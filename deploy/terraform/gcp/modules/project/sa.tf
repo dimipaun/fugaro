@@ -23,7 +23,7 @@ resource "google_service_account_iam_member" "operator" {
 # This is a widening of the 0.7.0 property that a job account's objects are
 # its own repository's: one project job serves every repository admitted to
 # its profile, so the object it writes is no longer inside one repository's
-# prefix. SECURITY.md and docs/design/bucket-iam.md state the regression in
+# prefix. SECURITY.md and docs/bucket-iam/spec.md state the regression in
 # full (D4), including another queued run's budget token (D13, accepted
 # 2026-10-15) and another run's launch.json/result.json (task 3.4). Every
 # project job gets this same condition whatever its profile, so a profile
@@ -201,7 +201,16 @@ resource "google_cloud_run_v2_service_iam_member" "credentials" {
   member   = google_service_account.job.member
 }
 
-# Only a profile whose runs authenticate through Vertex AI.
+# The shared project job's release-1 Vertex grant (CS11), planned the same way
+# the workflow module's is and for the same reason: var.job.vertex is the
+# project reaching Vertex AND infra.VertexGrantForJob saying the project's
+# budget mode allows a job the permission, so an enforcing project's jobs are
+# planned no aiplatform permission at all — no run in flight can hold one there,
+# because a `vertex` run is refused at bootstrap under `enforce` — while an
+# `observe` project keeps it until release 2 (X8). A review variant of one of
+# these jobs is planned none whatever this says (reviewVariant's own ruling),
+# and the service's own call is its one-permission custom role's
+# (modules/installation/credentials.tf, D3174).
 resource "google_project_iam_member" "vertex" {
   count = var.job.vertex ? 1 : 0
 

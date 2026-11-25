@@ -15,7 +15,7 @@
 // second copy of §2 in this file would be a list that drifts from the one a
 // reader checks, and the licence rule would then be enforced against the copy
 // rather than against the design. So the document is read from the repository
-// root (`docs/design/console-styling.md`), its §2 is taken whole, and every
+// root (`docs/console-styling/spec.md`), its §2 is taken whole, and every
 // backticked token in it is read: `div.console-rail-head` names the class
 // `console-rail-head`, `data-installation="chosen"` names the attribute
 // `data-installation`, and a token that is neither (`console/src/renderer/
@@ -64,7 +64,7 @@ const CONSOLE_ROOT = join(__dirname, '..', '..')
  * repository root. It is the one file this suite reads from outside the console,
  * and it is read because §2's tables **are** the licence: a copy of them here
  * would be a copy, and the copy is what would be enforced. */
-const DESIGN_DOCUMENT = join(CONSOLE_ROOT, '..', 'docs', 'design', 'console-styling.md')
+const DESIGN_DOCUMENT = join(CONSOLE_ROOT, '..', 'docs', 'console-styling', 'spec.md')
 
 /** INVENTORY_HEADING and NEXT_SECTION bound §2 in the design document. */
 const INVENTORY_HEADING = '## 2. Screen inventory'
@@ -113,8 +113,8 @@ const SCANNED: readonly string[] = Object.freeze([
   'manage.css',
 ])
 
-/** RAIL_HOOKS is the rail's fourteen classes, which §2.1 names and §4.1 draws as
- * fifteen elements (the name line, the warning mark and the empty-state line
+/** RAIL_HOOKS is the rail's fifteen classes, which §2.1 names and §4.1 draws as
+ * sixteen elements (the name line, the warning mark and the empty-state line
  * are the owner's design ruling of 2026-10-25; the collapse control went with
  * the rail's column when the header switcher replaced it on 2026-10-28). They
  * are listed here because the count is the claim: the stylesheet selects these
@@ -132,6 +132,7 @@ const RAIL_HOOKS: readonly string[] = Object.freeze([
   'console-rail-state',
   'console-rail-spend',
   'console-rail-add',
+  'console-rail-add-project',
   'console-rail-empty',
   'console-rail-hint',
 ])
@@ -1038,11 +1039,12 @@ describe('the theme’s selectors against the design’s §2 inventory', () => {
     expect(unknown, 'a rule selects an attribute the design’s §2 does not name').toEqual([])
   })
 
-  it('selects the rail’s fourteen hooks and no fifteenth', () => {
-    // "Fourteen hooks on fifteen elements" (design §2.1 and §4.1): the foot row
-    // and the button inside it share `console-rail-add`. A fifteenth
-    // `console-rail-*` class in the stylesheet would be a hook either the entry
-    // does not draw or §2.1 does not list, and both are the same defect.
+  it('selects the rail’s fifteen hooks and no sixteenth', () => {
+    // "Fifteen hooks on sixteen elements" (design §2.1 and §4.1): the foot row
+    // and the button inside it share `console-rail-add`, and the foot's second
+    // door is a class of its own (SW3c). A sixteenth `console-rail-*` class in
+    // the stylesheet would be a hook either the entry does not draw or §2.1 does
+    // not list, and both are the same defect.
     const rail = selectorsIn(readTheme('base.css')).classes.filter((name) => name.startsWith('console-rail'))
     expect(rail).toEqual([...RAIL_HOOKS].sort())
   })

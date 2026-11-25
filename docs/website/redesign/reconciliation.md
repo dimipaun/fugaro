@@ -705,7 +705,7 @@ lists every line of work's block): **`D1`–`D20`**, **`D21`–`D38`**, **`D39`�
 **`D160`–`D179`** (the mobile functional spec, `D174`–`D179` reserved) are taken. The gap
 **`D79`–`D89`** is deliberately unused — the first line of work left it alone under the
 rule "an unused number is not a free number" (`../reconciliation.md` §0, quoting
-`docs/plans/2026-10-15-desktop-console-v2.md`). No document on `main` or in an open pull
+`docs/desktop-console-v2/implementation-plan.md`). No document on `main` or in an open pull
 request writes `D180` or above (checked 2026-10-18). The redesign therefore proposes the
 first block above the highest allocation: **`D180`–`D192`**, thirteen numbers for the
 thirteen rows below, and asks the owner to confirm the block in the same breath as

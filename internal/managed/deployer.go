@@ -17,7 +17,7 @@ import (
 // the resolution; nothing here applies anything, and there is no path below
 // that runs work without a credential for the deployer account.
 //
-// Why it exists in this shape (docs/design/managed-projects.md, D75, amended
+// Why it exists in this shape (docs/managed-projects/spec.md, D75, amended
 // 2026-10-16): the creating apply is owner-run and the agent holds no project
 // IAM authority, so the account that applies has to be assumed rather than be
 // the operator's own identity. The account's permissions are the two custom

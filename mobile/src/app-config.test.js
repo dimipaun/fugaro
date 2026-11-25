@@ -95,8 +95,8 @@ const DECLARED = Object.freeze({
     ...CONFIG.expo.plugins,
     ['expo-build-properties', { ios: { useFrameworks: 'dynamic' } }],
     '@react-native-firebase/app',
-    ['@react-native-firebase/analytics', { ios: { withoutAdIdSupport: true } }],
     '@react-native-firebase/crashlytics',
+    '@react-native-firebase/messaging',
   ],
   ios: { ...CONFIG.expo.ios, infoPlist: { ITSAppUsesNonExemptEncryption: false } },
   android: {
@@ -381,8 +381,11 @@ test('a resolved config declares that the app uses only exempt encryption', () =
 // --- the Firebase config plugin, and the two native files (P7.1a) ------------
 //
 // The app gains Firebase (the mobile plan's Phase 7): `@react-native-firebase/app`
-// puts the SDK in the app, `analytics` and `crashlytics` are the two products it
-// carries, and the native config file that names the Firebase project is the
+// puts the SDK in the app, `crashlytics` is the reporter it carries (T3.1
+// removed `analytics` with D731, so it is the only one), P5.2.8's `messaging`
+// is the third (the one that mints the push token
+// an installation registers with), and the native config file that names the
+// Firebase project is the
 // **owner's** -- registered in the console, delivered to the build as an EAS file
 // environment variable, and never committed (D259, §4.3). Two things follow, and
 // both are checkable from the tree alone:
@@ -396,19 +399,21 @@ test('a resolved config declares that the app uses only exempt encryption', () =
 //     answer "no" with a path that is not ignored.
 //   * **the resolved config wires the plugin.** `app.config.js` is the one file
 //     the three packages' config plugins are registered in, and a resolution is
-//     what a build reads. What the plugin *options* mean -- the ad-ID switches,
-//     the iOS variant -- is the build-time walk's (§7.4, P7.1b); what is pinned
-//     here is that the entries exist, in both modes, once each, and that the
-//     plugins `app.json` already lists survive.
+//     what a build reads. What the plugin *options* mean -- the Android ad-ID
+//     removal, the iOS dynamic frameworks -- is the build-time walk's (§7.4,
+//     P7.1b); what is pinned here is that the entries exist, in both modes, once
+//     each, and that the plugins `app.json` already lists survive.
 
 /** The two native config files, by the names the Firebase console writes. */
 const NATIVE_CONFIG_FILES = Object.freeze(['google-services.json', 'GoogleService-Info.plist']);
 
-/** The three packages, in the order the config registers them. */
+/** The three packages, in the order the config registers them. The Analytics
+ * entry that sat second here left the app with its package (T3.1, D731), so
+ * this list is also what says the package is not merely unimported. */
 const FIREBASE_PACKAGES = Object.freeze([
   '@react-native-firebase/app',
-  '@react-native-firebase/analytics',
   '@react-native-firebase/crashlytics',
+  '@react-native-firebase/messaging',
 ]);
 
 /** The plugin's name, whether the entry is a bare string or a `[name, options]` pair. */
@@ -551,23 +556,21 @@ test('the native config paths come from the environment, and only when set', () 
   }
 });
 
-test('a resolved config links no advertising-id support, on both platforms', () => {
+test('a resolved config removes the advertising-id permission Android reads', () => {
   const plugins = resolveConfig(CONFIG.expo, {}).plugins;
   const optionsOf = (name) => plugins.find((entry) => pluginName(entry) === name)?.[1];
 
-  // iOS: the Analytics entry selects the variant with no ad-ID support, which
-  // is the option the pinned plugin reads to write the Podfile flag -- the
-  // whole of the iOS half of the ban, since the pod then links
-  // `FirebaseAnalyticsCore` rather than the identity subspec. Mutation: drop
-  // the option and this line goes red; it is also the one option §4.2's table
-  // asked P7.1 to resolve against the SDK's own source rather than name from
-  // memory.
-  assert.deepEqual(optionsOf('@react-native-firebase/analytics'), { ios: { withoutAdIdSupport: true } });
-  // Android: the permission Play reads as "this app uses the advertising id" is
+  // The permission Play reads as "this app uses the advertising id" is
   // **removed** from the merged manifest, through Expo's own
   // `android.blockedPermissions` -- which is the route, because the pinned
   // `@react-native-firebase/app` plugin has no Android option at all (§4.2's
   // other VERIFY item).
+  //
+  // **This is the whole of the source-side ban now.** The iOS half used to sit
+  // beside it, as the Analytics entry's `ios.withoutAdIdSupport` option; that
+  // entry left the app with its package (T3.1, D731), and a key whose reader has
+  // gone is not a ban, so what `src/ad-id.test.js` walks and what this file
+  // pins is the permission removal and nothing else.
   assert.deepEqual(resolveConfig(CONFIG.expo, {}).android.blockedPermissions, [
     'com.google.android.gms.permission.AD_ID',
   ]);
@@ -587,31 +590,66 @@ test('a resolved config links no advertising-id support, on both platforms', () 
   assert.deepEqual(optionsOf('expo-build-properties'), { ios: { useFrameworks: 'dynamic' } });
 });
 
-test('the Android switches firebase.json carries are the plan’s four', () => {
-  // The Android collection and ad switches are read by the SDK at **build
-  // time**, from `firebase.json` at the app root, under `react-native` -- the
-  // Analytics library's own `build.gradle` turns each into a manifest
-  // placeholder -- so this file, and not `app.config.js`, is where they live
-  // (§4.2). The values are D255's answer: the two collection switches are ON
-  // and the two ad switches are OFF. `src/app-config.ids.test.js`'s walk does
-  // not read this file, and §7.4's build-time walk (P7.1b) reads it alongside
-  // the generated native project; what is pinned here is the file itself.
+test('firebase.json carries the crash switch and messaging’s auto-registration, and nothing Analytics left behind', () => {
+  // These keys are read by the SDK at **build time**, from `firebase.json` at
+  // the app root, under `react-native`, and the pinned libraries turn each into
+  // a manifest placeholder or a build-time default -- so this file, and not
+  // `app.config.js`, is where they live (§4.2). `src/app-config.ids.test.js`'s
+  // walk does not read this file, and §7.4's build-time walk (P7.1b) reads it
+  // alongside the generated native project; what is pinned here is the file
+  // itself.
   //
-  // The four key names are the ones the SDK's build step reads, and they are
-  // not uniformly prefixed: `analytics/android/build.gradle:113` reads
-  // `analytics_default_allow_ad_personalization_signals`, while
-  // `:95` reads `google_analytics_adid_collection_enabled`. The prefixed
-  // `google_analytics_default_allow_ad_personalization_signals` is the
-  // **AndroidManifest** meta-data name (`analytics/android/src/main/
-  // AndroidManifest.xml:18`), not the `firebase.json` key, so writing it here
-  // would leave the switch unreachable and ad personalisation on.
+  // **What T3.1 changed here.** D731 drops Analytics from the app, so the three
+  // keys its library read are gone -- `analytics_auto_collection_enabled` and
+  // the two ad switches -- and the walk that planted the two ad switches is gone
+  // with them. Crashlytics' own switch is now **false**: under D731 the app
+  // sends nothing before it has read the project's published policy, and
+  // `crashlytics_auto_collection_enabled: true` would collect from the first
+  // frame of the first launch, which is exactly the "nothing is sent before the
+  // switch is read" D734 forbids. Collection is turned on at runtime, by the one
+  // call site in `src/telemetry/crash.js`, once the session carries the member.
+  //
+  // **The two messaging keys are P5.2.8's, and they are off** (Security review
+  // finding on this change, 2026-11-21). On the pinned SDK a launch registers
+  // the phone unless they say otherwise: iOS's
+  // `messaging/ios/RNFBMessaging/RNFBMessaging+NSNotificationCenter.m:101` calls
+  // `registerForRemoteNotifications` when
+  // `messaging_ios_auto_register_for_remote_messages` is unset (`defaultValue:
+  // YES`), and Android's `messaging/android/build.gradle:82-92` writes
+  // `firebase_messaging_auto_init_enabled` -- the AndroidManifest meta-data
+  // name -- from `messaging_auto_init_enabled`, which defaults to true. Both
+  // false is what makes SECURITY.md's "an act rather than a default" true of
+  // this build: nothing reaches FCM or APNs until `mobile/src/push/messaging.js`
+  // calls `registerDeviceForRemoteMessages` and then `getToken`, which its own
+  // tests pin in that order. Mutation: drop either key and this deepEqual goes
+  // red, and a build with it would auto-register with no user act.
+  //
+  // The deepEqual is the whole file, which is the other half of the Analytics
+  // removal: the object carries three keys, so a key typed back in -- by hand or
+  // by a copied build doc -- fails here rather than sitting in the build
+  // unreachable and unnoticed.
   const firebase = JSON.parse(readFileSync(join(HERE, '..', 'firebase.json'), 'utf8'));
   assert.deepEqual(firebase, {
     'react-native': {
-      analytics_auto_collection_enabled: true,
-      crashlytics_auto_collection_enabled: true,
-      google_analytics_adid_collection_enabled: false,
-      analytics_default_allow_ad_personalization_signals: false,
+      crashlytics_auto_collection_enabled: false,
+      messaging_auto_init_enabled: false,
+      messaging_ios_auto_register_for_remote_messages: false,
     },
   });
+  // ... and named one at a time, so a key coming back says which reader it would
+  // have had. These are the three the Analytics library's own build step reads
+  // (`analytics/android/build.gradle:95` and `:113` for the ad switches), and
+  // the deepEqual above is what would actually fail; this loop is what makes the
+  // failure legible.
+  for (const gone of [
+    'analytics_auto_collection_enabled',
+    'google_analytics_adid_collection_enabled',
+    'analytics_default_allow_ad_personalization_signals',
+  ]) {
+    assert.equal(
+      Object.hasOwn(firebase['react-native'], gone),
+      false,
+      `firebase.json carries ${gone}, and D731 dropped the package that reads it`,
+    );
+  }
 });

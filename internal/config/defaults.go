@@ -16,7 +16,7 @@ import (
 const BaseKind = "base"
 
 // MigrationDoc is the guide every refusal of a removed base setting names
-// (design/base-image.md §10).
+// (docs/base-image/spec.md §10).
 const MigrationDoc = "docs/base-image-migration.md"
 
 // Bases are the base kinds: the one Fugaro base (the legacy kinds were
@@ -315,6 +315,10 @@ func applyDefaults(c *Config) {
 	}
 	if c.Agent.FirstLineReview == "" {
 		c.Agent.FirstLineReview = FirstLineAuto
+	}
+	if c.Agent.WorkspaceBeat == nil {
+		t := true
+		c.Agent.WorkspaceBeat = &t
 	}
 	if c.Agent.MaxBudgetUSD == 0 {
 		c.Agent.MaxBudgetUSD = DefaultMaxBudgetUSD

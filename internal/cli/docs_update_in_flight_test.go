@@ -10,8 +10,9 @@ import (
 // P5.1b): the resident orchestrator's account and section 4.3's bindings ride
 // the installation step of `fugaro update`, so
 // docs/design/update-in-flight.md's own row for that step has to say so — and
-// say the half that matters for a run in flight, which is that an installation
-// that has not opted in creates nothing.
+// say the half that matters for a run in flight, which is that the one existing
+// resource it changes is the credentials service's revision, and that an
+// installation that cannot carry the block plans none.
 //
 // The row is the step's, and not a row of its own, because the document's table
 // is one row per `initStages` step (its own sentence, "The steps are
@@ -32,9 +33,9 @@ func TestDocsUpdateInFlightInstallationRowCarriesTheOrchestrator(t *testing.T) {
 	if row == "" {
 		t.Fatalf("%s has no `| installation |` row: the table is the audit of every update step, and the step the resident orchestrator's account is created by is gone", path)
 	}
-	for _, want := range []string{"orchestrator.tf", "P5.1b", "no-op", "has not opted in", "null", "CarriedOrchestrator"} {
+	for _, want := range []string{"orchestrator.tf", "P5.1b", "ensureOrchestratorBlock", "plans none", "FUGARO_ORCHESTRATOR_ACCOUNTS", "CarriedOrchestrator"} {
 		if !strings.Contains(row, want) {
-			t.Errorf("%s's installation row does not say %q: the account rides that step, and the row is where a reader learns that the step creates nothing for an installation that did not ask for one\n\nrow: %s", path, want, row)
+			t.Errorf("%s's installation row does not say %q: the account rides that step, and the row is where a reader learns what the step creates, which revision it changes and that an installation that cannot carry the block plans none\n\nrow: %s", path, want, row)
 		}
 	}
 
@@ -44,25 +45,17 @@ func TestDocsUpdateInFlightInstallationRowCarriesTheOrchestrator(t *testing.T) {
 		t.Errorf("%s's installation row names deploy/terraform/gcp/modules/installation/orchestrator.tf, which this tree does not hold: %v", path, err)
 	}
 
-	// And the row's "a key no release writes yet" is a fact rather than a hope:
-	// what writes a tfvars key is a field of the installation root's spec
-	// (internal/infra's InstallationSpec, whose json tags are those keys), and
-	// the release that adds the field is the one that turns the switch on for
-	// installations that opt in. Until then no release hands the key to any
-	// installation, which is what makes the step a no-op for every one of them —
-	// and that release rewrites this row, and this assertion, with it.
-	//
-	// The carry the row names is the other direction and not a writer: it keeps
-	// a block the installation's OWN document already holds, so an installation
-	// whose owner opted in by hand is not planned away by the very update that
-	// would otherwise rewrite the document without it. Both halves are read
-	// here, because the row states both.
+	// The writer is a function of the CLI and not a field of the installation
+	// root's spec (internal/infra's InstallationSpec, whose json tags are the
+	// tfvars keys): the key is written once into the document and carried by
+	// every later prepare, which is what the row says. The carry is read here
+	// because the row states it.
 	tfvars, err := os.ReadFile("../../internal/infra/tfvars.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(tfvars), `json:"orchestrator`) {
-		t.Errorf("internal/infra/tfvars.go carries an orchestrator key in its spec: %s's installation row says no release writes one yet, so the step creates nothing for any installation — the release that adds the writer turns the switch on for installations that opt in, and updates that row in the same sweep", path)
+		t.Errorf("internal/infra/tfvars.go carries an orchestrator key in its spec: %s's installation row says the block is written once by ensureOrchestratorBlock and carried, and a spec field would recompose it on every run", path)
 	}
 	if !strings.Contains(string(tfvars), "func CarriedOrchestrator(") {
 		t.Errorf("internal/infra/tfvars.go has no CarriedOrchestrator: %s's installation row says a block the installation holds is carried across an update, and a prepare that drops it hands Terraform the document of the account's and its five bindings' removal — which D1551 refuses for the identity", path)

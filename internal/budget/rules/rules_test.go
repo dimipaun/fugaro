@@ -15,6 +15,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/coordpath"
+	"github.com/dimipaun/fugaro/internal/identitywire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
@@ -243,7 +244,7 @@ func TestWritesOnlyAtNumericLeaves(t *testing.T) {
 // default is the fallback of a global one -- and the both-unset branch is
 // false, so the rules deny (fail closed).
 func TestPerRunOK(t *testing.T) {
-	ok, err := perRunOK(4) // the depth of runs/$slug/$run/reserved
+	ok, err := perRunOK(perRunDepth)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,13 +255,20 @@ func TestPerRunOK(t *testing.T) {
 		t.Errorf("no true branch: a repository with a cap of its own and no global one must pass: %s", ok)
 	}
 	for _, side := range []string{
-		"root.child('config/caps/repos').child($slug).child('perRunMicros')",
-		"root.child('config/caps/defaults/repoPerRunMicros')",
-		"root.child('config/caps/global/perRunMicros')",
+		perRunOwnSnap,
+		perRunDefaultSnap,
+		perRunGlobalSnap,
 	} {
 		if !strings.Contains(ok, side) {
 			t.Errorf("the comparison does not read %s: %s", side, ok)
 		}
+	}
+	// A node above its ceiling counts as the ceiling (spec §5.6, B18), so the
+	// repository's own value is read once for the bound and once for the
+	// ceiling the bound is clamped to. One read is the expression without the
+	// clamp, which is what this pins.
+	if n := strings.Count(ok, perRunOwnSnap+".val()"); n != 2 {
+		t.Errorf("the repository's per-run value is read %d times, want 2 (the bound and the ceiling it is clamped to): %s", n, ok)
 	}
 	if strings.Count(ok, "(") != strings.Count(ok, ")") || strings.Count(ok, "'")%2 != 0 {
 		t.Errorf("unbalanced parentheses or quotes: %s", ok)
@@ -300,16 +308,35 @@ func TestPerRunOK(t *testing.T) {
 // change of intent visible.
 func TestGoMirrorOfThePerRunBranches(t *testing.T) {
 	m := func(v int64) *budget.Micros { x := budget.Micros(v); return &x }
+	// ceiling clamps one cap to its ceiling (spec §5.6, B18): the project's
+	// global cap where it is set, else the default repository cap -- and where
+	// neither is set the cap stands. It is the rule the rules' own comparison
+	// now reads the repository's node through (perRunClamp) and the one
+	// budget.Caps.RepoPerRun reads it through once RC1's RepoCeiling lands in
+	// internal/budget/model.go. The test applies it to the model's answer too,
+	// so this mirror, the model and the rules agree whichever of the two lands
+	// first: a value already at or below its ceiling is unchanged, so the
+	// second application is a no-op.
+	ceiling := func(cap budget.Micros, def, global *budget.Micros) budget.Micros {
+		ceil := def
+		if global != nil {
+			ceil = global
+		}
+		if ceil != nil && cap > *ceil {
+			return *ceil
+		}
+		return cap
+	}
 	// mirror is perRunOK read as prose: the repository's own cap, else the
-	// default, and the global one where it is set; with neither side set the
-	// comparison is false (the rules deny).
+	// default, clamped to its ceiling, and the global one where it is set; with
+	// neither side set the comparison is false (the rules deny).
 	mirror := func(repo, def, global *budget.Micros, delta budget.Micros) bool {
 		if repo != nil || def != nil {
 			own := repo
 			if own == nil {
 				own = def
 			}
-			return delta <= *own && (global == nil || delta <= *global)
+			return delta <= ceiling(*own, def, global) && (global == nil || delta <= *global)
 		}
 		return global != nil && delta <= *global
 	}
@@ -338,6 +365,13 @@ func TestGoMirrorOfThePerRunBranches(t *testing.T) {
 				c.Global = &budget.GlobalCaps{PerRunMicros: sides.gl}
 			}
 			cap, ok := c.PerRun()
+			if ok {
+				// The model's own clamp is RC1's; until it lands, the answer
+				// here is the unclamped node and the ceiling is applied by the
+				// test, which is what keeps this row meaningful on either side
+				// of that landing.
+				cap = ceiling(cap, sides.def, sides.gl)
+			}
 			for _, delta := range []budget.Micros{0, 5, 10, 20, 30, 50} {
 				if got, want := mirror(sides.repo, sides.def, sides.gl, delta), ok && delta <= cap; got != want {
 					t.Errorf("delta %d: the rules' branches say %v, Caps.PerRun %d %v says %v", delta, got, cap, ok, want)
@@ -382,7 +416,7 @@ func formatFloat(f float64) string {
 	return string(b)
 }
 
-// ---- The policy nodes (docs/design/project-centric.md §5, phase 1 task 1.2).
+// ---- The policy nodes (docs/project-centric/spec.md §5, phase 1 task 1.2).
 // These assertions run without the emulator, on the generated JSON; the emulator
 // suite (TestAllowedPaths, TestDenialTable, build tag firebase) proves the same
 // shape against the real evaluator.
@@ -627,6 +661,62 @@ func TestVoicePolicyNodesAreReadPerChild(t *testing.T) {
 	}
 	if attrs := paths[repos]; len(attrs) != 0 {
 		t.Errorf("/%s carries %v: the grant must be per $slug child", repos, attrs)
+	}
+}
+
+// TestLaunchEnvelopeNodesAreReadPerChild: the launch envelope's grants, read out
+// of the generated document rather than argued about (mobile plan task P5.1g,
+// Q9's answer, the design's section 4.5 E1 and section 4.8). The emulator test
+// beside this one (emulator_orchestrator_test.go) proves the same claims against
+// a real rules engine; this is the half that runs in the job with no emulator,
+// and it is the half a reviewer reads.
+//
+// Three claims, and each is a fence rather than a description: the two parents
+// carry no grant at all (an RTDB read grant cascades, so one on `launch` would
+// hand every device's entry to every paired phone and one on `config/policy`
+// the published policy beside it); the recipe is read on `USER` and nothing else
+// (the installation's named safe recipe is the same value for every paired
+// device); and a device's entry is read on `USER` narrowed by `$uid ==
+// auth.uid`, which is the whole of what keeps one phone's repository allow-list,
+// launch rate and cost ceiling out of another phone's hands. Both children are
+// `.write: false`: the values are the owner's, published over IAM.
+//
+// Hand mutation this fails on: widening the entry's read to `USER` alone,
+// putting a grant on either parent, giving either child a `.write`, or dropping
+// the `$uid == auth.uid` conjunct.
+func TestLaunchEnvelopeNodesAreReadPerChild(t *testing.T) {
+	paths := generatedPaths(t)
+	recipe := PathLaunchEnvelope + "/recipe"
+	devices := PathLaunchEnvelope + "/devices"
+	entry := devices + "/$uid"
+	for _, p := range []string{PathLaunchEnvelope, recipe, devices, entry} {
+		if _, ok := paths[p]; !ok {
+			t.Fatalf("the template does not generate /%s, which this package names and the app reads", p)
+		}
+	}
+	for _, p := range []string{PathLaunchEnvelope, devices} {
+		for _, a := range []string{".read", ".write"} {
+			if v, ok := paths[p][a]; ok {
+				t.Errorf("/%s has %s = %v: an RTDB read grant on a parent cascades to the recipe and to every device's entry", p, a, v)
+			}
+		}
+	}
+	read, _ := paths[recipe][".read"].(string)
+	if !strings.Contains(read, "auth.token.mu") {
+		t.Errorf("/%s .read = %q, want the USER claim: every paired device reads the installation's named safe recipe", recipe, read)
+	}
+	if strings.Contains(read, "$uid") {
+		t.Errorf("/%s .read = %q is narrowed by a $uid the recipe is not keyed by", recipe, read)
+	}
+	if w, ok := paths[recipe][".write"]; !ok || w != false {
+		t.Errorf("/%s .write = %v, want false: the operator publishes the recipe over IAM", recipe, w)
+	}
+	entryRead, _ := paths[entry][".read"].(string)
+	if !strings.Contains(entryRead, "auth.token.mu") || !strings.Contains(entryRead, "$uid == auth.uid") {
+		t.Errorf("/%s .read = %q, want the USER claim narrowed by $uid == auth.uid: without the narrowing one device reads every other device's allow-list", entry, entryRead)
+	}
+	if w, ok := paths[entry][".write"]; !ok || w != false {
+		t.Errorf("/%s .write = %v, want false: a phone that could write its own entry would bound nothing", entry, w)
 	}
 }
 
@@ -1205,6 +1295,28 @@ func schemaCatalog(t *testing.T) (consts map[string]int64, fields, required, kin
 	return consts, fields, required, kinds
 }
 
+// rulesOnlyFields are the fields the rules gate that the shared schema does not
+// name — the one licence this test gives the rules to lead the schema by, and
+// it is a named field rather than a blanket tolerance. `sig` is the whole of
+// it: mobile plan task J5r (O6) makes the document accept a signed message
+// before the phone can write one, and J5b is the task that adds the field to
+// shared/mailbox-schema. A second entry here is a decision, which is what the
+// map's shape is for.
+var rulesOnlyFields = map[string]bool{"sig": true}
+
+// withoutTag is the schema's required-field list minus the tag, which the
+// message's own validator states beside it as TAGOK rather than in the list
+// (J5r): `mac` is the schema's name for a tag it does not yet call one.
+func withoutTag(required []string) []string {
+	out := make([]string, 0, len(required))
+	for _, f := range required {
+		if f != "mac" {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // TestMailboxRulesAgreeWithTheSharedSchema pins, without the emulator, the part
 // of §6.4's "the two artifacts cannot disagree" that can be pinned in Go: the
 // four bounds the rules apply to a message are the schema's own numbers, and
@@ -1354,11 +1466,19 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 	}
 
 	// The required fields, from the schema's own list rather than from a literal
-	// here: `hasChildren([...])` is what refuses a message with no tag, and a
-	// tag is required on every message of every kind and on the heartbeat. The
+	// here: `hasChildren([...])` is what refuses a message with a required field
+	// missing, and a tag is required on every message of every kind and on the
+	// heartbeat. The
 	// heartbeat's list is three of the four (it has no `id`), which the schema
 	// states separately (HEARTBEAT_REQUIRED).
-	msgRequired := "newData.hasChildren(['" + strings.Join(required, "', '") + "'])"
+	//
+	// The tag itself is the one required field the list no longer names: J5r
+	// (O6) replaces the `mac` member with TAGOK, which requires exactly one of
+	// `mac` and `sig`, because a phone paired the new way writes a signature and
+	// has no MAC to offer. The schema still calls it `mac`, so the list this
+	// builds is the schema's minus that one word, and the tag clause is asserted
+	// beside it: the requirement moved, it did not weaken.
+	msgRequired := "newData.hasChildren(['" + strings.Join(withoutTag(required), "', '") + "']) && " + exactlyOneTag("newData")
 	for _, p := range []string{`mailbox/$mb/inbox/$msg`, `mailbox/$mb/outbox/$msg`} {
 		attrs, ok := paths[p]
 		if !ok {
@@ -1367,12 +1487,12 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 		}
 		v, _ := attrs[".validate"].(string)
 		if !strings.Contains(v, msgRequired) {
-			t.Errorf("/%s .validate = %q, want the schema's required fields (%q)", p, v, msgRequired)
+			t.Errorf("/%s .validate = %q, want the schema's required fields with the tag clause in place of `mac` (%q)", p, v, msgRequired)
 		}
 	}
 	if attrs, ok := paths[`mailbox/$mb/heartbeat`]; !ok {
 		t.Error("the template does not generate /mailbox/$mb/heartbeat")
-	} else if v, _ := attrs[".validate"].(string); !strings.Contains(v, "newData.hasChildren(['at', 'boot', 'mac'])") {
+	} else if v, _ := attrs[".validate"].(string); !strings.Contains(v, "newData.hasChildren(['at', 'boot']) && "+exactlyOneTag("newData")) {
 		t.Errorf("/mailbox/$mb/heartbeat .validate = %q, want the tag required beside at and boot", v)
 	}
 
@@ -1380,7 +1500,10 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 	// from the schema (ACTION_REQUIRED is not exported and this reader does not
 	// follow a local constant), so these are pins: a record without its
 	// confirmation is the shape G11 calls prose, and a merge without the head it
-	// read back is one the consumer cannot check.
+	// read back is one the consumer cannot check. J5r (O10) moves the
+	// confirmation out of that list for `launch` alone — which modes need a
+	// read-back is the gate's decision, not this document's — and gives the verb
+	// its `mode`, so the two clauses are pinned beside the merge's own.
 	for _, p := range []string{`mailbox/$mb/inbox/$msg/action`, `mailbox/$mb/outbox/$msg/action`} {
 		attrs, ok := paths[p]
 		if !ok {
@@ -1389,8 +1512,10 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 		}
 		v, _ := attrs[".validate"].(string)
 		for _, frag := range []string{
-			"newData.hasChildren(['id', 'verb', 'target', 'confirmation'])",
+			"newData.hasChildren(['id', 'verb', 'target'])",
+			"newData.hasChildren(['confirmation'])",
 			"newData.child('verb').val() == 'merge' ? newData.child('head_sha').exists() : true",
+			"newData.child('verb').val() == 'launch' ? newData.child('mode').exists() :",
 			"== 'action'",
 		} {
 			if !strings.Contains(v, frag) {
@@ -1425,14 +1550,15 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 	// lives on an outbox message), and an outbox message has all of them. The
 	// registration's three (P5.2.2) are on both: the app writes its registration
 	// into its own inbox, and the consumer's messages travel the other way
-	// through the same document.
+	// through the same document. `sig` (J5r, O6) is on both as well, and it is
+	// the one field here the schema does not name yet.
 	gated := map[string]bool{}
 	for _, c := range []struct {
 		path string
 		want []string
 	}{
-		{`mailbox/$mb/inbox/$msg`, []string{"id", "sender", "text", "at", "mac", "agent", "kind", "options", "reply_to", "action", "token", "platform", "prefs"}},
-		{`mailbox/$mb/outbox/$msg`, []string{"id", "sender", "text", "at", "mac", "acked", "agent", "kind", "options", "reply_to", "action", "token", "platform", "prefs"}},
+		{`mailbox/$mb/inbox/$msg`, []string{"id", "sender", "text", "at", "mac", "sig", "agent", "kind", "options", "reply_to", "action", "token", "platform", "prefs"}},
+		{`mailbox/$mb/outbox/$msg`, []string{"id", "sender", "text", "at", "mac", "sig", "acked", "agent", "kind", "options", "reply_to", "action", "token", "platform", "prefs"}},
 	} {
 		if _, ok := paths[c.path]; !ok {
 			t.Errorf("the template does not generate /%s", c.path)
@@ -1454,7 +1580,7 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 		}
 		for _, field := range got {
 			gated[field] = true
-			if !slices.Contains(fields, field) {
+			if !slices.Contains(fields, field) && !rulesOnlyFields[field] {
 				t.Errorf("/%s gates %q, which the shared schema does not name: the rules may gate fewer fields than the schema, never one it does not have", c.path, field)
 			}
 		}
@@ -1480,7 +1606,8 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 // carries, in the macros' own spelling: the message's kind read from the field
 // (`PARENTKIND`), the field's own bound, and — on the three the schema makes
 // required or optional of that kind — the tag of the message it sits on
-// (`PARENTMACOK`). Mobile plan task P5.2.2.
+// (`PARENTMACOK`, or `PARENTSIGOK` for a phone that signs; mobile plan task
+// P5.2.2, and J5r for the second scheme). Mobile plan task P5.2.2.
 //
 // Built through expand rather than written out, registrationRequiredClause's
 // reason: the macro writes the expression, and a second spelling of it here
@@ -1492,9 +1619,9 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 // any kind. Each entry is compared as a whole, so a change to a bound, to an
 // arm or to the conjunction fails here and not only in the golden.
 var registrationFieldValidators = []struct{ field, expr string }{
-	{"token", "PARENTKIND == 'registration' && TOKENOK && PARENTMACOK"},
-	{"platform", "PARENTKIND == 'registration' && PLATFORMOK && PARENTMACOK"},
-	{"prefs", "PARENTKIND == 'registration' && newData.hasChildren(['kill_switch', 'cap_reached', 'consumer_offline', 'cap_near', 'prompt']) && PARENTMACOK"},
+	{"token", "PARENTKIND == 'registration' && TOKENOK && (PARENTMACOK || PARENTSIGOK)"},
+	{"platform", "PARENTKIND == 'registration' && PLATFORMOK && (PARENTMACOK || PARENTSIGOK)"},
+	{"prefs", "PARENTKIND == 'registration' && newData.hasChildren(['kill_switch', 'cap_reached', 'consumer_offline', 'cap_near', 'prompt']) && (PARENTMACOK || PARENTSIGOK)"},
 	{"prefs/quiet_hours", "newData.hasChildren(['zone', 'start', 'end'])"},
 	{"prefs/quiet_hours/zone", "ZONEOK"},
 	{"prefs/quiet_hours/start", "MINUTEOK"},
@@ -1557,6 +1684,14 @@ func TestUserReadGrantsAreExactlyTheNamedFamilies(t *testing.T) {
 	// orchestrator's (O2, D1220), granted on the root for the same reason and
 	// with a `.write: false` beside it: the person reads the state over the
 	// claim, and writes it over IAM, which no rule here binds.
+	//
+	// The launch envelope's two nodes are the last pair (mobile plan task
+	// P5.1g, Q9 and Q11): the installation's named safe recipe, which every
+	// paired device reads, and the device's own entry, which is the same claim
+	// narrowed by `$uid == auth.uid` so that one phone reads no other phone's
+	// allow-list. They are here rather than among the mailbox's two because
+	// they are not mailbox-scoped: the entry is keyed by the Firebase Auth uid
+	// the device node already is (P6.4), not by a mailbox.
 	want := map[string]bool{
 		"config/caps/global":                       true,
 		"config/caps/defaults":                     true,
@@ -1571,6 +1706,8 @@ func TestUserReadGrantsAreExactlyTheNamedFamilies(t *testing.T) {
 		"mailbox/$mb/heartbeat":                    true,
 		"coordinator":                              true,
 		PathOrchestrator:                           true,
+		PathLaunchEnvelope + "/recipe":             true,
+		PathLaunchEnvelope + "/devices/$uid":       true,
 	}
 	got := map[string]string{}
 	for p, attrs := range paths {
@@ -1684,6 +1821,15 @@ func TestMailboxRulesCheckTheSchemasCharacters(t *testing.T) {
 		m := `mailbox/$mb/` + dir + `/$msg`
 		for _, c := range []struct{ path, frag string }{
 			{m + `/mac`, ".matches(" + patternHex + ")"},
+			// J5r's signature: the other scheme's tag, at its own length and in
+			// its own character set (unpadded base64url), and the launch's mode
+			// as a bounded identity string. The signature has no pattern in the
+			// schema yet — J5b is the task that gives it one — so these are the
+			// rules' own numbers, pinned here rather than read from the schema.
+			{m + `/sig`, ".matches(" + patternSignature + ")"},
+			{m + `/sig`, "newData.val().length == " + strconv.Itoa(MaxSigLength)},
+			{m + `/action/mode`, "newData.parent().child('verb').val() == 'launch'"},
+			{m + `/action/mode`, "newData.val().length <= " + strconv.Itoa(MaxModeLength)},
 			{m + `/agent`, ".matches(" + patternIdentity + ")"},
 			{m + `/action/head_sha`, ".matches(" + patternHex + ")"},
 			{m + `/action/target/run`, ".matches(" + patternRun + ")"},
@@ -1709,6 +1855,8 @@ func TestMailboxRulesCheckTheSchemasCharacters(t *testing.T) {
 	}
 	for _, c := range []struct{ path, frag string }{
 		{`mailbox/$mb/heartbeat/mac`, ".matches(" + patternHex + ")"},
+		{`mailbox/$mb/heartbeat/sig`, ".matches(" + patternSignature + ")"},
+		{`mailbox/$mb/heartbeat/sig`, "newData.val().length == " + strconv.Itoa(MaxSigLength)},
 		{`mailbox/$mb/heartbeat/boot`, ".matches(" + patternIdentity + ")"},
 		{`mailbox/$mb/heartbeat/boot`, "newData.val().length <= " + strconv.Itoa(MaxBootLength)},
 		{`mailbox/$mb/heartbeat/agents`, "newData.hasChildren()"},
@@ -1758,6 +1906,18 @@ func wantFrag(t *testing.T, paths map[string]map[string]any, path, frag string) 
 	}
 }
 
+// The three arms TARGETOK's ternary is written from, in the template's own
+// spelling, and the verb read they hang off. They are consts rather than typed
+// twice because TestConfirmTargetsCarryOneShape and the named rule change below
+// both read them, and a second spelling would be a second thing to keep in
+// step.
+const (
+	targetVerb   = "newData.parent().child('verb').val()"
+	targetMerge  = "(newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists())"
+	targetCancel = "(newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists())"
+	targetLaunch = "(newData.hasChildren(['repo']) && !newData.child('run').exists() && !newData.child('pr').exists())"
+)
+
 // TestConfirmTargetsCarryOneShape pins TARGETOK's per-verb arms, and the
 // `confirm` arm in particular.
 //
@@ -1768,18 +1928,23 @@ func wantFrag(t *testing.T, paths map[string]map[string]any, path, frag string) 
 // arm written as an either-shape test — `hasChildren(['run']) ||
 // hasChildren(['repo', 'pr'])` — answers yes to `{run, repo, pr}` and to
 // `{run, repo}`, and the emulator accepts both. The negative half of each arm
-// is what refuses them, so each arm is pinned whole.
+// is what refuses them, so each arm is pinned whole. The launch arm (J5r, O10)
+// is the fourth and the narrowest: a start names a repository and neither a run
+// nor a pull request.
 //
 // This is the static half: `emulator_pairing_test.go` writes the two both-shapes
-// targets and watches the database refuse them.
+// targets and watches the database refuse them, and
+// `emulator_mailbox_test.go` writes a launch whose target carries a run or a
+// pull request and watches the same.
 func TestConfirmTargetsCarryOneShape(t *testing.T) {
 	paths := generatedPaths(t)
 	for _, dir := range []string{"inbox", "outbox"} {
 		p := `mailbox/$mb/` + dir + `/$msg/action/target`
 		for _, c := range []struct{ verb, frag string }{
-			{"merge", "== 'merge' ? (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists())"},
-			{"cancel", "== 'cancel' ? (newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists())"},
-			{"confirm", "((newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) || (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists()))"},
+			{"merge", "== 'merge' ? " + targetMerge},
+			{"cancel", "== 'cancel' ? " + targetCancel},
+			{"launch", "== 'launch' ? " + targetLaunch},
+			{"confirm", "(" + targetCancel + " || " + targetMerge + ")"},
 		} {
 			wantFrag(t, paths, p, c.frag)
 			t.Logf("/%s: the %s arm carries %s", p, c.verb, c.frag)
@@ -2082,7 +2247,7 @@ func TestAgentEntryFieldsAreTemplateChildren(t *testing.T) {
 		Coder: "m", Reviewer: "m", Recipe: "r", Auth: "cascade", PRURL: "https://example.invalid/1",
 		Action: "tool Bash", Tokens: 1, StartedAt: 1, StageStartedAt: 1, StageDeadline: 1, UpdatedAt: 1,
 		Spent: 1, Halted: "budget", Credential: "a1", WaitingUntil: 2, RequestedBy: "alice@example.invalid",
-		Mode: "critical", From: "area",
+		Mode: "critical", From: "area", Source: "pool:team", Fallback: true,
 	}
 	b, err := json.Marshal(entry)
 	if err != nil {
@@ -2099,9 +2264,12 @@ func TestAgentEntryFieldsAreTemplateChildren(t *testing.T) {
 			t.Errorf("budget.AgentEntry marshals %q and the template does not generate /%s: the entry's $other guard refuses the write", f, parent+"/"+f)
 		}
 	}
-	// The interesting two, named so that a rename has to be argued: the
-	// cascade's current credential and the instant it expects to resume at.
-	for _, f := range []string{"credential", "waiting_until"} {
+	// The interesting ones, named so that a rename has to be argued: the
+	// cascade's current credential and the instant it expects to resume at,
+	// and the routing table's source — whose name the contract fixes for
+	// `fugaro watch --json` (contract-table.md), so it is not this package's
+	// to rename in passing either.
+	for _, f := range []string{"credential", "waiting_until", "source"} {
 		if _, ok := fields[f]; !ok {
 			t.Errorf("budget.AgentEntry no longer marshals %q", f)
 		}
@@ -2122,9 +2290,10 @@ func TestAgentEntryFieldsAreTemplateChildren(t *testing.T) {
 //
 // Two rules already there are allowed to move, and both are named. One is a
 // change: the outcome's status validator gains the run status 'unreviewed'
-// (isNamedRuleChange, docs/binary-allow-rule's NV0, D994), the one change of
-// that shape because it is what keeps the database true about a status a
-// release adds, and the widening is exact — the one clause and nothing else.
+// (isNamedRuleChange, docs/binary-allow-rule's NV0, D994) and, for PR1, the
+// status 'paused' (model-credentials-routing, D3185, R15) — the one change of
+// that shape, because it is what keeps the database true about a status a
+// release adds, and each widening is exact: one clause and nothing else.
 // The other is an *addition to a rule*: the node the outcome itself sits at
 // gains the paired device's read (isNamedReadGrant, mobile identity-pairing J1,
 // F30, D2797, O3), which is a new attribute on a path generation 3 already
@@ -2134,8 +2303,8 @@ func TestAgentEntryFieldsAreTemplateChildren(t *testing.T) {
 //
 // Hand mutation this fails on: editing any existing rule (a loosened bound, a
 // dropped conjunct) while adding the new nodes, widening the outcome's status
-// validator by anything but that one clause (a second word, a bound instead of
-// an equality), a read granted at a second path or to an expression other than
+// validator by anything but those clauses (a third word, a bound instead of an
+// equality), a read granted at a second path or to an expression other than
 // the user claim, or dropping the new node from the template (the addition check
 // below).
 func TestRulesPreexistingPathsUnchanged(t *testing.T) {
@@ -2197,19 +2366,44 @@ func TestRulesPreexistingPathsUnchanged(t *testing.T) {
 	if _, ok := after[escalationLedgerPath]; !ok {
 		t.Errorf("the generated rules carry no /%s node: the reports job's read of the ledger's escalation block is what E12 adds", escalationLedgerPath)
 	}
+	// And J5r's, per node: an addition loop that only looks at what appeared
+	// passes a document that never gained any of them.
+	for _, p := range []string{
+		"mailbox/$mb/inbox/$msg/sig",
+		"mailbox/$mb/outbox/$msg/sig",
+		"mailbox/$mb/heartbeat/sig",
+		"mailbox/$mb/inbox/$msg/action/mode",
+		"mailbox/$mb/outbox/$msg/action/mode",
+	} {
+		if _, ok := after[p]; !ok {
+			t.Errorf("the generated rules carry no /%s node: the tag a device signs with, and the mode a typed launch carries, are the whole of what J5r adds", p)
+		}
+	}
 }
 
 // outcomeStatusPath is the one existing rule this branch changes, spelled as
 // generatedPaths spells it (the model slug, not the document's $slug variable).
 const outcomeStatusPath = "outcomes/$day/" + slugForPath + "/$run/status"
 
-// unreviewedClause is the one disjunct the widening adds to that rule, with the
-// spacing the template writes it in.
+// unreviewedClause and pausedClause are the two disjuncts the widening adds to
+// that rule, with the spacing the template writes them in. The second is PR1's
+// (model-credentials-routing, D3185, R15): a run that suspends itself writes
+// its outcome as `paused`, and a document that does not spell the word refuses
+// that outcome — which internal/budget's Finish would file as an
+// infrastructure error, a fault that never happened.
 const unreviewedClause = " || newData.val() == 'unreviewed'"
+const pausedClause = " || newData.val() == 'paused'"
 
 // registeredKindClause is the disjunct P5.2.2 adds to the kind enumeration, on
 // both messages, with the spacing the template writes it in.
 const registeredKindClause = " || newData.val() == 'registration'"
+
+// stopKindClause is the disjunct P5.1g adds to the same enumeration, on both
+// messages, with the spacing the template writes it in: the phone's stop
+// request, the sixth member of the schema's KINDS. The kind gate on the field
+// validators is built from kindOf, which reads the schema's vocabulary, so it
+// carries `stop` on its own and the change here is the enumeration alone.
+const stopKindClause = " || newData.val() == 'stop'"
 
 // registrationRequiredClause is the conjunct P5.2.2 adds to the message's own
 // validator — KINDREQ's registration arm, which is what makes a registration
@@ -2218,21 +2412,130 @@ const registeredKindClause = " || newData.val() == 'registration'"
 // would be a second thing to keep in step.
 var registrationRequiredClause = " && (" + kindOf("newData") + " == 'registration' ? (newData.child('token').exists() && newData.child('platform').exists()) : true)"
 
+// launchVerbClause is the disjunct J5r adds to the action verb enumeration
+// (O10), with the spacing the template writes it in: the typed start, the
+// fourth member of the mailbox schema's VERBS.
+const launchVerbClause = " || newData.val() == 'launch'"
+
+// msgRequired is the message's own hasChildren list as J5r writes it: the four
+// fields generation 3 required, and a tag that is exactly one of `mac` and
+// `sig` in place of the `mac` member it required. Built from withoutTag and
+// exactlyOneTag rather than typed twice, because the template's list and this
+// one are the same list and a second spelling would be a second thing to keep
+// in step.
+var msgRequired = "newData.hasChildren(['" + strings.Join(withoutTag(msgRequiredFields), "', '") + "']) && " + exactlyOneTag("newData")
+
+// msgRequiredFields is the four fields a message carries whatever its kind;
+// withoutTag drops `mac` from the list generation 3 required, because a message
+// now carries its tag as one of two members and neither is a required one.
+var msgRequiredFields = []string{"id", "sender", "text", "at", "mac"}
+
+// actionRequiredWas and actionRequiredNow are the two halves of the one change
+// J5r moves on the action node's own validator: a `launch` carries its `mode`
+// and needs no `confirmation` (O10 — which modes need a read-back at the gate
+// is J5a's, so a plain start needs none of it here), while every other verb
+// keeps `confirmation` exactly as generation 3 wrote it.
+//
+// They are a pair and not a clause insertion, because `confirmation` moves out
+// of the hasChildren list as the verb test grows around it: the list, the
+// launch arm and the confirmation arm in the new string together have to leave
+// the old one byte for byte.
+var (
+	actionRequiredWas = "newData.hasChildren(['id', 'verb', 'target', 'confirmation']) && (newData.child('verb').val() == 'merge' ? newData.child('head_sha').exists() : true)"
+	actionRequiredNow = "newData.hasChildren(['id', 'verb', 'target']) && (newData.child('verb').val() == 'launch' ? newData.child('mode').exists() : (newData.hasChildren(['confirmation']) && (newData.child('verb').val() == 'merge' ? newData.child('head_sha').exists() : true)))"
+)
+
+// perRunDepth is the depth of the lease's reserved leaf, the one site PERRUNOK
+// is expanded at.
+const perRunDepth = 4
+
+// perRunClampClause is the conjunct RC2 adds to the lease's reserved validator
+// (spec §5.6, B18): where the repository has a per-run cap of its own, the
+// run's outstanding is compared against that cap *and* against the cap's
+// ceiling — the project's global cap where it is set, else the default
+// repository cap, and the node itself where neither is set, which leaves the
+// node standing. Built from the helpers perRunOK builds it from, because a
+// second spelling of either half here would be a second thing to keep in step.
+var perRunClampClause = func() string {
+	delta, err := perRunDelta(perRunDepth)
+	if err != nil {
+		panic(err)
+	}
+	return perRunClamp(delta)
+}()
+
+// dailyClampClause is the conjunct RC2 adds to the day counter's validator
+// (spec §5.6, B18: the ceiling is "for each of daily and per-run"): the day's
+// new repository total against the ceiling that repository's own daily cap is
+// read as. Built from dailyClamp, for perRunClampClause's reason.
+var dailyClampClause = dailyClamp()
+
 // namedRuleChanges is the whole of what this document's existing rules may
-// change: each path, and the one clause the change adds to its validator. Every
-// other path stays as it was, and removing the clause from the new string has
-// to leave the generation-3 one byte for byte — so a change that also moved a
-// bound, dropped a conjunct or reworded an arm is not one of these.
-var namedRuleChanges = map[string]string{
+// change: each path, and the edits the change makes to its validator, each one
+// a substring the new string carries and the substring — often nothing — that
+// it puts in its place. Applying every edit at its path has to leave the
+// generation-3 validator byte for byte, so a change that also moved a bound,
+// dropped a conjunct or reworded an arm is not one of these, and neither is one
+// that edits a string nobody named.
+//
+// It is a list per path and no longer a single clause, because J5r's change to
+// a message is two edits: the tag clause is inserted, and the `mac` member is
+// taken out of the hasChildren list beside it.
+type ruleChange struct {
+	was, now string
+}
+
+var namedRuleChanges = map[string][]ruleChange{
 	// The outcome's status gains the run status 'unreviewed' (docs/
-	// binary-allow-rule's NV0, D994).
-	outcomeStatusPath: unreviewedClause,
+	// binary-allow-rule's NV0, D994) and, for PR1, 'paused' — the word a run
+	// that suspended itself ends with (model-credentials-routing, D3185, R15).
+	outcomeStatusPath: {{now: unreviewedClause}, {now: pausedClause}},
 	// The two messages gain the registration kind (mobile plan task P5.2.2):
-	// the word in the enumeration, and the required fields on the message.
-	"mailbox/$mb/inbox/$msg":       registrationRequiredClause,
-	"mailbox/$mb/outbox/$msg":      registrationRequiredClause,
-	"mailbox/$mb/inbox/$msg/kind":  registeredKindClause,
-	"mailbox/$mb/outbox/$msg/kind": registeredKindClause,
+	// the word in the enumeration, and the required fields on the message —
+	// and, for J5r, a tag that is one of `mac` and `sig` in place of the `mac`
+	// the list used to require (O6). The same two edits on the outbox, which
+	// carries the same shape in the other direction.
+	"mailbox/$mb/inbox/$msg": {
+		{now: registrationRequiredClause},
+		{was: "newData.hasChildren(['id', 'sender', 'text', 'at', 'mac'])", now: msgRequired},
+	},
+	"mailbox/$mb/outbox/$msg": {
+		{now: registrationRequiredClause},
+		{was: "newData.hasChildren(['id', 'sender', 'text', 'at', 'mac'])", now: msgRequired},
+	},
+	"mailbox/$mb/inbox/$msg/kind":  {{now: registeredKindClause + stopKindClause}},
+	"mailbox/$mb/outbox/$msg/kind": {{now: registeredKindClause + stopKindClause}},
+	// And J5r's two other moves: the typed launch verb, and the action
+	// validator that lets a launch carry its mode where every other verb
+	// carries its confirmation.
+	"mailbox/$mb/inbox/$msg/action/verb":  {{now: launchVerbClause}},
+	"mailbox/$mb/outbox/$msg/action/verb": {{now: launchVerbClause}},
+	"mailbox/$mb/inbox/$msg/action": {
+		{was: actionRequiredWas, now: actionRequiredNow},
+	},
+	"mailbox/$mb/outbox/$msg/action": {
+		{was: actionRequiredWas, now: actionRequiredNow},
+	},
+	"mailbox/$mb/inbox/$msg/action/target": {
+		{was: "(" + targetCancel + " || " + targetMerge + ")", now: "(" + targetVerb + " == 'launch' ? " + targetLaunch + " : (" + targetCancel + " || " + targetMerge + "))"},
+	},
+	"mailbox/$mb/outbox/$msg/action/target": {
+		{was: "(" + targetCancel + " || " + targetMerge + ")", now: "(" + targetVerb + " == 'launch' ? " + targetLaunch + " : (" + targetCancel + " || " + targetMerge + "))"},
+	},
+	// The heartbeat's tag, written the same way as a message's (O6).
+	"mailbox/$mb/heartbeat": {
+		{was: "newData.hasChildren(['at', 'boot', 'mac'])", now: "newData.hasChildren(['at', 'boot']) && " + exactlyOneTag("newData")},
+	},
+	// The lease's reserved leaf reads the repository's per-run cap clamped to
+	// its ceiling (RC2, spec §5.6, B18): a node above the ceiling counts as the
+	// ceiling, so a cap an admin wrote past `fugaro budget set --repo`'s refusal
+	// grants no larger lease than the ceiling does.
+	"runs/" + slugForPath + "/$run/reserved": {{now: perRunClampClause}},
+	// The day counter's leaf reads the repository's daily cap clamped to its
+	// ceiling the same way (RC2, spec §5.6, B18): the lease's multi-path write
+	// raises this counter as it takes a reservation, so it is one of the
+	// comparisons the check is made of.
+	"spend/$day/repos/" + slugForPath + "/counted": {{now: dailyClampClause}},
 }
 
 // TestOutcomeRuleAcceptsEveryRunStatus: the outcome's status validator accepts
@@ -2296,28 +2599,52 @@ const outcomeStatusNone = "none"
 
 // isNamedRuleChange reports whether the change to the rule at p — from want
 // (generation 3) to got (what this branch generates) — is this branch's own and
-// nothing besides: the outcome's status validator gains the run status
-// 'unreviewed', the label of a run that finished and pushed with no review
-// verdict (docs/binary-allow-rule/implementation-plan.md's NV0, D994).
+// nothing besides: one of the edits named in namedRuleChanges, on one of the
+// paths named there, and every other path as it was.
 //
-// The rule is what a client writes through, so the word a run's own record now
-// carries is refused by a document that does not spell it: internal/budget's
-// Finish would file the outcome as an infrastructure error — a fault that never
-// happened, on the page a person reads to see what their runs did. Widening the
-// validator is what stops that, and it is deliberately not a rules generation:
-// RulesVersion moves for a change that opens a family to a client or moves what
-// one may reach (internal/projectpolicy/version.go's generation-4 note), while
-// this admits one more value under a `.write` that does not move. `fugaro
-// update` carries it — its rules stage redeploys a document infra.SameJSON
-// reports as different, whatever the marker says (internal/infra's DB.Plan) —
-// and doctor's policy-rules-skew already reports the installation that has not
-// run it yet.
+// Two of the paths it names are the outcome's status, which gains the run
+// status 'unreviewed' — the label of a run that finished and pushed with no
+// review verdict (docs/binary-allow-rule/implementation-plan.md's NV0, D994) —
+// and the run status 'paused' (model-credentials-routing's PR1, D3185, R15) —
+// and, for J5r, the mailbox: a message and the heartbeat carry a tag that is
+// one of `mac` and `sig` (O6), and an inbox action may be a typed launch
+// carrying a `mode` (O10). The others are earlier tasks' (P5.2.2's registration
+// kind, P5.1g's stop kind).
+//
+// The outcome's is the one whose reason is worth writing down, because it is
+// the one a rules generation would be wrong to carry: the rule is what a client
+// writes through, so the word a run's own record now carries is refused by a
+// document that does not spell it — internal/budget's Finish would file the
+// outcome as an infrastructure error, a fault that never happened, on the page
+// a person reads to see what their runs did. Widening the validator is what
+// stops that, and RulesVersion moves for a change that opens a family to a
+// client or moves what one may reach (internal/projectpolicy/version.go's
+// generation-4 note), while this admits one more value under a `.write` that
+// does not move. `fugaro update` carries it — its rules stage redeploys a
+// document infra.SameJSON reports as different, whatever the marker says
+// (internal/infra's DB.Plan) — and doctor's policy-rules-skew already reports
+// the installation that has not run it yet.
+//
+// The second named change is RC2's clamp on that comparison (spec §5.6, B18),
+// and it takes no generation either, for the rule the note on the fourth
+// generation in internal/projectpolicy/version.go states: "a generation that
+// only adds a deny, or a node no client may reach, would not need the bump
+// either". This change adds a deny and nothing else — the comparison against
+// the repository's own node gets stricter, a node above its ceiling counting as
+// the ceiling — at a path, under a `.write`, that generation 3 already carried,
+// and every generation so far (4 through 10) moved the number for a read grant
+// or for a write a client may now reach. What the older document leaves a
+// client is a lease the clamped one refuses, and RC1's clamp on
+// Caps.RepoPerRun covers exactly that from the run's own side until the deploy
+// lands; `fugaro update` publishes the document either way, as above.
 //
 // The check is exact: one of the named paths, the `.validate` attribute of it
-// alone, and removing that path's own clause from the new string leaving the
-// generation-3 one byte for byte.
+// alone, and applying that path's own edits to the new string leaving the
+// generation-3 one byte for byte. An edit is a pair — the substring the new
+// string carries and the one it puts in its place — so an edit that quietly
+// takes out a bound or a conjunct beside the one it names fails here.
 func isNamedRuleChange(p string, want, got map[string]any) bool {
-	clause, named := namedRuleChanges[p]
+	changes, named := namedRuleChanges[p]
 	if !named || len(want) != len(got) {
 		return false
 	}
@@ -2329,7 +2656,13 @@ func isNamedRuleChange(p string, want, got map[string]any) bool {
 	if !wok || !gok {
 		return false
 	}
-	return strings.Contains(gs, clause) && strings.Replace(gs, clause, "", 1) == ws
+	for _, c := range changes {
+		if c.now == "" || !strings.Contains(gs, c.now) {
+			return false
+		}
+		gs = strings.Replace(gs, c.now, c.was, 1)
+	}
+	return gs == ws
 }
 
 // outcomeReadPath is the one existing rule J1 *adds* an attribute to, spelled as
@@ -2390,9 +2723,10 @@ func withoutAttr(m map[string]any, key string) map[string]any {
 // (docs/no-prompt-policy/implementation-plan.md's T8, D1543, F22), the
 // stateless orchestrator's (docs/stateless-orchestrator/implementation-plan.md's
 // O2, D1220), the workspace family's (docs/workspaces/implementation-plan.md's
-// W3, workspace.go) or a registration message's own fields (mobile plan task
-// P5.2.2). Anything else that appears in the document is a rules change nobody
-// asked for.
+// W3, workspace.go), a registration message's own fields (mobile plan task
+// P5.2.2), or the tag a message and the heartbeat carry and the mode a typed
+// launch carries (mobile plan task J5r, O6 and O10). Anything else that appears
+// in the document is a rules change nobody asked for.
 //
 // They are equalities and not prefixes, for the reason isNewCredsPath gives
 // below: P3 adds the family's own node and nothing under it, so a path *under*
@@ -2406,11 +2740,52 @@ func withoutAttr(m map[string]any, key string) map[string]any {
 // would otherwise make look legitimate. E12 (F27) makes exactly that change,
 // deliberately and for the reports job alone, so its five nodes are named in
 // isNewEscalationReadPath and the diff is what a reviewer reads.
+// isNewSignaturePath reports whether p is one of the five nodes J5r adds to the
+// mailbox: the `sig` a message or the heartbeat may carry in place of `mac` and
+// the `mode` a typed launch carries (O6 and O10, the mobile identity-pairing
+// plan's J5r).
+//
+// They are equalities and not prefixes, for isNewCredsPath's reason: each is a
+// leaf whose parent generation 3 already carried, so a path under one of them
+// would be a rule inside a field — a child of `sig`, say, which is a shape the
+// message has no room for and a reviewer has to see.
+//
+// The three tags are here and not in namedRuleChanges for the same reason the
+// launch envelope's nodes are in isNewLaunchPath: a `sig` node is a field a
+// client writes where nothing was written before, which is an addition, while
+// the `mac` member leaving the message's hasChildren list is a change to a rule
+// that existed and is named there.
+func isNewSignaturePath(p string) bool {
+	return p == "mailbox/$mb/inbox/$msg/sig" || p == "mailbox/$mb/outbox/$msg/sig" ||
+		p == "mailbox/$mb/heartbeat/sig" || p == "mailbox/$mb/inbox/$msg/action/mode" ||
+		p == "mailbox/$mb/outbox/$msg/action/mode"
+}
+
 func isNamedAddition(p string) bool {
 	return isNewCredsPath(p) || p == coordpath.PathRoot || p == PathMCPAuth ||
 		p == PathBuildLeases || p == PathOrchestrator || isNewWorkspacePath(p) || isNewVoicePath(p) ||
 		isNewRegistrationPath(p) || isNewEscalationReadPath(p) || isNewSpendAccuracyPath(p) ||
-		isNewRoutePath(p)
+		isNewRoutePath(p) || isNewLaunchPath(p) || isNewSignaturePath(p)
+}
+
+// isNewLaunchPath reports whether p is one of the four nodes the launch
+// envelope adds under the policy node (mobile plan task P5.1g, the owner's
+// answers Q9 and Q11): the envelope's own node, the installation's named safe
+// recipe, the devices node, and one paired device's entry.
+//
+// All four are equalities and not prefixes, for isNewCredsPath's reason: a path
+// *under* a device's entry is a change to what that entry contains — the
+// repository allow-list, the rate and the cost ceiling — which is the shape a
+// grant hidden one level down takes, and it belongs here as a diff a reviewer
+// reads rather than as a match this function waves through.
+//
+// `launch` and `devices` carry no grant of their own and are in the list
+// because the template spells them, for isNewVoicePath's reason: a read on
+// either would cascade to every device's entry, and naming them here is what
+// makes an edit that puts one there a diff this test shows.
+func isNewLaunchPath(p string) bool {
+	return p == PathLaunchEnvelope || p == PathLaunchEnvelope+"/recipe" ||
+		p == PathLaunchEnvelope+"/devices" || p == PathLaunchEnvelope+"/devices/$uid"
 }
 
 // escalationLedgerPath is the ladder's ledger node as the rules spell it (E7,
@@ -2699,10 +3074,14 @@ func isNewCredsPath(p string) bool {
 	// (rigor-modes plan T1.7, F40 of its reconciliation): the mode a live run
 	// resolved and the layer that decided it, which the runner writes into its
 	// own registry entry from its record so `fugaro watch` can show them. Both
-	// are equalities, for the reason above.
+	// are equalities, for the reason above. `source` and its `fallback` flag
+	// are the next pair of the same shape (model-credentials-routing CS9,
+	// D3070): what the run's running stage goes out on, as the live views print
+	// it.
 	entry := "agents/" + slugForPath + "/$run/"
 	return p == entry+"credential" || p == entry+"waiting_until" ||
-		p == entry+"mode" || p == entry+"from"
+		p == entry+"mode" || p == entry+"from" ||
+		p == entry+"source" || p == entry+"fallback"
 }
 
 // TestRulesVersionUnchanged: the generations an installation compares, asserted
@@ -2747,6 +3126,40 @@ func isNewCredsPath(p string) bool {
 //     holds this document to) is a **grant** to a run token too — the run reads
 //     its route before its first call, and did not read this leaf before — so a
 //     run under the document behind is refused a read the routing depends on.
+//     P5.1g moves it to 10 for two of those reasons at once, because the launch
+//     envelope is both a reach a client holds and a kind a client writes: the
+//     phone's **stop request** is the schema's sixth kind (P5.2.2's reason, one
+//     word along — under the document behind, every stop request is refused at
+//     the database with no error), and `config/policy/shared/launch/{recipe,
+//     devices/$uid}` is a **grant** to `USER` the paired device did not hold
+//     (P3's and J1's reason — the app refuses an utterance outside its own
+//     allow-list before it signs anything, so a device that cannot read its
+//     entry refuses every launch rather than launching unbounded). The rules do
+//     not enforce the envelope; the values are the consumer's and the app's
+//     (Q9's consequence), and what the generation records is the read and the
+//     write the phone needs to take part at all. J5r (mobile identity-pairing,
+//     O6 and O10 — the owner's answer of 2026-11-21 that a device signs with
+//     Ed25519, amending D171) moves it to 11 for two of those reasons again: a
+//     device's `sig` is a **field it writes** into a message and the heartbeat,
+//     so under the document behind every message and every heartbeat it signs
+//     is refused at the database with no error (P5.2.2's reason, and the
+//     registration's fields accept either scheme for the same reason J5b's
+//     device node decides which one), and `launch` is a **verb it writes** — a
+//     word the older document's enumeration does not carry, so a phone's start
+//     is refused there (P5.1g's reason one shape along).
+//     RC2 leaves it at 11, and it is the first change here that could: it is
+//     not a grant and not a write a client may now reach, but a **deny added**
+//     — the lease's per-run comparison reads the repository's node clamped to
+//     its ceiling (spec §5.6, B18), so an enforcing document refuses leases the
+//     document behind accepts where that node sits above the ceiling. A
+//     generation that only adds a deny does not need the bump (version.go's
+//     note on the fourth generation), which is also why nothing is dropped on
+//     an installation that has not redeployed: it keeps a document that is
+//     *looser* than this binary's on exactly the cap `fugaro budget set --repo`
+//     refuses to write (RC3) and Caps.RepoPerRun clamps on the run's own side
+//     (RC1). `fugaro update`'s rules stage publishes it either way, as it does
+//     every generation, and `fugaro doctor` reports policy-rules-skew until it
+//     has.
 //   - projectpolicy.PolicyRulesVersion gates the policy nodes, which neither
 //     change touches. It stays 1.
 //   - rules.CredsRulesVersion is the credentials family's own generation, at 1,
@@ -2765,8 +3178,8 @@ func isNewCredsPath(p string) bool {
 // Hand mutation this fails on: bumping any of the four (or lowering one of the
 // family versions), which is what a reviewer must see argued for.
 func TestRulesVersionUnchanged(t *testing.T) {
-	if projectpolicy.RulesVersion != 9 {
-		t.Errorf("projectpolicy.RulesVersion = %d, want 9: the generation that carries the credential-route leaf config/policy/route/$slug and the run token's read of it (workspace-service WS22, D2982, R3, R4)", projectpolicy.RulesVersion)
+	if projectpolicy.RulesVersion != 11 {
+		t.Errorf("projectpolicy.RulesVersion = %d, want 11: the generation that carries the device's signature in place of the tag and the typed launch action (mobile identity-pairing tasks J5r, O6 and O10)", projectpolicy.RulesVersion)
 	}
 	if projectpolicy.PolicyRulesVersion != 1 {
 		t.Errorf("projectpolicy.PolicyRulesVersion = %d, want 1: this change does not touch the policy nodes", projectpolicy.PolicyRulesVersion)
@@ -2854,5 +3267,115 @@ func assertNoConfigWrites(t *testing.T, marker string) {
 	parent := marker[:strings.LastIndexByte(marker, '/')]
 	if _, ok := generatedPaths(t)[parent]; !ok {
 		t.Errorf("%s has no parent location (%s) in the generated rules", marker, parent)
+	}
+}
+
+// ---- LM5: the issuance record's place (launcher-does-not-mint) --------------
+//
+// C1 places the issuance record under /creds (identitywire.PathRecord), the
+// subtree the document already closes, and its LM5 pins that place here. The
+// family's own node denies every client already, so this task generates no rule
+// for the record and changes none (F26).
+
+// issuanceSlug and issuanceRun are the pair the record's path is keyed by, of
+// the shape a real slug and run id have. They are names in a path and not
+// values: nothing under the record's path is read here.
+const (
+	issuanceSlug = "aurora"
+	issuanceRun  = "fb-20261120-041919-8271"
+)
+
+// TestRulesKeepTheIssuanceRecordClosed (LM5, R3, F26): the issuance record is
+// refused a read and a write to every caller that can hold a token of this
+// database — a run's token, a person's, a device's and a caller with no token
+// at all — and the document carries no rule of its own for it.
+//
+// The record is the service's state for one run's identity: who asked, the
+// claims the service will sign, the account the claim must come from and the
+// digests of the ticket and the nonce (R3). None of it is a client's to read,
+// and none of it is a client's to write.
+//
+// The place is not incidental, which is what F26 found. R3 first put the record
+// beside the run's budget record; a run's node grants its own token a read
+// (`.read: "RUN"`), and an RTDB grant cascades to every child, so a record
+// there would be readable — and its fields writable — by the run it names. The
+// contract moved it under /creds, whose node is the booleans false. The
+// contrast at the end of this test is that finding held in code, and it is
+// this test's red step: pointed at that path instead of the contract's, the
+// walk below fails on the run's own grant.
+//
+// Hand mutation this fails on: adding any node under /creds (both the walk over
+// the document's own locations and the governing walk see it), opening either
+// attribute of /creds, and moving the record's family out from under it — the
+// mutation F26 was, which the contrast refuses a second time.
+func TestRulesKeepTheIssuanceRecordClosed(t *testing.T) {
+	// The path is the contract's own spelling and not a literal here: C1 owns
+	// the record's place, and this is the test its package doc names as the one
+	// that pins it, so a move of the record and this proof cannot drift.
+	record := identitywire.PathRecord(issuanceSlug, issuanceRun)
+
+	// Every location that governs a read or a write of the record — its
+	// ancestors, the path itself, and anything that reaches it through a
+	// wildcard segment — carries nothing but the boolean false. That literal is
+	// what makes the denial true for every caller at once: RTDB evaluates it
+	// before it reads a claim, so it refuses a run's token (the fp, fs and fr
+	// claims), a device's (the mu claim the mobile reader is built on), a
+	// signed-in person — whom no grant admits on its own — and a caller with no
+	// token at all, alike. An expression here would be a grant to the class it
+	// names, and the boolean true a grant to everyone.
+	gov := governingPaths(t, record)
+	for p, attrs := range gov {
+		for _, a := range []string{".read", ".write"} {
+			if v, has := attrs[a]; has && v != false {
+				t.Errorf("/%s %s = %v, want the boolean false: no client token may read or write the issuance record (F26)", p, a, v)
+			}
+		}
+	}
+
+	// The nearest of them is the family's own node, and it carries the denial
+	// itself: an inherited deny is a different document from one that says so
+	// where a reader of the plan looks for it.
+	attrs, ok := gov[credsRoot]
+	if !ok {
+		t.Fatalf("the nearest generated ancestor of %s is not /%s (%v): the record must sit under the subtree the document closes (R3, F26)", record, credsRoot, keys(gov))
+	}
+	for _, a := range []string{".read", ".write"} {
+		if v, has := attrs[a]; !has || v != false {
+			t.Errorf("/%s %s = %v, want an explicit false (F26)", credsRoot, a, v)
+		}
+	}
+
+	// And the generator spells nothing of the record's family: the record's
+	// path is a path and not a location of the document, and the walk above is
+	// the whole of what closes it. This is F26's "no rule is generated".
+	// TestRulesPreexistingPathsUnchanged is the other half of the pin: a node
+	// that appeared under /creds is not an addition any task named
+	// (isNewCredsPath).
+	if !strings.HasPrefix(record, credsRoot+"/") {
+		t.Fatalf("the record's path %q is outside /%s: it must sit under the subtree the document closes (R3, F26)", record, credsRoot)
+	}
+	family := record[:strings.LastIndex(record, "/")] // creds/issuance/<slug>
+	family = family[:strings.LastIndex(family, "/")]  // creds/issuance
+	for p := range generatedPaths(t) {
+		if p == family || strings.HasPrefix(p, family+"/") {
+			t.Errorf("the generated rules carry /%s: the record's family is closed by /%s alone, and a node under it is a rule this task did not ask for (F26)", p, credsRoot)
+		}
+	}
+
+	// The contrast that makes the placement load-bearing: the path R3 first
+	// chose is governed by the run's own node, whose read is the run's token.
+	// The walk above comes back with a grant there and with the boolean false
+	// at the record's place, and the placement is the whole of the difference.
+	beside := budget.PathRun(issuanceSlug, issuanceRun) + "/issuance"
+	runGrant := false
+	for _, a := range governingPaths(t, beside) {
+		if v, has := a[".read"]; has && v != false {
+			if r, _ := v.(string); strings.Contains(r, "auth.token.fs") && strings.Contains(r, "auth.token.fr") {
+				runGrant = true
+			}
+		}
+	}
+	if !runGrant {
+		t.Errorf("no location governing /%s carries the run's own read: F26's finding — that a run reads its own node, so a record beside it is a record the run reads — is what makes the record's placement load-bearing", beside)
 	}
 }

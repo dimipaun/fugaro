@@ -24,9 +24,9 @@
       }
     }
   ],
-  "cost_usd": 0.004246,
+  "cost_usd": 0.004906,
   "cost": {
-    "model_usd": 0.004246,
+    "model_usd": 0.004906,
     "compute_usd": 0,
     "compute_estimated": false,
     "total_usd": 0,
@@ -34,22 +34,22 @@
     "model_basis": "api-list",
     "model_source": "gateway",
     "model_by": {
-      "deepseek/deepseek-v4-flash": 0.004246
+      "deepseek/deepseek-v4-flash": 0.004906
     },
     "route_by": {
-      "openrouter": 0.004246
+      "openrouter": 0.004906
     },
     "reported_usd": 0.0025,
     "reported_by": {
       "deepseek/deepseek-v4-flash": 0.0025
     },
-    "table_lo_usd": 0.00027,
-    "table_hi_usd": 0.00272,
+    "table_lo_usd": 0.00067,
+    "table_hi_usd": 0.00392,
     "unreported_calls": 1,
     "model_tokens": {
       "deepseek/deepseek-v4-flash": {
-        "input": 3000,
-        "output": 1500,
+        "input": 12000,
+        "output": 6000,
         "cache_read": 0,
         "cache_write_5m": 0,
         "cache_write_1h": 0
@@ -64,7 +64,7 @@
       "calls": 3,
       "agents": 0,
       "repeats": 0,
-      "model_usd": 0.004246,
+      "model_usd": 0.004906,
       "model": "deepseek/deepseek-v4-flash",
       "served_by": "api-key"
     },
@@ -102,7 +102,7 @@
     "source": "catalog",
     "sha256": "0c42726a0cc37a5415cfac83a74d25cfc041eb1d5a52a7d0533fcdcffb5202fc"
   },
-  "config_sha256": "eaa7e0eacd56c6a58396ab5c7da433a9580167994c55b8da188d3c1e4995c85f",
+  "config_sha256": "349efb767552b6445adaec5719e59cbbfeb4fc074e33c530db2998052004651f",
   "changed_files": {
     "paths": [
       "feature.txt"
@@ -115,6 +115,14 @@
     "from": "default",
     "at": "bootstrap",
     "revision": "origin/main"
+  },
+  "plan": {
+    "steps": [
+      {
+        "kind": "review",
+        "rounds": 2
+      }
+    ]
   },
   "review_scope": {
     "applicable": true,

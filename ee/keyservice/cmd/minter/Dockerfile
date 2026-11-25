@@ -2,7 +2,7 @@
 # See ee/LICENSE for the terms.
 #
 # The minter's image (portal plan P1.7, design
-# docs/design/key-signing-service.md S3.2, S3.3): the program alone in a
+# docs/key-signing-service/spec.md S3.2, S3.3): the program alone in a
 # distroless static image, for the `fugaro-key-minter` Cloud Run service.
 #
 # It is the one process in the deployment that can sign, and the whole of what

@@ -90,8 +90,8 @@ func kindOf(n Node) string {
 func validStream(name string) bool { return streams.Known(name) }
 
 // ArtifactSuffix is what a graph artifact is called beside its plan: the plan
-// `docs/plans/2026-10-15-desktop-console-v2.md` is described by
-// `docs/plans/2026-10-15-desktop-console-v2.graph.json`. A plan-side artifact
+// `docs/desktop-console-v2/implementation-plan.md` is described by
+// `docs/desktop-console-v2/implementation-plan.graph.json`. A plan-side artifact
 // rather than a database (D25), and beside the plan rather than in a directory
 // of its own so that moving the plan moves its graph.
 const ArtifactSuffix = ".graph.json"

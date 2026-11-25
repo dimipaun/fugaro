@@ -113,8 +113,11 @@ not exist yet.
 ### Slice P0: owner-run (no agent performs any step)
 
 - **P0.1 Projects and Firebase.** In `fugaro-prod` and `fugaro-staging`, enable Auth's Google, Apple
-  (Services ID), Microsoft (app registration) and email-link providers. Add `app.fugaro.dev` and the staging
-  host to the authorised domains. Create the `fugaro-portal` hosting site and its DNS. Depends on: none.
+  (Services ID), Microsoft (app registration) and email-link providers. Add `app.fugaro.dev` and
+  `app.staging.fugaro.dev` to the authorised domains. Create the hosting site each project owns, with its
+  DNS: `fugaro-portal` in `fugaro-prod` (app.fugaro.dev) and `fugaro-portal-staging` in `fugaro-staging`
+  (app.staging.fugaro.dev). A Hosting site id is globally unique, so `fugaro-portal` belongs to
+  `fugaro-prod` and the staging project cannot hold one of that name. Depends on: none.
 - **P0.2 Provider accounts.** Paddle sandbox and live (subscriptions S8.5, licence-key-v2 K5.2): one price
   per row, the webhook at `https://app.fugaro.dev/api/paddle/webhook`. Resend and its DNS (staging uses
   Resend's test mode and Paddle's sandbox only). Sentry project and DSN. Analytics property. Each secret
@@ -128,13 +131,17 @@ not exist yet.
   the ring cannot be deleted, and this apply uses a new ring name so it never meets
   `TestTheSigningKeyIsNeverDestroyedByAnApply`'s guard on the old one. Depends on: P1.5.
 - **P0.5 Build, deploy and seed.** `scripts/deploy-portal.sh --project fugaro-staging --dry-run`, then
-  without `--dry-run`. The script runs the Cloud Build of P1.7's two images, deploys both services and the
-  hosting site, and seeds the operations organisation with `--seed-operations <owner address>`. Production
+  without `--dry-run`. The staging project reads `ee/portal/firebase.staging.json` — the file that names
+  its own Hosting site, `fugaro-portal-staging` — and `fugaro-prod` reads `ee/portal/firebase.json`
+  (`fugaro-portal`), so a deploy of either project lands on the site that project owns. The script runs the
+  Cloud Build of P1.7's two images, deploys both services and the hosting site, and seeds the operations
+  organisation with `--seed-operations <owner address>`. Production
   follows Check 570–575. The seed is the API program's one-time `seed-operations` subcommand (P1.7), which
   the script executes as the services root's seed job (`google_cloud_run_v2_job.seed`): the API's image in
   the API's own environment, because the subcommand builds the API's service before it writes anything and
   no terminal holds that environment. Depends on: P0.1, P0.2, P0.4, P1.7, P9.2, P2.2.
-- **P0.6 The live checks.** `scripts/live-checks/check-570.sh` … `check-575.sh` on staging. Depends on:
+- **P0.6 The live checks.** `scripts/live-checks/check-570.sh` … `check-575.sh` on staging, whose portal
+  origin is `https://app.staging.fugaro.dev` (`https://app.fugaro.dev` under `--production`). Depends on:
   P9.4, P0.5, and licence-key-v2's K2.4, K3.2 and K3.3 (Check 570 runs `licence login` and `refresh`).
 
 ### Slice P1: foundations (inert alone)
@@ -519,14 +526,16 @@ not exist yet.
 
 - **P9.1 Amend licence key v2.**
   - Files: `docs/licence-key-v2/implementation-plan.md`, `docs/licence-key-v2/reconciliation.md` and
-    `docs/design/key-signing-service.md` (dated notes only): the list in the reconciliation's "What this
+    `docs/key-signing-service/spec.md` (dated notes only): the list in the reconciliation's "What this
     changes in licence key v2", plus design §3.4 and T13 with §9.1 row 5 (superseded by D2194), §5.2 (the
     timestamp window, if P4.2 adds it), §6 (replaced by P5.1), and the open D454, D455 and D459 recorded
     as decided by D2187 and D2194.
   - Command: `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1`.
   - Depends on: none. Commit: `docs: licence key v2 and the key-signing design follow the portal`.
 - **P9.2 Hosting, deploy and CI. SECURITY.**
-  - Files: `ee/portal/firebase.json` (+ `.license`; the `fugaro-portal` site, its CSP for Paddle,
+  - Files: `ee/portal/firebase.json` and `ee/portal/firebase.staging.json` (+ their `.license`; one
+    Hosting site each — `fugaro-portal` for `fugaro-prod`, `fugaro-portal-staging` for `fugaro-staging`,
+    the two files differing in that name alone — with the CSP for Paddle,
     Firebase Auth, Sentry and analytics, and the `/api/**` rewrite to the API service);
     `scripts/deploy-portal.sh` (new); `scripts/deploy-portal_test.sh` (new);
     `ee/portal/test/hosting.test.ts` (new); `docs/pending-workflows/portal-tests.yml` (new: vitest, the
@@ -628,7 +637,7 @@ Files written by more than one task. Every other file has one writer.
 | `ee/portal/test/types.test.ts` | P1.4 (1), then the area task that adds its area's fixtures (1 or later) |
 | `ee/coordinator/mcpauth/firebase.go` | P1.3 (0) |
 | `ee/keyservice/admin.go`, `admin_test.go`, root `firebase.json`, website key files | P9.3 (7) |
-| `docs/licence-key-v2/*`, `docs/design/key-signing-service.md` | P9.1 (0) |
+| `docs/licence-key-v2/*`, `docs/key-signing-service/spec.md` | P9.1 (0) |
 | `docs/gcp-live-checklist.md` | P9.4 (10) |
 
 No level holds two writers of one file — which is what put P1.6 at level 2 rather than beside P2.1: both write

@@ -48,13 +48,13 @@
 // `settingsEdit` context rather than through `args`.
 //
 // **What is not retried, and what is not guessed.** A refusal is the CLI's own
-// sentence, shown verbatim with a **Read again** control and nothing else: the
-// write's own compare-and-swap refuses an edit built on bytes that moved, and
-// that refusal exists precisely because another writer won -- retrying it
-// silently would be this console deciding an edit it was told not to make
-// (D1112). The one thing this module adds to the CLI's words is the shape
-// refusal of the read document (`SETTINGS_READ_SHAPE_BECAUSE`), for C2's
-// reason: a member that is not the type the contract gives it is a claim the
+// sentence, shown verbatim and nothing else: the write's own compare-and-swap
+// refuses an edit built on bytes that moved, and that refusal exists precisely
+// because another writer won -- the way to ask again is the row's own pencil,
+// which runs the read before it, and retrying it silently would be this console
+// deciding an edit it was told not to make (D1112). The one thing this module
+// adds to the CLI's words is the shape refusal of the read document
+// (`SETTINGS_READ_SHAPE_BECAUSE`), for C2's reason: a member that is not the type the contract gives it is a claim the
 // CLI never made, and the window is refused whole rather than drawn from a
 // coerced value.
 //

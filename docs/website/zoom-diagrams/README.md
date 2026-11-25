@@ -73,9 +73,9 @@ The corrections the reconciliation makes, in one line each:
 - **"GCP projects are free and disposable" is rejected by the repository's own design.** A
   managed project is **not** disposable — the Terraform state bucket, the spend history, the
   kill-switch state and the application data live in it, and the Firestore location can never
-  be changed (`docs/design/managed-projects.md:18,211`). And "it never runs Terraform" is
+  be changed (`docs/managed-projects/spec.md:18,211`). And "it never runs Terraform" is
   false: Terraform **is** Fugaro's provisioning model, and D58 permits adopting an existing
-  project (`docs/design/managed-projects.md:174`).
+  project (`docs/managed-projects/spec.md:174`).
 - **Managed projects were gated off when this note was written** (`internal/cli/recipes_skew.go`'s
   `managedDeployerShipped`, `false` then and true as of 0.10.0), so "Fugaro gets its own isolated,
   Fugaro-managed project" was a roadmap sentence then; it is a present-tense one now, with the
@@ -158,7 +158,7 @@ short form, with the finding that states each in full:
   budgets), all of which this line of work inherits.
 - [`../../backends.md`](../../backends.md) — the compute seam, the control-plane seam, and
   "Firebase stays GCP-bound regardless of compute backend".
-- [`../../design/managed-projects.md`](../../design/managed-projects.md) — why "disposable" is
+- [`../../managed-projects/spec.md`](../../managed-projects/spec.md) — why "disposable" is
   the one word the "Why GCP" page may not print.
 - [`../../mobile/README.md`](../../mobile/README.md) and
   [`../../mobile-auth/README.md`](../../mobile-auth/README.md) — what the phone app is today,

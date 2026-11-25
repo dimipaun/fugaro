@@ -98,7 +98,7 @@ enforcement, notes): AP7-AP10.
 - **Depends on:** AP4, AP5, AP6. **Commit:** `cli: no message sends the user to publish or update by hand (AP7)`. **Red step:** AP9's lint run first (expected red). **Reviewer:** standard (the skills edit makes the path-routing rule send it to level 3 in-run: CLAUDE.md/plugin skills are in the security routing list).
 
 ### AP8: console read of the pending steps
-- **Files:** `internal/cli/project.go` (`consoleReadPaths` row), `internal/cli/docs_desktop_console_test.go` (`consoleLaunchPaths`), `console/src/main/spawn.ts` and its test, `console/src/main/ipc.ts` (the new `fugaro apply` row needs an operation or `assertSpawnSurface` fails), `console/src/main/settingsedit.ts` and `confirm.ts` if the `--no-apply` word reaches them (the new read row, **and the `settings.edit` row gains `--no-apply`; one new exact-argv row for `fugaro apply` (a write verb, D1572)**), `console/docs/json-contract.md`, `docs/design/desktop-console.md` (row).
+- **Files:** `internal/cli/project.go` (`consoleReadPaths` row), `internal/cli/docs_desktop_console_test.go` (`consoleLaunchPaths`), `console/src/main/spawn.ts` and its test, `console/src/main/ipc.ts` (the new `fugaro apply` row needs an operation or `assertSpawnSurface` fails), `console/src/main/settingsedit.ts` and `confirm.ts` if the `--no-apply` word reaches them (the new read row, **and the `settings.edit` row gains `--no-apply`; one new exact-argv row for `fugaro apply` (a write verb, D1572)**), `console/docs/json-contract.md`, `docs/desktop-console/spec.md` (row).
 - **Tests:** the Go equality test between the two lists; a spawn test that `settings.edit` carries `--no-apply` in both phases; `console` typecheck and the spawn unit test.
 - **Depends on:** AP3. **Commit:** `console: the pending-steps read joins the fence (AP8)`. **Red step:** the equality test fails with only one side updated. **Reviewer:** opus + mandatory independent review (the console spawn allow-list is security-sensitive).
 
@@ -115,7 +115,7 @@ enforcement, notes): AP7-AP10.
 
 | Check | Measures | Runner |
 | --- | --- | --- |
-| 390 | `fugaro image add` alone: the deployed job's image digest equals the built entry's digest, and `apply --status --json` lists nothing | owner, after AP4 |
+| 390 | `fugaro image add` alone: the entry is in the catalog with the build's digest, the repository's jobs are left on entries the catalog holds, and `apply --status --json` lists nothing | owner, after AP4 |
 | 391 | Three `--no-apply` changes then one `apply`: the `policy` and `repository` stages run once each | owner |
 | 392 | A forced `policy` stage failure leaves the change saved, the step pending, exit non-zero; `fugaro apply` finishes it | owner |
 | 393-399 | Reserved | |

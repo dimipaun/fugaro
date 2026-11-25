@@ -397,8 +397,8 @@
         "prediction": true,
         "paths": [
           "docs/multi-model.md",
-          "docs/design/provider-price-catalog.md",
-          "docs/design/m10-multi-model.md",
+          "docs/provider-price-catalog/spec.md",
+          "docs/m10-multi-model/spec.md",
           "docs/design/v1.md",
           "internal/cli/docs_spend_accuracy_test.go"
         ]

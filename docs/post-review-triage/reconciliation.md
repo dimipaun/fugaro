@@ -136,7 +136,7 @@ queue work.
   settings registry and schema or `TestRegistryCoversEveryConfigField` fails (BF1m touched `registry.go` and
   `settings.schema.json` for the same reason).
 - **F27. Convention (docs and infra that name the mixed-account allow-list).** Widening `MixedAccountStages` changes
-  `docs/design/mixed-credentials.md` §11, `mixedStageAccounts` in `internal/infra/spec.go` and the messages in `internal/cli/run.go`.
+  `docs/mixed-credentials/spec.md` §11, `mixedStageAccounts` in `internal/infra/spec.go` and the messages in `internal/cli/run.go`.
 
 - **F28. Wrong (round 2: Hotfix triage cannot change a verdict).** The Hotfix row is `{Override: overrideSecurity}` with Risk 0
   (`internal/rigor/table.go`), so the only findings the table blocks in Hotfix are unscored findings and class `security`, and

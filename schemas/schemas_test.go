@@ -33,6 +33,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/runmsg"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -577,6 +578,159 @@ func TestTaskSchemaTierMatchesTheGoRules(t *testing.T) {
 	}
 }
 
+// TestTaskSchemaPromoteMatchesTheGoRules: the promote block a launcher writes
+// (fugaro run --promote, LV7.1) is a closed object of the area's name and the
+// paths, and the two bounds are task.Promote's own — the name's byte bound and
+// the declared-paths pair. The block is what the run reads to find the area's
+// code in the diff, so a schema that admitted a nameless or unbounded area
+// would describe a run the runner refuses.
+func TestTaskSchemaPromoteMatchesTheGoRules(t *testing.T) {
+	data, err := os.ReadFile("task.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var block struct {
+		Type                 string                     `json:"type"`
+		AdditionalProperties bool                       `json:"additionalProperties"`
+		Required             []string                   `json:"required"`
+		Properties           map[string]json.RawMessage `json:"properties"`
+	}
+	if raw, ok := doc.Properties["promote"]; !ok {
+		t.Fatal("task.schema.json has no promote property")
+	} else if err := json.Unmarshal(raw, &block); err != nil {
+		t.Fatal(err)
+	}
+	if block.Type != "object" || block.AdditionalProperties {
+		t.Errorf("promote is %s with additionalProperties %v: task.Promote is a closed object", block.Type, block.AdditionalProperties)
+	}
+	if !slices.Equal(block.Required, []string{"area"}) {
+		t.Errorf("promote requires %v, and the block that names no area is the one task.Promote refuses first", block.Required)
+	}
+	var area struct {
+		MinLength int `json:"minLength"`
+		MaxLength int `json:"maxLength"`
+	}
+	if err := json.Unmarshal(block.Properties["area"], &area); err != nil {
+		t.Fatal(err)
+	}
+	if area.MaxLength != task.MaxPromoteAreaBytes {
+		t.Errorf("schema promote area maxLength %d != task.MaxPromoteAreaBytes %d", area.MaxLength, task.MaxPromoteAreaBytes)
+	}
+	if area.MinLength != 1 {
+		t.Errorf("schema promote area minLength %d: an empty area is what task.Promote.Problem refuses first", area.MinLength)
+	}
+	var paths struct {
+		MaxItems int `json:"maxItems"`
+		Items    struct {
+			Pattern   string `json:"pattern"`
+			MaxLength int    `json:"maxLength"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(block.Properties["paths"], &paths); err != nil {
+		t.Fatal(err)
+	}
+	if paths.MaxItems != task.MaxDeclaredPaths || paths.Items.MaxLength != task.MaxDeclaredPathBytes || paths.Items.Pattern != `\S` {
+		t.Errorf("schema promote paths %+v != task.MaxDeclaredPaths %d / task.MaxDeclaredPathBytes %d and Spec.Validate's blank refusal", paths, task.MaxDeclaredPaths, task.MaxDeclaredPathBytes)
+	}
+}
+
+// TestRecipeNamePatternsMatchTheGoRule is the same tie for R19's name rule,
+// which three schemas carry: the recipe schema's own `name`, and the
+// `recipe.name` a task and a run record hold. The rule is recipe.IsNameOrCopy —
+// a recipe name, or the project's copy of one (PR0's grammar, D3302) — and the
+// two records' schemas are the surface a repository's CI and every external
+// reader check a run against, so a copy the launcher embeds in a task.json and
+// the runner writes into a run record has to be a name they accept; a schema
+// left on the flat name would refuse a migrated repository's own records. The
+// three are the same grammar as schemas/recipe.schema.json, held to it name by
+// name so they cannot drift apart.
+//
+// Mutation (put any of the three patterns back to the flat name): the copy
+// names below are refused by that schema and this test fails.
+func TestRecipeNamePatternsMatchTheGoRule(t *testing.T) {
+	patternOf := func(file string, path ...string) string {
+		t.Helper()
+		data, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+		}
+		if err := json.Unmarshal(data, &doc); err != nil {
+			t.Fatal(err)
+		}
+		raw, ok := doc.Properties[path[0]]
+		if !ok {
+			t.Fatalf("%s has no %s property", file, path[0])
+		}
+		for _, key := range path[1:] {
+			var step struct {
+				Properties map[string]json.RawMessage `json:"properties"`
+			}
+			if err := json.Unmarshal(raw, &step); err != nil {
+				t.Fatal(err)
+			}
+			if raw, ok = step.Properties[key]; !ok {
+				t.Fatalf("%s's %s has no %s property", file, strings.Join(path[:len(path)-1], "."), key)
+			}
+		}
+		var prop struct {
+			Pattern string `json:"pattern"`
+		}
+		if err := json.Unmarshal(raw, &prop); err != nil {
+			t.Fatal(err)
+		}
+		if prop.Pattern == "" {
+			t.Fatalf("%s's %s property carries no pattern", file, strings.Join(path, "."))
+		}
+		return prop.Pattern
+	}
+	maxCopy := recipe.CopyName(strings.Repeat("n", 40), "github", "acme/"+strings.Repeat("m", 60))
+	bounds := []struct {
+		name string
+		ok   bool
+	}{
+		{"solo", true},
+		{recipe.CopyName("review", "github", "acme/app-web"), true},
+		{maxCopy, true},
+		{"Review.acme-app-web-12345678", false},
+		{"review.acme-app-web", false},
+		{"review..acme-app-web-12345678", false},
+		{"solo.acme-app-web-12345678.yaml", false},
+		{strings.Repeat("n", 41) + ".acme-app-web-12345678", false},
+		{maxCopy + "m", false},
+	}
+	want := patternOf("recipe.schema.json", "name")
+	for _, h := range []struct {
+		file string
+		path []string
+	}{
+		{"recipe.schema.json", []string{"name"}},
+		{"task.schema.json", []string{"recipe", "name"}},
+		{"result.schema.json", []string{"recipe", "name"}},
+	} {
+		got := patternOf(h.file, h.path...)
+		if got != want {
+			t.Errorf("%s's %s pattern %q is not the recipe schema's name pattern %q", h.file, strings.Join(h.path, "."), got, want)
+			continue
+		}
+		pattern := regexp.MustCompile(got)
+		for _, b := range bounds {
+			if recipe.IsNameOrCopy(b.name) != b.ok || pattern.MatchString(b.name) != b.ok {
+				t.Errorf("%s's %s pattern says %v of %q, want %v (recipe.IsNameOrCopy says %v)",
+					h.file, strings.Join(h.path, "."), pattern.MatchString(b.name), b.name, b.ok, recipe.IsNameOrCopy(b.name))
+			}
+		}
+	}
+}
+
 // TestTaskSchemaInputs: the attached-files list a launcher writes (design
 // artifact-runs.md §4, plan Task 6) is an array of closed {name, bytes,
 // sha256} objects, and an absent list stays absent. The name's own shape
@@ -882,6 +1036,7 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	// false: a field the runner writes and the schema does not name is a
 	// record the schema rejects.
 	cost.ReportedBy = map[string]float64{"deepseek/deepseek-v4.1-flash": 4.04, "deepseek/deepseek-v4-pro": 0.02}
+	cost.FallbackUSD = 0.9
 	cost.TableLoUSD, cost.TableHiUSD, cost.UnreportedCalls = 3.6, 5.1, 2
 	rec := runstore.Record{
 		Version: 1, RunID: "20260927-100000-abcd", Repo: "acme/app", Workflow: "web",
@@ -889,7 +1044,7 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		Status:    runstore.StatusFailed, Stage: "writeback", Outcome: runstore.OutcomeDraft,
 		Reason: "tests failing on the final commit", Branch: "fugaro/add-a-feature", BaseBranch: "main", HeadSHA: "abcdef1234567",
 		// The closed cause beside the free text, which is the pair the record
-		// carries from the failure classes on (docs/design/failure-classes.md
+		// carries from the failure classes on (docs/failure-classes/design.md
 		// §3): the reason stays the sentence a person reads and the class is
 		// what the report counts.
 		FailureClass: failure.TestsFailed,
@@ -898,6 +1053,12 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		// that names the account the run used last.
 		OAuthAccount:  "team-a",
 		StageAccounts: map[string]string{"implement": "team-b", "review": "team-a"},
+		// And the owner of the token the run was served with (F16,
+		// docs/secrets-brokering/dynamic-delivery): a launcher's account id
+		// beside the credential's name and the per-stage accounts, which keep
+		// their meanings. It rides the fully-populated record so a schema that
+		// did not name it would reject a record the runner writes.
+		CredentialOwner: "104329501182774832335",
 		// The commit the run was cut from, which its guards compare against
 		// (design v1.md §4.6).
 		StartSHA: strings.Repeat("c", 40),
@@ -914,7 +1075,11 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 			Warning: "w", StartedAt: at, DurationS: 1.5,
 		}},
 		CostUSD: 4.12, Cost: &cost,
-		Stages: []runstore.StageTiming{{Name: "implement", StartedAt: at, DurationS: 61, ModelUSD: 0.42, ModelNotionalUSD: 0.12, Model: "claude-sonnet-5-5", Calls: &calls, Agents: &agents}},
+		// The chain members ride along for the same reason the artifact ones
+		// do: a member the runner writes and the schema does not name is a
+		// record the schema rejects (C1, CS8).
+		Stages: []runstore.StageTiming{{Name: "implement", StartedAt: at, DurationS: 61, ModelUSD: 0.42, ModelNotionalUSD: 0.12, Model: "claude-sonnet-5-5", Calls: &calls, Agents: &agents,
+			Source: &routing.SourceName{Kind: routing.KindProvider, Name: "openrouter"}, Fallback: true}},
 		// The switch log (C1.16, D140): the service's record of a credential
 		// change beside the cache-miss estimate only the gateway can compute,
 		// including the one a tier's unmeasured cache behaviour leaves
@@ -942,6 +1107,16 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 			},
 			At:       runstore.RigorAtFinalize,
 			Revision: "origin/main"},
+		// And the plan (docs/review-levels-ab-jobmax V1.3): one entry per
+		// step of the loop after implement, each the rounds resolved for it
+		// -- the figures the Run screen draws a level's bar against. It
+		// rides the fully-populated record so a schema that did not name it
+		// would reject a record the runner writes.
+		Plan: &runstore.PlanRecord{Steps: []runstore.PlanStepRecord{
+			{Kind: "first_line", Rounds: 3},
+			{Kind: "review", Rounds: 2},
+			{Kind: "adversarial", Rounds: 2},
+		}},
 		// And the escalation (docs/security-classification SC6, D1509): the
 		// row of the list in force whose match turned review level 3 on for
 		// the run, and the seam it was decided at.
@@ -1063,6 +1238,23 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	}
 	if err := sch.Validate(atBound); err != nil {
 		t.Errorf("schema rejects a stage account name of 64 runes: %v", err)
+	}
+	// credential_owner is the launcher's account id and nothing else: digits
+	// only and at most 21 of them (F16, maxLauncherSubDigits). A name, a
+	// credential value or a 22-digit number is a record no reader should have
+	// to render, and each is refused rather than stored.
+	for _, tc := range []struct{ name, new string }{
+		{"a value that is not an account id", `"credential_owner":"launcher@example.invalid"`},
+		{"an id longer than the bound", `"credential_owner":"` + strings.Repeat("1", 22) + `"`},
+		{"an id that is not text", `"credential_owner":104329501182774832335`},
+	} {
+		bad, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, []byte(`"credential_owner":"104329501182774832335"`), []byte(tc.new), 1)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(bad); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, tc.new)
+		}
 	}
 	// The cost object is closed, so a compute_source that is not a string
 	// (what a hand-edited result.json could carry) is rejected rather than
@@ -1869,7 +2061,7 @@ func TestResultSchemaAcceptsARecordWithoutArtifacts(t *testing.T) {
 }
 
 // TestResultSchemaOAuthAccount: a record naming a Claude OAuth account
-// (docs/design/named-oauth-tokens.md) validates; a non-string value (what a
+// (docs/named-oauth-tokens/spec.md) validates; a non-string value (what a
 // hand-edited or corrupt result.json could carry) does not. config.
 // ClaudeAccount's name regex (plan Task 1) has not landed on this branch, so
 // the schema only bounds the length, not the charset; this test (and the
@@ -1969,7 +2161,7 @@ func TestResultSchemaStageCallsAndAgents(t *testing.T) {
 }
 
 // TestResultSchemaStageCredential pins the schema half of the record's one
-// per-stage credential (docs/design/mixed-credentials.md §5, P12): the value
+// per-stage credential (docs/mixed-credentials/spec.md §5, P12): the value
 // is the closed set the design's contract names — "oauth" for a stage a
 // stage-scoped Claude OAuth account served — and the field is optional, so a
 // record whose stages all ran on the run's own credential carries none.
@@ -3494,6 +3686,61 @@ func TestProjectLayerSchemaRigorMembers(t *testing.T) {
 	}
 }
 
+// TestProjectLayerSchemaABRepos keeps the layer's per-repository sampling rate
+// (D3297) in step with the Go reader, the way TestProjectLayerSchemaRigorMembers
+// keeps LD4's shapes: the schema an editor validates against must accept the
+// map, refuse a key that is no repository name and a value over the block's
+// ceiling, and the Go decoder must refuse the same three. The relational half of
+// the rule is the one a schema of this shape cannot state — [0, ab.rate] needs
+// the block's own rate — so a value over the block's rate but inside 0.1 is
+// pinned below as the asymmetry it is, judged by the decoder alone.
+func TestProjectLayerSchemaABRepos(t *testing.T) {
+	sch := compile(t, "project-layer.schema.json")
+	const head = "version: 1\nproject: aurora\ngcp_project: proj-1234\nab:\n"
+	anchor := config.LayerAnchor{Project: "aurora", GCPProject: "proj-1234"}
+	for _, c := range []struct {
+		name string
+		body string
+		ok   bool
+	}{
+		{"a rate per repository", "  rate: 0.05\n  repos:\n    acme/web: 0.02\n    acme/legacy: 0\n", true},
+		{"an empty map", "  rate: 0.05\n  repos: {}\n", true},
+		{"a map that is null", "  repos: null\n", true},
+		{"a key that is a bare name", "  rate: 0.05\n  repos:\n    console-web: 0.01\n", false},
+		{"a key with three segments", "  rate: 0.05\n  repos:\n    acme/web/api: 0.01\n", false},
+		{"a negative value", "  rate: 0.05\n  repos:\n    acme/web: -0.01\n", false},
+		{"a value over the ceiling", "  rate: 0.05\n  repos:\n    acme/web: 0.11\n", false},
+	} {
+		text := head + c.body
+		schemaOK := sch.Validate(yamlInstance(t, []byte(text))) == nil
+		_, ps := config.ParseProjectLayer([]byte(text), anchor)
+		if schemaOK != (len(ps) == 0) {
+			t.Errorf("%s: the schema says ok=%v and config.ParseProjectLayer gives %v", c.name, schemaOK, ps)
+		}
+		if schemaOK != c.ok {
+			t.Errorf("%s: the schema says ok=%v; want %v", c.name, schemaOK, c.ok)
+		}
+	}
+	// A key with three segments: the schema's propertyNames pattern and the
+	// decoder's rigor.Member rule refuse it for the same reason, and the fixture
+	// the corpus carries is the two-segment case beside it.
+	bad := head + "  rate: 0.05\n  repos:\n    acme/web/api: 0.01\n"
+	if err := sch.Validate(yamlInstance(t, []byte(bad))); err == nil {
+		t.Fatal("the schema accepts a key that is no repository name")
+	} else if !strings.Contains(err.Error(), "invalid propertyName 'acme/web/api'") {
+		t.Errorf("the schema refuses the key as something other than a property name no repository pattern matches: %v", err)
+	}
+	// The decoder's bound is the block's own rate; the schema's is the shipped
+	// ceiling. Both halves are asserted so the looseness is a pinned fact.
+	over := head + "  rate: 0.02\n  repos:\n    acme/web: 0.05\n"
+	if _, ps := config.ParseProjectLayer([]byte(over), anchor); len(ps) == 0 {
+		t.Error("the decoder accepted a rate above the block's own ab.rate")
+	}
+	if err := sch.Validate(yamlInstance(t, []byte(over))); err != nil {
+		t.Errorf("the schema refused it, and it is the looser side here: %v", err)
+	}
+}
+
 // TestProjectLayerSchemaCommandsLintFix checks the profile schema's
 // commands.lint and commands.fix the same way TestSchemaBudgetBlock checks
 // budget: inline snippets, not the shared testdata/project-layer corpus.
@@ -3503,7 +3750,7 @@ func TestProjectLayerSchemaRigorMembers(t *testing.T) {
 // Validate (validateProfile's own comment: "what [a profile] leaves out the
 // repository may set, and Validate checks the merged workflow") — a profile
 // may ship commands.fix alone and let a repository supply commands.lint by
-// its own key, which the key-by-key merge (docs/design/layered-config.md
+// its own key, which the key-by-key merge (docs/layered-config/spec.md
 // §4) allows. The schema is intentionally stricter here, to catch the
 // likely mistake at authoring time; that's a false positive in an editor at
 // worst, never a false negative, so it doesn't need Go to agree.
@@ -7240,6 +7487,59 @@ func TestRunsShowSchema(t *testing.T) {
 	}
 }
 
+// TestOrchestratorIDSchemaAgreesWithGo: the id rule C-ORCH fixed (D3207,
+// internal/orchestrator/naming.go) is the rule the published documents carry, so
+// every field that is an orchestrator id admits exactly what
+// orchestrator.ValidOrchestratorID admits and refuses the rest. A named
+// orchestrator's `<project>~<name>` is an id a state document, an `orchestrator
+// ls` entry and an escalation listing all carry (CG1a), and a string the rule
+// refuses is carried by none of them — a schema still holding the agent rule
+// would refuse a document this release writes.
+//
+// A work item's id is deliberately not this rule (F36): the item ids beside
+// these fields keep idRE, which admits no `~`.
+//
+// Mutation (narrow one of these patterns back to the agent rule, or widen one to
+// idRE): this test fails naming the schema, the field and the id.
+func TestOrchestratorIDSchemaAgreesWithGo(t *testing.T) {
+	for _, tc := range []struct {
+		file string
+		path []string
+	}{
+		{"orchestrator-state.schema.json", []string{"properties", "agent_id", "pattern"}},
+		{"orchestrator-output.schema.json", []string{"$defs", "id", "pattern"}},
+		{"orchestrator-output.schema.json", []string{"$defs", "ls", "properties", "orchestrators", "items", "properties", "project", "pattern"}},
+		{"escalation.schema.json", []string{"$defs", "ls", "properties", "project", "pattern"}},
+		{"escalation.schema.json", []string{"$defs", "show", "properties", "project", "pattern"}},
+	} {
+		pattern, ok := schemaAt(t, tc.file, tc.path...).(string)
+		if !ok {
+			t.Fatalf("%s: %v: not a string", tc.file, tc.path)
+		}
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			t.Fatalf("%s: %v: %q does not compile: %v", tc.file, tc.path, pattern, err)
+		}
+		for _, id := range []string{
+			// The ids the rule admits: a project's default orchestrator, a named
+			// one, and one at the longest id the rule takes (a project at its own
+			// 40-character cap, the separator, a name).
+			"fugaro", "my-project", "a1", "fugaro~night", "my-project~night-shift-2",
+			strings.Repeat("o", 40) + "~night",
+			// And the ids it refuses, the claim key and a work item's shape among
+			// them: the two that would otherwise be mistaken for an orchestrator.
+			"", "Fugaro", "fugaro_night", "fugaro~Night", "fugaro~night~x", "fugaro-",
+			"-fugaro", "fugaro night", "fugaro/night", "fugaro.night",
+			orchestrator.ClaimsKey, strings.Repeat("n", 41),
+			strings.Repeat("o", 40) + "~" + strings.Repeat("n", 41),
+		} {
+			if got, want := re.MatchString(id), orchestrator.ValidOrchestratorID(id); got != want {
+				t.Errorf("%s: %v: the pattern matches %q = %v, and orchestrator.ValidOrchestratorID says %v", tc.file, tc.path, id, got, want)
+			}
+		}
+	}
+}
+
 // TestEscalationSchemaAgreesWithGo: the escalation documents' contract, and the
 // code that contract is for. `fugaro escalation ls|show --json` prints the
 // ladder's ledger (docs/outer-loop-escalation, E13), and every member of it is
@@ -8315,4 +8615,193 @@ func names[T ~string](list []T) []string {
 		out = append(out, string(v))
 	}
 	return out
+}
+
+// summaryJSONNames is a Go type's JSON member names, as the wire carries them:
+// what a schema's own property list is held to. An embedded or unexported field
+// is left out, as encoding/json leaves it out.
+func summaryJSONNames[T any](t *testing.T) []string {
+	t.Helper()
+	rt := reflect.TypeOf(*new(T))
+	var out []string
+	for i := range rt.NumField() {
+		name, _, _ := strings.Cut(rt.Field(i).Tag.Get("json"), ",")
+		if name == "" || name == "-" {
+			continue
+		}
+		out = append(out, name)
+	}
+	return slices.Sorted(slices.Values(out))
+}
+
+// summarySchemaProperties is a schema document's property names under path,
+// where path is a list of member names to walk ("$defs", "record",
+// "properties" for the record block's own properties).
+func summarySchemaProperties(t *testing.T, file string, path ...string) []string {
+	t.Helper()
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range path {
+		m, ok := doc.(map[string]any)
+		if !ok {
+			t.Fatalf("%s: %v: not an object", file, path)
+		}
+		if doc, ok = m[p]; !ok {
+			t.Fatalf("%s: no %v under %v", file, p, path)
+		}
+	}
+	m, ok := doc.(map[string]any)
+	if !ok {
+		t.Fatalf("%s: %v: not an object", file, path)
+	}
+	return slices.Sorted(maps.Keys(m))
+}
+
+// TestSummarySchemaRoundTrip holds schemas/run-summary.schema.json to the
+// object internal/runstore writes and reads (RL4 of docs/runs-ls-speed): the
+// document the Go side marshals is a document this schema accepts, the schema's
+// property lists are the Go types' own members -- so a field the projection
+// gains without the schema, or the schema without it, is a difference here --
+// the version const is runstore.SummaryVersion, and a document the reader
+// refuses is refused by the schema too.
+//
+// The one difference is deliberate and is the last case below: the contract
+// tolerates a member it does not know, so a summary a newer writer wrote is a
+// document an editor can validate, while the reader refuses what it cannot
+// vouch for and the listing reads the run's three objects instead.
+func TestSummarySchemaRoundTrip(t *testing.T) {
+	const (
+		file = "run-summary.schema.json"
+		slug = "acme-app"
+		id   = "20261119-130000-abcd"
+	)
+	sch := compile(t, file)
+	at := time.Date(2026, 11, 19, 13, 0, 0, 0, time.UTC)
+	built := at.Add(-24 * time.Hour)
+	deadline, statusAt := at.Add(2*time.Hour), at.Add(30*time.Minute)
+	cost := runstore.NewCost(1.25, 0.5, runstore.BasisAPIList)
+	rec := &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web",
+		Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady,
+		Branch: "fugaro/" + id, BaseBranch: "main",
+		HeadSHA: strings.Repeat("a", 40), PushedHead: strings.Repeat("b", 40),
+		PR:            &runstore.PRRef{Number: 42, URL: "https://example.test/acme/app/pull/42", StatusAt: &statusAt},
+		DraftFallback: true, StartedAt: at, Deadline: &deadline,
+		FollowUp:     &runstore.FollowUp{PR: 41, PreviousRun: "20261119-120000-9999", Comments: 2, Session: "fresh"},
+		OAuthAccount: "someone@example.com", Recipe: &runstore.RecipeRecord{Name: "ship", Source: "repo"},
+		ProjectLayer: &runstore.ProjectLayerRecord{SHA256: strings.Repeat("d", 64), Generation: 7, Applied: true},
+		ConfigSHA256: strings.Repeat("e", 64),
+		Image:        &runstore.ImageInfo{BuiltAt: &built, BakedCommit: strings.Repeat("f", 40)},
+		ChangedFiles: &runstore.ChangedFiles{Paths: []string{"a.go", "b.go"}, Total: 2},
+		Rigor:        &runstore.RigorRecord{Mode: rigor.Pro, Level: rigor.Pro, From: rigor.FromRepo, At: runstore.RigorAtBootstrap},
+		OwnerDecisions: &runstore.OwnerDecisions{
+			Decisions: []runstore.OwnerDecision{{File: "a.go", Summary: "only the owner can settle this"}}, Total: 1},
+		Artifacts: []runstore.ArtifactFile{{Name: "plan.md", Bytes: 120, SHA256: strings.Repeat("1", 64), ContentType: "text/markdown"}},
+		Execution: "projects/p/locations/r/jobs/j/executions/e-1", CostUSD: 1.25, Cost: &cost}
+	spec := &task.Spec{Version: 1, RunID: id, Repo: "acme/app", Ref: "main", Workflow: "web",
+		Task: "the run's prompt, which no row shows", Title: "the run's title", OAuthToken: "work",
+		Recipe: &task.Recipe{Name: "ship", Source: "repo"}, Batch: "nightly", RequestedBy: "someone@example.com",
+		Branch: "fugaro/" + id, PR: 42, PreviousRun: "20261119-120000-9999",
+		FollowUpOf: &task.FollowUpOf{Run: "20261119-120000-9999", Keys: []string{"k1"}, Importance: "important"},
+		Debt:       true}
+	sum := runstore.NewSummary(rec, spec, at)
+	// What the writer stamps and the caller never passes: the identity of the
+	// run the object sits under (runstore.WriteSummary).
+	sum.Version, sum.RunID, sum.Slug = runstore.SummaryVersion, id, slug
+	data, err := json.Marshal(sum)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("the schema rejects the summary runstore writes: %v\n%s", err, data)
+	}
+	// The document the schema accepts is one the reader takes: a contract that
+	// let through a shape DecodeSummary refuses would be a summary every
+	// listing falls back from.
+	back, err := runstore.DecodeSummary(data, slug, id)
+	if err != nil {
+		t.Fatalf("the summary this tree writes is refused by its own reader: %v", err)
+	}
+	if back.Record.Status != rec.Status || back.Spec().TitleLine() != spec.TitleLine() || back.AsRecord().PR.Number != rec.PR.Number {
+		t.Errorf("the summary read back = %+v, want the run it was written from", back)
+	}
+
+	// The property lists are the Go types' own members: the schema names every
+	// one of them and no other, so a field added to the projection alone (or
+	// to the schema alone) is red here.
+	for _, tc := range []struct {
+		what string
+		path []string
+		want []string
+	}{
+		{"the summary", []string{"properties"}, summaryJSONNames[runstore.Summary](t)},
+		{"the summary's task", []string{"$defs", "task", "properties"}, summaryJSONNames[runstore.SummaryTask](t)},
+		{"the summary's record", []string{"$defs", "record", "properties"}, summaryJSONNames[runstore.SummaryRecord](t)},
+	} {
+		if got := summarySchemaProperties(t, file, tc.path...); !slices.Equal(got, tc.want) {
+			t.Errorf("%s names the members %v, want the Go type's %v", tc.what, got, tc.want)
+		}
+	}
+
+	// The version the schema pins is the version the reader reads.
+	var doc struct {
+		Properties struct {
+			Version struct {
+				Const int `json:"const"`
+			} `json:"version"`
+		} `json:"properties"`
+	}
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Properties.Version.Const != runstore.SummaryVersion {
+		t.Errorf("%s pins version %d, want runstore.SummaryVersion (%d): a reader refuses every other version", file, doc.Properties.Version.Const, runstore.SummaryVersion)
+	}
+
+	// What the schema refuses: another version, no record, no time, no slug, an
+	// id or a slug that is not one, and a record that is not one.
+	for _, bad := range []string{
+		strings.Replace(string(data), `"version":1`, `"version":2`, 1),
+		strings.Replace(string(data), `"record":`, `"nothing":`, 1),
+		strings.Replace(string(data), `"at":"2026-11-19T13:00:00Z"`, `"at":5`, 1),
+		strings.Replace(string(data), `"slug":"acme-app"`, `"slug":"Acme-App"`, 1),
+		strings.Replace(string(data), `"run_id":"20261119-130000-abcd"`, `"run_id":"nope"`, 1),
+		strings.Replace(string(data), `"record":{"status":"succeeded"`, `"record":{"status":"other"`, 1),
+	} {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(bad))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(inst); err == nil {
+			t.Errorf("the schema accepts %s", bad)
+		}
+	}
+
+	// A member the schema does not know is the contract's own tolerance, and
+	// the reader's own refusal: a newer writer's summary validates here, and a
+	// listing reads the run's three objects for it.
+	extra := strings.Replace(string(data), `"version":1`, `"version":1,"future":true`, 1)
+	inst, err = jsonschema.UnmarshalJSON(strings.NewReader(extra))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("the schema refuses a member it does not know, which a newer writer's summary needs: %v", err)
+	}
+	if _, err := runstore.DecodeSummary([]byte(extra), slug, id); err == nil {
+		t.Error("the reader's strict decode accepted an unknown member")
+	}
 }

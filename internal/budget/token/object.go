@@ -12,7 +12,7 @@ import (
 )
 
 // ObjectPrefix is the runs bucket prefix the token objects live under, out of
-// runs/ (docs/design/budget-token-channel.md §7.2, D16): runs/ is where a
+// runs/ (docs/budget-token-channel/spec.md §7.2, D16): runs/ is where a
 // run's task, launch record and logs live, and a job account may write there,
 // while tokens/ is read-only for it, so a peer run cannot delete a queued
 // run's token. The Terraform modules grant on exactly this prefix — the job's
@@ -107,7 +107,7 @@ func DeleteObject(ctx context.Context, b *blobx.Bucket, slug, run string) error 
 // it means "missing, or not readable" and nothing narrower: its grant on
 // tokens/ is a conditioned objectViewer with no storage.objects.list, so GCS
 // answers its read of a missing object with 403, and a job without the grant
-// gets 403 whether the object is there or not (docs/design/bucket-iam.md
+// gets 403 whether the object is there or not (docs/bucket-iam/spec.md
 // §2.3). The runner's refuseStrayToken says what it makes of that.
 //
 // It reads the object's bytes rather than asking a driver for its metadata

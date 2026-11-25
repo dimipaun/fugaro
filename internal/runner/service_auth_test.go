@@ -300,55 +300,45 @@ func TestSwitchedRunKeepsItsProviderRoute(t *testing.T) {
 	}
 }
 
-// TestSwitchedRunWithBudgetOffRefusedAtBootstrap is D2071: the switch gains
-// the budget mode as a condition, because the gateway is what reaches the
-// service and the gateway exists only in observe and enforce. A repository on
-// the switch whose installation has the mode off is refused in bootstrap — the
-// run does not fall back to a mount the installation has stopped provisioning
-// for it — and a local invocation, which is never on the switch (D149), is
-// untouched by the refusal.
-func TestSwitchedRunWithBudgetOffRefusedAtBootstrap(t *testing.T) {
+// D2071 gave the switch the budget mode as a condition: the gateway is what
+// reaches the credentials service and the gateway existed only in observe and
+// enforce, so a switched repository whose installation had the mode off was
+// refused in bootstrap — the run does not fall back to a mount the
+// installation has stopped provisioning for it (D2072, D143). The mode that
+// could be off is gone (D3009, R3): a mode left unset is observe, every run is
+// accounted for (AB1a's Spend.On) and a switched run has a gateway in every
+// mode there is — which is what AB1b makes unconditional for the rest — so
+// nothing refuses it any more, and the refusal's own text is left with no
+// reader (serviceSwitchModeRefusal, which AB1b deletes). What is pinned here
+// is the state that replaced it: a switched run is admitted and its calls have
+// a gateway to reach the service through. A local invocation is untouched
+// (D149): it is never on the switch.
+func TestASwitchedRunIsAdmittedWhateverTheMode(t *testing.T) {
 	url := credentialsServiceURLEnv + "=https://creds.example"
 
-	for _, auth := range []string{"api-key", "oauth"} {
-		t.Run(auth+" with the budget off", func(t *testing.T) {
-			r := svcRun(t, auth, func(r *run) {
+	for _, tc := range []struct {
+		name string
+		auth string
+		mode string
+	}{
+		{"a mode left unset", "api-key", ""},
+		{"the word that was a mode", "api-key", policy.ModeOff},
+		{"observe", "oauth", policy.ModeObserve},
+		{"enforce", "oauth", policy.ModeEnforce},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := svcRun(t, tc.auth, func(r *run) {
 				r.d.Env = []string{url}
-				r.spend = Spend{Mode: policy.ModeOff}
+				r.spend = Spend{Mode: tc.mode, Prices: pricing.Embedded()}
 			})
-			err := r.applyRouting(nil, false)
-			if err == nil {
-				t.Fatal("a switched run with the budget off was admitted")
+			if err := r.applyRouting(nil, false); err != nil {
+				t.Fatalf("a switched run in mode %q: %v", tc.mode, err)
 			}
-			for _, want := range []string{credentialsServiceURLEnv, policy.ModeOff, "D2071"} {
-				if !strings.Contains(err.Error(), want) {
-					t.Errorf("the refusal doesn't mention %s: %v", want, err)
-				}
-			}
-			if !strings.Contains(err.Error(), policy.ModeObserve) || !strings.Contains(err.Error(), policy.ModeEnforce) {
-				t.Errorf("the refusal doesn't name the modes that start a gateway: %v", err)
+			if !r.gatewayOn() {
+				t.Errorf("a switched run in mode %q has no gateway, so no call of it reaches the credential the installation serves it", tc.mode)
 			}
 		})
 	}
-
-	t.Run("the mode unset is off", func(t *testing.T) {
-		r := svcRun(t, "oauth", func(r *run) {
-			r.d.Env = []string{url}
-		})
-		if err := r.applyRouting(nil, false); err == nil {
-			t.Fatal("a switched run with no budget mode was admitted")
-		}
-	})
-
-	t.Run("observe admits it", func(t *testing.T) {
-		r := svcRun(t, "oauth", func(r *run) {
-			r.d.Env = []string{url}
-			r.spend = Spend{Mode: policy.ModeObserve, Prices: pricing.Embedded()}
-		})
-		if err := r.applyRouting(nil, false); err != nil {
-			t.Fatalf("a switched run in observe: %v", err)
-		}
-	})
 
 	t.Run("a local run is not on the switch", func(t *testing.T) {
 		r := svcRun(t, "api-key", func(r *run) {

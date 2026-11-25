@@ -1,5 +1,25 @@
 # The Coordinator tab as an action queue, clickable pull requests, an on-demand job list, and a terminal
 
+**Superseded 2026-11-22 by [console-fixes](../console-fixes/implementation-plan.md) (D3210).** The
+tab this design specifies — the action queue, the fleet's totals, the job list and the transcript,
+over the stored `coordinator status` view — is **replaced** by that plan's CG7a/CG7b: one read,
+`fugaro orchestrator map --json` (C-ORCH's contract,
+[contract-orchestrators.md](../console-fixes/contract-orchestrators.md)), drawn as a graph of the
+project's **active orchestrators** with a health line and a drill-down. The four reads this tab made
+go with the four sections, and the hooks it named (`coordinator-queue-*`, `coordinator-total*`,
+`coordinator-repo*`, `coordinator-record*`, `coordinator-jobs-*`, `coordinator-transcript-*`,
+`coordinator-description-*`) are deleted with the markup rather than restyled. Two of this design's
+rules outlive it and the new tab keeps them, because both are `.claude/rules/console.md`'s:
+progressive rendering, and jobs never in the first paint. The terminal's design (D820–D828) is **not**
+superseded — it was design-first and no build of it exists. **The owner's Check C0 is moot for the
+tab**: the `coordinator status` read it times is one no screen makes any more. **The surface this
+tab reached through goes with it, and in one place rather than half of it here and half there**:
+the plan's I-ORCH removes the four operations this tab added — `coordinator.status`,
+`coordinator.show`, `coordinator.intents` (D810–D812) and `link.openPullRequest` (K2a, D814–D815)
+— from the allow-lists, and the preload's rows and the renderer's `ReadBridge`/`LinkBridge`
+members with them. Its status row moves
+when console-fixes is merged, not here (see the rule at the top of [docs/status.md](../status.md)).
+
 **Status as of 2026-11-10: done except the owner's Check C0 (profiling); see [docs/status.md](../status.md) for the current table.** The decisions are in
 [reconciliation.md](reconciliation.md). The page this replaces is the Coordinator screen as it
 stands on `main` (Bitbucket credentials T1.2, D364): one read, `fugaro coordinator status
@@ -21,7 +41,7 @@ description inline; the job list should be expandable, pageable, loadable on-dem
    arrives; independent reads run in parallel; nothing waits for all of them) and **the jobs rule**
    (jobs are never in the first paint; every job read is bounded by a `--since`; the read is
    asynchronous; what is shown is cached and stamped "as of HH:MM"). Both rules are being written
-   into `.claude/rules/console.md` and `docs/design/desktop-console.md` by a concurrent console run;
+   into `.claude/rules/console.md` and `docs/desktop-console/spec.md` by a concurrent console run;
    this design cites them by those names.
 2. **The terminal is design first, no build.** [reconciliation.md](reconciliation.md) §5 is the
    design: what "the agent" is, how a typed line would reach it, who may use it, what it may do, the

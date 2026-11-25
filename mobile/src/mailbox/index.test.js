@@ -32,6 +32,8 @@ test('the door exports the client, the paths, the codes and the three fakes', ()
     'OFFLINE_SPEECH',
     'PRESENCE_REASON',
     'REDACT_CODES',
+    'REGISTRATION_KIND',
+    'REGISTRATION_TEXT',
     'SPEAK_CODES',
     'STORE_CODES',
     'createMailboxClient',
@@ -99,5 +101,6 @@ test('the client the door builds is the one the tests in this directory build', 
     ok: true,
     id: 'm-1',
     at: 1_700_000_000_000,
+    text: 'run 42 finished',
   });
 });

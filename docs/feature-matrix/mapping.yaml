@@ -48,6 +48,18 @@ features:
     plan: community
     specs:
       - short-run-ids
+  - id: find-a-pull-requests-runs
+    name: "Find the runs on a pull request in a moment"
+    explanation: "Asking which runs a pull request has, or which are going, reads a small index instead of the whole history, so the answer comes back in about a second."
+    plan: community
+    specs:
+      - runs-ls-speed
+  - id: message-a-running-run
+    name: "Send a message to a run that is going"
+    explanation: "A person can tell a running task something new, to be read at its next coder stage, at its next quiet point or as a request to wrap up, and the run's record says what became of each message."
+    plan: community
+    specs:
+      - run-messages
   - id: install-and-update
     name: "Set up and update from the command line"
     explanation: "Fugaro provisions everything it needs in your own Google Cloud project from the command line, and brings the whole installation to a new version the same way. The update reports which known issues it resolves."
@@ -76,6 +88,12 @@ features:
       - cloud-senior-review
       - api-key-review
       - post-review-triage
+  - id: review-against-the-task
+    name: "Reviews check the change against the task"
+    explanation: "A review is given the task the pull request was written for, so it can say that part of the task is unmet or that the change differs from it, and a review of a pull request no run produced can be given a task by hand."
+    plan: community
+    specs:
+      - review-against-task
   - id: review-on-its-own
     name: "Review a pull request on its own, at a chosen depth"
     explanation: "A pull request can be reviewed by a separate review job, with the review depth chosen for the project and a second model offered as the reviewer."
@@ -167,6 +185,7 @@ features:
     plan: community
     specs:
       - secrets-brokering
+      - keys-through-service
   - id: project-security-rules
     name: "Say what counts as security-sensitive"
     explanation: "A project names the paths that count as security-sensitive and the executables a run may use, so a change to a sensitive path is escalated and a run nobody reviewed is reported as such."
@@ -248,6 +267,12 @@ features:
       - console-settings-edit
       - console-coordinator-v2
       - cli-output-console-graph
+  - id: console-manage
+    name: "Manage a project from the console"
+    explanation: "The console lists a project's models and keys and shows the change a command would make before it is made."
+    plan: team
+    specs:
+      - console-improvements
   - id: release-graph
     name: "See how releases depend on each other"
     explanation: "A graph draws the project's releases and tasks as boxes, with the dependencies between them and the path that matters."
@@ -261,6 +286,7 @@ features:
     specs:
       - mobile
       - mobile-auth
+      - mobile-identity-pairing
     hold:
       status: coming-soon
       reason: "The app's code is written, and no version of the app has been released."
@@ -279,12 +305,26 @@ features:
     plan: team
     specs:
       - workspaces
+  - id: workspace-members
+    name: "Share a workspace's access with its projects"
+    explanation: "A workspace holds the roster of its people and the credentials its projects share, and serves them to the projects that are members."
+    plan: team
+    specs:
+      - workspace-projects-users
+      - workspace-service
+      - workspace-credentials
   - id: run-governance
     name: "Catch a runaway run early"
     explanation: "Every task carries a tier, and a run that spends far more than its tier expects is stopped and reported instead of running to its cap."
     plan: team
     specs:
       - task-governance
+  - id: every-run-has-a-budget
+    name: "Every run is held to a budget"
+    explanation: "A run is held to a spend budget whichever way it is launched, and a model whose price Fugaro cannot work out is refused rather than run unmetered."
+    plan: community
+    specs:
+      - always-a-budget
   - id: model-comparison
     name: "Compare models on the same task"
     explanation: "Another model can be run against the same task beside the first, and the results are scored and reported together."
@@ -332,4 +372,102 @@ excluded:
     reason: "Not a spec: no plan, and nothing to build."
   - spec: plans
     reason: "Not a spec: no plan, and nothing to build."
+  - spec: ci-affected-tests
+    reason: "Internal: which tests the project's own build runs on a change, not something a user of Fugaro runs."
+  - spec: batch-run-identity
+    reason: "Plumbing for the Cloud Batch backend, which is not offered to a user yet: no capability to read until it is."
+  - spec: launcher-does-not-mint
+    reason: "Internal hardening of how a run's identity is issued, with nothing a user configures or sees."
+  - spec: location-preference
+    reason: "Not mapped yet: its first user-facing step, choosing where an installation's data lives, has not shipped."
+  - spec: credentials-belong-to-models
+    reason: "Not mapped yet: a plan with no task merged, so no capability to read; the model access feature takes it when the first step ships."
+  - spec: console-fixes
+    reason: "Not mapped yet: a plan still being worked through, whose fixes land in the console features already listed; no capability of its own to read."
+  - spec: managed-flag-ergonomics
+    reason: "Not mapped yet: a plan with three of twelve tasks merged, and its user-facing change is the refusal of writes to an unmanaged project, which no row describes yet."
+  - spec: repo-override-rulings
+    reason: "Not mapped yet: a plan still being worked through, whose user-facing change is the migration of a repository's own settings into the project, which no row describes yet."
+  - spec: required-version-stamp
+    reason: "Not mapped yet: a plan still being worked through, whose user-facing change is the project's oldest allowed CLI, which no row describes yet."
+  - spec: update-from-anywhere
+    reason: "Not mapped yet: a plan with its contract task in a run, so no capability to read."
+  - spec: repo-coupling-audit
+    reason: "Not mapped yet: an audit of how repositories are coupled to the installation, with no capability of its own to read."
+  - spec: model-credentials-routing
+    reason: "Not mapped yet: a large plan still being worked through; the model access feature takes it when its credential routing ships."
+  - spec: design
+    reason: "Not a spec: a documentation folder holding the first design and the in-flight update design, with no plan of its own."
+  - spec: adopt-firebase-root
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: agent-env
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: artifact-runs
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: base-image
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: bucket-iam
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: budget-token-channel
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: checkpoint-pushes
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: config-transitions
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: console-styling
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: desktop-console
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: desktop-console-v2
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: generic-tool
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: headroom-compression
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: image-refresh
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: key-signing-service
+    reason: "Superseded: what remained of it moved to the licence key and portal work, mapped there."
+  - spec: lapse-read-only
+    reason: "Superseded: what remained of it moved to the licence key work and the console, mapped there."
+  - spec: layered-config
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: m10-multi-model
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: m11-setup-and-skills
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: m9-budget-and-dashboard
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: managed-deployer-fence
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: managed-projects
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: mixed-credentials
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: named-oauth-tokens
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: project-centric
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: project-named-oauth-tokens
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: project-secrets
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: provider-price-catalog
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: recipes
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: registry-remote-repository
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: retire-image-mirror
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: roles
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: shared-config
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: upgrade
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: voice
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: watch-queued
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
 retired: []

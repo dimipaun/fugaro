@@ -407,7 +407,7 @@ either way).
 
 **The numbering is deliberately not `C4.x`.** `C0`–`C3` are [implementation-plan.md](implementation-plan.md)'s
 slices and `CSR1`–`CSR13` are the cloud senior review's; a third stream taking `C4` would collide with
-the C-numbers of four other plans in this repository (`docs/design/budget-token-channel.md`,
+the C-numbers of four other plans in this repository (`docs/budget-token-channel/spec.md`,
 `docs/forge-authorship-images/`, `docs/project-image-catalog/`, `docs/console-coordinator-v2/`). `DON` is
 this file's own prefix and collides with nothing.
 
@@ -1008,8 +1008,8 @@ the field. **It needs no second command**, which is the owner's own constraint: 
   root's *later* apply published — installation-wide, for every machine that reads the published file,
   with no `fugaro update`-only way back. The backfill therefore reads the installation's own state for
   every entry the config holds and writes the record the state and this run's bundle agree on: **true**
-  where the state shows the grant and the bundle holds a model credential, **`false`** where the state
-  shows no grant — the mirror the ninth review round found, and the one that hands an address out: a
+  where the state shows the grant and the bundle **serves that repository's own recorded auth**, **`false`**
+  where the state shows no grant — the mirror the ninth review round found, and the one that hands an address out: a
   `true` outliving the apply that re-applied the root held off (mounts back, `roles/run.invoker` gone)
   tells every console launch of that repository that the service is ready, so the provider opens keyless
   for a mint the service refuses and every run of it fails at bootstrap. An entry that holds **no**
@@ -1062,6 +1062,19 @@ the field. **It needs no second command**, which is the owner's own constraint: 
   one that applies the root with the switch on — is the one that records `true`. The auth is judged as
   the RUNS read it (`deploymentConfig`: the `fugaro.yaml` at the default branch, else this working
   tree), the same document the plan above is built from, or the record and the plan are one edit apart.
+  **The installation door has no checkout, and it reads the auth from the record instead** (found in
+  the field on 2026-11-24): the same fold, one door earlier — `backfillCredentialsServiceReady` asks
+  the sharp question (`credentialsBundleServes`) wherever `creds.ReadRepoAuth` has an answer for that
+  repository, and keeps the weak one ("the bundle holds a model credential") only where there is no
+  database, no record or a read that failed. What it fixes is a repository recorded ON over a bundle
+  that serves its auth nothing: `config.ServiceServedAuths` shipped in 0.26.0, so the apply that made
+  the grant was an `api-key` or `oauth` one, and the weak question — right only for the cascade, which
+  settles on any model credential — cannot tell it from one. The installation it was found on is the
+  shape to expect: an `oauth` repository whose record names an account the bundle holds no entry for,
+  because an account's OAuth token is a plain scalar the copy may not write (D3015), so it reaches the
+  bundle only where the owner entered it with `fugaro creds set`. Recorded off is the fail-safe
+  direction: the launch withholds the address and that repository's own `fugaro update --repo`
+  re-applies its root with the mounts back, one command and no `fugaro creds set`.
   **And the plan's FIRST condition is in it too** (the header's fifth 2026-11-07 row): `installed` is
   read from the **installation root's own outputs**, the source the spec reads it from
   (`infra.Inputs.Installation`, which `withDefaults` never fills from the local config) — not from the

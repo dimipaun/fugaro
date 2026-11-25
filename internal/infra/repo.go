@@ -71,6 +71,46 @@ func InstallationStateExists(ctx context.Context, c *Clients, stateBucket string
 	return StateExists(ctx, c, stateBucket, StatePrefixInstallation)
 }
 
+// InstallationBudgetAccount is the billing account the installation root's
+// state records on its alert: the one thing the budget carry takes from the
+// cloud rather than from a document, because a machine that never ran the apply
+// has no document and the alert belongs to a billing account, not to the
+// project (R7 of docs/managed-flag-ergonomics).
+//
+// found=false is "this installation holds no alert": no state object under the
+// root's prefix, a state bucket that is not there (nothing has been applied, so
+// there is no alert to keep), or a state whose resources name none. A state
+// object that cannot be read, or that is not a state this build can read, is
+// the error, and no caller may read it as "no alert": that answer plans the
+// alert's deletion, which the guard then refuses — the loud direction, and the
+// one that says the read failed rather than the alert never existed.
+func InstallationBudgetAccount(ctx context.Context, c *Clients, stateBucket string) (account string, found bool, err error) {
+	names, err := StateObjects(ctx, c, stateBucket, StatePrefixInstallation)
+	if err != nil {
+		if notFound(err) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("listing gs://%s/%s: %w", stateBucket, StatePrefixInstallation, err)
+	}
+	for _, name := range names {
+		data, err := ReadStateObject(ctx, c, stateBucket, name)
+		if err != nil {
+			if notFound(err) {
+				continue
+			}
+			return "", false, err
+		}
+		account, found, err := budgetBillingAccountOf(data)
+		if err != nil {
+			return "", false, fmt.Errorf("gs://%s/%s: %w", stateBucket, name, err)
+		}
+		if found {
+			return account, true, nil
+		}
+	}
+	return "", false, nil
+}
+
 // StateExists reports whether the state bucket holds any object under the
 // root's state prefix (StatePrefixInstallation, StatePrefixFirebase).
 // Read-only.
@@ -276,7 +316,7 @@ func SecretVersions(ctx context.Context, c *Clients, spec RepoSpec) (map[string]
 //
 // spec.Workflows may hold several keys per fugaro.yaml workflow, one per
 // Claude account the repository may choose (gcp.WorkflowVariant, design
-// docs/design/named-oauth-tokens.md §4): they share one image, built once,
+// docs/named-oauth-tokens/spec.md §4): they share one image, built once,
 // not once per account, so only the default account's entry (the one whose
 // key equals its own Name, the identity case of WorkflowVariant) is looked
 // at here; the names this returns are always fugaro.yaml workflow names,
@@ -334,7 +374,7 @@ type SecretStep struct {
 // this repository use one (spec.ProjectSecretCandidates, ProjectSecretCandidate's
 // own answer), because a repository copy would then win over it forever --
 // the silent precedence flip project-wide secrets exist to avoid (design
-// docs/design/project-secrets.md §5) -- and the repository's own copy
+// docs/project-secrets/spec.md §5) -- and the repository's own copy
 // otherwise. Readiness prints it as a Missing's fix; SecretCommands prints it
 // as the command to type, and the two must not be able to disagree about the
 // same name. bin names the binary and quote makes one shell word of a name,
@@ -436,6 +476,15 @@ func SecretCommands(spec RepoSpec, versions map[string]bool, bin, door string, q
 		// project-wide copy), so the whole of what a person is told about the
 		// name is Readiness's one note about it.
 		if ignoredRepoSecret(spec, logical) {
+			continue
+		}
+		// No run of this project's configuration holds the unsuffixed default
+		// account (RepoSpec.DefaultAccountUnused), so this name is no step
+		// either: the command would send the owner to mint a token for an
+		// account their own config never picks, and the repository is asked
+		// for nothing it uses. Readiness drops the same name's mount, so the
+		// step and the gate agree.
+		if spec.DefaultAccountUnused && logical == config.ClaudeOAuthToken {
 			continue
 		}
 		st := SecretStep{Name: logical, What: spec.Secrets[logical], Optional: OptionalSecret(logical)}

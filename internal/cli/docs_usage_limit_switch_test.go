@@ -20,7 +20,7 @@ func readSkillFile(t *testing.T, path string) string {
 // safety-critical claim: a run is only ever a candidate for an account
 // switch when its evidence names a Claude usage limit, matched loosely
 // (case-insensitively, wherever it appears) because the exact wording is
-// Claude Code's own and unverified here (docs/design/named-oauth-tokens.md
+// Claude Code's own and unverified here (docs/named-oauth-tokens/spec.md
 // §7 item U4) — never inferred from a revoked token, a failing test, a
 // review finding or a plain bug. A skill edit that drops the "usage limit"
 // match, the case-insensitivity, or the exclusion of other failures fails
@@ -82,23 +82,23 @@ func TestDocsUsageLimitSwitchRequiresExplicitToken(t *testing.T) {
 }
 
 // TestDocsNamedOAuthTokensAccountsCommandDesign pins
-// docs/design/named-oauth-tokens.md §12's claims about fugaro accounts ls
+// docs/named-oauth-tokens/spec.md §12's claims about fugaro accounts ls
 // against the real command: its flags, that it is offline (no Secret
 // Manager client is ever opened), and that the design no longer lists the
 // command as an unbuilt bigger-version item.
 func TestDocsNamedOAuthTokensAccountsCommandDesign(t *testing.T) {
-	doc := readSkillFile(t, "../../docs/design/named-oauth-tokens.md")
+	doc := readSkillFile(t, "../../docs/named-oauth-tokens/spec.md")
 	for _, want := range []string{
 		"fugaro accounts ls [--repo OWNER/NAME] [--json]",
 		"no Secret Manager call",
 		"explicitly unverified",
 	} {
 		if !strings.Contains(doc, want) {
-			t.Errorf("docs/design/named-oauth-tokens.md no longer says %q", want)
+			t.Errorf("docs/named-oauth-tokens/spec.md no longer says %q", want)
 		}
 	}
 	if strings.Contains(doc, "A `fugaro accounts` command to list configured names and which repositories may use each (today,") {
-		t.Error(`docs/design/named-oauth-tokens.md still lists fugaro accounts as an unbuilt bigger-version item, but it is now built`)
+		t.Error(`docs/named-oauth-tokens/spec.md still lists fugaro accounts as an unbuilt bigger-version item, but it is now built`)
 	}
 	ls := newAccountsLsCmd()
 	if ls.Flags().Lookup("repo") == nil || ls.Flags().Lookup("json") == nil {

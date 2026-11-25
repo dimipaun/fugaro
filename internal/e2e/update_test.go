@@ -30,6 +30,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/place"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -284,9 +285,12 @@ func installationOutputs(t *testing.T) string {
 			"build_submitter": "projects/" + initRepoProject + "/roles/" + infra.RoleBuildSubmitter,
 			"tag_mover":       "projects/" + initRepoProject + "/roles/" + infra.RoleTagMover,
 		},
-		"launchers":                []string{},
-		"operators":                []string{},
-		"log_view":                 "projects/" + initRepoProject + "/locations/global/buckets/fugaro/views/fugaro-runs",
+		"launchers": []string{},
+		"operators": []string{},
+		// The module's own output for a fresh installation: the log bucket is
+		// in place.For's location for the fixture's region, which is the US
+		// multi-region for us-east5 and not `global` (LP6, D3082).
+		"log_view":                 "projects/" + initRepoProject + "/locations/" + place.For(initRepoRegion).LogBucket.Where + "/buckets/fugaro/views/fugaro-runs",
 		"registry_cleanup_dry_run": true,
 	}
 	out := map[string]any{}
@@ -781,7 +785,7 @@ func TestUpdateRecordsVertex(t *testing.T) {
 	if got := r.localConfig(t).Repos["acme/sandbox"]; !got.Vertex {
 		t.Errorf("local config repo = %+v, want vertex", got)
 	}
-	if !strings.Contains(res.stdout, "warning: ") || !strings.Contains(res.stdout, "Vertex AI API") || !strings.Contains(res.stdout, "rerun fugaro update") {
+	if !strings.Contains(res.stdout, "Warning: ") || !strings.Contains(res.stdout, "Vertex AI API") || !strings.Contains(res.stdout, "rerun fugaro update") {
 		t.Errorf("no warning to enable the Vertex AI API:\n%s", res)
 	}
 	// Recorded, it isn't repeated.
@@ -809,7 +813,7 @@ func TestUpdateWarnsBaseImageOutsideBaseRegistry(t *testing.T) {
 	if res.code != 0 {
 		t.Fatal(res)
 	}
-	if !strings.Contains(res.stdout, "warning: ") || !strings.Contains(res.stdout, legacy) || !strings.Contains(res.stdout, infra.BaseRegistry) {
+	if !strings.Contains(res.stdout, "Warning: ") || !strings.Contains(res.stdout, legacy) || !strings.Contains(res.stdout, infra.BaseRegistry) {
 		t.Errorf("no warning about the base image:\n%s", res)
 	}
 	// The one in the base registry passes silently.
@@ -1218,7 +1222,10 @@ func TestUpdateForgetThenReinitImports(t *testing.T) {
 	// plans nothing.
 	plans := count(r.calls(t), "installation plan")
 	res := r.fugaroInit(t)
-	if res.code != 1 || !strings.Contains(res.stdout+res.stderr+logNamedIn(t, res.stdout), infra.LogBucketUndelete(initRepoProject)) {
+	// The undelete names the bucket's own location, `global`, which is where
+	// this installation's bucket is and not where the mapping points (LP6,
+	// R5, F10).
+	if res.code != 1 || !strings.Contains(res.stdout+res.stderr+logNamedIn(t, res.stdout), infra.LogBucketUndelete(initRepoProject, "global")) {
 		t.Fatalf("a retry with the log bucket pending deletion:\n%s", res)
 	}
 	if count(r.calls(t), "installation plan") != plans {
@@ -1489,11 +1496,11 @@ func TestUpdateStorageDisabledIsRemote(t *testing.T) {
 	}
 }
 
-// logNamedIn reads the run log a stage's failure names ("full output: PATH")
-// when the terminal shows only its first line.
+// logNamedIn reads the run log a stage's failure names ("Log:  PATH", two
+// spaces after the label) when the terminal shows only its first line.
 func logNamedIn(t *testing.T, stdout string) string {
 	t.Helper()
-	_, rest, ok := strings.Cut(stdout, "full output: ")
+	_, rest, ok := strings.Cut(stdout, "Log:  ")
 	if !ok {
 		return ""
 	}

@@ -15,6 +15,16 @@ func init() {
 	if err := access.SetSubscriptionLimit(lapseLimit); err != nil {
 		panic("ee/register: " + err.Error())
 	}
+	// The seat limit (K3.4): the other limit the same surfaces are judged by,
+	// installed here so that what a Subscription surface may do is decided in
+	// one init and not two. An unseated operator holds operator in the grants
+	// node and acts as a viewer there (spec section 10, D2186), which is the
+	// rule seats.go's licenceSeatLimit answers with — the core's own default
+	// caps nobody, and a tagged binary that kept it would enforce no seat at
+	// all.
+	if err := access.SetSeatLimit(licenceSeatLimit); err != nil {
+		panic("ee/register: " + err.Error())
+	}
 }
 
 // lapseLimit is what a lapsed subscription keeps on a Subscription surface
@@ -30,7 +40,7 @@ func init() {
 // gates. No surface is stranded by leaving it out, because no surface drives it
 // today either — `budget kill` sits on the console's NEVER_REACHABLE table, and
 // the app refuses the verb (shared/confirm's REFUSED_VERBS) — while the switch a
-// person uses is the CLI's own (docs/design/lapse-read-only.md §3.2).
+// person uses is the CLI's own (docs/lapse-read-only/spec.md §3.2).
 //
 // The switch is spelled out and its default refuses, so an action added to the
 // core's table later is refused under a lapse until a licensing decision keeps

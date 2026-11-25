@@ -193,6 +193,10 @@ func modelsWriteLocalConfig(t *testing.T, path string) *localcfg.Config {
 func TestModelsCommandsPrintAHostileIDEscaped(t *testing.T) {
 	home, _ := modelsWriteHome(t)
 	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("vendor/model-x", "", "", ""))
+	// The model rows of every models write are the project layer's (D3237, S4),
+	// so `use` names the layer the key is written at: a write into a repository
+	// is refused before the ID is ever looked at.
+	settingsWriteLayerFile(t, modelsUseLayerAuth)
 	// The newline is the shape every models write refuses on its own rule; the
 	// escape byte is what no provider grammar has room for.
 	hostile := "vendor/model-\x1b[31mred\nline`whoami`"
@@ -207,7 +211,7 @@ func TestModelsCommandsPrintAHostileIDEscaped(t *testing.T) {
 			return []string{"models", "add", id, "--price-in", "1", "--price-out", "2"}
 		}},
 		{"use", func(id string) []string {
-			return []string{"models", "use", "owner/repo-a", "coder", id}
+			return []string{"models", "use", "coder", id}
 		}},
 		{"rm", func(id string) []string { return []string{"models", "rm", id} }},
 		{"price set", func(id string) []string {
@@ -246,7 +250,7 @@ func TestModelsCommandsPrintAHostileIDEscaped(t *testing.T) {
 	}{
 		{"add", []string{"models", "add", csi, "--price-in", "1", "--price-out", "2"}},
 		{"rm", []string{"models", "rm", csi}},
-		{"use", []string{"models", "use", "owner/repo-a", "coder", csi}},
+		{"use", []string{"models", "use", "coder", csi}},
 		{"price set", []string{"models", "price", "set", csi, "--cache-read", "1"}},
 		{"provider set", []string{"models", "provider", "set", csi, "--kind", "anthropic-compat"}},
 		{"provider rm", []string{"models", "provider", "rm", csi}},

@@ -70,8 +70,8 @@ func managedPlanConfigured(rc ResourceChange, expressions map[string]json.RawMes
 const managedAccount = ManagedPrefix + "run@proj-1.iam.gserviceaccount.com"
 
 // TestManagedAllowedTypesGolden pins both halves of the decision against
-// literals: the 14 types a managed plan may contain, and the 12 entries of
-// allowedTypes it may not. A widening — or a type dropped without a reason —
+// literals: the 14 types a managed plan may contain, and the twenty-one entries
+// of allowedTypes it may not. A widening — or a type dropped without a reason —
 // is a diff in this test.
 func TestManagedAllowedTypesGolden(t *testing.T) {
 	want := []string{
@@ -108,6 +108,18 @@ func TestManagedAllowedTypesGolden(t *testing.T) {
 		"google_compute_router_nat",
 		"google_firebase_database_instance",
 		"google_firebase_project",
+		// The run index's composite indexes (RI2, C-INDEX): the owner-run
+		// Firebase root's, and the deployer holds no datastore.indexes.*.
+		"google_firestore_index",
+		// The consumer's signing key and its grant (mobile-identity-pairing
+		// plan task J6; O17): the key is the installation's own — created in
+		// its project by the installation root, published to a node of its
+		// database and pinned by every phone paired to it — so a repository's
+		// retirement may not reach it, and the deployer holds no
+		// run.services.*-shaped permission for a key ring either.
+		"google_kms_crypto_key",
+		"google_kms_crypto_key_iam_member",
+		"google_kms_key_ring",
 		"google_logging_log_view",
 		"google_logging_log_view_iam_member",
 		"google_logging_project_bucket_config",
@@ -200,11 +212,20 @@ func TestManagedCoverCommentsCountTheDroppedTypes(t *testing.T) {
 func droppedCountWord(n int) (string, bool) {
 	words := []string{"zero", "one", "two", "three", "four", "five", "six", "seven",
 		"eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
-		"sixteen", "seventeen", "eighteen", "nineteen", "twenty"}
-	if n < 0 || n >= len(words) {
+		"sixteen", "seventeen", "eighteen", "nineteen"}
+	tens := []string{"", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy",
+		"eighty", "ninety"}
+	if n < 0 || n >= 100 {
 		return "", false
 	}
-	return words[n], true
+	if n < len(words) {
+		return words[n], true
+	}
+	word := tens[n/10]
+	if n%10 != 0 {
+		word += "-" + words[n%10]
+	}
+	return word, true
 }
 
 // managedKeptFixture is one resource per type the list keeps: the type's own

@@ -79,7 +79,7 @@ import (
 // expectedAgentMarkers is the oracle for which environment variables mean a
 // coding agent's session: written here by hand, so a marker dropped from
 // agentMarkers is a failure rather than a smaller test
-// (docs/design/managed-projects.md §3 finding 2 names these six).
+// (docs/managed-projects/spec.md §3 finding 2 names these six).
 var expectedAgentMarkers = []string{"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT", "CLAUDE_CODE_REMOTE", "CURSOR_AGENT", "AI_AGENT"}
 
 // agentEnvState is one state of the environment a run can be in: no marker
@@ -996,7 +996,7 @@ var initFlagCases = map[string]string{
 	"replace-image":    "names the intent only; replacing confirms through askTyped (covered)",
 	"retire":           "both confirmations are askTyped; retireConfirm's agent refusal is an inline site (covered)",
 	"repo":             "the repository's applies confirm through ask/askOrdinary (covered)",
-	"firebase-project": "its applies confirm through ask (covered), its Firestore location through askCovered/canType (covered)",
+	"firebase-project": "its applies confirm through ask (covered); the Firestore database's location is no confirmation of its own at all — the run prints where it goes and creates it (LP10, D3090), so there is nothing here for the property to cover",
 	"forget":           "its state removals confirm through ask (covered)",
 	"config-only":      "writes the local config; any confirmation is ask's (covered)",
 	"onboard-repo":     "an opt-in in place of the typed owner/name: refused under a marker (checkOnboardRepo, authState: inline sites, covered); for a non-managed project without a marker it opts in without typing, which is NOT in the table",
@@ -1021,16 +1021,25 @@ var initFlagCases = map[string]string{
 	// confirmation it reaches is confirmStageWrite's, which the property
 	// already covers.
 	// answers-file (ST1 of docs/console-improvements/implementation-plan.md;
-	// D2904) is the third: the wizard's five questions as one document, whose
-	// answers are written onto those five flags' own fields, so it reaches the
+	// D2904) is the third: the wizard's questions as one document, whose
+	// answers are written onto those flags' own fields, so it reaches the
 	// confirmations they reach and none of its own. The steps that are a
-	// person's — the project's creation, the billing link, the Firestore
-	// location, every secret value — have no member in the document, which is
-	// what a member for one is refused by name for.
+	// person's — the project's creation, the billing link, every secret value —
+	// have no member in the document, which is what a member for one is refused
+	// by name for. Neither does the Firestore database's location: it is no
+	// question and no confirmation at all (LP10, D3090), so a document naming
+	// it would answer something the run never asks.
+	// location (LP4 of docs/location-preference) is the fourth, and it is
+	// --region's own question in a person's words: the place a first run of
+	// setup chooses (us or eu), turned into the region before anything is
+	// checked or asked (settleLocation), so what reaches a confirmation is the
+	// region --region reaches and nothing new. It is a first run's answer: a
+	// --repo run creates no installation and refuses it by name
+	// (installationFlags).
 	"admin": "value", "alert-email": "value", "answers-file": "value", "bake-repos": "value", "base": "value", "base-image": "value", "billing-account": "value", "budget": "value",
 	"budget-admin": "value", "budget-currency": "value", "budget-mode": "value", "config": "value",
 	"display-name": "value", "expect-digest": "value", "gcp-project": "value", "github-app-id": "value",
-	"image-source": "value", "name": "value", "no-log-isolation": "value",
+	"image-source": "value", "location": "value", "name": "value", "no-log-isolation": "value",
 	"operator": "value", "parent": "value", "project": "value", "region": "value", "rigor": "value",
 	"registry-cleanup": "value", "runs-bucket": "value", "scheduler-region": "value",
 	"state-bucket": "value; under --managed the value must be the derived fugaro-tfstate-<gcp-project> and anything else refuses the creation before the project stage (checkManagedStateBucket, Task 4.5/D59), the way a bad --budget-currency refuses it",
@@ -1213,6 +1222,12 @@ func TestManagedEveryAgentSiteInInitHasACase(t *testing.T) {
 // update_managed_test.go — and the plugin stage no longer reads it at all.
 func TestManagedPluginStageThroughTheLoopAppliesUnderEachMarker(t *testing.T) {
 	releaseBuild(t, "0.2.0")
+	// Claude Code's record of installed plugins is read from the host's own
+	// config directory unless it is pointed elsewhere, and a machine whose
+	// plugin is NEWER than this test's release reads the stage as "No changes"
+	// and fails the test on that machine alone. An empty directory is a machine
+	// with no plugin installed, which is the state every arm here installs into.
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	for _, how := range []struct {
 		name     string
 		stdin    string

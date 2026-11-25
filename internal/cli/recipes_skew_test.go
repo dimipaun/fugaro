@@ -36,7 +36,15 @@ func TestCheckRecipeImage(t *testing.T) {
 		Recipe: &task.Recipe{Name: "mine", Source: "repo"}}
 	check := func(baseRef string) (string, error) {
 		var warn bytes.Buffer
-		if baseRef != "-" {
+		if baseRef == "-" {
+			// The harness's fixture gives the job image a build record (AB4,
+			// F7: every launch of an installation with a database mints and is
+			// judged for it by the seal's image gate), and this case is the one
+			// with none.
+			if err := removeBuildRecord(f); err != nil {
+				t.Fatal(err)
+			}
+		} else {
 			writeBuildRecord(t, f, appSlug, "web", baseRef)
 		}
 		err := checkRecipeImage(context.Background(), env, appSlug, spec, "base", &warn)
@@ -486,16 +494,17 @@ func TestRecipesSkewRefusesReviewLevelsOnOldImage(t *testing.T) {
 	}
 }
 
-// TestLaunchReviewLevelsAskHoldsTheFloorOfTheModeTheLayersResolved: the
-// launcher resolves the levels a run will run before any run exists, and it
-// reads the owner's floor the way the run does (policy.FloorFor). A run whose
-// own request takes it off the axis to hotfix is held to hotfix's row *and* to
-// the row the layers resolved — a request raises a mode and never lowers a
-// floor (D8, LF5) — so the launch asks for the owner's floor and for the
-// adversarial step the floor turns on. Reading hotfix's row alone would resolve
-// the launch at no floor and no level 3 while the run resolves at both, and
-// every gate written on this ask would judge a launch that never happens.
-func TestLaunchReviewLevelsAskHoldsTheFloorOfTheModeTheLayersResolved(t *testing.T) {
+// TestLaunchReviewLevelsAskHoldsTheFloorOfTheModeTheRunIsAt: the launcher
+// resolves the levels a run will run before any run exists, and it reads the
+// owner's floor the way the run does (policy.FloorFor over
+// rigor.LayersRigor). A run whose own request took it off the axis to hotfix
+// reads hotfix's row alone (the owner's ruling of 2026-11-20), so a floor on
+// `pro` does not reach a `--mode hotfix` launch and the launch asks the image
+// for nothing of it — the same launch with no request keeps the mode its layers
+// resolve, which is the row the floor was written for. Reading both rows here
+// would resolve the launch at a floor and a level 3 the run never runs, and
+// every gate written on this ask would refuse an image the run does not need.
+func TestLaunchReviewLevelsAskHoldsTheFloorOfTheModeTheRunIsAt(t *testing.T) {
 	f := newCloudFixture(t)
 	env := fileEnv(t, f)
 	env.policy = policyReadOnce{done: true, found: true, p: &projectpolicy.Policy{
@@ -508,11 +517,11 @@ func TestLaunchReviewLevelsAskHoldsTheFloorOfTheModeTheLayersResolved(t *testing
 	if err != nil {
 		t.Fatalf("resolving the levels of a --mode hotfix launch under a floor on pro: %v", err)
 	}
-	if want := "the owner's review-level floor and review level 3 (its adversarial step)"; ask != want {
-		t.Errorf("ask = %q, want %q: the floor of the mode the layers resolved holds beside hotfix's", ask, want)
+	if ask != "" {
+		t.Errorf("ask = %q, want none: a hotfix run reads hotfix's row alone, and this project floors pro", ask)
 	}
 	// The same launch without the request keeps its own mode, which is the row
-	// the floor was written for: the answer does not depend on the union.
+	// the floor was written for.
 	spec.Rigor = ""
 	if ask, err := launchReviewLevelsAsk(context.Background(), env, spec, cfg, nil, false, &bytes.Buffer{}); err != nil || ask != "the owner's review-level floor and review level 3 (its adversarial step)" {
 		t.Errorf("a pro launch under a floor on pro: ask = %q, err = %v", ask, err)
@@ -1379,6 +1388,12 @@ func TestRecipesSkewRefusesReviewLevelsOnACloneWorkflow(t *testing.T) {
 func TestRecipesSkewRefusesReviewLevelsWithoutABuildRecord(t *testing.T) {
 	f := newCloudFixture(t)
 	checkoutWorkflows(t, "", "  web: { commands: { build: sh build.sh, test: sh test.sh } }\n")
+	// No record at all is the case this test opens with, and the fixture's own
+	// build record is one (AB4, F7: a launch that mints needs the seal's image
+	// gate to find a record it can read).
+	if err := removeBuildRecord(f); err != nil {
+		t.Fatal(err)
+	}
 	levels := filepath.Join(t.TempDir(), "levels.yaml")
 	if err := os.WriteFile(levels, []byte("l2:\n  none: true\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -4107,6 +4122,503 @@ func TestVisionSinceIsTheReleaseTheDocsName(t *testing.T) {
 		row := strings.Join(lines[at:end], "\n")
 		if want := "Fugaro before " + visionSince + " " + tc.want; !strings.Contains(row, want) {
 			t.Errorf("%s's %q row does not say %q:\n%s", tc.file, tc.anchor, want, row)
+		}
+	}
+}
+
+// workspaceBeatSkewLayer is a project layer that writes
+// defaults.agent.workspace_beat, the layer's half of the keep-warm beat's
+// switch, as the text says it: what an older runner's decoder refuses is the
+// key, whatever it holds, so `null` is a layer this test asks about exactly as
+// `false` is.
+func workspaceBeatSkewLayer(t *testing.T, written string) *config.ProjectLayer {
+	t.Helper()
+	l, ps := config.ParseProjectLayer([]byte("version: 1\nproject: acme\ngcp_project: acme-fugaro\ndefaults:\n  agent: { workspace_beat: "+written+" }\n"),
+		config.LayerAnchor{Project: "acme", GCPProject: "acme-fugaro"})
+	if len(ps) > 0 {
+		t.Fatalf("layer problems: %v", ps)
+	}
+	// The premise: the gate reads the key being written and not the value it
+	// holds, so the layer reports it set whatever it is written as — the
+	// switch on, the switch off, and the null a resolved-value test would read
+	// as no key.
+	if !l.SetsWorkspaceBeat() {
+		t.Fatalf("the layer writing workspace_beat: %s does not report the key as set", written)
+	}
+	return l
+}
+
+// TestUpdateRepoRefusesWorkspaceBeatOnAnOlderBaseImage is workspaceBeatSince's
+// fugaro update --repo gate, the same shape as stopFractionSince's: both files
+// a run decodes are strict, so a runner older than the release that reads the
+// key dies at bootstrap after the launch was paid for, and the converge
+// refuses to deploy a job that would. The boundary is the constant's own: one
+// release below is refused, the constant and one above pass, a base that is
+// not a release only warns, and no file writing the key asks nothing of the
+// image.
+//
+// The repository half is judged through RepoWorkspaceBeatSet, so a file
+// writing true — the default, which asks for nothing the release below does
+// not already do — is refused exactly as one writing false, and a repository
+// that writes no key asks nothing of the image.
+func TestUpdateRepoRefusesWorkspaceBeatOnAnOlderBaseImage(t *testing.T) {
+	below, above := shiftRelease(t, workspaceBeatSince, -1), shiftRelease(t, workspaceBeatSince, 1)
+	older := "ghcr.io/dimipaun/fugaro-base:" + below
+	lc := func(ref string) *localcfg.Config {
+		if ref == "" {
+			return &localcfg.Config{}
+		}
+		return &localcfg.Config{BaseImages: map[string]string{"base": ref}}
+	}
+	var out, errOut bytes.Buffer
+	cmd := NewRootCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	r := &initRun{o: &initOptions{}, cmd: cmd, w: &out}
+
+	for _, c := range []struct {
+		name    string
+		cfg     *config.Config
+		subject string
+		alt     string
+		absent  string
+	}{
+		{"the repository's own file", &config.Config{RepoWorkspaceBeatSet: true},
+			"fugaro.yaml's agent.workspace_beat of acme/app",
+			"remove agent.workspace_beat from fugaro.yaml",
+			"the project layer's defaults.agent.workspace_beat"},
+		{"the layer alone", &config.Config{Layer: workspaceBeatSkewLayer(t, "false")},
+			"the project layer's defaults.agent.workspace_beat (read for acme/app)",
+			"remove defaults.agent.workspace_beat from the project layer and publish it again",
+			"fugaro.yaml's agent.workspace_beat"},
+		// The key is what an older runner's decoder refuses, so the layer that
+		// writes it as null — the one asking for the default and nothing else —
+		// is converged onto an image that reads it exactly as the layer writing
+		// false is. SetsDefault answers false for a null, which is why the gate
+		// reads the layer's own key-presence answer.
+		{"the layer's key written null", &config.Config{Layer: workspaceBeatSkewLayer(t, "null")},
+			"the project layer's defaults.agent.workspace_beat (read for acme/app)",
+			"remove defaults.agent.workspace_beat from the project layer and publish it again",
+			"fugaro.yaml's agent.workspace_beat"},
+		{"both files", &config.Config{RepoWorkspaceBeatSet: true, Layer: workspaceBeatSkewLayer(t, "false")},
+			"fugaro.yaml's agent.workspace_beat and the project layer's defaults.agent.workspace_beat of acme/app",
+			"remove the key from fugaro.yaml and remove defaults.agent.workspace_beat from the project layer and publish it again",
+			""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			err := r.gateWorkspaceBeat(r.o, "acme/app", lc(older), c.cfg)
+			if err == nil || ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want refused", err)
+			}
+			for _, want := range []string{
+				c.subject,
+				"fugaro " + workspaceBeatSince + " or later",
+				older + ", release " + below,
+				"fugaro update --base base",
+				c.alt,
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("%v lacks %q", err, want)
+				}
+			}
+			if c.absent != "" && strings.Contains(err.Error(), c.absent) {
+				t.Errorf("the refusal names %q, a file that writes nothing here: %v", c.absent, err)
+			}
+			if errOut.Len() != 0 {
+				t.Errorf("stderr = %q, want none (refused, not warned)", errOut.String())
+			}
+		})
+	}
+
+	// The boundary, and the two states that ask nothing of the image.
+	for _, ref := range []string{"ghcr.io/dimipaun/fugaro-base:" + workspaceBeatSince, "ghcr.io/dimipaun/fugaro-base:" + above} {
+		var warn bytes.Buffer
+		if err := refuseWorkspaceBeatSkew("acme/app", true, false, ref, &warn); err != nil || warn.Len() != 0 {
+			t.Errorf("%q: err = %v, warn = %q, want neither", ref, err, warn.String())
+		}
+	}
+	for _, c := range []struct {
+		name                string
+		fromRepo, fromLayer bool
+		ref                 string
+	}{
+		{"no file writes the key", false, false, older},
+		{"no base image at all", true, false, ""},
+	} {
+		var warn bytes.Buffer
+		if err := refuseWorkspaceBeatSkew("acme/app", c.fromRepo, c.fromLayer, c.ref, &warn); err != nil || warn.Len() != 0 {
+			t.Errorf("%s: err = %v, warn = %q, want neither", c.name, err, warn.String())
+		}
+	}
+	var warn bytes.Buffer
+	if err := refuseWorkspaceBeatSkew("acme/app", true, false, "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c", &warn); err != nil {
+		t.Errorf("dev base: err = %v, want a warning only", err)
+	}
+	if !strings.Contains(warn.String(), "not a release base image") || !strings.Contains(warn.String(), "is not checked") {
+		t.Errorf("dev base: warn = %q", warn.String())
+	}
+
+	// A configuration that writes no key at all asks nothing of the image —
+	// nil, an empty config, a layer with nothing in it, and a layer that
+	// writes the sibling agent knobs instead.
+	other := jobsSkewLayerWith(t, "defaults: { agent: { review_rounds: 3 } }\n")
+	for _, cfg := range []*config.Config{nil, {}, {Layer: &config.ProjectLayer{}}, {Layer: other}} {
+		if cfg != nil && cfg.Layer != nil && cfg.Layer.SetsWorkspaceBeat() {
+			t.Fatalf("%+v: the premise is a configuration that writes no key", cfg)
+		}
+		if err := r.gateWorkspaceBeat(r.o, "acme/app", lc(older), cfg); err != nil {
+			t.Errorf("%+v: err = %v, want none", cfg, err)
+		}
+	}
+
+	// --forget and --plan-only deploy nothing, so neither is refused;
+	// --print-vars is judged like a deploy and writes nothing to stdout.
+	gated := &config.Config{RepoWorkspaceBeatSet: true}
+	for _, o := range []*initOptions{{planOnly: true}, {forget: true}} {
+		if err := (&initRun{o: o, cmd: cmd, w: &out}).gateWorkspaceBeat(o, "acme/app", lc(older), gated); err != nil {
+			t.Errorf("%+v: err = %v, want none", o, err)
+		}
+	}
+	out.Reset()
+	pv := &initOptions{printVars: true}
+	if err := (&initRun{o: pv, cmd: cmd, w: io.Discard}).gateWorkspaceBeat(pv, "acme/app", lc(older), gated); err == nil {
+		t.Fatal("--print-vars: want refused")
+	}
+	if out.Len() != 0 {
+		t.Errorf("--print-vars wrote to stdout: %q", out.String())
+	}
+}
+
+// TestValidateWarnsThatWorkspaceBeatNeedsEveryJobImage: the file is valid —
+// the skew is the installation's, not the file's — so fugaro validate warns
+// rather than refusing, the shape stopFractionImageWarnings has, and names
+// both ways to move an image (the installation's base, and a workflow's own).
+// The key written true counts: it is the line an older runner refuses,
+// whatever it says.
+func TestValidateWarnsThatWorkspaceBeatNeedsEveryJobImage(t *testing.T) {
+	for _, lines := range []string{"  workspace_beat: false\n", "  workspace_beat: true\n"} {
+		doc := validateStopFraction(t, lines)
+		if !has(doc.Warnings, "agent.workspace_beat", "needs fugaro "+workspaceBeatSince) {
+			t.Errorf("%q: warnings = %+v, want the keep-warm beat's warning", lines, doc.Warnings)
+		}
+		for _, want := range []string{"fugaro update --base base", "fugaro image refresh"} {
+			if !has(doc.Warnings, "agent.workspace_beat", want) {
+				t.Errorf("%q: the warning does not name %q: %+v", lines, want, doc.Warnings)
+			}
+		}
+	}
+	// A file that writes no key asks nothing of the image, and the warning is
+	// not this key's: the beat's switch is absent and on.
+	for _, lines := range []string{"", "  review_rounds: 3\n"} {
+		doc := validateStopFraction(t, lines)
+		if has(doc.Warnings, "agent.workspace_beat", "needs fugaro") {
+			t.Errorf("%q: warnings = %+v, want none about the keep-warm beat", lines, doc.Warnings)
+		}
+	}
+}
+
+// TestWorkspaceBeatKeyGatedOnImage is workspaceBeatSince's launch gate for the
+// keep-warm beat's switch: agent.workspace_beat is read by the config decoder
+// and not by the runner's logic, so a release before this one decodes
+// fugaro.yaml with KnownFields and the key alone — whatever it says, `true`
+// included — fails the run at bootstrap, after the launch was paid for. The
+// beat is an optimisation and not a behaviour the run depends on: the image's
+// runner sends no keep-warm request either way, so the way out with no image
+// to move is to remove the key, and the refusal says so.
+//
+// The judge is the workflow's build record, as every checkImageSince gate's
+// is, and the boundary is the constant's own: one release below is refused,
+// the constant and one above pass.
+func TestWorkspaceBeatKeyGatedOnImage(t *testing.T) {
+	for _, c := range []struct {
+		rel     string
+		refused bool
+	}{
+		{shiftRelease(t, workspaceBeatSince, -1), true},
+		{workspaceBeatSince, false},
+		{shiftRelease(t, workspaceBeatSince, 1), false},
+	} {
+		t.Run(c.rel, func(t *testing.T) {
+			f := newCloudFixture(t)
+			configSkewCheckout(t, f, configSkewWorkspaceBeat("false")+configSkewWorkflow)
+			writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:"+c.rel)
+			_, _, err := execute(t, "run", "--run-id", "20261120-100000-abcd", "A task")
+			if !c.refused {
+				if err != nil {
+					t.Fatalf("release %s: err = %v, want launched", c.rel, err)
+				}
+				return
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want the launch refused", err)
+			}
+			for _, want := range []string{
+				"fugaro.yaml's agent.workspace_beat of acme/other",
+				"needs a job image whose runner knows " + workspaceBeatKnows(true, false),
+				"fugaro " + workspaceBeatSince + " or later",
+				"ghcr.io/dimipaun/fugaro-base:" + c.rel + ", release " + c.rel,
+				imageGateRemedy,
+				"; or remove agent.workspace_beat from fugaro.yaml",
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("%v lacks %q", err, want)
+				}
+			}
+			if n := len(f.run.Executions()); n != 0 {
+				t.Errorf("%d executions, want none", n)
+			}
+		})
+	}
+	// The key is judged as text and not as a value: `workspace_beat: true` is
+	// the default — the beat on, which is what the release below does by having
+	// no beat at all — and it is refused exactly as false is.
+	t.Run("the switch written on", func(t *testing.T) {
+		f := newCloudFixture(t)
+		dir := configSkewCheckout(t, f, configSkewWorkspaceBeat("true")+configSkewWorkflow)
+		writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, workspaceBeatSince, -1))
+		_, _, err := execute(t, "run", "--run-id", "20261120-100000-abcd", "A task")
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("err = %v, want the launch refused", err)
+		}
+		if !strings.Contains(err.Error(), "fugaro.yaml's agent.workspace_beat of acme/other") {
+			t.Errorf("%v lacks the key's own subject", err)
+		}
+		// The same image, the same repository, a file that writes no key:
+		// nothing to gate, which is the way out the refusal names.
+		testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": configSkewHead + configSkewWorkflow})
+		commitRef(t, dir, "develop")
+		if _, _, err := execute(t, "run", "--run-id", "20261120-100000-abce", "A task"); err != nil {
+			t.Fatalf("a file that writes no agent.workspace_beat must not be gated on workspaceBeatSince: %v", err)
+		}
+	})
+	// The layer's half: the key travels inside the task (task.Spec.ProjectLayer),
+	// so a launch reads it from there when it can read no file of the
+	// repository's — and every repository of the project dies at bootstrap on
+	// it, which is why the gate judges the layer the run will read.
+	t.Run("the project layer's key", func(t *testing.T) {
+		f := newCloudFixture(t)
+		isolateCache(t)
+		older := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, workspaceBeatSince, -1)
+		publishedLayer(t, f, strings.Replace(testProjectLayer, "  agent: { auth: api-key }\n",
+			"  agent: { auth: api-key, workspace_beat: false }\n", 1))
+		dir := layerCheckout(t, f, minimalAnchored)
+		registerOtherLocally(t, f)
+		commitRef(t, dir, "main")
+		writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, older)
+		_, _, err := execute(t, "run", "--run-id", "20261120-100000-abcf", "A task")
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("err = %v, want the launch refused", err)
+		}
+		for _, want := range []string{
+			"the project layer's defaults.agent.workspace_beat (read for acme/other)",
+			"needs a job image whose runner knows " + workspaceBeatKnows(false, true),
+			older,
+		} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the layer's half: %v lacks %q", err, want)
+			}
+		}
+		if strings.Contains(err.Error(), "fugaro.yaml's agent.workspace_beat") {
+			t.Errorf("the refusal blames the repository's file, which writes no key: %v", err)
+		}
+		if n := len(f.run.Executions()); n != 0 {
+			t.Errorf("%d executions, want none", n)
+		}
+	})
+	// A checkout: clone workflow has no build record: its gate is the
+	// installation's own base image (checkCloneWorkspaceBeatImage), and the key
+	// is the same break there.
+	t.Run("a checkout: clone workflow", func(t *testing.T) {
+		f := newCloudFixture(t)
+		older := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, workspaceBeatSince, -1)
+		f.appendConfig(t, "base_images: {base: "+older+"}\n")
+		configSkewCheckout(t, f, configSkewWorkspaceBeat("false")+
+			"workflows:\n  svc: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n")
+		_, _, err := execute(t, "run", "--run-id", "20261120-100000-abce", "A task")
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("err = %v, want the launch refused", err)
+		}
+		for _, want := range []string{
+			"fugaro.yaml's agent.workspace_beat of acme/other",
+			"needs a job image whose runner knows " + workspaceBeatKnows(true, false),
+			older,
+			"fugaro update --base base",
+		} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%v lacks %q", err, want)
+			}
+		}
+		if n := len(f.run.Executions()); n != 0 {
+			t.Errorf("%d executions, want none", n)
+		}
+	})
+}
+
+// configSkewWorkspaceBeat is configSkewHead with the keep-warm beat's switch
+// written: the file the workspaceBeatSince launches above check out.
+func configSkewWorkspaceBeat(value string) string {
+	return strings.Replace(configSkewHead, "agent: { auth: api-key }", "agent: { auth: api-key, workspace_beat: "+value+" }", 1)
+}
+
+// TestWorkspaceBeatSinceHasAReleaseBullet: workspaceBeatSince names 0.27.0,
+// which is not tagged, so docs/release.md's Before-you-tag list is what holds
+// the constant to the release actually cut — the job every other *Since
+// constant's bullet does. Nothing else ties the number the gate accepts to the
+// release whose config reader knows the key, and a release that landed it
+// elsewhere would otherwise keep refusing images that read it.
+func TestWorkspaceBeatSinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `workspaceBeatSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no workspaceBeatSince bullet: the checklist is where a release verifies the constant")
+	}
+	if !strings.Contains(bullet, "currently `\""+workspaceBeatSince+"\"`") {
+		t.Errorf("docs/release.md's workspaceBeatSince bullet does not carry the constant's release (%q)", workspaceBeatSince)
+	}
+	for _, want := range []string{"agent.workspace_beat", "not tagged yet", "config.RepoWorkspaceBeatSet", "ProjectLayer.SetsWorkspaceBeat"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's workspaceBeatSince bullet does not say %q", want)
+		}
+	}
+	// The layer's half is the predicate both call sites ask, and the bullet has
+	// to name that one: workspaceBeatSources and gateWorkspaceBeat read
+	// SetsWorkspaceBeat, which counts a key written as null where SetsDefault
+	// answers false for it.
+	if strings.Contains(bullet, "SetsDefault") {
+		t.Errorf("docs/release.md's workspaceBeatSince bullet names SetsDefault, which is not the predicate the gate asks: a layer that writes the key as null sets it and SetsDefault answers false for it")
+	}
+}
+
+// TestWorkspaceBeatSinceIsTheReleaseTheDocsName: the key's own documentation
+// names the release the gate holds the job image to — the schema's sentence,
+// which a reader of fugaro.yaml and of the layer sees, and internal/config's
+// for the layer's field. A reader told to upgrade for a release that does not
+// read the key moves an image for nothing, and one told nothing meets the
+// bootstrap failure the gate exists to prevent.
+func TestWorkspaceBeatSinceIsTheReleaseTheDocsName(t *testing.T) {
+	repoSchema, layerSchema := readDoc(t, "schemas/fugaro.schema.json"), readDoc(t, "schemas/project-layer.schema.json")
+	layer := readDoc(t, "internal/config/layer.go")
+	for _, c := range []struct {
+		what string
+		doc  string
+		want string
+	}{
+		{"fugaro.yaml's schema, agent.workspace_beat", repoSchema, "Needs fugaro " + workspaceBeatSince},
+		{"the layer schema's agent.workspace_beat", layerSchema, "Needs fugaro " + workspaceBeatSince},
+		{"internal/config's LayerAgent.WorkspaceBeat", layer, "Fugaro before " + workspaceBeatSince + " refuses the key"},
+	} {
+		if !strings.Contains(c.doc, c.want) {
+			t.Errorf("%s does not name the release the key ships in: want %q", c.what, c.want)
+		}
+	}
+}
+
+// TestIdentitySinceRefusesAnOlderImage is identitySince's launch gate and LM8's
+// red step: a launch that holds a ticket for its run's identity is not put on a
+// job image whose runner cannot claim it. From the release that claims on, the
+// launcher signs nothing and writes no sealed object (R7, LM6), so such an
+// execution carries the ticket and nothing else; a runner older than that
+// release looks for the sealed token under tokens/ where its launcher no longer
+// writes one, finds nothing, and stops at bootstrap with no identity at all —
+// with the launch already paid for.
+//
+// The judge is the one every *Since gate uses (checkImageSince, and its
+// checkout: clone twin checkCloneImageSince for a workflow with no build record
+// of its own), and the rows are the boundary itself: the release below the
+// constant is refused, the constant's own release and the one above it are
+// admitted. The refusal names the move that fixes it — the image refresh
+// `fugaro update` performs — and it carries no alt, because the ticket is the
+// whole of what a run's identity travels on and an older image cannot be given
+// one another way.
+func TestIdentitySinceRefusesAnOlderImage(t *testing.T) {
+	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}
+	older := shiftRelease(t, identitySince, -1)
+
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+older)
+	err := env.identityGate(context.Background(), appSlug, spec, "base", false, io.Discard)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want the launch refused on a job image older than %s", err, identitySince)
+	}
+	for _, want := range []string{
+		identitySubject,
+		"needs a job image whose runner knows " + identityKnows,
+		"fugaro " + identitySince + " or later",
+		"was built from base image ghcr.io/dimipaun/fugaro-base:" + older + ", release " + older,
+		imageGateRemedy + ", in your own terminal window (never in a coding agent's session",
+		"its images stage verifies this release's base base image, pins it by digest through the installation's remote repository and rebuilds the workflow's image",
+		causeMarkerJobImage,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+
+	for _, rel := range []string{identitySince, shiftRelease(t, identitySince, 1)} {
+		t.Run("a job image at "+rel, func(t *testing.T) {
+			f := newCloudFixture(t)
+			env := fileEnv(t, f)
+			writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+rel)
+			if err := env.identityGate(context.Background(), appSlug, spec, "base", false, io.Discard); err != nil {
+				t.Fatalf("a job image whose runner knows the claim was refused: %v", err)
+			}
+		})
+	}
+
+	// A checkout: clone workflow has no build record to judge: its gate is the
+	// installation's own base image, through checkCloneImageSince, and the
+	// boundary is the same one.
+	t.Run("a checkout: clone workflow", func(t *testing.T) {
+		f := newCloudFixture(t)
+		f.appendConfig(t, "base_images: {base: ghcr.io/dimipaun/fugaro-base:"+older+"}\n")
+		env := fileEnv(t, f)
+		err := env.identityGate(context.Background(), appSlug, spec, "base", true, io.Discard)
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("err = %v, want the checkout: clone launch refused", err)
+		}
+		for _, want := range []string{identityKnows, "fugaro update --base base"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the clone refusal does not name %q: %v", want, err)
+			}
+		}
+	})
+}
+
+// TestIdentitySinceHasAReleaseBullet: identitySince names 0.29.0, and no test
+// can derive that number from the tree — the plan it belongs to names no
+// release, and the release it is for is two minors past the one this tree
+// makes — so docs/release.md's Before-you-tag list is the only thing holding
+// the value to the tag actually cut. Its own refusal test is not that check:
+// TestIdentitySinceRefusesAnOlderImage shifts every row off the constant itself
+// (shiftRelease), so a value that named the wrong release stays green there.
+//
+// The pinned phrases are the bullet's account of the number: the ticket's
+// variable, the call site that keeps a bridge launch out of the gate, the
+// release the plan cannot ship before, the two values it is not, and the
+// "refuses too late" failure a value below the claiming release buys.
+func TestIdentitySinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `identitySince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no identitySince bullet: the checklist is where a release verifies the constant, and this constant names a release two minors past the one this tree makes")
+	}
+	if !strings.Contains(bullet, "currently `\""+identitySince+"\"`") {
+		t.Errorf("docs/release.md's identitySince bullet does not carry the constant's release (%q)", identitySince)
+	}
+	for _, want := range []string{"FUGARO_IDENTITY_TICKET", "only for a launch that holds a ticket", "release A", "0.27.0", "refuses too late"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's identitySince bullet does not say %q", want)
 		}
 	}
 }

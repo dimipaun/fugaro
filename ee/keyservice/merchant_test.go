@@ -4,7 +4,7 @@
 package keyservice
 
 // The paid path: the merchant of record's events (subscriptions plan S3.2, the
-// design docs/design/key-signing-service.md §5). Every event here is signed the
+// design docs/key-signing-service/spec.md §5). Every event here is signed the
 // way the merchant signs one, delivered to the webhook route, and read back
 // through the record and ee/licence's verifier.
 

@@ -30,7 +30,7 @@ const SharedVersion = 1
 // carry, so a published switch would name routes nothing in the file defines
 // (the node, where a run is actually routed, is written by `project policy
 // publish`), and claude_accounts:, whose allow-list is decision T1's operator-only
-// trust anchor (design docs/design/named-oauth-tokens.md §3: never
+// trust anchor (design docs/named-oauth-tokens/spec.md §3: never
 // published, never settable from fugaro.yaml or the project layer, so it
 // must not round-trip through the runs bucket either, which any launcher
 // with objectAdmin on it can write) and the account-choice keys
@@ -53,7 +53,7 @@ const SharedVersion = 1
 // not one machine's — the machine that launches is often not the machine that
 // opted in, and a local-only copy of it is exactly what goes missing (the
 // ledger item of PR #903). **batch: is published**, for the opposite reason: it is the
-// installation's own facts (design docs/design/compute-backend.md §4.4, plan
+// installation's own facts (design docs/compute-backend/spec.md §4.4, plan
 // 2026-10-19-compute-backend.md Task 8 step 2) — the image a run's job runs,
 // the machine type, the network and subnetwork its VMs are placed in, the
 // account they run as, the socket gid — and a machine that onboarded before
@@ -110,6 +110,14 @@ func (c *Config) Shared() *Config {
 	s.Credentials = nil
 	s.Pools = nil
 	s.Crafts = config.Crafts{}
+	// The routing table is dropped with them and for their reason: it names
+	// which credential serves which model, and by which admissions, so a
+	// launcher who could write it into the runs bucket's shared file would be
+	// aiming every teammate's calls at a credential the owner never admitted
+	// (D3182, F12). It travels to the policy node instead, which the runner
+	// reads and fails closed on — the table's own reader, and the one document
+	// here that is not writable by a launcher.
+	s.ModelRouting = nil
 	// The cascade, the grades and the removals travel the three blocks above
 	// into the policy node, and every one of them is dropped here for the
 	// reason they are, each with its own edge. The cascade's fallback decides
@@ -213,7 +221,7 @@ func (c *Config) Shared() *Config {
 	// would therefore move every teammate who has no local config onto VMs
 	// with a `batch:` block they wrote, while the machine that ran the
 	// provisioning and the doctor reading never sees the file at all
-	// (docs/design/shared-config.md §4; the reader refuses the key besides).
+	// (docs/shared-config/spec.md §4; the reader refuses the key besides).
 	s.BackendName = ""
 	// ReviewFloor is the owner's policy and travels the way BaseBranch does,
 	// through `fugaro project policy publish` into the policy node. It is
@@ -417,13 +425,39 @@ func SameInstallation(published, local *Config) bool {
 // are unioned, the local entry winning a key clash — with one field inside
 // repos read the other way round (mergeRepoRecords); scalar and pointer fields
 // take the local value when it is non-zero, else the published one; name,
-// gcp_project, runs_bucket and version always come from local. What Shared
-// drops is
-// never taken from published either. A published object of another
-// installation (SameInstallation) is ignored. Neither argument is modified.
-func MergeShared(published, local *Config) *Config {
+// gcp_project, runs_bucket and version always come from local. The batch: block
+// is read the other way round for its opt-in fact and for nothing else
+// (mergeBatchBlock, R15): that fact is the published copy's, and the retired key
+// fact is never published at all. What Shared drops is never taken from
+// published either. A published object of another installation
+// (SameInstallation) is ignored. Neither argument is modified.
+//
+// The two writers that CHANGE the opt-in fact — an operator's selection of the
+// backend (R2) and the opt-out (R16) — are MergeSharedOptIn, which is this
+// function with the value they are writing passed explicitly.
+func MergeShared(published, local *Config) *Config { return MergeSharedOptIn(published, local, "") }
+
+// MergeSharedOptIn is MergeShared with the opt-in fact its caller is writing
+// (R15): optIn, when it is one of the fact's written values, is what the
+// published block carries, and "" is an ordinary publish, where the published
+// copy's own value is kept. Only the two writers R15 names pass one — the
+// operator's selection passes BatchOptInOn (R2) and the opt-out passes
+// BatchOptInWithdrawn (R16) — and they have to, because every other publish
+// takes the fact from the published copy: without an explicit value a machine
+// whose own block says `in` would never be able to opt an installation in, and
+// one whose block still says `in` would keep a withdrawal from being written.
+func MergeSharedOptIn(published, local *Config, optIn string) *Config {
 	out := local.Shared()
 	if !SameInstallation(published, local) {
+		// Nothing of the installation's is published to merge from — an empty
+		// bucket, or a copy ParseShared refused, which the publisher replaces
+		// (O18) — and the block published is this machine's own whole. The fact
+		// in it is the one this call would otherwise have taken from a published
+		// copy there is none of: the value a writer passed, and this machine's
+		// own block's for an ordinary publish — which is why a writer's value is
+		// an argument and not a rule read off the block, the absence of a copy to
+		// keep it in being exactly where it would otherwise be lost (R15).
+		out.Batch = mergeBatchBlock(out.Batch, nil, optIn)
 		return out
 	}
 	out.Repos = withoutRepoLocalKeys(mergeRepoRecords(published.Repos, out.Repos))
@@ -448,17 +482,7 @@ func MergeShared(published, local *Config) *Config {
 		out.Build = published.Build
 		out.Build.ServiceAccount = ""
 	}
-	if out.Batch == nil {
-		// The batch block is the installation's facts, not one machine's (the
-		// image a run's job runs, the machine type, the network and subnetwork
-		// its VMs are placed in, the account they run as, the socket gid), so
-		// it is published and it is a pointer like budget: and watch:. A
-		// publisher whose own config has no batch: block is a machine that did
-		// not apply the compute root; taking its nil over the published one
-		// would erase what another machine onboarded, silently, in the only
-		// place the installation's copy lives.
-		out.Batch = published.Batch
-	}
+	out.Batch = mergeBatchBlock(out.Batch, published.Batch, optIn)
 	if out.Budget == nil {
 		out.Budget = published.Budget
 	}
@@ -514,6 +538,71 @@ func MergeShared(published, local *Config) *Config {
 		out.MaxParallel = published.MaxParallel
 	}
 	return out
+}
+
+// mergeBatchBlock is the `batch:` block the publish writes: the publishing
+// machine's own block when it has one, else the published one — the rule the
+// block has had since it was published at all, and the reason for it: the block
+// is the installation's facts, not one machine's (the image a run's job runs,
+// the machine type, the network and subnetwork its VMs are placed in, the
+// account they run as, the socket gid), so a publisher whose own config has no
+// block is a machine that did not apply the compute root, and taking its nil
+// over the published one would erase what another machine onboarded, silently,
+// in the only place the installation's copy lives. Every field of the block
+// keeps that rule and only its two identity facts do not.
+//
+// **The opt-in fact comes from the published copy, whatever the publishing
+// machine's own block says** (R15, D3110 as amended): the fact says whether the
+// INSTALLATION's compute root is applied, and one machine's block is no more
+// the authority on it than on the network its VMs are placed in. A machine
+// whose own block lacks the fact — the common case, a teammate who onboarded
+// after an operator opted the installation in — must not publish the absence
+// over it, and a machine whose block holds the other value (a stale `in` after
+// an opt-out, which its own copy follows at its next `fugaro update`) must not
+// publish that either: the merge is what makes "a machine's copy of it is never
+// the authority" true of the runs bucket, and it is the whole of the rule,
+// because a launch reads the published copy whenever the machine holds no local
+// config of its own. A withdrawal is a written value beside `in` — see
+// batch_sealkey.go — so it is carried here exactly as `in` is and never read as
+// an absence.
+//
+// optIn is the single exception, and it is the two writers' (R15): the operator
+// who selects the backend passes BatchOptInOn (R2) and the opt-out passes
+// BatchOptInWithdrawn (R16), and the value they pass is published. It has to be
+// an argument rather than a rule read off the block, because "this machine's
+// value wins" would be the erasure above and "the published value wins" would
+// leave both writers unable to write anything: only the two commands that mean
+// the change may carry one.
+//
+// **The key fact is never published** (R10, BR23): it is the retired half of
+// the block's identity facts, the Cloud KMS key version a launcher wrapped a
+// run's budget token to and its public key, so the publish drops it here, in
+// place, exactly as `batch.secrets` leaves the block — a block that still
+// carries one is read and not refused (the fields stay in the config for that
+// reason, and Shared keeps them), and what a reader of the runs bucket gets is
+// the block without it. Dropping it only in the document the publish writes is
+// what makes a key fact written by the release behind unrepublishable: the
+// machine's own file is `fugaro update`'s to rewrite in place, and until it
+// does, the field it still holds is one no other machine ever reads.
+//
+// The block is returned as a fresh one, so neither argument is modified: the
+// result is marshalled and written, and the caller keeps its own block.
+func mergeBatchBlock(local, published *Batch, optIn string) *Batch {
+	if local == nil {
+		local = published
+	}
+	if local == nil {
+		return nil
+	}
+	out := *local
+	switch {
+	case optIn != "":
+		out.OptIn = optIn
+	case published != nil:
+		out.OptIn = published.OptIn
+	}
+	out.SealKey = nil
+	return &out
 }
 
 // mergeRepoRecords is unionMaps over the repository entries with one field

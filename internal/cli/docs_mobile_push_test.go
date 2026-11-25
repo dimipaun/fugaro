@@ -122,20 +122,20 @@ func TestDocsMobilePushCitationsExist(t *testing.T) {
 		// The channel's neighbours: what the site already tells a provider, and
 		// the console decision that asked the same question and answered "no FCM".
 		"website/src/pages/privacy.astro",
-		"docs/design/desktop-console-v2.md",
-		"docs/design/voice.md",
+		"docs/desktop-console-v2/spec.md",
+		"docs/voice/spec.md",
 		// The mailbox, its schema and the presence rule the design leans on.
 		"shared/mailbox/index.js",
 		"shared/mailbox-schema/index.js",
 		"shared/presence/index.js",
-		"docs/design/m9-budget-and-dashboard.md",
-		"docs/design/budget-token-channel.md",
+		"docs/m9-budget-and-dashboard/spec.md",
+		"docs/budget-token-channel/spec.md",
 		// Where the device node and its generation land.
 		"internal/budget/rules/rules.json.tmpl",
 		"internal/budget/rules/rules.go",
 		"internal/projectpolicy/version.go",
-		"docs/design/managed-projects.md",
-		"docs/design/project-centric.md",
+		"docs/managed-projects/spec.md",
+		"docs/project-centric/spec.md",
 		// The only scheduled cloud components: the job a sender would extend.
 		"internal/cli/history.go",
 		"deploy/terraform/gcp/modules/installation/history.tf",
@@ -192,39 +192,62 @@ func TestDocsMobilePushCitationsExist(t *testing.T) {
 	}
 }
 
-// TestDocsMobilePushDoesNotInventAMailboxDisclosureInSecurityMD: §9 argues,
-// correctly and from a grep, that SECURITY.md says nothing about the phone, the
-// mailbox or notifications — 0 occurrences of "mailbox" in that file, which this
-// test re-checks rather than trusting. §9 and Q8 must therefore not turn round
-// three lines later and claim the trust model already carries the mailbox's
-// disclosures, or point a future writer at "the mailbox residual it already
-// carries": that is a contradiction with both the file and the paragraph above
-// it, and it sends the writer to a paragraph that does not exist. The red state
-// is exactly those two sentences.
+// TestDocsMobilePushDoesNotInventAMailboxDisclosureInSecurityMD: §9 once
+// argued, correctly and from a grep, that SECURITY.md said nothing about the
+// phone, the mailbox or notifications, and its own failure text said that
+// sentence "is now false and must be corrected rather than left standing" the
+// day the trust model gained the subject. The owner's Q8 answer of 2026-11-21
+// put the statement in a NEW section, Task P5.2.8 wrote it, and this guard is
+// the correction's other half: the design must say what was written and with
+// which date, and it must not put back the two claims that were never true of
+// the file — that the trust model already carried the mailbox's disclosures, or
+// that a writer may be pointed at the mailbox residual "it already carries".
+// A design that still said the file carries nothing, beside a file that carries
+// the section, is the contradiction this test exists for.
 func TestDocsMobilePushDoesNotInventAMailboxDisclosureInSecurityMD(t *testing.T) {
 	const path = "docs/mobile/design/push-notifications.md"
 	doc := readDoc(t, path)
+	flat := normSpace(doc)
 
-	// The fact §9 relies on, checked here rather than asserted in the design's
-	// own prose: no occurrence of "mailbox" (any case) in SECURITY.md.
+	// The fact §9 now rests on, checked here rather than asserted in the
+	// design's own prose: the section exists, and it says the one thing Q7's
+	// answer requires of it — that the publisher is in the message path.
 	security := readDoc(t, "SECURITY.md")
-	if strings.Contains(strings.ToLower(security), "mailbox") {
-		t.Errorf("SECURITY.md now carries \"mailbox\": the design's §9 sentence that the trust model says nothing about the mailbox is now false and must be corrected rather than left standing")
+	for _, want := range []string{
+		"### Push notifications, and the relay the publisher holds",
+		"publisher is in the message path",
+	} {
+		if !strings.Contains(normSpace(security), want) {
+			t.Errorf("SECURITY.md does not carry %q: the owner's Q8 answer of 2026-11-21 puts the push statement in a new section of this file, and Q7's answer requires that section to say the publisher is in the message path", want)
+		}
 	}
 
 	// Fragments, not whole sentences: the document wraps its prose, so a
 	// whole-sentence needle can hide behind a newline as well as a wording
-	// change, and both would leave this guard green.
-	for _, invented := range []string{
+	// change, and both would leave this guard green. The first two are the
+	// invented claims §9 has always been refused for; the third is the same
+	// claim in the plan's own wording, which was true of the file and is not
+	// any more.
+	for _, stale := range []string{
 		"residual it already carries",
 		"the mailbox's disclosures",
+		"carries no mailbox disclosure today",
 	} {
-		if strings.Contains(doc, invented) {
-			t.Errorf("%s claims %q, but SECURITY.md has no occurrence of \"mailbox\": §9 states that absence itself three lines earlier, so the claim contradicts the file and the paragraph it sits in", path, invented)
+		if strings.Contains(flat, normSpace(stale)) {
+			t.Errorf("%s claims %q, and SECURITY.md carries the push section: a design that points a writer at a disclosure the file never held, or at the older text as if the file still stopped short of the subject, sends them somewhere the statement is not", path, stale)
 		}
 	}
-	if !strings.Contains(doc, "carries no mailbox disclosure") {
-		t.Errorf("%s lines neither a true claim nor a corrected one: §9/Q8 must say plainly that SECURITY.md carries no mailbox disclosure to sit the statement beside", path)
+
+	// What §9 must carry instead: the section it says was written, the date of
+	// the answer, and Q7's own sentence rather than a summary of it.
+	for _, want := range []string{
+		"Push notifications, and the relay the publisher holds",
+		"2026-11-21",
+		"publisher is in the message path",
+	} {
+		if !strings.Contains(flat, normSpace(want)) {
+			t.Errorf("%s does not carry %q: §9's claim about SECURITY.md must name the section that was written, the date the owner's answers were given, and the sentence Q7's answer puts in it", path, want)
+		}
 	}
 }
 

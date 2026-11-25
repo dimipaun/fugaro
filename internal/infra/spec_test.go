@@ -25,6 +25,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/place"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -1211,7 +1212,7 @@ func TestInstallationSpec(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Exactly the installation root's variables.
-	want := []string{"adopt_legacy_registry", "alert_email", "bucket_lifecycle", "budget", "enable_vertex", "fugaro_project", "launcher_accounts", "launcher_bucket_condition", "launchers", "log_bucket_description", "manage_apis",
+	want := []string{"adopt_legacy_registry", "alert_email", "bucket_lifecycle", "budget", "enable_vertex", "fugaro_project", "launcher_accounts", "launcher_bucket_condition", "launchers", "log_bucket_description", "log_bucket_location", "manage_apis",
 		"names", "operators", "project", "region", "registry_cleanup", "reports", "runs_bucket", "state_bucket"}
 	if got := slices.Sorted(maps.Keys(doc)); !slices.Equal(got, want) {
 		t.Errorf("keys = %v, want %v", got, want)
@@ -1220,6 +1221,12 @@ func TestInstallationSpec(t *testing.T) {
 	// carry no labels.
 	if doc["log_bucket_description"] != LogBucketDescription || !strings.Contains(LogBucketDescription, "fugaro") {
 		t.Errorf("log_bucket_description = %v", doc["log_bucket_description"])
+	}
+	// And where the bucket a NEW installation creates is: the mapping's
+	// answer for the region, which for us-east5 is the US multi-region (a
+	// region Cloud Logging offers no bucket in, LP6, D3082).
+	if doc["log_bucket_location"] != place.For(s.Region).LogBucket.Where {
+		t.Errorf("log_bucket_location = %v, want %v", doc["log_bucket_location"], place.For(s.Region).LogBucket.Where)
 	}
 	if doc["budget"] != nil {
 		t.Errorf("budget = %v", doc["budget"])
@@ -1443,7 +1450,7 @@ func TestWorkflowEnvKeepsTheCeiling(t *testing.T) {
 					t.Errorf("%s env = %v: want the mode, the cap and the prices", w.Name, got)
 				}
 				if s, err := runner.SpendFromEnv(func(k string) (string, bool) { v, ok := w.Env[k]; return v, ok }); err != nil || !s.On() || s.Cap != 5_000_000 || s.Prices == nil {
-					t.Errorf("%s: SpendFromEnv = %+v, %v", w.Name, s, err)
+					t.Errorf("%s: SpendFromEnv = %+v, %v; want the run accounted for on the owner's cap", w.Name, s, err)
 				}
 			}
 		})
@@ -2103,7 +2110,7 @@ const claudeAccountsLC = `claude_accounts:
 // the workflow keys fugaro.yaml names, unchanged: gcp.WorkflowVariant is the
 // identity function for the repository's default account, so
 // BuildRepoSpec's loop produces exactly the one WorkflowSpec per workflow it
-// produced before this task (design docs/design/named-oauth-tokens.md §5).
+// produced before this task (design docs/named-oauth-tokens/spec.md §5).
 // TestGoldenTfvars is the byte-for-byte proof of this over the fixture
 // corpus; this test pins the one fact that proof depends on, directly.
 func TestBuildRepoSpecUnchangedWithNoClaudeAccounts(t *testing.T) {
@@ -2353,7 +2360,7 @@ func TestProjectSecretContainerIsDerivedFromTheEntry(t *testing.T) {
 	}
 }
 
-// --- RepoSpec.Addresses (plan docs/plans/2026-10-14-config-transitions.md Task 1)
+// --- RepoSpec.Addresses (plan docs/config-transitions/implementation-plan.md Task 1)
 
 // The golden fixtures' agent blocks. oauth with one named account and
 // vertex exclude one another (Repo builds named variants only under oauth),
@@ -2418,7 +2425,7 @@ const repoRootAPIKeyLC = repoRootLC + `providers:
 `
 
 // repoRootMixedLC is repoRootAPIKeyLC with the one stage key the owner's B0
-// ruling admits (docs/design/mixed-credentials.md §11): the review stage's
+// ruling admits (docs/mixed-credentials/spec.md §11): the review stage's
 // Claude account, whose allow_data_to admits this repository. The coder's own
 // stages are untouched, so they keep the provider key the gateway holds.
 const repoRootMixedLC = repoRootAPIKeyLC + `stages:
@@ -2679,7 +2686,7 @@ var repoRootFixtures = map[string]repoRootFixture{
 	// repo_root_mixed is B2's fixture: an api-key spec whose local config
 	// names the one stage account the owner's B0 ruling admits, so a real plan
 	// holds the job variant that account gets, the token it mounts and the
-	// accessor beside them (docs/design/mixed-credentials.md §11). No other
+	// accessor beside them (docs/mixed-credentials/spec.md §11). No other
 	// fixture has an api-key job at all.
 	"repo_root_mixed": {agent: `agent: { auth: api-key }`, lc: repoRootMixedLC},
 	// repo_root_mixed_served is the mixed fixture SWITCHED: the same api-key
@@ -2695,7 +2702,7 @@ var repoRootFixtures = map[string]repoRootFixture{
 	// two Claude mounts and their accessors go, and the stage account's own
 	// job keeps the account's token and the accessor beside it, because that
 	// token is the stage's and its stages go straight to Anthropic (B0's
-	// ruling, docs/design/mixed-credentials.md §11; C1.20).
+	// ruling, docs/mixed-credentials/spec.md §11; C1.20).
 	"repo_root_mixed_served": {agent: `agent: { auth: api-key }`, lc: repoRootMixedLC + credentialsServiceLCBlock, credentialsService: true, credentialsReady: true, mode: config.BudgetEnforce},
 }
 
@@ -2833,7 +2840,7 @@ func TestRepoAddressesMatchTheCredentialsGolden(t *testing.T) {
 // the variant whose name carries the account's own token — is the only one
 // that reaches a Claude credential. That is the whole shape of the ruling:
 // the run's review and adversarial stages are on the account, and no stage
-// of the coder's own job is (docs/design/mixed-credentials.md §11).
+// of the coder's own job is (docs/mixed-credentials/spec.md §11).
 func TestRepoAddressesMatchTheMixedGolden(t *testing.T) {
 	const (
 		account = "bmb"
@@ -2916,7 +2923,7 @@ func TestRepoAddressesMatchTheMixedServedGolden(t *testing.T) {
 
 // TestSwitchedMixedRepositoryKeepsItsStageAccountToken is B2.7's flip on the
 // one repository that mixes credentials (B0's ruling of 2026-11-04,
-// docs/design/mixed-credentials.md §11): switched ON, an api-key repository
+// docs/mixed-credentials/spec.md §11): switched ON, an api-key repository
 // with a stage account gives up the two Claude mounts of its CODER job, and
 // the account's own variant job gives up its Anthropic key while keeping the
 // account's OAuth token.
@@ -3709,10 +3716,10 @@ func TestFilledServiceServedAuthsDropsTheAnthropicMountsOnly(t *testing.T) {
 		if !slices.Contains(config.ServiceServedAuths, auth) {
 			t.Fatalf("config.ServiceServedAuths is %v and does not carry %q: B2.7's flip is what makes a switched %s repository give up its two Claude mounts (D2072, G17)", config.ServiceServedAuths, auth, auth)
 		}
-		if got := ModelSecretsServed(true, auth); got != config.ModelSecretServedAnthropic {
+		if got := ModelSecretsServed(ChainPlan{}, true, auth); got != config.ModelSecretServedAnthropic {
 			t.Errorf("ModelSecretsServed(serving, %q) = %q, want %q: a switched repository of an auth in the flip list reaches the service for the Anthropic key and the OAuth token, so those two mounts go (D2072)", auth, got, config.ModelSecretServedAnthropic)
 		}
-		if got := ModelSecretsServed(false, auth); got != config.ModelSecretServedNone {
+		if got := ModelSecretsServed(ChainPlan{}, false, auth); got != config.ModelSecretServedNone {
 			t.Errorf("ModelSecretsServed(held off, %q) = %q, want %q: a repository the switch holds off keeps every mount, whatever the flip list says", auth, got, config.ModelSecretServedNone)
 		}
 	}
@@ -3782,7 +3789,7 @@ func TestFilledServiceServedAuthsKeepsProviderKeys(t *testing.T) {
 	}
 	// The provider's key is not a credential of the service's, at any auth: a
 	// vertex repository's calls are the project's own GCP service.
-	if got := ModelSecretsServed(true, "vertex"); got != config.ModelSecretServedNone {
+	if got := ModelSecretsServed(ChainPlan{}, true, "vertex"); got != config.ModelSecretServedNone {
 		t.Errorf("ModelSecretsServed(serving, vertex) = %q, want %q: a Vertex workflow's calls are not a credential this service holds", got, config.ModelSecretServedNone)
 	}
 }
@@ -3807,7 +3814,7 @@ func TestFilledServiceServedAuthsKeepsProviderKeys(t *testing.T) {
 // producing are admitted, one per variant, INCLUDING the named account's (a rule
 // keyed on the names of the two default mounts would leave that repository's
 // update owed a flag for half of its flip — design
-// docs/design/named-oauth-tokens.md §4 T3). A name the job still mounts is not,
+// docs/named-oauth-tokens/spec.md §4 T3). A name the job still mounts is not,
 // and neither is the name the fetched class's drop took instead (that accessor
 // is the OTHER flip's delete, and its own list admits it): the two lists
 // partition the plan's deletes rather than overlapping. A variant the
@@ -3844,7 +3851,7 @@ func TestModelAccessorAllowDeleteIsTheFlipsOwn(t *testing.T) {
 	}
 	for _, variant := range []string{"web", "web_bmb"} {
 		if _, deployed := oauth.Workflows[variant]; !deployed {
-			t.Fatalf("the fixture deploys no %s variant, so the named account's row below would be about a job this root never makes (design docs/design/named-oauth-tokens.md §4 T3)", variant)
+			t.Fatalf("the fixture deploys no %s variant, so the named account's row below would be about a job this root never makes (design docs/named-oauth-tokens/spec.md §4 T3)", variant)
 		}
 	}
 	var gone []string
@@ -3897,7 +3904,7 @@ func TestModelAccessorAllowDeleteIsTheFlipsOwn(t *testing.T) {
 		}
 	}
 	// The mixed stage account is the arm's one exception (B0,
-	// docs/design/mixed-credentials.md §11): its own job keeps the account's
+	// docs/mixed-credentials/spec.md §11): its own job keeps the account's
 	// token — and its accessor, which sa.tf exempts by the same field — so a
 	// plan deleting that address is not the flip's and stops the run.
 	mixed := repoRootServed(t, `agent: { auth: api-key }`, repoRootMixedLC, config.BudgetEnforce)
@@ -4283,10 +4290,10 @@ func TestFilledBuildListDropsTheCheckMounts(t *testing.T) {
 // D1634). A mixed stage account's own variant job is the arm's one exception,
 // its Claude OAuth mount being the STAGE's credential rather than the run's.
 func TestCascadeStillDropsItsMounts(t *testing.T) {
-	if got := ModelSecretsServed(true, config.AuthCascade); got != config.ModelSecretServedAll {
+	if got := ModelSecretsServed(ChainPlan{}, true, config.AuthCascade); got != config.ModelSecretServedAll {
 		t.Errorf("ModelSecretsServed(serving, cascade) = %q, want %q: the cascade's runner reads every model credential from the service, so its job keeps none (D143)", got, config.ModelSecretServedAll)
 	}
-	if got := ModelSecretsServed(false, config.AuthCascade); got != config.ModelSecretServedNone {
+	if got := ModelSecretsServed(ChainPlan{}, false, config.AuthCascade); got != config.ModelSecretServedNone {
 		t.Errorf("ModelSecretsServed(held off, cascade) = %q, want %q: a cascade repository the switch holds off keeps exactly what it had", got, config.ModelSecretServedNone)
 	}
 	rs := repoRootServed(t, repoRootCascadeAgent, repoRootLC, config.BudgetEnforce)
@@ -5906,11 +5913,34 @@ func sharedSandboxPolicy(repos ...string) *projectpolicy.Policy {
 	}
 }
 
+func bakedOnSharedJob(t *testing.T) {
+	t.Helper()
+	SharedJobBaked = true
+	t.Cleanup(func() { SharedJobBaked = false })
+}
+
+// TestABakedRepoIsNotMarkedSharedUntilTheSharedJobCarriesItsTools is why
+// switching a baked repository's account works: fugaro run launches its baked
+// workflow on the per-repository job, so update must keep applying the
+// repository root that creates it.
+func TestABakedRepoIsNotMarkedSharedUntilTheSharedJobCarriesItsTools(t *testing.T) {
+	in := sandboxInputs(t, m5Additions)
+	in.Policy = sharedSandboxPolicy("bitbucket/acme/sandbox")
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs.Shared {
+		t.Error("a repository with a baked workflow is marked shared while the shared job cannot carry its tools: update would apply no root and fugaro run would find no per-repository job")
+	}
+}
+
 // TestSpecMarksASharedRepo is M6's mark: a repository a deployed profile
 // admits is shared, which is the fact M7 reads to stop applying its
 // repository-level root and the structural precondition D2303 puts in place of
 // a retire gate.
 func TestSpecMarksASharedRepo(t *testing.T) {
+	bakedOnSharedJob(t)
 	in := sandboxInputs(t, m5Additions)
 	in.Policy = sharedSandboxPolicy("bitbucket/acme/sandbox")
 	rs, err := Repo(in)
@@ -5929,6 +5959,7 @@ func TestSpecMarksASharedRepo(t *testing.T) {
 // the field existed and no root applies differently on the strength of the
 // mark alone.
 func TestTheSharedMarkChangesNoTerraformInput(t *testing.T) {
+	bakedOnSharedJob(t)
 	marked := sandboxInputs(t, m5Additions)
 	marked.Policy = sharedSandboxPolicy("bitbucket/acme/sandbox")
 	unmarked := sandboxInputs(t, m5Additions)

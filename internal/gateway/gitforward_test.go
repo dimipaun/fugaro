@@ -653,7 +653,17 @@ func TestGitForwardFiltersTheAnswerHeaders(t *testing.T) {
 // went to with the caller's escaped path and query on it. That URL is the one
 // way a path could reach a line this listener writes, and the file's own
 // contract, which later tasks read as theirs, is that none does.
+//
+// The service in this case never comes back, so the forward spends the wait
+// (WS18) and is answered when the bound is spent: the bound and the interval
+// between attempts are shortened here, because what this case is about is the
+// two lines a run's operator reads and not the wait. The wait's own line is
+// written once, when the outage begins.
 func TestGitForwardUnreachableCarriesNoPath(t *testing.T) {
+	bound(t, 30*time.Millisecond)
+	defer func(old time.Duration) { gitForwardRetryDelay = old }(gitForwardRetryDelay)
+	gitForwardRetryDelay = 5 * time.Millisecond
+
 	logs := &logBuf{}
 	f := startForward(t, closedPort(t), func(o *GitForwardOptions) {
 		o.Log = slog.New(slog.NewJSONHandler(logs, nil))
@@ -667,16 +677,19 @@ func TestGitForwardUnreachableCarriesNoPath(t *testing.T) {
 		t.Errorf("the answer = %q, want the class %q", body, "unreachable")
 	}
 	lines := logs.lines(t)
-	if len(lines) != 1 {
-		t.Fatalf("the refusal wrote %d log lines, want 1", len(lines))
+	if len(lines) != 2 {
+		t.Fatalf("the refusal wrote %d log lines, want the wait's one and the refusal's", len(lines))
 	}
-	if got, _ := lines[0]["reason"].(string); got != "unreachable" {
+	if _, ok := lines[0]["reason"]; ok {
+		t.Errorf("the wait's line carries a class, which is the refusal's: %v", lines[0])
+	}
+	if got, _ := lines[1]["reason"].(string); got != "unreachable" {
 		t.Errorf("the log line's reason = %q, want %q", got, "unreachable")
 	}
 	// The cause is kept: a line that named nothing would satisfy the check
 	// below and leave the run's operator with a class and no dial.
-	if e, _ := lines[0]["error"].(string); e == "" {
-		t.Errorf("the log line carries no cause: %v", lines[0])
+	if e, _ := lines[1]["error"].(string); e == "" {
+		t.Errorf("the log line carries no cause: %v", lines[1])
 	}
 	// The whole line, its cause included: what the caller asked for is what a
 	// *url.Error would have said, and it is not here.

@@ -117,20 +117,21 @@ func newBudgetPreviewCmd() *cobra.Command {
 			"result.json that is missing or unreadable, and a record with no\n" +
 			"per-stage cost at all (one from before the runner kept it, or\n" +
 			"stages that all cost nothing).\n\n" +
-			"The recipe resolves as it does for a run: the repository's\n" +
-			".fugaro/recipes, the project's published recipes, then the catalog. The\n" +
-			"knobs come from the checkout's fugaro.yaml; without a checkout of the\n" +
-			"repository here, agent.max_budget_usd is unknown and only\n" +
-			"budget.per_run_usd bounds the figure, so with neither the preview says it\n" +
-			"is unbounded.\n\n" +
+			"The recipe resolves as it does for a run: the project's copy of the\n" +
+			"repository's own recipe, the project's published recipes, then the\n" +
+			"catalog. The checkout's .fugaro/recipes/ is not read. The knobs come\n" +
+			"from the checkout's fugaro.yaml; without a checkout of the repository\n" +
+			"here, agent.max_budget_usd is unknown and only budget.per_run_usd\n" +
+			"bounds the figure, so with neither the preview says it is unbounded.\n\n" +
 			"It reads the database's caps and today's counters (the Viewer role), and\n" +
 			"the repository's runs (the runs bucket, for the typical line). A recipe\n" +
-			"that is not in the checkout also reads the project's recipes from the\n" +
-			"runs bucket, as recipes ls does, which a plain project Viewer cannot\n" +
-			"read (the converge removes that access): not reading it costs the project layer,\n" +
-			"and the ceiling with it. The typical line's own read of the bucket is\n" +
-			"the one that costs the line and nothing else: a bucket it cannot read\n" +
-			"leaves the ceiling standing. It writes nothing.",
+			"name the project store could hold also reads the project's recipes from\n" +
+			"the runs bucket, as recipes ls does, which a plain project Viewer cannot\n" +
+			"read (the converge removes that access): a name that is no recipe name\n" +
+			"is refused before the bucket is opened, and nothing else on this path\n" +
+			"reaches it. The typical line's own read of the bucket is the one that\n" +
+			"costs the line and nothing else: a bucket it cannot read leaves the\n" +
+			"ceiling standing. It writes nothing.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runBudgetPreview(cmd, &o) },
 	}
@@ -138,7 +139,7 @@ func newBudgetPreviewCmd() *cobra.Command {
 	f.StringVar(&o.recipe, "recipe", "", "the recipe to preview ("+strings.Join(recipe.CatalogNames(), ", ")+")")
 	f.IntVar(&o.runs, "runs", 0, "how many runs to estimate")
 	f.StringVar(&o.repo, "repo", "", "the repository (owner/name, or a path inside its checkout); default: the checkout's origin")
-	f.StringVar(&o.mode, "mode", "", "the rigor mode to preview: "+rigor.RigorList()+"; it may raise the mode the repository resolves (its rigor: block, the project layer) and never lower it, so a mode below the resolved one changes nothing — except hotfix, which is taken whole and needs no opt-in, as it is for a run. This is the rigor mode, not the accounting mode budget set --mode takes (observe or enforce)")
+	f.StringVar(&o.mode, "mode", "", "the rigor mode to preview: "+rigor.RigorList()+"; it is the run's own request and settles the mode the repository resolves (its rigor: block, the project layer) whether it asks for more or for less — only a review floor holds a run above its request, and a floor is a level, not a mode. Hotfix is taken whole and needs no opt-in, as it is for a run. This is the rigor mode, not the accounting mode budget set --mode takes (observe or enforce)")
 	f.BoolVar(&o.json, "json", false, "print machine-readable output")
 	addCloudFlags(cmd, &o.cloud)
 	for _, name := range []string{"recipe", "runs"} {
@@ -179,11 +180,12 @@ type previewKnobs struct {
 // whatever the project had published.
 //
 // asked is --mode, fed to the resolver as the run's own request and nothing
-// more: the run's request may raise a mode and never lower it (D6), and a
-// preview that let it lower one would quote a ceiling the launched run would
-// never be held to — the unsafe direction for a spend estimate. Hotfix is the
-// one mode the request takes whole (rigor.Rigor.PerRun), so the preview prices it
-// exactly as a hotfix run would be priced rather than calling it a lower mode.
+// more: the request is the narrowest rank of the mode's order (LD3), so the
+// preview prices the mode the launched run will really be at, whether the
+// request asks for more or for less. Hotfix is the mode the request takes
+// whole (rigor.Rigor.PerRun), so the preview prices it exactly as a hotfix run
+// would be priced rather than calling it a lower mode. The floors are review
+// levels and not modes, so they move neither the mode nor these figures.
 func previewKnobsOf(cfg *config.Config, project rigor.Config, asked rigor.Rigor) previewKnobs {
 	k := previewKnobs{from: "defaults", mode: rigor.Resolve(project, rigor.Request{Level: asked}).Level}
 	if cfg != nil {
@@ -541,11 +543,11 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 	// A project recipe lives in the runs bucket, and reading the bucket is
 	// not everyone's to do (init removes the plain Viewer's read). Open it
 	// only when the project layer could hold this recipe at all: not when
-	// its name is not the default one (projectRecipesNote), and not when the
-	// repository's own checkout already holds it, since the repository layer
-	// resolves first.
+	// the runs bucket is not the default one (projectRecipesNote), and not
+	// when the name is one the store cannot hold, which resolveRecipe
+	// refuses without reading anything.
 	env := &cloudEnv{lc: lc}
-	if projectRecipesNote(lc) == "" && !repoHasRecipe(root, o.recipe) {
+	if projectRecipesNote(lc) == "" && repoHasRecipe(o.recipe) {
 		if env, err = openCloudFor(ctx, lc); err != nil {
 			return err
 		}
@@ -576,16 +578,6 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 		KnobsFrom: knobs.from, PerRunCapSource: []string{}, Notes: []string{}}
 	doc.Knobs.FirstLineRounds, doc.Knobs.ReviewRounds = knobs.first, knobs.rounds
 	doc.RigorMode = knobs.mode
-	// An on-axis request the layers already meet changes nothing (rigor.Resolve's
-	// raise-only rule), and the figures above are the resolved mode's: a caller
-	// who asked for poc and got pro's ceiling has to be told why, or the flag
-	// reads as broken. run says the same thing at a launch (noteRigorRequest).
-	// A request the resolution landed on exactly is not this case: it took
-	// effect, whether or not the layer that set the mode is the request — and
-	// hotfix always lands on exactly itself, since the request takes it whole.
-	if o.mode != "" && knobs.mode != rigor.Rigor(o.mode) {
-		doc.Notes = append(doc.Notes, fmt.Sprintf("--mode %s has no effect: this repository resolves to %s, and a request may raise a mode and never lower it", o.mode, knobs.mode))
-	}
 	// resolveRecipe's note says where the stages come from when the recipe
 	// was not simply found: a stale cached project recipe standing in for an
 	// unreachable bucket, or the project layer skipped. run prints it for the
@@ -981,16 +973,13 @@ func roundCount(knob, maxRounds int) int {
 	return min(max(knob, 0), 1)
 }
 
-// repoHasRecipe reports whether the checkout at root holds name in
-// .fugaro/recipes, which resolveRecipe takes before it reaches the runs
-// bucket. A name that is not a recipe name is not one either.
-func repoHasRecipe(root, name string) bool {
-	if root == "" || !recipe.NameRE.MatchString(name) {
-		return false
-	}
-	_, found, err := recipe.ReadRepoFile(root, name)
-	return err == nil && found
-}
+// repoHasRecipe reports whether the project store could hold name at all, which
+// is the question the bucket read below is opened for: a recipe name, or the
+// name of the project's copy of one (D3302). The checkout's .fugaro/recipes/ is
+// not read — a repository's own recipe is the project's copy of it, published
+// by fugaro update, and that copy is what resolveRecipe takes (D3303) — so a
+// name the store could hold is one the bucket has to be read for.
+func repoHasRecipe(name string) bool { return recipe.IsNameOrCopy(name) }
 
 func ptr(v float64) *float64 { return &v }
 

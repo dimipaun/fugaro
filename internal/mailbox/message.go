@@ -1,7 +1,7 @@
 // Package mailbox holds the consumer side of the phone's mailbox: the Go
 // binding of the contracts both ends of the wire already agree on.
 //
-// This is task T1 of docs/plans/2026-10-18-mobile-mailbox-consumer.md (mobile
+// This is task T1 of docs/mobile/mailbox-consumer-plan.md (mobile
 // P4.1) and it lands the message binding and nothing else: the strict decoder,
 // the validator and the canonical serialisation, each held to the merged
 // shared/mailbox-schema by its committed vectors.json. The tag over those bytes
@@ -102,6 +102,11 @@ const (
 	ZoneMax = 64
 	// MinuteMax is the largest minute of the local day: 23:59.
 	MinuteMax = 1439
+	// ModeMax bounds a launch's mode (O10, J5a). It is the bound the other
+	// short identity strings carry (AgentMax, BootMax, ZoneMax) and the same
+	// one the confirm machine puts on a mode it reads back (ConfirmMaxModeLen):
+	// a mode is a short word, not a body.
+	ModeMax = 64
 )
 
 // KindMessage is the kind a message with no `kind` field is.
@@ -111,9 +116,13 @@ const KindMessage = "message"
 // module's order.
 var (
 	// Kinds is every kind of message the schema names.
-	Kinds = []string{"message", "prompt", "answer", "action", "registration"}
-	// Actions is every verb an action record may carry.
-	Actions = []string{"cancel", "merge", "confirm"}
+	Kinds = []string{"message", "prompt", "answer", "action", "registration", "stop"}
+	// Actions is every verb an action record may carry: the ruling's three
+	// (cancel, merge, confirm) and, since O10, the typed start `launch`. The
+	// field set is the version -- there is no version field -- so a reader that
+	// predates the launch refuses it as an unknown verb, which is the
+	// fail-closed answer a typed start needs.
+	Actions = []string{"cancel", "merge", "confirm", "launch"}
 	// Platforms is every platform a push registration may name.
 	Platforms = []string{"ios", "android"}
 	// PrefsFields is the exact field set of a registration's `prefs`.
@@ -685,15 +694,22 @@ type QuietHours struct {
 }
 
 // Action is D169's action record: the verb, the target it resolves to, the id
-// of the action, the confirmation it was given and — for a merge — the head SHA
-// the read-back named.
+// of the action, the confirmation it was given and the field the verb alone
+// carries -- a merge's head SHA, or a launch's mode (O10).
 type Action struct {
-	ID           string
-	Verb         string
-	Target       Target
-	HeadSHA      string
-	HasHeadSHA   bool
-	Confirmation Confirmation
+	ID     string
+	Verb   string
+	Target Target
+	// Mode is the mode a launch would start in. It is set on a launch and on no
+	// other verb, and the schema refuses a launch that names none.
+	Mode string
+	// HasHeadSHA and HasConfirmation record whether the record carried the field
+	// at all. A confirmation is required on every verb but a launch, so on a
+	// launch its absence is a fact about the record and not a defect.
+	HeadSHA         string
+	HasHeadSHA      bool
+	Confirmation    Confirmation
+	HasConfirmation bool
 }
 
 // Target is a resolved target: a run, or a repository and a pull request.
@@ -1062,6 +1078,10 @@ var (
 		"answer":       {"reply_to": true},
 		"action":       {"action": true, "reply_to": true},
 		"registration": {"token": true, "platform": true, "prefs": true},
+		// The phone's stop request (P5.1g, Q10's answer (c)) carries nothing but
+		// its sentence: it is never executed, so it has no action record, no
+		// verb and no confirmation for anything to run.
+		"stop": {},
 	}
 	kindRequired = map[string][]string{
 		"message":      {},
@@ -1069,14 +1089,18 @@ var (
 		"answer":       {"reply_to"},
 		"action":       {"action"},
 		"registration": {"token", "platform"},
+		"stop":         {},
 	}
 )
 
 // The action record's, the confirmation's, the heartbeat's and an advertised
-// agent's fields, exactly, and the ones each must have.
+// agent's fields, exactly, and the ones each must have. `mode` and
+// `confirmation` are conditional on the verb, so `actionField` reads them there
+// rather than out of a required list: a launch carries a `mode` and may carry
+// no confirmation, and every other verb is the other way round.
 var (
-	actionFields       = []string{"id", "verb", "target", "head_sha", "confirmation"}
-	actionRequired     = []string{"id", "verb", "target", "confirmation"}
+	actionFields       = []string{"id", "verb", "mode", "target", "head_sha", "confirmation"}
+	actionRequired     = []string{"id", "verb", "target"}
 	confirmationFields = []string{"id", "at"}
 	repoTargetFields   = []string{"repo", "pr"}
 	heartbeatFields    = []string{"at", "boot", "agents", "mac"}
@@ -1560,11 +1584,16 @@ func kindField(value any) (string, *Refusal) {
 }
 
 // actionField validates D169's action record: the verb, the target it resolves
-// to, the action id, the confirmation record, and — for a merge — the head SHA
-// the read-back named. Every part is required because every part is executed:
-// the consumer runs `fugaro cancel RUN` or `gh pr merge <n> --repo
-// <owner/name>` from these fields and nothing else, and a record missing any of
-// them is one that cannot be checked before it runs.
+// to, the action id, the confirmation record, and the field the verb alone
+// carries -- a merge's head SHA, or a launch's mode (O10).
+//
+// Two fields are conditional on the verb, and each is the mirror of the other.
+// A launch carries the `mode` it would start in and may carry no confirmation:
+// a plain start goes straight through (D162) and only a costly one is read back
+// (D2786), which is the gate's decision rather than this validator's, because a
+// schema has no session policy to read. Every other verb is the other way
+// round: the confirmation is what authorises it and is required, and a `mode`
+// on one is a caller that thinks a mode changes what cancelling means.
 //
 // The kind is not a parameter, and that is the honest signature: the (kind,
 // field) table in ValidateMessage has already refused an `action` on every kind
@@ -1597,10 +1626,32 @@ func actionField(value any) checked[*Action] {
 	if !contains(Actions, verb) {
 		return bad[*Action](CodeUnknownVerb, "action.verb")
 	}
+	isLaunch := verb == "launch"
+
+	// A launch names the mode it would start in, and no other verb does: the
+	// mode is the one thing D2786 reads back and binds, and it is a field of the
+	// record rather than a target, because a start has no run id yet.
+	action := &Action{ID: id.value, Verb: verb}
+	if isLaunch {
+		if _, present := record["mode"]; !present {
+			return bad[*Action](CodeMissingField, "action.mode")
+		}
+	} else if _, present := record["mode"]; present {
+		return bad[*Action](CodeFieldNotAllowed, "action.mode")
+	}
+	if _, present := record["mode"]; present {
+		mode := identityField(record["mode"], "action.mode", ModeMax)
+		if mode.bad != nil {
+			return bad[*Action](mode.bad.Code, mode.bad.Field)
+		}
+		action.Mode = mode.value
+	}
+
 	target := targetField(record["target"], verb)
 	if target.bad != nil {
 		return bad[*Action](target.bad.Code, target.bad.Field)
 	}
+	action.Target = target.value
 
 	// A merge carries the head SHA read back at confirmation, and the consumer
 	// re-reads the pull request's head and refuses the merge if it has moved
@@ -1610,7 +1661,6 @@ func actionField(value any) checked[*Action] {
 	if verb == "merge" && !hasHead {
 		return bad[*Action](CodeMissingField, "action.head_sha")
 	}
-	action := &Action{ID: id.value, Verb: verb, Target: target.value}
 	if hasHead {
 		if verb != "merge" {
 			return bad[*Action](CodeFieldNotAllowed, "action.head_sha")
@@ -1621,18 +1671,30 @@ func actionField(value any) checked[*Action] {
 		}
 		action.HeadSHA, action.HasHeadSHA = sha.value, true
 	}
-	confirmation := confirmationField(record["confirmation"])
-	if confirmation.bad != nil {
-		return bad[*Action](confirmation.bad.Code, confirmation.bad.Field)
+
+	// The confirmation authorises every verb but a launch, which may carry one
+	// -- a costly start's read-back produces it -- but does not need one here:
+	// which starts need it is the session's policy, and the consumer's gate is
+	// what reads that (O10).
+	confirmation, hasConfirmation := record["confirmation"]
+	if !isLaunch && !hasConfirmation {
+		return bad[*Action](CodeMissingField, "action.confirmation")
 	}
-	action.Confirmation = confirmation.value
+	if hasConfirmation {
+		read := confirmationField(confirmation)
+		if read.bad != nil {
+			return bad[*Action](read.bad.Code, read.bad.Field)
+		}
+		action.Confirmation, action.HasConfirmation = read.value, true
+	}
 	return ok(action)
 }
 
-// targetField validates a resolved target: a run id, or a repository and a pull
-// request number, and the verb decides which. `confirm` — the ruling's third
-// verb, confirming an action — takes either, because the action being confirmed
-// can be a cancel or a merge.
+// targetField validates a resolved target: a run id, a repository and a pull
+// request number, or -- for a launch -- the repository alone (O10). The verb
+// decides which. `confirm` — the ruling's third verb, confirming an action —
+// takes either of the first two, because the action being confirmed can be a
+// cancel or a merge.
 //
 // The order of the questions is deliberate: what shape is this target, is that
 // shape complete and well formed, and only then does it agree with the verb.
@@ -1685,7 +1747,9 @@ func targetField(value any, verb string) checked[Target] {
 		if !runPattern.MatchString(run) {
 			return bad[Target](CodeBadTarget, "action.target.run")
 		}
-		if verb == "merge" {
+		// A merge merges a pull request and a launch starts in a repository, so
+		// neither resolves to a run (D169, O10).
+		if verb == "merge" || verb == "launch" {
 			return bad[Target](CodeBadTarget, "action.target")
 		}
 		return ok(Target{Run: run})
@@ -1696,10 +1760,16 @@ func targetField(value any, verb string) checked[Target] {
 			return bad[Target](CodeUnknownField, "action.target."+key)
 		}
 	}
-	for _, key := range repoTargetFields {
-		if _, present := record[key]; !present {
-			return bad[Target](CodeMissingField, "action.target."+key)
-		}
+	if !hasRepo {
+		return bad[Target](CodeMissingField, "action.target.repo")
+	}
+	// The repository shape is complete with the repository alone for a launch:
+	// a start names the repository it starts in and has no pull request to name
+	// (O10, and the rules' own launch arm). Every other verb that resolves to a
+	// repository names both.
+	wantsPR := verb != "launch"
+	if wantsPR && !hasPR {
+		return bad[Target](CodeMissingField, "action.target.pr")
 	}
 	repo, isString := record["repo"].(string)
 	if !isString {
@@ -1716,6 +1786,16 @@ func targetField(value any, verb string) checked[Target] {
 	}
 	if !repoPattern.MatchString(repo) {
 		return bad[Target](CodeBadTarget, "action.target.repo")
+	}
+	if !wantsPR {
+		// A launch resolves to the repository alone, so a pull request beside it
+		// is a target the verb cannot use: the start has no pull request to
+		// name, and the consumer would have to guess whether the record meant
+		// one.
+		if hasPR {
+			return bad[Target](CodeBadTarget, "action.target")
+		}
+		return ok(Target{Repo: repo, IsRepo: true})
 	}
 	pr, refusal := positiveIntField(record["pr"], "action.target.pr")
 	if refusal != nil {

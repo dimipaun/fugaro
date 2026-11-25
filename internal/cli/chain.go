@@ -204,7 +204,7 @@ func chainApply(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config, se
 	// and a step reads its subject out of the config it is handed — the
 	// workspace stages decide whether this installation is a workspace's own
 	// from `workspace_members` and `workspace_cap`, which is exactly what
-	// `workspace cap set` and `workspace member add` have just written — so a
+	// `workspace cap set` and `workspace project add` have just written — so a
 	// chain handed the stale copy would ask a stage about a config that no
 	// longer exists and skip it as "nothing to do here".
 	//

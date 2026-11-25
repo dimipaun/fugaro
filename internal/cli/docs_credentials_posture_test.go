@@ -83,6 +83,7 @@ var postureRecordRoots = []string{
 	"docs/forge-authorship-images/",
 	"docs/licensing/implementation-plan.md",
 	"docs/licensing/reconciliation.md",
+	"docs/m9-budget-and-dashboard/",
 	"docs/mcp-server/",
 	"docs/project-image-catalog/",
 	"docs/project-workflow-secrets/",

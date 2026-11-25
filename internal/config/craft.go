@@ -214,23 +214,69 @@ const (
 // PoolStrategies are the strategies a pool may be written with.
 var PoolStrategies = []string{PoolStrategyFailover, PoolStrategyRoundRobin}
 
-// Pool is one named, ordered list of credentials with a strategy: failover
-// tries them in order and moves to the next when one is exhausted, round-robin
-// shares the load and skips a member that fails (spec §2).
+// Pool is one named, ordered list of credentials with a rule: `ordered` walks
+// the list and takes the first usable member, round-robin shares the load and
+// skips a member a mark or the cap holds, and failover takes the member
+// exhausted longest ago (spec §2, R5, D3177).
+//
+// A pool carries a rule of its own (Rule) beside the strategy it was written
+// with (Strategy): the rule is NEW and the strategy is still read and still
+// means what it means, so a pool published with `strategy: round-robin` and no
+// rule is served round-robin, and a pool moves because a rule arrived only
+// where its owner wrote one (R21, Pool.RuleOrDefault).
 type Pool struct {
 	Name string `yaml:"name" json:"name"`
 	// Strategy is a value of PoolStrategies; "" is failover.
 	Strategy string `yaml:"strategy,omitempty" json:"strategy,omitempty"`
+	// Rule is the pool's rule, a value of PoolRules; "" is a pool that
+	// names none, which is served by its Strategy and by failover only where it
+	// names neither. It is a separate member from Strategy on purpose (R21): a
+	// value never changes meaning, so `ordered` arrives as a new name beside the
+	// strategy rather than as a third value of it, and a release-behind reader
+	// that knows only Strategy still reads a pool this file writes.
+	//
+	// It is optional and `omitempty` for that reader's sake as well: the
+	// published craft_pools block is decoded strictly by every job image of the
+	// installation, so an unset rule must write no key at all.
+	Rule string `yaml:"rule,omitempty" json:"rule,omitempty"`
 	// Members are the credentials' names, in the order the pool tries them.
-	// The order is meaningful for both strategies — it is what failover walks
-	// and what round-robin starts from — so it is a list and never a set.
+	// The order is meaningful for every rule — it is what ordered and failover
+	// walk and what round-robin starts from — so it is a list and never a set.
 	Members []string `yaml:"members" json:"members"`
+	// Threshold is the fraction of a member's limit at which the pool moves off
+	// that member, before the limit is hit (D3178, PL8), or nil when the pool
+	// names none: it is optional and no default is invented for it. It is a
+	// pointer for the same reason Rule is `omitempty` — an absent threshold
+	// writes no key into a block a release-behind reader decodes — and the bound
+	// it is held to is PoolThreshold's, which is the answer PL8's picker
+	// acts on.
+	Threshold *PoolThreshold `yaml:"threshold,omitempty" json:"threshold,omitempty"`
+
+	// Principal is who the pool belongs to (D3181, D3179 as amended): a person
+	// by their Google subject, a verified service account, or the project
+	// itself. It is a NEW member and it is the enforcing half of a pool's
+	// ownership; Owner below keeps its meaning and decides nothing about which
+	// pool a run is served from (R21, R7).
+	//
+	// It is a pointer because it is optional: a pool an installation already
+	// holds names none until `fugaro update` migrates it (MG1, MG2), and a
+	// published block must stay byte for byte what a release-behind reader
+	// decodes — so a pool with no principal writes no key.
+	Principal *PoolPrincipal `yaml:"principal,omitempty" json:"principal,omitempty"`
 
 	// Owner is the pool's owner, spelled by email (D1936, R10): the person a
 	// slip naming this pool is served to, and the pool's administrator. It is
 	// the roster's key, not a `sub` — the roster is keyed by email, and the
 	// service resolves it to the `sub` of the person asking for a slip at
 	// grant time — so a value here is a person's address and never a secret.
+	//
+	// It KEEPS ITS MEANING (R21): it stays an email address, which is display
+	// text an operator reads and the key the roster is written against, and it
+	// is not reused as the enforcing principal. Principal above is that half,
+	// and it is a member of its own rather than a second reading of this one —
+	// so a pool that names an owner and no principal is exactly the pool every
+	// installation holds today, and nothing about it moves until the migration
+	// writes a principal.
 	Owner string `yaml:"owner,omitempty" json:"owner,omitempty"`
 	// AllowedUsers are the other people the pool is served to, by email, in
 	// the same vocabulary as Owner. Empty is D1936's default: the owner alone,
@@ -246,6 +292,27 @@ type Pool struct {
 	// owner where it is published (ValidatePublishedPools), so "no owner" and
 	// "open to everyone" cannot be the same piece of text (F37).
 	LegacyOpen bool `yaml:"legacy_open,omitempty" json:"legacy_open,omitempty"`
+	// Cascade marks the pool as the cascade's (D3064 as amended): it is the
+	// marker `fugaro update` writes for the pool it migrates out of a project
+	// whose cascade serves, whose members are that cascade's credentials in the
+	// order the cascade tries them (docs/credentials-belong-to-models).
+	//
+	// Only that write may carry it, so it is refused anywhere it could not be
+	// the migration's: ValidateCascadePools refuses it where the configuration
+	// holding it turns no cascade on, and refuses an owner or an allowed user
+	// written beside it. What it buys the pool is the cascade's own reach — its
+	// subscriptions are served although the subscription-spread switch is off,
+	// exactly as the cascade serves them today (D1622) — which is why a key an
+	// operator wrote may not claim it, and why the pool is nobody's in
+	// particular: an ordinary pool of subscriptions is bounded by that switch
+	// and by its owner, and this one is bounded by neither.
+	//
+	// It never reaches the published node, where the pool is an ordinary
+	// legacy_open one (publishedCraftPools, R15, F36): no reader of the node
+	// sees it. What reads it is the launcher (CM14) and the access record the
+	// service reads (C1, CM5, CM36) — the two places a marker written in the
+	// installation's own config is meant to travel to.
+	Cascade bool `yaml:"cascade,omitempty" json:"cascade,omitempty"`
 }
 
 // poolEmailRE is the shape a pool's owner and its allowed users are held to:
@@ -447,6 +514,22 @@ func CredentialNamed(creds []Credential, name string) (Credential, bool) {
 // A pool and a credential share one namespace, because a craft's access names
 // either without saying which: a pool whose name is a credential's would leave
 // that name meaning two things.
+//
+// What this does NOT refuse is the release-1 bridge of D3176: a subscription
+// token that no pool lists is left alone. `fugaro update` wraps each lone
+// account in a pool of one (MG1, MG2), and until it has, every installation
+// holds such a token — so a refusal here would refuse the config of every
+// project that has not migrated yet. The state is reported and not refused in
+// release 1, and refused in release 2 by X2, once the migration has wrapped
+// what it can.
+//
+// The report is not here and is not written yet. Release 1's reporter is
+// routing.Problems — RT3 of docs/model-credentials-routing/implementation-plan.md,
+// whose acceptance carries the sentence "a subscription token in no pool is
+// reported as a warning in release 1" — and RT7 is the task that has `fugaro
+// validate` print it. Neither has shipped, so nothing reports the state today:
+// this function's silence is the whole of the bridge until RT3 lands, and a
+// migration that lifts it before then has nothing to read.
 func ValidatePools(pools []Pool, creds []Credential) []Problem {
 	var ps []Problem
 	defined := definedCredentialNames(creds)
@@ -470,6 +553,7 @@ func ValidatePools(pools []Pool, creds []Credential) []Problem {
 		if p.Strategy != "" && !slices.Contains(PoolStrategies, p.Strategy) {
 			ps = append(ps, Problem{Path: at + ".strategy", Message: fmt.Sprintf("must be one of %s", strings.Join(PoolStrategies, ", "))})
 		}
+		ps = append(ps, poolRuleProblems(at, p)...)
 		if len(p.Members) == 0 {
 			ps = append(ps, Problem{Path: at + ".members", Message: "a pool with no members serves nothing: list at least one credential"})
 		}
@@ -492,6 +576,67 @@ func ValidatePools(pools []Pool, creds []Credential) []Problem {
 		ps = append(ps, poolAccessProblems(at, p)...)
 	}
 	return ps
+}
+
+// ValidateCascadePools reports the rules a pool carrying the cascade's marker
+// is held to in a configuration: it is refused where the same document turns no
+// cascade on, and it names neither an owner nor allowed users.
+//
+// The two rules say one thing. The marker is what `fugaro update` writes for the
+// pool it migrates out of a project whose cascade serves (D3064 as amended), and
+// a pool nobody's migration wrote is a pool whose marker would be a false claim:
+// its subscriptions would be served with the subscription-spread switch off
+// (D1622) on the strength of a key an operator wrote, which is the widening the
+// switch exists to prevent. The switch that says a cascade serves is the
+// routing's (RoutingServesTheCascade) — the same statement `fugaro run` asks
+// before it launches a run of the project — and it is in this file and not in
+// ValidatePools because the routing is not a document a node read holds: a
+// published node's pools never carry the marker anyway (publishedCraftPools
+// clears it, R15), and a rule there would be a rule about a document that
+// cannot state it.
+//
+// A marker is not an owner's either: the pool is served as the cascade serves,
+// not to a person, which is why the publisher writes it as an ordinary
+// legacy_open pool and asks for no owner (F36). An owner written beside the
+// marker is refused rather than dropped, the same way poolAccessProblems
+// refuses one beside legacy_open (D1942): the publish would otherwise write a
+// pool whose owner nothing reads.
+func ValidateCascadePools(pools []Pool, routing *Routing) []Problem {
+	var ps []Problem
+	serves := RoutingServesTheCascade(routing)
+	for i, p := range pools {
+		if !p.Cascade {
+			continue
+		}
+		at := fmt.Sprintf("pools[%d]", i)
+		if p.Name != "" {
+			at = "pools." + pluginwire.Printable(p.Name)
+		}
+		if !serves {
+			ps = append(ps, Problem{Path: at + ".cascade", Message: fmt.Sprintf("a pool carries the cascade's marker only where the same configuration turns the cascade on, and this one does not: the marker is what `fugaro update` writes for the pool it migrates out of a cascade that serves (D3064), because that pool's subscriptions are served with the subscription-spread switch off exactly as the cascade serves them — turn the cascade on (routing.claude.via: %s), or drop the key and let the pool obey the switch like any other", RouteCascade)})
+			continue
+		}
+		if p.Owner != "" {
+			ps = append(ps, Problem{Path: at + ".owner", Message: "a pool marked as the cascade's has no owner: it is served as the cascade serves rather than to the people a pool names, and it is published as an ordinary legacy_open pool, which names neither an owner nor allowed users (D3064, D1942) — drop the key, or drop cascade and name the pool's owner"})
+		}
+		if len(p.AllowedUsers) > 0 {
+			ps = append(ps, Problem{Path: at + ".allowed_users", Message: "a pool marked as the cascade's names no allowed users: it is served as the cascade serves rather than to the people a pool names, and it is published as an ordinary legacy_open pool, which names neither an owner nor allowed users (D3064, D1942) — drop the key, or drop cascade and name the pool's owner and the users it is for"})
+		}
+	}
+	return ps
+}
+
+// RoutingServesTheCascade reports whether a routing block turns the cascade on
+// for the project: `routing.claude.via: cascade` (D133, D150), the switch that
+// admits a run of the project to the cascade at all. An absent block, and every
+// other via, serve no cascade — an absent switch is the direct route (D1b).
+//
+// It is one function because three readers ask it and may not drift: the config
+// loader's own rules (ValidateCascadePools), `fugaro project routing` and the
+// publisher's refusal to drop the switch from the node in silence
+// (routingTurnsTheCascadeOn, nodeTurnsTheCascadeOn).
+func RoutingServesTheCascade(r *Routing) bool {
+	return r != nil && r.Claude != nil && r.Claude.ViaValue() == RouteCascade
 }
 
 // ValidatePoolPaths reports D1668's rule for the pools a command is about to
@@ -679,8 +824,10 @@ func poolEmailProblem(email string) string {
 // ValidatePublishedPools reports every rule a policy node's craft_pools block
 // breaks: ValidatePools' rules, D1668's one-path rule (pathCrossingProblems,
 // which the node's own version-8 step converges a crossing pool with before this
-// read ever sees one) and the one only a PUBLISHED pool is held to — it names an
-// owner, or it carries the marker the migration wrote (D1936, D1942, F37).
+// read ever sees one) and the two only a PUBLISHED pool is held to — it names an
+// owner, or it carries the marker the migration wrote (D1936, D1942, F37), and
+// it carries no marker of the cascade's, which is the installation's alone
+// (D3064 as amended, R15).
 //
 // The two functions exist because the two documents are not the same thing. The
 // installation's own config is the owner's own pools and survives an upgrade
@@ -693,10 +840,27 @@ func ValidatePublishedPools(pools []Pool, creds []Credential) []Problem {
 	ps := ValidatePools(pools, creds)
 	ps = append(ps, pathCrossingProblems(pools, creds)...)
 	for _, p := range pools {
+		at := fmt.Sprintf("pools.%s", pluginwire.Printable(p.Name))
+		// The cascade's marker is the installation's own and the node never
+		// carries it (R15, D3064 as amended): the node's readers are job images
+		// and the service, and the pool they are served is the ordinary
+		// legacy_open one the publisher writes (publishedCraftPools). The key is
+		// refused here rather than ignored because ignoring it is how a node
+		// written by hand would keep a marker this reader then serves by a rule
+		// it may not apply — and before this field existed the same node was
+		// refused as an unknown key, so refusing it is what keeps this reader's
+		// answer to it what it has always been.
+		if p.Cascade {
+			ps = append(ps, Problem{Path: at + ".cascade", Message: "the cascade's marker is the installation's own: a published node is served the pool as an ordinary legacy_open one, because the marker says the pool is served although the subscription-spread switch is off, and no reader of this node may apply that rule (D3064 as amended, R15) — remove the key here and write it in the installation's config, where `fugaro update` writes it for the pool it migrated"})
+			// And no more of this pool: the owner rule below would answer a
+			// marked pool with the fix that keeps it (mark it legacy_open),
+			// which is not what a node carrying the marker needs to hear.
+			continue
+		}
 		if p.Name == "" || p.LegacyOpen || p.Owner != "" {
 			continue
 		}
-		ps = append(ps, Problem{Path: fmt.Sprintf("pools.%s", pluginwire.Printable(p.Name)), Message: "owner is required: a pool is served to its owner and to the users it names, so a pool with no owner serves nobody — name the pool's owner, or mark a pool that predates owners as legacy_open if it is one `fugaro update` migrated"})
+		ps = append(ps, Problem{Path: at, Message: "owner is required: a pool is served to its owner and to the users it names, so a pool with no owner serves nobody — name the pool's owner, or mark a pool that predates owners as legacy_open if it is one `fugaro update` migrated"})
 	}
 	return ps
 }

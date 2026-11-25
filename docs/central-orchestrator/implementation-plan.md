@@ -683,7 +683,7 @@ for. The decisions that **block** parts outright, and the part each blocks:
 ## 7. The owner-run live checks, proposed by name and not numbered
 
 The convention is that *"the phase that ships the check writes them"* — a sentence of
-`docs/design/voice.md` §5.3, quoted by `docs/mobile/voice-session/` and
+`docs/voice/spec.md` §5.3, quoted by `docs/mobile/voice-session/` and
 `docs/mobile/design/voice-evaluation-switch.md`, and **not** in the register itself — so this
 plan proposes the checks **by name** and takes **no
 number** (D24). The reasoning, with the register read name by name, is reconciliation §7: the

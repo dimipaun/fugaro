@@ -25,14 +25,23 @@
 //      job wrote can never become a command word. Every element is its own array
 //      entry, and the spawner is always called with `shell: false`.
 //   2. **`--project` goes on every argv that takes it, which is every command
-//      except `version`** (rule 3). `SPAWN_COMMANDS` carries `takesProject` per
-//      row, and the handshake's argv is exactly `["version"]`: `newVersionCmd`
-//      (`internal/cli/root.go`) is `cobra.NoArgs` with no `Flags()` at all, so a
-//      console that appended `--project` to it would fail its own version check
-//      on the first launch, on every machine -- while a console that left it off
-//      `watch` would show another installation's numbers. `--config <path>`
-//      follows `--project` whenever the installation declares one, and the value
-//      is the installation's, never the ambient environment's.
+//      except the three names `COMMANDS_WITHOUT_PROJECT` lists** (rule 3).
+//      `SPAWN_COMMANDS` carries `takesProject` per row, and the handshake's argv
+//      is exactly `["version"]`: `newVersionCmd` (`internal/cli/root.go`) is
+//      `cobra.NoArgs` with no `Flags()` at all, so a console that appended
+//      `--project` to it would fail its own version check on the first launch,
+//      on every machine -- while a console that left it off `watch` would show
+//      another installation's numbers. `--config <path>` follows `--project`
+//      whenever the installation declares one, and the value is the
+//      installation's, never the ambient environment's. **`setup` is the third
+//      name, and the one that is a fact about the command rather than about a
+//      flag**: its two allow-listed argvs *create* the installation their answers
+//      name, so a child aimed at an existing project -- by `--project` or by
+//      `$FUGARO_PROJECT`, which the CLI reads as the same selection
+//      (`localcfg.SelectInput.EnvProject`) -- refuses those answers as a rename
+//      of it (`loadInitConfig`, `internal/cli/init.go`), and a first run, which
+//      has no installation at all, could not build the argv. See rule 3's
+//      amendment in `docs/desktop-console/spec.md` (D2904).
 //   3. **The binary is resolved explicitly** (rule 4): the operator's configured
 //      path first -- an absolute one, since a relative path is checked against
 //      the app's working directory and run against the child's, which is a
@@ -62,7 +71,12 @@
 //   4. **The child's environment is built, not inherited** (rule 5, §5.1 rule
 //      8): exactly `PATH`, `HOME`, `TMPDIR`, `LANG`, `LC_ALL`, the five `XDG_*`
 //      variables and the chosen installation's `FUGARO_PROJECT` -- and nothing
-//      else from the app's own environment. A hostile `AWS_*`,
+//      else from the app's own environment. **The last of those is the row's,
+//      like rule 2's flag**: `$FUGARO_PROJECT` is the CLI's own fallback for
+//      `--project`, so a row `COMMANDS_WITHOUT_PROJECT` names states no project
+//      in its environment either, which is the one thing that lets the first-run
+//      wizard's `setup` child create the installation its answers name. A
+//      hostile `AWS_*`,
 //      `GOOGLE_APPLICATION_CREDENTIALS`, `ANTHROPIC_API_KEY` or ambient
 //      `FUGARO_PROJECT` in the app's environment cannot reach the child, which
 //      is asserted by diffing the child's own view of its environment against
@@ -115,7 +129,10 @@ import { dirname, isAbsolute, join } from 'node:path'
 
 import {
   CONSOLE_OPERATIONS,
+  IMAGE_TAGS_MAX,
+  IMAGE_TAG_RE,
   RUNS_LIST_MAX_LIMIT,
+  RUNS_STREAM_SINCE_WINDOWS,
   SETTINGS_VALUE_MAX_LENGTH,
   SUMMARY_SINCE_WINDOWS,
   isNeverReachable,
@@ -358,8 +375,11 @@ export function locationsFor(platform: string = process.platform): PlatformLocat
  * -- git, the tools `doctor` finds with `LookPath`, `gcloud`, and their
  * plugins -- which is the leak F41 exists to forbid, and the same "a credential
  * handed over for no reader" the WSL route below leaves the key out for.
- * Nothing reaches that state yet, only because `PRODUCTION_KEYRING` is empty
- * and every paste is refused until S2.9. **A real installation must not be
+ * Nothing reaches that state, and it is the floor below that keeps it out rather
+ * than the ring: `PRODUCTION_KEYRING` is held empty (S2.9 publishes the key in
+ * `ee/licence/keys/production.pub` and the release that closes this hand-off
+ * fills the ring), and the floor hands a key to no child at all in the meantime.
+ * **A real installation must not be
  * handed the key before the child can take it back out**, so the hand-off asks a
  * floor on the child's version -- `LICENCE_KEY_CLI_FLOOR`
  * (`src/shared/version.ts`), the release that carries the registration point --
@@ -461,6 +481,14 @@ export const SPAWN_FLAGS: readonly string[] = Object.freeze([
   '--dir',
   '--repo',
   '--all',
+  // `plan status`'s own opt-out of the forge lookups (IR4 of the console-fixes
+  // plan, D3217 as amended), and `plan.status`'s argv is its only user: it is
+  // the Graph tab's first paint, which is drawn from a read that spawns no `gh`
+  // -- so the declared argument is a boolean on that one row and nothing else in
+  // this module can emit the word. It is held behind
+  // `PLAN_STATUS_NO_MERGES_CLI_FLOOR` (`src/shared/version.ts`) and no release
+  // names that floor yet, so it reaches no child today.
+  '--no-merges',
   // `budget show`'s own opt-in, and the Spend screen's caps read is its only
   // caller: it costs a listing of the runs bucket, so no other row carries it.
   '--compute',
@@ -529,6 +557,34 @@ export const SPAWN_FLAGS: readonly string[] = Object.freeze([
   // which no renderer argument and no field of the operation's schema names.
   '--to',
   '--expect',
+  // The console improvements' five (AL). Each is a fixed word of one row's
+  // command path -- no renderer argument and no field of any schema spells one
+  // -- and each is on this list for the same reason `--watch` is: this is the
+  // module that may emit it at all, and `assertArgvFlags` holds every word of
+  // every argv here. None of them is on a never row, and each is a word of a
+  // command no release of the CLI in this tree registers yet -- which is what
+  // the floors in `src/shared/version.ts` are for.
+  //
+  // `--stream` is the three live reads' mode word (`runs ls --stream`,
+  // `report --stream`, `budget show --stream`): the same document, printed as
+  // it changes, one line at a time. It is in the command path rather than a
+  // declared flag because a stream is long-lived, and a word a payload could
+  // turn off would be a payload choosing between two reads.
+  '--stream',
+  // `--me` is `user ls`'s own scope word: the caller's role and nobody else's.
+  // The read it makes is the reason `whoami` is a row rather than a `--user`
+  // argument -- there is no form of this operation that is about another person.
+  '--me',
+  // The first-run wizard's three (D2904). `--plan-only` is what makes `setup`
+  // a read, and it is the whole of the difference between the two rows that
+  // drive that command. `--answers-file` is passed with `-` and never with a
+  // path: the answers reach the child on its standard input, from bytes main
+  // holds in memory. `--events` asks for the run's account as a feed of lines
+  // instead of the one `--json` document, and it is why those two rows have a
+  // deadline of their own (`SETUP_DEADLINE_MS` below).
+  '--plan-only',
+  '--answers-file',
+  '--events',
 ])
 
 /** DEFAULT_BACKOFF is the CLI's own stream backoff (`backMin`/`backMax`,
@@ -567,6 +623,21 @@ export const READ_TIMEOUT_MS = 90_000
 /** VERSION_TIMEOUT_MS is the version handshake's own, shorter deadline: the
  * command prints one constant line. */
 export const VERSION_TIMEOUT_MS = 5000
+
+/**
+ * SETUP_DEADLINE_MS is the first-run wizard's own deadline, and it is an hour
+ * rather than `READ_TIMEOUT_MS`'s ninety seconds because of what the command
+ * behind it does: a converge applies Terraform, waits on a build and reconciles
+ * an installation, and ninety seconds would kill it part-way through -- which
+ * is the one outcome worse than a slow screen, because the second attempt
+ * starts from a project that is half-built.
+ *
+ * **It is a ceiling and not the way the child ends.** A setup run ends when the
+ * CLI exits, which is the `done` or `error` line that closes its feed, or when
+ * the operator cancels; this number only bounds how long a child that never
+ * says anything may hold a modal open (the console improvements plan, AL).
+ */
+export const SETUP_DEADLINE_MS = 60 * 60 * 1000
 
 /** MAX_STDOUT_LENGTH bounds what a one-shot read may print, in UTF-16 code
  * units. The largest document is `logs --json`; this is generously above it,
@@ -643,6 +714,14 @@ export interface Backoff {
  * alone -- the window itself is `ipc.ts`'s closed set, which is narrower than
  * any grammar here could be, so what is left for this module is the spelling.
  *
+ * **`runsStreamSince` is the runs stream's one** (the console improvements
+ * plan's AL): `--since <window>`, the *space* form `runs ls`'s whole-document
+ * row emits, so the feed and the listing its screen falls back to ask for one
+ * window one way. It is a kind of its own rather than `value` for the reason
+ * `summarySince` is: the window is `ipc.ts`'s closed set
+ * (`RUNS_STREAM_SINCE_WINDOWS`), narrower than the command's own `parseSince`,
+ * so what is left here is the spelling and the second asking of the membership.
+ *
  * **`settingOp` and `settingValue` are the settings write's two** (the
  * settings-edit plan's C3), and both are kinds of their own because neither
  * emits a flag. `settingOp` is the subcommand the edit is -- `set` or `unset`,
@@ -683,11 +762,39 @@ export type SpawnArgumentKind =
   | 'limit'
   | 'after'
   | 'summarySince'
+  | 'runsStreamSince'
   | 'settingOp'
   | 'settingValue'
   | 'roadmapTask'
   | 'roadmapRelease'
   | 'stdin'
+  // The models write's two (the console improvements plan's MW1, D2903). The
+  // three values a renderer sends are one word each: the route and the two
+  // prices are `=`-form words (`--route=<r>`), and the model ID is the
+  // positional behind the row's terminator, the shape the settings write's
+  // value already has.
+  | 'equalsValue'
+  | 'terminatedValue'
+  // The image write's two (the same plan's MW2, D2903), and both are one word
+  // each for the reason the kinds above are -- a value inside the flag's own
+  // word cannot be read as a flag.
+  //
+  // **`equalsList` is the comma-joined list** the CLI's own `StringSliceVar`
+  // reads (`--tags=node,redis`): it is a kind of its own rather than `equalsText`
+  // because its members are a closed set -- the CLI's five tag words -- and the
+  // membership is asked again in `argvFor` rather than trusted, the way
+  // `summarySince`'s window and `settingOp`'s subcommand are. The renderer's
+  // alphabet (`ARGUMENT_RE`) refuses a comma, so no kind of the table below can
+  // spell this value.
+  //
+  // **`equalsText` is one `=`-form word holding spaces** (the entry's
+  // description, as `fugaro image ls` prints it): the space is why it is not
+  // `equalsValue`, and it is the one value of this surface that is prose. What
+  // this module refuses about it is what an argv cannot carry -- a control
+  // character, a NUL and an absurd length -- and the validator's own rule
+  // (printable, no newline, at most 200) is `ipc.ts`'s.
+  | 'equalsList'
+  | 'equalsText'
 
 /**
  * SPAWN_KIND_FOR is the one place the two kind vocabularies are related: the
@@ -709,6 +816,9 @@ export const SPAWN_KIND_FOR: Record<ArgumentKind, SpawnArgumentKind> = Object.fr
   // The runs summary's window: the third `=`-form kind, and the second on a
   // row that is a read.
   summarySince: 'summarySince',
+  // The runs stream's window: the console's own closed set in the space form,
+  // for the reason its own paragraph above gives.
+  runsStreamSince: 'runsStreamSince',
   reportDimension: 'value',
   secretScope: 'secretScope',
   pullRequest: 'pullRequest',
@@ -743,6 +853,28 @@ export const SPAWN_KIND_FOR: Record<ArgumentKind, SpawnArgumentKind> = Object.fr
   // and a word no renderer sends.
   roadmapNode: 'roadmapTask',
   roadmapRelease: 'roadmapRelease',
+  // The first-run wizard's answers (AL, D2904). The mapping is the launch's
+  // own `stdin`: what the validator hands over is one string -- main's own
+  // serialisation of the five answers it checked -- and it reaches the child on
+  // standard input, where `--answers-file -` reads it. It is the second kind
+  // that emits no argv word, and for a stronger reason than the first: a path
+  // in an argv is what `--answers-file <PATH>` would be.
+  setupAnswers: 'stdin',
+  // The models write's three (MW1, D2903): the two prices and the route are
+  // `=`-form words and the model ID is the positional behind the terminator.
+  // The mapping is total over ipc.ts's kinds, so these three are what a kind
+  // added there without an argv spelling would fail to compile on.
+  modelRoute: 'equalsValue',
+  modelPrice: 'equalsValue',
+  modelId: 'terminatedValue',
+  // The image write's four (MW2, D2903): the entry's name is the positional
+  // behind the terminator, its definition is an `=`-form word, and the tags and
+  // the description are the two kinds above -- a comma-joined list and a word
+  // that may hold spaces.
+  imageName: 'terminatedValue',
+  imageDockerfile: 'equalsValue',
+  imageTags: 'equalsList',
+  imageDescription: 'equalsText',
   // `licenceKey` is the second kind whose operation spawns nothing
   // (`licence.read`/`licence.save`, S2.7, carry `command: null`), for
   // `gitProvider`'s reason: the mapping is total over ipc.ts's kinds, and
@@ -827,6 +959,30 @@ export interface SpawnCommand {
    */
   readonly expectFlag?: string
 }
+
+/**
+ * MODELS_ADD_PLAN_OPERATION and MODELS_ADD_OPERATION are the models write's two
+ * rows (the console improvements plan's MW1, D2903), named here rather than
+ * inline because two tables below key off them: `EQUALS_FORM_FLAGS` names the
+ * three `=`-form prefixes both rows carry, and `TERMINATOR_OPERATIONS` names the
+ * two as rows whose own value is passed behind `--`. The two are one command's
+ * two phases -- the plan is the CLI's own `--dry-run` and the write is the same
+ * argv less it -- so they are two operations of the surface and two rows here.
+ */
+export const MODELS_ADD_PLAN_OPERATION = 'models.add.plan'
+export const MODELS_ADD_OPERATION = 'models.add'
+
+/**
+ * IMAGE_ADD_PLAN_OPERATION and IMAGE_ADD_OPERATION are the image write's two
+ * rows (the console improvements plan's MW2, D2903), named here for the reasons
+ * the models write's two are: `EQUALS_FORM_FLAGS` names the three `=`-form
+ * prefixes both rows carry, and `TERMINATOR_OPERATIONS` names the two as rows
+ * whose own value is passed behind `--`. The two are one command's two phases --
+ * the plan is the CLI's own `--dry-run` and the write is the same argv less it
+ * -- so they are two operations of the surface and two rows here.
+ */
+export const IMAGE_ADD_PLAN_OPERATION = 'image.add.plan'
+export const IMAGE_ADD_OPERATION = 'image.add'
 
 /**
  * SPAWN_COMMANDS is the table, read off the operations Task 1.2 declared and the
@@ -942,14 +1098,29 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     // its document is `console/docs/json-contract.md` §6.12). The words here are
     // the command's own (`newPlanStatusCmd`), the way every other row's are.
     //
-    // `--all` is the screen's own control and the row's one declared argument;
-    // `--json` is fixed. `--gcp-project` and `--region` are flags of the CLI's
-    // cloud group that this console never emits: neither is on `SPAWN_FLAGS`, so
-    // `assertArgvFlags` would refuse an argv carrying one.
+    // `--all` is the screen's own control and `--no-merges` the second argument
+    // the Graph tab passes (IR4 of the console-fixes plan, D3217 as amended);
+    // `--json` is fixed. The two arguments are booleans, so a renderer can ask
+    // for the word and never spell one, and the argv the first paint builds is
+    // `plan status --json --all --no-merges --project <name>`.
+    //
+    // **`--no-merges` is the flag the first paint is drawn from**: the read
+    // spawns no `gh` and answers `merges_read: false`, so the canvas paints
+    // without waiting for up to thirty-two forge lookups, and the plain read
+    // decorates the merged nodes afterwards. It is held behind
+    // `PLAN_STATUS_NO_MERGES_CLI_FLOOR` (`src/shared/version.ts`), which no
+    // release names yet, so it is passed to no child today -- the row carries it
+    // because the argv is the design's, and `assertArgvFlags` refuses a word
+    // that is not on `SPAWN_FLAGS`. `--gcp-project` and `--region` are flags of
+    // the CLI's cloud group that this console never emits: neither is on
+    // `SPAWN_FLAGS`, so `assertArgvFlags` would refuse an argv carrying one.
     operation: 'plan.status',
     words: ['plan', 'status', '--json'],
     takesProject: true,
-    args: [{ key: 'all', flag: '--all', kind: 'boolean' }],
+    args: [
+      { key: 'all', flag: '--all', kind: 'boolean' },
+      { key: 'noMerges', flag: '--no-merges', kind: 'boolean' },
+    ],
     dirFlag: false,
   },
   {
@@ -1121,6 +1292,146 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     words: ['models', 'ls', '--json'],
     takesProject: true,
     args: [],
+    dirFlag: false,
+  },
+  {
+    // **The models write's plan** (the console improvements plan's MW1, D2903):
+    // `models add --no-apply --dry-run --json`, the CLI's own dry run of the
+    // write below. Three things about this row are the whole of its safety.
+    //
+    // **`--dry-run` is what makes it a read.** The command computes the change
+    // and prints the versioned document
+    // (`schemas/models-add-plan.schema.json`) -- the claim, the allow-list
+    // entry, the two rates and the steps it would take -- and writes no config
+    // file, no published node and no saved step, which is why the window the
+    // console draws before the write can be drawn from a child at all.
+    //
+    // **`--no-apply` is a word of the command path and not a payload's.** It is
+    // what keeps the write's own follow-up steps (`fugaro apply`) off the
+    // operator's machine until they run them (D1565): the console's write saves
+    // the steps and says so, exactly as the settings write does.
+    //
+    // **The model ID is the positional behind the terminator** (`terminatedValue`
+    // below), which is the word `models add <id>` reads: a terminator is what
+    // makes a value spelled `--route` or `-x` the positional it is. The three
+    // values the renderer does send are `=`-form words -- `--route=<r>`,
+    // `--price-in=<usd>`, `--price-out=<usd>` -- so no value of this row can be
+    // read as a flag either, and every one of them is held to a grammar in main
+    // before this argv exists (`ipc.ts`'s `modelId`, `modelRoute` and
+    // `modelPrice`).
+    operation: 'models.add.plan',
+    words: ['models', 'add', '--no-apply', '--dry-run', '--json'],
+    takesProject: true,
+    args: [
+      { key: 'route', flag: '--route=', kind: 'equalsValue' },
+      { key: 'priceIn', flag: '--price-in=', kind: 'equalsValue' },
+      { key: 'priceOut', flag: '--price-out=', kind: 'equalsValue' },
+      { key: 'id', flag: null, kind: 'terminatedValue' },
+    ],
+    dirFlag: false,
+  },
+  {
+    // **The models write** (the same plan's MW1, D2903): the row above less
+    // `--dry-run --json`, and the console's fifth write. It appends the model to
+    // a route's own list in the project config and writes a `model_prices` entry
+    // and a `budget.allowed_models` entry for it -- a **widening**, because it
+    // changes what every run of the project may name and spend on -- and the
+    // only argv of this surface that reaches it is this one: the never table
+    // refuses `models add` as a command and `add` as a word of `models`, and
+    // grants the two rows of this write by name (`except`, `src/main/ipc.ts`).
+    //
+    // **It declares the same four arguments as the plan and no others**, so the
+    // argv the operator confirmed is the argv this row builds: main holds the
+    // plan's own document digest and the argv beside it and re-runs *that*, never
+    // one a renderer sends again (`src/main/modelsadd.ts`).
+    operation: 'models.add',
+    words: ['models', 'add', '--no-apply'],
+    takesProject: true,
+    args: [
+      { key: 'route', flag: '--route=', kind: 'equalsValue' },
+      { key: 'priceIn', flag: '--price-in=', kind: 'equalsValue' },
+      { key: 'priceOut', flag: '--price-out=', kind: 'equalsValue' },
+      { key: 'id', flag: null, kind: 'terminatedValue' },
+    ],
+    dirFlag: false,
+  },
+  {
+    // **The image write's plan** (the console improvements plan's MW2, D2903):
+    // `image add --no-apply --dry-run --json`, the CLI's own dry run of the
+    // write below, and the document the window is drawn from
+    // (`schemas/image-add-plan.schema.json`). The row is the models write's plan
+    // one command over, and the three things that make it safe are the same
+    // three.
+    //
+    // **`--dry-run` is what makes it a read.** The command builds the entry from
+    // its flags, asks every refusal the real add would ask -- the definition's
+    // own rules, a name the catalog already has, a definition no build could
+    // fetch, D1573's agent refusal and the installation's skew gate -- prints the
+    // versioned document and writes nothing: no catalog entry, no build, no
+    // saved step, and nothing priced.
+    //
+    // **`--no-apply` is a word of the command path and not a payload's.** It is
+    // what keeps the add's own follow-up steps -- the catalog's build, the
+    // redeploy of the repository and the publish of the node every run is
+    // admitted by (D1561) -- off the operator's machine until they run them
+    // (D1565). **The build is the one step here that bills**, which is why this
+    // word is not a payload's: the console saves the entry and owes the build.
+    //
+    // **The entry's name is the positional behind the terminator**
+    // (`terminatedValue`), the word `image add <name>` reads: a terminator is
+    // what makes a name spelled `--json` the positional it is. The three values
+    // the renderer does send are `=`-form words -- `--dockerfile=<owner/name:path>`,
+    // `--tags=<a,b>` and `--description=<text>` -- so no value of this row can be
+    // read as a flag either, and every one of them is held to a grammar in main
+    // before this argv exists (`ipc.ts`'s `imageName`, `imageDockerfile`,
+    // `imageTags` and `imageDescription`).
+    //
+    // **`--inline`, `--image`, `--default` and `--branch` are words of neither
+    // this row nor the write.** They are the other three definitions of one
+    // entry, and the CLI refuses three of them -- with `--branch` -- only in a
+    // coding agent's session (`imageAddAgentRefusal`, D1573). The console's
+    // child carries no agent marker, so that refusal would not fire for it: what
+    // keeps them off the wire is this table, and `assertArgvFlags` refuses each
+    // one for every operation but the rows that declare it.
+    operation: 'image.add.plan',
+    words: ['image', 'add', '--no-apply', '--dry-run', '--json'],
+    takesProject: true,
+    args: [
+      { key: 'dockerfile', flag: '--dockerfile=', kind: 'equalsValue' },
+      { key: 'tags', flag: '--tags=', kind: 'equalsList' },
+      { key: 'description', flag: '--description=', kind: 'equalsText' },
+      { key: 'name', flag: null, kind: 'terminatedValue' },
+    ],
+    dirFlag: false,
+  },
+  {
+    // **The image write** (the same plan's MW2, D2903): the row above less
+    // `--dry-run --json`, and the console's sixth write. It appends an entry to
+    // the installation's image catalog and, through the steps `--no-apply`
+    // saves, is the change every run of the project is admitted by: a project
+    // setting a reviewer signed off on, and the reason the never table refuses
+    // `image add` everywhere but here.
+    //
+    // **It declares the plan's own four arguments and no others**, so the argv
+    // the operator confirmed is the argv this row builds: main holds the plan's
+    // own document digest and the argv beside it and re-runs *that*, never one a
+    // renderer sends again (`src/main/imageadd.ts`).
+    //
+    // **A project admin's, and nothing else's.** `image add` refuses anyone but
+    // a project admin (`accessGateProject`) and so does the CLI's own skew gate,
+    // which is the authority check that survives this console: the window's
+    // action is enabled only for a project admin (RB4's gating), and a role that
+    // changed between the two is refused by the CLI's own sentence, which the
+    // screen shows like any other refusal.
+    operation: 'image.add',
+    words: ['image', 'add', '--no-apply'],
+    takesProject: true,
+    args: [
+      { key: 'dockerfile', flag: '--dockerfile=', kind: 'equalsValue' },
+      { key: 'tags', flag: '--tags=', kind: 'equalsList' },
+      { key: 'description', flag: '--description=', kind: 'equalsText' },
+      { key: 'name', flag: null, kind: 'terminatedValue' },
+    ],
     dirFlag: false,
   },
   {
@@ -1314,6 +1625,35 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     dirFlag: false,
   },
   {
+    // The orchestrator map (the console-fixes plan's CG7a; C-ORCH's document,
+    // D3221): `fugaro orchestrator map --json`, the project's active
+    // orchestrators, their connections and the coordinator's heartbeat, which is
+    // what the Coordinator tab draws. It is `coordinator status`'s shape rather
+    // than `coordinator show`'s -- `words` carries the whole argv and `args` is
+    // empty -- and that is the security answer here too: there is no field a
+    // renderer could fill, so no word of the argv is caller-influenced at all.
+    //
+    // **The command is registered from `ee/`** (`ee/orchestrator/cli/map.go`) and
+    // no released CLI carries it, so the row is unreachable today: the read is
+    // behind `ORCHESTRATOR_MAP_CLI_FLOOR` (`src/shared/version.ts`), and below
+    // it the tab names the CLI version it needs instead of spawning this row.
+    // The row is declared now because it is the allow-list's entry, and the one
+    // independent review it needs is this task's.
+    //
+    // It takes `--project`/`--config` like every other read of a project (rule
+    // 3) -- the command resolves the project's own database the way the stored
+    // view does -- and it carries no `--dir`: the map is built from the
+    // caller's database and needs no checkout. Nothing else is fixed here and
+    // nothing else is reachable: no `--repo`, no `--since` and no `--source`,
+    // because the map is already the project's active set and this console
+    // draws no control that narrows it.
+    operation: 'orchestrator.map',
+    words: ['orchestrator', 'map', '--json'],
+    takesProject: true,
+    args: [],
+    dirFlag: false,
+  },
+  {
     // The Project tab's managed state and its audit trail (the managed screens'
     // plan, CM4; `managed.status`, D1472 to D1477; rule 6's own row). The whole
     // argv is the row's four words plus the installation's two: `fugaro managed
@@ -1500,6 +1840,160 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     operation: 'apply.pending',
     words: ['apply', '--status', '--json'],
     takesProject: true,
+    args: [],
+    dirFlag: false,
+  },
+  // The console improvements' eight rows (AL). Every one of them is inert
+  // today: the CLI release that registers the row's new words is not the
+  // release in this tree, and each operation's floor
+  // (`src/shared/version.ts`) is `null` until one names it, so no caller
+  // reaches these rows at all. They are here rather than in a later task
+  // because the allow-list is the thing the whole console spawns through, and
+  // a row added after its screen exists is a row reviewed after its argv is on
+  // the wire.
+  {
+    // The runs list's live form (`runs ls --stream --json --since <w>`). Three
+    // things are deliberately absent.
+    //
+    // **`--since` is a declared argument and not a word**, and it is the one
+    // ring the read shares with `runs.list`: the window is a closed set of the
+    // console's own (`runsStreamSince`, `RUNS_STREAM_SINCE_WINDOWS`) rather
+    // than the CLI's `parseSince`, whose `0` is every run the installation ever
+    // made arriving one line at a time -- and both rows emit it as the space
+    // form, so a stream and the listing its screen falls back to cannot spell
+    // one window two ways.
+    //
+    // **No `--repo`, `--mine`, `--pr`, `--all`, `--limit`, `--after`**: the
+    // operation's schema has none of them, so `argvFor` refuses them by name
+    // before this row is reached -- the stream is the window's own list.
+    //
+    // **`--stream` is in the command path**, like `graph watch`'s `--watch`:
+    // it is what makes the child long-lived, and a declared flag would be a
+    // word a renderer could turn off.
+    operation: 'runs.stream',
+    words: ['runs', 'ls', '--stream', '--json'],
+    takesProject: true,
+    args: [{ key: 'since', flag: '--since', kind: 'runsStreamSince' }],
+    dirFlag: false,
+  },
+  {
+    // The spend report's live form (`report --stream --json` plus the four
+    // arguments the whole-document read declares, unchanged and for the same
+    // reasons -- so the two reads of one figure cannot narrow it two ways).
+    operation: 'spend.stream',
+    words: ['report', '--stream', '--json'],
+    takesProject: true,
+    args: [
+      { key: 'by', flag: '--by', kind: 'value' },
+      { key: 'since', flag: '--since', kind: 'value' },
+      { key: 'until', flag: '--until', kind: 'value' },
+      { key: 'repo', flag: '--repo', kind: 'value' },
+    ],
+    dirFlag: false,
+  },
+  {
+    // The caps read's live form (`budget show --stream --json` plus the three
+    // arguments `budget.show` declares, `--compute` included: it is the one
+    // that costs a listing of the runs bucket, and the stream carries exactly
+    // what the read carries).
+    operation: 'budget.stream',
+    words: ['budget', 'show', '--stream', '--json'],
+    takesProject: true,
+    args: [
+      { key: 'repo', flag: '--repo', kind: 'value' },
+      { key: 'all', flag: '--all', kind: 'boolean' },
+      { key: 'compute', flag: '--compute', kind: 'boolean' },
+    ],
+    dirFlag: false,
+  },
+  {
+    // The caller's own role (`user ls --me --json`). `--me` is in the command
+    // path: the operation has no argument at all, so no payload can ask the
+    // roster question this flag's absence would be.
+    operation: 'whoami',
+    words: ['user', 'ls', '--me', '--json'],
+    takesProject: true,
+    args: [],
+    dirFlag: false,
+  },
+  {
+    // The image catalog (`image ls --json`): the group's one read, and the
+    // group's one word on this table. `image add`, `image rm` and `image
+    // promote` are `NEVER_REACHABLE` rows beside the `image build` and `image
+    // refresh` ones, each as a command and as a word of `image`
+    // (`src/main/ipc.ts`). No argument at all.
+    operation: 'image.catalog.ls',
+    words: ['image', 'ls', '--json'],
+    takesProject: true,
+    args: [],
+    dirFlag: false,
+  },
+  {
+    // The recipes (`recipes ls --json`). `recipes publish` is a write and
+    // `recipes validate` takes a free `FILE` positional: neither is this row,
+    // and both are the never table's as words of `recipes` as well.
+    operation: 'recipes.ls',
+    words: ['recipes', 'ls', '--json'],
+    takesProject: true,
+    args: [],
+    dirFlag: false,
+  },
+  {
+    // The first-run wizard's plan (`setup --plan-only --answers-file -
+    // --events --json`), and the first of the two rows that drive `setup` at
+    // all -- the command's never-row grants them by name and refuses every
+    // other argv of it (`src/main/ipc.ts`).
+    //
+    // **`--plan-only` is the word that makes this a read**, and it is why the
+    // two rows are rows of their own rather than one row with a declared flag:
+    // the word decides whether the child creates a GCP project, so it belongs
+    // where no payload can reach it.
+    //
+    // **`--answers-file` is followed by `-` and never by a path.** The answers
+    // reach the child on its standard input, as the bytes main made from the
+    // payload it validated -- so no file exists for another process of the same
+    // user to swap between main's check and the CLI's read, and there is no word
+    // in this argv a path could be spelled into. `--events` asks for the run's
+    // account as a feed of lines; `--json` is the row's own, as on every row.
+    //
+    // **`takesProject` is false, and of the three names on
+    // `COMMANDS_WITHOUT_PROJECT` this is the one that is not about the flags**:
+    // the command *has* `--project` and `--config`, and passing either would
+    // defeat the row. This argv creates the installation its answers name, the
+    // CLI reads `--project` and `$FUGARO_PROJECT` as a selection rather than as
+    // a suggestion, and `loadInitConfig` (`internal/cli/init.go`) refuses
+    // answers whose `name` differs from the project that selection names -- so a
+    // wizard aimed at the active installation could never create another, and a
+    // first run, which has no installation to aim at, could not build this argv
+    // at all (`isSafeInstallationValue` refuses the empty project name). The
+    // child is handed no `FUGARO_PROJECT` either, by the same column
+    // (`childEnvironment`), and that is the half that would otherwise refuse the
+    // answers even with the flag gone.
+    operation: 'setup.plan',
+    words: ['setup', '--plan-only', '--answers-file', '-', '--events', '--json'],
+    takesProject: false,
+    args: [{ key: 'answers', flag: null, kind: 'stdin' }],
+    dirFlag: false,
+  },
+  {
+    // The first-run wizard's apply (`setup --answers-file - --events --json`):
+    // the row above less `--plan-only`, and the console's fourth write.
+    //
+    // **It declares no argument, and that is the whole of its safety**: the
+    // answers file the child reads on stdin is the one main held when it showed
+    // the plan window, so a payload cannot name a different project, region or
+    // rigor between the window and the write. There is no `--yes`, no `--name`,
+    // and no word beyond the command path's own: the CLI asks nothing
+    // (`docs/no-prompt-policy/`), and the operator's confirmation is the
+    // window's, not an argv word.
+    //
+    // **And no `--project`/`--config` either**, for the row above's reason and
+    // with one turn more force: this is the argv that *creates* the installation,
+    // so a project selected here would be the one the write renames rather than
+    // the one it makes (`takesProject: false`, `COMMANDS_WITHOUT_PROJECT`).
+    operation: 'setup.apply',
+    words: ['setup', '--answers-file', '-', '--events', '--json'],
+    takesProject: false,
     args: [],
     dirFlag: false,
   },
@@ -1721,6 +2215,25 @@ export const SETTINGS_EDIT_LAYERS: readonly string[] = Object.freeze(['local', '
 export const TERMINATOR_WORD = '--'
 
 /**
+ * TERMINATOR_OPERATIONS are the rows whose argv may carry that terminator, and
+ * they are exactly the rows whose **own value** is a positional the command
+ * reads: the settings write's value (C3, D1104), the models write's model ID
+ * (MW1, D2903) and the image write's entry name (MW2, D2903). It is a frozen list
+ * rather than a rule read off the table because `assertArgvFlags` is handed an
+ * operation's *name* and no row -- and the list is held two-sided by
+ * `assertSpawnSurface`, which refuses a row that emits a terminated value without
+ * being named here and a name whose row emits none, so no further row can quietly
+ * join it.
+ */
+export const TERMINATOR_OPERATIONS: readonly string[] = Object.freeze([
+  SETTINGS_EDIT_OPERATION,
+  MODELS_ADD_PLAN_OPERATION,
+  MODELS_ADD_OPERATION,
+  IMAGE_ADD_PLAN_OPERATION,
+  IMAGE_ADD_OPERATION,
+])
+
+/**
  * ARGUMENT_RE is the alphabet a *renderer* argument may use. It is deliberately
  * a whitelist rather than a blacklist: a repository is `owner/name`, a run id is
  * `YYYYMMDD-HHMMSS-xxxx`, a day is `YYYY-MM-DD`, `--since` is `Nd`/`3h`/`0` or
@@ -1733,6 +2246,15 @@ export const TERMINATOR_WORD = '--'
  * word, and with `shell: false` there is no shell to spell it for.
  */
 const ARGUMENT_RE = /^[A-Za-z0-9._:@/+-]+$/
+
+/**
+ * CONTROL_CHARACTER_RE matches the characters an argv element may not carry at
+ * all: every C0 control, and DEL. It is `isSafeInstallationValue`'s own rule,
+ * named here because the one kind that admits prose (`equalsText`, the image
+ * write's description) has an alphabet of its own rather than `ARGUMENT_RE`'s --
+ * a space and a comma are a description's to have, a newline is not.
+ */
+const CONTROL_CHARACTER_RE = /[\u0000-\u001f\u007f]/
 
 /**
  * sameArgv answers whether two argv arrays are the same command line, element by
@@ -2050,6 +2572,27 @@ export function argvFor(
         argv.push(`${spec.flag ?? ''}${value}`)
         break
       }
+      case 'runsStreamSince': {
+        // Two words, `--since <window>`, which is the form `runs ls`'s
+        // whole-document row emits: the feed and the listing its screen falls
+        // back to read the same flag the same way.
+        //
+        // **The membership is asked again here rather than trusted**, for
+        // `summarySince`'s reason: the schema is the renderer's gate (`ipc.ts`'s
+        // `runsStreamSince`) and this is the argv's, and the window the two could
+        // disagree about is `parseSince`'s `0` -- no lower bound, so every run the
+        // installation ever made, still arriving on a live feed.
+        if (
+          typeof value !== 'string' ||
+          !RUNS_STREAM_SINCE_WINDOWS.includes(value) ||
+          !isSafeArgumentValue(value)
+        ) {
+          refused(`${operation}'s ${spec.key} is not a window this console will pass to the CLI`)
+        }
+        if (spec.flag !== null) argv.push(spec.flag)
+        argv.push(value)
+        break
+      }
       case 'pullRequest': {
         // The validator hands this over as the *number* it checked (ipc.ts's
         // `pullRequest` kind returns it unchanged), and the CLI's `--pr` is an
@@ -2132,6 +2675,94 @@ export function argvFor(
           refused(`${operation}'s ${spec.key} is not a value this console will pass to the CLI`)
         }
         terminated.push(value)
+        break
+      }
+      case 'equalsValue': {
+        // One word, `--flag=value`: the value stays inside the flag's own word,
+        // so it can never be read as a flag -- the design's reason for the `=`
+        // form on the rows that carry one (design §5.1 rule 6), and the reason
+        // `isSafeArgumentValue`'s leading-`-` rule is **not** applied here: a
+        // value spelled `--json` is inside this word and is a value. What is
+        // checked is what an argv element can be at all -- non-empty, inside the
+        // console's bound, and in `ARGUMENT_RE`'s alphabet, which refuses every
+        // control character and every shell metacharacter. The value's own
+        // grammar is the validator's (`ipc.ts`'s `modelRoute` and `modelPrice`).
+        if (typeof value !== 'string') refused(`${operation}'s ${spec.key} is not a string`)
+        const word = `${spec.flag ?? ''}${value}`
+        if (value === '' || value.length > MAX_ARGUMENT_LENGTH || !ARGUMENT_RE.test(value)) {
+          refused(`${operation}'s ${spec.key} is not a value this console will pass to the CLI`)
+        }
+        argv.push(word)
+        break
+      }
+      case 'terminatedValue': {
+        // The positional the command reads -- `models add <id>`, `image add
+        // <name>` -- and it emits no word here: it is pushed after the
+        // installation's flags (`terminated`, above), behind the row's `--`,
+        // which is what makes a value spelled `--route` or `-x` the positional
+        // it is. What is checked here is what an argv element can be at all: a
+        // non-empty string, no NUL (execve refuses one), and inside the
+        // console's own bound.
+        if (
+          typeof value !== 'string' ||
+          value === '' ||
+          value.includes('\u0000') ||
+          value.length > MAX_ARGUMENT_LENGTH
+        ) {
+          refused(`${operation}'s ${spec.key} is not a value this console will pass to the CLI`)
+        }
+        terminated.push(value)
+        break
+      }
+      case 'equalsList': {
+        // One word, `--flag=a,b`: the comma-joined list the CLI's own
+        // `StringSliceVar` reads, and the reason this kind is not `equalsValue`
+        // -- `ARGUMENT_RE` refuses a comma.
+        //
+        // **The members are asked again here rather than trusted**, the way
+        // `summarySince`'s window and `settingOp`'s subcommand are: the schema
+        // is the renderer's gate (`ipc.ts`'s `imageTags`) and this is the
+        // argv's, and a tag is a shape rather than a membership -- the CLI's own
+        // free-form tag rule, which is why the set is not a list of words. Every
+        // member has to match it, the list has to be non-empty and no longer than
+        // the CLI's own count, and the whole word has to be inside the console's
+        // bound -- so a list that grew a member of another shape is refused
+        // before a child exists rather than by the CLI one process later.
+        if (typeof value !== 'string') refused(`${operation}'s ${spec.key} is not a string`)
+        const members = value === '' ? [] : value.split(',')
+        if (
+          members.length === 0 ||
+          members.length > IMAGE_TAGS_MAX ||
+          members.some((member) => !IMAGE_TAG_RE.test(member)) ||
+          value.length > MAX_ARGUMENT_LENGTH ||
+          value.includes('\u0000')
+        ) {
+          refused(`${operation}'s ${spec.key} is not a list of tags this console will pass to the CLI`)
+        }
+        argv.push(`${spec.flag ?? ''}${value}`)
+        break
+      }
+      case 'equalsText': {
+        // One word, `--flag=<text>`: a value that may hold spaces, which is why
+        // it is not `equalsValue` -- the renderer's alphabet refuses a space. It
+        // stays inside the flag's own word, so a text that begins with `-` is a
+        // text and never a word of its own.
+        //
+        // What is refused here is what an argv cannot carry at all: a control
+        // character (a newline would break a listing that prints one line per
+        // entry, and the CLI's own `badKeyRune` refuses one too), a NUL
+        // (execve refuses one) and the console's own bound. The value's own
+        // grammar -- printable, no newline, at most the CLI's own 200 -- is the
+        // validator's (`ipc.ts`'s `imageDescription`).
+        if (typeof value !== 'string') refused(`${operation}'s ${spec.key} is not a string`)
+        if (
+          value === '' ||
+          value.length > MAX_ARGUMENT_LENGTH ||
+          CONTROL_CHARACTER_RE.test(value)
+        ) {
+          refused(`${operation}'s ${spec.key} is not a value this console will pass to the CLI`)
+        }
+        argv.push(`${spec.flag ?? ''}${value}`)
         break
       }
     }
@@ -2283,6 +2914,7 @@ function emitsArgvWord(spec: SpawnArgument, value: ValidatedArgument): boolean {
     case 'limit':
     case 'after':
     case 'summarySince':
+    case 'runsStreamSince':
     case 'pullRequest':
     case 'title':
     case 'planTask':
@@ -2290,6 +2922,10 @@ function emitsArgvWord(spec: SpawnArgument, value: ValidatedArgument): boolean {
     case 'settingValue':
     case 'roadmapTask':
     case 'roadmapRelease':
+    case 'equalsValue':
+    case 'terminatedValue':
+    case 'equalsList':
+    case 'equalsText':
       return true
   }
 }
@@ -2325,6 +2961,41 @@ export const RUNS_LIST_EQUALS_FLAGS: readonly string[] = Object.freeze(['--limit
  * two-sided the way the runs list's are. */
 export const RUNS_SUMMARY_EQUALS_FLAGS: readonly string[] = Object.freeze(['--since='])
 
+/** MODELS_ADD_EQUALS_FLAGS are the models write's three `=`-form prefixes (the
+ * console improvements plan's MW1, D2903): the route the model is claimed on and
+ * the two rates. All three are one word each, `--flag=value`, so no value a
+ * renderer sends can be read as a flag -- which is what the row's fourth value,
+ * the model ID, is the terminator for.
+ *
+ * It is one list for the two rows because the two rows are one command's two
+ * phases: the plan and the write declare the same three arguments, and
+ * `assertSpawnSurface` holds this table to each row's own declared flags, so a
+ * row that lost one of them fails at startup rather than at spawn time. */
+export const MODELS_ADD_EQUALS_FLAGS: readonly string[] = Object.freeze([
+  '--route=',
+  '--price-in=',
+  '--price-out=',
+])
+
+/** IMAGE_ADD_EQUALS_FLAGS are the image write's three `=`-form prefixes (the
+ * same plan's MW2, D2903): the entry's definition, its tags and its description.
+ * All three are one word each, so no value a renderer sends can be read as a
+ * flag -- which is what the row's fourth value, the entry's name, is the
+ * terminator for.
+ *
+ * It is one list for the two rows for the models write's reason: the two rows are
+ * one command's two phases and declare the same three arguments, and
+ * `assertSpawnSurface` holds this table to each row's own declared flags. What
+ * the table deliberately leaves out is `image add`'s other three definitions of
+ * one entry -- `--inline`, `--image` and `--branch` -- which no row of this
+ * table declares: this console writes an entry from a Dockerfile it names, and
+ * `assertArgvFlags` refuses each of those three for every operation here. */
+export const IMAGE_ADD_EQUALS_FLAGS: readonly string[] = Object.freeze([
+  '--dockerfile=',
+  '--tags=',
+  '--description=',
+])
+
 /**
  * EQUALS_FORM_FLAGS is, **per operation**, the `=`-form flag prefixes that
  * operation's argv may carry -- the one place `assertArgvFlags` reads its
@@ -2345,6 +3016,10 @@ export const EQUALS_FORM_FLAGS: Readonly<Record<string, readonly string[]>> = Ob
   [RUN_LAUNCH_OPERATION]: RUN_LAUNCH_EQUALS_FLAGS,
   'runs.list': RUNS_LIST_EQUALS_FLAGS,
   'runs.summary': RUNS_SUMMARY_EQUALS_FLAGS,
+  [MODELS_ADD_PLAN_OPERATION]: MODELS_ADD_EQUALS_FLAGS,
+  [MODELS_ADD_OPERATION]: MODELS_ADD_EQUALS_FLAGS,
+  [IMAGE_ADD_PLAN_OPERATION]: IMAGE_ADD_EQUALS_FLAGS,
+  [IMAGE_ADD_OPERATION]: IMAGE_ADD_EQUALS_FLAGS,
 })
 
 /** assertArgvFlags refuses an argv carrying a flag outside `SPAWN_FLAGS`, and one
@@ -2385,8 +3060,8 @@ export function assertArgvFlags(operation: string, argv: readonly string[]): voi
       // follows it is read as a value and not as a flag, which is the whole of
       // what a terminator means -- and it is what lets the settings edit pass a
       // value spelled `--layer` without that word being refused here.
-      if (operation !== SETTINGS_EDIT_OPERATION) {
-        refused(`${operation} would emit ${TERMINATOR_WORD}, which only the settings write's own row may emit`)
+      if (!TERMINATOR_OPERATIONS.includes(operation)) {
+        refused(`${operation} would emit ${TERMINATOR_WORD}, which only the rows whose own value is one (${TERMINATOR_OPERATIONS.join(', ')}) may emit`)
       }
       terminated = true
       continue
@@ -2567,12 +3242,30 @@ export function assertWslPrefix(prefix: readonly string[]): void {
 /**
  * COMMANDS_WITHOUT_PROJECT and COMMANDS_TAKING_DIR are rules 3 and 5 as the CLI
  * states them, keyed by the *operation's* command (Task 1.2's table), not by the
- * spawn row: `version` is the one command with no `--project`
- * (`newVersionCmd` has no flags at all), and `doctor` is the one with a `--dir`.
- * `assertSpawnSurface` holds every row's `takesProject` and `dirFlag` to these,
- * so the columns `argvFor` keys off cannot drift from the rule.
+ * spawn row: `doctor` is the one command with a `--dir`, and the three names
+ * here are the commands with no `--project`. `assertSpawnSurface` holds every
+ * row's `takesProject` and `dirFlag` to these, so the columns `argvFor` keys off
+ * cannot drift from the rule -- and the `takesProject` column is also what
+ * `childEnvironment` reads to decide whether the child is told a
+ * `FUGARO_PROJECT`, because the variable and the flag are one statement.
+ *
+ * **The three are three different reasons, and only the first is about flags.**
+ * `version` has no `Flags()` at all (`newVersionCmd`), so `--project` on it is an
+ * unknown-flag error. `config list` prints this machine's installations, so there
+ * is no project to name yet and it resolves no checkout to name one from. And
+ * `setup` has the flags -- `addCloudFlags` is on it (`internal/cli/init.go`) --
+ * but **the console must not pass them**: the two argvs §5.1 allows it to spawn
+ * create the installation their answers name, and the CLI reads `--project` and
+ * `$FUGARO_PROJECT` as a *selection*, so a child told the active project refuses
+ * the answers that name another one (`loadInitConfig`, `internal/cli/init.go`),
+ * while a first run has no installation to tell it about (design §5.1 rule 6's
+ * census and §3.4 rule 3's amendment, D2904).
  */
-export const COMMANDS_WITHOUT_PROJECT: readonly string[] = Object.freeze(['version', 'config list'])
+export const COMMANDS_WITHOUT_PROJECT: readonly string[] = Object.freeze([
+  'version',
+  'config list',
+  'setup',
+])
 export const COMMANDS_TAKING_DIR: readonly string[] = Object.freeze(['doctor'])
 
 /**
@@ -2617,10 +3310,18 @@ export function assertSpawnSurface(rows: readonly SpawnCommand[]): void {
     for (const flag of operation.flags) {
       if (!row.words.includes(flag)) refused(`${row.operation} fixes ${flag} and its argv does not carry it`)
     }
-    const wantsProject = !COMMANDS_WITHOUT_PROJECT.includes(operation.command)
+    // The command's *name*, reduced from the operation's command path: the
+    // leading words before its first flag. A mode word is part of what makes an
+    // operation what it is and not part of the command's name -- `graph
+    // --watch` is `graph`, and the wizard's `setup --plan-only --answers-file -
+    // --events` is `setup` -- which is what `COMMANDS_WITHOUT_PROJECT` is keyed
+    // by, exactly as the design's census names those same commands.
+    const firstFlag = commandWords.findIndex((word) => word.startsWith('-'))
+    const command = (firstFlag === -1 ? commandWords : commandWords.slice(0, firstFlag)).join(' ')
+    const wantsProject = !COMMANDS_WITHOUT_PROJECT.includes(command)
     if (row.takesProject !== wantsProject) {
       refused(
-        `${row.operation} ${wantsProject ? 'must carry' : 'must not carry'} ${PROJECT_FLAG}: every command but ${COMMANDS_WITHOUT_PROJECT.join(' and ')} takes it (rule 3)`,
+        `${row.operation} ${wantsProject ? 'must carry' : 'must not carry'} ${PROJECT_FLAG}: every command but ${COMMANDS_WITHOUT_PROJECT.join(', ')} takes it (rule 3)`,
       )
     }
     const wantsDir = COMMANDS_TAKING_DIR.includes(operation.command)
@@ -2672,10 +3373,12 @@ export function assertSpawnSurface(rows: readonly SpawnCommand[]): void {
     if (row.expectFlag !== undefined && !SPAWN_FLAGS.includes(row.expectFlag)) {
       refused(`${row.operation} would emit ${row.expectFlag}, which is not a flag this console may spawn`)
     }
-    const terminates = row.args.some((spec) => spec.kind === 'settingValue')
-    if (terminates !== (row.operation === SETTINGS_EDIT_OPERATION)) {
+    const terminates = row.args.some(
+      (spec) => spec.kind === 'settingValue' || spec.kind === 'terminatedValue',
+    )
+    if (terminates !== TERMINATOR_OPERATIONS.includes(row.operation)) {
       refused(
-        `${row.operation} ${terminates ? 'emits a value behind the terminator' : 'has no value behind the terminator'}: only the settings write's own row passes one`,
+        `${row.operation} ${terminates ? 'emits a value behind the terminator' : 'has no value behind the terminator'}: only the rows whose own value is one (${TERMINATOR_OPERATIONS.join(', ')}) pass one`,
       )
     }
     const declared = new Set<string>(operation.args.map((spec) => spec.key))
@@ -2850,7 +3553,8 @@ export function parseVersionLine(text: string):
 /**
  * childEnvironment builds the child's environment: exactly `CHILD_ENV_KEYS`,
  * with `PATH` rebuilt from the resolved binary's directory and the well-known
- * tool prefixes, and `FUGARO_PROJECT` set to the installation's project. The
+ * tool prefixes, and `FUGARO_PROJECT` set to the installation's project for
+ * every child whose row takes one. The
  * app's own environment is read for `HOME`, `TMPDIR`, `LANG`, `LC_ALL` and the
  * five `XDG_*` variables and for nothing else -- the cloud SDK finds the
  * operator's identity in their home directory exactly as it does in a terminal,
@@ -2916,6 +3620,19 @@ export function childEnvironment(options: {
    * app's environment is not a source of it -- and it travels in the environment
    * rather than in an argv, which is the whole of F41's hand-off. */
   readonly licenceKey?: string | undefined
+  /** `takesProject` is the spawn row's own column (`SpawnCommand.takesProject`),
+   * read here because the variable and the flag are one statement: the CLI's
+   * `$FUGARO_PROJECT` is its fallback for `--project`
+   * (`localcfg.SelectInput.EnvProject`, `internal/localcfg/select.go:207`), so a
+   * row the console gives no `--project` is handed no project through the
+   * environment either -- otherwise the wizard's argv, which carries no flag,
+   * would still be aimed at the active installation by the back door and the CLI
+   * would refuse the answers it exists to write (`loadInitConfig`). **False
+   * writes no `FUGARO_PROJECT` at all**, and **omitted is true**, which is what
+   * the callers outside the spawn table want (`wsl.exe`'s own queries,
+   * `src/main/wsl.ts`, whose `project` is the spawn log's field and not a CLI
+   * selection). */
+  readonly takesProject?: boolean | undefined
 }): Readonly<Record<string, string>> {
   const env: Record<string, string> = Object.create(null) as Record<string, string>
   for (const key of CHILD_ENV_KEYS) {
@@ -2924,7 +3641,7 @@ export function childEnvironment(options: {
     if (typeof value === 'string' && value !== '') env[key] = value
   }
   env['PATH'] = childPath(options.binaryPath, options.platform)
-  env['FUGARO_PROJECT'] = options.target.project
+  if (options.takesProject !== false) env['FUGARO_PROJECT'] = options.target.project
   // Written from the argument and never from `appEnv`: the store is the only
   // source of a handed-over key, so a console started with one in its own
   // environment hands it to no child.
@@ -3906,6 +4623,12 @@ export function planFor(
     readonly licenceKey?: string | undefined
   },
 ): SpawnPlan {
+  // The row is read once, for the one column the two routes below need beyond
+  // `argvFor`: `takesProject` says whether the child is told a
+  // `FUGARO_PROJECT`, and the variable is the flag's own fallback in the CLI
+  // (`childEnvironment`). Reading it from the table rather than taking it as a
+  // context field keeps it one fact with the row `argvFor` reads.
+  const takesProject = spawnCommandFor(operation).takesProject
   const wsl = context.wsl
   if (wsl !== undefined) {
     const cliArgs = argvFor(operation, args, {
@@ -3967,6 +4690,12 @@ export function planFor(
         // for no reader. The CLI inside the distribution reads the key file of
         // its own config directory instead (S2.3), which is where a Windows
         // operator's `fugaro licence install` puts it.
+        //
+        // `FUGARO_PROJECT` follows the row on this route as on the host's: the
+        // wizard's `setup` is spawned inside a distribution the same way it is
+        // on the host, and it must reach a CLI with no project selected there
+        // too.
+        takesProject,
       }),
       project: context.target.project,
       backoff: context.backoff ?? DEFAULT_BACKOFF,
@@ -3991,6 +4720,7 @@ export function planFor(
       binaryPath: context.binaryPath,
       appEnv: context.appEnv,
       licenceKey: context.licenceKey,
+      takesProject,
     }),
     project: context.target.project,
     backoff: context.backoff ?? DEFAULT_BACKOFF,

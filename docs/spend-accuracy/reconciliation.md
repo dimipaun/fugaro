@@ -54,7 +54,7 @@ flip it in that release, and nobody did. `modelsCatalogPriceNote` (`internal/cli
 "fugaro update does not accept the switch yet (D795)". **Consequence:** no owner can set `highest` today, and every
 OpenRouter route has been priced at `cheapest` since 0.7.5. Resolution RS1.
 
-**F4 (Rule).** R3 reverses a recorded owner ruling. `docs/design/provider-price-catalog.md` D6: "`cheapest` stays
+**F4 (Rule).** R3 reverses a recorded owner ruling. `docs/provider-price-catalog/spec.md` D6: "`cheapest` stays
 the default (owner ruling 3)", repeated in `docs/multi-model.md` §2. **Consequence:** D2644 (answered: `highest`)
 supersedes ruling 3. D6, §0 item 3 and `docs/multi-model.md` §2 are amended in the same change, and that change says
 it supersedes the ruling.
@@ -67,7 +67,7 @@ also replaces the catalog row whole (`CatalogRoute.Overridden`), so no `price_po
 `deepseek/deepseek-v4-pro` has no override and is catalog-priced at `cheapest`. **Consequence:** D2645 (delete the
 override). How much of the gap this explains is U5.
 
-**F6 (Rule, settled).** `docs/design/m10-multi-model.md` ("Real vs notional dollars") says a large reported-vs-charge
+**F6 (Rule, settled).** `docs/m10-multi-model/spec.md` ("Real vs notional dollars") says a large reported-vs-charge
 gap is "never auto-adopted", and lists "adopt provider-reported cost as the settled charge" under "Phase 3 (needs the
 user's decision)". **Consequence:** D2640 is that decision. The m10 text is amended to point here.
 
@@ -77,7 +77,7 @@ model. `StageReport.Reported` is also one figure. **Consequence:** R1's per-mode
 figure exists only where the run used one route model; otherwise R1 shows the run's total under `mixed`.
 
 **F8 (Exists, confirmed).** `routedKeys` (`internal/gateway/forward.go`) refuses a client-sent `usage`, and the
-gateway never rewrites a body (`docs/multi-model.md` §7, `docs/design/provider-price-catalog.md` §0 item 6).
+gateway never rewrites a body (`docs/multi-model.md` §7, `docs/provider-price-catalog/spec.md` §0 item 6).
 **Consequence:** D2642 (no rewrite; measure presence first).
 
 **F9 (Exists, confirmed).** The report's per-model split. `Session.report` queues gateway spend per model as micros

@@ -1,6 +1,6 @@
 // The managed apply: the one path that applies a saved plan in a managed
 // project, and the three things that replace the coding-agent refusal D55
-// removes there (docs/design/managed-projects.md, D55 and D76).
+// removes there (docs/managed-projects/spec.md, D55 and D76).
 //
 // What it is: the agent-authored root is copied into this command's own
 // workdir, the backend is set by the command itself (D77's state bucket, never

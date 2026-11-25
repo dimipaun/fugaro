@@ -887,6 +887,28 @@ func (m *policyMigration) refuseRunsInFlight(ctx context.Context, yes bool, answ
 // node: the migration, the publish, or both in one write.
 func (m *policyMigration) writesNode() bool { return m.moved != nil || m.pub != nil }
 
+// raisesVersion is whether the write this run holds moves the published node's
+// version: the walk across versions does, and the step that runs at a version
+// rather than across two — AB8a's rewrite of a budget mode the vocabulary
+// dropped — does not. The two credentials rules around the write are what ask
+// it (credentialsMoveHeld, credentialsResolveBeforeRaise): they exist because
+// the node's version and the process reading it move together, and a node
+// rewritten at the version it already has asks no service to be replaced for
+// it, which is the whole of what D3025 buys (no bump, no image rebuilt).
+func (m *policyMigration) raisesVersion() bool {
+	return m.moved != nil && m.from != projectpolicy.Version
+}
+
+// sameVersion is whether this run's write is the one step that runs at a
+// version rather than across two (projectpolicy.Migrate's own answer for a node
+// at this version whose budget mode says the word the vocabulary dropped). It
+// is read off the node's version and not off the changes, because the version
+// is what the write is: a node already at this version can only change through
+// that step, so the number and the write are one fact.
+func (m *policyMigration) sameVersion() bool {
+	return m.moved != nil && m.from == projectpolicy.Version
+}
+
 // admitsNoRepository is whether the document this publish would write admits no
 // repository at all, which is the node that stops every run of the project
 // before it starts. It is asked of the built publish and not of the local
@@ -927,12 +949,16 @@ func (m *policyMigration) doneDetail() string {
 	switch {
 	case m.firstPublish:
 		return "published the project's first policy node, carrying what the local config states"
+	case m.sameVersion() && m.pub != nil:
+		return "rewrote the published policy node in place, with what the local config states"
 	case m.moved != nil && m.pub != nil:
 		return fmt.Sprintf("migrated the published policy from version %d to %d in place, with what the local config states", m.from, projectpolicy.Version)
 	case m.pub != nil:
 		return "published the node the local config states"
 	case m.generations != nil:
 		return fmt.Sprintf("re-seeded %s from the published policy node", m.path)
+	case m.sameVersion():
+		return fmt.Sprintf("rewrote the published policy node in place: %s", m.changes[0].Changed)
 	case m.writesNode():
 		return fmt.Sprintf("migrated the published policy from version %d to %d in place", m.from, projectpolicy.Version)
 	case len(m.importCloneURLs) > 0:
@@ -1060,6 +1086,7 @@ const (
 	bitbucketTokenKey    = "bitbucket_token"
 	bitbucketAPIRootsKey = "bitbucket_api_roots"
 	verifierAccountsKey  = "verifier_accounts"
+	mobileKey            = "mobile"
 	policyMigrationWhat  = "this rewrites the published policy node in place"
 	policyPublishWhat    = "this rewrites the published policy node in place, from your local config"
 	policyReseedWhat     = "this re-seeds your local config from the published policy node"
@@ -1145,6 +1172,27 @@ func withDerivedMembers(raw []byte, lc *localcfg.Config, identities map[string]s
 			return raw, userErr("carrying %s's %s verifier list into the policy: %v", lc.Name, verifierAccountsKey, err)
 		}
 	}
+	// The mobile block is carried for the reason the policy stage compares it:
+	// a node this migration writes without one reads as mobile disabled and is
+	// then a difference the very next run publishes, so a migrated node states
+	// the defaults a publish would (MobileForPublish).
+	if !carries(mobileKey) {
+		var err error
+		if node, err = patchPolicyJSON(node, mobileKey, projectpolicy.DefaultMobile()); err != nil {
+			return raw, userErr("carrying the policy's %s block into %s: %v", mobileKey, lc.Name, err)
+		}
+	}
+	// The app's crash-report switch travels beside the block for the same
+	// reason (D731, D738): a node this migration writes without the key is a
+	// difference the very next run publishes, and until that run the switch
+	// reads off (MobileCrashReportsOn), so a migrated node states the default a
+	// publish would (MobileCrashReportsForPublish).
+	if !carries(projectpolicy.MobileCrashReportsKey) {
+		var err error
+		if node, err = patchPolicyJSON(node, projectpolicy.MobileCrashReportsKey, projectpolicy.MobileCrashReportsForPublish(nil)); err != nil {
+			return raw, userErr("carrying the policy's %s key into %s: %v", projectpolicy.MobileCrashReportsKey, lc.Name, err)
+		}
+	}
 	return node, nil
 }
 
@@ -1198,10 +1246,24 @@ func (m *policyMigration) writeName() string {
 // than worded a second time here).
 func (m *policyMigration) print(w io.Writer) {
 	if m.moved != nil {
-		fmt.Fprintf(w, "%s: published (version %d) and rewritten in place as version %d; nothing is removed\n",
-			projectpolicy.PathShared(), m.from, projectpolicy.Version)
+		if m.sameVersion() {
+			// The step runs at the version rather than across two (AB8a): the
+			// node's number does not move, so a line naming two versions would
+			// be a diff of a change that is not there.
+			fmt.Fprintf(w, "%s: rewritten in place at version %d; nothing is removed\n",
+				projectpolicy.PathShared(), m.from)
+		} else {
+			fmt.Fprintf(w, "%s: published (version %d) and rewritten in place as version %d; nothing is removed\n",
+				projectpolicy.PathShared(), m.from, projectpolicy.Version)
+		}
 		for _, ch := range m.changes {
-			fmt.Fprintf(w, "  %d to %d: %s\n", ch.From, ch.To, ch.Changed)
+			head := fmt.Sprintf("%d to %d: %s", ch.From, ch.To, ch.Changed)
+			if ch.From == ch.To {
+				// The step that runs at a version says what it changed without
+				// the two numbers that would read as a version move (AB8a).
+				head = ch.Changed
+			}
+			fmt.Fprintf(w, "  %s\n", head)
 			kept := make([]string, 0, len(ch.Kept))
 			for _, name := range ch.Kept {
 				if !slices.Contains(m.derived, name) {
@@ -1394,7 +1456,7 @@ func (s *policyMigrateStage) Check(ctx context.Context) (initflow.Status, error)
 	// Bitbucket-proxied call until a later update succeeds
 	// (init_stages.go's credentialsMoveHeld has the whole argument).
 	var held string
-	if m != nil && m.moved != nil {
+	if m != nil && m.raisesVersion() {
 		held = s.e.credentialsMoveHeld()
 	}
 	switch {
@@ -1425,6 +1487,12 @@ func (s *policyMigrateStage) Check(ctx context.Context) (initflow.Status, error)
 		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the published policy node carries a clone_urls block this machine's config file does not: this run imports it into %s", m.path)}, nil
 	case m.moved == nil:
 		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the local config states what the published policy does not carry: %s", memberListText(m.drift))}, nil
+	}
+	if m.sameVersion() {
+		// The node's number does not move, so the line for a version the node
+		// is behind would say the version twice (AB8a). What this run does is
+		// the step, and the step's own sentence is the detail.
+		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the published policy is version %d and this run rewrites it in place: %s", m.from, m.changes[0].Changed)}, nil
 	}
 	return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the published policy is version %d and this Fugaro writes version %d", m.from, projectpolicy.Version)}, nil
 }
@@ -1477,6 +1545,10 @@ func (m *policyMigration) planDetail() string {
 		return fmt.Sprintf("import the published policy node's clone_urls block into %s, after your confirmation", m.path)
 	case m.moved == nil:
 		return "publish the node the local config states, after your confirmation"
+	case m.sameVersion() && m.pub == nil:
+		return "rewrite the published policy node in place, after your confirmation"
+	case m.sameVersion():
+		return "rewrite the published policy node in place and publish what the local config states, in one write, after your confirmation"
 	case m.pub == nil:
 		return fmt.Sprintf("migrate the published policy from version %d to %d in place, after your confirmation", m.from, projectpolicy.Version)
 	default:
@@ -1534,7 +1606,7 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 	// run cannot make fails the run with the node exactly where it was
 	// (credentialsResolveBeforeRaise; a run that replaces nothing at all never
 	// reaches this line, Check having held the stage back).
-	if m.moved != nil {
+	if m.raisesVersion() {
 		if err := s.e.credentialsResolveBeforeRaise(ctx); err != nil {
 			return initflow.Outcome{}, err
 		}
@@ -1612,9 +1684,9 @@ func (s *policyMigrateStage) inflightAnswer() inflightAnswer {
 // Verify reads the node back: a write that claims a version it did not land is
 // a policy this Fugaro would keep rewriting on every run.
 //
-// The version is not the whole of the answer. Migrate short-circuits on a node
-// already at this version (from == Version), so it never reaches the reader
-// gate it ends its walk with — and that gate judged the document the walk was
+// The version is not the whole of the answer. A node already at this version
+// whose one step changes nothing comes back byte for byte and is never judged
+// by the reader gate — and that gate judged the document the migration was
 // about to write, not the bytes the database now holds. Decode is that gate,
 // called here on what was read back: a node at this version that the current
 // reader refuses is a write that landed a policy no run of the project can
@@ -1643,6 +1715,12 @@ func (s *policyMigrateStage) Verify(ctx context.Context) error {
 		return err
 	}
 	if len(changes) > 0 {
+		if ch := changes[0]; ch.From == ch.To {
+			// The step that runs at a version rather than across two: the number
+			// a version-move refusal names would be the one the node already
+			// had, which reads as a node that converged when nothing landed.
+			return fmt.Errorf("the published policy was written but the migration's step at version %d is still owed for it, so the run would rewrite the node again", ch.From)
+		}
 		return fmt.Errorf("the published policy is still version %d", changes[0].From)
 	}
 	p, _, err := projectpolicy.Decode(raw)
@@ -1822,11 +1900,17 @@ func writtenDefaultProfiles(lc *localcfg.Config, providers []string, repos map[s
 // defaultProfileNames spells the profiles of a write as a person reads them in
 // the file: "profiles.standard, profiles.standard-bitbucket".
 func defaultProfileNames(defaults []defaultProfile) string {
+	return strings.Join(profileNames(defaults), ", ")
+}
+
+// profileNames is those names as a list, for the one line a withheld write
+// prints: nameList is what caps it.
+func profileNames(defaults []defaultProfile) []string {
 	names := make([]string, len(defaults))
 	for i, d := range defaults {
 		names[i] = "profiles." + d.Name
 	}
-	return strings.Join(names, ", ")
+	return names
 }
 
 // installSpec is the installation spec a run plans from, with the one
@@ -1860,7 +1944,12 @@ func defaultProfileNames(defaults []defaultProfile) string {
 // nothing to carry and is asked for the App ID, as it is today, and a profile
 // the operator renamed or deleted is the config's fact with the remedy
 // RefuseProjectJobDeletes prints for it.
-func installSpec(o *initOptions, lc *localcfg.Config, warn func(string)) (infra.InstallationSpec, error) {
+// sayWithheld is how a run says a write it did not make: the one line the
+// screen and the result's warnings read, and the reason whole, which the run's
+// log keeps (initRun.withheld).
+type sayWithheld func(line, why string)
+
+func installSpec(o *initOptions, lc *localcfg.Config, say sayWithheld) (infra.InstallationSpec, error) {
 	spec, err := installOptions(o, lc)
 	if err == nil {
 		return spec, nil
@@ -1878,8 +1967,10 @@ func installSpec(o *initOptions, lc *localcfg.Config, warn func(string)) (infra.
 			continue
 		}
 		kept.CarriedProjectJobs = []string{name}
-		warn(fmt.Sprintf("kept the shared job of %s as the installation holds it: this local config cannot compose it now (%s). This run converges with the job kept, and a later %s composes one from the config again once that is fixed",
-			defaultProfileNameList([]string{name}), oneLineCLI(err.Error()), selfCommand()+" update"))
+		say(withheldLine("kept the shared job of ", prefixedProfileNames([]string{name}),
+			fmt.Sprintf(" as deployed: this config cannot compose it; a later %s writes one once fixed", selfCommand()+" update")),
+			fmt.Sprintf("kept the shared job of %s as the installation holds it: this local config cannot compose it now (%s)",
+				defaultProfileNameList([]string{name}), oneLineCLI(err.Error())))
 		return kept, nil
 	}
 	return infra.InstallationSpec{}, err
@@ -1948,11 +2039,17 @@ func heldDefaultProfiles(o *initOptions, lc *localcfg.Config) []string {
 // defaultProfileNameList spells a held set as defaultProfileNames spells a
 // written one, from the names the installation answered for.
 func defaultProfileNameList(names []string) string {
+	return strings.Join(prefixedProfileNames(names), ", ")
+}
+
+// prefixedProfileNames is those names as the list a withheld write's line reads,
+// which is the list nameList cuts to the characters the line has.
+func prefixedProfileNames(names []string) []string {
 	out := make([]string, len(names))
 	for i, n := range names {
 		out[i] = "profiles." + n
 	}
-	return strings.Join(out, ", ")
+	return out
 }
 
 // createDefaultProfiles writes the default profile of every provider this
@@ -2006,7 +2103,7 @@ func (e *initEngine) createDefaultProfiles(ctx context.Context) {
 	// that case — the file keeps what the operator had, those repositories keep
 	// the per-repository jobs they run today, and the line says why, so the
 	// next update writes the profile once the reason is fixed.
-	spec, err := installSpec(o, e.lc, r.warn)
+	spec, err := installSpec(o, e.lc, r.withheld)
 	if err != nil {
 		for _, d := range created {
 			delete(e.lc.Profiles, d.Name)
@@ -2014,8 +2111,12 @@ func (e *initEngine) createDefaultProfiles(ctx context.Context) {
 		if !hadBlock {
 			e.lc.Profiles = nil
 		}
-		r.warn(fmt.Sprintf("no default profile was written (%s): %s; the repositories of those providers keep their per-repository jobs, and a later %s writes their default profile once that is fixed",
-			defaultProfileNames(created), oneLineCLI(err.Error()), selfCommand()+" update"))
+		r.withheld(
+			withheldLine("no default profile written: this config cannot compose ",
+				profileNames(created),
+				fmt.Sprintf("; a later %s writes it once fixed", selfCommand()+" update")),
+			fmt.Sprintf("no default profile was written (%s): %s",
+				defaultProfileNames(created), oneLineCLI(err.Error())))
 		return
 	}
 	// The spec every stage below builds is the one this config now yields, so
@@ -2060,7 +2161,9 @@ const defaultCatalogEntryName = "base"
 // catalog this machine's config does not hold is not one to write into, and an
 // entry the config already has under this name is the operator's.
 //
-// Every line it prints is a reason and a remedy, and it is silent in the one
+// Every line it prints is one line — what happened, and whether anything is
+// left for the operator — and the reason whole is in the run's log
+// (withholdDefaultCatalogEntry, initRun.withheld), and it is silent in the one
 // state where there is nothing to say: a project that already marks a default
 // has the entry this write is for, whether an earlier update or the operator
 // put it there.
@@ -2076,9 +2179,11 @@ func (e *initEngine) writeDefaultCatalogEntry(ctx context.Context) {
 	// this run reads one (init.go's effectiveVerifiers): it is the node this
 	// same run migrates in place, so it is a state `fugaro update` has to
 	// converge through and not a fact about the project's catalog.
-	p, _, err := r.policy.read(ctx, e.lc)
+	p, _, err := r.policyMemo().read(ctx, e.lc)
 	if err != nil && !olderPolicyNode(err) {
-		e.withholdDefaultCatalogEntry(fmt.Sprintf("the project's published policy could not be read (%s)", oneLineCLI(policyReadErr(err).Error())))
+		e.withholdDefaultCatalogEntry(
+			fmt.Sprintf("no default catalog entry written: the project's policy could not be read; a later %s retries", selfCommand()+" update"),
+			fmt.Sprintf("the project's published policy could not be read (%s)", oneLineCLI(policyReadErr(err).Error())))
 		return
 	}
 	var published *config.Catalog
@@ -2095,12 +2200,16 @@ func (e *initEngine) writeDefaultCatalogEntry(ctx context.Context) {
 		}
 	}
 	if e.lc.ImageCatalog == nil && published != nil && len(published.Entries) > 0 {
-		e.withholdDefaultCatalogEntry("this machine's project config names no image catalog, and the project has one published, so an entry written here would replace that catalog rather than be added to it")
+		e.withholdDefaultCatalogEntry(
+			"no default catalog entry written: the project publishes a catalog this config does not hold; nothing to do",
+			"this machine's project config names no image catalog, and the project has one published, so an entry written here would replace that catalog rather than be added to it")
 		return
 	}
 	base := e.lc.BaseImage(config.BaseKind)
 	if base == "" {
-		e.withholdDefaultCatalogEntry("this config records no base image for the base kind, so there is no reference to write the entry on")
+		e.withholdDefaultCatalogEntry(
+			"no default catalog entry written: this config records no base image to write the entry on; nothing to do",
+			"this config records no base image for the base kind, so there is no reference to write the entry on")
 		return
 	}
 	entry := config.Entry{
@@ -2109,17 +2218,21 @@ func (e *initEngine) writeDefaultCatalogEntry(ctx context.Context) {
 		Source:  config.Source{Kind: config.SourceImage, Image: base},
 	}
 	if slices.ContainsFunc(catalogEntries(cat), func(x config.Entry) bool { return x.Name == entry.Name }) {
-		e.withholdDefaultCatalogEntry(fmt.Sprintf("this project's catalog already has an entry named %s, and an entry of the operator's is never written over: mark the entry you want as the default in the project config, or rename that one, and a later %s writes this entry",
-			entry.Name, selfCommand()+" update"))
+		e.withholdDefaultCatalogEntry(
+			fmt.Sprintf("no default catalog entry written: the catalog already has an entry named %s; mark the entry you want as the default", entry.Name),
+			fmt.Sprintf("this project's catalog already has an entry named %s, and an entry of the operator's is never written over: mark the entry you want as the default in the project config, or rename that one, and a later %s writes this entry",
+				entry.Name, selfCommand()+" update"))
 		return
 	}
-	if why := e.defaultCatalogEntryRefusal(cat, e.lc.ImageMapEffective(publishedMap), entry, p); why != "" {
-		e.withholdDefaultCatalogEntry(why)
+	if line, why := e.defaultCatalogEntryRefusal(cat, e.lc.ImageMapEffective(publishedMap), entry, p); why != "" {
+		e.withholdDefaultCatalogEntry(line, why)
 		return
 	}
 	next := config.Catalog{Entries: append(catalogEntries(cat), entry)}
 	if problems := config.ValidateCatalog("image_catalog", next); len(problems) > 0 {
-		e.withholdDefaultCatalogEntry(fmt.Sprintf("the entry is not one this project's catalog can carry (%s: %s)", problems[0].Path, problems[0].Message))
+		e.withholdDefaultCatalogEntry(
+			"no default catalog entry written: this project's catalog cannot carry the entry; nothing to do",
+			fmt.Sprintf("the entry is not one this project's catalog can carry (%s: %s)", problems[0].Path, problems[0].Message))
 		return
 	}
 	e.lc.ImageCatalog = &next
@@ -2165,13 +2278,59 @@ func (e *initEngine) repinDefaultCatalogEntry(next *localcfg.Config, host, owner
 	next.ImageCatalog = &config.Catalog{Entries: entries}
 }
 
-// withholdDefaultCatalogEntry is the one sentence this write says when it does
-// not write: the reason, and what the project keeps in the meantime. It names
+// withholdDefaultCatalogEntry is how this write says it did not write: one
+// line — what happened and what, if anything, is left for the operator, which
+// is why the line ends in "nothing to do" where the project needs no repair —
+// and the reason whole, which the run's log keeps (initRun.withheld). It names
 // no command but `fugaro update`, because every reason is a fact about the
 // project's own configuration that the operator edits.
-func (e *initEngine) withholdDefaultCatalogEntry(why string) {
-	e.r.warn(fmt.Sprintf("no default catalog entry was written: %s; the shared jobs of this project keep the image they run today, and a later %s writes the entry once that is fixed",
-		why, selfCommand()+" update"))
+//
+// The line carries the repositories where they are what the operator acts on
+// and they fit within its bound (withheldLine), and the log carries them all
+// either way: the owner's rule of 2026-11-24 is that this warning is one line
+// of about withheldLineMax characters, and a project can list twenty
+// repositories.
+func (e *initEngine) withholdDefaultCatalogEntry(line, why string) {
+	e.r.withheld(line, why)
+}
+
+// withheldLineMax is how long the line a withheld write builds may be: the
+// owner's rule of 2026-11-24, that such a warning is one line of about this
+// many characters rather than the 600 it was. It is the line itself, without
+// the reporter's own `Warning: ` label in front of it (initRun.warn prints
+// whatever the caller builds).
+const withheldLineMax = 140
+
+// withheldLine is one line of a withheld write: the fixed head and the fixed
+// tail with the names the write is about between them, cut to as many names as
+// leave the whole line within withheldLineMax characters
+// (nameList). The count is what holds the bound for a project that lists twenty
+// repositories or names two long profiles; what the line cuts is in the run's
+// log with the rest of the reason (initRun.withheld).
+func withheldLine(head string, names []string, tail string) string {
+	return head + nameList(names, withheldLineMax-len(head)-len(tail)) + tail
+}
+
+// nameList names as many of the names a withheld write is about as fit budget
+// characters, with the rest counted, "and 3 more". The count is part of the
+// line, so a list that only fits without it is cut one name further: what the
+// reader is left with has to say that it is not the whole list, or the line
+// reads as a project with one repository.
+//
+// One name is the floor, and it is named whole even when it alone runs over the
+// budget: a line a little long reads better than one whose remedy names no
+// repository, and half a repository name is not one the operator can act on.
+func nameList(names []string, budget int) string {
+	if len(names) == 0 {
+		return ""
+	}
+	shown := len(names)
+	list := strings.Join(names, ", ")
+	for shown > 1 && len(list) > budget {
+		shown--
+		list = strings.Join(names[:shown], ", ") + fmt.Sprintf(", and %d more", len(names)-shown)
+	}
+	return list
 }
 
 // catalogEntries is the entries of a catalog a config may not have at all, as a
@@ -2184,9 +2343,11 @@ func catalogEntries(cat *config.Catalog) []config.Entry {
 	return slices.Clone(cat.Entries)
 }
 
-// defaultCatalogEntryRefusal is why the entry must not be written, "" when
-// nothing holds it back: the three states in which the entry would be the image
-// of a job this run has to deploy and the deployer would refuse that job.
+// defaultCatalogEntryRefusal is what holds the entry back — the one line the
+// screen reads, and the reason whole, which the run's log keeps — and both of
+// them empty when nothing holds it back: the three states in which the entry
+// would be the image of a job this run has to deploy and the deployer would
+// refuse that job.
 //
 // The first is a repository the project does not admit. Such a repository runs
 // on the per-repository job its own root deploys, and that job's image is the
@@ -2218,18 +2379,20 @@ func catalogEntries(cat *config.Catalog) []config.Entry {
 // written, and a workflow's image_name, its needs and the project's image_map
 // are read only against a catalog, so a job that runs the base image today can
 // be refused the moment the entry lands.
-func (e *initEngine) defaultCatalogEntryRefusal(cat *config.Catalog, imageMap map[string]string, entry config.Entry, node *projectpolicy.Policy) string {
+func (e *initEngine) defaultCatalogEntryRefusal(cat *config.Catalog, imageMap map[string]string, entry config.Entry, node *projectpolicy.Policy) (line, why string) {
 	if repos := unadmittedRepos(e.lc, node); len(repos) > 0 {
-		return fmt.Sprintf("this project does not admit %s — a repository is admitted when the project's published allow_repos names it and a profile of its provider admits it — and a repository it does not admit runs on the per-repository job its own root deploys, so the entry would be the image of that job: a checkout: baked workflow of it that writes no image of its own is refused there (unbuiltOnBaked, D1191)",
-			strings.Join(repos, ", "))
+		return withheldLine("no default catalog entry written: this project does not admit ", repos, "; nothing to do"),
+			fmt.Sprintf("this project does not admit %s — a repository is admitted when the project's published allow_repos names it and a profile of its provider admits it — and a repository it does not admit runs on the per-repository job its own root deploys, so the entry would be the image of that job: a checkout: baked workflow of it that writes no image of its own is refused there (unbuiltOnBaked, D1191)",
+				strings.Join(repos, ", "))
 	}
 	cfg, slug := e.checkoutWorkflows()
 	if repos := unvouchedRepos(e.lc, e.heldCanonical()); len(repos) > 0 {
-		return fmt.Sprintf("this project's config lists %s: a repository this run holds no checkout of keeps the per-repository job its own root deploys, whose image is this project's catalog default — where a checkout: baked workflow that writes no image of its own is refused (unbuiltOnBaked, D1191), and this run cannot read those workflows from here",
-			strings.Join(repos, ", "))
+		return withheldLine("no default catalog entry written: this machine holds no checkout of ", repos, "; nothing to do"),
+			fmt.Sprintf("this project's config lists %s: a repository this run holds no checkout of keeps the per-repository job its own root deploys, whose image is this project's catalog default — where a checkout: baked workflow that writes no image of its own is refused (unbuiltOnBaked, D1191), and this run cannot read those workflows from here",
+				strings.Join(repos, ", "))
 	}
 	if cfg == nil {
-		return ""
+		return "", ""
 	}
 	asked := config.Catalog{Entries: append(catalogEntries(cat), entry)}
 	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
@@ -2252,16 +2415,18 @@ func (e *initEngine) defaultCatalogEntryRefusal(cat *config.Catalog, imageMap ma
 		req.Catalog = &asked
 		sel, err := catalog.JobImage(req)
 		if err != nil {
-			return fmt.Sprintf("workflow %s of %s would stop resolving once this project has a catalog: %v — a workflow's image_name, its needs and the project's image_map are read only against one, and the entry is what makes one exist, so a job that runs the base image today would be refused the moment the entry is written",
-				name, slug, err)
+			return fmt.Sprintf("no default catalog entry written: workflow %s of %s would stop resolving; fix the image it names", name, slug),
+				fmt.Sprintf("workflow %s of %s would stop resolving once this project has a catalog: %v — a workflow's image_name, its needs and the project's image_map are read only against one, and the entry is what makes one exist, so a job that runs the base image today would be refused the moment the entry is written",
+					name, slug, err)
 		}
 		if sel.Source != catalog.SourceCatalog || sel.Entry.Name != entry.Name {
 			continue
 		}
-		return fmt.Sprintf("workflow %s of %s writes no image of its own, so the entry would be the image of a job that cannot run it and the deployer would refuse it (unbuiltOnBaked, D1191)",
-			name, slug)
+		return fmt.Sprintf("no default catalog entry written: workflow %s of %s writes no image of its own; give it a dockerfile", name, slug),
+			fmt.Sprintf("workflow %s of %s writes no image of its own, so the entry would be the image of a job that cannot run it and the deployer would refuse it (unbuiltOnBaked, D1191)",
+				name, slug)
 	}
-	return ""
+	return "", ""
 }
 
 // checkoutWorkflows is the checkout's own fugaro.yaml and the repository it is

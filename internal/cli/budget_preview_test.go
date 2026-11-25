@@ -1009,22 +1009,27 @@ func TestBudgetPreviewJSON(t *testing.T) {
 	}
 }
 
-// TestBudgetPreviewRecipeLayers: --recipe resolves the three layers, as run
-// does: the repository's .fugaro/recipes first.
+// TestBudgetPreviewRecipeLayers: --recipe resolves as run does: the project's
+// published recipes, then the catalog. The checkout's .fugaro/recipes/ is not
+// read (D3303), so the copy the folder holds loses to the project's own.
 func TestBudgetPreviewRecipeLayers(t *testing.T) {
 	f := newBudgetFixture(t, "")
+	f.DefaultRunsBucket(t)
 	f.SetCaps(100, 3, 20, 3)
 	f.SetSpentToday(0)
 	f.Checkout(t, "  max_budget_usd: 0.5\n  first_line_rounds: 1\n  review_rounds: 2\n")
+	testutil.WriteFiles(t, f.runsDir(), map[string]string{
+		"fugaro/recipes/mine.yaml": "version: 1\nname: mine\nsteps:\n  - review: {}\n"})
 	testutil.WriteFiles(t, ".", map[string]string{
-		".fugaro/recipes/mine.yaml": "version: 1\nname: mine\nsteps:\n  - review: {}\n"})
+		".fugaro/recipes/mine.yaml": "version: 1\nname: mine\nsteps:\n  - review: { max_rounds: 3 }\n"})
 	out, _, err := execute(t, "budget", "preview", "--recipe", "mine", "--runs", "1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// solo-shaped: implement + review rounds (1+2*2 = 5 stages).
-	if !strings.Contains(out, "recipe mine (repo)") || !strings.Contains(out, "5 stages") {
-		t.Fatalf("the repository's own recipe is not the one previewed:\n%s", out)
+	// solo-shaped: implement + review rounds (1+2*2 = 5 stages) -- the
+	// project's recipe, and not the folder's, which would be 1+2*4 = 9.
+	if !strings.Contains(out, "recipe mine (project)") || !strings.Contains(out, "5 stages") {
+		t.Fatalf("the project's own recipe is not the one previewed:\n%s", out)
 	}
 }
 
@@ -1079,7 +1084,7 @@ func TestBudgetPreviewRefusesBadArguments(t *testing.T) {
 		"zero runs":      {[]string{"budget", "preview", "--recipe", "standard", "--runs", "0", "--repo", "acme/app"}, "--runs must be more than 0"},
 		"negative runs":  {[]string{"budget", "preview", "--recipe", "standard", "--runs", "-1", "--repo", "acme/app"}, "--runs must be more than 0"},
 		"too many runs":  {[]string{"budget", "preview", "--recipe", "standard", "--runs", "100001", "--repo", "acme/app"}, "is more than 100000 runs; estimate a batch, not a project's lifetime"},
-		"unknown recipe": {[]string{"budget", "preview", "--recipe", "nope", "--runs", "2", "--repo", "acme/app"}, "recipe nope is not in .fugaro/recipes"},
+		"unknown recipe": {[]string{"budget", "preview", "--recipe", "nope", "--runs", "2", "--repo", "acme/app"}, "recipe nope is not in project aurora"},
 		"bad repo":       {[]string{"budget", "preview", "--recipe", "standard", "--runs", "2", "--repo", "not-a-repo"}, "--repo: the repository must look like owner/name"},
 		// The rigor mode's vocabulary, and not budget set --mode's (observe
 		// or enforce): the refusal names the one this flag takes.
@@ -1167,14 +1172,13 @@ func TestBudgetPreviewProjectRecipe(t *testing.T) {
 	}
 }
 
-// TestBudgetPreviewRepoRecipeSkipsTheBucket: a recipe the checkout holds is
-// resolved without the runs bucket, whose read is not every Viewer's to do
-// (init takes it away), so the preview still answers with the project marker
-// gone -- where a recipe the checkout does not hold needs the project's own
-// copy there and fails. The typical line's read of that same bucket is the
-// one thing the failure costs: it is a note, and the ceiling stands without
-// it.
-func TestBudgetPreviewRepoRecipeSkipsTheBucket(t *testing.T) {
+// TestBudgetPreviewRepoRecipeNeedsTheBucket: a recipe the checkout's
+// .fugaro/recipes/ holds is not resolved from there -- the project's copy of
+// it is where a repository's own recipe lives (D3303) -- so the runs bucket is
+// read for it as for any other name, and a preview that cannot open it fails
+// naming the project, where it used to answer from the folder. That read is
+// the one init takes away from the plain Viewer.
+func TestBudgetPreviewRepoRecipeNeedsTheBucket(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	f.DefaultRunsBucket(t)
 	f.SetCaps(100, 3, 20, 3)
@@ -1183,20 +1187,9 @@ func TestBudgetPreviewRepoRecipeSkipsTheBucket(t *testing.T) {
 	f.DropMarker(t)
 	testutil.WriteFiles(t, ".", map[string]string{
 		".fugaro/recipes/mine.yaml": "version: 1\nname: mine\nsteps:\n  - review: {}\n"})
-	out, errOut, err := execute(t, "budget", "preview", "--recipe", "mine", "--runs", "1")
-	if err != nil {
-		t.Fatalf("the recipe the checkout holds was looked for in the runs bucket: %v", err)
-	}
-	if !strings.Contains(out, "recipe mine (repo)") {
-		t.Fatalf("the repository's own recipe is not the one previewed:\n%s", out)
-	}
-	// The ceiling is stated all the same, and the bucket the typical line
-	// reads is named as the one thing that was lost.
-	if !strings.Contains(out, "rough worst case") {
-		t.Errorf("the ceiling is gone with the bucket:\n%s", out)
-	}
-	if !strings.Contains(errOut, "no typical line: ") || !strings.Contains(errOut, "no project name yet") {
-		t.Errorf("the typical line's own open failure is not said:\n%s", errOut)
+	_, _, err := execute(t, "budget", "preview", "--recipe", "mine", "--runs", "1")
+	if err == nil || !strings.Contains(err.Error(), "no project name yet") {
+		t.Fatalf("the folder stood in for the runs bucket: %v", err)
 	}
 }
 
@@ -1266,7 +1259,8 @@ func TestBudgetPreviewStageShapes(t *testing.T) {
 			f.SetSpentToday(0)
 			f.Checkout(t, "  max_budget_usd: 0.5\n  first_line_rounds: 1\n  review_rounds: 2\n")
 			if tc.yaml != "" {
-				testutil.WriteFiles(t, ".", map[string]string{".fugaro/recipes/shapes.yaml": tc.yaml})
+				f.DefaultRunsBucket(t)
+				testutil.WriteFiles(t, f.runsDir(), map[string]string{"fugaro/recipes/shapes.yaml": tc.yaml})
 			}
 			out, _, err := execute(t, "budget", "preview", "--recipe", tc.recipe, "--runs", "1")
 			if err != nil {
@@ -1302,11 +1296,9 @@ func TestBudgetPreviewUsesTheProjectsRigorMode(t *testing.T) {
 		repoRigor  string
 		noCheckout bool
 		// request is --mode, for the cases that ask for a mode over the one
-		// the layers give; note is what stderr has to say about it, if
-		// anything, so a request the resolver refuses to act on is pinned
-		// where it is refused as well as where it takes.
+		// the layers give: the request settles the mode, so these rows pin
+		// what the preview prices on either side of the layers' own answer.
 		request string
-		note    string
 		mode    string
 		first   int
 		rounds  int
@@ -1318,13 +1310,14 @@ func TestBudgetPreviewUsesTheProjectsRigorMode(t *testing.T) {
 		{name: "no checkout: the project layer's default", layer: "startup", noCheckout: true, mode: "startup", first: 2, rounds: 2, stages: 17},
 		// --mode is resolved over the layers a preview without a checkout has
 		// (the project layer alone), and it is resolved the same way there as
-		// it is over a checkout: raised, never lowered. Both rows are the
-		// no-checkout branch of previewKnobsOf, which reads the layer itself.
+		// it is over a checkout: the request is the narrowest rank and settles
+		// the mode whether it asks for more or for less (LD3). Both rows are
+		// the no-checkout branch of previewKnobsOf, which reads the layer
+		// itself.
 		{name: "no checkout: a mode asked over the project layer's", layer: "startup", noCheckout: true,
 			request: "critical", mode: "critical", first: 3, rounds: 5, stages: 47},
 		{name: "no checkout: a request below the project layer's", layer: "startup", noCheckout: true,
-			request: "poc", mode: "startup", first: 2, rounds: 2, stages: 17,
-			note: "--mode poc has no effect: this repository resolves to startup"},
+			request: "poc", mode: "poc", first: 1, rounds: 1, stages: 7},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newBudgetFixture(t, "")
@@ -1365,8 +1358,8 @@ func TestBudgetPreviewUsesTheProjectsRigorMode(t *testing.T) {
 			if !strings.Contains(out, want) {
 				t.Fatalf("preview never says %q:\n%s", want, out)
 			}
-			if tc.note != "" && !strings.Contains(errOut, tc.note) {
-				t.Fatalf("preview never says %q:\n%s", tc.note, errOut)
+			if strings.Contains(errOut, "has no effect") {
+				t.Fatalf("the preview prices a request and still notes it away:\n%s", errOut)
 			}
 		})
 	}
@@ -1541,34 +1534,56 @@ func TestBudgetPreviewModeEqualsTheModesOwnEffects(t *testing.T) {
 	}
 }
 
-// TestBudgetPreviewModeNeverLowers: an on-axis request may raise a mode and
-// never lower it (D6), so a --mode below the mode the repository resolves
-// changes nothing, and the preview says so rather than quoting a cheaper
-// ceiling than the run would really be held to.
+// TestBudgetPreviewModeLowers: the request is the narrowest rank of the mode's
+// order (LD3), so a --mode below the mode the layers resolve is the mode the run
+// really runs at, and the preview prices it: the stages its own row supplies the
+// knobs the checkout leaves unset, and its own fraction of the deployed ceiling
+// (config.RigorBudgetCap). What a request can never go below is a review floor,
+// which is a review level and not a mode, so nothing here refuses a lowering or
+// notes it away.
+//
+// Mutation (hold the request raise-only, the rule before LD3): every row reads
+// critical, which is the mode line this fails on.
 //
 // Hotfix is not one of these cases: the request takes it whole
-// (rigor.Rigor.PerRun), so `--mode hotfix` is the mode the preview prices and
-// there is nothing to note (TestBudgetPreviewTakesHotfix).
-func TestBudgetPreviewModeNeverLowers(t *testing.T) {
+// (rigor.Rigor.PerRun), and TestBudgetPreviewTakesHotfix pins those figures.
+func TestBudgetPreviewModeLowers(t *testing.T) {
 	const agent = "  max_budget_usd: 10\n"
-	for _, mode := range []rigor.Rigor{rigor.POC, rigor.Startup} {
-		t.Run(string(mode), func(t *testing.T) {
+	for _, tc := range []struct {
+		mode   rigor.Rigor
+		first  int
+		rounds int
+		stages int
+		cap    string
+	}{
+		{rigor.POC, 1, 1, 7, "$2.75"},      // 55% of the $5.00 ceiling
+		{rigor.Startup, 2, 2, 17, "$3.50"}, // 70%
+	} {
+		t.Run(string(tc.mode), func(t *testing.T) {
 			f := newBudgetFixture(t, "")
+			// The same fixture the raise rows use: the repository resolves
+			// critical, and the request asks for less.
 			f.SetCaps(100, 50, 100, 50)
 			f.SetSpentToday(0)
 			f.Checkout(t, agent)
 			previewCheckoutRigor(t, agent, string(rigor.Critical))
-			out, errOut, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "3", "--mode", string(mode))
+			out, errOut, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "3", "--mode", string(tc.mode))
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, want := range []string{"at most 47 stages (mode critical", "3 runs × $5.00 (per-run cap: budget.per_run_usd)"} {
+			for _, want := range []string{
+				fmt.Sprintf("at most %d stages (mode %s, agent.first_line_rounds %d, agent.review_rounds %d)", tc.stages, tc.mode, tc.first, tc.rounds),
+				fmt.Sprintf("3 runs × %s (per-run cap: budget.per_run_usd)", tc.cap),
+			} {
 				if !strings.Contains(out, want) {
-					t.Errorf("--mode %s lowered the mode the repository resolves:\n%s", mode, out)
+					t.Errorf("--mode %s never says %q:\n%s", tc.mode, want, out)
 				}
 			}
-			if want := "--mode " + string(mode) + " has no effect: this repository resolves to critical"; !strings.Contains(errOut, want) {
-				t.Errorf("the ignored request is not said:\n%s", errOut)
+			if strings.Contains(out, "mode critical") {
+				t.Errorf("--mode %s is priced at the mode the layers resolve:\n%s", tc.mode, out)
+			}
+			if strings.Contains(errOut, "has no effect") {
+				t.Errorf("the preview prices the request and still notes it away:\n%s", errOut)
 			}
 		})
 	}
@@ -1803,9 +1818,10 @@ func TestBudgetPreviewWithoutPricesNamesTheSourceInsteadOfGuessing(t *testing.T)
 // compute ceiling beside it (design §6, D4).
 func TestBudgetPreviewArtifactRecipeDoesNotInflateTheModelCeiling(t *testing.T) {
 	f := newBudgetFixture(t, "")
+	f.DefaultRunsBucket(t)
 	f.Checkout(t, "  max_budget_usd: 0.5\n  first_line_rounds: 1\n  review_rounds: 2\n")
-	testutil.WriteFiles(t, ".", map[string]string{
-		".fugaro/recipes/sizzle.yaml": "version: 1\nname: sizzle\nmode: artifact\n" +
+	testutil.WriteFiles(t, f.runsDir(), map[string]string{
+		"fugaro/recipes/sizzle.yaml": "version: 1\nname: sizzle\nmode: artifact\n" +
 			"steps:\n  - plan: {}\n  - render: {}\noutputs: { globs: [out/*.mp4] }\n"})
 	out, _, err := execute(t, "budget", "preview", "--recipe", "sizzle", "--runs", "6")
 	if err != nil {

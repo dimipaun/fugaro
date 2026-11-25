@@ -320,7 +320,7 @@ func printImageSurvey(w io.Writer, out imageSurveyOut) error {
 	}
 	fmt.Fprintf(w, "\ncatalog:\n")
 	if len(out.Setup.Catalog) == 0 {
-		fmt.Fprintf(w, "  none: fugaro image add writes an entry, and fugaro update publishes the catalog\n")
+		fmt.Fprintf(w, "  none: fugaro image add writes an entry and makes it live, building its image and publishing the catalog\n")
 	}
 	for _, e := range out.Setup.Catalog {
 		line := fmt.Sprintf("  %s  %s  [%s]  %s", oneLine(e.Name), catalogDefaultWord(e.Default), oneLine(strings.Join(e.Tags, " ")), oneLine(e.Source))

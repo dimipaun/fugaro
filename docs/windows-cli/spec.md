@@ -14,7 +14,7 @@ gave with it, and the plan reads both together:
 - The desktop console ships for macOS — and for Linux, unsigned, for 0.10.0 —
   because its data source is the Fugaro CLI, and the CLI has no Windows build.
 - Windows packaging for the console was deferred for that reason and for code
-  signing (`docs/design/desktop-console.md`, **D10**, "Windows and Linux:
+  signing (`docs/desktop-console/spec.md`, **D10**, "Windows and Linux:
   package them now, or later? — **Later**").
 
 ## What the owner asked for

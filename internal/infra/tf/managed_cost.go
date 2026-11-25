@@ -8,7 +8,7 @@ import (
 )
 
 // The cost-bearing attributes of a managed plan, flagged and blocked (Task 1.3
-// of docs/plans/2026-10-16-managed-projects.md).
+// of docs/managed-projects/implementation-plan.md).
 //
 // The spec's step 4 asks the agent to flag "new or upsized resources that bill
 // continuously, such as Cloud Run min instances, Cloud SQL tiers, GPUs and

@@ -47,13 +47,20 @@ func TestPtyFirstRunPrompts(t *testing.T) {
 	e, out, typeAt := ttyEngine(t, &initOptions{})
 	done := make(chan error, 1)
 	go func() { done <- e.r.gatherInputs(t.Context()) }()
-	typeAt("Type the GCP project's ID", 1, "my-proj-42\n")
-	typeAt("Type the region the installation's jobs and the scheduler run in", 1, "\n")
-	typeAt("Type the Fugaro project's name", 1, "\n") // its default can come from an installation in that project
+	// Every marker is the start of the question's own prompt (askedPrompt), so
+	// the answers follow the questions rather than a wording this file would
+	// keep: a question is one line, asked once.
+	typeAt(askedPrompt("--gcp-project"), 1, "my-proj-42\n")
+	typeAt(askedPrompt("--location"), 1, "\n")
+	typeAt(askedPrompt("--name"), 1, "\n") // its default can come from an installation in that project
 	// The rigor mode is the one question here Enter is not an answer to (task
-	// W), so the mode is typed rather than taken.
-	typeAt("Type the project's rigor mode", 1, string(rigor.Pro)+"\n")
-	typeAt("Bake your repos", 1, "\n") // the wizard's last question (IS7), and Enter is its suggestion
+	// W), so the mode is typed rather than taken. Its line is marked with the
+	// colon: the same words also open the heading above the four modes.
+	typeAt(questionFor("--rigor").label+": ", 1, string(rigor.Pro)+"\n")
+	// The budget amount is the project's alert threshold, and Enter is its
+	// suggestion (T2b of docs/managed-flag-ergonomics; D2210).
+	typeAt(askedPrompt("--budget"), 1, "\n")
+	typeAt(askedPrompt("--bake-repos"), 1, "\n") // the wizard's last question (IS7), and Enter is its suggestion
 	select {
 	case err := <-done:
 		if err != nil {
@@ -74,6 +81,11 @@ func TestPtyFirstRunPrompts(t *testing.T) {
 // comes out of it byte for byte: the merge that wrote it is gone (U2, D949).
 func TestPtyPluginConfirmationAtATerminal(t *testing.T) {
 	releaseBuild(t, "0.2.0")
+	// An empty config directory, so the plugin record the stage's own read
+	// consults is this test's and not the host's: a machine whose plugin is
+	// newer than this release would read the install half as nothing to do and
+	// fail the test on that machine alone.
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	settings := wiringCheckout(t, settingsWithOthers)
 	e, out, _ := ttyEngine(t, &initOptions{})
 	// After the engine: the rig takes claude off PATH itself.

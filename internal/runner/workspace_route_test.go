@@ -210,8 +210,8 @@ func TestTheGatewayCallsTheRecordsAddressAndNotTheEnvironments(t *testing.T) {
 	if got := envFake.Count(); got != 0 {
 		t.Errorf("the address the run's environment named received %d calls, want none: the run's address is the one its record carries (R3, F32)", got)
 	}
-	if got := wsFake.Count(); got != 1 {
-		t.Errorf("the record's address received %d calls, want the run's model call", got)
+	if got := modelCalls(wsFake); got != 1 {
+		t.Errorf("the record's address received %d calls, want the run's model call: the keep-warm beat the same run sends there (WS13) is not a call of this count", got)
 	}
 	if got := b.fake.Count(); got != 0 {
 		t.Errorf("this run's own upstream served %d calls, want none: the record serves the model kind from the workspace (D2989)", got)

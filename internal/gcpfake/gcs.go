@@ -263,7 +263,7 @@ func (g *GCS) FailObjectGetsAfter(bucket, name string, skip int) {
 // under prefix in bucket answer 403 PERMISSION_DENIED instead of 404, as GCS
 // answers a caller that holds storage.objects.get on the name but not
 // storage.objects.list — every job and build account, whose grants are
-// conditioned on a prefix (docs/design/bucket-iam.md §2.3, live check 7). A
+// conditioned on a prefix (docs/bucket-iam/spec.md §2.3, live check 7). A
 // present object still answers as it would; FailObjectGetsAfter is what
 // refuses a present one.
 func (g *GCS) AnswerMissingAs403(bucket, prefix string) {

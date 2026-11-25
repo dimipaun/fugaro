@@ -281,12 +281,19 @@ main()
 }
 
 /** commandKey is the stub's own reading of its argv: the leading words that do
- * not start with a dash, with `logs --url` told apart from `logs` because the
- * console's two log operations differ by exactly that flag, with `graph
- * --watch` told apart from `graph` for that same reason -- the one-shot read
- * and the live feed share the command word and differ by `--watch` -- and the
- * settings write told apart from the settings read because the two share the
- * command word `settings` and differ by whether a subcommand word follows it.
+ * not start with a dash, plus the **mode word** of a command that has two rows
+ * on the console's spawn table.
+ *
+ * **One key per operation, and the mode word is why it is not simply the
+ * command path.** Eight commands carry two rows each today -- `logs` (`--url`),
+ * `graph` (`--watch`), `runs ls`, `report` and `budget show` (`--stream`, the
+ * console improvements' three live reads), `user ls` (`--me`, the caller's own
+ * role), `models add` (`--dry-run`, the models write's plan and its write, MW1)
+ * and `image add` (`--dry-run`, the image write's two phases, MW2) -- and
+ * `setup` carries the wizard's two (`--plan-only`). Two rows sharing one key
+ * would make one of them unreachable and answer its scenarios from `default`,
+ * which is a test passing about a fallback rather than about its fixture
+ * (`stub.test.ts` holds the uniqueness).
  *
  * It is not a copy of anything: `STUB_COMMAND_KEYS` below is derived from the
  * spawn table by calling *this* function on each row's `words`, and the generated
@@ -300,19 +307,25 @@ export function commandKey(argv: readonly string[]): string {
     if (element.startsWith('-')) break
     words.push(element)
   }
+  // `logs` is the one row with a positional of its own between the command and
+  // its flags: the run whose log is wanted. `logs <RUN> --json` and `logs <RUN>
+  // --url` are two operations on that command word, so the run id is dropped
+  // and the flag is the whole of what tells them apart.
   if (words[0] === 'logs') return argv.includes('--url') ? 'logs --url' : 'logs'
-  // The graph is two operations on one command word the way the log is: the
-  // read of the stored view and the live feed of the same document, told apart
-  // by `--watch`. Sharing the read's key would make the feed's row unreachable
-  // and answer its scenarios from `default`.
-  if (words[0] === 'graph') return argv.includes('--watch') ? 'graph --watch' : 'graph'
   // A settings write is the one argv whose leading words are not a stable key:
   // `set`/`unset` and the key it names are the edit's own, so `settings set
   // budget.cap_usd` would be a key per edit, and a scenario key that only
   // sometimes matched is a scenario answered by `default`. The write's key is
-  // therefore the operation, and both spellings answer to it.
+  // therefore the operation, and both spellings answer to it. It is read before
+  // the mode words below, because a write's own argv carries none of them.
   if (words[0] === 'settings' && (words[1] === 'set' || words[1] === 'unset')) return SETTINGS_EDIT_KEY
-  return words.join(' ')
+  // The mode words are written out **inside** this function and not in a table
+  // beside it: the generated child is handed this function's own source
+  // (`installStub`), so a constant read from outside would be a ReferenceError
+  // in the child rather than a key.
+  const mode = ['--watch', '--stream', '--me', '--plan-only', '--dry-run'].find((word) => argv.includes(word))
+  const key = words.join(' ')
+  return mode === undefined ? key : `${key} ${mode}`
 }
 
 /** SETTINGS_EDIT_KEY is the settings write's key, and the one a row's own

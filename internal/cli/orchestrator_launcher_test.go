@@ -639,7 +639,7 @@ func TestRunLauncherGatesAReIssueOnTheStoredProjectLayer(t *testing.T) {
 	}
 
 	// The project layer is republished before the next tick.
-	withNone := strings.Replace(testProjectLayer, "  agent: { auth: api-key }\n",
+	withNone := strings.Replace(testProjectLayer, layerAgentLine,
 		"  agent: { auth: api-key, levels: { l2: { model: none } } }\n", 1)
 	if withNone == testProjectLayer {
 		t.Fatal("the project layer fixture no longer carries the agent line this test rewrites")
@@ -1198,6 +1198,9 @@ func TestResidentRunIsTheItemsRefusesAFieldNoLaunchWrites(t *testing.T) {
 		{"the branch of a follow-up", "the pull request of a follow-up", func(ts *task.Spec) { ts.Branch = "feature" }},
 		{"the pull request of a follow-up", "the pull request of a follow-up", func(ts *task.Spec) { ts.PR = 7 }},
 		{"the run a follow-up continues", "the pull request of a follow-up", func(ts *task.Spec) { ts.PreviousRun = runID }},
+		{"the pause a resumed run picks up", "a resumed run's pause", func(ts *task.Spec) {
+			ts.Branch, ts.PR, ts.PreviousRun, ts.Resumes = "fugaro/"+runID, 7, runID, runID
+		}},
 		{"review pull requests", "review pull requests", func(ts *task.Spec) { ts.ReviewPRs = []int{7} }},
 		{"a change set", "a change set", func(ts *task.Spec) {
 			ts.ChangeSet = &task.ChangeSet{ID: runID, Members: []task.ChangeSetMember{{Repo: "acme/app", RunID: runID}}}
@@ -1214,6 +1217,9 @@ func TestResidentRunIsTheItemsRefusesAFieldNoLaunchWrites(t *testing.T) {
 		}},
 		{"declared paths", "declared paths", func(ts *task.Spec) { ts.Paths = []string{"internal/cli"} }},
 		{"a requested rigor mode", "a requested rigor mode", func(ts *task.Spec) { ts.Rigor = "thorough" }},
+		{"a promote pass", "a promote pass", func(ts *task.Spec) {
+			ts.Promote = &task.Promote{Area: "payments", Paths: []string{"internal/payments/**"}}
+		}},
 		{"a batch label", "a batch label", func(ts *task.Spec) { ts.Batch = "batch-1" }},
 		{"review levels", "review levels", func(ts *task.Spec) { ts.ReviewLevels = &config.ReviewLevels{} }},
 		{"an expected scope", "an expected scope", func(ts *task.Spec) { ts.ExpectedScope = []string{"internal/cli"} }},
@@ -1299,8 +1305,8 @@ func TestResidentTaskFieldsAreAllClassified(t *testing.T) {
 	compared := []string{"repo", "task", "title", "plan_task", "tier", "external", "recipe"}
 	resolved := []string{"version", "run_id", "ref", "base_branch", "workflow", "requested_by",
 		"mode", "oauth_token", "overrides", "project_layer", "author", "digest_runs"}
-	refused := []string{"branch", "pr", "previous_run", "owner_ruled", "context_repos", "review_prs",
-		"change_set", "inputs", "reports", "ab", "mutate", "paths", "rigor", "batch", "review_levels",
+	refused := []string{"branch", "pr", "previous_run", "resumes", "owner_ruled", "context_repos", "review_prs",
+		"change_set", "inputs", "reports", "ab", "mutate", "paths", "rigor", "promote", "batch", "review_levels",
 		"expected_scope", "follow_up_of", "model_grade", "review_class", "compression_off", "debt", "security",
 		"review_spec", "from_findings", "own_text"}
 	// overrides is classified as the launch's own because the launch writes one

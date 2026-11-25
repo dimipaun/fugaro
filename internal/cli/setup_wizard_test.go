@@ -6,21 +6,25 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/place"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // setup_wizard_test.go pins the wizard task W1.3 of
 // docs/setup-wizard/implementation-plan.md gives `fugaro setup`, as the owner's
-// ruling of 2026-10-23 reshaped it: Fugaro only starts fresh, so there is no
-// question about the project — a first run creates it, the project stage
-// (init_project.go) refuses an ID that already exists, and the creation is
-// never covered by --yes (D12).
+// rulings of 2026-10-23 and 2026-11-22 reshaped it: there is no question about
+// the project — a first run makes it Fugaro's, creating it or adopting one that
+// is already there and holds nothing of Fugaro's, the project stage
+// (init_project.go) refuses an ID that holds anything of Fugaro's, and the
+// creation is never covered by --yes (D12).
 //
 // The question list itself is setup.go's `setupQuestions`, and
 // TestEveryWizardQuestionHasAFlag is the contract on it: every question has a
@@ -52,12 +56,18 @@ func wizardRun(t *testing.T, stdin string, o *initOptions) (*initRun, *strings.B
 // built from the temporary directory's name.
 var wizardAnswers = map[string]string{
 	"--gcp-project": "proj-1234\n",
-	"--region":      "\n",
-	"--name":        "\n",
+	// The place question's suggestion is US, which Enter takes (R2, D3086);
+	// --region answers the same question precisely and has no row of its own.
+	"--location": "\n",
+	"--region":   "\n",
+	"--name":     "\n",
 	// The rigor question has no suggestion on purpose (task W of
 	// docs/rigor-command/implementation-plan.md; D900): Enter is not an answer,
 	// so this is a value and not the "\n" every other row takes.
 	"--rigor": "pro\n",
+	// The budget question's suggestion is the default amount (T2b of
+	// docs/managed-flag-ergonomics; D2210, D2212), which Enter takes.
+	"--budget": "\n",
 	// The bake question's suggestion is yes (IS7), and Enter is the answer
 	// every run of this harness that is about something else gives it.
 	"--bake-repos": "\n",
@@ -88,7 +98,10 @@ func stdinGiving(gives map[string]string, except ...string) string {
 	}
 	var b strings.Builder
 	for _, q := range setupQuestions {
-		if skip[q.flag] {
+		// One row may be answered by either of two flags: the place question
+		// is --location or the region itself (R2, D3080), so a caller that
+		// answers it with --region has answered the row --location names.
+		if skip[q.flag] || (q.flag == "--location" && skip["--region"]) {
 			continue
 		}
 		if line, ok := gives[q.flag]; ok {
@@ -110,12 +123,23 @@ func optionsFor(flags ...string) *initOptions {
 		switch flag {
 		case "--gcp-project":
 			o.cloud.gcpProject = "proj-1234"
+		case "--location":
+			o.location = string(place.US)
 		case "--region":
 			o.cloud.region = defaultRegion
 		case "--name":
 			o.name = "aurora"
 		case "--rigor":
 			o.rigor = "pro"
+		case "--budget":
+			// The amount and the currency the run takes when the flag answers
+			// the budget question (managed.DefaultBudgetAmount, T1's constants):
+			// the flag is one answer, and the pair is what the installation's
+			// alert is created with.
+			o.budget, o.budgetCurrency = managed.DefaultBudgetAmount, managed.DefaultBudgetCurrency
+			// A creating run with a budget needs the account the alert is
+			// created with, and these fixtures have no installation state.
+			o.billingAccount = "000000-000000-000000"
 		case "--bake-repos":
 			// The value the flag names, and the fact that it was passed: a run that
 			// answers the question with the flag is the run whose answer the local
@@ -173,14 +197,9 @@ func TestEveryWizardQuestionHasAFlag(t *testing.T) {
 	}
 	at := 0
 	for _, q := range setupQuestions {
-		i := strings.Index(out.String()[at:], q.what)
-		if i < 0 && q.flag == "--bake-repos" {
-			// Asked under its label: its what is a clause and not a thing to
-			// type after "Type".
-			i = strings.Index(out.String()[at:], q.label)
-		}
+		i := strings.Index(out.String()[at:], q.askedLine())
 		if i < 0 {
-			t.Errorf("%s: the wizard did not ask %q, in the order the table lists it:\n%s", q.flag, q.what, out)
+			t.Errorf("%s: the wizard did not ask %q, in the order the table lists it:\n%s", q.flag, q.askedLine(), out)
 			continue
 		}
 		at += i
@@ -193,8 +212,8 @@ func TestEveryWizardQuestionHasAFlag(t *testing.T) {
 			if err := r.gatherInputs(t.Context()); err != nil {
 				t.Fatalf("%v\n%s", err, out)
 			}
-			if strings.Contains(out.String(), q.what) {
-				t.Errorf("%s answered the question, and the wizard asked %q anyway:\n%s", q.flag, q.what, out)
+			if strings.Contains(out.String(), q.askedLine()) {
+				t.Errorf("%s answered the question, and the wizard asked %q anyway:\n%s", q.flag, q.askedLine(), out)
 			}
 		})
 	}
@@ -230,11 +249,12 @@ func TestEveryWizardQuestionHasAFlag(t *testing.T) {
 	})
 }
 
-// TestSetupAsksNoCreateOrAdoptQuestion: Fugaro only starts fresh, so a first
-// run of `setup` asks for the new project's ID, the region and the name, and
-// nothing about whether to create the project or use another: the answer is
-// creation, recorded on --create-project's own field without a question, and
-// the project stage is registered for every first run.
+// TestSetupAsksNoCreateOrAdoptQuestion: a first run of `setup` asks for the
+// project's ID, the region and the name, and nothing about whether to create
+// the project or use another: the answer is creation, recorded on
+// --create-project's own field without a question, and a run whose ID is
+// already there and holds nothing of Fugaro's adopts it without asking. The
+// project stage is registered for every first run.
 func TestSetupAsksNoCreateOrAdoptQuestion(t *testing.T) {
 	r, out := wizardRun(t, stdinFor(""), nil)
 	if err := r.gatherInputs(t.Context()); err != nil {
@@ -312,6 +332,17 @@ func TestTheCreationIsHeldToTheFlagsChecks(t *testing.T) {
 			name: "--firebase-project names another project",
 			o:    &initOptions{door: setupDoor.name, cloud: cloudOptions{gcpProject: "proj-1234", region: "us-east5"}, firebase: "proj-9999"},
 			want: "--firebase-project",
+		},
+		{
+			// The carry has nothing to take the account from on a run that
+			// creates the project, and check() sees the creation only where
+			// --create-project is explicit: without this the run reaches the
+			// project stage and only the installation stage's state read
+			// refuses, after the project, Firebase, billing and the APIs are
+			// made (R7).
+			name: "a budget with no billing account",
+			o:    &initOptions{door: setupDoor.name, cloud: cloudOptions{gcpProject: "proj-1234", region: "us-east5"}, budget: 7, budgetCurrency: "USD"},
+			want: "--billing-account",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -411,7 +442,8 @@ func TestSetupOnAnExistingInstallationConvergesAndSaysSo(t *testing.T) {
 
 // TestSetupRefusesAnIDThatHoldsAnInstallation: a first run of `setup` whose ID
 // already holds a Fugaro installation (the runs bucket's marker names it) is
-// refused before the name is asked — Fugaro only starts fresh — and the
+// refused before the name is asked — fugaro setup adopts only a project that
+// holds nothing of Fugaro's (the owner's ruling of 2026-11-22) — and the
 // refusal names the one command that uses that installation from this machine
 // instead. --create-project changes nothing about it. `update` on the same
 // machine is that command: it takes the installation's own name and asks for
@@ -432,12 +464,12 @@ func TestSetupRefusesAnIDThatHoldsAnInstallation(t *testing.T) {
 			if err == nil || ExitCode(err) != ExitUserError {
 				t.Fatalf("setup went on with an ID that holds an installation: %v\n%s", err, out)
 			}
-			for _, want := range []string{"Fugaro only starts fresh: proj-1234 already exists; pick another id", "fugaro update --gcp-project proj-1234 --region " + defaultRegion} {
+			for _, want := range []string{"proj-1234 already exists and holds the Fugaro project", "fugaro update --gcp-project proj-1234 --region " + defaultRegion} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("the refusal lacks %q: %v", want, err)
 				}
 			}
-			if strings.Contains(out.String(), questionFor("--name").what) {
+			if strings.Contains(out.String(), askedPrompt("--name")) {
 				t.Errorf("the run asked for a name before refusing:\n%s", out)
 			}
 		})
@@ -452,7 +484,7 @@ func TestSetupRefusesAnIDThatHoldsAnInstallation(t *testing.T) {
 		if r.o.name != initProjectName || r.o.createProject {
 			t.Errorf("name %q, create %v: want the installation's own name and no creation", r.o.name, r.o.createProject)
 		}
-		if strings.Contains(out.String(), questionFor("--name").what) {
+		if strings.Contains(out.String(), askedPrompt("--name")) {
 			t.Errorf("the run asked for a name, and the installation has one:\n%s", out)
 		}
 	})
@@ -506,7 +538,7 @@ func TestSetupAsksBakeDefaultYes(t *testing.T) {
 	// out of the module: the one build every test of this package shares
 	// (fakeTerraform's sync.Once) happens here, while this is still the module.
 	fakeTerraform(t)
-	const sentence = "Bake your repos into the Docker images? This makes jobs start faster."
+	const sentence = "Bake repos into the images for faster job starts?"
 	if bakeQuestion.label != sentence {
 		t.Errorf("the wizard's bake question is %q, want the sentence the plan pins (%q)", bakeQuestion.label, sentence)
 	}
@@ -520,9 +552,14 @@ func TestSetupAsksBakeDefaultYes(t *testing.T) {
 	}
 
 	// Every other question is answered, so the bake question is this run's only
-	// one and every line read below belongs to it.
+	// one and every line read below belongs to it — the budget's answer is its
+	// flag's fields, which is where a scripted run answers it (T2b of
+	// docs/managed-flag-ergonomics).
 	only := func() *initOptions {
-		return &initOptions{name: initProjectName, cloud: cloudOptions{gcpProject: initProject, region: defaultRegion}, rigor: string(rigor.Pro)}
+		o := &initOptions{name: initProjectName, cloud: cloudOptions{gcpProject: initProject, region: defaultRegion}, rigor: string(rigor.Pro)}
+		o.budget, o.budgetCurrency = managed.DefaultBudgetAmount, managed.DefaultBudgetCurrency
+		o.billingAccount = "000000-000000-000000"
+		return o
 	}
 	ask := func(stdin string) (*initRun, *strings.Builder) {
 		t.Helper()
@@ -538,7 +575,7 @@ func TestSetupAsksBakeDefaultYes(t *testing.T) {
 	if !r.o.bakeReposChanged || !r.o.bakeRepos {
 		t.Errorf("Enter at the bake question recorded (answer %v, answered %v), want the suggestion: yes", r.o.bakeRepos, r.o.bakeReposChanged)
 	}
-	if want := bakeQuestion.label + " [yes]\nType " + bakeQuestion.label + ": "; !strings.Contains(out.String(), want) {
+	if want := bakeQuestion.askedLine() + " [Y/n]: "; !strings.Contains(out.String(), want) {
 		t.Errorf("the prompt is not %q:\n%s", want, out)
 	}
 
@@ -566,7 +603,7 @@ func TestSetupAsksBakeDefaultYes(t *testing.T) {
 	// about a run with no terminal at all, not about this one.
 	r, out = wizardRun(t, "", only())
 	err := r.gatherInputs(t.Context())
-	if err == nil || !strings.Contains(err.Error(), bakeQuestion.label) || ExitCode(err) != ExitUserError {
+	if err == nil || !strings.Contains(err.Error(), bakeQuestion.what) || ExitCode(err) != ExitUserError {
 		t.Errorf("the input ended at the bake question and the run reported %v, want the question named as the one it is waiting for:\n%s", err, out)
 	}
 	if r.o.bakeReposChanged {
@@ -629,6 +666,189 @@ func TestSetupAsksBakeDefaultYes(t *testing.T) {
 			t.Errorf("the run changed the bake switch and does not say what that costs — the answer is the build's, so the images that exist keep what they were built with:\n%s", out)
 		}
 	})
+}
+
+// budgetQuestion is the wizard's row for the budget (T2b of
+// docs/managed-flag-ergonomics; D2210), read where the run reads it: the
+// question the prompt prints, and the row TestEveryWizardQuestionHasAFlag holds
+// the run to.
+var budgetQuestion = questionFor("--budget")
+
+// TestSetupBudgetQuestionEnterTakesDefault is T2b's own test: a creating run of
+// `fugaro setup` is asked for the project's monthly budget ALERT amount, after
+// the rigor question, and Enter takes the suggestion — the default amount and
+// currency (managed.DefaultBudgetAmount, T1's constants, and D2212).
+//
+// The question is about the alert and not about a cap, and it says so where the
+// person reads it: what stops a run is the gateway's cost cap, a different
+// figure in a different place (internal/infra/managed/defaults.go).
+//
+// It is asked where a person can answer it, and the answer is recorded on
+// --budget's own fields — where a scripted run answers the same question, and
+// where the installation's alert is created from. The run that asked it also
+// settles the account the alert sits on (settleBudget): the answer Enter takes
+// is useless without one, and the account the run links is the one it takes
+// (D2216).
+func TestSetupBudgetQuestionEnterTakesDefault(t *testing.T) {
+	// Every other question is answered, so the budget question is this run's
+	// only one and every line read below belongs to it: the bake answer comes
+	// from its flag, and --link-billing is what the alert's account comes from
+	// (and what answers the billing question), which this run reads the effect
+	// of below.
+	only := func() *initOptions {
+		return &initOptions{name: initProjectName, cloud: cloudOptions{gcpProject: initProject, region: defaultRegion}, rigor: string(rigor.Pro), bakeRepos: true, bakeReposChanged: true, linkBilling: billingAcc}
+	}
+	ask := func(stdin string) (*initRun, *strings.Builder) {
+		t.Helper()
+		r, out := wizardRun(t, stdin, only())
+		if err := r.gatherInputs(t.Context()); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		return r, out
+	}
+
+	// Enter takes the suggestion: the default amount.
+	r, out := ask("\n")
+	if r.o.budget != managed.DefaultBudgetAmount || r.o.budgetCurrency != managed.DefaultBudgetCurrency {
+		t.Errorf("Enter at the budget question recorded %d %s, want the suggestion %d %s",
+			r.o.budget, r.o.budgetCurrency, managed.DefaultBudgetAmount, managed.DefaultBudgetCurrency)
+	}
+	// And the answer arrives with an account: the alert is created on the
+	// account the run links (D2216), which is what makes the answer actable.
+	if r.o.billingAccount != billingAcc {
+		t.Errorf("the run answered the budget question and left the alert no account: billing account %q, want the linked one %q", r.o.billingAccount, billingAcc)
+	}
+	want := budgetQuestion.askedLine() + " [" + strconv.FormatInt(managed.DefaultBudgetAmount, 10) + "]: "
+	if !strings.Contains(out.String(), want) {
+		t.Errorf("the prompt is not %q:\n%s", want, out)
+	}
+	// The one thing the question has to say about the figure: it is the alert's
+	// threshold, not a cap on spending — and it is said on the question's own
+	// line (the row's hint), not in a sentence above it.
+	if !strings.Contains(out.String(), budgetQuestion.hint) {
+		t.Errorf("the question does not say what the number is for:\n%s", out)
+	}
+	if l := strings.ToLower(budgetQuestion.hint); !strings.Contains(l, "alert") || !strings.Contains(l, "not a cap") {
+		t.Errorf("the budget question's own line does not say it is an alert and not a cap: %q", budgetQuestion.hint)
+	}
+
+	// A typed amount is the answer, and it is the amount the alert is created
+	// with — the currency stays the default (D2211).
+	r, _ = ask("2500\n")
+	if r.o.budget != 2500 || r.o.budgetCurrency != managed.DefaultBudgetCurrency {
+		t.Errorf("a typed amount recorded %d %s, want 2500 %s", r.o.budget, r.o.budgetCurrency, managed.DefaultBudgetCurrency)
+	}
+
+	// An amount the alert cannot be created with is asked again rather than
+	// taken: the pair is checked in the question's own words (managed.Budget's
+	// rule), so the refusal a person reads is the one the marker would make.
+	r, out = ask("0\n2500\n")
+	if !strings.Contains(out.String(), "outside 1 to 10000000") {
+		t.Errorf("an amount outside the range was taken instead of being asked again:\n%s", out)
+	}
+	if r.o.budget != 2500 {
+		t.Errorf("`0` then `2500` recorded %d, want 2500", r.o.budget)
+	}
+
+	// The input ending here stops the run at this question, exactly as it does
+	// at the questions above it: nothing was typed, so there is no answer to
+	// record, and what the run says is which question it is waiting for.
+	r, out = wizardRun(t, "", only())
+	err := r.gatherInputs(t.Context())
+	if err == nil || !strings.Contains(err.Error(), budgetQuestion.what) || ExitCode(err) != ExitUserError {
+		t.Errorf("the input ended at the budget question and the run reported %v, want the question named as the one it is waiting for:\n%s", err, out)
+	}
+	if r.o.budget != 0 || r.o.budgetCurrency != "" {
+		t.Errorf("the input ended at the budget question and the run recorded an answer (%d %s): nothing was typed", r.o.budget, r.o.budgetCurrency)
+	}
+}
+
+// TestSetupBudgetQuestionNoTerminalTakesDefault is T2b's second test and the
+// global constraint 3's pin (docs/managed-flag-ergonomics): no command waits
+// for input. Where nobody can be asked — a pipe, --json, --yes, a run that
+// never prompts — the question is not asked, the default amount and currency
+// apply (D2212), and the run goes on.
+//
+// The run carries its linked account in every case below, because the account
+// is what the alert needs and what the answer is carried into the
+// installation's variables with (settleBudget): the default is not a question
+// anybody answered, and a run with no terminal that stopped on one would be the
+// wait this test exists to refuse.
+func TestSetupBudgetQuestionNoTerminalTakesDefault(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		args  func(*initOptions)
+		plain bool
+	}{
+		{"a pipe", func(*initOptions) {}, true},
+		{"--json", func(o *initOptions) { o.asJSON = true }, false},
+		{"--yes", func(o *initOptions) { o.yes = true }, false},
+		{"a run that never prompts", func(o *initOptions) { o.nonInteractive = true }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := &initOptions{name: initProjectName, cloud: cloudOptions{gcpProject: initProject, region: defaultRegion}, rigor: string(rigor.Pro), bakeRepos: true, bakeReposChanged: true, linkBilling: billingAcc}
+			tc.args(o)
+			r, out := wizardRun(t, "", o)
+			if tc.plain {
+				// No terminal on stdin: the same state a run that carries its own
+				// answer is in, without a flag saying so.
+				noTerminal(t)
+			}
+			// The run returns with an input that holds nothing at all: nothing
+			// waited for a line nobody was there to type.
+			if err := r.gatherInputs(t.Context()); err != nil {
+				t.Fatalf("%v\n%s", err, out)
+			}
+			if strings.Contains(out.String(), budgetQuestion.what) {
+				t.Errorf("%s: the run asked the budget question, and nobody can answer it there:\n%s", tc.name, out)
+			}
+			if r.o.budget != managed.DefaultBudgetAmount || r.o.budgetCurrency != managed.DefaultBudgetCurrency {
+				t.Errorf("%s: the run has %d %s, want the default %d %s",
+					tc.name, r.o.budget, r.o.budgetCurrency, managed.DefaultBudgetAmount, managed.DefaultBudgetCurrency)
+			}
+			if r.o.billingAccount != billingAcc {
+				t.Errorf("%s: the default budget has no account: billing account %q, want the linked one %q", tc.name, r.o.billingAccount, billingAcc)
+			}
+		})
+	}
+}
+
+// TestSetupBudgetQuestionNoAccountIsNotCarried: a budget is an alert on a
+// billing account, so a run that links none carries no budget block into the
+// installation's variables, which the module's own validation refuses without
+// an account. The amount the question just answered (or the default nobody was
+// asked for) is not dropped with it: it stays on the run's own fields, where
+// the creation fact and the one command that adds the alert read it (T2a of
+// docs/managed-flag-ergonomics; init.go's budgetFigures and markCreated), and
+// the line printed here names the flags that command is spelled with.
+//
+// It is the wizard's own guard and not the run-level rule D2216 asks for: the
+// run that records the amount in the creation fact and prints the one command
+// that adds the alert is T2a's (docs/managed-flag-ergonomics, and the
+// dependency this task's plan line does not declare). What is here is the
+// smaller thing: what this phase answered is kept out of the installation's
+// block unless the run has the account the alert would sit on.
+func TestSetupBudgetQuestionNoAccountIsNotCarried(t *testing.T) {
+	r, out := wizardRun(t, "\n", &initOptions{name: initProjectName, cloud: cloudOptions{gcpProject: initProject, region: defaultRegion}, rigor: string(rigor.Pro), bakeRepos: true, bakeReposChanged: true})
+	if err := r.gatherInputs(t.Context()); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if r.o.budget != managed.DefaultBudgetAmount || r.o.budgetCurrency != managed.DefaultBudgetCurrency {
+		t.Errorf("a run that links no account went on with %d %s, want the default %d %s: the creation fact records the budget of every creating run (T2a)",
+			r.o.budget, r.o.budgetCurrency, managed.DefaultBudgetAmount, managed.DefaultBudgetCurrency)
+	}
+	if got := r.o.creationBudgetAccount(); got != "" {
+		t.Errorf("the run composes the installation's budget block on the account %q, and it links none: the module's own validation refuses a block without one", got)
+	}
+	line := out.String()
+	if !strings.Contains(line, budgetQuestion.askedLine()+" [") {
+		t.Errorf("the question was not asked at all:\n%s", line)
+	}
+	for _, want := range []string{"--budget", "--budget-currency", "--billing-account"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the run dropped the answer and does not name %s as what adds the alert later:\n%s", want, line)
+		}
+	}
 }
 
 // convergeLocalConfigPath is the local project config a run of the converge rig

@@ -30,9 +30,9 @@ type request struct {
 // decoding nobody checked.
 func bodies() []body {
 	return []body{
-		{"TicketRequest", identitywire.TicketRequest{}, `{"slug":"acme-sandbox","run":"fb-20261120-041919-8271","account":"fugaro-job@acme.iam.gserviceaccount.com","launcher":"dimi@example.com","branch":"fugaro/fb-20261120-041919-8271","pull_requests":[7],"context_repos":["acme/other"],"max_runtime_seconds":3600,"attempt":"wi-1:2"}`},
+		{"TicketRequest", identitywire.TicketRequest{}, `{"slug":"acme-sandbox","run":"fb-20261120-041919-8271","account":"fugaro-job@acme.iam.gserviceaccount.com","launcher":"dimi@example.com","branch":"fugaro/fb-20261120-041919-8271","pull_requests":[7],"context_repos":["acme/other"],"max_runtime_seconds":3600,"attempt":"wi-1:2","resumes":"fb-20261119-041919-0000","job":"projects/acme-sandbox/locations/europe-west1/jobs/fb-20261120-041919-8271"}`},
 		{"TicketResponse", identitywire.TicketResponse{}, `{"ticket":"t-1","expires_at":"2026-11-20T01:00:00Z"}`},
-		{"ClaimRequest", identitywire.ClaimRequest{}, `{"ticket":"t-1","nonce":"n-1"}`},
+		{"ClaimRequest", identitywire.ClaimRequest{}, `{"ticket":"t-1","nonce":"n-1","attestation":"h.p.s"}`},
 		{"ClaimResponse", identitywire.ClaimResponse{}, `{"token":"tok-1","expires_at":"2026-11-20T01:00:00Z"}`},
 		{"PairingRequest", identitywire.PairingRequest{}, `{}`},
 		{"PairingResponse", identitywire.PairingResponse{}, `{"token":"p-1","pairing":"p~abc","expires_at":"2026-11-20T00:05:00Z"}`},
@@ -40,12 +40,17 @@ func bodies() []body {
 		{"DeviceResponse", identitywire.DeviceResponse{}, `{"token":"d-1","device":"d~abc","expires_at":"2026-11-20T01:00:00Z"}`},
 		{"ProbeRequest", identitywire.ProbeRequest{}, `{}`},
 		{"ProbeResponse", identitywire.ProbeResponse{}, `{"signer":"fugaro-signer@acme.iam.gserviceaccount.com","signed_at":"2026-11-20T00:00:00Z"}`},
+		// The registration and its answer (C1 of docs/batch-run-identity): the
+		// run the record belongs to, the job the ticket ask named, and the id
+		// the platform gave that job.
+		{"JobRequest", identitywire.JobRequest{}, `{"slug":"acme-sandbox","run":"fb-20261120-041919-8271","job":"projects/acme-sandbox/locations/europe-west1/jobs/fb-20261120-041919-8271","job_id":"job-8271"}`},
+		{"JobResponse", identitywire.JobResponse{}, `{}`},
 		// The record's claims are the signer's own type (token.Claims), which
 		// carries no json tags of its own: encoding/json spells its fields by
 		// their Go names, and the wire names a token ends up carrying are built
 		// from it at the signing. The record is read back by this same type and
 		// by no reader outside the service.
-		{"Record", identitywire.Record{}, `{"caller":"dimi@example.com","class":"person","at":"2026-11-20T00:00:00Z","claims":{"Slug":"acme-sandbox","Run":"fb-20261120-041919-8271","FX":"2026-11-20T01:00:00Z","FP":"acme","RB":"dimi@example.com"},"expected_account":"fugaro-job@acme.iam.gserviceaccount.com","ticket_hash":"aa11","claimed":{"account":"fugaro-job@acme.iam.gserviceaccount.com","at":"2026-11-20T00:00:00Z","nonce_hash":"bb22"},"attempt":"wi-1:2"}`},
+		{"Record", identitywire.Record{}, `{"caller":"dimi@example.com","class":"person","at":"2026-11-20T00:00:00Z","claims":{"Slug":"acme-sandbox","Run":"fb-20261120-041919-8271","FX":"2026-11-20T01:00:00Z","FP":"acme","RB":"dimi@example.com"},"expected_account":"fugaro-job@acme.iam.gserviceaccount.com","ticket_hash":"aa11","claimed":{"account":"fugaro-job@acme.iam.gserviceaccount.com","at":"2026-11-20T00:00:00Z","nonce_hash":"bb22"},"attempt":"wi-1:2","job":"projects/acme-sandbox/locations/europe-west1/jobs/fb-20261120-041919-8271","job_id":"job-8271"}`},
 	}
 }
 
@@ -118,6 +123,7 @@ func TestIdentityWireHasNoCallerChosenIdentity(t *testing.T) {
 		{"PairingRequest", identitywire.PairingRequest{}, `{}`},
 		{"DeviceRequest", identitywire.DeviceRequest{}, `{}`},
 		{"ProbeRequest", identitywire.ProbeRequest{}, `{}`},
+		{"JobRequest", identitywire.JobRequest{}, `{"slug":"acme-sandbox","run":"fb-20261120-041919-8271","job":"projects/acme-sandbox/locations/europe-west1/jobs/fb-20261120-041919-8271","job_id":"job-8271"}`},
 	} {
 		typ := reflect.TypeOf(r.zero)
 		for i := range typ.NumField() {
@@ -138,16 +144,21 @@ func TestIdentityWireHasNoCallerChosenIdentity(t *testing.T) {
 	}
 }
 
-// TestIdentityWireRoutesAdmitTheRosterClasses is the route table: the five
-// paths, the classes each admits, the probe's own rule that it is the roster's
+// TestIdentityWireRoutesAdmitTheRosterClasses is the route table: the paths,
+// the classes each admits, the probe's own rule that it is the roster's
 // operators and nobody else, and the pieces of the contract the table is read
 // with — the execution variable the ticket travels in, the place the issuance
 // record lives, the digest a secret is kept as, and the attempt reference's
 // spelling.
+//
+// The count is six and not R2's five: this plan's registration (JobPath, C1 of
+// docs/batch-run-identity) is a route of the wire, so RouteFor names it and the
+// table carries it — the mount that admits the path at the service's door is
+// BR17's, and its own test is what holds that.
 func TestIdentityWireRoutesAdmitTheRosterClasses(t *testing.T) {
 	routes := identitywire.Routes()
-	if len(routes) != 5 {
-		t.Fatalf("the contract declares %d routes, want the five of R2", len(routes))
+	if len(routes) != 6 {
+		t.Fatalf("the contract declares %d routes, want R2's five paths and this plan's registration", len(routes))
 	}
 	want := map[string][]identitywire.CallerClass{
 		identitywire.TicketPath:  {identitywire.ClassPerson, identitywire.ClassServiceAccount, identitywire.ClassOrchestrator},
@@ -155,6 +166,7 @@ func TestIdentityWireRoutesAdmitTheRosterClasses(t *testing.T) {
 		identitywire.PairingPath: {identitywire.ClassPerson},
 		identitywire.DevicePath:  {identitywire.ClassPerson},
 		identitywire.ProbePath:   {identitywire.ClassPerson},
+		identitywire.JobPath:     {identitywire.ClassPerson, identitywire.ClassServiceAccount, identitywire.ClassOrchestrator},
 	}
 	operatorsOnly := 0
 	for _, rt := range routes {

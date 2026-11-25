@@ -43,7 +43,7 @@ export interface CheckoutFactory {
 }
 
 /** CHECKOUT_SELECT_CLASS is the menu's hook. It is the one this file draws and
- * the theme has a rule for (§2.1 of `docs/design/console-styling.md`). */
+ * the theme has a rule for (§2.1 of `docs/console-styling/spec.md`). */
 export const CHECKOUT_SELECT_CLASS = 'installation-checkout-select'
 
 /** CHECKOUT_SELECT_LABEL is the control's accessible name. A `select` beside a

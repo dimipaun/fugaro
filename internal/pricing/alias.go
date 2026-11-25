@@ -38,7 +38,7 @@ func IsProviderModelID(m string) bool { return providerIDRE.MatchString(m) }
 // an alias too -- with one exception: an explicit, well-formed provider model
 // ID under that prefix ("anthropic/claude-sonnet-5.5") is a real model ID,
 // because it is the one shape a provider route may claim by naming it
-// (design docs/design/mixed-credentials.md §4). Whether a route actually
+// (design docs/mixed-credentials/spec.md §4). Whether a route actually
 // claims it is not this package's question: the price table keys what a pin
 // may name, and who may route it is decided where the routes are
 // (internal/config.CheckProviderPolicy). A wildcard ("anthropic/*"), a

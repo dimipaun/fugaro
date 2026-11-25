@@ -1,4 +1,4 @@
-# `console-linux.yml`: the comment the 2026-11-09 checksum pin invalidated
+# `console-linux.yml`: the comments two changes invalidated
 
 **Status: staged, comment-only, not applied.** `.github/workflows/console-linux.yml`
 carries a comment saying `electron-v<version>-linux-x64.zip` is one of **three**
@@ -10,6 +10,14 @@ exists (docs/console-windows/implementation-plan.md T-B3, finding F37;
 package's own `checksums.json`). The count is now stale. This file holds the
 corrected comment text. **No executable line changes**, and the check below
 proves it.
+
+**A second comment of the same file is stale too, for a change of 2026-11-22**
+(`#3566`): it says `console/package.json`'s `engines.node` is a field
+`test/unit/pinning.test.ts` keeps an exact pin, and the field is a **range** —
+`>=22.23.3 <23`, a floor and the next major as its ceiling — which that test's
+`enginesNodeRE` carves out of the exact-pin rule. It is the same correction
+`console-tests-comments.md` and `console-windows-comments.md` stage for the
+comments their own files carry, with the same pair below.
 
 It is a `.md` file rather than a `.yml` one: a `console-linux-comments.yml` would
 be enumerated as a pending workflow by `internal/cli`'s docs tests and by
@@ -24,9 +32,9 @@ there is no `cp` step and no byte-identity clause to keep.
 
 ## How to apply
 
-Edit `.github/workflows/console-linux.yml`: find the `before` block below and put
-the `after` block in its place, changing nothing else. Then prove no executable
-line moved:
+Edit `.github/workflows/console-linux.yml` and, for each replacement below, find
+the `before` block and put the `after` block in its place, changing nothing
+else. Then prove no executable line moved:
 
 ```sh
 git diff -U0 -- .github/workflows/console-linux.yml \
@@ -44,12 +52,14 @@ git rm docs/pending-workflows/console-linux-comments.md
 This fragment is named in that page's opening line and in its section
 `## The comment-only fragments`, whose three reference edits are written out
 there as exact text. **One** of them is this file's, and it goes in the same
-commit: the opening line's second sentence goes back from *Five further files
-here are not workflows at all* to *Four*, its list losing this file's name and
+commit: the opening line's second sentence goes back from *Seven further files
+here are not workflows at all* to *Six*, its list losing this file's name and
 keeping `ci-hygiene.yml.snippet`, which is not a comment-only fragment and which
 no `git rm` here retires. The exception paragraph under that
-section's numbered list is **not** one of the three, and it goes with this file
-too, because it describes this fragment alone and nothing else. No test can see
+section's numbered list is **not** one of the three: it names this file,
+`console-tests-comments.md` and `console-windows-comments.md` together, so it
+goes with the last of the three to be applied and not with this one's `git rm`
+alone. No test can see
 a dangling reference here, because the fragments are `.md` and neither
 `internal/cli`'s docs tests nor `website/test/readme.mjs` enumerates them.
 
@@ -84,3 +94,30 @@ T-B4). A comment that names the number is a comment that goes stale on the next
 one, which is what happened here; the sentence says what the file is checked
 against instead, and `console/test/unit/fuses.test.ts` is where the exact set is
 pinned.
+
+## The Node pin's shape
+
+**before**:
+
+```
+      # The Node version comes from console/package.json's `engines.node`, the
+      # field test/unit/pinning.test.ts keeps an exact pin: a version written
+      # here a second time would be a pin that can disagree with the one the
+      # console's own tests enforce.
+```
+
+**after**:
+
+```
+      # The Node version comes from console/package.json's `engines.node`, the
+      # field test/unit/pinning.test.ts holds to a floor and the next major as
+      # its ceiling: a version written here a second time would be a pin that
+      # can disagree with the one the console's own tests enforce.
+```
+
+The comment says where the Node version comes from and why it is not written
+into the workflow a second time, and both halves are still what a reader needs:
+`actions/setup-node` reads the field through `node-version-file`, and the
+console's own tests are what hold the field's shape. Only the shape changed — an
+exact version to a floor and a ceiling — so the sentence keeps its work and
+loses the claim that the shape is an exact pin.

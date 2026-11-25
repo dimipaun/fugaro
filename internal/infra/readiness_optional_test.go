@@ -9,7 +9,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/runner"
 )
 
-// TestReadinessOptionalAnthropicKey (design docs/design/project-centric.md
+// TestReadinessOptionalAnthropicKey (design docs/project-centric/spec.md
 // §6.1): the Anthropic key is mounted whenever the secret has a version, a
 // fact about data rather than about policy, and its absence never gates the
 // job: a run whose models all route through providers needs no such key, and
@@ -113,7 +113,7 @@ func TestOptionalSecretIsOnlyTheAnthropicKey(t *testing.T) {
 // unconditionally dropped. When the repository copy has no version but the
 // project-wide one does -- this repository may use it -- the mount stays and
 // the project copy resolves it, exactly as for any other secret
-// (docs/design/project-secrets.md §5).
+// (docs/project-secrets/spec.md §5).
 func TestReadinessOptionalKeyResolvesProjectWide(t *testing.T) {
 	in := sandboxInputs(t, m5Additions+`project_secrets:
   anthropic-api-key: { allow_data_to: [acme/sandbox] }

@@ -24,7 +24,7 @@ import (
 
 // ProjectJob is one shared project job: one entry of the installation root's
 // project_jobs, keyed by its Cloud Run job name (design
-// docs/design/project-centric.md §4.1, plan task 3.2 step 1). The tagged
+// docs/project-centric/spec.md §4.1, plan task 3.2 step 1). The tagged
 // fields are the Terraform module's object type, exactly.
 //
 // It carries nothing per-repository: a project job serves every repository
@@ -462,6 +462,7 @@ func projectJobs(lc *localcfg.Config, bucket string, vertex bool, carried []stri
 			// the runner is handed, and the jobs beside this one must not carry
 			// this job's list.
 			jobEnv := maps.Clone(env)
+			sharedJobServedEnv(jobEnv, served)
 			jobEnv[runner.SecretEnvsVar] = redactionEnvs(jobSecrets)
 			saID := gcp.ProjectServiceAccountID(name, pr.Provider, account)
 			if err := addProjectJob(out, ProjectJob{
@@ -989,7 +990,7 @@ func recordedGitHubAppID(lc *localcfg.Config) (string, error) {
 			continue
 		}
 		if id != r.GitHubAppID {
-			return "", userErr("the local config records two GitHub Apps: %s has %s and %s has %s. A shared project job runs every repository admitted to its profile on one job, and that job holds one App's ID and one github-app-key secret, so a project that uses several Apps cannot share jobs (design docs/design/project-centric.md §4.5): put the repositories a profile admits on one App, or keep the others on per-repository jobs (a profile is what a repository with checkout: clone selects, so a profile left out of the repository's fugaro.yaml keeps its own job)",
+			return "", userErr("the local config records two GitHub Apps: %s has %s and %s has %s. A shared project job runs every repository admitted to its profile on one job, and that job holds one App's ID and one github-app-key secret, so a project that uses several Apps cannot share jobs (design docs/project-centric/spec.md §4.5): put the repositories a profile admits on one App, or keep the others on per-repository jobs (a profile is what a repository with checkout: clone selects, so a profile left out of the repository's fugaro.yaml keeps its own job)",
 				holder, id, name, r.GitHubAppID)
 		}
 	}
@@ -1258,6 +1259,7 @@ func refreshProjectJobMounts(job ProjectJob, pr config.JobProfile, lc *localcfg.
 		return job
 	}
 	env[runner.SecretEnvsVar] = redactionEnvs(mounts)
+	sharedJobServedEnv(env, served)
 	job.SecretEnv = mounts
 	job.Env = env
 	return job
@@ -1376,7 +1378,7 @@ func projectJobEnv(lc *localcfg.Config, bucket string, vertex bool) map[string]s
 // A profile is shared by every repository admitted to it, so it may mount
 // only project-wide containers — a name with no container is refused rather
 // than granted, because the grant would name a secret the installation does
-// not create (design docs/design/project-secrets.md §4). That is also why
+// not create (design docs/project-secrets/spec.md §4). That is also why
 // nothing per-repository can be mounted here: a repository's own secret is
 // reachable only by a job that repository alone runs.
 //
@@ -1468,6 +1470,35 @@ func projectJobMounts(lc *localcfg.Config, profile string, pr config.JobProfile,
 		return nil, err
 	}
 	return mounts, nil
+}
+
+// sharedJobServedEnv records C1's fact "this job's credentials are served" on a
+// shared job's own environment (config.CredentialsServedEnv, C1 (h)), or clears
+// it, from the profile's switch — and it is the same pair of clauses the mounts
+// move by, which is the point of it being one function.
+//
+// The runner's door on the credential a shared job holds reads this fact and
+// nothing else about that credential (internal/runner's projectJobServed): a
+// run of a served job chooses no model credential from agent.auth or from the
+// account its name carries, because the container holds none — which credential
+// serves a call is the credentials service's answer, walked from the project's
+// routing table (R2). So a job whose fact is set while it still mounts the
+// account's token is a run whose account nobody checks, and a job whose mounts
+// are gone without the fact is a run reading its own auth for a credential the
+// container does not hold: the two move together (G17, D143), and this is where
+// they are held to it.
+//
+// served is the profile's own switch, and the second clause is the fail-closed
+// one rather than a restatement of the first: the mounts move per variable by
+// the class list (IsSharedJobServedModelEnv). With that list empty — the inert
+// state D147's "with it off nothing changes" is — a switched profile keeps
+// every mount, and the fact must not be set.
+func sharedJobServedEnv(env map[string]string, served bool) {
+	if served && config.SharedJobServesClass(config.SharedJobClassModel) {
+		env[config.CredentialsServedEnv] = config.ServedValue
+		return
+	}
+	delete(env, config.CredentialsServedEnv)
 }
 
 // projectAccountMount adds the one secret_env entry that delivers an account

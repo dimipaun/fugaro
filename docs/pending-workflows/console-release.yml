@@ -160,9 +160,9 @@
 # than drifting silently.
 #
 # **What the update feed adds, in one paragraph.** The step is Task 4.4 of
-# docs/plans/2026-10-15-desktop-console.md, which names the staged
+# docs/desktop-console/implementation-plan.md, which names the staged
 # docs/pending-workflows/console-release.yml in its own file list, and the design
-# it serves is section 7.3 of docs/design/desktop-console.md, which is where
+# it serves is section 7.3 of docs/desktop-console/spec.md, which is where
 # electron-builder's companion electron-updater and the `latest-mac.yml` manifest
 # are named as the feed client and its format. electron-builder
 # publishes nothing here -- `build.publish` stays `null` in console/package.json
@@ -429,6 +429,7 @@ jobs:
     permissions:
       contents: read # the checkout
       checks: read # scripts/release-gate.sh reads the commit's check-runs
+      actions: read # the gate lists the tag's workflow runs and reads their titles
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1016,6 +1017,7 @@ jobs:
     permissions:
       contents: read # the checkout
       checks: read # scripts/release-gate.sh reads the commit's check-runs
+      actions: read # the gate lists the tag's workflow runs and reads their titles
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

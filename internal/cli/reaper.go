@@ -100,7 +100,7 @@ func newReaperCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reaper",
 		Short: "Sweep the Batch jobs and VMs a run has leaked",
-		Long: "One pass of the reaper (docs/design/compute-backend.md §3.4): delete the Batch jobs\n" +
+		Long: "One pass of the reaper (docs/compute-backend/spec.md §3.4): delete the Batch jobs\n" +
 			"that are stuck or queued past their deadline, and the Compute Engine instances of runs\n" +
 			"no Batch job accounts for, in this project and region.\n\n" +
 			"The reaper holds five permissions and creates nothing (SECURITY.md). Every deletion\n" +
@@ -233,6 +233,14 @@ func reaperPass(ctx context.Context, o cloudOptions, getenv func(string) string,
 	}
 	_, lc, err := selectProject(ctx, o)
 	if err == nil {
+		// D1541's fence, at the one seam this command selects a project
+		// through: `reaper` sweeps the project's own jobs and VMs, so an
+		// unmanaged one is refused before the pass is built. The
+		// job-environment path below selects no project at all — it is the
+		// installation's own job, which is D2219's case and not this one's.
+		if err := requireManaged(ctx, managedCommandFrom(ctx), lc); err != nil {
+			return batch.ReaperOptions{}, "", err
+		}
 		if lc.Batch == nil {
 			return batch.ReaperOptions{}, "", userErr("project %s has no Batch configuration (its project config has no batch: block), and the reaper only sweeps an installation that runs Batch: its queue deadline and run budget are derived from that installation's own task timeouts, so there is nothing here for it to judge", lc.Name)
 		}

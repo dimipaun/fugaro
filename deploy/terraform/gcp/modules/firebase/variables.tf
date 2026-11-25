@@ -12,6 +12,26 @@ variable "project" {
   }
 }
 
+# Where a NEW Realtime Database instance is created: the installation's region
+# mapped to the nearest of the three locations Google offers (internal/place,
+# D3089), computed by fugaro update and written into the tfvars. It is an
+# input rather than a constant because the mapping's answer differs by
+# installation; the three values are the whole of what Google offers, so
+# anything else is a mistyped tfvars and is refused here rather than by the
+# provider. An instance that already exists ignores this: the resource's
+# region is a creation-time field and the module's ignore_changes keeps the one
+# it has (F8, R4), which is what makes an installation whose mapping has since
+# changed plan no change at all.
+variable "database_region" {
+  description = "The Realtime Database location for a NEW default instance: us-central1, europe-west1 or asia-southeast1, the mapping's answer for the installation's region. An instance that already exists keeps its own location."
+  type        = string
+
+  validation {
+    condition     = contains(["us-central1", "europe-west1", "asia-southeast1"], var.database_region)
+    error_message = "database_region must be one of the three Realtime Database locations: us-central1, europe-west1 or asia-southeast1."
+  }
+}
+
 variable "fugaro_project" {
   description = "The Fugaro project's name. It is in the signer's description; the RTDB's /fugaro/project holds it too, written by fugaro update."
   type        = string
@@ -53,6 +73,22 @@ variable "manage_apis" {
   nullable    = false
 }
 
+# Whether the FP's Firestore (default) database is there, which `fugaro update`
+# reads before this root is applied (internal/infra's FirestoreStep.
+# DatabaseExists) and passes here. It gates the run index's composite indexes
+# (firestore_indexes.tf, RI2): an index can only be created under a database
+# that exists, and `fugaro update` ensures that database as the LAST step of the
+# stage that applies this root (D3027) — so a fresh installation plans none of
+# them here and gains them on the next update. False is the default because it
+# is the answer that cannot fail: a plan carrying no index is applied whatever
+# the project holds.
+variable "firestore_database_exists" {
+  description = "Whether the FP's Firestore (default) database is there, as fugaro update read it before this root was applied. It gates the run index's composite indexes: an index under a database that does not exist is refused, and fugaro update ensures that database after this root."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
 variable "skip_apis" {
   description = "APIs this root does not enable because the installation root, in the same GCP project, does (set by fugaro update when the FP is the installation's own project; empty with two projects)."
   type        = list(string)
@@ -87,6 +123,21 @@ variable "operators" {
     condition     = alltrue([for m in var.operators : can(regex("^(user|group|serviceAccount):[^ *]+$", m))])
     error_message = "operators must be IAM members: user:, group: or serviceAccount: followed by one address (no domain: and no wildcard: these members get roles on the FP)."
   }
+}
+
+# The switch on the people's row (launcher-does-not-mint plan task LM11,
+# D3121): whether the launchers' and operators' fugaroTokenMinter row on the
+# runs' signer is still planned. ON, and that default is what makes the first
+# update carrying this change a plan with nothing new in it; `fugaro update`
+# turns it off in the one plan that removes the row, once the credentials
+# service has proved it signs as this signer (LM14, R8). It gates the people's
+# row alone — the issuer's below is not this switch's, and neither is the
+# viewers': a viewer never held a way to mint an identity.
+variable "people_minter" {
+  description = "Whether launchers and operators hold the minter row on the runs' signer. On until `fugaro update` moves the grant to the issuer, which turns it off in the plan that removes the row."
+  type        = bool
+  default     = true
+  nullable    = false
 }
 
 # The viewer list (RS4 of docs/roles-scopes/implementation-plan.md, roles.md
@@ -161,5 +212,27 @@ variable "coordinator_account" {
   validation {
     condition     = var.coordinator_account == "" || can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\\.iam\\.gserviceaccount\\.com$", var.coordinator_account))
     error_message = "coordinator_account must be empty or a service account email, <id>@<project>.iam.gserviceaccount.com."
+  }
+}
+
+# The issuer's own account (launcher-does-not-mint plan task LM11, D3121, F7,
+# F8): the credentials service's runtime account, which the installation root
+# creates (modules/installation/credentials.tf) and `fugaro update` hands over
+# here because THIS is the root that owns the account it signs AS — the runs'
+# signer. When set, iam.tf plans iam.serviceAccounts.signJwt on that signer for
+# it: the one row that lets a run's identity be minted without a launcher's
+# machine, and the row that takes the people's grant's place (the spec's ask 1).
+# Empty — the default of every installation until LM13's update passes the
+# account once the installation root has created it — plans no row at all: IAM
+# refuses a member that does not exist, and an installation whose issuer is not
+# named yet must keep exactly the plan it had.
+variable "issuer_account" {
+  description = "The email of the credentials service's account, which mints the runs' custom tokens from the release that moves the grant. When set, it holds iam.serviceAccounts.signJwt on the runs' signer here. Empty names no account and plans no row: IAM refuses a member that does not exist."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.issuer_account == "" || can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\\.iam\\.gserviceaccount\\.com$", var.issuer_account))
+    error_message = "issuer_account must be empty or a service account email, <id>@<project>.iam.gserviceaccount.com."
   }
 }

@@ -2,7 +2,7 @@
 # See ee/LICENSE for the terms.
 #
 # The portal API's image (portal plan P1.7, design
-# docs/design/key-signing-service.md S3.5, S3.7): the program alone in a
+# docs/key-signing-service/spec.md S3.5, S3.7): the program alone in a
 # distroless static image, for the `fugaro-portal-api` Cloud Run service.
 #
 # It holds the deployment's public half — the document store, the mail key, the

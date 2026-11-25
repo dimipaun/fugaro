@@ -977,3 +977,51 @@ func TestMaxJobNameBytesIsTheJobNameRuleGcpProduces(t *testing.T) {
 		t.Errorf("ValidJobName accepted a name one byte over the limit gcp.JobName respects")
 	}
 }
+
+// TestCredentialOwnerHeaderRoundTrip: the owner of the credential that answered
+// (F16) is written and read back, an answer that carries none is the ordinary
+// case, and an owner that is not one launcher's account id — a name, a value
+// with a newline in it, one sent twice, one past the bound — is refused when it
+// is READ as well as when it is written: the run records it, so a reader that
+// took a raw header value would be recording a fact the service did not state.
+func TestCredentialOwnerHeaderRoundTrip(t *testing.T) {
+	h := http.Header{}
+	if err := SetCredentialOwnerHeader(h, testLauncherSub); err != nil {
+		t.Fatalf("SetCredentialOwnerHeader: %v", err)
+	}
+	owner, present, err := CredentialOwnerHeader(h)
+	if err != nil || !present || owner != testLauncherSub {
+		t.Fatalf("CredentialOwnerHeader = (%q, %v, %v), want (%q, true, nil)", owner, present, err, testLauncherSub)
+	}
+	// An answer that carries none is not a refusal: most answers serve a
+	// credential the launcher does not own.
+	if owner, present, err := CredentialOwnerHeader(http.Header{}); present || err != nil || owner != "" {
+		t.Fatalf("an answer with no owner header = (%q, %v, %v), want none and no error", owner, present, err)
+	}
+	for name, tc := range map[string]struct {
+		header http.Header
+		write  string
+	}{
+		"a name, not an account id": {http.Header{HeaderCredentialOwner: {testLauncherAccount}}, ""},
+		"an id with a newline":      {http.Header{HeaderCredentialOwner: {testLauncherSub + "\nX-Evil: 1"}}, ""},
+		"an id past the bound":      {http.Header{HeaderCredentialOwner: {strings.Repeat("1", maxLauncherSubDigits+1)}}, strings.Repeat("1", maxLauncherSubDigits+1)},
+		"an id sent twice":          {http.Header{HeaderCredentialOwner: {testLauncherSub, testLauncherSub}}, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if owner, present, err := CredentialOwnerHeader(tc.header); present || err == nil || owner != "" {
+				t.Fatalf("CredentialOwnerHeader(%v) = (%q, %v, %v), want a refusal", tc.header, owner, present, err)
+			}
+			if tc.write != "" {
+				if err := SetCredentialOwnerHeader(http.Header{}, tc.write); err == nil {
+					t.Errorf("SetCredentialOwnerHeader accepted %q", tc.write)
+				}
+			}
+		})
+	}
+	// The error names the field and never the value: it is header text from
+	// another process.
+	if _, _, err := CredentialOwnerHeader(http.Header{HeaderCredentialOwner: {"launcher@example.invalid"}}); err == nil ||
+		strings.Contains(err.Error(), "launcher@example.invalid") {
+		t.Errorf("the refusal = %v, want it to name the field and not the value", err)
+	}
+}

@@ -6,7 +6,7 @@ package keyservice
 // The KMS signer (portal plan P1.7): the minter's Signer on Cloud KMS's
 // asymmetric-sign call, so the private half of a licence key never leaves the
 // managed store and no file, fixture or process here holds one
-// (.claude/rules/ee.md R5, design docs/design/key-signing-service.md §3.3,
+// (.claude/rules/ee.md R5, design docs/key-signing-service/spec.md §3.3,
 // S2.1's Ed25519).
 //
 // This is the deployment's only Signer, and the minter's program is the only

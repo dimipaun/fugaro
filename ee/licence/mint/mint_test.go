@@ -39,7 +39,8 @@ import (
 )
 
 // testKeyID is the id the tests key the ring by. No production keyring holds it
-// and none ever will: S2.9 publishes the owner's, and this one is a test's.
+// and none ever will: the production ring holds the owner's published half
+// (S2.9), and this one is a test's.
 const testKeyID = "licence-mint-test-1"
 
 // ed25519Path is the one crypto package the tool's own sources may name.
@@ -89,7 +90,7 @@ func teamClaims() licence.Claims {
 // verifyWith is the check the tests hand the tool for a v1 key, and the one
 // the command hands it: K1.1's verifier, over the ring the caller names and the
 // workspace the key is read in. The ring is the caller's rather than the
-// compiled one, which is empty until S2.9 publishes the owner's key.
+// compiled one, which holds the published production half alone (S2.9).
 func verifyWith(ring licence.Keyring, firebaseProjectID string) Verifier {
 	return func(raw []byte, now time.Time) (licence.Claims, licence.State, error) {
 		return licence.Verify(raw, now, ring, firebaseProjectID)
@@ -449,7 +450,7 @@ func signingRunner(f *fakeSigner) Runner {
 // answers is a key K1.1's verifier accepts, read at the instant it was minted,
 // carrying the claim set the tool was given, field for field -- so an interim
 // hand-minted key and the service's are one format to every verifier (design
-// docs/design/key-signing-service.md §1).
+// docs/key-signing-service/spec.md §1).
 func TestMintedKeyVerifies(t *testing.T) {
 	claims := teamClaims()
 	key, signer, ring := minted(t, claims)

@@ -194,7 +194,7 @@ var jobConfigCopyTimeout = 30 * time.Second
 //
 // Only each workflow's default-account job: infra.Workflow always builds
 // the config.DefaultClaudeAccount variant (a repository may also deploy a
-// named-account job per docs/design/named-oauth-tokens.md, a separate job
+// named-account job per docs/named-oauth-tokens/spec.md, a separate job
 // this does not read). The same fugaro update --repo that refreshes the
 // default one also refreshes every named-account job, so running it fixes
 // both; this note just never checks the named ones itself.

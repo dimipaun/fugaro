@@ -188,19 +188,19 @@ type probeLease struct {
 // holds no empty one.
 func probeLeasePath(name string) string { return pathProbes + "/" + budget.Key(name) }
 
-// probeCall is the minimal call a probe makes, built from the run's own call:
-// the same path — the endpoint the credential is being asked about is the one
-// the run is about to use — and the model the run's body names, with this
-// service's own headers and its own body.
+// probeCall is the minimal call a probe makes, built from the run's own call
+// and the credential the probe is about: the same path — the endpoint the
+// credential is being asked about is the one the run is about to use — and the
+// model that credential would be served with (probeModel), with this service's
+// own headers and its own body.
 //
-// ok is false when the run's body names no model this service will put in a
-// probe: the call is not a model call this service can make, so there is
-// nothing to ask. The caller then answers the run the wait it was going to be
-// answered anyway, which is the fail-closed direction — a probe of "does this
-// token work" that asked something else would be answering a question nobody
-// asked.
-func probeCall(cl *call) (*call, bool) {
-	model, ok := callModel(cl.body)
+// ok is false when there is no model this service will put in a probe: the call
+// is not a model call this service can make, so there is nothing to ask. The
+// caller then answers the run the wait it was going to be answered anyway, which
+// is the fail-closed direction — a probe of "does this token work" that asked
+// something else would be answering a question nobody asked.
+func probeCall(cl *call, c creds.Credential) (*call, bool) {
+	model, ok := probeModel(cl, c)
 	if !ok {
 		return nil, false
 	}
@@ -222,6 +222,39 @@ func probeCall(cl *call) (*call, bool) {
 		scrubs: cl.scrubs,
 		header: probeHeaders(),
 	}, true
+}
+
+// probeModel is the model a probe asks about, and whether there is one this
+// service will put in a probe: the model the credential the probe is ABOUT
+// would serve this call with.
+//
+// On a call the cascade serves that is the model in the body the caller sent —
+// nothing rewrites it, so the body as it stands is the caller's own. On a
+// chain-served call it is the spelling of the SOURCE that holds this credential
+// (chainWalk.spellingOf), which is a different reading of the same call: the
+// walk rewrites the call's `model` member to each source's spelling on its way
+// out and leaves the served source's there (chainWalk.next), so the body as it
+// stands carries the LAST source's spelling — a route ID, a Vertex date, a
+// written downgrade — which is a model that source serves and this credential
+// may not, or may not be asked for on the route this credential is the key of.
+// The model the run named is not the answer either, for the same reason: what
+// the source would carry is the spelling the table's map gives this model on
+// that kind (CS3), and a probe asks whether this credential can serve the call
+// it is about to be given.
+//
+// A credential no source of the chain holds answers no probe: the walk serves
+// nothing but a source's members (chainMembers is exactly the list probeDue
+// reads), so this is unreachable, and the fail-closed direction is to ask
+// nothing rather than to guess a model for it.
+func probeModel(cl *call, c creds.Credential) (string, bool) {
+	if cl.chain != nil {
+		spelling, held := cl.chain.spellingOf(c.Name)
+		if !held {
+			return "", false
+		}
+		return probeModelValue(spelling)
+	}
+	return callModel(cl.body)
 }
 
 // probeBody is the body a probe sends: a Messages request asking for one token,
@@ -286,10 +319,18 @@ func callModel(body []byte) (string, bool) {
 	if err := json.Unmarshal(body, &head); err != nil {
 		return "", false
 	}
-	if head.Model == "" || len(head.Model) > maxProbeModelBytes {
+	return probeModelValue(head.Model)
+}
+
+// probeModelValue is the bound every model a probe may carry passes, whether it
+// came out of the caller's body or out of the table's own spelling for a source:
+// a model id is a short name, and this service must not build an upstream body
+// out of an unbounded run of anything.
+func probeModelValue(model string) (string, bool) {
+	if model == "" || len(model) > maxProbeModelBytes {
 		return "", false
 	}
-	return head.Model, true
+	return model, true
 }
 
 // probeOutcome is what one probe's answer means for the credential's mark. The
@@ -372,7 +413,7 @@ func (s *Server) probeDue(ctx context.Context, sel *creds.Selector, id Identity,
 		// which it has already answered with) is what the run is told.
 		return false
 	}
-	c, ok := firstDue(probeCandidates(cands, sel.Settings, sel.Model, sel.Provider), marks, now, probed)
+	c, ok := firstDue(probeCandidatesFor(cl, cands, sel), marks, now, probed)
 	if !ok {
 		// A selection said a probe is due and the marks say none is: the state
 		// moved between the two reads (another instance probed the credential,
@@ -405,9 +446,36 @@ func (s *Server) probeDue(ctx context.Context, sel *creds.Selector, id Identity,
 	return s.probeOne(ctx, sel, id, creds.Run{Slug: id.Slug, ID: id.Run}, c, e, cl)
 }
 
-// probeCandidates is the candidates a probe may run on, which is the candidates
-// the policy admits and this call's model may be served by, and not the ones the
-// bundle holds.
+// probeCandidatesFor is the list one call's probe may be made on, which is the
+// ORDER the call goes out on: a chain-served call's is the chain's own — the
+// plan's members, exactly what forward was handed — and every other call's is
+// the policy's answer (probeCandidates).
+//
+// The difference is the policy's tier gate, and dropping it is not a widening.
+// The table REPLACES the fixed tier order (R4, D3170), so a source the walk is
+// willing to serve is a source a probe may ask about, and it must be: a probe is
+// the only thing that clears a backed-off mark (creds.free, Mark.NeedsProbe), so
+// a member the gate dropped would leave a chain whose remaining source is the
+// project's paid key under `oauth-only`, or a provider's key, permanently
+// unusable — the walk serves that source, its mark never clears, and every call
+// of the step is answered a wait no probe ever reaches. What a probe may be made
+// on is therefore the plan's own decision, taken per source when it resolved
+// each one's members (planSource: the spelling the map gives the model on that
+// kind, the source's own admission, a pool member's account — D3175, D3182,
+// R20). It is the same decision the walk's own Serve and Judge read, and
+// creds.Selector leaves the gate out for the same reason.
+func probeCandidatesFor(cl *call, cands []creds.Credential, sel *creds.Selector) []creds.Credential {
+	if cl.chain != nil {
+		return cands
+	}
+	return probeCandidates(cands, sel.Settings, sel.Model, sel.Provider)
+}
+
+// probeCandidates is the candidates a probe may run on for a call the CASCADE
+// serves, which is the candidates the policy admits and this call's model may be
+// served by, and not the ones the bundle holds. A chain-served call does not
+// come through here (probeCandidatesFor): the table's own entry is what says
+// which tiers and which providers this call may go out on.
 //
 // The two lists are not the same, and that is the whole reason this exists: the
 // bundle's candidates are every credential the caller offered, and the tier
@@ -523,10 +591,17 @@ func probeRecordContext(ctx context.Context) (context.Context, context.CancelFun
 // cannot be un-made (it is out of this service's hands by then), so what is
 // withheld is its effect, which is the part this service decides.
 func (s *Server) probeOne(ctx context.Context, sel *creds.Selector, id Identity, run creds.Run, c creds.Credential, e Entry, cl *call) bool {
-	probe, ok := probeCall(cl)
+	probe, ok := probeCall(cl, c)
 	if !ok {
 		return false
 	}
+	// A probe is a call the workspace's own credential pays for (C1.16), so it
+	// takes a reservation like any other call of the run's and settles it here
+	// (WS8, F10): the bracket is the probe's own, because the probe's body is
+	// this service's one-token call and not the run's request, and pricing the
+	// probe by the run's own request would charge the workspace a whole context
+	// for a question about a credential.
+	s.withMeter(ctx, probe, id)
 	claimed, cerr := s.claimProbe(ctx, e.Name, run)
 	if cerr != nil {
 		// The lease could not be read. No probe is made: whether one is in
@@ -573,6 +648,16 @@ func (s *Server) probeOne(ctx context.Context, sel *creds.Selector, id Identity,
 	callCtx, callDone := probeCallContext(ctx)
 	ans, err := s.send(callCtx, probe, e)
 	callDone()
+	if probe.fail != nil {
+		// The workspace refused the probe before it went out — no room at the
+		// ceiling, no price for the model, a month that could not be written —
+		// so no call was made, nothing came back to classify and no mark is
+		// owed. The refusal is carried to the call the run is waiting for,
+		// which answers it and audits it: one refusal is one line, and this
+		// path writes none of its own.
+		cl.fail = probe.fail
+		return false
+	}
 	if ans != nil {
 		// The call was made, so it is the run's to account for (C1.16): the tier
 		// it was made on is recorded on the call the run is waiting for, and the
@@ -596,6 +681,21 @@ func (s *Server) probeOne(ctx context.Context, sel *creds.Selector, id Identity,
 		outcome, reset = classifyProbe(ans.resp, nil, s.now())
 	} else {
 		outcome, reset = classifyProbe(nil, err, s.now())
+	}
+	// The probe's own reservation settles here, at what it was charged for. A
+	// probe's answer is never read for usage — it is a probe's answer and not
+	// the run's — so the one-token call settles at the worst case it reserved,
+	// which is what the run's own gateway settles its probes at too (C1.16).
+	//
+	// A settle this service cannot write is the run's refusal and not the
+	// credential's business: the run is answered the workspace's own refusal
+	// (cl.fail, forwarded by the call that owed the probe), no mark is written
+	// and no line of this path's is — the credential stays where it was, backed
+	// off, which is the fail-closed direction when the probe's result could not
+	// be recorded at all.
+	if fail := s.settleCall(ctx, probe, nil); fail != nil {
+		cl.fail = fail
+		return false
 	}
 	status := probeStatus(outcome)
 	if aerr := s.audit.Write(recordCtx, id.Audit(AuditEvent{

@@ -145,7 +145,11 @@ func allowedPath(rel string) bool {
 }
 
 var allowed = []string{
-	"docs/plans/", "docs/releases/", "docs/design/", "docs/base-image-migration.md", "docs/base-image.md",
+	"docs/plans/", "docs/releases/", "docs/design/",
+	// The pre-layout specs and plans, folded out of docs/design/ and
+	// docs/plans/ into a folder each: the same history.
+	"docs/agent-env/", "docs/base-image/", "docs/headroom-compression/", "docs/image-refresh/", "docs/layered-config/", "docs/m11-setup-and-skills/", "docs/m9-budget-and-dashboard/", "docs/recipes/", "docs/registry-remote-repository/", "docs/retire-image-mirror/", "docs/shared-config/", "docs/upgrade/",
+	"docs/base-image-migration.md", "docs/base-image.md",
 	"images/legacy_names_test.go", "internal/config/legacy_test.go", "internal/localcfg/localcfg.go", "internal/config/dockerfile.go",
 	"internal/localcfg/localcfg_test.go", "internal/cli/sharedcfg_validate_test.go", "internal/infra/checkjob_test.go",
 	"testdata/config/invalid/legacy-",

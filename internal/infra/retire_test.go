@@ -17,7 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
-// --- Retirements (plan docs/plans/2026-10-14-config-transitions.md Task 2)
+// --- Retirements (plan docs/config-transitions/implementation-plan.md Task 2)
 
 // The origin fixture's installation: one member who both operates and
 // launches. That is not decoration: every count in design §1 is per
@@ -1933,7 +1933,7 @@ func TestRetireSetNeverCountsANote(t *testing.T) {
 // The types are the second half of the claim. Every address the update adds
 // is of a type the previous plan already declared -- the variant is the same
 // module instantiation the oauth account variants have used since
-// docs/design/named-oauth-tokens.md -- so the update asks for no new row in
+// docs/named-oauth-tokens/spec.md -- so the update asks for no new row in
 // the cover tables, which is what "no more than the grants the design lists"
 // means for one confirmation.
 func TestInstallationAtThePreviousVersionConvergesToTheMix(t *testing.T) {

@@ -156,6 +156,29 @@ type Selector struct {
 	// provider runs this call's model — a model whose provider's key the bundle
 	// does not hold would otherwise be sent to whichever one was left.
 	Provider string
+	// Exclusive names the candidate this call's own right serves OUTRIGHT while
+	// it can serve: the named credential is selected and no other member of the
+	// list is. It is the CALLER's word, per call, exactly as Strategy is — and
+	// it is per call rather than a mark on a Credential because whether a token
+	// is served outright is a fact about the call's entitlement and not about
+	// the token: the same credential is one more member of the list in another
+	// call, which has no slip naming it (internal/credsvc marks the person's own
+	// token here, which the slip their run carries entitles it to, R7, D3144).
+	//
+	// It exists because the offered order cannot say this. Order breaks an exact
+	// tie and says where a rotation starts (leastRecentlyExhausted, rotate), so
+	// a list that offered such a candidate as one more member of its tier would
+	// serve it to about one call in N — the tie-breaking counter's turn, or the
+	// rotation's — while the whole content of the entitlement is that the calls
+	// it names go out on that credential. The moment the candidate cannot serve
+	// — exhausted, backed off, capped or broken — the rule stops holding it up
+	// and the rest of the list is the answer, because "can serve now" is the
+	// judgement every other candidate meets and not a rule of its own (free).
+	//
+	// "" means a caller that named none, and then no candidate is served
+	// outright: a caller that never sets it selects exactly what it selected
+	// before this field existed.
+	Exclusive string
 }
 
 // Select answers the credential the run's next call goes to, or the wait until
@@ -205,8 +228,11 @@ type Selector struct {
 // credentials the project policy admits for this call, in the tier order
 // (tiers: A, then B where the policy spends, then C). Nothing here reads an
 // admission (that is C1.11's, from what C1.2 publishes) and nothing here
-// invents a credential the caller did not offer. The tier
-// decides which credential is taken and the order within a tier does not —
+// invents a credential the caller did not offer. The one candidate that is
+// served ahead of the tiers is the caller's own exclusive one, and only while
+// it can serve (Selector.Exclusive); every other candidate is answered by the
+// rule below. The tier decides which credential is taken and the order within
+// a tier does not —
 // except in a tie, which the offered order breaks, so a pool is listed the way
 // its owner ordered it and the listed order never outranks the tier (F7). What
 // picks among the usable members of one tier is the caller's Strategy — the
@@ -249,6 +275,153 @@ type Selector struct {
 // Lease's: the cap can be exceeded by the number of instances selecting at once,
 // for at most one lease TTL.
 func (s *Selector) Select(ctx context.Context, run Run, candidates []Credential) (Credential, time.Duration, error) {
+	return s.selectCredential(ctx, run, candidates, true)
+}
+
+// MayServe answers whether ONE credential may serve this run's call now, and it
+// writes NOTHING: no placement, no lease, no mark, no counter.
+//
+// It is the judgement Select makes over a list of that one credential
+// (selectCredential), and the one thing it leaves out is the recording of the
+// decision. Every rule is therefore the same rule and every refusal the same
+// error: the class rule and the provider tie (checkCandidates, D3000), the
+// credential's own mark, the room the cap leaves, and the wait a mark that will
+// lift answers with (ExhaustedUntil) — so a caller renders one sentence for one
+// state, and no credential is ever judged twice by two spellings of a rule.
+//
+// # Why a caller wants the judgement without the placement
+//
+// A call whose credential is DERIVED has no decision to record. The credentials
+// service's provider route builds its entry from the run's verified repository
+// and the provider's name the call carries, and it is the same entry for every
+// call that run makes to that provider: there is no pool for the run to be moved
+// around, no other credential this call could have been served by, and so
+// neither D154's stickiness nor D142's slot means anything for it.
+//
+// What placing it would do is the harm. A run's current credential and its lease
+// are ONE fact — where this run is (SetPlacement, take) — and a run that mixes
+// Claude calls with routed ones is on a shared subscription token for the first.
+// The routed call would move the run onto the provider's entry, which takes the
+// lease the run still holds on the account with it: the account's concurrency
+// slot (D142) is freed while the run is using it, and the next Claude call finds
+// no current credential to stay on (D154) and either re-selects off the prompt
+// cache's credential or waits on the cap. A run's placement is the cascade's to
+// write, and only for a call the cascade served.
+//
+// The judgement itself is not optional, and that is the other half: a caller
+// that skipped it and attached the credential anyway would serve an entry a mark
+// holds, or one the class rule and the provider tie refuse.
+func (s *Selector) MayServe(ctx context.Context, run Run, c Credential) error {
+	_, _, err := s.selectCredential(ctx, run, []Credential{c}, false)
+	return err
+}
+
+// Serve judges ONE credential the CALLER has already chosen, and records the
+// decision (take). It is MayServe with the placement, and it is what a chain
+// walked by the project's routing table serves a single-credential source with
+// (internal/credsvc's walk, CS1).
+//
+// # What it judges, and the one rule it does not
+//
+// The judgement is the same one every candidate meets (free): the credential's
+// own mark, and the room D142's cap leaves. It answers the same two refusals
+// for the same states — *ExhaustedUntil with the wait beside it, and
+// ErrNoCredential — so a caller renders one sentence for one state.
+//
+// What it does NOT apply is the POLICY's tier gate (reachable, Settings.tiers):
+// the chain REPLACES the fixed tier order (R4, D3170), so which tier a call may
+// go out on is the project's table's answer and no longer `settings.fallback`'s.
+// A chain that puts the project's paid key first serves the call there under
+// `oauth-only`, and a chain that puts a donated subscription first serves it
+// there — that is the whole of what the table is for. The class rule
+// (checkCandidates) is left out for the same reason: the table names a
+// credential FOR a model, which is the fact that rule infers, and RT3 refuses a
+// table whose sources disagree with it.
+//
+// Neither omission widens the cascade's own path: nothing but the walk calls
+// this, and the walk has a table's entry in hand.
+func (s *Selector) Serve(ctx context.Context, run Run, c Credential) (time.Duration, error) {
+	now := s.now()
+	wait, err := s.judge(ctx, run, c, now)
+	if err != nil {
+		return wait, err
+	}
+	if err := s.take(ctx, run, c, now, s.Settings.withDefaults()); err != nil {
+		return 0, err
+	}
+	return 0, nil
+}
+
+// Judge is what Serve judges, and nothing else: the same reading of the state,
+// the same two refusals and the same wait, with no placement written.
+//
+// It exists for the one caller that must ask about a credential WITHOUT serving
+// it — a chain walk re-reading a source this call has already sent to. Such a
+// source is not an empty one: a credential the call spent and left a mark on is
+// a credential the call can WAIT for, and a walk that answered "nothing" there
+// would tell the run at a usage limit that no credential becomes usable by
+// waiting (refuseSelection's state_unavailable) where the mark holds the reset
+// it may wait out. It is retryPool's rule read on the walk's own path: ask over
+// the whole set again, and never send to what was already sent.
+//
+// It writes no placement, which is the whole of the difference: the call's
+// placement is where the credential it is really going out on put it, and a
+// judgement about a spent credential is not a decision to move the run (D142's
+// lease and D154's placement are one fact).
+//
+// MayServe is the other judgement that writes no placement, and it is not this
+// one: that is the CASCADE's judgement, so it applies the policy's tier gate
+// and the class rule, and a chain's judgement does not (R4, Serve above).
+func (s *Selector) Judge(ctx context.Context, run Run, c Credential) (time.Duration, error) {
+	return s.judge(ctx, run, c, s.now())
+}
+
+// judge is Serve's judgement: free, read over one reading of the marks and the
+// leases, with the wait of an exhausted credential beside its refusal.
+func (s *Selector) judge(ctx context.Context, run Run, c Credential, now time.Time) (time.Duration, error) {
+	set := s.Settings.withDefaults()
+	if err := run.valid(); err != nil {
+		return 0, err
+	}
+	if c.Name == "" {
+		return 0, fmt.Errorf("creds: a credential of tier %q has no name", c.Tier)
+	}
+	marks, err := s.Store.Marks(ctx)
+	if err != nil {
+		return 0, err
+	}
+	leases, err := s.Store.Leases(ctx, now)
+	if err != nil {
+		return 0, err
+	}
+	if !free(c, marks, leases, run, now, set) {
+		if at, probe, ok := earliest([]Credential{c}, marks, leases, run, now, set); ok {
+			wait := waitUntil(now, at)
+			return wait, &ExhaustedUntil{At: at, Wait: wait, Probe: probe}
+		}
+		return 0, ErrNoCredential
+	}
+	return 0, nil
+}
+
+// Place records ONE credential the caller's own rule has already judged as the
+// run's current one, and writes nothing else: no mark, no judgement, and no
+// second reading of the state.
+//
+// It is for a credential a POOL's rule answered (PoolPicker.PickInPool), which
+// filters by free and picks in one answer, so the walk records the decision and
+// never judges the member twice: two readings of the state could disagree, and
+// the member the pool answered is the member the pool answered.
+func (s *Selector) Place(ctx context.Context, run Run, c Credential) error {
+	set := s.Settings.withDefaults()
+	return s.take(ctx, run, c, s.now(), set)
+}
+
+// selectCredential is the selection Select and MayServe share, and `place` is
+// the whole difference between them: Select records the decision (take), which
+// is D154's stickiness and D142's lease written as one placement, and MayServe
+// answers it and writes nothing.
+func (s *Selector) selectCredential(ctx context.Context, run Run, candidates []Credential, place bool) (Credential, time.Duration, error) {
 	set := s.Settings.withDefaults()
 	now := s.now()
 	if err := run.valid(); err != nil {
@@ -267,7 +440,40 @@ func (s *Selector) Select(ctx context.Context, run Run, candidates []Credential)
 		return Credential{}, 0, err
 	}
 
-	// D154's stickiness first, and before any preference: a run keeps the
+	// The caller's exclusive candidate, before the placement and before any
+	// tier: the credential the caller named here is SERVED while it can serve,
+	// and the list's other members are not. Both halves of that are the whole
+	// rule, and each is why the position is where it is (Selector.Exclusive).
+	//
+	// Before the placement, because D154's stickiness is how a pool is shared
+	// among runs and this candidate is not a member of one: a token that a call
+	// is entitled to is the token that call goes out on, and a run that was
+	// moved onto a shared entry by an exhaustion of its own — the one state
+	// that puts one there — does not stay there once its own token can serve
+	// again. Before the tiers, because the within-tier rule is the other half
+	// of the sharing (the counter's turn, a pool's rotation) and the offered
+	// order says only where it starts.
+	//
+	// The one judgement it meets is the same one every other candidate meets
+	// (free): a candidate that cannot serve now — exhausted, backed off, capped
+	// or broken — is not held up, and the rest of the list is the answer, with
+	// the placement, the tier loop and the wait-or-switch rule exactly what
+	// they already were. A name the caller's list does not hold is no candidate
+	// at all, which is the same rule read the other way and the reason a caller
+	// whose list was narrowed by an admission keeps its ordinary selection.
+	for _, c := range cs {
+		if s.Exclusive == "" || c.Name != s.Exclusive || !reachable(c, set) || !free(c, marks, leases, run, now, set) {
+			continue
+		}
+		if place {
+			if err := s.take(ctx, run, c, now, set); err != nil {
+				return Credential{}, 0, err
+			}
+		}
+		return c, 0, nil
+	}
+
+	// D154's stickiness next, and before every rule below it: a run keeps the
 	// credential it is on for as long as that credential is offered, usable and
 	// not held by the cap — the reason is the prompt cache, and every rule below
 	// this one would move the run off it for a reason the cache does not care
@@ -278,8 +484,10 @@ func (s *Selector) Select(ctx context.Context, run Run, candidates []Credential)
 	}
 	if found {
 		if c, ok := lookup(cs, cur); ok && reachable(c, set) && free(c, marks, leases, run, now, set) {
-			if err := s.take(ctx, run, c, now, set); err != nil {
-				return Credential{}, 0, err
+			if place {
+				if err := s.take(ctx, run, c, now, set); err != nil {
+					return Credential{}, 0, err
+				}
 			}
 			return c, 0, nil
 		}
@@ -306,8 +514,10 @@ func (s *Selector) Select(ctx context.Context, run Run, candidates []Credential)
 			if err != nil {
 				return Credential{}, 0, err
 			}
-			if err := s.take(ctx, run, c, now, set); err != nil {
-				return Credential{}, 0, err
+			if place {
+				if err := s.take(ctx, run, c, now, set); err != nil {
+					return Credential{}, 0, err
+				}
 			}
 			return c, 0, nil
 		}

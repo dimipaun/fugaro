@@ -46,7 +46,7 @@ func checkRoutingShapeV1(r *Routing, path string) []Problem {
 		ps = append(ps, Problem{Path: path + ".claude.via", Message: "is written with no value: name direct, openrouter or auto, or remove the block — an absent switch is direct (D1b)"})
 	}
 	if (via == "openrouter" || via == "auto") && len(c.Models) == 0 {
-		ps = append(ps, Problem{Path: path + ".claude.models", Message: fmt.Sprintf("is empty, and an empty list with via: %s would opt every Claude model in: name the IDs this switch carries, one explicit Claude ID per entry, never a pattern (D1a, docs/design/mixed-credentials.md §4)", via)})
+		ps = append(ps, Problem{Path: path + ".claude.models", Message: fmt.Sprintf("is empty, and an empty list with via: %s would opt every Claude model in: name the IDs this switch carries, one explicit Claude ID per entry, never a pattern (D1a, docs/mixed-credentials/spec.md §4)", via)})
 	}
 	// The model-entry rule is deliberately not copied: this file freezes the
 	// shape rule's answer about the *via*, and CheckRoutingModel is the same

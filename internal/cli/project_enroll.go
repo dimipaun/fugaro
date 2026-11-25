@@ -1,7 +1,7 @@
 package cli
 
 // `fugaro project repos` and `fugaro project sync`: enrollment as data (plan
-// task 4.1, docs/design/project-centric.md §4.3). A repository is tied to a
+// task 4.1, docs/project-centric/spec.md §4.3). A repository is tied to a
 // project by three things, all data — its `project:` line, the project's
 // allow-list, and the App's installation — and this file is the allow-list's
 // own commands: `ls` prints it against what the installation has seen run,
@@ -149,7 +149,10 @@ func newProjectReposAddCmd() *cobra.Command {
 			"far as it can:\n" +
 			"\n" +
 			"  1. the repository's own fugaro.yaml: read, never written\n" +
-			"  2. this machine's project config: the repository's repos: entry\n" +
+			"  2. this machine's project config: the repository's repos: entry (and, when\n" +
+			"     its fugaro.yaml names a Claude account by agent.oauth_token, the\n" +
+			"     repository in that one account's allow_data_to, which the next\n" +
+			"     update's publish requires; no other account's list is touched)\n" +
 			"  3. this machine's project config: its repo-to-image mapping\n" +
 			"  4. the published policy's allow_repos\n" +
 			"  5. the publish of the policy node (fugaro update's policy stage)\n" +
@@ -766,7 +769,7 @@ func configRepo(lc *localcfg.Config, arg string) (localcfg.Repo, bool) {
 func canonicalRepoArg(lc *localcfg.Config, arg string) (string, error) {
 	if arg == "*" {
 		// The allow-list's own entry for every repository — the design's
-		// explicit choice (docs/design/project-centric.md §4.3), which
+		// explicit choice (docs/project-centric/spec.md §4.3), which
 		// MatchRepo reads as admitting anything. It is not a repository, so
 		// neither the config lookup below (there is no owner/name to resolve a
 		// provider from) nor projectpolicy.Canonical applies to it: it is

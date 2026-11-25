@@ -884,11 +884,18 @@ func trimUSD(v float64) string {
 	return strings.TrimSuffix(strings.TrimSuffix(s, "0"), ".0")
 }
 
-// sectionLines joins the section's parts.
+// sectionLines joins the section's parts: a one-line part goes on the first
+// line, and a part carrying a block of its own is appended under it, in the
+// order the blocks already are (the hand-back, LV4.3).
 func (r *run) sectionLines(head string, parts ...string) string {
 	kept := []string{head}
+	var blocks []string
 	for _, p := range parts {
-		if p != "" {
+		switch {
+		case p == "":
+		case strings.Contains(p, "\n"):
+			blocks = append(blocks, p)
+		default:
 			kept = append(kept, p)
 		}
 	}
@@ -903,6 +910,9 @@ func (r *run) sectionLines(head string, parts ...string) string {
 	out += r.changeSetPart()
 	out += r.ownerPart()
 	out += r.deferredPart()
+	for _, b := range blocks {
+		out += b
+	}
 	if r.rec.DraftFallback {
 		out += "This host has no draft pull requests: this is a normal pull request marked [DRAFT], so reviews may already have been requested.\n"
 	}
@@ -1193,7 +1203,8 @@ func (r *run) pushedPart(records []verify.Record) string {
 }
 
 // finalSection is the section when the run ended: outcome, reason, tests,
-// reviews and cost. A review round the run's mode let through names each
+// reviews and cost, and the hand-back the run's level owes the reader (LV4.3).
+// A review round the run's mode let through names each
 // finding it tolerated and the mode that tolerated it (T3.3, D7, D18), and a
 // run that held more than one review level lists each level's verdict and the
 // head it approved (levelsPart, D727).
@@ -1212,7 +1223,7 @@ func (r *run) finalSection(ready bool, reason string, records []verify.Record) s
 	case r.rec.Status == runstore.StatusCancelled:
 		head = "**Cancelled**"
 	}
-	return r.sectionLines(head, why, r.checkpointReportPart(), r.rigorPart(), verifyPart(records), reviewsPart(r.rec.Reviews, r.findingsPolicy()), r.levelsPart(), r.narrowText, r.binariesPart(), r.costPart(), r.updated("finished"))
+	return r.sectionLines(head, why, r.checkpointReportPart(), r.rigorPart(), verifyPart(records), reviewsPart(r.rec.Reviews, r.findingsPolicy()), r.levelsPart(), r.narrowText, r.binariesPart(), r.promotePart(), r.costPart(), r.handBackPart(), r.updated("finished"))
 }
 
 // ---- finalize ----

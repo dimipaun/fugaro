@@ -135,7 +135,7 @@ of this task.
 'TestInitCheckoutUpgrade|TestCheckout|TestCheckouts|TestCascade|TestLeftCommands|TestInitPluginStage'
 -count=1`.
 
-**Docs and release notes.** `docs/design/upgrade.md`'s "the plugin step is the checkout's" sentence is
+**Docs and release notes.** `docs/upgrade/spec.md`'s "the plugin step is the checkout's" sentence is
 U7's; this task leaves it alone and says so in its description.
 
 ## U2. The pin merge is deleted (D940, D944, D949 — D949 answered 2026-11-04, **not the recommendation**)
@@ -286,7 +286,7 @@ set** writes nothing and prints the diff.
 **Tests.** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestInitPluginStage' -count=1`,
 `go test ./internal/pluginwire/... -count=1`.
 
-**Docs and release notes.** `docs/design/upgrade.md`'s migration paragraph is U7's. **No `### For
+**Docs and release notes.** `docs/upgrade/spec.md`'s migration paragraph is U7's. **No `### For
 operators` entry**: the removal is inside `fugaro update`, which is the HARD RULE.
 
 ## U6. The skills: the nudge, the `update` skill, and the gate (D947, D953)
@@ -326,7 +326,7 @@ sentence is asserted in `working` and `setup` before either carries it.
 each in the pull request of the run that owns its path:
 
 - **This repository's:** `CLAUDE.md` (its two `fugaro upgrade` sentences and the plugin-pin clause),
-  `.claude/skills/new-release/SKILL.md`, `docs/design/upgrade.md` (rewritten as the one-command design and
+  `.claude/skills/new-release/SKILL.md`, `docs/upgrade/spec.md` (rewritten as the one-command design and
   its test `internal/cli/docs_upgrade_test.go`'s `TestDocsDesignListsEveryUpgradeStep` with it),
   `docs/policy-migration.md`, `docs/base-image-migration.md` and the design docs that name the command in
   passing.

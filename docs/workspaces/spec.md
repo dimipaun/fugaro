@@ -1,12 +1,14 @@
 # Workspaces: the spec
 
-**Status as of 2026-11-10: in progress, 6/10 merged; see [docs/status.md](../status.md) for the current table.** §0 is the owner's spec as this run recorded it; the design that follows (§1 onward) is
+**Status as of 2026-11-24: built — this design is implemented, and the last of it landed through the [workspace-service](../workspace-service/implementation-plan.md) plan that finishes the credentials service; see [docs/status.md](../status.md) for the current table.** §0 is the owner's spec as this run recorded it; the design that follows (§1 onward) is
 written to the answer of each decision in [reconciliation.md](reconciliation.md) §4 (**D1290–D1305**,
 the block this design was renumbered into on 2026-11-04), and **where the two disagree the
 reconciliation wins** — §0 is the record of what was asked, not of what this design proposes.
 **The owner answered all sixteen decisions on 2026-11-04, every one as recommended**, so every
 sentence below is the design the owner answered and not a recommendation awaiting one. That is still
-**not an approval**: no task is approved, the owner approves each task by name, and §8's independent
+**not an approval**: no task is approved by being written down, the owner approves each task by
+name, and the ten tasks of this design's plan were approved by name afterwards and each is merged;
+§8's independent
 SECURITY review gates the merge.
 
 **This file was amended on 2026-11-04, after the design merged.** The design landed as **#1492**,
@@ -374,8 +376,9 @@ effective set is the **intersection** of:
   `allow_repos` legs are asked over the canonical name **recovered from the member's own policy**
   rather than from that child: the child holds account names and no repository, so the name is the
   entry of the account's `allow_repos` whose `task.Slug` is the verified slug (§5) — the **run's**
-  repository, which §8's residual risk 7 is about: nothing holds that slug to the repository the
-  calling job account belongs to.
+  repository, which §8's residual risk 7 was about: nothing then held that slug to the repository the
+  calling job account belongs to, and WS2 of
+  [workspace-service](../workspace-service/implementation-plan.md) holds it now.
 
 The member's policy is always the tighter side, because that is what "only tighten" means
 (`internal/policy/merge.go`). A credential the workspace holds and the member's policy excludes is
@@ -442,7 +445,15 @@ the call, so a run of calls that all settle at the reservation size is the worst
 is a number the operator can read rather than an adjective. **A settle that fails refuses**: if the
 usage cannot be written back, the call is refused rather than served, because a call whose cost the
 service cannot record is spending against a cap it cannot see (the fail-closed rule below, applied to
-the meter).
+the meter). **Except where the answer is already the run's**: the rule holds for a whole-body answer
+and for the probe, which are read for their usage before any byte of them leaves, and it does not hold
+for a streamed call, whose usage is known only when the stream ends — by then the answer has been
+written to the run, so there is nothing left to refuse. There the failed settle is the service's log
+line and nothing else: the
+reservation stands until it ages out (`budget.WorkspaceReservationTTL`) and is then released with its
+amount never reaching the settled figure, so the call is charged nowhere and the month is short by
+its whole worst case with no figure saying so. The rule above is a rule about the answers the service
+still holds, and this is the bound it does not cover.
 
 **The advisory headroom comes from the service, and the service holds no write on a member**
 (finding 1's consequence for the cap, and the owner's answer of 2026-11-04, **O1 adopted**). Each
@@ -463,21 +474,24 @@ database is in when it is not the project's default one, and `fp`**, and
 its **exchange URL** — and each is the workspace owner's own declaration, made once per member on the
 owner's machine (`workspace member add`, W1) and converged by the owner's `fugaro update` (W2's stage
 writes the record; W3's root of the workspace's own project and W6's service carry the table).
-**The table has no writer in the tree yet, and the region is the one value of it no command
-records** — stated rather than implied. `workspace member add` takes the member's job accounts, its
-Firebase project, its `fp` and its exchange URL, `--repo` (a repository the member contributes,
-repeatable) — the first four are the values this table holds, `--repo` is the member's
-contribution to the workspace, and the **region** is in none of them (§6) — and the per-member
-credentials node itself has no writer at all:
-`WorkspaceCredentials`'s own comment says so
-(`internal/projectpolicy/workspace_credentials.go`:113, "This node has no writer in the tree"). The
-command that records a region, and the publish path that fills the table, are therefore a later
-task's, and a member whose Firebase project was adopted with a **regional** database is derived the
-legacy `<firebase_project>-default-rtdb` host until one lands: its row can carry only an empty
-region, so the service cannot reach that member at all. **The owner answered that gap on 2026-11-10,
-as recommended**: the task that carries the region and the publish path is the one that gives this
-node its writer, and this release ships the node's shape and the derivation rather than taking the
-field ([reconciliation.md](reconciliation.md) §9, O4). **The
+**The table has its writer, and the region is one of the values that writer records** — stated
+rather than implied. W1's `workspace member add` is `fugaro workspace project add <project>
+--workspace <name>` in the tree: it takes the member's job accounts (`--job-service-account`,
+repeatable), the repository each of them is a job of (`--job-repos <account>=<owner/name>`, WS2's
+pairing), its Firebase project (`--firebase-project`), its `fp`, its exchange URL
+(`--exchange-url`), the region of its own Realtime Database (`--database-region`, omitted for a
+database in the project's own default region, or read from the member's own `budget.rtdb_url`) and
+`--repo` (a repository the member contributes, repeatable) — the first four and the region are the
+values this table holds, and `--repo` is the member's
+contribution to the workspace — and the workspace owner's
+`fugaro update` publishes the credentials node the table feeds, `workspace_credentials/<name>`,
+written from the member table and the shared list (WS3 and WS4 of
+[workspace-service](../workspace-service/implementation-plan.md), whose
+[contract-node.md](../workspace-service/contract-node.md) is the node's shape). **The owner answered
+that gap on 2026-11-10, as recommended**: the task that carries the region and the publish path is
+the one that gives this node its writer ([reconciliation.md](reconciliation.md) §9, O4), and it is
+those two — so a member whose Firebase project was adopted with a **regional** database is reached
+at the host its own region names and not the legacy `<firebase_project>-default-rtdb` one. **The
 member's database URL is not in the table at all**: it is **derived from the Firebase project the
 verified `iss` names**, so an owner cannot splice member B's accounts onto member A's database (§4,
 finding 6). **None of it is in
@@ -620,7 +634,7 @@ member's database. Both are applied throughout this section above, and both are 
 | `workspace ls [--json]` | Offline. Every workspace this machine's project configs name, with the members it can see **from its own files** — the owner's machine, which holds the record it publishes, sees the whole list, and a member's sees the memberships its own configs name — and which of them this machine has a config for. Versioned JSON with a schema, like every other CLI document |
 | `workspace show <name> [--json]` | Offline. One workspace from **this machine's own files**: the configs on it and the pin each carries, its cap as last published here, and the drift between what this machine holds and what it last knew the record to say. It reads no cloud node (§2: a member holds no grant on the workspace's project), so on a member it shows the member's own half and says so rather than printing an empty member list; the workspace owner's machine, which holds the record it publishes, shows the whole of it |
 | `workspace add <name>` / `workspace rm <name>` | Edits the **selected local project config** and nothing else: the membership key `workspace: <name>` **and the pin beside it** — the values of §2, which are the one place a member decides what it trusts and which workspace key it verifies an assertion against — on, or off. Prints the diff, backs up the file, writes atomically, and ends by printing `next: fugaro update` |
-| `workspace member add <name> <project>` / `member rm …` | The same, for the member list of a workspace this machine holds a config for — the owner's side of a membership. `member add` is also where the owner records the per-member values §5's service table is built from (the member's job accounts, its Firebase project, its `fp`, and its exchange URL), because the owner is the side that declares them — **and the region of the member's database is the one value of that table the command does not record**: it has no option for it, so the task that carries it is a later one (§5). **The member's database URL is not among them**: it is derived from the verified `iss` project (§4, §5), so that an owner cannot pair one member's accounts with another's database |
+| `workspace member add <name> <project>` / `member rm …` | The same, for the member list of a workspace this machine holds a config for — the owner's side of a membership. `member add` is also where the owner records the per-member values §5's service table is built from (the member's job accounts, its Firebase project, its `fp`, and its exchange URL), because the owner is the side that declares them — **and the region of the member's database is one of the values it records**: the verb is `fugaro workspace project add <project> --workspace <name>` in the tree (D2802, §5), and its `--database-region` carries the region, omitted for a database in the project's own default region (§5). **The member's database URL is not among them**: it is derived from the verified `iss` project (§4, §5), so that an owner cannot pair one member's accounts with another's database |
 | `workspace cap set --workspace <name> --monthly <amount>` | Records the workspace's cap in the local config; `fugaro update` publishes it |
 
 **`workspace show` reads files and never a cloud node**, and what "drift" means follows from that.
@@ -775,21 +789,23 @@ and the publish path keys the child with `task.Slug` of the same canonical name,
 repository is the entry whose slug is the verified one. A child that is **stale** against the policy
 it was derived from (a `repos rm` that did not touch it, two concurrent publishes, a hand edit) is
 therefore refused here exactly as the member's own service refuses it. The slug is the run identity's
-own and it is **not** held to the repository the calling job account belongs to — the comparison the
-member's front door makes (`internal/credsvc/server.go`:737) — because the per-member table names
-accounts and no repository, so the node is the **run's** repository and the account that called may
-belong to another — the column the owner's per-member table does not carry, and **review finding
-N1**. That is the divergence; it is stated
+own and it **was not** held to the repository the calling job account belongs to — the comparison the
+member's front door makes (`internal/credsvc/server.go`:737) — because the per-member table then named
+accounts and no repository, so the node was the **run's** repository and the account that called could
+belong to another — the column the owner's per-member table did not carry, and **review finding
+N1**. That was the divergence; it is stated
 here rather than left to be found, and it is narrow: the workspace's allow-list is still mandatory,
 the member's policy must still declare the credential, the repository's own node must still admit it,
 the member's two canonical legs are asked, and option (B) the owner refused is still refused.
-Whether to close the pairing is the owner's call, and
-closing it is a column rather than a redesign: the repository beside each job account in the
+Whether to close the pairing was the owner's call, and
+closing it was a column rather than a redesign: the repository beside each job account in the
 owner's per-member table — the pair `credsvc.JobAccount` already carries for the installation's own
-jobs, which yields the slug the pairing needs — and the column this table does not. It is stated
-again as residual risk 7 below, which is where W6 leaves it:
-the pairing stated and **not** enforced, because this release's row names job accounts and no
-repository.
+jobs, which yields the slug the pairing needs — and the column that table has since carried. It is stated
+again as residual risk 7 below, which is where W6 left it:
+the pairing stated and **not** enforced by that release, because its row named job accounts and no
+repository — and WS3 and WS4 of
+[workspace-service](../workspace-service/implementation-plan.md) gave the table that column, with
+WS2 of that plan holding the run identity's verified slug to it.
 
 **The workspace cap's integrity, after the amendment.** The cap is enforced at the service (D1299)
 and **metered there too** (D1301 as amended, §5): the service reserves before each call it pays for
@@ -895,15 +911,16 @@ ceiling is decided.
    that flag is exactly what a custom token can do. It is there because an unverified address is one
    nobody proved they own, and the provider pin is what answers this risk.)
 7. A shared credential is served where the member's own service would refuse it: **the run's
-   repository is not held to the calling job account.** The workspace's service asks the repository
+   repository was not held to the calling job account, which is what this risk stated while it was
+   open.** The workspace's service asks the repository
    from the **slug the run identity verified** — the repository's own admission child, the node that
    repository's administrator published (projectpolicy.PathRepo), gates the account names asked, and
    the member's two canonical `allow_repos` legs are asked over the name recovered from the member's
    **own policy**, the entry of the account's `allow_repos` whose `task.Slug` is that slug (the child
    itself holds names and no repository) — so a child stale against the policy it was derived from is
-   refused here, and nothing ties that slug to the account
-   that called: the per-member table names a member's job service accounts and no repository, so an
-   account admitted for one repository can present a run identity of **another** repository of the
+   refused here, and nothing then tied that slug to the account
+   that called: the per-member table named a member's job service accounts and no repository, so an
+   account admitted for one repository could present a run identity of **another** repository of the
    same member and be served that repository's admissions, where the member's own front door refuses
    the same call by comparing the two (`internal/credsvc/server.go`:737, `!bound || ja.Slug !=
    id.Slug`; **review finding N1**, and the table it compares is built from the installation's own
@@ -921,10 +938,14 @@ ceiling is decided.
    a column — the repository beside each job account in the owner's per-member table, the pair
    `credsvc.JobAccount` already carries for the installation's own jobs, which yields the slug the
    pairing needs — not a redesign, and **the owner made that call on 2026-11-10, as recommended:
-   W6 ships with the pairing stated here and not enforced**, and the column is taken by the task that
-   gives the per-member table a writer, because the row's job accounts are emails, `Verify` therefore
-   has no slug to compare, and a column no command writes would be a check with nothing in it
-   ([reconciliation.md](reconciliation.md) §9, O3).
+   W6 shipped with the pairing stated here and not enforced**, the column taken by the task that
+   gave the per-member table a writer, because the row's job accounts were emails and `Verify`
+   therefore had no slug to compare
+   ([reconciliation.md](reconciliation.md) §9, O3). **That task is WS3 and WS4 of
+   [workspace-service](../workspace-service/implementation-plan.md), and WS2 of that plan enforces
+   the pairing**: the owner's row carries the repository beside each job account, and the service
+   holds the run identity's verified slug to it, so this residual risk is **closed** rather than
+   stated, and `SECURITY.md` says so.
    **The second way this risk is reachable is the account's class, and it is stated here for the
    same reason.** The workspace builds each member's verifier from the owner's own table —
    `JobAccounts` alone, `internal/credsvc/workspace.go`:514 — so the two account classes the
@@ -972,12 +993,13 @@ This is rule 1 and rule 2 written as prohibitions. A workspace:
 - **#1487's authorization server.** The exchange endpoint of §3 *is* the MCP design's authorization
   server. That design **landed on `main` on 2026-11-04** (merged as #1487, `docs/mcp-server/`), so
   the interface this design was written to is now a settled document rather than an open pull
-  request — but **none of its code is written**: its plan's tasks M1–M10 are all unbuilt but for the
-  five merged on `main`, and its M5's licence gate was answered by the owner himself on 2026-11-07
-  ([licence-gate.md](../mcp-server/licence-gate.md) is the record), so what holds its front door back
-  is its own M5b, the paired-device approval. This design's SSO half therefore still
-  cannot be built until that work is, and [implementation-plan.md](implementation-plan.md) §2 and §5
-  carry that as the dependency that forces the release slot. Nothing here duplicates it: this design
+  request, and **most of its code is written**: M1–M8, M10 and M12 of its plan are built (M5b, the
+  paired-device approval the owner ruled a task of its own, among them), with M9 parked by the
+  owner's own ruling (D936) and M11 declined on 2026-11-09, and M12b's delivery of the flow to the
+  phone still unbuilt; its M5's licence gate was answered by the owner himself on 2026-11-07
+  ([licence-gate.md](../mcp-server/licence-gate.md) is the record). This design's SSO half
+  was therefore built on it, and [implementation-plan.md](implementation-plan.md) §2 and §5
+  record the dependency that forced the release slot. Nothing here duplicates it: this design
   adds a workspace Firebase, a workspace signer endpoint and a member-bound assertion, and reuses
   that server as the member's exchange.
 - **The workspace's own upgrade path.** `fugaro update` converges a workspace's record, its service

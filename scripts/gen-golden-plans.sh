@@ -87,6 +87,27 @@ golden=$repo/internal/infra/tf/testdata/golden
 # schedule, and the Firebase root's database grant to it. The opt-in is off by
 # default, so they are goldens of their own and every other golden here plans
 # no coordinator at all.
+# installation-eu and firebase-eu are the two roots of a NEW installation whose
+# region is europe-west1 (plan location-preference LP14, D3086): every located
+# resource of the plan is in the EU — the runs bucket, the log bucket, every
+# secret container's replication, every job's region, its FUGARO_REGION and its
+# image's registry host, every scheduler job's region and, in the Firebase
+# root, the Realtime Database's own location. The pair is the US fixture with
+# its region moved and nothing else (internal/infra/firebase_test.go's
+# TestEUTfvarsGolden generates them), so the two plans differ by the place
+# alone.
+# firebase-issuer is the Firebase root with the installation's credentials
+# account handed over as issuer_account (launcher-does-not-mint plan task LM13;
+# D3121, F7): the ONE row that moves a run's identity off every launcher and
+# onto the service — the root's own fugaroTokenMinter on the RUNS' signer
+# account, held by the credentials account the installation root creates — is
+# planned and covered there, and every other Firebase golden plans no such row
+# at all. The key is added HERE rather than written in the fixture, and the
+# golden is a golden of its own rather than `firebase` carrying it, for U9's
+# reason: a fresh setup's first apply is an installation whose root creates no
+# credentials service, so its Firebase root is handed no account and plans no
+# row — which is exactly what firebase and firebase-adopt are, and what
+# internal/cli's TestFreshSetupPlansNoRowForAMissingAccount reads them as.
 # installation-mobile is the installation root with the public mobile service's
 # switch ON beside the credentials service (mobile plan task P5; D2782 as
 # amended by F31, O8): the second Cloud Run service of the credentials image,
@@ -105,7 +126,7 @@ golden=$repo/internal/infra/tf/testdata/golden
 # account handed over as mobile_account: the device-only signer, and the one
 # grant that names it, are planned and covered there, and every other Firebase
 # golden here plans neither.
-for pair in installation:installation installation-accounts:installation installation-managed:installation installation-credentials:installation installation-mobile:installation installation-voice:installation installation-review:installation installation-coordinator:installation installation-viewers:installation repo:repo firebase:firebase firebase-same-project:firebase firebase-coordinator:firebase firebase-viewers:firebase firebase-mobile:firebase; do
+for pair in installation:installation installation-accounts:installation installation-managed:installation installation-credentials:installation installation-mobile:installation installation-voice:installation installation-review:installation installation-coordinator:installation installation-viewers:installation installation-eu:installation repo:repo firebase:firebase firebase-same-project:firebase firebase-coordinator:firebase firebase-viewers:firebase firebase-mobile:firebase firebase-eu:firebase firebase-issuer:firebase; do
   r=${pair%%:*}
   root=${pair##*:}
   (
@@ -113,11 +134,14 @@ for pair in installation:installation installation-accounts:installation install
     case "$r" in
       firebase-same-project) cp "$repo/internal/infra/testdata/firebase-same-project.tfvars.json" terraform.tfvars.json ;;
       installation) cp "$repo/internal/infra/testdata/installation-budget-job.tfvars.json" terraform.tfvars.json ;;
+      installation-eu) cp "$repo/internal/infra/testdata/installation-eu.tfvars.json" terraform.tfvars.json ;;
       installation-accounts) cp "$repo/internal/infra/testdata/installation-accounts.tfvars.json" terraform.tfvars.json ;;
       installation-managed) jq '. + {managed_deployer_scoped: true}' "$repo/internal/infra/testdata/installation-budget-job.tfvars.json" > terraform.tfvars.json ;;
       installation-credentials) cp "$repo/internal/infra/testdata/installation-credentials.tfvars.json" terraform.tfvars.json ;;
       installation-mobile) jq '. + {enable_mobile_service: true}' "$repo/internal/infra/testdata/installation-credentials.tfvars.json" > terraform.tfvars.json ;;
       firebase-mobile) jq '. + {mobile_account: "fugaro-mobile@proj-1234.iam.gserviceaccount.com"}' "$repo/internal/infra/testdata/firebase.tfvars.json" > terraform.tfvars.json ;;
+      firebase-eu) cp "$repo/internal/infra/testdata/firebase-eu.tfvars.json" terraform.tfvars.json ;;
+      firebase-issuer) jq '. + {issuer_account: "fugaro-credentials@proj-1234.iam.gserviceaccount.com"}' "$repo/internal/infra/testdata/firebase.tfvars.json" > terraform.tfvars.json ;;
       installation-voice) cp "$repo/internal/infra/testdata/installation-voice.tfvars.json" terraform.tfvars.json ;;
       installation-review) cp "$repo/internal/infra/testdata/installation-review.tfvars.json" terraform.tfvars.json ;;
       installation-coordinator) cp "$repo/internal/infra/testdata/installation-coordinator.tfvars.json" terraform.tfvars.json ;;
@@ -133,7 +157,7 @@ for pair in installation:installation installation-accounts:installation install
 done
 
 # repo-scope-move.plan.json is the one golden that needs a PRIOR state. It is
-# design docs/design/project-secrets.md §6 step 4: a secret name that stops
+# design docs/project-secrets/spec.md §6 step 4: a secret name that stops
 # being repo-only and becomes project-shared (the repo copy has no version,
 # the project copy is resolved), so its grants move to the project's container
 # while the repository's own container is kept. Only a plan with a state to

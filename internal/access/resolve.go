@@ -152,14 +152,27 @@ var actionRules = map[Action]actionRule{
 // holds in the cloud: a project-wide IAM grant reaches every repository with
 // gcloud whatever this answers (D1580, D1591).
 func Allowed(in Input, caller string, action Action, repo string) bool {
-	rule, known := actionRules[action]
+	held, rule, known := roleFor(in, caller, action, repo)
 	if !known {
 		return false
 	}
-	if rule.project {
-		return EffectiveAtProject(in, caller).AtLeast(rule.min)
+	return held.AtLeast(rule.min)
+}
+
+// roleFor resolves one action for one caller: the role they hold for it, the
+// rule the action takes, and whether this package knows the action at all. It
+// is the half Allowed and SubscriptionAllowed share — the lapse and the seat
+// limit are applied to the answer, never to the resolution — so that the two
+// gates cannot come to differ about what a caller holds.
+func roleFor(in Input, caller string, action Action, repo string) (Role, actionRule, bool) {
+	rule, known := actionRules[action]
+	if !known {
+		return RoleNone, actionRule{}, false
 	}
-	return Effective(in, caller, repo).AtLeast(rule.min)
+	if rule.project {
+		return EffectiveAtProject(in, caller), rule, true
+	}
+	return Effective(in, caller, repo), rule, true
 }
 
 // EffectiveAtProject returns caller's role at project scope: admin for an

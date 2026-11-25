@@ -162,6 +162,31 @@ type Spec struct {
 	Branch      string `json:"branch,omitempty"`
 	PR          int    `json:"pr,omitempty"`
 	PreviousRun string `json:"previous_run,omitempty"`
+	// Resumes is the run whose pause this one picks up
+	// (runstore.PauseMemberResumes, docs/model-credentials-routing): the run
+	// that suspended itself on this pull request, whose pause.json names the
+	// stage it was in, the session it saved and the commit it pushed, and
+	// where this run enters rather than at the first stage (R18, D3185).
+	//
+	// A resumed run is also a follow-up of the run it continues — branch, pr
+	// and previous_run are the same run's — and Validate holds the two
+	// together: the chain link is what carries the chain's remaining budget
+	// into the resumed run (D1045 to D1047, internal/runner/policy.go), the
+	// pull request is the one whose branch holds the checkpoint, and a task
+	// whose two members named different runs would continue one chain and
+	// read another run's pause. The member itself is what says a run resumes
+	// rather than works: a follow-up carries none and starts its own work,
+	// exactly as it always has.
+	//
+	// The orchestrator's launcher is its only writer, and only for a run the
+	// credentials service recorded as paused: nothing else may ask to resume
+	// one (R19, D3189). Empty (the common case, and every spec written before
+	// this release) writes no key, so a spec without one is byte-identical to
+	// what the previous release wrote. A task that carries one needs a runner
+	// that reads it: Parse decodes with DisallowUnknownFields, so a runner
+	// older than the release that ships the member refuses the whole task at
+	// bootstrap.
+	Resumes string `json:"resumes,omitempty"`
 	// OwnerRuled is the repository owner's ruling this follow-up was launched
 	// with (OD1, fugaro run --owner-ruled): their answer to the findings a run
 	// on the pull request left for them, which no code change could settle.
@@ -242,7 +267,7 @@ type Spec struct {
 	// changeSetSince) instead.
 	ChangeSet *ChangeSet `json:"change_set,omitempty"`
 	// ProjectLayer is the project layer the launching CLI read
-	// (docs/design/layered-config.md §8): its exact text, which the runner
+	// (docs/layered-config/spec.md §8): its exact text, which the runner
 	// resolves fugaro.yaml against. Nil: none. A runner before 0.6.0
 	// refuses an unknown field, so fugaro run's own launch-time image gate
 	// (checkImageSince, layered-config plan Task 11) refuses the launch
@@ -254,10 +279,10 @@ type Spec struct {
 	// at most config.MaxClaudeAccountNameLen characters, never
 	// config.DefaultClaudeAccount itself — "" means that — and never the name
 	// the bundle reserves, config.ReservedClaudeAccountName) this run holds
-	// (docs/design/named-oauth-tokens.md): the account an agent.auth: oauth
+	// (docs/named-oauth-tokens/spec.md): the account an agent.auth: oauth
 	// workflow used, and, for a mixed agent.auth: api-key run, the one Claude
 	// account its review and adversarial stages are served by, beside the
-	// provider key the gateway holds (docs/design/mixed-credentials.md §11).
+	// provider key the gateway holds (docs/mixed-credentials/spec.md §11).
 	// Both are the account whose job variant the run is on, which is the job
 	// that mounts its token, so a reader outside this binary reads it as the
 	// run's own account either way. A runner before namedTokensSince refuses
@@ -267,7 +292,7 @@ type Spec struct {
 	OAuthToken string `json:"oauth_token,omitempty"`
 	// CompressionOff, when true, disables agent.compression for this run
 	// only, overriding fugaro.yaml (fugaro run --no-compression;
-	// docs/design/headroom-compression.md §4's deliberately one-directional
+	// docs/headroom-compression/spec.md §4's deliberately one-directional
 	// override: there is no field and no flag to force compression *on*,
 	// only off). A runner before compressionSince refuses the field, since
 	// this package's decoder disallows unknown fields, which is why the
@@ -325,12 +350,15 @@ type Spec struct {
 	// rejected after the fact.
 	ReviewClass bool `json:"review_class,omitempty"`
 	// Rigor is the mode the run's own launcher asked for (fugaro run
-	// --mode, docs/rigor-modes implementation-plan T1.6): the one input
-	// that may raise the mode the run's layers resolve and never lower it
-	// (D6, F14). "" asks for none: every spec written before this release,
-	// every first run that passes no flag, and every follow-up whose pull
-	// request recorded no mode the reader may trust. The resolution then
-	// falls to the layers alone, exactly as it did before the flag existed.
+	// --mode, docs/rigor-modes implementation-plan T1.6): the narrowest rank
+	// of the mode's order, so it settles the level the run's layers resolve
+	// whether it asks for more or for less (LD3). What holds a lowering back
+	// is a review floor, which sits outside every layer and is a review level
+	// rather than a mode (LF5); the request's own rank no longer does. "" asks
+	// for none: every spec written before this release, every first run that
+	// passes no flag, and every follow-up whose pull request recorded no mode
+	// the reader may trust. The resolution then falls to the layers alone,
+	// exactly as it did before the flag existed.
 	//
 	// A --pr follow-up is the one launch that writes this field without a
 	// flag: it keeps the mode the runs on its pull request recorded and may
@@ -338,6 +366,14 @@ type Spec struct {
 	// follow-up's behalf. A recorded hotfix is not a mode it keeps — hotfix is
 	// off the axis, an operator's own mode (D12) — so a record carrying one
 	// leaves the field empty, like any other record that imposes nothing.
+	//
+	// A mode a launch carried from a record rather than one its caller typed —
+	// the follow-up's, and the parent run's that a filing launcher writes into
+	// a task of its own (internal/cli's followUpsParentMode, D1844) — is
+	// raise-only against the layers too, which is what RigorCarried reports
+	// and what the resolver holds it to (rigor.Request.Carried, LF5 §3a): the
+	// carry says where the work was left, never that this run may run below
+	// the configuration its repository has since resolved.
 	//
 	// It is called rigor and not mode because Spec.Mode is already taken: it
 	// is the *recipe's* mode (implement, review, artifact), a different
@@ -371,6 +407,28 @@ type Spec struct {
 	// matches nothing changes nothing. Each is bounded and non-blank below,
 	// since every one of them is matched against every rule.
 	Paths []string `json:"paths,omitempty"`
+	// Promote is the area this run raises to a higher level: the promote
+	// task of docs/rigor-modes/levels-spec.md §4 (LD6, fugaro run
+	// --promote, docs/rigor-modes/levels-reconciliation.md §3b item 12). A
+	// promote run reads the area's own backlog items and the area's code,
+	// works at the level its rigor request names, and closes the items it
+	// pays down (D31, reconciliation §3b item 12e). Nil for every launch
+	// that is not a promote run, which is every launch before this release
+	// and every one that passes no --promote.
+	//
+	// The block carries what the launcher resolved about the area — its
+	// name and this repository's part of it — and nothing else. The level
+	// rides Spec.Rigor, which is the request the launcher's own --mode wrote
+	// and the resolver already holds; a promote run with no level is refused
+	// by Validate below, because the level is the whole of what the run
+	// changes about the area.
+	//
+	// A runner before the release that reads this field refuses the whole
+	// spec (Parse decodes with DisallowUnknownFields), so the launcher gates
+	// a promote launch on the job image (internal/cli's promoteSince) rather
+	// than let the run fail at bootstrap after the task was written. A spec
+	// without it is byte-identical to what the previous release wrote.
+	Promote *Promote `json:"promote,omitempty"`
 	// Inputs are the files the launching CLI attached (fugaro run
 	// --attach; design artifact-runs.md §4): what it uploaded, under
 	// runs/<slug>/<run>/inputs/<name>, with the size and the hash it read
@@ -394,7 +452,7 @@ type Spec struct {
 	//
 	// It is the launcher's list and nobody else's: the job reads each named
 	// record by name and never lists (a list is a bucket-level call the
-	// per-repository grant cannot hold, docs/design/bucket-iam.md), so this
+	// per-repository grant cannot hold, docs/bucket-iam/spec.md), so this
 	// field is what decides which records a run reads — the reason T3.6 is
 	// reviewed as a security change. The runner reads the IDs of its own
 	// repository's prefix only, whatever this list says (G2).
@@ -1145,6 +1203,79 @@ func (c *ChangeSet) Member(repo string) (ChangeSetMember, bool) {
 	return ChangeSetMember{}, false
 }
 
+// MaxPromoteAreaBytes bounds the area name a promote task carries
+// (Spec.Promote, fugaro run --promote). The name is the launcher's own
+// resolution of the area the operator named — it reaches the run's brief,
+// the run record and the pull request body — so a hand-written task.json
+// cannot make it arbitrarily long. The area rules themselves bound a name at
+// rigor.MaxAreaName; this is the task side's own bound, and the two are
+// deliberately separate: the launcher has already matched the name against a
+// layer by the time it writes this field, and this refusal is for the file
+// nobody's layer produced.
+const MaxPromoteAreaBytes = 80
+
+// Promote is the area a promote run raises to a higher level (Spec.Promote,
+// fugaro run --promote; docs/rigor-modes/levels-spec.md §4, LD6,
+// docs/rigor-modes/levels-reconciliation.md §3b item 12). The run reads the
+// area's own backlog items and the area's code, works at the level Spec.Rigor
+// names, and closes the items it pays down (D31).
+//
+// It is a *first run's* block and a follow-up's alike: promoting an area an
+// earlier pull request left at a lower level is the follow-up that raises it,
+// and the follow-up is the shape in which the closing D31 asks for can name
+// the pull request that closes an item.
+type Promote struct {
+	// Area is the area's name, as the layer that declared it spells it
+	// (D20c): the project layer's rule, or one of the repository's own.
+	// Matching it is a string comparison and nothing more — the rules that
+	// could match it live in the layer, and this is the answer a layer gave.
+	Area string `json:"area"`
+	// Paths are this repository's part of the area: the paths of the member
+	// the area names for this repository, empty when the member is the whole
+	// repository. They are the scope the run's items are read from and the
+	// scope a closed item's code has to fall inside.
+	Paths []string `json:"paths,omitempty"`
+}
+
+// Problem reports what is wrong with a promote block — "" when nothing is —
+// for the two places one is accepted: the launcher, at fugaro run --promote,
+// and the runner, reading a stored task back (Spec.Validate), one list with
+// two callers as TitleProblem is.
+//
+// The rules are: an area that is non-blank, one line, at most
+// MaxPromoteAreaBytes bytes and free of control characters, and paths that
+// are each non-blank and bounded (MaxDeclaredPathBytes). It is a shape check
+// and nothing more: whether an area of that name exists, and whether this
+// repository is a member of it, is the launcher's question — it is the side
+// that holds the layers.
+func (p Promote) Problem() string {
+	switch {
+	case strings.TrimSpace(p.Area) == "":
+		return "must name the area it promotes"
+	case len(p.Area) > MaxPromoteAreaBytes:
+		return fmt.Sprintf("names an area longer than %d bytes", MaxPromoteAreaBytes)
+	case strings.ContainsAny(p.Area, "\x00\n\r"):
+		return "names an area with a NUL or a newline in it: an area's name is one line"
+	}
+	for _, r := range p.Area {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Sprintf("names an area with a control character (U+%04X) in it", r)
+		}
+	}
+	if len(p.Paths) > MaxDeclaredPaths {
+		return fmt.Sprintf("names more than %d paths", MaxDeclaredPaths)
+	}
+	for i, path := range p.Paths {
+		switch {
+		case strings.TrimSpace(path) == "":
+			return fmt.Sprintf("names an empty path at paths[%d]", i)
+		case len(path) > MaxDeclaredPathBytes:
+			return fmt.Sprintf("names a path longer than %d bytes at paths[%d]", MaxDeclaredPathBytes, i)
+		}
+	}
+	return ""
+}
+
 // PlanTaskElemRE is the form of one "/"-separated element of a plan task
 // id: letters, digits, '.', '_' and '-', starting with a letter or a digit.
 // An allow-list rather than a list of refusals, because the id is shown as
@@ -1206,7 +1337,7 @@ func PlanTaskProblem(t string) string {
 	return ""
 }
 
-// Recipe is the recipe the launching CLI resolved (docs/design/recipes.md §5).
+// Recipe is the recipe the launching CLI resolved (docs/recipes/spec.md §5).
 type Recipe struct {
 	Name   string `json:"name"`
 	Source string `json:"source"`           // "repo" | "project" | "catalog"
@@ -1579,6 +1710,24 @@ func Parse(data []byte) (*Spec, error) {
 // IsFollowUp reports whether the task continues an existing Fugaro PR.
 func (s *Spec) IsFollowUp() bool { return s.Branch != "" }
 
+// RigorCarried reports whether Rigor is a mode this launch carried from a
+// record rather than one its own caller typed on this run: a --pr follow-up
+// keeps the mode its pull request recorded (IsFollowUp, T5.2, F14), and a task
+// a filing launcher wrote carries the parent run's own answer (FollowUpOf,
+// D1844). Either way the mode says where the work was left, so it may raise
+// the level the layers resolve and never lower it (LF5 §3a) — which is what
+// rigor.Request.Carried tells the resolver, and the one reason a resolution
+// reads a spec's Rigor any differently from a flag typed on this run.
+func (s *Spec) RigorCarried() bool { return s.IsFollowUp() || s.FollowUpOf != nil }
+
+// RigorRequest is the resolver's input for this spec's own request (LD3, T5.1,
+// T5.2): the mode it asks for, over the paths given — the ones the launch
+// declared, or the paths a moment of the run measured — and whether that mode
+// was carried rather than asked for here.
+func (s *Spec) RigorRequest(paths []string) rigor.Request {
+	return rigor.Request{Level: s.Rigor, Paths: paths, Carried: s.RigorCarried()}
+}
+
 // Validate checks the spec's own rules; it does not look at the repository.
 func (s *Spec) Validate() error {
 	var errs []error
@@ -1748,6 +1897,21 @@ func (s *Spec) Validate() error {
 	if s.PreviousRun != "" && !runIDRE.MatchString(s.PreviousRun) {
 		bad("task spec: previous_run %q is not a run ID", s.PreviousRun)
 	}
+	if s.Resumes != "" && !runIDRE.MatchString(s.Resumes) {
+		bad("task spec: resumes %q is not a run ID", s.Resumes)
+	}
+	// A resumed run is a follow-up of the run it continues (Spec.Resumes):
+	// the pull request it works on and the chain it is bounded by are that
+	// run's, so the members that name them are required beside it and must
+	// name the same run. A task that named one run for the chain and another
+	// for the pause would continue one run's budget while reading another
+	// run's work, which no launcher may write and no run may act on.
+	if s.Resumes != "" && !allFollowUp {
+		bad("task spec: resumes needs branch, pr and previous_run: a resumed run continues the paused run's chain on the pull request it paused on")
+	}
+	if s.Resumes != "" && s.Resumes != s.PreviousRun {
+		bad("task spec: resumes names %q and previous_run names %q; a resumed run picks up the pause of the run it continues", s.Resumes, s.PreviousRun)
+	}
 	if s.Batch != "" && !BatchRE.MatchString(s.Batch) {
 		bad("task spec: batch %q must be 1-63 lower-case letters, digits, '.', '_' or '-'", s.Batch)
 	}
@@ -1884,6 +2048,23 @@ func (s *Spec) Validate() error {
 			bad("task spec: paths[%d] is empty", i)
 		case len(p) > MaxDeclaredPathBytes:
 			bad("task spec: paths[%d] is longer than %d bytes", i, MaxDeclaredPathBytes)
+		}
+	}
+	// The promote block (Spec.Promote, fugaro run --promote): the area it
+	// names and this repository's part of it. The level it raises the area to
+	// is Spec.Rigor, and a promote task that carries none is refused rather
+	// than resolved: the level is the whole of what the run changes about the
+	// area, so a promote task without one would be a run that does nothing
+	// under a name that says it raises something.
+	if p := s.Promote; p != nil {
+		if msg := p.Problem(); msg != "" {
+			bad("task spec: promote %s", msg)
+		}
+		if s.Rigor == "" {
+			bad("task spec: promote names no rigor level: a promote run says which level it raises the area to (fugaro run --promote --mode LEVEL)")
+		}
+		if s.ReviewPRs != nil {
+			bad("task spec: promote and review_prs don't go together: a promote run raises an area's level, and a review run reads pull requests")
 		}
 	}
 	// Mode is the recipe's mode, so the only values a spec may carry are
@@ -2042,8 +2223,8 @@ func (s *Spec) Validate() error {
 	}
 	if rc := s.Recipe; rc != nil {
 		switch {
-		case !recipe.NameRE.MatchString(rc.Name):
-			bad("task spec: recipe.name %q is not a recipe name", rc.Name)
+		case !recipe.IsNameOrCopy(rc.Name):
+			bad("task spec: recipe.name %q is not a recipe name or the name of the project's copy of one", rc.Name)
 		case rc.Source == string(recipe.SourceRepo):
 			if rc.YAML != "" || rc.SHA256 != "" {
 				bad("task spec: a repo recipe is read from the checkout; recipe.yaml and recipe.sha256 must be empty")

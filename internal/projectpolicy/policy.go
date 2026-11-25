@@ -1,5 +1,5 @@
 // Package projectpolicy is the project policy object of the project-centric
-// model (docs/design/project-centric.md §5): one readable node,
+// model (docs/project-centric/spec.md §5): one readable node,
 // config/policy/shared, its per-repository children under
 // config/policy/repos/$slug, and the admin-only config/admin.
 //
@@ -227,7 +227,7 @@ type Policy struct {
 	// It is the same member as DefaultClaudeAccount from the other side, copied
 	// by the same publish and refused in the shared file for the same reason,
 	// and it is one of the two keys that give an api-key run the one Claude
-	// account the ruling admits (docs/design/mixed-credentials.md §11): this
+	// account the ruling admits (docs/mixed-credentials/spec.md §11): this
 	// one is the stage's own declaration, DefaultClaudeAccount the project's
 	// (owner ruling 2026-11-05, which takes rung 4 too where the stage's own
 	// model is an Anthropic one). Which stage may take an account either way is
@@ -388,7 +388,7 @@ type Policy struct {
 	// sharper one: the floor exists to stop a launcher turning review off,
 	// and the shared file is writable by any launcher, so a floor there could
 	// be dropped by the very launcher it is meant to bind
-	// (docs/design/bucket-iam.md §10 L1, L2). `fugaro project policy publish`
+	// (docs/bucket-iam/spec.md §10 L1, L2). `fugaro project policy publish`
 	// writes it from the owner's project config, and the runner reads the
 	// node at bootstrap and merges the floor as a union (internal/policy's
 	// Merge): a lower layer can add a level and never remove one.
@@ -408,7 +408,7 @@ type Policy struct {
 	// It belongs to this node for the reason ReviewFloor does: it decides how
 	// much review a run gets, so a launcher must not be able to move it, and
 	// the shared file and the task are both launcher-written
-	// (docs/design/bucket-iam.md §10 L1, L2). The repository's own
+	// (docs/bucket-iam/spec.md §10 L1, L2). The repository's own
 	// agent.triage is the other home, and it is the *only* one a repository
 	// has: a run merges the node's answer over the file's as the stricter of
 	// the two (internal/policy's Merge), so a repository may turn the stage off
@@ -430,7 +430,7 @@ type Policy struct {
 	//
 	// It belongs to this node for Triage's reason: it decides how much review a
 	// run gets, so a launcher must not be able to move it, and the shared file
-	// and the task are both launcher-written (docs/design/bucket-iam.md §10 L1,
+	// and the task are both launcher-written (docs/bucket-iam/spec.md §10 L1,
 	// L2). The repository's own agent.review_against_task is the other home, and
 	// the merge between the two takes ON as the stricter value
 	// (internal/policy's Merge, the inverse of triage): the node's true is not
@@ -608,8 +608,8 @@ type Policy struct {
 	ImageServices ImageServices `json:"image_services,omitempty"`
 
 	// BakeRepos is whether a repository is baked into the image its job runs
-	// (D1901): the setup wizard's "Bake your repos into the Docker images?",
-	// asked with the answer yes.
+	// (D1901): the setup wizard's "Bake repos into the images for faster job
+	// starts?", asked with the answer yes.
 	//
 	// It is a pointer because the default is yes and therefore absent and true
 	// are the same statement: a project that never answered writes no member,
@@ -686,6 +686,49 @@ type Policy struct {
 	// what it was.
 	IssueSync *IssueSync `json:"issue_sync,omitempty"`
 
+	// Mobile is the project's mobile block (D2784, D2785, D2796): the switches
+	// and the lists the pairing route, the app's session and the phone's own
+	// decisions are read from. Its own file (mobile.go) carries the block, its
+	// rules and the argument for its home on this node.
+	//
+	// It is a pointer for the reason the two members above are: a project that
+	// has not run the update that publishes it writes no member, so its node
+	// stays byte for byte what it was — and a node with no block reads as
+	// mobile disabled (F40, O9).
+	Mobile *Mobile `json:"mobile,omitempty"`
+
+	// MobileCrashReports is the switch that decides whether the project's phones
+	// send crash reports to the project's Firebase project (D731, D738): the
+	// app's one collection switch, on by default and opt-out, and Firebase
+	// Analytics is not in the app at all (D731). The app reads it as
+	// `crash_reports` off the pairing session's policy and never off this node:
+	// `config/policy/**` is not in the paired device's read set (D2791).
+	//
+	// **It is a top-level key of the node and deliberately not a member of the
+	// mobile block above.** That block decodes strictly (decodeMobile's closed
+	// member set, DisallowUnknownFields), so a member added inside it makes
+	// every reader of the release behind refuse the WHOLE policy — and the node
+	// is re-read while runs are in flight (internal/runner's
+	// projectpolicy.Read on every run, the credentials service on every model
+	// call), so that refusal would stop the runs an update promises to leave
+	// alone (docs/design/update-in-flight.md). An unknown top-level key is
+	// listed in UnknownKeys and tolerated (P8), so a CLI or a runner of the
+	// release behind reads every key it knows and keeps serving; it simply has
+	// no switch of its own. It is F46's rule, which the block's own comment in
+	// mobile.go states for the block, and the same reason orchestrator_enabled
+	// is not a member of the orchestrator block.
+	//
+	// It is a pointer because the default is on and therefore absent and true
+	// are one statement: a project that never answered writes no member, and its
+	// node is byte for byte what it was before this key existed — while a
+	// project that turned the reports off is the only one with anything to say
+	// here. A publish writes the default explicitly for a node that carries none
+	// (MobileCrashReportsForPublish), which is what carries the key to an
+	// installation that published before it existed, and MobileCrashReportsOn is
+	// the reader — which answers a key that is not there **off**, never this
+	// default.
+	MobileCrashReports *bool `json:"mobile_crash_reports,omitempty"`
+
 	// UnknownKeys lists the top-level keys of the node this Fugaro does not
 	// know, sorted. Decode fills it in and never writes it back (json:"-"):
 	// the keys are tolerated so that a policy a newer Fugaro wrote does not
@@ -724,6 +767,18 @@ var knownTopLevelKeys = map[string]bool{
 	// UnknownKeys and keep reading the policy (F35, F46).
 	"orchestrator_enabled": true,
 	"issue_sync":           true,
+	// The mobile block (P6 of docs/mobile-identity-pairing): a top-level key and
+	// not a member of a block, for the reason the two above are — a reader of
+	// the release behind lists it and keeps reading the policy, which is what
+	// lets an update publish it while runs are in flight (F35, F46).
+	"mobile": true,
+	// The app's crash-report switch (T3.1 of docs/review-levels-ab-jobmax, D731,
+	// D738): a top-level key BESIDE the mobile block and not a member of it, for
+	// the reason orchestrator_enabled is beside the orchestrator block — the
+	// block decodes strictly, so a member added inside it is refused by every
+	// reader of the release behind, which is what update must never do. Read by
+	// MobileCrashReportsOn, which answers an absent key off.
+	"mobile_crash_reports": true,
 }
 
 // Budget is the ceiling a run is held to. An absent field is zero and means
@@ -747,7 +802,7 @@ type Budget struct {
 // drift no test can see, because each side would be self-consistent.
 //
 // RequireZDR and PricePolicy are the two price-catalogue switches
-// (docs/design/provider-price-catalog.md D3). They live on the carrier
+// (docs/provider-price-catalog/spec.md D3). They live on the carrier
 // (config.ModelProvider, beside RouteFeePct) and are NOT respelled here: a
 // second declaration of the same key would be shadowed rather than merged,
 // and — because Provider embeds a carrier that has its own UnmarshalYAML —
@@ -760,7 +815,7 @@ type Provider struct {
 	config.ModelProvider
 }
 
-// The values price_policy accepts (docs/design/provider-price-catalog.md D3),
+// The values price_policy accepts (docs/provider-price-catalog/spec.md D3),
 // spelled here as the policy spells them. They are config's own values, kept
 // as constants of this package too so a reader of a policy need not import
 // internal/config to name one.
@@ -1715,6 +1770,27 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 			return nil, true, err
 		}
 		p.IssueSync = block
+	}
+	// The mobile block is read on its own: no member of it is judged against
+	// another block, and it is held to its own rules (decodeMobile). A written
+	// null is the absent key, which is the one state that reads as mobile
+	// disabled — the block's presence is the surface's switch (mobile.go).
+	if mraw, ok := doc["mobile"]; ok && !IsNull(mraw) {
+		block, err := decodeMobile(mraw)
+		if err != nil {
+			return nil, true, err
+		}
+		p.Mobile = block
+	}
+	// The app's crash-report switch is read on its own, the daemon's switch's
+	// shape: one bool beside the mobile block and not a member of it, so that a
+	// reader of the release behind lists it in UnknownKeys and keeps reading the
+	// whole policy (F46). A written null is the absent key, which reads off
+	// (MobileCrashReportsOn).
+	if craw, ok := doc["mobile_crash_reports"]; ok && !IsNull(craw) {
+		if err := json.Unmarshal(craw, &p.MobileCrashReports); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: mobile_crash_reports: %w", err)
+		}
 	}
 	if vraw, ok := doc["verifier_accounts"]; ok && !IsNull(vraw) {
 		if err := json.Unmarshal(vraw, &p.VerifierAccounts); err != nil {
@@ -3018,10 +3094,19 @@ func validBudget(raw json.RawMessage, b Budget) error {
 		// alone would take the mode from the job environment, which nobody
 		// reading the policy can see, so enforcement would depend on a deploy
 		// (H1). Leaving the block out is how a policy says it sets no budget.
-		return errors.New("mode must be off, observe or enforce: a policy that sets no budget key leaves the budget block out")
+		return errors.New("mode must be observe or enforce: a policy that sets no budget key leaves the budget block out")
+	}
+	// The word that was a budget mode until this release is refused with the
+	// one text every door refuses it with, so a node an older CLI published
+	// says the same thing here as it does at the publish door and in a
+	// repository's file (AB2, D3009, D3022, policy.ModeOffRefusal). The
+	// migration reads it out of the node's own bytes before this reader is
+	// asked anything, which is what lets `fugaro update` rewrite it (F22).
+	if policy.Mode(b.Mode).Removed() {
+		return errors.New(policy.ModeOffRefusal)
 	}
 	if !policy.ValidMode(b.Mode) {
-		return fmt.Errorf("mode %q must be off, observe or enforce", b.Mode)
+		return fmt.Errorf("mode %q must be observe or enforce; leave the block out to set no budget at all", b.Mode)
 	}
 	if m, err := pricing.FromUSD(b.PerRunUSD); err != nil {
 		return fmt.Errorf("per_run_usd %v: it must be a number from 0 to %d US dollars", b.PerRunUSD, pricing.MaxUSD)

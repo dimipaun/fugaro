@@ -243,7 +243,7 @@ task here that writes one of those files waits for it (D1853). Tasks that touch 
 
 ### T-TR12: docs, the skill and the release notes
 - **Files:** `docs/triage.md` (new), `docs/recipes.md` (the readiness paragraph, keeping its pinned sentences),
-  `plugin/skills/working/SKILL.md` (one paragraph naming `fugaro followups`, `--debt` and the stage), the next release's notes under `docs/releases/` (the entry, and `### For operators`: run `fugaro update`; no other step), `docs/design/mixed-credentials.md` (§11's allow-list gains the stage), `website/data/release-summaries.yaml` only if a new
+  `plugin/skills/working/SKILL.md` (one paragraph naming `fugaro followups`, `--debt` and the stage), the next release's notes under `docs/releases/` (the entry, and `### For operators`: run `fugaro update`; no other step), `docs/mixed-credentials/spec.md` (§11's allow-list gains the stage), `website/data/release-summaries.yaml` only if a new
   release file is added. **Interfaces:** consumed T-TR7b, T-TR8, T-TR9, T-TR10, T-TR11; produced the user-facing account
   of the stage, the floor, "ready is not merged" and the debt command.
 - **Tests:** `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1` and `GOFLAGS=-p=2 go test ./plugin/ -count=1`.
@@ -300,7 +300,7 @@ first, so the verdicts can be read and tuned before they steer the loop; accepta
 | `internal/cli/followups.go`, `root.go` | T-TR10 (2) |
 | `website/content/cli-reference.md` | T-TR10 (2), T-TR11 (1: regenerated, the later level re-runs the generator on top) |
 | `internal/cli/runs.go`, `internal/runview/*` | T-TR11 (1) |
-| `docs/triage.md`, `docs/recipes.md`, `docs/design/mixed-credentials.md`, `plugin/skills/working/SKILL.md`, the next release's notes under `docs/releases/` | T-TR12 (5) |
+| `docs/triage.md`, `docs/recipes.md`, `docs/mixed-credentials/spec.md`, `plugin/skills/working/SKILL.md`, the next release's notes under `docs/releases/` | T-TR12 (5) |
 | `scripts/live-checks/check48*`, `docs/gcp-live-checklist.md` | T-TR13 (5) |
 
 BF1m (#1999) writes `internal/rigor/table.go`, `internal/runner/{outcome,runner,prflow,report,budget}.go`, `internal/config/*`, both

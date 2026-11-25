@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
 // The scanned payload, judged before anything is stored (mobile plan, Task
-// P6.8; the pairing contract is docs/plans/2026-10-22-mobile-pairing-cli.md
+// P6.8; the pairing contract is docs/mobile/pairing-cli-plan.md
 // §7.2, and D199 and D124 decide the two halves of it).
 //
 // **The red step.** This file was written before `payload.js` existed and

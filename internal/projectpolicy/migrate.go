@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/craft"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/policy"
 )
 
 // Change is one step of a migration, in the words a caller renders as the
@@ -187,9 +188,14 @@ func ReadsVersion(v int) bool {
 //
 // The answers, in order:
 //
-//   - a node already at Version comes back byte for byte, with no changes. It
-//     is not judged here: whether it is a policy this Fugaro can use is
-//     Decode's answer, and Migrate's is only whether it can be moved forward;
+//   - a node already at Version is not walked, but it is still read for the one
+//     step that runs AT a version rather than across two (migrateRemovedMode,
+//     AB8a): a node that says the word the budget mode's vocabulary dropped
+//     comes back rewritten, with a change, and every other node comes back byte
+//     for byte with none. A node it rewrites is judged by Decode at the end
+//     like any other migrated document; a node it does not touch is not judged
+//     at all: whether it is a policy this Fugaro can use is Decode's answer,
+//     and Migrate's is only whether it can be moved forward;
 //   - a node written in another version is refused with a *VersionError, the
 //     value Decode returns and SkewSentence words, in both directions: Found
 //     above Understood is a node ahead of this Fugaro (upgrade it), and Found
@@ -213,10 +219,11 @@ func ReadsVersion(v int) bool {
 //     refusal itself, so the operator reads the move that finishes the job
 //     beside the reason it stopped.
 //
-// The last step is followed by the reader's own judgement: the migrated bytes
-// must decode with Decode, or the migration is refused. That is what holds a
-// step to the shape the current reader reads rather than to the shape its
-// author believed in, and it is how a version-3 node whose profile mounts
+// The chain is followed by the one step that runs at a version rather than
+// across two, and the last of them by the reader's own judgement: the migrated
+// bytes must decode with Decode, or the migration is refused. That is what
+// holds a step to the shape the current reader reads rather than to the shape
+// its author believed in, and it is how a version-3 node whose profile mounts
 // bitbucket-token is refused here — the block that profile is bounded by is
 // derived at publish, so the step reports the republish as the move that
 // finishes the job instead of writing a node nothing can read.
@@ -229,7 +236,19 @@ func Migrate(raw []byte) ([]byte, []Change, error) {
 		return raw, nil, &VersionError{Found: from, Understood: Version}
 	}
 	if from == Version {
-		return raw, nil, nil
+		// The chain has nothing to walk, but the node is still read for the
+		// step that runs at this version (migrateRemovedMode): the word the
+		// budget mode's vocabulary dropped left it without a bump, so a node
+		// already at Version may be one no reader of this release serves and
+		// the update that rewrites it is the only way forward.
+		out, ch, changed, err := migrateRemovedMode(raw)
+		if err != nil || !changed {
+			return raw, nil, err
+		}
+		if err := migratedRefusal(out, nil); err != nil {
+			return raw, nil, err
+		}
+		return out, []Change{ch}, nil
 	}
 	names, err := objectMemberNames(raw)
 	if err != nil {
@@ -258,7 +277,28 @@ func Migrate(raw []byte) ([]byte, []Change, error) {
 		}
 		cur, changes = out, append(changes, ch)
 	}
-	if _, found, err := Decode(cur); err != nil || !found {
+	// The step that runs at a version rather than across two comes last, so a
+	// node the walk carried over is read for the dropped word too: a version-9
+	// node that says it is a version-10 node that says it (migrateRemovedMode,
+	// R4).
+	if out, ch, changed, err := migrateRemovedMode(cur); err != nil {
+		return raw, changes, err
+	} else if changed {
+		cur, changes = out, append(changes, ch)
+	}
+	if err := migratedRefusal(cur, changes); err != nil {
+		return raw, changes, err
+	}
+	return cur, changes, nil
+}
+
+// migratedRefusal is Migrate's last judgement of a document it would write:
+// the migrated bytes must decode with Decode, or the migration is refused and
+// the input comes back untouched. changes is what the walk read, and the note
+// of the last step that carries one travels in the refusal, so the operator
+// reads the move that finishes the job beside the reason it stopped.
+func migratedRefusal(migrated json.RawMessage, changes []Change) error {
+	if _, found, err := Decode(migrated); err != nil || !found {
 		if err == nil {
 			err = errors.New("the node is empty")
 		}
@@ -268,9 +308,64 @@ func Migrate(raw []byte) ([]byte, []Change, error) {
 				note = ch.Note
 			}
 		}
-		return raw, changes, &MalformedError{Why: "the migrated node is one the current reader refuses", Note: note, Err: err}
+		return &MalformedError{Why: "the migrated node is one the current reader refuses", Note: note, Err: err}
 	}
-	return cur, changes, nil
+	return nil
+}
+
+// migrateRemovedMode is the chain's one step that runs at a version rather than
+// across two: it rewrites the budget mode from the word the vocabulary dropped
+// to observe, in place, and leaves the node's version where it is (AB8a, R4,
+// D3010).
+//
+// It exists because the word left the mode's vocabulary without a bump (D3025):
+// a version-10 node an older CLI published, or one an administrator edited by
+// hand, says it, and no step across two versions reaches a node that is already
+// at Version — while no reader of this release serves such a node (the publish
+// door refuses it, and ValidMode stops knowing it, AB2). `fugaro update` is the
+// one command the upgrade is (CLAUDE.md), so the rewrite belongs to the
+// migration, and it is what makes every node this release writes one its own
+// readers can serve.
+//
+// It reads the mode out of the node's own bytes, before the strict reader is
+// asked anything: the node's decoder refuses the word once validation moves
+// (AB2's validBudget), so a step that decoded the node first could never load
+// the node it exists to rewrite (F22). The mode is asked of the vocabulary's
+// own predicate (Mode.Removed) rather than compared to a literal here, and what
+// it is rewritten to is that vocabulary's own answer (Mode.Effective), so this
+// step cannot read or spell a mode differently from the readers around it.
+//
+// The edit is confined to the budget block's mode member: every other member of
+// the block and every other top-level key comes back byte for byte, because
+// this is an edit of the owner's document and not a re-encoding of it. A node
+// carrying no budget block, or one whose mode is a live mode, is not touched at
+// all — changed says so, and the caller reports no change for it.
+func migrateRemovedMode(raw json.RawMessage) (out json.RawMessage, ch Change, changed bool, err error) {
+	bs, be, ok := memberValueSpan(raw, "budget")
+	if !ok || IsNull(raw[bs:be]) {
+		return raw, Change{}, false, nil
+	}
+	block := raw[bs:be]
+	ms, me, ok := memberValueSpan(block, "mode")
+	if !ok {
+		return raw, Change{}, false, nil
+	}
+	var mode string
+	if err := json.Unmarshal(block[ms:me], &mode); err != nil || !policy.Mode(mode).Removed() {
+		return raw, Change{}, false, nil
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return raw, Change{}, false, &MalformedError{Why: "it is not a JSON object", Err: err}
+	}
+	eff := policy.Mode(mode).Effective()
+	out = spliceMember(raw, bs+ms, bs+me, json.RawMessage(strconv.Quote(eff)))
+	return out, Change{
+		From:    Version,
+		To:      Version,
+		Changed: fmt.Sprintf("the budget mode: %s -> %s", mode, eff),
+		Kept:    keptKeys(doc, "budget"),
+	}, true, nil
 }
 
 // DecodeCarriedForward reads a node that may be written one version behind,
@@ -300,12 +395,22 @@ func Migrate(raw []byte) ([]byte, []Change, error) {
 // binary, or one below the chain's first step, comes back with the refusal
 // Decode made: those are not this reader's to reinterpret, and a migration that
 // has no step for a version reports its own refusal rather than inventing one.
-// A node already at Version is not migrated at all — Migrate returns it byte
-// for byte and nothing here re-encodes it.
+// A node already at Version is not walked across anything — the steps for older
+// versions do not run and nothing here re-encodes what they would have left.
+//
+// What a node AT Version is carried for, since AB2, is the one step that runs
+// at a version rather than across two: a node that says the word the budget
+// mode's vocabulary dropped. That step left no bump behind (D3025), so the node
+// the release behind published states this release's version and says the word,
+// and a carry that fired only on *VersionError would hand every reader along the
+// update's way a refusal for the node the same run is about to rewrite — the
+// second command the HARD RULE forbids. Migrate answers for the word itself, and
+// for a node it has no step for it returns the bytes untouched and this function
+// returns Decode's refusal, so the reach of the carry is the migration's own
+// answer and not a second list kept here.
 func DecodeCarriedForward(raw []byte) (*Policy, bool, error) {
 	pol, found, err := Decode(raw)
-	var ve *VersionError
-	if err == nil || !errors.As(err, &ve) || ve.Found >= ve.Understood {
+	if err == nil {
 		return pol, found, err
 	}
 	migrated, _, merr := Migrate(raw)

@@ -80,6 +80,27 @@ const (
 	// service keeps only its hash — so it is attached here, on the call the
 	// service decides by, and never written to a log, an error or a record.
 	HeaderSlipClaim = "X-Fugaro-Slip-Claim"
+	// WorkspaceSlipHeader carries the id of the workspace's own slip: the one
+	// the workspace's service granted a run (C1's PersonSlipEnv), presented on
+	// every call this run makes to that service and on none it makes to its
+	// own. It is the first of the two names C1 leaves for WC8 to declare a
+	// second time, and this package is the second declaration: internal/creds
+	// imports internal/budget, which imports this package, so the gateway
+	// cannot spell them through that package and does not (C1's own header
+	// comment, F26's shape for the provider wire). TestWorkspaceSlipMirrorsC1
+	// holds the two spellings to each other name by name.
+	//
+	// Two names rather than HeaderSlip's is R4 stated as a spelling: a run
+	// holds two slips, they are granted by two services a member's admins
+	// control differently (F13), and the header a call carries is what tells
+	// the two apart at a service. It is not a secret.
+	WorkspaceSlipHeader = "X-Fugaro-Workspace-Slip"
+	// WorkspaceSlipClaimHeader carries the claim secret the workspace's claim
+	// answered (C1's PersonSlipClaimHeader), read exactly as HeaderSlipClaim
+	// is: it is attached to a call to the workspace's service and to no other,
+	// it is never logged and never written into an error, a halt's detail or a
+	// record, and the workspace keeps only its hash.
+	WorkspaceSlipClaimHeader = "X-Fugaro-Workspace-Slip-Claim"
 	// HeaderAuthMode is the auth the run's own repository goes out on, as the
 	// runner declares it (B2.2, credsvc.HeaderAuthMode). It is a statement
 	// and never evidence: the service decides from the record `fugaro update`
@@ -94,7 +115,8 @@ const (
 )
 
 // The answer headers of the contract (credsvc.HeaderTier,
-// credsvc.HeaderCredential, credsvc.HeaderSwitch, credsvc.HeaderProbe).
+// credsvc.HeaderCredential, credsvc.HeaderCredentialOwner, credsvc.HeaderSwitch,
+// credsvc.HeaderProbe).
 const (
 	// HeaderTier is the credential tier that answered: TierA, TierB or
 	// TierC. A Messages call settles by it (C1.16).
@@ -102,6 +124,13 @@ const (
 	// HeaderCredential is the name of the credential that answered, never
 	// its value.
 	HeaderCredential = "X-Fugaro-Credential"
+	// HeaderCredentialOwner is the owner of the credential that answered,
+	// never its value (credsvc.HeaderCredentialOwner, F16): the account id of
+	// the person whose credential it is, which the run records beside the
+	// credential's name. It is written only where the credential served is
+	// the launcher's own per-user one, so an answer that carries none — a
+	// bundle entry's, a pool's, a slip-less call's — is the ordinary case.
+	HeaderCredentialOwner = "X-Fugaro-Credential-Owner"
 	// HeaderSwitch, when present, is the JSON of a switch: this call moved
 	// from one credential to another inside the service.
 	HeaderSwitch = "X-Fugaro-Switch"
@@ -175,6 +204,26 @@ const (
 	// unreadable-answer sentence instead of the one that names the fix, so
 	// TestAnUnlistedRepositoryHaltsNamingTheFix holds the spelling.
 	ErrorRepositoryNotListed = "repository_not_listed"
+	// ErrorSlipOwnerRemoved is the workspace's refusal of a call under a slip
+	// whose owner has left the workspace's roster (R3, D3146): the workspace's
+	// service re-reads its roster as it re-reads its published node, so a
+	// person the roster no longer holds stops being served within a minute
+	// whether or not the sweep of their containers succeeded, and the call is
+	// refused rather than continued on the shared entries. A refusal, so the
+	// run halts (D143) with the removal named — and it moves to no other
+	// credential, which is what makes it a halt rather than a switch.
+	//
+	// The word is the workspace's scope's to write — it is mirrored here the
+	// way every other type of this contract is, because this package cannot
+	// import the service's half — and the landed scope (WC4) writes it at the
+	// one point it may: credsvc's verifyPersonCallSlip asks the roster after
+	// the slip's claim secret has been matched, so only the run that holds
+	// that secret is ever answered this word, and it is answered the removal
+	// by name (slipOwnerRemoved). The claim route's own reading of the same
+	// fact keeps the record's one sentence instead, since a caller there names
+	// a slip before it holds any secret — so a call is answered here and a
+	// claim is not.
+	ErrorSlipOwnerRemoved = "slip_owner_removed"
 )
 
 // Why a credential was not used, in a refusal's tried list
@@ -271,6 +320,22 @@ type Service struct {
 	// running gateway.
 	SlipID    string
 	SlipClaim string
+	// WorkspaceSlipID and WorkspaceSlipClaim are the workspace's own slip,
+	// held exactly as the pair above is and presented under C1's names
+	// (WorkspaceSlipHeader, WorkspaceSlipClaimHeader) to the workspace's
+	// service and to no other (R4). They are a second pair rather than the
+	// same one because the two slips have two owners and two grantors: a
+	// member's slip is its own project's, and the workspace's is one only the
+	// workspace grants (F13, R3).
+	//
+	// Which pair a Service carries is which service it calls, and a Service
+	// carries one pair at most: Options.validate refuses a service upstream
+	// holding both, a call to one service being made under one slip, and
+	// Workspace.upstream is the only place the pair below is ever set. Both
+	// pairs are all or nothing for the reason above — a call presenting an id
+	// and no claim secret is a request the service does not read.
+	WorkspaceSlipID    string
+	WorkspaceSlipClaim string
 }
 
 // ServiceAnswer is what the credentials service said about one call: the
@@ -283,6 +348,14 @@ type ServiceAnswer struct {
 	// Credential is the name of the credential that answered, never its
 	// value.
 	Credential string
+	// CredentialOwner is the owner of the credential that answered, never its
+	// value (F16, credsvc.HeaderCredentialOwner): the account id of the
+	// person whose credential it is, which the run records beside the name.
+	// It is empty on an answer that carries none — a credential the launcher
+	// does not own, a call the service admitted under no slip, or one a
+	// service that predates the field answered — and the run then records no
+	// owner.
+	CredentialOwner string
 	// Switch is the contract's switch header as it arrived: the JSON of a
 	// Switch record, unread here. A switch is what the run's own log carries
 	// (C1.16), and the runner reads it with the contract's own reader
@@ -310,6 +383,11 @@ type ServiceAnswer struct {
 	// zero value: an exhausted answer carries no tier, and the credentials
 	// it names are in Tried.
 	Exhausted *Exhausted
+	// Unreachable, when set, is a call this gateway could not reach the
+	// service with at all (D2983): the call was not sent, and the one thing to
+	// do about it is wait for the service until the instant it names. Every
+	// other field is then the zero value.
+	Unreachable *Unreachable
 }
 
 // Exhausted is the service's typed exhausted answer (credsvc's
@@ -335,6 +413,37 @@ type Tried struct {
 	Tier   string
 	Reason string
 }
+
+// Unreachable is a call this gateway could not reach the service with at all
+// (D2983): no answer arrived, so nothing was refused and nothing was served.
+// It carries nothing the service said, because the service said nothing.
+//
+// It is not a halt: what the run does with it is wait, which is the mechanism
+// an exhausted answer uses (the runner ends the stage in flight, waits, and
+// resumes it). Its one figure is the instant the wait ends, which is this
+// package's own bound measured from the first call that could not reach the
+// service (serviceUnreachableBound); a call that meets the spent bound is what
+// halts the run, naming the service (stateDetailUnreachable or
+// stateDetailUnreachableWorkspace).
+type Unreachable struct {
+	// RetryAt is when this run stops waiting for the service: the first call
+	// that could not reach it, plus the bound. A call that meets a spent bound
+	// is the halt.
+	RetryAt time.Time
+	// Service is which credentials service could not be reached: "project's"
+	// or "workspace's". It is a fact about the route the run read at its start
+	// and not an address, and it is here so the runner's own log line and the
+	// run's record name the same service the halt names.
+	Service string
+}
+
+// The two services a call can be sent to, as the run's log and its halt name
+// them: which one a call went to is the route the run read at its start
+// (Options.ModelFromWorkspace), never an address.
+const (
+	serviceNameProject   = "project's credentials service"
+	serviceNameWorkspace = "workspace's credentials service"
+)
 
 // serviceCall reports whether this call is the credentials service's own, and
 // so is read, answered and halted the way a service call is: the service's
@@ -380,7 +489,7 @@ func (s *Server) serviceUpstream(ctx context.Context, rt route, in http.Header) 
 	if sv == nil {
 		return nil, fmt.Errorf("%w: the credentials service's identity isn't available", errServiceUnidentified)
 	}
-	id, run, slipID, slipClaim, err := sv.serviceCallIdentity(ctx)
+	id, run, slip, err := sv.serviceCallIdentity(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -388,11 +497,12 @@ func (s *Server) serviceUpstream(ctx context.Context, rt route, in http.Header) 
 	s.scrubToken(h)
 	// The service's own answer headers mean nothing in a request, and a
 	// client that sent them must not have them arrive as if the service had
-	// answered with them. The slip's two headers are dropped for that
-	// reason and for one more: they are the run's claim, taken by the runner
-	// and held here, so an agent that sent a slip of its own must not have
-	// it reach the service — what travels below is the claim the run took,
-	// and never a value the agent chose. The run's own auth declaration is
+	// answered with them. The slip's two headers — and the workspace's own
+	// pair beside them — are dropped for that reason and for one more: they
+	// are the run's claim, taken by the runner and held here, so an agent
+	// that sent a slip of its own must not have it reach either service —
+	// what travels below is the claim the run took, and never a value the
+	// agent chose. The run's own auth declaration is
 	// dropped for that same second reason: the agent runs inside the
 	// repository whose auth it is, so a mode or an account it wrote would
 	// read as the runner's statement about a repository it may not be in —
@@ -401,7 +511,22 @@ func (s *Server) serviceUpstream(ctx context.Context, rt route, in http.Header) 
 	// decides which of the repository's keys the service serves a routed
 	// call with (R2, KS5), so it is set here from the route the gateway
 	// routed to and never taken from a header the agent wrote.
-	for _, k := range []string{HeaderTier, HeaderCredential, HeaderSwitch, HeaderProbe, HeaderSlip, HeaderSlipClaim, HeaderAuthMode, HeaderAuthAccount, HeaderProvider} {
+	//
+	// The chain wire's four names go the same way (chainwire.go). The stage
+	// header is dropped whatever this gateway's ChainServed says and is then
+	// set from the run's own stage: it is the whole of R24's guard against
+	// answering in full a caller that is not a gateway of this contract, and
+	// the service cannot tell the gateway's own from one the agent wrote, so
+	// the drop is what makes it the gateway's (contract-table.md, "What the
+	// guard is not": a gateway built before this rule has no drop, and no
+	// later task may assume the window is closed for one). The three answer
+	// members are dropped for the reason every answer header above is, and
+	// the served model (HeaderModel) with them: they are the service's own
+	// answer and mean nothing in a request, so a client that sent them must
+	// not have them arrive as if the service had answered with them. No
+	// header naming a model is ever SET here: the service reads the model a
+	// call is for from the request's body (chainwire.go).
+	for _, k := range []string{HeaderTier, HeaderCredential, HeaderCredentialOwner, HeaderSwitch, HeaderProbe, HeaderSlip, HeaderSlipClaim, WorkspaceSlipHeader, WorkspaceSlipClaimHeader, HeaderAuthMode, HeaderAuthAccount, HeaderProvider, HeaderStage, HeaderSource, HeaderFallback, HeaderModel} {
 		h.Del(k)
 	}
 	h.Set("Authorization", "Bearer "+id)
@@ -413,9 +538,24 @@ func (s *Server) serviceUpstream(ctx context.Context, rt route, in http.Header) 
 	if account := s.o.Upstream.Account; account != "" {
 		h.Set(HeaderAuthAccount, account)
 	}
-	if slipID != "" {
-		h.Set(HeaderSlip, slipID)
-		h.Set(HeaderSlipClaim, slipClaim)
+	if slip.id != "" {
+		h.Set(slip.header, slip.id)
+		h.Set(slip.claimHeader, slip.claim)
+	}
+	if s.o.ChainServed {
+		// The run's current stage, from the run's own stage and never from a
+		// header (the drop above): a caller that sends it is answered with the
+		// chain's own accounting, which is what lets a step's record name the
+		// source that served it (ChainAnswerFunc, CS8). A call with no stage
+		// running carries the header not at all — the service then reads the
+		// caller as one of this contract answering for no step, which is the
+		// pre-contract answer — and a Messages call of a run is never one:
+		// handleMessages refuses a call with no stage before it is forwarded.
+		// A token count needs no stage (forwardFree), so one made with none
+		// running meets that same pre-contract answer and records nothing.
+		if stage := s.stageName(); stage != "" {
+			h.Set(HeaderStage, stage)
+		}
 	}
 	return h, nil
 }
@@ -431,11 +571,13 @@ func (s *Server) serviceUpstream(ctx context.Context, rt route, in http.Header) 
 // An identity that cannot be assembled is errServiceUnidentified and nothing is
 // sent: there is no credential of the job's to fall back to (D143), and a call
 // the service would refuse for want of an identity is not one this package
-// makes. The slip is all or nothing for Upstream.validate's reason: a call
-// presenting an id and no claim secret is a request the service does not read.
-func (s Service) serviceCallIdentity(ctx context.Context) (bearer, run, slipID, slipClaim string, err error) {
+// makes. Each slip is all or nothing for Upstream.validate's reason: a call
+// presenting an id and no claim secret is a request the service does not read,
+// and a Service carrying both slips is refused here too, a call to one service
+// being made under one slip (R4).
+func (s Service) serviceCallIdentity(ctx context.Context) (bearer, run string, slip serviceSlip, err error) {
 	if s.IDToken == nil || s.RunIDToken == nil {
-		return "", "", "", "", fmt.Errorf("%w: the credentials service's identity isn't available", errServiceUnidentified)
+		return "", "", serviceSlip{}, fmt.Errorf("%w: the credentials service's identity isn't available", errServiceUnidentified)
 	}
 	run = s.RunIDToken()
 	if run == "" {
@@ -443,19 +585,48 @@ func (s Service) serviceCallIdentity(ctx context.Context) (bearer, run, slipID, 
 		// identity is not a call this package makes (D143): the run's identity
 		// is what the service verifies the run with, and there is no second
 		// way to be admitted.
-		return "", "", "", "", fmt.Errorf("%w: the run's identity token isn't available", errServiceUnidentified)
+		return "", "", serviceSlip{}, fmt.Errorf("%w: the run's identity token isn't available", errServiceUnidentified)
 	}
 	id, err := s.IDToken(ctx)
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("%w: the job's identity token isn't available: %v", errServiceUnidentified, err)
+		return "", "", serviceSlip{}, fmt.Errorf("%w: the job's identity token isn't available: %v", errServiceUnidentified, err)
 	}
 	if id == "" {
-		return "", "", "", "", fmt.Errorf("%w: the job's identity token isn't available", errServiceUnidentified)
+		return "", "", serviceSlip{}, fmt.Errorf("%w: the job's identity token isn't available", errServiceUnidentified)
 	}
-	if (s.SlipID == "") != (s.SlipClaim == "") {
-		return "", "", "", "", fmt.Errorf("%w: the run holds half a slip", errServiceUnidentified)
+	switch {
+	case (s.SlipID == "") != (s.SlipClaim == ""):
+		return "", "", serviceSlip{}, fmt.Errorf("%w: the run holds half a slip", errServiceUnidentified)
+	case (s.WorkspaceSlipID == "") != (s.WorkspaceSlipClaim == ""):
+		return "", "", serviceSlip{}, fmt.Errorf("%w: the run holds half the workspace's slip", errServiceUnidentified)
+	case s.SlipID != "" && s.WorkspaceSlipID != "":
+		// Two slips on one upstream: a call to one service is made under one
+		// slip, and the header a call carries is what tells the two services
+		// apart (R4). Nothing decides which of the two this call would be
+		// under, so it is not sent.
+		return "", "", serviceSlip{}, fmt.Errorf("%w: the service upstream carries a member's slip and the workspace's", errServiceUnidentified)
+	case s.WorkspaceSlipID != "":
+		slip = serviceSlip{id: s.WorkspaceSlipID, claim: s.WorkspaceSlipClaim, header: WorkspaceSlipHeader, claimHeader: WorkspaceSlipClaimHeader}
+	default:
+		slip = serviceSlip{id: s.SlipID, claim: s.SlipClaim, header: HeaderSlip, claimHeader: HeaderSlipClaim}
 	}
-	return id, run, s.SlipID, s.SlipClaim, nil
+	return id, run, slip, nil
+}
+
+// serviceSlip is the slip one call to a credentials service travels under: the
+// id the launcher was granted, the claim secret the claim answered, and the two
+// header names it travels in. header and claimHeader are empty for a run that
+// holds no slip at all, and id is empty then too: the call carries neither name
+// and is the run of an installation whose service serves no slip route.
+//
+// The names are C1's own (creds.PersonSlipHeader for the workspace's slip,
+// credsvc.HeaderSlip for this project's), declared here a second time for the
+// reason the constants are, and held to them by TestWorkspaceSlipMirrorsC1.
+type serviceSlip struct {
+	id          string
+	claim       string
+	header      string
+	claimHeader string
 }
 
 // Post sends one signed call to a route of the credentials service and hands
@@ -490,7 +661,7 @@ func (s Service) Post(ctx context.Context, baseURL, path string, body []byte) (s
 	if !strings.HasPrefix(path, "/") {
 		return 0, nil, fmt.Errorf("gateway: %q isn't a path of the credentials service", path)
 	}
-	bearer, run, slipID, slipClaim, err := s.serviceCallIdentity(ctx)
+	bearer, run, slip, err := s.serviceCallIdentity(ctx)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -503,9 +674,9 @@ func (s Service) Post(ctx context.Context, baseURL, path string, body []byte) (s
 	req.Header.Set("Authorization", "Bearer "+bearer)
 	req.Header.Set(HeaderRunIdentity, run)
 	req.Header.Set(HeaderRunJob, s.Job)
-	if slipID != "" {
-		req.Header.Set(HeaderSlip, slipID)
-		req.Header.Set(HeaderSlipClaim, slipClaim)
+	if slip.id != "" {
+		req.Header.Set(slip.header, slip.id)
+		req.Header.Set(slip.claimHeader, slip.claim)
 	}
 	resp, err := serviceCallClient.Do(req)
 	if err != nil {
@@ -686,6 +857,65 @@ func credentialHeaders(h http.Header) (tier, name string, ok bool, err error) {
 		return "", "", false, errors.New("the answer's credential name isn't one clean header value")
 	}
 	return tier, name, true, nil
+}
+
+// MaxCredentialOwnerDigits bounds the owner a credential's answer may name: the
+// width of a Google account id — a number above 2^53, which is why
+// internal/infra/tf's identity handling already carries the same number, a
+// service account's unique_id, as text rather than rendering it. Twenty digits
+// would be the width of a uint64, and these ids are wider than one, so a bound
+// derived from a 64-bit number would refuse every launcher there is.
+//
+// It is THE definition of that width, and internal/credsvc imports it (its
+// maxLauncherSubDigits, the launcher class's own spelling of the same bound):
+// the service is the writer of the owner header and this package is its reader,
+// the two ends of one contract are this repository's code, and a bound spelled
+// twice is a bound that can drift with nothing red — the shape of the drift
+// being an owner the run records that the service could not have written. The
+// bound is a SHAPE check rather than a fence against a stranger's text: the
+// owner is the launcher's `sub` claim, inside a token Google signed, so a
+// caller cannot choose it — what the bound keeps out of the service's own two
+// sinks (the slip's owner and the secret name fugaro_u_<id>_<name>, whose total
+// length Secret Manager bounds) is an id Google has never issued. A value the
+// issuer widens past this one day is refused rather than carried, which is the
+// fail-closed answer, and widening it is this constant's change and the test
+// that pins it.
+const MaxCredentialOwnerDigits = 21
+
+// ValidCredentialOwner reports whether s may be a credential's owner: the
+// launcher's account id the contract writes it as, digits only and at most
+// MaxCredentialOwnerDigits of them. The run records it (F16), so a value the
+// service could not have written is refused rather than handed on. It is the
+// one definition of the rule, and internal/credsvc's validSlipOwner delegates
+// to it for the same reason the bound is here: one rule, both ends of the wire.
+func ValidCredentialOwner(s string) bool {
+	if s == "" || len(s) > MaxCredentialOwnerDigits {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// credentialOwner reads the owner of the credential that answered, present
+// false for an answer that carries none — every answer that is not a
+// slip-bound call's, and every answer a service that predates the field wrote.
+// An owner that is not one launcher's account id is an error rather than a
+// value: the run records it, so a caller that guessed at one would record a
+// fact the service did not state. The error names the field and never the
+// value.
+func credentialOwner(h http.Header) (owner string, present bool, err error) {
+	owner, present, err = responseHeader(h, HeaderCredentialOwner)
+	if err != nil || !present {
+		return "", present, err
+	}
+	if !ValidCredentialOwner(owner) {
+		return "", false, errors.New("the answer's credential owner isn't one launcher's account id")
+	}
+	return owner, true, nil
 }
 
 // switchValue reads the contract's switch header, unread. An answer that
@@ -936,6 +1166,12 @@ func exhaustedAnswer(e serviceRefusal) (Exhausted, error) {
 // refusal is never relayed: it is fugaro's own answer, it names the project's
 // credentials, and the agent has no business seeing the set of them (D143).
 func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needTier, servedRoute bool) (status int, done bool, tier string, probed []string) {
+	// What this answer cleared, because an answer of the service's own is not
+	// always the service being back: a workspace's service that REFUSES a call
+	// as unable to read its roster answered and is still not serving this run,
+	// and that refusal is the outage the wait is for (workspaceUnavailable,
+	// keepUnreachable).
+	outage := s.noteServiceReached()
 	if resp.StatusCode/100 == 2 {
 		// The room the workspace's service has left arrives on the answer
 		// itself, so it is read here, before any of it reaches the agent
@@ -944,6 +1180,28 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 		// believes, and a call the service did not pay for carries no
 		// number and changes nothing.
 		s.noteWorkspaceHeadroom(resp.Header)
+		if s.o.ChainServed {
+			// The answer's chain members (chainwire.go), read here where the
+			// service's other answer headers are and before any of it reaches
+			// the agent: which source served this call, whether it was the
+			// chain's first, and which model served. They are read for every
+			// served call of this gateway — a token count, a provider route's
+			// relayed answer and a Messages call alike — because the step's
+			// record folds the fallback flag over the whole stage (CS8), and
+			// an answer that names one and not the others is a halt rather
+			// than a value the run records a guess from.
+			a, present, err := chainAnswerHeaders(resp.Header)
+			if err != nil {
+				return s.haltService(w, stateDetailUnreadable), true, "", nil
+			}
+			if present {
+				// An answer of a service built before this contract carries
+				// none of the three and is not an error: this gateway sent the
+				// stage header, and a service that does not read it answers in
+				// the shape it always did.
+				s.answerChain(a)
+			}
+		}
 		if !needTier {
 			return resp.StatusCode, false, "", nil
 		}
@@ -952,6 +1210,15 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 			err = errors.New("the answer carries no tier")
 		}
 		if err != nil {
+			return s.haltService(w, stateDetailUnreadable), true, "", nil
+		}
+		owner, _, err := credentialOwner(resp.Header)
+		if err != nil {
+			// The owner is what the run records beside the credential's name
+			// (F16), so an answer whose owner cannot be read is one the run
+			// must not record a guess from: it halts like an answer whose
+			// tier cannot be read. An answer that carries no owner is the
+			// ordinary case and not an error.
 			return s.haltService(w, stateDetailUnreadable), true, "", nil
 		}
 		sw, err := switchValue(resp.Header)
@@ -965,7 +1232,7 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 			// not make.
 			return s.haltService(w, stateDetailUnreadable), true, "", nil
 		}
-		a := ServiceAnswer{Tier: tier, Credential: name, Switch: sw, Probed: probed}
+		a := ServiceAnswer{Tier: tier, Credential: name, CredentialOwner: owner, Switch: sw, Probed: probed}
 		if sw != "" {
 			// A switch's cache-miss cost is the gateway's to estimate
 			// (F24): it is computed here, where the last call's usage is,
@@ -1065,6 +1332,36 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 			"fugaro: the credentials service has no credential available before "+ex.ResetAt.UTC().Format(time.RFC3339))
 		return http.StatusServiceUnavailable, true, "", nil
 	case ErrorStateUnavailable:
+		if s.wsModel && s.workspaceSlipHeld() && wsRefusal == "" {
+			// R3, D2983: the workspace's service re-reads its roster on every
+			// call under its slip, and a roster it could not read is refused as
+			// the service being unable to read the state it must read — never as
+			// a verdict about this run — so this run waits for it exactly as it
+			// waits for a workspace service it cannot reach, and moves to no
+			// other credential meanwhile. The run's own project's service is
+			// unchanged: its "cannot read the state" is D143's halt, as it was.
+			//
+			// The re-read is the slip's (F13, R4): a run routed to the
+			// workspace that holds no slip made no roster read for this call to
+			// fail, so its refusal is the state the service could not read, the
+			// halt it always was, and the wait is not extended to it.
+			//
+			// An answer the workspace MARKED is not this refusal at all, and it
+			// halts below as it always did (workspace_refusal.go): the
+			// workspace's own cap, stop and settle reach a member as this same
+			// 503 state_unavailable, and each is a verdict about the call and
+			// not an outage. Waited for, one would spend the bound on a service
+			// that answered and then halt naming the roster with no marker on
+			// it — losing the fact the halt is read for (D2022's O19).
+			//
+			// The clock is put back, because this refusal is the outage itself
+			// and not an answer that ends it: a bound re-armed by every refusal
+			// is a wait that never spends it, and the halt below — the roster,
+			// named — would never be reached (noteUnreachable, R3).
+			s.keepUnreachable(outage)
+			s.workspaceUnavailable(w)
+			return http.StatusServiceUnavailable, true, "", nil
+		}
 		return haltOn(refusalDetail(e.Error)), true, "", nil
 	case ErrorNoCandidateCredentials:
 		// The one refusal whose detail is built from the answer rather than
@@ -1087,6 +1384,12 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 		// running run. The detail says so, because the service's own sentence
 		// never reaches the agent (D143): without it the operator reads a
 		// detail about a broken service instead of the missing allow-list.
+		return haltOn(refusalDetail(e.Error)), true, "", nil
+	case ErrorSlipOwnerRemoved:
+		// D3146, R3: the workspace's scope, refusing a call under the slip of
+		// someone its roster no longer holds. The detail names the removal and
+		// the halt is the run's end — it moves to no other credential, which is
+		// the whole of what makes this a halt and not a switch.
 		return haltOn(refusalDetail(e.Error)), true, "", nil
 	case ErrorRepositoryNotListed:
 		// R19: the workspace's scope, refusing a repository its own record of
@@ -1133,7 +1436,11 @@ type replayBody struct {
 // Detail is displayed to the agent in every later call's 403 and stored in
 // the run's record, and nothing the service sent is ever echoed into it.
 const (
-	// stateDetailUnreachable is a service this job could not reach.
+	// stateDetailUnreachable is the project's credentials service, which this
+	// job could not reach for the whole of the bound (D2983). It is the
+	// sentence a run of a repository whose model kind is served by its own
+	// project reads, and the one the live checklist reads for that case; the
+	// workspace's own is stateDetailUnreachableWorkspace below.
 	stateDetailUnreachable = "the credentials service could not be reached"
 	// stateDetailUnreadable is an answer this gateway could not read as the
 	// service's own, or could not account a call by.
@@ -1157,11 +1464,34 @@ const (
 	// owner's step rather than the operator's own, because the member's operator
 	// cannot grant it: the workspace's project is not theirs.
 	stateDetailUnadmittedWorkspace = "the workspace's credentials service refused this job's call: this repository's job is not granted on it yet, and the workspace owner's own 'fugaro update' in the workspace's project is what grants it (nothing this run or its own repository's operator does reaches that project)"
+	// stateDetailUnreachableWorkspace is stateDetailUnreachable for a run whose
+	// model calls go to the workspace's credentials service (D2983, R16): the
+	// bound was spent without one answer from it. It names that service rather
+	// than "the credentials service" because the two are different projects
+	// with different owners, and a member's operator told only that "the
+	// credentials service" could not be reached would look at their own.
+	stateDetailUnreachableWorkspace = "the workspace's credentials service could not be reached"
 	// workspaceNotListedDetail is R19's halt: the workspace's scope refuses a
 	// repository its own record of the calling job account does not name. Like
 	// stateDetailUnadmittedWorkspace it names the workspace owner's own step,
 	// which is the one thing that adds a repository to that list.
 	workspaceNotListedDetail = "the workspace's credentials service does not serve this repository (repository_not_listed): the workspace's record of this job account does not name it, and the workspace owner's own 'fugaro update' in the workspace's project is what adds it"
+	// slipOwnerRemovedDetail is D3146's halt: the workspace's service re-reads
+	// the workspace's roster as it re-reads its published node, and this call's
+	// slip belongs to someone that re-read no longer holds. It names the
+	// removal, which is the whole of what the run's operator is owed — the
+	// person's own admin is the one who restores a role — and it says what the
+	// run does not do: it moves to no other credential, since a slip refused
+	// this way is not a credential that failed but a person who left.
+	slipOwnerRemovedDetail = "the workspace's credentials service refused this call because the slip's owner has left the workspace's roster (slip_owner_removed): the run halts and is served no other credential (D3146)"
+	// stateDetailWorkspaceRoster is what a run that waited out the bound for a
+	// workspace's service which answers "I cannot read the state I must read" is
+	// halted with (R3, D2983). It is not stateDetailUnreachableWorkspace: that
+	// one says the service could not be reached, and this one answered. What it
+	// could not do is read the workspace's roster, and the two sentences are
+	// apart so an operator looks at the workspace's own state rather than at
+	// whether the revision is up.
+	stateDetailWorkspaceRoster = "the workspace's credentials service cannot read the workspace's roster"
 )
 
 // refusalDetail is the detail for a typed refusal the run cannot be served
@@ -1200,6 +1530,8 @@ func refusalDetail(typ string) string {
 		return "the credentials service refused this provider call (provider_not_allowed: check the project's published allowance and this repository's own admission)"
 	case ErrorRepositoryNotListed:
 		return workspaceNotListedDetail
+	case ErrorSlipOwnerRemoved:
+		return slipOwnerRemovedDetail
 	}
 	return stateDetailUnreadable
 }
@@ -1314,21 +1646,179 @@ func (s *Server) haltServiceMarked(w http.ResponseWriter, detail, workspace stri
 	return http.StatusForbidden
 }
 
-// serviceUnreachable halts a run whose gateway could not reach the service at
-// all (D143), answering the call with the halt, and reports whether this is
-// the thing that stopped it: an external halt or a cancelled request came
-// first, and then the agent's answer is the one that cause wrote.
-func (s *Server) serviceUnreachable(w http.ResponseWriter, base, req context.Context) (halted bool) {
+// serviceUnreachable is what a call the gateway could not reach the service
+// with is answered with (D2983): the run waits for the service and retries, for
+// at most serviceUnreachableBound from the first call that could not reach it,
+// and a call that meets the spent bound halts the run with a reason that names
+// which service it was. It never reaches for a credential of the job's own —
+// there is none to reach for, and D143 is why there is none.
+//
+// The wait is the runner's, and its mechanism is the one an exhausted answer
+// already uses (C1.17): the Unreachable answer below ends the stage in flight
+// through the run's own hook, stage waits where the answer says and resumes the
+// stage's session, and that retry — not a second send here — is what makes the
+// outage survivable. Nothing in this package sends the call again: a service
+// that is not answering is not a failure a second send fixes, and holding the
+// agent's call for the whole bound would hold the run's own stage in a request
+// nobody can cancel.
+//
+// So the call itself is answered the way an exhausted one is — 503, retryable,
+// with no retry-after of its own, so the agent backs off by its own schedule
+// for the moment it takes the run to end the stage — and the run learns of the
+// wait on the same hook its typed answers arrive on.
+//
+// Which service is named is which upstream this gateway calls: a run whose
+// model kind is routed to the workspace has the workspace's upstream IN
+// Options.Upstream (Start, Options.ModelFromWorkspace), so wsModel is the whole
+// of the question and no address is compared here.
+//
+// It reports whether this call's answer is the gateway's own — the wait's 503
+// or the halt, both written here — which is what the caller returns on: an
+// external halt or a cancelled request came first, and then the agent's answer
+// is the one that cause wrote. The wait itself is answerServiceWait, which
+// serviceAnswer reaches too: a workspace service that REFUSED a call as
+// unavailable is waited for the same way (workspaceUnavailable, R3).
+func (s *Server) serviceUnreachable(w http.ResponseWriter, base, req context.Context) (answered bool) {
 	if req.Err() != nil || base.Err() != nil {
 		return false
 	}
-	s.haltService(w, stateDetailUnreachable)
+	detail, service := stateDetailUnreachable, serviceNameProject
+	if s.wsModel {
+		detail, service = stateDetailUnreachableWorkspace, serviceNameWorkspace
+	}
+	s.answerServiceWait(w, detail, service, "could not be reached")
 	return true
 }
+
+// workspaceUnavailable is what a call the workspace's service REFUSED as
+// unavailable is answered with (R3, D2983): the workspace's service re-reads
+// the workspace's roster as it re-reads its published node, and a roster it
+// could not read is refused as the service being unable to read the state it
+// must read — never as a verdict about this run. So the run waits for it
+// exactly as it waits for a workspace service it cannot reach, and moves to no
+// other credential meanwhile, which is the whole of R3's "it waits for a
+// service it cannot reach instead of halting on a verdict nobody made".
+//
+// The service answered, so the sentence says what it could not do rather than
+// that it could not be reached, and the halt the spent bound reaches names the
+// roster rather than the connection.
+func (s *Server) workspaceUnavailable(w http.ResponseWriter) {
+	s.answerServiceWait(w, stateDetailWorkspaceRoster, serviceNameWorkspace, "cannot read the workspace's roster")
+}
+
+// answerServiceWait is the wait both of the callers above answer with: the
+// answer that ends the stage in flight, and the halt of the run once the bound
+// from the first such call is spent. cause is what went wrong, as the log line
+// and the agent's own error sentence say it — the two callers differ in what
+// the service did or failed to do, and in nothing else.
+func (s *Server) answerServiceWait(w http.ResponseWriter, detail, service, cause string) {
+	until := s.noteUnreachable()
+	if !time.Now().Before(until) {
+		s.haltService(w, detail)
+		return
+	}
+	s.answer(ServiceAnswer{Unreachable: &Unreachable{RetryAt: until, Service: service}})
+	s.log.Warn("the "+service+" "+cause+"; the run waits for it",
+		"stage", s.stageName(), "service", service, "retry_at", until.UTC().Format(time.RFC3339))
+	writeError(w, http.StatusServiceUnavailable, "api_error",
+		"fugaro: the "+service+" "+cause+"; the run waits for it until "+until.UTC().Format(time.RFC3339))
+}
+
+// noteUnreachable records a call that could not reach the service and answers
+// when this run stops waiting for it: the first such call, plus
+// serviceUnreachableBound (D2983). The clock is the run's and not the call's,
+// so a stage that meets the same outage again — and a second call in the stage
+// that met it — waits for the outage to be over rather than for a fresh bound
+// of its own, and every answer that arrives clears it (serviceAnswer): one
+// answer means the service is back.
+//
+// The first call of an outage is the one that sets the bound, and the bound is
+// this run's own: it is not persisted and not written to the record, because a
+// run that is stopped and relanced is a run that starts its own.
+func (s *Server) noteUnreachable() time.Time {
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.unreachableSince.IsZero() {
+		s.unreachableSince = now
+	}
+	return s.unreachableSince.Add(serviceUnreachableBound)
+}
+
+// noteServiceReached clears the outage clock: an answer of any kind — a served
+// call, a typed refusal, a model error the service relayed — is the service
+// being reachable, and the next call that cannot reach it starts a bound of its
+// own (D2983). It is called from serviceAnswer, the one place an answer of the
+// service's own is read.
+//
+// It answers the clock it cleared, because one answer is not always the service
+// being back: a workspace's service that refuses a call as unable to read its
+// roster answered and is still not serving this run, and that refusal puts the
+// clock back where it was (keepUnreachable, R3).
+func (s *Server) noteServiceReached() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	since := s.unreachableSince
+	s.unreachableSince = time.Time{}
+	return since
+}
+
+// keepUnreachable puts an outage clock back where an answer found it: the
+// workspace's service REFUSED a call as unable to read its roster rather than
+// serving one, and R3's wait is measured from the first call of the outage, so
+// a bound re-armed by every such refusal is a wait that never spends it and a
+// halt (stateDetailWorkspaceRoster) that is never reached. A clock that was not
+// running stays cleared: the outage of these refusals begins with the one that
+// meets it.
+func (s *Server) keepUnreachable(since time.Time) {
+	if since.IsZero() {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.unreachableSince.IsZero() {
+		s.unreachableSince = since
+	}
+}
+
+// workspaceSlipHeld reports whether the calls this gateway makes to the
+// workspace's service travel under the workspace's own slip: the roster R3's
+// refusal is about is re-read under that slip and nowhere else (F13, R4), so a
+// call holding none has no roster read to wait for.
+func (s *Server) workspaceSlipHeld() bool {
+	sv := s.o.Upstream.Service
+	return sv != nil && sv.WorkspaceSlipID != ""
+}
+
+// serviceUnreachableBound is how long a run waits for a credentials service it
+// cannot reach before it halts, naming the service (D2983). One constant covers
+// both services — an outage is a fact about the service and not about the route
+// that met it — and it is the bound gitforward.go's own retry is to reuse when
+// WS18 lands, because the git paths have no stage to wait in and would otherwise
+// spend a second one.
+//
+// What it is chosen for: it rides out what a service actually does (a revision
+// rollout, a cold start, a scale-to-zero revision waking, IAM propagation on a
+// grant that just landed), which is seconds to a couple of minutes, and it is
+// short enough that a service that is really gone stops the run inside the job
+// rather than at its deadline. It is a var, like endStageWait and
+// upstreamRetryDelay, so the tests do not spend it.
+var serviceUnreachableBound = 5 * time.Minute
 
 // answer hands one service answer to the run's hook, if it has one.
 func (s *Server) answer(a ServiceAnswer) {
 	if s.o.OnServiceAnswer != nil {
 		s.o.OnServiceAnswer(a)
+	}
+}
+
+// answerChain hands one served call's chain answer to the step's record hook,
+// if the run has one (chain_names.go): the source that served the call, the
+// fallback flag and the model that served. Like answer it is called with no
+// lock of this package's held, and a nil hook is not an error — a run whose
+// repository has not migrated has no record member to fill.
+func (s *Server) answerChain(a ChainAnswer) {
+	if s.o.OnChainAnswer != nil {
+		s.o.OnChainAnswer(a)
 	}
 }

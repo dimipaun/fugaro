@@ -98,7 +98,7 @@ A round the run **does not ask at all** is *skipped*, and it is not a failed one
 The stage's account can resolve to none — `triage` is a stage-scoped Claude
 account the published policy has to name, and a policy that names none for it
 leaves the stage with nothing to run on ([mixed
-credentials](design/mixed-credentials.md)) — and when the model the stage would
+credentials](mixed-credentials/spec.md)) — and when the model the stage would
 run is one only Anthropic serves that no provider route claims, while the run's
 gateway is the api-key one holding no Anthropic key, the gateway refuses the call
 itself, for the key it does not hold, before the request reaches any service.

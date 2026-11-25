@@ -22,15 +22,12 @@ const (
 // (NoBudget).
 //
 // It is the address and the identity, never the policy: what a *run* is
-// accounted for is the job's mode and the project's published policy, and the
-// block it writes names the mode off so that a launch of this installation
-// mints nothing (an installation whose config names a database and no mode is
-// one whose mode is observe, C1/AB11). A test that means a world with a budget
-// backend says so itself (the CLI's buildBudgetWorld, the runner's
-// attachBackend). What this gives is the world every later task's tests need
-// before they can say anything else: the installation has a database, so a run
-// has something to open a session against and a launch has something to mint
-// for.
+// accounted for is the job's mode and the project's published policy, and a
+// test that means a world with a budget backend says so itself (the CLI's
+// buildBudgetWorld, the runner's attachBackend). What this gives is the world
+// every later task's tests need before they can say anything else: the
+// installation has a database, so a run has something to open a session
+// against and a launch has something to mint for.
 type Budget struct {
 	// DB is the fake database itself, for a test that seeds a node or reads
 	// back what a run wrote.
@@ -48,6 +45,11 @@ type Budget struct {
 const (
 	// BudgetAPIKey is the web API key a fake budget database is named by.
 	BudgetAPIKey = "AIzaSyFakeWebApiKeyForTests000000000"
+	// BudgetSigner is the signer account a fake budget database's installation
+	// mints its runs' identities with. It is a service account in the Firebase
+	// project (the name `fugaro update --firebase-project` writes), shaped like
+	// one and not one.
+	BudgetSigner = "fugaro-token-signer@aurora-fp.iam.gserviceaccount.com"
 )
 
 // NewBudget starts a fake budget database, which lives until the test ends.
@@ -83,19 +85,23 @@ func (b *Budget) Env() []string {
 }
 
 // ConfigBlock is the budget block a project config carries for this database,
-// as one line for a fixture's config text: the database and the key a client
-// exchanges a run's token with, and the mode off — the harness's world is an
-// installation whose budget does nothing, so a launch of it mints no token and
-// a run of it reads no policy, which is what a test that is not about the
-// budget means. A test that means a budget that is on adds that itself, the way
-// internal/cli's buildBudgetWorld and launch fixtures do: an installation whose
-// config names a database and no mode is one whose mode is observe (C1, AB11),
-// so a modless block would be a block that mints — and every launch of a
-// fixture would need a signer and an identity of its own. Empty for a null
+// as one line for a fixture's config text: the database, the key a client
+// exchanges a run's token with and the signer account the launcher mints it
+// with, and no mode — the block says the installation has one, never how a run
+// is accounted for, which is the job's mode and the project's published policy.
+// A test that also means a mode, a per-run cap or a different signer adds that
+// itself, the way internal/cli's buildBudgetWorld does. Empty for a null
 // budget.
+//
+// The signer is part of the block because it is part of what an installation
+// with a database has: the Firebase root that creates the database creates the
+// web key, the signer account, the custom role and the grants with it (F4), and
+// every launch of such an installation mints its run's identity through that
+// signer (AB4, F7). A config block naming a database and no signer is a state
+// no update leaves behind — and one a launch refuses (budgetSignerOn).
 func (b *Budget) ConfigBlock() string {
 	if b == nil {
 		return ""
 	}
-	return "budget: { mode: off, firebase_api_key: " + b.APIKey + ", rtdb_url: " + b.DB.URL + " }\n"
+	return "budget: { firebase_api_key: " + b.APIKey + ", rtdb_url: " + b.DB.URL + ", token_signer: " + BudgetSigner + " }\n"
 }

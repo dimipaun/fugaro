@@ -30,6 +30,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/followup"
@@ -47,6 +48,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -272,7 +274,7 @@ type run struct {
 	env    []string
 	// mixedStages are the stages of this run that run on a stage-scoped
 	// Claude OAuth account of its own instead of the run's own credential,
-	// keyed by stage (docs/design/mixed-credentials.md §11, the owner's B0
+	// keyed by stage (docs/mixed-credentials/spec.md §11, the owner's B0
 	// ruling). It holds at most the senior review and the adversarial review,
 	// and it is empty for every run that does not mix credentials. It is read
 	// once at bootstrap (resolveMixedStages, agentenv.go) and never changes: a
@@ -372,7 +374,12 @@ type run struct {
 	// returns, and says what the gateway saw: violations of the stage's
 	// rules (the first fails the stage) and its token count.
 	wroteManaged bool // this run wrote the managed settings file (guarded by mu)
-	warnedKnob   bool // the routing-settings knob's Cloud Run warning was logged
+	// warnedManagedWrite is whether the one line about a local run's managed
+	// settings that could not be written has been logged: every stage writes
+	// the file, and the machine either holds the directory or does not
+	// (guarded by mu).
+	warnedManagedWrite bool
+	warnedKnob         bool // the routing-settings knob's Cloud Run warning was logged
 	// ignoredGovernanceSaid is whether the untagged build's one line about the
 	// governance block it ignores has been written: the line is about the
 	// build, so a run says it once however many stages it has (guarded by mu).
@@ -395,8 +402,32 @@ type run struct {
 	// D1934); nil for a run that holds none, which is every run of an
 	// installation the launcher was granted no slip for. slipMu guards it,
 	// because the beat's own goroutine runs while the run goes on.
-	slip   *slipHold
+	slip *slipHold
+	// wsSlip is the workspace's own slip, claimed at bootstrap from the id the
+	// launcher was granted (creds.PersonSlipEnv, WC8) and presented to the
+	// workspace's service alone (R4). It is a second hold rather than the same
+	// one because the two slips have two grantors and two claim secrets, and
+	// they travel under two pairs of headers exactly so that no call can carry
+	// the wrong one; nil for a run the workspace granted no slip, which is
+	// every run of a member whose launcher holds no personal token. slipMu
+	// guards it with slip above.
+	wsSlip *slipHold
 	slipMu sync.Mutex
+	// credRoute is the run's read of its own credential route record — read
+	// once for the whole run (gateway.go's credentialRoute) and asked at least
+	// twice: for the service the run's forge traffic goes to (WS18) and for the
+	// gateway's upstream (WS11). Guarded by mu, and routeRead says the read is
+	// done, so the route and the error beside it are the answer.
+	credRoute    creds.Route
+	routeReadErr error
+	routeRead    bool
+	// workspaceBeat is the keep-warm beat this run sends to its workspace's
+	// credentials service, or nil for a run whose route record serves no kind
+	// there, a run whose agent.workspace_beat is off, and a local run — which
+	// is not routed at all (WS13, R10). workspaceMu guards it, because the
+	// beat's own goroutine runs while the run goes on.
+	workspaceBeat *workspaceBeat
+	workspaceMu   sync.Mutex
 	// The gateway, when the budget is on for an api-key or vertex run, and
 	// what its stages cost; all guarded by mu. gwUsed is the money its calls
 	// settled -- the run's billed model spend -- and gwNotional is the tier-A
@@ -421,9 +452,26 @@ type run struct {
 	gwClosed       bool
 	gwUsed         pricing.Micros
 	gwNotional     pricing.Micros
+	// gwFallback is the part of gwUsed that bought a fallback: the calls the
+	// credentials service served from a source that is not its chain's first
+	// and a metered source paid for (C1, CS8, D140). It is the ledger's
+	// figure and not a sum of the stages' (recordLedgerCost), and it is a
+	// part of the run's model money -- cost.fallback_usd -- where a fallback
+	// a subscription served is notional and counted nowhere.
+	gwFallback pricing.Micros
+	// chainSource and chainFallback are what the credentials service's
+	// answers have said about the stage running now (C1's ChainAnswer, CS8):
+	// the source of the last call it answered -- nil when it answered none of
+	// them -- and whether any call of the stage came from a source that is
+	// not the chain's first. The gateway calls the hook once per answered
+	// call, from its own goroutines, so both are guarded by mu; a stage's row
+	// takes them and clears them (cost.go's stageTiming, stephook.go's
+	// stepTiming), which is what makes them the stage's own.
+	chainSource   *routing.SourceName
+	chainFallback bool
 	// direct is the model spend of the stages a stage-scoped Claude OAuth
 	// account served -- a mixed run's review and adversarial stages
-	// (docs/design/mixed-credentials.md §11). The gateway saw none of their
+	// (docs/mixed-credentials/spec.md §11). The gateway saw none of their
 	// calls, so nothing settles them: their figure is Claude Code's own result
 	// event, recorded here by recordAccountStageCost, and it is in
 	// record.CostUSD and cost.model_usd beside the ledger's two (P11, P12).
@@ -580,6 +628,12 @@ type run struct {
 	// is in the diff (D993); it is empty for a run that added none, which is
 	// every run whose task was not an asset.
 	binariesAdmitted []string
+	// promote is the run's promote pass (fugaro run --promote, LV7.1),
+	// resolved once from the checkout at the first brief (promoteRun) and read
+	// again at finalize, where the branch's own items answer what the run did
+	// with the area's debt: nil for every run whose task carries no promote
+	// block, which is every run that is not raising an area's level.
+	promote *promotePass
 	// rigorCfg is the run's rigor configuration *as the base branch has it*
 	// (docs/rigor-modes D25), read once at bootstrap and reused at every
 	// later moment (rigor.go); rigorRev is the revision it was read from, ""
@@ -591,11 +645,13 @@ type run struct {
 	rigorRev string
 	// layersRigor is the mode the layers alone resolved at the moments that
 	// have run — the run's own request left out (rigor.LayersRigor) — and it is
-	// set only when that request took the run off the axis
-	// (rigor.Rigor.PerRun, hotfix). It is the mode whose floor holds beside
-	// hotfix's own row: a request raises a mode and never lowers a floor (D8,
-	// LF5), so reading only the row of the mode the request chose would lower
-	// one (policy.Effective.ReviewFloorFor, resolveLevelsForcing).
+	// set only when that request took the run *below* them. It is the mode
+	// whose floor holds beside the requested one's: a request lowers a mode and
+	// never a floor (D8, LF5), so reading only the row of the mode the request
+	// chose would lower one (policy.Effective.ReviewFloorFor,
+	// resolveLevelsForcing). A request that took the run to hotfix sets none:
+	// hotfix reads its own row and nothing beside it (the owner's ruling of
+	// 2026-11-20).
 	layersRigor rigor.Rigor
 	// baseCfg is the whole resolved configuration the base branch's
 	// fugaro.yaml produced at bootstrap, of which rigorCfg is the mode's
@@ -781,11 +837,12 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		if p := recover(); p != nil {
 			err = fmt.Errorf("panic: %v", p)
 		}
-		// First, on every path out of here: the keep-warm beat is the one
-		// goroutine of this run that is not waited for anywhere else, and a
+		// First, on every path out of here: the keep-warm beats are the two
+		// goroutines of this run that are not waited for anywhere else, and a
 		// request still in flight when the run ends is a request of a
-		// finished run (DS1.5).
+		// finished run (DS1.5, WS13's beat for the workspace's service).
 		r.stopSlipBeat()
+		r.stopWorkspaceBeat()
 		if errors.Is(err, ErrDuplicateExecution) || errors.Is(err, errOwnerUnknown) {
 			// Another execution owns this run, or may: its result.json and
 			// lock are not ours to touch.
@@ -858,6 +915,13 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 				return
 			case cerr != nil && err == nil:
 				err = fmt.Errorf("writing run record: %w", cerr)
+			default:
+				// The failure record this execution just created is the run's
+				// own, so its summary goes beside it: a listing reads the
+				// summary where it read result.json, and a summary a deleted
+				// record left behind would otherwise stand in for this one
+				// (saveSummary).
+				r.saveSummary(ctx, r.rec)
 			}
 			rec = r.rec
 			err = r.redactErr(err)
@@ -865,14 +929,22 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		}
 		wctx, cancelWrite := context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
 		defer cancelWrite()
-		if werr := writeRecord(d.Store, wctx, r.recordSnapshot()); werr != nil && err == nil {
-			err = fmt.Errorf("writing run record: %w", werr)
+		final := r.recordSnapshot()
+		if werr := writeRecord(d.Store, wctx, final); werr != nil {
+			if err == nil {
+				err = fmt.Errorf("writing run record: %w", werr)
+			}
+		} else {
+			// The run's last summary goes with its last record, so a listing
+			// reads the ending a person's `runs ls` shows (saveSummary).
+			r.saveSummary(wctx, final)
 		}
 		rec = r.rec
 		err = r.redactErr(err)
 	}()
 
 	r.addSealKey()
+	r.addIdentityTicket()
 	r.addMountedSecrets()
 	r.registerModelCredentials()
 	if onNewRun != nil {
@@ -989,8 +1061,44 @@ func (r *run) save(ctx context.Context) {
 	}
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
 	defer cancel()
-	if err := writeRecord(r.d.Store, wctx, r.recordSnapshot()); err != nil {
+	rec := r.recordSnapshot()
+	if err := writeRecord(r.d.Store, wctx, rec); err != nil {
 		r.d.Log.Warn("writing run record failed", "err", err)
+		return
+	}
+	// The summary follows the record it projects, and only a record that
+	// reached the bucket: an object standing in for one that is not there
+	// would be a listing's row of a run that never happened.
+	r.saveSummary(wctx, rec)
+}
+
+// saveSummary writes the run's summary object beside the record it projects:
+// the two objects `runs ls` reads a row from instead of three
+// (docs/runs-ls-speed, RL4, D2966). It is written where the record is written
+// -- every save, which is each stage end and the finalize -- because a listing
+// shows the run as it is now, and a summary that lagged its record would show
+// a row that never was.
+//
+// It is best-effort in the way the pull-request index is (prindex.go): the
+// object is a shortcut over the run's own objects, so a summary that fails to
+// write costs a listing its speedup and never the run, and a run that has none
+// is read from its three objects exactly as before. rec is the record as it
+// was written, so the summary and the record it stands in for cannot disagree.
+func (r *run) saveSummary(ctx context.Context, rec *runstore.Record) {
+	// A run with no bucket, no record or no clock is a run there is nothing to
+	// write here for: the first two are a run too early to have a record and a
+	// fixture that carries none, and the clock is the one Run fills in, absent
+	// from a run assembled by hand (which is where the other two come from).
+	// A summary names the moment it was written, so with no clock there is no
+	// object to write, and writing one is never worth a panic in a run.
+	now := r.d.Now
+	if r.d.Bucket == nil || rec == nil || now == nil {
+		return
+	}
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
+	defer cancel()
+	if err := runstore.WriteSummary(wctx, r.d.Store, runstore.NewSummary(rec, r.spec, now().UTC())); err != nil {
+		r.d.Log.Warn("writing the run summary failed", "err", err)
 	}
 }
 
@@ -1046,16 +1154,37 @@ func (r *run) createRecord(ctx context.Context) error {
 
 // recordCredential is the cascade's own record (C1.19, D140): the name -- never
 // the value, which never leaves the service -- of the credential the run's
-// cascade answered a call with. It is written in two places, each the one its
-// reader has: the record the run ends with (runstore.Record.OAuthAccount,
-// which `fugaro runs` reads when a record exists) and the registry entry the
-// dashboard reads while the run is running (budget.AgentEntry.Credential).
+// cascade answered a call with, and the owner of that credential's token (F16
+// of docs/secrets-brokering/dynamic-delivery, runstore.Record.CredentialOwner,
+// the account id of the person it belongs to, which the service states on the
+// same answer -- gateway.ServiceAnswer.CredentialOwner, read from
+// credsvc.HeaderCredentialOwner -- and only for a credential the launcher
+// OWNS). It is written in two places,
+// each the one its reader has: the record the run ends with
+// (runstore.Record.OAuthAccount, which `fugaro runs` reads when a record
+// exists) and the registry entry the dashboard reads while the run is running
+// (budget.AgentEntry.Credential).
 //
-// The name is whatever the service answered, so it is written as one word: a
+// The name and the owner are ONE answer's pair, and they are written by ONE
+// writer under ONE lock for that reason: the stages of a cascade call at the
+// same time, so two answers reach serviceAnswer together, and a second writer
+// of either field would let the two interleave -- the record would end pairing
+// one answer's credential with another answer's owner, which is the
+// misattribution F16 exists to prevent. owner is therefore a value of this
+// call and never a field read back beside it.
+//
+// An empty owner is a write and not a no-op: a credential the launcher does not
+// own -- a pool's, a bundle entry, a per-user name of another person -- is
+// answered no owner (credsvc.credentialOwnedBy), so an answer that names a
+// credential and no owner CLEARS the field. Keeping the owner an earlier answer
+// gave would name the launcher beside a credential that is not theirs.
+//
+// Both are whatever the service answered, so they are written as one word: a
 // name carrying a control or bidi character would have the whole PATCH denied
 // and freeze the run's registry, which clipEntry's clipString already strips
 // (internal/budget) -- this is the second bound, for the record, which no
-// clipEntry sees.
+// clipEntry sees. No credential's VALUE is ever in play: the owner is an
+// account id, and no value ever leaves the service.
 //
 // A cascade run is the only run whose agent.auth makes a credential that is not
 // its own visible to it, and the gateway only ever forwards to the credentials
@@ -1066,14 +1195,20 @@ func (r *run) createRecord(ctx context.Context) error {
 // Its one caller is serviceAnswer (internal/runner/gateway.go), the callback
 // startGateway hands the gateway: the write is here, with the run's other
 // record writers, and the answer that decides it arrives there.
-func (r *run) recordCredential(name string) {
+func (r *run) recordCredential(name, owner string) {
 	name = safetext.Field(name)
 	if name == "" {
 		return
 	}
+	owner = safetext.Field(owner)
 	r.mu.Lock()
-	if r.rec != nil && r.rec.OAuthAccount != name {
-		r.rec.OAuthAccount = name
+	if r.rec != nil {
+		if r.rec.OAuthAccount != name {
+			r.rec.OAuthAccount = name
+		}
+		if r.rec.CredentialOwner != owner {
+			r.rec.CredentialOwner = owner
+		}
 	}
 	r.mu.Unlock()
 	r.noteRegistry(func(e *budget.AgentEntry) { e.Credential = name })
@@ -1481,9 +1616,27 @@ func (r *run) openProvider(ctx context.Context, kind, from string) error {
 	// and because it carries the identity set the published node names (T16).
 	// providers.Proxied refuses every kind but Bitbucket, so a proxied run
 	// cannot open another provider by asking for one.
+	// A forge credential this run's route serves from a workspace's service is
+	// the workspace's and not the job's (WS18, D2979), so the provider is
+	// opened the way a service-held credential is: no token and no key of the
+	// job's own is read, whatever the environment carries, and the runner
+	// installs the service's tokens below (C2.2, D145).
+	//
+	// The two arms are the two providers, and each is the same fact seen once:
+	// bitbucket's requests go to this run's forwarder, which is pointed at the
+	// service the route named -- the same one the model path's upstream calls
+	// when the model kind is served there -- and github's provider is opened
+	// keyless, its tokens coming from the mint below.
+	forgeService, fromWorkspace, err := r.forgeService(ctx, forgeKind(kind))
+	if err != nil {
+		return err
+	}
 	open := r.d.OpenProvider
-	if r.proxied {
-		open = r.proxiedOpener(ctx)
+	switch {
+	case r.proxied || (fromWorkspace && kind == gitprov.KindBitbucket):
+		open = r.proxiedOpener(ctx, forgeService)
+	case fromWorkspace && kind == gitprov.KindGitHub:
+		open = providers.ServiceHeldGitHub(r.d.Env, nil, func(msg string) { r.d.Log.Warn(r.redact(msg)) })
 	}
 	p, secrets, err := open(ctx, kind, r.spec.Repo)
 	for _, s := range secrets {
@@ -1500,7 +1653,7 @@ func (r *run) openProvider(ctx context.Context, kind, from string) error {
 	// first GitAuth below, and it is not optional -- a provider that took
 	// ServiceHeldKey refuses every token until one is installed, so a run
 	// that skipped this would stop rather than mint in-job.
-	src, err := r.serviceTokens()
+	src, err := r.serviceTokens(ctx)
 	if err != nil {
 		return err
 	}
@@ -1688,7 +1841,7 @@ func (r *run) stampTrailers(model string) []gitops.Trailer {
 //
 // The stage's credential is the part of it that is not the run's own: a stage
 // the run's stage-scoped Claude OAuth account serves gets that account's
-// environment instead (stageAgentEnv, docs/design/mixed-credentials.md §11),
+// environment instead (stageAgentEnv, docs/mixed-credentials/spec.md §11),
 // and the error here is the refusal of a stage whose account token the runner
 // does not hold.
 func (r *run) stageEnv(stage string, pins map[string]string) ([]string, error) {
@@ -1769,11 +1922,16 @@ func (r *run) unstampedCommits(ctx context.Context) (total, unstamped int, err e
 	return len(shas), unstamped, nil
 }
 
-// serviceTokens returns the installation's credentials service as the source
-// of this run's installation tokens, or nil when the installation has not
-// opted into one (providers.EnvCredentialsServiceURL unset): with the
-// service off the App's key is the job's own and its provider mints tokens
-// itself, as it always did.
+// serviceTokens returns the credentials service this run's github kind is
+// served by as the source of its installation tokens, or nil when there is
+// none: the project's own, which the job's environment names and which is
+// every run with no record, or the workspace's, whose address the run's own
+// route record carries (WS18, D2979). A run whose route serves the github kind
+// from the workspace has a mint to make even where its own installation names
+// no service, and the route's answer is what says so.
+//
+// nil is left for a run with no service at all: with the service off the App's
+// key is the job's own and its provider mints tokens itself, as it always did.
 //
 // A LOCAL run whose environment names a service is refused rather than
 // served, in the words serviceUpstream refuses the same situation in (D149):
@@ -1789,8 +1947,11 @@ func (r *run) unstampedCommits(ctx context.Context) (total, unstamped int, err e
 //
 // It is built per provider, so each provider has the cache ServiceTokens
 // documents -- one mint per hour per provider, not one per API call.
-func (r *run) serviceTokens() (*github.ServiceTokens, error) {
-	url := envLookup(r.d.Env, providers.EnvCredentialsServiceURL)
+func (r *run) serviceTokens(ctx context.Context) (*github.ServiceTokens, error) {
+	url, _, err := r.forgeService(ctx, creds.KindGitHub)
+	if err != nil {
+		return nil, err
+	}
 	if url == "" {
 		return nil, nil
 	}
@@ -1882,7 +2043,16 @@ func (r *run) branchClaim() string {
 // the installation's token. Nothing here is a credential, so nothing here is
 // redacted.
 func (r *run) startProxiedGit(ctx context.Context) error {
-	if !r.proxied {
+	// The route decides which service this run's git traffic reaches (WS18,
+	// D2979): the project's own, which is where it goes for every run with no
+	// record and every run whose record serves the Bitbucket kind from its
+	// project -- and the workspace's, at the address the record carries, for a
+	// run whose forge credential of that kind is the workspace's.
+	service, fromWorkspace, err := r.forgeService(ctx, creds.KindBitbucket)
+	if err != nil {
+		return err
+	}
+	if !r.proxied && !fromWorkspace {
 		// Not proxied is the ordinary state of a per-repository job whose
 		// published block does not admit its repository -- it carries its own
 		// mounted token, and nothing about it changed (G9) -- and of every
@@ -1891,12 +2061,15 @@ func (r *run) startProxiedGit(ctx context.Context) error {
 		// and sharedJobNeedsTheProxy is what says so in one clear sentence.
 		return r.sharedJobNeedsTheProxy(ctx)
 	}
-	service := envLookup(r.d.Env, providers.EnvCredentialsServiceURL)
-	if service == "" {
+	if !fromWorkspace && service == "" {
 		// Belt and braces: admissionCheck decides proxied-ness from this same
 		// variable, so a run that is proxied carries one. Refusing rather
 		// than starting a forwarder with no service keeps the failure here,
-		// where the reason is known, instead of at the first git command.
+		// where the reason is known, instead of at the first git command. A
+		// run whose route serves the kind from the workspace carries the
+		// address there and needs no variable of its own: the record is what
+		// says where a credential is served (R3), and it is the address a
+		// workspace's service is called at.
 		return fmt.Errorf("this run's Bitbucket access goes through the installation's credentials service, and this job names no service (%s is not set): the run stops before anything is cloned", providers.EnvCredentialsServiceURL)
 	}
 	// A challenger arm is exempt for the same reason the three run kinds
@@ -1905,14 +2078,22 @@ func (r *run) startProxiedGit(ctx context.Context) error {
 	// upgrade a launcher -- when what is true of it is that a Bitbucket
 	// repository is never a challenger at all (A2.1, mintGitAuth).
 	if !r.review && !r.artifact && !r.evaluate && !r.shadow && r.branchClaim() == "" {
-		return fmt.Errorf("this run's Bitbucket access goes through the installation's credentials service (the published policy admits %s with proxy: true), and that service admits a push only for the branch the run's identity names (fb): this identity names none, so the launcher that started this run is older than fugaro %s. Upgrade Fugaro on the machine that launches this repository's runs (brew upgrade dimipaun/tap/fugaro), run 'fugaro update' to bring the installation and the job images to it, and launch it again — the run stops before anything is cloned, and nothing was pushed or changed",
-			r.spec.Repo, branchClaimSince)
+		// Which service this run's proxy chain ends at is the message's own
+		// first clause: a run routed to the workspace was not admitted by its
+		// project's published block, and telling its operator to look there
+		// would name a record that says the opposite.
+		where := fmt.Sprintf("the installation's credentials service (the published policy admits %s with proxy: true)", r.spec.Repo)
+		if fromWorkspace {
+			where = fmt.Sprintf("the workspace's credentials service (this repository's own credential route serves its Bitbucket credential there, %s)", r.spec.Repo)
+		}
+		return fmt.Errorf("this run's Bitbucket access goes through %s, and that service admits a push only for the branch the run's identity names (fb): this identity names none, so the launcher that started this run is older than fugaro %s. Upgrade Fugaro on the machine that launches this repository's runs (brew upgrade dimipaun/tap/fugaro), run 'fugaro update' to bring the installation and the job images to it, and launch it again — the run stops before anything is cloned, and nothing was pushed or changed",
+			where, branchClaimSince)
 	}
 	job, err := r.jobName()
 	if err != nil {
 		return errors.New(r.redact(err.Error()))
 	}
-	f, err := gateway.StartGitForward(ctx, gateway.GitForwardOptions{
+	o := gateway.GitForwardOptions{
 		Service: service,
 		Identity: gateway.Service{
 			Job:        job,
@@ -1920,7 +2101,20 @@ func (r *run) startProxiedGit(ctx context.Context) error {
 			IDToken:    func(ctx context.Context) (string, error) { return metadataIDToken(ctx, r.d.Env, service) },
 		},
 		Log: r.d.Log,
-	})
+	}
+	if fromWorkspace {
+		// The record's address, and the identity this run presents there: a
+		// workspace upstream and not the project's service (WS11's second
+		// upstream, WS18). The project's own Service and Identity stay beside
+		// it, because a run's proxy chain has one end and this is the route's
+		// answer to which (R3).
+		ws, err := r.workspaceUpstream(service)
+		if err != nil {
+			return fmt.Errorf("starting the Bitbucket forwarder: %w", err)
+		}
+		o.Workspace = ws
+	}
+	f, err := gateway.StartGitForward(ctx, o)
 	if err != nil {
 		return fmt.Errorf("starting the Bitbucket forwarder: %w", err)
 	}
@@ -3265,7 +3459,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// else here knows it -- the launch gate runs in the launcher, on the other
 	// side of the job.
 	if r.artifact && r.jobEnv(backend.BackendEnv) == backend.CloudBatch {
-		return fmt.Errorf("recipe %s is mode: artifact, which renders a deliverable into the run's bucket, and this run's job is on the cloud-batch backend: an artifact-producing run is never launched on it, because a Batch run's account is not per-repository -- the same run's inputs, artifacts and record would be readable and overwritable by every run on the profile (docs/design/artifact-runs.md §8.5 and D11, plan 2026-10-19-compute-backend.md Global Constraint 13). Launch an artifact recipe on backend: cloud-run", rrec.Name)
+		return fmt.Errorf("recipe %s is mode: artifact, which renders a deliverable into the run's bucket, and this run's job is on the cloud-batch backend: an artifact-producing run is never launched on it, because a Batch run's account is not per-repository -- the same run's inputs, artifacts and record would be readable and overwritable by every run on the profile (docs/artifact-runs/spec.md §8.5 and D11, plan 2026-10-19-compute-backend.md Global Constraint 13). Launch an artifact recipe on backend: cloud-run", rrec.Name)
 	}
 	// A task that attached files under a resolved recipe of another mode
 	// fails the run before its first step (design §8.2): the launcher
@@ -3744,14 +3938,29 @@ func (r *run) bootstrap(ctx context.Context) error {
 		Reserve: wf.Timeouts.FinalizeReserve.Duration, Stage: wf.Timeouts.Stage.Duration,
 		StopFraction: r.cfg.Agent.ReviewStopFraction, Now: r.d.Now}
 	if r.follow != nil {
-		if err := r.prepareFollowUp(ctx); err != nil {
-			return err
+		if r.spec.Resumes != "" {
+			// A resumed run's task is a follow-up's too (task.Spec.Resumes):
+			// it works on the paused run's pull request and continues its
+			// chain. What it starts from is the pause and not the pull
+			// request's comments: it reads none. What it does inherit is what
+			// the paused run worked from — its rulings and the questions they
+			// answer — read off that run's record with the pause
+			// (prepareResume, inheritRulings): suspending a run does not end
+			// the answers the owner has given it.
+			if err := r.prepareResume(ctx); err != nil {
+				return err
+			}
+		} else {
+			if err := r.prepareFollowUp(ctx); err != nil {
+				return err
+			}
+			// The ruling this run works from, with the decisions it answers
+			// (OD1): its launch's own, or the pair the run before it worked
+			// from, which it inherits. Written here and not with the task's
+			// other text above because only now has the previous record been
+			// read.
+			r.recordRuling()
 		}
-		// The ruling this run works from, with the decisions it answers (OD1):
-		// its launch's own, or the pair the run before it worked from, which it
-		// inherits. Written here and not with the task's other text above
-		// because only now has the previous record been read.
-		r.recordRuling()
 	}
 	// The backing services this job's image provides, started now that the
 	// checkout and the agent's environment exist and before any stage runs
@@ -3810,7 +4019,7 @@ type ConfigResolution struct {
 
 // ResolveConfig resolves fugaro.yaml (data) over pl, the task's embedded
 // project layer (nil for none), anchored to the job's own project
-// (project, r.d.Project — docs/design/layered-config.md §8). The layer
+// (project, r.d.Project — docs/layered-config/spec.md §8). The layer
 // applies only to a file whose project: and gcp_project: are the layer's;
 // a launch from outside a checkout may carry one for a file that is not,
 // and Applied says so. Exported so a consumer that must prove it resolves
@@ -3858,7 +4067,7 @@ func ResolveConfig(data []byte, pl *task.ProjectLayer, project, base string) Con
 }
 
 // resolveConfig resolves fugaro.yaml (data) over the task's project layer
-// (docs/design/layered-config.md §8) and records which layer and which
+// (docs/layered-config/spec.md §8) and records which layer and which
 // resolved config the run uses. The layer applies only to a file whose
 // project: and gcp_project: are the layer's; a launch from outside a
 // checkout may carry one for a file that is not, and the record says the
@@ -3995,6 +4204,12 @@ func (r *run) systemPromptData() PromptData {
 	if r.follow != nil {
 		pd.FollowUp = followup.SystemPromptLines(r.promptData())
 	}
+	// The promote brief (LV7.1), resolved here and once: it reads the
+	// checkout's own backlog items, and the same list is what the finalize
+	// reading judges the branch against (promoteRun).
+	if p := r.promoteRun(); p != nil {
+		pd.Promote = p.brief
+	}
 	return pd
 }
 
@@ -4051,9 +4266,21 @@ func (r *run) agentLoop(ctx context.Context) {
 		req.Prompt = followup.ImplementPrompt(r.promptData(), f.sel)
 		if f.restored.Resumed {
 			req.SessionID, req.Resume = f.restored.ID, true
-			// Claude Code may still not find the session it was given:
-			// that is a reason to start fresh, not a failed stage.
-			opts.Recoverable = func(err error) bool { return errors.Is(err, agent.ErrNoSession) }
+			// Claude Code may still not find the session it was given: for a
+			// follow-up that is a reason to start fresh, not a failed stage.
+			// A resumed run may not: the session it was given is the one its
+			// pause names, and a run that started a fresh one instead would be
+			// the start-afresh R18 refuses.
+			if f.resumedStage == "" {
+				opts.Recoverable = func(err error) bool { return errors.Is(err, agent.ErrNoSession) }
+			} else {
+				// The work chain of a resumed run is the session its pause
+				// named: a fix a review round asks for, and the writeback's own
+				// save, continue that conversation rather than starting one of
+				// their own (fix prefers r.sessionID over the session it was
+				// handed).
+				r.sessionID = f.restored.ID
+			}
 		}
 	}
 	skipImplement := false
@@ -4185,10 +4412,25 @@ func (r *run) agentLoop(ctx context.Context) {
 		}
 		skipImplement = true
 	}
+	// A resumed run enters the stage the paused run was in and not the first
+	// one (R18, D3185): a pause taken in the review loop skips implement
+	// altogether — the work is on the branch and in the restored session —
+	// and one taken in a fix round enters that stage, in the session that
+	// round was in, before the loop reviews what the branch carries.
+	resumedFix := r.follow != nil && r.follow.resumedStage == "fix"
+	if f := r.follow; f != nil && config.IsReviewStage(f.resumedStage) {
+		skipImplement = true
+	}
 	// "" until implement actually runs and starts one: a Fixed gate skips
 	// implement, so there is no session yet for fix (below) to resume.
 	var sessionID string
-	if !skipImplement {
+	switch {
+	case resumedFix:
+		var ok bool
+		if sessionID, ok = r.resumeFix(ctx, req, opts); !ok {
+			return
+		}
+	case !skipImplement:
 		// Rule 1's first call site. The block is taken once and rides in both
 		// this request and the fresh one a recovered stage is retried with:
 		// the retry is the same stage, and a second take would find the queue
@@ -4848,6 +5090,36 @@ func (r *run) seniorRound(ctx context.Context, round int, reviewPrompt string) (
 	return Verdict{}, false, true
 }
 
+// resumeFix runs the fix stage a resumed run enters when the paused run
+// suspended in one (R18, D3185), in the session that round was in and with the
+// resuming prompt rather than FixPrompt: the findings that round was working
+// from are in the restored conversation, and this run has read no review of its
+// own. It reports the session to go on with and whether the loop may continue,
+// exactly as fix does, whose seams it keeps — the mode and the security
+// escalation are resolved again from the diff the work in progress carries.
+func (r *run) resumeFix(ctx context.Context, req agent.Request, opts stageOpts) (string, bool) {
+	const stage = "fix"
+	// Rule 1's third call site, as implement's is above: a message may stop
+	// this stage where it stands and resume it with the brief it was given
+	// and the message.
+	mb := r.messageBlock(ctx, stage)
+	brief := req.Prompt
+	if mb != "" {
+		req.Prompt += "\n\n" + mb
+	}
+	opts.Yield = &yieldOpts{Resume: func(block string) string { return brief + "\n\n" + block }}
+	res, ok, _ := r.stage(ctx, stage, req, opts)
+	r.noteSession(req, res)
+	r.countTokens(res)
+	if !ok || r.capReached() {
+		return req.SessionID, false
+	}
+	r.afterStage(ctx, stage)
+	r.roundRigor(ctx)
+	r.escalateSecurity(ctx, runstore.SecurityAtFix)
+	return req.SessionID, !r.pr.gone
+}
+
 // fix runs a fix stage for the findings a review round still blocks on, in the
 // implement session, and reports the session to go on with and whether the loop
 // may continue.
@@ -5417,6 +5689,36 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 			req.SessionID, req.Resume = agent.NewSessionID(), false
 			continue
 		}
+		var un *unreachableError
+		if errors.As(err, &un) {
+			// The credentials service could not be reached at all (D2983):
+			// the stage in flight ended -- it did not fail -- and the run waits
+			// for the service until the instant the gateway's own bound names,
+			// then resumes the stage's session. The attempt that ended spent
+			// what it spent, for the reason the exhausted branch below counts
+			// its own (countTokens, halt.go).
+			//
+			// No cap of its own, unlike the exhausted branch: the bound is the
+			// gateway's and it halts the run, naming the service, on the first
+			// call that meets the spent bound -- so the wait below ends at the
+			// bound, and the call the resumed stage makes either reaches the
+			// service or ends the run. maxCredentialResumes is not it: an
+			// outage is not a credential the run could switch to, and a run
+			// stopped with a credential's reason would send its operator to
+			// 'fugaro accounts ls'.
+			r.countTokens(res)
+			session := res.SessionID
+			if !agent.ValidSessionID(session) {
+				session = req.SessionID
+			}
+			if werr := r.waitForService(ctx, name, un.Service, un.Until); werr != nil {
+				return res, false, werr
+			}
+			r.d.Log.Info("the wait for the credentials service is over; resuming the stage",
+				"stage", name, "service", un.Service, "session", session)
+			req.SessionID, req.Resume = session, true
+			continue
+		}
 		var ex *exhaustedError
 		if !errors.As(err, &ex) {
 			return res, ok, err
@@ -5733,7 +6035,7 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	// A stage the run's stage-scoped Claude OAuth account serves opens no stage
 	// in the gateway and takes no figure of its own from it: its calls go
 	// straight to Anthropic, so the gateway has nothing to admit, nothing to
-	// refuse and nothing to report for it (docs/design/mixed-credentials.md
+	// refuse and nothing to report for it (docs/mixed-credentials/spec.md
 	// §11, P11). Its account stage is cleared of the previous stage's report
 	// for the same reason: nothing of this stage may be read from r.lastStage.
 	direct := r.stageDirect(name)
@@ -5945,6 +6247,19 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		r.noteStageExhausted(name)
 		r.save(ctx)
 		return res, false, exhausted
+	}
+
+	// A call that could not reach the credentials service at all ended this
+	// stage (D2983), the way an exhausted answer does and with the same
+	// reading: the stage did not fail, nothing is recorded about it, and stage
+	// waits for the instant the answer names and resumes the stage's session.
+	// It has no counterpart of noteStageExhausted above: which service the
+	// call goes to is not a walk, and the call the resumed stage makes is
+	// served by the same one.
+	var unreachable *unreachableError
+	if errors.As(context.Cause(stageCtx), &unreachable) && (err != nil || res.IsError) {
+		r.save(ctx)
+		return res, false, unreachable
 	}
 
 	// The message's stop, before everything below: the agent stopped itself
@@ -6232,7 +6547,7 @@ var transientStagePhrases = []string{"stream closed before completion"}
 // ends before any text arrives may report an error with no words in it at
 // all, and the only thing left to read is the exit that killed its process.
 // It is asked only for a stage the gateway served: a stage the run's
-// stage-scoped Claude OAuth account serves (docs/design/mixed-credentials.md)
+// stage-scoped Claude OAuth account serves (docs/mixed-credentials/spec.md)
 // forwards its calls itself, so there is no gateway to witness anything for
 // it, and such a stage is retried on its text alone -- or not at all. That is
 // the whole of the mixed-credential case here: no report of its own, no
@@ -6531,6 +6846,12 @@ func (r *run) finalize(ctx context.Context) error {
 	// value a later slice's rules act on is the one the run's whole diff
 	// answered (rigor.go).
 	r.finalizeRigor()
+	// A promote run's own reading of its branch (LV7.1, D31): the area's items
+	// as the run's first brief found them against the folder the run's own
+	// commits left. It writes nothing — the agent closed what it paid down, in
+	// its own commits — and the pull request's status section reports what it
+	// read (promotePart, promote.go).
+	r.readPromote(ctx)
 	// Nothing is written after the commit the suite ran on. The run used to
 	// file the findings it left open as backlog items here, which committed
 	// after that suite run and was not verified: a test that pins a fact

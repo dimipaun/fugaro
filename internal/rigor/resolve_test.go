@@ -5,11 +5,12 @@ import (
 	"testing"
 )
 
-// TestResolveLayerPrecedence pins D6/D20/D21: the narrowest layer that sets a
+// TestResolveLayerPrecedence pins D6/D20/D21: the narrowest rank that sets a
 // level wins — an area the run's paths matched, then the repository's own
-// value, then the project default, then Fugaro's own default — and a
-// narrower layer may set a *lower* level than a wider one, because the order
-// is a precedence and not an only-tightens rule.
+// value, then the project's answer for the repository, then the project
+// default, then Fugaro's own default — and a narrower one may set a *lower*
+// level than a wider one, because the order is a precedence and not an
+// only-tightens rule.
 func TestResolveLayerPrecedence(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -82,15 +83,34 @@ func TestResolveLayerPrecedence(t *testing.T) {
 			Critical, FromRequest, nil,
 		},
 		{
-			"a request cannot lower",
+			"a request lowers a repository default (LD3)",
 			Config{Repo: Critical}, Request{Level: POC},
-			Critical, FromRepo, nil,
+			POC, FromRequest, nil,
 		},
 		{
-			"a request cannot lower an area",
+			"a request lowers an area rule, since a floor is what holds it",
 			Config{RepoAreas: []Area{{Name: "pay", Match: "p/**", Level: Critical}}},
 			Request{Level: POC, Paths: []string{"p/x.go"}},
-			Critical, FromArea, []string{"pay"},
+			POC, FromRequest, []string{"pay"},
+		},
+		{
+			"a repository's own rule lowers a project area (D20 as amended)",
+			Config{
+				ProjectAreas: []Area{{Name: "payments", Match: "payments/**", Level: Critical}},
+				RepoAreas:    []Area{{Name: "own", Match: "payments/**", Level: POC}},
+			},
+			Request{Paths: []string{"payments/x.go"}},
+			POC, FromArea, []string{"payments", "own"},
+		},
+		{
+			"the project's entry for the repository outranks its own area",
+			Config{
+				Project:      Startup,
+				ProjectAreas: []Area{{Name: "payments", Match: "payments/**", Level: POC}},
+				ProjectRepos: map[string]Rigor{"acme/app": Critical},
+			},
+			Request{Repo: "acme/app", Paths: []string{"payments/x.go"}},
+			Critical, FromProject, []string{"payments"},
 		},
 		{
 			"a request equal to the resolved level leaves the tighter layer named",
@@ -114,6 +134,32 @@ func TestResolveLayerPrecedence(t *testing.T) {
 			Request{Paths: []string{"c/x"}},
 			Hotfix, FromArea, []string{"chore"},
 		},
+		{
+			"a carried request lowers no repository default (T5.2, LF5 §3a)",
+			Config{Repo: Critical}, Request{Level: POC, Carried: true},
+			Critical, FromRepo, nil,
+		},
+		{
+			"a carried request lowers no area rule either",
+			Config{RepoAreas: []Area{{Name: "pay", Match: "p/**", Level: Critical}}},
+			Request{Level: POC, Carried: true, Paths: []string{"p/x.go"}},
+			Critical, FromArea, []string{"pay"},
+		},
+		{
+			"a carried request raises",
+			Config{Repo: Startup}, Request{Level: Critical, Carried: true},
+			Critical, FromRequest, nil,
+		},
+		{
+			"a carried request for the level the layers set leaves them named",
+			Config{Repo: Pro}, Request{Level: Pro, Carried: true},
+			Pro, FromRepo, nil,
+		},
+		{
+			"a carried hotfix is still taken whole",
+			Config{Repo: Critical}, Request{Level: Hotfix, Carried: true},
+			Hotfix, FromRequest, nil,
+		},
 	}
 	for _, c := range cases {
 		got := Resolve(c.cfg, c.req)
@@ -122,6 +168,90 @@ func TestResolveLayerPrecedence(t *testing.T) {
 		}
 		if names := areaNames(got.Areas); !slices.Equal(names, c.wantArea) {
 			t.Errorf("%s: areas = %v; want %v", c.name, names, c.wantArea)
+		}
+	}
+}
+
+// resolveRanks is the order Resolve states once, weakest first (LD3) — the
+// same order docs/project-layer.md §2 states for a reader, as D3294 amends it
+// — with the way a test sets that one rank's level. The three area ranks match
+// different paths and carry different names, so a test that sets several ranks
+// at once reads each of them.
+var resolveRanks = []struct {
+	name string
+	set  func(*Config, *Request, Rigor)
+	from Layer
+}{
+	{"Fugaro's own default", func(*Config, *Request, Rigor) {}, FromDefault},
+	{"the project layer's default", func(c *Config, _ *Request, l Rigor) { c.Project = l }, FromProject},
+	{"a project-wide area the repo and paths match", func(c *Config, r *Request, l Rigor) {
+		c.ProjectAreas = append(c.ProjectAreas, Area{Name: "payments", Match: "payments/**", Level: l})
+		r.Paths = append(r.Paths, "payments/x.go")
+	}, FromArea},
+	{"the project layer's entry for the repository", func(c *Config, r *Request, l Rigor) {
+		c.ProjectRepos = map[string]Rigor{"acme/app": l}
+		r.Repo = "acme/app"
+	}, FromProject},
+	{"a project area naming the run's repository (D3294)", func(c *Config, r *Request, l Rigor) {
+		c.ProjectAreas = append(c.ProjectAreas, Area{
+			Name:    "member",
+			Members: []Member{{Repo: "acme/app", Paths: []string{"member/**"}}},
+			Level:   l,
+		})
+		r.Repo = "acme/app"
+		r.Paths = append(r.Paths, "member/x.go")
+	}, FromArea},
+	{"the repository's own default", func(c *Config, _ *Request, l Rigor) { c.Repo = l }, FromRepo},
+	{"a rule of the repository's own areas", func(c *Config, r *Request, l Rigor) {
+		c.RepoAreas = append(c.RepoAreas, Area{Name: "own", Match: "own/**", Level: l})
+		r.Paths = append(r.Paths, "own/x.go")
+	}, FromArea},
+	{"the run's own request", func(_ *Config, r *Request, l Rigor) { r.Level = l }, FromRequest},
+}
+
+// TestResolveStatesTheOrderOnce is LD3's table: the order is stated in one
+// function and it is this list — Fugaro's own default, the project layer's
+// default, a project area, the project's own entry for the repository, the
+// repository's own default, one of its areas, and the run's own request. Rank
+// i is set to Pro and every weaker rank to POC, so the answer must be rank i's
+// level and rank i's layer: a rank read out of order, or left out of the
+// resolver altogether, fails here.
+//
+// The first rank cannot be set — Fugaro's own default is Pro (D19), which is
+// the level that row is owed.
+func TestResolveStatesTheOrderOnce(t *testing.T) {
+	for i, rank := range resolveRanks {
+		var cfg Config
+		var req Request
+		for _, weaker := range resolveRanks[:i] {
+			weaker.set(&cfg, &req, POC)
+		}
+		rank.set(&cfg, &req, Pro)
+		got := Resolve(cfg, req)
+		if got.Level != Pro || got.From != rank.from {
+			t.Errorf("rank %d (%s) = (%q, %q); want (%q, %q): it must beat every rank below it",
+				i, rank.name, got.Level, got.From, Pro, rank.from)
+		}
+	}
+}
+
+// TestResolveOrderIsAPrecedenceNotAnOnlyTightensRule states D21 over that same
+// list: every rank may set a level *below* the one the rank under it set and is
+// still the answer, so the order is a precedence rather than an only-tightens
+// rule — which is what a default is for. The one pair where the wider rank
+// cannot be set is the first: Fugaro's own default is Pro whatever a test says,
+// and the project layer going below it is the pair under it.
+func TestResolveOrderIsAPrecedenceNotAnOnlyTightensRule(t *testing.T) {
+	for i := 0; i+1 < len(resolveRanks); i++ {
+		wider, narrower := resolveRanks[i], resolveRanks[i+1]
+		var cfg Config
+		var req Request
+		wider.set(&cfg, &req, Critical)
+		narrower.set(&cfg, &req, POC)
+		got := Resolve(cfg, req)
+		if got.Level != POC || got.From != narrower.from {
+			t.Errorf("%s (%q) over %s (%q) = (%q, %q); want (%q, %q): a narrower rank wins in either direction (D21)",
+				narrower.name, POC, wider.name, Critical, got.Level, got.From, POC, narrower.from)
 		}
 	}
 }
@@ -160,10 +290,16 @@ func TestResolveReadsTheProjectsPerRepoLevel(t *testing.T) {
 	if got := Resolve(Config{ProjectRepos: map[string]Rigor{"acme/app": ""}}, Request{Repo: "acme/app"}); got.Level != Default {
 		t.Errorf("Resolve over an unknown per-repo level = %q; want %q", got.Level, Default)
 	}
-	// And the field opts a Config in on its own: a project that states nothing
-	// but this map is configured.
-	if !cfg.Configured() {
-		t.Error("a Config carrying only ProjectRepos reports itself unconfigured, so a run would skip the resolver")
+	// And the field opts a Config in on its own, for the repository it names:
+	// a project that states nothing but this map is configured for the
+	// repository the map names, and for no other (Configured is per
+	// repository, D3294).
+	only := Config{ProjectRepos: map[string]Rigor{"acme/payments-core": Critical}}
+	if !only.Configured("acme/payments-core") {
+		t.Error("a Config carrying only ProjectRepos reports itself unconfigured for the repository it names, so a run would skip the resolver")
+	}
+	if only.Configured("acme/console-web") {
+		t.Error("a Config carrying one repository's entry reports another repository configured")
 	}
 }
 
@@ -174,12 +310,13 @@ func TestResolveReadsTheProjectsPerRepoLevel(t *testing.T) {
 // gate D12 named is dropped rather than built, and nothing here reads a key
 // that would gate it — the whole input is the request itself.
 //
-// The other half is the raise-only rule, which this must not have moved:
-// every on-axis request is still compared by Rank and still cannot lower.
+// The other half is the on-axis request, which the order gives the same rank:
+// it settles the level whether it raises or lowers what the layers set (LD3),
+// by its own value and not by a rank comparison.
 //
-// Mutation (drop req.Level.PerRun() from Resolve's request block, leaving the
-// rank comparison): hotfix ranks 0, so every case here answers the layer's
-// level instead and the test fails on the first one.
+// Mutation (compare the request by Rank instead of taking it): hotfix ranks 0,
+// so every case here answers the layer's level instead and the test fails on
+// the first one.
 func TestResolveTakesAHotfixRequestWhole(t *testing.T) {
 	cases := []struct {
 		name string
@@ -209,38 +346,53 @@ func TestResolveTakesAHotfixRequestWhole(t *testing.T) {
 	if got := Resolve(Config{Repo: Pro}, Request{Level: Hotfix, Reached: Critical}); got.Level != Critical {
 		t.Errorf("Resolve(repo pro, request hotfix, reached critical) = %q; want critical: a level a run has reached never falls", got.Level)
 	}
-	// Raise-only is unchanged for every other level: a request below what the
-	// layers resolved still leaves the layers' answer standing, and one equal
-	// to it still leaves the layer that set it named.
+	// An on-axis request is the strongest rank too: a request below what the
+	// layers resolved is the answer, and one equal to it still leaves the
+	// layer that set it named, since that is the narrower reason for the same
+	// level. What holds a request back is a floor, outside every layer, and
+	// not this function (config.ResolveLevels).
 	for _, m := range []Rigor{POC, Startup} {
-		if got := Resolve(Config{Repo: Critical}, Request{Level: m}); got.Level != Critical || got.From != FromRepo {
-			t.Errorf("Resolve(repo critical, request %q) = (%q, %q); want (critical, repo): a request may not lower a run", m, got.Level, got.From)
+		if got := Resolve(Config{Repo: Critical}, Request{Level: m}); got.Level != m || got.From != FromRequest {
+			t.Errorf("Resolve(repo critical, request %q) = (%q, %q); want (%q, request): the run's own request is the narrowest rank", m, got.Level, got.From, m)
 		}
+	}
+	if got := Resolve(Config{Repo: Critical}, Request{Level: Critical}); got.Level != Critical || got.From != FromRepo {
+		t.Errorf("Resolve(repo critical, request critical) = (%q, %q); want (critical, repo): the layer that already set the level is the narrower reason", got.Level, got.From)
 	}
 }
 
-// TestLayersRigorAnswersOnlyBesideARequestThatTakesTheRunWhole: the level the
-// layers resolve is what a reader of the owner's floor holds beside the level
-// the request chose (policy.Effective.ReviewFloorFor), because a request raises
-// a level and never lowers a floor (D8, LF5). It is asked for exactly when the
-// request took the run off the axis: for every other request the layers'
-// answer is already the level the run is at, and "" is the answer that says so.
-func TestLayersRigorAnswersOnlyBesideARequestThatTakesTheRunWhole(t *testing.T) {
+// TestLayersRigorAnswersOnlyBesideARequestBelowThem: the level the layers
+// alone resolve is what a reader of the owner's floor holds beside the level
+// the request chose (policy.Effective.ReviewFloorFor), because a request
+// lowers a level and never a floor (D8, LF5). It is asked for exactly when the
+// request went below the layers: a request that raised the run, or that asked
+// for the level the layers already set, leaves it at or above them, and "" is
+// the answer that says so. A request for hotfix asks for none of it: hotfix is
+// held to its own floor row and to nothing beside it (the owner's ruling of
+// 2026-11-20).
+func TestLayersRigorAnswersOnlyBesideARequestBelowThem(t *testing.T) {
 	cfg := Config{
-		Project:      Startup,
-		Repo:         Pro,
-		RepoAreas:    []Area{{Name: "pay", Match: "p/**", Level: Critical}},
-		ProjectAreas: nil,
+		Project:   Startup,
+		Repo:      Pro,
+		RepoAreas: []Area{{Name: "pay", Match: "p/**", Level: Critical}},
 	}
 	for _, c := range []struct {
 		name string
 		req  Request
 		want Rigor
 	}{
-		{"a request for hotfix", Request{Level: Hotfix}, Pro},
-		{"a request for hotfix over an area", Request{Level: Hotfix, Paths: []string{"p/x.go"}}, Critical},
-		{"a request for an on-axis level", Request{Level: Critical}, ""},
+		{"a request below the layers", Request{Level: Startup}, Pro},
+		{"a request below an area the paths match", Request{Level: POC, Paths: []string{"p/x.go"}}, Critical},
+		{"a request for the level the layers set", Request{Level: Pro}, ""},
+		{"a request above the layers", Request{Level: Critical}, ""},
+		{"a request for hotfix", Request{Level: Hotfix}, ""},
+		{"a request for hotfix over an area", Request{Level: Hotfix, Paths: []string{"p/x.go"}}, ""},
 		{"no request at all", Request{}, ""},
+		// A carried request never lowers, so it leaves no row behind it: the
+		// run is at the layers' own level and reads their row as its own
+		// (task's Spec.RigorCarried, T5.2, D1844).
+		{"a carried request that the layers outrank", Request{Level: POC, Carried: true}, ""},
+		{"a carried request below an area the paths match", Request{Level: POC, Carried: true, Paths: []string{"p/x.go"}}, ""},
 	} {
 		if got := LayersRigor(cfg, c.req, ""); got != c.want {
 			t.Errorf("%s: LayersRigor = %q; want %q", c.name, got, c.want)
@@ -248,8 +400,13 @@ func TestLayersRigorAnswersOnlyBesideARequestThatTakesTheRunWhole(t *testing.T) 
 	}
 	// reached folds the way Resolve's own Reached does, so a caller asking at
 	// each of D22's moments never takes the answer down.
-	if got := LayersRigor(Config{Repo: Startup}, Request{Level: Hotfix}, Critical); got != Critical {
-		t.Errorf("LayersRigor(repo startup, request hotfix, reached critical) = %q; want critical: the level the layers gave never falls", got)
+	if got := LayersRigor(Config{Repo: Critical}, Request{Level: POC}, Startup); got != Critical {
+		t.Errorf("LayersRigor(repo critical, request poc, reached startup) = %q; want critical: the level the layers gave never falls", got)
+	}
+	// The repository's own half of the order is read too: a request below the
+	// project layer's entry for the repository answers that entry.
+	if got := LayersRigor(Config{ProjectRepos: map[string]Rigor{"acme/app": Critical}}, Request{Repo: "acme/app", Level: POC}, ""); got != Critical {
+		t.Errorf("LayersRigor(project per-repo critical, request poc) = %q; want critical: the floor holds the project's own answer", got)
 	}
 }
 
@@ -335,11 +492,12 @@ func TestStrictestOverASetIsWhatResolveReads(t *testing.T) {
 
 // TestResolvePrecedenceHoldsOverEveryPairOfModes pins the property over every
 // pair of on-axis levels rather than over the handful of pairs a hand-written
-// table names: a narrower layer wins outright in *either* rank direction
-// (D21), and on top of that a rank comparison runs in exactly two places — a
-// request may only raise, and D22's reached value only holds. A comparison
-// inverted anywhere in Resolve breaks some pair here, which the table cases
-// above cannot show because they each pick one direction.
+// table names: a narrower rank wins outright in *either* rank direction (D21),
+// and on top of that a rank comparison runs in exactly one place — D22's
+// reached value only holds — while the request settles the level by its own
+// value. A comparison inverted anywhere in Resolve breaks some pair here,
+// which the table cases above cannot show because they each pick one
+// direction.
 func TestResolvePrecedenceHoldsOverEveryPairOfModes(t *testing.T) {
 	axis := Rigors[:len(Rigors)-1] // the four on-axis levels
 	for _, a := range axis {
@@ -355,20 +513,31 @@ func TestResolvePrecedenceHoldsOverEveryPairOfModes(t *testing.T) {
 			if got := Resolve(cfg, Request{Paths: []string{"x/y"}}); got.Level != a {
 				t.Errorf("Resolve(area %q over repo %q) = %q; want %q", a, b, got.Level, a)
 			}
-			// A request may only raise: the answer is never weaker than the
-			// level the layers resolved.
-			if got := Resolve(Config{Repo: b}, Request{Level: a}); got.Level.Rank() < b.Rank() {
-				t.Errorf("Resolve(repo %q, request %q) = %q; a request lowered the level", b, a, got.Level)
+			// The run's own request is the narrowest rank of all: it settles
+			// the level whatever the layers said, in either direction.
+			if got := Resolve(Config{Repo: b}, Request{Level: a}); got.Level != a {
+				t.Errorf("Resolve(repo %q, request %q) = %q; want %q, the run's own request", b, a, got.Level, a)
 			}
-			// The same for the reached value: never weaker than the level this
+			// The reached value only holds: never weaker than the level this
 			// resolution would otherwise answer.
 			if got := Resolve(Config{Repo: b}, Request{Reached: a}); got.Level.Rank() < b.Rank() {
 				t.Errorf("Resolve(repo %q, reached %q) = %q; a reached value lowered the level", b, a, got.Level)
 			}
-			// And each of the two raise paths does move up when it should:
-			// the stricter of the two is the answer.
-			if got := Resolve(Config{Repo: b}, Request{Level: a}); got.Level != Strictest(a, b) {
-				t.Errorf("Resolve(repo %q, request %q) = %q; want %q", b, a, got.Level, Strictest(a, b))
+			// The project's entry for the repository beats its own default and
+			// its own areas: the one rank of the order that is read between
+			// them (LD4, LF4).
+			perRepo := Config{Project: a, ProjectRepos: map[string]Rigor{"acme/app": b}}
+			if got := Resolve(perRepo, Request{Repo: "acme/app"}); got.Level != b {
+				t.Errorf("Resolve(project %q, its entry for the repo %q) = %q; want %q", a, b, got.Level, b)
+			}
+			// And a repository's own rule settles the level over a project
+			// area's, in either direction (D20 as amended).
+			mixed := Config{
+				ProjectAreas: []Area{{Name: "payments", Match: "x/**", Level: b}},
+				RepoAreas:    []Area{{Name: "own", Match: "x/**", Level: a}},
+			}
+			if got := Resolve(mixed, Request{Paths: []string{"x/y"}}); got.Level != a {
+				t.Errorf("Resolve(project area %q, repo area %q) = %q; want %q, the narrower layer's own rule", b, a, got.Level, a)
 			}
 		}
 	}
@@ -426,7 +595,7 @@ func TestLayersIsTheSetResolveNames(t *testing.T) {
 // TestConfiguredIsAnyLayerSettingAnything: a zero Config is the unconfigured
 // repository, and any one of the five fields opts it in.
 func TestConfiguredIsAnyLayerSettingAnything(t *testing.T) {
-	if (Config{}).Configured() {
+	if (Config{}).Configured("") {
 		t.Error("a zero Config reports itself configured")
 	}
 	area := []Area{{Name: "docs", Match: "docs/**", Level: POC}}
@@ -437,8 +606,8 @@ func TestConfiguredIsAnyLayerSettingAnything(t *testing.T) {
 		"project level": {Project: Critical},
 		"project areas": {ProjectAreas: area},
 	} {
-		if !c.Configured() {
-			t.Errorf("%s: Configured() = false", name)
+		if !c.Configured("") {
+			t.Errorf("%s: Configured(\"\") = false", name)
 		}
 	}
 }

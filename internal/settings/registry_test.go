@@ -13,6 +13,8 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/runner"
 )
 
 // yamlPaths is every leaf path a yaml-tagged struct writes, with "*" standing
@@ -557,5 +559,76 @@ func TestSettingsSchemaNamesTheReportsCommitRows(t *testing.T) {
 		if !slices.Equal(r.Layers, []string{LayerLocal}) {
 			t.Errorf("%s: Layers = %v, want the owner's local project config alone: a launcher-writable layer that carried the designation would aim every report of the project", key, r.Layers)
 		}
+	}
+}
+
+// TestTheRegistryAndTheRunAgreeOnUnset (AB11, R3, F2): the DEFAULT column and
+// the schema have said "unset = observe" since before any of this work, and the
+// run read an unset mode as the old word until AB1a. This is what holds the
+// three to one answer rather than to each other: the mode a job that names
+// nothing gets is read out of the run's own reader (runner.SpendFromEnv), and
+// the registry row and the schema's default keyword must name that same word.
+// The row's default is a decision rather than a value, so
+// TestRegistryDefaultsMatchApplyDefaults leaves it alone by design; this is the
+// pin it has instead.
+func TestTheRegistryAndTheRunAgreeOnUnset(t *testing.T) {
+	// The run's own answer for a job that carries no budget at all — no mode,
+	// no cap, no ceiling — which is the shape of a job written before this
+	// release (AB5 writes the mode from now on).
+	s, err := runner.SpendFromEnv(func(string) (string, bool) { return "", false })
+	if err != nil {
+		t.Fatalf("a job that names no budget at all is refused: %v", err)
+	}
+	if !s.On() {
+		t.Errorf("a job that names no mode is not accounted for: Spend = %+v", s)
+	}
+	// The string the run defaults to is not the word that was a mode: that
+	// word was what an unset mode resolved to at the run until AB1a, while
+	// the registry and the schema said observe (F2), and this is the line that
+	// fails on the reading coming back.
+	if policy.Mode(s.Mode).Removed() {
+		t.Errorf("a job that names no mode defaults to the word that was a mode (%q), and the registry and the schema have said observe for it all along (F2, D3009)", s.Mode)
+	}
+	runMode := policy.Mode(s.Mode).Effective()
+	if runMode != policy.ModeObserve {
+		t.Fatalf("the run reads an unset mode as %q, want %q (D3009, R3)", runMode, policy.ModeObserve)
+	}
+
+	// The registry row, which is the sentence a person reads and the value the
+	// DEFAULT column prints.
+	r, ok := Lookup("budget.mode")
+	if !ok {
+		t.Fatal("budget.mode: no registry row")
+	}
+	if want := unset(runMode); r.Default != want {
+		t.Errorf("budget.mode: the registry says %+v, and the run's answer for an unset mode is %q", r.Default, runMode)
+	}
+
+	// And the schema's own copy of the sentence, which is where a consumer of
+	// the settings document reads what an absent key means: schemas'
+	// TestSettingsSchema holds the whole table to the registry, and this holds
+	// this key to the run.
+	raw, err := os.ReadFile(filepath.Join("..", "..", "schemas", "settings.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Defs struct {
+			KeyDefaults struct {
+				Properties map[string]struct {
+					Default string `json:"default"`
+				} `json:"properties"`
+			} `json:"keyDefaults"`
+		} `json:"$defs"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := doc.Defs.KeyDefaults.Properties["budget.mode"]
+	if !ok {
+		t.Fatal("settings.schema.json names no budget.mode")
+	}
+	if want := unset(runMode).Unset; entry.Default != want {
+		t.Errorf("settings.schema.json budget.mode: the default is %q, and the run's answer for an unset mode is %q", entry.Default, runMode)
 	}
 }

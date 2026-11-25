@@ -55,12 +55,13 @@ import {
   unavailable,
 } from '../../shared/availability'
 import type { Reading, Sample } from '../../shared/availability'
-import { launcherCell } from '../../shared/launcher'
+import { launcherFull } from '../../shared/launcher'
 import { rigorModeWord } from '../../shared/rigor'
 import type { RigorView } from '../../shared/rigor'
 import { isMarkerText, sanitizeText } from '../../shared/sanitize'
 import { displayRuns, shortRun } from '../../shared/shortid'
 import type { RunRef } from '../../shared/shortid'
+import { authModeOf } from '../../shared/schema'
 import type { BurnView, FinishedView, KillView, LiveDocument, RunView, TotalsView } from '../../shared/schema'
 import { putReading, putText } from '../app'
 import type { ElementLike } from '../app'
@@ -697,10 +698,10 @@ export interface LiveRunRow {
   readonly workflow: string | null
   readonly requestedBy: string | null
   /** the run's whole recorded launcher (`launched_by`), `null` when the record
-   * carries none. The runs table's BY column draws it, shortened by
-   * `shared/launcher.ts` -- the CLI's own `LauncherShort`, which is what
-   * `watch`'s BY column prints (D1704) -- and a row whose record carries none
-   * draws the column's cell and no value in it. */
+   * carries none. The runs table's BY column draws it as the record wrote it
+   * (`shared/launcher.ts`: the console no longer cuts at the address, where the
+   * CLI's own BY column still does) -- and a row whose record carries none draws
+   * the column's cell and no value in it. */
   readonly launchedBy: string | null
   readonly spend: Reading
   readonly age: Reading
@@ -1426,14 +1427,13 @@ export function buildLiveModel(
 }
 
 /**
- * LIVE_CAPS_HIDDEN_WORD is what a withheld cap figure says, and it is the
- * sentence the Coordinator's queue draws for the same withholding
- * (`COORDINATOR_QUEUE_CAPS_HIDDEN_WORD`): `caps` is one view of
- * `REDUCED_VIEWS`, and one mode withholding it in two places under two
- * different sentences would read as two different modes. It is a second copy
- * rather than an import because the screens are siblings and none owns the
- * others (the same reason `LIVE_PR_NO_LINK_REASON` is a copy of `run.ts`'s),
- * and `live.test.ts` holds the two constants equal so they cannot drift.
+ * LIVE_CAPS_HIDDEN_WORD is what a withheld cap figure says: `caps` is one view
+ * of `REDUCED_VIEWS`, and the kind that edits the caps draws the same sentence
+ * (`manage/kinds/budget.ts`'s `BUDGET_CAPS_HIDDEN_WORD`). It is a second copy
+ * rather than an import because the screens and the kinds are siblings and none
+ * owns the others (the same reason `LIVE_PR_NO_LINK_REASON` is a copy of
+ * `run.ts`'s), and the budget kind's own copy is held equal to this one so they
+ * cannot drift (`manage-budget.test.ts`).
  */
 export const LIVE_CAPS_HIDDEN_WORD = 'the caps are withheld for the installation this console is driving'
 
@@ -1961,7 +1961,13 @@ function runRow(factory: ScreenFactory, row: LiveRunRow, ending: string): Screen
 
   const actors = cell(element, factory, 'td', 'live-run-coder')
   putActor(cell(actors, factory, 'span', 'live-run-models'), row.models, 'runs[].models')
-  putActor(cell(actors, factory, 'span', 'live-run-auth'), row.auth, 'runs[].auth')
+  // **A run with no auth mode draws no auth mode.** Since D3070 the CLI writes
+  // `-` under `auth` for one, and the mark is not a mode: `n/a` here would be the
+  // console reporting a question the feed answered, and drawing the `-` itself
+  // would put the CLI's placeholder on the screen as if it were a word about the
+  // run. So the cell is not drawn at all (`authModeOf`).
+  const auth = authModeOf(row.auth)
+  if (auth !== null) putActor(cell(actors, factory, 'span', 'live-run-auth'), auth, 'runs[].auth')
 
   numberCell(element, factory, 'td', row.spend, 'usd', 'live-run-spend')
   // The age is a **span**, not a count of seconds: `duration` is the unit a
@@ -1976,24 +1982,23 @@ function runRow(factory: ScreenFactory, row: LiveRunRow, ending: string): Screen
 }
 
 /**
- * byCell draws the BY column: who started the run, in `watch`'s own short form
- * (`internal/watch/plain.go`'s `launcherText`, which is
- * `runview.LauncherShort`; D1704).
+ * byCell draws the BY column: who started the run, as the record wrote the
+ * launcher (`shared/launcher.ts`, D1704 for the column itself).
  *
  * **The cell is always there and the value is not.** The table is a rectangle,
  * so a row whose record carries no launcher still draws the column's `td` -- but
  * it draws **no element inside it**, which is the rule `shared/launcher.ts`
  * states: an empty cell is the truth about a launcher nobody recorded, where a
  * `dash` would be a mark the reader has to look up, and a cell naming nobody
- * would be worse than both. The short form goes through `putText` in the `label`
- * class -- the one key this console draws in a class other than the one its wire
- * field declares, which `shared/launcher.ts`'s header argues -- so an invisible
- * character, a bidi override or a credential shape in a launcher is handled by
- * the sanitizer like every other cell's text.
+ * would be worse than both. The whole identity goes through `putText` in the
+ * `label` class -- the one key this console draws in a class other than the one
+ * its wire field declares, which `shared/launcher.ts`'s header argues -- so an
+ * invisible character, a bidi override or a credential shape in a launcher is
+ * handled by the sanitizer like every other cell's text.
  */
 function byCell(factory: ScreenFactory, row: LiveRunRow): ScreenElement {
   const element = make(factory, 'td', 'live-run-by')
-  const launcher = launcherCell(row.launchedBy)
+  const launcher = launcherFull(row.launchedBy)
   if (launcher !== null) {
     putText(cell(element, factory, 'span', 'live-run-started-by'), launcher, 'label', 'runs[].launched_by')
   }

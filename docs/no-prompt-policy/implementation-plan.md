@@ -332,8 +332,8 @@ and T8 waits on the spike only.
 - **Files:** every command file that registers them (the list in F4), `plugin/skills/{setup,upgrade,working,
   parallelism}` and `reference/`, `plugin/*_test.go` (including `setup_skill_test.go`), `console/src/main/spawn.ts`,
   `console/src/main/ipc.ts`, `console/src/main/launch.ts`, `console/src/renderer/confirm.ts` and its tests,
-  `docs/gcp-live-checklist.md` (31 mentions), `docs/design/managed-projects.md`, `managed-projects-spec.md`,
-  `docs/design/image-refresh.md`, `docs/managed-agent-converge/*`, `docs/console-managed-screens/*`,
+  `docs/gcp-live-checklist.md` (31 mentions), `docs/managed-projects/spec.md`, `managed-projects-spec.md`,
+  `docs/image-refresh/spec.md`, `docs/managed-agent-converge/*`, `docs/console-managed-screens/*`,
   `SECURITY.md` (flag text only), other docs the grep finds.
 - **Depends on:** T3, T4, T5, T6, T7, T9, T10, T15. **Tests:** plugin tests, console `npm run typecheck` and
   `npm run test:unit -- --maxWorkers=2`, `go test ./internal/cli -run Docs`. **Reviewer:** opus + mandatory

@@ -12,13 +12,14 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The account-choice keys of the accounts design (docs/accounts-add/spec.md
 // §11.1-§11.2) are read here, and the B0 ruling
-// (docs/design/mixed-credentials.md §11) is what bounds the second one: an
+// (docs/mixed-credentials/spec.md §11) is what bounds the second one: an
 // api-key run may name an account for the senior review and the adversarial
 // review and no other stage, and it may name one account and not two. These
 // tests are that refusal matrix, plus the two rungs the chain gains.
@@ -52,7 +53,7 @@ func TestRunUsesTheProjectDefaultClaudeAccount(t *testing.T) {
 		f := newCloudFixture(t)
 		f.appendConfig(t, defaultClaudeAccountConfig)
 		oauthCheckout(t, f, "")
-		writeBuildRecord(t, f, otherSlug, "svc", release065)
+		writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 		f.run.AddJob(gcp.JobName(otherSlug, gcp.WorkflowVariant("svc", "acme-overflow")), "2", "4Gi")
 		if _, _, err := execute(t, "run", "--run-id", "20261105-100000-aaaa", "A task"); err != nil {
 			t.Fatal(err)
@@ -65,7 +66,7 @@ func TestRunUsesTheProjectDefaultClaudeAccount(t *testing.T) {
 		f := newCloudFixture(t)
 		f.appendConfig(t, defaultClaudeAccountConfig)
 		oauthCheckout(t, f, "  oauth_token: acme-personal\n")
-		writeBuildRecord(t, f, otherSlug, "svc", release065)
+		writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 		f.run.AddJob(gcp.JobName(otherSlug, gcp.WorkflowVariant("svc", "acme-personal")), "2", "4Gi")
 		if _, _, err := execute(t, "run", "--run-id", "20261105-100000-bbbb", "A task"); err != nil {
 			t.Fatal(err)
@@ -85,7 +86,7 @@ func TestRunRefusesAStageAccountOnTheCodersStage(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, stageAccountConfig("implement", "acme-overflow"))
 	recipeCheckout(t, f, "", nil) // agent.auth: api-key
-	writeBuildRecord(t, f, otherSlug, "svc", release065)
+	writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 	_, _, err := execute(t, "run", "--run-id", "20261105-100000-cccc", "A task")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want a user refusal", err)
@@ -108,7 +109,7 @@ func TestRunRefusesASecondStageAccount(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, stageAccountConfig("review", "acme-overflow", "adversarial", "acme-personal"))
 	recipeCheckout(t, f, "", nil)
-	writeBuildRecord(t, f, otherSlug, "svc", release065)
+	writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 	_, _, err := execute(t, "run", "--run-id", "20261105-100000-dddd", "A task")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "one") {
 		t.Fatalf("err = %v, want a refusal naming the one account a mixed run may hold", err)
@@ -136,7 +137,7 @@ func TestRunAdmitsAStageAccountForTheReviewsOnly(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, stageAccountConfig("review", "acme-overflow", "adversarial", "acme-overflow"))
 	recipeCheckout(t, f, "", nil)
-	writeBuildRecord(t, f, otherSlug, "svc", release065)
+	writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 	f.run.AddJob(gcp.JobName(otherSlug, gcp.WorkflowVariant("svc", "acme-overflow")), "2", "4Gi")
 	if _, _, err := execute(t, "run", "--run-id", "20261105-100000-eeee", "A task"); err != nil {
 		t.Fatal(err)
@@ -155,7 +156,7 @@ func TestRunRefusesAStageAccountThisRepositoryMayNotUse(t *testing.T) {
 	f.appendConfig(t, "claude_accounts:\n  acme-elsewhere:\n    allow_data_to: [\"acme/person-1\"]\n"+
 		stagesBlock("review", "acme-elsewhere"))
 	recipeCheckout(t, f, "", nil) // acme/other is not in acme-elsewhere's allow_data_to
-	writeBuildRecord(t, f, otherSlug, "svc", release065)
+	writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 	_, _, err := execute(t, "run", "--run-id", "20261105-100000-ffff", "A task")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "acme-elsewhere") || !strings.Contains(err.Error(), "claude_accounts") {
 		t.Fatalf("err = %v, want the allow-list refusal", err)
@@ -223,6 +224,18 @@ const (
 	mixElsewhereDefault = "default_claude_account: acme-elsewhere\n"
 )
 
+// mixEnforceOn is mixEnforce with the installation's own database, for the
+// rows that launch: every launch of an installation whose config names a
+// database mints the run's identity (AB4, F7), so a block appended over the
+// harness's — which replaces it whole, appendConfig — has to name the
+// database, the signer the mint signs through and the key the client
+// exchanges the token with, or the launch is refused before anything is
+// written. The rows that only resolve an account keep the one above.
+func mixEnforceOn(f *cloudFixture) string {
+	return "budget: { mode: enforce, per_run_usd: 5, rtdb_url: " + f.budget.DB.URL +
+		", token_signer: " + testSigner + ", firebase_api_key: " + f.budget.APIKey + " }\n"
+}
+
 // mixCase is one row's fixture: the accounts (keys adds the account-choice
 // keys the row is about), the routes and the budget mode, over a checkout of
 // acme/other whose coder is on the provider route and whose reviews run on
@@ -252,7 +265,7 @@ func mixCaseWith(t *testing.T, accounts, keys, reviewer, coder, budget string) (
 }
 
 // TestClaudeAccountForTheMixMatrix is the whole rule of the owner's ruling of
-// 2026-11-05 (docs/design/mixed-credentials.md §11, amending the 2026-11-04
+// 2026-11-05 (docs/mixed-credentials/spec.md §11, amending the 2026-11-04
 // conservative reading) as a matrix: which account a *stage* resolves for an
 // api-key run, over the rung the account is named by, the stage asked for and
 // the model that stage runs.
@@ -437,9 +450,9 @@ func TestRunLandsAMixedRunOnTheMixsAccount(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newCloudFixture(t)
-			f.appendConfig(t, claudeAccountsConfig+mixRouteConfig+mixEnforce+tc.keys)
+			f.appendConfig(t, claudeAccountsConfig+mixRouteConfig+mixEnforceOn(f)+tc.keys)
 			recipeCheckout(t, f, "  models: { coder: "+mixCoderModel+", reviewer: "+tc.reviewer+", background: "+mixCoderModel+" }\n", nil)
-			writeBuildRecord(t, f, otherSlug, "svc", release065)
+			writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 			// The account's own job variant, which a mixed run has to start
 			// on: the base job is registered by recipeCheckout.
 			f.run.AddJob(gcp.JobName(otherSlug, gcp.WorkflowVariant("svc", "acme-overflow")), "2", "4Gi")
@@ -468,9 +481,9 @@ func TestRunLandsAMixedRunOnTheMixsAccount(t *testing.T) {
 // no execution starts.
 func TestRunRetryLaunchesAMixedRunOnTheMixsAccount(t *testing.T) {
 	f := newCloudFixture(t)
-	f.appendConfig(t, defaultClaudeAccountConfig+mixRouteConfig+mixEnforce)
+	f.appendConfig(t, defaultClaudeAccountConfig+mixRouteConfig+mixEnforceOn(f))
 	recipeCheckout(t, f, "  models: { coder: "+mixCoderModel+", reviewer: "+claudeReviewer+", background: "+mixCoderModel+" }\n", nil)
-	writeBuildRecord(t, f, otherSlug, "svc", release065)
+	writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 	variant := gcp.WorkflowVariant("svc", "acme-overflow")
 	f.run.AddJob(gcp.JobName(otherSlug, variant), "2", "4Gi")
 	// The task a mixed launch of this repository stores, never started —
@@ -522,9 +535,9 @@ func TestRunPRLandsAFollowUpOfAMixedRunOnTheMixsAccount(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newCloudFixture(t)
-			f.appendConfig(t, defaultClaudeAccountConfig+mixRouteConfig+mixEnforce)
+			f.appendConfig(t, defaultClaudeAccountConfig+mixRouteConfig+mixEnforceOn(f))
 			recipeCheckout(t, f, "  models: { coder: "+mixCoderModel+", reviewer: "+claudeReviewer+", background: "+mixCoderModel+" }\n", nil)
-			writeBuildRecord(t, f, otherSlug, "svc", release065)
+			writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 			variant := gcp.WorkflowVariant("svc", "acme-overflow")
 			f.run.AddJob(gcp.JobName(otherSlug, variant), "2", "4Gi")
 			root := wallRunIDAt(2, "090000", "d5e1")
@@ -630,6 +643,14 @@ func TestClaudeAccountForRefusesAMixThatWouldBeASecondAccount(t *testing.T) {
 // only budget.mode: enforce routes a call to a provider at all. A
 // configuration that declares a mix under any other mode declares a key that
 // could never apply, so the launch refuses it and names the mode.
+//
+// The rows are the two words such a configuration can still say: observe, and
+// the word that was a mode until this release (D3009). The second resolves observe
+// — the local config that still says it is the file the update rewrites
+// (localcfg.RemovedBudgetMode, AB8a), and every reader that needs a mode to act
+// on takes the vocabulary's own answer (modeName, D3010) — so the refusal names
+// observe for both, which is what the row pins: a config that still says the
+// removed word is judged as the mode it means, not as a mode of its own.
 func TestClaudeAccountForRefusesAMixTheModeCannotCarry(t *testing.T) {
 	for _, mode := range []string{"off", "observe"} {
 		t.Run(mode, func(t *testing.T) {
@@ -638,7 +659,7 @@ func TestClaudeAccountForRefusesAMixTheModeCannotCarry(t *testing.T) {
 			if ExitCode(err) != ExitUserError {
 				t.Fatalf("err = %v, want a refusal", err)
 			}
-			for _, want := range []string{"budget.mode", mode, "enforce", "default_claude_account"} {
+			for _, want := range []string{"budget.mode", policy.Mode(mode).Effective(), "enforce", "default_claude_account"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("the refusal does not name %q: %v", want, err)
 				}

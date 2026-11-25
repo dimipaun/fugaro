@@ -42,11 +42,9 @@ func TestTheHarnessGivesARunABudgetDatabase(t *testing.T) {
 		t.Fatalf("the run's reader answered %+v, want a backend on %s", be, b.URL())
 	}
 	// And the installation's own config: the block, read by the loader the CLI
-	// reads a project with. It names the database and the mode off, so that
-	// every harness here has a launch that mints nothing and a run that reads
-	// no policy: a block naming no mode would be a block whose mode is observe
-	// (C1, AB11), and every launch of a fixture would need a signer and a
-	// minted identity of its own.
+	// reads a project with. It names the database and nothing about how a run
+	// is accounted for, which is what every harness here leans on: the block
+	// changes what a mode-unset installation does at no test's merge.
 	cfg, err := localcfg.Parse([]byte("version: 2\nname: aurora\ngcp_project: " + budgetProject + "\n" +
 		"region: us-east5\nruns_bucket: unused-bucket\nbucket_url: 'file://" + t.TempDir() + "'\n" +
 		"endpoints: { no_auth: true }\n" + b.ConfigBlock()))
@@ -55,9 +53,6 @@ func TestTheHarnessGivesARunABudgetDatabase(t *testing.T) {
 	}
 	if cfg.Budget == nil || cfg.Budget.RTDBURL != b.URL() || cfg.Budget.FirebaseAPIKey != b.APIKey {
 		t.Fatalf("the config holds %+v, want the database at %s", cfg.Budget, b.URL())
-	}
-	if cfg.BudgetMode() != localcfg.BudgetOff {
-		t.Fatalf("the harness's config names mode %q, want off: the world every fixture starts in is one whose launch mints nothing", cfg.BudgetMode())
 	}
 }
 

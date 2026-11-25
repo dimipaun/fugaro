@@ -12,7 +12,7 @@ import (
 )
 
 // TestDocsNamedOAuthTokensDoctorSeverity pins
-// docs/design/named-oauth-tokens.md's §6f claims about fugaro doctor's two
+// docs/named-oauth-tokens/spec.md's §6f claims about fugaro doctor's two
 // named-account checks against the actual code: claude-accounts-stored's
 // severity split (an ordinary, red finding for a missing stored token; a
 // warning, never silence, when the check itself could not be answered), and
@@ -22,7 +22,7 @@ import (
 // docs_project_layer_test.go and docs_upgrade_test.go already hold other
 // design/user docs to).
 func TestDocsNamedOAuthTokensDoctorSeverity(t *testing.T) {
-	data, err := os.ReadFile("../../docs/design/named-oauth-tokens.md")
+	data, err := os.ReadFile("../../docs/named-oauth-tokens/spec.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,14 +38,14 @@ func TestDocsNamedOAuthTokensDoctorSeverity(t *testing.T) {
 		"no GCP call at all",
 	} {
 		if !strings.Contains(doc, want) {
-			t.Errorf("docs/design/named-oauth-tokens.md no longer says %q", want)
+			t.Errorf("docs/named-oauth-tokens/spec.md no longer says %q", want)
 		}
 	}
 	if strings.Contains(doc, "not yet implemented") {
-		t.Error(`docs/design/named-oauth-tokens.md still claims oauth-token-allowed is "not yet implemented", but it is now implemented`)
+		t.Error(`docs/named-oauth-tokens/spec.md still claims oauth-token-allowed is "not yet implemented", but it is now implemented`)
 	}
 	if _, ok := reflect.TypeOf(config.Agent{}).FieldByName("OAuthToken"); !ok {
-		t.Fatal("config.Agent has no OAuthToken field any more: docs/design/named-oauth-tokens.md's §6f describes " +
+		t.Fatal("config.Agent has no OAuthToken field any more: docs/named-oauth-tokens/spec.md's §6f describes " +
 			"the oauth-token-allowed check against it")
 	}
 	// Ties the doc's severity claims to oauthTokenAllowedCheck itself, not
@@ -135,21 +135,21 @@ func TestDocsNamedOAuthTokensWorkflowVariantJoin(t *testing.T) {
 	if got, want := gcp.WorkflowVariant("build", "acme"), "build_acme"; got != want {
 		t.Fatalf("gcp.WorkflowVariant(%q, %q) = %q, want %q: this test's own join assumption is stale", "build", "acme", got, want)
 	}
-	data, err := os.ReadFile("../../docs/design/named-oauth-tokens.md")
+	data, err := os.ReadFile("../../docs/named-oauth-tokens/spec.md")
 	if err != nil {
 		t.Fatal(err)
 	}
 	doc := string(data)
 	if want := `workflow + "_" + token`; !strings.Contains(doc, want) {
-		t.Errorf("docs/design/named-oauth-tokens.md no longer describes WorkflowVariant's join as %q", want)
+		t.Errorf("docs/named-oauth-tokens/spec.md no longer describes WorkflowVariant's join as %q", want)
 	}
 	if bad := `workflow + "--" + token`; strings.Contains(doc, bad) {
-		t.Errorf("docs/design/named-oauth-tokens.md still claims WorkflowVariant joins with %q, which gcp.WorkflowVariant does not do", bad)
+		t.Errorf("docs/named-oauth-tokens/spec.md still claims WorkflowVariant joins with %q, which gcp.WorkflowVariant does not do", bad)
 	}
 	if _, ok := reflect.TypeOf(config.ClaudeAccount{}).FieldByName("Secret"); ok {
-		t.Fatal("config.ClaudeAccount now has a Secret field: docs/design/named-oauth-tokens.md's §3 example was corrected on the assumption it does not")
+		t.Fatal("config.ClaudeAccount now has a Secret field: docs/named-oauth-tokens/spec.md's §3 example was corrected on the assumption it does not")
 	}
 	if strings.Contains(doc, "secret: claude-oauth-token-acme-personal") {
-		t.Error(`docs/design/named-oauth-tokens.md's §3 example still shows a "secret:" field on a claude_accounts entry; the secret is always derived (ClaudeAccountSecret), never a key of that block`)
+		t.Error(`docs/named-oauth-tokens/spec.md's §3 example still shows a "secret:" field on a claude_accounts entry; the secret is always derived (ClaudeAccountSecret), never a key of that block`)
 	}
 }

@@ -26,7 +26,7 @@ import (
 // and no entry of the handler's served-file list, which is why the first string
 // below is the status line rather than a mood.
 func TestDocsConsoleStylingDesignIsWritten(t *testing.T) {
-	const path = "docs/design/console-styling.md"
+	const path = "docs/console-styling/spec.md"
 	doc := readDoc(t, path)
 	for _, want := range []string{
 		// The status line, and the rule that nothing follows the document.
@@ -487,7 +487,7 @@ func mdRow(t *testing.T, path, section, prefix string) string {
 // directory — because a file a design creates is not a file a design cites, and
 // stat'ing one would make this test fail on the document doing its job.
 func TestDocsConsoleStylingCitationsExist(t *testing.T) {
-	const path = "docs/design/console-styling.md"
+	const path = "docs/console-styling/spec.md"
 	doc := readDoc(t, path)
 	for _, cited := range []string{
 		// The palette the light set is derived from, the site's token layer,
@@ -497,9 +497,9 @@ func TestDocsConsoleStylingCitationsExist(t *testing.T) {
 		"website/src/styles/palette-logo.css",
 		"website/test/a11y.mjs",
 		// The documents it is read against.
-		"docs/design/desktop-console.md",
-		"docs/design/desktop-console-v2.md",
-		"docs/plans/2026-10-15-desktop-console.md",
+		"docs/desktop-console/spec.md",
+		"docs/desktop-console-v2/spec.md",
+		"docs/desktop-console/implementation-plan.md",
 		"docs/website/redesign/reconciliation.md",
 	} {
 		// The document links its neighbours relatively (../plans/…,
@@ -552,7 +552,7 @@ func TestDocsConsoleStylingCitationsExist(t *testing.T) {
 		// says is on that line. When there is none the line only has to be there,
 		// which the checks above have said. The subject is read at THIS
 		// occurrence's offset and not from the first one: the document cites
-		// `docs/plans/2026-10-15-desktop-console.md:120` twice, and a lookup by
+		// `docs/desktop-console/implementation-plan.md:120` twice, and a lookup by
 		// string would check both sentences against the first sentence's subject,
 		// leaving the second claim unchecked.
 		if subject := mdCitedSubject(doc, m[0], citation); subject != "" && !strings.Contains(cited, subject) {
@@ -573,7 +573,7 @@ var mdLineCitationRE = regexp.MustCompile(`([\w./-]+\.(?:md|go|ts|css|mjs|json|y
 //
 // at is the byte offset of this occurrence of the citation, and it is why the
 // caller passes an index rather than the citation's text: the document cites
-// `docs/plans/2026-10-15-desktop-console.md:120` twice, and `strings.Index`
+// `docs/desktop-console/implementation-plan.md:120` twice, and `strings.Index`
 // would return the first offset both times, checking the second sentence
 // against the first sentence's subject and never against its own.
 //
@@ -634,7 +634,7 @@ func truncate(s string, n int) string {
 // then spaces to hyphens. That is why an em dash leaves two hyphens behind
 // rather than one.
 func TestDocsConsoleStylingAnchorsResolve(t *testing.T) {
-	const path = "docs/design/console-styling.md"
+	const path = "docs/console-styling/spec.md"
 	doc := readDoc(t, path)
 
 	slugs := map[string]int{}
@@ -713,7 +713,7 @@ func mdHeadingSlug(heading string) string {
 // there as well rather than that the older sentences are gone — a history that
 // is deleted is a history nobody can check the approval against.
 func TestDocsConsoleStylingPlanTasksAreApproved(t *testing.T) {
-	const path = "docs/plans/2026-10-15-desktop-console.md"
+	const path = "docs/desktop-console/implementation-plan.md"
 	plan := readDoc(t, path)
 	for _, want := range []string{
 		// The phase, in the file's numbering, carrying the approval in its heading.
@@ -733,7 +733,7 @@ func TestDocsConsoleStylingPlanTasksAreApproved(t *testing.T) {
 		"src/renderer/theme/screens.css",
 		// The authority the phase defers to, the approval itself, and the gate
 		// that now records it.
-		"docs/design/console-styling.md",
+		"docs/console-styling/spec.md",
 		"These six tasks are `APPROVED by the owner on 2026-10-19`",
 		"OWNER APPROVAL GATE",
 		"**Phase 6, and only Phase 6, is `APPROVED by the owner on 2026-10-19`",
@@ -800,7 +800,7 @@ func TestDocsConsoleStylingPlanTasksAreApproved(t *testing.T) {
 	// compares both ways rather than trusting a number that two documents would
 	// have to keep in step by hand.
 	themeLines := mdTableRows(plan, mdThemeTreeLineRE)
-	design := readDoc(t, "docs/design/console-styling.md")
+	design := readDoc(t, "docs/console-styling/spec.md")
 	if got, want := mdThemeTreeNames(themeLines), mdThemeFiles(design); !slices.Equal(got, want) {
 		t.Errorf("%s: the File Structure tree names %v and the design's §3.1 table lists %v; the tree carries one line per stylesheet of the theme directory, and a tree that has drifted from the design's own list is a tree a reader of either cannot check against the other", path, got, want)
 	}
@@ -826,7 +826,7 @@ func TestDocsConsoleStylingPlanTasksAreApproved(t *testing.T) {
 		"**ANSWERED by the owner on 2026-10-19: option (b), dark only**",
 	} {
 		if !strings.Contains(mdFlat(design), want) {
-			t.Errorf("docs/design/console-styling.md: §7 does not say %q; that sentence is how the design tells a reader where the phase landed, and each fact in it is one this test just checked against the plan", want)
+			t.Errorf("docs/console-styling/spec.md: §7 does not say %q; that sentence is how the design tells a reader where the phase landed, and each fact in it is one this test just checked against the plan", want)
 		}
 	}
 
@@ -916,7 +916,7 @@ func TestDocsConsoleStylingPlanTasksAreApproved(t *testing.T) {
 	}
 	for _, doc := range []struct{ path, text string }{
 		{path, plan},
-		{"docs/design/console-styling.md", design},
+		{"docs/console-styling/spec.md", design},
 	} {
 		paras := paragraphs(doc.text)
 		for _, para := range paras {
@@ -951,7 +951,7 @@ func TestDocsConsoleStylingPlanTasksAreApproved(t *testing.T) {
 	// sentence from which a weaker scan is written. The round that added this
 	// check found exactly that — the sentence listed fifteen phrases and eight
 	// marks while the pin read nineteen and fifteen, and nothing failed.
-	const designPath = "docs/design/console-styling.md"
+	const designPath = "docs/console-styling/spec.md"
 	item4 := mdItem(t, designPath, design, "### 6.5 The docs test", "\n---\n\n## 7. ", 4)
 	flatItem4 := strings.ToLower(mdFlat(item4))
 	for _, phrase := range twoSetPhrases {
@@ -1147,8 +1147,8 @@ var mdForwardRefRE = regexp.MustCompile(`Task 6\.([1-6])`)
 // What it does read is the pair of paragraphs that say what a task touches and
 // what proves it, and for those the rule is absolute.
 func TestDocsConsoleStylingPhaseOrdering(t *testing.T) {
-	const planPath = "docs/plans/2026-10-15-desktop-console.md"
-	const designPath = "docs/design/console-styling.md"
+	const planPath = "docs/desktop-console/implementation-plan.md"
+	const designPath = "docs/console-styling/spec.md"
 	plan, design := readDoc(t, planPath), readDoc(t, designPath)
 
 	planTasks := mdTaskSections(t, planPath, plan,
@@ -1445,7 +1445,7 @@ func mdWordValue(word string) (int, bool) {
 // the console's own test files): those are other cases' subjects, and this one
 // is about the document keeping its own arithmetic.
 func TestDocsConsoleStylingCountsMatch(t *testing.T) {
-	const path = "docs/design/console-styling.md"
+	const path = "docs/console-styling/spec.md"
 	doc := readDoc(t, path)
 
 	// §6.5's enumeration: the ordered list runs 1..N with no gap, and N is the
@@ -1885,7 +1885,7 @@ func mdTokens(t *testing.T, path, section string) map[string]string {
 // re-finding the same markers.
 func mdStylingDoc(t *testing.T) (doc string, dark, light map[string]string, contrast string) {
 	t.Helper()
-	const path = "docs/design/console-styling.md"
+	const path = "docs/console-styling/spec.md"
 	doc = readDoc(t, path)
 	theme := mdCut(t, path, doc,
 		"### 3.2 The dark value set",
@@ -1911,7 +1911,7 @@ var mdStateOrder = []string{"--ok", "--warn", "--error", "--halted", "--stale"}
 // it as decorative and a hairline that cleared 3:1 would be a boundary the
 // design should have named as one.
 func TestDocsConsoleStylingContrastComputes(t *testing.T) {
-	const path = "docs/design/console-styling.md"
+	const path = "docs/console-styling/spec.md"
 	doc, dark, light, contrast := mdStylingDoc(t)
 
 	parts := mdCut(t, path, contrast,
@@ -2044,7 +2044,7 @@ func TestDocsConsoleStylingContrastComputes(t *testing.T) {
 // future token taking the documented fallback. The message it fails with is
 // still the section's own: change the token, not the rule.
 func TestDocsConsoleStylingStateSeparation(t *testing.T) {
-	const path = "docs/design/console-styling.md"
+	const path = "docs/console-styling/spec.md"
 	_, dark, light, contrast := mdStylingDoc(t)
 	parts := mdCut(t, path, contrast,
 		"**Dark**", "**Light**", "**A label on a filled control**",
@@ -2171,7 +2171,7 @@ func TestDocsConsoleStylingTokenProvenance(t *testing.T) {
 		"--warn":       "#F5A524",
 	} {
 		if dark[name] != hex {
-			t.Errorf("%s: §3.2 declares %s as %q, want %q, the website's value", "docs/design/console-styling.md", name, dark[name], hex)
+			t.Errorf("%s: §3.2 declares %s as %q, want %q, the website's value", "docs/console-styling/spec.md", name, dark[name], hex)
 		}
 		if !strings.Contains(site, name+": "+hex+";") {
 			t.Errorf("palette-logo.css no longer declares %s: %s; §3.2 reuses it byte for byte, and that reuse is the claim this test checks", name, hex)
@@ -2190,18 +2190,18 @@ func TestDocsConsoleStylingTokenProvenance(t *testing.T) {
 	for _, name := range []string{"--surface-alt", "--border-strong", "--ok", "--error", "--halted", "--stale"} {
 		hex := dark[name]
 		if hex == "" {
-			t.Errorf("docs/design/console-styling.md: §3.2 declares no %s", name)
+			t.Errorf("docs/console-styling/spec.md: §3.2 declares no %s", name)
 			continue
 		}
 		if strings.Contains(site, hex) {
-			t.Errorf("docs/design/console-styling.md: §3.2 calls %s (%s) new, and palette-logo.css already carries that literal", name, hex)
+			t.Errorf("docs/console-styling/spec.md: §3.2 calls %s (%s) new, and palette-logo.css already carries that literal", name, hex)
 		}
 	}
 
 	// And the count the accounting adds up to, so a fifteenth token cannot be
 	// added to the table without the sentence being revisited.
 	if n := len(dark); n != 14 {
-		t.Errorf("docs/design/console-styling.md: §3.2 declares %d tokens; the section's accounting is seven reused, one renamed and six new, which is fourteen", n)
+		t.Errorf("docs/console-styling/spec.md: §3.2 declares %d tokens; the section's accounting is seven reused, one renamed and six new, which is fourteen", n)
 	}
 }
 
@@ -2214,7 +2214,7 @@ func TestDocsConsoleStylingTokenProvenance(t *testing.T) {
 // is pinned to the two figures and to the tone the design names in their place,
 // because the whole finding was that the right number was in the wrong place.
 func TestDocsConsoleStylingAccentOnALightGround(t *testing.T) {
-	const path = "docs/design/console-styling.md"
+	const path = "docs/console-styling/spec.md"
 	doc, dark, light, _ := mdStylingDoc(t)
 
 	accent := dark["--accent"]
@@ -2272,7 +2272,7 @@ func TestDocsConsoleStylingAccentOnALightGround(t *testing.T) {
 // Its red state is the rail block's absence from §4.1, which is how it was
 // written, and the mutations it is proved against are named in §7.7.
 func TestDocsConsoleStylingRailIsSpecified(t *testing.T) {
-	const path = "docs/design/console-styling.md"
+	const path = "docs/console-styling/spec.md"
 	doc := readDoc(t, path)
 	const railMarker = "**The installation rail — now the switcher's menu.**"
 	rail := mdBetween(t, path, doc, railMarker, "### 4.2 Narrow windows")
@@ -2394,8 +2394,8 @@ func TestDocsConsoleStylingRailIsSpecified(t *testing.T) {
 	// `installation.list` on the dashboard's surface). Task 6.3's plan clause is
 	// the one-row rail it built before that ruling, and it keeps its own wording;
 	// neither document may promise a row per *stored* installation alone.
-	planDoc := readDoc(t, "docs/plans/2026-10-15-desktop-console.md")
-	planPath := "docs/plans/2026-10-15-desktop-console.md"
+	planDoc := readDoc(t, "docs/desktop-console/implementation-plan.md")
+	planPath := "docs/desktop-console/implementation-plan.md"
 	if !strings.Contains(structure, "one row per installation the CLI listed or this console holds, readable or not") {
 		t.Errorf("%s: §4.1 does not say the rail draws one row per installation the CLI listed or this console holds, readable or not; that is the owner's ruling of 2026-10-25, and the sentence the rail's cases are written from", path)
 	}
@@ -2582,7 +2582,7 @@ func mdReviewerTier(t *testing.T, path, section string) string {
 // file does, and it names the tasks by their clauses rather than by their
 // content: the plan is where a task's scope is stated.
 func TestDocsConsoleStylingRailIsInThePlan(t *testing.T) {
-	const planPath = "docs/plans/2026-10-15-desktop-console.md"
+	const planPath = "docs/desktop-console/implementation-plan.md"
 	plan := readDoc(t, planPath)
 	tasks := mdTaskSections(t, planPath, plan,
 		"### Task 6.1: The token layer",
@@ -2608,28 +2608,29 @@ func TestDocsConsoleStylingRailIsInThePlan(t *testing.T) {
 	}
 }
 
-// TestDocsConsoleStylingSettingsSectionCarriesItsEditorAndWindow: §2.5 is the
+// TestDocsConsoleStylingSettingsSectionCarriesItsPencilAndWindow: §2.5 is the
 // document the Project screen's hooks live in, and the settings section is the
-// one part of it that writes. The stylesheet selects three of its hooks, so the
-// editor's vocabulary has to be named here for the same reason every other
-// hook is -- and the confirmation window's two shapes have to be described
-// here, because the window is a document of its own (§2.13's) that this
-// section's pencil opens, and a shape a reader cannot find is a shape no
-// review checks the code against.
-func TestDocsConsoleStylingSettingsSectionCarriesItsEditorAndWindow(t *testing.T) {
-	const path = "docs/design/console-styling.md"
+// one part of it that writes. The stylesheet selects the pencil, so the row's
+// own outcome hook has to be named here for the same reason every other hook is
+// -- and the confirmation window's two shapes have to be described here,
+// because the window is a document of its own (§2.13's) that this section's
+// pencil opens, and a shape a reader cannot find is a shape no review checks
+// the code against. The row's inline editor is gone (the console improvements
+// plan's SU2b), so the hook it was drawn with is a hook this table may not keep
+// naming: a reader who finds it here would look for a box the row no longer has.
+func TestDocsConsoleStylingSettingsSectionCarriesItsPencilAndWindow(t *testing.T) {
+	const path = "docs/console-styling/spec.md"
 	doc := readDoc(t, path)
 	section := mdBetween(t, path, doc, "### 2.5 Project", "### 2.6 Run detail")
 
 	row := mdRow(t, path, section, "| Settings |")
-	for _, hook := range []string{"`projects-settings-editor`", "`projects-settings-editor-outcome`"} {
-		if !strings.Contains(row, hook) {
-			t.Errorf("%s: §2.5's Settings row does not name %s; the entry draws it and this table is the vocabulary a rule may select from", path, hook)
-		}
+	if !strings.Contains(row, "`projects-settings-editor-outcome`") {
+		t.Errorf("%s: §2.5's Settings row does not name `projects-settings-editor-outcome`; the entry draws it and this table is the vocabulary a rule may select from", path)
+	}
+	if strings.Contains(row, "`projects-settings-editor`") {
+		t.Errorf("%s: §2.5's Settings row still names `projects-settings-editor`; the inline editor that hook was drawn for is deleted (SU2b), and the row draws no box to type a value into", path)
 	}
 	for _, want := range []string{
-		"Review and write",
-		"Read again",
 		"I understand this raises a limit",
 		"widening",
 		"narrowing",
@@ -2638,7 +2639,7 @@ func TestDocsConsoleStylingSettingsSectionCarriesItsEditorAndWindow(t *testing.T
 		"§2.13",
 	} {
 		if !strings.Contains(section, want) {
-			t.Errorf("%s: §2.5 does not state %q, so the settings section's write -- the editor the pencil opens and the window's two shapes -- is described nowhere in this document", path, want)
+			t.Errorf("%s: §2.5 does not state %q, so the settings section's write -- the window the pencil opens and its two shapes -- is described nowhere in this document", path, want)
 		}
 	}
 }

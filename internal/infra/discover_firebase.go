@@ -30,7 +30,6 @@ const (
 // public, so they only stop an accidental adoption: the shape checks of
 // DiscoverFirebase are what stop a squatter.
 const (
-	firebaseDBRegion    = "us-central1"
 	firebaseDBType      = "DEFAULT_DATABASE"
 	webKeyDisplayName   = "Fugaro run sign-in"
 	signerDisplayName   = "Fugaro token signer"
@@ -55,6 +54,11 @@ func signerDescription(name string) string {
 // imported; each that fails is refused, and every refusal is returned
 // together. What does not exist (404, or its API disabled) is left for the
 // plan to create.
+//
+// The Realtime Database instance's LOCATION is not one of those checks: an
+// instance cannot move, so one that exists is adopted where it is and the
+// mapping's answer for a new one is not held against it (D3091, by
+// firebaseDB below).
 //
 // managed are the addresses the Firebase root's state already manages
 // (true; a nil map is a first run's empty state). A singleton whose import
@@ -116,10 +120,18 @@ func firebaseAddress(k importKind) string {
 }
 
 // firebaseDB adopts the project's default Realtime Database instance when
-// it is the one the module defines: DEFAULT_DATABASE, in us-central1,
-// named <fp>-default-rtdb, and ACTIVE. Its data is checked by DB.Check,
-// which refuses data without our mark; an empty, unmarked instance is
-// adopted (design decision 1).
+// it is the one the module defines: DEFAULT_DATABASE, named
+// <fp>-default-rtdb, and ACTIVE, WHEREVER it is (R3, R4). Its data is
+// checked by DB.Check, which refuses data without our mark; an empty,
+// unmarked instance is adopted (design decision 1).
+//
+// Its LOCATION is the one shape the module does not decide: Google offers
+// the instance in three locations for the whole world and one can never
+// move or be renamed, so an instance that exists wherever the installation's
+// mapping would put a new one is adopted where it IS, and the import names
+// that location (D3091). The module ignores its own region for an instance
+// it already manages, so the plan leaves it where it is; when the two
+// differ the run is told once, in a note, rather than refused.
 func (d *discovery) firebaseDB(spec FirebaseSpec) error {
 	wantID := firebaseDBInstanceID(d.project)
 	var found []*firebasedatabase.DatabaseInstance
@@ -134,7 +146,7 @@ func (d *discovery) firebaseDB(spec FirebaseSpec) error {
 	case err != nil:
 		return fmt.Errorf("listing the Realtime Database instances of project %s (fugaro update --firebase-project needs firebasedatabase.instances.list there): %w", d.project, err)
 	}
-	ok := false
+	ok, adopted := false, ""
 	for _, i := range found {
 		loc, id := instanceLocationID(i.Name)
 		// The default instance, and anything else under our ID: either
@@ -146,10 +158,10 @@ func (d *discovery) firebaseDB(spec FirebaseSpec) error {
 		where := "Realtime Database instance " + i.Name
 		switch {
 		case i.Type != firebaseDBType:
-			d.refuse(fmt.Errorf("%s is a %s, not the project's %s: the Firebase project cannot host Fugaro's backend as the module defines it (the default instance %s in %s)", where, i.Type, firebaseDBType, wantID, firebaseDBRegion))
-		case loc != firebaseDBRegion || id != wantID:
-			d.refuse(fmt.Errorf("the Firebase project %s's default Realtime Database is %s (location %s, ID %s), not %s in %s: a default instance can neither move nor be renamed, and a project has only one, so this Firebase project cannot host Fugaro's backend as the module defines it; use another Firebase project",
-				d.project, i.Name, loc, id, wantID, firebaseDBRegion))
+			d.refuse(fmt.Errorf("%s is a %s, not the project's %s: the Firebase project cannot host Fugaro's backend as the module defines it (the default instance %s)", where, i.Type, firebaseDBType, wantID))
+		case id != wantID:
+			d.refuse(fmt.Errorf("the Firebase project %s's default Realtime Database is %s (location %s, ID %s), not %s: a default instance can neither move nor be renamed, and a project has only one, so this Firebase project cannot host Fugaro's backend as the module defines it; use another Firebase project",
+				d.project, i.Name, loc, id, wantID))
 		case i.State == "DISABLED":
 			d.refuse(fmt.Errorf("%s is DISABLED, not ACTIVE: re-enable it in the Firebase console (Realtime Database, the database's menu), then rerun fugaro update --firebase-project %s", where, d.project))
 		case i.State == "DELETED":
@@ -159,11 +171,16 @@ func (d *discovery) firebaseDB(spec FirebaseSpec) error {
 		case i.DatabaseUrl == "":
 			d.refuse(fmt.Errorf("%s has no database URL, so neither fugaro nor its runs could reach it; fugaro refuses to adopt it. Rerun fugaro update --firebase-project %s once the Firebase console shows its URL", where, d.project))
 		default:
-			ok = true
+			ok, adopted = true, loc
 		}
 	}
-	if ok {
-		d.add(importFirebaseDB, firebaseDBRegion, "", wantID)
+	if !ok {
+		return nil
+	}
+	d.add(importFirebaseDB, adopted, "", wantID)
+	if adopted != spec.DatabaseRegion {
+		d.im.Notes = append(d.im.Notes, fmt.Sprintf("the Realtime Database instance %s is in %s and keeps it: an instance cannot move, so a new one's location (%s, from the installation's region) does not apply to it",
+			firebaseDBInstanceID(d.project), adopted, spec.DatabaseRegion))
 	}
 	return nil
 }

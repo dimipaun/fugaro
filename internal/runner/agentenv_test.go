@@ -363,17 +363,26 @@ func TestClaudeCoderKeepsItsTools(t *testing.T) {
 // for — an ID newer than the shipped table, which is what a repository pins
 // before the table carries it, and one the gateway would serve and price at
 // the table's maximum (forward.go's modelFor) — so this is the case a rule
-// read off the price row alone would get wrong. The budget off builds no table
-// at all, and a provider-served coder is refused at bootstrap without the
-// gateway, so this is the shape the case really has.
+// read off the price row alone would get wrong. The run is an oauth one, the
+// credential the gateway does not carry (D3026, R12): that is the fact that
+// leaves it gateway-less now, where the mode used to (AB1b, D3009), and its
+// job carries no database at all, so it has no session to read either. Its
+// price table is built all the same, and a provider-served coder is refused at
+// bootstrap without the gateway, so this is the shape the case really has.
 //
 // Mutation (denyBinaryReads' price-row answer without its gatewayOn): the
 // implement stage's brief gains the rule and this test fails.
 func TestTextOnlyCoderWithNoGatewayKeepsItsImageReads(t *testing.T) {
 	const coder = "claude-opus-6"
-	g := newGW(t, strings.Replace(pinnedConfig(t), "coder: "+sonnet, "coder: "+coder, 1), "off", "")
-	if g.deps.Spend.Prices != nil {
-		t.Fatalf("the budget-off run built a price table: %+v", g.deps.Spend.Prices)
+	cfg := oauthCfg(t, strings.Replace(pinnedConfig(t), "coder: "+sonnet, "coder: "+coder, 1))
+	g := newGW(t, cfg, "", "")
+	// The job names no database: from AB1a on a run that names one opens a
+	// session against it, and this is a run with no session, no cap and no
+	// gateway — the shape whose brief must carry no image rule.
+	g.harness.noBudget()
+	g.harness.deps.Env = append(g.harness.deps.Env, "CLAUDE_CODE_OAUTH_TOKEN="+oauthToken)
+	if g.deps.Spend.Prices == nil {
+		t.Fatal("the run built no price table: from AB1a on one is built whatever the mode is, and the price-row answer is what this test mutates")
 	}
 	if _, ok := pricing.Embedded().Lookup(coder); ok {
 		t.Fatalf("%s has a price row: this test is about a model the run's own table does not carry", coder)
@@ -422,14 +431,14 @@ func TestGatewayRunKeepsRealKeyFromAgent(t *testing.T) {
 	}
 }
 
-// With the budget off a run is what it was before the gateway existed:
-// models set in the configuration change nothing but --model. No pin is
-// put in the agent's environment, no settings file is written, and an
-// unwritable settings directory is of no concern.
-func TestBudgetOffSetsNoPinsAndWritesNoSettings(t *testing.T) {
-	cfg := strings.Replace(pinnedConfig(t), "auth: api-key", "auth: oauth", 1)
-	h := newHarness(t, cfg, nil)
-	h.deps.Env = append(h.deps.Env, "CLAUDE_CODE_OAUTH_TOKEN=oauth-token-for-tests-1234")
+// A run the gateway does not carry — oauth, the one credential it never holds
+// (D3026, R12), and so the only gateway-less run there is now that no mode
+// takes one away (AB1b, D3009) — is what it was before the gateway existed:
+// models set in the configuration change nothing but --model. No pin is put in
+// the agent's environment, no settings file is written, and an unwritable
+// settings directory is of no concern.
+func TestAGatewayLessRunSetsNoPinsAndWritesNoSettings(t *testing.T) {
+	h := oauthHarness(t, pinnedConfig(t), nil)
 	h.deps.ManagedSettingsPath = filepath.Join(t.TempDir(), "absent", "managed-settings.json")
 	var logs bytes.Buffer
 	h.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
@@ -443,7 +452,7 @@ func TestBudgetOffSetsNoPinsAndWritesNoSettings(t *testing.T) {
 			"CLAUDE_CODE_SUBAGENT_MODEL", "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "ANTHROPIC_BASE_URL",
 		} {
 			if got := envValue(req.Env, k); got != "" {
-				t.Errorf("call %d: %s = %q with the budget off", i, k, got)
+				t.Errorf("call %d: %s = %q with no gateway", i, k, got)
 			}
 		}
 	}
@@ -486,10 +495,24 @@ func TestManagedSettingsRemovedAtRunEnd(t *testing.T) {
 	}
 }
 
+// TestGatewayManagedDirNotWritableFailsBootstrap: in the image, a directory
+// that cannot hold Claude Code's managed settings fails the run before the
+// lock is taken — the managed settings are what keep a repository's own
+// settings from rerouting the agent there.
+//
+// It is a cloud run on purpose: the directory is the image's, and a local
+// invocation takes no such precondition at all
+// (TestALocalRunNeedsNoManagedSettingsDirectory; the #3481 finding).
 func TestGatewayManagedDirNotWritableFailsBootstrap(t *testing.T) {
 	g := newGW(t, gwConfig(t, ""), "observe", "")
 	h := g.harness
 	h.deps.ManagedSettingsPath = filepath.Join(t.TempDir(), "absent", "managed-settings.json")
+	// A run in the cloud: the platform's own report of its execution, and the
+	// project its job names (a local run is named by the invocation alone).
+	h.deps.Local = false
+	h.deps.Project = "aurora"
+	h.deps.Execution = cloudRunExecution(fixtureJob())
+	h.deps.Env = append(h.deps.Env, "CLOUD_RUN_EXECUTION=exec-1")
 	b := withBucket(h)
 	rec, err := h.run(t)
 	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "can't hold Claude Code's managed settings") ||
@@ -625,8 +648,16 @@ func TestSettingsNotJSONRefusedWithGateway(t *testing.T) {
 	}
 }
 
+// TestRepoSettingsIgnoredWithoutGateway: with no gateway under the run — an
+// oauth one, the credential the gateway does not carry (D3026, R12) — a
+// repository's settings file that would reroute Claude Code answers a question
+// nobody asks, and the run is not refused over it. That state is the
+// credential's now and no longer the mode's (AB1b, D3009): the api-key run
+// this used to be, with no mode named, is a run whose gateway is up and whose
+// settings are checked (TestRepoSettingsRerouteRefused).
 func TestRepoSettingsIgnoredWithoutGateway(t *testing.T) {
-	h := newHarnessFiles(t, "", nil, map[string]string{".claude/settings.json": rerouting})
+	h := newHarnessFiles(t, oauthCfg(t, pinnedConfig(t)), nil, map[string]string{".claude/settings.json": rerouting})
+	h.deps.Env = append(h.deps.Env, "CLAUDE_CODE_OAUTH_TOKEN="+oauthToken)
 	rec, err := h.run(t, implement("feature"), review("ship", 0))
 	if err != nil || rec.Status != runstore.StatusSucceeded {
 		t.Fatalf("rec = %+v, err = %v", rec, err)

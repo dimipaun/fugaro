@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// The pin for docs/plans/2026-10-18-mobile-mailbox-consumer.md, the CLI plan
+// The pin for docs/mobile/mailbox-consumer-plan.md, the CLI plan
 // console D19 requires before mobile task P4.1 (`fugaro mailbox`) may be
 // written. T1 has landed — `internal/mailbox`'s message binding and its replay
 // of the merged vectors — and every other task of the plan has not, so what
@@ -44,7 +44,7 @@ import (
 // (at least one message read, no action, every message read refused, at least
 // one of those refusals an action refusal), and both places must carry all of
 // them.
-const mailboxPlan = "docs/plans/2026-10-18-mobile-mailbox-consumer.md"
+const mailboxPlan = "docs/mobile/mailbox-consumer-plan.md"
 
 // planCited says whether the plan cites path, in its own prose or as the
 // relative link the document uses for its neighbours (docs/plans/'s
@@ -112,7 +112,7 @@ var planLinkRE = regexp.MustCompile(`\]\(([^)]+)\)`)
 // read out of the document at test time so that a path the plan adds is checked
 // the moment it is written down. A trailing slash (a directory written as
 // `shared/`) is stripped, so the two spellings of one directory are one entry;
-// a link is resolved against docs/plans/, which is where the document lives.
+// a link is resolved against docs/mobile/, which is where the document lives.
 func planPaths(doc string) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -128,7 +128,7 @@ func planPaths(doc string) []string {
 		add(m[1])
 	}
 	for _, m := range planLinkRE.FindAllStringSubmatch(doc, -1) {
-		add(path.Join("docs/plans", m[1]))
+		add(path.Join("docs/mobile", m[1]))
 	}
 	sort.Strings(out)
 	return out
@@ -193,19 +193,16 @@ func isPlanPath(p string) bool {
 // landing put the hidden command's stored-prompt rule in `internal/cli/mailbox.go`
 // and its tests in `internal/cli/mailbox_sweep_test.go`, so the test file is
 // checked like any other cited path while T7's own half (the local delete set
-// and the presence verdict `internal/mailbox/expiry.go` holds) is still to come.
-// The remaining entries are the tasks still unbuilt — T7's remaining half and
-// T8's corpus — and each of them must stay absent until its own task lands.
-var planWillCreate = map[string]string{
-	"internal/mailbox/expiry.go":              "T7 (the hidden sweeper; the plan names it there, not under T3 or T4)",
-	"internal/mailbox/parity_test.go":         "T8 (replays shared/mailbox/parity.test.js's corpus)",
-	"internal/mailbox/testdata/parity.json":   "T8 generates it; the Go side only reads it",
-	"docs/mobile/mailbox-review-checklist.md": "T8",
-	// The parity corpora the shared modules' own test files will write; the
-	// merged modules' index.test.js files exist today, these do not (§13's
-	// "no merged module changes" — test files only).
-	"shared/mailbox/parity.test.js": "T8",
-}
+// and the presence verdict `internal/mailbox/expiry.go` holds) was still to
+// come. T7's own half has landed since — the file and its tests are in the tree
+// — so it left the map the way every landed task's entry does, and P6.13 is no
+// longer half-built. T8's four left it last: the replay, the corpus it reads and
+// this plan's review checklist are in the tree, and the module's own test file
+// that writes the corpus is beside `shared/mailbox/index.js`. **Every entry has
+// left the map, and that is the state the rule is written for** — it stays as
+// the place a later plan's unbuilt paths would be named, with the same two
+// assertions over whatever is in it: absent, and still cited.
+var planWillCreate = map[string]string{}
 
 // planWillCreateElsewhere is the other half of that rule: paths the plan names
 // that belong to another, later task. It is empty on this branch, and that is
@@ -248,7 +245,8 @@ var planPathMoved = map[string]struct {
 // TestMailboxPlanEveryCitedPathExists is the path half of the citations pin,
 // derived from the plan rather than kept by hand. Every backticked `internal/`,
 // `shared/`, `mobile/`, `docs/`, `website/`, `deploy/` or `scripts/` path the
-// plan names must be in the tree — or be one of the handful T1–T8 create, each
+// plan names must be in the tree — or be one of the paths a task names and has
+// not created yet (planWillCreate, empty now that T1–T8 have all landed), each
 // of which must still be absent and still be named by the plan, or one of the
 // two ee-reorg E1.7a moved, whose successor must be present in its place.
 //
@@ -409,7 +407,7 @@ func TestMailboxPlanCitationsExist(t *testing.T) {
 		"internal/budget/token/device.go",
 		// The plan's authorities.
 		"docs/design/v1.md",
-		"docs/design/voice.md",
+		"docs/voice/spec.md",
 		"docs/mobile/implementation-plan.md",
 		"docs/mobile/functional-spec-reconciliation.md",
 	} {
@@ -913,6 +911,11 @@ var planPhaseSixMerged = map[string]string{
 	"P6.5": "shared/prompts/index.js",
 	"P6.6": "internal/budget/sweep.go",
 	"P6.7": "internal/mailbox/action.go",
+	// P6.13 came whole: the pairing CLI plan's T7 landed the hidden command and
+	// its stored-prompt deletion in internal/cli/mailbox.go, and this plan's own
+	// T7 landed the half beside it (internal/mailbox/expiry.go) — so the proof
+	// path is the file both halves are wired through.
+	"P6.13": "internal/cli/mailbox.go",
 }
 
 // planPhaseSixUnbuilt is the other direction: the tasks the bullet calls
@@ -934,18 +937,18 @@ var planPhaseSixUnbuilt = map[string][]string{
 // more here for the same reason — `internal/cli/mailbox.go` runs the consumer's
 // inbound gate, its ledger and its refusal at the action seam, while neither
 // task's own file was in the tree — and T6 then landed P6.7's, so P6.7 moved up
-// to the merged list and only P6.13 is left half-built, in the narrowest sense:
-// the pairing plan's T7 landed its store-side deletion in
-// `internal/cli/mailbox.go`, so what the `unbuilt` half has left to excuse is
-// this plan's own T7 — the local delete set and the reported presence verdict.
+// to the merged list. P6.13 was the last one here, for the narrowest reason: the
+// pairing plan's T7 landed its store-side deletion in `internal/cli/mailbox.go`
+// while this plan's own T7 — the local delete set and the reported presence
+// verdict — was not. That half has landed now, so the list is empty and the
+// state it was written for is gone rather than merely excused.
+//
 // Both halves of an entry
 // are held to the tree here: the sentence a reader plans against is a fact
 // about this branch rather than a memory of one.
 var planPhaseSixPartial = map[string]struct {
 	built, unbuilt []string
-}{
-	"P6.13": {built: []string{"internal/cli/mailbox.go"}, unbuilt: []string{"internal/mailbox/expiry.go"}},
-}
+}{}
 
 // TestMailboxPlanPhaseSixStatusIsTrue holds the premise bullet — the one that
 // says which of Phase 6 is merged, which is half-built and which is not — to

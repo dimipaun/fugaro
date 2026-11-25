@@ -46,6 +46,10 @@ variable "log_bucket_description" {
   type = string
 }
 
+variable "log_bucket_location" {
+  type = string
+}
+
 variable "bucket_lifecycle" {
   type = object({
     runs_days              = optional(number, 90)
@@ -294,6 +298,13 @@ variable "intake" {
     service    = string
     image      = string
     url        = optional(string)
+    # people is the intake's second class list (WC3, R5): the workspace
+    # roster's people, for an installation that is a workspace's project, and
+    # empty for every other one (`fugaro update` renders it from the roster).
+    # The root passes this block to the module whole (main.tf), so a member
+    # added here is a member the module can read; the module's own type and
+    # validation are what hold it to its shape.
+    people = optional(list(string), [])
   })
   default = null
 }
@@ -362,8 +373,17 @@ variable "credentials_service" {
       provider = string
       account  = string
     })), [])
-    verifier_accounts = optional(list(string))
-    url               = optional(string)
+    shared_job_accounts = optional(list(object({
+      profile  = string
+      provider = string
+      account  = string
+      repos    = list(string)
+    })), [])
+    verifier_accounts       = optional(list(string))
+    url                     = optional(string)
+    signer_account          = optional(string, "")
+    roster_service_accounts = optional(list(string), [])
+    implicit_admins         = optional(list(string), [])
   })
   # The credentials service (D146, D147): every `fugaro update` writes this
   # block (DON1, the owner's ruling of 2026-11-05), so the service is part of
@@ -381,16 +401,30 @@ variable "credentials_service" {
   # accounts may call it), review_job_accounts the review-only variants of
   # those project jobs — the review class's admitted set, one {profile,
   # provider, account} row per variant, empty for an installation that deploys
-  # none — url is the service's own URL — the audience its
+  # none — shared_job_accounts the shared coding class's own set, one
+  # {profile, provider, account, repos} row per shared job the deployment
+  # composes, with the repositories its profile serves (B5.1; the type is the
+  # module's, whose validation holds each row to a profile, a provider and a
+  # repositories list with no empty entry — an empty account is the profile's
+  # no-account CODING job and is served, which is the one place this table
+  # differs from the review one) — url is the service's own URL — the audience its
   # callers' tokens are minted for — which Cloud Run assigns, so the module
   # carries its unassigned placeholder until the apply after the one that
   # creates the service (the module's own output reads the URL back, and the
   # run that deploys the service applies again in the same run; the type is
   # the module's, and its validations are the ones that hold these four to
-  # their shape). verifier_accounts is the one OPTIONAL member, and the module
-  # renders its environment entry only when it is set: null is an installation
-  # that names no verifier, whose service starts with the same seven names and
-  # an empty list (C3.9g1, D1068).
+  # their shape). verifier_accounts and the identity half's three —
+  # signer_account, roster_service_accounts and implicit_admins, which LM12 of
+  # docs/launcher-does-not-mint adds under the names LM22 declared on the
+  # process's side (D3121, D3123, F29/R16) — are the OPTIONAL members. The
+  # module renders each of those three only where it has something to carry,
+  # and verifier_accounts' entry is always rendered (its unset state is the
+  # installation's own verifier account), so an installation that names none of
+  # them starts the service it always did: the same names it always had, an
+  # empty verifier list or the account this module creates, and no signer and
+  # no issuer (C3.9g1, D1068). The module's own description is where each
+  # member's shape and unset state are written; this root declares the types
+  # and adds no validation of its own.
   default = null
 }
 
@@ -502,8 +536,27 @@ variable "orchestrator" {
   # installation's node out of, and the tick's Scheduler job name and region.
   # The module's type is this same object and its validations are the ones that
   # hold them to their shape, so this root declares the value and decides
-  # nothing about it; nothing in internal/infra composes the block yet (the
-  # module variable's description says so), so the one installation that has it
-  # is one whose owner wrote it into terraform.tfvars.json by hand.
+  # nothing about it. internal/infra composes the block (Orchestrator) for the
+  # one door that writes it — `fugaro update`, for an installation that has the
+  # credentials service and the Firebase backend — and every run after it
+  # leaves the key exactly as it found it.
   default = null
+}
+
+# The switch on the minter rows that are not the issuer's (launcher-does-not-mint
+# plan task LM12, D3121, R8), and it is the FIREBASE root's own switch under the
+# same name: there it gates the people's row — the launchers' and the operators'
+# fugaroTokenMinter grant on the runs' signer (LM11) — and here the resident
+# orchestrator's row on that same signer, in the module's orchestrator.tf. One
+# name in both roots, because the plan that moves the grant to the credentials
+# service turns both off at once (LM14: `fugaro update` applies both roots with
+# the switch off once the service has proved it signs as this signer, and the
+# two rows are gone together). ON is the whole of what makes the update carrying
+# this change a plan with nothing new in it, and what it never gates is the
+# ISSUER's row: that row is what keeps the installation able to mint a run's
+# identity while the grant moves (R8).
+variable "people_minter" {
+  type     = bool
+  default  = true
+  nullable = false
 }

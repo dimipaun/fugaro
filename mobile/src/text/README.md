@@ -162,14 +162,14 @@ React, which is also how "the screen draws no secret" stays a fact in CI.
 return it, and it is drawn **verbatim and once**: the read-back already ends in
 the typed cue (see above), so the screen adds no second instruction under it.
 
-It takes `{ installations, confirmation, unsent, notice, draft, onChangeText }`
-and draws, per installation, its id (D114's label), its waiting questions in
-P6.5's listing order with the destructive ones marked, and its recent summaries
-newest first and capped at `RECENT_SUMMARY_LIMIT`. **Per installation and never
-summed** (D170): nothing counts across sections, and `screen.test.js` asserts
-that no total appears on screen. P6.5's `stage` (the reminder escalation) is
-**not** drawn — nothing here reads it, and the header says so rather than
-implying it.
+It takes `{ installations, conversation, confirmation, unsent, notice, draft,
+onChangeText }` and draws, per installation, its id (D114's label), its waiting
+questions in P6.5's listing order with the destructive ones marked, and its
+recent summaries newest first and capped at `RECENT_SUMMARY_LIMIT`. **Per
+installation and never summed** (D170): nothing counts across sections, and
+`screen.test.js` asserts that no total appears on screen. P6.5's `stage` (the
+reminder escalation) is **not** drawn — nothing here reads it, and the header
+says so rather than implying it. `conversation` is the one transcript below.
 
 The unsent text from `client.pending()` is drawn too — D167's first half is
 that it is *shown* rather than queued by the SDK, so a user who typed into a
@@ -190,3 +190,112 @@ caller's, and there is no element in the tree that could write anything.
 **What is not here.** No answer buttons and no launch button: matching a typed
 line to the question it answers ("the active installation's oldest question",
 §3.4) is the caller's, because it is state this screen does not hold.
+
+## One transcript for voice and text
+
+X1 (mobile identity and pairing plan; **D2788**, the spec's *"one session, two
+modes"*). Voice and text are two views of one conversation with the operator's
+session, and `transcript.js` is the conversation: an append-only list of lines a
+view can be built, torn down and built again around without losing one.
+
+```js
+import { createTranscript, recordingMailbox, transcriptSpeaker } from './index.js';
+
+const transcript = createTranscript({ session, now, newId });   // one per project session
+
+createVoiceScreen({ pipeline, client, now, holder, transcript });   // the voice view records
+const typed = createTypedInput({ mailbox: recordingMailbox({ transcript, mailbox: client }), now, newId });
+
+// the reply, through the client's own speaker port: the mailbox outbox, and no other door
+createMailboxClient({ ..., speaker: transcriptSpeaker({ transcript, speaker: pipelineSpeaker }) });
+
+// and the text view draws the same list
+TextScreen({ conversation: transcript.entries() });
+```
+
+A line is `{ id, at, who, source, text, engine }`, closed and checked fail-closed
+the way the session port is: `who` is `operator` or `agent`, `source` is `voice`,
+`text` or `outbox`, `engine` is the tag of the engine that produced a spoken line
+(`null` for a typed one), and an unknown field is refused rather than ignored.
+The store carries the session's opaque project id and **ends at `signedOut`**: a
+later line is refused, and the lines already there stay — the conversation
+happened.
+
+**What is a line, and what is not.** A line is what reached the session: a send
+the client refused appends nothing (D167's `unsent` is where refused text stays
+visible), and a reply the speaker could not speak appends nothing either (the
+client leaves the message unacked and the next poll says it again). The
+transcript is not a history of what the owner attempted. Nor is the **app's own
+speech** a line: the client says its refusal — "No connection. I have not sent
+that." — over the same speaker port it speaks replies through (S6.3), marks it
+as a refusal, and the transcript records nothing for it, because the agent never
+said it. What the owner heard is the voice and text views' own `refused` state,
+not a reply. And the words on a line are the **redacted** ones: `send` answers
+with the text it signed (D118) as `sent.text`, and both wrappers record that
+string rather than the raw sentence they were handed, so a secret is in neither
+the message nor the conversation.
+
+**Who writes it, and why there are four seams and not one.** The voice view
+records its own spoken words (the engine tag is a fact only it holds at that
+moment); `recordingMailbox` wraps the client handed to `input.js`, so the typed
+door needs no change and the write is still the client's (D113); `transcriptSpeaker`
+wraps the port the client speaks replies through; and the voice screen's snapshot
+carries `conversation` beside the text view's `conversation` prop. Nothing here
+writes anything anywhere: the transcript holds what a view or the client
+produced, and a refused line is a refusal, not an append.
+
+## Long paste, and detail to the screen
+
+X2 (mobile identity and pairing plan; the spec's "Long text input" and "Detail
+goes to the screen"). Two halves of the same text interface, one file each.
+
+**The draft outlives the view.** `composer.js` holds the one string the owner
+has typed or pasted and not sent, and it is a store rather than a `useState`
+because a phone rebuilds a view for reasons that have nothing to do with the
+draft: a switch to the voice view and back, a rotation. A draft held in the
+view's own state is a draft the rebuild loses. The wiring is two props:
+
+```js
+const composer = createComposer();
+
+TextScreen({ draft: composer.text(), onChangeText: composer.change });
+```
+
+**No cap, on purpose.** The plan's default is *"long paste 100000 characters
+without loss"*; `LONG_PASTE_CHARS` names that figure as the size the tests drive
+and the bar the module is held to, **not** as a limit. A limit is the very loss
+the sentence is about: a paste silently shortened, or refused with "too long",
+is the one thing the composer exists to prevent. The store trims nothing,
+normalises nothing and re-encodes nothing, and a value that is not a string is
+refused with the draft kept, so a caller's mistake cannot wipe what somebody
+pasted. `clear()` is the caller's call **after** a send the client accepted --
+the composer cannot see a send and must not guess one happened. It writes
+nothing: the send is `src/mailbox`'s client (D113) and this module holds no
+client, no store and no path.
+
+**A reply too dense to follow by ear goes to the screen.** `detail.js` is the
+spec's *"the agent says it has put the details on screen and shows them in the
+text view"*. Two shapes are dense and they are the two the spec names -- a
+**list of ids** (run ids like `20260926-221530-a1b2`, pull-request ids like
+`#1234`) and a **table** (the pipe table an agent writes, rule row and all) --
+and everything else is read out. The rule is deliberately narrow, and the
+reason is which way a mistake costs: a reply wrongly called dense is *hidden*
+from an owner who is listening, so a list counts only when it is nothing but
+ids, and a table only when its rule row is really there.
+
+```js
+// one speaker on the client, chosen once: the client is built once, so the
+// mode switch changes nothing about the port.
+createMailboxClient({ ..., speaker: detailOnScreen({ transcript, speaker: pipelineSpeaker }) });
+```
+
+`detailOnScreen` is a drop-in for `transcriptSpeaker`: an ordinary reply is
+spoken and recorded exactly as that port does, and a dense one is spoken as
+`DETAIL_SPEECH` ("The details are on screen.") with the detail appended to the
+transcript -- the agent's line, through the outbox, which is the list the text
+view already draws. Two lines, in the order it happened: the agent announced,
+then showed. A reply the speaker could not speak shows nothing (the client
+leaves it unacked and the next poll says it again, so a table appended here
+would be the same table twice), and the app's own refusal sentence (S6.3) is
+not a reply and is not classified.
+

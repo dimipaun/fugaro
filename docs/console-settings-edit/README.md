@@ -62,7 +62,7 @@ Three things this design settles that the ask does not:
 
 1. **Which rows get a pencil is the CLI's answer, never the console's.** S5 keeps the allow-list of
    writable rows (`settingsGenericKeys` and `settingsGenericPrefixes`, `internal/cli/settings_set.go:117`, `:315`) and
-   the registry's `Owner` and `Sensitive` facts (`internal/settings/registry.go:80`). The console
+   the registry's `Owner` and `Sensitive` facts (`internal/settings/registry.go:81`). The console
    reads them and keeps no list of its own; the read's own field is the subject of **D1102** and the
    prerequisite **P2**. A row the read marks `sensitive: true` is **hidden** — no key, no value, no
    pencil — which is the owner's ruling of 2026-11-01 and is pinned as `a Sensitive row is absent
@@ -95,8 +95,8 @@ Three things this design settles that the ask does not:
   `docs/rigor-modes/reconciliation.md` that counts the `internal/cli/docs_*_test.go` pin files moves
   from 90 to 91, because this folder ships the ninety-first and the row's own guard re-runs the
   command it prints. The figure is a count of the tree rather than a decision, and nothing else in
-  that document moves. `docs/design/desktop-console.md` §5.1 (rules 5, 6 and the new rule 12 for the
-  second write), `console/docs/json-contract.md` §6.15 and `docs/design/console-styling.md` §2.5 are
+  that document moves. `docs/desktop-console/spec.md` §5.1 (rules 5, 6 and the new rule 12 for the
+  second write), `console/docs/json-contract.md` §6.15 and `docs/console-styling/spec.md` §2.5 are
   **named in the plan** as the documents the implementing tasks change, and not one of them is
   touched here.
 - It does not implement **S5**. `fugaro settings get|set|unset` is pull request **#1525**, merged
@@ -113,10 +113,10 @@ Three things this design settles that the ask does not:
   **S5** is the command every edit here spawns, whose **D846** is the rule this work's P4 amends for
   that command and leaves standing for `fugaro update`, and whose §4.4 is the allow-list of writable
   rows.
-- [docs/design/desktop-console.md](../design/desktop-console.md) §5.1 — rules 5, 6 and 11: the IPC
+- [docs/desktop-console/spec.md](../desktop-console/spec.md) §5.1 — rules 5, 6 and 11: the IPC
   allow-list, the exact-argv spawn allow-list with its never table, and the launch, which is the
   pattern this design's confirmation window copies.
-- [docs/design/console-styling.md](../design/console-styling.md) §2.5 — the Project screen's class
+- [docs/console-styling/spec.md](../console-styling/spec.md) §2.5 — the Project screen's class
   hooks, which the pencil and the settings panels extend.
 - [docs/console-windows/](../console-windows/README.md) — the WSL route, where the CLI's argv is
   handed to a shell inside a distribution and the wrapper refuses any word with shell metacharacters;

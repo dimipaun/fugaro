@@ -13,6 +13,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/coordpath"
 	"github.com/dimipaun/fugaro/internal/rtdb"
@@ -110,6 +111,16 @@ type Store struct {
 // NewStore returns a store over an already-opened client. The caller owns the
 // client's credential: this package never mints one and never reads one.
 func NewStore(c *rtdb.Client) *Store { return &Store{c: c, attempts: writeAttempts} }
+
+// ServerNow is the database's own clock (rtdb.Client.ServerNow): the time the
+// most recently answered request was stamped with, and ok false until the store
+// has heard anything. The sweep stamps its heartbeat with it rather than with
+// the clock it is handed, because whoever reads that heartbeat compares it
+// against ages the database's clock wrote: a job whose host clock is wrong
+// would report a heartbeat in the future, or hours old, and a health line built
+// on two clocks says nothing (internal/orchestrator's lease keeps the same rule
+// on the other subtree).
+func (s *Store) ServerNow() (time.Time, bool) { return s.c.ServerNow() }
 
 // Read returns the document at path into out (nil to read nothing) and the
 // ETag to write it back with, and found is false for an absent node. An absent
@@ -287,6 +298,32 @@ func (s *Store) ReadRepoIntents(ctx context.Context, slug, repo string) (RepoInt
 		})
 	}
 	return out, nil
+}
+
+// ReadHeartbeat reads the sweep's heartbeat (coordpath.PathHeartbeat), typed
+// rather than raw: this is the read the console's health line makes (D3212),
+// and it is the caller's answer to whether the coordinator is running at all.
+//
+// found is false for an absent node, and that is a fact rather than a failure:
+// the sweep is off until an owner turns it on (the installation's
+// coordinator_sweep job), and an installation whose schedule never fired has no
+// heartbeat — which is what the health line names the fix from. It is the same
+// distinction RepoView.Stored draws, and for the same reason: a document of
+// zeroes would read as a sweep that began at the beginning of time.
+//
+// A node that does not decode is refused rather than shown as that zero
+// document, with ErrUnreadable, exactly as ReadRepoView refuses one.
+func (s *Store) ReadHeartbeat(ctx context.Context) (Heartbeat, bool, error) {
+	var raw json.RawMessage
+	_, found, err := s.Read(ctx, coordpath.PathHeartbeat, &raw)
+	if err != nil || !found {
+		return Heartbeat{}, false, err
+	}
+	var hb Heartbeat
+	if err := strictDecode(raw, &hb); err != nil {
+		return Heartbeat{}, false, fmt.Errorf("coordinator: reading /%s: %w: %w", coordpath.PathHeartbeat, ErrUnreadable, err)
+	}
+	return hb, true, nil
 }
 
 // strictDecode decodes one stored document, refusing a field this build does

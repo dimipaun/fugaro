@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -19,10 +20,15 @@ import (
 	"golang.org/x/oauth2"
 	secretmanager "google.golang.org/api/secretmanager/v1"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	infraTF "github.com/dimipaun/fugaro/internal/infra/tf"
+	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/workspace"
 )
 
 // The credentials service's entry point (plan task C1.14) is not a command
@@ -372,10 +378,10 @@ func TestCredentialsServiceReviewJobAccountsReachTheAuthenticator(t *testing.T) 
 // statement rather than two.
 //
 // The third half is the optional and the empty half of the wiring: with the
-// document absent — the state of every installation whose module does not
-// render the entry yet, which is every installation today — and with an empty
-// array, the configuration builds and the service starts with no shared job at
-// all. That is what makes the absent value a class refused whole rather than a
+// document absent — an installation carried from a release whose module did
+// not render the entry yet — and with an empty array, the configuration builds
+// and the service starts with no shared job at all. That is what makes the
+// absent value a class refused whole rather than a
 // process that will not bind a port.
 //
 // Mutation (verified, run and restored): dropping SharedJobAccounts from the
@@ -435,6 +441,99 @@ func TestCredentialsServiceSharedJobAccountsReachTheService(t *testing.T) {
 		}
 		if _, err := credsvc.NewServer(cfg); err != nil {
 			t.Fatalf("NewServer with %s = %q: %v", envSharedJobAccounts, raw, err)
+		}
+	}
+}
+
+// The value of FUGARO_SHARED_JOB_ACCOUNTS is written by ONE half of this
+// program and read by the other, through a file, a Terraform variable and a
+// Cloud Run container — internal/infra renders the installation's shared jobs
+// into the tfvars (CredentialsSharedJobAccounts) and the module carries them
+// into this service's environment, and this command parses them back at
+// start-up (credentialsServiceSharedJobAccounts). Nothing in between is typed
+// by hand, so the two halves of the document have no compiler between them:
+// the writer's json tags and the reader's are string-matched, the reader
+// refuses an unknown field and a row without repos, and a member either side
+// renames is a service that refuses to bind a port — or, worse, one that
+// starts with a table that names no account the deployment created.
+//
+// The round trip is therefore asserted end to end: a real local config is
+// derived into rows, the rows are marshalled exactly as they are written (the
+// struct, not a hand-built document), and the command's own reader is handed
+// the result. Every row has to come back, carrying the same repositories — a
+// pattern among them, because allow_repos is matched as a pattern and a list
+// this side rewrote or dropped would be a shared caller refused for a
+// repository its profile admits — and each account has to be the service
+// account the deployer creates for that triple (gcp.ProjectServiceAccountID),
+// which is the whole of what the caller's class rests on.
+func TestCredentialsSharedJobAccountsRoundTrip(t *testing.T) {
+	// Two profiles and both providers: the GitHub one names an allow_repos list
+	// with a named account beside its default, the Bitbucket one names none, so
+	// its row takes the repositories this machine's config records for
+	// Bitbucket — the two derivations the writer makes, and the two the reader
+	// has to receive.
+	const local = `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+registry: us-east5-docker.pkg.dev/proj-1234/fugaro
+user: test@example.com
+repos:
+  acme/webapp: { provider: github, base_branch: main, workflows: [web], github_app_id: "123456789" }
+  acme/sandbox: { provider: bitbucket, base_branch: master, workflows: [web] }
+claude_accounts:
+  acme-personal: { allow_data_to: [acme/webapp] }
+project_secrets:
+  claude-oauth-token: { allow_data_to: [acme/webapp] }
+profiles:
+  standard: { provider: github, cpu: 1, memory: 2Gi, timeout_class: 1h, allow_repos: [github/acme/webapp, github/acme/*], claude_accounts: [acme-personal, default] }
+  bbshared: { provider: bitbucket, cpu: 2, memory: 4Gi, timeout_class: 6h }
+`
+	lc, err := localcfg.Parse([]byte(local))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := infra.CredentialsSharedJobAccounts(lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRows := []infra.CredentialsSharedJob{
+		{Profile: "bbshared", Provider: "bitbucket", Account: "", Repos: []string{"bitbucket/acme/sandbox"}},
+		{Profile: "standard", Provider: "github", Account: "", Repos: []string{"github/acme/webapp", "github/acme/*"}},
+		{Profile: "standard", Provider: "github", Account: "acme-personal", Repos: []string{"github/acme/webapp", "github/acme/*"}},
+	}
+	if !slices.EqualFunc(rows, wantRows, func(a, b infra.CredentialsSharedJob) bool {
+		return a.Profile == b.Profile && a.Provider == b.Provider && a.Account == b.Account && slices.Equal(a.Repos, b.Repos)
+	}) {
+		t.Fatalf("the installation's shared jobs = %+v, want %+v", rows, wantRows)
+	}
+	raw, err := json.Marshal(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accounts, err := credentialsServiceSharedJobAccounts(string(raw), credentialsServeEnv[envGCPProject])
+	if err != nil {
+		t.Fatalf("the service refused the value this program renders for its own installation (%s): %v", raw, err)
+	}
+	if len(accounts) != len(wantRows) {
+		t.Fatalf("the service read %d rows out of %d: %+v", len(accounts), len(wantRows), accounts)
+	}
+	gcpProject := credentialsServeEnv[envGCPProject]
+	slices.SortFunc(accounts, func(a, b credsvc.SharedJobAccount) int { return strings.Compare(a.Email, b.Email) })
+	for _, r := range wantRows {
+		// The account the deployer creates for this triple, spelled here the
+		// way the reader derives it (credsvc.SharedJobAccountFor is the one
+		// derivation both sides share) and checked against the email the row
+		// really carries: a table naming an account no job runs as is a class
+		// no caller can be verified into.
+		want := gcp.ProjectServiceAccountID(r.Profile, r.Provider, r.Account) + "@" + gcpProject + ".iam.gserviceaccount.com"
+		i := slices.IndexFunc(accounts, func(a credsvc.SharedJobAccount) bool { return a.Email == want })
+		if i < 0 {
+			t.Fatalf("the service read %+v and none of them is %s, the account the deployer creates for (%s, %s, %q)", accounts, want, r.Profile, r.Provider, r.Account)
+		}
+		if got := accounts[i]; got.Profile != r.Profile || !slices.Equal(got.Repos, r.Repos) {
+			t.Errorf("row %s came back as %+v, want the profile %s and the repositories %v it was written with: the writer's list IS the admission the service binds a shared caller to", got.Email, got, r.Profile, r.Repos)
 		}
 	}
 }
@@ -797,6 +896,135 @@ func TestCredentialsServiceOrchestratorClassReachesTheAuthenticator(t *testing.T
 		if _, err := credsvc.NewServer(cfg); err != nil {
 			t.Fatalf("NewServer with %s = %q: %v", envOrchestratorAccounts, raw, err)
 		}
+	}
+}
+
+// TestCredentialsServeReadsTheIdentityEnv is LM22's reading end (D3121, D3123,
+// F29/R16): the three names of the identity half are read out of the
+// deployment's environment into C1's configuration, and NOTHING USES THEM YET.
+//
+// The three are the values the issuer will be configured with — the account a
+// run's identity is signed as, the roster's `serviceAccount:` entries and the
+// implicit admins the CLI's own gate reads out of its configuration — and each
+// is read here as an OPTIONAL value, because the module that renders them is
+// LM12: an installation whose module does not render one yet must start the
+// service it always did, on the bridge the identity routes answer "not served"
+// from (R7), rather than refuse to bind a port.
+//
+// Nothing serves a caller by these values yet, and the test says so by what it
+// does NOT assert: the configuration is built and the service starts with a
+// signer set, and no route reads it — the five identity routes answer the
+// contract's "not served" whatever this holds until I1 wires the issuer in and
+// deletes credsvc's identity stub. What is pinned here is the read, which is
+// the whole of what this task produces: the values arrive in the fields
+// credsvc.IdentityConfig names for them (I1 hands them to the routes), and a
+// deployment that is wrong is refused by name and never by value.
+//
+// Mutation (verified, run and restored): change credentialsServiceSigner's last
+// line to return the empty string — the first half below fails with an empty
+// Signer, which no other assertion here could tell from an installation whose
+// module renders no entry.
+func TestCredentialsServeReadsTheIdentityEnv(t *testing.T) {
+	const (
+		signer = "fugaro-token-signer@proj-1234.iam.gserviceaccount.com"
+		ci     = "ci-deploy@proj-1234.iam.gserviceaccount.com"
+		admin  = "owner@example.com"
+	)
+	for _, n := range credentialsServiceEnvNames {
+		t.Setenv(n, credentialsServeEnv[n])
+	}
+	fakeCredentialsService(t)
+
+	// Half one: the three values reach C1's configuration, each in its own
+	// field and unchanged. The roster's list and the admins' are pinned as
+	// lists and not as "non-empty", because the two are different questions —
+	// one address where the module renders a list is a document this reader
+	// must not repair, and a list that arrived as one string would serve a
+	// caller class nobody deployed.
+	t.Setenv(envSignerAccount, signer)
+	t.Setenv(envRosterServiceAccounts, `["`+ci+`"]`)
+	t.Setenv(envImplicitAdmins, `["`+admin+`"]`)
+	cfg, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+	if err != nil {
+		t.Fatalf("credentialsServiceConfig with the identity half set: %v", err)
+	}
+	if cfg.Identity.Signer != signer {
+		t.Errorf("the configuration's signer is %q, want the address %s carries: a service that dropped it would serve an installation with no issuer once I1 wires the routes", cfg.Identity.Signer, envSignerAccount)
+	}
+	if !slices.Equal(cfg.Identity.ServiceAccounts, []string{ci}) {
+		t.Errorf("the configuration's service accounts are %q, want %q: %s is the roster's one serviceAccount: entry", cfg.Identity.ServiceAccounts, []string{ci}, envRosterServiceAccounts)
+	}
+	if !slices.Equal(cfg.Identity.ImplicitAdmins, []string{admin}) {
+		t.Errorf("the configuration's implicit admins are %q, want %q: %s is what the machine's own configuration names", cfg.Identity.ImplicitAdmins, []string{admin}, envImplicitAdmins)
+	}
+	if _, err := credsvc.NewServer(cfg); err != nil {
+		t.Fatalf("NewServer with the identity half configured: %v (an installation whose module renders the three must be a service that starts)", err)
+	}
+
+	// Half two: absent and empty are the zero value, and the service starts —
+	// the state every installation is in until LM12 renders the entries. The
+	// three are read outside credentialsServiceEnvNames for exactly this
+	// reason, which is the verifier list's rule (TestCredentialsServeStartsWithoutTheVerifierList).
+	for _, raw := range []string{"", "[]"} {
+		t.Setenv(envSignerAccount, "")
+		t.Setenv(envRosterServiceAccounts, raw)
+		t.Setenv(envImplicitAdmins, raw)
+		cfg, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+		if err != nil {
+			t.Fatalf("credentialsServiceConfig with %s and %s = %q: %v (the module renders none of the three yet, so a deployment that carries none must start the same service it always did)", envSignerAccount, envRosterServiceAccounts, raw, err)
+		}
+		if cfg.Identity.Signer != "" || len(cfg.Identity.ServiceAccounts) != 0 || len(cfg.Identity.ImplicitAdmins) != 0 {
+			t.Errorf("the configuration carries %+v with the three names absent: an installation whose module renders none has no issuer, and a value here would be one this process invented", cfg.Identity)
+		}
+		if _, err := credsvc.NewServer(cfg); err != nil {
+			t.Fatalf("NewServer with the three names absent: %v", err)
+		}
+	}
+
+	// Half three: a value that is present and is not the document the module
+	// renders is a deployment that is wrong, refused by name and never by
+	// value. The signer is held to one address — the coordinator's own rule,
+	// because a single value is not a document: what is refused is a space or
+	// a control byte around the address and not its spelling, which is left to
+	// whoever consumes it (I1) — and the two lists to the array every class
+	// list is read as, which refuses a quoted string, a row and any element
+	// that is not one.
+	for _, tc := range []struct {
+		name  string
+		entry string
+		read  func(string) error
+		raw   []string
+	}{
+		{envSignerAccount, signer, func(raw string) error { _, err := credentialsServiceSigner(raw); return err },
+			[]string{signer + " ", " " + signer, "\t" + signer, signer + "\n", signer + " " + signer, signer + "\r\n"}},
+		{envRosterServiceAccounts, ci, func(raw string) error { _, err := credentialsServiceRosterServiceAccounts(raw); return err },
+			[]string{"not json", `"` + ci + `"`, `[{"email":"` + ci + `"}]`, `["` + ci + `",3]`}},
+		{envImplicitAdmins, admin, func(raw string) error { _, err := credentialsServiceImplicitAdmins(raw); return err },
+			[]string{"not json", `"` + admin + `"`, `[{"user":"` + admin + `"}]`, `["` + admin + `",3]`}},
+	} {
+		for _, raw := range tc.raw {
+			err := tc.read(raw)
+			if err == nil {
+				t.Errorf("reading %s = %q is accepted: the value is the document the module renders or nothing", tc.name, raw)
+				continue
+			}
+			if !strings.Contains(err.Error(), tc.name) {
+				t.Errorf("the refusal for %s = %q is %q, want it to name the variable", tc.name, raw, err)
+			}
+			if strings.Contains(err.Error(), tc.entry) {
+				t.Errorf("the refusal for %s = %q carries the account itself: %q (this process's log is a line an operator reads)", tc.name, raw, err)
+			}
+		}
+		// ... and the same value through the builder, which is where the
+		// refusal reaches an operator: a malformed entry is a deployment that
+		// is wrong and not a value to be read as empty.
+		t.Setenv(tc.name, tc.raw[0])
+		if _, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard); err == nil || ExitCode(err) != ExitUserError {
+			t.Errorf("err = %v for %s = %q, want a user error (exit 1)", err, tc.name, tc.raw[0])
+		} else if !strings.Contains(err.Error(), tc.name) {
+			t.Errorf("the builder's refusal for %s = %q is %q, want it to name the variable", tc.name, tc.raw[0], err)
+		}
+		t.Setenv(tc.name, "")
 	}
 }
 
@@ -1241,20 +1469,24 @@ func TestCredentialsServiceRefusalsNeverCarryAValue(t *testing.T) {
 // The other direction is a name this command reads that nothing sets, which is
 // a fact the service silently does not have.
 //
-// The list is the seven REQUIRED names plus the eight optional ones, which is
+// The list is the seven REQUIRED names plus the eleven optional ones, which is
 // the whole of what the module renders and what this command reads: the
 // optional ones belong here because a name the module sets and this command
 // does not read is the same mistake whether the command requires it or reads it
 // outside the loop. Which of the names is which is pinned by the tests around
 // this one, not by this comparison.
 //
-// All eight are rendered conditionally — the module sets each of them only on
+// All eleven are rendered conditionally — the module sets each of them only on
 // an installation where it applies — and the reason they belong here rather than
-// in credentialsServiceEnvNames is pinned by the tests around this one. One of
-// them is rendered by no module yet and is read from
-// CredentialsServiceEnvAwaitingTheModule below: FUGARO_SHARED_JOB_ACCOUNTS
-// (B5.1), whose reader arrived ahead of the module that will render it — the
-// same cover-first order FUGARO_REVIEW_JOB_ACCOUNTS followed.
+// in credentialsServiceEnvNames is pinned by the tests around this one. The
+// conditionality is also what lets a reader arrive before the module that
+// renders it — FUGARO_SHARED_JOB_ACCOUNTS (B5.1) was read here for a release
+// before credentials.tf set it, the same cover-first order
+// FUGARO_REVIEW_JOB_ACCOUNTS followed — and
+// CredentialsServiceEnvAwaitingTheModule (internal/infra/tf) was the list that
+// held such a name. FUGARO_SHARED_JOB_ACCOUNTS was its last member and the
+// module renders it now, so the list is empty and the loop below requires every
+// name this command reads to be in credentials.tf.
 //
 // internal/infra/tf's credentialsServiceEnv is the third side of this, and it
 // is held to the module by that package's own test (the cover's allow-list
@@ -1267,7 +1499,7 @@ func TestCredentialsServiceEnvIsTheDeploymentsOwn(t *testing.T) {
 		inModule[m[1]] = true
 	}
 	pending := infraTF.CredentialsServiceEnvAwaitingTheModule()
-	read := append(slices.Clone(credentialsServiceEnvNames), envVerifierAccounts, envPersonAccounts, envLauncherAccounts, envCoordinatorAccount, envReviewJobAccounts, envSharedJobAccounts, envBuildAccounts, envOrchestratorAccounts)
+	read := append(slices.Clone(credentialsServiceEnvNames), envVerifierAccounts, envPersonAccounts, envLauncherAccounts, envCoordinatorAccount, envReviewJobAccounts, envSharedJobAccounts, envBuildAccounts, envOrchestratorAccounts, envSignerAccount, envRosterServiceAccounts, envImplicitAdmins)
 	for _, n := range read {
 		if slices.Contains(pending, n) {
 			if inModule[n] {
@@ -1648,5 +1880,322 @@ func TestCredentialsServeRefusesHTTP2DebugStill(t *testing.T) {
 				t.Fatalf("err = %v, want the http2debug refusal: a process that serves the h2c path prints the frames of a call that carries a credential", err)
 			}
 		})
+	}
+}
+
+// The workspace's personal half (C2, WC14) is what a workspace-mode process
+// hands C1's resolver beside the front door, the node reader and the meter:
+// the reader of the workspace's OWN roster node, the launcher verifier that
+// roster admits its people with, and the slip store its own grants live in.
+// All three are built over the workspace's own database — the one
+// FUGARO_RTDB_URL names — and all three travel to the scope through C2's one
+// package variable, `credsvc.PersonScopeConfigForServe`, which the process sets
+// BEFORE the resolver is built (C2's "Two package-level variables are how the
+// sides meet").
+//
+// What these tests can and cannot see is worth stating, because WC4 (the scope
+// that reads the configuration) is written in parallel with this task and has
+// not landed: what they pin is the WIRING — the three readers, over which
+// database, and set before the resolver — which is the whole of what this task
+// produces. The scope's use of them is WC4's own tests'.
+
+// workspaceRosterDocument is a roster as C1's own encoder writes it: the
+// version this build reads, the service-account mechanism (which owns no folder
+// id), and the people and admins the caller names. It validates nothing itself,
+// so a test that means to publish a roster this build REFUSES publishes one —
+// which is exactly how the refusal is driven below.
+func workspaceRosterDocument(people []workspace.Person, admins []string) *workspace.Roster {
+	return &workspace.Roster{
+		Version:   workspace.RosterVersion,
+		Mechanism: workspace.MechanismSA,
+		People:    people,
+		Admins:    admins,
+	}
+}
+
+// publishRoster writes a roster into the workspace's own database at the node
+// C1's store reads, through C1's own encoder: the document the process decodes
+// is the one a `fugaro workspace` command writes, and not a shape these tests
+// invented.
+func publishRoster(t *testing.T, fake *gcpfake.RTDB, client *rtdb.Client, name string, people []workspace.Person, admins []string) {
+	t.Helper()
+	store, err := workspace.NewRosterStore(client, name)
+	if err != nil {
+		t.Fatalf("the roster store these tests publish through: %v", err)
+	}
+	raw, err := workspace.EncodeRoster(workspaceRosterDocument(people, admins))
+	if err != nil {
+		t.Fatalf("the roster these tests publish is not one C1's encoder writes, so they would prove nothing about the read: %v", err)
+	}
+	fake.Set(store.Path(), json.RawMessage(raw))
+}
+
+// TestWorkspaceModeIsHandedTheRosterAndItsSlips is WC14's acceptance: a
+// workspace-mode process builds the roster's reader, the launcher verifier and
+// a slip store over the workspace's own database, and hands them to the scope's
+// resolver through C2's configuration, before that resolver is built.
+//
+// The launcher class is the half a test cannot read off the configuration: the
+// verifier's account list is unexported, and verifying a caller would need a
+// Google ID token and Google's key set, neither of which is here. So the class
+// is observed from the other end, by what the process DOES with a roster — and
+// the two rosters below are the pair that pins it exactly:
+//
+//   - a roster naming a human AND a machine starts: the machine's address is
+//     one the class's own construction refuses (foldLauncherAccounts), so the
+//     process starting is what says the machine never reached it — R3's "people
+//     only" (F12).
+//   - a roster whose only person is a HUMAN with a service account's address
+//     starts too, and the person half is set. A human's address is held to the
+//     address grammar and not to its domain (workspace.CanonicalAddress), so
+//     C1's roster admits this document, and a class built straight off its
+//     people would have refused the whole deployment at the class's own
+//     construction. It starts because the list builder leaves the shape out
+//     (workspaceRosterLaunchers): one entry a member's roster could plant, or
+//     an operator could mis-kind, must not stop every member's routes, and an
+//     address of that shape could never be verified as a person anyway.
+func TestWorkspaceModeIsHandedTheRosterAndItsSlips(t *testing.T) {
+	const workspaceName = "aurora-ws"
+	// The configuration is the package's, and the process is one deployment:
+	// a test that left it set would hand the next test in this binary another
+	// workspace's launcher class.
+	before := credsvc.PersonScopeConfigForServe
+	t.Cleanup(func() { credsvc.PersonScopeConfigForServe = before })
+
+	t.Run("the roster's reader, launcher class and slips are the workspace's own", func(t *testing.T) {
+		for n, v := range workspaceServeEnv(workspaceName) {
+			t.Setenv(n, v)
+		}
+		fakeCredentialsService(t)
+		fake, client := fakeWorkspaceDatabase(t, workspaceName)
+		credentialsTest.database = func(context.Context, string, oauth2.TokenSource) (*rtdb.Client, error) {
+			return client, nil
+		}
+		publishRoster(t, fake, client, workspaceName, []workspace.Person{
+			// A machine of the workspace, and its address is one the launcher
+			// class refuses: it is here to prove the class never saw it.
+			{Address: workspaceServiceAccount, Kind: workspace.KindSA},
+			{Address: "person-1@example.com", Kind: workspace.KindHuman},
+		}, []string{"person-1@example.com"})
+
+		// The order C2 fixes, recorded where it can be seen: the configuration
+		// is what the scope reads when it is BUILT, so a resolver built over a
+		// configuration that arrived afterwards would serve every grant of this
+		// deployment with no launcher class and no slips.
+		var atBuild credsvc.PersonScopeConfig
+		credentialsWorkspaceTest = func(cfg credsvc.WorkspaceScopeConfig) (credsvc.ScopeResolver, error) {
+			atBuild = credsvc.PersonScopeConfigForServe
+			return credsvc.NewWorkspaceScopeResolver(cfg)
+		}
+		t.Cleanup(func() { credentialsWorkspaceTest = nil })
+
+		cfg, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+		if err != nil {
+			t.Fatalf("credentialsServiceConfig with a roster published: %v", err)
+		}
+		if cfg.Resolver == nil {
+			t.Fatal("the workspace's configuration handed the Server no resolver")
+		}
+		if atBuild.Roster == nil || atBuild.Launchers == nil || atBuild.Slips == nil {
+			t.Fatalf("C1's constructor was handed Roster=%v Launchers=%v Slips=%v, and all three are set before it is built: the roster's reader, the verifier its people are admitted by, and the store this workspace's grants live in", atBuild.Roster != nil, atBuild.Launchers != nil, atBuild.Slips != nil)
+		}
+		person := credsvc.PersonScopeConfigForServe
+		if person.Roster == nil || person.Launchers == nil || person.Slips == nil {
+			t.Fatalf("the process left Roster=%v Launchers=%v Slips=%v for the scope to read", person.Roster != nil, person.Launchers != nil, person.Slips != nil)
+		}
+
+		// The reader is the workspace's own roster node, and it answers what is
+		// THERE: the scope re-reads through it on the sixty-second rule the
+		// published node has (C2's rule 3), so the person the owner removes is
+		// refused without this service restarting (R3, D3146) — which a
+		// snapshot taken at startup could not do.
+		rosterNode, found, err := person.Roster.Read(context.Background())
+		if err != nil {
+			t.Fatalf("the roster reader: %v", err)
+		}
+		if !found {
+			t.Fatal("the roster reader found no node at the path it answers, and this test published one there")
+		}
+		document, err := workspace.DecodeRoster(rosterNode.Raw)
+		if err != nil {
+			t.Fatalf("the document the roster reader answered is not one C1's reader reads: %v", err)
+		}
+		addresses := []string{}
+		for _, p := range document.People {
+			addresses = append(addresses, p.Address)
+		}
+		if !slices.Equal(addresses, []string{workspaceServiceAccount, "person-1@example.com"}) {
+			t.Fatalf("the roster reader answered the people %v, want the roster published at the workspace's own node", addresses)
+		}
+
+		// ... and it reads the node NOW: the same reader, over the node the
+		// owner has since moved.
+		publishRoster(t, fake, client, workspaceName, []workspace.Person{
+			{Address: "person-2@example.com", Kind: workspace.KindHuman},
+		}, []string{"person-2@example.com"})
+		rosterNode, found, err = person.Roster.Read(context.Background())
+		if err != nil || !found {
+			t.Fatalf("the second read of the roster: found=%v err=%v", found, err)
+		}
+		document, err = workspace.DecodeRoster(rosterNode.Raw)
+		if err != nil {
+			t.Fatalf("the second read's document: %v", err)
+		}
+		if len(document.People) != 1 || document.People[0].Address != "person-2@example.com" {
+			t.Fatalf("the roster reader answered %+v after the node moved: a reader that answered the roster it was built over would be a snapshot, and a person removed from the roster is refused within a minute (R3, D3146) by the read this one makes", document.People)
+		}
+
+		// The slips are the workspace's OWN database's, which is the database
+		// this process was handed and never a member's (R3): the grant writes
+		// here and the claim reads here, and a slip of a member's is another
+		// service's (WC8).
+		//
+		// What is asked of the store is only that it is a working store over
+		// THIS database, and neither question needs the slip half's own names:
+		// internal/creds' boundary test keeps `creds.Slip` and the rest out of
+		// every file of this package but the service's, and it is right to —
+		// no operator command grants, claims or ends a slip (G10). So the store
+		// is read through the interface the process handed the scope, and the
+		// database it reached is the one that answers: a read of an id nothing
+		// wrote answers "no such slip" out of the workspace's own fake, and the
+		// same read fails when that fake refuses every call.
+		if _, found, err := person.Slips.Slip(context.Background(), "slip-wc14"); err != nil {
+			t.Fatalf("the slip store the process handed the scope could not read the workspace's own database: %v", err)
+		} else if found {
+			t.Fatal("the slip store found a slip at an id nothing has written, and this workspace's database holds none")
+		}
+		fake.Refuse(http.StatusServiceUnavailable, "UNAVAILABLE", "", "the workspace's own database is out")
+		if _, _, err := person.Slips.Slip(context.Background(), "slip-wc14"); err == nil {
+			t.Error("the slip store answered while the workspace's own database refused every call: the store the process handed the scope is not this database's, and the workspace's slips are the workspace's own (R3)")
+		}
+		fake.Refuse(0, "", "", "")
+
+		// ... and the workspace's deployment is still the one Server (D2980):
+		// the personal half is additive and changes nothing about the
+		// installation's path (C2's rule 1).
+		if _, err := credsvc.NewServer(cfg); err != nil {
+			t.Fatalf("NewServer refused the workspace's configuration with a roster published: %v", err)
+		}
+	})
+
+	t.Run("a roster whose human is a service account still starts", func(t *testing.T) {
+		// A HUMAN with a service account's address: C1's roster admits the
+		// document (a person's address is held to the address grammar, and its
+		// domain is not the roster's business), and the launcher class would
+		// refuse it — so the process starting, with the class built and handed
+		// to the scope, is the observation that the list builder left the entry
+		// out rather than handing it on. A deployment stopped here would stop
+		// every member's model and forge routes over one entry that could never
+		// be verified as a person (C2's "not a failure to start").
+		const machine = "svc-1@proj-1234.iam.gserviceaccount.com"
+		for n, v := range workspaceServeEnv(workspaceName) {
+			t.Setenv(n, v)
+		}
+		fakeCredentialsService(t)
+		fake, client := fakeWorkspaceDatabase(t, workspaceName)
+		credentialsTest.database = func(context.Context, string, oauth2.TokenSource) (*rtdb.Client, error) {
+			return client, nil
+		}
+		publishRoster(t, fake, client, workspaceName, []workspace.Person{
+			{Address: machine, Kind: workspace.KindHuman},
+		}, []string{machine})
+
+		cfg, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+		if err != nil {
+			t.Fatalf("credentialsServiceConfig with a roster whose only person is a human holding a service account's address: %v", err)
+		}
+		if cfg.Resolver == nil {
+			t.Fatal("the workspace's configuration handed the Server no resolver: this workspace's owner HAS published a roster, so the personal half is the workspace's own and a nil resolver would be the installation's")
+		}
+		person := credsvc.PersonScopeConfigForServe
+		if person.Roster == nil || person.Launchers == nil || person.Slips == nil {
+			t.Fatalf("the process left Roster=%v Launchers=%v Slips=%v: the half is set whether or not the roster named anybody this class can admit, and the class being BUILT and non-refusing is what says the service-account-shaped entry never reached it", person.Roster != nil, person.Launchers != nil, person.Slips != nil)
+		}
+		if _, err := credsvc.NewServer(cfg); err != nil {
+			t.Fatalf("NewServer refused the workspace's configuration: %v", err)
+		}
+	})
+
+	t.Run("a roster that cannot be read refuses the process", func(t *testing.T) {
+		// The roster lives in the same database as the published node this
+		// function read a moment earlier, so a read of it that fails is a
+		// deployment that cannot serve its people — and a process that started
+		// anyway would refuse every one of their grants while looking healthy
+		// (D143's fail-closed direction). The read that failed is an error and
+		// never "no roster" (C2's rule 3).
+		for n, v := range workspaceServeEnv(workspaceName) {
+			t.Setenv(n, v)
+		}
+		fakeCredentialsService(t)
+		fake, client := fakeWorkspaceDatabase(t, workspaceName)
+		credentialsTest.database = func(context.Context, string, oauth2.TokenSource) (*rtdb.Client, error) {
+			return client, nil
+		}
+		store, err := workspace.NewRosterStore(client, workspaceName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fake.DenyRead(store.Path())
+
+		_, err = credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+		if err == nil || ExitCode(err) != ExitRemoteError {
+			t.Fatalf("err = %v, want a remote error: a roster nobody could read has no people to serve, and a service that started anyway would answer every grant of this workspace with a refusal it cannot explain (the published node's own read above is refused the same way, out of the same database)", err)
+		}
+	})
+}
+
+// TestWorkspaceModeWithoutARosterGrantsNothing is the other half of WC14's
+// acceptance: a workspace whose owner has published no roster is a process that
+// STARTS and whose scope serves no grant and no personal candidate, which is
+// today's behaviour (C2's "What each side may rely on", WC14's paragraph). It
+// is not a failure to start, and it is not the same state as a roster that
+// cannot be read — the test above pins that one.
+//
+// The workspace's published credentials node IS there, so the process reaches
+// the personal half's own read rather than refusing on the node above it, and
+// the assertions WS5 makes about that node's half still hold: the resolver is
+// built and the Server accepts the configuration.
+func TestWorkspaceModeWithoutARosterGrantsNothing(t *testing.T) {
+	const workspaceName = "aurora-ws"
+	before := credsvc.PersonScopeConfigForServe
+	t.Cleanup(func() { credsvc.PersonScopeConfigForServe = before })
+	// A launcher class left over from another test would make this test pass
+	// for the wrong reason, so the variable is cleared before the process runs:
+	// what is asserted below is that THIS process left the zero configuration.
+	credsvc.PersonScopeConfigForServe = credsvc.PersonScopeConfig{}
+
+	for n, v := range workspaceServeEnv(workspaceName) {
+		t.Setenv(n, v)
+	}
+	fakeCredentialsService(t)
+	fake, client := fakeWorkspaceDatabase(t, workspaceName)
+	credentialsTest.database = func(context.Context, string, oauth2.TokenSource) (*rtdb.Client, error) {
+		return client, nil
+	}
+	// The database really is one the roster could have been published in, and
+	// the node this test does not publish is absent rather than unreadable: a
+	// test that proved "no roster" from a database that was never reachable
+	// would prove nothing.
+	store, err := workspace.NewRosterStore(client, workspaceName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fake.Value(store.Path()) != nil {
+		t.Fatalf("%s already holds a roster, and this test is about a workspace whose owner has published none", store.Path())
+	}
+
+	cfg, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+	if err != nil {
+		t.Fatalf("credentialsServiceConfig for a workspace with no roster node: %v (a workspace that published no roster is a state of the deployment and not a failure to start)", err)
+	}
+	if cfg.Resolver == nil {
+		t.Fatal("the workspace's configuration handed the Server no resolver: the personal half is additive, and a workspace with no roster still serves everything the node above it binds")
+	}
+	person := credsvc.PersonScopeConfigForServe
+	if person.Roster != nil || person.Launchers != nil || person.Slips != nil {
+		t.Fatalf("the process handed the scope Roster=%v Launchers=%v Slips=%v for a workspace with no roster node: C2's zero configuration is the state every deployment is in until one is wired, and half of one is a scope that would read a roster it was never handed", person.Roster != nil, person.Launchers != nil, person.Slips != nil)
+	}
+	if _, err := credsvc.NewServer(cfg); err != nil {
+		t.Fatalf("NewServer refused the configuration of a workspace with no roster node: %v", err)
 	}
 }

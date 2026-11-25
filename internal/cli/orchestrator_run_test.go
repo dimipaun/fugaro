@@ -18,9 +18,11 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gateway"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The daemon: its start-up, its loop and the boundary it holds (O8).
@@ -71,7 +73,7 @@ func (f *daemonFixture) daemon(t *testing.T, binary string) (*orchestratorDaemon
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := orchestrator.NewLease(db, id, daemonHolder, db.ServerNow)
+	lease, err := orchestrator.NewLease(db, id, daemonHolder, daemonDriver, db.ServerNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,8 +102,13 @@ func (f *daemonFixture) daemon(t *testing.T, binary string) (*orchestratorDaemon
 }
 
 // daemonHolder is the name the fixture's daemon holds the lease under, the way
-// task.NewRunID names a real one.
-const daemonHolder = "20261109-101500-abcd"
+// task.NewRunID names a real one, and daemonDriver is the principal whose
+// credential holds it — what `fugaro orchestrator run` reads from the local
+// config (D3218).
+const (
+	daemonHolder = "20261109-101500-abcd"
+	daemonDriver = "driver@example.com"
+)
 
 // statePath is where the fixture's daemon reads its node.
 func (f *daemonFixture) statePath(t *testing.T) string {
@@ -727,6 +734,215 @@ func TestWaitBeatsTheLeaseWhileTheIntervalRuns(t *testing.T) {
 	}
 }
 
+// claimNode is one claim node as the database carries it: which orchestrator
+// holds it and the server time it was last written at, in the spelling the fake
+// stores.
+func claimNode(t *testing.T, db *gcpfake.RTDB, ref orchestrator.ItemRef) (string, string) {
+	t.Helper()
+	path, err := orchestrator.ClaimPath(ref)
+	if err != nil {
+		t.Fatalf("building the claim path of %q: %v", ref.Item, err)
+	}
+	v := db.Value(path)
+	doc, ok := v.(map[string]any)
+	if !ok {
+		t.Fatalf("the claim node at %s is %#v, not a document", path, v)
+	}
+	holder, _ := doc["holder"].(string)
+	at, _ := doc["at"].(string)
+	return holder, at
+}
+
+// TestBeatRestampsTheClaimsTheDaemonHolds: the beat writes this daemon's own
+// claims beside the lease it holds (beatAndRefresh), and writes nothing else.
+//
+// The claim node records the server time its holder last confirmed an item was
+// still its own, so a daemon that beat only its lease would leave that stamp on
+// the day the item was taken — and a claim another orchestrator holds is never
+// written: a claim is released by its item finishing and by nothing else (the
+// owner's ruling of 2026-11-23), so a beat that re-stamped a rival's node would
+// be taking an item whose run is still going.
+//
+// What the beat re-stamps is the picture the daemon's own cycle read off its
+// nodes (orchestrator.Tick.Held) and never a walk of the project's claims node:
+// a plan task's claim stands for good once the task is finished (claim.go's
+// header), so that node is a growing record of every claim the project ever made
+// and a beat that walked it would read one node more for each of them, for ever.
+// The cycle below is what puts the item in that picture, which is also the only
+// way a claim of this daemon's can exist: a claim is taken inside a cycle.
+func TestBeatRestampsTheClaimsTheDaemonHolds(t *testing.T) {
+	f := newDaemonFixture(t)
+	d, _ := f.running(t, "")
+	ctx := context.Background()
+
+	// The item the claim is taken on, as the daemon's own node carries it: a
+	// plan task approved and started, so the cycle's reading names it (and
+	// nothing else) as work this daemon holds.
+	f.setState(t, `{"schema_version":1,"rev":1,"agent_id":"aurora","role":"orchestrator",
+		"goal":"keep the work moving","work_items":[{"id":"wi-1","title":"land demo/A","repo":"acme/app",
+		"recipe":"standard","rigor_tier":"medium","brief":"Do the thing.","plan_task":"demo/A",
+		"phase":"running","run_id":"20261109-101500-abcd","attempts":1}],
+		"decisions":[],"facts":{},"archived":[],"intents":[]}`)
+	if _, err := d.tick.Step(ctx); err != nil {
+		t.Fatalf("the cycle that reads the node: %v", err)
+	}
+
+	mine := orchestrator.ItemRef{Orchestrator: d.id, Item: "demo/A"}
+	other := orchestrator.ItemRef{Orchestrator: "aurora~night", Item: "demo/B"}
+	rival, err := orchestrator.NewClaim(d.db, other.Orchestrator, d.db.ServerNow)
+	if err != nil {
+		t.Fatalf("building the other orchestrator's claims: %v", err)
+	}
+	for _, c := range []struct {
+		claims *orchestrator.Claim
+		ref    orchestrator.ItemRef
+	}{{d.claims, mine}, {rival, other}} {
+		if c.claims == nil {
+			t.Fatal("the daemon has no claims to beat: running it built no guard")
+		}
+		if took, err := c.claims.Take(ctx, c.ref); err != nil || !took {
+			t.Fatalf("the take of %q: took=%v, err=%v", c.ref.Item, took, err)
+		}
+	}
+	held := d.tick.Held()
+	if len(held) != 1 || held[0].Ref != mine {
+		t.Fatalf("the daemon's own picture of what it holds is %+v, and the beat re-stamps what the cycle read off this daemon's nodes", held)
+	}
+	holder, takenAt := claimNode(t, f.db, mine)
+	if holder != d.id {
+		t.Fatalf("the claim names %q after the take, not this daemon (%q)", holder, d.id)
+	}
+	otherBefore := f.db.Value(claimPathOf(t, other))
+
+	// The clock moves on, and the beat is the only thing that writes: the stamp
+	// this daemon's claim carries afterwards is the server's time at the beat.
+	stampAt, err := time.Parse(time.RFC3339, takenAt)
+	if err != nil {
+		t.Fatalf("the claim's own stamp %q: %v", takenAt, err)
+	}
+	later := stampAt.Add(5 * time.Second)
+	f.db.SetClock(func() time.Time { return later })
+
+	if err := d.beatAndRefresh(ctx); err != nil {
+		t.Fatalf("the daemon's beat: %v", err)
+	}
+	holder, at := claimNode(t, f.db, mine)
+	if holder != d.id {
+		t.Errorf("the claim names %q after the beat, not this daemon (%q)", holder, d.id)
+	}
+	if want := later.UTC().Truncate(time.Second).Format(time.RFC3339); at != want {
+		t.Errorf("the claim is stamped %q after the beat, not the server time the beat was made at (%s)", at, want)
+	}
+	if after := f.db.Value(claimPathOf(t, other)); !reflect.DeepEqual(otherBefore, after) {
+		t.Errorf("the other orchestrator's claim changed under a beat:\nafter  %#v\nbefore %#v", after, otherBefore)
+	}
+	lease, err := d.lease.Read(ctx)
+	if err != nil {
+		t.Fatalf("reading the lease node after the beat: %v", err)
+	}
+	if want := later.UTC().Truncate(time.Second); !lease.At.Equal(want) {
+		t.Errorf("the lease is stamped %s after the beat, not the server time the beat was made at (%s)", lease.At, want)
+	}
+}
+
+// TestAFirstBeatAfterARestartRestampsNoClaim is the gap the beat's own reading
+// has and the safe direction it fails in: what the beat settles is the picture
+// the daemon's last cycle read off its nodes (orchestrator.Tick.Held), and a
+// daemon that has just started has read none — so its first beat re-stamps no
+// claim at all, and a claim it holds from before the restart keeps the stamp it
+// was taken at until the first cycle reads the nodes.
+//
+// One beat and one cycle is the whole of the gap, and nothing reads an item's
+// stamp to decide anything (claim.go's header); what would close it is a beat
+// that read the nodes itself, or the walk of the project's claims subtree the
+// refresh was built without — a read that grows with every claim the project
+// ever made, on every beat, for one stamp nobody decides anything by.
+//
+// Mutation: settle the claims in the beat (read the nodes there, or walk the
+// claims node) and the node below moves under a beat that has run no cycle.
+func TestAFirstBeatAfterARestartRestampsNoClaim(t *testing.T) {
+	f := newDaemonFixture(t)
+	d, _ := f.running(t, "")
+	ctx := context.Background()
+
+	// The restart: the daemon's node carries an item whose run is in flight —
+	// the case a claim outlives a clean exit for (Lease.Release) — and the claim
+	// was taken by the daemon an earlier process was, so nothing about this one
+	// has read the node yet.
+	f.setState(t, `{"schema_version":1,"rev":1,"agent_id":"aurora","role":"orchestrator",
+		"goal":"keep the work moving","work_items":[{"id":"wi-1","title":"land demo/A","repo":"acme/app",
+		"recipe":"standard","rigor_tier":"medium","brief":"Do the thing.","plan_task":"demo/A",
+		"phase":"running","run_id":"20261109-101500-abcd","attempts":1}],
+		"decisions":[],"facts":{},"archived":[],"intents":[]}`)
+	mine := orchestrator.ItemRef{Orchestrator: d.id, Item: "demo/A"}
+	if took, err := d.claims.Take(ctx, mine); err != nil || !took {
+		t.Fatalf("the take of %q: took=%v, err=%v", mine.Item, took, err)
+	}
+	if held := d.tick.Held(); len(held) != 0 {
+		t.Fatalf("a daemon that has run no cycle holds %+v, and what the beat settles is the picture its last cycle read", held)
+	}
+	before := f.db.Value(claimPathOf(t, mine))
+	leaseBefore, err := d.lease.Read(ctx)
+	if err != nil {
+		t.Fatalf("reading the lease node before the beat: %v", err)
+	}
+	later := leaseBefore.At.Add(5 * time.Second)
+	f.db.SetClock(func() time.Time { return later })
+
+	if err := d.beatAndRefresh(ctx); err != nil {
+		t.Fatalf("the daemon's first beat after its restart: %v", err)
+	}
+	if after := f.db.Value(claimPathOf(t, mine)); !reflect.DeepEqual(before, after) {
+		t.Errorf("the claim this daemon holds changed under the first beat after its restart:\nafter  %#v\nbefore %#v", after, before)
+	}
+	lease, err := d.lease.Read(ctx)
+	if err != nil {
+		t.Fatalf("reading the lease node after the beat: %v", err)
+	}
+	if !lease.At.After(leaseBefore.At) {
+		t.Errorf("the lease is stamped %s after a beat that moved the clock past %s, so nothing above is about a beat that ran", lease.At, leaseBefore.At)
+	}
+
+	// And the gap is one beat: the first cycle reads the node the claim's item is
+	// on, settles the claim it carries, and the stamp is the cycle's own clock
+	// from then on.
+	if _, err := d.tick.Step(ctx); err != nil {
+		t.Fatalf("the daemon's first cycle after its restart: %v", err)
+	}
+	if got := d.tick.Held(); len(got) != 1 || got[0].Ref != mine {
+		t.Fatalf("the first cycle's own picture is %+v, and the item its node carries is in flight", got)
+	}
+	_, at := claimNode(t, f.db, mine)
+	if want := later.UTC().Truncate(time.Second).Format(time.RFC3339); at != want {
+		t.Errorf("the claim is stamped %q after the first cycle, not the server time the cycle was made at (%s)", at, want)
+	}
+}
+
+// TestTheCycleLineSaysTheSkips: a cycle that skipped an action because another
+// orchestrator of the project holds the item says so where a person reads the
+// cycles. Without the count, the line is the same as an idle daemon's, and the
+// one person who needs to know why this daemon is doing nothing while the
+// project's other orchestrator works is the one reading it (Skipped, D3209).
+func TestTheCycleLineSaysTheSkips(t *testing.T) {
+	var out strings.Builder
+	d := &orchestratorDaemon{id: "fugaro~night", out: &out, warn: &out}
+	d.report(orchestrator.Report{Outcome: orchestrator.CycleInFlight, Skipped: 2}, nil)
+	if said := out.String(); !strings.Contains(said, "in-flight") || !strings.Contains(said, "2 skipped") {
+		t.Errorf("the cycle line is %q, and a cycle that skipped two items another orchestrator holds says so", said)
+	}
+}
+
+// claimPathOf is one claim node's path, through the package's own builder: a
+// path a test spelled itself could name a node the package never writes.
+func claimPathOf(t *testing.T, ref orchestrator.ItemRef) string {
+	t.Helper()
+	path, err := orchestrator.ClaimPath(ref)
+	if err != nil {
+		t.Fatalf("building the claim path of %q: %v", ref.Item, err)
+	}
+	return path
+}
+
 // TestRunRefusesAnIntervalLongerThanTheLease: the flag is bounded by the claim
 // it drives, and a value the daemon cannot serve is refused rather than quietly
 // shortened — before anything is opened, so a mistyped duration costs nothing.
@@ -880,7 +1096,7 @@ func TestRunOnceTakesOneCycleAndReleasesTheLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := orchestrator.NewLease(db, "aurora", daemonHolder, db.ServerNow)
+	lease, err := orchestrator.NewLease(db, "aurora", daemonHolder, daemonDriver, db.ServerNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1114,7 +1330,7 @@ func TestRunOnceReportsAFailedCycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := orchestrator.NewLease(db, "aurora", daemonHolder, db.ServerNow)
+	lease, err := orchestrator.NewLease(db, "aurora", daemonHolder, daemonDriver, db.ServerNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1284,5 +1500,176 @@ func TestRunViewCarriesTheWorkspaceRefusal(t *testing.T) {
 	}
 	if reports[0].WorkspaceRefusal != "" || reports[0].Halt != (orchestrator.Halt{}) {
 		t.Errorf("an ordinary run's report is %+v, want no marker and no halt", reports[0])
+	}
+}
+
+// TestRunViewCarriesThePauseNode is the filler C3's node needs on the reader
+// side: a run that suspended itself is reported with the node the credentials
+// service recorded for it (D3189), which is the only place the instant it comes
+// back is written — the run's own record carries none, and a job that could name
+// its own resume time would be an agent choosing when to spend (R8). Without it
+// the fold has nothing to tell a person a pause with, and the notice the
+// orchestrator draws for a suspended run reaches no sink at all.
+//
+// The node is read for the runs whose own record ended `paused` and no others:
+// the service records one for exactly those, so a node standing over any other
+// run is not a pause this reader hands on.
+func TestRunViewCarriesThePauseNode(t *testing.T) {
+	f, d, cs := crashDaemon(t, true, false)
+	ctx := context.Background()
+	resumeAt := f.now.Add(45 * time.Minute)
+	node := runstore.PauseNode{Launcher: "person@example.com", ResumeAt: resumeAt.UnixMilli(), Chain: cs.runID}
+	f.db.Set(runstore.PauseNodePath(appSlug, cs.runID), node)
+
+	rec := &runstore.Record{
+		Version: 1, RunID: cs.runID, Execution: "exec-1", Status: runstore.StatusPaused,
+		Stage: "implement", Outcome: runstore.OutcomeNone, StartedAt: f.now,
+	}
+	if err := f.runStore(t, cs.runID).WriteRecord(ctx, rec); err != nil {
+		t.Fatalf("writing the record of the run that suspended itself: %v", err)
+	}
+
+	reports, err := d.tick.Runs.Runs(ctx, []string{cs.runID})
+	if err != nil {
+		t.Fatalf("the reader over a suspended run: %v", err)
+	}
+	if len(reports) != 1 {
+		t.Fatalf("the reader answered %d report(s) for one run id", len(reports))
+	}
+	rep := reports[0]
+	if rep.Pause == nil {
+		t.Fatalf("the report of a run whose record says it suspended itself carries no pause, so nothing tells a person it is coming back: %+v", rep)
+	}
+	if *rep.Pause != node {
+		t.Errorf("the report carries the pause %+v, want the node the credentials service recorded: %+v", *rep.Pause, node)
+	}
+
+	// The same node over a run that did not suspend itself is nothing this
+	// reader reports: a pause is what the service recorded it for the run whose
+	// own record ended `paused` (C3), and a stale node is not one.
+	rec.Status = runstore.StatusFailed
+	if err := f.runStore(t, cs.runID).WriteRecord(ctx, rec); err != nil {
+		t.Fatalf("writing the record of a run that failed: %v", err)
+	}
+	reports, err = d.tick.Runs.Runs(ctx, []string{cs.runID})
+	if err != nil {
+		t.Fatalf("the reader over a failed run: %v", err)
+	}
+	if len(reports) != 1 {
+		t.Fatalf("the reader answered %d report(s) for one run id", len(reports))
+	}
+	if reports[0].Pause != nil {
+		t.Errorf("a run whose record does not say it suspended itself was reported with the pause %+v", *reports[0].Pause)
+	}
+}
+
+// TestRunViewTellsNoPauseItCouldNotRead is the other half of the reader the
+// test above pins, and the half pauseNode's own rule is about: the node is
+// handed on as a pause only when the service's record is there and this release
+// can place it. A read that did not happen, a run the service recorded no node
+// for and a node this release cannot read are each no pause — and each is said
+// on the daemon's own output, because an operator has nothing else. What none
+// of them may be is a pause: the record behind the read already says the run
+// ended, so a pause drawn from less than a whole node is the line promising a
+// return that nothing backs, which is the one lie this reader could tell
+// (D3197, R18). What none of them may do either is stop the cycle — a daemon
+// that refused its tick over a broken pause resumes nobody, which is a worse
+// answer than the run ending as a halt.
+func TestRunViewTellsNoPauseItCouldNotRead(t *testing.T) {
+	cases := []struct {
+		name string
+		// seed is what stands at the node the service writes, or what keeps the
+		// read from reaching it: the three answers pauseNode reads and the one
+		// the node itself gives.
+		seed  func(t *testing.T, f *daemonFixture, path string)
+		wants string
+	}{
+		{
+			// A read the database refused — the rules no longer grant it, or
+			// the backend answered nothing at all. It is the case a rule
+			// deployment is most likely to produce and the one a reader must
+			// not read past.
+			name: "a read that did not happen",
+			seed: func(_ *testing.T, f *daemonFixture, path string) {
+				f.db.DenyRead(path)
+			},
+			wants: "could not be read",
+		},
+		{
+			// The service recorded no pause for a run whose own record says it
+			// suspended itself: the contract's order ends a run paused only
+			// after the ask that writes the node (C3), so this is a broken
+			// pause and not a pause nothing has got round to marking.
+			name: "a run the service recorded no pause for",
+			seed: func(_ *testing.T, _ *daemonFixture, _ string) {},
+			// The absent-node line is the one of the three that says what
+			// follows from it, and that is the fact a person acts on.
+			wants: "recorded no pause",
+		},
+		{
+			// A node carrying a member this release does not know: the pause
+			// spans a fugaro update (F36), so a node written by another release
+			// is a shape this one refuses rather than reads as the members it
+			// happens to recognise (R18, R25's own rule).
+			name: "a node this release cannot place",
+			seed: func(_ *testing.T, f *daemonFixture, path string) {
+				f.db.Set(path, map[string]any{
+					"launcher": "person@example.com", "resume_at": f.now.Add(time.Hour).UnixMilli(),
+					"chain": "20261122-120000-abcd", "resumed_by": "20261122-130000-bbbb",
+				})
+			},
+			wants: "not one this release can read",
+		},
+		{
+			// Half a node: every member known, and one of them naming no usable
+			// pause. Half a node is not one the orchestrator may resume on
+			// (R18), and the instant it does not back is exactly what the
+			// notice would promise.
+			name: "half a node",
+			seed: func(_ *testing.T, f *daemonFixture, path string) {
+				f.db.Set(path, map[string]any{"resume_at": f.now.Add(time.Hour).UnixMilli(), "chain": "20261122-120000-abcd"})
+			},
+			wants: "not one this release can read",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f, d, cs := crashDaemon(t, true, false)
+			ctx := context.Background()
+			path := runstore.PauseNodePath(appSlug, cs.runID)
+			c.seed(t, f, path)
+
+			// The record is the run's own: it says the run ended paused, which
+			// is the one thing that makes the reader look at the node at all.
+			rec := &runstore.Record{
+				Version: 1, RunID: cs.runID, Execution: "exec-1", Status: runstore.StatusPaused,
+				Stage: "implement", Outcome: runstore.OutcomeNone, StartedAt: f.now.Add(-time.Hour),
+			}
+			if err := f.runStore(t, cs.runID).WriteRecord(ctx, rec); err != nil {
+				t.Fatalf("writing the record of the run that suspended itself: %v", err)
+			}
+
+			reports, err := d.tick.Runs.Runs(ctx, []string{cs.runID})
+			if err != nil {
+				t.Fatalf("the reader failed over a run whose pause node is %s: %v — a broken pause is a warning and never a stopped cycle, because a daemon that will not tick resumes nobody", c.name, err)
+			}
+			if len(reports) != 1 {
+				t.Fatalf("the reader answered %d report(s) for one run id", len(reports))
+			}
+			if reports[0].Pause != nil {
+				t.Errorf("a run whose pause node is %s was reported with the pause %+v: the notice would promise a return nothing backs", c.name, *reports[0].Pause)
+			}
+
+			// The daemon's own output is the only place this failure is
+			// visible — the report handed to the fold carries no pause and no
+			// word about why — and it names the run the way every warning about
+			// one does: the short form, which is what a person types back into
+			// `fugaro diagnose`.
+			out := f.out.String()
+			if short := task.ShortRun(cs.runID); !strings.Contains(out, short) || !strings.Contains(out, c.wants) {
+				t.Errorf("the daemon said %q over a run whose pause node is %s, and the operator's only signal is a line naming the run (%s) and what was wrong (%q)", out, c.name, short, c.wants)
+			}
+		})
 	}
 }

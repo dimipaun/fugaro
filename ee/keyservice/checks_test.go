@@ -4,7 +4,7 @@
 package keyservice
 
 // The checks' own data and grammars (subscriptions plan S3.2; the design
-// docs/design/key-signing-service.md §4 and §7): the licences §4.4 admits, the
+// docs/key-signing-service/spec.md §4 and §7): the licences §4.4 admits, the
 // repository lines it reads, the count the deploy bounds them by, and the two
 // halves of an address.
 //

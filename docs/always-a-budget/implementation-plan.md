@@ -232,7 +232,11 @@ AB8b. **Slice 5, the edges:** AB9, AB10. **Documents and checks:** AB12, AB13, A
 - Acceptance: the Firebase stage can run with no flag, on `setup` and `update`, in the
   installation's own project, and acts only to adopt or to create: where the database is known on
   this machine it is skipped as today, so an operator's update of such an installation does what
-  it did (F34); otherwise it first probes for a database that exists and is unknown on this machine, by the
+  it did (F34; amended by console-fixes RI2: the skip is decided on the Firebase root's state, and
+  an installation whose state does not carry the run index's composite indexes yet runs the stage,
+  because nothing but an apply of that root creates them — unless the credential may not make the
+  project's IAM changes that apply makes, which is the operator's own update, and that run keeps
+  F34's skip and converges); otherwise it first probes for a database that exists and is unknown on this machine, by the
   Firebase state and never by the history account (F23), and adopts it only if it is in the
   installation's own project (F24); where there is none it probes whether the person can make the
   project's IAM changes; if so it creates the database in observe and records it; if not, or the
@@ -316,11 +320,11 @@ AB8b. **Slice 5, the edges:** AB9, AB10. **Documents and checks:** AB12, AB13, A
 ### AB9: Cloud Batch refuses every launch
 - Acceptance: a launch on the Batch backend is refused with one stated reason that names the
   token's missing carrier; `doctor` and `validate` say so for an installation on Batch;
-  `docs/backends.md` says so, and `docs/design/budget-token-channel.md` loses its stale line about
+  `docs/backends.md` says so, and `docs/budget-token-channel/spec.md` loses its stale line about
   unbuilt wiring (D3021). The carrier is planned in
   [batch-run-identity](../batch-run-identity/README.md), whose BR1 replaces this refusal.
 - Files: `internal/backend/batch/run.go`, `internal/cli/doctor_batch.go`,
-  `internal/cli/validate_batch.go`, `docs/backends.md`, `docs/design/budget-token-channel.md`.
+  `internal/cli/validate_batch.go`, `docs/backends.md`, `docs/budget-token-channel/spec.md`.
 - Interfaces: none.
 - Tests: `TestEveryBatchLaunchIsRefusedWithOneReason`, `TestDoctorSaysBatchCannotLaunch`.
 - Command: `go test ./internal/backend/batch/ -run EveryBatchLaunchIsRefused -count=1 && go test ./internal/cli/ -run 'DoctorSaysBatchCannotLaunch|OnCloudBatch|Docs' -count=1`.
@@ -358,13 +362,13 @@ AB8b. **Slice 5, the edges:** AB9, AB10. **Documents and checks:** AB12, AB13, A
 - Reviewer tier: standard.
 
 ### AB12: the documents and the operator notes
-- Acceptance: `README.md`, `docs/how-to/budgets.md`, `docs/design/m9-budget-and-dashboard.md`,
+- Acceptance: `README.md`, `docs/how-to/budgets.md`, `docs/m9-budget-and-dashboard/spec.md`,
   `docs/design/v1.md`, `docs/multi-model.md` and every row of the live checklist that presents off
   (Check 47's budget-off variant among them) no longer present it as a mode or as a rollback; the release notes' `### For operators` is "run `fugaro update`" and what it will
   say: that it creates the budget database (about two dollars a month at the design's estimate,
   billing required), which repositories will stop and why, that a project owner must run it where
   an operator cannot, and that Cloud Batch can launch nothing.
-- Files: `README.md`, `docs/how-to/budgets.md`, `docs/design/m9-budget-and-dashboard.md`,
+- Files: `README.md`, `docs/how-to/budgets.md`, `docs/m9-budget-and-dashboard/spec.md`,
   `docs/design/v1.md`, `docs/multi-model.md`, `docs/gcp-live-checklist.md`, the release's notes
   file. It is past five files because the mode is described in that many places.
 - Interfaces: none.
@@ -519,7 +523,7 @@ after AB7; AB12 after AB14; AB15 after AB3, AB5 and AB8b).
 | `internal/projectpolicy/migrate.go`, `policy.go`, `internal/cli/init_policy_migrate.go`, `project_cmd.go` | AB8a (1) |
 | `internal/cli/init_fugaroyaml.go`, `update_in_flight.go`, `docs/design/update-in-flight.md`, `internal/apply/steps.go` | AB8b (2) |
 | `internal/cli/init_credentials.go`, `run.go`, `internal/infra/spec_test.go` | AB15 (4) |
-| `internal/backend/batch/run.go`, `internal/cli/doctor_batch.go`, `validate_batch.go`, `docs/backends.md`, `docs/design/budget-token-channel.md` | AB9 (3) |
+| `internal/backend/batch/run.go`, `internal/cli/doctor_batch.go`, `validate_batch.go`, `docs/backends.md`, `docs/budget-token-channel/spec.md` | AB9 (3) |
 | `ee/ab/admit.go`, `ee/coordinator/cli/declare.go` | AB10 (1) |
 | `internal/settings/registry.go`, `schemas/settings.schema.json`, `schemas/result.schema.json` | AB11 (2) |
 | `docs/gcp-live-checklist.md` | AB14 (0), AB12 (4) |

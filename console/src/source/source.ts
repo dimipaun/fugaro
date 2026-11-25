@@ -462,6 +462,26 @@ export interface FugaroSource {
    * neither is `coordinatorStatus`, which is the stored view and needs no host
    * credential either. */
   coordinatorIntents(args: ValidatedArguments): Promise<Snapshot>
+  /** orchestratorMap is the project's active orchestrators, the connections
+   * between them and the coordinator's own heartbeat (`orchestrator map --json`,
+   * the console-fixes plan's CG7a; C-ORCH's document,
+   * `internal/orchestrator/mapdoc.go`; `console/docs/json-contract.md` gains the
+   * section for it with the plan's I-ORCH, which wires the map end to end). It
+   * has **no argument at all**, the declarations read's
+   * shape: the whole argv is the spawn row's own words, so an implementation
+   * must add no word of its own and a caller influences nothing -- the document
+   * is one project's, so there is no scope to narrow. Like `coordinatorIntents`
+   * it is the caller's own database read (the orchestrator nodes, their leases,
+   * the claims and the heartbeat, `roles/firebasedatabase.viewer`), so it needs
+   * no host credential and no published credentials service.
+   *
+   * **It is behind `ORCHESTRATOR_MAP_CLI_FLOOR`** (`src/shared/version.ts`): a
+   * CLI below it has no such command, and the Coordinator tab names the version
+   * it needs rather than calling this method at all. An implementation must not
+   * spawn the row for a version below the floor -- the child would fail as an
+   * unknown command and the tab would draw a refusal about a version it could
+   * have named. */
+  orchestratorMap(args: ValidatedArguments): Promise<Snapshot>
   /** managedStatus is one managed project's two marks, whether they agree, and
    * the newest audit record's bounded subset (`managed status --json`, the
    * managed screens' plan's CM4, D1472 to D1477; `console/docs/json-contract.md`
@@ -840,6 +860,60 @@ export const NO_GRAPH_SCOPE =
   'this scope is not one the last graph read listed: re-read the graph and pick a scope it shows'
 
 /**
+ * NO_NAMED_SCOPE is what `graph.read` and `graph.watch` answer for a **named
+ * orchestrator** scope (`orchestrator:<project>~<name>`, C-ORCH's id rule, F40)
+ * on an installation whose CLI predates the release that reads one
+ * (`ORCHESTRATOR_MAP_CLI_FLOOR`, `src/shared/version.ts`). The grammar in
+ * `src/main/ipc.ts` admits the spelling -- one rule, the CLI's own -- and this is
+ * the **floor** on it: the named scope and `orchestrator map --json` are one
+ * release's, so a console that spawned a named scope at an older CLI would be a
+ * child spawned to fail on a scope the command cannot parse. The refusal is
+ * thrown before `resolve`, so no binary is probed and no child exists.
+ *
+ * It is a sentence of its own rather than `NO_GRAPH_SCOPE`: the two are
+ * different states, and the fix is different too -- that one says to re-read the
+ * graph, this one that the installation's CLI is too old to have a named scope
+ * at all.
+ */
+export const NO_NAMED_SCOPE =
+  'this installation’s CLI cannot read a named orchestrator: the orchestrator map needs a newer fugaro'
+
+/**
+ * NO_ORCHESTRATOR_MAP is what `orchestrator.map` answers for an installation
+ * whose CLI predates the release that carries `orchestrator map --json`
+ * (`ORCHESTRATOR_MAP_CLI_FLOOR`, `src/shared/version.ts`). The read is refused
+ * before `resolve` -- no binary is probed and no child is spawned -- so an older
+ * CLI never meets the row as `unknown command "map"`, which is a failure the
+ * operator can do nothing about.
+ *
+ * The Coordinator tab asks the same floor before it calls this method
+ * (`orchestratorMapSupported`, CG7b), so the sentence is the process's own half
+ * of one fact: a screen shows the version it needs, and a renderer that asked
+ * anyway is refused here.
+ */
+export const NO_ORCHESTRATOR_MAP =
+  'the orchestrator map needs a newer fugaro CLI: this installation’s version has no `orchestrator map` command'
+
+/**
+ * NO_PLAN_NO_MERGES is what `plan.status` answers for a `noMerges` argument on
+ * an installation whose CLI predates the release that carries `plan status
+ * --no-merges` (`PLAN_STATUS_NO_MERGES_CLI_FLOOR`, `src/shared/version.ts`).
+ * The read is refused before `resolve` -- no binary is probed and no child is
+ * spawned -- so an older CLI never meets the flag as `unknown flag:
+ * --no-merges`, which is a failure the operator can do nothing about.
+ *
+ * **A refusal of the argument is not a refusal of the screen.** The Graph tab
+ * asks the same floor before it builds the argument (`planStatusNoMergesSupported`,
+ * IR4), so the two are one fact read from two sides: a console whose CLI is below
+ * the floor makes the single read it has always made and draws the canvas from
+ * it, and a renderer that asked for the flag anyway is refused here rather than
+ * silently served the merges-included document under a `merges_read: false`
+ * contract.
+ */
+export const NO_PLAN_NO_MERGES =
+  'reading the plan without merge state needs a newer fugaro CLI: this installation’s version has no `plan status --no-merges` flag'
+
+/**
  * handlersFor answers the whole IPC surface from one source. It is a function
  * rather than a class because the surface is a table: one handler per operation,
  * each a one-line call.
@@ -948,6 +1022,10 @@ export function handlersFor(
     'coordinator.status': (args) => source.coordinatorStatus(args),
     'coordinator.show': (args) => source.coordinatorShow(args),
     'coordinator.intents': (args) => source.coordinatorIntents(args),
+    // The orchestrator map (CG7a). A read like the declarations above it and no
+    // argument either, so the handler is the call itself: the source's own
+    // version floor is what decides whether a child is spawned at all.
+    'orchestrator.map': (args) => source.orchestratorMap(args),
     // The record's one write (GV3.2). Its answer is sentences and keys rather
     // than a document, so it is `settings.edit`'s shape and not `graph.read`'s:
     // what the handler returns is what the source's own answer carried, refusal
@@ -1052,4 +1130,27 @@ export type CliBackedHandlers = Omit<
   | 'link.openPullRequest'
   | 'licence.read'
   | 'licence.save'
+  // The nine console-improvements operations (AL) are omitted here for the
+  // reason the six above are, read one row at a time: each needs something a
+  // `CliSource` of the active installation is not -- `setup.plan` and
+  // `setup.apply` a file of bytes main holds and a deadline of their own,
+  // `settings.editor.open` the confirmation window, and the three streams and
+  // the three one-shot reads the version-floored handlers `src/source/
+  // new-reads.ts` builds (SRC). The entry point joins every one of them over
+  // this surface, and `registerConsoleHandlers` still demands the whole
+  // surface, so a console that forgets the join fails to register rather than
+  // answering an operation with nothing.
+  | 'runs.stream'
+  | 'spend.stream'
+  | 'budget.stream'
+  | 'whoami'
+  | 'image.catalog.ls'
+  | 'recipes.ls'
+  | 'setup.plan'
+  | 'setup.apply'
+  | 'settings.editor.open'
+  | 'models.add.plan'
+  | 'models.add'
+  | 'image.add.plan'
+  | 'image.add'
 >

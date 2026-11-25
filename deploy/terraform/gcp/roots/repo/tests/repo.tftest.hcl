@@ -401,7 +401,7 @@ run "bucket_condition_exact" {
 }
 
 # The job's read-only grant on its own repository's budget token objects
-# (docs/design/budget-token-channel.md section 7.2, D16): objectViewer, never
+# (docs/budget-token-channel/spec.md section 7.2, D16): objectViewer, never
 # objectUser, on exactly tokens/<slug>/ of the runs bucket, and the runs/,
 # cache/ and locks/ grant does not reach tokens/.
 run "token_condition_exact" {
@@ -1529,7 +1529,7 @@ run "bad_fugaro_project" {
   expect_failures = [var.fugaro_project]
 }
 
-# The resolved secret reaches every reader (design docs/design/project-secrets.md
+# The resolved secret reaches every reader (design docs/project-secrets/spec.md
 # §5, Task 5): the workflow module's job mount, the job account's accessor
 # grant, the build account's grant and the check job's secret_key_ref must all
 # name the IDENTICAL project-wide container for bitbucket-token, while a name

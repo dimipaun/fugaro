@@ -1248,7 +1248,7 @@ step_the_number() {
   direct_usd=$(field "$SCRATCH/direct-record.txt" model_usd)
   local conclusion=""
   if [ "${routed_read:-0}" = 0 ] || [ -z "$routed_read" ]; then
-    conclusion="the routed run reports NO cache_read at all: a routed Claude senior that never reports one is charged at the full input rate for every token it re-sends, which is the difference between list price and several times list price (design/project-centric.md §6.2). Task 1b.3's paragraph in docs/multi-model.md gains this number and the switch's help text says what it costs, which is a 0.8.0.x patch and the owner's call"
+    conclusion="the routed run reports NO cache_read at all: a routed Claude senior that never reports one is charged at the full input rate for every token it re-sends, which is the difference between list price and several times list price (docs/project-centric/spec.md §6.2). Task 1b.3's paragraph in docs/multi-model.md gains this number and the switch's help text says what it costs, which is a 0.8.0.x patch and the owner's call"
   else
     conclusion="the routed run DOES report cache reads: ${routed_read} tokens of its reviewer call came out of the cache rather than being re-sent at the full input rate"
   fi

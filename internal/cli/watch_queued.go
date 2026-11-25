@@ -26,7 +26,7 @@ import (
 
 // `fugaro watch` shows queued runs (launched, or about to be, but with no
 // registry entry yet) from the same runs bucket ls reads (design
-// docs/design/watch-queued.md): never the backend, and never a new object.
+// docs/watch-queued/spec.md): never the backend, and never a new object.
 // Only someone who can read the runs bucket (a launcher or an operator)
 // sees them; a plain Firebase Viewer always gets the one-line "queued runs
 // unavailable" note instead (gcp-setup.md "the runs bucket's Viewer
@@ -165,15 +165,18 @@ type scanResult struct {
 	IsQueued   bool
 	Finished   watch.FinishedRun
 	IsFinished bool
-	// Facts is what the run's own launch.json says about it: the Cloud Run job
-	// it names, who started the run, and the plan task it recorded — reported
-	// for every run the scan read one for, a live run's included, whose RTDB
-	// registry entry carries neither and could not be trusted with either (a
-	// launcher writes a job's environment and its own launch.json, never the
-	// job's name or the registry). Job is "" when there is no launch.json to
-	// read, and LaunchedBy too (a launch that recorded no launcher: the
-	// recovery backfill, a local run with no execution, or `fugaro logs`'s
-	// synthetic launch), and PlanTask too (a launch that named no plan task).
+	// Facts is what the run's own records say about it: the Cloud Run job its
+	// launch.json names, who started the run and the plan task it recorded —
+	// reported for every run the scan read one for, a live run's included,
+	// whose RTDB registry entry carries neither and could not be trusted with
+	// either (a launcher writes a job's environment and its own launch.json,
+	// never the job's name or the registry) — and the paused run its task names
+	// under `resumes`, which is the one of the four that is not in launch.json.
+	// Job is "" when there is no launch.json to read, and LaunchedBy too (a
+	// launch that recorded no launcher: the recovery backfill, a local run with
+	// no execution, or `fugaro logs`'s synthetic launch), PlanTask too (a
+	// launch that named no plan task) and Resumes too (every run that resumed
+	// nothing, which is nearly all of them).
 	Facts watch.RunFacts
 }
 
@@ -199,6 +202,12 @@ func scanRun(ctx context.Context, env *cloudEnv, slug, id string, w scanWindow, 
 	if in.Launch != nil {
 		facts.Job, facts.LaunchedBy = in.Launch.Job, in.Launch.LaunchedBy
 		facts.PlanTask = in.Launch.PlanTask
+	}
+	// Resumes is the one fact of the three that is not in launch.json: the
+	// task says which paused run this one was launched to pick up, and the
+	// task is what readRun already read (watch.RunFacts.Resumes).
+	if in.Task != nil {
+		facts.Resumes = in.Task.Resumes
 	}
 	res, err := scanRow(ctx, env, ro, in, w, now)
 	if err != nil {
@@ -571,7 +580,7 @@ feed:
 
 	r := repoScan{total: len(ids)}
 	for i, res := range results {
-		if res.done && res.err == nil && (res.res.Facts.Job != "" || res.res.Facts.LaunchedBy != "" || res.res.Facts.PlanTask != "") {
+		if res.done && res.err == nil && (res.res.Facts.Job != "" || res.res.Facts.LaunchedBy != "" || res.res.Facts.PlanTask != "" || res.res.Facts.Resumes != "") {
 			if r.facts == nil {
 				r.facts = watch.Facts{}
 			}

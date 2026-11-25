@@ -69,7 +69,7 @@ type ModelProvider struct {
 	// AllowDataTo are the repositories (owner/name) whose code may be sent
 	// here. Absent (the zero value) or ["*"] mean every repository (owner
 	// ruling, 2026-10-13 and its follow-ups, design
-	// docs/design/project-secrets.md §3a); a list written with no
+	// docs/project-secrets/spec.md §3a); a list written with no
 	// repositories in it -- [] , or the key with nothing under it at all --
 	// is refused by ValidateModelProviders as ambiguous.
 	AllowDataTo []string `yaml:"allow_data_to,omitempty" json:"allow_data_to,omitempty"`
@@ -191,7 +191,7 @@ func (p ModelProvider) Matches(model string) bool {
 // AllowsData reports whether repo (owner/name) may send code to p: true for
 // every repository when AllowDataTo is nil (the key is absent -- never
 // written at all), or when it contains the literal entry "*" (owner ruling,
-// 2026-10-13, and its follow-ups, design docs/design/project-secrets.md
+// 2026-10-13, and its follow-ups, design docs/project-secrets/spec.md
 // §3a). A list written with no repositories in it -- [] , or a null key,
 // which the unmarshaller marks with allowDataToWritten -- is refused by
 // ValidateModelProviders before this method is ever called on valid config.
@@ -668,10 +668,13 @@ var ModelSecretsServedValues = []string{ModelSecretServedAll, ModelSecretServedA
 // The three arms are the flip's own vocabulary (D2072, G17), because the two
 // halves of the family are served at different times:
 //
-//   - all — the cascade: every model credential the job mounts. That is
+//   - all — every model credential the job mounts. That is
 //     IsModelSecretEnv's whole predicate, and what this rule was before B2.7
 //     gave the other two arms a value: a cascade job mounts none of them
-//     (SecretMounts' cascade case), so the arm is inert for it.
+//     (SecretMounts' cascade case), so the arm is inert for it. Its second
+//     producer is the routing table (infra.ModelSecretsServed): the job of a
+//     repository a chain serves mounts none of them either, which is the arm
+//     doing the work there.
 //   - anthropic — an `api-key` or `oauth` repository the switch admits: the
 //     two names in ModelSecretEnvs (the Claude OAuth token and the Anthropic
 //     key) and never a provider key, whose value the run's own route forwards
@@ -681,7 +684,7 @@ var ModelSecretsServedValues = []string{ModelSecretServedAll, ModelSecretServedA
 //     the RUNNER hands straight to Anthropic and the run's gateway never sees,
 //     so the service serves no call of theirs and the mount stays — with it
 //     the job account's accessor (B0's ruling of 2026-11-04,
-//     docs/design/mixed-credentials.md §11; WorkflowSpec.StageAccount is the
+//     docs/mixed-credentials/spec.md §11; WorkflowSpec.StageAccount is the
 //     fact, and it is api-key's alone: under oauth the account's token is the
 //     run's own credential and IS served).
 //   - none — a repository the switch holds off: nothing, so every mount stays.
@@ -1101,7 +1104,7 @@ func conventionUsable(name string) bool {
 // a configured provider's key. It is both halves of what
 // infra.SecretMounts refuses when a job is built, in the same order, because
 // the two names are two different collisions — and the second is the one
-// docs/design/project-secrets.md §3 names as needing exactly this pair of
+// docs/project-secrets/spec.md §3 names as needing exactly this pair of
 // documents, "a provider's .Secret is an operator-chosen, open-ended string
 // config.Validate ... has no way to know about — only SecretMounts, which has
 // both w.Secrets and lc.Providers in scope, can catch that one":
@@ -1200,7 +1203,7 @@ var ClaudePatterns = []string{"claude-*", "anthropic/*"}
 // CheckClaudeClaim is the rule for a route entry that overlaps a Claude
 // pattern: the problem, or "" when the entry is the one shape a route may
 // claim -- an explicit "anthropic/<id>", and nothing else under that prefix
-// (design docs/design/mixed-credentials.md §4, owner ruling 2026-10-14). The
+// (design docs/mixed-credentials/spec.md §4, owner ruling 2026-10-14). The
 // claim is the entry itself, so this is the whole permission: no separate
 // list, no switch. A wildcard ("anthropic/*"), a bare "claude-*" spelling, a
 // ":" variant, a "[1m]" spelling or a name the provider-ID grammar rejects is
@@ -1286,7 +1289,7 @@ func checkProviderURL(s string) error {
 // credentials and leaves this function's answer unchanged: an api-key run
 // may declare one stage-scoped Claude OAuth account for its review and
 // adversarial stages, beside the provider key its coder runs on
-// (docs/design/mixed-credentials.md §11). That account is not a provider's
+// (docs/mixed-credentials/spec.md §11). That account is not a provider's
 // key and it sits under the value this function admits before it reads
 // anything, so every refusal below still stands for the auth values it names.
 //
@@ -1326,21 +1329,25 @@ func CheckProviderAuth(a Agent, providers map[string]ModelProvider) []Problem {
 }
 
 // CheckProviderGateway refuses a provider model unless the budget gateway is
-// on and enforcing. The gateway holds the key and routes the call, so without
-// it the call would go to Anthropic; and observe never refuses a call, while
-// a provider's calls are real dollars (and an injected agent could send what
-// the pins would stop), so the owner's default is enforce. mode is the run's
-// effective budget mode ("" and "off" are the gateway off); bg is the run's
+// enforcing. The gateway holds the key and routes the call, so without it the
+// call would go to Anthropic; and observe never refuses a call, while a
+// provider's calls are real dollars (and an injected agent could send what the
+// pins would stop), so the owner's default is enforce. bg is the run's
 // effective background model. One problem per pin that names a provider model,
 // the vision slot's included when it is set.
+//
+// mode is the run's effective budget mode, and the answer is the vocabulary's
+// (AB2, R3): an unset mode is observe, not the off it was read as, so a run
+// that writes no mode is refused with the sentence that names the mode it
+// resolves and what raising it takes. There is no second sentence for an off
+// any more — the word is not a mode, and a door that accepts text a person
+// wrote refuses it before a run is judged (internal/config's validateBudget,
+// D3022).
 func CheckProviderGateway(a Agent, bg string, providers map[string]ModelProvider, mode string) []Problem {
-	if mode == "enforce" {
+	if policy.Mode(mode).Effective() == policy.ModeEnforce {
 		return nil
 	}
-	why := "which needs the budget gateway: set budget.mode to enforce (with agent.auth api-key) and a per-run cap; without it the call would go to Anthropic"
-	if mode == "observe" {
-		why = "which needs budget.mode enforce: observe never refuses a call and a provider's calls are real dollars. Set budget.mode: enforce with budget.per_run_usd in the project config and run `fugaro update` (or budget.mode: enforce in fugaro.yaml); `fugaro budget set --global --mode enforce` makes the shared database enforce too (it needs the global --daily and --per-run caps)"
-	}
+	why := "which needs budget.mode enforce: observe never refuses a call and a provider's calls are real dollars. Set budget.mode: enforce with budget.per_run_usd in the project config and run `fugaro update` (or budget.mode: enforce in fugaro.yaml); `fugaro budget set --global --mode enforce` makes the shared database enforce too (it needs the global --daily and --per-run caps)"
 	var ps []Problem
 	for _, r := range []struct{ path, model string }{
 		{"agent.models.coder", a.ModelFor(RoleCoder)},
@@ -1440,7 +1447,7 @@ func claimed(providers map[string]ModelProvider, model string) bool {
 // the route, exactly as the gateway decides it (internal/gateway/route.go): a
 // model no allowed provider claims goes direct. So a Claude pin, or a model no
 // route serves, needs the key, and a repository whose pins are all served by
-// providers it may send code to does not (design docs/design/project-centric.md
+// providers it may send code to does not (design docs/project-centric/spec.md
 // §6.1). repo "" is an unknown repository, which no provider may serve.
 //
 // A review level's own model is a pin of its own (agent.levels.lN.model,

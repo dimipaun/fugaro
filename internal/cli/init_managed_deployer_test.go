@@ -15,7 +15,7 @@ import (
 // The other half of what the managed creation leaves behind: beside Task 0.1's
 // creation fact, the managed run sets up D77's dedicated state bucket and binds
 // the deployer to it on that bucket alone (Task 1.5 (3) of
-// docs/plans/2026-10-16-managed-projects.md).
+// docs/managed-projects/implementation-plan.md).
 //
 // Both steps live in markCreated and nowhere else, and both are gated on the
 // run having created the project: they are setup on the operator's own
@@ -53,6 +53,12 @@ func TestMarkCreatedSetsUpTheManagedStateBucket(t *testing.T) {
 		// reads the options for the amount the creation fact records.
 		o := &initOptions{managed: true, budget: 100, budgetCurrency: "USD", billingAccount: "000000-000000-000000"}
 		run := &initRun{o: o, cmd: NewRootCmd(), w: &out, gcpProject: newProj}
+		// The account the run's own variables carry the alert on, as the
+		// carried budget sets it on a converge (initRun.budgetAccount): this rig
+		// drives markCreated directly, and a run whose block carries no account
+		// is the one that creates no alert and says what adds it (T2a of
+		// docs/managed-flag-ergonomics).
+		run.budgetAccount = o.billingAccount
 		run.res.Created, run.res.Outputs = newProj, &infra.InstallationOutputs{RunsBucket: bucket}
 		e := &initEngine{r: run, c: c, lc: lc, spec: infra.InstallationSpec{Project: newProj, Region: "us-east5"}}
 		return r, e, &out

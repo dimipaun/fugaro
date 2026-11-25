@@ -2,7 +2,7 @@
 // See ee/LICENSE for the terms.
 
 // The key minter's program (portal plan P1.7, design
-// docs/design/key-signing-service.md §3.2, §3.3).
+// docs/key-signing-service/spec.md §3.2, §3.3).
 //
 // It is the second of the deployment's two Cloud Run services and it is the one
 // that can sign: it builds the KMS signer, hands it to Minter, and serves

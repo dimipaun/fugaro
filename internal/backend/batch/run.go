@@ -29,10 +29,10 @@ func (b *Backend) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.
 	if spec.Repo.Slug == "" || spec.Workflow == "" || spec.RunID == "" {
 		return backend.ExecutionRef{}, notCreated(fmt.Errorf("launching: a run needs a repository slug, a workflow and a run id (got %q, %q, %q)", spec.Repo.Slug, spec.Workflow, spec.RunID))
 	}
-	// The account is asked for before the timeout, so a workflow on a project
-	// job is refused before anything else about the run is worked out -- the
-	// order this check has always had, and the one BR10's red step names
-	// (account.go).
+	// The account is asked for before the timeout, so a workflow whose
+	// deployed job this installation records no account for is refused before
+	// anything else about the run is worked out -- the order this check has
+	// always had, and the one BR10's red step names (account.go).
 	account, err := b.jobAccount(spec)
 	if err != nil {
 		return backend.ExecutionRef{}, notCreated(err)
@@ -43,6 +43,13 @@ func (b *Backend) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.
 	}
 	id := JobID(spec.Repo.Slug, spec.Workflow, spec.RunID)
 	full := b.location() + "/jobs/" + id
+	// The budget token's carrier is judged here and not in the job definition,
+	// so a launch carrying the token is refused before a job is built at all --
+	// and by its own name, before anything about the entry's shape is read
+	// (AB9, D3021).
+	if entry := budgetTokenEntry(spec); entry != "" {
+		return backend.ExecutionRef{}, notCreated(tokenCarrierRefusal(full, entry))
+	}
 	job, err := b.jobDefinition(spec, id, full, timeout, account)
 	if err != nil {
 		return backend.ExecutionRef{}, notCreated(err)
@@ -60,6 +67,45 @@ func (b *Backend) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.
 		b.o.Warn(fmt.Sprintf("job %s: createTime: %v", full, err))
 	}
 	return backend.ExecutionRef{Name: b.codec.Format(cid), Job: cid.Job, LogURL: b.logURL(cid, created.Uid, created0)}, nil
+}
+
+// budgetTokenEnv is the budget token's marker: the name whose value IS the
+// seal key (D15), which the launcher writes as a secret entry once it seals
+// (internal/cli/run.go's sealMarker) and which the runner reads to tell a
+// minted token from a project that published no policy (internal/runner's
+// BudgetTokenEnv, plan R2-8(a)).
+//
+// It is spelled here, the way env.go spells the credentials service's address,
+// because this package decides what a launch entry may name and the reader
+// that owns it (internal/runner) cannot be imported from a backend.
+const budgetTokenEnv = "FUGARO_BUDGET_TOKEN"
+
+// budgetTokenEntry is the name of the entry a launch carries the budget
+// token's marker under, "" when it carries none. It reads the two lists a
+// launch's own environment is made of -- LaunchSpec.Env and
+// LaunchSpec.SecretEnv -- and it is deliberately a read of the RAW entries and
+// not of backend.LaunchEnv's parse: the marker is refused by name, whatever
+// shape the entry has (a name run into its value, the launcher bug
+// backend.LaunchEnv's own comment names, is this name as much as any other),
+// so the refusal cannot be missed by an entry the parser would reject first
+// with another reason.
+//
+// **Both spellings, one refusal** (AB9, D3021): the sealed entry the launcher
+// writes today, and the ordinary variable a launch could spell the marker as.
+// A Batch job must never carry either -- the marker's value is the seal key, so
+// an ordinary variable of the job's definition is the plain key as a standing
+// copy, which R5 forbids and internal/budget/token's wrap contract states for
+// the marker by name ("it is never set on a Batch job") -- and before AB9 only
+// the sealed one was refused, so an unsealed launch worked here.
+func budgetTokenEntry(spec backend.LaunchSpec) string {
+	for _, entries := range [][]string{spec.Env, spec.SecretEnv} {
+		for _, kv := range entries {
+			if name, _, _ := strings.Cut(kv, "="); name == budgetTokenEnv {
+				return name
+			}
+		}
+	}
+	return ""
 }
 
 // timeout is the run's total time: the workflow's own when the caller has it
@@ -186,9 +232,10 @@ func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeou
 					},
 				},
 			}},
-			// Never the default Compute Engine account: New refuses it. Which
-			// account it is -- the workflow's deployed job's, or the block's
-			// single one today -- is account.go's answer, asked in Launch.
+			// Never the default Compute Engine account: New refuses the
+			// block's, and account.go refuses the one a job is built with.
+			// Which account it is is account.go's answer (BR10): the account
+			// of the deployed job the run stands in for, asked in Launch.
 			ServiceAccount: &batch.ServiceAccount{Email: account},
 			// The VMs carry no external IP (design §1.7, C7). Both names are
 			// sent because Check 57a measured that Batch refuses

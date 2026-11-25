@@ -115,8 +115,8 @@ func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service
 		out = append(out, doctorCheck{ID: "token-signers-managed", Severity: "warning",
 			Problem: "the managed deployment's own grants, which Fugaro's own Terraform makes on purpose, and which are a signing path here, because the Firebase project is the deployer's own project: the deployer's other, unconditioned " + tf.DeployerRole +
 				" role holds iam.serviceAccounts.create, so the account creates an " + tf.ManagedPrefix + " account of this project, the conditioned role below names exactly the accounts it creates, and its iam.serviceAccounts.setIamPolicy is how it grants itself the token-creator role on the one it made — and Firebase accepts a token signed by any account of the project. The bindings: " + strings.Join(parts, ", ") +
-				"; what a service makes of the module's condition is not read here and is Check 68 of docs/gcp-live-checklist.md's to measure (docs/design/managed-deployer-fence.md)",
-			Fix: "the same-project layout is what leaves this open, and the choice is the owner's: a Firebase project of the deployer's own keeps the deployer out of the budget database's accounts (docs/design/m9-budget-and-dashboard.md §6.0), and removing either binding stops the managed replacement `fugaro update` runs"})
+				"; what a service makes of the module's condition is not read here and is Check 68 of docs/gcp-live-checklist.md's to measure (docs/managed-deployer-fence/spec.md)",
+			Fix: "the same-project layout is what leaves this open, and the choice is the owner's: a Firebase project of the deployer's own keeps the deployer out of the budget database's accounts (docs/m9-budget-and-dashboard/spec.md §6.0), and removing either binding stops the managed replacement `fugaro update` runs"})
 	}
 	if len(agentOrder) > 0 {
 		var parts []string
@@ -133,7 +133,7 @@ func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service
 				len(owners), strings.Join(ownerOrder, ", "))})
 	}
 	// Always said, and always partial: nothing found is not "safe".
-	msg := "checked the project and service-account IAM policies of " + pfp + "; not read: folder- and organization-inherited bindings, deny policies (docs/design/m9-budget-and-dashboard.md)"
+	msg := "checked the project and service-account IAM policies of " + pfp + "; not read: folder- and organization-inherited bindings, deny policies (docs/m9-budget-and-dashboard/spec.md)"
 	if nerr == nil {
 		msg += "; Google service agents of this project are read and classified"
 	} else {

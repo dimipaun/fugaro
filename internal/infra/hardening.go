@@ -16,7 +16,7 @@ import (
 )
 
 // BucketFinding is one thing doctor reports about who can write the runs
-// bucket (docs/design/bucket-iam.md H9).
+// bucket (docs/bucket-iam/spec.md H9).
 type BucketFinding struct{ Severity, Member, Role, Problem, Fix string }
 
 // sealRelease is the release whose launchers write the sealed budget token
@@ -166,7 +166,7 @@ var jobRunsSlugRE = regexp.MustCompile(`/objects/runs/([a-z0-9][a-z0-9_-]*)/"\)`
 // gcp.BucketConditionTitle) but not the read-only grant on that repository's
 // tokens/ (gcp.TokenBucketCondition, titled gcp.TokenBucketConditionTitle,
 // roles/storage.objectViewer): a repository not re-applied since the sealed
-// budget token moved to tokens/ (docs/design/budget-token-channel.md §7.2).
+// budget token moved to tokens/ (docs/budget-token-channel/spec.md §7.2).
 // Its runs cannot read their token, and GCS answers the refused read like a
 // missing object, so the run alone cannot say which. Read from the bucket's
 // own policy: the same read runs-bucket-iam makes, nothing more.
@@ -289,7 +289,7 @@ func grantMember(address, name string) (string, bool) {
 }
 
 // HardeningAllowDelete is the 0.7.0 bucket hardening's allow-list for p
-// (docs/design/bucket-iam.md H7): each delete of a launcher's old objectAdmin
+// (docs/bucket-iam/spec.md H7): each delete of a launcher's old objectAdmin
 // grant on the runs bucket, runs["<m>"], where m is a launcher and not an
 // operator and p also creates m's runs_reader and runs_launcher grants.
 // A replace, another role, another resource, an operator's grant or a
@@ -327,7 +327,7 @@ func HardeningAllowDelete(p *tf.Plan, launchers, operators []string) []string {
 }
 
 // LauncherGrantUpgrade is the upgrade's allow-list for p
-// (docs/design/bucket-iam.md H5): each replace of a launcher's
+// (docs/bucket-iam/spec.md H5): each replace of a launcher's
 // runs_launcher["<m>"] grant on bucket whose before is one of the earlier
 // forms of that grant (objectUser under gcp.LegacyLauncherBucketCondition or
 // gcp.RunsOnlyLauncherBucketCondition and its title, no description) and

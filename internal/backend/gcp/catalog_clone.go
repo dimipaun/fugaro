@@ -76,7 +76,7 @@ const (
 	// An image and not a named build context: `--build-context` is a buildx
 	// flag, and the step that builds an entry is the template's plain
 	// `docker build` on a worker that ships the docker CLI and no buildx
-	// (docs/design/base-image.md) — a request that wrote one fails the whole
+	// (docs/base-image/spec.md) — a request that wrote one fails the whole
 	// build at its first flag, which is what an update of the `go` image found
 	// out. Docker resolves the name in `COPY --from=<name>` out of the local
 	// image store before the registry — its default resolve mode is "prefer
@@ -151,6 +151,16 @@ COPY --from=clone --chown=1000:1000 /out/ /
 // submodule's URL, an LFS endpoint — is read from a file the clone just made and
 // refused when it does not belong to this host, before the fetch that would use
 // it.
+//
+// catalogCloneScriptText is the clone step's script. Its fetch-by-id failure
+// line — "the branch was force-pushed; re-run the build" — stands for a commit
+// that was never pushed as well, and the script cannot tell the two apart: it
+// holds no branch name, and the shallow clone's own refs are the only ones it
+// may read, so both are the same fact here, that this remote does not publish
+// the commit. A commit that was never pushed is refused in the checkout, before
+// anything is submitted (internal/cli's refuseUnpushedCommit), so what reaches
+// this line through the CLI is a real force-push — and a template driven by
+// hand, which has no checkout to judge.
 const catalogCloneScriptText = `set -eu
 export LC_ALL=C
 CRED=/run/secrets/git-credentials

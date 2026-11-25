@@ -13,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/mirror"
+	"github.com/dimipaun/fugaro/internal/place"
 )
 
 // update_test.go is `fugaro update`'s own behaviour: the door that re-converges
@@ -120,7 +121,7 @@ func TestUpdateWithoutAnInstallationNamesSetup(t *testing.T) {
 // themselves, pins that line, because an apply that stops at the installation
 // prints no left-for-you at all (report.Brief keeps one clause of a step's
 // reason; the whole of it is in the log the run names). The covered step is a
-// different matter, and TestUpdateAppliesTheFourStepsItOwns pins it: D12 makes
+// different matter, and TestUpdateAppliesTheThreeStepsItOwns pins it: D12 makes
 // the step a covered one, which is why the sentence above says "by asking".
 func TestUpdateLeavesAnUnenrolledRepositoryAloneAndExitsOne(t *testing.T) {
 	// The rig of an installation that converges with nothing to do, not a bare
@@ -129,6 +130,11 @@ func TestUpdateLeavesAnUnenrolledRepositoryAloneAndExitsOne(t *testing.T) {
 	// at the installation, left_for_you is empty and the --onboard-repo arm
 	// below passes without ever having a line to look at — which is how the
 	// secrets stage kept offering the flag after the other two stopped.
+	//
+	// The machine's installed plugin is this test's and not the host's: a machine
+	// whose plugin is newer than this release reads the plugin stage as nothing to
+	// do, and the step the assertions below look for is missing there.
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	r := updateRig(t)
 	dir := repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", initProjectName, ""))
 	t.Chdir(dir)
@@ -270,53 +276,20 @@ func contains(list []string, want string) bool {
 	return false
 }
 
-// TestUpdateAppliesTheFourStepsItOwns is D12's call-site half, at the four
-// functions that take the steps. `update` covers all four: the Firestore
-// database's location, a billable first image build, replacing a registry tag
-// and onboarding an unlisted repository. `setup` keeps exactly one of them —
-// the location, the door that asks for it as a first-time question — and the
-// other three are covered in both doors, which is the answer's own row-by-row
-// statement of what moves.
+// TestUpdateAppliesTheThreeStepsItOwns is D12's call-site half, at the three
+// functions that take the steps. `update` covers all three: a billable first
+// image build, replacing a registry tag and onboarding an unlisted repository.
+// `setup` covers the same three, and each is covered in both doors, which is
+// the answer's own row-by-row statement of what moves.
 //
-// Planting the bug in either direction fails it: a call site relaxed for
-// `setup` (the location) fails the setup arm here, and one left Typed for
-// `update` fails the update arm — for the build and the tag, whose arms run
-// both doors, that is the same mutation seen twice.
-func TestUpdateAppliesTheFourStepsItOwns(t *testing.T) {
-	t.Run("the Firestore location", func(t *testing.T) {
-		for _, tc := range []struct {
-			door    string
-			covered bool
-		}{{setupDoor.name, false}, {updateDoor.name, true}} {
-			t.Run(tc.door, func(t *testing.T) {
-				e, out := stageEngine(t, infra.FirestoreLocation+"\n", &initOptions{door: tc.door, yes: true, firebase: "aurora-fp"})
-				err := e.r.confirmLocation()
-				if !tc.covered {
-					// The class is Typed for `setup`, so the run's own answer
-					// confirms nothing here and the run leaves the permanent
-					// location for the user: T7, nothing is typed at it, and the
-					// banner below is the note, which names the location.
-					if err == nil || !strings.Contains(err.Error(), "the Firestore database's permanent location") {
-						t.Fatalf("setup confirmed the permanent location: %v\n%s", err, out)
-					}
-					if !strings.Contains(out.String(), infra.FirestoreLocation) {
-						t.Errorf("the setup banner does not name the location it leaves:\n%s", out)
-					}
-					if strings.Contains(out.String(), "confirmed by this run's own answer") {
-						t.Errorf("setup's own answer confirmed the location:\n%s", out)
-					}
-					return
-				}
-				if err != nil {
-					t.Fatalf("update did not cover the location: %v\n%s", err, out)
-				}
-				if !strings.Contains(out.String(), "confirmed by this run's own answer") {
-					t.Errorf("the covered step does not say how it was confirmed:\n%s", out)
-				}
-			})
-		}
-	})
-
+// The Firestore database's location is no longer one of them: it is not a
+// confirmation at all any more (LP10 of docs/location-preference; D3090), so
+// there is no door left to relax it in and nothing to assert about it here.
+//
+// Planting the bug in either direction fails it: a call site left Typed fails
+// the arm that runs both doors, and one relaxed for a single door fails that
+// door's arm.
+func TestUpdateAppliesTheThreeStepsItOwns(t *testing.T) {
 	t.Run("a billable first image build", func(t *testing.T) {
 		cfg := &config.Config{Workflows: map[string]config.Workflow{"app": {}}}
 		spec := infra.RepoSpec{Name: "acme/app", Slug: "acme-app", RegistryPath: "r",
@@ -528,7 +501,12 @@ func TestUpdateNeverCreatesAnything(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	for _, rq := range r.crm.Requests()[before:] {
-		if rq.Method == "POST" && strings.Contains(rq.Path, "projects") {
+		// A create is a POST to the collection, and every create is one. The
+		// colon is what separates it from a write on a project that already
+		// exists, and `update` makes one of those: the Firebase stage's probe
+		// of the caller's own rights over the project (`:testIamPermissions`,
+		// CanMakeIAMChanges, R2) creates nothing.
+		if rq.Method == "POST" && strings.Contains(rq.Path, "projects") && !strings.Contains(rq.Path, ":") {
 			t.Errorf("update created a project: %s %s", rq.Method, rq.Path)
 		}
 	}
@@ -576,5 +554,34 @@ func TestUpdateConvergesAnInstallationAtThePreviousRelease(t *testing.T) {
 	}
 	if strings.Contains(string(b), "mcp_server") {
 		t.Errorf("fugaro update turned the front door on for an installation that never asked for one (D934: off is the absence of the opt-in), and the front door is a public endpoint the moment it is served:\n%s", b)
+	}
+}
+
+// TestUpdateKeepsAnExistingInstallationOnItsOwnBucketLocation (LP6, R5, F11):
+// discovery reads where an installation's log bucket really is, and the run
+// writes that location into the spec, so the plan of an installation whose
+// bucket is in `global` is a plan of a bucket in `global`. That one location
+// builds the sink's destination, the view's bucket path and every view grant's
+// location (logging.tf), so a run that handed Terraform the mapping's answer
+// instead — `us`, for this fixture's us-east5 — would point the sink at a
+// bucket that does not exist and delete and re-create every grant in a location
+// with no view in it. The bucket resource's own ignore_changes keeps the bucket
+// itself where it is in either plan, which is why this test reads the tfvars
+// rather than the bucket's row: that row is a no-op for both answers.
+func TestUpdateKeepsAnExistingInstallationOnItsOwnBucketLocation(t *testing.T) {
+	r := updateRig(t)
+	fakeTerminal(t)
+	// This fixture's region (initConfig, us-east5) maps somewhere else, so the
+	// two answers differ and the assertion below can tell them apart.
+	if where := place.For("us-east5").LogBucket.Where; where == "global" {
+		t.Fatalf("this fixture's region maps to `global` (%s), which is the answer the installation's bucket must NOT be given", where)
+	}
+	r.logs.AddBucket(initProject, "global", infra.LogBucket, "ACTIVE", infra.LogBucketDescription)
+	out, _, err := executeStdin(t, "", "update")
+	if err != nil {
+		t.Fatalf("one fugaro update did not converge an installation whose log bucket is in `global`: %v\n%s", err, out)
+	}
+	if got := r.tfvars(t)["log_bucket_location"]; got != "global" {
+		t.Errorf("the run planned with log_bucket_location = %v, want `global`, where discovery found this installation's bucket: the sink's destination and every view grant are built from it, and the mapping's answer would move them off the bucket", got)
 	}
 }

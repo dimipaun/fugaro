@@ -14,6 +14,7 @@ import (
 
 	"gocloud.dev/gcerrors"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitops"
@@ -235,7 +236,7 @@ func providerForHost(host string) string {
 }
 
 // consoleReadCtxKey marks the commands the desktop console spawns as reads:
-// docs/design/desktop-console.md §5.1's exact-argv allow-list, plus the one
+// docs/desktop-console/spec.md §5.1's exact-argv allow-list, plus the one
 // read that design names for the console and whose allow-list row the console
 // task adds (`plan graph --json` for the graph document, V2.2.1).
 //
@@ -321,6 +322,16 @@ var consoleReadPaths = map[string]bool{
 	// writes nothing, the remembered checkouts included. It asks nothing else
 	// of the machine: the read is the caller's own database node.
 	"fugaro coordinator intents": true,
+	// The orchestrator map (the console-fixes plan's CG7a; C-ORCH's document,
+	// D3221): the project's active orchestrators, their connections and the
+	// coordinator's heartbeat, assembled from the caller's own database -- the
+	// orchestrator nodes, their leases, the claims and the heartbeat node -- so
+	// it needs no checkout and asks the host for nothing. It is a cloud read
+	// like the rest, aimed with `--project`/`--config`, and it writes nothing,
+	// the remembered checkouts included. The command is registered from `ee/`
+	// (`ee/orchestrator/cli/map.go`), and no released CLI carries it yet, which
+	// is why the console's own read sits behind `ORCHESTRATOR_MAP_CLI_FLOOR`.
+	"fugaro orchestrator map": true,
 	// The settings read (the settings-edit plan's C1): the project's settings,
 	// each with the layer that decided it and the three writability facts. It
 	// writes nothing -- no file, no cache, no cloud object (`newSettingsCmd`'s
@@ -386,6 +397,18 @@ var consoleReadPaths = map[string]bool{
 	// command) is covered by it too: it is named in consoleLaunchPaths for
 	// that reason, and the two tables are read together.
 	"fugaro apply": true,
+	// The Code tab's two catalogue reads (the console improvements plan's AL,
+	// §5.1's rows): `image ls --json` prints the image catalog -- each entry
+	// with the environment it builds and the repositories pinned to it -- and
+	// `recipes ls --json` prints the recipes this installation can run. Both
+	// are offline reads of the installation's own records and write nothing,
+	// the remembered checkouts included, so a console that asks either
+	// remembers no checkout. Their writers are the never table's: `image
+	// add`, `image rm` and `image promote`, `recipes publish` and `recipes
+	// validate` -- each as a command and as a word of its group, so no other
+	// word of either group is reachable from the console.
+	"fugaro image ls":   true,
+	"fugaro recipes ls": true,
 	// The one the design names and §5.1 has not carried a row for yet (the
 	// console task adds it); it resolves no checkout today.
 	"fugaro plan graph": true,
@@ -395,6 +418,16 @@ var consoleReadPaths = map[string]bool{
 // (localcfg.Select), from the flags, the working directory's checkout and
 // the environment, and applies --gcp-project and --region to it (announce).
 // Every refusal is a user error.
+//
+// It is also the fence's second call site (required_cli.go, R4). The root hook
+// fences the project a command's own flags and environment select, and there is
+// nothing to fence when they select none; the shared config this falls back to
+// is the project such a command actually acts on, and it is known only here,
+// after the fetch. So the check runs on the shared config, before anything of
+// the command has been printed, under the verdict the hook recorded for the
+// command: an exempt command (doctor) and a console read (runs ls) pass, the
+// read with its one stderr line, and a context with no verdict at all — a test
+// calling this directly — is not checked.
 func selectProject(ctx context.Context, o cloudOptions) (localcfg.Selection, *localcfg.Config, error) {
 	co, err := checkoutProject(ctx, "")
 	if err != nil {
@@ -406,6 +439,11 @@ func selectProject(ctx context.Context, o cloudOptions) (localcfg.Selection, *lo
 	sel, lc, err := selectWith(ctx, o, co, false, "")
 	if err != nil {
 		return sel, nil, err
+	}
+	if v, ok := fenceVerdictFrom(ctx); ok && v.checks() && sel.From == "shared config" && !backend.OnPlatform(os.Getenv) {
+		if err := requireCLI(ctx, lc, o.errw()); err != nil {
+			return sel, nil, err
+		}
 	}
 	return sel, lc, announce(o, sel, lc)
 }
@@ -541,7 +579,7 @@ func checkCloudName(ctx context.Context, b *blobx.Bucket, lc *localcfg.Config, g
 	}
 	r, err := b.Bucket.NewReader(ctx, infra.ProjectMarkerObject, nil)
 	if gcerrors.Code(err) == gcerrors.NotFound {
-		return userErr("project %s's installation has no project name yet; an operator runs fugaro setup --name %s (see docs/design/m9-budget-and-dashboard.md §13.1)", lc.Name, lc.Name)
+		return userErr("project %s's installation has no project name yet; an operator runs fugaro setup --name %s (see docs/m9-budget-and-dashboard/spec.md §13.1)", lc.Name, lc.Name)
 	}
 	if err != nil {
 		return remote(fmt.Errorf("reading %s from %s: %w", infra.ProjectMarkerObject, bucketURL, err))

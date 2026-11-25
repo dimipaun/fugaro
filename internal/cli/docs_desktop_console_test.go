@@ -18,7 +18,7 @@ package cli
 //
 // Two halves, three test families. TestDocsDesktopConsoleDesignCarriesTheDecisions
 // is the design's own presence test (design section 9.5 item 1): the load-bearing
-// strings of docs/design/desktop-console.md. TestDocsDesktopConsoleContractNamesEveryWatchField
+// strings of docs/desktop-console/spec.md. TestDocsDesktopConsoleContractNamesEveryWatchField
 // is the stronger half this task adds: console/docs/json-contract.md must name
 // every json tag of internal/watch/json.go's shapes, derived from the structs
 // themselves rather than from a hand-kept list, so a rename in json.go fails a
@@ -70,7 +70,7 @@ import (
 // and the owner-run table. A presence test, not a fidelity test -- a reviewer
 // reads the diff for fidelity (design section 9.5).
 func TestDocsDesktopConsoleDesignCarriesTheDecisions(t *testing.T) {
-	const path = "docs/design/desktop-console.md"
+	const path = "docs/desktop-console/spec.md"
 	doc := readDoc(t, path)
 	for _, tc := range []struct {
 		what   string
@@ -122,7 +122,7 @@ func TestDocsDesktopConsoleDesignCarriesTheDecisions(t *testing.T) {
 // red step: the owner's answers of 2026-10-15 pinned where the design records
 // them -- section 10's last column -- and the lines that record what the
 // owner's answers of 2026-10-16 do to THIS design (nothing: D22, D34 and D21
-// belong to docs/design/desktop-console-v2.md's D21-D38, and no row of
+// belong to docs/desktop-console-v2/spec.md's D21-D38, and no row of
 // section 10 moves).
 //
 // The column is read as a TABLE, not as prose, for the reason
@@ -143,7 +143,7 @@ func TestDocsDesktopConsoleDesignCarriesTheDecisions(t *testing.T) {
 // ruling and it goes where the answer is, so a cell that lost one fails here
 // rather than in review.
 func TestDocsDesktopConsoleDesignCarriesTheOwnerAnswers(t *testing.T) {
-	const path = "docs/design/desktop-console.md"
+	const path = "docs/desktop-console/spec.md"
 	doc := readDoc(t, path)
 
 	for _, want := range []string{
@@ -464,6 +464,16 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		// field table is held to the shape it documents.
 		reflect.TypeOf(applyDoc{}),
 		reflect.TypeOf(applyRow{}),
+		// §6.33's dry-run document (the console improvements plan's MW1,
+		// D2903) and §6.34's (MW2): the change as data, which the console's
+		// confirmation windows are drawn from. They are here because the
+		// section is a contract the console reads, and a field table is held to
+		// the shape it documents.
+		reflect.TypeOf(modelsAddPlanDoc{}), reflect.TypeOf(modelsAddPlanClaim{}),
+		reflect.TypeOf(modelsAddPlanAllow{}), reflect.TypeOf(modelsAddPlanPrice{}),
+		reflect.TypeOf(modelsAddPlanStep{}),
+		reflect.TypeOf(imageAddPlanDoc{}), reflect.TypeOf(imageAddPlanEntry{}),
+		reflect.TypeOf(imageAddPlanStep{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command:
 		// ee/coordinator/cli/console_contract_test.go pins them against the
 		// tagged tree, which is the tree that still serves the console.
@@ -694,6 +704,16 @@ var consoleMovedSections = []string{
 	// held by the door's own tests.
 	"### 6.25 `fugaro coordinator roadmap move",
 	"## 4. `fugaro report --json`",
+	// §4's stream subsection (the console improvements plan's RS3, the
+	// `spend.stream` operation) is the same command's second argv, and it lives
+	// in the same ee/ package (`ee/report/cli/report_stream.go`), so this build
+	// can name neither its writer nor the flags its prose states -- `--until`
+	// and `--csv` are the report's own. It is a heading of its own rather than
+	// part of §4's because the stream is a different document (one line per
+	// row) from the indented one above it; the ee-side counterpart that would
+	// hold it says nothing about it yet, and the row of §5.1 that spawns it is
+	// held here on the design's side.
+	"### `fugaro report --stream --json`",
 }
 
 // consoleMovedRows are the document's individual lines that name a flag of a
@@ -854,6 +874,22 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		// no shape carries is a field invented rather than read.
 		reflect.TypeOf(applyDoc{}),
 		reflect.TypeOf(applyRow{}),
+		// §6.33's and §6.34's dry-run documents, the same set as the test above
+		// (the console improvements plan's MW1 and MW2, D2903). They are here
+		// for this test's own reason -- a field table that names a key no shape
+		// carries is a field invented rather than read -- and both documents are
+		// read whole by the console's windows, so every member is listed.
+		reflect.TypeOf(modelsAddPlanDoc{}), reflect.TypeOf(modelsAddPlanClaim{}),
+		reflect.TypeOf(modelsAddPlanAllow{}), reflect.TypeOf(modelsAddPlanPrice{}),
+		reflect.TypeOf(modelsAddPlanStep{}),
+		reflect.TypeOf(imageAddPlanDoc{}), reflect.TypeOf(imageAddPlanEntry{}),
+		reflect.TypeOf(imageAddPlanStep{}),
+		// §6.29's document (WH1, the console improvements plan's AL): the
+		// caller's own role, the scope it is held at and the patterns that scope
+		// names -- the `whoami` read. It is here for this test's own reason: a
+		// field table that names a key no shape carries is a field invented
+		// rather than read.
+		reflect.TypeOf(whoamiDoc{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command,
 		// as in the test above.
 	}
@@ -871,10 +907,12 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 	keyTokenRE := regexp.MustCompile("^[a-z][a-z0-9_]*$")
 	backtickRE := regexp.MustCompile("`([^`]+)`")
 	// The rows whose first column is a command or a flag rather than a json
-	// key: docs/design/desktop-console.md's spawn table and the flag
-	// inventory, both of which name commands, not fields.
+	// key: docs/desktop-console/spec.md's spawn table and the flag
+	// inventory, both of which name commands, not fields. `setup` is the flag
+	// inventory's own row for the first-run wizard, whose argv arrives partly on
+	// stdin -- a word of the table, not a key of any document.
 	notAKey := map[string]bool{"watch": true, "report": true, "diagnose": true,
-		"logs": true, "doctor": true, "version": true}
+		"logs": true, "doctor": true, "version": true, "setup": true}
 	// approvedAheadOfTheCLI are the wire keys the document names under its own
 	// bounded exception (§intro): the owner has approved a release that will
 	// write them, no shape here carries them yet, and the console accepts them
@@ -1016,20 +1054,26 @@ func TestDocsDesktopConsoleContractStatesTheRunsStatsOwnViewRefusal(t *testing.T
 }
 
 // TestDocsDesktopConsoleContractStatesWhichDocumentsAreLineDelimited: the
-// console's own set has three line-delimited documents, and they do it through
-// two different code paths -- the watch feed through json.NewEncoder with no
-// SetIndent and the graph's stream through WriteDoc, the log lines through
-// json.Marshal in printLogEntry. A document that claims only the feed is
-// line-delimited, or that calls the log form indented, builds the log reader on
-// the wrong parser, which is what a review of the first revision found here.
+// console's own set has seven line-delimited documents, and they do it through
+// three different code paths -- the watch feed through json.NewEncoder with no
+// SetIndent, the graph's stream through WriteDoc, the log lines through
+// json.Marshal in printLogEntry, and the console improvements' four through
+// RS1's one-line-at-a-time writer and `setup --events`'s own. A document that
+// claims only the feed is line-delimited, or that calls the log form indented,
+// builds the log reader on the wrong parser, which is what a review of the
+// first revision found here.
 //
-// The count moved once, and the move is why the graph's stream is quoted here:
-// the graph plan's CG9b puts `graph --watch --json` on the console's spawn
+// The count moved twice, and each move is why a stream is quoted here: the
+// graph plan's CG9b puts `graph --watch --json` on the console's spawn
 // table, which is what makes section 6.22's compact stream a document of the
 // console's own set -- before it, the document said the graph was not in the
-// set and named CG9b as the task that would move the count with its row.
+// set and named CG9b as the task that would move the count with its row -- and
+// the console improvements plan's AL adds three live reads and the wizard's
+// event feed. The improvement's three are the sharper case: each is a new argv
+// on a command whose one-shot read is indented, so the parser follows the argv
+// and never the command word.
 //
-// The claim is scoped to the console's set, and the fourth line-delimited
+// The claim is scoped to the console's set, and the eighth line-delimited
 // document this file describes -- `fugaro cancel RUN --json` (section 6.3),
 // which is a write the console never spawns -- is stated separately and
 // asserted here too. A second review found the document claiming "exactly two
@@ -1043,18 +1087,24 @@ func TestDocsDesktopConsoleContractStatesWhichDocumentsAreLineDelimited(t *testi
 		what   string
 		quotes []string
 	}{
-		{"the three in the console's set are line-delimited", []string{
+		{"the seven in the console's set are line-delimited", []string{
 			"one compact `logLine` object per line",
 			"printLogEntry",
 			"json.Marshal",
-			"Three of the commands in the console's set are line-delimited",
-			"`watch --json`, `logs RUN\n   --json` and `graph --watch --json`",
+			"Seven of the commands in the console's set are line-delimited",
+			"`watch --json`, `logs RUN --json`, `graph --watch --json` and the console",
+			"improvements' four",
 			"Every other command in that set is indented",
+			// The console improvements' three live reads sit on an indented
+			// command's own words, so the document must say the parser follows
+			// the argv: the one-shot form of the same command is not compact.
+			"`runs ls --stream\n   --json` is line-delimited while `runs ls --json` (§5) is not",
 		}},
 		{"cancel's document is compact, outside that set", []string{
 			"**Its document is compact — one object per line**",
 			"`printCancel` marshals the struct with `json.Marshal`",
 			"the only one outside the console's set",
+			"the only one of the eight the console never spawns",
 		}},
 		{"every other document in the console's set is indented", []string{
 			"## 9. What the console may do with all this",
@@ -1182,6 +1232,15 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	// describes its flags, so they are checked against this constructor like
 	// any other command's.
 	"models ls": newModelsLsCmd,
+	// §6.33 documents the write's dry run (the console improvements plan's MW1,
+	// D2903), which is the `models add` command: `--route`, `--price-in`,
+	// `--price-out`, `--dry-run` and the pair of the composite-commands plan's
+	// AP5 are its own flags, so the section's prose is checked against this
+	// constructor like any other command's. It is on the design's spawn
+	// allow-list as `models.add.plan` and `models.add` (the console's fifth
+	// write), so the whole of what a renderer may influence about the child is
+	// the four arguments the section names.
+	"models add": newModelsAddCmd,
 	// §6.19 documents the settings read (CLI 0.16.0, S5/#1525), and the console
 	// spawns it since the settings-edit plan's C1, as §5.1 rule 6's
 	// `settings --json --project <name> [--config <path>]` row. The document
@@ -1229,6 +1288,41 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	// `apply` is the same constructor's write arm, and both its words are
 	// checked against it here rather than in the design's table alone.
 	"apply": newApplyCmd,
+	// §6.29 documents the roster read and its `--me` form (the roles-and-scopes
+	// plan's RS7, WH1), and the console spawns the second as §5.1 rule 6's
+	// `user ls --me --json` row, the caller's own role. The document describes
+	// both forms' flags, so they are checked against this constructor like any
+	// other command's.
+	"user ls": newUserLsCmd,
+	// §6.30 documents the image catalog's read (the console improvements plan's
+	// AL), which is the console's `image.catalog.ls` and §5.1's `image ls
+	// --json` row. The group's writers -- `image add`, `image rm`, `image
+	// promote`, `image build`, `image refresh` -- are the never table's, save
+	// the add §6.34 documents, which MW2's two rows above carry by name; the
+	// section's flags are checked against this constructor like any other
+	// command's.
+	"image ls": newImageLsCmd,
+	// §6.34 documents the image write's dry run (the same plan's MW2, D2903),
+	// which is the `image add` command: `--dockerfile`, `--tags`,
+	// `--description`, `--dry-run` and the definition flags the console's rows
+	// deliberately carry none of (`--inline`, `--image`, `--default`,
+	// `--branch`) are its own, so the section's prose is checked against this
+	// constructor like any other command's. It is on the design's spawn
+	// allow-list as `image.add.plan` and `image.add` (the console's sixth
+	// write), and the section says which of its flags no row may carry.
+	"image add": newImageAddCmd,
+	// §6.31 documents the recipes in force (the same plan's AL, §5.1's
+	// `recipes ls --json` row, the console's `recipes.ls`). `recipes publish`
+	// and `recipes validate` are the never table's, so this read is the group's
+	// whole reach here too.
+	"recipes ls": newRecipesLsCmd,
+	// §6.32 documents the first-run wizard (the same plan's ST1, ST2 and SW3a):
+	// `setup --plan-only --answers-file - --events --json` is the console's
+	// `setup.plan` and the same command without `--plan-only` is `setup.apply`,
+	// the console's fourth write. Both argvs are §5.1's rows, so the section's
+	// flags -- `--plan-only`, `--answers-file` and `--events` not least -- are
+	// checked against this constructor like any other command's.
+	"setup": newSetupCmd,
 }
 
 // TestDocsDesktopConsoleContractNamesOnlyRealFlags: every --flag the document
@@ -1539,21 +1633,43 @@ func firstBacktick(cell string) string {
 // is what a review of the first revision found here: the table could lose a
 // row -- or gain one -- and the test would still pass. This parses both tables
 // §5.1 rule 6 carries and compares their first cells exactly: the allow-list is
-// the thirty-one argvs and nothing else -- the console's one spawn table
+// the forty-two argvs and nothing else -- the console's one spawn table
 // (SPAWN_COMMANDS) since the installation rail took the picker's read onto the
 // dashboard's surface -- and a review of an earlier revision found the picker's own
 // read, `config list --json`, absent here, which left the specification
 // forbidding the one read the picker depends on -- and the "never" table still
 // names the two entries that make a name-based list a hole.
 func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
-	const path = "docs/design/desktop-console.md"
+	const path = "docs/desktop-console/spec.md"
 	doc := readDoc(t, path)
 
 	want := []string{
 		"watch --json",
 		"budget show --json",
+		// The caps as a live feed (the console improvements plan's RS4, the
+		// `budget.stream` operation): the same command with the flag that makes
+		// it a stream -- one newline-delimited `row` per repository and one
+		// `end` line, the kill switch among the rows as `slug: "kill"` -- so the
+		// command carries two argvs here, a one-shot read and its stream. D2906
+		// is why it is a **flag** rather than members of §3's document: the
+		// one-shot document is unchanged, member for member and byte for byte.
+		"budget show --stream --json",
 		"report --json",
+		// The report as a live feed (the same plan's RS3, the `spend.stream`
+		// operation): one `row` per element of §4's `rows`, an `end` line
+		// carrying the document's own `totals`, and nothing of the header or the
+		// `warnings`. The report's section is checked against the tagged tree
+		// (ee/report/cli/console_contract_test.go), but its row of this table is
+		// this list's, so the argv is spelled here.
+		"report --stream --json",
 		"runs ls --json",
+		// The listing as it arrives (the same plan's RS1, the `runs.stream`
+		// operation): the console's newest feed, always with `--since 24h` as it
+		// spawns the one-shot read, drawn row by row and capped at 10,000 rows,
+		// 16 MiB and a per-line bound. It is the row whose argv shows that the
+		// parser follows the argv and never the command word: the command's
+		// one-shot read above is indented and this one is not.
+		"runs ls --stream --json",
 		// The Spend screen's by-person view (console L5b): the one read whose
 		// rows the CLI scopes to the caller, and the one argv here the console
 		// may not widen with --all-users.
@@ -1622,6 +1738,19 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// fixed words -- so this list spells the whole argv back with nothing
 		// an operation's schema fills.
 		"coordinator intents --all --json",
+		// The orchestrator map (the console-fixes plan's CG7a, the
+		// `orchestrator.map` operation, D3221; C-ORCH's document,
+		// `internal/orchestrator/mapdoc.go`): the project's **active**
+		// orchestrators, the connections between them and the coordinator's own
+		// heartbeat. It has no argument of its own -- `--json` is the row's fixed
+		// word, and the read is one project's whole active set -- so this list
+		// spells the whole argv back with the two project flags of §3.4 rule 3
+		// and nothing an operation's schema fills. The command is registered from
+		// `ee/` and no release carries it yet, which is why the console's own read
+		// sits behind `ORCHESTRATOR_MAP_CLI_FLOOR` (`src/shared/version.ts`); the
+		// row is on this table because the allow-list's entry is this task's, the
+		// way `settings set`'s `--no-apply` was before its release shipped.
+		"orchestrator map --json --project <name> [--config <path>]",
 		// The settings read (the settings-edit plan's C1, the `settings.read`
 		// operation, D1102): the selected project's settings, each with the
 		// layer that won, the value it gives and the writability facts the
@@ -1740,6 +1869,83 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// from a renderer: no positional word, no `--repo`, and the two project
 		// flags are rule 3's, so the row spells the whole argv back.
 		"apply --project <name> [--config <path>]",
+		// The caller's own role (WH1, the console improvements plan's AL, the
+		// `whoami` operation, D2907): the one argv of `user ls` that reads no
+		// roster -- with `--me` the command answers about the caller instead of
+		// listing everybody -- so it carries neither `--repo` nor `--all` and
+		// no positional word at all. The console reads it at startup and maps
+		// it to disabled-with-a-reason controls; it decides no role of its own.
+		"user ls --me --json",
+		// The Code tab's two catalogue reads (the same plan's AL, the
+		// `image.catalog.ls` and `recipes.ls` operations): the project's image
+		// catalog and the recipes in force. Both are offline, both have no
+		// argument at all -- the commands are cobra's `NoArgs`, and `image ls`'s
+		// `--shared` and `recipes ls`'s `--verbose` are deliberately not the
+		// console's words -- and the groups' writers are on the never table
+		// below, save the two adds this plan's MW1 and MW2 put on this table by
+		// name, which is why the image read is no longer its group's whole
+		// reach and the recipes read still is.
+		"image ls --json",
+		"recipes ls --json",
+		// The first-run wizard's plan and its apply (the same plan's AL, the
+		// `setup.plan` and `setup.apply` operations, ST1, ST2 and SW3a): the
+		// converge `setup` drives, whose five answers arrive as one JSON
+		// document on the child's standard input -- `--answers-file -`, never a
+		// path, so no file exists for another process of the same user to change
+		// between main's validation and the CLI's read, and no word of the argv
+		// is a path. `--plan-only` is the word that makes the child read instead
+		// of create, so the second row is the first less it: **the console's
+		// fourth write**, after rules 11, 12 and 14, and the reason §5.1 gained
+		// two rows and consoleLaunchPaths an entry. Neither row carries `--yes`,
+		// `--name`, `--gcp-project`, `--region`, `--bake-repos` or any argument
+		// at all: the answers file is the only place a project name crosses, and
+		// a flag beside the file wins over it, so the row spells the command's
+		// argv and the four words the console's two rows carry. **Nor does
+		// either carry `--project` or `--config`, or hand the child a
+		// `FUGARO_PROJECT`** (design §3.4 rule 3's third exception): the answers
+		// name the installation the run is about to create, and the CLI reads
+		// the flag and the variable as one selection, so a child given an
+		// existing project has `loadInitConfig` refuse those answers as a rename
+		// of it -- and a first run has no project to give it. The rows carry
+		// `takesProject: false` for exactly that (console/src/main/spawn.ts).
+		"setup --plan-only --answers-file - --events --json",
+		"setup --answers-file - --events --json",
+		// The models write's two halves (the same plan's MW1, D2903, the
+		// `models.add.plan` and `models.add` operations): the CLI's own dry run
+		// of the write and the write itself, which is the first less
+		// `--dry-run --json`. **The console's fifth write**, after rules 11, 12
+		// and 14 and the first-run wizard's apply, and the second of them with
+		// the lapse gate; the change is a widening, so the window carries the
+		// tick. The three values a renderer sends are `=`-form words and the
+		// model ID is the positional behind `--`, so no value can be read as a
+		// flag -- and every one of the four is held to a grammar in main before
+		// either argv exists. `--no-apply` is a word of both rows: the console
+		// saves the change and its follow-up steps rather than running them
+		// (D1565). It is the reason §5.1 gained two rows and consoleLaunchPaths
+		// an entry, and the reason the never table's `models add` rows carry an
+		// `except` naming exactly these two operations.
+		"models add --no-apply --dry-run --json --route=<route> --price-in=<usd> --price-out=<usd> --project <name> [--config <path>] -- <ID>",
+		"models add --no-apply --route=<route> --price-in=<usd> --price-out=<usd> --project <name> [--config <path>] -- <ID>",
+		// The image write's two halves (the same plan's MW2, D2903, the
+		// `image.add.plan` and `image.add` operations): the CLI's own dry run of
+		// the entry's add to the installation's image catalog and the write
+		// itself, which is the first less `--dry-run --json`. **The console's
+		// sixth write**, after rules 11, 12 and 14, the first-run wizard's apply
+		// and the models write, and the third of them with the lapse gate; the
+		// change is **not** a widening -- it raises no limit and MD2's document
+		// carries no `widening` member -- so the window is one deliberate click
+		// with no tick. `--dockerfile` is the one required value, spelled
+		// `owner/name:path` and cut at the first colon; the tag list and the
+		// description are optional, and an absent flag is how the row says
+		// *none*. Every value is one `=`-form word and the entry's name is the
+		// positional behind `--`, and main holds each to a stated grammar before
+		// either argv exists. `--no-apply` is a word of both rows: the console
+		// saves the entry and its follow-up steps rather than running them
+		// (D1565). It is the reason §5.1 gained two rows and consoleLaunchPaths
+		// an entry, and the reason the never table's `image add` rows carry an
+		// `except` naming exactly these two operations.
+		"image add --no-apply --dry-run --json --dockerfile=<owner/name:path> [--tags=<list>] [--description=<text>] --project <name> [--config <path>] -- <name>",
+		"image add --no-apply --dockerfile=<owner/name:path> [--tags=<list>] [--description=<text>] --project <name> [--config <path>] -- <name>",
 	}
 	rows := docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |")
 	got := map[string]bool{}
@@ -1822,18 +2028,19 @@ func consoleRowCommand(t *testing.T, argv string) string {
 // the *design's* rows -- `craft ls` is on this table with no console row yet --
 // and not about `SPAWN_COMMANDS`, which the surface test above reads.
 //
-// Both halves are read off the document rather than remembered here: the two
-// exceptions are the sentence's own ("except two: `version`, … and the rail's
-// `config list --json`"), and everything else is what the table's rows spell
-// before their flags, so a row that lands moves this sentence in the same
-// commit and nothing in Go.
+// Both halves are read off the document rather than remembered here: the
+// exceptions are the sentence's own (its spelled count and the commands it
+// names after "except" -- `version`, the rail's `config list --json`, and since
+// AL the first-run wizard's `setup`, which are three), and everything else is
+// what the table's rows spell before their flags, so a row that lands moves this
+// sentence in the same commit and nothing in Go.
 //
 // Mutations that prove it: leave the row and the sentence alone (this test fails
 // naming `coordinator roadmap move`); name a command no row carries; move the
 // spelled count without moving the list; and drop a row's own command from the
 // list (the same failure from the other side).
 func TestDocsDesktopConsoleProjectFlagCensus(t *testing.T) {
-	const path = "docs/design/desktop-console.md"
+	const path = "docs/desktop-console/spec.md"
 	// Whitespace is normalised, as the sibling docs tests do: the sentence is
 	// wrapped across lines and a re-wrap is the same sentence.
 	doc := readDoc(t, path)
@@ -1865,11 +2072,18 @@ func TestDocsDesktopConsoleProjectFlagCensus(t *testing.T) {
 	}
 
 	// The exceptions, from the sentence's own clause: what it excludes from the
-	// census is what the table's rows below may leave out of it.
-	at := strings.Index(block[1], "except two:")
-	if at < 0 {
-		t.Fatalf("%s's §5.1 rule 6 no longer says how many rows carry no `--project` (\"except two: …\"): the census is read against that clause", path)
+	// census is what the table's rows below may leave out of it. The count is
+	// read off the clause rather than remembered here -- "except two" became
+	// "except three" when the console improvements plan's AL added the
+	// first-run wizard's two `setup` rows, whose exclusion is the console's own
+	// rather than the command's -- so a fourth exception moves the clause and
+	// nothing in Go.
+	exceptions := regexp.MustCompile("except ([a-z]+(?:-[a-z]+)?):").FindStringSubmatch(block[1])
+	if exceptions == nil {
+		t.Fatalf("%s's §5.1 rule 6 no longer says how many rows carry no `--project` (\"except <count>: …\"): the census is read against that clause", path)
 	}
+	spelled := consoleSpelledNumber(t, exceptions[1])
+	at := strings.Index(block[1], "except "+exceptions[1]+":")
 	clause := block[1][at:]
 	if end := strings.Index(clause, "That is not a table annotation"); end >= 0 {
 		clause = clause[:end]
@@ -1878,8 +2092,8 @@ func TestDocsDesktopConsoleProjectFlagCensus(t *testing.T) {
 	for _, m := range regexp.MustCompile("`([^`]+)`").FindAllStringSubmatch(clause, -1) {
 		exempt[consoleRowCommand(t, m[1])] = true
 	}
-	if len(exempt) != 2 {
-		t.Errorf("%s's §5.1 rule 6 says \"except two\" and names %d commands that carry no `--project` (%v): the census counts the rest of the table, so the two exceptions are read from that clause", path, len(exempt), exempt)
+	if len(exempt) != spelled {
+		t.Errorf("%s's §5.1 rule 6 says \"except %s\" and names %d commands that carry no `--project` (%v): the census counts the rest of the table, so the exceptions are read from that clause", path, exceptions[1], len(exempt), exempt)
 	}
 
 	// The table's own rows, minus the exceptions: what the census must name.
@@ -1925,7 +2139,7 @@ func TestDocsDesktopConsoleProjectFlagCensus(t *testing.T) {
 // Mutation caught: a later edit that puts the old justification back, or a
 // document whose row drops one of the two words while the code keeps it.
 func TestDocsDesktopConsoleDesignCoordinatorCutNamesThePageTheRowAdmits(t *testing.T) {
-	const path = "docs/design/desktop-console.md"
+	const path = "docs/desktop-console/spec.md"
 	doc := readDoc(t, path)
 
 	// The command's half, read off newLsCmd rather than a list kept here: the
@@ -1972,7 +2186,7 @@ func TestDocsDesktopConsoleDesignCoordinatorCutNamesThePageTheRowAdmits(t *testi
 // allow (bar the reads the design names for the console and §5.1 has no
 // row for yet).
 func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
-	const path = "docs/design/desktop-console.md"
+	const path = "docs/desktop-console/spec.md"
 	doc := readDoc(t, path)
 	allowed := map[string]bool{}
 	argvs := 0
@@ -1998,7 +2212,7 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	// Thirty-one commands: the thirteen dashboard reads (logs has two argvs), the
+	// Thirty-four commands: the thirteen dashboard reads (logs has two argvs), the
 	// rail's `config list --json` (D13's amendment of 2026-10-20), the graph
 	// screen's `plan status --json` (GV2.1), the dependency graph read
 	// `graph --json` (the graph plan's CG9a), the project view's
@@ -2028,9 +2242,33 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	// two enrolment reads of the repos-management plan's RE5 (D2413) are the
 	// thirtieth and thirty-first commands: `project repos ls --json` and `project
 	// repos status --json`, the `project repos` group's whole reach, since its two
-	// writes are on the never table below.
-	if len(allowed) != 31 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 31 (logs and apply have two argvs each)", path, argvs, len(allowed))
+	// writes are on the never table below. The console improvements plan's AL
+	// adds the thirty-second to thirty-fourth: the Code tab's two catalogue reads
+	// `image ls --json` and `recipes ls --json`, each offline and each the whole
+	// of its group's reach, and the first-run wizard's `setup`, whose two rows
+	// are the plan (`setup --plan-only …`) and the apply (`setup …`) -- a write,
+	// so `fugaro setup` is named in consoleLaunchPaths rather than here. Its
+	// three streams are second argvs of commands this census already carries
+	// (`budget show`, `report` and `runs ls`), so they move the argv count and
+	// not the command count. The console improvements plan's MW1 adds the
+	// thirty-fifth: `fugaro models add`, the models write, whose two rows on the
+	// table are its dry run (`models add --no-apply --dry-run --json …`) and the
+	// write itself (`models add --no-apply …`) -- a write, so `fugaro models add`
+	// is named in consoleLaunchPaths rather than here, and the group's other
+	// words stay on the never table below. The same plan's MW2 adds the
+	// thirty-sixth: `fugaro image add`, the image write, whose two rows are its
+	// dry run (`image add --no-apply --dry-run --json …`) and the write itself
+	// (`image add --no-apply …`) -- a write too, so `fugaro image add` is named
+	// in consoleLaunchPaths rather than here, and the group's other writers stay
+	// on the never table below. The console-fixes plan's CG7a adds the
+	// thirty-seventh, and the first of its own this list has carried: `fugaro
+	// orchestrator map --json`, the Coordinator tab's map of the project's active
+	// orchestrators (C-ORCH's document, D3221). It is a read -- one document,
+	// assembled from the caller's own database node, needing no checkout -- so it
+	// is named here, and the command lives under `ee/` until a release carries it
+	// (which is why the console's own read is behind a version floor).
+	if len(allowed) != 37 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 37 (logs and apply have two argvs each, `settings` and `settings set` are one command's two rows, `models add` and `image add` are the same for the two writes, and each of the console improvements' three streams is a second row on a command the table already carries)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the read the design names for the console and §5.1 has not grown
@@ -2146,14 +2384,20 @@ func consoleOperationCount(t *testing.T, text string) (int, string) {
 }
 
 // consoleSpelledNumber reads a number spelled the way this document spells one:
-// a tens word, or a tens word and a ones word joined by a hyphen. A word outside
-// those is a failure rather than a zero, because the number is compared against
-// the constant and a silent zero would read as a surface of no operations.
+// a ones word, a tens word, or a tens word and a ones word joined by a hyphen
+// (the exception census below the allow-list spells a bare "three" since the
+// console improvements plan's AL added the first-run wizard's `setup` as its
+// third exception). A word outside those is a failure rather than a zero,
+// because the number is compared against the constant and a silent zero would
+// read as a surface of no operations.
 func consoleSpelledNumber(t *testing.T, spelled string) int {
 	t.Helper()
 	tens := map[string]int{"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60}
 	ones := map[string]int{"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9}
 	if n, ok := tens[spelled]; ok {
+		return n
+	}
+	if n, ok := ones[spelled]; ok {
 		return n
 	}
 	if parts := strings.Split(spelled, "-"); len(parts) == 2 {
@@ -2205,7 +2449,18 @@ func consoleSpelledNumber(t *testing.T, spelled string) int {
 //     thirty-nine, and the roles-and-scopes plan's RS7 -- the Members view's
 //     read of the installation's grants, `members.list`, the second row whose
 //     command is a word of a group the console otherwise may not touch
-//     (`models.list` was the first) -- to the forty rule 5 carries today.
+//     (`models.list` was the first) -- to the forty, and the console
+//     improvements plan's AL -- its nine, the three live feeds among them, which
+//     are second argvs of commands the census already carries -- to the
+//     fifty-two, and the same plan's MW1 -- the models write's two halves,
+//     `models.add.plan` and `models.add`, the second of which is the console's
+//     fifth write -- to the fifty-four, and the same plan's MW2 -- the image
+//     write's two halves, `image.add.plan` and `image.add`, the second of which
+//     is the console's sixth write -- to the fifty-six, and the console-fixes
+//     plan's CG7a -- the Coordinator tab's map read, `orchestrator.map`, the
+//     first operation here whose command the table had not carried and the one
+//     whose read sits behind a CLI version floor because no release carries the
+//     command yet -- to the fifty-seven rule 5 carries today.
 //   - **every row of spawn.ts's `SPAWN_COMMANDS` is admitted by rule 6's table**:
 //     the row's own words lead some row of the design's table **and what that row
 //     carries after them is flags, nothing else**. The second half is the whole
@@ -2234,7 +2489,7 @@ func consoleSpelledNumber(t *testing.T, spelled string) int {
 // design's sentence and the surface's size off the constant, so the task that
 // lands an operation moves the sentence alone and edits nothing here.
 func TestDocsDesktopConsoleDesignSurfaceIsTheConsoleSource(t *testing.T) {
-	const path = "docs/design/desktop-console.md"
+	const path = "docs/desktop-console/spec.md"
 	doc := readDoc(t, path)
 	ipc := readDoc(t, consoleIpcPath)
 	spawn := readDoc(t, consoleSpawnPath)
@@ -2616,17 +2871,24 @@ func TestDocsDesktopConsoleSpawnWordsAreFlagsTheCLIRegisters(t *testing.T) {
 // consoleLaunchPaths is §5.1's allow-list written as an exemption rather
 // than as a hole: the writers the console spawns are deliberately absent from
 // consoleReadPaths -- a write is not a read and must not be -- and this map is
-// where each one is named instead. There are four: `fugaro run` is the launch
+// where each one is named instead. There are eight: `fugaro models add` is the
+// models write (the console improvements plan's MW1, D2903, rule 5), whose two
+// rows on §5.1's table are the dry run and the write, `fugaro image add` is the
+// image write (the same plan's MW2, the same decision), whose two rows are the
+// same arrangement one group over -- its dry run and its write -- and `fugaro
+// run` is the launch
 // (rule 11, D22), `fugaro settings set`/`fugaro settings unset` are the
 // settings write (the settings-edit plan's C3, D1103, rule 12), whose row on
 // §5.1's table is the `set` form and whose two words share this one entry's
 // reason, `fugaro coordinator roadmap move` is the record's move (the
 // dependency-graph plan's GV3.2, rule 14), whose row the same task added on
-// 2026-11-12, and `fugaro apply` is the chain the console runs after a
+// 2026-11-12, `fugaro apply` is the chain the console runs after a
 // management command saved a change for later (docs/composite-commands,
-// D1572; §5.1 carries its own row). The exemption is the security claim, so it
-// sits beside the reason: a table that grew another writer comes back here and
-// says so.
+// D1572; §5.1 carries its own row), and `fugaro setup` is the first-run
+// wizard's apply (the console improvements plan's AL, rule 5), whose read arm
+// is the same command with `--plan-only`. The exemption is the security claim,
+// so it sits beside the reason: a table that grew another writer comes back
+// here and says so.
 //
 // `fugaro apply` is the one command on both lists at once, and it is not an
 // oversight: §5.1 carries two rows for one command because its two argv are
@@ -2639,12 +2901,20 @@ func TestDocsDesktopConsoleSpawnWordsAreFlagsTheCLIRegisters(t *testing.T) {
 // remembered checkout. A later task that wants the chain to record the
 // checkout it ran in has to split this command's entry by argv, which is a
 // change to the table's key rather than a row in it.
+//
+// `fugaro setup` is the same arrangement the other way round: its two argvs are
+// the wizard's read (`--plan-only`) and its write, and the write is the one
+// that is exempt. A command whose every row writes, `run`'s, needs no such
+// note.
 var consoleLaunchPaths = map[string]bool{
 	"fugaro run":                      true,
 	"fugaro settings set":             true,
 	"fugaro settings unset":           true,
 	"fugaro coordinator roadmap move": true,
 	"fugaro apply":                    true,
+	"fugaro setup":                    true,
+	"fugaro models add":               true,
+	"fugaro image add":                true,
 }
 
 // planPhaseRow returns the "What ships" cell of the project-centric plan's
@@ -2656,12 +2926,12 @@ var consoleLaunchPaths = map[string]bool{
 // ships, so the header named here and the cell read are the table's own.
 func planPhaseRow(t *testing.T, plan, phase string) (whatShips, row string) {
 	t.Helper()
-	for _, cells := range docTableAfter(t, "docs/plans/2026-10-14-project-centric.md", plan, "| Phase | Release | What ships |") {
+	for _, cells := range docTableAfter(t, "docs/project-centric/implementation-plan.md", plan, "| Phase | Release | What ships |") {
 		if strings.Contains(cells[0], phase) {
 			return cells[2], strings.Join(cells, " | ")
 		}
 	}
-	t.Fatalf("docs/plans/2026-10-14-project-centric.md's phase table has no row naming %q", phase)
+	t.Fatalf("docs/project-centric/implementation-plan.md's phase table has no row naming %q", phase)
 	return "", ""
 }
 
@@ -2677,7 +2947,7 @@ func planPhaseRow(t *testing.T, plan, phase string) (whatShips, row string) {
 func TestDocsDesktopConsoleContractCreditsProjectCommandsToTheRightPhase(t *testing.T) {
 	const path = "console/docs/json-contract.md"
 	doc := readDoc(t, path)
-	plan := readDoc(t, "docs/plans/2026-10-14-project-centric.md")
+	plan := readDoc(t, "docs/project-centric/implementation-plan.md")
 
 	phase1, _ := planPhaseRow(t, plan, "1. Policy as data")
 	phase4, _ := planPhaseRow(t, plan, "4. Enrollment and migration")
@@ -3297,8 +3567,9 @@ func TestConsoleTestsWorkflowIsStagedAndPinned(t *testing.T) {
 	}
 
 	// The Node version is read from console/package.json's `engines.node`, never
-	// written here a second time: test/unit/pinning.test.ts keeps that field an
-	// exact pin, and a copy of it in this file is a pin that can disagree.
+	// written here a second time: test/unit/pinning.test.ts keeps that field a
+	// pin (a floor and the next major as its ceiling since 2026-11-22), and a
+	// copy of it in this file is a pin that can disagree.
 	nodeSteps := 0
 	for _, step := range job.Steps {
 		if !strings.Contains(step.Uses, "actions/setup-node@") {
@@ -4047,7 +4318,7 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	if len(wf.Permissions) != 1 || wf.Permissions["contents"] != "read" {
 		t.Errorf("%s's workflow-level permissions = %v, want exactly contents: read", consoleReleaseWorkflowPath, wf.Permissions)
 	}
-	if want := map[string]string{"contents": "read", "checks": "read"}; !reflect.DeepEqual(job.Permissions, want) {
+	if want := map[string]string{"contents": "read", "checks": "read", "actions": "read"}; !reflect.DeepEqual(job.Permissions, want) {
 		t.Errorf("%s's release job permissions = %v, want exactly %v: the job that runs the packer never holds a token that can write a release", consoleReleaseWorkflowPath, job.Permissions, want)
 	}
 	// `contents: write` to create and publish the release, and -- once the
@@ -5923,7 +6194,7 @@ func consoleReadmeSection(t *testing.T, doc, heading string) string {
 // The plan must carry the task as SECURITY-SENSITIVE, depending on Task 3.2, and
 // name it in "What ships with the MVP" and in Task 4.6.
 func TestConsoleMVPRequiresTheStartupHandshake(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "plans", "2026-10-15-desktop-console.md"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "desktop-console", "implementation-plan.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -5986,7 +6257,7 @@ func TestConsoleMVPRequiresTheStartupHandshake(t *testing.T) {
 // plan that promises it and a design that does not carry it is the failure mode
 // this pair of documents has to be protected from.
 func TestConsoleMVPRequiresTheRendererEntry(t *testing.T) {
-	plan := readDoc(t, "docs/plans/2026-10-15-desktop-console.md")
+	plan := readDoc(t, "docs/desktop-console/implementation-plan.md")
 	section := func(start, end string) string {
 		i := strings.Index(plan, start)
 		if i < 0 {
@@ -6054,7 +6325,7 @@ func TestConsoleMVPRequiresTheRendererEntry(t *testing.T) {
 	// third write and the two updater-owned locations, added by the owner's
 	// D768/D770 answers of 2026-10-30 (auto-update U5): C8's wording stays, as
 	// the earlier amendment, and the newer one sits beside it.
-	design := readDoc(t, "docs/design/desktop-console.md")
+	design := readDoc(t, "docs/desktop-console/spec.md")
 	if !strings.Contains(design, "10. **The app writes the spawn log, when asked, the installations file, `updates.json`, `crash.json` and the licence store, and nothing else.**") {
 		t.Error("design section 5.1 rule 10 was not amended to name the app's five writes (C8's second, D768's third, the crash switch's fourth, S2.7's licence store) -- and the headline is amended in place each time, so its earlier files stay in it")
 	}
@@ -6904,7 +7175,7 @@ func (h *gateHarness) run(t *testing.T, extra ...string) (bool, string) {
 // 2.4 into the console's rewritten rule by hand, and no test failed when it
 // was dropped; this one does, for 2.4 and for any later flagged task.
 func TestPlanRule9ListsEveryFlaggedHeading(t *testing.T) {
-	plan := readDoc(t, "docs/plans/2026-10-15-desktop-console.md")
+	plan := readDoc(t, "docs/desktop-console/implementation-plan.md")
 	rule := regexp.MustCompile(`(?m)^9\. \*\*Security-sensitive tasks.*$`).FindString(plan)
 	if rule == "" {
 		t.Fatal("the plan has no Global Constraints rule 9")
@@ -7198,12 +7469,14 @@ func orderedJSONKeys(t *testing.T, raw json.RawMessage) []string {
 
 // mayLackOldRecording are the keys a document recorded before the release that
 // added them may leave out: see TestDocsDesktopConsoleNormalFixtureMatchesTheGoTypes.
-// `mode` and `from` are here for the other reason a required key can be
+// `mode`, `from` and `source` are here for the other reason a required key can be
 // absent: they are always present in a document this release writes (CLI
-// 0.23.0, rigor-modes plan T1.7), but a document an older CLI wrote carries no
-// key for them at all -- which is what the console's own allowance for them
-// says, and why the recording may lack them and still be one this build reads.
-var mayLackOldRecording = map[string]bool{"leased_usd": true, "max_parallel": true, "mode": true, "from": true}
+// 0.23.0 for the first two, rigor-modes plan T1.7; the routing table's source
+// for the third, model-credentials-routing CS9), but a document an older CLI
+// wrote carries no key for them at all -- which is what the console's own
+// allowance for them says, and why the recording may lack them and still be one
+// this build reads.
+var mayLackOldRecording = map[string]bool{"leased_usd": true, "max_parallel": true, "mode": true, "from": true, "source": true}
 
 // checkJSONShape walks one JSON value against a struct type: keys in struct
 // order, required keys present (bar those in mayLack), recursing into nested
@@ -8323,7 +8596,7 @@ func TestConsoleReleaseLinuxAddsTheLinuxLegAndMovesNothingElse(t *testing.T) {
 
 	// The linux job: the pinned runner, read-only, and nothing to keep secret.
 	linux := renderedJob(t, rawJobs, path, "linux")
-	for _, want := range []string{"runs-on: ubuntu-24.04", "contents: read", "checks: read"} {
+	for _, want := range []string{"runs-on: ubuntu-24.04", "contents: read", "checks: read", "actions: read"} {
 		if !strings.Contains(linux, want) {
 			t.Errorf("%s's linux job does not carry %q: %s", path, want, strings.TrimSpace(linux))
 		}
@@ -8876,7 +9149,7 @@ func TestConsoleReleaseLinuxStagedFileIsNotTheAppliedOne(t *testing.T) {
 
 // consoleFeedFileName is the update feed's own name: electron-updater's macOS
 // manifest, which the release job writes beside the .zip (design section 7.3,
-// and Task 4.4 of docs/plans/2026-10-15-desktop-console.md -- the packer cannot
+// and Task 4.4 of docs/desktop-console/implementation-plan.md -- the packer cannot
 // write it: `build.publish` is `null` in console/package.json, so
 // electron-builder publishes nothing).
 const consoleFeedFileName = "latest-mac.yml"
@@ -8982,7 +9255,7 @@ func consoleLinesDropped(base, text string) []string {
 
 // TestDocsConsoleReleaseFeedIsStagedAndPinned holds the staged update feed to
 // what the console's auto-update needs and to nothing else (the owner's go of
-// 2026-10-30; Task 4.4 of docs/plans/2026-10-15-desktop-console.md, design
+// 2026-10-30; Task 4.4 of docs/desktop-console/implementation-plan.md, design
 // section 7.3). The macOS `release` job writes `latest-mac.yml`
 // beside the .zip it has just verified, from the tag's version and the .zip's
 // own bytes, sums it into the job's console-sha256sums.txt and uploads it with
@@ -9894,7 +10167,7 @@ const consoleSpawnPath = "console/src/main/spawn.ts"
 // "exists on every packager" justification back over `AfterPackContext`. Each
 // fails one half of this test and nothing else.
 func TestDocsConsoleLinuxFusesGoThroughThePackerContext(t *testing.T) {
-	design := readDoc(t, "docs/design/desktop-console.md")
+	design := readDoc(t, "docs/desktop-console/spec.md")
 	section := consoleReadmeSection(t, design, "### 7.6 Linux, unsigned")
 	// Flattened, because the claims below are made in prose that the file wraps:
 	// a phrase this test refuses must not be able to hide behind a line break.
@@ -9904,11 +10177,11 @@ func TestDocsConsoleLinuxFusesGoThroughThePackerContext(t *testing.T) {
 	// which platform is being packed.
 	for _, want := range []string{"afterPack", "electronPlatformName"} {
 		if !strings.Contains(section, want) {
-			t.Errorf("docs/design/desktop-console.md's §7.6 does not name %q in its fuse sentence: what decides which executable is patched on each platform is the claim that keeps the two platforms' postures identical, and %s is what decides it", want, consoleFuseHookPath)
+			t.Errorf("docs/desktop-console/spec.md's §7.6 does not name %q in its fuse sentence: what decides which executable is patched on each platform is the claim that keeps the two platforms' postures identical, and %s is what decides it", want, consoleFuseHookPath)
 		}
 	}
 	if strings.Contains(section, "process.platform") {
-		t.Errorf("docs/design/desktop-console.md's §7.6 says `process.platform` decides which executable the fuse hook patches: the hook runs in the packer's process on the build host rather than in the app, so that value is the machine doing the packing, and the hook reads electron-builder's own `context.electronPlatformName` (fuseTarget in %s) instead", consoleFuseHookPath)
+		t.Errorf("docs/desktop-console/spec.md's §7.6 says `process.platform` decides which executable the fuse hook patches: the hook runs in the packer's process on the build host rather than in the app, so that value is the machine doing the packing, and the hook reads electron-builder's own `context.electronPlatformName` (fuseTarget in %s) instead", consoleFuseHookPath)
 	}
 
 	// And the hook does what the design says it does: one platform switch, on
@@ -9957,7 +10230,7 @@ func TestDocsConsoleLinuxFusesGoThroughThePackerContext(t *testing.T) {
 // rule 5); move one entry of spawn.ts's LINUX_LOCATIONS without moving it in the
 // design; and give either platform the other's Homebrew prefix.
 func TestDocsConsoleSpawnListsCarryBothPlatforms(t *testing.T) {
-	design := readDoc(t, "docs/design/desktop-console.md")
+	design := readDoc(t, "docs/desktop-console/spec.md")
 	spawn := readDoc(t, consoleSpawnPath)
 
 	// §3.4's own rules, each bounded by the next numbered rule so that a phrase
@@ -9979,7 +10252,7 @@ func TestDocsConsoleSpawnListsCarryBothPlatforms(t *testing.T) {
 		rule := consoleNumberedRule(t, recommendation, tc.rule)
 		if !consoleContainsRun(consoleBacktickedPaths(rule), want) {
 			t.Errorf(
-				"docs/design/desktop-console.md's §3.4 rule %d does not state %s's %s in the order %s gives it (%s): rule 4 is where the console looks for the CLI and rule 5 is the `PATH` the child gets, and §7.6 and the plan send a reader here for Linux's own lists",
+				"docs/desktop-console/spec.md's §3.4 rule %d does not state %s's %s in the order %s gives it (%s): rule 4 is where the console looks for the CLI and rule 5 is the `PATH` the child gets, and §7.6 and the plan send a reader here for Linux's own lists",
 				tc.rule, tc.platform, tc.field, consoleSpawnPath, strings.Join(want, ", "),
 			)
 		}
@@ -9992,7 +10265,7 @@ func TestDocsConsoleSpawnListsCarryBothPlatforms(t *testing.T) {
 	if !strings.Contains(linux, "§3.4 rule 4") {
 		t.Errorf("§7.6 no longer cites §3.4 rule 4 for the locations Linux's CLI is resolved from, and rule 4 is where Linux's own list is stated")
 	}
-	if plan := readDoc(t, "docs/plans/2026-10-15-desktop-console.md"); !strings.Contains(plan, "§3.4 rules 4 and 5") {
+	if plan := readDoc(t, "docs/desktop-console/implementation-plan.md"); !strings.Contains(plan, "§3.4 rules 4 and 5") {
 		t.Errorf("the plan's 2026-10-20 Linux note no longer cites §3.4 rules 4 and 5 for the per-platform resolution and child-`PATH` lists, which are the two rules those lists are stated in")
 	}
 }
@@ -10647,7 +10920,7 @@ func consoleProductName(t *testing.T) string {
 // table); and restoring a bare `run` to the never table, which would read as a
 // permission for the one argv this rule writes rather than for every other one.
 func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
-	const path = "docs/design/desktop-console.md"
+	const path = "docs/desktop-console/spec.md"
 	doc := readDoc(t, path)
 
 	start := strings.Index(doc, "\n11. **The launch is the console's first write")
@@ -10947,7 +11220,7 @@ func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
 // `settings`, a never table that still says "single write", a screen that draws
 // a write nothing describes.
 func TestDocsDesktopConsoleDesignCarriesTheSettingsEditSections(t *testing.T) {
-	const path = "docs/design/desktop-console.md"
+	const path = "docs/desktop-console/spec.md"
 	doc := readDoc(t, path)
 
 	// §3.4 rule 3: the commands the console passes the aiming flags on. The
@@ -11113,15 +11386,25 @@ func TestDocsDesktopConsoleContractFinishesTheSettingsWrite(t *testing.T) {
 		t.Errorf("%s's §8 still calls `run` \"the one row here that writes\": `settings set|unset` is the second, and the row it belongs in is above this sentence", path)
 	}
 
-	// §9: the console's documents are read-only **with** the two writes named,
-	// and the sentence that says so keeps the pinned claim about the set.
+	// §9: the console's documents are read-only **with** the writes named, and
+	// the sentence that says so keeps the pinned claim about the set.
 	nine := mdBetween(t, path, doc, "## 9. What the console may do", "\n## 10. ")
 	for _, want := range []string{
 		"Every document in the console's set is read-only",
 		"**second write**",
+		// The count, and the two members this change added: the sentence is
+		// where a reader counts the console's writes from, so the fifth and the
+		// sixth are pinned as words and by the two operations they are --
+		// `models.add` and `image.add`, the argv on the allow-list (design
+		// §5.1 rule 6).
+		"six\n   exceptions",
+		"**fifth**",
+		"**sixth**",
+		"`models.add`",
+		"`image.add`",
 	} {
 		if !strings.Contains(nine, want) {
-			t.Errorf("%s's §9 does not state %q: the console now writes twice, and this is the section that counts what it may do with the documents it reads", path, want)
+			t.Errorf("%s's §9 does not state %q: the console now writes six times, and this is the section that counts what it may do with the documents it reads", path, want)
 		}
 	}
 }

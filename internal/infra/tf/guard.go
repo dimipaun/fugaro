@@ -70,9 +70,31 @@ func Guard(p *Plan, allowDelete []string) error {
 // modes: the advice is one sentence, and the sentences beside it are not
 // advice but the reason.
 func GuardWith(p *Plan, allowDelete []string, advice string) error {
-	return guardWith(p, advice, func(rc ResourceChange) verdict {
+	return guardWith(p, advice, allowDeleteJudge(allowDelete))
+}
+
+// allowDeleteJudge is the rule Guard and GuardWith judge a removal by: the
+// list names the address, and nothing else. It is one function because
+// Refused asks the same question of the same walk, and a refusal and the
+// addresses it lists may not be built from two readings of one plan.
+func allowDeleteJudge(allowDelete []string) judge {
+	return func(rc ResourceChange) verdict {
 		return verdict{ok: slices.Contains(allowDelete, rc.Address)}
-	})
+	}
+}
+
+// Refused is the addresses Guard refuses for this list, in the plan's order
+// and one per refused change: the same walk Guard's own text is built from,
+// for a caller that prints a shorter list than Guard's text does — a person at
+// a terminal reads five addresses and a pointer at the log, while Guard's
+// refusal names every one (the owner's feedback of 2026-11-24).
+//
+// The addresses are the plan's own, unbounded, for the caller to print: the
+// caller bounds them where it writes them, as every printer of a plan's words
+// must (safetext).
+func Refused(p *Plan, allowDelete []string) []string {
+	_, _, at := guardWalk(p, allowDeleteJudge(allowDelete))
+	return at
 }
 
 // GuardEntries is Guard over the owner's own delete list: an entries list
@@ -158,7 +180,7 @@ func guardWith(p *Plan, advice string, judges judge) error {
 	if p == nil {
 		return errors.New("guard: no plan")
 	}
-	refused, _ := guardWalk(p, judges)
+	refused, _, _ := guardWalk(p, judges)
 	if len(refused) == 0 {
 		return nil
 	}
@@ -178,9 +200,16 @@ func guardWith(p *Plan, advice string, judges judge) error {
 // reason. A warned item is written in those same two shapes, so a reader parses
 // it exactly as a refusal and only its half of the answer says which it is. A
 // nil plan is one refusal, "guard: no plan", and no warnings.
-func guardWalk(p *Plan, judges judge) (refused, warned []string) {
+//
+// refusedAt is the address behind each refused item, in the same order and one
+// per item — "" for the nil plan's one item, which names none. It is what a
+// caller that prints a shorter list than the items use (Refused), and it is
+// read off the walk rather than parsed back out of an item: an item's address
+// and its actions are both the plan's words, and nothing about them says where
+// the first ends.
+func guardWalk(p *Plan, judges judge) (refused, warned, refusedAt []string) {
 	if p == nil {
-		return []string{"guard: no plan"}, nil
+		return []string{"guard: no plan"}, nil, []string{""}
 	}
 	for _, rc := range p.ResourceChanges {
 		acts := rc.Change.Actions
@@ -199,14 +228,14 @@ func guardWalk(p *Plan, judges judge) (refused, warned []string) {
 		// of the same line is printed uncut instead (identityText) while this
 		// half is not. A managed root is the owner's own root, so the depth of
 		// addresses in it is theirs to write; the limit is recorded in
-		// docs/design/managed-projects.md §6 item 5 beside the identity's own.
+		// docs/managed-projects/spec.md §6 item 5 beside the identity's own.
 		addr, said := safetext.Field(rc.Address), safetext.Field(strings.Join(acts, ", "))
 		if len(acts) == 0 {
-			refused = append(refused, addr+" (no actions)")
+			refused, refusedAt = append(refused, addr+" (no actions)"), append(refusedAt, rc.Address)
 			continue
 		}
 		if unknown := slices.IndexFunc(acts, func(a string) bool { return !knownActions[a] }); unknown >= 0 {
-			refused = append(refused, fmt.Sprintf("%s (%s)", addr, said))
+			refused, refusedAt = append(refused, fmt.Sprintf("%s (%s)", addr, said)), append(refusedAt, rc.Address)
 			continue
 		}
 		if !slices.Contains(acts, "delete") {
@@ -217,7 +246,7 @@ func guardWalk(p *Plan, judges judge) (refused, warned []string) {
 		case r.ok && removesUnderAnotherAddress(rc):
 			// A listed address names what may be removed at that address,
 			// never an object moved there from another one.
-			refused = append(refused, fmt.Sprintf("%s (%s): %s", addr, said, movedRemovalReason(rc)))
+			refused, refusedAt = append(refused, fmt.Sprintf("%s (%s): %s", addr, said, movedRemovalReason(rc))), append(refusedAt, rc.Address)
 		case r.ok:
 		case r.warn && !removesUnderAnotherAddress(rc):
 			// Nothing admits this removal, and it is a content one D1545 takes
@@ -239,7 +268,7 @@ func guardWalk(p *Plan, judges judge) (refused, warned []string) {
 		case r.why == "":
 			// The list does not name this address: the item Guard has always
 			// written, with the actions and nothing beside them.
-			refused = append(refused, fmt.Sprintf("%s (%s)", addr, said))
+			refused, refusedAt = append(refused, fmt.Sprintf("%s (%s)", addr, said)), append(refusedAt, rc.Address)
 		case removesUnderAnotherAddress(rc):
 			// The list names this address, and the object the change removes
 			// is not the one it was bound to — and it was moved here from
@@ -251,12 +280,12 @@ func guardWalk(p *Plan, judges judge) (refused, warned []string) {
 			// this one would be reading two rules for it. Approves' sentence
 			// is still the refusal for a listed address whose entry was bound
 			// to another object and whose removal was not moved (below).
-			refused = append(refused, fmt.Sprintf("%s (%s): %s", addr, said, movedRemovalReason(rc)))
+			refused, refusedAt = append(refused, fmt.Sprintf("%s (%s): %s", addr, said, movedRemovalReason(rc))), append(refusedAt, rc.Address)
 		default:
-			refused = append(refused, fmt.Sprintf("%s (%s): %s", addr, said, r.why))
+			refused, refusedAt = append(refused, fmt.Sprintf("%s (%s): %s", addr, said, r.why)), append(refusedAt, rc.Address)
 		}
 	}
-	return refused, warned
+	return refused, warned, refusedAt
 }
 
 // GuardManaged is the managed apply's delete rule as D1545 and D1551 leave it:
@@ -291,7 +320,7 @@ func guardWalk(p *Plan, judges judge) (refused, warned []string) {
 // line guardWith has always written, so a caller that carries it whole is
 // unchanged.
 func GuardManaged(p *Plan, entries []DeleteEntry, addresses []string) (refused, warned []string) {
-	return guardWalk(p, func(rc ResourceChange) verdict {
+	refused, warned, _ = guardWalk(p, func(rc ResourceChange) verdict {
 		ok, why := Approves(entries, rc)
 		if ok {
 			return verdict{ok: true}
@@ -322,6 +351,7 @@ func GuardManaged(p *Plan, entries []DeleteEntry, addresses []string) (refused, 
 		// D1551 does not protect.
 		return verdict{warn: !RefusesRemovalType(rc.Type)}
 	})
+	return refused, warned
 }
 
 // Listable is the addresses Guard refuses only because allowDelete does not

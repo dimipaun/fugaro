@@ -96,6 +96,12 @@ const PRAttempts = prAttempts
 // MaxCredentialResumes exposes maxCredentialResumes.
 const MaxCredentialResumes = maxCredentialResumes
 
+// SlipClaimAttempts is the bound on one claim's attempts: the first call and
+// the retries slipRetryDelays names (identity_claim.go's claimRetryCall, which
+// the slip's own retry shares the shape of). A test asserts the service sees no
+// more than this, so an unbounded retry is visible.
+var SlipClaimAttempts = len(slipRetryDelays) + 1
+
 // CredentialsServiceURLEnv and MetadataHostEnv are where a cascade run reads
 // its upstream from, exposed so a runner_test run can be pointed at a
 // stand-in the same way a job is pointed at the real service.
@@ -155,6 +161,16 @@ func SetCredsWait(t *testing.T, f func(ctx context.Context, d time.Duration) err
 // stage then waits for the reset and resumes the stage's session.
 func (h *RunHandle) NoteExhausted(reset time.Time) {
 	h.r.noteExhausted(credsvc.ExhaustedUntil{ResetAt: reset})
+}
+
+// NoteUnreachable is a call that could not reach the credentials service
+// (D2983) as the gateway's own answer delivers it: it ends the stage in flight,
+// and stage then waits for the bound the answer names and resumes the stage's
+// session. retryAt is when the gateway stops waiting (its own bound measured
+// from the first call that could not reach the service), and service is which
+// service it was, as the gateway names it.
+func (h *RunHandle) NoteUnreachable(retryAt time.Time, service string) {
+	h.r.noteUnreachable(gateway.Unreachable{RetryAt: retryAt, Service: service})
 }
 
 // ServiceAnswer is the same answer arriving the way it does in a real run:

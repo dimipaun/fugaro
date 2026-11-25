@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/yamledit"
 )
 
 // gcpProjectFieldSince is the first fugaro release whose fugaro.yaml parser
@@ -249,6 +250,134 @@ func (r *initRun) writeAnchor(a *anchorEdit, env initflow.Env, planOnly bool) (b
 		return false, err
 	}
 	fmt.Fprintf(r.w, "Updated %s with gcp_project. Review it with git diff and commit it like any change. Every teammate's CLI and every CI job or pin that runs fugaro against the repository must be on this release before you merge a change that adds gcp_project: older versions refuse the key as unknown.\n", a.path)
+	return true, nil
+}
+
+// budgetModeEdit is the removal of the budget.mode line from a checkout's
+// fugaro.yaml, prepared and not yet written (AB8b, D3022, F12).
+type budgetModeEdit struct {
+	path     string
+	old, out []byte
+}
+
+// fugaroYAMLWithoutRemovedMode is a checkout's fugaro.yaml with the word that
+// was a budget mode spliced out of it, and whether the file said it: the bytes
+// this run's own removal offer leaves in the working tree
+// (writeBudgetModeRemoval). Nothing validates the file here — the word is read
+// out of the bytes (localcfg.RemovedBudgetMode, F22) — and a splice the editor
+// refuses leaves the bytes as they are and the word in the file, so the reader
+// that asked judges them as they always were.
+//
+// The readers that take it are the update's own, and they take it because the
+// update is the one command that has to load a file that still says the word:
+// from this release the word is refused by the config's own validation (D3022),
+// and the update is the one that offers to take the line out — a stage that
+// stopped on the line it is about to remove would need a person to commit the
+// removal and run `fugaro update` a second time, which the upgrade may never
+// ask (CLAUDE.md's HARD RULE). Every other reader of these bytes refuses the
+// word, `fugaro validate` first among them, and a run in this repository still
+// halts in its job on the file it checks out until the line is gone.
+func fugaroYAMLWithoutRemovedMode(data []byte) ([]byte, bool) {
+	if _, off := localcfg.RemovedBudgetMode(data); !off {
+		return data, false
+	}
+	out, err := yamledit.RemoveKey(data, []string{"budget", "mode"})
+	if err != nil {
+		return data, false
+	}
+	return out, true
+}
+
+// updateRemovalKey is the context key theUpdateLeavesTheRemoval installs.
+type updateRemovalKey struct{}
+
+// theUpdateLeavesTheRemoval marks every read of a checkout's fugaro.yaml in
+// this run as the update's own: the bytes as this run's removal offer leaves
+// them (fugaroYAMLWithoutRemovedMode). It is installed once, at the door
+// (runInit), because a run of the init door is the one whose own writes
+// include taking that line out — and because the readers of a checkout's file
+// along its way are many (the repository and checkout stages, the image
+// refresh, the image check, the image stage, the job resolution), so a flag
+// each of them has to remember is a flag one of them is found without. Every
+// other door reads the bytes as they are and refuses a file that still says
+// the word (D3022): `fugaro validate`, a launch, doctor.
+func theUpdateLeavesTheRemoval(ctx context.Context) context.Context {
+	return context.WithValue(ctx, updateRemovalKey{}, true)
+}
+
+// updateLeavesTheRemoval reports whether ctx carries theUpdateLeavesTheRemoval.
+func updateLeavesTheRemoval(ctx context.Context) bool {
+	on, _ := ctx.Value(updateRemovalKey{}).(bool)
+	return on
+}
+
+// prepareBudgetModeRemoval reads the fugaro.yaml of the checkout at root and
+// makes the edit that takes the word which is not a budget mode any more out of
+// it; nil when the file does not say it.
+//
+// The word is read out of the bytes and before anything judges the file (F22):
+// from AB2 on, a checkout's file that says off is refused by the config's own
+// validation, and this edit is the fix that refusal names — so the reading is
+// localcfg.RemovedBudgetMode, which validates nothing. The edit is a splice and
+// not a re-marshal, so the file keeps every byte it had around the line, and a
+// splice the editor refuses is the caller's to say rather than a silent write.
+func prepareBudgetModeRemoval(root string) (*budgetModeEdit, error) {
+	path := filepath.Join(root, "fugaro.yaml")
+	old, err := requireFugaroYAML(path)
+	if err != nil {
+		return nil, err
+	}
+	if _, off := localcfg.RemovedBudgetMode(old); !off {
+		return nil, nil
+	}
+	out, err := yamledit.RemoveKey(old, []string{"budget", "mode"})
+	if err != nil {
+		return nil, err
+	}
+	return &budgetModeEdit{path: path, old: old, out: out}, nil
+}
+
+// writeBudgetModeRemoval is the one write of the removal, after writeAnchor's
+// pattern: the diff, then --yes writes, a person at the terminal writes having
+// read the diff, and anything else leaves the file alone and prints the line to
+// remove. Nothing is typed for it (docs/no-prompt-policy). planOnly prints what
+// it would do and writes nothing. It reports whether the file was written.
+//
+// A managed project's own terminal is asked nothing here either, for the reason
+// writeAnchor's is not: the diff above is the whole of what the owner reads,
+// the line to remove is not needed because the write is made, and the sentence
+// says why.
+func (r *initRun) writeBudgetModeRemoval(a *budgetModeEdit, env initflow.Env, planOnly bool) (bool, error) {
+	if a == nil {
+		return false, nil
+	}
+	fmt.Fprintf(r.w, "%s\n%s", a.path, lineDiff(string(a.old), string(a.out)))
+	removeLine := fmt.Sprintf("to let this repository's runs start again, remove the budget.mode line from %s: it is not a budget mode any more (there is always a budget, and a mode left unset is observe)\n", a.path)
+	switch {
+	case planOnly:
+		fmt.Fprintln(r.w, "  (plan only: fugaro.yaml is not written)")
+		return false, nil
+	case r.gateStandsIn() && initflow.PersonAtTheTerminal(r.conditions()):
+		fmt.Fprintf(r.w, "  %s\n", initflow.OwnerProceeded())
+	case env.Yes:
+		fmt.Fprintln(r.w, "  confirmed by this run's own answer")
+	case !env.Interactive:
+		fmt.Fprint(r.w, removeLine)
+		return false, nil
+	default:
+		ok, err := r.confirmNow("write this to " + a.path + "?")
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			fmt.Fprint(r.w, removeLine)
+			return false, nil
+		}
+	}
+	if err := writeFileAtomic(a.path, a.out); err != nil {
+		return false, err
+	}
+	fmt.Fprintf(r.w, "Updated %s: the budget.mode line is gone, and the file keeps every other byte it had. Review it with git diff and commit it like any change; until the line is merged away this repository's runs are refused.\n", a.path)
 	return true, nil
 }
 

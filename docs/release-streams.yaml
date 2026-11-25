@@ -10,7 +10,8 @@
 # A stream has one naming theme, so a name on its own says which stream it
 # belongs to: the CLI's names are animals and carry no bird, the console's are
 # fruits, the app's are birds. Names are spent in alphabetical order, one per
-# minor, and a patch release is spoken as the name and the patch ("Badger four").
+# minor, and after a Z name the alphabet starts again (no name is ever repeated).
+# A patch release is spoken as the name and the patch ("Badger four").
 # `current` is the version the stream is at, and 0.0.0 says nothing has shipped
 # on it yet; `next` is the name the next minor takes, the first one `current` has
 # not spent (the CLI's names start at 0.10, the console's at 0.110, the app's at
@@ -20,12 +21,12 @@ streams:
   - name: cli
     theme: animals
     # Badger is 0.10, Camel 0.11, and one name per minor after that.
-    names: [Badger, Camel, Dolphin, Gecko, Hippo, Koala, Moose, Narwhal, Ocelot, Panda, Quokka, Rhino, Sloth, Tapir, Uakari, Vole, Wombat, Xerus, Yak]
+    names: [Badger, Camel, Dolphin, Gecko, Hippo, Koala, Moose, Narwhal, Ocelot, Panda, Quokka, Rhino, Sloth, Tapir, Uakari, Vole, Wombat, Xerus, Yak, Zander, Zebra, Zebu, Zokor, Zorilla]
     # The last CLI release, v0.21.2 "Rhino two"; 0.22.0 "Sloth" is next (the
     # field below stays at the version main carries: a hotfix is cut from its
     # own branch and is never merged back).
-    current: "0.26.1"
-    next: Xerus
+    current: "0.28.0"
+    next: Zander
     tag_prefix: v
 
   - name: console
@@ -34,10 +35,10 @@ streams:
     # which is the CLI's Camel, and it never goes below 0.110.0: the console's
     # updater refuses a downgrade (docs/release.md, "Console releases"). Apple
     # and Lemon are avoided, and internal/streams refuses them.
-    names: [Cherry, Mango, Melon, Nectarine, Orange, Papaya, Peach, Pear, Plum, Pomelo, Quince, Raspberry, Strawberry, Tangerine, Ugli, Watermelon]
-    # The last console release, console-v0.124.0 "Ugli"; 0.125.0 "Watermelon" is next.
-    current: "0.124.0"
-    next: Watermelon
+    names: [Cherry, Mango, Melon, Nectarine, Orange, Papaya, Peach, Pear, Plum, Pomelo, Quince, Raspberry, Strawberry, Tangerine, Ugli, Watermelon, Yuzu, Zante, Zapote, Ziziphus, Zucchini, Zwetschge]
+    # The last console release, console-v0.125.0 "Watermelon"; 0.126.0 "Yuzu" is next.
+    current: "0.125.0"
+    next: Yuzu
     tag_prefix: console-v
 
   - name: mobile

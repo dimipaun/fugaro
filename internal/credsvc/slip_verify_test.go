@@ -35,11 +35,13 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/secretname"
@@ -642,6 +644,135 @@ func TestTheSlipSecretIsNeverForwarded(t *testing.T) {
 	if !strings.Contains(up, redactedValue) {
 		t.Error("the forwarded body was not scrubbed of the claim secret")
 	}
+}
+
+// servedOwnerOf drives one model call the way the messages route does — the
+// same forward, with the candidate list exactly the one name the test gives and
+// the slip binding on the call's context (withCallSlip) that the answer reads
+// its owner from — and answers the credential-owner header that answer carried,
+// and whether it carried one at all.
+//
+// It exists because a candidate of the secret grammar is not something a bundle
+// document can carry: CredentialKey's key set is closed, so a per-user name and
+// a fugaro_p_ one reach this service through a run's slip or a pool's shared
+// node, and a test that wants to ask the ANSWER about one states the candidate
+// itself. The per-secret reader holds the name's container, so the credential
+// really is served: a call whose credential could not be resolved is refused,
+// and a refusal's missing header would say nothing about this rule.
+func servedOwnerOf(t *testing.T, name string) (string, bool) {
+	t.Helper()
+	dyn := &dynReader{doc: testBundleDoc(t), values: map[string]string{name: fakeCred(t, "rotated")}}
+	loader := &BundleLoader{Source: dyn}
+	s := newSvcWith(t, func(_ *svc, cfg *Config) { cfg.Bundles = loader })
+	ctx := withCallSlip(context.Background(), &slipBinding{
+		id: anIdNobodyWrote, owner: testLauncherSub, allowed: []string{name},
+	})
+	b, err := loader.Load(ctx)
+	if err != nil {
+		t.Fatalf("the bundle was not read: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	sel := &creds.Selector{
+		Store:    s.state,
+		Settings: settingsOf(s.policy.shared),
+		Now:      func() time.Time { return s.now },
+	}
+	s.server.forward(ctx, rec, providerCall(t, MessagesPath), sel,
+		Identity{Slug: s.slug, Run: s.run, Job: s.job, JobAccount: testJobSA, JobClass: ClassRepository},
+		b, []creds.Credential{{Name: name, Tier: creds.TierA}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the call served the credential in position 1 is answered %d, want 200: %s", rec.Code, rec.Body)
+	}
+	if got := rec.Header().Get(HeaderCredential); got != name {
+		t.Fatalf("%s = %q, want the credential the call was served: the fixture must serve what it states", HeaderCredential, got)
+	}
+	owner, present, err := CredentialOwnerHeader(rec.Header())
+	if err != nil {
+		t.Fatalf("the answer's owner header: %v", err)
+	}
+	return owner, present
+}
+
+// TestAServedSlipCallNamesTheOwnerOfTheToken: F16. An answer names the owner of
+// the token that served the call in ONE case — the credential served is the
+// launcher's own per-user credential — and that is what the run records beside
+// the credential's name (runstore.Record.CredentialOwner).
+//
+// The rest of the cases are the reason the rule is the grammar's and not the
+// slip's: a slip admits a call to more than the launcher's own tokens. A bundle
+// entry is nobody's, a project-shared name is the pool's and the launcher may
+// merely be ALLOWED by the pool that lends it (R11, G8), and a per-user name of
+// another account is that account's — naming this call's launcher over any of
+// them would put an owner in the record that nothing verified, which is the one
+// thing a field about whose token paid must never do. Every one of those
+// answers carries no owner, and the run's record holds none.
+//
+// A slip-less call is the same call without the two headers: no slip, no
+// launcher to name, no owner — exactly what this service answered before the
+// field existed.
+func TestAServedSlipCallNamesTheOwnerOfTheToken(t *testing.T) {
+	t.Run("the launcher's own per-user credential", func(t *testing.T) {
+		own := mustUserName(t, testLauncherSub, "model-token")
+		owner, present := servedOwnerOf(t, own)
+		if !present || owner != testLauncherSub {
+			t.Errorf("%s = %q (present %v), want the launcher's own sub %q: the answer names whose token served the call", HeaderCredentialOwner, owner, present, testLauncherSub)
+		}
+	})
+
+	t.Run("a per-user credential of somebody else", func(t *testing.T) {
+		// The grant's own rule refuses a slip naming one (checkGrantedNames),
+		// and this is the answer's half of the same rule: the id in the name is
+		// who owns the credential, and an answer naming the launcher would be a
+		// lie no other check on this path makes.
+		theirs := mustUserName(t, testOtherSub, "model-token")
+		owner, present := servedOwnerOf(t, theirs)
+		if present {
+			t.Errorf("%s = %q, want none: the credential is another account's and not this call's launcher's", HeaderCredentialOwner, owner)
+		}
+	})
+
+	t.Run("a project-shared credential", func(t *testing.T) {
+		// A pool lends a shared credential to a launcher it allows without the
+		// launcher owning it (R11, G8), and a shared name carries no owner at
+		// all: which pool's roster admitted this call is not a fact this answer
+		// holds.
+		shared := mustSharedToken(t, testPoolCredential)
+		owner, present := servedOwnerOf(t, shared)
+		if present {
+			t.Errorf("%s = %q, want none: a project-shared credential names no owner", HeaderCredentialOwner, owner)
+		}
+	})
+
+	t.Run("a bundle entry on the wire's own call", func(t *testing.T) {
+		// testSlipCredential is a bundle entry's own name — a name of no
+		// grammar, so nobody's — and the slip names it, so the service serves
+		// it: the call the record must leave empty is an ORDINARY one.
+		s := newSlips(t, testLauncherAccount)
+		sl := s.claimedSlip(t, 3600, testSlipCredential)
+		resp, body := s.slipCall(t, sl, "bundle")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("the slip's own call is answered %d, want 200: %s", resp.StatusCode, body)
+		}
+		// The bundle's entry for the token resolves to the account's own name
+		// (CredentialKey), which is what the answer names.
+		if got := resp.Header.Get(HeaderCredential); got != config.DefaultClaudeAccount {
+			t.Fatalf("%s = %q, want %q: the fixture must have served the bundle entry", HeaderCredential, got, config.DefaultClaudeAccount)
+		}
+		if got := resp.Header.Values(HeaderCredentialOwner); len(got) != 0 {
+			t.Errorf("a call served a bundle entry carries %s = %q, want none", HeaderCredentialOwner, got)
+		}
+	})
+
+	t.Run("a slip-less call", func(t *testing.T) {
+		s := newSlips(t, testLauncherAccount)
+		resp, body := s.call(t, callBody("slip-less"))
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("the slip-less call is answered %d, want 200: %s", resp.StatusCode, body)
+		}
+		if got := resp.Header.Values(HeaderCredentialOwner); len(got) != 0 {
+			t.Errorf("a slip-less call's answer carries %s = %q, want none", HeaderCredentialOwner, got)
+		}
+	})
 }
 
 // TestTheSlipCacheHoldsOnlyVerifiedBodies: the cache is keyed by an id the

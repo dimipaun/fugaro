@@ -125,11 +125,20 @@ var ModelCredentialVars = []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN
 
 // BudgetTokenEnv is internal/runner's BudgetTokenEnv: the marker the launcher
 // writes into a launch's environment, whose value is the launch's seal key
-// once the launcher seals (docs/design/budget-token-channel.md §7.1). It is
+// once the launcher seals (docs/budget-token-channel/spec.md §7.1). It is
 // named here rather than imported because internal/runner imports this
 // package, so the runner's constant is an alias of this one and the two
 // cannot drift. See processEnv for why it is stripped.
 const BudgetTokenEnv = "FUGARO_BUDGET_TOKEN"
+
+// IdentityTicketEnv is identitywire.TicketEnv's name: the variable a Batch
+// launch carries its ticket in, which is the secret the run presents at its
+// claim (docs/batch-run-identity, R5, D3115). It is spelled here rather than
+// imported because internal/identitywire depends on this package — so this
+// package cannot import it, and the dependency is a cycle in the other
+// direction — and the two are held together by a test (internal/runner's
+// TestTheTicketHasOneName). See processEnv for why it is stripped.
+const IdentityTicketEnv = "FUGARO_IDENTITY_TICKET"
 
 // Repo is a git checkout. Env is added to the process environment for every git call.
 type Repo struct {
@@ -298,7 +307,8 @@ func (r *Repo) git(ctx context.Context, args ...string) (string, error) {
 
 // Environ is the environment of every git call on r: the process's, then Env,
 // without the variables StripEnv names — and, whatever that list says, without
-// the provider keys and BudgetTokenEnv, which processEnv strips itself.
+// the provider keys, BudgetTokenEnv and IdentityTicketEnv, which processEnv
+// strips itself.
 func (r *Repo) Environ() []string { return r.processEnv() }
 
 // processEnv is the environment of every git call: the process's, then Env.
@@ -308,7 +318,7 @@ func (r *Repo) processEnv() []string {
 	// budget marker is the run's: no git call, and nothing git runs, ever sees
 	// either, whatever StripEnv says. The marker is a secret as soon as the
 	// launcher seals — its value is the launch's seal key, and whoever holds
-	// it opens this run's token object (docs/design/budget-token-channel.md
+	// it opens this run's token object (docs/budget-token-channel/spec.md
 	// §7.1) — and an agent-written .git/config (core.fsmonitor, a filter
 	// driver) is exactly a way to make git run a command of the agent's
 	// choosing, which is why the model credential is stripped the same way.
@@ -317,10 +327,20 @@ func (r *Repo) processEnv() []string {
 	// runner's /proc regardless, so what it removes is one more place the
 	// value would surface — a hook's environment, a command's dump of its own
 	// env — not the agent's own reach (SECURITY.md, "What one run's agent can
-	// reach"; docs/design/budget-token-channel.md §7.1).
+	// reach"; docs/budget-token-channel/spec.md §7.1).
+	//
+	// The identity ticket goes with them (BR4, R7 of docs/batch-run-identity).
+	// It is not a secret in the way the marker is — Batch prints a job's
+	// variables itself, which D3115 accepts because the ticket alone claims
+	// nothing — and Fugaro prints it nowhere: the runner registers it with its
+	// redactor at the run's first moment, so no reason, record, comment or pull
+	// request it writes can carry it. This strip is the other half of the same
+	// rule, for the reason the marker's is: a launch carries the ticket in the
+	// job's environment, and a command an agent-written .git/config makes git
+	// run inherits that environment.
 	return slices.DeleteFunc(env, func(kv string) bool {
 		k, _, _ := strings.Cut(kv, "=")
-		return config.IsProviderKeyEnv(k) || k == BudgetTokenEnv || slices.Contains(r.StripEnv, k)
+		return config.IsProviderKeyEnv(k) || k == BudgetTokenEnv || k == IdentityTicketEnv || slices.Contains(r.StripEnv, k)
 	})
 }
 

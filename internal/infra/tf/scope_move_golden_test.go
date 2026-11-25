@@ -8,7 +8,7 @@ import (
 
 // TestScopeMoveReplacesIAMMembersNeverDeletesSecrets reads the one golden plan
 // that has a prior state to diff against (scripts/gen-golden-plans.sh, made in
-// two real steps). It is design docs/design/project-secrets.md §6 step 4: a
+// two real steps). It is design docs/project-secrets/spec.md §6 step 4: a
 // secret name stops being repo-only and becomes project-shared (the repo copy
 // has no enabled version any more, the project copy is resolved), so the
 // grants and the jobs' mounted references move to the project's container.

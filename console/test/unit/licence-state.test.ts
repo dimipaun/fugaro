@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The console's lapse state, at the handler (subscriptions plan S6.2; the
-// design is `docs/design/lapse-read-only.md`, D436 and T12).
+// design is `docs/lapse-read-only/spec.md`, D436 and T12).
 //
 // What this file holds, and why each part is a test rather than an argument:
 //
 //   - **the refused class is the table's, not a list of names.** The lapse takes
-//     three operations away -- `run.launch`, `settings.edit` and GV3.2's
-//     `roadmap.move` -- and it must classify them by the column their own rows
-//     carry (`refusedAfterLapse`),
+//     the launch, the configuration change -- `settings.edit` and the window that
+//     drives it, `settings.editor.open` -- and the record's move (GV3.2's
+//     `roadmap.move`) away, and it must classify them by the column their own
+//     rows carry (`refusedAfterLapse`),
 //     because the design's rule is that a later cancel, whose row differs from
 //     the launch's in exactly that field, must not be refused the day it is
 //     added. A gate built from a list beside the table would pass every case
@@ -124,10 +125,28 @@ const OPERATIONS: readonly ConsoleOperation[] = CONSOLE_OPERATIONS
 
 /** THE_REFUSED is the lapsed state's whole class, written out as a literal so
  * the column is checked against the design rather than against itself: T12 takes
- * the console's launch and its configuration change away, and GV3.2 adds the
+ * the console's launch and its configuration change away, GV3.2 adds the
  * console's third write -- the move of a task between the record's releases
- * (design section 5.1 rule 14) -- and nothing else does. */
-const THE_REFUSED: readonly OperationName[] = ['run.launch', 'settings.edit', 'roadmap.move']
+ * (design section 5.1 rule 14) -- AL adds the wizard's apply, the write that
+ * converges the installation from the answers a lapsed key no longer licenses
+ * (design section 5.1, D2904), MW1 adds the models write (D2903) and MW2 the image write -- and
+ * nothing else does. **SU2b adds the settings write's window**
+ * (`settings.editor.open`): it spawns nothing as itself and every child behind it
+ * is one phase of `settings.edit`'s plan, so it is the configuration change
+ * reached through a window -- the Project tab's pencil -- and a lapse that
+ * refused the write and kept the window would leave the write working behind the
+ * pencil. The two **plan** rows beside them are **not** here: a plan writes
+ * nothing, so the lapse keeps it, which is the asymmetry the setup pair is the
+ * case for and the models pair is the second case. */
+const THE_REFUSED: readonly OperationName[] = [
+  'run.launch',
+  'settings.edit',
+  'roadmap.move',
+  'setup.apply',
+  'models.add',
+  'settings.editor.open',
+  'image.add',
+]
 
 /** THE_KEPT is every other operation: the non-vacuity guard for a wrapper that
  * refused the whole surface. */
@@ -145,18 +164,37 @@ const EMPTY_PAYLOADS: readonly OperationName[] = THE_KEPT.filter((name) => {
 })
 
 /**
- * WELL_FORMED is what the registrar's own schema accepts for the three refused
+ * WELL_FORMED is what the registrar's own schema accepts for the refused
  * operations. The tests that go through the bridge for a refusal are about the
  * gate, and a payload the schema refuses would answer a refusal this file is not
- * about; `ipc.test.ts` holds the same three payloads for the same reason. The
- * move's two ids are a document key and a release key as the graph document
- * spells them (contract section 6.22) -- the gate never reads them, and the
- * source behind this fake handler is never reached.
+ * about; `ipc.test.ts` holds the same payloads for the same reason. The move's
+ * two ids are a document key and a release key as the graph document spells them
+ * (contract section 6.22) -- the gate never reads them, and the source behind
+ * this fake handler is never reached.
  */
 const WELL_FORMED: Readonly<Record<string, Record<string, unknown>>> = Object.freeze({
   'run.launch': { installation: 'sandbox', repository: 'acme/app', task: 'do the thing' },
   'settings.edit': { op: 'set', key: 'budget.cap_usd', value: '25' },
   'roadmap.move': { node: 'coordinator:plans/gv/T1', toRelease: 'a'.repeat(64), confirmed: true },
+  // The apply carries nothing at all (AL): the answers file it hands the child
+  // is the one main held when it showed the plan window, so the empty payload is
+  // the well-formed one and the gate is what the refusal can be about.
+  'setup.apply': {},
+  // The models write (MW1, D2903): a claim the schema takes, over one route and
+  // its two rates. The gate never reads them either.
+  'models.add': { id: 'deepseek/deepseek-v4.1-flash', route: 'openrouter', priceIn: '0.14', priceOut: '0.28' },
+  // The settings write's window (SU2b): the key is the whole payload -- the
+  // layer and the phase are main's -- and the gate refuses before the flow reads
+  // a document, so this is all it is ever handed.
+  'settings.editor.open': { key: 'budget.cap_usd' },
+  // The image write (MW2, D2903): an entry the schema takes, over a dockerfile
+  // reference, two tags and a description. The gate never reads them either.
+  'image.add': {
+    name: 'app',
+    dockerfile: 'acme/app:.fugaro/app.Dockerfile',
+    tags: 'node,redis',
+    description: 'the app image',
+  },
 })
 
 /** recordingIpcMain is Electron's `ipcMain`, as far as the registrar uses it: a
@@ -268,21 +306,23 @@ describe('the five states a licence reply puts the console in', () => {
 })
 
 describe('the refused class is the table\'s column', () => {
-  it('marks exactly the three operations the design takes away, and no other row', () => {
+  it('marks exactly the six operations the design takes away, and no other row', () => {
     const marked = OPERATIONS.filter((operation) => operation.refusedAfterLapse === true).map(
       (operation) => operation.name,
     )
     expect([...marked].sort()).toEqual([...THE_REFUSED].sort())
   })
 
-  it('names the target installation on the launch row, and on none of the other two', () => {
+  it('names the target installation on the launch row, and on none of the other five', () => {
     // The second column the gate reads, and the reason the rows are not
     // decided the same way: the launch acts on the installation its payload
     // names, and the settings write and the roadmap move act on the installation
     // the console is driving. `assertReachableSurface` (`ipc.ts`) holds the column's *shape*
     // -- a required `installationName` argument of the same row -- and this
     // holds the *set*: a settings write given an installation argument would ask
-    // the store about a name its own payload never carries.
+    // the store about a name its own payload never carries. The settings write's
+    // window is the same fact again -- its payload is one key, and the flow
+    // writes the document of the installation the console is driving.
     expect(
       OPERATIONS.filter((operation) => operation.refusedAfterLapse === true).map((operation) => [
         operation.name,
@@ -292,6 +332,10 @@ describe('the refused class is the table\'s column', () => {
       ['run.launch', 'installation'],
       ['settings.edit', undefined],
       ['roadmap.move', undefined],
+      ['setup.apply', undefined],
+      ['models.add', undefined],
+      ['image.add', undefined],
+      ['settings.editor.open', undefined],
     ])
   })
 
@@ -306,28 +350,103 @@ describe('the refused class is the table\'s column', () => {
       expect(row?.refusedAfterLapse, name).toBeUndefined()
       expect(row?.command, name).toBeNull()
     }
-    // And no `command: null` row anywhere carries it, which is the guard rather
-    // than the two rows it was written for.
+    // The one `command: null` row in the class is the window that drives a
+    // refused write (`drivesOperation`), and that is the only way such a row may
+    // be in it: every other row that spawns nothing is unmarked, which is the
+    // guard rather than the two rows it was written for.
     for (const operation of OPERATIONS) {
-      if (operation.command === null) {
+      if (operation.command !== null) continue
+      const driven =
+        operation.drivesOperation === undefined
+          ? undefined
+          : OPERATIONS.find((candidate) => candidate.name === operation.drivesOperation)
+      if (driven === undefined) {
         expect(operation.refusedAfterLapse, operation.name).toBeUndefined()
+        continue
       }
+      expect(driven.refusedAfterLapse, operation.name).toBe(true)
+      expect(driven.command, operation.name).not.toBeNull()
+      expect(operation.refusedAfterLapse, operation.name).toBe(true)
     }
+    // Named, so the branch above is not vacuous: the settings editor's window is
+    // the row it is, and it drives the write.
+    const window = OPERATIONS.find((operation) => operation.name === 'settings.editor.open')
+    expect(window?.command).toBeNull()
+    expect(window?.drivesOperation).toBe('settings.edit')
   })
 })
 
 describe('the lapse, at the handler', () => {
-  it('refuses the launch, the settings write and the roadmap move in the main process, and reaches no source', async () => {
+  it('refuses the whole class -- the launch, the settings write and its window, the roadmap move, the wizard’s apply and the two writes -- and reaches no source', async () => {
     const { bridge, reached } = lapsedConsole(() => AT['lapsed'] as LicenceReply)
     for (const name of THE_REFUSED) {
       const reply = await bridgeMethod(bridge, name)(WELL_FORMED[name])
       expect(reply, name).toEqual({ ok: false, reason: LAPSE_REFUSAL })
     }
-    // **The point of the gate**: none of the three reached its handler, so no
-    // child was spawned, no setting was read or written, and the record the move
-    // would have written is untouched. A gate applied after
+    // **The point of the gate**: none of them reached its handler, so no child
+    // was spawned, no setting was read or written, the record the move
+    // would have written is untouched, and the apply never converged an
+    // installation. A gate applied after
     // the handler answers the identical sentence and has already spawned.
     expect(reached).toEqual([])
+  })
+
+  it('refuses the wizard’s apply and keeps its plan, which the same lapse reads differently', async () => {
+    // **The pair the setup rows are the case for** (AL, D2904). The wizard is
+    // two operations over one command: the plan writes nothing and the apply
+    // converges the installation, so a lapse takes the second away and keeps the
+    // first -- which is also what keeps the way out of a lapse a screen the
+    // operator can still reach. A row that carried the column on the plan would
+    // take a read away over a licence; a row that dropped it from the apply
+    // would converge an installation from a key that no longer licenses it.
+    const asked: (string | undefined)[] = []
+    const { bridge, reached, wrapped } = lapsedConsole((installation) => {
+      asked.push(installation)
+      return AT['lapsed'] as LicenceReply
+    })
+    expect(await bridgeMethod(bridge, 'setup.apply')({})).toEqual({ ok: false, reason: LAPSE_REFUSAL })
+    expect(reached).not.toContain('setup.apply')
+    // The plan is the very handler it was handed, so the gate never even asks
+    // the store about it.
+    const source = answeredBy()
+    const wrappedPlan = lapseHandlers(source.handlers, () => AT['lapsed'] as LicenceReply)['setup.plan']
+    expect(wrappedPlan).toBe(source.handlers['setup.plan'])
+    expect(await wrapped['setup.plan']({})).toEqual({})
+    expect(reached).toContain('setup.plan')
+    // ...and the apply asked about the **active binding**: its payload names no
+    // installation, which is what `undefined` means to `current` (the same
+    // reading the settings write gets).
+    expect(asked).toEqual([undefined])
+  })
+
+  it('refuses the settings window with the write, before the child the window would spawn', async () => {
+    // **The pair this row is for** (SU2b, D2902). The Project tab's settings
+    // pencil opens `settings.editor.open`, and every child behind that window --
+    // the read that names the row and its layer, the dry run, and the write --
+    // is spawned by the flow the handler runs, through the source
+    // (`src/main/settingsedit.ts`). So the window is a second door onto the
+    // configuration change T12 takes away, and the refusal has to be at the door:
+    // a gate that let the window open and refused at the write would have spawned
+    // the read and the dry run first, and one that refused neither would leave the
+    // pencil on screen with the write working behind it.
+    const { bridge, reached } = lapsedConsole(() => AT['lapsed'] as LicenceReply)
+    for (const name of ['settings.edit', 'settings.editor.open'] as const) {
+      expect(await bridgeMethod(bridge, name)(WELL_FORMED[name]), name).toEqual({
+        ok: false,
+        reason: LAPSE_REFUSAL,
+      })
+    }
+    // Nothing behind either door was reached, so the read, the dry run and the
+    // write never spawned: the source is the only thing that spawns here.
+    expect(reached).toEqual([])
+    // And the window is not a row the gate refuses for its own sake: within the
+    // grace it is the very handler it was handed, so the refusal is the state's.
+    const inside = lapsedConsole(() => AT['grace'] as LicenceReply)
+    expect(await bridgeMethod(inside.bridge, 'settings.editor.open')(WELL_FORMED['settings.editor.open'])).toEqual({
+      ok: true,
+      data: {},
+    })
+    expect(inside.reached).toEqual(['settings.editor.open'])
   })
 
   it('answers a sentence that names the state and the way out, and carries no figure', () => {
@@ -377,6 +496,10 @@ describe('the lapse, at the handler', () => {
     expect(reached).not.toContain('run.launch')
     expect(reached).not.toContain('settings.edit')
     expect(reached).not.toContain('roadmap.move')
+    expect(reached).not.toContain('setup.apply')
+    // ...and the wizard's plan is among the kept: the lapse keeps the screen
+    // that shows what an apply would do.
+    expect(reached).toContain('setup.plan')
   })
 
   it('works in full within the grace, which is what the grace is for', async () => {

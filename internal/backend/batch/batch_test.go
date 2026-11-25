@@ -23,8 +23,16 @@ import (
 const (
 	testProject = "fake-project"
 	testRegion  = "fake-region"
-	testSA      = "fugaro-job-acme-app@fake-project.iam.gserviceaccount.com"
-	testImage   = "fake-region-docker.pkg.dev/fake-project/fugaro-acme-app/acme-app:1"
+	// testSA is the one account an installation's block carries
+	// (Options.ServiceAccount). Since BR10 nothing a launch creates runs as it:
+	// a job's VMs run as the account of the deployed job the run stands in for.
+	testSA = "fugaro-job-acme-app@fake-project.iam.gserviceaccount.com"
+	// testJobSA is the account of the per-repository deployed job these tests'
+	// launches stand in for: gcp.ServiceAccountID(slug, workflow) in this
+	// installation's project, which is the account the repository root creates
+	// for that job and the one its Cloud Run job runs as (BR10, D3103).
+	testJobSA = "fugaro-acme-app-web-2dc53d2b@fake-project.iam.gserviceaccount.com"
+	testImage = "fake-region-docker.pkg.dev/fake-project/fugaro-acme-app/acme-app:1"
 	// testSecret is a Secret Manager secret *name*, never a value: the job
 	// definition carries names only.
 	testSecret = "projects/fake-project/secrets/fugaro-acme-app-anthropic-api-key"
@@ -455,9 +463,14 @@ func TestJobDefinitionIsTheDesignsJob(t *testing.T) {
 	if got := object(t, call.Job, "allocationPolicy", "instances", "0")["blockProjectSshKeys"]; got != true {
 		t.Errorf("blockProjectSshKeys = %v, want true", got)
 	}
-	// Never the default Compute Engine account (design §3.2, C6/C21).
-	if got := object(t, call.Job, "allocationPolicy", "serviceAccount")["email"]; got != testSA {
-		t.Errorf("serviceAccount.email = %v, want %s", got, testSA)
+	// Never the default Compute Engine account (design §3.2, C6/C21), and
+	// never the block's single account either (BR10, D3103): it is the account
+	// of the deployed job this launch stands in for.
+	if got := object(t, call.Job, "allocationPolicy", "serviceAccount")["email"]; got != testJobSA {
+		t.Errorf("serviceAccount.email = %v, want %s", got, testJobSA)
+	}
+	if testJobSA == testSA {
+		t.Error("the job's account and the block's are the same string, so this assertion cannot tell them apart")
 	}
 }
 
@@ -570,7 +583,7 @@ const (
       ]
     },
     "serviceAccount": {
-      "email": "fugaro-job-acme-app@fake-project.iam.gserviceaccount.com"
+      "email": "fugaro-acme-app-web-2dc53d2b@fake-project.iam.gserviceaccount.com"
     }
   },
   "labels": {
@@ -645,7 +658,7 @@ const (
       ]
     },
     "serviceAccount": {
-      "email": "fugaro-job-acme-app@fake-project.iam.gserviceaccount.com"
+      "email": "fugaro-acme-app-web-2dc53d2b@fake-project.iam.gserviceaccount.com"
     }
   },
   "labels": {
@@ -2041,34 +2054,35 @@ func TestTheJobHasNoTaskEnvironments(t *testing.T) {
 // built for a block that names nothing, which is what
 // TestABatchJobMountsNothing holds (secrets_test.go).
 
-// TestLaunchCarriesTheSpecEnv: the launcher's per-execution variables (the
-// budget marker) go into the task's own variables, which is the whole of a
-// Batch task's environment on the VM (design §2.2). The marker is how a run
-// tells a minted token from a project that published no policy (plan
-// R2-8(a)), and a Batch backend that dropped it would leave every Batch run
-// reading the token's absence as "nothing was minted".
-//
-// The map is also why the job's own names are reserved here and not only on
-// Cloud Run: a later write to a map key is what the run would believe about
+// TestLaunchCarriesTheSpecEnv: the launcher's per-execution variables go into
+// the task's own variables, which is the whole of a Batch task's environment
+// on the VM (design §2.2). A Batch backend that dropped Env would launch every
+// run without them -- the run's own slip, the services its image provides --
+// and the map is also why the job's own names are reserved here and not only
+// on Cloud Run: a later write to a map key is what the run would believe about
 // itself, so an entry naming FUGARO_RUN (the run's own identity, which
 // jobDefinition writes for the same map), FUGARO_BACKEND or FUGARO_PROJECT is
-// refused rather than applied — the same collision the secrets check below
-// refuses, for the same reason. The platform's own five are reserved beside
+// refused rather than applied. The platform's own five are reserved beside
 // them (backend.ReservedEnvNames, which is the same list Cloud Run asks), so
 // the two backends refuse one set of launch entries rather than each its own.
+//
+// The entry below is a slip and not the budget marker: the marker is refused
+// by name whatever its shape (TestEveryBatchLaunchIsRefusedWithOneReason, AB9),
+// and what this test holds is the other half -- an entry this backend may carry
+// reaches the task's variables beside the job's own identity.
 func TestLaunchCarriesTheSpecEnv(t *testing.T) {
 	ctx := context.Background()
 	b, bf, _, _ := newTestBackend(t, nil)
 	s := spec()
-	s.Env = []string{"FUGARO_BUDGET_TOKEN=1"}
+	s.Env = []string{"FUGARO_SLIP=1"}
 	if _, err := b.Launch(ctx, s); err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
 	vars := object(t, bf.Creates()[0].Job, "taskGroups", "0", "taskSpec", "environment", "variables")
-	if vars["FUGARO_BUDGET_TOKEN"] != "1" {
+	if vars["FUGARO_SLIP"] != "1" {
 		t.Errorf("the task's variables = %v, want the launch's own entry in them", vars)
 	}
-	// And the job's own identity is still the job's: the marker went in
+	// And the job's own identity is still the job's: the entry went in
 	// beside it, not over it.
 	if vars["FUGARO_RUN"] != backendtest.Slug+"/"+spec().RunID || vars["FUGARO_BACKEND"] != backend.CloudBatch {
 		t.Errorf("the task's variables = %v, want the job's own identity intact", vars)
@@ -2088,7 +2102,7 @@ func TestLaunchCarriesTheSpecEnv(t *testing.T) {
 	// where the job's environment already holds it.
 	before := len(bf.Creates())
 	for _, bad := range []string{
-		"FUGARO_BUDGET_TOKEN", "=1", "FUGARO_RUN=acme-app/someone-elses-run",
+		"FUGARO_SLIP", "=1", "FUGARO_RUN=acme-app/someone-elses-run",
 		"FUGARO_PROJECT=someone-elses-project", "FUGARO_BUCKET=gs://someone-elses-bucket",
 		"FUGARO_REGION=elsewhere",
 	} {
@@ -2506,7 +2520,7 @@ func equalJSON(a, b any) bool {
 }
 
 // TestLaunchRefusesASecretEnv is the Batch half of the seal's carrier
-// (docs/design/budget-token-channel.md, "The Batch backend refuses a sealed
+// (docs/budget-token-channel/spec.md, "The Batch backend refuses a sealed
 // launch"): a Batch job has no per-execution override, so the only place a
 // launch's variable can go is the job definition's plain variables, which
 // every launcher (batch.jobsEditor) and the reaper (batch.jobs.get) read back
@@ -2601,9 +2615,9 @@ func TestLaunchRefusesASecretEnv(t *testing.T) {
 	// holds this file and those documents to the same sentence.
 	for _, want := range []string{
 		"the job's definition",
-		"docs/design/budget-token-channel.md",
+		"docs/budget-token-channel/spec.md",
 		"cannot launch any run on Batch",
-		"a budget database with budget mode on, or a published policy",
+		"one that names a budget database, with the signer account it mints through",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: the answer is a documented limit, and a refusal that stops naming its reason, its consequence or the condition sends an operator to provision a backend their project cannot use\n\nmessage: %v", want, err)

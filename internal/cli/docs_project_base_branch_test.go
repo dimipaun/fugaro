@@ -22,7 +22,7 @@ import (
 // `base_branch` halves swapped, §3's bullet back to "when the branch is not
 // `main`", the scope table's row widened to `project, repo`, the shared
 // config's two bullets back to the repository's `base_branch` alone, or
-// docs/design/project-centric.md's policy-node paragraph without the default —
+// docs/project-centric/spec.md's policy-node paragraph without the default —
 // each fails here.
 func TestDocsStateTheProjectDefaultBaseBranch(t *testing.T) {
 	layer := flattenDoc(readDoc(t, "docs/project-layer.md"))
@@ -39,8 +39,10 @@ func TestDocsStateTheProjectDefaultBaseBranch(t *testing.T) {
 		// §3's bullet: main is no longer the only branch a repository writes.
 		"`git.base_branch:` when the branch is not the project's default",
 		// §5's scope table: the row stays `repo`, and the project default is
-		// the owner's in the policy node rather than a project-layer key.
-		"| `git.base_branch` | repo | a project-wide base branch in the launcher-writable project layer would let a bucket writer point image builds at an unreviewed branch; the project's default base branch is the owner's, published to the policy node instead |",
+		// the owner's in the policy node rather than a project-layer key. The
+		// trailing citation is D3237's, which kept the key in the repository
+		// (docs/repo-override-rulings, task S0).
+		"| `git.base_branch` | repo | a project-wide base branch in the launcher-writable project layer would let a bucket writer point image builds at an unreviewed branch; the project's default base branch is the owner's, published to the policy node instead; approved by D3237 |",
 	} {
 		if !strings.Contains(layer, want) {
 			t.Errorf("docs/project-layer.md does not say %q", want)
@@ -50,30 +52,30 @@ func TestDocsStateTheProjectDefaultBaseBranch(t *testing.T) {
 		t.Error("docs/project-layer.md still says a repository writes git.base_branch when the branch is not `main`: it writes it when the branch is not the project's default, which the project's own base_branch may have moved")
 	}
 
-	// docs/design/shared-config.md: the shared file refuses the project's
+	// docs/shared-config/spec.md: the shared file refuses the project's
 	// default too, for the reason it refuses each repository's entry.
-	shared := flattenDoc(readDoc(t, "docs/design/shared-config.md"))
+	shared := flattenDoc(readDoc(t, "docs/shared-config/spec.md"))
 	for _, want := range []string{
 		"each repository's `base_branch` and the project's top-level `base_branch`",
 		"no `base_branch` at either level",
 	} {
 		if !strings.Contains(shared, want) {
-			t.Errorf("docs/design/shared-config.md does not say %q", want)
+			t.Errorf("docs/shared-config/spec.md does not say %q", want)
 		}
 	}
 	if strings.Contains(shared, "Consumers use the checkout's value, else `main`") {
-		t.Error("docs/design/shared-config.md still resolves a base branch to the checkout's value else `main`: the installation's repos.<r>.base_branch and the project's base_branch sit between them, and the shared file is why the second is read from the policy node")
+		t.Error("docs/shared-config/spec.md still resolves a base branch to the checkout's value else `main`: the installation's repos.<r>.base_branch and the project's base_branch sit between them, and the shared file is why the second is read from the policy node")
 	}
 
-	// docs/design/project-centric.md: the policy node's members, with the
+	// docs/project-centric/spec.md: the policy node's members, with the
 	// project's default among them and main when it is absent.
-	centric := flattenDoc(readDoc(t, "docs/design/project-centric.md"))
+	centric := flattenDoc(readDoc(t, "docs/project-centric/spec.md"))
 	for _, want := range []string{
 		"The node also carries the project's `base_branch`",
 		"a node without it means `main`",
 	} {
 		if !strings.Contains(centric, want) {
-			t.Errorf("docs/design/project-centric.md does not say %q", want)
+			t.Errorf("docs/project-centric/spec.md does not say %q", want)
 		}
 	}
 }

@@ -389,10 +389,18 @@ func (s *secretsStage) resolve(ctx context.Context) {
 		// The Anthropic key is asked for only when a run actually needs it:
 		// with the gateway on and every pin served by a provider the run never
 		// calls Anthropic, so init does not prompt for a value and does not
-		// store one (design docs/design/project-centric.md §6.1). The rule is
+		// store one (design docs/project-centric/spec.md §6.1). The rule is
 		// needsAnthropicKey (config.AnthropicKeyNeeded over the effective
 		// mode), the one validate and update --repo ask too.
 		needsKey := needsAnthropicKey(lc, cfg, repo)
+		// Whether any run of this project holds the unsuffixed default
+		// account: when none does, the bare token is a name nothing of the
+		// owner's mounts, and asking for it here would store the one
+		// repository copy no project-wide copy can replace (the name is
+		// deliberately outside D2's sweep). Readiness drops the same mount and
+		// SecretCommands prints no step for it, so the three readers answer
+		// one way.
+		runsDefault := lc.RunsOnDefaultClaudeAccount()
 		for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
 			// The default account only: Task 5 extends this to every name
 			// config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo) allows,
@@ -403,10 +411,13 @@ func (s *secretsStage) resolve(ctx context.Context) {
 				return
 			}
 			for _, m := range allowedHarnessOAuthMounts(lc, repo, mounts) {
+				if m.Logical == config.ClaudeOAuthToken && !runsDefault {
+					continue
+				}
 				if m.Logical == config.AnthropicSecret && !needsKey {
 					// No call of this run goes to Anthropic, so there is
 					// nothing to ask for: the run never calls it (design
-					// docs/design/project-centric.md §6.1). The container is
+					// docs/project-centric/spec.md §6.1). The container is
 					// still planned, so the owner can store a key later with
 					// `fugaro secrets set`, and a run that needs one without
 					// it is refused with that command.
@@ -424,7 +435,7 @@ func (s *secretsStage) resolve(ctx context.Context) {
 		// already knows about per workflow; the line it leaves for one of
 		// them is that account's own `fugaro accounts add` command (Left),
 		// not the default's mint-then-store pair (design
-		// docs/design/named-oauth-tokens.md §3 T3, §4). A name the credentials
+		// docs/named-oauth-tokens/spec.md §3 T3, §4). A name the credentials
 		// block declares a key credential is no such account
 		// (config.ClaudeAccountTokenNames): it has no
 		// claude-oauth-token-<name>, and the command the entry would leave the
@@ -454,7 +465,7 @@ func (s *secretsStage) resolve(ctx context.Context) {
 	// repoPolicyInput gives the repository stage: a node the operator cannot
 	// reach must not be taken for one that admits nobody, and the repository
 	// stage stops the run on the same error.
-	p, found, err := s.e.r.policy.read(ctx, lc)
+	p, found, err := s.e.r.policyMemo().read(ctx, lc)
 	s.node = repoPolicyInput(lc, p, found, err)
 	// A repository-level secret (D2313) is one no shared job mounts, so it is
 	// not a name this stage may take. The ruling closed the stores that would

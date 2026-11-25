@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"path/filepath"
 	"slices"
@@ -55,6 +56,19 @@ func managedAddMarker() []byte {
 	return []byte(`{"version":1,"gcp_project":"` + initProject + `"}`)
 }
 
+// markManaged marks the rig's world managed for gcpProject: the project's own
+// fugaro_managed label and, in the runs bucket of that name, the installation's
+// label with the creation fact in it — both halves of what D1541's read
+// requires, and neither a shortcut for the other. It is what makes a rig a
+// project a run is admitted to, and the one place the two fakes are marked.
+func (r *addRig) markManaged(t *testing.T, gcpProject string) {
+	t.Helper()
+	bucket := "fugaro-runs-" + gcpProject
+	r.gcs.AddBucket(bucket, initProjectNumber, map[string]string{gcp.LabelManaged: gcp.ManagedValue})
+	r.gcs.Put(bucket, managed.MarkerObject, []byte(fmt.Sprintf(`{"version":1,"gcp_project":%q}`, gcpProject)))
+	labelled(r.crm, gcpProject)
+}
+
 // newManagedAddRig is the accounts-add rig in a project whose marks say managed
 // (or, with managed false, in the ordinary installation this row must leave
 // exactly as it was), running in a checkout whose origin is owner/repo-a: the
@@ -64,17 +78,14 @@ func newManagedAddRig(t *testing.T, local string, marks managedAddMarks) *addRig
 	t.Helper()
 	// The rig first and the checkout after it: the rig builds the fake
 	// terraform once per test binary, from the module this checkout is not in.
-	r := newAddRigWith(t, local)
-	r.managed = marks == addMarksManaged
+	r := newAddRigMarks(t, local, marks == addMarksManaged)
 	accountsAddCheckout(t, "owner/repo-a")
-	// The identity a record names is this test's own: a file that happened to
-	// be on the machine would otherwise name a real address in a record, and in
-	// this test's failure output. The time is fixed for the same reason —
-	// a record is filed under its day, and a test reads one day back.
+	// The credentials in force are the fixtures': a real file on the machine
+	// would otherwise be read, and the record would name an address that was on
+	// it. The identity itself is stubbed one layer down, with the marks
+	// (newAddRigMarks). The time is fixed for the same reason: a record is
+	// filed under its day, and a test reads one day back.
 	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", filepath.Join(r.dir, "no-application-default-credentials.json"))
-	oldUser := authenticatedUser
-	authenticatedUser = func(context.Context, *localcfg.Config) (string, error) { return managedGateUser, nil }
-	t.Cleanup(func() { authenticatedUser = oldUser })
 	oldNow := managedGateNow
 	managedGateNow = func() time.Time { return managedGateTestNow }
 	t.Cleanup(func() { managedGateNow = oldNow })
@@ -83,16 +94,25 @@ func newManagedAddRig(t *testing.T, local string, marks managedAddMarks) *addRig
 	// carrying the installation's label, and the fugaro_managed label on the
 	// project itself. A world with one of the two is a world this program must
 	// answer "not managed" about, which is why the fixtures below exist.
-	switch marks {
-	case addMarksManaged:
-		r.gcs.AddBucket(initRunsBucket, initProjectNumber, map[string]string{gcp.LabelManaged: gcp.ManagedValue})
-		r.gcs.Put(initRunsBucket, managed.MarkerObject, managedAddMarker())
-		labelled(r.crm, initProject)
-	case addMarksUnlabelled:
+	// The one-mark world keeps its own bucket and object, and no label: the
+	// label's absence is the whole of what it is about, since the read answers a
+	// project without one from the label alone and never looks in the bucket.
+	if marks == addMarksUnlabelled {
 		r.gcs.AddBucket(initRunsBucket, initProjectNumber, map[string]string{gcp.LabelManaged: gcp.ManagedValue})
 		r.gcs.Put(initRunsBucket, managed.MarkerObject, managedAddMarker())
 	}
 	return r
+}
+
+// ordinaryInstallationRig is the same fixture in an installation that is not
+// managed: a project with neither mark, which is the world the refusals that
+// stand before any cloud read are tested in — the marker's own fence, the
+// login's, the token step's terminal rule. D2217's fence is what a managed
+// project answers with instead, one layer further in (managed_require_test.go),
+// and accounts_managed.go's gate with it.
+func ordinaryInstallationRig(t *testing.T, local string) *addRig {
+	t.Helper()
+	return newAddRigMarks(t, local, false)
 }
 
 // managedAddMarks is which of the two marks a rig's project carries. The
@@ -191,11 +211,41 @@ func fakeOutputTerminal(t *testing.T) {
 
 // ownerAtTheTerminal is the owner's own session: no coding agent's marker, a
 // real terminal on the run's input and on its output.
+//
+// A test that stands here and then READS the run's account — its step lines,
+// its closing line — sets NO_COLOR beside it (plainAccount): a terminal writer
+// has the reporter draw the step in flight on the terminal's own line, and the
+// carriage return and erase sequence that leaves inside the line are the
+// fixture's artefact rather than the command's behaviour. The door itself does
+// not change: it is the terminal on both streams the gate reads
+// (accounts_managed.go), and colour is not one of its facts.
 func ownerAtTheTerminal(t *testing.T) {
 	t.Helper()
 	noAgentSession(t)
 	fakeTerminal(t)
 	fakeOutputTerminal(t)
+}
+
+// plainAccount turns the reporter's colour off for a test that reads the run's
+// account rather than the sentences inside it. The account itself is the same
+// one a coloured terminal is shown — the marks keep their glyphs (an ASCII
+// account is --ascii's, not colour's) — so the lines these tests parse are the
+// lines the reporter wrote.
+func plainAccount(t *testing.T) {
+	t.Helper()
+	t.Setenv("NO_COLOR", "1")
+}
+
+// actingAccount names the account a managed project's step is judged and
+// recorded under (D1014): the gate reads the credentials in force, and a test
+// binary has none. The name is the fixtures' own, as it is in every other
+// managed rig, so no record a test reads names an address that was on the
+// machine.
+func actingAccount(t *testing.T) {
+	t.Helper()
+	old := authenticatedUser
+	authenticatedUser = func(context.Context, *localcfg.Config) (string, error) { return managedGateUser, nil }
+	t.Cleanup(func() { authenticatedUser = old })
 }
 
 // ownerAddStdin is what the owner types at this command's one read: the token.
@@ -485,8 +535,20 @@ func TestAccountsAddManagedRecordsNothingWhenThereIsNoWrite(t *testing.T) {
 
 // An installation that is not managed keeps today's refusal exactly: the
 // declaration is not written, no record is filed — D1025 writes down nothing
-// about a project that is not managed — and the sentence is the one this
-// command has always used.
+// about a project that is not managed — and the run exits a user error.
+//
+// The sentence is the FENCE's, and not this command's own: this command starts
+// by resolving the caller against the project's own database
+// (accessGateProject, whose read is budgetDBFor), that seam makes the managed
+// read, and a project whose marks ANSWER "not managed" is refused there — long
+// before the converge, and so before the marker fence an agent's session would
+// otherwise meet. It is the same sentence a person at their own terminal reads
+// on that project (TestFencedCommandRefusesUnmanaged pins it at the seam), and
+// the reason it is the right one either way is that the fix is the same in
+// both sessions: the project has to be flagged managed by its owner. A read
+// that FAILS is the other half of this row and is not an answer: it warns and
+// goes on, and the sentence is this command's own again
+// (TestAccountsAddManagedUnreadMarksKeepTheRefusal).
 func TestAccountsAddUnmanagedKeepsTheRefusalInAnAgentSession(t *testing.T) {
 	r := newManagedAddRig(t, addRigLocal, addMarksNone)
 	before := readFileString(t, r.cfg)
@@ -496,12 +558,7 @@ func TestAccountsAddUnmanagedKeepsTheRefusalInAnAgentSession(t *testing.T) {
 	if err == nil {
 		t.Fatalf("the command wrote in a coding agent's session:\n%s", out)
 	}
-	if ExitCode(err) != ExitUserError {
-		t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
-	}
-	if !strings.Contains(err.Error(), "refusing to write") || !strings.Contains(err.Error(), "nothing was written") {
-		t.Errorf("the refusal is not this command's own: %v", err)
-	}
+	checkFenceRefusal(t, err, "accounts add")
 	if after := readFileString(t, r.cfg); after != before {
 		t.Errorf("the file changed in a coding agent's session:\n%s", after)
 	}
@@ -511,22 +568,36 @@ func TestAccountsAddUnmanagedKeepsTheRefusalInAnAgentSession(t *testing.T) {
 }
 
 // A mark read that does not answer fails closed: one half of the fact is not
-// the fact, so the project is not managed, the command refuses as it always
-// did, and nothing is recorded. The wrong answer here would be the admitting
-// one, and this is the test that makes it the refusing one.
+// the fact, so the project is not managed, the command refuses, and nothing is
+// recorded. The wrong answer here would be the admitting one, and this is the
+// test that makes it the refusing one.
+//
+// The two arms part company on WHICH refusal, because a failed read is not an
+// answer (D2218): the creation fact the fake refuses to serve is a read that
+// broke, so the fence warns on the command's stderr and goes on as a project
+// that is not managed, and the marker fence of this command's own gate — the
+// sentence it has always used — is what an agent's session then meets. A
+// missing label is the other kind: the read answered, the answer is "not
+// managed", and the fence refuses there, at the access gate, before the
+// command's own gate is reached at all.
 func TestAccountsAddManagedUnreadMarksKeepTheRefusal(t *testing.T) {
-	for name, unread := range map[string]func(t *testing.T) *addRig{
-		"the creation fact cannot be read": func(t *testing.T) *addRig {
+	for name, tc := range map[string]struct {
+		world func(t *testing.T) *addRig
+		// fence is true where the marks answered "not managed" rather than
+		// failing to answer, which is what decides the sentence.
+		fence bool
+	}{
+		"the creation fact cannot be read": {world: func(t *testing.T) *addRig {
 			r := newManagedAddRig(t, addRigLocal, addMarksManaged)
 			r.gcs.RefusePath("managed.json", 500, "InternalServerError", "", "the creation fact did not answer")
 			return r
-		},
-		"the project carries no label": func(t *testing.T) *addRig {
+		}},
+		"the project carries no label": {fence: true, world: func(t *testing.T) *addRig {
 			return newManagedAddRig(t, addRigLocal, addMarksUnlabelled)
-		},
+		}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			r := unread(t)
+			r := tc.world(t)
 			before := readFileString(t, r.cfg)
 			t.Setenv(accountsAddAgent, "1")
 
@@ -534,11 +605,15 @@ func TestAccountsAddManagedUnreadMarksKeepTheRefusal(t *testing.T) {
 			if err == nil {
 				t.Fatalf("a project this program cannot prove is managed was admitted:\n%s", out)
 			}
-			if ExitCode(err) != ExitUserError {
-				t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
-			}
-			if !strings.Contains(err.Error(), "refusing to write") || !strings.Contains(err.Error(), "nothing was written") {
-				t.Errorf("the refusal is not this command's own: %v", err)
+			if tc.fence {
+				checkFenceRefusal(t, err, "accounts add")
+			} else {
+				if ExitCode(err) != ExitUserError {
+					t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
+				}
+				if !strings.Contains(err.Error(), "refusing to write") || !strings.Contains(err.Error(), "nothing was written") {
+					t.Errorf("the refusal is not this command's own: %v", err)
+				}
 			}
 			if after := readFileString(t, r.cfg); after != before {
 				t.Errorf("the file changed under a mark that could not be read:\n%s", after)

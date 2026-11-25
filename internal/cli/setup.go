@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/rigor"
@@ -30,7 +32,12 @@ import (
 // moved out of init.go (W1.2 splits the retired command's Long between the
 // two doors) with the command it names being the one it is; W1.3 grows the
 // wizard's questions into it.
-const setupLong = `setup plans the installation's shared resources (the runs bucket, registries,
+//
+// The budget question's suggestion and its unit are read from T1's constants
+// rather than written into the sentence (D2211, D2212): the help a person reads
+// before a first run names the same figures the question takes and the alert is
+// created with, whatever those are.
+var setupLong = `setup plans the installation's shared resources (the runs bucket, registries,
 custom roles, the scheduler account, log isolation, an optional budget) with
 Terraform, importing what the bootstrap already made, and applies the plan it
 showed once a person at the terminal confirms it. It
@@ -53,31 +60,45 @@ Credentials), so that fugaro run works; --operator or --admin replaces that,
 an existing config is never changed by it, and with a service
 account's credentials it stops and names the two flags.
 
-Fugaro only starts fresh: a first run creates the GCP project the installation
-lives in, and that project is Fugaro's, and managed, from its creation. On a
+A first run creates the GCP project the installation
+lives in — or adopts one that is already there and holds nothing of Fugaro's,
+using it as if it had created it (the owner's ruling of 2026-11-22) — and that
+project is Fugaro's, and managed, from its creation. On a
 first run it asks its questions once, in this order, each with a suggestion
 Enter takes, and writes the local config, so later runs ask nothing: the new
 GCP project's ID (--gcp-project; a project named after this one,
-fugaro-<name>, which Enter takes; never gcloud's default project), the region
-(--region; us-east5), the project's name (--name; from the repository's
+fugaro-<name>, which Enter takes; never gcloud's default project), where the
+installation lives (--location; US, whose region is us-east5 and which Enter
+takes, or EU, whose region is europe-west1; a region typed in full answers the
+same question and is --region's own form, and the two given together must
+agree), the project's name (--name; from the repository's
 owner, else this directory's), the project's rigor mode (--rigor; how much
 review every run of it gets — poc, startup, pro, the built-in default that is
 listed first, or critical — and the one question with no suggestion, so Enter
-is not an answer there) and whether a repository the build can read is
+is not an answer there), the project's monthly budget alert (--budget; the
+amount Cloud Billing warns the owner at when the month's spend reaches it — an
+alert, not a cap on spending: what stops a run is the gateway's cost cap — in
+whole units of ` + managed.DefaultBudgetCurrency + `, which Enter takes as ` + strconv.FormatInt(managed.DefaultBudgetAmount, 10) + `) and whether a
+repository the build can read is
 baked into the image its job runs (--bake-repos; yes, which makes jobs start
 faster; asked only where it can be answered, so a run with a project config
 keeps that project's answer). Every question has its flag, so only the
 confirmations below need a terminal at all: without one, or with
 --json, the run names every missing flag in one
-error — the bake switch needs no flag there, because an absent key means the
-same as a written yes. An ID that already exists is refused before anything is
-asked or changed ("Fugaro only starts fresh: <id> already exists; pick
-another id"), and so is one that already holds a Fugaro installation, with the
+error — the bake switch and the budget need no flag there, because an absent
+key means the same as a written yes and a budget nobody answered takes its own
+default. An ID that already exists and holds anything of Fugaro's is refused
+before anything is asked or changed ("<id> already exists and holds something
+of Fugaro's: fugaro setup only adopts a project that holds nothing of
+Fugaro's, so pick another id"), and so is one that already holds a Fugaro
+installation, with the
 command that uses that installation from this machine instead: fugaro update
 --gcp-project <id> --region <region>, which writes the local config from the
-installation and applies nothing. The one taken ID a first run goes on with is a project an
-earlier run of fugaro setup created and did not finish (it carries the label
-fugaro_created=true from its creation): the rerun resumes it. The budget
+installation and applies nothing. A project that already exists and holds
+nothing of Fugaro's is adopted: the run uses it as if it had created it. The
+other ID a first run goes on with is a project an
+earlier run of fugaro setup made Fugaro's and did not finish (it carries the
+label fugaro_created, true or adopted, from that run): the rerun resumes it. The budget
 section of a local config written from an installation (rtdb_url,
 firebase_project, firebase_api_key, token_signer: none a secret) is filled
 from the Firebase root's outputs, read only. A --name given for an
@@ -95,9 +116,10 @@ not, the build is left for you with each missing permission and its fix and
 nothing is billed. A repository the local config does not list is asked about
 first, at the start, before any plan.
 
-setup runs as a converge of stages (preflight, installation, with
---firebase-project the Firebase backend and the images, the secrets, the
-plugin wiring and the repository, and on a first run the project — the one
+setup runs as a converge of stages (preflight, installation, the Firebase
+backend — the budget database, which it adopts or creates, see
+--firebase-project — the images, the secrets, the plugin wiring and the
+repository, and on a first run the project — the one
 stage that creates the GCP project, and the one that refuses an ID that
 already exists), each with its own confirmation, in order, and stops at the
 first that fails or needs you; a rerun resumes, and one with nothing to do
@@ -143,8 +165,18 @@ session may run it: it edits only a local file.
 setup --firebase-project <gcp-project-id> turns the shared budget on: it
 builds the budget backend in the installation's own GCP project. The value is
 the installation's own GCP project id (the default; the flag is only needed to
-turn the shared budget on), and any other id is refused. A setup without it
-builds no backend. It creates nothing and links nothing
+turn the shared budget on), and any other id is refused. The stage runs with
+and without the flag, and setup and update run the same one: with none it
+adopts the database the installation's Firebase state names where that
+database is the installation's own project's, or creates one in the
+installation's own project where this credential may make the project's IAM
+changes and the project has billing (the new database starts in observe, with
+no mode chosen); where neither is this run's — the credential may not, the
+project has no billing, or nothing answers the confirmation creating one costs
+(a coding agent's session, --json, a pipe) — the stage changes nothing, says
+in one line who must run the command or that billing must be linked, and the
+rest of the run carries on. An installation whose database this machine
+already records keeps what it has. The stage creates nothing and links nothing
 itself (the project and its billing link are the first run's), and it refuses
 a project that has no billing, or whose database holds data and no Fugaro
 mark. It runs three applies, each
@@ -156,11 +188,16 @@ once its image exists). Between the last two it deploys the database's rules,
 mark, project name, mode (--budget-mode; an absent one is seeded observe) and
 largest lease, after a confirmation of their own, then writes the local
 config. The same step creates the Firestore database for the spend history
-(fugaro report) if the project has none: its location, us-east5, is permanent
-(chosen once, never changed or deleted by Fugaro), so the location's
-confirmation is the person at a real terminal (nothing is typed; --json and a pipe never confirm it, and the step is then
-left for you), and it
-refuses a database that holds data or is in another location; it also deploys
+(fugaro report) if the project has none: it goes in the installation's own
+region where Firestore offers it, and otherwise in the place's own default
+region — the mapping's answer, which the step's own plan row prints before
+anything is created — and its location is permanent (chosen once, never changed
+or deleted by Fugaro), so the run prints where and creates it, asking nobody
+(nothing is typed, and a coding agent's session, --json and a pipe are no
+different); a database that already exists is adopted as it is, wherever it is,
+when it is empty or carries the Fugaro mark — the plan row says where, and names
+it as outside the installation's place when it is — and a database that holds
+data and carries no mark, or that is not in native mode, is refused; it also deploys
 deny-everything Firestore rules and the Fugaro mark. --plan-only stops after the installation's plan. Each repository then
 needs fugaro setup --repo to pick up the jobs' environment.
 
@@ -189,14 +226,16 @@ review screen and one confirmation, taken by the person at the terminal and
 shown when the first of them has something to change (nothing is typed, so a
 rerun with nothing to do shows nothing). Each step
 still prints its own exact plan. It never covers creating a project, linking
-billing, the Firestore database's permanent location, a Cloud Build, replacing
+billing, a Cloud Build, replacing
 a registry tag (--replace-image), an unlisted repository or a secret. Those are
 their own steps: the build, the tag and onboarding an unlisted repository are
 covered by the run's own confirmation in a project whose gate stands in for it,
 and taken by the person at the terminal otherwise (D12's answer of 2026-10-20
 keeps them one class in either door), and a project's
-creation, the billing link, the location and a secret value keep a
-confirmation of their own, taken with the person at the terminal. The state bucket and the API enable are fixed, announced, free steps; every
+creation, the billing link and a secret value keep a
+confirmation of their own, taken with the person at the terminal. The Firestore
+database's location is no step at all: where the run creates the database it
+prints where, and that the location is permanent, and creates it. The state bucket and the API enable are fixed, announced, free steps; every
 Terraform plan is shown as it runs and is covered only if it is creates and
 in-place updates of the installation's own resource kinds, granting only the
 modules' roles to the listed launchers, operators and budget admins (the review
@@ -222,8 +261,7 @@ your registry (--replace-image KIND names the intent). D12's answer of
 door, while a repository whose origin git config rewrites, or whose host is not
 a provider's own, takes the confirmation of a person at the terminal whatever
 the run was given. What
-it still never covers: creating a project or linking billing, a secret, and
-the Firestore database's permanent location, this door's first-time question.
+it still never covers: creating a project or linking billing, and a secret.
 With no terminal, or with --json, each of those is left for you, with the
 one line to run: a first run that reaches the billing question is refused at
 once, in the sentence naming --link-billing, before any account of yours is
@@ -364,13 +402,33 @@ const setupAlreadySetUp = "this installation is already set up"
 // needs no terminal for it — and the name the refusal prints when the run
 // cannot proceed without an answer.
 //
+// what is the question in a sentence, and it is what a run that could not read
+// an answer says it had no answer for (noAnswer) and what the value entry names
+// where it reads for itself; label and hint are what the question looks like on
+// the screen — the bold label and, after it, what the question says about the
+// shape of the answer — so a prompt is one line and the two halves of it are
+// the row's (askedLine).
+//
 // missing is what a run that cannot ask is refused with when nothing else
 // answers the question.
 type wizardQuestion struct {
-	what    string // the question, in one line
+	what    string // the question, in one line, for the refusals about it
 	label   string // the label the prompt shows (a prefix, where the label is built from the run)
+	hint    string // what the prompt says about the answer after the label, or ""
 	flag    string // the flag that answers it
 	missing string // what MissingInputsError names, exactly as firstRunMissing builds it
+}
+
+// askedLine is the question as a person reads it, up to the colon their answer
+// is typed after: the label, and what the row says about the shape of the
+// answer. The suggestion Enter takes is not part of it — that is the run's, and
+// it is drawn after this (wizardAsk) — so what is here is what the table
+// decides, which is what a test can hold a prompt to.
+func (q wizardQuestion) askedLine() string {
+	if q.hint == "" {
+		return q.label
+	}
+	return q.label + ": " + q.hint
 }
 
 // setupQuestions is the wizard's question list, and TestEveryWizardQuestionHasAFlag
@@ -399,10 +457,19 @@ var setupQuestions = []wizardQuestion{
 		missing: "--gcp-project <id>",
 	},
 	{
-		what:    "the region the installation's jobs and the scheduler run in",
-		label:   "Region (the installation's jobs and the scheduler)",
-		flag:    "--region",
-		missing: "--region <region>",
+		// The place question (LP4 of docs/location-preference; D3080, D3081,
+		// D3086). It is the wizard's region question in a person's words and
+		// not a second question (F2): the answer is us, eu, or a region typed
+		// in full, --region answers the same question precisely, and the
+		// region stays the one setting the installation stores (D3080). The
+		// suggestion is US, which is today's default region; the region itself
+		// is not in the row, because a place answer names one region and the
+		// mapping's own rows say which (R7).
+		what:    "the place the installation lives in (US, EU, or a region typed in full)",
+		label:   "Location",
+		hint:    "US, EU or a region",
+		flag:    "--location",
+		missing: "--location <us|eu>",
 	},
 	{
 		what:    "the Fugaro project's name",
@@ -423,13 +490,30 @@ var setupQuestions = []wizardQuestion{
 		missing: "--rigor <mode>",
 	},
 	{
+		// The budget question (T2b of docs/managed-flag-ergonomics; D2210,
+		// D2211, D2212). The figure is the project's budget ALERT — the point
+		// Cloud Billing warns the owner at — and the label says so, because
+		// what stops a run is the gateway's cost cap, a different figure in a
+		// different place (internal/infra/managed/defaults.go): a monthly
+		// figure read as a cap would be read as a limit this wizard does not
+		// set. The suggestion is the default amount, which Enter takes, and
+		// the missing is empty on purpose like the bake switch's below: a run
+		// that cannot ask takes the same default (D2212), so demanding the flag
+		// would refuse a run whose answer is already in hand (askBudget).
+		what:    "the monthly amount of the project's budget alert, in whole units of " + managed.DefaultBudgetCurrency,
+		label:   "Monthly budget alert",
+		hint:    "an alert at a threshold, not a cap on spending, in whole units of " + managed.DefaultBudgetCurrency,
+		flag:    "--budget",
+		missing: "",
+	},
+	{
 		// The bake switch (IS7 of docs/image-setup-skill/implementation-plan.md;
 		// D1901). Its missing is empty on purpose: a run that cannot ask takes
 		// this answer itself — an absent key means yes, which is the
 		// suggestion the question offers — so demanding the flag would refuse a
 		// run whose answer is already in hand (askBake).
 		what:    "whether a repository the build can read is baked into the image its job runs",
-		label:   "Bake your repos into the Docker images? This makes jobs start faster.",
+		label:   "Bake repos into the images for faster job starts?",
 		flag:    "--bake-repos",
 		missing: "",
 	},
@@ -482,7 +566,7 @@ func (s *wizardStage) askBake() error {
 	q := questionFor("--bake-repos")
 	s.a.asked = append(s.a.asked, q.label)
 	var yes bool
-	if _, err := r.prompt(valueSpec{what: q.label, flag: q.flag}, "yes", func(v string) error {
+	if _, err := r.askValue(wizardAsk{label: q.label, def: "yes", show: "Y/n"}, valueSpec{what: q.what, flag: q.flag}, func(v string) error {
 		var verr error
 		yes, verr = bakeAnswer(v)
 		return verr
@@ -493,20 +577,23 @@ func (s *wizardStage) askBake() error {
 	return nil
 }
 
-// rigorQuestionLead is the line above the four modes, and the whole of what
-// tells the reader that Enter is not an answer here: every other question of
-// this wizard takes its suggestion with Enter, and this one has none
-// (askRigor).
-const rigorQuestionLead = "the project's rigor mode decides how much review every run of it gets; type one of them (this is the one question of the wizard with no suggestion, so Enter is not an answer):"
+// rigorQuestionLead is the heading above the four modes. It is the question's
+// own label followed by what the answer decides, so the table that follows
+// reads as the answer's own list rather than as a paragraph about it: the one
+// thing a person has to know — that Enter is not an answer here, unlike every
+// other question of this wizard — is said where Enter is pressed and not up
+// front (askRigor's wizardAsk.empty).
+const rigorQuestionLead = "Rigor mode, which sets how much review each run gets:"
 
-// rigorChoice is one line of the rigor question: the mode, and the wizard's own
-// sentence about what it costs. Everything else the line says is read from the
-// two tables that hold it — the review a mode runs by default
-// (rigor.DefaultLevels) and the rounds it spends (rigor.DefaultRounds) — so the
-// question cannot describe a mode as anything other than what a run of it does.
+// rigorChoice is one line of the rigor question: the mode, what review it runs
+// in short words, and the wizard's own note about what it costs. Everything
+// else the line says is read from the two tables that hold it — the review a
+// mode runs by default (rigor.DefaultLevels) and the rounds it spends
+// (rigor.DefaultRounds) — so the question cannot describe a mode as anything
+// other than what a run of it does.
 type rigorChoice struct {
 	mode rigor.Rigor
-	cost string
+	note string
 }
 
 // rigorChoices is the question's list, and `pro` first is the whole of what
@@ -515,16 +602,19 @@ type rigorChoice struct {
 // what they have. Hotfix is not in the list and is not writable: it is a
 // per-run mode (D12, D834), refused by name where it is typed or passed.
 var rigorChoices = []rigorChoice{
-	{mode: rigor.Pro, cost: "it is the built-in default, so it is what a project that says nothing already runs today"},
-	{mode: rigor.Startup, cost: "less spend, less to spend it on"},
-	{mode: rigor.POC, cost: "the cheapest mode there is"},
-	{mode: rigor.Critical, cost: "the most review, and the most money"},
+	{mode: rigor.Pro, note: "(default)"},
+	{mode: rigor.Startup, note: "less spend"},
+	{mode: rigor.POC, note: "cheapest"},
+	{mode: rigor.Critical, note: "most review"},
 }
 
-// printRigorChoices prints one line per mode, in the list's order, the way the
-// billing question prints its own list: what review the mode runs, the rounds
-// it spends by default, and what it costs.
+// printRigorChoices prints the four modes as the table the question is answered
+// from: the mode, its review and its rounds from the tables that hold them, and
+// its note — the columns padded, so the review and the note line up and a
+// person reads one down each column.
 func (r *initRun) printRigorChoices() {
+	type row struct{ mode, review, note string }
+	var rows []row
 	for _, c := range rigorChoices {
 		levels, err := rigor.DefaultLevels(c.mode)
 		if err != nil {
@@ -535,36 +625,41 @@ func (r *initRun) printRigorChoices() {
 			// described by a guess (DefaultLevels refuses to guess too).
 			continue
 		}
-		fmt.Fprintf(r.w, "  %s: %s; by default %s — %s\n",
-			c.mode, rigorReviewWords(levels), rigorRoundWords(rigor.DefaultRounds(c.mode)), c.cost)
+		rows = append(rows, row{
+			mode:   string(c.mode),
+			review: rigorReviewWords(levels) + ", " + rigorRoundWords(rigor.DefaultRounds(c.mode)),
+			note:   c.note,
+		})
+	}
+	modePad, reviewPad := 0, 0
+	for _, row := range rows {
+		modePad, reviewPad = max(modePad, len(row.mode)), max(reviewPad, len(row.review))
+	}
+	for _, row := range rows {
+		fmt.Fprintf(r.w, "  %-*s  %-*s  %s\n", modePad, row.mode, reviewPad, row.review, row.note)
 	}
 }
 
-// rigorRoundWords is a mode's loop counts in words, singular where the count is
-// one: the line is what a person deciding how much a mode costs reads, and "1
-// senior rounds" is a sentence they have to translate.
+// rigorRoundWords is a mode's loop counts as the table's own column, "3+3
+// rounds": the two counts are the first-line and the senior rounds a run of the
+// mode spends, and the one number a reader compares across the four modes is
+// how much of each it buys.
 func rigorRoundWords(r rigor.Rounds) string {
-	round := func(n int, what string) string {
-		if n == 1 {
-			return fmt.Sprintf("%d %s round", n, what)
-		}
-		return fmt.Sprintf("%d %s rounds", n, what)
-	}
-	return round(r.Inner, "first-line") + " and " + round(r.Senior, "senior")
+	return fmt.Sprintf("%d+%d rounds", r.Inner, r.Senior)
 }
 
-// rigorReviewWords is what review a mode runs, in the question's words, read
+// rigorReviewWords is what review a mode runs, in the table's short words, read
 // off the mode's own row of the level table (rigor/levels.go): level 1 is the
 // first-line review, level 2 the senior review that decides readiness, level 3
 // the adversarial pass after it.
 func rigorReviewWords(l rigor.Levels) string {
 	switch {
 	case l.L3 == rigor.LevelOn:
-		return "review level 2 and review level 3, the adversarial pass after the senior one"
+		return "senior + adversarial"
 	case l.L2 == rigor.LevelOn:
-		return "review level 2, the senior review that decides readiness, and no adversarial pass"
+		return "senior review"
 	case l.L1 == rigor.LevelOn:
-		return "review level 1 only, the first-line review, which then decides readiness"
+		return "first-line review only"
 	}
 	return "no review at all"
 }
@@ -679,7 +774,7 @@ func (s *wizardStage) askRigor() error {
 	s.a.asked = append(s.a.asked, q.label)
 	fmt.Fprintln(r.w, rigorQuestionLead)
 	r.printRigorChoices()
-	v, err := r.prompt(valueSpec{what: q.what, flag: q.flag}, "", func(v string) error {
+	v, err := r.askValue(wizardAsk{label: q.label, empty: "type one of the modes above (this is the one question with no suggestion)"}, valueSpec{what: q.what, flag: q.flag}, func(v string) error {
 		_, verr := setupRigorMode(v)
 		return verr
 	})
@@ -694,6 +789,78 @@ func (s *wizardStage) askRigor() error {
 	}
 	o.rigor = string(mode)
 	return nil
+}
+
+// askBudget is the wizard's budget question (T2b of
+// docs/managed-flag-ergonomics; D2210, D2211, D2212): the monthly amount the
+// project's budget alert is created with, asked once after the rigor question,
+// with the default amount as the suggestion Enter takes.
+//
+// The answer goes onto --budget's own fields, which is where a scripted run
+// answers the same question and where the installation's alert is created from
+// (installOptions, init.go), and the currency the amount is in is the default
+// one (D2211): the question asks what the owner is warned at, and an amount
+// without a currency is one no alert can be created with. The answers file
+// fills the same two fields and may answer either on its own (setup_answers.go,
+// R4).
+//
+// It asks nothing where nobody can ask (canAsk: --json, a pipe, --yes, a run
+// that never prompts) and nothing on a run that does not create the
+// installation — a run with a project config, `fugaro update` too — which is
+// askRigor's rule and askBake's: the question is about the project this run
+// brings up, and a project that is already there keeps the budget its own. A
+// run that cannot ask takes the default itself, which is what D2212 says the
+// answer is wherever nobody chose one: nothing waits, and no flag is demanded
+// (the row's missing is empty).
+//
+// The account the alert is on is settled once the billing question has
+// answered, because that is where the linked account appears (settleBudget): a
+// budget is an alert on a billing account, and the answer this question collects
+// must not reach the installation without one.
+func (s *wizardStage) askBudget() error {
+	r, o := s.r, s.r.o
+	if !o.createProject || o.budget > 0 {
+		return nil
+	}
+	if !r.canAsk() {
+		o.budget, o.budgetCurrency = managed.DefaultBudgetAmount, managed.DefaultBudgetCurrency
+		return nil
+	}
+	q := questionFor("--budget")
+	s.a.asked = append(s.a.asked, q.label)
+	v, err := r.askValue(wizardAsk{label: q.label, hint: q.hint, def: strconv.FormatInt(managed.DefaultBudgetAmount, 10)}, valueSpec{what: q.what, flag: q.flag}, func(v string) error {
+		_, verr := budgetAnswer(v)
+		return verr
+	})
+	if err != nil {
+		return err
+	}
+	amount, err := budgetAnswer(v)
+	if err != nil {
+		// The prompt validated the same value one line above, so this cannot be
+		// reached; an amount is recorded only where it read back as one.
+		return err
+	}
+	o.budget, o.budgetCurrency = amount, managed.DefaultBudgetCurrency
+	return nil
+}
+
+// budgetAnswer is the budget question's own reading of an answer: a whole
+// number of units, in the range the alert's amount may take — which is the
+// marker's own rule (managed.Budget.Check, T1's constants), so a figure the
+// question takes is one the installation and the creation fact take as well,
+// and no later step refuses what a person just answered. What it does not read
+// is a currency: the question asks for the amount and takes the default
+// currency (D2211).
+func budgetAnswer(v string) (int64, error) {
+	n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+	if err != nil {
+		return 0, errors.New("answer a whole number of units, such as " + strconv.FormatInt(managed.DefaultBudgetAmount, 10))
+	}
+	if err := (managed.Budget{Amount: n, Currency: managed.DefaultBudgetCurrency}).Check(); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // bakeAnswer is the bake question's own reading of an answer: the two things it
@@ -742,11 +909,12 @@ func wizardStages(ctx context.Context, r *initRun) []initflow.Stage {
 }
 
 // settleCreation records what this run does about the GCP project, where the
-// rest of the run reads it: --create-project's own field. Fugaro only starts
-// fresh (the owner's ruling of 2026-10-23), so there is no question to ask: a
-// first run of fugaro setup creates its project (the project stage,
-// init_project.go, refuses an ID that already exists before anything is
-// changed), and the flag only says so explicitly.
+// rest of the run reads it: --create-project's own field. There is no question
+// to ask: a first run of fugaro setup makes its project Fugaro's — it creates
+// it, or adopts one that is already there and holds nothing of Fugaro's (the
+// owner's ruling of 2026-11-22; the project stage, init_project.go, refuses an
+// ID that holds anything of Fugaro's before anything is changed), and the flag
+// only says so explicitly.
 //
 // A run that cannot act on a creation does not get one: `fugaro update` creates
 // nothing (its stage set has no project stage at all, init_stages.go), and
@@ -766,6 +934,15 @@ func (r *initRun) settleCreation(firstRun bool) error {
 	o := r.o
 	if o.setupCreates(firstRun) {
 		o.createProject = true
+	}
+	// A creating run's alert is on the account the run links, and this is where
+	// a creation no flag named is settled (takeLinkedBudgetAccount): the door
+	// took the account already where --create-project was explicit, and
+	// checkCreateProject below is what refuses the amount with no account
+	// otherwise — before the project stage, so a run that never had one is told
+	// rather than refused once the project exists.
+	if o.createProject {
+		o.takeLinkedBudgetAccount()
 	}
 	return o.checkCreateProject()
 }
@@ -839,4 +1016,49 @@ func (o *initOptions) programPrefix() string {
 		return p + ": "
 	}
 	return ""
+}
+
+// printRunHeader is the run's own heading, drawn the way every section of the
+// CLI is (report.Style.Header): what this run does, and the installation it is
+// about. It goes with the first thing the run says — the first question of a
+// first run, or the converge's first block on a run that asks nothing — and
+// never twice (initRun.headed).
+//
+// name is the installation this run knows itself by, and suggested is the
+// wizard's own first read of it, for the header a run prints before its name
+// question has been answered: --name wins, then whatever the wizard found.
+//
+// It says nothing with --json (stdout is one document) or --print-vars (stdout
+// is the variables alone), the two modes whose stdout is not a transcript; the
+// fact is in the result either way.
+func (r *initRun) printRunHeader(name, suggested string) {
+	o := r.o
+	if r.headed || o.asJSON || o.printVars {
+		return
+	}
+	r.headed = true
+	if name == "" {
+		name = suggested
+	}
+	fmt.Fprintln(r.w, r.qs.Header(o.runTitle(name)))
+}
+
+// runTitle is the header's text: the door's own verb, the installation's name
+// where this run knows one, and the GCP project it is about. A part this run
+// cannot fill in yet is left out rather than guessed: the header is printed
+// before the questions that settle it.
+func (o *initOptions) runTitle(name string) string {
+	verb := "Setting up"
+	if o.door == updateDoor.name {
+		verb = "Updating"
+	}
+	switch {
+	case name != "" && o.cloud.gcpProject != "":
+		return fmt.Sprintf("%s %s (GCP %s)", verb, name, pluginwire.Printable(o.cloud.gcpProject))
+	case name != "":
+		return verb + " " + name
+	case o.cloud.gcpProject != "":
+		return fmt.Sprintf("%s (GCP %s)", verb, pluginwire.Printable(o.cloud.gcpProject))
+	}
+	return verb
 }

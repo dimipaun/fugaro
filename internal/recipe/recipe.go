@@ -1,5 +1,5 @@
 // Package recipe is the format of a Fugaro recipe: the named, selectable
-// task loop that follows the implement stage (docs/design/recipes.md). It is
+// task loop that follows the implement stage (docs/recipes/spec.md). It is
 // pure: no I/O, no config, no runner. A recipe is untrusted input wherever it
 // comes from, so Parse refuses, never repairs.
 package recipe
@@ -63,6 +63,20 @@ const modeMsg = "must be implement, review, artifact or evaluate"
 
 // NameRE is a recipe name: the shape of a project name.
 var NameRE = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$`)
+
+// IsNameOrCopy reports whether name is one a recipe is stored and looked up by
+// (R19): a recipe name (NameRE), or the project's copy of one (IsCopyName,
+// D3302). Every check that reads a recipe name asks this rather than NameRE, so
+// a migrated copy parses, validates and caches like the name it copies — and
+// only the copy grammar's own dotted shape is admitted, so any other dotted name
+// stays refused.
+func IsNameOrCopy(name string) bool {
+	return NameRE.MatchString(name) || IsCopyName(name)
+}
+
+// nameMsg is the recipe's name refusal, and it names the copy grammar too: a
+// name that is neither is most often a copy someone spelled wrong.
+const nameMsg = "must be a recipe name (1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit) or the name of the project's copy of one (that name, a dot, the repository's slug and 8 hex)"
 
 // LevelNames are the levels a by_level: entry may name, in the vocabulary's
 // own order (internal/rigor's Rigors: POC, Startup, Pro, Critical, Hotfix).
@@ -797,8 +811,8 @@ func (p *parser) top(m *yaml.Node) *Recipe {
 				switch {
 				case hasControlChar(s):
 					p.add("name", v.Line, unsafeCharMsg)
-				case !NameRE.MatchString(s):
-					p.add("name", v.Line, "must be a recipe name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit")
+				case !IsNameOrCopy(s):
+					p.add("name", v.Line, nameMsg)
 				}
 				r.Name = s
 			}

@@ -41,7 +41,7 @@ nothing else. What it buys is a **session the project's own security rules must 
 obtainable by anyone who holds the web API key the pairing QR already carries. What it costs is §2
 to §5 below, and the one property the tree's design exists to keep (§5).
 
-Fugaro is **one Firebase project per installation** (`docs/design/project-centric.md`), so every
+Fugaro is **one Firebase project per installation** (`docs/project-centric/spec.md`), so every
 "once" below means **once per project, by its owner** — and there is no mechanism in this tree that
 enables a provider in somebody's project for them: `fugaro setup` and `fugaro update` apply the
 Terraform that creates the project, and `deploy/terraform/gcp/modules/firebase/firebase.tf` says of
@@ -81,8 +81,9 @@ owner in Google Cloud and in Entra ID, and the spec's own sentence — *"Each pr
 Fugaro app's OAuth client ID as an allowed client, which project setup handles once"* — is asking
 for an `init`/Terraform surface that does not exist. What **does** exist now, and did not when
 [reconciliation.md](reconciliation.md) was written, is the app's side of it: the app carries Firebase
-through three `@react-native-firebase` packages (`mobile/package.json`: `app`, `analytics`,
-`crashlytics`), `mobile/app.config.js` registers their config plugins and points them at the two
+through three `@react-native-firebase` packages (`mobile/package.json`: `app`, `crashlytics`,
+`messaging` — four until the owner's ruling of 2026-10-30, D731, dropped Analytics from the app),
+`mobile/app.config.js` registers their config plugins and points them at the two
 native config files, and those files — `google-services.json` for Android and
 `GoogleService-Info.plist` for iOS — are **the owner's**, written by the Firebase console, named in
 `mobile/.gitignore` and delivered to a build as EAS **file** environment variables.
@@ -97,7 +98,8 @@ D232 price.
 ### 2.3 The authorised domains
 
 `firebase.json` carries hosting and headers and **no `auth` block**; `mobile/firebase.json` carries
-the app's Analytics settings and no `auth` block either. The action URL's host and every
+the app's Crashlytics and Messaging switches (`crashlytics_auto_collection_enabled: false` and the
+two Messaging keys; the Analytics keys left with D731's removal) and no `auth` block either. The action URL's host and every
 dynamic-link host are per-project console state, added on top of what Terraform applies — which
 means the path puts a **hand-made step in every project**, immediately after `fugaro setup`, that
 nothing in this tree checks for and no convergence repairs.
@@ -360,7 +362,7 @@ Named so that a reader sees the blast radius is **decisions, not files**:
   the provider rows'.
 - **A rules generation.** The first rule that **reads** a provider claim opens a family to a session
   the deployed document does not admit under, and that is what `internal/projectpolicy/version.go`'s
-  `RulesVersion` (currently **6**) exists to signal: a generation is a deploy the owner has to run on
+  `RulesVersion` (currently **11**) exists to signal: a generation is a deploy the owner has to run on
   **every installation**, and [reconciliation.md](reconciliation.md) §F29 and the plan's §3 both make
   "a generation" a thing a part stops and asks about rather than quietly adds. The generated document
   is pinned by `internal/budget/rules/testdata/rules.golden.json`, and the denial table by the

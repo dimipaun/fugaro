@@ -305,8 +305,10 @@ is reused.
   by `fugaro update`); on a linked member it adopts the member's grantees into the workspace node
   (outside the domains only with `--external`), writes the stored grant of each workspace admin
   who also holds the live binding (D2818, D2823; the mark kept in the workspace node) and the mirror; on an unlinked member it records the entry
-  and says the member owner runs `fugaro workspace project link`; it refuses a project the mirror or
-  the parent folder shows in another workspace (R2, R14) and strips nothing (D2805).
+  and says the member owner runs `fugaro workspace project link`, reading no document of the member's own database (R14: the
+  mirror and the parent folder are readable once linked, so R2's refusal for a project this workspace does not hold is the
+  authority's own, made at `link`); a held member whose database carries a member list that is not this workspace's is refused
+  (R2, R14); and it strips nothing (D2805).
 - Files: `internal/cli/workspace_project.go` (new), `internal/cli/workspace_project_test.go` (new).
 - Interfaces: consumes C1 `Store`, `AuditSink`; C2 `Authority.Holds`, `MemberOps`.
 - Tests: `TestProjectAddAdoptsGrants`, `TestProjectAddWaitsForLink`, `TestProjectAddRefusesOtherWorkspace`,

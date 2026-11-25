@@ -133,6 +133,66 @@ func TestSharedAsksTheMembersPolicyInThePolicySOwnSpelling(t *testing.T) {
 	}
 }
 
+// TestSharedAsksTheMembersPolicyForTheProviderKeyInThePolicySOwnSpelling: the
+// provider key splits across the two documents the same way the paid key does,
+// and WC1 gave the pool the provider key as a model entry (D2978, F7) — so the
+// member's leg has to pair the two spellings for it too, or the offering is one
+// nobody can be admitted to.
+//
+// The pool speaks config.ProviderKeySecret, which is the credential's own
+// logical name and its document key; the member's accounts block files its axis
+// value as config.ProviderKeyAccount, the value projectpolicy's DeriveAccounts
+// publishes. Both claims are asked together here, because the second is a
+// HAZARD and not only a miss: "provider-key" is a name an ACCOUNT may have
+// (config's account rule admits it, and the account's document key is
+// claude-oauth-token-provider-key), and the accounts block keys such an account
+// by that same name — so a policy holding one would answer the pool's question
+// with that account's own allow_repos, and the third-party key would be
+// authorized by an account that is nothing to do with it (one name, two
+// credentials). The arm's TIER is what keeps the two apart: the provider key is
+// the reserved tier C, the account is tier A.
+func TestSharedAsksTheMembersPolicyForTheProviderKeyInThePolicySOwnSpelling(t *testing.T) {
+	provider := Shared{
+		Credential: Credential{Name: config.ProviderKeySecret, Tier: TierC},
+		Projects:   []string{"project-a"},
+	}
+	// The member's policy names the axis value and nothing else, which is what
+	// its own publish path writes for the provider key.
+	axisOnly := func(name string) bool { return name == config.ProviderKeyAccount }
+	if err := AdmitShared("project-a", provider, axisOnly); err != nil {
+		t.Fatalf("AdmitShared for the provider key a policy names by %s = %v, want it served", config.ProviderKeyAccount, err)
+	}
+	got := SharedFor("project-a", []Shared{provider}, axisOnly)
+	if len(got) != 1 || got[0] != provider.Credential {
+		t.Fatalf("SharedFor = %v, want the provider key: the member's policy admits it under %s", got, config.ProviderKeyAccount)
+	}
+
+	// An account named "provider-key" is a different credential of a different
+	// tier. A policy that names that account — the entry its own policy holds for
+	// it — admits the ACCOUNT and not the provider key, so the pool's entry is
+	// refused rather than served through an account's allow_repos.
+	accountNamedLikeTheKey := func(name string) bool { return name == config.ProviderKeySecret }
+	if err := AdmitShared("project-a", provider, accountNamedLikeTheKey); !errors.Is(err, ErrMemberPolicy) {
+		t.Errorf("AdmitShared for the provider key where the policy names only an account called %q = %v, want ErrMemberPolicy: the accounts block files those two under different keys, and one account's allow_repos may not authorize the third-party key", config.ProviderKeySecret, err)
+	}
+	if got := SharedFor("project-a", []Shared{provider}, accountNamedLikeTheKey); len(got) != 0 {
+		t.Errorf("SharedFor = %v, want none: an account named like the provider key is not one", got)
+	}
+	// And the account itself, at its own tier and under its own name, is what
+	// that policy admits — so the translation is the tier's as well as the name's
+	// and not a blanket substitution.
+	account := Shared{
+		Credential: Credential{Name: config.ProviderKeySecret, Tier: TierA},
+		Projects:   []string{"project-a"},
+	}
+	if err := AdmitShared("project-a", account, accountNamedLikeTheKey); err != nil {
+		t.Fatalf("AdmitShared for a tier-A account the policy names by its own name = %v, want it served", err)
+	}
+	if err := AdmitShared("project-a", account, axisOnly); !errors.Is(err, ErrMemberPolicy) {
+		t.Errorf("AdmitShared for a tier-A account where the policy names only %s = %v, want ErrMemberPolicy: the axis value stands for the provider key and not for an account", config.ProviderKeyAccount, err)
+	}
+}
+
 // TestSharedForKeepsEveryAdmittedCredentialOnce: the effective set is a set.
 // A credential the workspace declares twice — the shape a hand-edited node or
 // two publishes produce — is served once rather than twice, because the caller

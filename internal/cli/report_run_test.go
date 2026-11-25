@@ -197,11 +197,16 @@ func TestBacklogAddFailureIsAFailedStep(t *testing.T) {
 	if err == nil {
 		t.Fatal("a filing of an item whose repository is not owner/name was accepted")
 	}
-	if !strings.Contains(out, markFailed+" filed: ") {
+	if !strings.Contains(out, markFailed+" filed") {
 		t.Errorf("the refusal is not the step that failed:\n%s", out)
 	}
+	// The reason is the block's own "Error:" line under the step, and not the
+	// rest of the step's line: a step's line is its name alone (report.Step).
+	if text := failureError(reportLines(out)); !strings.HasPrefix(text, "Error: ") || strings.TrimSpace(strings.TrimPrefix(text, "Error: ")) == "" {
+		t.Errorf("the failed step carries no reason under it:\n%s", out)
+	}
 	path, _ := onlyLog(t, "backlog-add")
-	if !strings.Contains(out, "full output: "+path) {
+	if !strings.Contains(out, "Log:  "+path) {
 		t.Errorf("the failure does not name the log this run's output is in:\n%s", out)
 	}
 	if lines := reportLines(out); !strings.HasPrefix(lines[len(lines)-1], "Failed in ") {

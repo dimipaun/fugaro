@@ -29,6 +29,8 @@ package credsvc
 // not the gateway's.
 
 import (
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
@@ -85,30 +87,110 @@ func requestNoAllowListRefusal(p *projectpolicy.Policy) string {
 // service forwards. The pin is where the two part company: a body the gateway
 // forwards to a *provider route* (a model the stage's pins admit only through
 // the routing switch) is refused here as unpinned, because this service's pin
-// is the project's allow-list and its routes are nil — see below.
+// is the project's allow-list — which is the same and only rule a routed call
+// is pinned to (the owner's ruling of 2026-10-22, and R11 for the provider
+// route).
 //
-// The routes are nil, so the two rules that are about a *provider route* — the
-// variant suffix that changes a route's routing and price, and the foreign
-// field a route does not take — cannot fire: this service serves the Anthropic
-// upstream, where an accepted call goes whatever its model is called
-// (internal/credsvc's forward). A caller that routes nothing has no routed
-// call.
+// The pin and the routes are the caller's, because the two paths this service
+// serves a call under hold different ones: a Messages call to the Anthropic
+// upstream is pinned to the project's allow-list and routes nothing (a caller
+// that routes nothing has no routed call, so the two rules that are about a
+// provider route — the variant suffix, the foreign field — cannot fire), and a
+// routed call is pinned to the same list and carries the policy's own providers
+// as its routes (providerRoutes), which is what makes those two rules fire for
+// it. Neither argument is a rule this file invents: both are facts the caller
+// read, and the check itself is unchanged whichever it is handed.
 //
 // A body the gateway cannot read at all is a refusal too — the gateway's own
 // path answers parseRequest's error and check's violation alike, as a 400 — so
 // it comes back as the refusal's sentence. An error is the service's own state
 // and not the caller's: the project's prices could not be read, which the
 // caller cannot fix and which is answered as the unavailability it is.
-func (s *Server) requestRefusal(shared *projectpolicy.Policy, body []byte) (string, error) {
+func (s *Server) requestRefusal(shared *projectpolicy.Policy, body []byte, pin gateway.RequestPin, routes []gateway.Route) (string, error) {
 	table, err := requestPriceTable(shared, s.now())
 	if err != nil {
 		return "", err
 	}
-	refusal, err := gateway.RequestRefusal(body, "", requestPin(shared), table, nil)
+	refusal, err := gateway.RequestRefusal(body, "", pin, table, routes)
 	if err != nil {
 		return err.Error(), nil
 	}
 	return refusal, nil
+}
+
+// providerRoutes is the published policy's providers block as the gateway's own
+// routes (R11): one route per provider the project names, claiming exactly the
+// models that provider's block claims, which is what "the service builds the
+// provider routes from the published policy" means.
+//
+// They are the routes the request check is run against (requestRefusal), so the
+// two rules that are about a provider route — a model ID carrying a variant
+// suffix, and a top-level field a provider route does not take — fire for a
+// routed call exactly as they fire for a call the run's own gateway forwards to
+// a provider. That is the half that keeps a HAND-BUILT call to this route from
+// escaping the rules: an agent holding the job's own token can compose a body
+// and post it here, and a route that judged it by none of the rules a route
+// carries would forward whatever it composed (D3003).
+//
+// What a route carries beyond its name and its claims is deliberately absent.
+// This is the shape a REQUEST is judged by — gateway.RequestRefusal is the only
+// reader, and it reads those two fields and no other (Route.matches) — and the
+// facts a call actually needs to go out are the bundle entry's: where the
+// provider is and how its key is sent (D1418). The policy does not carry them
+// and must not; a route built here that named an address or held a credential
+// would be a route one could forward with, and the one path that forwards to a
+// provider builds its own from the entry (providerRoute, forward.go).
+//
+// The order is the providers sorted by name, so a model two providers claim —
+// which the policy's own check refuses to publish (validProviders) — would still
+// be judged the same way twice, and a refusal cannot depend on a map's
+// iteration order.
+func providerRoutes(p *projectpolicy.Policy) []gateway.Route {
+	if p == nil || len(p.Providers) == 0 {
+		return nil
+	}
+	names := slices.Sorted(maps.Keys(p.Providers))
+	out := make([]gateway.Route, 0, len(names))
+	for _, name := range names {
+		out = append(out, gateway.Route{Name: name, Models: slices.Clone(p.Providers[name].Models)})
+	}
+	return out
+}
+
+// providerRequestRefusal is the gateway's own request check over a routed
+// call's body, and the type the refusal is: which of the two the policy's rules
+// answered and which the request's own shape (R11, D3003).
+//
+// The check is the gateway's (requestRefusal) and it is run with the routes the
+// published policy builds, so a routed call is judged by the two rules a
+// provider route adds (providerRoutes). What this function adds is the TYPE,
+// and it exists because the wire has one word for each half and the gateway
+// answers one sentence for whichever rule failed first without saying which:
+// `provider_not_allowed` is a call the published policy refuses, and
+// `request_refused` is one the gateway's request check refuses on any path.
+//
+// Which half answered is read by asking the same check the same question with
+// the pin taken away (an empty RequestPin is "no model rule", whose reading is
+// the gateway's own). A body that check ACCEPTS was refused by the project's
+// model rule and by nothing else — a variant suffix, a foreign field, a shape
+// violation and a max_tokens bound all survive a pin-less read — so the type is
+// the policy's. The second read happens only where the call is refused anyway,
+// and it is the same function over the same body, so the two can never disagree
+// about which rules exist or about which of them a body meets.
+func (s *Server) providerRequestRefusal(shared *projectpolicy.Policy, body []byte) (typ string, refusal string, err error) {
+	routes := providerRoutes(shared)
+	refusal, err = s.requestRefusal(shared, body, requestPin(shared), routes)
+	if err != nil || refusal == "" {
+		return "", refusal, err
+	}
+	shape, err := s.requestRefusal(shared, body, gateway.RequestPin{}, routes)
+	if err != nil {
+		return "", "", err
+	}
+	if shape != "" {
+		return ErrorRequestRefused, shape, nil
+	}
+	return ErrorProviderNotAllowed, refusal, nil
 }
 
 // requestPin is the model rule this service holds a call to: the models the

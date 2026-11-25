@@ -2,7 +2,7 @@
 /* See console/LICENSE.md for the terms. */
 /* console/src/renderer/theme/palette.css — the console's VALUE SET.
  *
- * docs/design/console-styling.md §3.2 is the literal table this file transcribes, and the
+ * docs/console-styling/spec.md §3.2 is the literal table this file transcribes, and the
  * plan's Task 6.1 is the task that writes it. It holds every colour the console paints and
  * nothing else: no size, no spacing, no motion (those are `tokens.css`), so a rule that
  * wants a value reads a token here and a step there, and the contrast test

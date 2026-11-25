@@ -150,7 +150,7 @@
         "paths": [
           "docs/git-providers.md",
           "docs/checkout.md",
-          "docs/design/project-centric.md",
+          "docs/project-centric/spec.md",
           "internal/cli/docs_project_wide_git_test.go"
         ]
       }

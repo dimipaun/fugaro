@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/place"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
@@ -29,7 +30,9 @@ import (
 //
 // The GCP project's ID (D4): `fugaro setup`'s suggestion is a project to
 // create, named after this one — `fugaro-<name>`, defaultGCPProject — and
-// nothing else, because Fugaro only starts fresh. `fugaro update` on a new
+// nothing else. That name is one to create, or to adopt where a project
+// already carries it and holds nothing of Fugaro's (the owner's ruling of
+// 2026-11-22). `fugaro update` on a new
 // machine asks for an installation that already exists, so it also offers the
 // project this machine is already working in (suggestGCPProject:
 // GOOGLE_CLOUD_PROJECT or the quota project of the application default
@@ -39,14 +42,104 @@ import (
 // CLOUDSDK_CORE_PROJECT is read here.
 
 // defaultRegion is the region the installation's jobs and the scheduler run
-// in: the wizard's own question, answered once and changeable on a later run.
-// It is not the Firestore database's location (infra.FirestoreLocation, C1),
-// which is permanent and is confirmed by typing it; the two happen to hold the
-// same value and are never derived from one another.
-const defaultRegion = "us-east5"
+// in, and the region a first run gets when only the place is chosen: it is the
+// US place's own answer, read off the mapping so the two cannot drift (D3086,
+// LP1). The region is the one setting an installation stores; the place is
+// derived from it (D3080), and a region typed in full (--region) settles both.
+//
+// It is not the Firestore database's location (C1): the mapping derives that
+// one from the region (place.For, D3085), so it equals this value only where
+// Firestore is offered in the region — an installation in us-west8 runs its
+// jobs in this region and keeps its history in us-east5 — and a location is
+// permanent, which is why the person confirms it at the terminal rather than
+// this constant settling it.
+var defaultRegion = place.DefaultRegion(place.US)
 
 // regionRE is the shape of a Google Cloud region (us-east5, europe-west4).
 var regionRE = regexp.MustCompile(`^[a-z]+-[a-z]+[0-9]+$`)
+
+// parsePlace is the place an answer names: the two the product offers
+// (D3081), case-insensitively, and nothing else. A region typed in full is not
+// a place answer — it is the precise form of the same answer, which the run
+// takes through --region (D3080).
+func parsePlace(v string) (place.Place, bool) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "us":
+		return place.US, true
+	case "eu":
+		return place.EU, true
+	}
+	return place.None, false
+}
+
+// placeAnswer is the wizard's own reading of an answer to the place question
+// (F2, D3080, D3081): us or eu, or a region typed in full — the place question
+// and the region question are one question, so the person may answer either
+// way. It returns the place the answer settles and the region it carries, the
+// region being "" for a place (which the mapping's default region fills).
+//
+// The refusal is the one the region question has always printed, with the two
+// places in front of it: a person who types something that is neither gets a
+// sentence naming what the answer can be.
+func placeAnswer(v string) (p place.Place, region string, err error) {
+	if p, ok := parsePlace(v); ok {
+		return p, "", nil
+	}
+	if regionRE.MatchString(v) {
+		return place.Of(v), v, nil
+	}
+	return place.None, "", errors.New("answer us, eu, or a region (a region looks like us-east5 or europe-west4)")
+}
+
+// settleLocation turns --location into the region this run carries, and
+// refuses the one thing two answers to one question can be: a disagreement
+// (R2, D3080). The place itself is not stored anywhere — the region is the one
+// stored setting, and the place is derived from it wherever it is read
+// (place.Of) — so this runs before anything is asked or planned and leaves the
+// run's own field for the region.
+//
+// A place with no region typed beside it takes the place's default region
+// (place.DefaultRegion: us-east5, europe-west1, D3086). With both given they
+// must agree, and a `--region` in neither place (London, Zürich) agrees with
+// neither: it is a region typed in full, and --location is not how it is
+// written.
+func (o *initOptions) settleLocation() error {
+	if o.location == "" {
+		return nil
+	}
+	p, ok := parsePlace(o.location)
+	if !ok {
+		return userErr("--location %s is not a place: answer us or eu, or name the region itself with --region <region>", pluginwire.Printable(o.location))
+	}
+	if o.cloud.region == "" {
+		o.cloud.region = place.DefaultRegion(p)
+		return nil
+	}
+	if got := place.Of(o.cloud.region); got != p {
+		return userErr("--location %s and --region %s disagree: --region %s is %s, and the place and the region are one answer (pass one of the two, or a region of the place --location names)",
+			pluginwire.Printable(o.location), pluginwire.Printable(o.cloud.region), pluginwire.Printable(o.cloud.region), got)
+	}
+	return nil
+}
+
+// setupLocationRefusal is --location on a run that creates no installation
+// (setupCreates): the place is the answer of the run that CREATES the
+// installation, and a run that creates none has none to give.
+//
+// Left alone, the place is materialized into the place's default region
+// (settleLocation) — a region the caller never typed — which the region-move
+// guard then refuses in the region's own words, printing a --region the caller
+// never passed as the fix for the --location they did; and where that default
+// happens to be the installation's own region, the answer is dropped in
+// silence. Refused by name instead, where --rigor is (LP4's review; setup.go's
+// rigor refusals are the same refusal for the neighbouring first-run flag),
+// with the region named as what such a run takes.
+func setupLocationRefusal(answer string) error {
+	if answer == "" {
+		return nil
+	}
+	return userErr("--location (or the location member of an answers file, which is the same answer) is a first run's flag: it chooses the place fugaro setup creates the installation in, and this run creates none, so there is no place to choose (an installation's region is where it was created and cannot move) — the region itself is what a run names, with --region <region>; nothing was asked and nothing was written")
+}
 
 var nameJunkRE = regexp.MustCompile(`[^a-z0-9]+`)
 
@@ -233,7 +326,14 @@ func (r *initRun) firstRunMissing(ctx context.Context) (name, fromCheckout strin
 	if o.cloud.gcpProject == "" {
 		missing = append(missing, missingInput{"--gcp-project <id>", "the GCP project ID"})
 	}
-	if o.cloud.region == "" {
+	if o.cloud.region == "" && o.location == "" {
+		// One question, two ways to answer it (F2, R2): where the installation
+		// lives (us or eu), or the region itself. A run that cannot ask is
+		// refused with both, in that order, because either one is a whole
+		// answer and neither is a default this run may take for a person.
+		if o.setupCreates(true) {
+			missing = append(missing, missingInput{"--location <us|eu>", "where the installation lives: us or eu"})
+		}
 		missing = append(missing, missingInput{"--region <region>", "the GCP region, such as " + defaultRegion})
 	}
 	return name, fromCheckout, missing, true
@@ -370,39 +470,63 @@ func noAnswer(format string, args ...any) error {
 	return &noAnswerError{msg: e.Error(), user: e}
 }
 
-// prompt asks for the value spec names, with def as the suggestion, and returns
-// the validated answer. It is promptChoice with no second suggestion, and the
-// questions that offer one answer are unchanged by it.
-func (r *initRun) prompt(spec valueSpec, def string, valid func(string) error) (string, error) {
-	return r.promptChoice(spec, def, "", "", valid)
+// wizardAsk is one question as the wizard draws it: the label, what the
+// question says about the shape of the answer, the answer Enter takes and the
+// words that answer is offered in, and the second answer a person may type
+// instead with the one line saying why.
+//
+// def and show are two fields because Enter's answer and the words the question
+// offers it in are different strings in two places: the bake switch is drawn
+// [Y/n] and takes yes, and the billing account is drawn by its name and taken
+// by its number (askBilling). Everywhere else they are one string, and show is
+// left empty.
+type wizardAsk struct {
+	label string
+	hint  string
+	def   string
+	show  string
+	alt   string
+	why   string
+	// empty is what the question says when Enter is pressed at it and it has no
+	// suggestion to take, in place of the "a value is needed" every other
+	// question says. Only the rigor question has none, and saying so here is
+	// what lets it stop being said up front in a sentence above the four modes
+	// (askRigor).
+	empty string
 }
 
-// promptChoice is prompt with a second suggestion: def is what Enter takes, and
-// alt — offered after it, with the one line saying why, when it is neither
-// empty nor def itself — is an answer a person may type instead. Only the GCP
-// project's ID is asked this way (D4): a project to create, or the project the
-// machine is already running in, are both reasonable answers and only the
-// person knows which one they mean.
+// ask prints one question and reads its answer. It is the one way the wizard
+// asks, and what it prints is one line: the label, what the answer looks like,
+// and the suggestion Enter takes in brackets, with the colon the answer is
+// typed after — the value entry beneath adds nothing, because a second line
+// asking for the same value in the same words is one question asked twice
+// (valueSpec.asked).
+//
+// Only the GCP project's ID has a second suggestion (alt, with the one line
+// saying why): a project to create and the project this machine already works
+// in are both reasonable answers, and only the person knows which they mean.
 //
 // The value itself comes through the one value-entry helper (readValue, D1540):
 // at a terminal it is read, beside no terminal it is refused at once naming the
 // flag or the variable that supplies it, and neither is a confirmation — so
-// what the helper reads here is a value and never a yes or a no. The suggestion
-// is printed above the read, the way the wizard has always offered it, and the
-// entry asks for the value under it in its own words ("Type …: "): an empty
-// line takes the suggestion, and the entry has no default of its own, so a
+// what is read here is a value and never a yes or a no. Enter takes the
+// suggestion where there is one, and the entry has no default of its own, so a
 // value that cannot be defaulted is refused rather than guessed (a run with no
 // terminal gets the refusal, never the suggestion in the person's place), and
 // an input that ended with nothing on the line is noAnswer rather than an empty
 // line — the suggestion is what the person took with Enter, not what this run
 // takes for them when they walked away. A value the caller's own rule refuses
-// is asked again, three attempts in all, and a question that runs out of
-// attempts is noAnswer — a run that stopped at a question, not a refusal.
-func (r *initRun) promptChoice(spec valueSpec, def, alt, why string, valid func(string) error) (string, error) {
-	if line := suggestionLine(spec.what, def, alt, why); line != "" {
-		fmt.Fprintf(r.w, "%s\n", line)
-	}
+// is asked again, question line and all, three attempts in all, and a question
+// that runs out of attempts is noAnswer — a run that stopped at a question, not
+// a refusal.
+func (r *initRun) askValue(a wizardAsk, spec valueSpec, valid func(string) error) (string, error) {
+	spec.asked = true
 	for range 3 {
+		line := r.qs.Ask(a.label, a.hint, cmp.Or(a.show, a.def))
+		if a.alt != "" && a.alt != a.def {
+			line += fmt.Sprintf(" (or %s: %s)", pluginwire.Printable(a.alt), a.why)
+		}
+		fmt.Fprint(r.w, line)
 		b, err := readValueIn(r.ctx(), r.in, r.w, spec)
 		if errors.Is(err, io.EOF) {
 			// The input ended with nothing on the line: a question nobody
@@ -414,9 +538,9 @@ func (r *initRun) promptChoice(spec valueSpec, def, alt, why string, valid func(
 		if err != nil {
 			return "", err
 		}
-		v := cmp.Or(strings.TrimSpace(string(b)), def)
+		v := cmp.Or(strings.TrimSpace(string(b)), a.def)
 		if v == "" {
-			fmt.Fprintln(r.w, "  a value is needed")
+			fmt.Fprintln(r.w, "  "+cmp.Or(a.empty, "a value is needed"))
 			continue
 		}
 		if verr := valid(v); verr != nil {
@@ -426,24 +550,4 @@ func (r *initRun) promptChoice(spec valueSpec, def, alt, why string, valid func(
 		return v, nil
 	}
 	return "", noAnswer("no usable answer for %q after 3 tries", spec.what)
-}
-
-// suggestionLine is what the wizard shows above a value entry: the question's
-// own name, the answer Enter takes, and the second answer with the one line
-// saying why — the line the prompt printed before the value entry read the
-// value itself (promptChoice). It is empty where the question has neither a
-// suggestion nor a second one, so a question with nothing to offer prints only
-// the entry's own "Type …: ".
-func suggestionLine(what, def, alt, why string) string {
-	second := ""
-	if alt != "" && alt != def {
-		second = fmt.Sprintf(" (or %s: %s)", pluginwire.Printable(alt), why)
-	}
-	switch {
-	case def != "":
-		return fmt.Sprintf("%s [%s]%s", what, def, second)
-	case second != "":
-		return what + ":" + second
-	}
-	return ""
 }

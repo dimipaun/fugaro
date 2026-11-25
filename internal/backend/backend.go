@@ -111,7 +111,7 @@ type LaunchSpec struct {
 	RunID    string
 	// Job is the job to run, by its own name (not a path): the shared project
 	// job of the profile the workflow selects, under the project-centric model
-	// (docs/design/project-centric.md §4.1, plan task 3.4 step 1). Empty means
+	// (docs/project-centric/spec.md §4.1, plan task 3.4 step 1). Empty means
 	// the per-repository job of (Repo.Slug, Workflow), which is what every
 	// project that has published no profiles gets, byte for byte, and what
 	// every workflow that is not a `checkout: clone` one keeps until phase 4
@@ -124,7 +124,7 @@ type LaunchSpec struct {
 	Timeout time.Duration
 	// Env are extra "NAME=value" variables for this execution only, merged
 	// into the job's own environment (the Cloud Run v2 API merges override env
-	// into the job's; docs/design/project-centric.md §2.2). They are plain: a
+	// into the job's; docs/project-centric/spec.md §2.2). They are plain: a
 	// value here is readable in the job's definition and in every listing of it,
 	// so a value that is a secret goes in SecretEnv instead — the budget marker
 	// of a launch that minted is one (a fact about this launch, not about the
@@ -135,7 +135,7 @@ type LaunchSpec struct {
 	// SecretEnv are "NAME=value" variables like Env, for this execution only,
 	// whose value is a secret: today the one entry is the budget marker of a
 	// launch that sealed its token, whose value is the launch's seal key
-	// (docs/design/budget-token-channel.md §7.1, D15). A backend carries a
+	// (docs/budget-token-channel/spec.md §7.1, D15). A backend carries a
 	// secret entry only where the design accepts its audience — Cloud Run's
 	// execution override, priced in §7.1 — and refuses the launch where it
 	// cannot (Batch, whose only carrier is the job definition's plain
@@ -303,7 +303,7 @@ func (e Execution) Billed(now time.Time) time.Duration {
 // VMMinimumBilled is the shortest window Compute Engine bills: "All vCPUs,
 // GPUs, and GB of memory are charged a minimum of 1 minute", then per
 // second (cloud.google.com/compute/vm-instance-pricing, checked 2026-10-15,
-// quoted in docs/design/compute-backend.md §5.2). Cloud Run jobs have no
+// quoted in docs/compute-backend/spec.md §5.2). Cloud Run jobs have no
 // such floor, which is why the floor is applied here rather than in
 // Prices.ComputeUSD: it is a property of the platform, not of the prices.
 const VMMinimumBilled = time.Minute

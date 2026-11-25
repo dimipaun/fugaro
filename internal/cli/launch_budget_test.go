@@ -22,18 +22,23 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
-	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
-const testSigner = "fugaro-token-signer@aurora-fp.iam.gserviceaccount.com"
+// testSigner is the signer the fixture's installation mints through: the
+// harness's own (testutil.BudgetSigner), which is the account its config block
+// names and the one the fixture's fake IAM Credentials API signs as.
+const testSigner = testutil.BudgetSigner
 
 // launchBudgetFixture is a cloud fixture whose project has the budget
-// backend: an RTDB fake, an IAM Credentials fake that can sign as the signer.
+// backend: an RTDB fake this file seeds, the harness's signer and the IAM
+// Credentials fake that signs as it.
 type launchBudgetFixture struct {
 	*cloudFixture
 	db  *gcpfake.RTDB
@@ -51,32 +56,13 @@ func newLaunchBudget(t *testing.T, mode string) *launchBudgetFixture {
 // counterpart for, and the one a test about an unreadable ledger turns on.
 func newLaunchBudgetWith(t *testing.T, mode string, members ...string) *launchBudgetFixture {
 	t.Helper()
+	f := &launchBudgetFixture{cloudFixture: newCloudFixture(t)}
+	f.db, f.iam = f.cloudFixture.budget.DB, f.cloudFixture.iam
 	extra := ""
 	for _, m := range members {
 		extra += m + ", "
 	}
-	return newLaunchBudgetBlock(t, "mode: "+mode+", ", extra)
-}
-
-// newUnsetModeBudget is the same fixture with no mode key in its block at all:
-// the installation whose config names a database and no mode, which the
-// launcher reads as observe (C1, AB11) and which is the mode budgetEnv writes
-// into the jobs of exactly that config (AB5).
-func newUnsetModeBudget(t *testing.T) *launchBudgetFixture {
-	t.Helper()
-	return newLaunchBudgetBlock(t, "", "")
-}
-
-// newLaunchBudgetBlock builds the fixture whose budget block is
-// "budget: { <modeClause>per_run_usd: 5, <extra>… }" — the two callers above
-// differ in the mode clause alone, so that what makes a launch mint (or refuse
-// to) is the only thing that varies between them.
-func newLaunchBudgetBlock(t *testing.T, modeClause, extra string) *launchBudgetFixture {
-	t.Helper()
-	iam := gcpfake.NewIAMCredentials(t)
-	iam.AddSigner(testSigner)
-	f := &launchBudgetFixture{cloudFixture: newCloudFixture(t, "iam_credentials: "+iam.URL+"/"), db: gcpfake.NewRTDB(t), iam: iam}
-	f.appendConfig(t, "budget: { "+modeClause+"per_run_usd: 5, "+extra+"firebase_project: proj-1234, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
+	f.appendConfig(t, "budget: { mode: "+mode+", per_run_usd: 5, "+extra+"firebase_project: proj-1234, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
 		", firebase_api_key: "+settingsFakeAPIKey+" }\n")
 	f.db.Set("fugaro/project", "aurora")
 	// The database a real installation runs against carries Fugaro's own mark
@@ -86,9 +72,7 @@ func newLaunchBudgetBlock(t *testing.T, modeClause, extra string) *launchBudgetF
 	// points at.
 	f.db.Set(budget.PathMark, auroraMark())
 	f.db.Set("config/mode", "enforce")
-	f.db.Set("config/caps/global", map[string]any{"dailyMicros": 100 * usd1, "perRunMicros": 10 * usd1})
-	f.db.Set("config/caps/defaults", map[string]any{"repoDailyMicros": 50 * usd1, "repoPerRunMicros": 5 * usd1})
-	f.db.Set("config/limits", map[string]any{"maxReserveMicros": 5 * usd1})
+	seedLaunchCaps(f.db)
 	// The job image's runner is a current release's: a launch that mints is
 	// judged against it (the seal gate, sealSince), and a launch under a
 	// published policy is judged against it too (policyImageGate, releasePolicy)
@@ -408,171 +392,35 @@ func TestAMintThatCannotDeleteOrWriteStopsTheLaunch(t *testing.T) {
 	}
 }
 
-// A config that names a budget mode and no database is not refused for that
-// alone (the review of this PR reconciled the launcher with internal/infra's
-// readiness rule, "nothing is blocked until a policy exists"): the mode is the
-// operator's claim about the budget, never a policy, and an installation whose
-// config names no database has no policy this launcher can see however its mode
-// is spelled. What refuses a launch is a policy the launcher *can* see and
-// cannot honour — an allow-list that does not admit the repository
-// (TestRunRefusesBeforeLaunch), a published node it cannot read
-// (TestLaunchRefusesADeniedPolicyRead) — and at deploy time the readiness gate
-// is what blocks a project-centric installation whose jobs carry no backend.
-//
-// So this launch goes ahead, with no token and with no database call at all:
-// the same shape a never-configured or mode-off installation has always had.
-//
-// Both orders are pinned because they are different code: without
-// --no-budget-check the budget pre-check runs first (and skips, having no
-// database to check either), with it the policy gate is the only thing left.
-// Each order gets its own fixture: the launch now succeeds, so a second one on
-// the same run id would be refused as an already-launched run and would pin
-// nothing.
-func TestModeOnWithoutADatabaseLaunchesAsBefore(t *testing.T) {
-	for _, mode := range []string{"observe", "enforce"} {
-		t.Run(mode, func(t *testing.T) {
-			for _, tc := range []struct {
-				name string
-				args []string
-			}{
-				{"as launched", nil},
-				{"--no-budget-check", []string{"--no-budget-check"}},
-			} {
-				t.Run(tc.name, func(t *testing.T) {
-					f := newCloudFixture(t)
-					f.appendConfig(t, "budget: { mode: "+mode+", per_run_usd: 5 }\n")
-					var env map[string]string
-					f.run.OnRun = func(c gcpfake.RunCall) { env = c.Env }
-					args := append([]string{"run", "--repo", "acme/app", "--run-id", budgetRun}, tc.args...)
-					_, errOut, err := execute(t, append(args, "Add a feature")...)
-					if err != nil {
-						t.Fatalf("err = %v (%s), want a launch: a mode that is on is not a policy, and with no database there is no policy to read", err, errOut)
-					}
-					if n := len(f.run.Executions()); n != 1 {
-						t.Errorf("%d executions were created, want 1", n)
-					}
-					if !storedTask(t, f) {
-						t.Error("the launch stored no task")
-					}
-					if tok := readToken(t, f, budgetRun); tok != "" {
-						t.Error("a launch with no database to read a policy from minted a budget token")
-					}
-					// And the job carries no backend, which is the same
-					// shape a never-configured installation deploys: no
-					// address to read a policy from, so no mode to claim
-					// either. A project that then publishes a policy is
-					// what internal/infra's readiness gate stops the next
-					// deploy for.
-					for _, k := range []string{runner.RTDBURLEnv, runner.BudgetTokenEnv, "FUGARO_BUDGET_MODE"} {
-						if v, ok := env[k]; ok {
-							t.Errorf("the job's environment carries %s=%q with no database to read a policy from", k, v)
-						}
-					}
-				})
-			}
-		})
-	}
-}
-
-// The mint decision, at the line the original finding cites (budgetMintOn's
-// early return): with no database there is no policy this CLI can see, whatever
-// the mode says, so the answer is "no token needed" rather than a refusal. That
-// reading is what makes the mode-off installation and the never-configured one
-// the same path — and it is sound because the side that can see a policy, the
-// launcher's own gate and internal/infra's readiness gate, is what refuses.
-func TestMintIsNotNeededWithoutADatabaseWhateverTheMode(t *testing.T) {
-	for _, cfg := range []string{
-		"budget: { mode: observe, per_run_usd: 5 }\n",
-		"budget: { mode: enforce, per_run_usd: 5 }\n",
-		"",
-	} {
-		f := newCloudFixture(t)
-		f.appendConfig(t, cfg)
-		env := memEnv(t, f)
-		if on, err := env.budgetMintOn(context.Background()); on || err != nil {
-			t.Fatalf("budgetMintOn with %q = (%v, %v), want a skip: no database, so no policy this CLI could see", cfg, on, err)
-		}
-	}
-}
-
-// The launcher's mint decision reads the mode the way the job's own
-// environment is written (AB5's budgetEnv): an installation whose config names
-// a database and no mode is an installation whose mode is observe (C1, AB11 —
-// unset is observe everywhere), so a launch of it mints the run's token
-// exactly as one that writes observe does, and the job the same config deploys
-// names observe. An explicit off stays off: the two tests above and
-// TestBudgetOffSkipsEverything are its side.
-func TestAnUnsetModeLaunchesWithAToken(t *testing.T) {
-	f := newUnsetModeBudget(t)
-	var env map[string]string
-	f.run.OnRun = func(c gcpfake.RunCall) { env = c.Env }
-	if _, _, err := runBudget(t); err != nil {
-		t.Fatal(err)
-	}
-	raw := readToken(t, f.cloudFixture, budgetRun)
-	if raw == "" {
-		t.Fatal("an installation whose config names a database and no mode minted no token: an unset mode is observe, and observe mints")
-	}
-	if c := claimsOf(t, f, unsealed(t, markerKey(t, env), []byte(raw), budgetRun)); c["fs"] != appSlug || c["fr"] != budgetRun || c["fp"] != "aurora" {
-		t.Fatalf("claims = %v", c)
-	}
-	// And the job that installation deploys names the same mode: the launcher
-	// and the deploy answer one default, which is what makes a run of it able
-	// to read the policy it was minted an identity for.
-	lc := memEnv(t, f.cloudFixture).lc
-	cfg, problems := config.Parse([]byte("version: 1\nproject: aurora\ngit: { provider: github }\n" +
-		"workflows:\n  web: { commands: { build: sh b.sh, test: sh t.sh } }\n"))
-	if len(problems) > 0 {
-		t.Fatal(problems)
-	}
-	// The app id, the base image and the registry the spec asks of every
-	// repository, spelled the way internal/infra's own fixtures spell them:
-	// nothing here is about the provider or the images.
-	lc.RegistryHost = "us-east5-docker.pkg.dev/proj-1234"
-	lc.BaseImages = map[string]string{"base": lc.RegistryHost + "/fugaro-base/fugaro-base:dev-0123abc"}
-	rs, err := infra.Repo(infra.Inputs{LC: lc, Repo: "acme/app", Cfg: cfg, GitHubAppID: "123456"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	w, ok := rs.Workflows["web"]
-	if !ok {
-		t.Fatalf("the spec carries no web workflow: %v", rs.Workflows)
-	}
-	if got := w.Env[infra.BudgetModeEnv]; got != "observe" {
-		t.Errorf("the job names %s=%q, want observe: the launcher minted for an unset mode, and the deploy must name the mode that mint is for", infra.BudgetModeEnv, got)
-	}
-}
-
-// newOffModeBudget is the launch fixture with the budget mode off in the
-// operator's config and the budget block spelled as given, so that what makes
-// a launch mint (or refuse to) is the only thing that varies.
-func newOffModeBudget(t *testing.T, budget string) *launchBudgetFixture {
+// newOffModeBudget is the launch fixture of an installation that has a budget
+// database — with the signer it mints through and the caps a launch is
+// pre-checked against — and whose config spells the mode off. Under AB4 the
+// mode decides nothing about the mint, so the spelling that used to mean "mint
+// nothing" is deliberately the one these tests use: what they vary instead is
+// what the database holds (a published policy, and how it answers), and every
+// one of them mints a token whatever they find there.
+func newOffModeBudget(t *testing.T) *launchBudgetFixture {
 	t.Helper()
-	iam := gcpfake.NewIAMCredentials(t)
-	iam.AddSigner(testSigner)
-	f := &launchBudgetFixture{cloudFixture: newCloudFixture(t, "iam_credentials: "+iam.URL+"/"), db: gcpfake.NewRTDB(t), iam: iam}
-	f.appendConfig(t, budget)
-	f.db.Set("fugaro/project", "aurora")
-	f.db.Set("config/mode", "enforce")
-	// The record is the policy release's and not the seal's: this fixture is
-	// the one tests publish a policy onto, and the launcher holds a job image
-	// to the release that introduced the node's version (policyImageGate) — a
-	// seal-release record under a published policy is a run that halts at
-	// bootstrap.
-	writeBuildRecord(t, f.cloudFixture, appSlug, "web", releasePolicy)
-	return f
+	return newLaunchBudgetWith(t, "off")
 }
 
-// The launcher's mint decision follows the published policy, not the
-// operator's local mode (plan task 1.3 step 2): a job of a project that has
-// published a policy must be able to read it, whatever mode its environment
-// was deployed with, and the runner reads the policy's mode through that
-// identity. Without a policy there is nothing to read and no token is minted
-// — which is what makes the runner's "budget off, no token" path a legacy
-// installation rather than a hole.
-func TestLauncherMintsATokenWhenAPolicyExistsAndTheLocalModeIsOff(t *testing.T) {
+// The launcher mints for every launch of a configuration that names a budget
+// database — whatever the local mode says and whether or not a policy is
+// published (AB4, F7) — and this test pins the three shapes that used to be
+// told apart by the policy read: nothing published (the launch that minted
+// nothing before), a published policy (the run's identity, and the job's own
+// environment left alone), and a database with no signer to mint with (still
+// the one refusal, because the identity is what the run is given).
+//
+// The runner's "budget off, no token" path stays a legacy installation rather
+// than a hole for a different reason now: an installation with no database
+// mints nothing and is refused at the launch instead (budgetBackendOn).
+func TestTheLauncherMintsWhateverTheModeAndThePolicy(t *testing.T) {
+	// The fixture's own block is the shape under test, so a subtest that wants
+	// another one REPLACES it: the config carries one budget key, and appending
+	// a second is a file this program cannot read (appendConfig's own note).
 	budget := func(f *launchBudgetFixture) string {
-		return "budget: { mode: off, per_run_usd: 5, rtdb_url: " + f.db.URL + ", token_signer: " + testSigner +
+		return "budget: { mode: off, per_run_usd: 5, firebase_project: proj-1234, rtdb_url: " + f.db.URL + ", token_signer: " + testSigner +
 			", firebase_api_key: " + settingsFakeAPIKey + " }\n"
 	}
 	// The allow-list admits the fixture's repository: a published policy with
@@ -581,27 +429,28 @@ func TestLauncherMintsATokenWhenAPolicyExistsAndTheLocalModeIsOff(t *testing.T) 
 	// subtests are about.
 	policy := `{"version":9,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["github/acme/*"]}`
 
-	t.Run("no policy, no token", func(t *testing.T) {
-		f := newOffModeBudget(t, "")
-		f.appendConfig(t, budget(f))
+	t.Run("nothing published, a token", func(t *testing.T) {
+		f := newOffModeBudget(t)
+		setBudgetBlock(t, os.Getenv("FUGARO_CONFIG"), budget(f))
 		var env map[string]string
 		f.run.OnRun = func(c gcpfake.RunCall) { env = c.Env }
 		if _, _, err := runBudget(t); err != nil {
 			t.Fatal(err)
 		}
-		if tok := readToken(t, f.cloudFixture, budgetRun); tok != "" {
-			t.Fatalf("a launch for a project with no policy minted a token: %q", tok)
+		raw := readToken(t, f.cloudFixture, budgetRun)
+		if raw == "" {
+			t.Fatal("a launch of an installation with a budget database minted no token: a policy is not what makes the launch mint (AB4, F7)")
 		}
-		if v, ok := env[runner.BudgetTokenEnv]; ok {
-			t.Fatalf("a launch that minted nothing set %s = %q", runner.BudgetTokenEnv, v)
+		if n := len(f.iam.SignCalls()); n != 1 {
+			t.Fatalf("sign calls = %d, want the one mint", n)
 		}
-		if n := len(f.iam.SignCalls()); n != 0 {
-			t.Fatalf("sign calls = %d", n)
+		if v, ok := env[runner.BudgetTokenEnv]; !ok || v == "" {
+			t.Fatalf("%s is %q, want the sealed key of the token the launch minted", runner.BudgetTokenEnv, v)
 		}
 	})
 	t.Run("a policy, a token", func(t *testing.T) {
-		f := newOffModeBudget(t, "")
-		f.appendConfig(t, budget(f))
+		f := newOffModeBudget(t)
+		setBudgetBlock(t, os.Getenv("FUGARO_CONFIG"), budget(f))
 		f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
 		f.db.Set(projectpolicy.PathShared(), json.RawMessage(policy))
 		var env map[string]string
@@ -630,11 +479,9 @@ func TestLauncherMintsATokenWhenAPolicyExistsAndTheLocalModeIsOff(t *testing.T) 
 			t.Fatalf("the launcher rewrote the job's %s to the policy's", runner.BudgetModeEnv)
 		}
 	})
-	t.Run("a policy with no signer is refused", func(t *testing.T) {
-		f := newOffModeBudget(t, "")
-		f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", firebase_api_key: "+settingsFakeAPIKey+" }\n")
-		f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
-		f.db.Set(projectpolicy.PathShared(), json.RawMessage(policy))
+	t.Run("no signer, a refusal", func(t *testing.T) {
+		f := newOffModeBudget(t)
+		setBudgetBlock(t, os.Getenv("FUGARO_CONFIG"), "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", firebase_api_key: "+settingsFakeAPIKey+" }\n")
 		_, _, err := runBudget(t)
 		if err == nil || !strings.Contains(err.Error(), "budget.token_signer") {
 			t.Fatalf("err = %v, want the missing-signer refusal", err)
@@ -658,8 +505,8 @@ func TestLauncherMintsATokenWhenAPolicyExistsAndTheLocalModeIsOff(t *testing.T) 
 // (projectPolicyRead instead of env.policy.read) — the count below becomes 2
 // and this test fails.
 func TestLaunchReadsThePolicyOnce(t *testing.T) {
-	f := newOffModeBudget(t, "")
-	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
+	f := newOffModeBudget(t)
+	setBudgetBlock(t, os.Getenv("FUGARO_CONFIG"), "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
 		", firebase_api_key: "+settingsFakeAPIKey+" }\n")
 	publishPolicy(t, f, `{"version":9,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["*"]}`)
 	if _, _, err := runBudget(t); err != nil {
@@ -692,8 +539,8 @@ func TestLaunchReadsThePolicyOnce(t *testing.T) {
 // run's task.json is in the bucket. No stored task is this gate's promise
 // ("a refused launch leaves nothing behind at all"), and it is asserted below.
 func TestLaunchRefusesADeniedPolicyRead(t *testing.T) {
-	f := newOffModeBudget(t, "")
-	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
+	f := newOffModeBudget(t)
+	setBudgetBlock(t, os.Getenv("FUGARO_CONFIG"), "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
 		", firebase_api_key: "+settingsFakeAPIKey+" }\n")
 	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
 	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":9,"budget":{"mode":"enforce","per_run_usd":5}}`))
@@ -722,8 +569,8 @@ func TestLaunchRefusesADeniedPolicyRead(t *testing.T) {
 // upgraded mid-run), and the CLI — which the operator can upgrade — refuses
 // them, because a misspelt key is a policy the owner believes he set.
 func TestLaunchRefusesAPolicyKeyThisFugaroDoesNotKnow(t *testing.T) {
-	f := newOffModeBudget(t, "")
-	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
+	f := newOffModeBudget(t)
+	setBudgetBlock(t, os.Getenv("FUGARO_CONFIG"), "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
 		", firebase_api_key: "+settingsFakeAPIKey+" }\n")
 	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
 	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":9,"allow_repo":["acme/*"]}`))
@@ -764,8 +611,8 @@ func TestLaunchClassifiesAMalformedPolicyAsTheUsersOwnError(t *testing.T) {
 		"not a JSON object":            `["budget"]`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			f := newOffModeBudget(t, "")
-			f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
+			f := newOffModeBudget(t)
+			setBudgetBlock(t, os.Getenv("FUGARO_CONFIG"), "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
 				", firebase_api_key: "+settingsFakeAPIKey+" }\n")
 			f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
 			f.db.Set(projectpolicy.PathShared(), json.RawMessage(node))
@@ -804,8 +651,8 @@ func TestLaunchClassifiesAnUnreachablePolicyReadAsRemote(t *testing.T) {
 			c.Close()
 		}
 	}()
-	f := newOffModeBudget(t, "")
-	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: http://"+addr+", token_signer: "+testSigner+
+	f := newOffModeBudget(t)
+	setBudgetBlock(t, os.Getenv("FUGARO_CONFIG"), "budget: { mode: off, per_run_usd: 5, rtdb_url: http://"+addr+", token_signer: "+testSigner+
 		", firebase_api_key: "+settingsFakeAPIKey+" }\n")
 	_, _, err = runBudget(t)
 	if err == nil || ExitCode(err) != ExitRemoteError {
@@ -1142,51 +989,31 @@ func TestNoBudgetCheckSkipsOnlyPrecheck(t *testing.T) {
 	}
 }
 
-func TestBudgetOffSkipsEverything(t *testing.T) {
-	for name, cfg := range map[string]string{
-		"off, backend configured": "budget: { mode: off, rtdb_url: URL, token_signer: " + testSigner + " }\n",
-		"no budget block":         "",
-		// A mode that is not off with no database is the same skip: nothing is
-		// blocked until a policy exists, and this config has none the launcher
-		// could see (TestModeOnWithoutADatabaseLaunchesAsBefore is the launch
-		// half of it, with the pre-checks in the way).
-		"observe, no backend": "budget: { mode: observe, per_run_usd: 5 }\n",
-	} {
-		t.Run(name, func(t *testing.T) {
-			iam := gcpfake.NewIAMCredentials(t)
-			iam.AddSigner(testSigner)
-			f := newCloudFixture(t, "iam_credentials: "+iam.URL+"/")
-			db := gcpfake.NewRTDB(t)
-			f.appendConfig(t, strings.ReplaceAll(cfg, "URL", db.URL))
-			db.Set("config/kill/global", map[string]any{"on": true})
-			var env map[string]string
-			f.run.OnRun = func(c gcpfake.RunCall) { env = c.Env }
-			_, errOut, err := execute(t, "run", "--repo", "acme/app", "--run-id", budgetRun, "--no-budget-check", "Add a feature")
-			if err != nil {
+// The pre-check and the mint are the database's, not the mode's (AB4, F7):
+// `budget.mode: off` with a database and a signer is a launch like any other
+// now, and the three modes are pinned together here because the point is that
+// they are the same launch. What the mode used to buy — no database call at
+// all, no token — is gone: the pre-check reads the database (the kill switch
+// below is on, so the launch is refused for it) and, with the switch off, the
+// same launch mints the run's identity.
+func TestABudgetOffInstallationMintsAndChecksLikeAnyOther(t *testing.T) {
+	for _, mode := range []string{"off", "observe", "enforce"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newLaunchBudget(t, mode)
+			f.db.Set("config/kill/global", map[string]any{"on": true})
+			_, errOut, err := runBudget(t)
+			if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "kill switch") {
+				t.Fatalf("err = %v (%s), want the pre-check's kill-switch refusal: every launch of an installation with a database is pre-checked", err, errOut)
+			}
+			if launchedAny(f) || len(f.iam.SignCalls()) != 0 || readToken(t, f.cloudFixture, budgetRun) != "" {
+				t.Fatal("a refused launch minted, launched or wrote a token")
+			}
+			g := newLaunchBudget(t, mode)
+			if _, _, err := runBudget(t); err != nil {
 				t.Fatal(err)
 			}
-			// A budget-off launch touches no part of the budget: no caps, no
-			// kill switch, no registry, no token. It does read whether the
-			// project has published a policy, with the operator's own
-			// credentials, because a published policy means the run needs an
-			// identity whatever the mode is (task 1.3 step 2), and the roles
-			// node, because the launch's role check reads it whatever the mode
-			// is too (plan task RS6a).
-			for _, r := range db.Requests() {
-				if !launchReadIsNotTheBudget(r) {
-					t.Fatalf("a budget-off launch made a database call it should not: %s %s", r.Method, r.Path)
-				}
-			}
-			if env == nil || len(iam.SignCalls()) != 0 || readToken(t, f, budgetRun) != "" {
-				t.Fatalf("a budget-off launch touched the backend (env %v)", env)
-			}
-			if strings.Contains(errOut, "budget") {
-				t.Fatalf("a budget-off launch said something about the budget: %q", errOut)
-			}
-			for k := range env {
-				if strings.Contains(k, "TOKEN") && k != "FUGARO_RUN" {
-					t.Fatalf("unexpected env %s", k)
-				}
+			if len(g.iam.SignCalls()) != 1 || readToken(t, g.cloudFixture, budgetRun) == "" {
+				t.Fatal("a launch of an installation with a budget database minted no token")
 			}
 		})
 	}
@@ -1637,10 +1464,18 @@ func TestLaunchRefusesProxiedRunOnBatch(t *testing.T) {
 // and ServiceSwitchedAuth, which is the release BEFORE the flip's own), and
 // the rows are the switch's conditions taken one at a time: both auths the
 // list carries are refused on the image below it, and a repository whose
-// record says its root was never applied with the service on, an installation
-// that carries no service, and a published node whose budget mode is off are
-// admitted — a launch the service does not serve keeps every mount and is
-// judged by every gate it always was (G9, G17).
+// record says its root was never applied with the service on and an
+// installation that carries no service are admitted — a launch the service
+// does not serve keeps every mount and is judged by every gate it always was
+// (G9, G17).
+//
+// The switch's fourth condition — a published node whose budget mode is off,
+// the mode that left a cascade run without a gateway — is the one row that
+// cannot reach this gate at all any more: off is not a mode this release has
+// (D3009), so the node's own reader refuses it with the one text every door
+// refuses the word with (D3022, AB2) and the launch stops there. The row holds
+// that refusal instead of this gate's admission, and `fugaro update` is what
+// rewrites such a node (AB8b, F26).
 //
 // The admitted rows end at policyImageGate rather than at the launch, the way
 // TestLaunchRefusesProxiedRunOnOldImage's do and for the same reason: every
@@ -1667,7 +1502,7 @@ func TestLaunchRefusesASwitchedAPIKeyRunOnAnOldImage(t *testing.T) {
 		{"a switched oauth repository on an image below the flip", oauthLaunchYAML, config.AuthOAuth, old, proxiedBlock, "enforce", true, true},
 		{"the repository's own switch is off", apiKeyLaunchYAML, "", old, proxiedBlock, "enforce", false, false},
 		{"the installation carries no credentials service", apiKeyLaunchYAML, "", old, "", "enforce", true, false},
-		{"the published node's budget mode is off", apiKeyLaunchYAML, "", old, proxiedBlock, "off", true, false},
+		{"the published node still says the removed budget mode", apiKeyLaunchYAML, "", old, proxiedBlock, "off", true, false},
 		{"the job image is at the flip's release", apiKeyLaunchYAML, "", atFlip, proxiedBlock, "enforce", true, false},
 		{"the job image is the current release", apiKeyLaunchYAML, "", releasePolicy, proxiedBlock, "enforce", true, false},
 	} {
@@ -1688,6 +1523,21 @@ func TestLaunchRefusesASwitchedAPIKeyRunOnAnOldImage(t *testing.T) {
 				t.Fatal("a repository whose model mounts the flip has taken off was launched onto a job image whose runner cannot read them from the credentials service: it would halt at its first model call with no key and no account of its own (D2072, G17)")
 			case tc.refused:
 				for _, want := range []string{serviceAuthSince, "model credential is brokered", tc.auth, "job mounts neither the Anthropic key nor the Claude OAuth token", "fugaro update"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not name %q: %v", want, err)
+					}
+				}
+				if launchedAny(f) {
+					t.Error("the refused launch started an execution")
+				}
+				if storedTaskFor(t, f.cloudFixture, appSlug) {
+					t.Error("the refused launch stored a task")
+				}
+			case policy.Mode(tc.mode).Removed():
+				if err == nil {
+					t.Fatal("a published node that still says the word that was a budget mode was launched: this release has no such mode (D3009), so the node's own reader refuses it, and what serves this repository again is the update's rewrite of the node, not a run")
+				}
+				for _, want := range []string{projectpolicy.PathShared(), policy.ModeOffRefusal} {
 					if !strings.Contains(err.Error(), want) {
 						t.Errorf("the refusal does not name %q: %v", want, err)
 					}
@@ -1740,10 +1590,15 @@ workflows:
 // release BEFORE the flip's own), and the rows are the gate's conditions taken
 // one at a time: a switched repository declaring a secret is refused on the
 // image below that release, and a repository whose record says its root was
-// never applied with the service on, an installation that carries no service, a
-// published node whose budget mode is off and a workflow declaring no secret
-// are admitted — none of them loses a mount to the flip, and each is judged by
-// every gate it always was (G9, G17).
+// never applied with the service on, an installation that carries no service
+// and a workflow declaring no secret are admitted — none of them loses a mount
+// to the flip, and each is judged by every gate it always was (G9, G17).
+//
+// The row that carries a published node whose budget mode is off is the one
+// that stops at the node's own reader rather than here: off is not a mode this
+// release has (D3009), so the launch is refused with the one text every door
+// refuses the word with (D3022, AB2) and the fix is the update's rewrite of the
+// node (AB8b, F26).
 //
 // The admitted rows end at policyImageGate rather than at the launch, the way
 // TestLaunchRefusesASwitchedAPIKeyRunOnAnOldImage's do and for the same reason:
@@ -1770,7 +1625,7 @@ func TestLaunchRefusesAVaultRunOnAnOldImage(t *testing.T) {
 		{"the workflow declares no secret", apiKeyLaunchYAML, old, proxiedBlock, "enforce", true, false},
 		{"the repository's own switch is off", vaultLaunchYAML, old, proxiedBlock, "enforce", false, false},
 		{"the installation carries no credentials service", vaultLaunchYAML, old, "", "enforce", true, false},
-		{"the published node's budget mode is off", vaultLaunchYAML, old, proxiedBlock, "off", true, false},
+		{"the published node still says the removed budget mode", vaultLaunchYAML, old, proxiedBlock, "off", true, false},
 		{"the job image is at the fetch's release", vaultLaunchYAML, atFetch, proxiedBlock, "enforce", true, false},
 		{"the job image is the current release", vaultLaunchYAML, releasePolicy, proxiedBlock, "enforce", true, false},
 	} {
@@ -1791,6 +1646,21 @@ func TestLaunchRefusesAVaultRunOnAnOldImage(t *testing.T) {
 				t.Fatal("a repository whose workflow secrets the flip has taken the mounts off was launched onto a job image whose runner cannot fetch them from the credentials service: the run would stop at bootstrap over a declared secret it has no value for (G17)")
 			case tc.refused:
 				for _, want := range []string{vaultSince, "workflow secrets are brokered", "job mounts none of the workflow's own secrets", "fugaro update"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not name %q: %v", want, err)
+					}
+				}
+				if launchedAny(f) {
+					t.Error("the refused launch started an execution")
+				}
+				if storedTaskFor(t, f.cloudFixture, appSlug) {
+					t.Error("the refused launch stored a task")
+				}
+			case policy.Mode(tc.mode).Removed():
+				if err == nil {
+					t.Fatal("a published node that still says the word that was a budget mode was launched: this release has no such mode (D3009), so the node's own reader refuses it, and what serves this repository again is the update's rewrite of the node, not a run")
+				}
+				for _, want := range []string{projectpolicy.PathShared(), policy.ModeOffRefusal} {
 					if !strings.Contains(err.Error(), want) {
 						t.Errorf("the refusal does not name %q: %v", want, err)
 					}

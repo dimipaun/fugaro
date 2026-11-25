@@ -25,9 +25,9 @@ Read **on 2026-11-14** at `origin/main` = **`5c170e5c`**, rather than inherited 
 
 - **On `main`**, the highest written decision is **D2399** (`docs/review-job`, whose block its own README states as D2380–D2399), and that design's check block is **610–619**, of which **610 and 611** are used — `docs/status.md` names *"owner Checks 610 and 611"* as that work's.
 - **In the open work streams**, every branch that writes a decision block was fetched and read: **none writes a decision above D2399 and none reserves a check in 620–629**. The draft this plan adopts claims nothing here — a task branch writes no decision block.
-- **This work takes D2400–D2429** — **D2400–D2417 written here, every one answered by the owner on 2026-11-15 as recommended, D2418–D2429 reserved** — and **Checks 620–629**, of which **620** is the plan's one owner-run check and **621–629 are reserved**.
+- **This work takes D2400–D2429** — **D2400–D2417 written here, every one answered by the owner on 2026-11-15 as recommended, D2418–D2429 reserved** — and **Checks 620–629**, of which **621–629 are reserved**. The plan's one owner-run check is **Check 670** and not 620: **620 belongs to the mobile-auth work** (the register reads its block as 620–627, and `docs/status.md` records the same), so the owner ruled on 2026-11-21 that this plan's own check renumbers to **670** — see [reconciliation.md](reconciliation.md) §5.
 
-A number reserved by a plan that has not merged is invisible to a grep, and a number reserved in a merged plan is invisible to a grep of the checklist — `docs/plans/2026-10-16-voice.md` §2 (line 58) states both, and it is why §5's fourth command reads the designs' own files and not one file. A later task that needs a number re-checks that section's facts rather than this conclusion.
+A number reserved by a plan that has not merged is invisible to a grep, and a number reserved in a merged plan is invisible to a grep of the checklist — `docs/voice/implementation-plan.md` §2 (line 58) states both, and it is why §5's fourth command reads the designs' own files and not one file. A later task that needs a number re-checks that section's facts rather than this conclusion.
 
 ## What this design does not do
 
@@ -39,4 +39,4 @@ A number reserved by a plan that has not merged is invisible to a grep, and a nu
 - **It does not change a repository's `fugaro.yaml`.** That file is the only place for repo-specific behaviour, and `add` reads it and never writes it.
 - **It writes its own `docs/status.md` row and gives no task that file.** The row is `repos-management`, `0/7`, nothing merged, no run; whoever merges the spec moves it as tasks land, and no task of RE0–RE6 edits the file. It edits nothing under `.github/workflows/` and adds no dependency.
 - **It does not touch `belong`.** Every live step is owner-run on the sandbox installation.
-- **It does not verify the Bitbucket half live.** Check 620 uses the GitHub sandbox; the Bitbucket rows reuse checks that are built and tested, but no owner-run check here reads a real workspace — that is a second check and a reserved number, if the owner wants it.
+- **It does not verify the Bitbucket half live.** Check 670 uses the GitHub sandbox; the Bitbucket rows reuse checks that are built and tested, but no owner-run check here reads a real workspace — that is a second check and a reserved number, if the owner wants it.

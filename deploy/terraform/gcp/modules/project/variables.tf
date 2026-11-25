@@ -1,4 +1,4 @@
-# One shared project job (design docs/design/project-centric.md §4.1): the
+# One shared project job (design docs/project-centric/spec.md §4.1): the
 # installation root calls this module once per (profile, provider, account)
 # with its slice of terraform.tfvars.json's project_jobs. The validation
 # blocks check shapes only; nothing here derives a name, and nothing here
@@ -117,7 +117,7 @@ variable "job" {
   # in one clause, with no slug — a project job serves every repository
   # admitted to its profile, so the prefix is as narrow as the grant can be,
   # and tokens/ is not one of the job's objectUser prefixes
-  # (docs/design/budget-token-channel.md §7.2).
+  # (docs/budget-token-channel/spec.md §7.2).
   validation {
     condition = (
       length(var.job.token_condition.title) > 0 && length(var.job.token_condition.title) <= 100 &&

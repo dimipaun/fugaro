@@ -107,8 +107,14 @@ func TestMarkCreatedWritesOnlyForACreationThisRunCreatedOrResumed(t *testing.T) 
 		if !ok {
 			t.Fatalf("no %s in gs://%s after the run that created the project:\n%s", managed.MarkerObject, bucket, out)
 		}
-		if want := `{"version":1,"gcp_project":"` + newProj + `"}`; b != want {
+		// The fact records the budget this run created the alert with: the
+		// defaults, since a run that creates the project has no installation
+		// whose figures the flags could leave to (D2211, D2212, T2a).
+		if want := defaultCreationFact(newProj); b != want {
 			t.Errorf("gs://%s/%s = %s, want %s", bucket, managed.MarkerObject, b, want)
+		}
+		if strings.Contains(out, "no alert was created") {
+			t.Errorf("the run says it created no alert, and the account it links is the one its budget block is on:\n%s", out)
 		}
 		// And the other half of the same fact, written by the same step
 		// (Task 3.0): the label on the project itself, which the read
@@ -242,14 +248,14 @@ func TestMarkCreatedWritesOnlyForACreationThisRunCreatedOrResumed(t *testing.T) 
 			t.Errorf("the resumed mark's banner is missing:\n%s", out)
 		}
 		b, ok := markerAt(t, r.gcs, bucket)
-		if want := `{"version":1,"gcp_project":"` + newProj + `"}`; !ok || b != want {
+		if want := defaultCreationFact(newProj); !ok || b != want {
 			t.Errorf("the resumed project's fact = %q (present %v), want %s", b, ok, want)
 		}
 	})
 
 	// (c'') --create-project with --firebase-project set to the same project: the
 	// one-project layout the docs tell the owner to run ("One project or
-	// two: either is supported", docs/design/managed-projects.md, and the live checklist's
+	// two: either is supported", docs/managed-projects/spec.md, and the live checklist's
 	// init step), where the Firebase backend lives in the project the run
 	// creates. It is a different path to the same fact: with --firebase-project the
 	// installation is the Firebase engine's first apply and the installation
@@ -278,8 +284,14 @@ func TestMarkCreatedWritesOnlyForACreationThisRunCreatedOrResumed(t *testing.T) 
 		if !ok {
 			t.Fatalf("no %s in gs://%s after the run that created the project and put Firebase on it:\n%s", managed.MarkerObject, bucket, out)
 		}
-		if want := `{"version":1,"gcp_project":"` + newProj + `"}`; b != want {
+		if want := defaultCreationFact(newProj); b != want {
 			t.Errorf("gs://%s/%s = %s, want %s", bucket, managed.MarkerObject, b, want)
+		}
+		// The same account the installation's variables carry, from the other
+		// engine's write: the alert is created either way, so the run does not
+		// tell the owner to add one.
+		if strings.Contains(out, "no alert was created") {
+			t.Errorf("the run says it created no alert, and it linked the account its budget block is on:\n%s", out)
 		}
 		// Once, and on its own first try: a second write would have to get
 		// past WriteMarker's IfGenerationMatch(0), and the run says so
@@ -840,7 +852,7 @@ func TestForgetRefusesAManagedInstallation(t *testing.T) {
 		"seven scoped roles",
 		"fugaro_managed",
 		"fugaro/managed.json",
-		"docs/design/managed-projects.md",
+		"docs/managed-projects/spec.md",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("the refusal does not carry %q:\n%s", want, msg)
@@ -915,7 +927,7 @@ func TestForgetRefusesAManagedInstallationAndLeavesTheWorkdirAlone(t *testing.T)
 		"flagged managed",
 		"fugaro_managed",
 		"fugaro/managed.json",
-		"docs/design/managed-projects.md",
+		"docs/managed-projects/spec.md",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("the refusal does not carry %q:\n%s", want, msg)
@@ -1038,7 +1050,7 @@ func TestForgetRefusesAFenceTheMarksNoLongerAdmitTo(t *testing.T) {
 		t.Fatalf("the fixture's setup wrote tfvars[managed_deployer_scoped] = %v, want true", got)
 	}
 	// The marks come off the project — the object here, which alone is enough,
-	// because the read requires both halves (docs/design/managed-projects.md, "What makes a
+	// because the read requires both halves (docs/managed-projects/spec.md, "What makes a
 	// project managed" is the same step by hand).
 	if err := r.gcs.Bucket(t, initRunsBucket).Delete(context.Background(), managed.MarkerObject); err != nil {
 		t.Fatal(err)
@@ -1072,7 +1084,7 @@ func TestForgetRefusesAFenceTheMarksNoLongerAdmitTo(t *testing.T) {
 		"managed_deployer_scoped",
 		// And that un-managing is not the way past it.
 		"taking the project out of managed mode does not remove it",
-		"docs/design/managed-projects.md",
+		"docs/managed-projects/spec.md",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("the refusal does not carry %q:\n%s", want, msg)
@@ -1350,7 +1362,16 @@ func TestManagedInitRefusalAtEveryCallSite(t *testing.T) {
 		outside := "module.repo.google_storage_bucket_iam_member.job"
 		r := newRetireRig(t, retireOpts{protection: true, outside: outside})
 		_, _, err := executeStdin(t, "aurora\naurora\n", "setup", "--repo", "--retire", "--no-build")
-		managedRefusal(t, err, outside, true)
+		// This call site alone runs with a terminal (newRetireRig), and the
+		// person at it reads the door's short block rather than Guard's text
+		// (init_refusal.go, the owner's feedback of 2026-11-24): the same
+		// address, the same count, and the managed sentence written for a
+		// reader who is not a session — which is why advice is false here and
+		// true at every call site whose reader is an agent or a script. The
+		// rules this row has always asserted still hold of the block: it names
+		// no flag, no "hint: " line and no agent marker (noFlagName and the
+		// list below).
+		managedRefusal(t, err, outside, false)
 		if applies := r.applies(t); len(applies) != 0 {
 			t.Errorf("the refused plan was applied: %v", applies)
 		}

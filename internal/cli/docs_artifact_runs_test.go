@@ -135,7 +135,7 @@ func TestChecklistCheck58PrefixOfFailsClosed(t *testing.T) {
 }
 
 // TestChecklistHasCheck58 pins Check 58 of docs/gcp-live-checklist.md (the
-// artifact-runs check, design docs/design/artifact-runs.md §3–§9): the row and
+// artifact-runs check, design docs/artifact-runs/spec.md §3–§9): the row and
 // the heading say it is the owner's to run and never against `belong`, the
 // guard block is verbatim, every `fugaro` command carries `--project fugaro`,
 // every state-changing step records its commit and every launch records its
@@ -409,7 +409,7 @@ func TestChecklistHasCheck58(t *testing.T) {
 	// 8. The design's own §12 rows this check claims to settle name the step
 	// that settles them, so a section that renumbers its steps does not leave
 	// the design pointing at nothing.
-	design, err := os.ReadFile("../../docs/design/artifact-runs.md")
+	design, err := os.ReadFile("../../docs/artifact-runs/spec.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -541,7 +541,7 @@ func TestChecklistHasCheck58(t *testing.T) {
 	if !strings.Contains(section, "**NOT RUN.** Its blocks have been through several review rounds; read the guard and the Restore once more before running it, and run it after 0.8.0 is tagged.") {
 		t.Error("Check 58 does not open with the NOT RUN banner")
 	}
-	outline := designSection(t, "../../docs/design/artifact-runs.md", "## 11. Check 58, in outline")
+	outline := designSection(t, "../../docs/artifact-runs/spec.md", "## 11. Check 58, in outline")
 	if !strings.Contains(outline, "`fugaro image build`") {
 		t.Error("the design's §11 outline does not name `fugaro image build` as Check 58's step-1 rebuild")
 	}
@@ -600,7 +600,7 @@ func TestArtifactRunsDesignSecurityText(t *testing.T) {
 		t.Fatalf("SECURITY.md's artifact paragraphs are %d, want the four this design pins", len(paras))
 	}
 
-	design, err := os.ReadFile("../../docs/design/artifact-runs.md")
+	design, err := os.ReadFile("../../docs/artifact-runs/spec.md")
 	if err != nil {
 		t.Fatal(err)
 	}

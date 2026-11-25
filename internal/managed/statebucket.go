@@ -14,10 +14,10 @@ import (
 
 // D77's dedicated state bucket: where the agent-authored root's Terraform
 // state lives, and the one place the deployer holds object access (Task 1.5
-// (3) of docs/plans/2026-10-16-managed-projects.md).
+// (3) of docs/managed-projects/implementation-plan.md).
 //
 // Why dedicated, rather than a prefix of the installation's state bucket
-// (docs/design/managed-projects.md, D77, answered 2026-10-16): the deployer's
+// (docs/managed-projects/spec.md, D77, answered 2026-10-16): the deployer's
 // custom roles deliberately hold no project-level object authority and no
 // project-level IAM permission, so the deployer's access to the state has to
 // be a bucket-level binding. A binding on the installation's state bucket

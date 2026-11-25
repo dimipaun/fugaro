@@ -21,7 +21,7 @@ agent:
   # is what the review levels' guardrail (D721, docs/review-levels-ab-jobmax/) refuses by exact
   # model ID: this pair is why the refusal does not fire here.
   # The independent review can now run INSIDE the cloud loop on a Claude account: the per-stage
-  # account setting exists (mixed credentials, the tasks B1-B6, docs/design/mixed-credentials.md
+  # account setting exists (mixed credentials, the tasks B1-B6, docs/mixed-credentials/spec.md
   # §11), so an api-key run may name ONE stage-scoped account for its `review`, `adversarial` and
   # `triage` stages — `stages.<stage>.claude_account`, or the project's `default_claude_account`
   # where that stage's own model is an Anthropic one — and those three stages go direct to Anthropic on an Opus
@@ -39,7 +39,7 @@ agent:
   # The senior review's brief is this repository's own (.fugaro/review.md). It is read
   # from the run's base and never from the pull request's own branch (docs/design/v1.md),
   # so a change cannot review itself. It is here because of the owner's ruling of
-  # 2026-11-06 — recorded in docs/design/mixed-credentials.md §11, beside the two rulings
+  # 2026-11-06 — recorded in docs/mixed-credentials/spec.md §11, beside the two rulings
   # it builds on — that a run whose in-job review ran on Opus and passed gets no second
   # review by a person (until the job mounts the account's token, a DeepSeek review still gets a local one): the reviewer is told to read the whole change and check the claims against the
   # code, to run the targeted tests by name, to mutation-check a security-sensitive change
@@ -70,6 +70,24 @@ workflows:
       # internal/e2e, about 12 and 6 minutes each, internal/image and images (the base-image builds), whose tests need
       # Docker and a git checkout the container doesn't have. A change to those packages
       # should run them (CI does).
+      # What runs is what the change can reach: the packages the diff against the base
+      # branch reaches through the reverse import graph and the read map
+      # (scripts/ci-affected, the same selector docs/ci-affected-tests plans for CI). How
+      # far that narrows depends on the change. A documents-only change reaches only the
+      # packages that read the document: 14 of this tree's 167, for docs/design/v1.md. A
+      # change to a source file still runs most of the tree but not all of it:
+      # ./internal/policy/policy.go selects 136 packages, and the tree invocation below
+      # carries 131 against the whole tree's 159 -- ./scripts, this step's largest, among
+      # the 131, and 31 of the whole tree's left out, ./internal/redact, ./internal/safetext,
+      # ./internal/streams and the selector's own ./scripts/ci-select among them, because
+      # they reach nothing the change touches. Three the whole tree drops by substring --
+      # ./internal/imagebake, ./internal/imagecheck and ./internal/imagesurvey, under its
+      # `-e /internal/image` -- run here: the two lists differ by net 28 and not 31. What
+      # would make a source change cheap is the read map's `any` set, which marks nearly
+      # every package and so puts a walker in nearly every selection (R4; narrowing it is
+      # CS2b of that plan). The whole tree below is also the answer to every doubt the
+      # selector cannot place, and CI, which the merge waits on, still runs every package on
+      # every push.
       # One test is left out with them, and it is the one that made ./scripts too big for
       # this step: TestLiveCheckScripts, which runs the bash tests of scripts/live-checks,
       # each driving a check's own script against fake tools on PATH. It is the bulk of the
@@ -127,18 +145,54 @@ workflows:
           w() { shift 2; "$@"; }
           json=
         fi
-        # Three invocations at once: the tree without internal/cli (with the live-check bash
-        # tests skipped), and internal/cli in the two halves the comment above describes. The
-        # cli exclusion is anchored, so internal/clidoc and ee/clidoc stay in.
-        w --junitfile reports/tree.xml go test $json -timeout 15m -skip '^TestLiveCheckScripts$' $(go list ./... | grep -v -e /internal/runner -e /internal/e2e -e /internal/image -e /fugaro/images -e '/internal/cli$') &
-        tree=$!
-        w --junitfile reports/cli-update.xml go test $json -timeout 15m -run '^TestU' ./internal/cli/ &
-        cliU=$!
-        w --junitfile reports/cli-rest.xml go test $json -timeout 20m -run '^Test[^U]' ./internal/cli/ &
-        cliRest=$!
-        wait $tree || rc=$?
-        wait $cliU || rc=$?
-        wait $cliRest || rc=$?
+        # What this change can reach (scripts/ci-affected): the working tree's diff against
+        # the base branch, mapped through the reverse import graph and the committed read
+        # map. The packages it names are what runs; an empty answer is the whole tree, which
+        # is what this step ran before there was a selector. The empty answer is not an
+        # error, it is the doubt: one of R8's, a diff or a map that could not be read, a path
+        # no test is known to read, a tree too old to carry the program (a follow-up or
+        # review run reads commands.test from the base branch and checks out the pull
+        # request's own tree, internal/runner/followup.go, so a branch cut before the
+        # selector still gets the command below), or an answer that is nothing but the four
+        # packages this step never runs: those four are CI's, and a change that reaches only
+        # them is answered the same way, with everything this step does run.
+        reached=$(go run ./scripts/ci-affected --base origin/main)
+        # The four are dropped from the answer rather than the answer being dropped for
+        # them, the way the whole tree below drops them: a change that reaches one of them
+        # usually reaches others too, and those are this step's to run -- dropping the whole
+        # answer would put the whole tree back for nearly every change. An answer that is
+        # just a doubt, or just those four, leaves sel empty and runs the whole tree.
+        # ./images is the base-image package, which the selector names as a repository path
+        # where the tree below names the import path (fugaro/images).
+        sel=
+        if [ -n "$reached" ]; then
+          sel=$(printf '%s\n' $reached | grep -v -e '^\./internal/runner$' -e '^\./internal/e2e$' -e '^\./internal/image$' -e '^\./images$' | tr '\n' ' ')
+        fi
+        if [ -z "$sel" ]; then
+          pkgs=$(go list ./... | grep -v -e /internal/runner -e /internal/e2e -e /internal/image -e /fugaro/images -e '/internal/cli$')
+          cli=1
+        else
+          # The cli exclusion is anchored, so internal/clidoc and ee/clidoc stay in.
+          case " $sel " in *" ./internal/cli "*) cli=1 ;; *) cli= ;; esac
+          pkgs=$(printf '%s\n' $sel | grep -v '^\./internal/cli$')
+        fi
+        # One invocation per family, at once: the tree without internal/cli (with the
+        # live-check bash tests skipped), and internal/cli in the two halves the comment
+        # above describes -- and only where the change reaches them. The cli package is
+        # still the whole package when it runs: the split is the 15m cap one `go test` puts
+        # on a package, and narrowing inside it by name is what flakes the update tests.
+        pids=
+        if [ -n "$pkgs" ]; then
+          w --junitfile reports/tree.xml go test $json -timeout 15m -skip '^TestLiveCheckScripts$' $pkgs &
+          pids="$pids $!"
+        fi
+        if [ -n "$cli" ]; then
+          w --junitfile reports/cli-update.xml go test $json -timeout 15m -run '^TestU' ./internal/cli/ &
+          pids="$pids $!"
+          w --junitfile reports/cli-rest.xml go test $json -timeout 20m -run '^Test[^U]' ./internal/cli/ &
+          pids="$pids $!"
+        fi
+        for pid in $pids; do wait "$pid" || rc=$?; done
         # The container's high-water memory since it started, the agent and the build cache
         # included (Cloud Run keeps the disk in memory): the number to size resources.memory by.
         for f in /sys/fs/cgroup/memory.peak /sys/fs/cgroup/memory/memory.max_usage_in_bytes; do

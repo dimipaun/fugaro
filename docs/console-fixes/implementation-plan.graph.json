@@ -1,0 +1,1153 @@
+{
+  "schema_version": 3,
+  "plan": "docs/console-fixes/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "C-INDEX",
+      "title": "the index contract",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runindex/contract.go",
+          "internal/runindex/stub.go",
+          "internal/runindex/contract_test.go",
+          "docs/console-fixes/contract-index.md"
+        ]
+      },
+      "kind": "contract",
+      "stubs": [
+        "internal/runindex/stub.go"
+      ]
+    },
+    {
+      "id": "RI1",
+      "title": "ordered, paged Firestore queries",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/firestore/query.go",
+          "internal/firestore/query_test.go",
+          "internal/gcpfake/firestore.go",
+          "internal/gcpfake/firestore_test.go"
+        ]
+      }
+    },
+    {
+      "id": "RI2",
+      "title": "the composite indexes",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "deploy/terraform/gcp/modules/firebase/firestore_indexes.tf",
+          "internal/infra/firebase_indexes_test.go"
+        ]
+      }
+    },
+    {
+      "id": "RI3",
+      "title": "the Firestore reader with the RTDB overlay",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runindex/firestore.go",
+          "internal/runindex/overlay.go",
+          "internal/runindex/firestore_test.go",
+          "internal/runindex/overlay_test.go"
+        ]
+      }
+    },
+    {
+      "id": "RI4",
+      "title": "the sweep folds runs into the index",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runindex/fold.go",
+          "internal/runindex/lease.go",
+          "internal/runindex/fold_test.go",
+          "internal/cli/history.go",
+          "internal/cli/history_fold_test.go",
+          "internal/budget/rollover.go"
+        ]
+      }
+    },
+    {
+      "id": "RI5",
+      "title": "reindex from update and runs reindex",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runindex/reindex.go",
+          "internal/runindex/reindex_test.go",
+          "internal/cli/runs_reindex.go",
+          "internal/cli/update_runindex.go",
+          "internal/cli/update_runindex_test.go",
+          "internal/cli/init_stages.go"
+        ]
+      }
+    },
+    {
+      "id": "RI6",
+      "title": "doctor says when the index is incomplete",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/doctor_runindex.go",
+          "internal/cli/doctor_runindex_test.go"
+        ]
+      }
+    },
+    {
+      "id": "IR1",
+      "title": "runs ls reads the index",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/runs.go",
+          "internal/cli/runs_pr.go",
+          "internal/cli/runs_index_test.go"
+        ]
+      }
+    },
+    {
+      "id": "IR2",
+      "title": "plan status reads the index; --no-merges for the first paint",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/plan_status.go",
+          "internal/cli/plan_status_index_test.go",
+          "internal/cli/plan.go"
+        ]
+      }
+    },
+    {
+      "id": "IR3",
+      "title": "graph's fallback reads the index",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "ee/coordinator/cli/coordinator.go",
+          "ee/graph/cli/graph.go",
+          "ee/graph/cli/graph_index_test.go"
+        ]
+      }
+    },
+    {
+      "id": "IR4",
+      "title": "the Graph canvas before merge state",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/main/spawn.ts",
+          "console/src/main/ipc.ts",
+          "console/src/renderer/entry.ts",
+          "console/src/shared/version.ts",
+          "docs/desktop-console/spec.md",
+          "console/test/unit/graph-read.test.ts",
+          "console/test/unit/spawn.test.ts",
+          "console/test/unit/ipc.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "IR5a",
+      "title": "the runner stops writing the GCS pull-request index",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/prindex.go",
+          "internal/runner/followup.go",
+          "internal/runner/prflow.go",
+          "internal/runner/reviewartifact.go",
+          "internal/runner/prindex_retired_test.go"
+        ]
+      }
+    },
+    {
+      "id": "IR5b",
+      "title": "the CLI stops writing and backfilling the GCS pull-request index",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/run.go",
+          "internal/cli/followup.go",
+          "internal/cli/init_stages.go",
+          "internal/cli/update_prindex.go",
+          "internal/cli/update_prindex_test.go",
+          "docs/runs-ls-speed/implementation-plan.md"
+        ]
+      }
+    },
+    {
+      "id": "IR6",
+      "title": "runs stats reads the index",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/runs_stats.go",
+          "internal/cli/runs_stats_index_test.go"
+        ]
+      }
+    },
+    {
+      "id": "IR7",
+      "title": "older history on demand in the Live list",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/renderer/screens/live.ts",
+          "console/test/unit/live.test.ts",
+          "console/src/main/spawn.ts"
+        ]
+      }
+    },
+    {
+      "id": "I-INDEX",
+      "title": "wire the index in",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runindex/stub.go",
+          "internal/cli/runindex_wire.go",
+          "internal/cli/indexed_reads_e2e_test.go",
+          "ee/graph/cli/graph.go",
+          "console/docs/json-contract.md"
+        ]
+      },
+      "kind": "integration"
+    },
+    {
+      "id": "T-CHK",
+      "title": "the scripts of Checks 870 and 871",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/check-870-run-index-timings.sh",
+          "scripts/check-871-run-index-100x.sh",
+          "scripts/check-870-run-index-timings_test.sh",
+          "scripts/check-871-run-index-100x_test.sh",
+          "docs/gcp-live-checklist.md"
+        ]
+      }
+    },
+    {
+      "id": "C-ORCH",
+      "title": "the named-orchestrator and map contract",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/orchestrator/naming.go",
+          "internal/orchestrator/mapdoc.go",
+          "internal/orchestrator/map_stub.go",
+          "internal/orchestrator/naming_test.go",
+          "docs/console-fixes/contract-orchestrators.md"
+        ]
+      },
+      "kind": "contract",
+      "stubs": [
+        "internal/orchestrator/map_stub.go"
+      ]
+    },
+    {
+      "id": "CG1a",
+      "title": "state, lease and store accept named orchestrators",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/orchestrator/lease.go",
+          "internal/orchestrator/store.go",
+          "internal/orchestrator/list.go",
+          "internal/orchestrator/named_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CG1b",
+      "title": "--name on the orchestrator commands",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/orchestrator_cmd.go",
+          "internal/cli/orchestrator_ls.go",
+          "internal/cli/orchestrator_install.go",
+          "internal/cli/orchestrator_named_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CG1c",
+      "title": "every orchestrator command honours --name",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/escalation.go",
+          "internal/cli/orchestrator_import.go",
+          "internal/cli/orchestrator_patch.go",
+          "internal/cli/orchestrator_run.go",
+          "internal/cli/orchestrator_state.go",
+          "internal/cli/orchestrator_named_callers_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CG2",
+      "title": "a previous release reads every node this one writes",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/orchestrator/compat_test.go",
+          "internal/orchestrator/testdata/prev-release/**",
+          "internal/cli/update_orchestrator_named_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CG3",
+      "title": "cross-orchestrator dependencies",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/orchestrator/validate.go",
+          "internal/orchestrator/shard.go",
+          "internal/orchestrator/tick.go",
+          "internal/orchestrator/cross_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CG4",
+      "title": "a claim per plan task",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/orchestrator/claim.go",
+          "internal/orchestrator/claim_test.go",
+          "internal/orchestrator/launch.go"
+        ]
+      }
+    },
+    {
+      "id": "CG5",
+      "title": "the coordinator sweep's heartbeat",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "ee/coordinator/sweep.go",
+          "ee/coordinator/state.go",
+          "internal/coordpath/coordpath.go",
+          "ee/coordinator/heartbeat_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CG6",
+      "title": "the map builder and orchestrator map --json",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "ee/orchestrator/mapbuild.go",
+          "ee/orchestrator/mapbuild_test.go",
+          "ee/orchestrator/cli/map.go",
+          "ee/orchestrator/cli/map_test.go",
+          "ee/graph/source_orchestrator.go"
+        ]
+      }
+    },
+    {
+      "id": "CG7a",
+      "title": "the console reads the map",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/main/spawn.ts",
+          "console/src/main/ipc.ts",
+          "console/src/source/cli.ts",
+          "console/src/shared/schema.ts",
+          "console/src/shared/version.ts",
+          "docs/desktop-console/spec.md",
+          "console/test/unit/spawn.test.ts",
+          "console/test/unit/ipc.test.ts",
+          "console/test/unit/schema.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "CG7b",
+      "title": "the Coordinator tab as a graph",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/renderer/screens/coordinator.ts",
+          "console/src/renderer/entry.ts",
+          "console/test/unit/coordinator.test.ts",
+          "docs/console-coordinator-v2/README.md"
+        ]
+      }
+    },
+    {
+      "id": "CG8",
+      "title": "the graph scope accepts named orchestrators",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "ee/graph/key.go",
+          "ee/graph/key_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CG-DOCS",
+      "title": "the orchestrator skill and the earlier plan",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "plugin/skills/orchestrator/SKILL.md",
+          "docs/orchestrator-graph-estimates/reconciliation.md"
+        ]
+      }
+    },
+    {
+      "id": "I-ORCH",
+      "title": "wire the map in",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/orchestrator/map_stub.go",
+          "ee/orchestrator/cli/map.go",
+          "ee/orchestrator/map_e2e_test.go",
+          "console/src/main/spawn.ts",
+          "console/src/main/ipc.ts",
+          "console/docs/json-contract.md",
+          "docs/desktop-console/spec.md",
+          "console/test/unit/spawn.test.ts",
+          "console/test/unit/ipc.test.ts"
+        ]
+      },
+      "kind": "integration"
+    },
+    {
+      "id": "ID1",
+      "title": "the sanitizer masks only secrets",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/shared/sanitize.ts",
+          "console/test/unit/sanitize*.test.ts",
+          "console/test/unit/live.test.ts",
+          "console/test/unit/projects.test.ts",
+          "console/test/unit/spend.test.ts",
+          "console/test/unit/spend-controls.test.ts",
+          "console/test/unit/seats.test.ts",
+          "console/test/unit/accountkeys.test.ts",
+          "console/test/unit/degraded.test.ts",
+          "console/test/unit/schema.test.ts",
+          "console/test/unit/graph.test.ts",
+          "console/test/unit/normal-fixture.test.ts",
+          "console/test/unit/screen-literals.test.ts",
+          "console/test/unit/manage-code.test.ts",
+          "console/test/unit/credentialsservice.test.ts",
+          "console/test/e2e/spend.spec.ts"
+        ]
+      }
+    },
+    {
+      "id": "ID6",
+      "title": "the main process's refusal text keeps paths",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/main/ipc.ts",
+          "console/test/unit/ipc.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "ID2",
+      "title": "identities drawn whole",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/shared/launcher.ts",
+          "console/test/unit/launcher.test.ts",
+          "console/src/renderer/manage/kinds/people.ts",
+          "console/test/unit/manage-people.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "ID3",
+      "title": "the per-person breakdown on by default",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/renderer/screens/spend.ts",
+          "console/test/unit/spend.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "ID4",
+      "title": "the documents say only secrets are masked",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/README.md",
+          "docs/desktop-console/spec.md",
+          ".claude/rules/console.md"
+        ]
+      }
+    },
+    {
+      "id": "ID5",
+      "title": "every n/a has a named cause",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/test/unit/unavailable-causes.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "R-index-fields",
+      "title": "amend the index contract: a per-plan count",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runindex/contract.go",
+          "docs/console-fixes/contract-index.md"
+        ]
+      },
+      "kind": "contract_change"
+    },
+    {
+      "id": "R-map-shape",
+      "title": "amend the map contract: per-task fields",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/orchestrator/mapdoc.go",
+          "docs/console-fixes/contract-orchestrators.md"
+        ]
+      },
+      "kind": "contract_change"
+    }
+  ],
+  "edges": [
+    {
+      "task": "RI2",
+      "needs": "C-INDEX",
+      "reason": "the index field list"
+    },
+    {
+      "task": "RI3",
+      "needs": "RI1",
+      "reason": "it calls the client's new query"
+    },
+    {
+      "task": "RI4",
+      "needs": "RI1",
+      "reason": "it writes through the client's query and patch"
+    },
+    {
+      "task": "RI5",
+      "needs": "RI4",
+      "reason": "the reindex reuses the fold and the writer lease"
+    },
+    {
+      "task": "IR1",
+      "needs": "C-INDEX",
+      "reason": "the Reader's shape"
+    },
+    {
+      "task": "IR2",
+      "needs": "C-INDEX",
+      "reason": "the query and summary shape"
+    },
+    {
+      "task": "IR3",
+      "needs": "C-INDEX",
+      "reason": "the Reader's List"
+    },
+    {
+      "task": "IR4",
+      "needs": "IR2",
+      "reason": "kept: IR4 waits on CG7b at a later level anyway, so breaking this edge gains nothing"
+    },
+    {
+      "task": "IR4",
+      "needs": "CG7a",
+      "reason": "one file: the allow-lists and the 5.1 table"
+    },
+    {
+      "task": "IR4",
+      "needs": "CG7b",
+      "reason": "one file: console/src/renderer/entry.ts"
+    },
+    {
+      "task": "I-INDEX",
+      "needs": "RI3",
+      "reason": "wires the real reader"
+    },
+    {
+      "task": "I-INDEX",
+      "needs": "RI4",
+      "reason": "the end-to-end test needs folded data"
+    },
+    {
+      "task": "I-INDEX",
+      "needs": "RI5",
+      "reason": "the end-to-end test seeds through reindex"
+    },
+    {
+      "task": "I-INDEX",
+      "needs": "IR1",
+      "reason": "wires runs ls"
+    },
+    {
+      "task": "I-INDEX",
+      "needs": "IR2",
+      "reason": "wires plan status"
+    },
+    {
+      "task": "I-INDEX",
+      "needs": "IR3",
+      "reason": "wires graph"
+    },
+    {
+      "task": "I-INDEX",
+      "needs": "RI2",
+      "reason": "the integration covers every edge C-INDEX broke"
+    },
+    {
+      "task": "IR5a",
+      "needs": "I-INDEX",
+      "reason": "--pr must read the live index before the old writers stop"
+    },
+    {
+      "task": "IR5b",
+      "needs": "I-INDEX",
+      "reason": "--pr must read the live index before the old writers stop"
+    },
+    {
+      "task": "IR6",
+      "needs": "C-INDEX",
+      "reason": "the Reader"
+    },
+    {
+      "task": "I-INDEX",
+      "needs": "IR6",
+      "reason": "the integration covers every edge C-INDEX broke"
+    },
+    {
+      "task": "T-CHK",
+      "needs": "I-INDEX",
+      "reason": "what the checks time"
+    },
+    {
+      "task": "CG1b",
+      "needs": "C-ORCH",
+      "reason": "the id rules and the driver type"
+    },
+    {
+      "task": "CG2",
+      "needs": "C-ORCH",
+      "reason": "the field names"
+    },
+    {
+      "task": "CG3",
+      "needs": "C-ORCH",
+      "reason": "ParseItemRef"
+    },
+    {
+      "task": "CG4",
+      "needs": "C-ORCH",
+      "reason": "ClaimPath"
+    },
+    {
+      "task": "CG1c",
+      "needs": "CG1b",
+      "reason": "kept: it uses the flag and resolver CG1b adds; a contract for one function would be nearly the task"
+    },
+    {
+      "task": "I-ORCH",
+      "needs": "CG1c",
+      "reason": "named callers"
+    },
+    {
+      "task": "CG6",
+      "needs": "C-ORCH",
+      "reason": "the MapDoc"
+    },
+    {
+      "task": "CG7a",
+      "needs": "C-ORCH",
+      "reason": "the document's shape"
+    },
+    {
+      "task": "CG7b",
+      "needs": "CG7a",
+      "reason": "the bridge method and decoder it imports"
+    },
+    {
+      "task": "CG-DOCS",
+      "needs": "CG1b",
+      "reason": "the plugin tests check every flag a skill names"
+    },
+    {
+      "task": "I-ORCH",
+      "needs": "CG1a",
+      "reason": "named state"
+    },
+    {
+      "task": "I-ORCH",
+      "needs": "CG1b",
+      "reason": "named commands"
+    },
+    {
+      "task": "I-ORCH",
+      "needs": "CG2",
+      "reason": "re-runs its compatibility test on wired nodes"
+    },
+    {
+      "task": "I-ORCH",
+      "needs": "CG3",
+      "reason": "cross edges"
+    },
+    {
+      "task": "I-ORCH",
+      "needs": "CG4",
+      "reason": "claims"
+    },
+    {
+      "task": "I-ORCH",
+      "needs": "CG5",
+      "reason": "heartbeat"
+    },
+    {
+      "task": "I-ORCH",
+      "needs": "CG6",
+      "reason": "the builder"
+    },
+    {
+      "task": "I-ORCH",
+      "needs": "CG7a",
+      "reason": "the console read"
+    },
+    {
+      "task": "I-ORCH",
+      "needs": "CG7b",
+      "reason": "the tab"
+    },
+    {
+      "task": "I-ORCH",
+      "needs": "IR4",
+      "reason": "one file: the allow-lists"
+    },
+    {
+      "task": "IR7",
+      "needs": "ID1",
+      "reason": "one file: console/test/unit/live.test.ts"
+    },
+    {
+      "task": "IR7",
+      "needs": "I-INDEX",
+      "reason": "--after past the window needs the index read"
+    },
+    {
+      "task": "IR7",
+      "needs": "I-ORCH",
+      "reason": "one file: console/src/main/spawn.ts"
+    },
+    {
+      "task": "ID6",
+      "needs": "ID1",
+      "reason": "the renderer must catch a token in a rooted path before this mask goes"
+    },
+    {
+      "task": "ID6",
+      "needs": "CG7a",
+      "reason": "one file: console/src/main/ipc.ts and its test"
+    },
+    {
+      "task": "IR4",
+      "needs": "ID6",
+      "reason": "one file: console/src/main/ipc.ts and its test"
+    },
+    {
+      "task": "CG7a",
+      "needs": "ID1",
+      "reason": "one file: console/test/unit/schema.test.ts"
+    },
+    {
+      "task": "RI6",
+      "needs": "C-INDEX",
+      "reason": "the summary's shape"
+    },
+    {
+      "task": "I-INDEX",
+      "needs": "RI6",
+      "reason": "the integration covers every edge C-INDEX broke"
+    },
+    {
+      "task": "CG8",
+      "needs": "C-ORCH",
+      "reason": "the id rule"
+    },
+    {
+      "task": "I-ORCH",
+      "needs": "CG8",
+      "reason": "the integration covers every edge C-ORCH broke"
+    },
+    {
+      "task": "I-ORCH",
+      "needs": "I-INDEX",
+      "reason": "one file: console/docs/json-contract.md"
+    },
+    {
+      "task": "ID3",
+      "needs": "ID1",
+      "reason": "one file: console/test/unit/spend.test.ts"
+    },
+    {
+      "task": "ID2",
+      "needs": "ID1",
+      "reason": "the person class must accept the value"
+    },
+    {
+      "task": "ID5",
+      "needs": "ID1",
+      "reason": "the n/a causes after the masks go"
+    },
+    {
+      "task": "ID5",
+      "needs": "ID2",
+      "reason": "whole identities drawn"
+    },
+    {
+      "task": "ID4",
+      "needs": "ID1",
+      "reason": "it describes ID1's behaviour"
+    },
+    {
+      "task": "ID4",
+      "needs": "ID3",
+      "reason": "it records ID3's default in D15's amendment"
+    },
+    {
+      "task": "ID4",
+      "needs": "I-ORCH",
+      "reason": "one file: docs/desktop-console/spec.md"
+    },
+    {
+      "task": "R-index-fields",
+      "needs": "C-INDEX",
+      "reason": "amends a file C-INDEX creates"
+    },
+    {
+      "task": "R-map-shape",
+      "needs": "C-ORCH",
+      "reason": "amends a file C-ORCH creates"
+    }
+  ],
+  "decoupling": [
+    {
+      "contract": "C-INDEX",
+      "was": {
+        "task": "IR1",
+        "needs": "RI3"
+      },
+      "integration": "I-INDEX",
+      "reason": "runs ls needs the Reader's shape, not a live index"
+    },
+    {
+      "contract": "C-INDEX",
+      "was": {
+        "task": "IR2",
+        "needs": "RI3"
+      },
+      "integration": "I-INDEX",
+      "reason": "plan status needs the query shape and the summary's fields"
+    },
+    {
+      "contract": "C-INDEX",
+      "was": {
+        "task": "IR3",
+        "needs": "RI3"
+      },
+      "integration": "I-INDEX",
+      "reason": "the graph fallback needs only List"
+    },
+    {
+      "contract": "C-INDEX",
+      "was": {
+        "task": "RI2",
+        "needs": "RI4"
+      },
+      "integration": "I-INDEX",
+      "reason": "the Terraform indexes need the field list, not the writer"
+    },
+    {
+      "contract": "C-INDEX",
+      "was": {
+        "task": "IR6",
+        "needs": "RI3"
+      },
+      "integration": "I-INDEX",
+      "reason": "runs stats needs the Reader's shape, not a live index"
+    },
+    {
+      "contract": "C-INDEX",
+      "was": {
+        "task": "RI6",
+        "needs": "RI4"
+      },
+      "integration": "I-INDEX",
+      "reason": "doctor needs the summary's fields, not the fold"
+    },
+    {
+      "contract": "C-ORCH",
+      "was": {
+        "task": "CG8",
+        "needs": "CG1a"
+      },
+      "integration": "I-ORCH",
+      "reason": "the scope grammar needs the id rule, not the store"
+    },
+    {
+      "contract": "C-ORCH",
+      "was": {
+        "task": "CG1b",
+        "needs": "CG1a"
+      },
+      "integration": "I-ORCH",
+      "reason": "the commands need the id rules and the driver type, not the store's code"
+    },
+    {
+      "contract": "C-ORCH",
+      "was": {
+        "task": "CG2",
+        "needs": "CG1a"
+      },
+      "integration": "I-ORCH",
+      "reason": "the migration needs the field names, not the readers"
+    },
+    {
+      "contract": "C-ORCH",
+      "was": {
+        "task": "CG3",
+        "needs": "CG1a"
+      },
+      "integration": "I-ORCH",
+      "reason": "cross references need the id rules, not the stored fields"
+    },
+    {
+      "contract": "C-ORCH",
+      "was": {
+        "task": "CG4",
+        "needs": "CG1a"
+      },
+      "integration": "I-ORCH",
+      "reason": "claims need ClaimPath, not the named state"
+    },
+    {
+      "contract": "C-ORCH",
+      "was": {
+        "task": "CG6",
+        "needs": "CG3"
+      },
+      "integration": "I-ORCH",
+      "reason": "the builder needs the edge vocabulary, not the tick"
+    },
+    {
+      "contract": "C-ORCH",
+      "was": {
+        "task": "CG7a",
+        "needs": "CG6"
+      },
+      "integration": "I-ORCH",
+      "reason": "the console needs the document's shape, not the builder"
+    }
+  ],
+  "contract_changes": [
+    {
+      "change": "R-index-fields",
+      "contract": "C-INDEX",
+      "raised_by": "IR2",
+      "reason": "if the summary needs a per-plan count to join without a query",
+      "affects": [
+        "RI2",
+        "RI3",
+        "RI4",
+        "IR1"
+      ]
+    },
+    {
+      "change": "R-map-shape",
+      "contract": "C-ORCH",
+      "raised_by": "CG7b",
+      "reason": "if the drill-down needs per-task fields the node lacks",
+      "affects": [
+        "CG6",
+        "CG7a"
+      ]
+    }
+  ]
+}

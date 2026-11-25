@@ -111,6 +111,17 @@ func newPairCmd() *cobra.Command {
 			"code the operator types matches the key the phone wrote, so a refused\n" +
 			"pairing leaves the project exactly as it was.\n" +
 			"\n" +
+			"--email naming somebody other than you is an INVITATION rather than a\n" +
+			"pairing. An admin may name another member's email with a --role at or\n" +
+			"below the role the roster grants them, and the command writes an invite\n" +
+			"that person's phone presents when it pairs, creates the member record, and\n" +
+			"draws a code carrying the project's mobile endpoint, that address, a\n" +
+			"one-time nonce and the fingerprint of the consumer key the phone pins. An\n" +
+			"invitation carries no credential and writes no device node: it waits for\n" +
+			"nothing, asks nothing and ignores --timeout, and the person it names pairs\n" +
+			"when they sign in. --name is a device's, so an invitation refuses a value\n" +
+			"for it.\n" +
+			"\n" +
 			"The code is drawn in a terminal wide enough for it. The payload is over a\n" +
 			"kilobyte, so its code is over a hundred columns wide, and a narrower\n" +
 			"terminal gets the payload line instead of a drawing that would wrap and\n" +
@@ -125,9 +136,9 @@ func newPairCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error { return runPair(cmd, o) },
 	}
 	f := cmd.Flags()
-	f.StringVar(&o.name, "name", "", "the device's name, for pair ls and the device node's own field")
-	f.StringVar(&o.email, "email", "", "the administered email for the device (default, and normally the value: your own verified address, which is the only address this command may administer)")
-	f.StringVar(&o.role, "role", "", "the device's role: viewer, operator or admin (default: the role the allowlist resolves for your address, or your own when it names none; --role may only lower it, and never below the entry an address that already has one resolves to)")
+	f.StringVar(&o.name, "name", "", "the device's name, for pair ls and the device node's own field (refused when --email invites somebody else: the phone's node is written when it pairs)")
+	f.StringVar(&o.email, "email", "", "the administered email for the device (default, and normally the value: your own verified address); naming somebody else's address is an invitation for that member, which an admin sends with --role and which pairs no device now")
+	f.StringVar(&o.role, "role", "", "the device's role: viewer, operator or admin (default for your own address: the role the allowlist resolves, or your own when it names none; required for an invitation, where it must be at or below the role the roster grants that address; --role may only lower it)")
 	f.DurationVar(&o.timeout, "timeout", pairDefaultTimeout, "how long to wait for the phone's key and the typed code (refused above "+pairMaxTimeout.String()+")")
 	f.BoolVar(&o.asJSON, "json", false, "stream the pairing as newline-delimited JSON events on stdout")
 	addCloudFlags(cmd, &o.cloudOptions)
@@ -162,13 +173,6 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 	lc, db, err := budgetDBFor(ctx, lc)
 	if err != nil {
 		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedBudget), err)
-	}
-	// The config layer validates the key only when it is set, so an installation
-	// that never ran `fugaro update --firebase-project` would otherwise print a
-	// code whose api_key is empty and which the phone cannot exchange a custom
-	// token with at all.
-	if strings.TrimSpace(lc.Budget.FirebaseAPIKey) == "" {
-		return pairRefuse(ev, o, pairRefusedAPIKey, fmt.Errorf("project %s has no budget.firebase_api_key: the phone exchanges the pairing token with it, and a code without one scans into a phone that cannot sign in; restore it with 'fugaro update --firebase-project %s', which writes budget.rtdb_url and budget.firebase_api_key", lc.Name, lc.GCPProject))
 	}
 	// The probe comes before the ownership question rather than after it:
 	// both refuse the same pairing, and a credential that the database will
@@ -241,12 +245,14 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 		}
 	}
 
-	// §7.1 step 2, D226: the one address this command may administer is the
-	// pairing operator's own verified one, read by the check
-	// init_members.go's userEmail already performs for the CLI. --email is
-	// therefore not a free field: an address that is not the operator's own
-	// would put a device on D166's allowlist under an address nobody proved
-	// they hold, and the node's existence is the whole of what the rules read.
+	// §7.1 step 2, D226 as amended by D2799: the address a device is paired
+	// under is normally the pairing operator's own verified one, read by the
+	// check init_members.go's userEmail already performs for the CLI. An address
+	// that is not the operator's own is no longer refused outright — an admin may
+	// name another member's email (D2799) — but it is not a device pairing
+	// either: it is an INVITATION, which writes the invite the pairing endpoint
+	// reads and no device node at all. The two paths part here, and everything
+	// below this point is the bootstrap pairing's.
 	own, err := authenticatedUser(ctx, lc)
 	if err != nil {
 		// The check reads the address from the identity endpoint, so it can
@@ -256,9 +262,31 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 		// answer would go and fix the wrong thing.
 		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedEmail), err)
 	}
-	email, err := pairAdministeredEmail(own, o.email)
+	email, mine, err := pairAdministeredEmail(own, o.email)
 	if err != nil {
 		return pairRefuse(ev, o, pairRefusedEmail, err)
+	}
+	if !mine {
+		return pairRunInvite(ctx, cmd, o, ev, lc, db, pairInviteRequest{
+			own:     own,
+			ownRole: ownRole,
+			grants:  grantsNode.Grants,
+			email:   email,
+			want:    wantRole,
+		}, now)
+	}
+
+	// The bootstrap code carries budget.firebase_api_key, and a code without one
+	// scans into a phone that cannot sign in, so the pairing refuses here rather
+	// than printing it. The config layer validates the key only when it is set,
+	// so an installation that never ran `fugaro update --firebase-project` would
+	// otherwise print a code whose api_key is empty. The check sits below the path
+	// decision because it is the BOOTSTRAP code that carries the key: an
+	// invitation's code carries no credential at all, and the phone gets the
+	// database URL and the API key from the service on success, so an installation
+	// whose config has no key can still invite (D2799, F4).
+	if strings.TrimSpace(lc.Budget.FirebaseAPIKey) == "" {
+		return pairRefuse(ev, o, pairRefusedAPIKey, fmt.Errorf("project %s has no budget.firebase_api_key: the phone exchanges the pairing token with it, and a code without one scans into a phone that cannot sign in; restore it with 'fugaro update --firebase-project %s', which writes budget.rtdb_url and budget.firebase_api_key", lc.Name, lc.GCPProject))
 	}
 
 	// D224, and this is the place the resolution runs: once, in the CLI, at the
@@ -287,33 +315,35 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedAllowlistUnreadable), err)
 	}
 
-	signer, err := (&cloudEnv{lc: lc}).tokenSigner(ctx)
-	if err != nil {
-		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedUnreachable), err)
-	}
-	pairingToken, uid, err := token.MintPairing(ctx, signer, o.timeout, now)
+	// The one-shot pairing token comes from the installation's credentials
+	// service, or — where the service has no identity half to answer with, is a
+	// release behind, or is not configured at all — from this operator's own
+	// credential, which is what this command did before the issuer existed
+	// (LM10, R7).
+	issuer := newPairIssuer(lc, now, o.timeout)
+	minted, err := issuer.Pairing(ctx)
 	if err != nil {
 		if errors.Is(err, token.ErrNotMinter) {
-			return pairRefuse(ev, o, pairRefusedMinter,
-				fmt.Errorf("%s; pairing mints the one-shot pairing token with your own credential, which needs the fugaroTokenMinter role on the signer account %s (the installation's launchers and operators hold it)", oneLine(err.Error()), lc.Budget.TokenSigner))
+			return pairRefuse(ev, o, pairRefusedMinter, pairMinterRefusal(lc, err))
 		}
-		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedUnreachable), err)
+		return pairRefuse(ev, o, pairIssuerCode(err), err)
 	}
+	pairingToken, uid := minted.Token, minted.UID
+	expiresAt := minted.ExpiresAt.UTC().Format(time.RFC3339)
 
 	payload, err := json.Marshal(pairQR{
-		V:           pairQRVersion,
+		V:           pairBootstrapQRVersion,
 		Project:     lc.Name,
 		GCPProject:  lc.GCPProject,
 		DatabaseURL: lc.Budget.RTDBURL,
 		APIKey:      lc.Budget.FirebaseAPIKey,
 		Token:       pairingToken,
 		UID:         uid,
-		ExpiresAt:   now.Add(token.PairingLifetime(o.timeout)).UTC().Format(time.RFC3339),
+		ExpiresAt:   expiresAt,
 	})
 	if err != nil {
 		return userErr("building the QR payload: %v", err)
 	}
-	expiresAt := now.Add(token.PairingLifetime(o.timeout)).UTC().Format(time.RFC3339)
 
 	out := cmd.OutOrStdout()
 	if o.asJSON {
@@ -388,9 +418,12 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 	// §7.1 steps 6 and 7, M4: the device token is minted and then the node
 	// exists before anything is delivered, so no token exists that the rules
 	// do not yet admit.
-	device, err := token.MintDevice(ctx, signer, now)
+	device, err := issuer.Device(ctx)
 	if err != nil {
-		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedMinter), err)
+		if errors.Is(err, token.ErrNotMinter) {
+			return pairRefuse(ev, o, pairRefusedMinter, pairMinterRefusal(lc, err))
+		}
+		return pairRefuse(ev, o, pairIssuerCode(err), err)
 	}
 	node := pairDeviceNode{Name: o.name, Email: email, Role: string(role), At: now.UTC().Format(time.RFC3339)}
 	if err := db.Patch(ctx, rules.PathDevices, map[string]any{device.UID: node}); err != nil {
@@ -545,7 +578,7 @@ type pairDeliveryNode struct {
 // names localcfg accepts. A pairing that cannot name its item is a pairing
 // that cannot store a key, so the prefix is what gives way.
 func pairItemName(project, deviceUID string) string {
-	return project + "-" + strings.TrimPrefix(deviceUID, "m~")
+	return project + "-" + strings.TrimPrefix(deviceUID, pairDeviceUIDPrefix)
 }
 
 // pairStoreMACKey draws this pairing's MAC key (D171) and stores it at item,
@@ -1031,8 +1064,10 @@ func pairInheritedRole(grants []accesslib.Grant, me string) mobileauth.Role {
 }
 
 // pairAdministeredEmail is the address the entry is written with (§7.1 step 2,
-// D226): the operator's own verified one, canonicalised by the same rule P1
-// reads entries with, with --email admitted only when it is that same address.
+// D226 as amended by D2799): the operator's own verified one, canonicalised by
+// the same rule P1 reads entries with, or the address --email names when it is
+// somebody else's — in which case the answer says so, and the caller takes the
+// invitation path instead of pairing a device.
 //
 // Both sides go through NormalizeEmail, and that is the whole reason this is a
 // function rather than two lines at the call site: the value written has to be
@@ -1053,24 +1088,27 @@ func pairInheritedRole(grants []accesslib.Grant, me string) mobileauth.Role {
 // because the provider an address of this shape belongs to resolves the local
 // part case-insensitively — the operator who capitalised a letter of their own
 // address typed their own address, and refusing that would send them to change
-// an account rather than a keystroke. What differs after both folds is a
-// different address and is refused rather than repaired.
-func pairAdministeredEmail(own, typed string) (string, error) {
-	mine, err := mobileauth.NormalizeEmail(strings.ToLower(strings.TrimSpace(own)))
+// an account rather than a keystroke.
+//
+// The second answer, mine, is the path decision and not a refusal: D226 refused
+// an address that was not the operator's own outright, and D2799 turns that
+// refusal into an invitation. An address that is not the operator's own is
+// therefore returned rather than rejected, and it is the caller — which holds
+// the grants and the role --role named — that decides whether an invitation may
+// be written for it.
+func pairAdministeredEmail(own, typed string) (address string, mine bool, err error) {
+	ownCanonical, err := mobileauth.NormalizeEmail(strings.ToLower(strings.TrimSpace(own)))
 	if err != nil {
-		return "", fmt.Errorf("the identity endpoint answered with %q as your verified address, and that is not an address this installation's allowlist can carry (%v): a device node's administered email is what the allowlist resolves a role for, so an entry this build cannot read would refuse every pairing in the installation, and this command will not write one", own, err)
+		return "", false, fmt.Errorf("the identity endpoint answered with %q as your verified address, and that is not an address this installation's allowlist can carry (%v): a device node's administered email is what the allowlist resolves a role for, so an entry this build cannot read would refuse every pairing in the installation, and this command will not write one", own, err)
 	}
 	if strings.TrimSpace(typed) == "" {
-		return mine, nil
+		return ownCanonical, true, nil
 	}
 	want, err := mobileauth.NormalizeEmail(strings.ToLower(strings.TrimSpace(typed)))
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	if want != mine {
-		return "", fmt.Errorf("--email %s is not your own verified address (%s): a device node's administered email is an address this installation has proved the pairing operator holds, and pairing refuses one it cannot attribute to you", want, mine)
-	}
-	return want, nil
+	return want, want == ownCanonical, nil
 }
 
 // errPairResolvedAbove is D224's own refusal: the role the allowlist resolves
@@ -1624,250 +1662,6 @@ func pairCloudLeftover(err error, lc *localcfg.Config) string {
 		return ""
 	}
 	return fmt.Sprintf("; the installation's cloud copy of the pairing's key (%s) could not be destroyed either (%v), so it is there with no device behind it and must be destroyed by hand — a destroy, not a disable, which the design's step 2b says is not enough", pairCloudCopyName(lc), oneLine(err.Error()))
-}
-
-type pairRevokeOptions struct {
-	cloudOptions
-	uid, name string
-	asJSON    bool
-}
-
-func newPairRevokeCmd() *cobra.Command {
-	o := &pairRevokeOptions{}
-	cmd := &cobra.Command{
-		Use:   "revoke (--uid UID | --name NAME)",
-		Short: "Revoke a paired device",
-		Long: "Revoke a paired device: the phone is off this installation's allowlist from\n" +
-			"its next request on.\n" +
-			"\n" +
-			"The order is the command (M4): the device node under config/admin/devices\n" +
-			"goes first, because the node's existence is what the rules read and its\n" +
-			"deletion revokes at once, without waiting for an ID token to expire; then\n" +
-			"the account's push node under config/admin/push, the sibling that holds\n" +
-			"the one registration this installation made for it, so the phone's token\n" +
-			"goes with the pairing rather than outliving it (push design §3.4); then,\n" +
-			"where the installation has a resident orchestrator, the installation's own\n" +
-			"cloud copy of the pairing's MAC key, which is the mobile design's\n" +
-			"revocation step 2b: its version is destroyed rather than rotated or\n" +
-			"disabled, so the pairing's messages stop verifying in the cloud as well as\n" +
-			"on this laptop; then this laptop's OS keychain item for that pairing's MAC\n" +
-			"key. Every deletion this command can make is here, in that order.\n" +
-			"\n" +
-			"Deleting the cloud copy un-reads nothing: whoever held the key keeps it, a\n" +
-			"project Owner or Editor among them, and what the step ends is the\n" +
-			"installation's own service's ability to verify a message and to forge one.\n" +
-			"\n" +
-			"The pairing session's own node is not one of them. Its key is the p~ uid\n" +
-			"the session drew, and nothing on this laptop records that uid, so a revoke\n" +
-			"by device cannot name the node it would delete; the history sweep deletes\n" +
-			"it with the p~ user the node belongs to (mobile plan decision 2), and it\n" +
-			"is the sweep this command names rather than a node it did not touch.\n" +
-			"\n" +
-			"It does not delete the device's Auth user. No role a Terraform grant gives\n" +
-			"an operator can delete one (the history job's account is the only holder of\n" +
-			"roles/firebaseauth.admin), and the device node's deletion is what makes the\n" +
-			"orphan the history sweep's to remove — which is why this command names the\n" +
-			"sweep rather than pretending the account is gone.\n" +
-			"\n" +
-			"Exactly one of --uid and --name selects the device, and a --name that\n" +
-			"matches more than one node is refused rather than revoked ambiguously: the\n" +
-			"refusal says how many it matched, and `fugaro pair ls` prints the uids to\n" +
-			"pick one from.\n" +
-			"\n" +
-			"Its own state is the local config, as it is for the rest of the command.",
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error { return runPairRevoke(cmd, o) },
-	}
-	f := cmd.Flags()
-	f.StringVar(&o.uid, "uid", "", "the uid of the device to revoke (m~…), which is the node's key")
-	f.StringVar(&o.name, "name", "", "the name of the device to revoke; it must match exactly one device")
-	f.BoolVar(&o.asJSON, "json", false, "print the revocation as one JSON event on stdout")
-	addCloudFlags(cmd, &o.cloudOptions)
-	return cmd
-}
-
-func runPairRevoke(cmd *cobra.Command, o *pairRevokeOptions) error {
-	ctx := cmd.Context()
-	ev := &pairEventWriter{w: cmd.OutOrStdout(), now: pairNow}
-	switch {
-	case o.uid == "" && o.name == "":
-		return pairRefuseIn(ev, o.asJSON, pairRefusedNoSelector,
-			errors.New("revoke needs the device to revoke: --uid with its uid, or --name with a name that matches exactly one device; `fugaro pair ls` prints both"))
-	case o.uid != "" && o.name != "":
-		return pairRefuseIn(ev, o.asJSON, pairRefusedTwoSelectors,
-			fmt.Errorf("revoke was given --uid %s and --name %s: a device is revoked by one of them, and two selectors could name two devices, so revoke refuses rather than guess which was meant", o.uid, o.name))
-	}
-	lc, db, err := pairOpen(cmd, o.cloudOptions, ev, o.asJSON, pairRefusedDatabaseAdmin)
-	if err != nil {
-		return err
-	}
-	rows, err := pairListDevices(ctx, lc, db)
-	if err != nil {
-		return pairRefuseIn(ev, o.asJSON, pairRefusalCode(err, pairRefusedUnreachable), err)
-	}
-	device, code, err := pairSelectDevice(rows, o, lc)
-	if err != nil {
-		return pairRefuseIn(ev, o.asJSON, code, err)
-	}
-
-	// M4, and the order is the command: the node first. It is what the rules
-	// read in userClaim, so deleting it revokes at once — every family USER
-	// reaches is refused from the next request on — while the keychain item and
-	// the pairing node are this laptop's and the session's, not the phone's.
-	if err := db.Patch(ctx, rules.PathDevices, map[string]any{device.UID: nil}); err != nil {
-		if errors.Is(err, rtdb.ErrPermission) {
-			return pairRefuseIn(ev, o.asJSON, pairRefusedDatabaseAdmin,
-				fmt.Errorf("the deletion of the device node %s was refused: revoking a device deletes it with roles/firebasedatabase.admin, which this credential does not hold on project %s's Firebase project (its owners and editors hold it, and terraform.budget_admins): %w",
-					rules.PathDevices+"/"+device.UID, lc.Name, err))
-		}
-		return pairRefuseIn(ev, o.asJSON, pairRefusalCode(err, pairRefusedUnreachable), dbErr(lc, err, true))
-	}
-	wrote := []string{rules.PathDevices + "/" + device.UID}
-
-	// §3.4's sibling, deleted in the same act: the whole node goes, so the
-	// registration's token, platform, prefs and the sender's ledger go with the
-	// pairing rather than outliving it on a timer (§7, Q10(i)). The device node
-	// is already gone, so this deletion is what stops the delivery rather than
-	// what stops the reads — the sender's condition is both nodes (§3.4 rule 2)
-	// — and a device that never registered holds no node at all, whose deletion
-	// is the no-op the database makes it.
-	//
-	// The failure is remembered rather than returned on, and the steps below
-	// run either way: the device node is gone by now, so a second `fugaro pair
-	// revoke` is refused as nothing to revoke, and the keychain item — the one
-	// thing this command could still take away — would be left with nothing
-	// that ever removes it. What closes the act is the refusal below, once the
-	// item is gone; a node this act could not delete is never reported as
-	// deleted.
-	pushErr := db.Patch(ctx, pairPushRoot, map[string]any{device.UID: nil})
-	if pushErr == nil {
-		wrote = append(wrote, pairPushPath(device.UID))
-	}
-
-	// The design's step 2b, and its place in the order: the cloud copy of the
-	// pairing's key goes after the nodes and before the laptop's item, which is
-	// the order §4.7 numbers — the Auth user's deletion is step 2 and is not this
-	// command's (the sweep's), so what follows here is 2b, then the item.
-	//
-	// Its failure is remembered exactly as the push node's is, and for the same
-	// reason: the deletion after it is this laptop's own item, the one thing this
-	// command could still take away, and a revocation stopped before it would
-	// leave a key behind that nothing ever removes. What the operator is owed is
-	// the refusal below, whose sentence names the copy that is still readable in
-	// the cloud rather than a step that did not land.
-	destroyed, copyErr := pairDeleteCloudCopy(ctx, lc, device.UID)
-	if copyErr == nil && destroyed > 0 {
-		wrote = append(wrote, pairCloudCopyName(lc))
-	}
-
-	item, err := keychain.ParseItem(pairItemName(lc.Name, device.UID), lc.Name)
-	if err != nil {
-		return pairRefuseIn(ev, o.asJSON, pairRefusedKeychain,
-			fmt.Errorf("the device is off the allowlist, but the keychain item this pairing's MAC key lives at (%s) is not a name a key is stored under: %v; the item's name carries the project's own name (M5), so it is not derivable here and must be deleted by hand%s", pairItemName(lc.Name, device.UID), err, pairPushLeftover(pushErr, device.UID)+pairCloudLeftover(copyErr, lc)))
-	}
-	if err := pairKeychain().Delete(ctx, item); err != nil {
-		return pairRefuseIn(ev, o.asJSON, pairRefusedKeychainDelete,
-			fmt.Errorf("the device node %s is deleted and the phone is off the allowlist, but this laptop's MAC key for the pairing could not be removed from the OS keychain at %s: %w; the key is still there and must be deleted by hand%s", wrote[0], item.Name(), err, pairPushLeftover(pushErr, device.UID)+pairCloudLeftover(copyErr, lc)))
-	}
-	if pushErr != nil {
-		if errors.Is(pushErr, rtdb.ErrPermission) {
-			return pairRefuseIn(ev, o.asJSON, pairRefusedDatabaseAdmin,
-				fmt.Errorf("the device node %s is deleted and this laptop's MAC key is gone, but the deletion of its push node %s was refused: revoking a device deletes both nodes with roles/firebasedatabase.admin, which this credential does not hold on project %s's Firebase project (its owners and editors hold it, and terraform.budget_admins): %w%s",
-					wrote[0], pairPushPath(device.UID), lc.Name, pushErr, pairCloudLeftover(copyErr, lc)))
-		}
-		cause := dbErr(lc, pushErr, true)
-		return pairRefuseIn(ev, o.asJSON, pairRefusalCode(cause, pairRefusedUnreachable),
-			fmt.Errorf("%w; the device node %s is deleted and this laptop's MAC key is gone, so the phone is off the allowlist and the sender — which sends only when both nodes exist (§3.4 rule 2) — delivers nothing to it, but the push node %s could not be deleted and still holds the installation's registration for that account: the token is there and must be deleted by hand%s",
-				cause, wrote[0], pairPushPath(device.UID), pairCloudLeftover(copyErr, lc)))
-	}
-
-	// The third copy's own failure, reported after the push node's for the reason
-	// the two deletions are ordered as they are: the node is the read the rules
-	// make, and this is the copy that keeps a revoked pairing's messages verifying
-	// in the cloud. The refusal says what did land — the node, the allowlist and
-	// the laptop's key — and what did not, and the fix is the operator's because
-	// no command of this CLI can reach a container the installation's own
-	// credential cannot write.
-	if copyErr != nil {
-		return pairRefuseIn(ev, o.asJSON, pairRefusalCode(copyErr, pairRefusedCloudKeyDelete),
-			fmt.Errorf("%w; the device node %s is deleted, this laptop's MAC key is gone and the phone is off the allowlist, but the installation's own cloud copy of the pairing's key (%s) could not be destroyed, so the pairing's messages keep verifying in the cloud until its version is destroyed by hand — a destroy rather than a disable, because disabling is not enough while the service is granted versions.access on the parent (the design's step 2b)%s",
-				copyErr, wrote[0], pairCloudCopyName(lc), pairPushLeftover(pushErr, device.UID)))
-	}
-
-	// The pairing session's own node is the third thing §4.3 names, and it is
-	// deliberately not deleted here: its key is the p~ uid MintPairing drew,
-	// and nothing on this laptop records it — the device node holds the name,
-	// the administered email, the role and the pairing time and no pairing uid
-	// (M13), and the local config holds the keychain item's name, not the
-	// session's. So a revoke by device cannot name the node it would delete,
-	// and it is the sweep's: it deletes pairing/<uid> when it deletes the p~
-	// user the node belongs to (decision 2, internal/budget/sweep.go). The
-	// command says so rather than reporting a node it did not touch.
-
-	if o.asJSON {
-		return ev.emit(pairEvent{Event: pairEventRevoked, Revoke: &pairRevokeDocument{
-			Project:      lc.Name,
-			At:           pairNow().UTC().Format(time.RFC3339),
-			Device:       pairDevice{UID: device.UID, Name: device.Name, Email: device.Email, Role: device.Role},
-			KeychainItem: item.Name(),
-			Wrote:        wrote,
-			Refused:      []string{},
-			Warnings:     []string{},
-		}})
-	}
-	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "revoked %s", pairCell(device.UID))
-	if device.Name != "" {
-		fmt.Fprintf(out, " (%s)", pairCell(device.Name))
-	}
-	fmt.Fprintf(out, ": deleted %s, so the phone is off %s's allowlist from its next request on\n", wrote[0], lc.Name)
-	fmt.Fprintf(out, "deleted its push node %s with it, so the registration this installation made for that account — its token, its platform and its preferences — is gone with the pairing\n", wrote[1])
-	if destroyed > 0 {
-		fmt.Fprintf(out, "destroyed the installation's own cloud copy of the pairing's key at %s, so the pairing's messages stop verifying in the cloud as well as on this laptop\n", pairCloudCopyName(lc))
-	}
-	fmt.Fprintf(out, "deleted this laptop's OS keychain item %s\n", item.Name())
-	fmt.Fprintf(out, "the %s Auth user is not deleted here — no role a Terraform grant gives an operator can delete one — and the history sweep removes it now that its device node is gone; an abandoned pairing node, if this pairing left one, is what the same sweep removes with it\n", device.UID)
-	return nil
-}
-
-// pairSelectDevice resolves the one device a revoke names. --uid is the node's
-// own key, so it either is a device or is not one. A name is not unique: the
-// node's children are unconstrained and two hands may have paired two phones
-// under one name, and a revoke that picked one of them would revoke a device
-// the operator did not mean. It is refused by class and count instead — echoing
-// neither the typed selector nor the node's uids — which is what makes
-// `pair ls` the step before it.
-func pairSelectDevice(rows []pairDeviceRow, o *pairRevokeOptions, lc *localcfg.Config) (pairDeviceRow, string, error) {
-	if o.uid != "" {
-		for _, r := range rows {
-			if r.UID == o.uid {
-				return r, "", nil
-			}
-		}
-		return pairDeviceRow{}, pairRefusedNoPairing,
-			fmt.Errorf("no device node %s/%s exists: the uid is the node's key, and `fugaro pair ls` prints the uids %s holds", rules.PathDevices, o.uid, lc.Name)
-	}
-	var named []pairDeviceRow
-	for _, r := range rows {
-		if r.Name == o.name {
-			named = append(named, r)
-		}
-	}
-	switch len(named) {
-	case 1:
-		return named[0], "", nil
-	case 0:
-		return pairDeviceRow{}, pairRefusedNoPairing,
-			fmt.Errorf("no device paired with %s is named %q: --name matches the device node's own name field exactly, and `fugaro pair ls` prints the names %s holds", lc.Name, o.name, lc.Name)
-	default:
-		// The typed selector is not echoed and neither are the uids: --name's
-		// value is the operator's own input and the uids come out of a node
-		// nobody constrained, and this sentence is printed where `pair ls`'s
-		// own, sanitised listing is the place to read them. The refusal names
-		// itself and how many pairings it matched, and nothing else.
-		return pairDeviceRow{}, pairRefusedTwoPairings,
-			fmt.Errorf("revoke matched %d devices by name: revoke needs one, so name it by uid with --uid, which `fugaro pair ls` prints", len(named))
-	}
 }
 
 // pairRefusalCode is the wire code for a refusal at a call site that can fail

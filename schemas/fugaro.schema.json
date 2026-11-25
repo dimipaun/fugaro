@@ -109,15 +109,16 @@
         "review_stop_fraction": { "type": "number", "minimum": 0, "maximum": 1, "description": "The share of the run's total time budget (workflows.<name>.timeouts.total) after which the review loop starts no further review or fix round and goes to finalize; the owner's ruling of 2026-11-08. Greater than 0 and at most 1; absent or 0 is 0.8 (config.DefaultReviewStopFraction), and 1 stops the loop only when the whole budget is spent. What a stopped run does with the findings it has left is the rigor mode's own stop row (rigor.BlocksAtStop). Needs fugaro 0.22.0: the key is refused by an older binary whatever it says, its decoder being strict, so fugaro run refuses to launch onto a job image older than that release (internal/cli's stopFractionSince), naming the key and the image to move." },
         "triage": { "type": "boolean", "description": "Whether the run's triage stage runs: the step that weighs a review round's findings before the fix round takes them (D1851). It runs in the startup and pro rigor modes alone (config.TriageMode, config.Agent.TriageOn), so true turns nothing on in poc, critical or hotfix and the key can only take the stage away; absent is on. Only the repository's own fugaro.yaml may set it: the key is repo-scope alone (config.Scopes), so the project layer and a profile refuse it, and a task's own embedded project layer cannot put the stage back after the base branch took it away. The owner's published policy node is the other home, merged tighter-only and read from the base branch beside this key. Needs fugaro 0.23.0: the key is refused by an older binary whatever it says, its decoder being strict, so fugaro run refuses to launch onto a job image older than that release (internal/cli's triageSince), naming the key and the image to move." },
         "review_against_task": { "type": "boolean", "description": "Whether every review stage is given the task the pull request was written for and asked whether the change does what it asks (docs/review-against-task/, R7): absent is on, and a written false turns the check off for this repository's reviews alone. Only the repository's own fugaro.yaml may set it: the key is repo-scope alone (config.Scopes), so the project layer and a profile refuse it, and a task's own embedded project layer cannot turn the check off after the base branch turned it on. The value is read from the base branch (config.Agent.ReviewAgainstTaskOn, config.RepoReviewAgainstTaskSet) and never from the run's own checkout, so a run's agent cannot switch off the review of its own work. The owner's published policy node is the other home (review_against_task), merged tighter-only and read from the base branch beside this key: a published true forces the check on everywhere and a published false is the project-wide default a repository's true overrides (D2935). Needs fugaro 0.27.0: the key is refused by an older binary whatever it says, its decoder being strict, so fugaro run refuses to launch onto a job image older than that release (internal/cli's reviewSpecSince), naming the key and the image to move." },
+        "workspace_beat": { "type": "boolean", "description": "Whether a run that has routed a kind of credential to its own workspace's credentials service keeps that service warm (docs/workspace-service/, R10, D2985): the run beats the workspace's keep-warm route (credsvc.WorkspaceKeepWarmPath) at the slip beat's cadence, so a service scaled to zero between the calls the run pays for is warm when the next one arrives. The beat carries the job's own identity and no slip id and no claim secret (F33), and a run that routed nothing to the workspace sends none. Absent is on (config.Agent.WorkspaceBeatOn); a written false turns the beat off for this repository alone. Both scopes carry it (config.Scopes): the project layer sets it for every repository of the project and a repository's own value replaces it, and neither is a widening, because a run that sends no beat is slower at a call and never less correct. Needs fugaro 0.27.0: the key is refused by an older binary whatever it says, its decoder being strict, so fugaro run refuses to launch onto a job image older than that release (internal/cli's workspaceBeatSince), naming the key and the image to move." },
         "recipe": { "type": "string", "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?)?$", "description": "The recipe (task loop) runs use unless fugaro run --recipe names one: .fugaro/recipes/<name>.yaml, the project's fugaro/recipes/<name>.yaml, or the catalog (default, solo, standard, premium, review-only, pick, test-and-fix, lint-fix, run-digest). Fugaro before 0.5.0 refuses this key." },
         "oauth_token": {
           "type": "string",
           "pattern": "^[a-z](?:[a-z0-9]|-[a-z0-9]){0,30}$",
           "maxLength": 31,
           "not": { "enum": ["default", "bitbucket-token"] },
-          "description": "The named Claude account (claude_accounts in the local config) this workflow's agent.auth: oauth uses; absent means the repository's default account, the existing claude-oauth-token secret (docs/design/named-oauth-tokens.md). fugaro run --token NAME overrides it per run. The local config's claude_accounts.<name>.allow_data_to must list this repository, checked at launch, not by this schema. Fugaro before 0.6.5 refuses this key. The not clause refuses two names: \"default\" (the empty value already means it) and bitbucket-token, the one name the credentials bundle reserves for the platform's own git credential (config.ReservedClaudeAccountName, refused by config.Validate in the same words)."
+          "description": "The named Claude account (claude_accounts in the local config) this workflow's agent.auth: oauth uses; absent means the repository's default account, the existing claude-oauth-token secret (docs/named-oauth-tokens/spec.md). fugaro run --token NAME overrides it per run. The local config's claude_accounts.<name>.allow_data_to must list this repository, checked at launch, not by this schema. Fugaro before 0.6.5 refuses this key. The not clause refuses two names: \"default\" (the empty value already means it) and bitbucket-token, the one name the credentials bundle reserves for the platform's own git credential (config.ReservedClaudeAccountName, refused by config.Validate in the same words)."
         },
-        "compression": { "enum": [""], "description": "The context-compression proxy this workflow's model calls route through (docs/design/headroom-compression.md). The key is reserved and refused: the only value this schema admits is \"\" (off, the default), and the real value is admitted by the same change that implements the proxy. A repository that sets it is refused with \"not yet implemented\", not as an unknown key." },
+        "compression": { "enum": [""], "description": "The context-compression proxy this workflow's model calls route through (docs/headroom-compression/spec.md). The key is reserved and refused: the only value this schema admits is \"\" (off, the default), and the real value is admitted by the same change that implements the proxy. A repository that sets it is refused with \"not yet implemented\", not as an unknown key." },
         "max_budget_usd": { "type": "number", "minimum": 0 },
         "instructions": { "type": "string" },
         "review": { "type": "string" }
@@ -128,7 +129,7 @@
       "additionalProperties": false,
       "description": "The repository's cost and model policy. The runner reads it from the default branch and merges it with the project's ceiling; it can only tighten. Model prices are not settable here. A null block, mode, cap or list is the same as leaving it out.",
       "properties": {
-        "mode": { "enum": ["off", "observe", "enforce", "", null], "description": "The strictest mode of the layers wins: enforce, then observe, then off." },
+        "mode": { "enum": ["observe", "enforce", "", null], "description": "The strictest mode of the layers wins: enforce, then observe, and a mode left out or written as \"\" or null is observe. off is not a budget mode any more: there is always a budget, and a mode left unset is observe; write observe or enforce." },
         "per_run_usd": {
           "type": ["number", "null"],
           "maximum": 100000,
@@ -235,7 +236,7 @@
             "areas": {
               "type": ["array", "null"],
               "maxItems": 100,
-              "description": "Named path rules: the level a run resolves to when the paths it touches match one. Both layers' lists are in effect (a union, not a replacement), the strictest matched rule decides, and a rule is matched with the same doublestar globs workflows.*.rebuild.paths uses. Needs fugaro 0.11.0.",
+              "description": "Named path rules: the level a run resolves to when the paths it touches match one. Both layers' lists are in effect (a union, not a replacement), and they are read at two ranks of the order the level resolves by (docs/project-layer.md §2, D20 as amended): the strictest rule that matched in a list says what that list sets, and this repository's list is the narrower rank of the two, so its answer stands for the paths it matches — a lower level than the project's area sets, where it names one, because the level is a default and not a floor. A rule is matched with the same doublestar globs workflows.*.rebuild.paths uses. Needs fugaro 0.11.0.",
               "items": { "$ref": "#/$defs/rigorArea" }
             }
           }
@@ -496,7 +497,7 @@
             "test": { "type": "string", "minLength": 1 },
             "lint": { "type": "string", "minLength": 1, "description": "The check step's gate command (build | test | lint)." },
             "fix": { "type": "string", "minLength": 1, "description": "The check step's autofix command; needs lint, since the gate runs fix, then lint." },
-            "render": { "type": "string", "minLength": 1, "description": "A mode: artifact recipe's render command: repository text, run once, in the checkout, as the agent's user (docs/design/artifact-runs.md §3). Absent, no recipe with a render step may run against this workflow." },
+            "render": { "type": "string", "minLength": 1, "description": "A mode: artifact recipe's render command: repository text, run once, in the checkout, as the agent's user (docs/artifact-runs/spec.md §3). Absent, no recipe with a render step may run against this workflow." },
             "probe": { "type": "string", "minLength": 1, "description": "The artifact recipe's optional check on what it rendered: one command, given the outputs directory and the names in its environment. Absent, the recipe's outputs.probe must be none." },
             "rerun_failed": {
               "type": "object",
@@ -549,6 +550,10 @@
                   ]
                 },
                 "description": "Must not be a variable Fugaro sets or one that changes how the runner, git, a shell, the build or a runtime behaves (config.ReservedEnvPrefixes and config.ReservedEnvNames)."
+              },
+              "file": {
+                "type": "boolean",
+                "description": "Expose the value as a file: the runner writes it under a tmpfs directory and this entry's env receives the path (D3327). The variable is still required, because it is where the path lands."
               }
             }
           }
@@ -568,18 +573,18 @@
             "total": { "$ref": "#/$defs/duration" },
             "stage": { "$ref": "#/$defs/duration" },
             "verify": { "$ref": "#/$defs/duration" },
-            "render": { "$ref": "#/$defs/duration", "description": "Bounds the render step alone; absent means min(verify, total - finalize_reserve). The run's own deadline caps it further (docs/design/artifact-runs.md §3)." },
+            "render": { "$ref": "#/$defs/duration", "description": "Bounds the render step alone; absent means min(verify, total - finalize_reserve). The run's own deadline caps it further (docs/artifact-runs/spec.md §3)." },
             "finalize_reserve": { "$ref": "#/$defs/duration" }
           }
         },
         "inputs": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Caps what a launcher may attach to a run of this workflow (docs/design/artifact-runs.md §4).",
+          "description": "Caps what a launcher may attach to a run of this workflow (docs/artifact-runs/spec.md §4).",
           "properties": {
             "max_files": { "type": "integer", "minimum": 0, "maximum": 64, "description": "How many files may be attached; absent or 0 means 16 (config.DefaultInputFiles)." },
             "max_bytes": { "type": "integer", "minimum": 0, "maximum": 1073741824, "description": "The most ONE attached file may hold; absent or 0 means 256 MiB (config.DefaultInputBytes)." },
-            "max_total_bytes": { "type": "integer", "minimum": 0, "maximum": 4294967296, "description": "The most the WHOLE set may hold; absent or 0 means 1 GiB (config.DefaultInputTotalBytes). The runner stages these beside the render's originals, so the memory rule counts them (docs/design/artifact-runs.md §5.2)." }
+            "max_total_bytes": { "type": "integer", "minimum": 0, "maximum": 4294967296, "description": "The most the WHOLE set may hold; absent or 0 means 1 GiB (config.DefaultInputTotalBytes). The runner stages these beside the render's originals, so the memory rule counts them (docs/artifact-runs/spec.md §5.2)." }
           }
         },
         "ab": {

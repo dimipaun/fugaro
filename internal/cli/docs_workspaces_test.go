@@ -2,13 +2,14 @@ package cli
 
 // The workspaces design folder, pinned.
 //
-// docs/workspaces/ is a design-only folder: README.md (the index, the owner's
-// answers, the reading of the number block and what a reader should not take
-// from here), spec.md (the owner's spec recorded as §0, then the design written
-// to his answers), reconciliation.md (the findings F1-F32, the sixteen
-// decisions D1290-D1305 and the owner's answers of 2026-11-04) and
-// implementation-plan.md (the tasks W0-W9). It adds no code and no task in it is
-// approved, so nothing here pins a command, a flag or an option.
+// docs/workspaces/ is a design folder whose design is built: README.md (the
+// index, the owner's answers, the reading of the number block and what a reader
+// should not take from here), spec.md (the owner's spec recorded as §0, then the
+// design written to his answers), reconciliation.md (the findings F1-F32, the
+// sixteen decisions D1290-D1305 and the owner's answers of 2026-11-04) and
+// implementation-plan.md (the tasks W0-W9). The service it designs was finished
+// by docs/workspace-service/, so the folder is documentation of a merged design
+// and nothing here pins a command, a flag or an option.
 //
 // What it does pin is the half of these documents that rots silently:
 //
@@ -56,7 +57,7 @@ const (
 	// It is the folder's whole claim about itself -- how much of the design is
 	// merged, and where the current table lives -- and a file that dropped it
 	// would read as a folder whose state nobody can place.
-	wsStatus = "**Status as of 2026-11-10: in progress, 6/10 merged; see [docs/status.md](../status.md) for the current table.**"
+	wsStatus = "**Status as of 2026-11-24: built — this design is implemented, and the last of it landed through the [workspace-service](../workspace-service/implementation-plan.md) plan that finishes the credentials service; see [docs/status.md](../status.md) for the current table.**"
 )
 
 func wsDocs() []string { return []string{wsReadme, wsSpec, wsReconciled, wsPlan} }
@@ -97,7 +98,7 @@ func TestDocsWorkspacesIsWritten(t *testing.T) {
 		// SECURITY review of spec.md §8, which the coordinator runs.
 		"independent SECURITY review is **mandatory before this design merges**",
 		"**the coordinator runs it**",
-		"**No task is approved**",
+		"**A task starts only on the owner's approval of it by name, and every task below has it**",
 	} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("%s does not state %q: the plan gates every task on the security review and on the owner approving each task by name, so a later edit that dropped either would leave a task looking startable",
@@ -320,6 +321,10 @@ func TestDocsWorkspacesNamesWhatItDesigns(t *testing.T) {
 		"**The rollup becomes a reconciliation alarm**",
 		"**The overshoot is bounded by the reservation, and the bound is stated.**",
 		"**A settle that fails refuses**",
+		// The exception the rule above needs: the rule is about the answers the
+		// service still holds, and a streamed one has already reached the run.
+		"**Except where the answer is already the run's**",
+		"the reservation stands until it ages out (`budget.WorkspaceReservationTTL`)",
 		"**The service's second grant, on each member's runs bucket, is gone**",
 		"**What that read reaches, stated node by node, and what the write would have reached**",
 		"`config/caps/global`",

@@ -106,6 +106,22 @@ variable "log_bucket_description" {
   }
 }
 
+variable "log_bucket_location" {
+  description = "Where the run log bucket is: the installation's region where Cloud Logging offers a bucket there, else the place's multi-region (us, eu), else global (place.For, D3082). fugaro update writes it, and on an installation that has a bucket already it is the location discovery read, because a bucket's location is permanent: the resource below ignores the field, so this decides what is CREATED and never moves what exists (R5)."
+  type        = string
+  # `global`, which is where every installation made before this mapping has
+  # its bucket and what the module wrote before the variable existed: the root
+  # always names a location (fugaro update writes place.For's answer), and this
+  # default is what a direct caller of the module gets instead of a plan that
+  # refuses for a variable it never had.
+  default = "global"
+
+  validation {
+    condition     = can(regex("^[a-z]+(-[a-z]+[0-9]+)?$", var.log_bucket_location))
+    error_message = "log_bucket_location must be a log bucket location: a region such as us-east5, the multi-region us or eu, or global."
+  }
+}
+
 variable "bucket_lifecycle" {
   description = "The runs bucket's lifecycle, in days: the three rules the bootstrap set, the one the bucket's versioning adds (a noncurrent version under runs/, cache/, locks/, tokens/ or issues/ is purged this many days after it stops being current), the one the stored reports get (reports/ is deleted this many days after an object is created, which is E3's 18 months held in whole days, as the other members are), and the one a person's message to a running run gets (tokens/…/messages/NNNN.msg.json is deleted this many days after it is written, F11's 7, which is the owner's answer O1)."
   type = object({
@@ -126,7 +142,7 @@ variable "bucket_lifecycle" {
 }
 
 variable "enable_vertex" {
-  description = "Whether to enable the Vertex AI API, for workflows with agent.auth: vertex."
+  description = "Whether to enable the Vertex AI API: for workflows with agent.auth: vertex, and for a project whose routing table names Vertex anywhere (the credentials service calls it on its own identity)."
   type        = bool
   default     = false
   nullable    = false
@@ -340,18 +356,18 @@ variable "catalog_check" {
         expression = string
       })
       # The repository's provider credential (internal/infra's
-      # CatalogCheckRepository.GitSecretID), which the project's build identity
-      # holds one secretAccessor on: a build of one of this repository's
-      # entries runs as the identity now (B6, D2301) and reads that container
-      # through AvailableSecrets, so the reach the per-repository build account
-      # held (modules/repo/build.tf's own build grant) has to be the
-      # identity's. Optional, and absent for a repository whose credential this
-      # installation cannot name, where no build of its entries is submitted.
+      # CatalogCheckRepository.GitSecretID), which this module granted the
+      # project's build identity a secretAccessor on until IS8 (D3330): a
+      # catalog entry's build mounted it as AvailableSecrets while the build
+      # ran as the identity (B6, D2301). The build fetches that credential from
+      # the credentials service now, so NOTHING here reads either field — they
+      # are kept in the input shape so the tfvars an installation applied at
+      # the release behind still validate, and an installation whose tfvars
+      # carry them converges with no accessor planned and no refusal.
       git_secret_id = optional(string)
       # The repository's own container, when it holds a live version and
-      # git_secret_id names the project's copy: a build resolves the own copy
-      # first, so the identity is granted it too, as a second grant beside the
-      # first rather than a change of it.
+      # git_secret_id names the project's copy. Read by nothing here since IS8,
+      # for the reason above.
       own_git_secret_id = optional(string)
     }))
   })
@@ -607,7 +623,7 @@ variable "project_secrets" {
 }
 
 variable "credentials_service" {
-  description = "The credentials service (D146, D147): the installation's own Cloud Run service that alone holds the model credentials. OFF by default (null) — with it off this module creates nothing, every job keeps its model-secret accessors and no run reaches a service. image is the released service image, pinned BY DIGEST and never by tag (C1.20's init stage fills the verified digest, as it fills history.image; the validation below refuses a tag, because the account this service runs as reads every credential in the bundle and an operator may push a tag to the installation's own registry); bundle_secret is the Secret Manager ID of the one bundle container the service reads — the project-wide container of the logical name \"creds-bundle\" (internal/backend/gcp's ProjectSecretID, CredsBundleSecretID once the loader of C1.11 declares it), which C1.20's stage fills from that one function so the container created here and the name the loader reads cannot drift. It is created here and written only by the owner-run fugaro creds set (C1.25). firebase_project, rtdb_url and job_accounts are the rest of what the process is configured with (C1.14's serve, whose whole environment is this module's env blocks): the Firebase project a run's identity is verified against and the database it reads, and the installation's per-repository jobs as {provider, repo, workflow} triples, from which the service derives the job service accounts it binds a run to, and review_job_accounts, the review-only variants of the installation's project jobs as {profile, provider, account} triples (the same axis, one row per variant, carrying the value of the account axis the variant's calls are served by) — empty for an installation that deploys no variant, whose service admits no review caller. url is the service's OWN URL — the audience its callers' Google ID tokens are minted for — and it is optional because Cloud Run assigns it: no expression in this file can read google_cloud_run_v2_service.credentials[0].uri from inside that resource (a self-referential block), so the first apply creates the revision with credentials.tf's unassigned placeholder (an .invalid host no ID token is ever minted for: the revision starts, is healthy and admits nobody) until the apply that carries the URL the output reads back (C1.20's stage fills it, the same way history.deploy_job and its rtdb_url are filled on a later apply). Both unset states are the fail-closed direction: a service that guessed its own audience would accept a token minted for another service, and one that refused to start would fail the very apply that produced the URL it needs. verifier_accounts are the identities that may ask the verify route whether a verdict's signature is this service's (C3.9g1, D1068), each a bare address the Google ID token's email claim carries; it is optional, its environment entry is always rendered, and the three states are the whole of the rule: unset means the installation's own verifier account — the one this module creates, and the default an installation gets without naming anything — an explicit [] means nobody (the owner's clear), and a written list is rendered exactly as it is, with the account never added to it. The process reads the entry as an optional value, so a service whose list is empty starts with an empty verifier list rather than refusing to bind a port."
+  description = "The credentials service (D146, D147): the installation's own Cloud Run service that alone holds the model credentials. OFF by default (null) — with it off this module creates nothing, every job keeps its model-secret accessors and no run reaches a service. image is the released service image, pinned BY DIGEST and never by tag (C1.20's init stage fills the verified digest, as it fills history.image; the validation below refuses a tag, because the account this service runs as reads every credential in the bundle and an operator may push a tag to the installation's own registry); bundle_secret is the Secret Manager ID of the one bundle container the service reads — the project-wide container of the logical name \"creds-bundle\" (internal/backend/gcp's ProjectSecretID, CredsBundleSecretID once the loader of C1.11 declares it), which C1.20's stage fills from that one function so the container created here and the name the loader reads cannot drift. It is created here and written only by the owner-run fugaro creds set (C1.25). firebase_project, rtdb_url and job_accounts are the rest of what the process is configured with (C1.14's serve, whose whole environment is this module's env blocks): the Firebase project a run's identity is verified against and the database it reads, and the installation's per-repository jobs as {provider, repo, workflow} triples, from which the service derives the job service accounts it binds a run to, and review_job_accounts, the review-only variants of the installation's project jobs as {profile, provider, account} triples (the same axis, one row per variant, carrying the value of the account axis the variant's calls are served by) — empty for an installation that deploys no variant, whose service admits no review caller — and shared_job_accounts, the installation's SHARED project jobs as {profile, provider, account, repos} rows (the coding axis, one row per shared job the deployer creates, carrying the repositories the profile serves as the patterns the policy spells them with — an empty list is the profile that serves none, and the member is never absent) — empty for an installation that deploys no shared job, whose service admits no shared caller. The shared row's account is the axis's OWN spelling, in which the empty string is the profile's no-account job and never the review table's \"default\": the caller it admits holds the CODING job, which is the job the launcher launches a repository of that profile onto rather than a review variant of it. url is the service's OWN URL — the audience its callers' Google ID tokens are minted for — and it is optional because Cloud Run assigns it: no expression in this file can read google_cloud_run_v2_service.credentials[0].uri from inside that resource (a self-referential block), so the first apply creates the revision with credentials.tf's unassigned placeholder (an .invalid host no ID token is ever minted for: the revision starts, is healthy and admits nobody) until the apply that carries the URL the output reads back (C1.20's stage fills it, the same way history.deploy_job and its rtdb_url are filled on a later apply). Both unset states are the fail-closed direction: a service that guessed its own audience would accept a token minted for another service, and one that refused to start would fail the very apply that produced the URL it needs. verifier_accounts are the identities that may ask the verify route whether a verdict's signature is this service's (C3.9g1, D1068), each a bare address the Google ID token's email claim carries; it is optional, its environment entry is always rendered, and the three states are the whole of the rule: unset means the installation's own verifier account — the one this module creates, and the default an installation gets without naming anything — an explicit [] means nobody (the owner's clear), and a written list is rendered exactly as it is, with the account never added to it. The process reads the entry as an optional value, so a service whose list is empty starts with an empty verifier list rather than refusing to bind a port. signer_account, roster_service_accounts and implicit_admins are the identity half's three names (LM12 of docs/launcher-does-not-mint, under the names LM22 declared on the process's side, D3121, D3123, F29/R16), and they are members of this block rather than variables of their own because every name this service is configured with is one of this block's — a block beside it would be a second place an installation's service is written from, and it would exist in states this one does not. signer_account is the ONE bare address of the account a run's identity is signed as: the runs' signer the installation's Firebase root creates, which the update hands over once that root has — empty is the whole of the other state, an installation whose issuer is not named yet, whose service must start with the entry absent (the identity routes answer the contract's \"not served\" until I1 wires them, R7). roster_service_accounts are the roster's `serviceAccount:` entries as bare addresses (D3123): the class a person's list cannot hold, because the address presents a service account's token rather than a person's, and the accounts iam.tf makes the invoker grant for. implicit_admins are the implicit admins of the installation (F29, R16) as bare addresses, which the update reads out of the machine's own terraform.budget_admins — the same list the CLI's launch gate judges by — so that the issuer's scope check gives the gate's answer and an owner is not refused. All three are read by the process as OPTIONAL values, so an installation whose block carries none of them starts the service it always did — an empty class, or no signer and no issuer — rather than refusing to bind a port, and each is rendered only where it has something to carry."
   type = object({
     account_id       = string
     service          = string
@@ -625,8 +641,17 @@ variable "credentials_service" {
       provider = string
       account  = string
     })), [])
-    verifier_accounts = optional(list(string))
-    url               = optional(string)
+    shared_job_accounts = optional(list(object({
+      profile  = string
+      provider = string
+      account  = string
+      repos    = list(string)
+    })), [])
+    verifier_accounts       = optional(list(string))
+    url                     = optional(string)
+    signer_account          = optional(string, "")
+    roster_service_accounts = optional(list(string), [])
+    implicit_admins         = optional(list(string), [])
   })
   default = null
 
@@ -670,6 +695,18 @@ variable "credentials_service" {
   # every row needs all three fields. The list itself may be EMPTY, which is an
   # installation that deploys no review variant and a service that admits no
   # review caller — the fail-closed state, and not the empty coding table above.
+  #
+  # shared_job_accounts is held to the profile and the provider of every row,
+  # and to a repositories list whose entries are all non-empty, and its ACCOUNT
+  # is deliberately not held to anything: this class's caller holds the profile's
+  # CODING job, whose value on the account axis is the empty string when the
+  # profile names no account (config.ProjectJobAccounts), so an empty account
+  # here is a row the service must serve rather than one it refuses — the one
+  # place this table differs from the review one above. An empty repos list is
+  # the profile that serves no repository — a row whose every caller is refused,
+  # which the revision admits and not a plan to fail — while an empty ENTRY in
+  # it is refused here, as the process refuses it at start-up by name. The list
+  # itself may be EMPTY, the review table's own rule and reason.
   validation {
     condition = var.credentials_service == null ? true : (
       can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.credentials_service.firebase_project)) &&
@@ -681,9 +718,33 @@ variable "credentials_service" {
       alltrue([for r in var.credentials_service.review_job_accounts :
         r.profile != "" && r.provider != "" && r.account != ""
       ]) &&
+      alltrue([for r in var.credentials_service.shared_job_accounts :
+        r.profile != "" && r.provider != "" && alltrue([for x in r.repos : x != ""])
+      ]) &&
       (try(var.credentials_service.url, null) == null || can(regex("^https://[a-z0-9.-]+$", var.credentials_service.url)))
     )
-    error_message = "credentials_service needs the Firebase project a run's identity is verified against (the shape of a project ID), the installation's realtime database URL (https://<database>.firebasedatabase.app or .firebaseio.com, without a path — the same rule history.rtdb_url is held to), at least one job as {provider, repo, workflow} with all three set (the service binds a run to a repository through them, and an empty table refuses every caller), every review job as {profile, provider, account} with all three set (the service derives the review job's account from them and serves a review call by the account the row names), and, once it is known, its own URL in the same https://<host> form."
+    error_message = "credentials_service needs the Firebase project a run's identity is verified against (the shape of a project ID), the installation's realtime database URL (https://<database>.firebasedatabase.app or .firebaseio.com, without a path — the same rule history.rtdb_url is held to), at least one job as {provider, repo, workflow} with all three set (the service binds a run to a repository through them, and an empty table refuses every caller), every review job as {profile, provider, account} with all three set (the service derives the review job's account from them and serves a review call by the account the row names), every shared job with a profile and a provider and a repositories list holding no empty entry (an empty account is the profile's no-account coding job and is served), and, once it is known, its own URL in the same https://<host> form."
+  }
+
+  # The identity half's three (LM12) are BARE ADDRESSES — the shape
+  # var.launcher_accounts is held to, and for its reason: the process compares
+  # each against the `email` claim of a caller's own Google ID token, so an IAM
+  # member spelling (`user:someone@example.com`) matches nobody, and a group or
+  # a domain holds no address at all (D3123: `group:` entries are deliberately
+  # not on any of the three). Empty is the one state they share with the
+  # optional lists above — the installation whose roster names no service
+  # account, whose configuration names no implicit admin, and whose runs'
+  # signer the update has not handed over — and a value that is present and is
+  # not an address is a deployment that is wrong rather than one the service
+  # discovers at its first call. The refusal is by variable and never by value:
+  # these are accounts, and the environment is the process's own.
+  validation {
+    condition = var.credentials_service == null ? true : (
+      can(regex("^([^@: ]+@[^@ ]+)?$", var.credentials_service.signer_account)) &&
+      alltrue([for a in var.credentials_service.roster_service_accounts : can(regex("^[^@: ]+@[^@ ]+$", a))]) &&
+      alltrue([for a in var.credentials_service.implicit_admins : can(regex("^[^@: ]+@[^@ ]+$", a))])
+    )
+    error_message = "credentials_service's identity names are bare email addresses, the spelling a Google ID token's email claim carries (someone@example.com) and never the member spelling the roster takes (user:someone@example.com); signer_account is either such an address or empty, which is an installation whose runs' signer the update has not handed over yet and whose service carries no issuer."
   }
 }
 
@@ -699,12 +760,13 @@ variable "enable_mobile_service" {
 }
 
 variable "intake" {
-  description = "The secrets intake (D1931, DS2.2): the installation's own Cloud Run service that alone creates, versions and deletes the dynamic per-secret containers — fugaro_u_<sub>_<name> and fugaro_p_<name>, the internal/secretname grammar — and the identity the credentials service reads them back through a prefix-conditioned accessor for. OFF by default (null): with it off this module creates no account, no role and no service, and no container of the dynamic class is ever written. It is on for an installation whose owner has the feature, and turning it off again removes a service and an account and touches no container (nothing here reads a value, so nothing here carries a prevent_destroy). account_id and service are the account's ID and the Cloud Run service's name; image is the released image, pinned BY DIGEST and never by a tag — the same rule and the same reason as credentials_service.image, because this process runs as the account that writes an installation's credentials and the repository grants roles/artifactregistry.writer to every operator (iam.tf); url is the service's OWN URL, the audience a caller's Google ID token is minted for, and it is optional because Cloud Run assigns it — no expression can read google_cloud_run_v2_service.intake[0].uri from inside that resource, so the first apply creates the revision with intake.tf's unassigned placeholder (an .invalid host no ID token is ever minted for: the revision starts, is healthy and admits nobody) until the apply that carries the URL this module's output publishes."
+  description = "The secrets intake (D1931, DS2.2): the installation's own Cloud Run service that alone creates, versions and deletes the dynamic per-secret containers — fugaro_u_<sub>_<name> and fugaro_p_<name>, the internal/secretname grammar — and the identity the credentials service reads them back through a prefix-conditioned accessor for. OFF by default (null): with it off this module creates no account, no role and no service, and no container of the dynamic class is ever written. It is on for an installation whose owner has the feature, and turning it off again removes a service and an account and touches no container (nothing here reads a value, so nothing here carries a prevent_destroy). account_id and service are the account's ID and the Cloud Run service's name; image is the released image, pinned BY DIGEST and never by a tag — the same rule and the same reason as credentials_service.image, because this process runs as the account that writes an installation's credentials and the repository grants roles/artifactregistry.writer to every operator (iam.tf); url is the service's OWN URL, the audience a caller's Google ID token is minted for, and it is optional because Cloud Run assigns it — no expression can read google_cloud_run_v2_service.intake[0].uri from inside that resource, so the first apply creates the revision with intake.tf's unassigned placeholder (an .invalid host no ID token is ever minted for: the revision starts, is healthy and admits nobody) until the apply that carries the URL this module's output publishes. people is the intake's SECOND class list (WC3, R5): the people of a workspace's roster, whose tokens live in THIS installation's containers (D3143), as the bare addresses a Google ID token's email claim holds. It is held to var.launcher_accounts' own rule (the same `^[^@: ]+@[^@ ]+$` shape, the same 512-byte bound and the same service-account refusal), because the two lists merge into ONE class list and ONE invoker set (intake.tf's locals): each entry here is spelled into the grant as the member spelling (the module prefixes each one with user:), so an address already carrying a colon is not an address this list can carry — it is a member IAM has no principal for and a claim no token holds, and the same value reaching the class list through the launchers' half is refused by launcher_accounts today. The renderer drops all three shapes for that reason (internal/infra's IntakePeople) and leaves the person off rather than write a value the plan refuses, which is internal/access's own rule for the same kind of value (its admin list refuses a colon-bearing entry and the derivation drops the person). It is a member of THIS block and of no other variable, and that is load bearing rather than tidy: the installation's `launchers` list is also the workspace project's credentials service invoker set (iam.tf, local.launcher_invoker_members), so a roster person added there would be admitted to a service this task does not widen (F10). The intake's invoker set and the class its process reads are the two together — var.launcher_accounts and this list (intake.tf's own locals) — and this list is empty (the default) for every installation that is not a workspace's project, where `fugaro update` renders it from the roster on the workspace owner's own run."
   type = object({
     account_id = string
     service    = string
     image      = string
     url        = optional(string)
+    people     = optional(list(string), [])
   })
   default = null
 
@@ -716,9 +778,10 @@ variable "intake" {
       can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.intake.account_id)) &&
       can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.intake.service)) &&
       can(regex("^[A-Za-z0-9][A-Za-z0-9._/@:-]*@sha256:[0-9a-f]{64}$", var.intake.image)) &&
-      (var.intake.url == null || can(regex("^https://[a-z0-9.-]+$", var.intake.url)))
+      (var.intake.url == null || can(regex("^https://[a-z0-9.-]+$", var.intake.url))) &&
+      alltrue([for p in var.intake.people : can(regex("^[^@: ]+@[^@ ]+$", p)) && length(p) <= 512 && !endswith(lower(p), ".gserviceaccount.com")])
     )
-    error_message = "intake needs a service account ID (6-30 characters of a-z, 0-9 and -, starting with a letter), a Cloud Run service name, an image pinned by digest (an image reference ending in @sha256: and 64 lower-case hex digits — never a tag: an operator can push a tag), and, once the URL is known, its own URL in the https://<host> form (no path)."
+    error_message = "intake needs a service account ID (6-30 characters of a-z, 0-9 and -, starting with a letter), a Cloud Run service name, an image pinned by digest (an image reference ending in @sha256: and 64 lower-case hex digits — never a tag: an operator can push a tag), and, once the URL is known, its own URL in the https://<host> form (no path); people is a list of BARE email addresses — the class is matched to a Google ID token's email claim, so a group or a domain entry is one no token can carry — and each entry is held to launcher_accounts' own shape (someone@example.com: one @, no colon and no space in the local part, no @ in the domain), because the two lists are one class list and the grant is this entry's member spelling (intake.tf prefixes each with user:): an address carrying a colon is the member spelling itself and not a bare address, so it is refused here rather than spelled into a grant with no principal. A service account's address, which is a job's rather than a person's, is refused in ANY case, and so is an address past 512 bytes — the test folds a value first and internal/credsvc's foldLauncherAccounts REFUSES both shapes outright, so an entry of either is a revision that exits on start (WC3). The three are exactly the shapes internal/infra's IntakePeople leaves off the list it renders from a workspace's roster, so the roster can never be written into a value this refuses."
   }
 }
 
@@ -755,14 +818,14 @@ variable "voice_service" {
 }
 
 variable "managed_deployer_scoped" {
-  description = "Whether to create the managed deployer's seven conditioned roles (fugaroDeployerStorage, Secret, Account, ApiKey, Repository, RunJob, SchedulerJob) and their seven conditioned bindings. OFF by default, and set by fugaro for an installation that uses managed projects (the module's variable is written from the project's own creation fact, internal/cli/init.go's installRoot): managed projects ship in 0.10.0. What is NOT settled is whether the fence works: the redesigned fmgd- prefix fence has not been measured live yet (docs/design/managed-deployer-fence.md, Check 68 of the live checklist), so an apply that creates these bindings is the first thing to find out whether IAM accepts them. Before 0.10.0 this flag created one scoped role under one condition, and that condition could not be expressed as a GCP IAM condition at all (17 logical operators where IAM allows 12, resource.name.contains() is not a supported function, and resource.name is not supported for Artifact Registry repositories, Cloud Run jobs, Cloud Scheduler jobs, service accounts or API keys), so setIamPolicy would have rejected it and stopped the whole apply."
+  description = "Whether to create the managed deployer's seven conditioned roles (fugaroDeployerStorage, Secret, Account, ApiKey, Repository, RunJob, SchedulerJob) and their seven conditioned bindings. OFF by default, and set by fugaro for an installation that uses managed projects (the module's variable is written from the project's own creation fact, internal/cli/init.go's installRoot): managed projects ship in 0.10.0. What is NOT settled is whether the fence works: the redesigned fmgd- prefix fence has not been measured live yet (docs/managed-deployer-fence/spec.md, Check 68 of the live checklist), so an apply that creates these bindings is the first thing to find out whether IAM accepts them. Before 0.10.0 this flag created one scoped role under one condition, and that condition could not be expressed as a GCP IAM condition at all (17 logical operators where IAM allows 12, resource.name.contains() is not a supported function, and resource.name is not supported for Artifact Registry repositories, Cloud Run jobs, Cloud Scheduler jobs, service accounts or API keys), so setIamPolicy would have rejected it and stopped the whole apply."
   type        = bool
   default     = false
   nullable    = false
 }
 
 variable "orchestrator" {
-  description = "The resident orchestrator (mobile plan tasks P5.1b and P5.1c; docs/mobile/design/always-on-orchestrator.md sections 4.1 and 4.3): one service account per installation with exactly the grants the design's table lists, the Cloud Run service that account runs, the Cloud Scheduler tick that wakes it, and the environment that service's one process is configured by. OFF by default (null) — an installation that has not opted in plans exactly what it planned before this file existed, which is what makes the update carrying it a no-op for every installation that has not asked for a resident orchestrator. account_id is the account's ID, fixed by internal/infra's OrchestratorAccountID so that `fugaro doctor` can find the account by the name the design gives it. firebase_project and signer_account_id are the token-minter row's two names and are on this variable rather than derived from var.coordinator: that row is bound on the FIREBASE root's signer account, in that root's project, where the fugaroTokenMinter role is declared (modules/firebase/iam.tf), and the ID is the one internal/infra hands the Firebase root (FirebaseVars' SignerAccountID, the firebase module's names.signer_account_id), so this file composes the signer's address from the same ID the account is created with, the way scheduler.tf composes its own account's. service is the Cloud Run service's name; image is the released image pinned BY DIGEST and never by a tag, for credentials_service.image's and intake.image's reason; rtdb_url is the database the process reads this installation's node out of, and it is a field of its own because the service's own Firebase project and the database's URL are two names the same installation computes in two roots. scheduler_job and scheduler_region are the tick's own two names, scheduler_region separately because Cloud Scheduler is not offered in every Cloud Run region (history.tf's and coordinator.tf's rule). The variable has no CLI writer yet — fugaro update carries no --orchestrator flag on this branch — so nothing here is reachable until the release that turns the resident orchestrator on writes one, which is also the release that must order this root's token-minter binding behind the Firebase root (orchestrator.tf states the ordering)."
+  description = "The resident orchestrator (mobile plan tasks P5.1b and P5.1c; docs/mobile/design/always-on-orchestrator.md sections 4.1 and 4.3): one service account per installation with exactly the grants the design's table lists, the Cloud Run service that account runs, the Cloud Scheduler tick that wakes it, and the environment that service's one process is configured by. OFF by default (null) — an installation that has not opted in plans exactly what it planned before this file existed, which is what makes the update carrying it a no-op for every installation that has not asked for a resident orchestrator. account_id is the account's ID, fixed by internal/infra's OrchestratorAccountID so that `fugaro doctor` can find the account by the name the design gives it. firebase_project and signer_account_id are the token-minter row's two names and are on this variable rather than derived from var.coordinator: that row is bound on the FIREBASE root's signer account, in that root's project, where the fugaroTokenMinter role is declared (modules/firebase/iam.tf), and the ID is the one internal/infra hands the Firebase root (FirebaseVars' SignerAccountID, the firebase module's names.signer_account_id), so this file composes the signer's address from the same ID the account is created with, the way scheduler.tf composes its own account's. service is the Cloud Run service's name; image is the released image pinned BY DIGEST and never by a tag, for credentials_service.image's and intake.image's reason; rtdb_url is the database the process reads this installation's node out of, and it is a field of its own because the service's own Firebase project and the database's URL are two names the same installation computes in two roots. scheduler_job and scheduler_region are the tick's own two names, scheduler_region separately because Cloud Scheduler is not offered in every Cloud Run region (history.tf's and coordinator.tf's rule). The writer is `fugaro update --firebase-project <gcp-project-id> --orchestrator` (internal/cli's ensureOrchestratorBlock through internal/infra's Orchestrator and SetOrchestrator), which derives every field from what the installation already holds and never from the operator, and which runs at the stage that has the Firebase outputs — after the Firebase root, so this root's token-minter binding is created against a signer that exists (orchestrator.tf states the ordering). The block is written once and carried by every later run (internal/infra's CarriedOrchestrator, which moves only the image onto the release's own pin), so a run that is not asked for the orchestrator composes nothing here."
   type = object({
     account_id        = string
     firebase_project  = string
@@ -802,4 +865,29 @@ variable "orchestrator" {
     )
     error_message = "orchestrator needs a Cloud Run service name, an image pinned by digest (an image reference ending in @sha256: and 64 lower-case hex digits — never a tag: an operator can push a tag), the database URL the process reads this installation's node out of in the https://<host> form (no path), and the tick's Scheduler job name and region."
   }
+}
+
+# The switch on the minter rows that are not the issuer's (launcher-does-not-mint
+# plan task LM12, D3121, R8), and it is the FIREBASE root's own switch read here
+# under the same name: in that root it gates the people's row — the launchers'
+# and the operators' fugaroTokenMinter grant on the runs' signer (LM11) — and in
+# this one it gates the resident orchestrator's row on that same signer
+# (orchestrator.tf's orchestrator_token_minter). ONE name in both roots, because
+# the plan that moves the grant to the credentials service turns both off at
+# once (LM14: `fugaro update` applies both roots with the switch off once the
+# service has proved it signs as this signer, and the people's row and the
+# orchestrator's are gone together).
+#
+# ON, and the default is the whole of what makes the update carrying this change
+# a plan with nothing new in it: an installation that has not been asked to move
+# its grant keeps minting the way it always did. What it never gates is the
+# ISSUER's row (modules/firebase/iam.tf's issuer_minter): the plan that turns
+# this switch off is the plan that moves the grant TO the credentials service,
+# and a switch that also took that row away would leave nobody able to mint a
+# run's identity — the failure R8 exists to avoid.
+variable "people_minter" {
+  description = "Whether the minter rows that are not the issuer's are still planned: the resident orchestrator's on the runs' signer here, and the launchers' and the operators' in the Firebase root, which carries the same switch under this name. On until `fugaro update` moves the grant to the credentials service, which turns it off in the one plan that removes those rows."
+  type        = bool
+  default     = true
+  nullable    = false
 }

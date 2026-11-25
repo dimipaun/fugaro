@@ -13,14 +13,15 @@ package cli
 // skills' own words, and the release the whole thing ships in.
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
 
 const (
 	// The design of record the bucket's grants and their limits live in
-	// (docs/design/bucket-iam.md §10, the threat model).
-	runsLsSpeedBucketIAM = "docs/design/bucket-iam.md"
+	// (docs/bucket-iam/spec.md §10, the threat model).
+	runsLsSpeedBucketIAM = "docs/bucket-iam/spec.md"
 	// The step-by-step audit of `fugaro update` while runs are in flight:
 	// RL2B wrote the index row, and RL3 is the release that makes runs read it.
 	runsLsSpeedUpdateInFlight = "docs/design/update-in-flight.md"
@@ -92,6 +93,41 @@ func TestDocsUpdateInFlightIndexRowIsCurrent(t *testing.T) {
 		if !strings.Contains(doc, want.phrase) {
 			t.Errorf("%s does not say %q: %s", runsLsSpeedUpdateInFlight, want.phrase, want.why)
 		}
+	}
+}
+
+// TestDocsUpdateInFlightSummaryRowIsCurrent: RL4's backfill runs inside the
+// same `fugaro update` the index backfill does, from the same place
+// (init_stages.go's outcome), so the audit's table carries its row beside that
+// one and states the half a run in flight turns on: a run whose record still
+// says running is skipped and never waited for, and a reader falls back to the
+// run's own three objects wherever the summary is absent or unusable.
+//
+// The row's symbols are checked too: a row naming a writer that has been
+// renamed is a page that sends its reader nowhere.
+func TestDocsUpdateInFlightSummaryRowIsCurrent(t *testing.T) {
+	doc := flattenDoc(readDoc(t, runsLsSpeedUpdateInFlight))
+	for _, want := range []struct{ phrase, why string }{
+		{"the run summaries (D2966)", "the summary backfill's row is gone from the step table"},
+		{"a hint a reader falls back from and never waits for",
+			"the row does not say what the summary is to a reader, which is the reason the step can be safe for a run in flight at all"},
+		{"its record still says `running`",
+			"the skip is not stated, so a reader cannot tell that the walk neither writes under a run that is going nor waits for it"},
+		{"backfillRunSummary", "the row does not name the writer the code search lands on"},
+	} {
+		if !strings.Contains(doc, want.phrase) {
+			t.Errorf("%s does not say %q: %s", runsLsSpeedUpdateInFlight, want.phrase, want.why)
+		}
+	}
+	step, err := os.ReadFile("update_summary.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(step), "func (e *initEngine) backfillRunSummary(") || !strings.Contains(string(step), "func backfillRunSummariesIn(") {
+		t.Errorf("%s's row names backfillRunSummary and backfillRunSummariesIn, which internal/cli/update_summary.go no longer holds: the row sends its reader to a function this tree does not have", runsLsSpeedUpdateInFlight)
+	}
+	if w, err := os.ReadFile("../runstore/summary.go"); err != nil || !strings.Contains(string(w), "func CreateSummary(") {
+		t.Errorf("%s's row names runstore.CreateSummary, the create-if-absent write the step uses; internal/runstore/summary.go does not hold it (%v)", runsLsSpeedUpdateInFlight, err)
 	}
 }
 

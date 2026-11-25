@@ -64,7 +64,7 @@ func TestCoverBucketConditions(t *testing.T) {
 		wantInProblem string
 	}{
 		{"launcher writes runs/, tokens/ and issues/", cbPerson, "roles/storage.objectUser", launcher, "", true, ""},
-		// The budget token's move (docs/design/budget-token-channel.md §7.2,
+		// The budget token's move (docs/budget-token-channel/spec.md §7.2,
 		// D16): the job account reads its own repository's tokens/<slug>/ and
 		// nothing else, and may never write it.
 		{"job account reads its tokens/<slug>/", cbJobSA, "roles/storage.objectViewer", tokens, cbJobSAID, true, ""},

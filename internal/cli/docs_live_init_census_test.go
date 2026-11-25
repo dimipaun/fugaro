@@ -149,6 +149,44 @@ var datedRecords = []string{
 	// plan's own docs task wrote the folder -- which is why it is stated here
 	// rather than folded into that ruling.
 	"docs/spend-accuracy/",
+	// The pre-layout specs and plans, folded out of docs/design/ and
+	// docs/plans/ into one folder each: the same dated records, now under
+	// their own names.
+	"docs/adopt-firebase-root/",
+	"docs/agent-env/",
+	"docs/base-image/",
+	"docs/bucket-iam/",
+	"docs/checkpoint-pushes/",
+	"docs/compute-backend/",
+	"docs/config-transitions/",
+	"docs/desktop-console-v2/",
+	"docs/desktop-console/",
+	"docs/generic-tool/",
+	"docs/headroom-compression/",
+	"docs/image-refresh/",
+	"docs/key-signing-service/",
+	"docs/layered-config/",
+	"docs/m10-multi-model/",
+	"docs/m11-setup-and-skills/",
+	"docs/m9-budget-and-dashboard/",
+	"docs/managed-deployer-fence/",
+	"docs/managed-projects/",
+	"docs/mixed-credentials/",
+	"docs/named-oauth-tokens/",
+	"docs/project-centric/",
+	"docs/project-named-oauth-tokens/",
+	"docs/project-secrets/",
+	"docs/provider-price-catalog/",
+	"docs/recipes/",
+	"docs/registry-remote-repository/",
+	// The repo-coupling audit's record: its spec, as received, names the
+	// retired command among the surfaces to audit, and the reconciliation and
+	// report answer it in the same words; spec.md is never edited.
+	"docs/repo-coupling-audit/",
+	"docs/retire-image-mirror/",
+	"docs/shared-config/",
+	"docs/upgrade/",
+	"docs/voice/",
 }
 
 // retirementText is the second exemption class, and it is not a judgement
@@ -184,7 +222,7 @@ var datedRecords = []string{
 // pattern is. Two more pin dated records that D9 keeps: internal/cli/docs_release_notes_test.go
 // is built around the 0.9.0 notes' own spelling (its comment: "the notes' own
 // spelling, which is frozen with them"), and internal/cli/docs_compute_backend_test.go
-// quotes the 0.8.6 notes and design/compute-backend.md in the same way. A
+// quotes the 0.8.6 notes and docs/compute-backend/spec.md in the same way. A
 // rename cannot reach their mentions -- the record keeps the name, so the pin
 // that reads it must -- and a test that spelled the command around the census
 // (`"fugaro " + "init"`) would be hiding the mention rather than retiring the
@@ -216,6 +254,11 @@ var retirementText = []string{
 	"internal/cli/restore_test.go",
 	"internal/cli/docs_release_notes_test.go",
 	"internal/cli/docs_compute_backend_test.go",
+	// T3's fence, whose exemption table is keyed by command path: the
+	// tombstone's path is a key in that table, so the mention is the key rather
+	// than a sentence about the command, and renaming it out would delete the
+	// exemption that keeps the tombstone answering below a stamp.
+	"internal/cli/required_cli.go",
 }
 
 // liveRoots is what the census walks. Every top-level entry that names the
@@ -349,7 +392,7 @@ const censusRoot = "../.."
 // implementation-plan.md, so that class is seven files under four folders now.
 // That is why `datedRecords` above carries fourteen roots and says so.
 //
-// Eight name the command by design, and they are `retirementText` above --
+// Nine name the command by design, and they are `retirementText` above --
 // W0.2's three, W1.2's relay case and the four this task added: the tombstone
 // and its test, this file, the relay case whose input IS the retired command
 // line, the two must-not-contain guards whose pattern IS the retired word
@@ -357,7 +400,11 @@ const censusRoot = "../.."
 // internal/cli/restore_test.go), and the two pins of dated records
 // (internal/cli/docs_release_notes_test.go and
 // internal/cli/docs_compute_backend_test.go) whose quoted spelling is frozen
-// with the record they read.
+// with the record they read. The ninth is T3's fence
+// (internal/cli/required_cli.go), and it is here by that same rule: its
+// exemption table is keyed by command path, the tombstone's path is the retired
+// word, and taking the key out would delete the exemption that keeps `fugaro
+// init` answering instead of being refused below a stamp.
 //
 // The plan's "anything else the red step prints is a file a rename task missed
 // and belongs to that task, not to this one" was written for a residue of one,
@@ -448,6 +495,15 @@ var censusOutputDirs = []string{
 	"mobile/dist",
 	"mobile/web-build",
 	"mobile/.expo",
+	// mobile/spike/.gitignore: the Check 733 spike (docs/mobile-identity-pairing,
+	// task M0), which is its own Expo project and declares the same three trees
+	// for itself. `mobile/.gitignore`'s patterns are unanchored and would cover
+	// them, and the spike's own file is what carries the two `.env` lines below —
+	// so the trees are classified where the file that declares them sits rather
+	// than being left to a product app's ignore file.
+	"mobile/spike/dist",
+	"mobile/spike/web-build",
+	"mobile/spike/.expo",
 	// ee/portal/.gitignore: the bundle `vite build` writes, which Hosting is
 	// fed from (P9.2) and which nobody reads as source. The portal's
 	// node_modules is on censusOutputNames with the other apps', from the same
@@ -503,6 +559,13 @@ var censusOutputNames = []string{
 	// is why the name is matched at any depth rather than at the app root.
 	"google-services.json",
 	"GoogleService-Info.plist",
+	// mobile/spike/.gitignore's .env and .env.local: the file the spike's owner
+	// writes the provider client ids and the two identifiers of a build into
+	// (mobile/spike/.env.example names every variable and no value). They are
+	// matched as whole segments rather than as a marker, because `.env.example`
+	// is committed repository text that the walk has to keep reading.
+	".env",
+	".env.local",
 }
 
 // censusOutputMarkers are matched against a file's base name, because the
@@ -1097,6 +1160,17 @@ var censusIgnored = []struct {
 	{"mobile/.gitignore", "*.log", "mobile/app.log", false, ""},
 	{"mobile/.gitignore", "google-services.json", "mobile/google-services.json", false, ""},
 	{"mobile/.gitignore", "GoogleService-Info.plist", "mobile/GoogleService-Info.plist", false, ""},
+	// The spike's own ignore file (docs/mobile-identity-pairing, task M0). Its
+	// first six lines are the app's, at the spike's root; the last two are the
+	// reason the file exists at all rather than a copy of mobile/.gitignore's.
+	{"mobile/spike/.gitignore", "node_modules/", "mobile/spike/node_modules/expo/index.js", false, ""},
+	{"mobile/spike/.gitignore", ".expo/", "mobile/spike/.expo/cache/state.json", false, ""},
+	{"mobile/spike/.gitignore", ".metro-health-check*", "mobile/spike/.metro-health-check.json", false, ""},
+	{"mobile/spike/.gitignore", "dist/", "mobile/spike/dist/index.html", false, ""},
+	{"mobile/spike/.gitignore", "web-build/", "mobile/spike/web-build/index.html", false, ""},
+	{"mobile/spike/.gitignore", "*.log", "mobile/spike/app.log", false, ""},
+	{"mobile/spike/.gitignore", ".env", "mobile/spike/.env", false, ""},
+	{"mobile/spike/.gitignore", ".env.local", "mobile/spike/.env.local", false, ""},
 	// The portal's own two lines: the fourth app in the tree, installed from
 	// its own lockfile and built by Vite rather than by a native toolchain. They
 	// are the two rows that go with ee/ (absentWith), which is the tree the core

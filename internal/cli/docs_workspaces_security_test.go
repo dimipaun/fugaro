@@ -26,7 +26,8 @@ package cli
 //     sentence is one a rewrite drifts into: that the workspace is a boundary
 //     between members, that a member's database cannot be read, that the
 //     workspace holds no credential, that the cap cannot be passed, that
-//     revocation is immediate, and that the meter is wired on this tree.
+//     revocation is immediate, and that the cap binds on every
+//     shared-credential call.
 //
 // The red step is this file's first run: the sentences it pins are not written
 // yet, so it fails on the section's own absence.
@@ -110,6 +111,20 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 		"**The one grant a member holds in the workspace's project is the invoke grant on the workspace's own credentials service**",
 		"`roles/run.invoker` per member job account",
 		"no node of the workspace's database",
+		// WC2 makes that sentence's implication false: from the task that
+		// renders the roster's people into the workspace's own root, a
+		// member's job accounts are no longer the only holders of that
+		// grant. So the sentence names the other two principals — one
+		// invoke grant per address for each `human` of the roster, and one
+		// accessor for the workspace's own account, conditioned to the
+		// person's prefix AND to the one name the workspace serves (D2971,
+		// R6) — and the width of that condition is pinned, because a
+		// condition that dropped either half would read the project's other
+		// secrets.
+		"**A person the workspace's roster names holds the same invoke grant, and the workspace's own account holds one conditioned accessor beside it.**",
+		"`roles/run.invoker` per address",
+		"conditioned to the `fugaro_u_` prefix",
+		"the one personal name the workspace serves",
 		// The pool, the intersection, and what a compromised member reaches.
 		"**A compromised member reaches the pool, and the intersection is what bounds it.**",
 		"cannot read a credential's value",
@@ -118,19 +133,52 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 		"reserves the room for a call before it makes it and settles on the response's usage",
 		"**the reservation in flight**",
 		"**a failed settle refuses**",
-		// And the limit this release does not hide: the meter is not wired, so
-		// the cap binds nothing on this tree.
+		// The wiring, and what it reaches: the reservation is taken before
+		// every paid call the workspace's own service answers — the probe
+		// included, since a probe is a call the workspace pays for — the
+		// settle's failure refuses the call, a subscription token's call
+		// spends nothing of the workspace's money, and an INSTALLATION's scope
+		// is the one with no meter, unchanged in every behavior. The sentence
+		// has to name which of the two deployments that scope is, because this
+		// tree builds both.
+		"the probe a cascade owes a backed-off credential included",
+		"refusing the call when that settle cannot be written",
+		"serving a call on a subscription token unmetered because it spends none of the workspace's money",
+		"it reserves nothing, settles nothing and writes no header",
+		// The headroom's delivery, narrowed to the answers that really carry it:
+		// answer() and refuseMeter write it, and a refusal that never reached the
+		// meter — refuseSelection's wait, the call a credential was already sent
+		// to — writes none, which nothing reads as a ceiling of zero.
+		"the headroom rides the answers the service writes itself",
+		"a refusal that never reached the meter",
+		// And the one path where the fail-closed rule above does not hold. A
+		// streamed answer has already reached the run when its usage is known,
+		// so a settle that cannot be written there is a log line and the
+		// reservation ages out unrecorded. Without this the pin above --
+		// "refusing the call when that settle cannot be written" -- reads as a
+		// rule about every path, while the path most calls take is the one it
+		// does not cover.
+		"**A streamed answer is the one path where a failed settle does not refuse the call, and it is stated rather than hidden**",
+		"released with its amount never reaching the month's settled spend",
+		// And the limits this release does not hide. Both deployments are built
+		// here and the meter binds over the workspace's own, so the sentence
+		// has to say what the cap DOES reach -- the deployment, the route that
+		// leads a member's run to it -- and leave the limits that are real (the
+		// stream, the alarm, the missing per-member share) as the limits.
 		"**And the limit this release does not hide.**",
-		"no code path takes them on this tree",
-		"**a workspace's cap binds nothing today**",
-		// The alarm is the cap's second half and it is unwired too: the section
-		// states the design's alarm above and has to say that nothing hosts it,
-		// or a reader takes it as live while residual risk 1 counts it as a
-		// mitigation. `budget.ReconcileWorkspace` is called from its own test
-		// file and from nothing else on this tree.
-		"**The reconciliation alarm is in the same state**",
+		"**What the wiring reaches, and what it does not, is worth stating exactly.**",
+		"the workspace owner's `fugaro update` applies it with no other step",
+		"reaches that service where the route its own `fugaro update` published says a kind is served from the workspace",
+		// The alarm, which is the cap's second half and is still hosted
+		// nowhere: the section states the design's alarm above and has to say
+		// that nothing runs it, or a reader takes it as live while residual
+		// risk 1 counts it as a mitigation. `budget.ReconcileWorkspace` is
+		// called from its own test file and from nothing else on this tree
+		// (D2991).
+		"**The reconciliation alarm still runs nowhere**",
 		"`budget.ReconcileWorkspace` is reached from its own tests and from nothing that runs",
-		"the meter, the headroom and the alarm arrive together with the wiring",
+		"**And one member can use the cap up for the others**",
+		"no per-member share of the workspace's cap",
 		// The alarm, and the unbound member that fails closed rather than
 		// counting as zero.
 		"**The reconciliation alarm.**",
@@ -290,12 +338,79 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 		// the workspace's project, and a section that kept the older wording
 		// would tell a reader no member's account reaches the workspace at all.
 		"because no member holds a grant on the workspace's project",
-		// The meter, which is machinery on this tree and not yet a fence.
+		// And WC2's own: the roster's people hold that grant too, so a
+		// sentence that left a member's job accounts as its only holders
+		// would send a reader past the grant a person of the workspace
+		// holds and past the accessor the workspace's own account holds
+		// beside it.
+		"only member job accounts hold a grant",
+		// The meter, which is machinery on this tree and wired to the paid-call
+		// path of the workspace's own deployment -- which is built here and
+		// which `fugaro update` applies -- so the cap IS a fence over a
+		// member's metered call. What is wider than the tree is the word
+		// "every": a kind served from the project's own copy is not metered,
+		// and a subscription token's call reserves nothing.
 		"the workspace's cap is enforced on every shared-credential call",
 		"every shared-credential call is metered",
+		// The stale spellings this section carried while the meter was unwired
+		// or the deployment unbuilt. All three are now false in the other
+		// direction, and a section that kept one would tell a reader the cap
+		// is not a fence at all when it is.
+		"**a workspace's cap binds nothing today**",
+		"still not a fence over any call a member makes today",
+		"does not exist on this tree yet",
+		"answers every call as an **installation**",
+		"no code path takes them on this tree",
 	} {
 		if strings.Contains(flattenDoc(s), banned) {
 			t.Errorf("SECURITY.md says %q: that is wider than the design and wider than the tree", banned)
+		}
+	}
+}
+
+// TestSecurityMdStatesTheWorkspacesOwnSlip is WC4's half of the sentence this
+// task makes false, and it is the reason the plan's shared-files table takes
+// `SECURITY.md` as its one exception: the slip paragraph states, of every slip,
+// that the roster which decided its credential set "is read at issue time and
+// never remembered" and that "a slip already issued keeps serving the run it was
+// granted for" — and the workspace's own slip is narrower than that on every
+// count. The service re-reads the roster as it re-reads the node, so a person
+// taken off the roster is refused within the minute, a slip a person holds is
+// refused on every call once they are gone, the slip records the owner's
+// verified address case-folded at grant time, and a grant nobody claimed is
+// over at its claim deadline rather than claimable for weeks. The pin reads the
+// section the sentence lives in, because a claim stated anywhere else in the
+// document is not a claim the reader of that paragraph has.
+func TestSecurityMdStatesTheWorkspacesOwnSlip(t *testing.T) {
+	s := readDoc(t, "SECURITY.md")
+	const slipsHeading = "### The intake, and the slips a run holds"
+	if !strings.Contains(s, "\n"+slipsHeading+"\n") {
+		t.Fatalf("SECURITY.md has no `%s` section: the workspace's own slip is narrower than the installation's, and the paragraph that states the wider rule is where the narrowing has to be read", slipsHeading)
+	}
+	section := flattenDoc(docSection(t, "SECURITY.md", s, slipsHeading))
+	for _, want := range []string{
+		// The narrowing, named as one: a reader who takes the paragraph above
+		// at face value has to meet this sentence in the same place.
+		"A workspace's own slip is narrower than that on every count",
+		// The roster IS re-read, as the node is, and a removed person is
+		// refused within the minute -- both their next grant and the calls of
+		// the runs they already launched (R3, D3146).
+		"re-reads the roster as it re-reads the node",
+		"every 60 seconds",
+		"is refused their next grant",
+		"every call under a slip they already hold within that minute",
+		// The check every call makes needs the verified address, and it is
+		// case-folded when the grant writes it (F11, finding 7).
+		"records its owner's verified address, case-folded at grant time",
+		"the check every call reads",
+		// And the claim deadline: the number is WC4's to choose and is chosen
+		// here, so the document states it rather than leaving a reader to
+		// guess how long an unclaimed grant is worth.
+		"a claim deadline counted from the grant — 30 minutes",
+		"can no longer be claimed",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("SECURITY.md's slips paragraph never says %q: the paragraph states the wider rule, and WC4's narrower one has to be read beside it or the document is false about the workspace's own slip", want)
 		}
 	}
 }
@@ -339,5 +454,53 @@ func TestDesignV1NamesTheWorkspace(t *testing.T) {
 	// the terminology it is defined against.
 	if !regexp.MustCompile(`(?m)^- \*\*Workspace\.\*\* `).MatchString(doc) {
 		t.Error("docs/design/v1.md does not carry the workspace as a bullet of the terminology list: the project section defines its units as bullets, and a paragraph anywhere else is a unit a reader does not meet where the others are")
+	}
+}
+
+// slipsSecurityHeading is the section of SECURITY.md that states what a slip is
+// and what a hostile launcher reaches of one. It is the section a workspace's
+// slip changes: the roster sentence it carried said a slip already issued keeps
+// serving the run it was granted for, which is true of the pool a grant is read
+// from and false of a workspace's roster, which its credentials service re-reads
+// under a live slip (D3146).
+const slipsSecurityHeading = "### The intake, and the slips a run holds"
+
+// TestSecurityMdStatesTheRostersOneException is WC8's pin on the sentence it
+// adds to the slips paragraph, reconciled with WC4's when the two tasks met on
+// `main`. WC4 narrowed the paragraph for a workspace's own slip -- the roster
+// re-read as the node is, the case-folded address, the claim deadline -- and
+// left the pool's own rule standing, because "a slip already issued keeps
+// serving the run it was granted for" is true of the publisher's pool a grant's
+// credential set is read from; WC8 adds what the run does when the roster its
+// slip is re-read against drops its person. So the paragraph states both, and
+// this pin holds them together: a rewrite that dropped either half would leave
+// a reader with the wrong rule.
+//
+// What the halt's reason says is pinned nowhere, deliberately: the reason a run
+// refused under a removed owner's slip carries is the open half of D3146 (the
+// landed service answers the one sentence it answers every refusal of a run's
+// identity, so the halt does not name the removal), and the document states the
+// halt itself rather than a sentence about its wording.
+func TestSecurityMdStatesTheRostersOneException(t *testing.T) {
+	doc := readDoc(t, "SECURITY.md")
+	section := flattenDoc(docSection(t, "SECURITY.md", doc, slipsSecurityHeading))
+	for _, want := range []string{
+		// The pool's own rule, kept: the roster a grant's credential set is
+		// read from is the publisher's, and a person taken off it is refused at
+		// the next grant.
+		"the roster that decided a slip's credential set is read at issue time and never remembered",
+		"a member the publisher takes off a pool is refused at the next grant",
+		"while a slip already issued keeps serving the run it was granted for",
+		// WC4's narrowing, which is what makes the sentence above safe to keep.
+		"A workspace's own slip is narrower than that on every count",
+		"every call under a slip they already hold within that minute",
+		// And WC8's own fact, which neither side of the paragraph stated: the
+		// run under such a slip ends rather than being served another
+		// credential (D3146).
+		"the run under such a slip halts rather than being served another credential",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("the `%s` section does not state %q: a slip that keeps serving a run whose person the workspace has dropped is the guarantee D3146 refuses", slipsSecurityHeading, want)
+		}
 	}
 }

@@ -92,13 +92,21 @@ import type {
   ModelsListView,
 } from '../../shared/schema'
 import { MODELS_LIST_CLI_FLOOR } from '../../shared/version'
+import type { CliCompatibility } from '../../shared/version'
 import { nameableText, sanitizeRefusal, sanitizeText } from '../../shared/sanitize'
 import type { TextClass } from '../../shared/sanitize'
+import type { BudgetStreamFeed, NewOpsDocument, NewOpsReply } from '../../shared/new-ops'
 import type { JSONDoc } from '../../source/source'
+import { budgetFeedRows, feedRows, readStream } from '../stream'
+import type { StreamPaint, StreamSource, StreamStatus } from '../stream'
 import { putReading, putText } from '../app'
 import type { ElementLike } from '../app'
+import { KINDS } from '../manage/kinds/index'
+import { mountManage } from '../manage/shell'
+import type { ManageDeps, ManageSection } from '../manage/shell'
 import { BUSY_SLOT_CLASS } from '../section'
 import { disabledWrite } from '../writes'
+import { CAPS_STREAM_ABSENT, CAPS_STREAM_HIDDEN } from './spend'
 import { POLICY_NODE_SOURCE, POLICY_NODE_SHAPE, buildPolicyNotes, policyNotesBody } from './policynotes'
 import type { PolicyNotesModel } from './policynotes'
 
@@ -140,6 +148,17 @@ export const ENROLLMENT_SOURCE_LINE = 'no command on this tree (project-centric 
  * document's own `repos` and nothing else.
  */
 export const REPOSITORIES_SOURCE_LINE = PROJECTS_SOURCE_LINES['budget.show'] as string
+
+/**
+ * BUDGET_STREAM_SOURCE_LINE is the command line the three panels read from the
+ * caps document name when the read was the **feed** (RS5): the same document's
+ * rows, one line at a time. It is its own constant rather than a fourth row of
+ * `PROJECTS_SOURCE_LINES`, because that table is keyed by *operations* and held
+ * to the console's allow-list by a test -- `budget.stream` is an operation of
+ * C-OPS's with a command line of its own, and a person reading the panel is owed
+ * the line they could run.
+ */
+export const BUDGET_STREAM_SOURCE_LINE = 'fugaro budget show --stream --json'
 
 /**
  * SECRETS_ARRAY_NOTE is the console's own sentence about the one document whose
@@ -348,6 +367,17 @@ export interface ProjectsInputs {
   readonly policy: unknown
   readonly doctor: unknown
   readonly sentences?: Partial<Record<OperationName, string>> | undefined
+  /**
+   * `streamed` says the caps document behind this model came from a
+   * `budget show --stream` feed rather than from the whole document (RS5,
+   * D2906/O3). The three panels that read it then name the feed's own command
+   * line, the largest single lease is `n/a` with the console's sentence for a
+   * read that did not carry it, and the caps panel says what the feed does not
+   * carry beside the rows it did (`CAPS_STREAM_ABSENT`) -- a table of repository
+   * caps drawn from a feed must not read as a project whose global and default
+   * caps are unset.
+   */
+  readonly streamed?: boolean
 }
 
 /** ProjectsModel is the whole screen, built and testable with no element. */
@@ -646,13 +676,20 @@ function capRow(
 /** panelOf builds one panel: a read, an unavailable one, or a not-built one.
  * The three are separate doors so that a caller cannot build a `read` panel
  * with no count, or a not-built one with a count -- the shape the plan's
- * "never as a zero" rule depends on. */
+ * "never as a zero" rule depends on.
+ *
+ * `because` is the sentence a `read` panel owes a reader when the read answered
+ * but did not carry everything the panel draws -- RS5's streamed caps read, whose
+ * feed is the rows and not the document round them (`CAPS_STREAM_ABSENT`). It is
+ * drawn beside the rows and never instead of them (`panelShell`), and it is the
+ * console's own words or the CLI's, like every other `because`. */
 function readPanel(
   key: ProjectsPanelKey,
   title: string,
   operation: OperationName,
   count: number,
   source?: string,
+  because?: string,
 ): ProjectsPanel {
   return {
     key,
@@ -660,7 +697,7 @@ function readPanel(
     source: source ?? PROJECTS_SOURCE_LINES[operation] ?? `fugaro ${operation}`,
     operation,
     state: 'read',
-    because: null,
+    because: because === undefined ? null : drawnRefusal(because),
     becauseKind: 'refusal',
     count: measured(count),
   }
@@ -713,6 +750,23 @@ const ENROLLMENT_BECAUSE =
  * what the panel's own state and source line say. */
 const REFUSAL_UNREADABLE =
   'the CLI refused this read, and its own sentence is longer than the console will draw'
+
+/** REFUSAL_NONE_TOLD is what a read that refused **without a sentence** says:
+ * the throw carried nothing this console can draw, and the panel says that
+ * rather than drawing an empty reason (the shape `refusalSentence` reads). */
+const REFUSAL_NONE_TOLD = 'the read was refused, and the CLI printed no sentence this console can draw'
+
+/** refusalSentence is the CLI's own sentence out of whatever the fallback read
+ * threw, through `drawnRefusal` -- the same treatment every other refusal of
+ * this screen goes through (`drawnRefusal`'s own note). The throw is read
+ * **structurally** (`sentence`) rather than by importing `SourceRefusal`: the
+ * source module is main's, and this file is bundled into the window, where
+ * main's modules must not be reachable at all. */
+function refusalSentence(cause: unknown): string {
+  const raw = (cause as { readonly sentence?: unknown } | null | undefined)?.sentence
+  if (typeof raw !== 'string' || raw.trim() === '') return REFUSAL_NONE_TOLD
+  return drawnRefusal(raw)
+}
 
 /**
  * drawnRefusal is `sanitizeRefusal`'s decision for a panel's reason, applied
@@ -771,6 +825,9 @@ export function buildProjectsModel(inputs: ProjectsInputs): ProjectsModel {
   const budget = objectAt(inputs.budget)
   const accounts = objectAt(inputs.accounts)
   const secretList = arrayAt(inputs.secrets)
+  // RS5: the same three panels read from a `budget show --stream` feed name the
+  // feed's command line, because that is the read whose rows they drew.
+  const budgetSource = inputs.streamed === true ? BUDGET_STREAM_SOURCE_LINE : undefined
 
   const warnings = textsAt(budget?.['warnings'])
 
@@ -870,10 +927,28 @@ export function buildProjectsModel(inputs: ProjectsInputs): ProjectsModel {
   const panels: ProjectsPanel[] = [
     budget === null
       ? unavailablePanel('caps', 'caps', 'budget.show', absent('budget.show', inputs.sentences))
-      : readPanel('caps', 'caps', 'budget.show', caps.length),
+      : readPanel(
+          'caps',
+          'caps',
+          'budget.show',
+          caps.length,
+          budgetSource,
+          // A streamed read carries the repositories' rows and the project's
+          // kill switch, and says so beside the table it did draw: the project's
+          // own rows, the defaults and the mode are not rows of the feed, and a
+          // table drawn from it without this sentence would read as a project
+          // whose global and default caps are unset.
+          inputs.streamed === true ? CAPS_STREAM_ABSENT : undefined,
+        ),
     budget === null
       ? unavailablePanel('kill', 'kill switches', 'budget.show', absent('budget.show', inputs.sentences))
-      : readPanel('kill', 'kill switches', 'budget.show', killRows.filter((row) => row.kill !== null).length),
+      : readPanel(
+          'kill',
+          'kill switches',
+          'budget.show',
+          killRows.filter((row) => row.kill !== null).length,
+          budgetSource,
+        ),
     // Read from the cap document alone, and it draws no list when that document
     // did not arrive: a repository set drawn from nothing would read as "this
     // project has no repository", which is a different fact from "the console
@@ -886,7 +961,13 @@ export function buildProjectsModel(inputs: ProjectsInputs): ProjectsModel {
           repositoriesBecause(budget === null, inputs.sentences),
           REPOSITORIES_SOURCE_LINE,
         )
-      : readPanel('repositories', 'repositories', 'budget.show', enrolled.length, REPOSITORIES_SOURCE_LINE),
+      : readPanel(
+          'repositories',
+          'repositories',
+          'budget.show',
+          enrolled.length,
+          budgetSource ?? REPOSITORIES_SOURCE_LINE,
+        ),
     accounts === null
       ? unavailablePanel('accounts', 'Claude accounts', 'accounts.inventory', absent('accounts.inventory', inputs.sentences))
       : complete
@@ -930,13 +1011,121 @@ export function buildProjectsModel(inputs: ProjectsInputs): ProjectsModel {
     day: textAt(budget?.['day']),
     panels,
     caps,
-    maxReserve: readNumber(budget?.['max_reserve_usd'], 'max_reserve_usd'),
+    // The largest single lease is a top-level member of the document and not a
+    // row of the feed, so a streamed read says why it is `n/a` rather than
+    // reading an absence as the CLI's own "no reserve limit"
+    // (`CAPS_STREAM_ABSENT`).
+    maxReserve:
+      inputs.streamed === true
+        ? unavailable(CAPS_STREAM_ABSENT)
+        : readNumber(budget?.['max_reserve_usd'], 'max_reserve_usd'),
     kill: { global: killAt(objectAt(budget?.['global'])?.['kill']), rows: killRows },
     repositories,
     accounts: projectAccounts,
     secrets: { entries: secretEntries, note: SECRETS_ARRAY_NOTE },
     policy: policyNotes,
     warnings,
+  }
+}
+
+/**
+ * budgetFromFeed is the document a streamed caps read can assemble: the rows the
+ * feed wrote, under the two members of the document they belong to.
+ *
+ * One `row` line is one element of the document's `repos` array, unchanged, and
+ * the project's kill switch is the row whose slug is `kill` -- where the whole
+ * document carries the switch is `global.kill`, so that is where it goes here
+ * (`budgetFeedRows` is the one spelling of that rule, `internal/cli/
+ * budget_stream.go` is its authority). **It is not a document the CLI wrote,
+ * and it does not pretend to be one**: the members the feed does not carry
+ * (`project`, `mode`, `day`, `max_reserve_usd`, `global`'s counters, `defaults`,
+ * `warnings`) are left out rather than guessed at, which is why the model built
+ * from it is handed `streamed: true` (`ProjectsInputs.streamed`). Every consumer
+ * of this value is this file's own reader.
+ */
+export function budgetFromFeed(rows: readonly NewOpsDocument[]): JSONDoc {
+  const feed = budgetFeedRows(rows)
+  return feed.killed ? { repos: feed.repos, global: { kill: feed.kill } } : { repos: feed.repos }
+}
+
+/** ProjectsStreamRead is the caps read this tab makes when it can ask for the
+ * feed: `budget show --stream --json` (RS2's `readStream`, C-OPS's
+ * `budget.stream`) and the `budget show --json` document this tab read before
+ * the stream existed. */
+export interface ProjectsStreamRead {
+  readonly stream: () => Promise<NewOpsReply<BudgetStreamFeed>>
+  /** the fallback document, read through the screen's own reader, which throws
+   * a `SourceRefusal` carrying the CLI's sentence when the command refused */
+  readonly budget: () => Promise<JSONDoc>
+  readonly withheld: boolean
+  /** once per chunk, with the document assembled from the rows read so far, so
+   * the tab draws the caps table as its lines arrive */
+  readonly onRows?: (document: JSONDoc) => void
+  readonly current?: () => boolean
+  readonly paint?: StreamPaint
+}
+
+/** ProjectsStreamOutcome is what the read answers. `document` is the whole
+ * document where one was read and the rows assembled into a document where the
+ * feed answered -- and `source` is what tells them apart, so a caller that needs
+ * a member only the whole document carries (the rail's spend, the fleet gauge)
+ * asks for it only where `source` is `whole`. */
+export type ProjectsStreamOutcome =
+  | { readonly status: 'complete'; readonly source: StreamSource; readonly document: JSONDoc }
+  | {
+      readonly status: Exclude<StreamStatus, 'complete'>
+      readonly source: StreamSource
+      readonly sentence: string | null
+    }
+
+/**
+ * readBudgetStream makes this tab's caps read.
+ *
+ * **The rows are drawn as they arrive and the `end` line completes the
+ * section.** `readStream` hands each chunk to `onRows`, which assembles the
+ * document the model is built from, and each chunk therefore draws the caps
+ * table a line longer; the `end` line is what says the list finished. An
+ * interrupted feed (no `end`) answers `interrupted` with R1's sentence and a
+ * Retry -- the rows that arrived are not a shorter list of caps, and the tab
+ * never draws them as one -- and a feed the CLI ended with a sentence answers
+ * `failed`.
+ *
+ * **The whole-document read is the fallback.** Where the operation cannot be
+ * asked -- no handler, a CLI below the feed's floor, a refusal -- `readStream`
+ * asks for `budget show --json` instead, and the document that comes back is
+ * what is drawn: it is the read that carries everything the panels draw.
+ */
+export async function readBudgetStream(read: ProjectsStreamRead): Promise<ProjectsStreamOutcome> {
+  let whole: JSONDoc | null = null
+  const result = await readStream<NewOpsDocument>({
+    withheld: read.withheld,
+    stream: read.stream,
+    document: async () => {
+      try {
+        whole = await read.budget()
+        return { ok: true, rows: feedRows(whole['repos']) }
+      } catch (cause) {
+        return { ok: false, sentence: refusalSentence(cause) }
+      }
+    },
+    // A whole-document read is one answer and one drawing, and `readStream` does
+    // not call this for it.
+    onRows: (rows) => {
+      read.onRows?.(budgetFromFeed(rows))
+    },
+    current: read.current,
+    paint: read.paint,
+  })
+  if (result.status === 'withheld') {
+    return { status: 'withheld', source: 'none', sentence: CAPS_STREAM_HIDDEN }
+  }
+  if (result.status !== 'complete') {
+    return { status: result.status, source: result.source, sentence: result.sentence }
+  }
+  return {
+    status: 'complete',
+    source: result.source,
+    document: whole !== null ? whole : budgetFromFeed(result.rows),
   }
 }
 
@@ -1800,17 +1989,12 @@ function modelsPrice(value: number | null): Reading {
  * their wire class, so markup, bidi controls and newlines are flattened to inert
  * text rather than read as markup.
  *
- * **The host is drawn as the console's marker and not as the machine's name, and
- * that is the decoder's own row for the key.** `routes[].host` is `host` in
- * `WIRE_TEXT_CLASSES` (`../../shared/schema.ts`), and `sanitizeText`'s host class
- * returns `HOST_PLACEHOLDER` for every machine name it is given, valid or not: a
- * machine name is the one thing this console does not draw, whichever field it
- * arrives in. **Another class cannot be asked instead**: `label` and
- * `sentence` run the free-text rules, whose hostname and address rules replace a
- * machine name before any class branch reads the value, so the value comes out as
- * the marker there too (`sanitize.ts`). The row is recognised without it: the
- * `name` above is the document's own word for the route, and the hostname itself
- * is drawn whole inside the `base_url` beside it, which is a `url`.
+ * **The host is drawn as the machine's own name, and that is the decoder's own
+ * row for the key.** `routes[].host` is `host` in `WIRE_TEXT_CLASSES`
+ * (`../../shared/schema.ts`), and `sanitizeText`'s host class draws the name it
+ * was given, valid or not (D3213, 2026-11-21): which endpoint a route sends data
+ * to is what this panel is for. The name is also inside the `base_url` beside it,
+ * which is a `url`.
  */
 function modelsRouteLine(parent: ScreenElement, factory: ScreenFactory, route: ModelsListRoute): void {
   const element = cell(parent, factory, 'li', 'projects-models-route')
@@ -2007,10 +2191,12 @@ function settingsRowLine(
  * controls. `type="button"` keeps it out of a form's submit path, the way every
  * live control in this theme is drawn.
  *
- * It binds nothing here. The press is the entry's (`paintSettings`), because the
- * entry is the only place holding the bridge, the row set and the focus to hand
- * back -- and what pressing it opens (the dry run, `settingsView`'s window, the
- * argv) is C3's.
+ * It binds nothing here. The press is the entry's (`bindSettingsPencils`),
+ * because the entry is the only place holding the operation, the row set and the
+ * focus to hand back -- and what pressing it opens is **main's one window**
+ * (`settings.editor.open`, the settings-edit plan's SU1): the entry sends the
+ * row's key and main does the entry, the dry run's diff, the confirmation and
+ * the write (D2902).
  *
  * **It is drawn through the raw `create`/`setAttribute` pair rather than through
  * `make`, and the hook is the reason.** `theme-selectors.test.ts` checks each
@@ -2226,7 +2412,7 @@ export const PROJECTS_MODELS_BUSY = 'Reading the project’s models…'
  * `projects-body` inside the same `section.projects`, so the second read's mark
  * and skeleton have an element of their own. One element wearing both claims
  * would have whichever read landed first take the other's claim down
- * (`COORDINATOR_WINDOW_SHAPE`'s reason, one tab over). */
+ * (`PROJECTS_SHAPE`'s reason, one section over). */
 export const PROJECTS_MODELS_CLASS = 'projects-models'
 
 /** PROJECTS_SETTINGS_BUSY is the tab's **third** section's mark (the
@@ -2271,13 +2457,26 @@ export const PROJECTS_LICENCE_CLASS = 'projects-licence-section'
  * D439 compares -- the estimate and the seats that key carries. */
 export const PROJECTS_SEATS_CLASS = 'projects-seats-section'
 
+/** PROJECTS_MANAGE_CLASS is the host the Manage section is mounted into (the
+ * console-improvements plan's task I-MG): the tenth sibling of `projects-body`,
+ * drawn for `PROJECTS_MODELS_CLASS`'s reason -- one element wearing two reads'
+ * claims would have whichever landed first take the other's claim down. It is
+ * the one host here drawn **with no slot beside it**, and that is the
+ * difference the section has from every other one of these: the Manage section
+ * carries a read per kind, each with its own busy mark and its own refusal
+ * (`manage/shell.ts`), so a mark of this file's would be a tenth claim about
+ * reads this file never started. */
+export const PROJECTS_MANAGE_CLASS = 'projects-manage-section'
+
 /** DrawnProjectsFrame is the screen with nothing in it: the root, the section a
  * read fills, and the slot the entry's busy mark goes in. Every later section is
  * a `host`/`slot` pair of its own, drawn the same way -- `models` and `settings`
  * from the tab's second and third reads, and `managed`, `accountKeys`,
  * `retirements` and `credentialsService` from the three CM10 added, two of which
  * feed two sections apiece (the account keys the settings read, the retirements
- * the managed state's), and `licence` from S2.7 and `seats` from S4.2. */
+ * the managed state's), and `licence` from S2.7 and `seats` from S4.2. `manage`
+ * (I-MG) is the tenth and the odd one of them: the section it is filled with
+ * reads once per kind, so it is a host with no slot of this file's beside it. */
 export interface DrawnProjectsFrame {
   readonly root: ScreenElement
   readonly body: ScreenElement
@@ -2298,6 +2497,7 @@ export interface DrawnProjectsFrame {
   readonly licenceSlot: ScreenElement
   readonly seats: ScreenElement
   readonly seatsSlot: ScreenElement
+  readonly manage: ScreenElement
 }
 
 /**
@@ -2352,6 +2552,10 @@ export function renderProjectsFrame(factory: ScreenFactory, theme: ProjectsTheme
   // command of its own and owns the mark of that read, like every section here.
   const seats = make(factory, 'div', PROJECTS_SEATS_CLASS)
   const seatsSlot = cell(seats, factory, 'div', BUSY_SLOT_CLASS)
+  // The Manage section's host (I-MG), the last of them and the one with no
+  // slot: `mountProjectsManage` fills it with a section that owns a mark per
+  // kind, so there is no single read of this file's for a slot to be about.
+  const manage = make(factory, 'div', PROJECTS_MANAGE_CLASS)
   root.append(body)
   root.append(models)
   root.append(settings)
@@ -2361,6 +2565,7 @@ export function renderProjectsFrame(factory: ScreenFactory, theme: ProjectsTheme
   root.append(credentialsService)
   root.append(licence)
   root.append(seats)
+  root.append(manage)
   return {
     root,
     body,
@@ -2381,7 +2586,44 @@ export function renderProjectsFrame(factory: ScreenFactory, theme: ProjectsTheme
     licenceSlot,
     seats,
     seatsSlot,
+    manage,
   }
+}
+
+/**
+ * mountProjectsManage mounts the Manage section into the frame's host: the
+ * console's own kinds (the plan's task I-MG, `manage/kinds/index.ts`), over the
+ * caller's operations.
+ *
+ * **It is the tab's own door for that section, and the entry is the caller.**
+ * `mountManage` is handed the kinds the console draws -- `KINDS`, built for the
+ * installation this console is driving, which is what asks the Budget kind's
+ * reduced-mode gate exactly once -- and everything else the section needs is the
+ * *caller's*, because this screen has none of it: the factory, the theme, the
+ * console's operation surface, the clipboard and the rail (`ManageDeps`). This
+ * module therefore spawns nothing, copies nothing and navigates nowhere; it puts
+ * the section into the host it drew and answers what it mounted, so a caller
+ * that has to re-read one kind later can (`ManageSection.readKind`).
+ *
+ * **The cast is the two element surfaces'.** A kind's root is a `ManageElement`
+ * -- the shell's own wider surface, `ElementLike` plus the `replaceChildren` a
+ * repaint needs and the `addEventListener` its groups and its Copy buttons need
+ * (`manage/shell.ts`) -- and this file's `ScreenElement` is the narrower one
+ * (`childNodes`, and no listener at all). The hosts this frame draws are typed
+ * by this file's surface, so the root goes in through the one cast that says the
+ * two are the same node -- the element the caller's own factory made, handed
+ * back to that caller, exactly as `shell.ts`'s `asManage` says it in the other
+ * direction. Nothing here reads a screen member off it, and the shell keeps the
+ * surface it built the element with.
+ */
+export function mountProjectsManage(
+  deps: ManageDeps,
+  compatibility: CliCompatibility,
+  host: ScreenElement,
+): ManageSection {
+  const section = mountManage(KINDS(compatibility)).draw(deps)
+  host.append(section.root as unknown as ScreenElement)
+  return section
 }
 
 /**

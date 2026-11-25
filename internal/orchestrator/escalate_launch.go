@@ -424,14 +424,20 @@ func (c *cycle) ladderAct(ctx context.Context, w WorkItem, step escalation.Step,
 // open), the item's own approval (D2042, G15) — the standing one, or the one a
 // retry spent — and the ladder's count of the runs it has already spent.
 //
+// other is what the cycle resolved the item's cross references to (D3208), as
+// the plan reads them: a ladder run is a run, and one started for an item whose
+// work in another orchestrator is not done is the launch the plan holds back,
+// made by another door. A caller that holds no such reading passes nil, and the
+// reference then holds the item — the direction a launch fails in.
+//
 // Every launch the ladder makes is held to this, whichever rung asks for it:
 // the rungs this file walks call it through ladderOuter, and the hook past rung
 // 2 calls it before it launches a review or a judge, which are runs of the
 // item's own work and are spent under a person's approval exactly as a rebase
 // is. Its own rung 3 balance is what the rule reads, so a launch the hook makes
 // is counted here and not only in the transition a rung below writes.
-func ladderLaunchable(s State, w WorkItem) bool {
-	if !startable(w.Phase) || !dependenciesDone(s, w) {
+func ladderLaunchable(s State, other crossPhases, w WorkItem) bool {
+	if !startable(w.Phase) || !dependenciesMet(s, other, w) {
 		// A ladder run is a run: an item a run is moving through is not one to
 		// start beside it, and neither is one still waiting on work that is not
 		// done — the rebase would move a head under the item waiting on it.
@@ -460,7 +466,7 @@ func ladderLaunchable(s State, w WorkItem) bool {
 // past rung 2 is where that stop is carried out. The per-item ceiling a rung 1
 // resume is held by is RunView.Spend's (launch.go).
 func (c *cycle) ladderOuter(w WorkItem, step escalation.Step, read LadderReading) (LadderRequest, bool) {
-	if !ladderLaunchable(c.state, w) {
+	if !ladderLaunchable(c.state, c.cross, w) {
 		return LadderRequest{}, false
 	}
 	recipe := RecipeRebase

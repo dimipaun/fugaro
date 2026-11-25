@@ -16,7 +16,7 @@ import (
 // T3.6): the run records of this repository that its digest step may read.
 //
 // A report run reads the records it is handed and never lists — a listing is
-// a bucket-level call the job's grant cannot hold (docs/design/bucket-iam.md,
+// a bucket-level call the job's grant cannot hold (docs/bucket-iam/spec.md,
 // V7) — so what a job may read is decided here, on the machine that holds
 // the person's credentials and already lists runs for fugaro runs ls.
 

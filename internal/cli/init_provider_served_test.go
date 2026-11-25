@@ -59,7 +59,7 @@ const providerServedProviders = `providers:
 `
 
 // providerServedStageAccount is the local config's one mix (B0,
-// docs/design/mixed-credentials.md §11): an account this repository's review
+// docs/mixed-credentials/spec.md §11): an account this repository's review
 // stage goes out on instead of its provider key, admitted to this repository by
 // its own allow_data_to — the account infra.MixedStageAccounts answers with,
 // which is the whole of R12's "the record names a stage account".

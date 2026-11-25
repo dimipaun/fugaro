@@ -240,20 +240,23 @@ func TestResolveLevelsFloorRefusesNone(t *testing.T) {
 	}
 }
 
-// TestResolveLevelsFloorHoldsForAHotfixRequest pins what a request may not do
-// to the owner's floor. `review_floor` is a mode→levels map, and a run reads
-// the row of the mode it is at (policy.Effective.ReviewFloorFor) — but a
-// request may raise a mode and never lower a floor (D8, LF5), so a request
-// that takes a run off the axis to hotfix (rigor.Rigor.PerRun) is held to
-// hotfix's row *and* to the row of the mode the layers resolved beside it
-// (rigor.LayersRigor): a floor of l2,l3 on pro still turns l3 on for that run.
-// Reading hotfix's row alone would let one flag drop a floor the owner set,
-// silently, which is the lowering no request may take.
+// TestResolveLevelsFloorFollowsTheHotfixRuling pins what a run's own request
+// may and may not do to the owner's floor. `review_floor` is a mode→levels
+// map, and a run reads the row of the mode it is at
+// (policy.Effective.ReviewFloorFor) — but a request lowers a mode and never a
+// floor (D8, LF5), so a run an on-axis request took *below* the layers is held
+// to the row of the mode the layers resolved as well (rigor.LayersRigor): a
+// floor of l2,l3 on pro still turns l3 on for a run the request lowered to
+// poc, which is the lowering no request may take.
 //
-// The owner's lever for a floored hotfix run stays the floor written for
-// hotfix, which `fugaro rigor floor set hotfix l2,l3` accepts
+// A request that takes the run off the axis is the owner's ruling of
+// 2026-11-20 (docs/rigor-modes/levels-reconciliation.md, item 3): a hotfix run
+// is held to hotfix's own row and to nothing beside it, so the pro floor does
+// not reach it — the row of the mode the layers resolved is deliberately not
+// read for it. The owner's lever for a floored hotfix run is the floor written
+// for hotfix, which `fugaro rigor floor set hotfix l2,l3` accepts
 // (TestRigorFloorSetAcceptsHotfix, internal/cli).
-func TestResolveLevelsFloorHoldsForAHotfixRequest(t *testing.T) {
+func TestResolveLevelsFloorFollowsTheHotfixRuling(t *testing.T) {
 	owner := policy.Layer{ReviewFloor: map[rigor.Rigor][]policy.Level{
 		rigor.Pro: {policy.LevelL2, policy.LevelL3},
 	}}
@@ -285,17 +288,32 @@ func TestResolveLevelsFloorHoldsForAHotfixRequest(t *testing.T) {
 		t.Error("l3 is off for a pro run under a floor of l2,l3 on pro; want it on: the floor turns on a level the mode's own row leaves off")
 	}
 
+	// The same repository and the same owner, with an on-axis request that
+	// lowered the run below the layers: the floor of the mode the layers
+	// resolved holds beside the one the run is at, so the owner's l3 is on.
+	mode, floor = floorFor(rigor.Request{Level: rigor.POC})
+	if mode != rigor.POC {
+		t.Fatalf("the run resolved to %s; want poc from the request", mode)
+	}
+	if len(floor) != 2 {
+		t.Fatalf("the lowered run's floor = %v; want the two levels the owner set for pro: the request lowered the mode and not the floor (D8, LF5)", floor)
+	}
+	if !levels(mode, floor).L3.On {
+		t.Error("l3 is off for a run the request lowered to poc under a floor of l2,l3 on pro; want it on: a request lowers a mode and never a floor (D8, LF5)")
+	}
+
 	// The same repository and the same owner, with the run's own request for
-	// hotfix: hotfix's row is empty, and pro's still holds beside it.
+	// hotfix: hotfix's row is empty, and pro's does not reach it (the owner's
+	// ruling of 2026-11-20).
 	mode, floor = floorFor(rigor.Request{Level: rigor.Hotfix})
 	if mode != rigor.Hotfix {
 		t.Fatalf("the run resolved to %s; want hotfix from the request", mode)
 	}
-	if len(floor) != 2 {
-		t.Fatalf("the hotfix run's floor = %v; want the two levels the owner set for pro: the request took the run off the axis and left the floor of the mode the layers resolved in force", floor)
+	if len(floor) != 0 {
+		t.Fatalf("the hotfix run's floor = %v; want none: a hotfix run is held to hotfix's row alone, and the owner set none for it", floor)
 	}
-	if !levels(mode, floor).L3.On {
-		t.Error("l3 is off for a hotfix run the owner floored on pro; want it on: a request raises a mode and never lowers a floor (D8, LF5)")
+	if levels(mode, floor).L3.On {
+		t.Error("l3 is on for a hotfix run under a floor the owner wrote for pro; want it off: a floor written for pro does not hold a hotfix run")
 	}
 
 	// The owner's lever for a floored hotfix run: the same request, with the

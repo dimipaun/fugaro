@@ -327,7 +327,7 @@ func TestRecordJSON(t *testing.T) {
 // the record like any other field, and a record that cannot say — an empty
 // edition, which is every record written before the field existed — omits the
 // key entirely. The gates read "unknown" from its absence (design
-// docs/design/ee-boundary-moves.md §7), and a record an older fugaro wrote must
+// docs/ee-reorg/boundary-moves.md §7), and a record an older fugaro wrote must
 // not gain a key it never wrote.
 func TestRecordEditionRoundTrips(t *testing.T) {
 	for _, c := range []struct {

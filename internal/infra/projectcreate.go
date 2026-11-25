@@ -37,12 +37,17 @@ package infra
 // linked to: this file reads that link for its presence and never for its
 // name (ProjectInfo carries no account field), and no run prints one.
 //
-// Fugaro only starts fresh: the project an installation lives in is one
-// fugaro setup created. CreateProject labels it CreatedLabelKey=CreatedLabelValue
-// in the create request itself, so the label is there from the project's first
-// moment, and a later run of fugaro setup that finds the ID taken tells its own
-// earlier creation (a run that stopped for billing, or before its installation
-// was applied: the resume) from a project someone else made, which it refuses.
+// The project an installation lives in is one fugaro setup created, or one it
+// adopted (the owner's ruling of 2026-11-22): an ID that already exists and
+// holds nothing of Fugaro's is used as if setup had created it. CreateProject
+// labels the projects it makes CreatedLabelKey=CreatedLabelValue in the create
+// request itself, so the label is there from the project's first moment; the
+// run that adopts a project writes CreatedLabelKey=AdoptedLabelValue instead,
+// because the value states the project's origin and an adopted project's
+// origin is not this program. Either value is what a later run of fugaro setup
+// that finds the ID taken reads to tell a project of Fugaro's own (one whose
+// earlier run stopped for billing, or before its installation was applied: the
+// resume) from a project someone else made, which it still refuses.
 // The label is a statement about the project's origin and not a privilege:
 // anyone who may update the project can set it. A managed project still needs
 // the creation fact in its runs bucket, which the creating run writes, or, for
@@ -237,10 +242,13 @@ type ProjectInfo struct {
 	// says "taken".
 	Exists bool
 	State  string // ACTIVE, DELETE_REQUESTED, ...
-	// CreatedByFugaro is whether the project carries the label CreateProject
-	// puts on every project it creates (CreatedLabelKey=CreatedLabelValue).
-	CreatedByFugaro bool
-	Firebase        bool
+	// CreatedLabel is the value of CreatedLabelKey on the project, verbatim:
+	// "" when the project carries no such label at all. CreatedByFugaro and
+	// AdoptedByFugaro read the two values this program writes; a project
+	// carrying the key with any other value is one this program did not
+	// write, and it is refused rather than adopted.
+	CreatedLabel string
+	Firebase     bool
 	// BillingKnown is false when the caller cannot read the project's
 	// billing; BillingEnabled is meaningful only when it is true. The
 	// account the project is linked to is deliberately not read out.
@@ -250,6 +258,15 @@ type ProjectInfo struct {
 	// never replaced.
 	BillingLinked bool
 }
+
+// CreatedByFugaro is whether the project carries the label CreateProject puts
+// on every project it creates (CreatedLabelKey=CreatedLabelValue).
+func (i ProjectInfo) CreatedByFugaro() bool { return i.CreatedLabel == CreatedLabelValue }
+
+// AdoptedByFugaro is whether it carries CreatedLabelKey=AdoptedLabelValue
+// instead: the label the run that adopted an existing project writes. It says
+// the project is Fugaro's own without saying Fugaro created it.
+func (i ProjectInfo) AdoptedByFugaro() bool { return i.CreatedLabel == AdoptedLabelValue }
 
 // ReadProject reads the project, its Firebase resource and its billing
 // state. It changes nothing.
@@ -263,7 +280,7 @@ func ReadProject(ctx context.Context, pc *ProjectClients, id string) (ProjectInf
 		return info, classify(err, "reading project "+id)
 	}
 	info.Exists, info.State = true, p.State
-	info.CreatedByFugaro = p.Labels[CreatedLabelKey] == CreatedLabelValue
+	info.CreatedLabel = p.Labels[CreatedLabelKey]
 	if p.State != "" && p.State != "ACTIVE" {
 		return info, nil
 	}
@@ -415,16 +432,59 @@ func refusedOperation(code int64, message string) bool {
 	return false
 }
 
-// CreateSpec is what the user confirmed.
-// CreatedLabelKey=CreatedLabelValue is the label every project fugaro setup
-// creates carries from its creation on (CreateProject sends it in the create
-// request): what a later run reads to tell a project it created, and may
-// resume, from one it did not, which it refuses.
+// CreatedLabelKey is the label that says a project is one of Fugaro's own,
+// and its value says how it became one: CreatedLabelValue for a project
+// fugaro setup created (CreateProject sends it in the create request), and
+// AdoptedLabelValue for one it adopted because it was there and held nothing
+// of Fugaro's (internal/cli's project stage). A later run reads it to tell a
+// project it may resume from one it must refuse.
 const (
 	CreatedLabelKey   = "fugaro_created"
 	CreatedLabelValue = "true"
+	AdoptedLabelValue = "adopted"
 )
 
+// WriteAdoptedLabel records that project is one fugaro setup adopted: it
+// writes CreatedLabelKey=AdoptedLabelValue, and it refuses a project that
+// carries the key with any value at all. The value states where the project
+// came from, and the label is written once, by the run that made the project
+// Fugaro's — CreateProject's create request for a created one, this for an
+// adopted one. Nothing here re-reads whether the project held anything of
+// Fugaro's: that read is the caller's (internal/cli's footprint), and this
+// writes what it decided.
+//
+// Everything else is the shape managed.writeManagedLabel writes the other
+// label in: the project is read first, every other label is kept, and the
+// whole object is written back with one label added — projects.update
+// replaces the project's editable state with the request's, so a body holding
+// only labels would take the owner's display name off the project.
+func WriteAdoptedLabel(ctx context.Context, c *Clients, project string) error {
+	if project == "" {
+		return fmt.Errorf("refusing to write the %s label: no project name", CreatedLabelKey)
+	}
+	if c == nil || c.CRM == nil {
+		return fmt.Errorf("refusing to label %s as %s=%s: no Resource Manager client", project, CreatedLabelKey, AdoptedLabelValue)
+	}
+	p, err := c.CRM.Projects.Get(project).Context(ctx).Do()
+	if err != nil {
+		return fmt.Errorf("reading project %s before labelling it %s=%s: %w", project, CreatedLabelKey, AdoptedLabelValue, err)
+	}
+	if v := p.Labels[CreatedLabelKey]; v != "" {
+		return fmt.Errorf("refusing to label %s as %s=%s: it already carries %s=%s, and the label is written once, by the run that made the project Fugaro's", project, CreatedLabelKey, AdoptedLabelValue, CreatedLabelKey, v)
+	}
+	labels := make(map[string]string, len(p.Labels)+1)
+	for k, v := range p.Labels {
+		labels[k] = v
+	}
+	labels[CreatedLabelKey] = AdoptedLabelValue
+	p.Labels = labels
+	if _, err := c.CRM.Projects.Update(project, p).Context(ctx).Do(); err != nil {
+		return fmt.Errorf("labelling project %s %s=%s: %w", project, CreatedLabelKey, AdoptedLabelValue, err)
+	}
+	return nil
+}
+
+// CreateSpec is what the user confirmed.
 type CreateSpec struct {
 	ID, DisplayName string
 	// Parent is organizations/N or folders/N; empty means no parent (the
@@ -475,7 +535,7 @@ func SuggestProjectID(id string) string {
 // Its return is the creation fact, and the only one: a caller that gets nil
 // here created the project, and a project Fugaro created is a project Fugaro
 // manages (the owner's addendum of 2026-10-15; design D56/D57, Task 0.1 of
-// docs/plans/2026-10-16-managed-projects.md). init turns it into
+// docs/managed-projects/implementation-plan.md). init turns it into
 // initResult.Created and records it in the runs bucket
 // (internal/infra/managed.WriteMarker, called from init's markCreated);
 // nothing here writes that object, because at this moment the bucket does

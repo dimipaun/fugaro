@@ -79,7 +79,7 @@ the console knows, and whether the CLI lets it — asked of two different refusa
 wants only the first can take P3 alone and leave every widening row showing a command to copy.
 
 **Why C5 is not first.** Three of the four documents C5 changes are the **fences themselves** —
-`docs/design/desktop-console.md` §5.1 rules 5 and 6 and the new rule 12. A fence document written
+`docs/desktop-console/spec.md` §5.1 rules 5 and 6 and the new rule 12. A fence document written
 before the code it fences is a description of an intention; the console rule requires the count, the
 table and the code to move in **the same commit**, so C5's changes to those three are made inside
 C1, C2 and C3 and C5 holds only what is left (§6 below says which).
@@ -97,7 +97,7 @@ textual one.
 | `console/src/main/confirm.ts` | generalized from one view to a union, so the launch window and the settings window are one implementation (**D1115**, C3) | the launch (rule 11) |
 | `console/src/preload/index.ts`, `console/src/preload/confirm.ts` | the written-out method list gains the two methods (C1, C3); the confirm preload gains the tick's field (C3) | every console feature; `console/test/unit/preload-surface.test.ts` pins the duplication |
 | `console/src/renderer/entry.ts` | the Project tab's section wiring and the pencil's event handling (C1, C2) | every screen; the file is the console's second-largest |
-| `console/src/renderer/theme/screens.css` | the new panels' class hooks and the pencil's states (C2) | every screen; `docs/design/console-styling.md` §2.5 names them |
+| `console/src/renderer/theme/screens.css` | the new panels' class hooks and the pencil's states (C2) | every screen; `docs/console-styling/spec.md` §2.5 names them |
 | `console/test/fixtures/bin/fugaro` | two new arms: `settings … --json` and `settings set\|unset …`, the second recording its argv (C4) | every console e2e |
 | `internal/cli/settings.go`, `settings_read.go`, `settings_set.go`, `settings_write.go` | P1, P2, P3, P4 — all four are changes to the command S5 landed | S5 (#1525), which has now merged and left the files on `main` |
 
@@ -248,7 +248,7 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
   `console/src/renderer/theme/screens.css` (the panels' hooks, per `console-styling.md` §2.5),
   `console/test/unit/ipc.test.ts`, `console/test/unit/spawn.test.ts`,
   `console/test/unit/preload-surface.test.ts`, `console/test/unit/projects.test.ts`,
-  `docs/design/desktop-console.md` §5.1 **rule 5 and rule 6, in this commit**,
+  `docs/desktop-console/spec.md` §5.1 **rule 5 and rule 6, in this commit**,
   `console/docs/json-contract.md` §6.15 (the settings document, with the three fields P2 adds).
 - **The argv, word by word:** `settings --json --project <name> [--config <path>]` — the group's own
   read, with the project flags §3.4 rule 3 gives every cloud command. **No `--offline`**: the
@@ -313,7 +313,7 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
   `console/src/preload/confirm.ts`, `console/src/renderer/entry.ts`,
   `console/test/unit/confirm.test.ts`, `console/test/unit/confirm-view.test.ts`,
   `console/test/unit/ipc.test.ts`, `console/test/unit/spawn.test.ts`,
-  `docs/design/desktop-console.md` §5.1 **rule 5, rule 6 and the new rule 12, in this commit**.
+  `docs/desktop-console/spec.md` §5.1 **rule 5, rule 6 and the new rule 12, in this commit**.
 - **The two spawns per confirmed edit, in this order:** first `settings set KEY --layer <L>
   --dry-run --json --project <name> [--config <path>]` (or the `unset` form) — nothing is written,
   and its document is what the window draws; then, on a yes from the window's own top frame,
@@ -367,10 +367,10 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
 
 ### C5. The documents the fences live in (D1121). **SEC** — **size S**
 
-- **Files:** `docs/design/desktop-console.md` §5.1 (**rule 5's count and rule 6's two rows move in
+- **Files:** `docs/desktop-console/spec.md` §5.1 (**rule 5's count and rule 6's two rows move in
   C1's and C3's commits, not here**; what is left for this task is the prose that is not a fence —
   §3.4's project-flag paragraph gaining `settings`, and rule 12's cross-reference into
-  `docs/settings-commands/` for the D846 amendment), `docs/design/console-styling.md` §2.5 (the new
+  `docs/settings-commands/` for the D846 amendment), `docs/console-styling/spec.md` §2.5 (the new
   panels' class hooks and the pencil's states, which C2's CSS implements),
   `console/docs/json-contract.md` §6.15 (finished against the shipped screen, per D848's own rule
   that the console's work writes the console's document), and

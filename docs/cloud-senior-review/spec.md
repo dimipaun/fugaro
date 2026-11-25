@@ -88,7 +88,7 @@ accounts first, then shared ones, with a tried-list — is a plan, not code.
 the budget gateway is off for that credential's calls, so **nothing prices them**: the run's
 `cost.model_usd` carries Claude Code's own estimate of its usage, `runstore.ModelBasis` is
 `subscription`, and the caps (`budget.per_run_usd`, the project ceiling, the day cap) do not bind
-them. This is stated in [docs/design/mixed-credentials.md](../design/mixed-credentials.md) §5 and §7
+them. This is stated in [docs/mixed-credentials/spec.md](../mixed-credentials/spec.md) §5 and §7
 ("*Capped by the gateway: no; only Claude Code's own estimate*"), and it is the property the owner is
 buying: the senior review costs no dollars per run, bounded only by `agent.max_budget_usd` — which
 is passed to Claude Code as `--max-budget-usd` and **is Claude Code's own estimate**, accurate for a
@@ -105,7 +105,7 @@ the metadata server (`mixed-credentials.md` §6; the plan's Review Focus 1 and 2
 accepted today for an `oauth` workflow.
 
 **It is not why `stage_auth` is held, and this design had that wrong.** D9 states the hold itself,
-in `docs/design/project-centric.md` **§10** ("Effect on work in flight", where the row sits): *"#363
+in `docs/project-centric/spec.md` **§10** ("Effect on work in flight", where the row sits): *"#363
 OAuth reviewer stage — Multiplies per-repository variant jobs; widens token blast radius under
 sharing — **Hold** until phase 5."* The two costs D9
 names are a **job per repository** and a token **shared wider by a shared job** — not the `/proc`
@@ -350,7 +350,7 @@ the command must ship**, is the token mount this design first proposed — the v
 carrying the account's Claude token — which is strictly worse and is recorded as a fallback rather
 than as the plan (§7). The billing identity this design chooses is the thing to check against the tree: the
 variant it inherits its shape from is the **shared project job** of `(profile, account)`, whose bucket
-condition is the whole of `runs/` (`gcp.ProjectBucketCondition`, `docs/design/bucket-iam.md` §2.1) —
+condition is the whole of `runs/` (`gcp.ProjectBucketCondition`, `docs/bucket-iam/spec.md` §2.1) —
 the accepted, installation-wide reach the owner ruled on 2026-10-17. A review job needs to write one
 run's own record and artifact, so that reach is more than it needs; narrowing it is a bucket-layout
 change this design does **not** make and instead records as a finding (**F15**). Note what the

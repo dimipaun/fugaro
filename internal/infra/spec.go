@@ -406,6 +406,14 @@ type VoiceService struct {
 // answer: a second implementation would be a second answer, and the state
 // where the two disagree is a job whose credential was dropped and whose
 // launch was told about no service to get it from.
+//
+// It is the release-1 bridge's arm and no longer the whole answer: a
+// repository the project's routing table serves is on the service whatever
+// this function says about its auth, and that arm is
+// CredentialsServiceServesChains, read beside it where the switch is decided
+// (resolve). This one keeps its meaning and its signature — it answers about
+// agent.auth, which is what a repository with no table is still served by
+// (O7: the flip list and this question are the owner's to retire, not CS11's).
 func CredentialsServiceServes(installed, ready bool, auth, mode string) bool {
 	if !installed || !ready {
 		return false
@@ -443,16 +451,38 @@ func CredentialsServiceServes(installed, ready bool, auth, mode string) bool {
 //
 //   - `none`: the switch is off for this repository. Nothing is served, so
 //     every mount stays and the module drops no accessor.
-//   - `all`: the cascade's job, whose runner reads every model credential from
-//     the service. That is the answer this branch shipped before, and the
+//   - `all`: a repository whose every call the service makes with a credential
+//     of its own — the cascade's job since the first release, whose runner
+//     reads every model credential from the service, and since CS11 a
+//     repository the project's routing table serves, whose run's gateway holds
+//     no key at all and whose chain names the source per call (R2). That is
+//     also the answer this branch shipped before the input existed, and the
 //     module's own default for a root applied with an older tfvars.
 //   - `anthropic`: an auth in config.ServiceServedAuths — the service hands
 //     back the Claude OAuth token and the Anthropic key, and only those two:
 //     a provider's key is forwarded, not attached, by the route that spends it
 //     (R6, D1634), so its mount is the run's own and stays.
-func ModelSecretsServed(serves bool, auth string) string {
+//
+// `serves` gates the table, and the order matters: `serves` is the switch's
+// answer, which CredentialsServiceServesChains holds to installed-and-ready
+// just as CredentialsServiceServes does, so `plan.Serves` on a repository of an
+// installation with no service — or one whose root has not recorded readiness —
+// is a table this run is not told about. Reading the table first would drop the
+// job's model mounts there and leave it with CredentialsService nil beside them,
+// which is exactly the state the switch exists to prevent: no mount and no
+// address is a run that reaches no credential at all.
+//
+// So a repository the table serves AND the switch reaches is `all` however its
+// file names its auth — including a `vertex` one, which no arm below answers for
+// and which has no credential to mount either way — and a repository the table
+// does not serve is the bridge's, `none` or `anthropic` by the list above.
+// `plan` is ChainPlanFor's answer for this repository.
+func ModelSecretsServed(plan ChainPlan, serves bool, auth string) string {
 	if !serves {
 		return config.ModelSecretServedNone
+	}
+	if plan.Serves {
+		return config.ModelSecretServedAll
 	}
 	if auth == config.AuthCascade {
 		return config.ModelSecretServedAll
@@ -529,13 +559,21 @@ type WorkflowSpec struct {
 	// repository's budget token objects, tokens/<slug>/
 	// (gcp.TokenBucketCondition; budget-token-channel.md §7.2, D16).
 	TokenCondition Condition `json:"token_condition"`
-	Vertex         bool      `json:"vertex"`
-	DeployJob      bool      `json:"deploy_job"`
+	// Vertex is whether this job's account is planned the Vertex permission
+	// (modules/workflow/sa.tf's one aiplatform member), and it is the fact this
+	// spec's own address set is read from, so the grant and the address cannot
+	// disagree. It is the repository reaching Vertex AND the project's mode
+	// allowing the grant (VertexGrantForJob): under `enforce` no run in flight
+	// can be using it, so release 1 plans none, and the two Vertex names in Env
+	// go with it — an agent on `agent.auth: vertex` reads them, and that run is
+	// the one the gateway refuses first.
+	Vertex    bool `json:"vertex"`
+	DeployJob bool `json:"deploy_job"`
 	// StageAccount is whether this is a mixed stage account's own variant job
 	// (mixedStageAccountJob): the job a run's `review`, `adversarial` and
 	// `triage` stages go out on when an api-key repository mixes a Claude
 	// account with the provider key its coder's stages keep (B0's one mix,
-	// docs/design/mixed-credentials.md §11). Those stages reach Anthropic on
+	// docs/mixed-credentials/spec.md §11). Those stages reach Anthropic on
 	// that account's token through the RUNNER and never through the run's
 	// gateway, so the credentials service has no call of theirs to serve and
 	// B2.7's flip leaves this job's Claude OAuth mount and its accessor alone
@@ -640,7 +678,7 @@ type CheckJobSpec struct {
 	BaseImages map[string]string `json:"base_images"`
 	// GitSecretID is the secret ID of the provider credential as Readiness
 	// resolved it for this repository (the repository's own copy, or the
-	// project-wide one; design docs/design/project-secrets.md §5, §7), so
+	// project-wide one; design docs/project-secrets/spec.md §5, §7), so
 	// the rebuild the check job submits names the secret the job itself
 	// reads. Empty in a spec written before this field existed: the in-job
 	// rebuild falls back to the repository's own ID (imagecheck.go).
@@ -786,6 +824,23 @@ type RepoSpec struct {
 	// values, so no plan of this release leaves the question to the default.
 	ModelSecretsServed string `json:"model_secrets_served,omitempty"`
 
+	// ReachesVertex is whether this repository's runs reach Vertex at all: its
+	// file's `agent.auth: vertex`, or a chain of the project's table that may
+	// serve it naming Vertex (ChainPlan.Vertex — a repository the service
+	// reaches Vertex for, which names no Vertex in its own file at all).
+	// UsesVertex is this, and it is what `fugaro update` records into the local
+	// config as repos.<repo>.vertex and what the installation enables the
+	// Vertex AI API from.
+	//
+	// It is a fact of its own because the GRANT comes apart from it: under
+	// `budget.mode: enforce` release 1 plans no job's account the Vertex
+	// permission (VertexGrantForJob) while the API must stay on and the
+	// credentials service must keep its own permission, the service being what
+	// calls Vertex on its behalf (D3174). It is json:"-" the way the spec's
+	// other in-process facts are: no Terraform input carries it, and the
+	// repository root plans exactly what it planned before this field existed.
+	ReachesVertex bool `json:"-"`
+
 	// ProjectSecretCandidates are the logical names this repository may use
 	// project-wide, mapped to the secret ID they would resolve to
 	// (gcp.ProjectSecretID). Candidate data only: being here says nothing
@@ -804,7 +859,7 @@ type RepoSpec struct {
 	// for a name only the node admits it refuses --project-wide and its bare
 	// form writes the repository's own copy -- the copy that then wins over
 	// the project's forever, the silent flip project-wide secrets exist to
-	// avoid (design docs/design/project-secrets.md §5). What such a name is
+	// avoid (design docs/project-secrets/spec.md §5). What such a name is
 	// given instead is the run's own door, whose secrets stage stores the
 	// value in the container its own node-read decision picks: SecretFix's
 	// node-only branch, and initsecrets' Left, which spells the same line.
@@ -815,6 +870,21 @@ type RepoSpec struct {
 	// mapped to the project secret ID. This is the field that reaches
 	// tfvars as repo.project_secrets.
 	ProjectSecrets map[string]string `json:"project_secrets,omitempty"`
+
+	// DefaultAccountUnused says no run of this project's configuration holds
+	// the unsuffixed default Claude account (localcfg's
+	// RunsOnDefaultClaudeAccount): every account a launch picks is a named one,
+	// so the bare claude-oauth-token is a token nothing mounts and its absence
+	// is not a repository's missing secret. Readiness drops the mount of that
+	// name from every job and SecretCommands prints no step for it, because a
+	// step would send the owner to mint a token for an account their own
+	// configuration never chooses — the one repository copy no project-wide
+	// copy can replace (the bare name is deliberately outside D2's sweep). The
+	// job itself is unchanged and still deployed: an explicit
+	// `fugaro run --token default` targets it, and the account's own allow-list
+	// is what refuses that launch, not a job that is not there. json:"-": no
+	// Terraform input reads it.
+	DefaultAccountUnused bool `json:"-"`
 
 	// AccountProfiles names, for each named Claude account this repository's
 	// jobs mount, the profile whose claude_accounts already lists it
@@ -872,8 +942,16 @@ type repoCtx struct {
 	credentialsServiceOn bool
 	// budgetMode is the mode the published node carries, read once by resolve
 	// from Inputs.Policy: the switch's fourth condition for an `api-key` or
-	// `oauth` repository (D2071). It is "" where the caller read no node.
+	// `oauth` repository (D2071), and the fact VertexGrantForJob reads to take
+	// a job's Vertex permission away on an enforcing project. It is "" where
+	// the caller read no node.
 	budgetMode string
+	// chain is what the project's routing table decides for this repository,
+	// read once by resolve (ChainPlanFor): whether a chain of it may serve this
+	// repository — which is what puts its runs on the credentials service
+	// beside the switch's own answer, CredentialsServiceServesChains — whether
+	// it reaches Vertex, and whether the project publishes a table at all.
+	chain ChainPlan
 	// providerKeysServed and stageAccountServed are R12's two facts as this
 	// repository's entry in the local config records them, read once by
 	// resolve: the owner's own `fugaro update` judged each of them and wrote
@@ -979,7 +1057,15 @@ func resolve(in Inputs) (*repoCtx, error) {
 	if in.Policy != nil {
 		c.budgetMode = in.Policy.Budget.Mode
 	}
-	c.credentialsServiceOn = CredentialsServiceServes(c.inst.CredentialsService != nil, local.CredentialsServiceOn(), in.Cfg.Agent.Auth, c.budgetMode)
+	c.chain = ChainPlanFor(lc, in.Repo)
+	installed, ready := c.inst.CredentialsService != nil, local.CredentialsServiceOn()
+	// Two arms, one answer: the release-1 bridge, which reads agent.auth, and
+	// the table, which does not (ChainPlanFor). A repository the table serves
+	// is on the service whatever its file names — and a repository the bridge
+	// would serve keeps its answer, so an installation whose table names no
+	// chain for it moves nothing (MG1's per-repository migration).
+	c.credentialsServiceOn = CredentialsServiceServes(installed, ready, in.Cfg.Agent.Auth, c.budgetMode) ||
+		CredentialsServiceServesChains(installed, ready, c.chain)
 	c.providerKeysServed = local.ProviderKeysServedOn()
 	c.stageAccountServed = local.StageAccountServedOn()
 	return c, nil
@@ -1070,7 +1156,28 @@ func (c *repoCtx) resolveBitbucketProxied() error {
 // and handed in as Inputs.Policy, exactly as the proxy's half is
 // (resolveBitbucketProxied, same reason: internal/infra holds no client that
 // could read one and Repo is a pure function of its Inputs).
-func (c *repoCtx) sharedRepo() bool { return SharedRepo(c.in.Policy, c.provider, c.in.Repo) }
+//
+// A repository with a workflow whose tools live in its own derived image
+// (checkout other than clone) keeps its per-repository jobs until the shared
+// job carries that image (SharedJobBaked), because fugaro run launches that
+// workflow on the per-repository job: enrolling the repository as shared would
+// leave update creating no job for the launch to find.
+func (c *repoCtx) sharedRepo() bool {
+	if !SharedJobBaked && c.in.Cfg != nil {
+		for _, w := range c.in.Cfg.Workflows {
+			if w.Checkout != config.CheckoutClone {
+				return false
+			}
+		}
+	}
+	return SharedRepo(c.in.Policy, c.provider, c.in.Repo)
+}
+
+// SharedJobBaked is whether a shared project job carries a baked workflow's
+// tools; S10 flips it in the change that deploys the catalog default image.
+// It is a variable so S4's and S10's tests admit the workflow the way
+// production will.
+var SharedJobBaked = false
 
 // buildServes is whether the credentials service serves the secrets of class
 // to this repository's BUILDS (B4.9, the S4 flip; D2076, D2077): the class
@@ -1383,7 +1490,7 @@ func unbuiltOnBaked(workflow string, e config.Entry) error {
 
 // Workflow is the spec of one workflow of the repository, its default
 // Claude account (config.DefaultClaudeAccount). Repo builds one WorkflowSpec
-// per account a repository may choose among (docs/design/named-oauth-tokens.md
+// per account a repository may choose among (docs/named-oauth-tokens/spec.md
 // §4); this exported helper only ever builds the default one, which is what
 // every caller outside this package wants.
 func Workflow(in Inputs, name string) (WorkflowSpec, error) {
@@ -1551,6 +1658,20 @@ func runnerKeyCredential(lc *localcfg.Config, provider, repo string) (string, bo
 	return secret, true
 }
 
+// RunnerKeyCredential is runnerKeyCredential for a reader outside this package:
+// the container the runner-path key credential of provider's own name holds the
+// key in, for the repositories claude_accounts.<provider>.allow_data_to names.
+//
+// The reader is internal/cli's copy of the installation's model keys into the
+// credentials service's bundle (KS12): which container a repository's runs are
+// served a provider's key from is this function's answer and nobody else's, and
+// an entry the copy wrote holding a key the repository's own job does not mount
+// is a key no released run is served (F27, R6). It is exported rather than
+// spelled a second time there so the two cannot disagree.
+func RunnerKeyCredential(lc *localcfg.Config, provider, repo string) (string, bool) {
+	return runnerKeyCredential(lc, provider, repo)
+}
+
 // runnerKeyCredentialName is the credential a logical secret is the derived
 // container of, when this installation declares it as a RUNNER-path key
 // credential (D1670, MC23). It is the one place that reads the half off a
@@ -1649,7 +1770,7 @@ func RequiredSecrets(cfg *config.Config, lc *localcfg.Config, repo string) ([]st
 // variant gcp.WorkflowVariant(name, token) (identity for the repository's
 // default account, so an installation with no named accounts gets a job,
 // account and labels byte-identical to before this field existed, design
-// docs/design/named-oauth-tokens.md §5). Only the job's own identity (Job,
+// docs/named-oauth-tokens/spec.md §5). Only the job's own identity (Job,
 // ServiceAccount, the fugaro_workflow label) and its mounted Claude secret
 // (SecretMounts) vary by token; the image, commands and resources are the
 // one fugaro.yaml workflow entry's, shared by every variant (they are built
@@ -1705,7 +1826,7 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 			Title:      gcp.TokenBucketConditionTitle(saID),
 			Expression: gcp.TokenBucketCondition(c.bucket, slug),
 		},
-		Vertex:    c.in.Cfg.Agent.Auth == "vertex",
+		Vertex:    c.reachesVertex() && VertexGrantForJob(c.budgetMode),
 		DeployJob: true,
 
 		Name:                name,
@@ -1824,7 +1945,7 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	// that go direct to Anthropic rather than through the run's gateway, so the
 	// service never serves it and the mount stays — with its accessor, which
 	// sa.tf exempts by the same field (B0's one mix,
-	// docs/design/mixed-credentials.md §11).
+	// docs/mixed-credentials/spec.md §11).
 	//
 	// c.credentialsServiceOn and not the block's presence: the installation
 	// having a service says nothing about THIS repository. A repository
@@ -1866,7 +1987,7 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 			ws.Env[config.StageAccountServedEnv] = config.ServedValue
 		}
 	}
-	if served := ModelSecretsServed(c.credentialsServiceOn, c.in.Cfg.Agent.Auth); served != config.ModelSecretServedNone {
+	if served := ModelSecretsServed(c.chain, c.credentialsServiceOn, c.in.Cfg.Agent.Auth); served != config.ModelSecretServedNone {
 		dropModelMounts(&ws, served)
 	}
 	// And the workflow's OWN secrets go the same way for a repository the
@@ -2055,13 +2176,15 @@ func Repo(in Inputs) (RepoSpec, error) {
 		// lc is the project's own local config, so this is the installation's
 		// answer: the budget block it names, whatever the repositories merged
 		// over it.
-		BudgetConfigured: lc.Budget != nil,
+		BudgetConfigured:     lc.Budget != nil,
+		DefaultAccountUnused: !lc.RunsOnDefaultClaudeAccount(),
 		// The same answer workflow() dropped the mounts with, read from the
 		// same two facts, so the module's accessor drop and this spec's mount
 		// drop cannot disagree: a job whose account lost an accessor on a
 		// secret its container still mounts is a job Cloud Run refuses to
 		// create.
-		ModelSecretsServed: ModelSecretsServed(c.credentialsServiceOn, in.Cfg.Agent.Auth),
+		ModelSecretsServed: ModelSecretsServed(c.chain, c.credentialsServiceOn, in.Cfg.Agent.Auth),
+		ReachesVertex:      c.reachesVertex(),
 
 		GitHubAppID:              c.appID,
 		RepoURL:                  c.repoURL,
@@ -2073,7 +2196,7 @@ func Repo(in Inputs) (RepoSpec, error) {
 	var checked []string
 	for _, name := range slices.Sorted(maps.Keys(in.Cfg.Workflows)) {
 		// One WorkflowSpec per Claude account this repository may choose for
-		// an oauth workflow (design docs/design/named-oauth-tokens.md §4 T3):
+		// an oauth workflow (design docs/named-oauth-tokens/spec.md §4 T3):
 		// config.AllowedClaudeAccounts is the one place that decides the
 		// set, so a name not on it never gets a key here at all (the hard
 		// backstop of the allow-list, design §6b.3). Every other auth kind
@@ -2139,7 +2262,7 @@ func Repo(in Inputs) (RepoSpec, error) {
 // to: every name its workflows (and the check job) mount that
 // ProjectSecretCandidate accepts. Being here says nothing about whether the
 // name actually resolves to the project copy -- Readiness decides that
-// against live state (design docs/design/project-secrets.md §5).
+// against live state (design docs/project-secrets/spec.md §5).
 //
 // The second answer is the subset only the node admits (RepoSpec's
 // ProjectSecretNodeOnly), asked of each name only once the local config's own
@@ -2363,16 +2486,18 @@ func (rs RepoSpec) MountSecretID(logical string) string {
 	return rs.Secrets[logical]
 }
 
-// UsesVertex reports whether any of the repository's workflows
-// authenticates its agent through Vertex AI.
-func (rs RepoSpec) UsesVertex() bool {
-	for _, ws := range rs.Workflows {
-		if ws.Vertex {
-			return true
-		}
-	}
-	return false
-}
+// UsesVertex reports whether this repository's runs reach Vertex AI at all,
+// which is the fact the installation plans the Vertex AI API and the
+// credentials service's own permission from (ChainsNameVertex, and the record
+// `fugaro update` writes into the local config's repos.<repo>.vertex).
+//
+// It is ReachesVertex and deliberately NOT "some workflow's job holds the
+// grant": since CS11 a job's Vertex grant is planned away on an enforcing
+// project while the API has to stay enabled for the credentials service, so a
+// reader that answered from ws.Vertex would disable the API and plan the
+// service no permission exactly where the service is the only thing left that
+// calls Vertex.
+func (rs RepoSpec) UsesVertex() bool { return rs.ReachesVertex }
 
 // BaseImageWarnings are the warnings for each of the local config's base
 // images (kind -> image) that is in neither of the installation's own image
@@ -2516,7 +2641,7 @@ func (c *repoCtx) check(rs RepoSpec, checked []string) (*CheckSpec, error) {
 // of a real `terraform plan` of the real root, and
 // TestRepoAddressesMatchTheRealPlanGolden fails when a module gains a
 // resource this function does not name (Review Focus 8 of
-// docs/plans/2026-10-14-config-transitions.md).
+// docs/config-transitions/implementation-plan.md).
 func (rs RepoSpec) Addresses() []string {
 	const root = "module.repo."
 	q := strconv.Quote
@@ -2685,7 +2810,7 @@ func (rs RepoSpec) Addresses() []string {
 // provider keys, and a mixed stage account's own Claude OAuth token — is a
 // mount the job's account keeps a grant on, so a mirror that answered "held"
 // for every model variable would report a live accessor as one the plan
-// retires (R6, D1634; B0's mix, docs/design/mixed-credentials.md §11).
+// retires (R6, D1634; B0's mix, docs/mixed-credentials/spec.md §11).
 //
 // proxied is the repository's own fact (RepoSpec.BitbucketProxied), and it is
 // the second way a mount comes to be held: a name config.ProxiedGitSecretNames
@@ -2822,7 +2947,7 @@ func Schedule(slug string) string {
 // (mixedDefaultAccount). The stages of the mix — the senior review, the
 // adversarial review and the triage that weighs their findings — may name one
 // account and no other stage may name any
-// (docs/design/mixed-credentials.md §11): that is the one mix the owner's B0
+// (docs/mixed-credentials/spec.md §11): that is the one mix the owner's B0
 // ruling admits, the coder's own stages keeping the provider key the gateway
 // holds.
 //
@@ -2886,7 +3011,7 @@ func MixedStageAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []
 // mount is a credential of the stage's rather than the run's.
 //
 // The mix is api-key's alone (resolveMixedStages, internal/runner; B0's ruling
-// of 2026-11-04, docs/design/mixed-credentials.md §11), which is why the auth
+// of 2026-11-04, docs/mixed-credentials/spec.md §11), which is why the auth
 // is read here: a name a stage key of an oauth repository names is not one of
 // these jobs — under oauth the key keeps the meaning the accounts design gives
 // it, and the account's token is the run's own, served by the service like
@@ -2909,7 +3034,7 @@ func mixedStageAccountJob(cfg *config.Config, lc *localcfg.Config, repo, token s
 // mixedDefaultAccount is rung 4's account for an api-key repository: the
 // project's default_claude_account where the owner's ruling of 2026-11-05
 // admits it as one of this repository's mixed accounts, "" otherwise
-// (docs/design/mixed-credentials.md §11). It is the job set's half of the rung
+// (docs/mixed-credentials/spec.md §11). It is the job set's half of the rung
 // the launch (mixedStageAccount, internal/cli/run.go) and the run
 // (r.mixedDefaultAccount, internal/runner) resolve, so a run that may hold the
 // account's token is a run a job exists for — and a repository the ruling

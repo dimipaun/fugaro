@@ -1,0 +1,596 @@
+{
+  "schema_version": 3,
+  "plan": "docs/workspace-credentials/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "C1",
+      "title": "the person wire contract",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/creds/person.go",
+          "internal/creds/person_stub.go",
+          "docs/workspace-credentials/contract-person.md"
+        ]
+      },
+      "kind": "contract",
+      "stubs": [
+        "internal/creds/person_stub.go"
+      ]
+    },
+    {
+      "id": "C2",
+      "title": "the person scope contract",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/scope_person.go",
+          "internal/credsvc/scope_person_stub.go",
+          "docs/workspace-credentials/contract-scope-person.md"
+        ]
+      },
+      "kind": "contract",
+      "stubs": [
+        "internal/credsvc/scope_person_stub.go"
+      ]
+    },
+    {
+      "id": "WC0",
+      "title": "the threat model for the personal half",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/workspace-credentials/threat-model.md"
+        ]
+      }
+    },
+    {
+      "id": "WC1",
+      "title": "a provider key is shared like any model entry",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/workspace_share.go",
+          "internal/cli/workspace_share_test.go",
+          "internal/credsvc/bundle_workspace.go",
+          "internal/credsvc/bundle_workspace_test.go",
+          "website/content/cli-reference.md"
+        ]
+      }
+    },
+    {
+      "id": "WC2",
+      "title": "the workspace root admits the roster's people",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "deploy/terraform/gcp/roots/workspace/*.tf",
+          "internal/infra/tf/workspace.go",
+          "internal/infra/tf/workspace_test.go",
+          "internal/cli/workspace_create.go",
+          "deploy/terraform/gcp/roots/workspace/tests/workspace.tftest.hcl",
+          "SECURITY.md",
+          "website/content/security.md"
+        ]
+      }
+    },
+    {
+      "id": "WC3",
+      "title": "the intake admits the roster's people",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "deploy/terraform/gcp/modules/installation/intake.tf",
+          "deploy/terraform/gcp/modules/installation/variables.tf",
+          "internal/infra/launchers.go",
+          "internal/infra/tfvars.go",
+          "internal/cli/intake_serve.go",
+          "internal/intake/server.go",
+          "internal/infra/launchers_test.go",
+          "internal/cli/intake_serve_test.go",
+          "internal/intake/server_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WC4",
+      "title": "the workspace's grant and claim",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/scope_workspace.go",
+          "internal/credsvc/workspace.go",
+          "internal/credsvc/slip.go",
+          "internal/credsvc/server.go",
+          "internal/credsvc/scope_workspace_test.go",
+          "internal/credsvc/scope_installation_test.go",
+          "SECURITY.md",
+          "website/content/security.md",
+          "docs/workspaces/*.md"
+        ]
+      }
+    },
+    {
+      "id": "WC5",
+      "title": "the personal candidate",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/personal_workspace.go",
+          "internal/credsvc/personal_workspace_test.go",
+          "internal/credsvc/cascade.go",
+          "internal/credsvc/dynamicsecrets.go"
+        ]
+      }
+    },
+    {
+      "id": "WC6",
+      "title": "the member's switch",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/projectpolicy/policy.go",
+          "internal/projectpolicy/policy_test.go",
+          "internal/settings/registry.go",
+          "schemas/settings.schema.json",
+          "internal/cli/init_policy_publish.go",
+          "internal/localcfg/localcfg.go"
+        ]
+      }
+    },
+    {
+      "id": "WC7",
+      "title": "fugaro run asks the workspace for a grant",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/run_personal.go",
+          "internal/cli/run_personal_test.go",
+          "internal/cli/run.go",
+          "website/content/cli-reference.md",
+          "internal/cli/noprompt_harness_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WC8",
+      "title": "the gateway carries the workspace's slip",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/gateway/service.go",
+          "internal/gateway/gateway.go",
+          "internal/gateway/workspace_route_test.go",
+          "internal/runner/gateway.go",
+          "internal/runner/budget_session.go",
+          "internal/runner/gateway_service_internal_test.go",
+          "SECURITY.md",
+          "website/content/security.md"
+        ]
+      }
+    },
+    {
+      "id": "WC9",
+      "title": "storing a token at the workspace",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/secrets_intake.go",
+          "internal/cli/secrets_intake_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WC10",
+      "title": "offboarding sweeps the workspace",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/workspace_offboard.go",
+          "internal/cli/workspace_offboard_test.go",
+          "internal/cli/workspace_user.go",
+          "internal/cli/workspace_user_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WC11",
+      "title": "doctor, and update's lines",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/doctor_workspace.go",
+          "internal/cli/doctor_workspace_test.go",
+          "internal/cli/update_in_flight.go",
+          "docs/design/update-in-flight.md"
+        ]
+      }
+    },
+    {
+      "id": "WC12",
+      "title": "Checks 850 and 851, as scripts",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check-850*.sh",
+          "scripts/live-checks/check-851*.sh",
+          "docs/gcp-live-checklist.md"
+        ]
+      }
+    },
+    {
+      "id": "WC13",
+      "title": "documents and the release note",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/releases/*.md",
+          "docs/workspaces/README.md",
+          "plugin/skills/working/SKILL.md"
+        ]
+      }
+    },
+    {
+      "id": "WC14",
+      "title": "workspace mode is handed the roster and its slips",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/credentials_serve.go",
+          "internal/cli/credentials_serve_test.go"
+        ]
+      }
+    },
+    {
+      "id": "I1",
+      "title": "integration",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/creds/person_stub.go",
+          "internal/credsvc/scope_person_stub.go",
+          "internal/credsvc/personal_workspace.go",
+          "internal/cli/credentials_serve.go",
+          "internal/cli/workspace_personal_end_to_end_test.go"
+        ]
+      },
+      "kind": "integration"
+    },
+    {
+      "id": "R-person-wire",
+      "title": "amend the person wire contract",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/creds/person.go",
+          "docs/workspace-credentials/contract-person.md"
+        ]
+      },
+      "kind": "contract_change"
+    },
+    {
+      "id": "R-person-scope",
+      "title": "amend the person scope contract",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/scope_person.go",
+          "docs/workspace-credentials/contract-scope-person.md"
+        ]
+      },
+      "kind": "contract_change"
+    }
+  ],
+  "edges": [
+    {
+      "task": "WC2",
+      "needs": "WC0",
+      "reason": "the owner's answers to the threat model's review"
+    },
+    {
+      "task": "WC3",
+      "needs": "WC0",
+      "reason": "the owner's answers to the threat model's review"
+    },
+    {
+      "task": "WC4",
+      "needs": "WC0",
+      "reason": "the owner's answers to the threat model's review"
+    },
+    {
+      "task": "WC5",
+      "needs": "WC0",
+      "reason": "the owner's answers to the threat model's review"
+    },
+    {
+      "task": "WC6",
+      "needs": "WC0",
+      "reason": "the owner's answers to the threat model's review"
+    },
+    {
+      "task": "WC7",
+      "needs": "WC0",
+      "reason": "the owner's answers to the threat model's review"
+    },
+    {
+      "task": "WC8",
+      "needs": "WC0",
+      "reason": "the owner's answers to the threat model's review"
+    },
+    {
+      "task": "WC9",
+      "needs": "WC0",
+      "reason": "the owner's answers to the threat model's review"
+    },
+    {
+      "task": "WC10",
+      "needs": "WC0",
+      "reason": "the owner's answers to the threat model's review"
+    },
+    {
+      "task": "WC7",
+      "needs": "C1",
+      "reason": "the grant's request and answer"
+    },
+    {
+      "task": "WC14",
+      "needs": "WC0",
+      "reason": "the owner's answers to the threat model's review"
+    },
+    {
+      "task": "WC8",
+      "needs": "C1",
+      "reason": "the header names and the claim's shape"
+    },
+    {
+      "task": "WC5",
+      "needs": "C1",
+      "reason": "the switch's reader"
+    },
+    {
+      "task": "WC5",
+      "needs": "C2",
+      "reason": "the slip's owner for a call"
+    },
+    {
+      "task": "WC7",
+      "needs": "WC6",
+      "reason": "it reads the field WC6 adds to the published policy"
+    },
+    {
+      "task": "WC11",
+      "needs": "WC6",
+      "reason": "it reads the field WC6 adds to the published policy"
+    },
+    {
+      "task": "WC12",
+      "needs": "WC7",
+      "reason": "the scripts call the built command"
+    },
+    {
+      "task": "WC12",
+      "needs": "WC9",
+      "reason": "the scripts call the built command"
+    },
+    {
+      "task": "WC13",
+      "needs": "WC4",
+      "reason": "it describes the two routes"
+    },
+    {
+      "task": "WC13",
+      "needs": "WC5",
+      "reason": "it describes the behaviour"
+    },
+    {
+      "task": "WC13",
+      "needs": "WC7",
+      "reason": "it names the flag the CLI must have"
+    },
+    {
+      "task": "WC13",
+      "needs": "WC9",
+      "reason": "it names the command the CLI must have"
+    },
+    {
+      "task": "I1",
+      "needs": "WC2",
+      "reason": "it wires the real side"
+    },
+    {
+      "task": "I1",
+      "needs": "WC3",
+      "reason": "it wires the real side"
+    },
+    {
+      "task": "I1",
+      "needs": "WC4",
+      "reason": "it wires the real side"
+    },
+    {
+      "task": "I1",
+      "needs": "WC5",
+      "reason": "it wires the real side"
+    },
+    {
+      "task": "I1",
+      "needs": "WC6",
+      "reason": "it wires the real side"
+    },
+    {
+      "task": "I1",
+      "needs": "WC7",
+      "reason": "it wires the real side"
+    },
+    {
+      "task": "I1",
+      "needs": "WC8",
+      "reason": "it wires the real side"
+    },
+    {
+      "task": "I1",
+      "needs": "WC9",
+      "reason": "it wires the real side"
+    },
+    {
+      "task": "I1",
+      "needs": "WC14",
+      "reason": "it wires the real side"
+    },
+    {
+      "task": "I1",
+      "needs": "C1",
+      "reason": "it deletes the stub"
+    },
+    {
+      "task": "I1",
+      "needs": "C2",
+      "reason": "it deletes the stub"
+    }
+  ],
+  "decoupling": [
+    {
+      "contract": "C1",
+      "was": {
+        "task": "WC7",
+        "needs": "WC4"
+      },
+      "integration": "I1",
+      "reason": "the launcher needs the grant's request and answer, not the route's code"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "WC8",
+        "needs": "WC4"
+      },
+      "integration": "I1",
+      "reason": "the gateway needs the header names and the claim's shape, not the route's code"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "WC5",
+        "needs": "WC6"
+      },
+      "integration": "I1",
+      "reason": "the candidate asks whether the switch is on, not who publishes it"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WC5",
+        "needs": "WC4"
+      },
+      "integration": "I1",
+      "reason": "the candidate needs the slip's owner for a call, not the grant's code"
+    }
+  ],
+  "contract_changes": [
+    {
+      "change": "R-person-wire",
+      "contract": "C1",
+      "raised_by": "WC6",
+      "reason": "if the switch's home must be elsewhere, or an answer to the threat model's review changes a name or a shape",
+      "affects": [
+        "WC4",
+        "WC5",
+        "WC7",
+        "WC8",
+        "WC11"
+      ]
+    },
+    {
+      "change": "R-person-scope",
+      "contract": "C2",
+      "raised_by": "WC4",
+      "reason": "if the candidate needs something of the call the interface does not carry",
+      "affects": [
+        "WC4",
+        "WC5",
+        "WC14"
+      ]
+    }
+  ]
+}

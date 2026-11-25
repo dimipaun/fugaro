@@ -24,7 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
-// The project layer (docs/design/layered-config.md): one object per project
+// The project layer (docs/layered-config/spec.md): one object per project
 // in the runs bucket, published by fugaro config publish, holding the
 // defaults and the workflow profiles of every repository of the project.
 const (
@@ -129,7 +129,7 @@ type ProjectLayer struct {
 // are the same two a LayerAnchor is built from. Nothing but a file that
 // names both of the layer's own applies: a file that writes neither, or
 // one of them, keeps the layer's rows out of what a run resolves
-// (docs/design/layered-config.md §8).
+// (docs/layered-config/spec.md §8).
 //
 // It is the one spelling of the rule, so that no reader can report a
 // layer's rows in force on a file a run would resolve without them: the
@@ -399,6 +399,22 @@ func (l *ProjectLayer) SetsMergeJudgeCraft() bool {
 	return mergeJudgeCraftKey(d["agent"])
 }
 
+// SetsABRepos reports whether the layer's text writes ab.repos, at any value
+// (D3297): a runner or CLI before L8 decodes the layer with KnownFields and
+// refuses the member whatever it says, and an empty map's zero value cannot
+// tell an empty block from none, so the key being written is what the launch's
+// abReposSince gate (internal/cli/recipes_skew.go) judges the job image
+// against. The key sits in the top-level ab: block beside the rest of the
+// block, and the tree is read for that reason.
+func (l *ProjectLayer) SetsABRepos() bool {
+	if l == nil {
+		return false
+	}
+	a, _ := l.tree["ab"].(map[string]any)
+	_, ok := a["repos"]
+	return ok
+}
+
 // SetsGovernance reports whether the layer's text writes governance:, at any
 // value: a runner before governanceSince decodes the layer with KnownFields,
 // so the key alone is what it refuses, and Governance's zero value cannot
@@ -460,6 +476,25 @@ func (l *ProjectLayer) SetsStopFraction() bool {
 	d, _ := l.tree["defaults"].(map[string]any)
 	a, _ := d["agent"].(map[string]any)
 	_, ok := a["review_stop_fraction"]
+	return ok
+}
+
+// SetsWorkspaceBeat reports whether the layer's text writes
+// defaults.agent.workspace_beat, at any value: the layer's half of the
+// keep-warm beat's switch, judged as the key being written for
+// SetsStopFraction's reason — a runner before workspaceBeatSince
+// (internal/cli) decodes the layer with KnownFields and refuses the key
+// whatever it says, and a layer writing it `true`, the default, is the same
+// line to that decoder as one writing `false`. It is what the gates judge the
+// job images against, beside the repository's half (setsWorkspaceBeat), and it
+// is the layer's because that refusal reaches every repository of the project.
+func (l *ProjectLayer) SetsWorkspaceBeat() bool {
+	if l == nil {
+		return false
+	}
+	d, _ := l.tree["defaults"].(map[string]any)
+	a, _ := d["agent"].(map[string]any)
+	_, ok := a["workspace_beat"]
 	return ok
 }
 
@@ -573,6 +608,13 @@ type LayerAgent struct {
 	MaxBudgetUSD    float64    `yaml:"max_budget_usd"`
 	FirstLineReview string     `yaml:"first_line_review"`
 	FirstLineRounds int        `yaml:"first_line_rounds"`
+	// WorkspaceBeat is the project's answer to whether a run keeps its
+	// workspace's credentials service warm (R10, D2985); a repository's own
+	// value replaces it. Unset means on (config.Agent.WorkspaceBeatOn).
+	// Fugaro before 0.27.0 refuses the key (strict decoder), in every
+	// repository of the project, which is what the launch's own gate judges
+	// the job image on (internal/cli's workspaceBeatSince).
+	WorkspaceBeat *bool `yaml:"workspace_beat"`
 	// Levels is the project-wide per-level review block (L1.3, D722): the
 	// same config.ReviewLevels a repository's agent.levels and a task's
 	// review_levels carry. The merge is per key (resolve.go's overlay), so
@@ -647,7 +689,7 @@ var layerTopKeys = []string{"version", "project", "gcp_project", "defaults", "pr
 // layerReserved are keys a later release defines; this one refuses them
 // with a message saying so.
 var layerReserved = map[string]string{
-	"environments": "the image catalog (named environments) arrives with the single base image (docs/design/layered-config.md, Phase 2); this release refuses it",
+	"environments": "the image catalog (named environments) arrives with the single base image (docs/layered-config/spec.md, Phase 2); this release refuses it",
 	"extends":      "profiles do not extend each other in this release",
 }
 

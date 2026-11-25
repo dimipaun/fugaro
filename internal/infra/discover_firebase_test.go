@@ -53,11 +53,16 @@ func newFBCloud(t *testing.T) *fbCloud {
 
 func fbSpec() FirebaseSpec {
 	return FirebaseSpec{
-		Project:       fbTestProject,
-		FugaroProject: "aurora",
-		Names:         FirebaseNames{SignerAccountID: SignerAccountID, MinterRoleID: MinterRoleID, APIKey: APIKeyID},
-		Launchers:     []string{"user:a@x.com"},
-		Operators:     []string{"group:ops@x.com"},
+		Project: fbTestProject,
+		// Where a NEW instance would go, which is where the fixture's
+		// instance already is: an installation in a US region maps to
+		// us-central1 (place.For). A test that wants the two to differ — the
+		// adopted instance somewhere else — says so itself.
+		DatabaseRegion: "us-central1",
+		FugaroProject:  "aurora",
+		Names:          FirebaseNames{SignerAccountID: SignerAccountID, MinterRoleID: MinterRoleID, APIKey: APIKeyID},
+		Launchers:      []string{"user:a@x.com"},
+		Operators:      []string{"group:ops@x.com"},
 	}
 }
 
@@ -350,9 +355,6 @@ func TestDiscoverFirebaseRefuses(t *testing.T) {
 		{"key with another display name", func(f *fbCloud) {
 			f.keys.AddKey(fbTestProject, "fugaro-web", "Browser key", fbWebTargets, false, false)
 		}, []string{"display name", `"Browser key"`}},
-		{"default instance in another region", func(f *fbCloud) {
-			f.fbdb.AddInstanceFull(fbTestProject, "europe-west1", fbTestProject+"-default-rtdb", "DEFAULT_DATABASE", "ACTIVE", url)
-		}, []string{"us-central1", "europe-west1"}},
 		{"default instance under another id", func(f *fbCloud) {
 			f.fbdb.AddInstanceFull(fbTestProject, "us-central1", "fp-1234-other", "DEFAULT_DATABASE", "ACTIVE", url)
 		}, []string{"default-rtdb", "fp-1234-other"}},
@@ -723,6 +725,62 @@ func TestDiscoverFirebaseSeveralInstances(t *testing.T) {
 	}
 }
 
+// An instance that already exists is adopted WHEREVER IT IS (R3, R4, D3091):
+// the mapping decides where a new one goes, and a database that exists can
+// neither move nor be renamed, so an installation whose mapping has since
+// changed — or one created before there was a mapping — keeps its own and is
+// imported at the location it really is in. The run is told once, in a note,
+// and nothing is refused: the old rule refused exactly this.
+func TestAnInstanceElsewhereIsAdopted(t *testing.T) {
+	ctx := context.Background()
+	f := newFBCloud(t)
+	f.fbdb.AddInstanceFull(fbTestProject, "europe-west1", fbTestProject+"-default-rtdb", "DEFAULT_DATABASE", "ACTIVE",
+		"https://fp-1234-default-rtdb.europe-west1.firebasedatabase.app")
+	f.addKey()
+	f.addSigner()
+	f.addRole()
+	// The installation is in a US region, so a NEW instance would go to
+	// us-central1: the one that is there was created before that, or by an
+	// earlier mapping.
+	im, err := DiscoverFirebase(ctx, f.c, fbSpec(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Import{To: "module.firebase.google_firebase_database_instance.this",
+		ID: "projects/fp-1234/locations/europe-west1/instances/fp-1234-default-rtdb"}
+	if len(im.List) != 4 || !slices.Contains(im.List, want) {
+		t.Fatalf("imports\n got %v\nwant the instance imported at europe-west1 beside the other three", im.List)
+	}
+	// Said once, and only about this: the signer's adoption note is the
+	// other one, and neither the location nor the mapping appears twice.
+	saying := 0
+	for _, n := range im.Notes {
+		if strings.Contains(n, "europe-west1") {
+			saying++
+			if !strings.Contains(n, "us-central1") || !strings.Contains(n, "keeps it") {
+				t.Errorf("note %q; want it to say the instance stays where it is and where the mapping would put one", n)
+			}
+		}
+	}
+	if saying != 1 {
+		t.Errorf("notes %v; want exactly one about the instance's location", im.Notes)
+	}
+
+	// The same instance when the mapping agrees with it: nothing to say.
+	f = newFBCloud(t)
+	f.fbdb.AddInstanceFull(fbTestProject, "us-central1", fbTestProject+"-default-rtdb", "DEFAULT_DATABASE", "ACTIVE",
+		"https://fp-1234-default-rtdb.firebaseio.com")
+	im, err = DiscoverFirebase(ctx, f.c, fbSpec(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range im.Notes {
+		if strings.Contains(n, "Realtime Database instance") {
+			t.Errorf("note %q: the instance is where the mapping would put one, so there is nothing to say", n)
+		}
+	}
+}
+
 // The marks and names discovery checks are the Firebase module's, read
 // from the embedded Terraform, and the four import rows are built from the
 // same names: a constant that drifts from the module fails here.
@@ -784,7 +842,16 @@ func TestFirebaseMarksMatchModule(t *testing.T) {
 	}
 
 	db := block("google_firebase_database_instance", "this")
-	eq("instance region", attr(db, "region"), firebaseDBRegion)
+	// The region is the root's input and not a constant, and the module
+	// IGNORES it: the location is a creation-time field, so an instance that
+	// already exists keeps the one it was created in (F8, R4, D3091), which
+	// is what discovery's import at the instance's own location lines up
+	// with. Either half missing makes the two disagree about a database that
+	// exists, and a plan would try to move it.
+	eq("instance region", attr(db, "region"), "var.database_region")
+	if !regexp.MustCompile(`(?m)^\s*ignore_changes\s*=\s*\[region\]`).MatchString(db) {
+		t.Errorf("the module does not ignore the instance's region: %s", db)
+	}
 	eq("instance instance_id", attr(db, "instance_id"), firebaseDBInstanceID("${var.project}"))
 	eq("instance type", attr(db, "type"), firebaseDBType)
 
@@ -799,7 +866,7 @@ func TestFirebaseMarksMatchModule(t *testing.T) {
 		keys = append(keys, m[1])
 	}
 	slices.Sort(keys)
-	spec, err := Firebase(InstallationSpec{Project: "proj-1234", FugaroProject: "aurora"}, FirebaseInputs{FP: "fp-1234"})
+	spec, err := Firebase(InstallationSpec{Project: "proj-1234", FugaroProject: "aurora", Region: "us-east5"}, FirebaseInputs{FP: "fp-1234"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -824,8 +891,8 @@ func TestFirebaseMarksMatchModule(t *testing.T) {
 		got    Import
 		to, id string
 	}{
-		{newImport(importFirebaseDB, p, firebaseDBRegion, "", firebaseDBInstanceID(p)), "module.firebase.google_firebase_database_instance.this",
-			"projects/P/locations/" + attr(db, "region") + "/instances/" + strings.ReplaceAll(attr(db, "instance_id"), "${var.project}", p)},
+		{newImport(importFirebaseDB, p, spec.DatabaseRegion, "", firebaseDBInstanceID(p)), "module.firebase.google_firebase_database_instance.this",
+			"projects/P/locations/" + spec.DatabaseRegion + "/instances/" + strings.ReplaceAll(attr(db, "instance_id"), "${var.project}", p)},
 		{newImport(importAPIKey, p, "", "", spec.Names.APIKey), "module.firebase.google_apikeys_key.web", "projects/P/locations/global/keys/" + tfvars.Names["api_key"]},
 		{newImport(importSignerSA, p, "", "", serviceAccountEmail(spec.Names.SignerAccountID, p)), "module.firebase.google_service_account.signer",
 			"projects/P/serviceAccounts/" + tfvars.Names["signer_account_id"] + "@P.iam.gserviceaccount.com"},

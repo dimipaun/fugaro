@@ -5,20 +5,24 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/failure"
-	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
-// resolveRecipe finds the run's recipe (docs/design/recipes.md §5): the name
+// resolveRecipe finds the run's recipe (docs/recipes/spec.md §5): the name
 // from the task, else (first runs only) agent.recipe, else default; the text
-// from the repository layer at the run's base, else the task's embedded
-// copy, else the catalog. Anything wrong is an error: there is no fallback
-// to default.
+// from the task's embedded copy, else the catalog. The repository's own
+// .fugaro/recipes/ is never read (L8's release A, D3304): a task that leaves
+// its recipe to that folder — Source: repo, or no embedded recipe where the
+// ref still holds the file — is refused at bootstrap with the fix rather
+// than run on whatever the folder says. Anything wrong is an error: there is
+// no fallback to default.
 func (r *run) resolveRecipe(ctx context.Context, cfg *config.Config) (*recipe.Recipe, runstore.RecipeRecord, error) {
 	name, emb := recipe.DefaultName, r.spec.Recipe
 	switch {
@@ -27,23 +31,26 @@ func (r *run) resolveRecipe(ctx context.Context, cfg *config.Config) (*recipe.Re
 	case r.follow == nil && cfg.Agent.Recipe != "":
 		name = cfg.Agent.Recipe
 	}
-	where := recipe.RepoPath(name)
-	data, found, err := r.readRepoRecipe(ctx, name)
-	if err != nil {
-		return nil, runstore.RecipeRecord{}, fmt.Errorf("recipe %s: %w", name, err)
-	}
-	src := recipe.SourceRepo
+	var data []byte
+	var src recipe.Source
+	var where string
 	switch {
-	case found:
 	case emb != nil && emb.Source == string(recipe.SourceRepo):
-		return nil, runstore.RecipeRecord{}, endClass{failure.ConfigInvalid, fmt.Errorf("recipe %s is a repository recipe (%s), but %s has no such file at its base: commit and push it to %s, then launch again", name, where, r.spec.Ref, r.spec.Ref)}
+		return nil, runstore.RecipeRecord{}, repoRecipeRefusal(name, "the task names the repository's copy")
 	case emb != nil:
 		data, src, where = []byte(emb.YAML), recipe.Source(emb.Source), emb.Source+" recipe "+name+" (embedded in task.json)"
 	default:
+		present, err := r.hasRepoRecipe(ctx, name)
+		if err != nil {
+			return nil, runstore.RecipeRecord{}, fmt.Errorf("recipe %s: %w", name, err)
+		}
+		if present {
+			return nil, runstore.RecipeRecord{}, repoRecipeRefusal(name, "the ref still holds "+recipe.RepoPath(name))
+		}
 		text, ok := recipe.CatalogText(name)
 		if !ok {
-			return nil, runstore.RecipeRecord{}, endClass{failure.ConfigInvalid, fmt.Errorf("recipe %s is not in %s at %s nor in the catalog (%s); a project recipe reaches a run only through fugaro run, which embeds it",
-				name, recipe.RepoDir, r.spec.Ref, strings.Join(recipe.CatalogNames(), ", "))}
+			return nil, runstore.RecipeRecord{}, endClass{failure.ConfigInvalid, fmt.Errorf("recipe %s is neither embedded in the task nor in the catalog (%s); a repository or project recipe reaches a run only through fugaro run, which embeds it",
+				name, strings.Join(recipe.CatalogNames(), ", "))}
 		}
 		data, src, where = text, recipe.SourceCatalog, "catalog recipe "+name
 	}
@@ -59,50 +66,39 @@ func (r *run) resolveRecipe(ctx context.Context, cfg *config.Config) (*recipe.Re
 	return rcp, runstore.RecipeRecord{Name: name, Source: string(src), SHA256: sum}, nil
 }
 
-// showRepoFile is the read of a base file; a test replaces it to prove the
-// size check comes first.
-var showRepoFile = func(ctx context.Context, repo *gitops.Repo, rev, rel string) ([]byte, error) {
-	return repo.ShowFile(ctx, rev, rel)
+// repoRecipeRefusal is the refusal of a task that leaves its recipe to the
+// repository's folder, whose text a run no longer reads (D3304, R8). It
+// names the one fix rather than the folder's content: the launcher embeds
+// the copy the project resolves (B16 lifted it there), so a second launch on
+// an upgraded CLI runs the same recipe the repository meant.
+func repoRecipeRefusal(name, why string) error {
+	return endClass{failure.ConfigInvalid, fmt.Errorf("recipe %s is the repository's own (%s) and a run no longer reads %s (D3237), so this task cannot be run as it stands: upgrade fugaro (brew upgrade dimipaun/tap/fugaro, then fugaro update) and launch again, which embeds the project's copy",
+		name, why, recipe.RepoDir)}
 }
 
-// readRepoRecipe reads .fugaro/recipes/<name>.yaml: for a first run from the
-// checkout at the task's ref, for a follow-up from origin/<ref> (the base, as
-// readBaseConfig reads fugaro.yaml). Only a regular file is read: a symbolic
-// link anywhere on the path, or a directory, is an error. found is false when
-// there is no such file.
-func (r *run) readRepoRecipe(ctx context.Context, name string) (data []byte, found bool, err error) {
+// hasRepoRecipe reports whether .fugaro/recipes/<name>.yaml is at the run's
+// ref: for a first run in the checkout at the task's ref, for a follow-up on
+// origin/<ref> (the base, as readBaseConfig reads fugaro.yaml). Nothing is
+// read from it — a task that embeds no recipe while the file is there is
+// refused (D3304) — so any entry at that path counts, whatever its type or
+// size.
+func (r *run) hasRepoRecipe(ctx context.Context, name string) (bool, error) {
 	rel := recipe.RepoPath(name)
 	if r.follow != nil {
-		rev := "origin/" + r.spec.Ref
-		mode, err := r.repo.TreeEntryMode(ctx, rev, rel)
-		switch {
-		case err != nil:
-			return nil, false, err
-		case mode == "":
-			return nil, false, nil
-		case mode != "100644" && mode != "100755":
-			return nil, false, fmt.Errorf("%s at %s is not a regular file", rel, rev)
+		mode, err := r.repo.TreeEntryMode(ctx, "origin/"+r.spec.Ref, rel)
+		if err != nil {
+			return false, err
 		}
-		// Size the blob first: show would load all of it.
-		n, err := r.repo.BlobSize(ctx, rev, rel)
-		switch {
-		case errors.Is(err, fs.ErrNotExist):
-			return nil, false, nil
-		case err != nil:
-			return nil, false, err
-		case n > recipe.MaxBytes:
-			return nil, false, fmt.Errorf("%s is %d bytes, over the 16 KiB limit", rel, n)
-		}
-		if data, err = showRepoFile(ctx, r.repo, rev, rel); err != nil {
-			return nil, false, err
-		}
-	} else {
-		return recipe.ReadRepoFile(r.d.WorkDir, name)
+		return mode != "", nil
 	}
-	if len(data) > recipe.MaxBytes {
-		return nil, false, fmt.Errorf("%s is %d bytes, over the 16 KiB limit", rel, len(data))
+	_, err := os.Lstat(filepath.Join(r.d.WorkDir, filepath.FromSlash(rel)))
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return false, nil
+	case err != nil:
+		return false, err
 	}
-	return data, true, nil
+	return true, nil
 }
 
 // ApplyRoles makes one role run as the other does, when the recipe maps

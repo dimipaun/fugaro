@@ -104,6 +104,11 @@ func init() {
 	// beside the rows, never instead of them, and only when a grouping was
 	// asked for.
 	add("runs ls", lsDoc{}, "groups")
+	// The same reference names the index's own two facts about itself, which
+	// a listing carries only when the index answered it (D3215): a reader that
+	// showed the rows of an index still building as the whole history would be
+	// showing a number the document does not support.
+	add("runs ls", lsDoc{}, "index_complete", "folded_through")
 	add("diagnose", Diagnosis{}, "row", "row.pr_url", "row.reason", "row.cost.route_by", "row.cost.reported_usd",
 		"row.base_branch",
 		"row.project_layer", "row.project_layer.sha256", "row.project_layer.generation", "row.project_layer.applied", "row.config_sha256",
@@ -222,6 +227,17 @@ var notFields = []string{
 	// working skill names the config keys to say what `user add` writes.
 	"terraform.operators", "terraform.admins",
 	"base_rev", // a key of the patch document a session sends, not a field of any --json output
+	// The two ops the orchestrator skill names on the lines that send a reader
+	// to `--json`: the patch document's own vocabulary, not fields of the
+	// output. `plan_approve` is the person's approval of a plan's items (R5),
+	// and `work_item_upsert` is the op a session declares work with.
+	"plan_approve", "work_item_upsert",
+	// The kind of line `setup --events --json` writes for one thing only the
+	// user can do, named by the setup skill's driving reference on the line
+	// that says what `--events` writes (setup_events.go's closed set). It is a
+	// value of that line's `type` member, not a member of any --json document,
+	// though the same word is one.
+	"left_for_you",
 }
 
 var fieldTokenRE = regexp.MustCompile("`([a-z][a-z0-9]*(?:(?:_[a-z0-9]+)+|(?:\\.[a-z][a-z0-9_]*(?:\\[\\])?)+)(?:\\.[a-z][a-z0-9_]*)*)`")

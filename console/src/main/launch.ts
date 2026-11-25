@@ -30,6 +30,9 @@ import { cliSentence, planFor, privateWorkingDirectory, runToCompletion, spawned
 import type { SpawnLogWriter } from './spawnlog'
 import type { LaunchRecords, LaunchResult } from './launchrules'
 import type { SettingsEntryView, SettingsView } from './settingsview'
+import type { ImageAddView } from './imagesview'
+import type { ModelsAddView } from './modelsview'
+import type { SetupView } from './setupview'
 import {
   checkLaunchBranch,
   checkLaunchPlanTask,
@@ -353,17 +356,34 @@ export interface SettingsConfirmView extends SettingsView {
   readonly project: string
 }
 
-/** ConfirmSubject is what one confirmation window is opened for, and there are
- * exactly three: a launch (`ConfirmView`, rule 11's window), a settings edit's
- * confirmation (`SettingsConfirmView`, rule 12's) and a settings edit's **entry
+/**
+ * ConfirmSubject is what one confirmation window is opened for, and there are
+ * exactly six: a launch (`ConfirmView`, rule 11's window), a settings edit's
+ * confirmation (`SettingsConfirmView`, rule 12's), a settings edit's **entry
  * form** (`SettingsEntryView`, SU1's first phase of D2902's one modal, which is
- * the same window before any dry run exists). The union is a discriminant rather
- * than a guess, so neither the window nor the document it serves can mistake one
- * for the other -- which is the property that matters, because the three
- * questions have different gates: a launch's yes spawns a run, a widening's yes
- * needs the tick as well (`CONFIRM_TICK_NEEDED`), and the entry form's answer is
- * a value the main process then runs a dry run over. */
-export type ConfirmSubject = ConfirmView | SettingsConfirmView | SettingsEntryView
+ * the same window before any dry run exists), a **first setup** (`SetupView`,
+ * SW3a: the answers main parsed, their digest, both command lines and the four
+ * sentences of what a yes does), a **models write** (`ModelsAddView`, MW1: the
+ * CLI's own plan document, its digest and the exact argv the confirmed write
+ * spawns) and an **image write** (`ImageAddView`, MW2: the same shape one command
+ * over -- the entry the add would write, the steps it owes, the document's digest
+ * and the exact argv the confirmed write spawns). The union is a discriminant
+ * rather than a guess, so neither the window nor the document it serves can
+ * mistake one for the other -- which is the property that matters, because the
+ * six questions have different gates: a launch's yes spawns a run, a widening's
+ * yes needs the tick as well (`CONFIRM_TICK_NEEDED`, which the settings edit and
+ * the models write are the two of), the entry form's answer is a value the main
+ * process then runs a dry run over, and a setup's yes is the go for a run whose
+ * answers the main process already holds -- it spawns nothing by itself, and it
+ * is never a consent the CLI accepts (`wizardrun.ts`).
+ */
+export type ConfirmSubject =
+  | ConfirmView
+  | SettingsConfirmView
+  | SettingsEntryView
+  | SetupView
+  | ModelsAddView
+  | ImageAddView
 
 /**
  * LaunchConfirmer is the seam the confirmation window fills: `confirm.ts`'s

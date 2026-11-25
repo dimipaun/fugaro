@@ -21,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/place"
 )
 
 // The Firebase side's singletons, in the Firebase project (the FP) and in
@@ -229,10 +230,30 @@ func CoordinatorRepos(lc *localcfg.Config) []CoordinatorRepo {
 // FirebaseSpec is the Firebase root's tfvars: exactly its variables.
 type FirebaseSpec struct {
 	// Project is the Firebase project's ID (the FP).
-	Project       string        `json:"project"`
-	FugaroProject string        `json:"fugaro_project"`
-	Names         FirebaseNames `json:"names"`
-	ManageAPIs    bool          `json:"manage_apis"`
+	Project string `json:"project"`
+	// DatabaseRegion is the location a NEW Realtime Database instance is
+	// created in: the mapping's answer for the installation's own region
+	// (place.For(inst.Region).RealtimeDatabase, D3089), which is us-central1
+	// for a US installation as D4 chose and one of Google's three Realtime
+	// Database locations for every other. It is NOT read for an instance that
+	// already exists — the module ignores the field, and discovery imports the
+	// instance at the location it really is in (D3091, F8) — which is why the
+	// rule that gives it a value lives here and not at the plan.
+	DatabaseRegion string        `json:"database_region"`
+	FugaroProject  string        `json:"fugaro_project"`
+	Names          FirebaseNames `json:"names"`
+	ManageAPIs     bool          `json:"manage_apis"`
+	// FirestoreDatabaseExists is whether the FP's Firestore (default) database
+	// is there, as the run reads it before this root is applied
+	// (FirestoreStep.DatabaseExists). The module creates the run index's
+	// composite indexes only when it is true (RI2, the module's
+	// firestore_indexes.tf): an index cannot be created under a database that
+	// does not exist, and `fugaro update` ensures that database LAST (D3027), so
+	// a fresh installation's own apply would be refused and could never
+	// converge. An installation that has its database gets the indexes in the
+	// same update that carries this field; one that has not gets them on the
+	// next update, once the database is there.
+	FirestoreDatabaseExists bool `json:"firestore_database_exists"`
 	// Launchers and Operators mint run tokens and read the database;
 	// Admins (the GCP project's owners and editors) and BudgetAdmins write
 	// it. The history account is the sweeper's, which holds its own roles.
@@ -255,6 +276,19 @@ type FirebaseSpec struct {
 	BudgetAdmins       []string `json:"budget_admins"`
 	HistoryAccount     string   `json:"history_account"`
 	CoordinatorAccount string   `json:"coordinator_account"`
+	// IssuerAccount is the credentials service's own account, which this
+	// root grants iam.serviceAccounts.signJwt on the runs' signer
+	// (launcher-does-not-mint plan task LM13; D3121, F7): the ONE row that
+	// moves a run's identity off every launcher and onto the service. It is
+	// an output of the installation root's own apply
+	// (InstallationOutputs.CredentialsService.Account), never a derived
+	// name, so it is passed only once that apply has created the account —
+	// IAM refuses a member it cannot find, and a fresh setup's first apply
+	// is an installation whose root creates no credentials service yet
+	// (U9). Empty — the state of every installation with no service — plans
+	// no row at all, and is left out of the tfvars, which is exactly what
+	// this root planned before the variable existed.
+	IssuerAccount string `json:"issuer_account,omitempty"`
 	// WorkspaceServiceAccount is the workspace service account the member's
 	// own workspace_pin names, and the ONLY principal this root grants a
 	// read of this project's database to (docs/workspaces/spec.md §5, W7):
@@ -309,6 +343,23 @@ type FirebaseInputs struct {
 	// the workspace's: the record a workspace publishes names no service
 	// account, so nothing the workspace says can widen its reach here.
 	WorkspaceServiceAccount string
+	// FirestoreDatabaseExists is whether the FP's Firestore (default) database
+	// is there, which the run reads before this root is applied
+	// (FirestoreStep.DatabaseExists) and hands over here: it gates the run
+	// index's composite indexes (FirebaseSpec.FirestoreDatabaseExists, RI2).
+	// It is false wherever no such read was made — --print-vars makes none —
+	// and a plan that carries no index is the one that cannot fail.
+	FirestoreDatabaseExists bool
+	// IssuerAccount is the credentials service's own account, read back from
+	// the installation root's output (CredentialsService.Account), and empty
+	// on an installation whose root created no such account — a fresh
+	// setup's first apply, and every installation that carries no service
+	// (U9). It is passed rather than derived from the credentials account's
+	// name: a name this package could compose is an account nothing has
+	// created yet, and this root's row is the one grant of the file that
+	// names its member as a literal plan string (issuerMinterGrant is what
+	// holds it to that account of a run whose plans name it at all).
+	IssuerAccount string
 }
 
 // Firebase is the Firebase root's spec for the installation spec, which
@@ -338,17 +389,27 @@ func Firebase(inst InstallationSpec, in FirebaseInputs) (FirebaseSpec, error) {
 		}
 	}
 	s := FirebaseSpec{
-		Project:            in.FP,
-		FugaroProject:      inst.FugaroProject,
-		Names:              FirebaseNames{SignerAccountID: SignerAccountID, MinterRoleID: MinterRoleID, APIKey: APIKeyID},
-		ManageAPIs:         inst.ManageAPIs,
-		Launchers:          members(inst.Launchers, nil),
-		Operators:          members(inst.Operators, nil),
-		Viewers:            members(inst.Viewers, nil),
-		Admins:             sortedUnique(in.Admins),
-		BudgetAdmins:       sortedUnique(in.BudgetAdmins),
-		HistoryAccount:     history,
-		CoordinatorAccount: coordinator,
+		Project: in.FP,
+		// The installation's own region decides where a new budget database
+		// goes, through the product's table rather than a rule of this file's
+		// (docs/location-preference/reconciliation.md, "The mapping"): Google
+		// offers the Realtime Database in three locations for the whole world,
+		// so the region itself is the answer only for the three that are one of
+		// them. The region a run in flight has is whatever its installation was
+		// created with, and an installation whose region is under europe-west1
+		// gets europe-west1 here.
+		DatabaseRegion:          place.For(inst.Region).RealtimeDatabase.Where,
+		FugaroProject:           inst.FugaroProject,
+		Names:                   FirebaseNames{SignerAccountID: SignerAccountID, MinterRoleID: MinterRoleID, APIKey: APIKeyID},
+		ManageAPIs:              inst.ManageAPIs,
+		FirestoreDatabaseExists: in.FirestoreDatabaseExists,
+		Launchers:               members(inst.Launchers, nil),
+		Operators:               members(inst.Operators, nil),
+		Viewers:                 members(inst.Viewers, nil),
+		Admins:                  sortedUnique(in.Admins),
+		BudgetAdmins:            sortedUnique(in.BudgetAdmins),
+		HistoryAccount:          history,
+		CoordinatorAccount:      coordinator,
 	}
 	// The workspace's account is the member's own pin and needs no rule of
 	// this root's to exist (it is not created here, and it is not on the
@@ -361,6 +422,19 @@ func Firebase(inst InstallationSpec, in FirebaseInputs) (FirebaseSpec, error) {
 			return FirebaseSpec{}, userErr("the workspace service account %q is not a service account email (<id>@<project>.iam.gserviceaccount.com); the workspace's read of this project's database is bound to it and IAM refuses a member it cannot find", in.WorkspaceServiceAccount)
 		}
 		s.WorkspaceServiceAccount = in.WorkspaceServiceAccount
+	}
+	// The issuer's account is checked for its shape for the workspace's
+	// reason: the module's own validation is reached at that root's plan,
+	// which this run makes AFTER it has applied the installation root, so a
+	// value the module refuses is refused here instead — the member is the
+	// one identity that mints every run's token through this root's signer,
+	// and a refusal that waited for the plan would come with an apply
+	// already behind it.
+	if in.IssuerAccount != "" {
+		if !saEmailRE.MatchString(in.IssuerAccount) {
+			return FirebaseSpec{}, userErr("the issuer account %q is not a service account email (<id>@<project>.iam.gserviceaccount.com): the credentials service's account mints every run's identity through this root's signer, and a member IAM cannot resolve is a row the apply that plans it fails on", in.IssuerAccount)
+		}
+		s.IssuerAccount = in.IssuerAccount
 	}
 	if in.FP == inst.Project {
 		// One project holds the installation and the Firebase backend (design
@@ -604,6 +678,53 @@ func DatabaseURLs(ctx context.Context, c *Clients, fp string) ([]string, error) 
 		return nil, fmt.Errorf("listing project %s's databases: %w", fp, err)
 	}
 	return urls, nil
+}
+
+// DatabaseCreatorPermissions are the project's own IAM changes the Firebase
+// root makes: it creates the token signer's custom role and the account that
+// wears it, and it grants the role to it (modules/firebase/iam.tf). They are
+// what the caller of a run that would CREATE the budget database is asked for
+// (R2): a person who holds them can make the project's IAM changes and the
+// stage may go ahead, and one who does not gets the stage's one line naming a
+// project owner instead of a failed apply halfway through the root.
+//
+// The list is the permissions and not a role: roles/editor holds none of the
+// project's policy write, and whether an operator's roles suffice is exactly
+// the question (U1, AB7's probe). roles/owner holds all four.
+var DatabaseCreatorPermissions = []string{
+	"resourcemanager.projects.getIamPolicy",
+	"resourcemanager.projects.setIamPolicy",
+	"iam.roles.create",
+	"iam.serviceAccounts.create",
+}
+
+// CanMakeIAMChanges reports whether the caller holds every permission the
+// Firebase root's own IAM changes need on project fp. It reads the caller's
+// OWN permissions (projects.testIamPermissions) and never the project's policy,
+// which is the API's own division: the policy says who may do what, and this
+// says what this credential, here, may.
+//
+// A project the caller cannot read at all is an error rather than a no: the two
+// are different answers, and the caller is the one that knows which of them its
+// own line names.
+func CanMakeIAMChanges(ctx context.Context, c *Clients, fp string) (bool, error) {
+	if c.CRM == nil {
+		return false, errors.New("no Resource Manager client (endpoints.cloud_resource_manager is not set)")
+	}
+	res, err := c.CRM.Projects.TestIamPermissions(fp, &crm.TestIamPermissionsRequest{Permissions: DatabaseCreatorPermissions}).Context(ctx).Do()
+	if err != nil {
+		return false, fmt.Errorf("testing your permissions on project %s: %w", fp, err)
+	}
+	held := map[string]bool{}
+	for _, p := range res.Permissions {
+		held[p] = true
+	}
+	for _, p := range DatabaseCreatorPermissions {
+		if !held[p] {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // ErrNoFirebaseOutputs means the Firebase root's state holds no outputs.

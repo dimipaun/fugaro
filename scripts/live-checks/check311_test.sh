@@ -344,12 +344,12 @@ test_the_forced_failure_is_a_terraform_that_answers_version() {
 }
 
 test_the_failure_readings_are_the_reporter_s_own_lines() {
-  expect_contains "$ps" "'^    full output: (.+)\$'" "the log's path is read from the line that carries it"
-  expect_contains "$ps" "'fugaro troubleshoot ([A-Za-z0-9._-]+)'" "and the id from the line that routes by it"
+  expect_contains "$ps" "'^  Log:  (.+)\$'" "the log's path is read from the line that carries it"
+  expect_contains "$ps" "'^  Help: fugaro troubleshoot ([A-Za-z0-9._-]+)'" "and the id from the line that routes by it"
   expect_contains "$ps" "[IO.Path]::GetFileNameWithoutExtension(\$path)" "the id is compared with the log's own stem, so one word opens the run that failed"
-  expect_contains "$ps" "'^    [^ ]'" "the context is the error's own lines, four spaces in"
-  expect_contains "$ps" "'^    full output: '" "which is not the path line"
-  expect_contains "$ps" "'^    Something went wrong\.'" "and not the diagnose line"
+  expect_contains "$ps" "'^  [^ ]'" "the context is the error's own lines in the block, two spaces in"
+  expect_contains "$ps" "'^  Log:  '" "which is not the path line"
+  expect_contains "$ps" "'^  Help: fugaro troubleshoot '" "and not the diagnose line"
   expect_contains "$ps" "Get-Content -LiteralPath \$path -Raw" "the log itself is read whole"
   expect_contains "$ps" "\$logText -like ('*' + \$script:StubLineTwo + '*')" "and has to hold the context the screen carried"
   expect_contains "$ps" "the forced failure produced no failure block at all" "a run that refused before a stage stops the phase rather than reading FAILs off it"

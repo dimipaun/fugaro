@@ -6,7 +6,9 @@ the claim set of [the licence-key-v2 plan](../licence-key-v2/implementation-plan
 tensions TN1–TN5 — and the text the tasks that build it are written against: the Go verifier (K1.1,
 `ee/licence/key.go`), the mint tool (K1.3), the console's verifier (K1.4), the project store (K3.1),
 the commands (K3.2–K3.4), the renewal job (K4.1, K4.2) and the key service (K2). The production keyring
-is empty, so no key exists in the field and the replacement orphans nothing (D2130). The Go verifier of
+holds the owner's one published production key since S2.9 (`ee/licence/keys/production.pub`), and no key
+of this format is known to have been issued in the field, so the replacement orphans nothing (D2130).
+The Go verifier of
 the old `<key id>.<payload>.<signature>` format went with K7.3, and the console's and the app's readers
 of that format remain, with `ee/licence/testdata/vectors.json`, until the tasks that remove those
 readers remove the file too.
@@ -14,7 +16,7 @@ readers remove the file too.
 It **supersedes** licensing task L3.1 and subscriptions **S2.1/S2.3** (the format) and **amends**
 S2.4, S2.5, S2.7–S2.10, S3.1–S3.4 and S6.1 where they name the old claims (K7.2 writes the notes for
 the plans and the key-signing-service design; S6.1's own note,
-[the read-only state after a lapse](../design/lapse-read-only.md), carries this note's key states and
+[the read-only state after a lapse](../lapse-read-only/spec.md), carries this note's key states and
 claim names from 2026-11-11). The rules of the old note that the amended decisions keep are carried
 here: the signature over the raw bytes before the claims, the offline check at the registration point,
 the read-only lapse, the overlap, the tier's maximum lifetime, the staging key's refusal, and where each
@@ -345,8 +347,8 @@ U5, `images/trivy-secret.yaml`).
   the owner mints them one at a time with the tool of K1.3, against the same claim set this note fixes,
   so the keys of the interim and the keys of the service are the same format. Minting and the production
   signing key are **owner-run** (K0.2, K1.3's "OWNER-RUN to use"): no agent mints, and the production
-  keyring stays empty until the owner publishes the public half. The record of what was issued lives in
-  the service's store and the private business repository (R5), never here.
+  public half is published for a build to trust (`ee/licence/keys/production.pub`, S2.9). The record of
+  what was issued lives in the service's store and the private business repository (R5), never here.
 - **The service later (T13).** The owner-operated service — a dedicated Fugaro GCP project, Cloud Run, a
   non-exportable KMS signing key, intake split from signing (K2) — issues the same keys, with the
   purchase events of the merchant of record feeding it. It is **not deployed by any task of the v1

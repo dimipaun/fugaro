@@ -35,6 +35,7 @@ import (
 	fcli "github.com/dimipaun/fugaro/internal/cli"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/runindex"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -79,6 +80,29 @@ type graphOptions struct {
 	cloud  fcli.CloudFlags
 }
 
+// graphIndex is the run index the coordinator scope's runs-half fallback reads
+// (IR3, F3): a repository the project's database holds no stored view for is
+// the repository's runs, and they come from the index rather than from a
+// listing of the runs bucket and a read per run — which is what F3 measured,
+// and the common case, because the coordinator's sweep is off on most
+// installations.
+//
+// It is a function the command calls, held in a package variable for the reason
+// the coordinator's own store opener is one (openCoordinatorStore): the one
+// thing that would reach a database is replaceable, so a test drives the
+// fallback without Firestore. What it answers with is the index's own reader,
+// and until I-INDEX wires the real one (RI3's `runindex.NewFirestore`) it is
+// C-INDEX's stub, which reads nothing and says the index is incomplete: a
+// repository with no stored view then draws no runs rather than a bucket
+// listing, and the scope's own state still tells a screen that the coordinator
+// has reconciled nothing. What that empty half may not do is stand unqualified:
+// the read's warnings carry the index's own completeness (coordcli.IndexRuns),
+// so a document that draws no runs because the index has folded none says so
+// rather than reporting a repository with no runs.
+var graphIndex = func(context.Context, *fcli.Cloud) (runindex.Reader, error) {
+	return runindex.NewStub(), nil
+}
+
 // NewGraphCmd is the `graph` command.
 func NewGraphCmd() *cobra.Command {
 	var o graphOptions
@@ -100,9 +124,10 @@ func NewGraphCmd() *cobra.Command {
 			"orchestrator:<id> is one orchestrator's node under /orchestrator, its work\n" +
 			"items as nodes and their depends_on as edges; local:<id> is the same node\n" +
 			"read as one this machine's daemon drives, falling back to the daemon's\n" +
-			"cached brief when the node cannot be read. An id is one lower-case letter or\n" +
-			"digit, then up to 39 more of those or a hyphen, and nothing else: anything\n" +
-			"that does not match is refused before anything is read, and so is an id the\n" +
+			"cached brief when the node cannot be read. An id is an orchestrator id and\n" +
+			"nothing else: a project's own name, or a project name, ~ and a name for a\n" +
+			"named one, which is how the tree under /orchestrator is keyed. Anything that\n" +
+			"does not match is refused before anything is read, and so is an id the\n" +
 			"project's database does not hold, with a sentence naming it and pointing at\n" +
 			"fugaro orchestrator ls. Which ids exist is what that listing asks — a key\n" +
 			"under /orchestrator — and not whether a state node was written, so an id it\n" +
@@ -137,7 +162,7 @@ func NewGraphCmd() *cobra.Command {
 			"--watch needs --json, which is the only shape a reader of the stream can\n" +
 			"consume.\n\n" +
 			"Exit codes: 1 for a refused scope or a project with no database, 2 for a\n" +
-			"failure of the database or the runs bucket.",
+			"failure of the database or the run index.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runGraph(cmd, &o) },
 	}
@@ -187,8 +212,16 @@ func runGraph(cmd *cobra.Command, o *graphOptions) error {
 	if err != nil {
 		return err
 	}
+	// The index the coordinator scope reads a repository's runs from when the
+	// database stores no view for it (graphIndex). It is opened beside the
+	// connection and not per scope read, for the reason the store is: one
+	// reader, built once, serves every document of a stream (runGraphWatch).
+	index, err := graphIndex(ctx, env)
+	if err != nil {
+		return err
+	}
 	if o.watch {
-		return runGraphWatch(ctx, cmd.OutOrStdout(), env, db, scope)
+		return runGraphWatch(ctx, cmd.OutOrStdout(), env, db, index, scope)
 	}
 
 	// The read's warnings are buffered rather than written as they are made:
@@ -200,7 +233,7 @@ func runGraph(cmd *cobra.Command, o *graphOptions) error {
 	// A one-shot read has no time of its own to give for the stored view (the
 	// sweep's own design), so its `as_of` is null and the scope claims no age:
 	// the zero time is the caller saying it has none (contract §6.22).
-	doc, err := readGraph(ctx, env, coordinator.NewStore(db), db, scope, now, time.Time{}, &warned)
+	doc, err := readGraph(ctx, env, coordinator.NewStore(db), index, db, scope, now, time.Time{}, &warned)
 	if err != nil {
 		return err
 	}
@@ -252,7 +285,12 @@ func runGraph(cmd *cobra.Command, o *graphOptions) error {
 // every change, every keep-alive and every retry of a failed read. db is that
 // same client, which the orchestrator scopes are read through: one connection,
 // and the one credential minted for it, serve every scope of the document.
-func readGraph(ctx context.Context, env *fcli.Cloud, store *coordinator.Store, db *rtdb.Client, scope graph.Scope, now, asOf time.Time, warned *bytes.Buffer) (graph.Document, error) {
+//
+// index is the run index, which the coordinator's runs-half fallback reads a
+// repository's runs from when the database stores no view for it (IR3, F3). It
+// is the caller's to open for the store's own reason: the real reader holds a
+// client too, and a stream must not build one per document.
+func readGraph(ctx context.Context, env *fcli.Cloud, store *coordinator.Store, index runindex.Reader, db *rtdb.Client, scope graph.Scope, now, asOf time.Time, warned *bytes.Buffer) (graph.Document, error) {
 	sources := []graph.SourceState{}
 	nodes := []graph.Node{}
 	releases := []graph.Release{}
@@ -263,7 +301,7 @@ func readGraph(ctx context.Context, env *fcli.Cloud, store *coordinator.Store, d
 		return graph.Document{}, err
 	}
 	if covers {
-		state, ns, rs, es, err := coordinatorScope(ctx, env, store, now, asOf, warned)
+		state, ns, rs, es, err := coordinatorScope(ctx, env, store, index, now, asOf, warned)
 		if err != nil {
 			return graph.Document{}, err
 		}
@@ -323,7 +361,10 @@ func readGraph(ctx context.Context, env *fcli.Cloud, store *coordinator.Store, d
 // what a cached brief under this machine's cache directory says, and `central`
 // — here, a plain `orchestrator:` scope — is one only the project's database
 // holds. That is why `ls` and this reader agree about the kind of an id without
-// asking each other: they read the same two things.
+// asking each other: they read the same two things. That rule is also what a
+// cross-orchestrator dependency's far end is keyed by (F17): the scope map built
+// from the same enumeration is handed to every source of the document
+// (documentScopes).
 //
 // Whether the database holds an id *at all* is the third read, and it is `ls`'s
 // own: the keys under `orchestrator/` with no values (orchestrator.NodeIDs). An
@@ -370,6 +411,11 @@ func graphSources(ctx context.Context, env *fcli.Cloud, db *rtdb.Client, scope g
 		// machine's daemon, a cached brief is what says this machine runs one,
 		// and the cache stands in for that scope alone — so an id with no brief
 		// here is refused whatever the database holds (§6.22, D1358).
+		//
+		// Peers is left nil: this document holds the one node the caller named,
+		// so a cross-orchestrator dependency has no peer node to point at and
+		// draws nothing. The enumeration that knows the project's other ids is
+		// `all`'s, and this scope did not ask for it (F17, §6.22).
 		if src.Absent() && scope.Kind == graph.ScopeOrchestrator {
 			held, err := databaseHolds(ctx, env, db, scope.ID)
 			if err != nil {
@@ -407,12 +453,19 @@ func graphSources(ctx context.Context, env *fcli.Cloud, db *rtdb.Client, scope g
 		kind[id] = true
 	}
 	sorted := slices.Sorted(maps.Keys(kind))
+	// The scope each of those ids is drawn under, which every source carries as
+	// its Peers: a cross-orchestrator dependency's far end is keyed by the scope
+	// the peer is drawn in, and the two kinds of this project's orchestrators —
+	// one this machine runs, one only the database holds — are two different
+	// scope names for one id (D1358, F17).
+	scopes := documentScopes(sorted, kind)
 	out := make([]graph.OrchestratorSource, 0, len(sorted))
 	for _, id := range sorted {
 		src, err := orchestratorSource(ctx, env, db, id, kind[id], caches)
 		if err != nil {
 			return false, nil, err
 		}
+		src.Peers = scopes
 		// The enumeration has just answered this for every id: a key under
 		// `orchestrator/<id>` is there, whatever its state node says. It is
 		// what makes an id whose state is not written yet a scope that is down
@@ -421,6 +474,29 @@ func graphSources(ctx context.Context, env *fcli.Cloud, db *rtdb.Client, scope g
 		out = append(out, src)
 	}
 	return true, out, nil
+}
+
+// documentScopes is the scope each orchestrator id is drawn under in one
+// document: `local:<id>` for an id this machine has a cached brief for and
+// `orchestrator:<id>` for the rest, which is CG4's rule for the kind of an
+// orchestrator and the same rule the sources themselves are built by (D1358).
+//
+// It is what a cross-orchestrator dependency's far end is keyed by (F17), and
+// it is built from the enumeration rather than by each source, because one
+// source knows its own kind and cannot know its peers': a document drawn from
+// this machine holds a local orchestrator and a central one under two scope
+// names, and an edge whose far end disagreed with the peer's own key would name
+// no node at all (§6.22).
+func documentScopes(ids []string, local map[string]bool) map[string]string {
+	scopes := make(map[string]string, len(ids))
+	for _, id := range ids {
+		kind := graph.ScopeOrchestrator
+		if local[id] {
+			kind = graph.ScopeLocal
+		}
+		scopes[id] = graph.Scope{Kind: kind, ID: id}.String()
+	}
+	return scopes
 }
 
 // databaseHolds reports whether the project's database holds an id at all: one
@@ -525,7 +601,11 @@ func cachedBriefs() (map[string]time.Time, error) {
 // store, the same credential and the same runs-half fallback for a repository
 // with nothing stored, which is what makes a project whose coordinator is off
 // draw its runs rather than nothing — and the record is read from the same store
-// with the same credential (D2117, `coordinator.Store.ReadRoadmap`).
+// with the same credential (D2117, `coordinator.Store.ReadRoadmap`). The one
+// difference from that command's read is where the runs half comes from: this
+// one reads it from the run index (`coordcli.IndexRuns`), because F3's own
+// measurement is of this command — a bucket listing and a read per run, for a
+// repository the sweep has never reconciled, which is the common case.
 //
 // An answer this build cannot read becomes the scope's state and never a
 // refusal: a stored node the decoding refuses, and a stored view whose identity
@@ -545,13 +625,13 @@ func cachedBriefs() (map[string]time.Time, error) {
 // the rest of the read's sentences take (`graphWarningLines`), and the reason
 // the count exists is exactly this: "the record holds nothing" and "the record
 // holds something this build cannot read" must not look alike (§6.22).
-func coordinatorScope(ctx context.Context, env *fcli.Cloud, store *coordinator.Store, now, asOf time.Time, warned *bytes.Buffer) (graph.SourceState, []graph.Node, []graph.Release, []graph.Edge, error) {
+func coordinatorScope(ctx context.Context, env *fcli.Cloud, store *coordinator.Store, index runindex.Reader, now, asOf time.Time, warned *bytes.Buffer) (graph.SourceState, []graph.Node, []graph.Release, []graph.Edge, error) {
 	source := graph.Scope{Kind: graph.ScopeCoordinator}.String()
 	window, err := fcli.ParseSince(fcli.LsDefaultSince())
 	if err != nil {
 		return graph.SourceState{}, nil, nil, nil, fcli.UserErr("%v", err)
 	}
-	project, err := coordcli.StoredProjectThrough(ctx, env, store, graphRepos(env), fcli.LsSince(window), warned)
+	project, err := coordcli.StoredProjectThrough(ctx, env, store, graphRepos(env), fcli.LsSince(window), coordcli.IndexRuns(index), warned)
 	switch {
 	case err == nil:
 		src := graph.CoordinatorSource{View: project, AsOf: asOf, Now: now}

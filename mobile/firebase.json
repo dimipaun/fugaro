@@ -1,8 +1,7 @@
 {
   "react-native": {
-    "analytics_auto_collection_enabled": true,
-    "crashlytics_auto_collection_enabled": true,
-    "google_analytics_adid_collection_enabled": false,
-    "analytics_default_allow_ad_personalization_signals": false
+    "crashlytics_auto_collection_enabled": false,
+    "messaging_auto_init_enabled": false,
+    "messaging_ios_auto_register_for_remote_messages": false
   }
 }

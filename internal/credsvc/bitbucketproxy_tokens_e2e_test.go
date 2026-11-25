@@ -230,11 +230,13 @@ func proxyTokensWorldOf(t *testing.T, node string, doc []byte, values map[string
 	// before any token is minted or any call is made — is what makes the two
 	// agree, so the mark a 429 leaves is a mark the next request meets.
 	s.now = time.Now().UTC().Truncate(time.Second)
-	// The run id is dated by that clock as every other claim of the identity is
-	// (runClaims reads f.now), and the fixture's own id is a fixed day: left at
-	// it, the run is a launch the liveness scan refuses (checkLive's maxRunDays)
-	// as soon as the real date is far enough past the fixture's ground, which
-	// would fail these tests on the calendar rather than on their subject.
+	// The run id is moved with the clock and for a second reason: the identity
+	// routes date a run by the launch day its id carries and refuse one whose
+	// launch is further back than maxRunDays (ticketRunEnded). The fixture's id
+	// is built from testNow(), so a world that moved the clock and left the id
+	// names a launch that walks out of that window once the wall clock is
+	// maxRunDays past testNow(), and every call of this world is then answered
+	// as a run that is over. One world's clock and one world's id move together.
 	s.run = s.now.Format("20060102-150405") + "-ab12"
 
 	w := &proxyTokensWorld{t: t, s: s, up: up, db: db, store: store, values: values, clock: s.now}

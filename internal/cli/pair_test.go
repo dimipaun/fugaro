@@ -25,6 +25,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -41,6 +42,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/mailbox/keychain"
 	"github.com/dimipaun/fugaro/internal/mobileauth"
+	"github.com/dimipaun/fugaro/internal/mobilesession"
 )
 
 // The pairing fixture: a project config whose budget backend is the RTDB fake,
@@ -1532,11 +1534,27 @@ func pairFixedRand(t *testing.T) string {
 	for i := range fixed {
 		fixed[i] = byte(i)
 	}
-	prev := rand.Reader
-	rand.Reader = pairCyclicRand{fixed}
-	t.Cleanup(func() { rand.Reader = prev })
+	prev := pairRandOverride.Swap(&pairCyclicRand{fixed})
+	t.Cleanup(func() { pairRandOverride.Store(prev) })
 	return "p~" + base64.RawURLEncoding.EncodeToString(fixed)
 }
+
+// pairRandOverride is what pairFixedRand sets and pairSwitchRand reads. The
+// package's one write to crypto/rand.Reader is the init below; a test that
+// wrote the variable itself raced with the TLS goroutines an earlier test's
+// server and client leave behind, which read it when they close.
+var pairRandOverride atomic.Pointer[pairCyclicRand]
+
+type pairSwitchRand struct{ real io.Reader }
+
+func (r pairSwitchRand) Read(p []byte) (int, error) {
+	if o := pairRandOverride.Load(); o != nil {
+		return o.Read(p)
+	}
+	return r.real.Read(p)
+}
+
+func init() { rand.Reader = pairSwitchRand{rand.Reader} }
 
 type pairCyclicRand struct{ b []byte }
 
@@ -1894,21 +1912,22 @@ func TestPairJSONCodeEventHoldsNoFingerprint(t *testing.T) {
 	}
 }
 
-// TestPairEmailNotOperatorsRefused is D226 as the plan's §12 reads it: the
-// administered email on a device node is an address this installation has
-// proved the pairing operator holds, so --email is not a free field. The
-// operator's own address is the one that passes.
+// TestPairEmailNotOperatorsRefused is D226 as D2799 amends it: --email is
+// still not a free field. Naming somebody else's address is no longer a
+// refusal of the pairing's own kind — it is an INVITATION, and an operator who
+// is not an admin may not send one — while the operator's own address is the
+// one that pairs a device.
 func TestPairEmailNotOperatorsRefused(t *testing.T) {
-	f := newPairFixture(t, pairMe)
-	out, _, err := pairRun(t, "--email", pairLauncher, "--json")
+	f := newPairFixture(t, pairLauncher)
+	out, _, err := pairRun(t, "--email", pairMe, "--role", "operator", "--json")
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want exit 1", err)
 	}
 	events := pairLines(t, out)
-	if len(events) != 1 || events[0].Event != pairEventRefused || events[0].Code != pairRefusedEmail {
-		t.Fatalf("events = %v, want one refused with %q", events, pairRefusedEmail)
+	if len(events) != 1 || events[0].Event != pairEventRefused || events[0].Code != pairRefusedInviteAdmin {
+		t.Fatalf("events = %v, want one refused with %q", events, pairRefusedInviteAdmin)
 	}
-	for _, want := range []string{pairLauncher, pairMe} {
+	for _, want := range []string{pairMe, pairLauncher} {
 		if !strings.Contains(events[0].Reason, want) {
 			t.Fatalf("the refusal %q does not name %q", events[0].Reason, want)
 		}
@@ -1920,6 +1939,12 @@ func TestPairEmailNotOperatorsRefused(t *testing.T) {
 		if w != nil {
 			t.Fatalf("a refused email wrote %v", w)
 		}
+	}
+	if v := f.db.Value(pairInviteRoot); v != nil {
+		t.Fatalf("a refused invitation wrote an invite node: %v", v)
+	}
+	if v := f.db.Value(pairMemberRoot); v != nil {
+		t.Fatalf("a refused invitation wrote a member record: %v", v)
 	}
 
 	// The operator's own address, spelled as the operator's provider spells
@@ -2865,8 +2890,8 @@ func TestRevokeNeverDeletesTheAuthUser(t *testing.T) {
 	if doc == nil {
 		t.Fatalf("the %s event carries no document: %v", pairEventRevoked, events[0])
 	}
-	if want := []string{rules.PathDevices + "/" + pairDevA, pairPushPath(pairDevA)}; !slices.Equal(doc.Wrote, want) {
-		t.Fatalf("wrote = %v, want the two nodes the act deleted (%v): the Auth user is not this command's to delete, and the pairing session's node is the sweep's", doc.Wrote, want)
+	if want := []string{rules.PathDevices + "/" + pairDevA, mobilesession.RefreshFamilyPath(pairDevA), pairPushPath(pairDevA)}; !slices.Equal(doc.Wrote, want) {
+		t.Fatalf("wrote = %v, want the nodes and the family the act deleted (%v): the Auth user is not this command's to delete, and the pairing session's node is the sweep's", doc.Wrote, want)
 	}
 	if len(doc.Warnings) != 0 || len(doc.Refused) != 0 {
 		t.Fatalf("document = %+v, want no warnings and no refusals", doc)
@@ -2903,9 +2928,9 @@ func TestRevokeDeletesThePushNodeWithTheDeviceNode(t *testing.T) {
 	if len(events) != 1 || events[0].Event != pairEventRevoked || events[0].Revoke == nil {
 		t.Fatalf("events = %v, want one %s carrying a document", events, pairEventRevoked)
 	}
-	want := []string{rules.PathDevices + "/" + pairDevA, pairPushPath(pairDevA)}
+	want := []string{rules.PathDevices + "/" + pairDevA, mobilesession.RefreshFamilyPath(pairDevA), pairPushPath(pairDevA)}
 	if !slices.Equal(events[0].Revoke.Wrote, want) {
-		t.Fatalf("wrote = %v, want %v: the device node first, because it is what the rules read and its deletion is the revocation, and the push node with it", events[0].Revoke.Wrote, want)
+		t.Fatalf("wrote = %v, want %v: the device node first, because it is what the rules read and its deletion is the revocation, the refresh family with it because the family is the session, and the push node with them", events[0].Revoke.Wrote, want)
 	}
 	if v := f.db.Value(pairPushPath(pairDevA)); v != nil {
 		t.Fatalf("the push node survived the revoke: %v", v)
@@ -3072,9 +3097,9 @@ func TestRevokeDestroysTheCloudCopyOfTheKey(t *testing.T) {
 	if len(events) != 1 || events[0].Event != pairEventRevoked || events[0].Revoke == nil {
 		t.Fatalf("events = %v, want one %s carrying a document", events, pairEventRevoked)
 	}
-	want := []string{rules.PathDevices + "/" + pairDevA, pairPushPath(pairDevA), pairCloudCopy()}
+	want := []string{rules.PathDevices + "/" + pairDevA, mobilesession.RefreshFamilyPath(pairDevA), pairPushPath(pairDevA), pairCloudCopy()}
 	if !slices.Equal(events[0].Revoke.Wrote, want) {
-		t.Fatalf("wrote = %v, want %v: the copy is step 2b, between the two nodes and the laptop's item", events[0].Revoke.Wrote, want)
+		t.Fatalf("wrote = %v, want %v: the copy is step 2b, between the nodes and the laptop's item", events[0].Revoke.Wrote, want)
 	}
 	destroyed := f.secrets.Destroyed()
 	if len(destroyed) != 1 || !strings.HasSuffix(destroyed[0], "/versions/1") {
@@ -3119,7 +3144,7 @@ func TestRevokeDestroysTheCloudCopyOfADisabledVersion(t *testing.T) {
 	if len(events) != 1 || events[0].Event != pairEventRevoked || events[0].Revoke == nil {
 		t.Fatalf("events = %v, want one %s carrying a document", events, pairEventRevoked)
 	}
-	want := []string{rules.PathDevices + "/" + pairDevA, pairPushPath(pairDevA), pairCloudCopy()}
+	want := []string{rules.PathDevices + "/" + pairDevA, mobilesession.RefreshFamilyPath(pairDevA), pairPushPath(pairDevA), pairCloudCopy()}
 	if !slices.Equal(events[0].Revoke.Wrote, want) {
 		t.Fatalf("wrote = %v, want %v: the copy is step 2b, and a version a disable hides from the revoke is the state step 2b exists for", events[0].Revoke.Wrote, want)
 	}
@@ -3149,7 +3174,7 @@ func TestRevokeWithoutAContainerDestroysNothing(t *testing.T) {
 		t.Fatalf("revoke on an installation with no cloud container: %v", err)
 	}
 	events := pairLines(t, out)
-	want := []string{rules.PathDevices + "/" + pairDevA, pairPushPath(pairDevA)}
+	want := []string{rules.PathDevices + "/" + pairDevA, mobilesession.RefreshFamilyPath(pairDevA), pairPushPath(pairDevA)}
 	if !slices.Equal(events[0].Revoke.Wrote, want) {
 		t.Fatalf("wrote = %v, want %v", events[0].Revoke.Wrote, want)
 	}

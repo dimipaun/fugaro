@@ -24,7 +24,7 @@ read in this checkout; a citation by symbol is held where a line would move.
 | "The image is operator-owned (the catalog lives in the published policy, D1140)" | Confirmed: the published `image_catalog` node is `config.Catalog` on the project node (`internal/projectpolicy/policy.go:346`), the local config wins over it (`internal/localcfg/localcfg.go:1448-1457`), and the deploy picks the image from it (`internal/infra/spec.go:836-854`, `:1063-1074`) | Confirmed |
 | "Our build CLI also reads `NEXUS_BASEURL` (`require_var`) in its artifact-lookup helpers" | Not this repository's code — it is the reporter's own build tooling inside their image, and nothing here can confirm or refute it | Out of reach |
 | "Nothing warned … it took a failed run and a transcript search to find" | Confirmed, and worse than the issue says: **no command reads a job image's environment** and `doctor`, which reads the installation, never reads a job's container env (F14) | Confirmed |
-| "The only hint in the docs is a clause in `docs/base-image.md`" | Confirmed, and it is **two** sentences: `docs/base-image.md:45` and the reason it points at, `docs/design/base-image.md:167` (F2) | Confirmed |
+| "The only hint in the docs is a clause in `docs/base-image.md`" | Confirmed, and it is **two** sentences: `docs/base-image.md:45` and the reason it points at, `docs/base-image/spec.md:167` (F2) | Confirmed |
 | "Fugaro already has the right denylist … as in `schemas/fugaro.schema.json`" | Confirmed, and it is **Go code**, not only a schema: `config.ReservedEnv` (F3). The issue's list is nearly the list; it omits `GOOGLE_`, `GCE_`, `GRPC_` and `STORAGE_EMULATOR_`, and it writes `VERTEX_REGION` for `VERTEX_REGION_` | Confirmed with corrections |
 | "per-repository images could follow, since SECURITY.md already assumes the repository is trusted" | True about the assumption (`SECURITY.md:6`, `:53`), and the owner declined the extension — **and** another design is removing per-repository images, on the 0.20.0 slot it has held since #1709 merged (F17) | Declined, O1 |
 
@@ -63,9 +63,9 @@ exactly this.
 **F2. The rule is stated in two places, both of them one sentence, neither of them where an operator
 writing `ENV` lines would look.** `docs/base-image.md:45`: *"The agent's own environment is an
 allowlist; none of these variables is added to it by this doc. The design's reasoning is in
-[design/base-image.md](design/base-image.md) section 6."* — that sentence is about the **harness**
+[base-image/spec.md](base-image/spec.md) section 6."* — that sentence is about the **harness**
 table above it, in a file whose §"Bring your own" (`:130`) is where an operator deciding what their
-image carries reads. And `docs/design/base-image.md:167`: *"The agent's environment is an allowlist
+image carries reads. And `docs/base-image/spec.md:167`: *"The agent's environment is an allowlist
 (`internal/agent/env.go`); none of these is added to it by this design."* §6 is *"Agent harnesses"*
 (heading at `:121`) — the reasoning the first sentence promises is a list of harness variables, not
 a statement about the image's `ENV` at all.
@@ -86,9 +86,9 @@ names the two Go lists as its source.
 
 **F4. Today the only writer of a non-reserved name into a job's environment is the image itself —
 and, for a repository that builds its own image, the repository.** A repository's `fugaro.yaml`
-cannot set an agent environment variable at all: `docs/design/agent-env.md` designs `agent.env:` and
+cannot set an agent environment variable at all: `docs/agent-env/spec.md` designs `agent.env:` and
 its §1 says the allow-list **is** Fugaro's own Go code and never a `fugaro.yaml` field
-(`docs/design/agent-env.md:305-314`), and **nothing of it is built** (its own status line, `:3-4`).
+(`docs/agent-env/spec.md:305-314`), and **nothing of it is built** (its own status line, `:3-4`).
 But a repository's **Dockerfile** is repository-authored text: `image:`/`dockerfile:`
 (`internal/config/config.go:603-604`) make a per-repository job whose image sets whatever names the
 repository wrote. That is the fact O1's scope answers, and F5 is what makes it enforceable. **One
@@ -215,7 +215,7 @@ one-line comment fix in a file this plan does not otherwise touch; the plan does
 whoever takes IE1 may fix it in the same commit if they touch that file.
 
 **F16. The harness design's safety argument does not transfer, and that is the honest core of this
-one.** `docs/design/agent-env.md` §2 and §5 rest on *"Values are never secret by construction"* and
+one.** `docs/agent-env/spec.md` §2 and §5 rest on *"Values are never secret by construction"* and
 *"Names only is safe by construction, not by redaction: every value on the allow-list is … a
 non-secret literal"* (`:471-473`, `:936-950`) — because **Fugaro** chooses the names. Here the
 **operator's image** chooses them, and an operator can put a token in an image (`docs/base-image.md:28`
@@ -250,7 +250,7 @@ above. "The image" is an operator-owned catalog image; "the repository" is untru
 
 | Probe | Answer |
 | --- | --- |
-| **Can a repository's agent steer which names pass?** | No. The set is computed in Go from the runner's own environment, gated on the deploy's stamp (D1371) and filtered by `config.ReservedEnv` (F3); a repository's `fugaro.yaml` writes no agent environment name at all today (F4, `docs/design/agent-env.md:305-314`). The agent can *read* the values through `/proc` (F18) but cannot add, remove or alter a name in its own environment — nothing in the loop rebuilds the environment from agent-controlled text |
+| **Can a repository's agent steer which names pass?** | No. The set is computed in Go from the runner's own environment, gated on the deploy's stamp (D1371) and filtered by `config.ReservedEnv` (F3); a repository's `fugaro.yaml` writes no agent environment name at all today (F4, `docs/agent-env/spec.md:305-314`). The agent can *read* the values through `/proc` (F18) but cannot add, remove or alter a name in its own environment — nothing in the loop rebuilds the environment from agent-controlled text |
 | **Can a repository-built image in a project that also has catalog images influence it?** | Not through this path: such a job carries an **empty stamp** (the key is written on every workflow job, so an image's own `ENV` of that name cannot supply one), so it passes nothing (D1371). This is the scope ruling made enforceable, and F5 is why it needed a new fact rather than a check |
 | **Can an image `ENV` override `PATH` or `HOME`?** | No: both are `config.ReservedEnvNames` (`internal/config/validate.go:72`), so the image's values are dropped and the runner's own stand. Nothing else writes `PATH` except `spec.PathPrepend`, which prepends to whatever `out["PATH"]` holds (`internal/agent/env.go:224-231`) — i.e. to the runner's value |
 | **Proxies and CA bundles?** | No — with one name that is reserved by a **prefix** rather than by a name, and the distinction is stated because an earlier draft of this table got it wrong. The four proxy names (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY`) and `SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_EXTRA_CA_CERTS`, `CURL_CA_BUNDLE` are `config.ReservedEnvNames` (`internal/config/validate.go:70-71`), and the CA bundles are on `baseEnv` as well (`internal/agent/env.go:22`), so a run keeps the value it already had. **`GIT_SSL_CAINFO` is not on any reserved-name list** — not `config.ReservedEnvNames` (`internal/config/validate.go:68-80`) and not the launcher's `backend.ReservedEnvNames`, which is a backend's own names plus the five `PlatformEnvNames` and nothing else (`internal/backend/launchenv.go:31`, `:50-54`); what denies it is the **`GIT_` prefix** (`internal/config/validate.go:63`) through `config.ReservedEnv` (`:85-88`). It is on `baseEnv` too (`internal/agent/env.go:22`), which is what carries the runner's own value to the agent. An image that needs a TLS-inspecting proxy for its own build sets it at build time, not in the job |
@@ -301,7 +301,7 @@ settles.
   (i.e. pass an undeclared secret name only if the image also set it) — refused: at run time nothing
   can tell the image's value from the mounted one, and the mounted one wins in the merged
   environment. *Cost:* an operator who needs a secret-shaped value must use `workflows.*.secrets`,
-  which is the rule `docs/design/agent-env.md` §2 already states.
+  which is the rule `docs/agent-env/spec.md` §2 already states.
 - **D1374. Order: the image's values are written before the auth variables, the declared secrets,
   `spec.Set` and `GatewayVars`.** *Recommendation.* O1's ruling, and it is already the code's shape —
   `maps.Copy(out, spec.Set)` at `internal/agent/env.go:216` and `GatewayVars` "last, so nothing
@@ -339,7 +339,7 @@ settles.
   same stamp, so a job deployed before D1371 is reported as "not catalog-stamped" rather than guessed
   at.
 - **D1379. `docs/base-image.md` states the rule next to "Bring your own", and
-  `docs/design/base-image.md` §6's allowlist sentence points at it.** *Recommendation.* The issue's
+  `docs/base-image/spec.md` §6's allowlist sentence points at it.** *Recommendation.* The issue's
   own ask 3, and the two sentences F2 found are the whole of today's documentation. *Cost:* two
   pinned docs tests to move in the same commit (`go test ./internal/cli/ -run Docs`), which is the
   normal cost of a doc sentence here.
@@ -373,7 +373,7 @@ settles.
 
 - **Option 2 — a plain, non-secret `env:` map on a workflow (`fugaro.yaml`) and on a project-layer
   profile.** *Declined by the owner (O1).* Two reasons beyond the ruling, both from the tree: the
-  mechanism already exists as a **design** for `agent.env:` (`docs/design/agent-env.md`, nothing
+  mechanism already exists as a **design** for `agent.env:` (`docs/agent-env/spec.md`, nothing
   built, `:3-4`), whose §2 rule is that the allow-list is Fugaro's Go code and never a config field
   (`:305-314`) — a config map would be a second, weaker answer to the same need, and it would need
   the same review that design asks for; and a catalog image needs no new key at all, because the

@@ -43,16 +43,19 @@ func TestMergePerRunMin(t *testing.T) {
 }
 
 func TestMergeModeOrder(t *testing.T) {
+	// The word that was a mode until this release is written as the literal
+	// here, as everywhere outside policy.mode.go: it is not one of the modes
+	// any more, so a layer that says it carries no value at all (AB2, D3009).
 	cases := []struct {
 		c, d, b, want string
 		ignored       int
 	}{
 		{"", "", "", "", 0},
-		{"off", "", "", "off", 0},
+		{"off", "", "", "", 0}, // a layer that says it sets no mode
 		{"off", "observe", "", "observe", 0},
 		{"off", "enforce", "observe", "enforce", 1},
-		{"observe", "", "off", "observe", 1}, // a branch off under an observe ceiling stays observe
-		{"enforce", "off", "off", "enforce", 2},
+		{"observe", "", "off", "observe", 0}, // and it cannot loosen one either
+		{"enforce", "off", "off", "enforce", 0},
 		{"", "observe", "enforce", "enforce", 0},
 		{"observe", "observe", "observe", "observe", 0},
 		{"bogus", "", "", "", 0},
@@ -108,10 +111,11 @@ func TestMergeIgnoredRecords(t *testing.T) {
 		Layer{PerRunUSD: 2},
 		Layer{Mode: "off", PerRunUSD: 500, MaxRunTokens: 200, AllowedModels: []string{"a", "b", "c"}},
 	)
+	// The branch's mode is the word that is not a mode any more: it carries no
+	// value, so it is not a loser to record (AB2, D3009).
 	want := []Ignored{
 		{KeyPerRunUSD, "500", "2", "default-branch"},
 		{KeyMaxRunTokens, "200", "100", "ceiling"},
-		{KeyMode, "off", "enforce", "ceiling"},
 		{KeyAllowedModels, "a,b,c", "a,b", "ceiling"},
 	}
 	if !reflect.DeepEqual(e.Ignored, want) {
@@ -125,8 +129,9 @@ func TestMergeIgnoredRecords(t *testing.T) {
 	if e.PerRunUSD != 5 || len(e.Ignored) != 2 || e.Ignored[1] != (Ignored{KeyPerRunUSD, "7", "5", "ceiling"}) {
 		t.Fatalf("%+v", e)
 	}
-	// the ceiling is never ignored; with no tighten layers nothing is.
-	if e := Merge(Layer{Mode: "off", PerRunUSD: 1}); len(e.Ignored) != 0 || e.Mode != "off" {
+	// the ceiling is never ignored; with no tighten layers nothing is, and a
+	// ceiling that writes the word that is not a mode sets no mode at all.
+	if e := Merge(Layer{Mode: "off", PerRunUSD: 1}); len(e.Ignored) != 0 || e.Mode != "" {
 		t.Fatalf("%+v", e)
 	}
 }
@@ -274,7 +279,7 @@ func TestBinariesCapTightensOnly(t *testing.T) {
 // TestReviewFloorMergesTightenOnly is D722's G1: the owner's review-level
 // floor is a union over the layers, so a layer below it can only ever add a
 // level to a rigor mode. The layers under the floor are the ones a launcher
-// writes — the project layer and the task (docs/design/bucket-iam.md §10 L1,
+// writes — the project layer and the task (docs/bucket-iam/spec.md §10 L1,
 // L2) — and the whole point of the floor is that neither can take a level
 // away: a merge that let a lower layer's shorter list replace the owner's
 // would be the launcher choosing how much review it gets.
@@ -312,47 +317,74 @@ func TestReviewFloorMergesTightenOnly(t *testing.T) {
 	}
 }
 
-// TestReviewFloorForHoldsBothRowsOfAnOffAxisRequest: a request may raise a
-// mode and never lower a floor (D8, LF5). The floor is read off the mode the
-// run is at, so a run whose own request took it to hotfix — off the axis,
-// where the mode the layers resolved no longer says what the run is — is held
-// to hotfix's row *and* to the row the layers resolved for it. Reading one
-// row would let a per-run flag drop a floor the owner set.
-func TestReviewFloorForHoldsBothRowsOfAnOffAxisRequest(t *testing.T) {
+// TestReviewFloorForHoldsTheRowAHotfixRequestReads: a request lowers a mode
+// and never a floor (D8, LF5), and the owner's ruling of 2026-11-20 says which
+// row that leaves a run his own flag took off the axis. A hotfix run is held
+// to hotfix's row and to nothing beside it — a floor written for pro or
+// critical does not reach it — while a run an on-axis request lowered is held
+// to the row of the mode the layers resolved as well (rigor.LayersRigor,
+// which answers nothing for hotfix and its own level for a request below it).
+//
+// Mutation (drop mode.PerRun() from FloorFor): the hotfix cases below read the
+// union of hotfix's row and pro's, which is the 2026-11-13 behaviour this
+// reverses, and fail on what they want.
+func TestReviewFloorForHoldsTheRowAHotfixRequestReads(t *testing.T) {
 	e := Merge(Layer{ReviewFloor: map[rigor.Rigor][]Level{
-		rigor.Pro:    {LevelL2, LevelL3},
-		rigor.Hotfix: {LevelL1},
+		rigor.Pro:      {LevelL2, LevelL3},
+		rigor.Critical: {LevelL3},
+		rigor.Hotfix:   {LevelL1},
 	}})
 
-	// No second row: the request did not take the run off the axis ("" is
-	// what rigor.LayersRigor answers for every on-axis request), so the answer
-	// is ReviewFloor's own.
+	// No second row: the request did not take the run below the layers ("" is
+	// what rigor.LayersRigor answers for a request that raised it or asked for
+	// the level they set), so the answer is ReviewFloor's own.
 	if got, want := e.ReviewFloorFor(rigor.Pro, ""), []Level{LevelL2, LevelL3}; !slices.Equal(got, want) {
 		t.Errorf("ReviewFloorFor(pro, no beside) = %v, want %v", got, want)
 	}
-	if got, want := e.ReviewFloorFor(rigor.Hotfix, ""), []Level{LevelL1}; !slices.Equal(got, want) {
-		t.Errorf("ReviewFloorFor(hotfix, no beside) = %v, want %v", got, want)
+	// Hotfix reads its own row whatever beside says: the row of the mode the
+	// layers resolved does not reach a hotfix run.
+	for _, beside := range []rigor.Rigor{"", rigor.Pro, rigor.Critical} {
+		if got, want := e.ReviewFloorFor(rigor.Hotfix, beside), []Level{LevelL1}; !slices.Equal(got, want) {
+			t.Errorf("ReviewFloorFor(hotfix, %q) = %v, want %v: a hotfix run is held to hotfix's row alone", beside, got, want)
+		}
 	}
-	// Both rows, in the vocabulary's order.
-	if got, want := e.ReviewFloorFor(rigor.Hotfix, rigor.Pro), []Level{LevelL1, LevelL2, LevelL3}; !slices.Equal(got, want) {
-		t.Errorf("ReviewFloorFor(hotfix, pro) = %v, want %v: a hotfix run is held to hotfix's row and to the row the layers resolved", got, want)
+	// A hotfix row is the owner's own lever: declared, it holds the run, and
+	// it is the only thing that does.
+	floored := Merge(Layer{ReviewFloor: map[rigor.Rigor][]Level{
+		rigor.Pro:    {LevelL2, LevelL3},
+		rigor.Hotfix: {LevelL2},
+	}})
+	if got, want := floored.ReviewFloorFor(rigor.Hotfix, ""), []Level{LevelL2}; !slices.Equal(got, want) {
+		t.Errorf("ReviewFloorFor(hotfix) with a floor declared for hotfix = %v, want %v", got, want)
 	}
-	// A mode with no row of its own adds nothing, and neither does naming the
-	// same mode twice.
-	if got, want := e.ReviewFloorFor(rigor.POC, rigor.Pro), []Level{LevelL2, LevelL3}; !slices.Equal(got, want) {
-		t.Errorf("ReviewFloorFor(poc, pro) = %v, want %v: the row the layers resolved still holds", got, want)
+	// A run an on-axis request lowered is held to both rows, in the
+	// vocabulary's order: a mode with no row of its own adds nothing, and
+	// naming the same mode twice reads one row.
+	if got, want := e.ReviewFloorFor(rigor.Startup, rigor.Pro), []Level{LevelL2, LevelL3}; !slices.Equal(got, want) {
+		t.Errorf("ReviewFloorFor(startup, pro) = %v, want %v: the row the layers resolved still holds", got, want)
+	}
+	if got, want := e.ReviewFloorFor(rigor.POC, rigor.Critical), []Level{LevelL3}; !slices.Equal(got, want) {
+		t.Errorf("ReviewFloorFor(poc, critical) = %v, want %v: the row the layers resolved holds however few rows the run's own mode has", got, want)
 	}
 	if got, want := e.ReviewFloorFor(rigor.Pro, rigor.Pro), []Level{LevelL2, LevelL3}; !slices.Equal(got, want) {
 		t.Errorf("ReviewFloorFor(pro, pro) = %v, want %v", got, want)
 	}
 	// FloorFor is the same rule for a reader that holds the map itself, which
-	// is what the launcher reads off the published policy node.
-	if got, want := FloorFor(e.Layer.ReviewFloor, rigor.Hotfix, rigor.Pro), []Level{LevelL1, LevelL2, LevelL3}; !slices.Equal(got, want) {
+	// is what the launcher reads off the published policy node: the two
+	// callers get one answer for a hotfix run.
+	if got, want := FloorFor(e.Layer.ReviewFloor, rigor.Hotfix, rigor.Pro), []Level{LevelL1}; !slices.Equal(got, want) {
 		t.Errorf("FloorFor(policy node, hotfix, pro) = %v, want %v", got, want)
 	}
+	if got, want := FloorFor(e.Layer.ReviewFloor, rigor.Startup, rigor.Pro), []Level{LevelL2, LevelL3}; !slices.Equal(got, want) {
+		t.Errorf("FloorFor(policy node, startup, pro) = %v, want %v", got, want)
+	}
 	// The merged policy is not modified, and the answer is the caller's own
-	// slice to append to (both readers force level 3 on).
+	// slice to append to where one row is read (both readers force level 3 on).
 	_ = append(e.ReviewFloorFor(rigor.Hotfix, rigor.Pro), LevelL3)
+	if want := []Level{LevelL1}; !slices.Equal(e.Layer.ReviewFloor[rigor.Hotfix], want) {
+		t.Errorf("ReviewFloor(hotfix) = %v after a caller appended to the answer, want %v", e.Layer.ReviewFloor[rigor.Hotfix], want)
+	}
+	_ = append(e.ReviewFloorFor(rigor.Startup, rigor.Pro), LevelL1)
 	if want := []Level{LevelL2, LevelL3}; !slices.Equal(e.Layer.ReviewFloor[rigor.Pro], want) {
 		t.Errorf("ReviewFloor(pro) = %v after a caller appended to the answer, want %v", e.Layer.ReviewFloor[rigor.Pro], want)
 	}
@@ -423,15 +455,22 @@ func TestInfCapIsUnset(t *testing.T) {
 }
 
 func TestValidMode(t *testing.T) {
-	for m, ok := range map[string]bool{"": false, "off": true, "observe": true, "enforce": true, "ENFORCE": false, "bogus": false} {
+	// The word that was a budget mode until this release is written as the
+	// literal rather than through the constant, so this file needs no edit
+	// when I1 deletes the constant (docs/always-a-budget/contract-mode.md
+	// §3): what this row pins is that the vocabulary refuses it.
+	for m, ok := range map[string]bool{"": false, "off": false, "observe": true, "enforce": true, "ENFORCE": false, "bogus": false} {
 		if ValidMode(m) != ok {
 			t.Errorf("ValidMode(%q) != %v", m, ok)
 		}
 	}
-	// an unknown mode is unset: it neither sets nor is ignored.
-	e := Merge(Layer{Mode: "observe"}, Layer{Mode: "bogus"})
-	if e.Mode != "observe" || len(e.Ignored) != 0 {
-		t.Fatalf("%+v", e)
+	// an unknown mode is unset: it neither sets nor is ignored, and neither is
+	// the removed word.
+	for _, m := range []string{"bogus", "off"} {
+		e := Merge(Layer{Mode: "observe"}, Layer{Mode: m})
+		if e.Mode != "observe" || len(e.Ignored) != 0 {
+			t.Fatalf("mode %q: %+v", m, e)
+		}
 	}
 }
 

@@ -129,7 +129,7 @@ func projectLayerOf(ctx context.Context, lc *localcfg.Config) (*config.ProjectLa
 }
 
 // findLayer is the project layer that applies to the fugaro.yaml data
-// (docs/design/layered-config.md §3 and §7). None applies to a file
+// (docs/layered-config/spec.md §3 and §7). None applies to a file
 // without gcp_project: (decision L9), or to an installation whose runs
 // bucket is not default-named. Otherwise it is the bucket's object, read
 // on every call (decision L13): only when the bucket cannot be reached at

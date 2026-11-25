@@ -84,7 +84,7 @@ var errFound = errors.New("found")
 // OptionalSecret reports whether a job may go without this logical secret.
 // Only one may: the Anthropic API key, mounted whenever the secret has a
 // version, because a run whose models all route through providers needs none
-// (design docs/design/project-centric.md §6.1). Everything else a job mounts
+// (design docs/project-centric/spec.md §6.1). Everything else a job mounts
 // is required for the job to work at all.
 func OptionalSecret(logical string) bool { return logical == config.AnthropicSecret }
 
@@ -311,7 +311,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 	}
 	hasVersion := func(logical string) (bool, error) { return hasVersionID(spec.Secrets[logical]) }
 	// resolveProject is Readiness's own repo-wins-else-project precedence
-	// (design docs/design/project-secrets.md §5), through the one helper
+	// (design docs/project-secrets/spec.md §5), through the one helper
 	// that decides it (resolveSecretID, ResolveSecretID's own body). It is
 	// only ever called for a logical name whose repository copy has no
 	// enabled version, so resolved is true exactly when the project copy is
@@ -432,7 +432,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 			}
 			// The repository copy has no version: the project-wide one may
 			// still resolve it, optional secret or not, so this comes first
-			// (design docs/design/project-secrets.md §5).
+			// (design docs/project-secrets/spec.md §5).
 			resolved, fix, err := resolveProject(logical)
 			if err != nil {
 				return RepoSpec{}, nil, err
@@ -459,6 +459,20 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 				dropMount(ws, logical)
 				ignored = append(ignored, logical)
 				ignoredHere = append(ignoredHere, logical)
+				continue
+			}
+			if spec.DefaultAccountUnused && logical == config.ClaudeOAuthToken {
+				// No run of this project's configuration holds the unsuffixed
+				// default account (RepoSpec.DefaultAccountUnused), so this job
+				// mounts a token nothing of the owner's ever uses and its
+				// absence is not a gate: the mount goes the way the optional
+				// key's does, so the job still deploys and the repository is
+				// not stranded on a name no command of its configuration
+				// reaches. What a launch naming the default account anyway
+				// (`--token default`) meets is the runner's own refusal of a
+				// run that holds no credential, which is a run told what is
+				// wrong rather than a repository that cannot be brought up.
+				dropMount(ws, logical)
 				continue
 			}
 			if OptionalSecret(logical) {

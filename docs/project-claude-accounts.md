@@ -1,13 +1,13 @@
 # Project Claude accounts: one OAuth token per (profile, account)
 
-Status: **0.9.0, released.** The released Fugaro is 0.26.1, and 0.9.0 is the first release any of this page works on:
+Status: **0.9.0, released.** The released Fugaro is 0.28.2, and 0.9.0 is the first release any of this page works on:
 the `claude_accounts` field inside a profile, the `accounts` block in the published policy and the
 jobs they name all ship in 0.9.0 (policy version 3,
 [`internal/projectpolicy/version.go`](../internal/projectpolicy/version.go)), and a 0.8.x binary
 reads none of it. The page is kept out
 of the docs hub on the site until the hub lists it, and every command below is a 0.9.0 or later
 `fugaro` binary. The design it documents is
-[design/project-named-oauth-tokens.md](design/project-named-oauth-tokens.md).
+[project-named-oauth-tokens/spec.md](project-named-oauth-tokens/spec.md).
 
 Every command on this page is labelled with **where it runs**, because the two are different
 machines with different files:
@@ -33,10 +33,10 @@ of them, and §16 is the one command that moves those keys off one account and o
 
 The Claude OAuth credential was one secret per repository: `claude-oauth-token`, mounted into the
 job as `CLAUDE_CODE_OAUTH_TOKEN`
-([design/named-oauth-tokens.md](design/named-oauth-tokens.md) §1). Named accounts
-([design/named-oauth-tokens.md](design/named-oauth-tokens.md)) made *which* token a repository
+([named-oauth-tokens/spec.md](named-oauth-tokens/spec.md) §1). Named accounts
+([named-oauth-tokens/spec.md](named-oauth-tokens/spec.md)) made *which* token a repository
 uses a choice: `agent.oauth_token` in `fugaro.yaml`, or `fugaro run --token`.
-[design/project-named-oauth-tokens.md](design/project-named-oauth-tokens.md) carries that choice to
+[project-named-oauth-tokens/spec.md](project-named-oauth-tokens/spec.md) carries that choice to
 the project job, where the credential is a fact of the **job** and not of the run.
 
 A named account is:
@@ -113,7 +113,7 @@ argument. Run it as the person or team whose subscription the token belongs to �
 account, signing in to the account that name is for. What Claude Code does when a machine already
 holds a token for another account (whether it logs out first, takes a flag, or wants a separate
 profile) is not verified by Fugaro, no live check having been run
-([design/named-oauth-tokens.md](design/named-oauth-tokens.md) §7, U2): `claude setup-token --help` in
+([named-oauth-tokens/spec.md](named-oauth-tokens/spec.md) §7, U2): `claude setup-token --help` in
 your own install is the authority, and nothing here depends on the answer, because what is stored is
 whatever value you paste.
 
@@ -654,12 +654,12 @@ radius (§1), and `accounts.<name>.allow_repos` plus the two gates are what boun
   owner-configured model providers, no local compute-price override, the default budget grace, and
   no repository-level `workflows.<n>.secrets` — only the profile's project-wide ones. **The account
   gates are not what admits such a run, and no live check has proved one end to end on a shared
-  job:** the check that would (the plan's own, `docs/plans/2026-10-14-project-centric.md` Task 3.7)
+  job:** the check that would (the plan's own, `docs/project-centric/implementation-plan.md` Task 3.7)
   has not been run. A Bitbucket repository never reaches a shared job at all.
 - **No per-account budget dimension.** The budget schema is keyed by model, repository, project and
   person, never by credential: an OAuth run adds to the notional (subscription, unbilled) counters,
   and the account's own limits are Anthropic's, not Fugaro's
-  ([design/named-oauth-tokens.md](design/named-oauth-tokens.md) §9).
+  ([named-oauth-tokens/spec.md](named-oauth-tokens/spec.md) §9).
 - **Unverified without a live check:** whether one account's token serves several concurrent runs
   comfortably (a sizing question, design §7 U3), and whether the account jobs' IAM members plan as
   pure creates — Task 2's golden plans answer the second; no cloud call was made for either.
@@ -972,9 +972,9 @@ nothing here rewrites a record, a ledger or a counter
 
 ## See also
 
-- [design/project-named-oauth-tokens.md](design/project-named-oauth-tokens.md) — the design, its
+- [project-named-oauth-tokens/spec.md](project-named-oauth-tokens/spec.md) — the design, its
   decisions (D1 to D10) and its threat model.
-- [design/named-oauth-tokens.md](design/named-oauth-tokens.md) — the repository-level feature this
+- [named-oauth-tokens/spec.md](named-oauth-tokens/spec.md) — the repository-level feature this
   one carries to the project job.
 - [project-layer.md](project-layer.md) — profiles, `job_profile` and the project layer, and which
   layer may write each craft key.

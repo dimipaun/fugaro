@@ -130,6 +130,8 @@ const MODULES: readonly string[] = Object.freeze([
   'renderer/skeleton.js',
   'renderer/screens/reading.js',
   'renderer/section.js',
+  // The streamed read the screen falls back through (RS5), which it requires.
+  'renderer/stream.js',
   'renderer/screens/spend.js',
 ])
 
@@ -877,8 +879,10 @@ test.describe('the Spend screen', () => {
     expect(drawn.atCapWords).toEqual([])
   })
 
-  test('hides the person breakdown by default', async () => {
-    await mount(PERSON_REPORT, BUDGET, 'light')
+  test('hides the person breakdown once the knob is turned off', async () => {
+    // The knob is on when the screen opens (D3214, amending design D15), so
+    // this is the off state drawn on purpose, not the screen's own first paint.
+    await mount(PERSON_REPORT, BUDGET, 'light', false)
     const drawn = await screen(page)
 
     expect(drawn.rows).toBe(0)
@@ -893,11 +897,12 @@ test.describe('the Spend screen', () => {
     const drawn = await screen(page)
 
     expect(drawn.rows).toBe(2)
-    // The `person` class of `sanitize.ts`: an address on the wire is the
-    // console's own marker, and the CLI's `unknown` bucket is drawn as itself.
-    expect(drawn.text).toContain('redacted@example.invalid')
+    // The `person` class of `sanitize.ts`: an address on the wire is drawn as the
+    // person it names (D3213, 2026-11-21), and the CLI's `unknown` bucket as
+    // itself.
+    expect(drawn.text).toContain('ada@example.com')
+    expect(drawn.text).toContain('bob@example.com')
     expect(drawn.text).toContain('unknown')
-    expect(drawn.text).not.toContain('ada')
   })
 
   test('offers no link, and nothing to click', async () => {
@@ -949,35 +954,32 @@ test.describe('the Spend screen', () => {
     expect(after.accounts).toEqual(['model', 'notional', 'compute'])
   })
 
-  test('keeps the person view off the screen, and off the wire, until the knob is turned on', async () => {
-    // The default golden is taken from this state: the knob is drawn, and it is
-    // off. The document the read answers with carries the person rows -- a
-    // window holding a stale document is the case the withholding is for -- and
-    // none of them is drawn, and no address is anywhere in the text.
-    const off = await mountWired(SPEND_DEFAULT_CONTROLS, { '7d': PERSON_REPORT })
+  test('draws the person view on the default, and nothing of it once the knob is turned off', async () => {
+    // The knob opens on (D3214, amending D15): the document the read answers
+    // with carries the person rows, and they are drawn with no press behind
+    // them -- the address as the person it names.
+    const open = await mountWired(SPEND_DEFAULT_CONTROLS, { '7d': PERSON_REPORT })
+    const shown = await screen(page)
+
+    expect(open.asked).toEqual([{ by: 'day', since: '7d' }])
+    expect(shown.personsEnabled).toBe('true')
+    expect(shown.personState).toBe('on')
+    expect(shown.rows).toBe(2)
+    expect(shown.text).toContain('ada@example.com')
+    expect(shown.text).toContain('unknown')
+
+    // The operator's own switch, pressed the other way: the read is the day
+    // grouping and nothing else, the knob is drawn off, and none of the
+    // document's rows is drawn -- no address anywhere in the text.
+    const off = await mountWired(personView(SPEND_DEFAULT_CONTROLS, false), { '7d': PERSON_REPORT })
     const hidden = await screen(page)
 
     expect(off.asked).toEqual([{ by: 'day', since: '7d' }])
-    expect(JSON.stringify(off.asked)).not.toContain('person')
     expect(hidden.personsEnabled).toBe('false')
     expect(hidden.personState).toBe('off')
     expect(hidden.rows).toBe(0)
     expect(hidden.text).toContain('person breakdown is off')
     expect(hidden.text).not.toContain('ada')
-
-    // The operator's own switch: the same read with `by person` and nothing
-    // else, and the rows are drawn -- as the console's marker, never the
-    // address.
-    const on = await mountWired(personView(SPEND_DEFAULT_CONTROLS, true), { '7d': PERSON_REPORT })
-    const shown = await screen(page)
-
-    expect(on.asked).toEqual([{ by: 'person', since: '7d' }])
-    expect(shown.personsEnabled).toBe('true')
-    expect(shown.personState).toBe('on')
-    expect(shown.rows).toBe(2)
-    expect(shown.text).toContain('redacted@example.invalid')
-    expect(shown.text).toContain('unknown')
-    expect(shown.text).not.toContain('ada')
   })
 
   // -------------------------------------------------------------------------
@@ -1006,10 +1008,9 @@ test.describe('the Spend screen', () => {
     expect(drawn.peopleTotals).toBe(1)
     expect(drawn.peopleReason).toBeNull()
     // The identity the read was resolved for, through the `person` class: the
-    // console's marker, never the address, and the login nowhere on the mount.
-    expect(drawn.peopleYou).toBe('redacted@example.invalid')
+    // address the document named, drawn as itself (D3213).
+    expect(drawn.peopleYou).toBe('ada@example.com')
     expect(drawn.text).toContain('these are every launcher of this project in the window')
-    expect(drawn.text).not.toContain('ada')
 
     // The money path, end to end: the document's three `float64`s reach the
     // cells as dollars, the notional one carries its mark, and the average
@@ -1027,7 +1028,7 @@ test.describe('the Spend screen', () => {
     expect(drawn.peopleSamples).toEqual(['3', '1', '0', '4'])
 
     // The knob off is one read and no panel at all -- not an empty one.
-    const off = await mountWired(SPEND_DEFAULT_CONTROLS, { '7d': REPORT }, 'light', STATS_DOCUMENT)
+    const off = await mountWired(personView(SPEND_DEFAULT_CONTROLS, false), { '7d': REPORT }, 'light', STATS_DOCUMENT)
     const hidden = await screen(page)
 
     expect(off.askedPeople).toEqual([])

@@ -87,6 +87,14 @@ import (
 // register at test time (part 1c).
 var voiceSwitchWritten = []string{"49", "50", "52", "58", "69a", "69b", "70a", "70b", "70c", "80", "81", "82", "83", "84", "85", "86", "87", "88", "89"}
 
+// oneTagMacro is the macro J5r writes on a message's own validator and on the
+// heartbeat (mobile identity-pairing, O6), the name the template spells where
+// the generated document expands to "exactly one of `mac` and `sig`". The
+// design's §2 describes that expansion in prose and the test counts the macro in
+// the template, so a message that lost its tag would be one the design no
+// longer describes.
+const oneTagMacro = "TAGOK"
+
 func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	const designPath = "docs/mobile/design/voice-evaluation-switch.md"
 	const checklistPath = "docs/gcp-live-checklist.md"
@@ -217,8 +225,8 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	if strings.Contains(checklist, "## Check 39:") {
 		t.Errorf("%s now has a `## Check 39:` section, but %s §13 says 39 is written as 39a–39f in the retire-image-mirror plan; recount the section", checklistPath, designPath)
 	}
-	if !strings.Contains(readDoc(t, "docs/plans/2026-10-13-retire-image-mirror.md"), "live checks 39a–39f") {
-		t.Errorf("%s §13 says 39 is written as 39a–39f in docs/plans/2026-10-13-retire-image-mirror.md, which no longer names them that way", designPath)
+	if !strings.Contains(readDoc(t, "docs/retire-image-mirror/implementation-plan.md"), "live checks 39a–39f") {
+		t.Errorf("%s §13 says 39 is written as 39a–39f in docs/retire-image-mirror/implementation-plan.md, which no longer names them that way", designPath)
 	}
 	// The other half of the 1–18 row: those numbers are rows WITHOUT a section,
 	// 1b and 11b included. A `## Check 1` written later makes §13's row wrong,
@@ -291,7 +299,7 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 		t.Errorf("%s's summary table has no `| 57 |` row, but %s §13 says 57 is a summary row", checklistPath, designPath)
 	}
 	if strings.Contains(checklist, "## Check 57:") {
-		t.Errorf("%s now has a `## Check 57:` section, but %s §13 says 57's section lives in docs/design/compute-backend.md §7.2", checklistPath, designPath)
+		t.Errorf("%s now has a `## Check 57:` section, but %s §13 says 57's section lives in docs/compute-backend/spec.md §7.2", checklistPath, designPath)
 	}
 	row57 := ""
 	for _, line := range strings.Split(checklist, "\n") {
@@ -302,10 +310,10 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	if row57 == "" {
 		t.Fatalf("%s's §13 names 57 as a written row and this test's marker `| 57 |` found none; update the marker", checklistPath)
 	}
-	if want := `See "Check 57" in ` + "`docs/design/compute-backend.md` §7.2"; !strings.Contains(row57, want) {
+	if want := `See "Check 57" in ` + "`docs/compute-backend/spec.md` §7.2"; !strings.Contains(row57, want) {
 		t.Errorf("%s's `| 57 |` row does not point at %q, so it no longer says where the check's body is: %s", checklistPath, want, row57)
 	}
-	compute := readDoc(t, "docs/design/compute-backend.md")
+	compute := readDoc(t, "docs/compute-backend/spec.md")
 	heading, body := false, ""
 	for _, line := range strings.Split(compute, "\n") {
 		if line == "### 7.2 The check" { // the heading itself, not a renamed one
@@ -320,9 +328,9 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 		}
 	}
 	if !heading {
-		t.Errorf("docs/design/compute-backend.md has no `### 7.2 The check` heading, so %s §13's sentence that 57's section lives in its §7.2 is stale", designPath)
+		t.Errorf("docs/compute-backend/spec.md has no `### 7.2 The check` heading, so %s §13's sentence that 57's section lives in its §7.2 is stale", designPath)
 	} else if !strings.Contains(body, "Check 57: the compute-instance Docker backend") {
-		t.Errorf("docs/design/compute-backend.md's §7.2 no longer opens with the check's own title, so %s §13's sentence that 57's body lives there is stale", designPath)
+		t.Errorf("docs/compute-backend/spec.md's §7.2 no longer opens with the check's own title, so %s §13's sentence that 57's body lives there is stale", designPath)
 	}
 	row := ""
 	for _, line := range strings.Split(design, "\n") {
@@ -366,33 +374,39 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 		t.Errorf("%s's §5 rule 4 promises the STT path is gated by the redactor, which §3's own table says it cannot be", designPath)
 	}
 
-	// 4. The mailbox rules §2 says are shipped. P6.4 (#601, 371038f) is merged
-	// into this branch, so the rules template requires `mac` on the inbox, the
-	// outbox and the heartbeat; a §2 that calls those fields "not shipped"
-	// contradicts the rules it cites, as an earlier revision's did.
+	// 4. The mailbox rules §2 says are shipped, as J5r rewrote them: P6.4
+	// (#601, 371038f) is merged into this branch, so the rules template requires
+	// a tag on the inbox, the outbox and the heartbeat — and since J5r (mobile
+	// identity-pairing, O6) that tag is exactly one of `mac` and `sig`, so the
+	// required-children list names the four fields and the tag is a clause
+	// beside it. A §2 that quoted the older spelling would cite a rule this
+	// document does not have, as an earlier revision's did when it called the
+	// fields "not shipped".
 	tmpl := readDoc(t, "internal/budget/rules/rules.json.tmpl")
-	// Counted rather than merely found: `mac` is required on the inbox *and*
-	// the outbox, so the string appears twice, and a template that dropped it
-	// from one of the two would still satisfy a plain Contains.
+	// Counted rather than merely found: the tag is required on the inbox *and*
+	// the outbox and on the heartbeat, so each clause appears three times, and a
+	// template that dropped it from one of the three would still satisfy a
+	// plain Contains.
 	for _, want := range []struct {
 		s   string
 		min int
 	}{
-		{"hasChildren(['id', 'sender', 'text', 'at', 'mac'])", 2},
-		{"hasChildren(['at', 'boot', 'mac'])", 1},
+		{"newData.hasChildren(['id', 'sender', 'text', 'at'])", 2},
+		{oneTagMacro, 3},
 	} {
 		if got := strings.Count(tmpl, want.s); got < want.min {
 			t.Errorf("internal/budget/rules/rules.json.tmpl carries %q %d times, want at least %d, so %s §2's account of the mailbox's required fields is stale", want.s, got, want.min, designPath)
 		}
 	}
 	// The design's own sentence, which is the half that went stale: §2 must
-	// name the fields as shipped and carry the rules' two required sets. (The
-	// withdrawn wording is quoted in §11's round-11 entry, so only §2 is read
-	// here — a whole-document search would trip on that quotation.)
+	// name the fields as shipped and carry the rules' required set with the two
+	// tag shapes beside it. (The withdrawn wording is quoted in §11's round-11
+	// entry, so only §2 is read here — a whole-document search would trip on
+	// that quotation.)
 	exists := docSection(t, designPath, design, "## 2. What exists today")
 	for _, want := range []string{
-		"['id', 'sender', 'text', 'at', 'mac']",
-		"['at', 'boot', 'mac']",
+		"newData.hasChildren(['id', 'sender', 'text', 'at'])",
+		"a tag that is exactly one of `mac` and `sig`",
 		"the fields P6.4 added are in it",
 	} {
 		if !strings.Contains(exists, want) {
@@ -486,15 +500,15 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	// SOURCE writes them (emphasis and line wrapping aside — see flat) and the
 	// file the design attributes them to.
 	for _, q := range []struct{ quote, src string }{
-		{"the phase that ships the check writes them", "docs/design/voice.md"},
+		{"the phase that ships the check writes them", "docs/voice/spec.md"},
 		{"A check is never run before its text is in the register", "docs/mobile/implementation-plan.md"},
 		{"The app never stores or uploads audio", "docs/mobile/implementation-plan.md"},
 		{"so the audio never leaves the device", "docs/mobile/reconciliation.md"},
 		{"it must be stated as a rule rather than left as an implication", "docs/mobile/reconciliation.md"},
-		{"local-only for v1", "docs/design/voice.md"},
-		{"Your machine stays your business", "docs/design/desktop-console.md"},
-		{"Audio fixtures are synthesised (Task V4.3)", "docs/plans/2026-10-16-voice.md"},
-		{"v1's whole provider path is local-only", "docs/plans/2026-10-16-voice.md"},
+		{"local-only for v1", "docs/voice/spec.md"},
+		{"Your machine stays your business", "docs/desktop-console/spec.md"},
+		{"Audio fixtures are synthesised (Task V4.3)", "docs/voice/implementation-plan.md"},
+		{"v1's whole provider path is local-only", "docs/voice/implementation-plan.md"},
 		{"TOKEN && auth.token.fs == $slug", "internal/budget/rules/rules.json.tmpl"},
 		{"read-back text is built from the resolved target and from nothing", "shared/confirm/index.js"},
 		{"a confirmation is a separate utterance", "shared/confirm/index.js"},
@@ -514,7 +528,7 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	// The two halves of the attribution itself: each quotation named with the
 	// file it is in, and neither given to the register.
 	for _, want := range []string{
-		"[voice.md](../../design/voice.md) **§5.3**",
+		"[voice.md](../../voice/spec.md) **§5.3**",
 		`[implementation-plan.md](../implementation-plan.md), the block "Check numbers this plan takes (80–89)"`,
 		`"**A check is never run before its text is in the register**"`,
 	} {
@@ -531,7 +545,7 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 }
 
 // TestVoiceDocRegisterNoteCounts70bAsWritten pins the other document that keeps the
-// register's bookkeeping: docs/design/voice.md §5.3 says which of the website redesign's
+// register's bookkeeping: docs/voice/spec.md §5.3 says which of the website redesign's
 // checks are written, and it said "69c and 70b are not in the register" — true when it was
 // counted, and false on a branch that writes the `| 70b |` row and the `## Check 70b:`
 // section. §13 of the mobile design records the same fact for 70a–70c (its own row says
@@ -542,7 +556,7 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 // the count it is about: §5.3's count is above the sentence, and nothing below it carries
 // one, so the direction word is pinned too.
 func TestVoiceDocRegisterNoteCounts70bAsWritten(t *testing.T) {
-	const voicePath = "docs/design/voice.md"
+	const voicePath = "docs/voice/spec.md"
 	voice := flat(readDoc(t, voicePath))
 
 	if strings.Contains(voice, "69c and 70b are not in the register") {

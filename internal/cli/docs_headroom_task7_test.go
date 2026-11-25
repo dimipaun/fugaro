@@ -6,7 +6,7 @@ import (
 )
 
 // TestHeadroomTask7NoteCorrections pins the corrections the review of #1162
-// asked for in the Task 7 note (docs/plans/2026-10-12-headroom-compression.md,
+// asked for in the Task 7 note (docs/headroom-compression/implementation-plan.md,
 // its revised 2026-10-27 note) and in the design it cites, so the false
 // sentences they replaced cannot come back:
 //
@@ -27,8 +27,8 @@ import (
 // The corrections also have to be reachable from Check L2, whose parenthetical
 // sends the reader to whatever Task 7 found.
 func TestHeadroomTask7NoteCorrections(t *testing.T) {
-	plan := flattenDoc(readDoc(t, "docs/plans/2026-10-12-headroom-compression.md"))
-	design := flattenDoc(readDoc(t, "docs/design/headroom-compression.md"))
+	plan := flattenDoc(readDoc(t, "docs/headroom-compression/implementation-plan.md"))
+	design := flattenDoc(readDoc(t, "docs/headroom-compression/spec.md"))
 
 	for _, want := range []string{
 		"`HEADROOM_OFFLINE` is named among the switches that disable it",
@@ -66,7 +66,7 @@ func TestHeadroomTask7NoteCorrections(t *testing.T) {
 	// Check L2's own parenthetical already sends the reader to "whatever Task 7
 	// found", so the pointer this correction adds is what is pinned — the bare
 	// words "Task 7" are there with or without it, and would assert nothing.
-	l2 := mdBetween(t, "docs/plans/2026-10-12-headroom-compression.md", plan,
+	l2 := mdBetween(t, "docs/headroom-compression/implementation-plan.md", plan,
 		"Check L2. Can Headroom's own configuration", "Check L3.")
 	if !strings.Contains(l2, "its Corrections block records that Headroom fetches its ML models at run time") {
 		t.Error("Check L2 no longer points at the Task 7 revised note and its Corrections block")

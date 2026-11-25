@@ -60,7 +60,17 @@ func (s *issueShared) Close() {
 // no network — which is why a coding agent's session may call it and still
 // reach no shared store (F10): what a session must not do is upload, and the
 // project's own name is a local file.
-func openIssueShared(ctx context.Context, agent string) *issueShared {
+//
+// The second return is D1541's fence and never a store problem: the store's
+// own failures stay the notes they always were. The project's issues are the
+// project's own state, so `issue sync` and `issue dismiss` — the two commands
+// that write them — are fenced, and the read is made here, where the project's
+// name becomes known and before mineOpen could build a client. An exempt
+// command — every reader of this store — is answered without a read
+// (requireManaged), so a listing never pays for the fence and never fails on
+// it; a caller that ignores the error would be writing the store of a project
+// the fence refused, which is why every caller returns it.
+func openIssueShared(ctx context.Context, agent string) (*issueShared, error) {
 	sh := &issueShared{deps: issues.Deps{
 		Lookup:   mineCaller,
 		NoLookup: agent != "",
@@ -69,21 +79,24 @@ func openIssueShared(ctx context.Context, agent string) *issueShared {
 	}}
 	if agent != "" {
 		sh.notes = append(sh.notes, "note: this is a coding agent's session: nothing is uploaded, and the project's issues are not read")
-		return sh
+		return sh, nil
 	}
 	lc, err := mineProject(ctx)
 	if err != nil {
 		sh.notes = append(sh.notes, "note: the project's runs bucket could not be found ("+oneLine(err.Error())+"), so the project's issues are not read")
-		return sh
+		return sh, nil
+	}
+	if err := requireManaged(ctx, managedCommandFrom(ctx), lc); err != nil {
+		return sh, err
 	}
 	sh.installation = issues.Digest(lc.BucketURL())
 	b, err := mineOpen(ctx, lc)
 	if err != nil {
 		sh.notes = append(sh.notes, "note: the project's shared store could not be opened ("+oneLine(err.Error())+")")
-		return sh
+		return sh, nil
 	}
 	sh.bucket = b
-	return sh
+	return sh, nil
 }
 
 // why is the line this run has about what it could not reach, as the reason
@@ -219,7 +232,10 @@ func runIssueSync(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	sh := openIssueShared(ctx, "")
+	sh, err := openIssueShared(ctx, "")
+	if err != nil {
+		return err
+	}
 	defer sh.Close()
 	if sh.bucket == nil {
 		// The project is the command's whole subject: unlike a listing, there is

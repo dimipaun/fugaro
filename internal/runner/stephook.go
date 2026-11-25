@@ -68,7 +68,7 @@ type StepView struct {
 
 // steps are the step kinds this build carries, by kind. The registry is
 // process-wide and filled from an init, the way internal/cli's own seams are
-// (§5.5 of docs/design/ee-boundary-moves.md); the tagged binary registers one
+// (§5.5 of docs/ee-reorg/boundary-moves.md); the tagged binary registers one
 // function for the one kind its recipes hold.
 var steps = map[recipe.StepKind]StepFunc{}
 
@@ -200,9 +200,16 @@ func (r *run) stepTiming(name string, started time.Time) runstore.StageTiming {
 	r.mu.Lock()
 	sp := r.stepSpend
 	r.mu.Unlock()
+	// The source the step's own calls were served from, taken and cleared the
+	// way a stage's row takes them (cost.go's chainStage, C1, CS8): a
+	// step's calls are the only ones its mode makes, so its stage carries
+	// them wherever else the run's stages do.
+	source, fallback := r.chainStage()
 	zero := 0
 	return runstore.StageTiming{
 		Name:             name,
+		Source:           source,
+		Fallback:         fallback,
 		StartedAt:        started.UTC(),
 		DurationS:        r.d.Now().Sub(started).Seconds(),
 		ModelUSD:         (sp.used + sp.notional).USD(),

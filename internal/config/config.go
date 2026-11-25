@@ -185,6 +185,15 @@ type Config struct {
 	// says (internal/cli). Like the fields above it is never part of the file
 	// or of SHA256.
 	RepoStopFractionSet bool `yaml:"-" json:"-"`
+	// RepoWorkspaceBeatSet is whether the repository's own file wrote the
+	// agent.workspace_beat key at all, at any value: the question
+	// RepoRigorSet answers for rigor:, and Agent.WorkspaceBeat cannot answer
+	// it — the key written true (the default) decodes to the same answer as
+	// the key being absent once WorkspaceBeatOn is read, and a runner older
+	// than workspaceBeatSince refuses the key itself, whatever it says
+	// (internal/cli). Like the fields above it is never part of the file or
+	// of SHA256.
+	RepoWorkspaceBeatSet bool `yaml:"-" json:"-"`
 	// RepoTriageSet is whether the repository's own file wrote the
 	// agent.triage key at all, at any value: the question RepoRigorSet answers
 	// for rigor:, and Agent.Triage cannot answer it — the key written true
@@ -389,7 +398,7 @@ const (
 // out sets no policy. The model prices are not settable here (a repository
 // that could set prices could set them to zero).
 type Budget struct {
-	Mode      string  `yaml:"mode"`        // off | observe | enforce; "" sets none
+	Mode      string  `yaml:"mode"`        // observe | enforce; "" sets none, which the run reads as observe
 	PerRunUSD float64 `yaml:"per_run_usd"` // 0 sets none; enforce needs a cap only after the merge
 	// AllowedModels bounds the models the run may choose, explicit IDs
 	// only; nil sets none, and an empty list is invalid.
@@ -731,15 +740,32 @@ type Agent struct {
 	// whatever it says, which is what the launch's own gate judges the job
 	// image on (internal/cli's reviewSpecSince).
 	ReviewAgainstTask *bool `yaml:"review_against_task,omitempty" json:"ReviewAgainstTask,omitempty"`
+	// WorkspaceBeat is whether a run that routed a kind of credential to its
+	// workspace's credentials service keeps that service warm (R10, D2985):
+	// true, false, or nil for the default, which is on. It is a pointer for
+	// Triage's reason: the key's absence and `workspace_beat: false` are two
+	// answers, and the field cannot tell them apart otherwise.
+	//
+	// The beat is the run's own (creds.WorkspaceBeatSetting, C2 carries the
+	// key's spelling): the run posts a keep-warm request to the workspace's
+	// service at the slip beat's cadence, so a service scaled to zero between
+	// the calls the run pays for is warm when the next one arrives. Turning it
+	// off is the owner's own doubt of D2985 rather than a safety setting — a
+	// run that sends no beat is slower at a call, not less correct — so the
+	// project layer and the repository both carry it, as they carry the run's
+	// other behaviour keys. Binaries before 0.27.0 refuse the key (strict
+	// decoder), whatever it says, which is what the launch's own gate judges
+	// the job image on (internal/cli's workspaceBeatSince).
+	WorkspaceBeat *bool `yaml:"workspace_beat,omitempty" json:"WorkspaceBeat,omitempty"`
 	// Recipe names the task loop that follows implement
-	// (docs/design/recipes.md): a recipe in .fugaro/recipes/, the project's,
+	// (docs/recipes/spec.md): a recipe in .fugaro/recipes/, the project's,
 	// or the catalog's. "" is default. fugaro run --recipe wins over it.
 	// Binaries before 0.5.0 refuse the key.
 	Recipe string `yaml:"recipe"`
 	// OAuthToken names the Claude account (claude_accounts in the local
 	// config, ClaudeAccountNameRE) this workflow's agent.auth: oauth uses;
 	// "" is the repository's default account, the existing claude-oauth-token
-	// secret (docs/design/named-oauth-tokens.md). fugaro run --token wins
+	// secret (docs/named-oauth-tokens/spec.md). fugaro run --token wins
 	// over it. A name must still be allowed for this repository
 	// (AllowedClaudeAccounts), checked at launch, not here: Validate checks
 	// the name's shape, and refuses the reserved name. Repo and override scope
@@ -748,7 +774,7 @@ type Agent struct {
 	OAuthToken string `yaml:"oauth_token,omitempty" json:"OAuthToken,omitempty"`
 	// Compression names the context-compression proxy this workflow's model
 	// calls route through: "" (off, the default) or "headroom"
-	// (docs/design/headroom-compression.md). Reserved and refused (the plan's
+	// (docs/headroom-compression/spec.md). Reserved and refused (the plan's
 	// P11): Validate knows the key and refuses every value with "not yet
 	// implemented" rather than leaving a repository that tries it with a
 	// strict-parse unknown-field error, so no run ever has the key set and
@@ -784,6 +810,13 @@ func (a Agent) TriageOn(mode rigor.Rigor) bool {
 	}
 	return a.Triage == nil || *a.Triage
 }
+
+// WorkspaceBeatOn reports whether this run keeps its workspace's credentials
+// service warm (R10, D2985): true unless agent.workspace_beat is false. The
+// key is the run's own switch and nothing else decides it — no policy node and
+// no ceiling carries it — because the beat's absence costs a cold start at a
+// call and never a credential.
+func (a Agent) WorkspaceBeatOn() bool { return a.WorkspaceBeat == nil || *a.WorkspaceBeat }
 
 // ReviewAgainstTaskOn reports whether the repository's own configuration has
 // every review stage checked against the task the pull request was written for
@@ -1223,16 +1256,28 @@ type CacheEntry struct {
 	Paths []string `yaml:"paths"`
 }
 
-// Secret maps a logical secret name to the environment variable it is exposed as.
+// Secret maps a logical secret name to the environment variable it is exposed
+// as, and says whether the value should reach the run as a file rather than as
+// the variable's own content (D3327).
+//
+// File is the repository's declaration that the value is one a tool insists on
+// reading from a path (a credential file rather than an environment variable).
+// The variable named by Env is set all the same and receives the path the value
+// was written to, which is why a file secret names its Env exactly as an
+// ordinary one does. It changes nothing about what the run may reach: a file is
+// treated as the environment secret it stands in for — present for a coding
+// run's stages, never written in an independent review run, removed at run end
+// (F19, G3; the writing half is IS2's, internal/runner).
 type Secret struct {
 	Name string `yaml:"name"`
 	Env  string `yaml:"env"`
+	File bool   `yaml:"file"`
 }
 
 // AnthropicSecret is the logical secret that holds the Anthropic API key. It
 // is the one secret a job may go without: it is mounted whenever the secret
 // has a version, and a run whose models all route through providers needs
-// none (design docs/design/project-centric.md §6.1).
+// none (design docs/project-centric/spec.md §6.1).
 const AnthropicSecret = "anthropic-api-key"
 
 // MissingAnthropicKey is what a call that needs Anthropic gets when no key is
@@ -1617,7 +1662,7 @@ func Parse(data []byte) (*Config, []Problem) {
 // whether the file could be read at all.
 //
 // It is the repository's own block: both keys it carries are repository-scope
-// (docs/design/named-oauth-tokens.md T2 for agent.oauth_token, which no project
+// (docs/named-oauth-tokens/spec.md T2 for agent.oauth_token, which no project
 // layer may name, and layered-config.md for agent.auth, whose layer a caller
 // merges itself), so the file's bytes are the whole answer here and a file that
 // needs a layer for something else still says what it says — which is why this

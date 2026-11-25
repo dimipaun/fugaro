@@ -34,13 +34,13 @@
 //      read, and the panel kept the Graph's refusal under the newly marked tab
 //      until the new read answered. Spend and Projects refuse here (the stub
 //      answers neither `budget show` nor the report), Coordinator draws its own
-//      screen -- and none of the three may hold `plan.status`'s refusal or its
-//      sentence, in any state, at any point of the switch.
+//      floor sentence and reads nothing -- and none of the three may hold
+//      `plan.status`'s refusal or its sentence, in any state, at any point of
+//      the switch.
 //
-// The stub is `inRangeCliStub()`: the dashboard document, the committed
-// `plan-status.json` the Graph draws, and the committed
-// `coordinator-status.json` the project view draws. Nothing here reaches the
-// network or a real CLI.
+// The stub is `inRangeCliStub()`: the dashboard document and the committed
+// `plan-status.json` the Graph draws. Nothing here reaches the network or a real
+// CLI.
 
 import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
@@ -307,8 +307,12 @@ test.describe('the Graph with no installation checkout', () => {
     await expect(page.locator(`${PANEL} ${OPERATION}`, { hasText: 'budget.show' })).toHaveCount(1)
 
     await page.locator(nav('coordinator')).click()
+    // The Coordinator draws its own section and nothing of the Graph's: this
+    // window's CLI is below the release `orchestrator map` arrives in, so the tab
+    // is its header and the console's own sentence naming that release -- no
+    // figure, and no read spawned at all.
     await expect(page.locator(`${PANEL} section.coordinator`)).toHaveCount(1)
-    await expect(page.locator(`${PANEL} li.coordinator-record`).first()).toBeVisible()
+    await expect(page.locator(`${PANEL} p.coordinator-floor`)).toHaveCount(1)
     await expect(page.locator(PANEL)).not.toContainText(NO_PLAN_CHECKOUT)
 
     // Nothing in any of the three named the Graph's read: the operation cell is

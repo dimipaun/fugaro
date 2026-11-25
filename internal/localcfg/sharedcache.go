@@ -18,7 +18,7 @@ const (
 )
 
 // SharedCacheEntry is the last shared config fetched for a project from
-// its runs bucket (docs/design/shared-config.md §6). YAML is the object as
+// its runs bucket (docs/shared-config/spec.md §6). YAML is the object as
 // read, which the caller validates again on every use: the cache is in the
 // user's own directory, but it is never trusted more than the bucket.
 type SharedCacheEntry struct {

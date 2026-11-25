@@ -30,7 +30,7 @@ import (
 // TestDefaultLoopGolden pins the loop of a repository that names no recipe:
 // stage order, review tiers, each call's model and the outcome. It was
 // written against the hard-coded loop and must pass unchanged on the
-// recipe-driven one (docs/design/recipes.md §10, equivalence).
+// recipe-driven one (docs/recipes/spec.md §10, equivalence).
 func TestDefaultLoopGolden(t *testing.T) {
 	one := 1
 	override := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Task: "Add a feature",
@@ -49,43 +49,43 @@ func TestDefaultLoopGolden(t *testing.T) {
 		{"first line off", 2, "  first_line_review: off\n", nil,
 			[]step{implement("feature"), review("changes", 1), fixStep, review("ship", 0)},
 			[]string{"implement", "review", "fix", "review"}, []string{":changes", ":ship"},
-			[]string{"coder-model", "senior-model", "coder-model", "senior-model"}, runstore.OutcomeReady},
+			[]string{sonnet, opus, sonnet, opus}, runstore.OutcomeReady},
 		{"first line on", 2, "  first_line_review: on\n  first_line_rounds: 1\n", nil,
 			[]step{implement("feature"), review("changes", 1), fixStep, review("ship", 0)},
 			[]string{"implement", "review_first", "fix", "review"}, []string{"first:changes", "senior:ship"},
-			[]string{"coder-model", "coder-model", "coder-model", "senior-model"}, runstore.OutcomeReady},
+			[]string{sonnet, sonnet, sonnet, opus}, runstore.OutcomeReady},
 		{"first line hands over on ship", 1, "  first_line_review: on\n  first_line_rounds: 2\n", nil,
 			[]step{implement("feature"), review("ship", 0), review("changes", 2)},
 			[]string{"implement", "review_first", "review"}, []string{"first:ship", "senior:changes"},
-			[]string{"coder-model", "coder-model", "senior-model"}, runstore.OutcomeDraft},
+			[]string{sonnet, sonnet, opus}, runstore.OutcomeDraft},
 		{"rounds used up", 2, "  first_line_review: off\n", nil,
 			[]step{implement("feature"), review("changes", 1), fixStep, review("changes", 1)},
 			[]string{"implement", "review", "fix", "review"}, []string{":changes", ":changes"},
-			[]string{"coder-model", "senior-model", "coder-model", "senior-model"}, runstore.OutcomeDraft},
+			[]string{sonnet, opus, sonnet, opus}, runstore.OutcomeDraft},
 		{"senior ships on round 1", 2, "  first_line_review: off\n", nil,
 			[]step{implement("feature"), review("ship", 0)},
 			[]string{"implement", "review"}, []string{":ship"},
-			[]string{"coder-model", "senior-model"}, runstore.OutcomeReady},
+			[]string{sonnet, opus}, runstore.OutcomeReady},
 		{"first line auto with a Claude coder is off", 2, "", nil,
 			[]step{implement("feature"), review("changes", 1), fixStep, review("ship", 0)},
 			[]string{"implement", "review", "fix", "review"}, []string{":changes", ":ship"},
-			[]string{"coder-model", "senior-model", "coder-model", "senior-model"}, runstore.OutcomeReady},
+			[]string{sonnet, opus, sonnet, opus}, runstore.OutcomeReady},
 		{"first line failure is skipped", 1, "  first_line_review: on\n  first_line_rounds: 2\n", nil,
 			[]step{implement("feature"), failStep, review("ship", 0)},
 			[]string{"implement", "review_first", "review"}, []string{"first:none", "senior:ship"},
-			[]string{"coder-model", "coder-model", "senior-model"}, runstore.OutcomeReady},
+			[]string{sonnet, sonnet, opus}, runstore.OutcomeReady},
 		{"first line without a verdict is skipped", 1, "  first_line_review: on\n  first_line_rounds: 2\n", nil,
 			[]step{implement("feature"), noVerdictStep, review("ship", 0)},
 			[]string{"implement", "review_first", "review"}, []string{"first:none", "senior:ship"},
-			[]string{"coder-model", "coder-model", "senior-model"}, runstore.OutcomeReady},
+			[]string{sonnet, sonnet, opus}, runstore.OutcomeReady},
 		{"first line rounds exhausted on changes", 1, "  first_line_review: on\n  first_line_rounds: 2\n", nil,
 			[]step{implement("feature"), review("changes", 1), fixStep, review("changes", 1), fixStep, review("ship", 0)},
 			[]string{"implement", "review_first", "fix", "review_first", "fix", "review"}, []string{"first:changes", "first:changes", "senior:ship"},
-			[]string{"coder-model", "coder-model", "coder-model", "coder-model", "coder-model", "senior-model"}, runstore.OutcomeReady},
+			[]string{sonnet, sonnet, sonnet, sonnet, sonnet, opus}, runstore.OutcomeReady},
 		{"task override wins", 3, "  first_line_review: off\n", override,
 			[]step{implement("feature"), review("changes", 1)},
 			[]string{"implement", "review"}, []string{":changes"},
-			[]string{"coder-model", "senior-model"}, runstore.OutcomeDraft},
+			[]string{sonnet, opus}, runstore.OutcomeDraft},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			h := newHarness(t, firstLineCfg(t, c.rounds, c.extra), c.spec)

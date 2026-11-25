@@ -2,7 +2,7 @@
 // See ee/LICENSE for the terms.
 
 // The portal API's program (portal plan P1.7, design
-// docs/design/key-signing-service.md §3.1, S3.5, S3.7).
+// docs/key-signing-service/spec.md §3.1, S3.5, S3.7).
 //
 // It is the deployment's public half: it reads its configuration out of the
 // environment and Secret Manager, builds the seams the routes reach, and serves

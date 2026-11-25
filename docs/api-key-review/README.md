@@ -54,7 +54,7 @@ this folder, by this repository's rule. The ask is reproduced verbatim in [spec.
 **subscription** account — and **since AK4 and AK5 the cloud one may instead be served by the
 project's own Anthropic API key**: the policy's pairing names the sentinel
 `config.AnthropicKeyAccount`, the job for it mounts nothing, and the class's own door admits it. The **in-job** one is the mixed run's stage-scoped account
-(`docs/design/mixed-credentials.md` §11, `internal/runner/agentenv.go` `resolveMixedStages`, whose
+(`docs/mixed-credentials/spec.md` §11, `internal/runner/agentenv.go` `resolveMixedStages`, whose
 live check is **Check 290** — written, and **not run**: the register records it as "USER-RUN, NOT
 RUN" and `docs/multi-model.md` and `docs/releases/v0.20.0.md` agree, so the configuration is
 designed and built, never measured): an `api-key` run whose coder is on a provider route, whose
@@ -83,7 +83,7 @@ half **already works and needs no new machinery at all**: `agent.auth: api-key` 
 `models.reviewer` and the gateway on already sends the review stage's calls through the gateway to
 Anthropic's own API on the run's `anthropic-api-key` (`internal/runner/gateway.go` `gatewayUpstream`
 — the `"api-key"` arm builds `gateway.Upstream{Kind: "anthropic"}`), priced from the table and
-charged as `ModelUSD` — this is `docs/design/mixed-credentials.md` **§3 Path A**, whose own words are
+charged as `ModelUSD` — this is `docs/mixed-credentials/spec.md` **§3 Path A**, whose own words are
 "Works today with the code as it is". What is missing there is a **name and a pin**, not a
 capability: no config key, no doc section and no test calls it the api-key review, and nothing
 asserts the review stage's real-dollar accounting in such a run (**F5**). The cloud half is the
@@ -122,7 +122,7 @@ sentence — "the service has nowhere to hold the key, no pairing that can name 
 that may offer one and no upstream to send it to" — is **true of an OpenRouter key and not of an
 Anthropic one** (**F12**), which splits the slice in two.
 
-**`docs/design/mixed-credentials.md` §3 already designs the in-job half.** It is merged on `main`, it
+**`docs/mixed-credentials/spec.md` §3 already designs the in-job half.** It is merged on `main`, it
 is headed "Path A: Claude through an Anthropic API key", and §1's own words for it are **"Works
 today with the code as it is"**. Its "Missing" list — the user docs, the cost guidance, a
 gateway test with both upstreams in one run, and one sandbox live check — is **partly stale**:

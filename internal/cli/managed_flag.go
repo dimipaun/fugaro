@@ -21,7 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
-// fugaro managed flag (docs/design/managed-projects.md D58, the plan's Task
+// fugaro managed flag (docs/managed-projects/spec.md D58, the plan's Task
 // 6.1) is the owner's decision that an EXISTING project — one a Fugaro run
 // did not create — is managed, recorded in that project's own marker object.
 // It is the second way a project becomes managed; the first is a run that
@@ -41,36 +41,40 @@ import (
 //     own action. The identity that can run it is the operator's own, and it
 //     is not D75's deployer account — the account a managed apply impersonates
 //     can neither write the marker nor run this command.
-//   - It is per project, with the exact project ID. One invocation names one
-//     project: the argument is a GCP project ID, there is no bulk form, no
-//     wildcard and no "all projects" form, and it must be the selected
-//     installation's own gcp_project. The confirmation is that argument and
-//     nothing else: the project is named by its exact ID on the command line,
-//     which is the owner's declaration (D1541's consent by argument, the
-//     answer of 2026-11-07 — not a string typed at a prompt), and this command
-//     registers no --yes and no --non-interactive, so no flag stands in for
-//     naming the project either.
+//   - It is per project, with the project named. One invocation names one
+//     project: the argument, when there is one, is a GCP project ID, there is
+//     no bulk form, no wildcard and no "all projects" form, and it must be the
+//     selected installation's own gcp_project. The argument became OPTIONAL on
+//     2026-11-21 (D2213, which amended D1541's consent by argument): omitted,
+//     the project is that installation's own, and what stands where the typed
+//     ID stood is that managedFlagStatement names it before either mark is
+//     written — so the invocation is still about a project the owner can see
+//     it is about, and the two refusals either side of the write (a coding
+//     agent's session, a run's process) are unchanged. This command still
+//     registers no --yes and no --non-interactive: nothing stands in for the
+//     project's identity, and there is nothing to confirm.
 //   - It writes through the marker's own discipline. The object is
 //     fugaro/managed.json at the runs bucket's root, written by
 //     managed.WriteFlag exactly as Task 0.1 writes the creation fact: into a
 //     bucket proved to be that project's own by its project number and the
 //     installation's label (a bucket name is global, so a mark proves nothing
 //     without them), and in the version that carries the budget amount the
-//     owner states — the version with no count in it (D1543), which is the one
-//     `fugaro setup --create-project --managed` writes too. A project whose
-//     bucket fails that proof is not flagged, and the command says so rather
-//     than writing anywhere else.
-//   - It writes once, with one exception. A project that already records an
-//     amount is refused — the amount is the owner's decision at the time it
-//     was taken, and this command adds a budget rather than editing one — and
-//     so is any object this build cannot read as this project's marker. The
+//     owner states or takes the default of — the version with no count in it
+//     (D1543). A project whose bucket fails that proof is not flagged, and the
+//     command says so rather than writing anywhere else.
+//   - It writes once, with two exceptions. A project that already records an
+//     amount is not touched by a run that states none: the default is what a
+//     project recording nothing is marked with, and a figure its owner chose is
+//     not a default's to replace (D2215). An EXPLICIT --budget does replace it,
+//     through managed.RewriteBudget and under the same generation precondition,
+//     because the amount became a figure a default writes and a figure nobody
+//     chose must be changeable by the owner who meant another one. The other
 //     exception is the one object the apply cannot use and the gate's own
-//     refusal names this command as the way out of: a version-1 creation fact,
-//     which is what every `fugaro setup --create-project` without --managed
-//     leaves behind. That fact records no amount, so the project is refused by
-//     every managed apply; the flag replaces it with the version that records
-//     the amount, under a write conditioned on the generation it read, so a
-//     writer that got there first is never clobbered.
+//     warning names this command as the way out of: a version-1 creation fact,
+//     which is what every `fugaro setup --create-project` without an amount
+//     leaves behind. That fact records no amount; the flag replaces it with the
+//     version that records one. Either way the write is conditioned on the
+//     generation it read, so a writer that got there first is never clobbered.
 //   - It only ADDS guards, and the risk is in its own output. A flagged
 //     project gains the deterministic gate, the owner-written delete list
 //     (fugaro allow-delete) and the recorded budget — things an ordinary
@@ -83,53 +87,57 @@ import (
 //     bypass). The refusal below stops an agent that uses the program.
 //   - belong is never a target of any task in the plan (Global Constraint 7).
 //     This command has no batch form, and flagging belong would be the owner's
-//     own deliberate act, by its exact project ID as the argument.
+//     own deliberate act, selecting its installation and naming it.
 //
 // What it is not, stated rather than implied: it does not create or change a
-// budget alert. The amount it records is the amount the owner states, in the
-// marker, and the apply reads it as the evidence that a budget was chosen at
-// all (Task 4.4) — the billing account's alert thresholds are Terraform's,
-// created by fugaro setup's installation root.
+// budget alert. The amount it records is the amount the owner states or the
+// default it takes (D2212), in the marker, and the apply reads it as the
+// evidence that a budget was chosen at all (Task 4.4) — the billing account's
+// alert thresholds are Terraform's, created by fugaro setup's installation
+// root.
 
-// newManagedFlagCmd is `fugaro managed flag PROJECT_ID`.
+// newManagedFlagCmd is `fugaro managed flag [PROJECT_ID]`.
 func newManagedFlagCmd() *cobra.Command {
 	var o cloudOptions
 	var amount int64
 	var currency string
 	cmd := &cobra.Command{
-		Use:   "flag PROJECT_ID",
+		Use:   "flag [PROJECT_ID]",
 		Short: "Flag an existing GCP project as managed (the project's owner)",
-		Long: `Flag an existing GCP project PROJECT_ID as managed, recording the managed
-marker in that project's own runs bucket.
+		Long: `Flag an existing GCP project as managed, recording the managed marker in
+that project's own runs bucket.
 
 This is how a project Fugaro did not create becomes managed: the marker is
 what tells a later run that this project's applies may skip the typed
 confirmation, and it is normally written by the run that created the project
-(fugaro setup --create-project --managed). Flagging is the after-the-fact way,
-answered by the owner on 2026-10-16 (design D58).
+(fugaro setup --create-project). Flagging is the after-the-fact way, answered
+by the owner on 2026-10-16 (design D58).
 
 Run it as an operator, with your own credentials. A coding agent's session is
-refused, and so is a Fugaro run's process. The permission you give is the
-PROJECT_ID argument itself: naming the exact GCP project ID on the command line
-is the declaration that this project is managed (design D1541), and nothing is
-typed at a prompt — this command takes no flag at all,
-so no flag stands in for naming the project either.
-
-PROJECT_ID must be the exact GCP project ID of the installation selected by
---project, --config or the checkout: one invocation names one project, and
-there is no bulk form, no wildcard and no prefix.
+refused, and so is a Fugaro run's process. The project is the installation
+selected by --project, --config or the checkout. PROJECT_ID may be given, and
+must then be that installation's own exact GCP project ID; the statement
+printed before the write names the project either way, so the invocation is
+about a named project and not about whatever the checkout happens to hold
+(design D1541, amended on 2026-11-21 by D2213, when the argument became
+optional: what stands where the typed ID stood is the naming, and still nothing
+is typed at a prompt). One invocation names one project: there is no bulk form,
+no wildcard and no prefix.
 
 It records two things in gs://<runs bucket>/fugaro/managed.json: that this
-project is managed, and the monthly budget amount and currency the owner states
-with --budget and --budget-currency. The amount is required, with no default
-(D64), because the marker's amount is what the apply-time budget read opens the
-gate on: a marked project that records no amount is refused by every managed
-apply rather than applied without a budget control. The amount is the budget
-ALERT amount the installation's Terraform creates and nothing else — this
-command does not create or change a budget, and it makes no billing call.
-Nothing else is a question: the bound on billable image builds this object used
-to record (D1013) is gone (D1543), so there is no count to ask the owner for
-and none to write, exactly as fugaro setup asks for none.
+project is managed, and the monthly budget amount and currency the owner means
+with --budget and --budget-currency. Both have defaults — 100 USD — so the
+command with no flags records a figure rather than asking for one (design
+D2212 and D2211). The amount is the budget ALERT amount the installation's
+Terraform creates and nothing else — this command does not create or change a
+budget, and it makes no billing call. The alert itself is the installation's
+own Terraform and belongs to the update step of that installation, not to this
+object — fugaro update --budget N --budget-currency CCC --billing-account ID
+sets the amount this command records. Nothing else is a question: the bound
+on
+billable image builds this object used to record (D1013) is gone (D1543), so
+there is no count to ask the owner for and none to write, exactly as fugaro
+setup asks for none.
 
 It writes BOTH marks a managed project carries, in one step: that object and
 the label fugaro_managed=true on the GCP project itself (Task 3.0). The read
@@ -157,21 +165,31 @@ marker and run this command; SECURITY.md records the wider Owner/Editor
 bypass. The refusal below is a speed bump against an agent that uses the
 program, not a wall against one that goes around it.
 
-A project that already records an amount is refused: the amount is the owner's
-decision at the time it was taken, and this command adds a budget rather than
-editing one. The one object it does replace is a version-1 creation fact —
-what fugaro setup --create-project without --managed leaves, and the state the
-managed apply refuses for having no amount recorded. What it replaced is said
-in the output, and the write is conditioned on the object it read, so nothing
-is overwritten blind.`,
-		Args: cobra.ExactArgs(1),
+An amount a project already records is its owner's figure, and a default never
+replaces it: run with no --budget over such a marker, the command refuses and
+names the flag that changes it. An explicit --budget rewrites the recorded
+amount (design D2215), keeping the recorded currency unless --budget-currency
+is given too, and prints the old figure and the new one. The one object it
+replaces unasked is a version-1 creation fact — what fugaro setup
+--create-project leaves, and the state the managed apply warns for, having no
+amount recorded. What it replaced is said in the output, and every write is
+conditioned on the object it read, so nothing is overwritten blind.`,
+		// The argument became optional (D2213), and an invocation with none is
+		// about the selected installation's own project — the one the
+		// statement names before either mark is written. One invocation still
+		// names one project: no form of this command names two.
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return managedFlag(cmd, o, args[0], amount, currency)
+			id := ""
+			if len(args) == 1 {
+				id = args[0]
+			}
+			return managedFlag(cmd, o, id, amount, currency)
 		},
 	}
 	addCloudFlags(cmd, &o)
-	cmd.Flags().Int64Var(&amount, "budget", 0, "the monthly budget alert amount to record, in whole units of --budget-currency (required)")
-	cmd.Flags().StringVar(&currency, "budget-currency", "", "the currency --budget is in, three uppercase letters such as USD (required)")
+	cmd.Flags().Int64Var(&amount, "budget", managed.DefaultBudgetAmount, "the monthly budget alert amount to record, in whole units of --budget-currency (default 100; pass it to record another figure, or to replace an amount the marker already records)")
+	cmd.Flags().StringVar(&currency, "budget-currency", managed.DefaultBudgetCurrency, "the currency --budget is in, three uppercase letters such as USD (default USD, or the currency the marker already records when an amount is being replaced)")
 	return cmd
 }
 
@@ -180,8 +198,9 @@ is overwritten blind.`,
 // own framing (D58) is that flagging only adds guards AND that the marker is
 // what turns the typed confirmation off, so the second half is stated rather
 // than left to be inferred. It is a statement and not a confirmation — what
-// confirms the write is the argument the command was given (D1541) — so it is
-// printed as what the write does.
+// confirms the write is the project the invocation named, the argument it was
+// given (D1541) or the installation's own named here (D2213) — so it is printed
+// as what the write does.
 //
 // It is one function because two commands make this same write, both of them
 // the owner's own and both through the same two writers: `fugaro managed flag`
@@ -192,9 +211,10 @@ is overwritten blind.`,
 //
 // Its last line is each caller's own, because what happens when the project
 // already records whether it is managed is not the same for the two: this
-// command replaces one object and refuses every other state, while the
-// self-flag can also finish a fact that already records the amount it was
-// given.
+// command creates the object, replaces the creation fact that records no
+// amount, and rewrites a recorded figure only when its owner named one
+// (D2215), while the self-flag can also finish a fact that already records the
+// amount it was given.
 func managedFlagStatement(w io.Writer, gcpProject, bucket string, amount int64, currency string) {
 	fmt.Fprintf(w, "flagging GCP project %s as managed writes gs://%s/%s\n", safetext.Field(gcpProject), safetext.Field(bucket), managed.MarkerObject)
 	fmt.Fprintf(w, "  and the label %s=%s on the project itself: a managed project carries both, and the read requires both, so the object alone would change nothing about this project's runs\n", managed.ProjectLabelKey, managed.ProjectLabelValue)
@@ -231,22 +251,30 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 		return userErr("nothing was written: fugaro managed flag is run by a person at their own terminal, and this process is a Fugaro run's (%s is set)", m)
 	}
 	// One project, named exactly, and by a name a shell cannot expand into
-	// several: the argument is a GCP project ID and the wildcard and list
-	// forms are not ones. The equality with the selected installation's own
-	// gcp_project, below, is the other half — a prefix of the ID passes this
-	// check and fails that one.
-	if !config.GCPProjectRE.MatchString(id) {
+	// several: the argument, when there is one, is a GCP project ID and the
+	// wildcard and list forms are not ones. The equality with the selected
+	// installation's own gcp_project, below, is the other half — a prefix of
+	// the ID passes this check and fails that one. An invocation with no
+	// argument takes the installation's own project (D2213): a name the config
+	// already holds, so there is nothing here for this check to judge.
+	if id != "" && !config.GCPProjectRE.MatchString(id) {
 		return userErr("%q is not a GCP project ID: this command flags one project, by its exact ID, with no wildcard, no prefix and no list", safetext.Field(id))
 	}
-	// The amount and the currency are a pair and are required: there is no
-	// default (D64), and a marked project that records no amount is refused by
-	// every managed apply (Task 4.4), so a flag without one would lower this
-	// project's guard and buy nothing at all. The rule is the marker's own
+	// The amount and the currency both have defaults (D2212, D2211): a flag
+	// with neither records 100 USD. A mark that records no amount is the state
+	// the apply gate warns for and sends its owner to this very command to fix
+	// (D1545, F14): the amount is the evidence that a budget was chosen at
+	// all, not a lock, and a flag that recorded none would leave that warning
+	// standing. What is still refused, before any cloud read, is a pair the
+	// marker itself would not write — and the rule is the marker's own
 	// (managed.Budget.Check, which internal/infra/managed's writer and reader
-	// both apply), called rather than restated.
+	// both apply), called rather than restated. A currency the marker already
+	// records replaces the default further down (R6), and the pair it makes is
+	// one this same rule accepted as the marker's own.
 	budget := managed.Budget{Amount: amount, Currency: currency}
 	if err := budget.Check(); err != nil {
-		return userErr("nothing was written: flagging a project records the monthly budget alert amount its owner chose, and the amount and the currency are required together: %v; pass --budget and --budget-currency, as in --budget 50 --budget-currency USD", safetext.Field(err.Error()))
+		return userErr("nothing was written: flagging a project records the monthly budget alert amount its owner chose (design D2212), and %v; the amount and the currency default to %d %s, and --budget and --budget-currency are what record another figure, as in --budget 50 --budget-currency USD",
+			safetext.Field(err.Error()), managed.DefaultBudgetAmount, safetext.Field(managed.DefaultBudgetCurrency))
 	}
 	_, lc, err := selectProject(ctx, o)
 	if err != nil {
@@ -255,11 +283,24 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	for _, w := range lc.Warnings() {
 		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", safetext.Field(w))
 	}
+	// D2213: with no argument the project is the selected installation's own.
+	// What stood where the typed ID stood is the statement below, which names
+	// the project before either mark is written — so an invocation with no
+	// argument is still about a named project, and still not one the owner
+	// cannot see. The installation's own gcp_project is what no argument
+	// means: it is resolved here and not defaulted at the flag's declaration,
+	// so a config that moved under the invocation moves this with it.
+	if id == "" {
+		id = lc.GCPProject
+	}
 	// The project the argument names is the project this installation is in,
 	// and nothing else: --project and --config select the Fugaro project, the
 	// argument is the GCP project, and the two having to agree is what keeps
 	// an invocation from flagging a project other than the one whose config
-	// and credentials it is using.
+	// and credentials it is using. Only a given argument can disagree — the
+	// branch above resolved the other case to this very field — so this is the
+	// refusal for a typed ID that names another install, and the message says
+	// which one it is.
 	if id != lc.GCPProject {
 		return userErr("nothing was written: the project this command would flag is the one the argument names, and %s is not the installation selected here: Fugaro project %s is installed in %s. Name %s, or select its installation with --project or --config",
 			safetext.Field(id), safetext.Field(lc.Name), safetext.Field(lc.GCPProject), safetext.Field(lc.GCPProject))
@@ -315,27 +356,75 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 		// The API's own text can carry a body: one sanitised line.
 		return remote(fmt.Errorf("reading the number of GCP project %s: %s", safetext.Field(lc.GCPProject), safetext.Field(err.Error())))
 	}
+	// What the project records now, read before the statement and before
+	// anything is written (D2215, R6). It is the object half alone — no label
+	// requirement — because the two answers it has to give are both about the
+	// object: whether the project already records an amount, which decides
+	// whether a default may be written, and which currency a rewrite keeps.
+	// ReadFlagFact is that read, the same one `fugaro update`'s self-flag
+	// takes, so the two owners of this write judge the marker the same way.
+	fact, err := managed.ReadFlagFact(ctx, c.Storage, bucket, lc.GCPProject, number)
+	if err != nil {
+		// Nothing is written yet and nothing is claimed: a fact that could not
+		// be read is not "records nothing", so this is a hard return and the
+		// writer is never reached.
+		return managedFlagFactErr(lc, bucket, err)
+	}
+	if fact.Ours {
+		// This project already records an amount. D2215: the default is not a
+		// value to write over a figure the owner chose, and an explicit
+		// --budget is what replaces it. The trigger is --budget and not
+		// --budget-currency, because the flag the answer names is the amount —
+		// a currency alone would rewrite the amount with the default.
+		if !cmd.Flags().Changed("budget") {
+			return userErr("nothing was written for %s: gs://%s/%s is already there and records the budget %d %s, and a default never replaces a figure the project's owner chose (design D2215). Run again with --budget to replace it, as in --budget 400, and with --budget-currency only if the currency changes too",
+				safetext.Field(lc.Name), safetext.Field(bucket), managed.MarkerObject, fact.Budget.Amount, safetext.Field(fact.Budget.Currency))
+		}
+		// R6: the currency a rewrite writes is the recorded one unless the
+		// owner named another. Putting the default over a recorded EUR would
+		// be the one thing this default must never do.
+		if !cmd.Flags().Changed("budget-currency") {
+			currency = fact.Budget.Currency
+		}
+		budget = managed.Budget{Amount: amount, Currency: currency}
+	}
 	w := cmd.OutOrStdout()
-	managedFlagStatement(w, lc.GCPProject, bucket, amount, currency)
+	managedFlagStatement(w, lc.GCPProject, bucket, budget.Amount, budget.Currency)
 	// The statement's last line is this command's own, and it is the one the
-	// self-flag answers differently: this command replaces one object and
-	// refuses every other state.
-	fmt.Fprintf(w, "  if this project already records whether it is managed: nothing is written unless its marker is the creation fact that records no amount (what `fugaro setup --create-project` without --managed leaves), which this replaces with the one above. A marker that already records an amount is refused, and so is any object this build cannot read as this project's.\n")
+	// self-flag answers differently: this command replaces one object unasked
+	// and refuses every other state.
+	fmt.Fprintf(w, "  if this project already records whether it is managed: an object that records no amount (what `fugaro setup --create-project` without a budget leaves) is replaced with the one above. One that already records an amount is not touched by a default — a figure its owner chose is not a default's to replace (D2215) — and the amount above is written over it only when --budget was named on the command line. Any object this build cannot read as this project's marker is refused.\n")
 	// The write, and the read that settles it, are one step: the marker, the
 	// label and the read-back are one thing an operator either has or has not
 	// (Task 3.0). It is opened after the statement above, so nothing in flight
 	// is drawn over the lines the owner has just read (G1). What confirms the
-	// write is the argument this command was given — the project ID, typed on
-	// the command line and matched against the selected installation (D1541) —
-	// and not a second typed answer at a prompt.
+	// write is the project the invocation names — the argument matched against
+	// the selected installation, or the installation itself named in the
+	// statement above (D1541, D2213) — and not a second typed answer at a
+	// prompt.
 	step := rep.Step("flag")
 	fail := func(err error) error {
 		step.Failed(err, nil)
 		return err
 	}
-	replaced, err := managed.WriteFlag(ctx, c.Storage, bucket, lc.GCPProject, number, budget)
-	if err != nil {
-		return fail(managedFlagErr(lc, bucket, err))
+	// One write, two writers, and which one runs is decided by what is there:
+	// RewriteBudget is the only way a recorded amount changes (D2215), and
+	// WriteFlag is the creation of the object and the replacement of the
+	// creation fact that records no amount. Collapsing the two into one call
+	// would either edit a figure the owner chose or refuse the one state the
+	// apply gate sends owners here for.
+	var replaced bool
+	var oldBudget managed.Budget
+	if fact.Ours {
+		oldBudget, err = managed.RewriteBudget(ctx, c.Storage, bucket, lc.GCPProject, number, budget)
+		if err != nil {
+			return fail(managedFlagRewriteErr(lc, bucket, err))
+		}
+	} else {
+		replaced, err = managed.WriteFlag(ctx, c.Storage, bucket, lc.GCPProject, number, budget)
+		if err != nil {
+			return fail(managedFlagErr(lc, bucket, err))
+		}
 	}
 	// The other half of the same statement, in the same step (Task 3.0): the
 	// label on the project itself. Both are what the read requires, so a flag
@@ -354,17 +443,19 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	// labels are kept, and a value someone else put there is refused rather
 	// than overwritten.
 	if err := managed.WriteManagedLabelForFlag(ctx, c.CRM, lc.GCPProject); err != nil {
-		// The marker is on disk from here on and the project is NOT managed
-		// (readFact requires both marks), so this is not a success, and it is
-		// not a state a second `fugaro managed flag` can finish: the marker
-		// is now the version that records an amount, and that is the one
-		// object this command refuses to replace. The refusal says what is
-		// missing, that only the project's owner writes it at their own
-		// terminal, and where that one line is — the condition and not the
-		// command, the rule Task 3.0's refusal text keeps, because this
-		// command's output is the operator's (a coding agent's session is
-		// refused above and never reaches it).
-		return fail(remote(fmt.Errorf("wrote gs://%s/%s, but not the %s=%s label on GCP project %s (%v): the read requires both marks, so %s is not managed yet and nothing is skipped for it. The label is written on the account that owns the project, in the owner's own terminal, and docs/design/managed-projects.md has that one line; it is not a second run of this command, which replaces only the creation fact that records no amount",
+		// The object is on disk from here on and the project is NOT managed
+		// (readFact requires both marks), so this is not a success. What the
+		// failing write is decides what a second run can do about it: the
+		// object half is settled — the figures this invocation states are the
+		// ones the object records, so the rewrite writes nothing — and the
+		// label is the half left, which a second run retries and which fails
+		// again only where the credential still may not update the project's
+		// labels. The refusal says what is missing, which write it is and the
+		// permission that write needs, and where the owner's own one line is —
+		// the condition and not the command, the rule Task 3.0's refusal text
+		// keeps, because this command's output is the operator's (a coding
+		// agent's session is refused above and never reaches it).
+		return fail(remote(fmt.Errorf("wrote gs://%s/%s, but not the %s=%s label on GCP project %s (%v): the read requires both marks, so %s is not managed yet and nothing is skipped for it. The label is the half that needs resourcemanager.projects.update on the project, so it is written by the account that owns it — the owner's own terminal, whose one line docs/managed-projects/spec.md has. Running this command again with the same --budget retries exactly that write: the object already records the figures this invocation states, so the rewrite writes nothing and the label is the half left to write",
 			safetext.Field(bucket), managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, safetext.Field(lc.GCPProject), safetext.FieldErr(err), safetext.Field(lc.Name))))
 	}
 	// Read back through the managed read itself, with its project-number
@@ -380,18 +471,27 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 			why = fmt.Sprintf("it records %d %s", got.Amount, safetext.Field(got.Currency))
 		}
 		return fail(remote(fmt.Errorf("wrote gs://%s/%s, but it does not read back as %s's marker with the budget %d %s (%s): check it with `gcloud storage cat gs://%s/%s` as the operator before relying on it",
-			safetext.Field(bucket), managed.MarkerObject, safetext.Field(lc.Name), amount, safetext.Field(currency), why, safetext.Field(bucket), managed.MarkerObject)))
+			safetext.Field(bucket), managed.MarkerObject, safetext.Field(lc.Name), budget.Amount, safetext.Field(budget.Currency), why, safetext.Field(bucket), managed.MarkerObject)))
 	}
 	// The read-back is what the step ends on, so the line a person reads is
 	// the one the command is willing to claim.
 	step.Done(fmt.Sprintf("read back gs://%s/%s through the managed read, with the project-number check: managed, budget %d %s",
 		safetext.Field(bucket), managed.MarkerObject, got.Amount, safetext.Field(got.Currency)))
-	// What happened is said, and the two are different things: this project
-	// had no marker, or it had the version-1 creation fact and now records an
-	// amount.
+	// What happened is said, and the three are different things: this project
+	// had no marker, it had the version-1 creation fact and now records an
+	// amount, or it already recorded one and this invocation is about that
+	// figure — replaced when the owner named another, left exactly as it was
+	// when they named none.
 	wrote := fmt.Sprintf("wrote gs://%s/%s: %s is a managed project", safetext.Field(bucket), managed.MarkerObject, safetext.Field(lc.Name))
-	if replaced {
-		wrote = fmt.Sprintf("replaced the creation fact in gs://%s/%s: %s recorded no budget amount and now records %d %s", safetext.Field(bucket), managed.MarkerObject, safetext.Field(lc.Name), amount, safetext.Field(currency))
+	switch {
+	case replaced:
+		wrote = fmt.Sprintf("replaced the creation fact in gs://%s/%s: %s recorded no budget amount and now records %d %s", safetext.Field(bucket), managed.MarkerObject, safetext.Field(lc.Name), budget.Amount, safetext.Field(budget.Currency))
+	case fact.Ours && oldBudget != budget:
+		wrote = fmt.Sprintf("rewrote the budget in gs://%s/%s: %s recorded %d %s and now records %d %s",
+			safetext.Field(bucket), managed.MarkerObject, safetext.Field(lc.Name), oldBudget.Amount, safetext.Field(oldBudget.Currency), budget.Amount, safetext.Field(budget.Currency))
+	case fact.Ours:
+		wrote = fmt.Sprintf("left gs://%s/%s as it was: %s already records the budget %d %s, and nothing was rewritten",
+			safetext.Field(bucket), managed.MarkerObject, safetext.Field(lc.Name), budget.Amount, safetext.Field(budget.Currency))
 	}
 	// What was written, and the undo, go through the run's own writer: they are
 	// the account the step above ends on, so they are kept in the log beside
@@ -400,17 +500,28 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	// and how to undo it — so nothing is in flight over them.
 	out := sayThrough(rep, w)
 	fmt.Fprintf(out, "%s, and its applies no longer stop for the typed confirmation; the gate, the owner's delete list and the recorded budget %d %s are what replace it\n",
-		wrote, amount, safetext.Field(currency))
-	// The undo names both writes, because this command made both (Task 3.0):
+		wrote, budget.Amount, safetext.Field(budget.Currency))
+	if fact.Ours {
+		// The alert is the installation's own Terraform, and what sets it is
+		// the update that applies the installation — not this object. The
+		// sentence names that invocation with this figure, because a person who
+		// changed the amount has to be told what sets it; it says nothing about
+		// what an update reads for itself, which is the update's business. It is
+		// printed on this path alone, so a creation is not told about a change
+		// it did not make.
+		fmt.Fprintf(out, "the budget ALERT is not changed here: it is the installation's own Terraform, and the `fugaro update` that applies the installation is what sets it — `fugaro update --budget %d --budget-currency %s --billing-account ID` applies the figure above\n",
+			budget.Amount, safetext.Field(budget.Currency))
+	}
+	// The undo names both marks, because this command writes both (Task 3.0):
 	// the object in the runs bucket and the label on the project. Either one
 	// alone makes the project unmanaged again — the read requires both — and
 	// they come off together now: `fugaro managed unflag` is the owner-run
 	// command that takes both off (D1020), the one this line used to say did
 	// not exist. The gcloud line takes the label off on
 	// its own, and no test can run it, so it stays marked UNVERIFIED as the
-	// backfill in docs/design/managed-projects.md is.
-	fmt.Fprintf(out, "undo: this command wrote two things, and either one alone makes the project unmanaged again, because the read requires both — take both off with `fugaro managed unflag %s` in your own terminal, which removes the object gs://%s/%s and the %s=%s label on the project itself; the label alone comes off with `gcloud projects update %s --remove-labels=%s`, which is UNVERIFIED until an operator has run it live (docs/design/managed-projects.md carries the same line)\n",
-		safetext.Field(lc.GCPProject), safetext.Field(bucket), managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, safetext.Field(lc.GCPProject), managed.ProjectLabelKey)
+	// backfill in docs/managed-projects/spec.md is.
+	fmt.Fprintf(out, "undo: the two marks a managed project carries are the object gs://%s/%s and the %s=%s label on the project itself, and either one alone makes the project unmanaged again, because the read requires both — take both off with `fugaro managed unflag %s` in your own terminal, which removes the object and the label; the label alone comes off with `gcloud projects update %s --remove-labels=%s`, which is UNVERIFIED until an operator has run it live (docs/managed-projects/spec.md carries the same line)\n",
+		safetext.Field(bucket), managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, safetext.Field(lc.GCPProject), safetext.Field(lc.GCPProject), managed.ProjectLabelKey)
 	return nil
 }
 
@@ -439,7 +550,7 @@ func managedFlagRunMarker(getenv func(string) string) string {
 func managedFlagErr(lc *localcfg.Config, bucket string, err error) error {
 	switch {
 	case errors.Is(err, managed.ErrAlreadyMarked):
-		return userErr("nothing was written for %s: gs://%s/%s is already there and is not the creation fact this command adds a budget to, so %s already records whether it is managed — a run that created it wrote the fact, or an owner flagged it before. This command replaces only a version-1 creation fact, which records no amount; a marker that records one is the owner's decision, not a value to edit. To read what is there, use `gcloud storage cat gs://%s/%s` as the operator",
+		return userErr("nothing was written for %s: gs://%s/%s is already there and is not the creation fact this command adds a budget to, so %s already records whether it is managed — a run that created it wrote the fact, or an owner flagged it before. This command replaces only a version-1 creation fact, which records no amount, and an amount a marker already records is replaced by running this command with --budget naming the new figure, which rewrites the fact rather than writing over it (D2215) — what is here is neither, so nothing was written over it. To read what is there, use `gcloud storage cat gs://%s/%s` as the operator",
 			safetext.Field(lc.Name), safetext.Field(bucket), managed.MarkerObject, safetext.Field(lc.Name), safetext.Field(bucket), managed.MarkerObject)
 	case errors.Is(err, managed.ErrRefused):
 		return userErr("nothing was written for %s: the marker goes into the project's own runs bucket, at gs://%s/%s, and that bucket is not %s's: check gcp_project and runs_bucket in the project config, or run fugaro project check: %s",
@@ -451,5 +562,41 @@ func managedFlagErr(lc *localcfg.Config, bucket string, err error) error {
 		// A wrapped provider error is untrusted text too: one bounded field,
 		// with its chain kept so the exit code is still the remote one.
 		return remote(fmt.Errorf("writing %s in gs://%s for %s: %w", managed.MarkerObject, safetext.Field(bucket), safetext.Field(lc.Name), safetext.FieldErr(err)))
+	}
+}
+
+// managedFlagFactErr is what a failed READ of the marker leaves, and it is a
+// separate function because its sentences have to be about a read: the write
+// below has not happened yet, so "nothing was written" is true for a different
+// reason, and a reader told the marker "goes into" a bucket would look for a
+// write that was never attempted. Same two states, same recoveries — a bucket
+// that is not this project's own, and a credential the object refuses.
+func managedFlagFactErr(lc *localcfg.Config, bucket string, err error) error {
+	switch {
+	case errors.Is(err, managed.ErrRefused):
+		return userErr("nothing was written for %s: whether this project already records a budget is read from its own runs bucket, at gs://%s/%s, and that bucket is not %s's: check gcp_project and runs_bucket in the project config, or run fugaro project check: %s",
+			safetext.Field(lc.Name), safetext.Field(bucket), managed.MarkerObject, safetext.Field(lc.GCPProject), safetext.Field(err.Error()))
+	case isAccessDenied(err):
+		return userErr("nothing was written for %s: gs://%s/%s is at the runs bucket's root, and reading it needs the operator's own credential: run this as an operator, or ask one to flag the project: %s",
+			safetext.Field(lc.Name), safetext.Field(bucket), managed.MarkerObject, safetext.Field(err.Error()))
+	default:
+		return remote(fmt.Errorf("reading %s in gs://%s for %s: %w", managed.MarkerObject, safetext.Field(bucket), safetext.Field(lc.Name), safetext.FieldErr(err)))
+	}
+}
+
+// managedFlagRewriteErr is what the owner can do about a rewrite that did not
+// happen: the object moved under this invocation, or it is one this build may
+// not write a fact over. The other failures the write has are the marker's own
+// and are reported as they come.
+func managedFlagRewriteErr(lc *localcfg.Config, bucket string, err error) error {
+	switch {
+	case errors.Is(err, managed.ErrAlreadyMarked):
+		return userErr("nothing was rewritten for %s: gs://%s/%s was written by someone else between this command's read and its write, so the amount recorded there is that writer's and the figure this run was given is not what the marker holds — read it with `gcloud storage cat gs://%s/%s`, and run this command again if it is not the figure the owner means",
+			safetext.Field(lc.Name), safetext.Field(bucket), managed.MarkerObject, safetext.Field(bucket), managed.MarkerObject)
+	case errors.Is(err, managed.ErrRefused):
+		return userErr("nothing was rewritten for %s: the amount is replaced in the project's own marker at gs://%s/%s, and that object is not one this build may write over: %s",
+			safetext.Field(lc.Name), safetext.Field(bucket), managed.MarkerObject, safetext.Field(err.Error()))
+	default:
+		return remote(fmt.Errorf("rewriting the budget recorded in %s in gs://%s for %s: %w", managed.MarkerObject, safetext.Field(bucket), safetext.Field(lc.Name), safetext.FieldErr(err)))
 	}
 }

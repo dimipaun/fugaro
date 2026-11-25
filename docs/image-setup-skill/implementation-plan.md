@@ -62,7 +62,7 @@
 - **Red step:** the current refresh builds; the test expects the notice. **Tier:** standard.
 
 ### IS4: the Claude-only base
-- **Files:** `images/base/Dockerfile` (the harness stage and the four binary-harness ARG pins), `images/base/tools.tsv` (the seven `harness` rows), `images/base/harnesses/package.json` and `package-lock.json` (delete), `internal/image/tools.go`, `internal/image/selftest.go` (the smoke contract), `images/base_test.go`, `images/smoke_test.go`, `images/size-budget.sh`, `docs/base-image.md`, `docs/design/base-image.md`, the root `README.md` (names all seven), `.github/dependabot.yml` (the `images/base/harnesses/` entry; not a workflow file), `images/base_smoke_test.go`, `images/smoke.sh`, `internal/image/tools_test.go`, `selftest_test.go`, and the `HARNESS_NODE_VERSION` runtime in the Dockerfile if nothing else uses it.
+- **Files:** `images/base/Dockerfile` (the harness stage and the four binary-harness ARG pins), `images/base/tools.tsv` (the seven `harness` rows), `images/base/harnesses/package.json` and `package-lock.json` (delete), `internal/image/tools.go`, `internal/image/selftest.go` (the smoke contract), `images/base_test.go`, `images/smoke_test.go`, `images/size-budget.sh`, `docs/base-image.md`, `docs/base-image/spec.md`, the root `README.md` (names all seven), `.github/dependabot.yml` (the `images/base/harnesses/` entry; not a workflow file), `images/base_smoke_test.go`, `images/smoke.sh`, `internal/image/tools_test.go`, `selftest_test.go`, and the `HARNESS_NODE_VERSION` runtime in the Dockerfile if nothing else uses it.
 - **Interfaces:** the contract list shrinks to Claude Code plus Fugaro's own components (F8). **Tests:** `TestBaseHasOnlyClaudeHarness` (the seven `harness` rows of F8) replaces the harness-entry assertions and the smoke contract's harness tools; `TestUpdateConvergesSlimBase` (an installation on the previous base converges through `update`); size budget lowers.
 - **Command:** `go test ./images/ ./internal/image/ ./internal/cli/ -run 'Base|SizeBudget|Tools|Selftest|UpdateConvergesSlimBase' -count=1`; image build tests run behind their tags in CI.
 - **Depends on:** none. **Commit:** `images: the base keeps the Claude harness only`.
@@ -79,7 +79,7 @@
 
 ### IS7: the `setup` prompt
 - **Files:** `internal/cli/setup.go`, `internal/cli/setup_wizard_test.go`, a no-prompt path for a managed project (the owner's rule: no prompts there; the value comes from a flag or the policy), `docs/setup-wizard/` page naming prompts if pinned.
-- **Interfaces:** asks "Bake your repos into the Docker images? This makes jobs start faster." default yes, writes `bake_repos` through IS5; `fugaro settings` change followed by a rebuild notice. **Tests:** `TestSetupAsksBakeDefaultYes`, `TestSetupUpdateConvergesBake`. **Command:** `go test ./internal/cli/ -run 'SetupAsksBake|SetupUpdateConvergesBake' -count=1`.
+- **Interfaces:** asks "Bake repos into the images for faster job starts?" default yes, writes `bake_repos` through IS5; `fugaro settings` change followed by a rebuild notice. **Tests:** `TestSetupAsksBakeDefaultYes`, `TestSetupUpdateConvergesBake`. **Command:** `go test ./internal/cli/ -run 'SetupAsksBake|SetupUpdateConvergesBake' -count=1`.
 - **Depends on:** IS5. **Commit:** `setup: ask whether to bake repos, default yes`.
 - **Red step:** the wizard has no such prompt. **Tier:** standard.
 

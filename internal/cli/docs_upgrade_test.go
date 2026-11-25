@@ -57,7 +57,7 @@ func TestDocsNameUpgrade(t *testing.T) {
 	// `fugaro update` in .claude/skills/new-release/SKILL.md, and README.md and
 	// docs/release.md are another run's, so the sentence is held to the
 	// sequence under either spelling until that run lands its own half.
-	sequenceRE := regexp.MustCompile("brew upgrade dimipaun/tap/fugaro && fugaro (?:upgrade|update)")
+	sequenceRE := regexp.MustCompile("brew upgrade dimipaun/tap/fugaro && fugaro update")
 	for _, path := range []string{"../../README.md", "../../.claude/skills/new-release/SKILL.md", "../../docs/release.md"} {
 		data, _ := os.ReadFile(path)
 		if !sequenceRE.Match(data) {
@@ -68,11 +68,28 @@ func TestDocsNameUpgrade(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// README's getting-started note names the skill that does the local half.
-	// The skill's own name changes with U6 (`upgrade` becomes `update`), so the
-	// line is accepted under either.
-	if !regexp.MustCompile("`/fugaro:(?:upgrade|update)` does the local half").Match(readme) {
-		t.Error("README.md's Upgrading section never says /fugaro:upgrade does the local half and hands the user the rest")
+	if !strings.Contains(string(readme), "`/fugaro:update` does the local half") {
+		t.Error("README.md's Upgrading section never says /fugaro:update does the local half and hands the user the rest")
+	}
+}
+
+// TestDocsNameNoRetiredUpgradeDoor: the three documents a person upgrades
+// from say `brew upgrade`, then one `fugaro update` (repo-coupling-audit D1,
+// rows RC93, RC96, RC97). `fugaro upgrade` is retired and reaches cobra's
+// "unknown command"; `fugaro update-skills` would be a second command, which
+// the one-command upgrade rule forbids; the skill is `/fugaro:update`; and the
+// plugin is installed at user scope, so there is no pin to commit.
+func TestDocsNameNoRetiredUpgradeDoor(t *testing.T) {
+	for _, path := range []string{"../../README.md", "../../docs/release.md", "../../website/data/install.yaml"} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, gone := range []string{"fugaro upgrade", "fugaro update-skills", "/fugaro:upgrade", "Commit the `.claude/settings.json` change", "(commit the diff)"} {
+			if strings.Contains(string(data), gone) {
+				t.Errorf("%s still says %q", path, gone)
+			}
+		}
 	}
 }
 
@@ -88,7 +105,7 @@ func TestDocsNameUpgrade(t *testing.T) {
 // machine-local stage runs although a cloud stage stopped, and the run still
 // leaves the checkout for the user and exits 1.
 func TestDocsDesignListsEveryUpgradeStep(t *testing.T) {
-	data, err := os.ReadFile("../../docs/design/upgrade.md")
+	data, err := os.ReadFile("../../docs/upgrade/spec.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,11 +139,11 @@ func TestDocsDesignListsEveryUpgradeStep(t *testing.T) {
 		"[--repo [PATH]] [--image-source S] [--expect-digest KIND=sha256:H]...",
 	} {
 		if !strings.Contains(doc, want) {
-			t.Errorf("docs/design/upgrade.md does not say %q", want)
+			t.Errorf("docs/upgrade/spec.md does not say %q", want)
 		}
 	}
 	if strings.Contains(doc, "OPEN OWNER DECISION") {
-		t.Error("docs/design/upgrade.md still carries the open decision the owner ruled on 2026-10-31")
+		t.Error("docs/upgrade/spec.md still carries the open decision the owner ruled on 2026-10-31")
 	}
 	// The pin step's deletion (D949, U2) is the edit that renumbered this list,
 	// and the doc is where an older reader looks for the command's shape: the
@@ -134,7 +151,7 @@ func TestDocsDesignListsEveryUpgradeStep(t *testing.T) {
 	// gone together.
 	for _, gone := range []string{"--allow-fork", "five steps", "runs pin and plugin", "fugaro upgrade [PATH", "[--repo R]", "[--workflow W]"} {
 		if strings.Contains(doc, gone) {
-			t.Errorf("docs/design/upgrade.md still says %q", gone)
+			t.Errorf("docs/upgrade/spec.md still says %q", gone)
 		}
 	}
 }

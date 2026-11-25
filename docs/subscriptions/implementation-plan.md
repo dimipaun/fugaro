@@ -297,7 +297,7 @@ the paid commands warn, not refuse, and that warning is itself deferred with the
 D523), and the job image is built with the `ee` tag and mounts no key (D524). E0.3 states the
 corrected model; the bullets below are kept for the record.*
 
-- **Files:** `docs/design/ee-boundary-moves.md` (new).
+- **Files:** `docs/ee-reorg/boundary-moves.md` (new).
 - **Content:** the rulings T10, T11, T20 and T21, made concrete.
   - **The coordinator (T10).** What moves and how the core keeps working:
     - **What moves.** The library `internal/coordinator/` (`intent.go`, `project.go`, `state.go`,
@@ -758,7 +758,7 @@ longer this note's, and follows the v2 `fgk_` key (D2130).**
 states are the v2 `fgk_` keys', and its revocation list, its renewal authentication and its sign-in
 are the v2 service's (D2130, D2131, D2135, D2144).**
 
-- **Files:** `docs/design/key-signing-service.md` (new).
+- **Files:** `docs/key-signing-service/spec.md` (new).
 - **Content:**
   - **Hosting (T13):** a dedicated Fugaro GCP project the owner operates, Cloud Run, a
     non-exportable KMS key, and the internet-facing intake (forms, purchase events, admin page)
@@ -935,7 +935,7 @@ key, whose revocation is what the customer's own job checks (D2131).**
 
 #### S5.1 Design: the role model on the existing lists (T16)
 
-- **Files:** `docs/design/roles.md` (new).
+- **Files:** `docs/roles/spec.md` (new).
 - **Content:**
   - **Core:** the cloud keeps enforcing the launcher, operator and admin lists in MIT core (IAM, the
     RTDB rules). A small MIT core change adds the viewer's cloud enforcement: a read-only list.
@@ -959,7 +959,7 @@ key, whose revocation is what the customer's own job checks (D2131).**
 after is the key's own `grace_days` rather than a fixed thirty days, and "Free" is the no-key state
 (D2133, D2142).**
 
-- **Files:** `docs/design/lapse-read-only.md` (new).
+- **Files:** `docs/lapse-read-only/spec.md` (new).
 - **Content:**
   - **The console:** after the grace period it can read and cancel, and it cannot launch or change
     config (T12). The console has no launch or cancel today (fifteen read operations), so for it

@@ -8,7 +8,7 @@ import "errors"
 // one could be raised to ee by a build flag — silencing the warning a core job
 // image is supposed to get — or, worse, lowered to core on a tagged build,
 // making the binary with the enterprise code in it deny having it (design
-// docs/design/ee-boundary-moves.md §7).
+// docs/ee-reorg/boundary-moves.md §7).
 const (
 	// EditionCore is the edition of every build without the ee build tag.
 	EditionCore = "core"

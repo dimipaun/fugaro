@@ -54,11 +54,11 @@ not exist. Recording them here so the next reader does not repeat them.
 | **GitHub as ground truth** (§6) | `gitprov.Provider` reads `Repository`, `PullRequest`, `Comments`, `FetchPRHead` (`internal/gitprov/gitprov.go:208-270`), and `github.MintInstallationToken(ctx, o, perms)` mints a token **scoped to one repository** (`internal/gitprov/github/apptoken.go`'s `tokenSource.Token`, whose body names one). See **#9**, **#10**. |
 | **Intent signals from local orchestrators, before code exists** (§6) | No channel exists. The only per-person fact written today is `launch.json`'s `launched_by` (`internal/runstore/launch.go`), a **self-declared email** (`internal/cli/run.go:1731`, from `localcfg.Config.Me`). See **#11**. |
 | **MCP server over HTTP** (§7) | No MCP server, no MCP dependency. The only HTTP server in the repository is the per-run budget gateway, bound to loopback (`internal/gateway/gateway.go:250-262`, `127.0.0.1:0`). See **#8**. |
-| **Two model tiers; "reuses the project's existing key management and security service"** (§8) | The security service does not exist (`docs/credentials-service/README.md:3` — *"plan only; nothing is implemented"*). Model configuration today is per **slot**, not per tier (`agent.models.coder|reviewer|background`, `docs/design/m10-multi-model.md`) plus the routing switch (`internal/config/routing.go:42-61`). See **#21**, **#22**, **#23**. |
+| **Two model tiers; "reuses the project's existing key management and security service"** (§8) | The security service does not exist (`docs/credentials-service/README.md:3` — *"plan only; nothing is implemented"*). Model configuration today is per **slot**, not per tier (`agent.models.coder|reviewer|background`, `docs/m10-multi-model/spec.md`) plus the routing switch (`internal/config/routing.go:42-61`). See **#21**, **#22**, **#23**. |
 | **Concurrency: Firestore transactions or a per-project lock** (§9) | The Firestore client has **no transactions**; the only lock is per-branch, in GCS (`internal/lock/lock.go:1-5`, key `locks/<slug>/<branch-hash>`). The repo's concurrency idiom is generation-matched GCS writes (`internal/blobx/blobx.go:238,334,365`), RTDB `PutIfMatch` ETag CAS (`internal/budget/kill.go:141`) and deterministic doc IDs with update-time preconditions (`internal/budget/rollover.go:511,526`). See **#16**, **#17**. |
 | **Daily token-spend cap that "counts toward the project's existing spend caps"** (§9) | The existing caps are **per run**, keyed to a run's Firebase identity (`internal/budget/token/token.go:83-88 Claims`; `internal/budget/evaluate.go:135 Evaluate`). A long-lived service has no run identity. See **#25**. |
 | **Drift reconciliation: a scheduled job via the same Terraform** (§9) | This shape exists: Cloud Scheduler → HTTP POST to the Cloud Run Admin `jobs:run` API (`deploy/terraform/gcp/modules/installation/history.tf:180`, `*/15 * * * *`; a daily rollover at `:223`). It targets a **job**, not a service. See **#18**. |
-| **Console project-wide view; "ask the coordinator"** (§10) | The console's nav is Live / Spend / Projects (`console/src/renderer/entry.ts:490-496`); its data plane is one interface over the `fugaro` CLI as a sidecar (`console/src/source/cli.ts:1-8`), with thirteen read operations and one `link.openExternal` (`console/src/main/ipc.ts:307-558`, fourteen entries). The v2 *spec*'s "Overview" is unbuilt, and v2's ruling is one write only — launch (D22, `docs/design/desktop-console-v2.md`). See **#27**, **#28**. |
+| **Console project-wide view; "ask the coordinator"** (§10) | The console's nav is Live / Spend / Projects (`console/src/renderer/entry.ts:490-496`); its data plane is one interface over the `fugaro` CLI as a sidecar (`console/src/source/cli.ts:1-8`), with thirteen read operations and one `link.openExternal` (`console/src/main/ipc.ts:307-558`, fourteen entries). The v2 *spec*'s "Overview" is unbuilt, and v2's ruling is one write only — launch (D22, `docs/desktop-console-v2/spec.md`). See **#27**, **#28**. |
 | **Advisory, not authoritative; "never blocks or reorders merges"** (§3) | Consistent with the repo, and it has a hard consequence: the coordinator must hold **no GitHub write permission**. The App's per-run token asks for `contents: write, pull_requests: write, issues: read, metadata: read` (`internal/gitprov/github/apptoken.go`'s `tokenPermissions`); a read-only set is not merely expressible, it is **minted today** — `{contents: read, metadata: read}` (`buildTokenPermissions`, exported as `BuildTokenPermissions`) — by two callers, both of which only clone (`internal/cli/gitcred.go:107`, `internal/cli/imagecheck.go:517`). See **#9**, **Q3**. |
 | **Self-hosted; no Fugaro-operated central service** (§3) | Consistent: everything is per-installation, and managed projects were gated off in the release this table was written against (`internal/cli/recipes_skew.go`'s `managedDeployerShipped`; 0.10.0 ships it true, with the deployer's fence unmeasured — Check 68 is owner-run after the release). |
 | **"Works with any MCP-capable agent, not only Claude"** (§7) | The repository drives **only Claude Code** (`docs/base-image.md`). A front door for arbitrary MCP clients is a new integration and a new untrusted-input surface. See **#8**, **#13**. |
@@ -156,7 +156,7 @@ credential at all** (`console/src/main/spawn.ts:1-8`).
 decision, not a reuse. → **Q2**.
 
 **#5 — Offboarding a person is manual and incomplete, so a "no extra permission model" v1 would have no way to remove a departed developer. — Gap.**
-`README.md:201` still carries the unchecked roadmap item *"One-command offboarding of a
+`README.md:208` still carries the unchecked roadmap item *"One-command offboarding of a
 repository"*, and no page states an offboarding remedy any more: the runbook that carried one,
 `docs/gcp-setup.md`, is the short setup page now. Removing a **person** means editing the
 launcher/operator lists and re-running `init` with `--allow-delete`, or a hand-run
@@ -222,7 +222,7 @@ coordinator stores, the console sees it only if a `fugaro` command can read it. 
 
 **#8 — There is no MCP server, no MCP dependency, and one loopback HTTP server in the whole repository. — Gap.**
 `internal/gateway/gateway.go:1-7` is the only HTTP server: *"a loopback proxy between
-Claude Code and the model API"*, started at `:609 Start`, bound at `:629` to
+Claude Code and the model API"*, started at `:681 Start`, bound at `:701` to
 `127.0.0.1:0`. Its routes are `HEAD /api/hello`, `POST /v1/messages`,
 `POST /v1/messages/count_tokens`. Nothing else in the tree serves a request.
 The spec's own claims about the protocol also need care: **MCP authorization is
@@ -272,7 +272,7 @@ that mints across repositories. → **Q3**, **Q12**.
 `docs/releases/vX.Y.Z.md` and `docs/release.md`. Nothing in the tree maps a PR to a
 release, or a PR to another PR. The v2 console spec proposes a dependency graph and an
 Overview view, and both are explicitly unbuilt
-(`docs/design/desktop-console-v2.md` — *"**Nothing in v2 is approved or built**"*).
+(`docs/desktop-console-v2/spec.md` — *"**Nothing in v2 is approved or built**"*).
 *Consequence:* four of the spec's six state items (§5) are greenfield. They are also the
 four that need **no** LLM, which is what makes finding **#28** possible.
 
@@ -452,7 +452,7 @@ dependency on unbuilt work). There is no third reading. → **Q4**.
 
 **#23 — A "two-tier" model config has no home in the config schema; the nearest concept is a per-slot model. — Gap.**
 Today's model configuration is per **slot**: `agent.model` and
-`agent.models.{coder,reviewer,background}` (`docs/design/m10-multi-model.md`), with the
+`agent.models.{coder,reviewer,background}` (`docs/m10-multi-model/spec.md`), with the
 routing switch `routing.claude: {via: direct|openrouter|auto, models: [...]}`
 (`internal/config/routing.go:42-61`, values at `:14-24`, validated by `CheckRouting` at
 `:98`). A published project policy can carry `providers`, `model_prices` and `routing`
@@ -504,7 +504,7 @@ From the price catalog the repo ships (`internal/pricing/catalog/catalog.json`,
 `checked_at 2026-10-23`): `deepseek/deepseek-v4.1-flash` is $0.07–$0.60 per million
 input tokens and $0.18–$2.40 per million output; the catalog's own note is that *"a run
 that charges $5 may really cost up to about $189"* under the cheapest-endpoint
-undercharge (`docs/design/provider-price-catalog.md`, on *"`cheapest` can undercharge"*). The built-in Claude table
+undercharge (`docs/provider-price-catalog/spec.md`, on *"`cheapest` can undercharge"*). The built-in Claude table
 (`internal/pricing/table.go Embedded()`) is Haiku 4.5 $1/$5, Sonnet 5.5 $2/$10,
 Opus 5.5 $4/$20, Fable 5.1 $10/$50 (cited by symbol rather than by line: the function's body
 is a list that gains a model at a time, and a line range here was already wrong once — Fable
@@ -535,8 +535,8 @@ interface (`console/src/source/source.ts`, `console/src/source/cli.ts:1-8`) whos
 implementation spawns the installed `fugaro`. The IPC table is fourteen entries — thirteen
 reads plus `link.openExternal` (`console/src/main/ipc.ts:307-558`). v1 is *"strictly
 read-only"*
-(`docs/design/desktop-console.md`, D2), and v2's ruling is **one** write — launch,
-through `fugaro run`, *"with no command queue"* (`docs/design/desktop-console-v2.md`,
+(`docs/desktop-console/spec.md`, D2), and v2's ruling is **one** write — launch,
+through `fugaro run`, *"with no command queue"* (`docs/desktop-console-v2/spec.md`,
 D22). So the console's §10 "ask the coordinator" is a **new** interaction, and it is the
 only one in the spec that makes the console send free text to a model.
 *Consequence:* the console can gain the project view as new **read** operations over the
@@ -544,10 +544,10 @@ CLI sidecar without touching the write ruling — but "ask the coordinator" is a
 operation and a new ruling. → **Q8**.
 
 **#28 — All model output is untrusted text, and the console's rule is text, never markup. — Rule.**
-`docs/design/desktop-console.md` §5.1 rule 7 — *"Job-written text is text"* — and the code
+`docs/desktop-console/spec.md` §5.1 rule 7 — *"Job-written text is text"* — and the code
 follows it: `console/src/renderer/app.ts` writes through `element.textContent`
 (`:124,138,159,174`), never `innerHTML`; the sanitizers are
-`console/src/shared/sanitize.ts` (`sanitizeText:2519`, `sanitizeRefusal:2790`,
+`console/src/shared/sanitize.ts` (`sanitizeText:2493`, `sanitizeRefusal:2790`,
 `safeUrl:2822`); navigation and window-open are denied
 (`console/src/main/window.ts:231 denyNavigation`, `:242 denyWindowOpen`), and there is
 exactly one validated `shell.openExternal`.
@@ -799,7 +799,7 @@ rewritten to it rather than to the answer above.
 | U4 | **The real cost of a reasoning-tier call at the spec's scale.** The arithmetic in finding **#26** is arithmetic from the shipped price catalog, not a measurement. | `fugaro report` and `fugaro budget preview` measure runs, not a service. Only running one would settle it. |
 | U5 | **Whether the RTDB rules can express a read grant for a coordinator's own state without widening anything else.** The template's macros are `TOKEN`, `RUN`, `USER`, `MAILBOX`, `CONSUMER` (`internal/budget/rules/rules.go:565-592`). | The rules have an emulator and a golden file (`internal/budget/rules/testdata/rules.golden.json`), so this is answerable by writing the change — but it is a change, and none is proposed here. |
 | U6 | **What `docs/design/always-on-orchestrator.md` (PR #632) finally rules.** It is an open draft and it asks Q1–Q7 rather than deciding. | Reading it at the commit it merges with. Q10's option (A) depends on its answers. |
-| U7 | **What PR #634 (the console styling design) settles.** It is open and not on `main`; `docs/design/console-styling.md` does not exist locally. | Reading the merged file. It adds a `SERVED_FILES` entry and a Phase 6, and it does not change the CSP — so it should not affect Q8, but that is a claim about a draft. |
+| U7 | **What PR #634 (the console styling design) settles.** It is open and not on `main`; `docs/console-styling/spec.md` does not exist locally. | Reading the merged file. It adds a `SERVED_FILES` entry and a Phase 6, and it does not change the CSP — so it should not affect Q8, but that is a claim about a draft. |
 
 ---
 
@@ -814,8 +814,8 @@ the README and for whatever plan follows.
 | --- | --- | --- |
 | **Fugaro project** | A semantic project of several repositories and people: one GCP project, one Firebase project, its repositories, its people lists, one local config. | `docs/design/v1.md`. The spec's §2/§4 unit. |
 | **Installation** | *The same object as a Fugaro project*, named from the cloud side: what `fugaro init` creates. | `docs/design/v1.md`; `deploy/terraform/gcp/roots/installation/`. The mobile and orchestrator designs say "per installation" where this spec says "per project" — the same thing (finding **#1**). |
-| **Orchestrator** | **The local agent a developer runs**, one per developer (or per thread of work). | `docs/design/desktop-console-spec-v2.md`, on *"Multiple orchestrators: typically one per thread of work"*; `docs/mobile/spec.md`, on *"Phase 1: orchestrator runs on the owner's laptop"*. The spec's §1/§6 use. |
-| **Coordinator** | **This design's new per-project service.** Aggregates what every orchestrator is doing, owns project-level state, is advisory. | New. **But the word is already taken twice in-tree** for something else: a review-process role (`docs/plans/2026-09-30-m9a-gateway-and-project-identity.md:1173`) and a designation in a test fixture (`shared/mailbox/index.test.js:1683`). |
+| **Orchestrator** | **The local agent a developer runs**, one per developer (or per thread of work). | `docs/desktop-console-v2/spec-source.md`, on *"Multiple orchestrators: typically one per thread of work"*; `docs/mobile/spec.md`, on *"Phase 1: orchestrator runs on the owner's laptop"*. The spec's §1/§6 use. |
+| **Coordinator** | **This design's new per-project service.** Aggregates what every orchestrator is doing, owns project-level state, is advisory. | New. **But the word is already taken twice in-tree** for something else: a review-process role (`docs/m9-budget-and-dashboard/implementation-plan-m9a.md:1173`) and a designation in a test fixture (`shared/mailbox/index.test.js:1683`). |
 | **Always-on orchestrator** | The mobile design's phase-2 resident service: one per installation, `fugaro run` authority, no model credential. The coordinator's close sibling. | `docs/design/always-on-orchestrator.md` (PR #632); `docs/mobile/spec.md`, on *"Phase 2: orchestrator moves to an always-on cloud service"*; D115. |
 | **Front agent** | The mobile design's P5.4: the phone's conversational agent. | `docs/mobile/implementation-plan.md`, under **Task P5.4**. Distinct from both of the above. |
 | **Summarising agent** | The mobile design's agent beside the orchestrator, which condenses task events into spoken updates. | `docs/mobile/spec.md`, on *"**Summarising agent** sits beside the orchestrator"*. The nearest existing thing to a "coordinator" in the mobile design, and not the same. |

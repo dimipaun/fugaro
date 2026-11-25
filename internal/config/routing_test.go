@@ -10,7 +10,7 @@ import (
 )
 
 // claudeRoute is a provider entry that claims one explicit Claude ID, the shape
-// docs/design/mixed-credentials.md §4 requires of an opt-in route entry. It is
+// docs/mixed-credentials/spec.md §4 requires of an opt-in route entry. It is
 // built in Go rather than parsed: the claim is what #359's phase 2 lets a
 // provider's models carry, and this task resolves and validates the switch
 // against it, not against the config's own spelling of a claim.

@@ -263,7 +263,7 @@ type defaultBranchResult struct {
 // defaultBranchParse is the checkout's default branch's fugaro.yaml
 // (origin/HEAD, main or master, as last fetched), read from git and
 // resolved over the selected project config, with no cloud call besides
-// reading the project layer (docs/design/layered-config.md). Memoized per
+// reading the project layer (docs/layered-config/spec.md). Memoized per
 // command invocation (checkoutParseCache.defaultBranch, cloud.go):
 // resolveRepoTarget and defaultBranchConfig (initsecrets.go) both read
 // this exact file, and the converge calls them up to three times in one run.
@@ -282,6 +282,16 @@ func defaultBranchParse(ctx context.Context, root string) defaultBranchResult {
 	if result.ref != "" {
 		if data, err := gitCmd(ctx, root, "cat-file", "blob", "refs/remotes/"+result.ref+":fugaro.yaml").Output(); err == nil {
 			result.read, result.data = true, data
+			// The default branch's bytes as this run's own removal offer leaves
+			// them, the way loadCheckoutResolved reads the working tree
+			// (fugaroYAMLWithoutRemovedMode, AB8b, F22): the door that resolves
+			// this checkout is the update's own, and the branch goes on saying
+			// the word until the person commits the removal this same run
+			// offers. Every other door reads the branch (and prints its
+			// problem) as it is.
+			if updateLeavesTheRemoval(ctx) {
+				data, _ = fugaroYAMLWithoutRemovedMode(data)
+			}
 			result.cfg, result.problems = parseCheckoutFugaroYAML(ctx, data, selectedProjectConfig(ctx))
 		}
 	}
@@ -295,7 +305,7 @@ func defaultBranchParse(ctx context.Context, root string) defaultBranchResult {
 
 // resolveRepoTarget finds the checkout (the working directory's) and its
 // default branch's fugaro.yaml, with no cloud call besides reading the
-// project layer (docs/design/layered-config.md). It returns the target
+// project layer (docs/layered-config/spec.md). It returns the target
 // when the stage applies, else the status that says why (skipped, or
 // needs-you when the user has something to fix); project "" does not check
 // the file's project.

@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -334,13 +335,23 @@ func (e *cloudEnv) reviewJobFor(ctx context.Context, coding *launchProjectJob, s
 // placed. A set that does not hold the job is a refusal, and the sentence names
 // the gates the provider's job is composed behind.
 //
-// The account is the one axis value the job serves. Every implicit job is
-// deployed for the default account alone — its account segment is fixed at
-// deployment (internal/infra's ImplicitReviewJobName) — while a review may name
-// another account with --token, and the credentials service pairs the caller it
-// verifies with the account that job was deployed for. So a review that names
-// one is refused here rather than launched onto the default account's job with
-// a task that says otherwise.
+// The account is the one axis value the job serves, and it is the project's
+// DEFAULT account rather than the unsuffixed one: the job's segment is fixed at
+// deployment as the axis's empty-string account (internal/infra's
+// ImplicitReviewJobName), and the axis spells that account
+// config.DefaultClaudeAccount — which is the name of the unsuffixed token for a
+// project that names no default, and the account the published policy's
+// default_claude_account maps the default to for one that does (D873's rung 4,
+// copied from the owner's local config at publish). So the review's own account
+// is resolved through the policy's default before the comparison
+// (implicitReviewServedAccount), and a launch whose account IS that default —
+// whatever it read it from, --token, the repository's own agent.oauth_token or
+// the config's default_claude_account — is the review this job serves.
+//
+// What is refused here is a review naming any OTHER account: the credentials
+// service pairs the caller it verifies with the account that job was deployed
+// for, so a launch naming another one would be admitted to a container whose
+// reviewer is served as an account the task does not say.
 //
 // A Bitbucket review is refused unless the published node brokers the
 // repository. The implicit job mounts no credential at all, so the Bitbucket
@@ -367,17 +378,22 @@ func (e *cloudEnv) implicitReviewJobFor(ctx context.Context, spec *task.Spec, sl
 		return nil, userErr("a review runs on a review-only job, and this installation deploys no implicit review-only job for the provider %s: `fugaro review` reads that job out of the installation's own configuration — the same computation the install applied — and the config composes an implicit review-only job of a provider only when the credentials service is opted in (this launch got that far, so it is), a repository of that provider is recorded in the installation's repos (%s is the axis the provider's job is composed for), no profile's review variant already holds the name (%s), and the github job is composed only from a config that records exactly one GitHub App ID — the App a shared job's repositories are built from, which onboarding the repository the App serves writes: fugaro update --repo <owner/name> --github-app-id <id>, then fugaro update, the whole upgrade and the command that deploys the job. Run fugaro doctor, or read the review in the run's own job with fugaro run --pr N --recipe %s",
 			provider, provider, infra.ImplicitReviewJobName(provider), reviewOnlyRecipe)
 	}
-	if account := infra.ReviewVariantAccount(projectJobAccount(reviewAccount(spec))); account != job.Account {
-		return nil, userErr("this review names the Claude account %q, and it runs on the installation's implicit review-only job of the provider %s, which serves one account: the default one (%s). That job's account segment is fixed where it is deployed, its container mounts no credential of its own, and the installation's credentials service pairs the caller it verifies with the account the job was deployed for — so a review launched onto it could not be served as the account this launch names. Launch the review without --token, or read it in the run's own job, which carries the account its own workflow selects, with fugaro run --pr N --recipe %s",
-			pluginwire.Printable(account), provider, config.DefaultClaudeAccount, reviewOnlyRecipe)
+	// The account the job serves is read from the policy, and the policy is read
+	// before the account is judged rather than after it: the two are one
+	// question (the doc comment above). It is the launch's own memoized read
+	// (policyReadOnce), so the placements below ask it no second time.
+	p, found, err := e.policy.read(ctx, e.lc)
+	if err != nil {
+		return nil, policyReadErr(err)
+	}
+	served := implicitReviewServedAccount(p)
+	if account := reviewAccount(spec); account != served {
+		return nil, userErr("this review names the Claude account %q, and it runs on the installation's implicit review-only job of the provider %s, which serves one account: the project's default one (%s). That job's account segment is fixed where it is deployed, its container mounts no credential of its own, and the installation's credentials service pairs the caller it verifies with the account the job was deployed for — so a review launched onto it could not be served as the account this launch names. A launch takes its account from --token, else from the repository's own agent.oauth_token, else from the project's default_claude_account: where this project reviews on %s, name it as the default_claude_account and publish the policy (fugaro project policy publish); otherwise read the review in the run's own job, which carries the account its own workflow selects, with fugaro run --pr N --recipe %s",
+			pluginwire.Printable(account), provider, pluginwire.Printable(served), pluginwire.Printable(account), reviewOnlyRecipe)
 	}
 	if provider == gitprov.KindBitbucket && !e.nodeBrokersBitbucket(ctx, slug, spec) {
 		return nil, userErr("a review of the Bitbucket repository %s runs on the installation's implicit review-only job, and that job mounts no Bitbucket token: its git access is brokered by the installation's credentials service, which forwards the token for a repository only where the published policy admits it with proxy: true — the block derived from project_secrets.bitbucket-token, and the same document the service reads when the job asks. This project's node does not admit %s that way, so a review launched onto that job would open the repository with no token at all and stop at its first git call, in the container, where nothing is left to say why. Read the review in the run's own job, which holds the repository's own token, with fugaro run --pr N --recipe %s; or broker this repository's access, by setting proxy: true on its project_secrets.bitbucket-token entry, running fugaro project policy publish, then fugaro update --repo %s",
 			pluginwire.Printable(spec.Repo), pluginwire.Printable(spec.Repo), reviewOnlyRecipe, pluginwire.Printable(spec.Repo))
-	}
-	p, found, err := e.policy.read(ctx, e.lc)
-	if err != nil {
-		return nil, policyReadErr(err)
 	}
 	if !found || p == nil {
 		return nil, userErr("a review runs on the installation's implicit review-only job, and this project has published no policy: the run is placed in that job by the job's own name whether or not a policy is published — the job is the installation's, not the policy's — and admission is the slug binding alone, so what refuses this review is the credentials service, at the run's first credential request: every credential that job has is the service's (it mounts none of its own), and the service admits an account to a repository only through the published policy's admissions, which with none admit nothing, so the run would stop inside the container this launch had already paid for. Publish the project's policy with fugaro project policy publish (fugaro doctor first, for the rules a policy is read under and the version this Fugaro writes), and this review has the policy that places it; until then, read the review in the run's own job, with fugaro run --pr N --recipe " + reviewOnlyRecipe)
@@ -392,6 +408,32 @@ func (e *cloudEnv) implicitReviewJobFor(ctx context.Context, spec *task.Spec, sl
 		Profile: job.Profile,
 		Timeout: time.Duration(job.TaskTimeoutS) * time.Second,
 	}, nil
+}
+
+// implicitReviewServedAccount is the one Claude account the implicit review-only
+// job serves, as an account is spelled everywhere else (config.DefaultClaudeAccount
+// for the unsuffixed one, a name of the local config's claude_accounts for any
+// other): the project's own default_claude_account where the published policy
+// names one, and the unsuffixed default otherwise. An absent policy is the
+// second answer, which is the one a policy-less project publishes and the one
+// the job's segment carries.
+//
+// It is read from the policy and not from the job's account segment, which is
+// the same fact spelled the other way: the deployer fixes the segment as the
+// axis's empty-string account (internal/infra's ImplicitReviewJobName, the name
+// e.implicitReviewJob resolves the job by), and the axis spells that account
+// config.DefaultClaudeAccount — the name the credentials service admits the
+// caller under. Which account that name means for this project is the policy's
+// own statement (default_claude_account, D873's rung 4, resolved through the
+// owner's aliases before it was published): a project that reviews as `belong`
+// has its reviews served as `belong` on this job and no other, and a project
+// that names no default is served as the unsuffixed account the segment stands
+// for.
+func implicitReviewServedAccount(p *projectpolicy.Policy) string {
+	if p != nil && p.DefaultClaudeAccount != "" {
+		return p.DefaultClaudeAccount
+	}
+	return config.DefaultClaudeAccount
 }
 
 // implicitReviewJob is the installation's implicit review-only job of provider

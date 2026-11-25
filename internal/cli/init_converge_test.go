@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -59,8 +58,11 @@ func (c convergeJSON) state(name string) string {
 }
 
 // From nothing (no state bucket yet, a plan with changes): the converge
-// creates, applies and reports each stage; the Firebase stage is skipped
-// without --firebase-project. --json confirms no step (T7,
+// creates, applies and reports each stage; the Firebase stage with no flag
+// probes for the database this machine does not record and says in one line
+// who must create one, because this rig's credential holds none of the
+// project's IAM changes (gcpfake answers nothing held by default) — and the
+// run carries on, one apply and all (AB7, R2). --json confirms no step (T7,
 // docs/no-prompt-policy), so the run is read off its own account at a real
 // terminal instead: one line per stage, and a Done line — setup's own line
 // about `gh` is printed after it — because nothing is left for the user.
@@ -77,8 +79,8 @@ func TestConvergeFromNothing(t *testing.T) {
 	if l := stepLineOf(account, "installation"); !strings.HasPrefix(l, markDone+" installation ") {
 		t.Errorf("the installation is not a tick: %q\n%s", l, out)
 	}
-	if l := stepLineOf(account, "firebase"); !strings.HasPrefix(l, markSkipped+" firebase") {
-		t.Errorf("firebase is not skipped without --firebase-project: %q\n%s", l, out)
+	if l := stepLineOf(account, "firebase"); !strings.HasPrefix(l, markDone+" firebase no budget database was created") {
+		t.Errorf("the Firebase stage is %q, want the one line of a no-flag run that may not create one\n%s", l, out)
 	}
 	if l := stepLineOf(account, "preflight"); !strings.HasPrefix(l, markDone+" preflight") {
 		t.Errorf("the preflight is not a tick: %q\n%s", l, out)
@@ -142,21 +144,6 @@ func TestTheStateBucketCreationNeedsARealTerminal(t *testing.T) {
 	}
 	if len(r.ran(t, "apply")) != 0 {
 		t.Errorf("calls %q", r.calls(t))
-	}
-}
-
-// The Firestore location's confirmation never reads stdin under
-// --non-interactive.
-func TestNonInteractiveNeverReadsFirestoreLocation(t *testing.T) {
-	rd := &readSpy{Reader: strings.NewReader("us-east5\n")}
-	r := &initRun{o: &initOptions{nonInteractive: true}, w: &strings.Builder{}, in: bufio.NewReader(rd)}
-	err := r.confirmLocation()
-	var ny *initflow.NeedsYouError
-	if !errors.As(err, &ny) || strings.Contains(err.Error(), "--yes") {
-		t.Fatalf("err %v: the location is the user's, and --yes does not give it", err)
-	}
-	if rd.read {
-		t.Error("stdin was read")
 	}
 }
 

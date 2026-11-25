@@ -1,7 +1,9 @@
 package runner
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -13,11 +15,14 @@ import (
 	"testing"
 	"time"
 
+	"gocloud.dev/blob/memblob"
 	"golang.org/x/oauth2"
 
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
@@ -813,6 +818,77 @@ func TestCascadeRecordsOAuthAccount(t *testing.T) {
 	}
 }
 
+// TestCascadeRecordsCredentialOwner: the run records the owner of the token its
+// calls were served with (F16, docs/secrets-brokering/dynamic-delivery). The
+// service names it on the answer beside the credential's name, the run's own
+// gateway hands the answer over, and the record the run ends with --
+// runstore.Record.CredentialOwner -- carries it. oauth_account keeps the
+// meaning it had: the credential's name, not the owner, which is the second
+// fact this test is about.
+//
+// The two are ONE answer's pair, so this test drives the answers the way a
+// cascade produces them: one that names a credential and its owner, then one
+// that names a credential whose token the launcher does not own. The record
+// must end holding the later credential's name and NO owner -- the field
+// cleared by the answer that named that credential -- because an owner kept
+// from the call before it is a record naming the wrong person.
+func TestCascadeRecordsCredentialOwner(t *testing.T) {
+	const owner = "104329501182774832335"
+	r := svcServedRunWith(t, func() (http.Header, pricing.Usage) {
+		return http.Header{
+			gateway.HeaderTier:            []string{gateway.TierB},
+			gateway.HeaderCredential:      []string{"repo-shared-b"},
+			gateway.HeaderCredentialOwner: []string{owner},
+		}, pricing.Usage{Input: 1, Output: 3}
+	}, func(r *run) {
+		r.rec = &runstore.Record{}
+	})
+	r.sess = svcSession(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := r.startGateway(ctx); err != nil {
+		t.Fatalf("the run's own gateway: %v", err)
+	}
+	defer func() {
+		c, stop := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stop()
+		_ = r.gw.Close(c)
+	}()
+	if code, body := svcPost(t, r); code != http.StatusOK {
+		t.Fatalf("the agent's call was answered %d: %s", code, body)
+	}
+	if got := r.rec.CredentialOwner; got != owner {
+		t.Errorf("the record names the owner %q, want the one the service answered with", got)
+	}
+	if got := r.rec.OAuthAccount; got != "repo-shared-b" {
+		t.Errorf("oauth_account = %q, want the credential's name: the owner is a second field and not this one", got)
+	}
+
+	// The owner is written as one word, the way every untrusted value the run
+	// records is.
+	r.serviceAnswer(gateway.ServiceAnswer{
+		Credential:      "repo-shared-b",
+		CredentialOwner: "1043295\u0007011‮827",
+	})
+	if got := r.rec.CredentialOwner; got != "1043295011827" {
+		t.Errorf("the record names the owner %q, want the value with what a terminal must not be handed stripped", got)
+	}
+	// The owner travels WITH the credential that answered: a call served a
+	// credential the launcher does not own is answered no owner
+	// (credsvc.credentialOwnedBy), so the field is CLEARED rather than left
+	// standing from the call before it. An owner kept beside this answer would
+	// name the launcher whose own token paid for an earlier call as the owner
+	// of a credential that is not theirs -- the misattribution F16 forbids,
+	// and the run would carry it in the record it ends with.
+	r.serviceAnswer(gateway.ServiceAnswer{Credential: "sharedce"})
+	if got := r.rec.CredentialOwner; got != "" {
+		t.Errorf("the record names the owner %q after a call served a credential the launcher does not own, want none", got)
+	}
+	if got := r.rec.OAuthAccount; got != "sharedce" {
+		t.Errorf("oauth_account = %q, want the credential of the call that just answered", got)
+	}
+}
+
 // TestCascadeWritesCurrentCredentialName: the same name reaches the registry
 // entry the dashboard reads while the run is running (C1.3, D141), and it is
 // the credential the run is using now -- a run that moved from one to another
@@ -891,4 +967,499 @@ func svcWaitFor(t *testing.T, what string, cond func() bool) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %s", what)
+}
+
+// ---- WC8: the workspace's slip, at the run ----
+//
+// The four tests below are WC8's runner half: a run handed a workspace's slip
+// claims it at the workspace's own credentials service at bootstrap, keeps the
+// claim secret where it keeps the project's own (the hold, and never the job's
+// environment), sends it on every call to that service and on none to the
+// project's (R4), and meets the workspace's two refusals about a slip as R3 and
+// D3146 say -- the removal of its owner halts the run, and a roster the
+// workspace could not read is waited for.
+//
+// What the gateway does with the answer -- which service a call reaches, what
+// it carries, how it halts -- is pinned in internal/gateway/workspace_route_test.go.
+// What is pinned here is the run's own half: the claim, the hold, and the two
+// answers landing on the run as the decisions they are.
+
+// wsSecret is a claim secret shaped like one and shared by the tests below: it
+// is not, and never was, a credential, and it is long enough that the run's
+// redactor covers it (minSecretLen).
+const wsSecret = "fake-workspace-claim-secret-not-a-credential"
+
+// wsSlipFixture is what the tests below are driven against: the address of the
+// run's own project's credentials service, the address of the workspace's (the
+// one the run's route record carries), and the two slip ids a launcher would
+// have written into the job's environment. An empty slip id is a launch that
+// was handed none, which is the run as it was (R4).
+type wsSlipFixture struct {
+	projectURL    string
+	workspaceURL  string
+	memberSlip    string
+	workspaceSlip string
+}
+
+// wsSlipRun is a run at the point its gateway starts, holding everything a
+// bootstrap has by then: the budget session that admitted it (which is the
+// identity both its claims present), the database its own route record is read
+// from, the sealed token a launcher leaves for the run's identity, the job's
+// environment with the two service addresses and the slip ids in it, and a
+// record that serves the model kind from the workspace (creds.HolderWorkspace)
+// -- so this run's model calls are the workspace's service's, which is the
+// traffic the workspace's slip must travel on (R3, R4).
+//
+// Nothing here is the workspace's answer: the claim secret of the two tests
+// that need one exists only in the stand-in's reply, the way it exists only in
+// the service's at run time.
+func wsSlipRun(t *testing.T, f wsSlipFixture, edit func(*run)) *run {
+	t.Helper()
+	ctx := context.Background()
+	now := time.Now()
+	db := gcpfake.NewRTDB(t)
+	record, err := creds.RouteRecord(creds.Route{
+		Version: creds.RouteVersion, Address: f.workspaceURL, Model: creds.HolderWorkspace,
+	})
+	if err != nil {
+		t.Fatalf("the record a member's own update would publish was refused by its own writer: %v", err)
+	}
+	db.Set(creds.RoutePath(svcSlug), json.RawMessage(record))
+
+	meta := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "job-id-token-from-the-metadata-stand-in")
+	}))
+	t.Cleanup(meta.Close)
+
+	bucket := memblob.OpenBucket(nil)
+	t.Cleanup(func() { _ = bucket.Close() })
+	blobs := blobx.Wrap(bucket)
+	key := bytes.Repeat([]byte{0x5a}, token.KeySize)
+	iam := gcpfake.NewIAMCredentials(t)
+	iam.AddSigner(svcSignerEmail)
+	itk := gcpfake.NewIdentityToolkit(t, iam, svcAPIKey, svcProject)
+	signer, err := token.NewIAMSigner(svcSignerEmail,
+		oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "ya29.launcher"}), token.WithIAMEndpoint(iam.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	custom, err := token.MintAt(ctx, signer, token.Claims{
+		Slug: svcSlug, Run: svcRunID, FX: token.ExpiryFX(now, 3*time.Hour), FP: svcProject, RB: "owner@example.invalid",
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := token.PutObject(ctx, blobs, svcSlug, svcRunID, custom, key); err != nil {
+		t.Fatal(err)
+	}
+
+	env := []string{
+		credentialsServiceURLEnv + "=" + f.projectURL,
+		metadataHostEnv + "=" + strings.TrimPrefix(meta.URL, "http://"),
+	}
+	if f.memberSlip != "" {
+		env = append(env, SlipEnv+"="+f.memberSlip)
+	}
+	if f.workspaceSlip != "" {
+		env = append(env, creds.PersonSlipEnv+"="+f.workspaceSlip)
+	}
+	r := svcRun(t, config.AuthCascade, func(r *run) {
+		r.d.Env = env
+		r.d.Bucket = blobs
+		r.d.Store = runstore.Open(bucket, svcSlug, svcRunID)
+		r.d.Backend = Backend{
+			RTDBURL: db.URL, APIKey: svcAPIKey, TokenMarked: true, TokenKey: key,
+			Tune: func(c *budget.Config) { c.IdentityURL, c.SecureTokenURL = itk.URL, itk.URL },
+		}
+		r.spend = Spend{Mode: "observe", Prices: pricing.Embedded()}
+		r.spec = &task.Spec{Version: 1, RunID: svcRunID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature"}
+		if edit != nil {
+			edit(r)
+		}
+	})
+	// The session the launcher's own admission opened: both of this run's
+	// claims present its identity, and a claim with no identity is no call.
+	r.sess = svcSessionOn(t, db)
+	return r
+}
+
+// wsClaimReply is the answer the workspace's service gives a claim: the one
+// claim secret, written by the contract's own shape and not as a body this file
+// made up.
+func wsClaimReply(t *testing.T, secret string) anthropicfake.Reply {
+	t.Helper()
+	body, err := json.Marshal(credsvc.SlipClaimResponse{
+		ClaimSecret: secret, ExpiresAt: time.Now().Add(time.Hour), MaxRuntimeSeconds: 3600,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return anthropicfake.Reply{Body: string(body)}
+}
+
+// wsModelReply is a served model answer: the body and the two headers a
+// credential service settles a call by, which the gateway reads back as the
+// run's ServiceAnswer.
+func wsModelReply() anthropicfake.Reply {
+	rep := anthropicfake.MessageOK("claude-sonnet-5-5", pricing.Usage{Input: 11, Output: 13})
+	rep.Header = http.Header{
+		gateway.HeaderTier:       []string{gateway.TierA},
+		gateway.HeaderCredential: []string{"workspace-shared"},
+	}
+	return rep
+}
+
+// wsAt is every request a stand-in received at one path, in order: the run
+// calls one service for two routes, and which route a request is on is the
+// whole of what tells a claim from a model call.
+func wsAt(f *anthropicfake.Fake, path string) []*http.Request {
+	var out []*http.Request
+	for _, req := range f.Seen() {
+		if req.URL.Path == path {
+			out = append(out, req)
+		}
+	}
+	return out
+}
+
+// wsAbsent reports the first of names a request does not carry, or "" when it
+// carries all of them: a call may carry one service's slip pair and never the
+// other's (R4), and the two tests that read a call say so through this.
+func wsAbsent(r *http.Request, names ...string) string {
+	for _, n := range names {
+		if got := r.Header.Get(n); got != "" {
+			return n + "=" + got
+		}
+	}
+	return ""
+}
+
+// TestTheWorkspaceSlipIsClaimedAtBootstrap: a run the launcher handed a
+// workspace's slip claims it at the workspace's own credentials service, and
+// the claim goes to the address the run's own route record carries and to no
+// other (R3): the run's first call to that service is the claim, it presents
+// the slip's id under C1's own header, and the secret it takes is what every
+// call after it presents.
+//
+// The run holds its own installation's slip in the same breath, which is what
+// makes this more than a claim about one header: the two claims go to two
+// services, each under its own pair of names, and the model call that follows
+// carries the workspace's pair because the workspace serves the model kind.
+func TestTheWorkspaceSlipIsClaimedAtBootstrap(t *testing.T) {
+	const (
+		memberSlip = "fake-member-slip-0f1e2d3c-not-a-credential"
+		wsSlip     = "fake-workspace-slip-4b2a9e77-not-a-credential"
+	)
+	var project, workspace *anthropicfake.Fake
+	project, projectSrv := anthropicfake.New(t)
+	workspace, wsSrv := anthropicfake.New(t)
+	project.Func = func(r *http.Request, _ []byte) anthropicfake.Reply {
+		if r.URL.Path != credsvc.SlipClaimPath {
+			t.Errorf("this run's own service received %s %s: the model kind is served from the workspace, so nothing of this run's model path is its own", r.Method, r.URL.Path)
+			return anthropicfake.Error(http.StatusNotFound, "not_found", "no such route")
+		}
+		return wsClaimReply(t, "fake-member-claim-secret-not-a-credential")
+	}
+	workspace.Func = func(r *http.Request, _ []byte) anthropicfake.Reply {
+		if r.URL.Path == credsvc.SlipClaimPath {
+			return wsClaimReply(t, wsSecret)
+		}
+		return wsModelReply()
+	}
+
+	r := wsSlipRun(t, wsSlipFixture{
+		projectURL: projectSrv.URL, workspaceURL: wsSrv.URL,
+		memberSlip: memberSlip, workspaceSlip: wsSlip,
+	}, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// The run's own bootstrap order: the installation's slip is claimed first
+	// (claimSlip), and the gateway -- which is where the workspace's slip is
+	// claimed -- starts after it.
+	r.claimSlip(ctx)
+	if err := r.startGateway(ctx); err != nil {
+		t.Fatalf("the run's own gateway: %v", err)
+	}
+	defer func() {
+		r.stopSlipBeat()
+		r.stopWorkspaceBeat()
+		c, stop := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stop()
+		_ = r.gw.Close(c)
+	}()
+
+	claims := wsAt(workspace, credsvc.SlipClaimPath)
+	if len(claims) != 1 {
+		t.Fatalf("the workspace's service received %d claim calls, want the one this run's bootstrap makes", len(claims))
+	}
+	claim := claims[0]
+	if got := claim.Header.Get(creds.PersonSlipHeader); got != wsSlip {
+		t.Errorf("the claim presents %s %q, want the slip id the launcher wrote for this run", creds.PersonSlipHeader, got)
+	}
+	if got := claim.Header.Get(creds.PersonSlipClaimHeader); got != "" {
+		t.Errorf("the claim presents a %s: the secret is what the claim ANSWERS with, and a run that already held one would be claiming a second time", creds.PersonSlipClaimHeader)
+	}
+	if bad := wsAbsent(claim, credsvc.HeaderSlip, credsvc.HeaderSlipClaim); bad != "" {
+		t.Errorf("the claim to the workspace's service carries the member's own slip (%s): a slip belongs to the service that granted it (R4)", bad)
+	}
+	// The claim is the run's own: the job's identity and the run's, which is
+	// what the workspace's service decides a claim by (F23, F30).
+	if got := claim.Header.Get(gateway.HeaderRunJob); got != svcJob {
+		t.Errorf("the claim reports the job %q, want %q", got, svcJob)
+	}
+	if got := claim.Header.Get(gateway.HeaderRunIdentity); got != r.sess.IDToken()() {
+		t.Errorf("the claim presents a run identity that is not the one that admitted this run")
+	}
+
+	// The member's own slip reaches the member's own service and no other
+	// (R4): the other claim exists, and the workspace's service saw none of it.
+	own := wsAt(project, credsvc.SlipClaimPath)
+	if len(own) != 1 {
+		t.Fatalf("the run's own service received %d claim calls, want the one this run's bootstrap makes for its own slip", len(own))
+	}
+	if got := own[0].Header.Get(credsvc.HeaderSlip); got != memberSlip {
+		t.Fatalf("the run's own claim presents %s %q, want the slip id the launcher wrote for it: this test says nothing about the two slips unless both are claimed", credsvc.HeaderSlip, got)
+	}
+	if bad := wsAbsent(own[0], creds.PersonSlipHeader, creds.PersonSlipClaimHeader); bad != "" {
+		t.Errorf("the claim to the run's own service carries the workspace's slip (%s): a slip belongs to the service that granted it (R4)", bad)
+	}
+
+	// And the secret the claim answered travels on the run's model call to
+	// the workspace, with the slip's id beside it.
+	if code, body := svcPost(t, r); code != http.StatusOK {
+		t.Fatalf("the agent's model call was answered %d: %s", code, body)
+	}
+	calls := wsAt(workspace, "/v1/messages")
+	if len(calls) != 1 {
+		t.Fatalf("the workspace's service received %d model calls, want the one the run made", len(calls))
+	}
+	if got := calls[0].Header.Get(creds.PersonSlipHeader); got != wsSlip {
+		t.Errorf("the model call carries %s %q, want the slip this run claimed", creds.PersonSlipHeader, got)
+	}
+	if got := calls[0].Header.Get(creds.PersonSlipClaimHeader); got != wsSecret {
+		t.Errorf("the model call carries %s %q, want the secret the workspace's claim answered", creds.PersonSlipClaimHeader, got)
+	}
+	if bad := wsAbsent(calls[0], credsvc.HeaderSlip, credsvc.HeaderSlipClaim); bad != "" {
+		t.Errorf("the model call to the workspace carries the member's own slip (%s): the workspace's service is not the member's own (R4, R18)", bad)
+	}
+	if got := len(wsAt(project, "/v1/messages")); got != 0 {
+		t.Errorf("the run's own service received %d model calls, want none: this run's record serves the model kind from the workspace", got)
+	}
+}
+
+// TestTheClaimSecretStaysOutOfTheEnvironment: the workspace's claim secret is
+// held the way the installation's own is (R4, the hold) and never written into
+// the job's environment, which is the one place a launcher can put anything a
+// run's agent reads.
+//
+// The test is not an assertion about an absent value: the same run presents the
+// secret to the workspace's service on its model call, so it really holds it,
+// and the two things a run does with a credential it holds -- redacting it out
+// of everything it publishes, and keeping it in memory alone -- are read here.
+func TestTheClaimSecretStaysOutOfTheEnvironment(t *testing.T) {
+	const wsSlip = "fake-workspace-slip-4b2a9e77-not-a-credential"
+	workspace, wsSrv := anthropicfake.New(t)
+	project, projectSrv := anthropicfake.New(t)
+	workspace.Func = func(r *http.Request, _ []byte) anthropicfake.Reply {
+		if r.URL.Path == credsvc.SlipClaimPath {
+			return wsClaimReply(t, wsSecret)
+		}
+		return wsModelReply()
+	}
+	project.Func = func(r *http.Request, _ []byte) anthropicfake.Reply {
+		t.Errorf("this run's own service received %s %s: nothing of this run's model path is its own", r.Method, r.URL.Path)
+		return anthropicfake.Error(http.StatusNotFound, "not_found", "no such route")
+	}
+
+	r := wsSlipRun(t, wsSlipFixture{
+		projectURL: projectSrv.URL, workspaceURL: wsSrv.URL, workspaceSlip: wsSlip,
+	}, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := r.startGateway(ctx); err != nil {
+		t.Fatalf("the run's own gateway: %v", err)
+	}
+	defer func() {
+		r.stopWorkspaceBeat()
+		c, stop := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stop()
+		_ = r.gw.Close(c)
+	}()
+
+	hold := r.workspaceSlipHold()
+	if hold == nil {
+		t.Fatal("the run holds no workspace slip: the claim was answered with one, so this test says nothing about where the secret is kept")
+	}
+	if hold.secret != wsSecret {
+		t.Fatalf("the hold carries %q, want the secret the claim answered with", hold.secret)
+	}
+	if code, body := svcPost(t, r); code != http.StatusOK {
+		t.Fatalf("the agent's model call was answered %d: %s", code, body)
+	}
+	calls := wsAt(workspace, "/v1/messages")
+	if len(calls) != 1 || calls[0].Header.Get(creds.PersonSlipClaimHeader) != wsSecret {
+		t.Fatalf("the workspace's service saw %d model calls carrying %q: this test says nothing about the environment unless the secret really travels", len(calls), calls[0].Header.Get(creds.PersonSlipClaimHeader))
+	}
+
+	for i, e := range r.d.Env {
+		if strings.Contains(e, wsSecret) {
+			t.Errorf("environment entry %d carries the claim secret: the secret is held by the run and presented to the workspace's service, and the job's environment -- which is what the agent's own environment is built from -- never names it", i)
+		}
+	}
+	// The id the launcher wrote is there, so the secret's absence above is
+	// about the secret and not about a fixture that wrote nothing.
+	if got := envLookup(r.d.Env, creds.PersonSlipEnv); got != wsSlip {
+		t.Errorf("the job's environment names %q as the workspace's slip, want %q", got, wsSlip)
+	}
+	// Registered with the redactor as the installation's own claim is: a
+	// secret the run holds and does not redact leaks into a reason, a log line
+	// and the record.
+	if got := r.redact("the workspace answered " + wsSecret + " just now"); strings.Contains(got, wsSecret) {
+		t.Errorf("the run's redactor leaves the claim secret in %q", got)
+	}
+}
+
+// TestARemovedOwnersRunHaltsNamingTheRemoval: D3146. The workspace's service
+// re-reads its roster under a live slip, so a member the roster no longer holds
+// is refused within a minute whether or not the sweep of their containers
+// succeeded. The refusal halts the run with the removal named, and the run
+// moves to no other credential: the model call is not sent to the member's own
+// service, and nothing is asked twice. What the stand-in sends is the word the
+// workspace's scope writes for this call — credsvc.ErrorSlipOwnerRemoved, which
+// verifyPersonCallSlip answers once the slip's claim secret has been matched —
+// so what this test holds is the gateway's reader and the halt it forces.
+func TestARemovedOwnersRunHaltsNamingTheRemoval(t *testing.T) {
+	const wsSlip = "fake-workspace-slip-4b2a9e77-not-a-credential"
+	workspace, wsSrv := anthropicfake.New(t)
+	project, projectSrv := anthropicfake.New(t)
+	workspace.Func = func(r *http.Request, _ []byte) anthropicfake.Reply {
+		if r.URL.Path == credsvc.SlipClaimPath {
+			return wsClaimReply(t, wsSecret)
+		}
+		return anthropicfake.Reply{Status: http.StatusForbidden,
+			Body: `{"error":"slip_owner_removed","message":"the slip's owner is no longer on this workspace's roster"}`}
+	}
+	project.Func = func(r *http.Request, _ []byte) anthropicfake.Reply {
+		t.Errorf("this run's own service received %s %s after the workspace refused it: the run moved to another credential, which D3146 forbids", r.Method, r.URL.Path)
+		return anthropicfake.Error(http.StatusNotFound, "not_found", "no such route")
+	}
+
+	r := wsSlipRun(t, wsSlipFixture{
+		projectURL: projectSrv.URL, workspaceURL: wsSrv.URL, workspaceSlip: wsSlip,
+	}, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := r.startGateway(ctx); err != nil {
+		t.Fatalf("the run's own gateway: %v", err)
+	}
+	defer func() {
+		r.stopWorkspaceBeat()
+		c, stop := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stop()
+		_ = r.gw.Close(c)
+	}()
+
+	code, body := svcPost(t, r)
+	if code != http.StatusForbidden {
+		t.Fatalf("the agent's model call was answered %d, want the halt a refusal forces (D143): %s", code, body)
+	}
+	for _, want := range []string{"slip_owner_removed", "roster", "D3146"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the halt the agent was answered does not name %q: %s", want, body)
+		}
+	}
+	select {
+	case h := <-r.gw.Halted():
+		if h.Reason != gateway.ReasonBudgetUnavailable || h.Scope != "run" {
+			t.Errorf("the run halted as %s/%s, want the halt a refusal forces (D143)", h.Reason, h.Scope)
+		}
+		if !strings.Contains(h.Detail, "slip_owner_removed") || !strings.Contains(h.Detail, "roster") {
+			t.Errorf("the halt's detail does not name the removal: %s", h.Detail)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the run did not halt on the workspace's refusal, and the agent was answered a stop it cannot act on")
+	}
+	if got := len(wsAt(workspace, "/v1/messages")); got != 1 {
+		t.Errorf("the workspace's service received %d model calls, want the one it refused: a refusal is not retried (R3)", got)
+	}
+}
+
+// TestAnUnavailableRosterIsWaitedFor: R3. A workspace whose roster cannot be
+// read is refused as the service being unable to read the state it must read,
+// never as a verdict about this run, so the call is answered the way a service
+// that cannot be reached is -- 503, the stage in flight ends, and the run waits
+// for the instant the gateway's bound names -- and the run moves to no other
+// credential meanwhile (D2989).
+func TestAnUnavailableRosterIsWaitedFor(t *testing.T) {
+	const wsSlip = "fake-workspace-slip-4b2a9e77-not-a-credential"
+	workspace, wsSrv := anthropicfake.New(t)
+	project, projectSrv := anthropicfake.New(t)
+	workspace.Func = func(r *http.Request, _ []byte) anthropicfake.Reply {
+		if r.URL.Path == credsvc.SlipClaimPath {
+			return wsClaimReply(t, wsSecret)
+		}
+		return anthropicfake.Reply{Status: credsvc.StatusUnavailable,
+			Body: `{"error":"state_unavailable","message":"the workspace's roster could not be read"}`}
+	}
+	project.Func = func(r *http.Request, _ []byte) anthropicfake.Reply {
+		t.Errorf("this run's own service received %s %s: a roster the workspace could not read is a wait and not a switch, and this run has no credential of its own (D2989, D143)", r.Method, r.URL.Path)
+		return anthropicfake.Error(http.StatusNotFound, "not_found", "no such route")
+	}
+
+	r := wsSlipRun(t, wsSlipFixture{
+		projectURL: projectSrv.URL, workspaceURL: wsSrv.URL, workspaceSlip: wsSlip,
+	}, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := r.startGateway(ctx); err != nil {
+		t.Fatalf("the run's own gateway: %v", err)
+	}
+	defer func() {
+		r.stopWorkspaceBeat()
+		c, stop := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stop()
+		_ = r.gw.Close(c)
+	}()
+
+	// The stage in flight, as stageOnce records it: the wait is the runner's
+	// reaction to the gateway's answer, and the stage's own cancel is its
+	// record.
+	var mu sync.Mutex
+	var cause error
+	r.mu.Lock()
+	r.haltStage = func(err error) { mu.Lock(); cause = err; mu.Unlock() }
+	r.mu.Unlock()
+
+	started := time.Now()
+	code, body := svcPost(t, r)
+	if code != http.StatusServiceUnavailable {
+		t.Fatalf("the agent's model call was answered %d, want the retryable wait a service that cannot answer gets (R3): %s", code, body)
+	}
+	select {
+	case h := <-r.gw.Halted():
+		t.Fatalf("the run halted on a roster the workspace could not read: %s/%s %s -- a service that cannot read its state is waited for, not a verdict about this run", h.Reason, h.Scope, h.Detail)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	mu.Lock()
+	got := cause
+	mu.Unlock()
+	wait, ok := got.(*unreachableError)
+	if !ok {
+		t.Fatalf("the stage in flight was ended with %v, want the wait a call that reached no service starts", got)
+	}
+	if wait.Service != "workspace's credentials service" {
+		t.Errorf("the wait names the service %q, want the workspace's credentials service", wait.Service)
+	}
+	// One bound for both services (D2983), measured from the call that met the
+	// outage: this one is a few minutes out, not the run's whole deadline.
+	if until := wait.Until; !until.After(started.Add(4*time.Minute)) || until.After(started.Add(6*time.Minute)) {
+		t.Errorf("the wait ends at %s, want the gateway's own bound after %s", until, started)
+	}
+	if h := r.haltValue(); h != nil {
+		t.Errorf("the run recorded a halt (%s/%s) on a call it is waiting for", h.Reason, h.Scope)
+	}
+	if got := len(wsAt(workspace, "/v1/messages")); got != 1 {
+		t.Errorf("the workspace's service received %d model calls, want the one it refused", got)
+	}
 }

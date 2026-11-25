@@ -36,6 +36,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -170,11 +171,11 @@ type Config struct {
 	// runs bucket's shared file is written by any launcher, and the checks
 	// that hold a `batch:` block -- or the choice itself -- to the
 	// installation's own provisioning are `fugaro doctor`'s, which a launch
-	// does not consult (docs/design/shared-config.md §4).
+	// does not consult (docs/shared-config/spec.md §4).
 	BackendName string `yaml:"backend,omitempty"`
 	// Batch is what the Cloud Batch backend reads: the installation facts a
 	// run's VM is built and placed from (design
-	// docs/design/compute-backend.md §4.4, plan
+	// docs/compute-backend/spec.md §4.4, plan
 	// 2026-10-19-compute-backend.md Task 8 step 2). The Batch opener reads it
 	// (internal/cli/cloud.go's cloudOpeners), and the block is only read by
 	// the backend that was selected: an installation that carries it without
@@ -187,7 +188,9 @@ type Config struct {
 	// cost estimates (design §10.1).
 	ComputePrices map[string]Price `yaml:"compute_prices,omitempty"`
 	// LogView is the log view Fugaro job logs are read through
-	// (projects/<p>/locations/global/buckets/<b>/views/<v>); empty reads
+	// (projects/<p>/locations/<l>/buckets/<b>/views/<v>, where <l> is the
+	// run log bucket's own location — the mapping's, or `global` for an
+	// installation made before it — and not always a region); empty reads
 	// the project's default logs.
 	LogView string `yaml:"log_view,omitempty"`
 	// SchedulerRegion is where the daily image check's Cloud Scheduler
@@ -214,7 +217,7 @@ type Config struct {
 	// (design m10-multi-model.md §3), by name. Only the owner sets them.
 	Providers map[string]config.ModelProvider `yaml:"providers,omitempty"`
 	// Routing is the routing switch: which route the Claude IDs it names take
-	// (design docs/design/project-centric.md §6.2, D1a/D1b). Only the owner sets
+	// (design docs/project-centric/spec.md §6.2, D1a/D1b). Only the owner sets
 	// it, and this file is its only definition site in this release: a
 	// repository's fugaro.yaml has no routing key, and D1a's second site, the
 	// project layer, does not take it yet (the layer's decode is strict, so a
@@ -235,8 +238,26 @@ type Config struct {
 	// the active route the node carries, and only --remove-routing says that on
 	// purpose (the review of PR #414).
 	Routing *config.Routing `yaml:"routing,omitempty"`
+	// ModelRouting is where the project's models are reached: the routing
+	// table, an ordered list of entries naming a model or a pattern and the
+	// credential sources that may serve it (docs/model-credentials-routing/
+	// spec.md, D3182). It is the successor of the crafts' access and of
+	// Routing above, and it is the table itself rather than a block holding
+	// one, which is what a person writing it expects to see (contract-table.md,
+	// "The one contract the config does not share").
+	//
+	// It is written here, by `fugaro routing set` and by `fugaro update`'s
+	// migration, and by nothing else: a repository's `fugaro.yaml` and the
+	// project layer have no such key, because a repository may not choose its
+	// own routing — the project's table is the project's — so a file that names
+	// it is refused as an unknown field (both documents decode strictly). It
+	// reaches the runs through the published policy, whose own `model_routing`
+	// key carries the table beside the pools (RT4), and never through the
+	// published shared config: Shared drops it for the reason it drops the
+	// crafts' access, one step out.
+	ModelRouting routing.Table `yaml:"model_routing,omitempty"`
 	// ClaudeAccounts are named Claude OAuth credentials a repository may
-	// choose among by name (design docs/design/named-oauth-tokens.md).
+	// choose among by name (design docs/named-oauth-tokens/spec.md).
 	// Only the owner sets them, here, never in fugaro.yaml.
 	ClaudeAccounts map[string]config.ClaudeAccount `yaml:"claude_accounts,omitempty"`
 	// ClaudeAccountAliases are the names the choice keys may hold instead of an
@@ -265,9 +286,17 @@ type Config struct {
 	// a credential is a spending and data-egress grant (F12, D1628), which is
 	// why a repository may select among them and never add one.
 	Credentials []config.Credential `yaml:"credentials,omitempty"`
-	// Pools are named, ordered lists of those credentials with a strategy
-	// (spec §2). They are created where credentials are, and for the same
-	// reason.
+	// Pools are named, ordered lists of those credentials with a rule: the
+	// `strategy` they were written with, which still means what it means, and
+	// the `rule` that arrived with the routing table, which is served where it
+	// is written and resolved from the strategy where it is not (spec §2, R5,
+	// R21). A pool also names the `principal` it belongs to, which is optional
+	// until the migration writes one (MG2), and a `threshold`, which validation
+	// refuses wherever it is written: no rule set this release ships acts on one,
+	// so the member arrives with the rule that reads it (PL8). An installation
+	// that has not migrated carries neither, and a pool moves only where its
+	// owner wrote a rule (config.Pool.RuleOrDefault). They are created where
+	// credentials are, and for the same reason.
 	Pools []config.Pool `yaml:"pools,omitempty"`
 	// SubscriptionSpread is whether a run may spread across two or more Claude
 	// OAuth subscription credentials at all (D1622, D1636): the D875 switch
@@ -375,7 +404,7 @@ type Config struct {
 	ClaudeAccountAuto bool `yaml:"claude_account_auto,omitempty"`
 	// ProjectSecrets are the reserved secret names (config.ReservedSecrets)
 	// the owner has opted into project-wide storage for, by allow-listed
-	// repository (design docs/design/project-secrets.md §3). Only the owner
+	// repository (design docs/project-secrets/spec.md §3). Only the owner
 	// sets them, here, never in fugaro.yaml. A provider's or a named Claude
 	// account's own allow_data_to governs its own secret instead; neither
 	// can collide with a ReservedSecrets key in the first place, so
@@ -602,7 +631,7 @@ type Config struct {
 	// from here, because a guardrail is not the writer's to remove.
 	Orchestrator *policy.Orchestrator `yaml:"orchestrator,omitempty"`
 	// Profiles are the project's job profiles (design
-	// docs/design/project-centric.md §4.1), by name: what a Cloud Run job is
+	// docs/project-centric/spec.md §4.1), by name: what a Cloud Run job is
 	// deployed as, and what a repository's workflow selects with job_profile.
 	// They are the owner's to write, here, never in fugaro.yaml, and
 	// `fugaro project policy publish` copies them into the policy node, where
@@ -743,7 +772,7 @@ type Config struct {
 	// the value itself never enters the shared config a launcher can write
 	// (Shared drops it, and the publisher refuses the key). A floor a
 	// launcher could write — in the published shared config, in the project
-	// layer or in the task (docs/design/bucket-iam.md §10 L1, L2) — would be
+	// layer or in the task (docs/bucket-iam/spec.md §10 L1, L2) — would be
 	// that launcher deciding how much review it gets, which is the one thing
 	// the floor exists to prevent.
 	//
@@ -998,7 +1027,7 @@ func (p WorkspacePin) IsZero() bool { return p == WorkspacePin{} }
 // WorkspaceMember is one member of a workspace, as the workspace owner
 // declares it: how the workspace's own service reaches that member. It is the
 // owner's declaration and never the member's, and every value in it is one the
-// owner writes by hand (`fugaro workspace member add`).
+// owner writes by hand (`fugaro workspace project add`).
 type WorkspaceMember struct {
 	// Repos are the repositories this member contributes to the workspace, as
 	// `owner/repo`. Empty for a member that contributes none.
@@ -1057,7 +1086,7 @@ type WorkspaceJobAccount struct {
 }
 
 // IsZero reports whether the entry declares nothing at all, which is the state
-// validateWorkspace refuses and `fugaro workspace member rm` reads as "there is
+// validateWorkspace refuses and `fugaro workspace project rm` reads as "there is
 // no entry to remove". It is one rule with two readers, so the loader and the
 // command cannot come to different answers about an entry that is there and
 // says nothing.
@@ -1097,6 +1126,18 @@ type WorkspaceShared struct {
 	// file does not know is refused rather than read as a model one, because
 	// the kind is what decides whether Covers is required.
 	Kind string `yaml:"kind"`
+	// AllMembers offers the credential to every member of the workspace, the
+	// ones that join later included (D2977). It is exclusive with Projects and
+	// one of the two is written (contract C3's rule 5): an entry offered to the
+	// members it names carries Projects and no AllMembers at all, and one
+	// offered to every member carries AllMembers and no Projects. The reader
+	// refuses a node that carries both rather than picking one, because a
+	// reader that picked would be deciding who may be served a credential.
+	//
+	// An entry offered to every member is bounded by the workspace's ceiling
+	// alone, which is why the workspace's own cap has to be stated before
+	// `fugaro workspace share --all-members` writes one (D2977).
+	AllMembers bool `yaml:"all_members,omitempty"`
 	// Projects are the member projects this credential may be served to, as
 	// project names. It is the workspace's own allow-list, and the effective
 	// set is this list intersected with the member's own policy (D1298): a
@@ -1189,6 +1230,30 @@ func (c *Config) choiceRefProblem(name string) string {
 // allow-list, is the shape this method exists to keep out of the tree.
 func (c *Config) ResolveAccount(name string) (account, alias string) {
 	return config.ResolveAccountAlias(c.ClaudeAccountAliases, name)
+}
+
+// RunsOnDefaultClaudeAccount reports whether any run of this project holds the
+// unsuffixed default Claude account: its default_claude_account key names that
+// account or names nothing, or one of its stage keys does. An installation
+// whose runs are all on a named account answers false, and the bare
+// claude-oauth-token is then a token no run of it holds — the name the secrets
+// stage must not ask for, and the one Readiness must not hold a job back for.
+// Which account a run holds is this key's and the stage keys' answer and
+// nothing else's: neither a repository's file nor the project layer may name
+// one (DefaultClaudeAccount's comment), so the answer is total here.
+func (c *Config) RunsOnDefaultClaudeAccount() bool {
+	if c == nil {
+		return true
+	}
+	if name, _ := c.ResolveAccount(c.DefaultClaudeAccount); name == "" || name == config.DefaultClaudeAccount {
+		return true
+	}
+	for _, choice := range c.ClaudeAccountStages {
+		if name, _ := c.ResolveAccount(choice.ClaudeAccount); name == "" || name == config.DefaultClaudeAccount {
+			return true
+		}
+	}
+	return false
 }
 
 // Mailbox is the mailbox block: what the mailbox consumer needs from the
@@ -1364,7 +1429,7 @@ const (
 
 // Budget is the project's per-run model spend guard.
 type Budget struct {
-	Mode      string  `yaml:"mode"`        // off | observe | enforce; "" is off
+	Mode      string  `yaml:"mode"`        // observe | enforce; "" is observe, and the word that was a mode loads only for the update that rewrites it
 	PerRunUSD float64 `yaml:"per_run_usd"` // enforce: 0 < x <= 100000; observe: >= 0
 	// MaxRunTokens is the ceiling on a run's total tokens; 0 is none. A
 	// repository's fugaro.yaml may only lower it.
@@ -1623,11 +1688,19 @@ func (c *Config) UpdateCheckEnabled() bool {
 	return *c.UpdateCheck
 }
 
-// BudgetMode is the budget's mode: "off" when there is no budget block or
-// its mode is empty.
+// BudgetMode is the budget's mode as this installation resolved it: observe
+// when there is no budget block or its mode is empty, the mode it writes
+// otherwise (AB2, R3, D3010).
+//
+// The word that was a mode until this release is answered as written and never
+// landed on observe here: `fugaro update` reads the file's own bytes for the
+// rewrite that removes it, and this answer is what the update's listing looks
+// at to say so (localcfg's RemovedBudgetMode, F22). Its readers are the ones
+// that need a mode to act on — the launcher, `fugaro doctor`, the job's
+// environment — and none of them is a door that accepts text a person wrote.
 func (c *Config) BudgetMode() string {
 	if c.Budget == nil || c.Budget.Mode == "" {
-		return BudgetOff
+		return BudgetObserve
 	}
 	return c.Budget.Mode
 }
@@ -1687,8 +1760,11 @@ func (c *Config) Overrides() (pricing.Overrides, error) {
 // validateBudget checks the budget block and the model prices.
 func (c *Config) validateBudget(bad func(string, ...any)) {
 	if b := c.Budget; b != nil {
-		if b.Mode != "" && !policy.ValidMode(b.Mode) {
-			bad("budget.mode %q must be off, observe or enforce", b.Mode)
+		// The word that was a budget mode is read before it is judged, so a
+		// config that says it still loads for the update that rewrites it
+		// (F22; load_removed_mode.go).
+		if b.Mode != "" && !acceptedBudgetMode(b.Mode) {
+			bad("budget.mode %q must be observe or enforce; leave the key out for observe", b.Mode)
 		}
 		if b.MaxRunTokens < 0 {
 			bad("budget.max_run_tokens %d: it must not be negative (0 is none)", b.MaxRunTokens)
@@ -1809,7 +1885,7 @@ const SecretExpiryLayout = "2006-01-02"
 
 // Batch is the Cloud Batch backend's installation configuration: the facts a
 // run's VM and job are built and placed from (design
-// docs/design/compute-backend.md §4.4, plan 2026-10-19-compute-backend.md
+// docs/compute-backend/spec.md §4.4, plan 2026-10-19-compute-backend.md
 // Task 8 step 2). It is read in one place — internal/cli/cloud.go's Batch
 // opener, which builds internal/backend/batch.Options from it — and the
 // backend name is what selects that opener: since the enable task (plan
@@ -2085,9 +2161,11 @@ type Repo struct {
 	// GitHubAppID is the repository's GitHub App, for GitHub
 	// repositories. It is not a secret.
 	GitHubAppID string `yaml:"github_app_id,omitempty"`
-	// Vertex records that one of the repository's workflows authenticates
-	// its agent through Vertex AI (agent.auth: vertex), so fugaro update
-	// enables the Vertex AI API. fugaro update sets it.
+	// Vertex records that the repository's runs reach Vertex AI at all —
+	// its file's agent.auth: vertex, or a chain of the project's own
+	// routing table that may serve it naming Vertex — so fugaro update
+	// enables the Vertex AI API. fugaro update sets it, from
+	// infra.RepoSpec.UsesVertex.
 	Vertex bool `yaml:"vertex,omitempty"`
 	// CredentialsServiceReady records that this repository's root has been
 	// applied with the installation's credentials service ON — its bundle
@@ -2543,7 +2621,7 @@ func legacyBaseImageKey(kind string) string {
 
 // oldProjectKey is the refusal of a local config of before project
 // configs, whose project: was the GCP project.
-const oldProjectKey = "local config: `project:` is now `gcp_project:`, and the file lives at projects/<name>.yaml with name: <name>; see docs/design/m9-budget-and-dashboard.md §13.1"
+const oldProjectKey = "local config: `project:` is now `gcp_project:`, and the file lives at projects/<name>.yaml with name: <name>; see docs/m9-budget-and-dashboard/spec.md §13.1"
 
 // oldMailboxKeychainItem refuses the shape decision 9 replaced: one item name
 // for the project, where the block now holds one per pairing. It is read off
@@ -3286,6 +3364,15 @@ func (c *Config) validate() error {
 	for _, p := range config.ValidatePools(c.Pools, c.Credentials) {
 		bad("%s: %s", p.Path, p.Message)
 	}
+	// And the pool that carries the cascade's marker is held to the rule the
+	// marker is read under (D3064 as amended): it is the pool `fugaro update`
+	// migrates out of a project whose cascade serves, so a file that turns no
+	// cascade on may not carry one. The routing is the file's own block, which
+	// is the statement that decides whether a run of this installation's
+	// projects is cascaded at all, and it is validated just above.
+	for _, p := range config.ValidateCascadePools(c.Pools, c.Routing) {
+		bad("%s: %s", p.Path, p.Message)
+	}
 	for _, p := range config.ValidateCrafts(c.Crafts) {
 		bad("%s: %s", p.Path, p.Message)
 	}
@@ -3879,8 +3966,17 @@ func validateWorkspace(c *Config, bad func(string, ...any)) {
 					bad("workspace_shared.%s: covers lists %s twice", name, why)
 				}
 			}
-			if len(s.Projects) == 0 {
-				bad("workspace_shared.%s names no project: a written entry states the members it may be served to, and an empty list is refused rather than read as every member", name)
+			// Who the entry may be served to is one of two declarations and
+			// never both (contract C3's rule 5): the members it names, or every
+			// member of the workspace. A file that carried both, or neither, is
+			// refused here as the node's own reader refuses it — an entry read
+			// as one of the two when the owner wrote the other would be a pool
+			// wider or narrower than the declaration beside it.
+			switch {
+			case s.AllMembers && len(s.Projects) > 0:
+				bad("workspace_shared.%s carries both all_members and projects: they are exclusive — an entry offered to the members it names carries `projects` and no all_members, and one offered to every member carries `all_members: true` and no projects", name)
+			case !s.AllMembers && len(s.Projects) == 0:
+				bad("workspace_shared.%s names no project and does not offer the credential to every member: a written entry states the members it may be served to — a list of `projects`, or `all_members: true` — and one that says neither is refused rather than read as every member", name)
 			}
 			for _, p := range s.Projects {
 				if !config.ProjectNameRE.MatchString(p) {
@@ -3892,6 +3988,12 @@ func validateWorkspace(c *Config, bad func(string, ...any)) {
 			}
 		}
 	}
+	// The routing table's own decode rules, which are the members a kind cannot
+	// use and nothing that decides anything about a chain: what a table is
+	// missing, or what it routes to a source that cannot reach a model, is
+	// routing.Problems' answer (RT3), reported by `fugaro validate` and refused
+	// by `fugaro routing set` — not a load of a file every member parses.
+	c.validateModelRouting(bad)
 }
 
 // duplicated is the first value a list holds twice, "" when it holds none

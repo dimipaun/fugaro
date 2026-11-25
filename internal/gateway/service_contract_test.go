@@ -134,6 +134,11 @@ func TestServiceConstantsMirrorCredsvc(t *testing.T) {
 		{"the probe's header", gateway.HeaderProbe, credsvc.HeaderProbe},
 		{"the slip's header", gateway.HeaderSlip, credsvc.HeaderSlip},
 		{"the claim secret's header", gateway.HeaderSlipClaim, credsvc.HeaderSlipClaim},
+		// The owner's header is a mirror like the rest, but the RULE it carries is not:
+		// gateway.ValidCredentialOwner is the one definition of it, and credsvc's
+		// validSlipOwner and maxLauncherSubDigits delegate to it rather than respelling
+		// it (the service imports the gateway; the gateway cannot import the service, F26).
+		{"the credential owner's header", gateway.HeaderCredentialOwner, credsvc.HeaderCredentialOwner},
 	}
 	for _, h := range headers {
 		if h.gateway != h.wire {
@@ -458,6 +463,29 @@ func TestServiceContractMirrorsCredsvcReadsWhatItWrites(t *testing.T) {
 		}
 		if detail := haltDetail(t, gw); detail != "" {
 			t.Errorf("an exhausted answer halted the run: %q", detail)
+		}
+	})
+
+	t.Run("slip_owner_removed", func(t *testing.T) {
+		// D3146's refusal, through the service's own writer: a call under a
+		// slip whose owner the roster no longer lists is halted naming the
+		// removal. It is the one word of this contract whose writer and reader
+		// are tested apart otherwise — the gateway's own reader by the
+		// runner's stand-in — so this holds the two ends to each other.
+		rec := httptest.NewRecorder()
+		credsvc.WriteWireError(rec, credsvc.StatusUnverified, credsvc.WireError{
+			Error:   credsvc.ErrorSlipOwnerRemoved,
+			Message: "the slip's owner is no longer on this workspace's roster",
+		})
+		h := newServiceMirror(t, func(*http.Request, []byte) anthropicfake.Reply {
+			return anthropicfake.Reply{Status: rec.Code, Body: rec.Body.String()}
+		})
+		status, _ := postMirror(t, h)
+		if status != http.StatusForbidden {
+			t.Fatalf("the refusal was answered %d", status)
+		}
+		if detail := haltDetail(t, h); !strings.Contains(detail, gateway.ErrorSlipOwnerRemoved) || !strings.Contains(detail, "roster") {
+			t.Errorf("the gateway halted %q, want the removal named", detail)
 		}
 	})
 }

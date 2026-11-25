@@ -13,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -141,13 +142,28 @@ func TestRunnerHaltsOnADeniedReadWhenTheMarkerExists(t *testing.T) {
 	}
 }
 
-// The mode-off path (B1): the job's own mode is off and the run has no
-// credential to read a policy with, so nothing is read, no session opens and
-// the environment ceiling applies. This is safe for a launcher-minted token —
-// one is minted whenever the project has published a policy, mode off included
-// (internal/cli's mint decision), so a mode-off run with no token is a project
-// with nothing published.
-func TestRunnerWithNoCredentialTakesTheModeOffPath(t *testing.T) {
+// The path with nothing to read (B1, AB1a): a launch the launcher minted
+// nothing for opens no session and holds the environment ceiling. The mode used
+// to be what said so, and from AB1a on every run is accounted for (D3009, R3),
+// so what says it now is the launcher's own marker — evidence about this launch
+// rather than about the mode: the launcher mints a token whenever it can see a
+// shared budget or a published policy, so markless is an installation whose
+// mode is off or unset and which has published nothing, and such a run has
+// nothing to read. The three subtests below pin the shapes it takes.
+//
+// "Minted nothing" is read from two facts, and both are needed: the launch
+// carries no marker, and the job's own environment names no live mode (a
+// launcher mints for what it can see, and internal/infra writes a mode into the
+// job only for an installation that mints). The other absences stay refusals: a
+// job that names a database and carries no web API key stops on the missing key
+// (the third subtest), a marked job's absent token stops (the fourth; the
+// marked form is TestRunnerWithTheMintedMarkerRefusesAMissingToken), and so
+// does a markless one whose job names a live mode
+// (TestTheMissingTokenRefusalWithoutTheMarkerReadsRight): a job launched with
+// its token's override dropped, which no launcher does and which must not run
+// unaccounted. The markless arm with no live mode is the one still standing,
+// and AB4 is what closes it, by making the launcher mint on every launch.
+func TestALaunchThatMintedNothingOpensNoSession(t *testing.T) {
 	t.Run("the job carries no backend", func(t *testing.T) {
 		g := newGW(t, gwConfig(t, ""), "off", "")
 		h := withBucket(g.harness)
@@ -156,7 +172,7 @@ func TestRunnerWithNoCredentialTakesTheModeOffPath(t *testing.T) {
 			t.Fatalf("rec = %+v, err = %v", rec, err)
 		}
 		if rec.Budget != nil {
-			t.Fatalf("a budget-off run with no backend joined the shared budget: %+v", rec.Budget)
+			t.Fatalf("a run with no database anywhere joined the shared budget: %+v", rec.Budget)
 		}
 		ok, err := h.Exists(context.Background(), token.ObjectKey(repoSlug, runID))
 		if err != nil || ok {
@@ -164,6 +180,16 @@ func TestRunnerWithNoCredentialTakesTheModeOffPath(t *testing.T) {
 		}
 	})
 	t.Run("the bucket holds no token", func(t *testing.T) {
+		// A database, its key, no marker — a launch the launcher minted nothing
+		// for — and no token object: the run cannot tell a bucket aged out from
+		// a launch that never minted one, so the marker is what it reads, and
+		// markless is "there was nothing here" (B1). This is the one arm AB1a
+		// left standing, and it is the deployment it exists for: the launcher
+		// mints nothing for an installation whose mode is off or unset which
+		// has published no policy, and the refusal that used to stand here
+		// named fugaro update as its fix, which cannot change what that
+		// launcher mints until AB4 makes every launch mint. The run holds the
+		// environment ceiling, as it did before AB1a.
 		b := newBK(t, gwConfig(t, ""), "off", "")
 		b.unmarked()
 		if err := token.DeleteObject(context.Background(), b.bucket, repoSlug, runID); err != nil {
@@ -171,13 +197,13 @@ func TestRunnerWithNoCredentialTakesTheModeOffPath(t *testing.T) {
 		}
 		rec, err := b.run(t, implement("feature"), review("ship", 0))
 		if err != nil || rec.Status != runstore.StatusSucceeded || rec.Budget != nil {
-			t.Fatalf("rec = %+v, err = %v", rec, err)
+			t.Fatalf("rec = %+v, err = %v: a markless launch with no token has nothing to read", rec, err)
 		}
 		if n := len(b.db.Credentials()); n != 0 {
-			t.Fatalf("a run with its budget off made %d database requests", n)
+			t.Fatalf("a run with nothing to read made %d database requests", n)
 		}
 		if b.itk.Exchanges() != 0 {
-			t.Fatal("a run with its budget off and no token exchanged one")
+			t.Fatal("a run with nothing to read exchanged a token")
 		}
 	})
 	t.Run("the job carries no web API key", func(t *testing.T) {
@@ -185,37 +211,41 @@ func TestRunnerWithNoCredentialTakesTheModeOffPath(t *testing.T) {
 		// independently (internal/infra's job environment) and the key is
 		// optional in the operator's config (internal/localcfg), so a job can
 		// name a database and carry no way to exchange a token with it. The
-		// key is a credential, and on a budget-off job its absence is the
-		// mode-off path, like the two cases above: the run cannot tell "no
-		// policy" from "no key", so the refusal is the launcher's readiness
-		// gate, and a run that halts here is halting on a credential it was
-		// never given (B1).
+		// key is a credential: from AB1a on its absence is never the reading
+		// "there is nothing here to account for" (D3009, R3) — the run stops,
+		// naming the variable the deploy is missing, before it looks at the
+		// bucket at all.
 		b := newBK(t, gwConfig(t, ""), "off", "")
 		b.unmarked()
 		b.deps.Backend.APIKey = ""
 		rec, err := b.run(t, implement("feature"), review("ship", 0))
-		if err != nil || rec.Status != runstore.StatusSucceeded || rec.Budget != nil {
-			t.Fatalf("rec = %+v, err = %v: a mode-off job with no key is the mode-off path", rec, err)
+		if err == nil || rec.Status != runstore.StatusInfraError || rec.Budget != nil {
+			t.Fatalf("rec = %+v, err = %v: a job that names a database and carries no key must stop", rec, err)
+		}
+		if !strings.Contains(err.Error(), runner.FirebaseAPIKeyEnv+" is not set") || !strings.Contains(err.Error(), runner.RTDBURLEnv) {
+			t.Errorf("the refusal does not name the variable the deploy is missing: %v", err)
 		}
 		if n := len(b.db.Credentials()); n != 0 {
-			t.Fatalf("a run with its budget off made %d database requests", n)
+			t.Fatalf("a run with no key made %d database requests", n)
 		}
 		if b.itk.Exchanges() != 0 {
-			t.Fatal("a run with its budget off and no key exchanged a token")
+			t.Fatal("a run with no key exchanged a token")
 		}
 		// The key is checked before the bucket read: the run did not even
 		// look at the token object.
 		if ok, err := b.bucket.Exists(context.Background(), token.ObjectKey(repoSlug, runID)); err != nil || !ok {
 			t.Fatalf("the run's token object is gone (exists = %v, err = %v)", ok, err)
 		}
+		if len(b.agent.calls) != 0 {
+			t.Fatal("a stage ran")
+		}
 	})
-	t.Run("the launcher's marker outranks the mode", func(t *testing.T) {
-		// The same job, launched by a launcher that minted: with the mode off
-		// the launcher mints only when the project has published a policy
+	t.Run("the launcher's marker outranks a missing credential", func(t *testing.T) {
+		// The same job, launched by a launcher that minted: the launcher mints
+		// only when the project has a shared budget or a published policy
 		// (internal/cli's budgetMintOn), so the marker says a policy exists
 		// and this run cannot read it. The missing credential is then the
-		// refusal, exactly as a missing token object is (M2), and never the
-		// mode-off path.
+		// refusal, exactly as a missing token object is (M2).
 		b := newBK(t, gwConfig(t, ""), "off", "")
 		b.deps.Backend.APIKey = ""
 		b.deps.Backend.TokenMarked = true
@@ -231,10 +261,13 @@ func TestRunnerWithNoCredentialTakesTheModeOffPath(t *testing.T) {
 
 // M2's regression test (security review of PR #379): the launcher that minted
 // this run's token says so in the execution's environment, and the marker
-// outranks the job's own mode. A mode-off job whose token object cannot be
-// read — gone, or behind a grant the job account lacks — must not read that as "this
-// project has published no policy" and go on with the environment ceiling while
-// the launcher minted a token precisely because a policy exists.
+// outranks the job's own mode. A job whose token object cannot be read — gone,
+// or behind a grant the job account lacks — must not read that as "this project
+// has published no policy" and go on with the environment ceiling while the
+// launcher minted a token precisely because a policy exists. From AB1a on the
+// markless form of the same state reads the same way (the second subtest): no
+// mode is off any more (D3009, R3), so an absent token is never "nothing to
+// account for".
 func TestRunnerWithTheMintedMarkerRefusesAMissingToken(t *testing.T) {
 	const policy = `{"version":9,"budget":{"mode":"enforce","per_run_usd":0.09}}`
 	t.Run("mode off", func(t *testing.T) {
@@ -273,10 +306,15 @@ func TestRunnerWithTheMintedMarkerRefusesAMissingToken(t *testing.T) {
 			t.Fatalf("the run went on without its token: calls = %d, rec = %+v", len(b.agent.calls), rec)
 		}
 	})
-	t.Run("no marker, the job's own mode off", func(t *testing.T) {
-		// The marker is the launcher's; a job without one is a launch that
-		// never minted (an installation with nothing published, or a local
-		// run), and it keeps today's behaviour exactly.
+	t.Run("no marker", func(t *testing.T) {
+		// The marker is the launcher's, and without one the absent token is
+		// the launcher's own answer that it minted nothing for this launch:
+		// nothing to read, so the run holds the environment ceiling, as it did
+		// before AB1a. This is the arm AB1a left standing (budgetClient's
+		// markless ErrNoToken case), and AB4 closes it by making the launcher
+		// mint on every launch. The mode is not what says which arm this is any
+		// more (D3009, R3) — the marker is — so the job's own mode going away
+		// changed nothing here.
 		b := policyRun(t, gwConfig(t, ""), "off", "", policy)
 		b.unmarked()
 		if err := token.DeleteObject(context.Background(), b.bucket, repoSlug, runID); err != nil {
@@ -284,19 +322,24 @@ func TestRunnerWithTheMintedMarkerRefusesAMissingToken(t *testing.T) {
 		}
 		rec, err := b.run(t, implement("feature"), review("ship", 0))
 		if err != nil || rec.Status != runstore.StatusSucceeded || rec.Budget != nil {
-			t.Fatalf("rec = %+v, err = %v: an unmarked mode-off run with no token is today's path", rec, err)
+			t.Fatalf("rec = %+v, err = %v: a markless launch with no token has nothing to read", rec, err)
 		}
 		if n := len(b.db.Credentials()); n != 0 {
-			t.Fatalf("an unmarked run with its budget off made %d database requests", n)
+			t.Fatalf("a run with nothing to read made %d database requests", n)
 		}
 	})
 }
 
-// The other half of the same refusal: a budget-on job whose token object
-// cannot be read and whose launch records no marker. It carries the same grant
-// and the same remedy, and this is the sentence the unbalanced parenthesis was
-// in for the other case too — one constant, two sentences, so a test of one of
-// them pins the shape of both.
+// The other sentence of the same refusal: a job whose own environment names a
+// live mode — enforce here, and internal/infra writes the mode into a job only
+// when it is observe or enforce, so the launcher of this installation mints —
+// launched with no marker and with its token object gone. The run cannot tell a
+// bucket aged out from a launch that never carried one, and the mode is what
+// keeps this from being the markless arm that runs on (budgetClient's
+// !liveMode case): a job of an installation that mints nothing carries no mode.
+// It carries the same grant and the same remedy, and this is the sentence the
+// unbalanced parenthesis was in for the other case too — one constant, two
+// sentences, so a test of one of them pins the shape of both.
 func TestTheMissingTokenRefusalWithoutTheMarkerReadsRight(t *testing.T) {
 	const policy = `{"version":9,"budget":{"mode":"enforce","per_run_usd":0.09}}`
 	b := policyRun(t, gwConfig(t, ""), "enforce", "5", policy, capScript(3)...)
@@ -425,7 +468,7 @@ func TestRunnerWithNoBackendAndAnUnreadableBucketStops(t *testing.T) {
 // noListBucket is the runs bucket as a job account sees it: its grant on
 // tokens/ is a conditioned objectViewer with no storage.objects.list, so GCS
 // answers its read of a missing token object with 403, not 404
-// (docs/design/bucket-iam.md §2.3, live check 7).
+// (docs/bucket-iam/spec.md §2.3, live check 7).
 func noListBucket(t *testing.T) (*gcpfake.GCS, *blobx.Bucket) {
 	t.Helper()
 	gcs := gcpfake.NewGCS(t)
@@ -492,7 +535,7 @@ func TestRunnerWithNoBackendAndAStrayTokenRefuses(t *testing.T) {
 // A present token object whose read is refused with a 403 — the job account
 // holds no grant on tokens/ — answers exactly what a missing object answers a
 // caller without list permission, so the bucket read cannot be the evidence
-// here (docs/design/budget-token-channel.md §4 principle 3: the marker is).
+// here (docs/budget-token-channel/spec.md §4 principle 3: the marker is).
 // Every launcher that writes under tokens/ seals the object and hands its key
 // to the execution as the marker (internal/cli's mintBudgetToken and
 // sealMarker), so the real form of this state carries the marker, and that run
@@ -810,6 +853,32 @@ func TestPolicyCarriedVersionHaltsTheRunWithTheUpdateRemedy(t *testing.T) {
 	}
 }
 
+// R4's own direction, and the one the fixtures above used to prove by accident:
+// a node that still says the word the budget mode's vocabulary dropped is not
+// one a run may read as "no mode" or as the observe it used to mean. The
+// release behind published one — it kept its version, because that step left no
+// bump behind (D3025, AB8a) — and a run that meets it, because `fugaro update`
+// has not run yet or an older CLI published it, is refused at bootstrap with
+// C1's one text, which names the fix (AB2, D3009, D3022). The node is the
+// operator's own to fix, so the refusal names it and offers nothing the run
+// cannot do: only the update rewrites it in place (F22), and the run is not the
+// update.
+func TestPolicyWithTheRemovedModeHaltsTheRunWithTheOneText(t *testing.T) {
+	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":9,"budget":{"mode":"off"}}`, capScript(3)...)
+	rec, err := b.run(t, implement("feature"))
+	if err == nil {
+		t.Fatalf("a policy node that says the word must stop the run: rec = %+v", rec)
+	}
+	for _, want := range []string{projectpolicy.PathShared(), policy.ModeOffRefusal} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if len(b.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded {
+		t.Fatalf("%d stages ran", len(b.agent.calls))
+	}
+}
+
 // Carried review item (d): a marker that is not an integer generation is a
 // user's node, named as itself — never read as "no marker", which would make a
 // project-centric installation a legacy one.
@@ -975,7 +1044,7 @@ func TestPolicySetsOnlyItsOwnKeys(t *testing.T) {
 	// alone and the node allows haiku and sonnet, so the run the job's own
 	// list would have refused goes through.
 	b = policyRun(t, gwConfig(t, ""), "off", "",
-		`{"version":9,"budget":{"mode":"off","allowed_models":["`+sonnet+`","`+haiku+`"]}}`, capScript(3)...)
+		`{"version":9,"budget":{"mode":"observe","allowed_models":["`+sonnet+`","`+haiku+`"]}}`, capScript(3)...)
 	b.deps.Spend = ceilingOf(t, runner.AllowedModelsEnv, haiku)
 	rec, err = b.run(t, implement("feature"), review("ship", 0))
 	if err != nil || rec.Status != runstore.StatusSucceeded {
@@ -1051,7 +1120,7 @@ func TestPolicyBudgetWithoutAModeHaltsTheRun(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), projectpolicy.PathShared()) {
 		t.Fatalf("a budget block with no mode must stop the run: err = %v, rec = %+v", err, rec)
 	}
-	for _, want := range []string{"mode", "off, observe or enforce", "leaves the budget block out"} {
+	for _, want := range []string{"mode", "observe or enforce", "leaves the budget block out"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}

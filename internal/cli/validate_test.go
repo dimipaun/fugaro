@@ -32,6 +32,12 @@ workflows:
   app: { commands: { build: sh build.sh, test: sh test.sh } }
 `
 
+// cliPinnedYAML is cliMinimalYAML with the three role models named, for the
+// tests that validate the file with a project config in reach: the price rules
+// hold in every mode now (AB3, D3020), so a file that names no model is refused
+// there before the warning the test is about.
+var cliPinnedYAML = strings.Replace(cliMinimalYAML, "workflows:", "agent:\n"+pinnedAgent+"\nworkflows:", 1)
+
 func writeConfig(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "fugaro.yaml")
@@ -317,25 +323,11 @@ func TestValidateAppliesPinsWhenBudgetOn(t *testing.T) {
 	}
 }
 
-func TestValidateSkipsPinsWhenBudgetOff(t *testing.T) {
-	for _, budget := range []string{"", "budget: { mode: off }\n"} {
-		path := budgetProject(t, budget, "  auth: api-key\n  model: sonnet")
-		if out, err := validateProblems(t, path); err != nil {
-			t.Fatalf("budget %q: %v %s", budget, err, out)
-		}
-	}
-	// No project config at all: nothing to say the budget is on.
-	isolateProjects(t, t.TempDir())
-	if out, err := validateProblems(t, writeConfig(t, cliMinimalYAML)); err != nil {
-		t.Fatalf("%v %s", err, out)
-	}
-}
-
 func TestValidateRefusesVertexEnforce(t *testing.T) {
 	pinned := "  auth: vertex\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }"
 	path := budgetProject(t, "budget: { mode: enforce, per_run_usd: 5 }\n", pinned)
 	out, err := validateProblems(t, path)
-	if ExitCode(err) != ExitUserError || !strings.Contains(out, "Vertex budgets are not supported yet: use budget.mode observe or off") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "Vertex budgets are not supported yet: use budget.mode observe for this repository") {
 		t.Fatalf("enforce: exit %d, out %q", ExitCode(err), out)
 	}
 	path = budgetProject(t, "budget: { mode: observe }\n", pinned)
@@ -531,8 +523,12 @@ func TestValidatePerRunWarningNamesTheDatabaseCaps(t *testing.T) {
 }
 
 func TestValidateWarnsOnLooserThanCeiling(t *testing.T) {
-	path := fileWithBudget(t, "budget: { mode: observe, per_run_usd: 5, max_run_tokens: 1000 }\n",
-		"budget: { mode: off, per_run_usd: 20 }\n", pinnedAgent+"\n  max_run_tokens: 9000")
+	// The looser mode is observe against an enforcing ceiling, which is the
+	// only pair left: until D3009 the file wrote off and the ceiling observed,
+	// and the word is refused where a document is read now (AB2, D3022), so
+	// the same warning is reached the other way round rather than not at all.
+	path := fileWithBudget(t, "budget: { mode: enforce, per_run_usd: 5, max_run_tokens: 1000 }\n",
+		"budget: { mode: observe, per_run_usd: 20 }\n", pinnedAgent+"\n  max_run_tokens: 9000")
 	out, errOut, err := execute(t, "validate", path)
 	if err != nil || !strings.Contains(out, "is valid") {
 		t.Fatalf("looser values are not problems: %v %q", err, out)
@@ -540,7 +536,7 @@ func TestValidateWarnsOnLooserThanCeiling(t *testing.T) {
 	for _, want := range []string{
 		"warning: budget.per_run_usd: 20 is above the project's ceiling of 5; the runner will use 5",
 		"warning: agent.max_run_tokens: 9000 is above the project's ceiling of 1000; the runner will use 1000",
-		"warning: budget.mode: off is looser than the project's observe; the runner will use observe",
+		"warning: budget.mode: observe is looser than the project's enforce; the runner will use enforce",
 	} {
 		if !strings.Contains(errOut, want) {
 			t.Errorf("stderr lacks %q:\n%s", want, errOut)
@@ -655,7 +651,12 @@ func TestValidateEnforceWithoutCapWarnsNoCap(t *testing.T) {
 func TestValidateNotOnDefaultBranchSaysSo(t *testing.T) {
 	isolateProjects(t, t.TempDir())
 	writeProject(t, "aurora", "proj-1234")
-	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), cliMinimalYAML)
+	// The file names its three role models: with the project's config in reach
+	// the price rules hold in every mode (AB3, D3020), so a file that names no
+	// model at all is refused before the note this test is about.
+	pinned := strings.Replace(cliMinimalYAML, "workflows:",
+		"agent:\n"+pinnedAgent+"\n  levels: { l2: { model: claude-opus-5-5 } }\nworkflows:", 1)
+	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), pinned)
 	testutil.Git(t, root, "add", ".")
 	testutil.Git(t, root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
 	testutil.Git(t, root, "branch", "-M", "main")
@@ -674,7 +675,7 @@ func TestValidateNotOnDefaultBranchSaysSo(t *testing.T) {
 		len(noPolicy.Warnings) != 1 || noPolicy.Warnings[0].Path != "workflows.app" {
 		t.Fatalf("no policy keys: %v out %q stderr %q", err, out, errOut)
 	}
-	withBudget := strings.Replace(cliMinimalYAML, "workflows:", "budget: { per_run_usd: 1 }\nworkflows:", 1)
+	withBudget := strings.Replace(pinned, "workflows:", "budget: { per_run_usd: 1 }\nworkflows:", 1)
 	if err := os.WriteFile(file, []byte(withBudget), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -729,7 +730,10 @@ func TestValidateRefusesCommittedVertexEnforceWithoutProjectConfig(t *testing.T)
 	if ExitCode(err) != ExitUserError || !strings.Contains(out, "agent.auth") || !strings.Contains(out, vertexBudgetRefusal) {
 		t.Fatalf("exit %d: %s", ExitCode(err), out)
 	}
-	for _, budget := range []string{"budget: { mode: observe }\n", "budget: { mode: off }\n", ""} {
+	// The word that was a mode until this release is not one of these: the file
+	// is refused at budget.mode with C1's one text, which is what
+	// internal/config's TestOffIsRefusedWithTheFix asserts (AB2, D3022).
+	for _, budget := range []string{"budget: { mode: observe }\n", ""} {
 		if out, _, err := execute(t, "validate", writeConfig(t, vertex(budget))); err != nil {
 			t.Fatalf("%q: %v %s", budget, err, out)
 		}
@@ -918,13 +922,21 @@ func TestValidateProviderModels(t *testing.T) {
 	if out, _, err = execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, "agent.auth: api-key") {
 		t.Fatalf("exit %d: %s", ExitCode(err), out)
 	}
-	// A provider model with the gateway off (budget mode off) is refused, as
-	// the runner refuses it.
+	// A project config that still says the word that was a mode carries no mode
+	// at all — localcfg reads a mode it cannot use as unset, so the update can
+	// rewrite the file (AB8b, F22) — and the run then resolves observe. So the
+	// provider pin is judged exactly as the observe row below judges it: same
+	// sentence, and never the gateway-off one, which no mode this release has
+	// reaches any more (AB2, D3009: the word is refused where a document is
+	// read, so a document that reached a run says one of the two modes).
 	path = budgetProject(t, "budget: { mode: off }\n"+validateProviderBlock, coder)
-	if out, _, err = execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, "needs the budget gateway") || !strings.Contains(out, "budget.mode to enforce") {
-		t.Fatalf("exit %d: %s", ExitCode(err), out)
+	if out, _, err = execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, "budget.mode enforce") || !strings.Contains(out, "fugaro budget set --global --mode enforce") {
+		t.Fatalf("the removed word: exit %d: %s", ExitCode(err), out)
+	} else if strings.Contains(out, "needs the budget gateway") {
+		t.Fatalf("the removed word was judged as the gateway's off: %s", out)
 	}
-	// Observe never refuses a call: a provider's dollars need enforce.
+	// A provider's dollars need enforce: observe accounts for a call and never
+	// refuses one, so the pin is refused with the mode that would carry it.
 	path = budgetProject(t, "budget: { mode: observe }\n"+validateProviderBlock, coder)
 	if out, _, err = execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, "budget.mode enforce") || !strings.Contains(out, "fugaro budget set --global --mode enforce") {
 		t.Fatalf("observe: exit %d: %s", ExitCode(err), out)
@@ -1107,7 +1119,7 @@ func TestValidateWarnsProviderSecretOffConvention(t *testing.T) {
 }
 
 // TestValidateNotesAnthropicKeyNeededOffline (design
-// docs/design/project-centric.md §6.1): a pin that goes direct to Anthropic
+// docs/project-centric/spec.md §6.1): a pin that goes direct to Anthropic
 // needs the Anthropic key, and validate says so offline -- whether the secret
 // has a version is a fact only the cloud knows -- naming the fix. A run whose
 // pins a provider may all serve gets no such note.
@@ -1374,10 +1386,23 @@ func TestValidatePrintsUnresolvedOffline(t *testing.T) {
 	// resolution is over the routes *this repository's* run carries
 	// (allow_data_to; routedProjectBlock names acme/sandbox): the same pin
 	// resolves, and the line is the resolution.
+	//
+	// This file names the pins a run behind the gateway must carry (AB1b,
+	// D3009, D3020): every api-key run has a gateway now, so validate judges a
+	// routed pin with the run's own provider rules and price rule for the first
+	// time here, and a routed config that leaves the mode unset is refused for
+	// the gateway a provider-served pin needs ("agent.models.coder is served by
+	// a provider, which needs the budget gateway: set budget.mode to enforce")
+	// or that names no background model at all — before the resolution line
+	// this test reads is printed. The state is the one the whole switch is
+	// read in, and TestValidateResolvesOverTheRoutesThisCheckoutCarries builds
+	// its files the same way.
+	const routed = "budget: { mode: enforce, per_run_usd: 5 }\n" +
+		"agent:\n  auth: api-key\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }\nworkflows:"
 	isolateProjects(t, t.TempDir())
 	projectRouting(t, routedProjectBlock+routedSwitchBlock)
 	inCheckoutOf(t, "acme/sandbox")
-	path = writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1))
+	path = writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", routed, 1))
 	_, errOut, err = execute(t, "validate", path)
 	if err != nil {
 		t.Fatalf("validate: %v\n%s", err, errOut)
@@ -1460,10 +1485,12 @@ func TestValidateResolvesOverTheRoutesThisCheckoutCarries(t *testing.T) {
 // when its gateway is on. internal/runner's applyRouting returns before
 // CheckRouting when !gatewayOn() (the mutation
 // TestRoutingDoesNothingWithTheGatewayOff exists to catch), and gatewayOn is
-// the budget being on (observe or enforce) and the credential's being a model
-// API's (api-key or vertex). The sibling refusal in the same function is gated
-// on the mode, so the two halves of one function disagreed about whether
-// routing exists without a gateway (D11, design §6.2).
+// the credential's being one the gateway carries — api-key, vertex or cascade,
+// in every mode (AB1b, D3009) — so the state a run of this configuration has no
+// gateway in is the credential's own now, and no longer the budget's. The
+// sibling refusal in the same function is gated on the mode, so the two halves
+// of one function disagreed about whether routing exists without a gateway
+// (D11, design §6.2).
 //
 // A configuration whose runs have no gateway is not a failing one: the switch
 // is inert, the pins keep their Claude IDs, and the line is a note that says
@@ -1474,8 +1501,8 @@ func TestValidateResolvesOverTheRoutesThisCheckoutCarries(t *testing.T) {
 // certain halt in was read off gatewayOn alone, and applyRouting returns before
 // CheckRouting for two more states of its own — via: auto under a Vertex
 // credential (TestAutoDoesNotRouteAVertexRun), and via: auto with an Anthropic
-// API key stored in the job. The four states are one table here, and the
-// difference between them is why the switch reaches no run.
+// API key stored in the job. The states are one table here, and the difference
+// between them is why the switch reaches no run.
 func TestValidateDoesNotClaimAHaltWithoutAGateway(t *testing.T) {
 	const budget = "budget: { mode: enforce, per_run_usd: 5 }\n"
 	const observe = "budget: { mode: observe }\n"
@@ -1487,14 +1514,17 @@ func TestValidateDoesNotClaimAHaltWithoutAGateway(t *testing.T) {
 	}
 	// routedProjectBlock admits acme/sandbox only and the switch names the
 	// model, so a run of acme/other carries no route for it: the state the rule
-	// is about, in each of the four ways a run of this configuration does not
-	// reach the switch. Two of them are the gateway's (D11) and two are via:
-	// auto's own — the Vertex credential, which auto never routes, and the
-	// key-presence question, whose answer is a secret version in the cloud and
-	// no line in this file. validate read the second as a certain halt and the
-	// third as a route it could print (review finding on this rule).
+	// is about, in each of the ways a run of this configuration does not reach
+	// the switch. One is the gateway's (D11) and two are via: auto's own — the
+	// Vertex credential, which auto never routes, and the key-presence
+	// question, whose answer is a secret version in the cloud and no line in
+	// this file. validate read the second as a certain halt and the third as a
+	// route it could print (review finding on this rule).
 	for _, tc := range []struct{ name, budget, auth, switchBlock, want string }{
-		{"the budget is off", "", "api-key", routedSwitchBlock, "no run of this configuration has a gateway"},
+		// The mode is not one of the states any more (AB1b, D3009): an
+		// api-key run has a gateway whatever the mode says, so the state this
+		// table used to carry for "no budget named" — an api-key run with no
+		// gateway — is not a run that exists. The credential is what is left.
 		{"the credential is not a model API's", budget, "oauth", routedSwitchBlock, "no run of this configuration has a gateway"},
 		{"the credential is a Vertex one", observe, "vertex", autoSwitch, "via: auto does not route a Vertex run"},
 		{"via: auto under a model API's credential", budget, "api-key", autoSwitch, "key-presence driven"},
@@ -1652,9 +1682,13 @@ func TestValidateJudgesTheSwitchOverTheModelsItNames(t *testing.T) {
 			want:    "via: auto is key-presence driven",
 		},
 		{
+			// The gateway-less state is the credential's now (AB1b, D3009):
+			// an api-key run has a gateway whatever the mode says, so an
+			// oauth one is what a run of this configuration with no gateway
+			// for the switch is.
 			name:    "a switch no run of this configuration has a gateway for",
 			project: otherRoute + namesSonnet,
-			agent:   claudePin("api-key", "claude-opus-5-5"),
+			agent:   claudePin("oauth", "claude-opus-5-5"),
 			want:    "no run of this configuration has a gateway",
 		},
 	} {
@@ -2248,7 +2282,7 @@ func TestValidateJudgesTheAllowListOfThePinsTheRunHas(t *testing.T) {
 
 // TestValidateNotesAClaudePinWithNoKeyAndNoSwitch is plan task 1b.3's second
 // requirement, design §6.2's safeguard: a project that routes Claude through a
-// provider — the owner docs/design/mixed-credentials.md §1 describes, an
+// provider — the owner docs/mixed-credentials/spec.md §1 describes, an
 // OpenRouter key and no Anthropic one — and pins a Claude model the switch
 // leaves on the direct route is told so, and the line names the one write that
 // sends the call to that route.
@@ -3089,7 +3123,7 @@ func TestReviewFloorUnpublishableWarns(t *testing.T) {
 		}
 		return got
 	}
-	_, errOut, err := execute(t, "validate", writeConfig(t, cliMinimalYAML))
+	_, errOut, err := execute(t, "validate", writeConfig(t, cliPinnedYAML))
 	if err != nil {
 		t.Fatalf("a floor nothing can publish is valid: %v (%q)", err, errOut)
 	}
@@ -3098,7 +3132,7 @@ func TestReviewFloorUnpublishableWarns(t *testing.T) {
 		t.Fatalf("floor warnings = %q (stderr %q)", got, errOut)
 	}
 	// --json carries it as a warning, never a problem.
-	out, _, err := execute(t, "validate", "--json", writeConfig(t, cliMinimalYAML))
+	out, _, err := execute(t, "validate", "--json", writeConfig(t, cliPinnedYAML))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3174,10 +3208,15 @@ func reviewInstallation(t *testing.T, naming bool, local, agent, fileBlock strin
 		local += "claude_accounts:\n  team-a:\n    allow_data_to:\n      - acme/sandbox\n"
 	}
 	projectRouting(t, local)
-	body := cliMinimalYAML
+	// The three role pins are always written, whatever the caller's own agent
+	// lines are: a file that names none is refused once the price rules hold in
+	// every mode (AB3, D3020), and the notes below are about a file a run would
+	// start.
+	lines := pinnedAgent + "\n"
 	if agent != "" {
-		body = strings.Replace(cliMinimalYAML, "workflows:", "agent:\n"+agent+"\nworkflows:", 1)
+		lines = agent + "\n" + lines
 	}
+	body := strings.Replace(cliMinimalYAML, "workflows:", "agent:\n"+lines+"workflows:", 1)
 	return writeConfig(t, body+fileBlock)
 }
 

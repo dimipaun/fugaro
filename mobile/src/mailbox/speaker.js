@@ -31,8 +31,13 @@
 // `{ ok: true }` when the text has been spoken to the end, and a refusal when
 // it was not -- an interrupted utterance, a missing audio route, a text the
 // engine cannot voice. A refusal is not an error to log: the client's answer
-// is to leave the message unacked, so the next pass tries again. Nothing in
-// this module reads a clock, a device or a network.
+// is to leave the message unacked, so the next pass tries again. The optional
+// second argument is the client's word on WHAT it is saying -- today only the
+// refusal sentence the app says to the owner when their message was not sent
+// (`client.js`'s `REFUSAL_SPEECH`) -- and it is provenance rather than audio:
+// a port that does not keep a conversation ignores it, and the one that does
+// (`src/text/transcript.js`) uses it to leave the app's own words out of the
+// agent's. Nothing in this module reads a clock, a device or a network.
 
 /** A speak that did not happen, and the one input refusal. */
 export const SPEAK_CODES = Object.freeze({
@@ -64,6 +69,9 @@ export class MemorySpeaker {
    * Speak one reply.
    *
    * @param {unknown} text
+   * @param {object} [speech] the client's word on what it is saying: ignored
+   *   here, because this port answers one question and keeps no conversation
+   *   (the header says what the argument is for)
    * @returns {Promise<{ ok: true } | { ok: false, code: string, field: string }>}
    */
   async speak(text) {

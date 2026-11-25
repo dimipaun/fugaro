@@ -13,7 +13,7 @@ import (
 // mix credentials" rule for exactly one case, and the owner's ruling of
 // 2026-11-05 widens the rung that may name the account; these tests are what
 // hold the documents that state both to the rule: the design note that
-// records it (docs/design/mixed-credentials.md, whose §11 is new), the
+// records it (docs/mixed-credentials/spec.md, whose §11 is new), the
 // credential section and the refusal list of the user doc
 // (docs/multi-model.md), SECURITY.md's residual risk, and — since the tasks
 // B1-B6 shipped in 0.19.0 — the repository's own fugaro.yaml comment and the
@@ -86,7 +86,7 @@ func rungTwoKeys(stages []string) string {
 // serve, the second-provider refusal, the threat model and the failure
 // behaviour the tasks B1-B6 follow.
 func TestDocsMixedCredentialsRecordsTheRuling(t *testing.T) {
-	const path = "docs/design/mixed-credentials.md"
+	const path = "docs/mixed-credentials/spec.md"
 	section := flattenDoc(docSection(t, path, readDoc(t, path), "## 11. "))
 
 	// The stages are read from the recipe's own step names, so a step renamed
@@ -267,7 +267,7 @@ func TestDocsMixedCredentialsRecordsTheRuling(t *testing.T) {
 // count it states and on the two test names, which is exactly the mistake the
 // list made.
 func TestDocsMixedCredentialsCorrectsTheStaleMissingList(t *testing.T) {
-	const path = "docs/design/mixed-credentials.md"
+	const path = "docs/mixed-credentials/spec.md"
 	section := flattenDoc(docSection(t, path, readDoc(t, path), "## 3. Path A"))
 	for _, want := range []string{
 		// The corrected list: one gap, and it is the live check.
@@ -325,7 +325,7 @@ func TestDocsMultiModelRecordsTheReviewAccountException(t *testing.T) {
 		"`adversarial`",
 		"`triage`",
 		"`review_first`",
-		"design/mixed-credentials.md",
+		"mixed-credentials/spec.md",
 		// The bullet names the keys that decide the mix, so a reader who meets
 		// the rule here is sent to the stage's own key for all three stages and
 		// not only for the reviews.
@@ -355,7 +355,7 @@ func TestDocsMultiModelRecordsTheReviewAccountException(t *testing.T) {
 		"`allow_data_to`",
 		"the runner's environment",
 		"allow-list",
-		"design/mixed-credentials.md",
+		"mixed-credentials/spec.md",
 		// The two keys that admit the mix, and the condition on the second: the
 		// project default an oauth run uses for every stage is a way in for the
 		// three mixed stages where their own model is an Anthropic one, and no
@@ -457,7 +457,7 @@ func TestDocsMultiModelNamesTheReviewOnTheRunsOwnKey(t *testing.T) {
 		"`credential: oauth`",
 		"`stage_accounts`",
 		"no cap of the gateway's bounds it",
-		"design/mixed-credentials.md",
+		"mixed-credentials/spec.md",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("%s's %q never says %q: the configuration §4 shows runs its review on the run's own key, and the section is where a reader learns which credential pays for it and what that costs", path, heading, want)
@@ -485,7 +485,7 @@ func TestSecurityMdStatesTheMixedRunResidual(t *testing.T) {
 		"the same exposure class",
 		"no dollar cap of the gateway's on the stages that use it",
 		"revocable at the account",
-		"design/mixed-credentials.md",
+		"mixed-credentials/spec.md",
 		// The ruling is a ruling, and the mechanism it rules on shipped: a
 		// security document that describes a built mechanism as unbuilt, inside
 		// a list of today's gaps, tells a reader their exposure is smaller than
@@ -519,7 +519,7 @@ func TestSecurityMdStatesTheMixedRunResidual(t *testing.T) {
 // sentence a reader is sent to when the third stage is dropped.
 func TestNoPageEnumeratesTheMixShort(t *testing.T) {
 	for _, path := range []string{
-		"docs/design/mixed-credentials.md",
+		"docs/mixed-credentials/spec.md",
 		"docs/multi-model.md",
 		"SECURITY.md",
 		"fugaro.yaml",
@@ -562,7 +562,7 @@ func TestNoPageEnumeratesTheMixShort(t *testing.T) {
 // test exists for: it makes an owner who does have the setting believe they do
 // not, and an agent believe a shipped refusal is still to come.
 func TestDocsMixedCredentialsRecordsWhatShipped(t *testing.T) {
-	const path = "docs/design/mixed-credentials.md"
+	const path = "docs/mixed-credentials/spec.md"
 	doc := readDoc(t, path)
 
 	stale := "Nothing here is built"
@@ -658,7 +658,7 @@ func TestFugaroYAMLStatesTheShippedReviewSettings(t *testing.T) {
 	for _, want := range []string{
 		"D721",
 		"stages.<stage>.claude_account",
-		"docs/design/mixed-credentials.md",
+		"docs/mixed-credentials/spec.md",
 		"Check 290",
 	} {
 		if !strings.Contains(comment, want) {

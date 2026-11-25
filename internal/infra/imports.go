@@ -37,6 +37,13 @@ type Imports struct {
 	// never shrink under prevent_destroy (N3). The caller writes it back
 	// onto the spec it plans.
 	ProjectSecrets map[string]string
+	// LogBucketLocation is where the installation's log bucket already is,
+	// found by listing the project's buckets in every location because a
+	// bucket's location cannot be derived from its ID (R5, F10). The caller
+	// writes it back onto the spec it plans, so the plan names the bucket's
+	// own location rather than the mapping's; it is empty when there is no
+	// bucket, and the spec's own — place.For's answer — then stands.
+	LogBucketLocation string
 	// Notes are things the user should know that don't stop the plan.
 	Notes []string
 }
@@ -110,11 +117,14 @@ var importTable = map[importKind]struct{ to, id string }{
 	importBuildSubmitterRole: {"module.installation.google_project_iam_custom_role.build_submitter", "projects/{project}/roles/{name}"},
 	importTagMoverRole:       {TagMoverRoleAddress, "projects/{project}/roles/{name}"},
 	importSchedulerSA:        {"module.installation.google_service_account.scheduler", "projects/{project}/serviceAccounts/{name}"},
-	importLogBucket:          {LogBucketAddress, "projects/{project}/locations/global/buckets/{name}"},
-	importFirebaseDB:         {"module.firebase.google_firebase_database_instance.this", "projects/{project}/locations/{region}/instances/{name}"},
-	importAPIKey:             {"module.firebase.google_apikeys_key.web", "projects/{project}/locations/global/keys/{name}"},
-	importSignerSA:           {"module.firebase.google_service_account.signer", "projects/{project}/serviceAccounts/{name}"},
-	importMinterRole:         {"module.firebase.google_project_iam_custom_role.token_minter", "projects/{project}/roles/{name}"},
+	// For the log bucket {region} is its LOCATION, not the installation's
+	// region: a bucket's location is permanent and discovery reads it off the
+	// bucket it found by ID (R5, F10).
+	importLogBucket:  {LogBucketAddress, "projects/{project}/locations/{region}/buckets/{name}"},
+	importFirebaseDB: {"module.firebase.google_firebase_database_instance.this", "projects/{project}/locations/{region}/instances/{name}"},
+	importAPIKey:     {"module.firebase.google_apikeys_key.web", "projects/{project}/locations/global/keys/{name}"},
+	importSignerSA:   {"module.firebase.google_service_account.signer", "projects/{project}/serviceAccounts/{name}"},
+	importMinterRole: {"module.firebase.google_project_iam_custom_role.token_minter", "projects/{project}/roles/{name}"},
 }
 
 // newImport is the import of a resource of kind k.

@@ -16,6 +16,11 @@ import (
 // The jobs of acme-app's web and api workflows.
 var webJob, apiJob = JobName("acme-app", "web"), JobName("acme-app", "api")
 
+// historyJob is the history job's own name (internal/infra.HistoryJob),
+// spelled rather than imported: this package's tests do not import
+// internal/infra, and StartJob reads no name but the one it is handed.
+const historyJob = "fugarohist"
+
 func newTestBackend(t *testing.T) (*Backend, *gcpfake.Run, *gcpfake.Logging) {
 	t.Helper()
 	fr, fl := gcpfake.NewRun(t), gcpfake.NewLogging(t)
@@ -407,6 +412,24 @@ func TestLaunchUnreadableMetadataIsAmbiguous(t *testing.T) {
 	}
 }
 
+// StartJob's own half of that path: :run succeeded, so the execution exists,
+// and an unreadable operation must not read as a start that did not happen -- a
+// caller that took it for one would start a second execution. The name it
+// cannot read is what ErrStartedUnnamed says, so a caller that only prints the
+// execution says that instead of printing an empty name.
+func TestStartJobUnreadableMetadataIsStartedUnnamed(t *testing.T) {
+	b, fr, _ := newTestBackend(t)
+	fr.AddJob(historyJob, "1", "2Gi")
+	fr.BadRunMetadata = true
+	name, err := b.StartJob(context.Background(), historyJob, []string{"budget", "history", "--reindex"})
+	if !errors.Is(err, ErrStartedUnnamed) || name != "" {
+		t.Fatalf("StartJob = %q, %v, want no name and ErrStartedUnnamed", name, err)
+	}
+	if got := len(fr.Executions()); got != 1 {
+		t.Fatalf("executions = %v, want the one the start created", fr.Executions())
+	}
+}
+
 func TestListKeepsExecutionsWithUnparseableLimits(t *testing.T) {
 	ctx := context.Background()
 	b, fr, _ := newTestBackend(t)
@@ -626,7 +649,7 @@ func TestExecutionReportsRun(t *testing.T) {
 // TestLaunchCarriesTheSecretEnvInTheOverride: Cloud Run carries a launch's
 // secret entry (the budget seal key, D15) in the execution's own container
 // override, the carrier the design accepts and prices
-// (docs/design/budget-token-channel.md §7.1): the value reaches this
+// (docs/budget-token-channel/spec.md §7.1): the value reaches this
 // execution and not the job's definition.
 func TestLaunchCarriesTheSecretEnvInTheOverride(t *testing.T) {
 	ctx := context.Background()

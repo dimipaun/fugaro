@@ -23,12 +23,12 @@ func checkStaleYesClaims(t *testing.T, path, line string) {
 // The design doc is scanned for the same stale claims (not for flags: it
 // legitimately names the old init sequence and the flags refresh lacks).
 func TestDesignDocNoStaleYesClaims(t *testing.T) {
-	data, err := os.ReadFile("../../docs/design/image-refresh.md")
+	data, err := os.ReadFile("../../docs/image-refresh/spec.md")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, line := range strings.Split(string(data), "\n") {
-		checkStaleYesClaims(t, "docs/design/image-refresh.md", line)
+		checkStaleYesClaims(t, "docs/image-refresh/spec.md", line)
 	}
 }
 

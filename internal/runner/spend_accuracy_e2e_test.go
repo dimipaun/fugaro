@@ -37,7 +37,7 @@ var spendGoldenPath = filepath.Join("testdata", "spend_accuracy_result.golden.js
 // itself is the table's own figure, so counting it would make the band agree
 // with itself.
 func TestSpendFieldsEndToEnd(t *testing.T) {
-	use := pricing.Usage{Input: 1000, Output: 500}
+	use := pricing.Usage{Input: 4000, Output: 2000}
 	// Two calls report what they cost, the third reports none: the split, the
 	// band and the unreported count are then three different figures of the
 	// same stage.

@@ -376,21 +376,25 @@ func TestStoredFollowUpRefusesADifferentRigorRequest(t *testing.T) {
 	}
 }
 
-// rigorNoEffect is the note the launcher prints when --mode asks for a mode
-// the run's layers already meet.
-const rigorNoEffect = "it has no effect"
+// rigorNoEffect is the note the launcher prints when --mode asks for the mode
+// the run's layers already resolve.
+const rigorNoEffect = "has no effect"
 
-// TestRunNotesAModeThatRaisesNothing: --mode may raise and never lower (D6),
-// so a request at or below what the layers resolve is accepted and does
-// nothing. The launcher says so once, on stderr, and still launches: the
-// request is recorded as asked, and the note is no error.
+// TestRunNotesAModeThatIsWhatTheLayersAlreadyResolve: the request is the
+// narrowest rank of the order (LD3), so --mode decides whether it asks for more
+// or for less, and the one request that decides nothing is the request for the
+// mode the run would have been at anyway. The launcher says so once, on stderr,
+// and still launches: the request is recorded as asked, and the note is no
+// error.
 //
 // Hotfix is not one of these cases: it is the mode a request takes whole
 // (rigor.Rigor.PerRun), so it takes effect from any starting point and there is
 // nothing to note (TestRunTakesHotfixWithNoOptIn).
 //
-// Mutation (drop the note): the first two cases see nothing on stderr.
-func TestRunNotesAModeThatRaisesNothing(t *testing.T) {
+// Mutation (drop the note): the equal case sees nothing on stderr; mutation
+// (hold the request raise-only, the rule before LD3): the lowering case starts
+// printing it too, which the count catches.
+func TestRunNotesAModeThatIsWhatTheLayersAlreadyResolve(t *testing.T) {
 	// The area rule writes the released `mode:` spelling: this fixture's job
 	// image is one the two spellings this release adds ship behind, and the
 	// gate for them refuses a `level:`-writing file on it before the note is
@@ -401,9 +405,11 @@ func TestRunNotesAModeThatRaisesNothing(t *testing.T) {
 		want                  string // "" means no note
 	}{
 		{"equal to the repository's", "rigor:\n  default: critical\n", "critical", nil,
-			"--mode critical is not higher than the repository's resolved mode critical: it has no effect"},
-		{"below an area the paths match", "rigor:\n  default: poc\n  areas:\n    - { name: payments, match: \"payments/**\", mode: critical }\n", "pro", []string{"payments/x.go"},
-			"--mode pro is not higher than the repository's resolved mode critical: it has no effect"},
+			"--mode critical has no effect: this repository already resolves to critical"},
+		// The paths a run declares are a rank of their own, above the
+		// repository's blocks, so this request is not the mode the layers
+		// resolve: it takes effect and there is nothing to note.
+		{"below an area the paths match", "rigor:\n  default: poc\n  areas:\n    - { name: payments, match: \"payments/**\", mode: critical }\n", "pro", []string{"payments/x.go"}, ""},
 		{"above the repository's", "rigor:\n  default: startup\n", "critical", nil, ""},
 	}
 	for i, c := range cases {
@@ -436,13 +442,15 @@ func TestRunNotesAModeThatRaisesNothing(t *testing.T) {
 	}
 }
 
-// TestRunAttemptsNotesAModeThatRaisesNothingOnce: a best-of-N batch is one
-// launcher's request, so the note is printed once, not once per attempt.
-func TestRunAttemptsNotesAModeThatRaisesNothingOnce(t *testing.T) {
+// TestRunAttemptsNotesARequestThatDecidesNothingOnce: a best-of-N batch is one
+// launcher's request, so the note is printed once, not once per attempt. The
+// request is the mode an unconfigured repository already resolves (pro), which
+// is the one request that decides nothing (LD3).
+func TestRunAttemptsNotesARequestThatDecidesNothingOnce(t *testing.T) {
 	f := newCloudFixture(t)
 	writeBuildRecord(t, f, appSlug, "web", release0111)
 	checkoutWorkflows(t, "", "  web: { commands: { build: sh build.sh, test: sh test.sh } }\n")
-	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--attempts", "2", "--mode", "poc", "Fix it.")
+	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--attempts", "2", "--mode", "pro", "Fix it.")
 	if err != nil {
 		t.Fatal(err)
 	}

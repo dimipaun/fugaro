@@ -1,5 +1,5 @@
-warning: build.service_account is deprecated and will be ignored: each repository's builds run as its own build account; fugaro update drops it
-warning: couldn't check origin/main's fugaro.yaml for project: aurora: <the fetch did not reach it>; runs read it from there
+Warning: build.service_account is deprecated and will be ignored: each repository's builds run as its own build account; fugaro update drops it
+Warning: couldn't check origin/main's fugaro.yaml for project: aurora: <the fetch did not reach it>; runs read it from there
 ⚠ This change retires 3 addresses (project aurora, GCP project proj-1234, repository acme/sandbox).
   2 go away; fugaro deletes no secret.
 
@@ -26,14 +26,7 @@ Next command:
 ⚠ CONFIRM (project aurora, GCP project proj-1234): retire 3 addresses of proj-1234: remove 2 from Terraform's state (destroying nothing), then apply, then delete 1 Cloud Run job through the API. Delete fugaro-acme-sandbox-app-bmb (us-east5, module.repo.module.workflow["app_bmb"].google_cloud_run_v2_job.this[0]). Fugaro deletes no secret, so these leave Terraform's state and stay in Secret Manager if they are still there: claude-oauth-token-bmb (fugaro-acme-sandbox-claude-oauth-token-bmb-2dfc7765d8e5dd81), unmanaged.
   confirmed
 removed 2 addresses from Terraform's state; nothing was destroyed
-Plan: 0 to import, 1 to create, 1 to update, 0 to forget, 1 to delete.
-
-⚠ Review these first:
-  ⚠ update module.repo.module.workflow["app"].google_cloud_run_v2_job.this[0]: template
-  ⚠ delete module.repo.module.workflow["app_bmb"].google_service_account.job
-
-Other changes:
-  create module.repo.google_artifact_registry_repository.images
+✔ repository acme/sandbox 1 to create, 1 to update, 1 to delete (log: <tmp>)
 IAM: 0 bindings match the live ones (adopted), 3 new
 the plan above is the retirement's: 0 imports, 1 creates, 1 updates, 1 deletes, 0 replaces. Deleting:
   delete module.repo.module.workflow["app_bmb"].google_service_account.job

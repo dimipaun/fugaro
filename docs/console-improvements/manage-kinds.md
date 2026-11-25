@@ -38,7 +38,8 @@ kind's own list is not: the command D2903 puts on the clipboard names the row it
 github/acme/app` is one repository's -- and that value is a value of that row's document, which only the kind holds. A
 command declared on the kind alone could only be one that names no repository, person or key at all, so a kind whose
 rows each need their own declares them on the row, and a row that leaves the member out draws the kind's own
-`actions` and nothing else.
+`actions` and nothing else. People & access's are MO-P's three -- a pair's `fugaro user revoke`, a person's
+`fugaro user offboard` and an account's `fugaro accounts rm` -- and Code's are MO-C's repository removal.
 
 **It is a descriptor, not a contract.** The console's contract is `console/docs/json-contract.md`, which is about
 what the CLI sends and the console reads back; a descriptor is neither, and no reader outside this binary consumes
@@ -123,7 +124,9 @@ still admits it -- is read through the `TEXT_CLASSES` class its column declares 
 `repoTextOf`), and a value the class refuses draws no action at all rather than a sentence with the value left out. What
 the sentence must state is the CLI's own account of the command (spec section 8), which is why MO-C's two are composed of
 phrases copied verbatim out of `internal/cli/project_repos_rm.go` and `project_enroll_converge.go` and held back to those
-files by `manage-code.test.ts`, and it is the empty string for a command with nothing to state. A refused action takes
+files by `manage-code.test.ts`, and MO-P's three -- a revoke's, an offboarding's and an account removal's -- out of
+`internal/cli/user_grant.go`, `internal/cli/offboard.go` and `internal/cli/accounts_rm.go`, held back by
+`manage-people.test.ts`, and it is the empty string for a command with nothing to state. A refused action takes
 its consequence with it: nothing is drawn for a command that was refused.
 
 ## What is not here

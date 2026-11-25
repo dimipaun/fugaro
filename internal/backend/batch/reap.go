@@ -14,10 +14,11 @@ import (
 	"google.golang.org/api/googleapi"
 
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/identitywire"
 )
 
 // This file is the reaper and the queue deadline (design
-// docs/design/compute-backend.md §1.4, §3.4, C8, C14), the residual path
+// docs/compute-backend/spec.md §1.4, §3.4, C8, C14), the residual path
 // that exists because Batch's own teardown -- which the owner measured on
 // Check 57a: a job's VM is gone 3 to 26 seconds after the job reaches a
 // terminal state -- is measured, not guaranteed. The reaper is a SAFETY NET
@@ -55,6 +56,16 @@ import (
 //     finalize) and no VM ever did (Batch creates them at SCHEDULED). A job
 //     that DID leave QUEUED keeps its record, and the queue deadline never
 //     deletes one (deleteQueued reads the job back before it acts).
+//
+//     A job whose environment carries the identity ticket a Batch launch puts
+//     on it (identitywire.TicketEnv, BR1) is judged by the TICKET's deadline
+//     too, where that is shorter: a queued job has not started, so it has
+//     claimed nothing, and a ticket that expires while its job still waits for
+//     a VM is a run that could only fail at its first call -- so deleting it a
+//     pass early is what keeps a VM from being billed for it (D3106 as amended,
+//     F31). The reaper reads the ticket's NAME and never its value: whether the
+//     variable is there at all is the whole of the fact its deadline rests on
+//     (see jobCarriesTicket).
 //   - It never deletes a finished job's record. That record is history, and
 //     the VM of a finished job is Batch's own teardown; §3.4's "the reaper
 //     deletes the job" is about the jobs it has decided must go (a stuck
@@ -140,6 +151,33 @@ import (
 // instances only: a job's deadlines are its time in the state it reports, see
 // ReaperOptions.MaxAge.)
 const ReapMargin = 15 * time.Minute
+
+// TicketLife is how long a run's identity ticket lives, and therefore the whole
+// of the budget a Batch run may spend waiting for a VM: it is the issuer's
+// stated ticket life (D3106 as amended, BR14). An hour is what one comes to:
+// the launcher plan's R2 states that a ticket, its nonce and the job's identity
+// token together are a run's token "for that long and no longer", and the token
+// they come to is a custom token, which Firebase caps at an hour
+// (identitywire.TicketResponse.ExpiresAt, token.Lifetime). It is the hour the
+// sealed token D3106 first spoke of lived too, so the amendment moved the
+// object that deadline is read from and not its length.
+//
+// It is a default and not a fact of this package: the issuer is what states a
+// ticket's life, ticket by ticket, and a caller that knows its installation's
+// own hands it over in ReaperOptions.TicketLife. What the reaper does with the
+// number is its own: it stops the wait BEFORE the life is spent, by the two
+// margins below, so that the job it ends is one that could not have claimed in
+// time even if Batch had started it that second.
+const TicketLife = time.Hour
+
+// TicketStartMargin is the last of a ticket's life that a run still needs: the
+// VM boot and image pull the design budgets 120 s for (design §1.2), which is
+// the time between a queued job being given a VM and its container running the
+// runner's first call. A job whose wait reaches the life less this margin can
+// no longer claim at all -- a VM given to it then would come up with the ticket
+// already spent, and the run's first call to the issuer would be refused -- so
+// the margin is where a queue wait stops being one that can still end in a run.
+const TicketStartMargin = 120 * time.Second
 
 // MaxDeadline is the longest deadline a caller may configure, for either of
 // the reaper's own. A VM or a job cannot leak for longer than Batch keeps the
@@ -378,6 +416,22 @@ type ReaperOptions struct {
 	// deadlines would then only ever be read against jobs that had queued for
 	// longer than a run.
 	QueueDeadline time.Duration
+	// TicketLife is the issuer's stated ticket life: how long a run's identity
+	// ticket stays claimable, and therefore the whole of the wait a Batch run
+	// that carries one may spend QUEUED (D3106 as amended, BR14). Zero means
+	// TicketLife, the hour the launcher plan's R2 states for a ticket; a caller
+	// that knows the life its own issuer states hands that over instead.
+	//
+	// It is a job's deadline and not an instance's: a QUEUED job whose
+	// environment carries the ticket is judged by the deadline this life
+	// implies, the queue deadline where that is shorter (Reaper.TicketDeadline),
+	// and nothing else the reaper decides moves for it.
+	//
+	// A value that is negative, or too short to leave anything for the reaper's
+	// own interval and the start margin (TicketStartMargin), is refused by
+	// NewReaper rather than obeyed: a life with no room left in it would delete
+	// every job carrying a ticket the moment it was created.
+	TicketLife time.Duration
 	// MaxAge is the age floor for an INSTANCE: how old an instance must be
 	// before the reaper will delete it. Zero means the queue deadline, plus
 	// the longest a run may be active (the longest configured task timeout,
@@ -423,7 +477,13 @@ type Reaper struct {
 	compute       *compute.Service
 	now           func() time.Time
 	queueDeadline time.Duration
-	maxAge        time.Duration
+	// ticketDeadline is what the issuer's stated ticket life comes to as a
+	// queue wait: the life less the interval this reaper's schedule runs it on
+	// and the margin a job needs to start, and never more than the queue
+	// deadline (TicketDeadline). A QUEUED job whose environment carries the
+	// ticket is judged by it.
+	ticketDeadline time.Duration
+	maxAge         time.Duration
 	// runBudget is how long a job may spend in one state (RUNNING,
 	// SCHEDULED, DELETION_IN_PROGRESS) before the reaper reads it as stuck:
 	// the longest a run may be active (NewReaper's base), its slack and
@@ -476,10 +536,16 @@ func NewReaper(ctx context.Context, o ReaperOptions) (*Reaper, error) {
 		return nil, fmt.Errorf("a negative queue deadline (%v): a caller meaning \"no deadline\" leaves it zero", o.QueueDeadline)
 	case o.MaxAge < 0:
 		return nil, fmt.Errorf("a negative maximum age (%v): a caller meaning \"use the default\" leaves it zero", o.MaxAge)
+	case o.TicketLife < 0:
+		return nil, fmt.Errorf("a negative ticket life (%v): a caller meaning \"use the default\" leaves it zero, and the default is the issuer's stated life (%v)", o.TicketLife, TicketLife)
 	}
 	queueDeadline := o.QueueDeadline
 	if queueDeadline == 0 {
 		queueDeadline = base + backend.TaskTimeoutSlack
+	}
+	ticketLife := o.TicketLife
+	if ticketLife == 0 {
+		ticketLife = TicketLife
 	}
 	// Everything in MaxAge except the queue wait: how long a job may
 	// legitimately be RUNNING (or in any other single state) before it is
@@ -500,7 +566,15 @@ func NewReaper(ctx context.Context, o ReaperOptions) (*Reaper, error) {
 	// no job can be judged stuck unless its queue wait alone exceeded a whole
 	// run. All three are the caller's bug, and a reaper that deletes things
 	// must say so rather than invent a deadline.
+	//
+	// A ticket life is the fourth: one whose deadline leaves nothing behind it
+	// (ticketDeadline) would delete EVERY job carrying a ticket the moment it
+	// was created -- a job the launcher had just started cannot have claimed
+	// yet either -- which is not a deadline but a switch that ends runs.
+	ticketDeadline := ticketLife - ReapMargin - TicketStartMargin
 	switch floor := queueDeadline + runBudget; {
+	case ticketDeadline <= 0:
+		return nil, fmt.Errorf("a ticket life of %v leaves nothing for the reaper's own interval (%v) and the start margin (%v): the deadline it implies (%v) would delete a job carrying a ticket the moment it was created", ticketLife, ReapMargin, TicketStartMargin, ticketDeadline)
 	case queueDeadline > MaxDeadline:
 		return nil, fmt.Errorf("a queue deadline of %v is longer than any deadline the reaper will act on (%v)", queueDeadline, MaxDeadline)
 	case queueDeadline > runBudget:
@@ -521,20 +595,33 @@ func NewReaper(ctx context.Context, o ReaperOptions) (*Reaper, error) {
 	return &Reaper{
 		o: o, batch: bs, compute: cs, now: o.Now,
 		queueDeadline: queueDeadline, maxAge: maxAge, runBudget: runBudget,
-		listPageSize: 100,
+		ticketDeadline: ticketDeadline,
+		listPageSize:   100,
 	}, nil
 }
 
-// QueueDeadline, MaxAge and RunBudget are the deadlines this Reaper decides
-// by, after the defaults above are applied. Exported for the caller that logs
-// the plan before a pass (and for tests that pin them).
+// QueueDeadline, MaxAge, RunBudget and TicketDeadline are the deadlines this
+// Reaper decides by, after the defaults above are applied. Exported for the
+// caller that logs the plan before a pass (and for tests that pin them).
 //
 // QueueDeadline bounds a QUEUED job's wait, MaxAge bounds an instance's age
 // and no job at all, and RunBudget bounds how long a job may be in any one
-// state before the reaper calls it stuck.
+// state before the reaper calls it stuck. TicketDeadline bounds a QUEUED job
+// whose environment carries a run's identity ticket: the ticket's life less the
+// start margin (TicketStartMargin, the last of the life a run needs to boot and
+// claim) and less ReapMargin, which is the interval the installation's Scheduler
+// starts a pass on (deploy/terraform/gcp/modules/compute/reaper.tf: the `*/15`
+// cadence IS ReapMargin, not a preference) -- a pass can only act at its own
+// boundaries, so a job left inside the deadline by one pass would spend it
+// before the next, and could be given a VM in between with a ticket that cannot
+// cover its first call. It is never more than the queue deadline: a ticket can
+// shorten a wait, never lengthen one.
 func (r *Reaper) QueueDeadline() time.Duration { return r.queueDeadline }
 func (r *Reaper) MaxAge() time.Duration        { return r.maxAge }
 func (r *Reaper) RunBudget() time.Duration     { return r.runBudget }
+func (r *Reaper) TicketDeadline() time.Duration {
+	return min(r.ticketDeadline, r.queueDeadline)
+}
 
 // location is projects/<p>/locations/<r>, the parent of the jobs.
 func (r *Reaper) location() string {
@@ -722,11 +809,18 @@ func (r *Reaper) reapJob(ctx context.Context, j *batch.Job, owned owners, rep *R
 		// creation and the API reporting QUEUED is a few milliseconds the
 		// reaper reads as waiting -- the conservative side of a deadline that
 		// deletes rather than leaves.
-		if age <= r.queueDeadline {
-			// Still waiting for capacity, within the deadline the design
-			// gives a queue wait. It owns its VM if it has somehow been given
-			// one; Batch is still managing it.
-			owned.own(run, "its job is QUEUED, still within the queue deadline: Batch is still managing it")
+		//
+		// WHICH deadline that is depends on the job: the queue deadline, or the
+		// ticket's where the job carries one and that is shorter
+		// (queuedDeadlineFor). The wait is measured the same way either way --
+		// it is the length of it that a ticket shortens.
+		dl := r.queuedDeadlineFor(j)
+		if age <= dl.limit {
+			// Still waiting for capacity, within the deadline the design gives
+			// a queue wait -- or within the ticket's, which is the same
+			// judgement one pass earlier. It owns its VM if it has somehow been
+			// given one; Batch is still managing it.
+			owned.own(run, "its job is QUEUED, still within the "+dl.label+": Batch is still managing it")
 			return nil
 		}
 		// Deleted, not cancelled: jobs.cancel is not a permission Google has
@@ -743,7 +837,7 @@ func (r *Reaper) reapJob(ctx context.Context, j *batch.Job, owned owners, rep *R
 		// What it must never do is delete a job that DID leave QUEUED: that
 		// run may have executed a task, and its record is what the run's ls,
 		// diagnose and watch read.
-		return r.deleteQueued(ctx, j, run, age, owned, rep)
+		return r.deleteQueued(ctx, j, run, age, dl, owned, rep)
 	case "SCHEDULED", "RUNNING":
 		// Judged on the time spent IN THIS STATE, not on the job's age: a run
 		// may wait in the queue far longer than the queue deadline (the
@@ -910,8 +1004,70 @@ func stateEventPostdatesQueueDeadline(j *batch.Job, created time.Time, queueDead
 	return !ev.IsZero() && ev.After(created.Add(queueDeadline))
 }
 
-// deleteQueued is the queue deadline: a job that has not reached SCHEDULED or
-// RUNNING within the deadline is deleted (§1.4's queue deadline is
+// queuedDeadline is the deadline one QUEUED job is judged by, and the words
+// that say which of the two it was. The label travels with the value so that
+// the report names the deadline a delete rested on rather than leaving an
+// operator to re-derive it: a run ended because its ticket could not outlive
+// the wait and one ended because it waited out the queue deadline are two
+// different facts about a launch, and the report is the audit trail.
+type queuedDeadline struct {
+	limit time.Duration
+	label string
+}
+
+// queuedDeadlineFor is the deadline a QUEUED job is judged by. The queue
+// deadline is the default, and it is the whole answer for a job with no ticket
+// on it: the deadline a job without a ticket keeps is the deadline every job
+// keeps.
+//
+// A job whose environment carries the identity ticket a Batch launch puts on it
+// (identitywire.TicketEnv, BR1) is judged by the TICKET's deadline where that
+// is shorter. A queued job has not started, so it has claimed nothing, and the
+// ticket, its nonce and the job's identity token are one token for the ticket's
+// life and no longer (R2): a run whose ticket expires while its job still waits
+// for a VM could only fail at its first call, so ending it a pass early is what
+// keeps a VM from being billed for a run that cannot claim (D3106 as amended,
+// F31).
+//
+// The shorter of the two and never the longer: a ticket can bring a delete
+// forward, and a ticket life longer than the queue deadline leaves the queue
+// deadline in charge, because the queue deadline is what a run's wait may come
+// to whatever its identity is. That is also why the ticket is read here and not
+// enforced on the job: nothing here refuses a job for carrying one.
+func (r *Reaper) queuedDeadlineFor(j *batch.Job) queuedDeadline {
+	if jobCarriesTicket(j) && r.ticketDeadline < r.queueDeadline {
+		return queuedDeadline{limit: r.ticketDeadline, label: "ticket deadline"}
+	}
+	return queuedDeadline{limit: r.queueDeadline, label: "queue deadline"}
+}
+
+// jobCarriesTicket says whether a job's environment carries the identity ticket
+// a Batch launch puts on the job (identitywire.TicketEnv, BR1). It reads the
+// ticket's NAME and never its value: whether the variable is there at all is
+// the whole of the fact the shorter deadline rests on, the value is a bearer
+// credential this package has no use for, and a reaper that read it would be
+// holding a run's identity in order to decide a deadline (D3106 as amended,
+// F31). What the deadline is read from is the job as the API returned it, which
+// is what the launcher created: Batch has no call that changes a job's task
+// environment.
+func jobCarriesTicket(j *batch.Job) bool {
+	if j == nil {
+		return false
+	}
+	for _, tg := range j.TaskGroups {
+		if tg == nil || tg.TaskSpec == nil || tg.TaskSpec.Environment == nil {
+			continue
+		}
+		if _, present := tg.TaskSpec.Environment.Variables[identitywire.TicketEnv]; present {
+			return true
+		}
+	}
+	return false
+}
+
+// deleteQueued is the queue deadline -- or the ticket's, where the job carries
+// a ticket and that comes first (queuedDeadlineFor): a job that has not reached
+// SCHEDULED or RUNNING within the deadline is deleted (§1.4's queue deadline is
 // Fugaro-side, and a job that never left QUEUED never ran a task, so what is
 // erased is the job's own record -- its state and the status message Batch
 // attaches -- and nothing else: the run's launch.json is the launcher's, not
@@ -934,11 +1090,11 @@ func stateEventPostdatesQueueDeadline(j *batch.Job, created time.Time, queueDead
 // judges every other job. The read costs one API call per queued job past the
 // deadline, which is a rare shape; the alternative is a delete decided from a
 // stale snapshot.
-func (r *Reaper) deleteQueued(ctx context.Context, j *batch.Job, run string, age time.Duration, owned owners, rep *Report) error {
-	reason := fmt.Sprintf("queued for %.0f minutes and never left QUEUED, past the queue deadline of %.0f", age.Minutes(), r.queueDeadline.Minutes())
-	deleting := "is being deleted by this pass for the queue deadline"
+func (r *Reaper) deleteQueued(ctx context.Context, j *batch.Job, run string, age time.Duration, dl queuedDeadline, owned owners, rep *Report) error {
+	reason := fmt.Sprintf("queued for %.0f minutes and never left QUEUED, past the %s of %.0f", age.Minutes(), dl.label, dl.limit.Minutes())
+	deleting := "is being deleted by this pass for the " + dl.label
 	if r.o.DryRun {
-		deleting = "would be deleted by this pass for the queue deadline"
+		deleting = "would be deleted by this pass for the " + dl.label
 	}
 	// Owned is a first-wins map (owners.own), so the clause is written once,
 	// on the path the pass actually took: a run whose job left QUEUED is not
@@ -972,7 +1128,7 @@ func (r *Reaper) deleteQueued(ctx context.Context, j *batch.Job, run string, age
 	}
 	if state := jobState(got); state != "QUEUED" {
 		// It left the queue: it is a run now, and its record is the run's.
-		owned.own(run, fmt.Sprintf("its job left QUEUED (%s) between the listing and the queue deadline's delete, so the reaper left it to the next pass", state))
+		owned.own(run, fmt.Sprintf("its job left QUEUED (%s) between the listing and the %s's delete, so the reaper left it to the next pass", state, dl.label))
 		return nil
 	}
 	own(deleting)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
 	"os"
@@ -23,7 +24,7 @@ import (
 
 // This file is the retirement: the one flow in fugaro that deletes a cloud
 // resource fugaro itself created and that Terraform can no longer delete
-// (docs/design/config-transitions.md §3.2, §3.3, §4.2).
+// (docs/config-transitions/spec.md §3.2, §3.3, §4.2).
 //
 // It is a destructive flow and it is written to be read as one. Three rules
 // hold everywhere below, and every guard the design names is kept:
@@ -188,7 +189,40 @@ func (r *initRun) retireAPI(spec infra.RepoSpec, rets []infra.Retirement) []infr
 // what is kept, the order of operations, and the one command that runs it.
 // It is printed before the plan, so it carries none of the plan's counts --
 // those are the second confirmation's (retirePlan).
+//
+// With a reporter the summary has two readers (the owner's feedback of
+// 2026-11-24): the terminal gets the same summary with at most
+// retirementShown rows in each of its three lists and the line that sends the
+// reader to the log for the rest, and the log gets it with every row. The
+// counts, the reasons, the order of operations and the next command are on
+// both — what is cut is the address rows, and those are the thing a screen
+// cannot hold and a log is for. A run with no log (G5: a state directory that
+// is a link, foreign-owned or read-only) prints it whole, as it always did:
+// a screen with nowhere else to send the addresses may not swallow them.
 func (r *initRun) printRetirements(spec infra.RepoSpec, rets []infra.Retirement) error {
+	if r.repLog == nil || r.repLog.Path() == "" {
+		r.retireSummary(r.w, spec, rets, 0)
+		return nil
+	}
+	short := &strings.Builder{}
+	r.retireSummary(short, spec, rets, retirementShown)
+	fmt.Fprint(r.w, short.String())
+	full := &strings.Builder{}
+	r.retireSummary(full, spec, rets, 0)
+	fmt.Fprint(r.rep.Stream(), full.String())
+	return nil
+}
+
+// retirementShown is how many rows of each of the retirement summary's three
+// lists the terminal gets before the rest are left to the log: five, the same
+// number the guard's refusal block lists (init_refusal.go).
+const retirementShown = 5
+
+// retireSummary writes the ⚠ RETIRE summary of design §3.2 — what goes, why,
+// what is kept, the order of operations, and the one command that runs it — to
+// w, with at most max rows in each of its lists (0 for all of them): the rows
+// it cut are counted, and the line under them names the log they are in.
+func (r *initRun) retireSummary(w io.Writer, spec infra.RepoSpec, rets []infra.Retirement, max int) {
 	api, apply, kept := r.retireGoingAway(spec, rets)
 	// A row the state removal takes out and nothing then deletes -- a job
 	// whose workflow variant is still deployed, so the API delete refuses it
@@ -203,39 +237,45 @@ func (r *initRun) printRetirements(spec infra.RepoSpec, rets []infra.Retirement)
 	}
 	apply = slices.DeleteFunc(apply, func(ret infra.Retirement) bool { return inRemoved[ret.Address] })
 	gone := len(api) + len(apply)
-	fmt.Fprintf(r.w, "⚠ This change retires %d %s (project %s, GCP project %s, repository %s).\n",
+	fmt.Fprintf(w, "⚠ This change retires %d %s (project %s, GCP project %s, repository %s).\n",
 		len(rets), plural(len(rets), "address", "addresses"), r.projectName, r.gcpProject, spec.Name)
 	if len(kept) > 0 {
-		fmt.Fprintf(r.w, "  %d go away; fugaro deletes no %s.\n",
+		fmt.Fprintf(w, "  %d go away; fugaro deletes no %s.\n",
 			gone, plural(len(kept), "secret", "secret or image"))
 	} else {
-		fmt.Fprintf(r.w, "  %d go away.\n", gone)
+		fmt.Fprintf(w, "  %d go away.\n", gone)
 	}
-	fmt.Fprintf(r.w, "\nWhy: %s\n", reasons(rets))
-	fmt.Fprintf(r.w, "\nGoing away (%d, predicted from the state and the labels) — %d the plan will delete, %d deleted through the Cloud Run API after it:\n",
+	fmt.Fprintf(w, "\nWhy: %s\n", reasons(rets))
+	fmt.Fprintf(w, "\nGoing away (%d, predicted from the state and the labels) — %d the plan will delete, %d deleted through the Cloud Run API after it:\n",
 		gone, len(apply), len(api))
+	var goneRows []string
 	for _, ret := range slices.Concat(apply, api) {
-		fmt.Fprintf(r.w, "  %-72s %s: %s\n", ret.Address, ret.Kind, ret.Cause)
+		goneRows = append(goneRows, fmt.Sprintf("  %-72s %s: %s\n", ret.Address, ret.Kind, ret.Cause))
 	}
+	r.retireRows(w, goneRows, max)
 	if len(removed) > 0 {
-		fmt.Fprintf(r.w, "\nRemoved from Terraform's state, and never deleted (%d):\n", len(removed))
+		fmt.Fprintf(w, "\nRemoved from Terraform's state, and never deleted (%d):\n", len(removed))
+		var rows []string
 		for _, a := range removed {
-			fmt.Fprintf(r.w, "  %s\n", a)
+			rows = append(rows, "  "+a+"\n")
 		}
+		r.retireRows(w, rows, max)
 	}
 	if len(kept) > 0 {
-		fmt.Fprintln(r.w, "\nKEPT — Fugaro never deletes a secret or a secret version:")
+		fmt.Fprintln(w, "\nKEPT — Fugaro never deletes a secret or a secret version:")
+		var rows []string
 		for _, k := range kept {
 			switch {
 			case k.SecretID != "":
-				fmt.Fprintf(r.w, "  %-32s leaves Terraform's state, unmanaged; Secret Manager is untouched\n", k.Logical)
+				rows = append(rows, fmt.Sprintf("  %-32s leaves Terraform's state, unmanaged; Secret Manager is untouched\n", k.Logical))
 			case k.Logical != "":
-				fmt.Fprintf(r.w, "  %-32s leaves Terraform's state, unmanaged; Secret Manager is untouched (its Secret Manager ID could not be read)\n", k.Logical)
+				rows = append(rows, fmt.Sprintf("  %-32s leaves Terraform's state, unmanaged; Secret Manager is untouched (its Secret Manager ID could not be read)\n", k.Logical))
 			default:
-				fmt.Fprintf(r.w, "  %s\n", k.Address)
+				rows = append(rows, "  "+k.Address+"\n")
 			}
 		}
-		fmt.Fprintln(r.w, "  Nothing here deletes a container, so one that still exists keeps its value. A live container carrying this repository's labels is adopted back into the plan instead of being retired at all, so these are the ones the label list did not find: check them with `fugaro secrets ls --repo`.")
+		r.retireRows(w, rows, max)
+		fmt.Fprintln(w, "  Nothing here deletes a container, so one that still exists keeps its value. A live container carrying this repository's labels is adopted back into the plan instead of being retired at all, so these are the ones the label list did not find: check them with `fugaro secrets ls --repo`.")
 	}
 	// Step 1's count is every address the state removal takes out, the
 	// API-deleted jobs included: they leave the state by the same step,
@@ -244,12 +284,28 @@ func (r *initRun) printRetirements(spec infra.RepoSpec, rets []infra.Retirement)
 	// then never deleted -- so the two counts differ by the API jobs, and
 	// the confirmation's own "remove N from Terraform's state" is this one.
 	n := len(infra.Removals(r.retireState, rets))
-	fmt.Fprintf(r.w, "\nOrder of operations:\n  1. remove %d %s from Terraform's state without destroying %s: the addresses no apply can delete (a secret container's prevent_destroy, a job whose deletion_protection the state says is on). Nothing in the cloud is deleted by this step.\n",
+	fmt.Fprintf(w, "\nOrder of operations:\n  1. remove %d %s from Terraform's state without destroying %s: the addresses no apply can delete (a secret container's prevent_destroy, a job whose deletion_protection the state says is on). Nothing in the cloud is deleted by this step.\n",
 		n, plural(n, "address", "addresses"), plural(n, "it", "them"))
-	fmt.Fprintln(r.w, "  2. plan, show the plan's own counts and its full delete list, and ask again — answered by the person at a real terminal.")
-	fmt.Fprintf(r.w, "  3. apply, then delete the %d orphaned Cloud Run %s through the API.\n", len(api), plural(len(api), "job", "jobs"))
-	fmt.Fprintln(r.w, "\nNext command:\n  fugaro update --repo . --retire")
-	return nil
+	fmt.Fprintln(w, "  2. plan, show the plan's own counts and its full delete list, and ask again — answered by the person at a real terminal.")
+	fmt.Fprintf(w, "  3. apply, then delete the %d orphaned Cloud Run %s through the API.\n", len(api), plural(len(api), "job", "jobs"))
+	fmt.Fprintln(w, "\nNext command:\n  fugaro update --repo . --retire")
+}
+
+// retireRows writes one of the summary's lists: at most max of its rows (0 for
+// all of them) and, where it cut, the count of what it left out and the log the
+// rest is in. Every row is a whole line, so a list is cut between two addresses
+// and never inside one.
+func (r *initRun) retireRows(w io.Writer, rows []string, max int) {
+	shown := rows
+	if max > 0 && len(rows) > max {
+		shown = rows[:max]
+	}
+	for _, l := range shown {
+		fmt.Fprint(w, l)
+	}
+	if n := len(rows) - len(shown); n > 0 {
+		fmt.Fprintf(w, "  +%d more, see %s\n", n, r.repLog.Path())
+	}
 }
 
 // retireRemovals is Removals over the state this run read: the protected

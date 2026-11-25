@@ -18,7 +18,7 @@ package credsvc
 // **They decide nothing.** They read no token, no KMS key, no record and no
 // cloud: the arguments are not looked at, and two calls with two different VMs
 // get the same answer. That is the stub rule this tree follows
-// (provider_wire_stub.go, scope_stub.go, internal/cli's after_write_stub.go).
+// (provider_wire_stub.go, internal/cli's after_write_stub.go).
 
 import (
 	"context"

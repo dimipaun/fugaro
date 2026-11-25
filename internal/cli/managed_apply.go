@@ -34,7 +34,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
-// fugaro managed apply (docs/design/managed-projects.md, D76) applies the
+// fugaro managed apply (docs/managed-projects/spec.md, D76) applies the
 // agent-authored Terraform root of a managed project: the root in the
 // repository checkout, copied into a workdir of this command's own, planned
 // into a saved file, gated by the deterministic gate (Tasks 1.0-1.3) with the

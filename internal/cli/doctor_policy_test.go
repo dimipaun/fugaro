@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/coordpath"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -934,6 +935,57 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		}
 	})
 
+	t.Run("a marker of the launch envelope's generation, below the signature's", func(t *testing.T) {
+		// Generation 10 already carries the phone's stop request and the launch
+		// envelope, so the sentence for it must not send the operator after
+		// either: what generation 11 adds is the tag a signing device carries in
+		// place of the `mac` and the typed launch action, and that is what it
+		// names (mobile identity-pairing task J5r, O6 and O10). Generation 10 is
+		// the marker every installation on the release behind this one reports,
+		// so this is the state the sentence is read in — and the state a signing
+		// phone meets: under those rules every message it signs and every
+		// heartbeat is refused at the database with no error, and its launch is
+		// refused at the verb enumeration, so the app can neither speak nor
+		// start anything until the deploy.
+		if rulesLaunchGeneration >= projectpolicy.RulesVersion {
+			t.Fatalf("rulesLaunchGeneration = %d and RulesVersion = %d: this case is about a marker between them", rulesLaunchGeneration, projectpolicy.RulesVersion)
+		}
+		_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+		db.Set(projectpolicy.PathRulesMarker(), rulesLaunchGeneration)
+		db.SetRules([]byte(`{"rules":{".read":false,".write":false}}`))
+		c, ok := doctorChecksByID(t)["policy-rules-skew"]
+		if !ok || c.Severity != "warning" {
+			t.Fatalf("policy-rules-skew = %+v (present %v), want a warning", c, ok)
+		}
+		if c.Problem != rulesMarkerOlderText(rulesLaunchGeneration) {
+			t.Errorf("the body is not rulesMarkerOlderText:\n got %q\nwant %q", c.Problem, rulesMarkerOlderText(rulesLaunchGeneration))
+		}
+		for _, want := range []string{fmt.Sprintf("generation %d", rulesLaunchGeneration), "sig", "launch", fmt.Sprintf("generation %d or newer", projectpolicy.RulesVersion)} {
+			if !strings.Contains(c.Problem, want) {
+				t.Errorf("the body does not carry %q: %q", want, c.Problem)
+			}
+		}
+		// The earlier generations' own absences are what must not appear, for
+		// the reason the cases above give — and the launch envelope's is the one
+		// next door, since this marker's rules carry it: a sentence that claimed
+		// the stop request or the envelope were missing would send the operator
+		// after a deploy they already ran.
+		for _, bad := range []string{"fugaro pair", "by hand", "no run reads a published policy", coordpath.PathRoot + "/", "neither ask for a stop", "adds the credential route", "reads no route", "refused the whole stage report", "registered with nothing"} {
+			if strings.Contains(c.Problem, bad) {
+				t.Errorf("the body for a generation-%d marker carries %q, which is about rules it already has: %q", rulesLaunchGeneration, bad, c.Problem)
+			}
+		}
+		if !strings.Contains(c.Problem, "which adds the two shapes a phone of this release writes") {
+			t.Errorf("the body for a generation-%d marker does not name what the redeploy adds (the tag a signing device carries and the typed launch it sends): %q", rulesLaunchGeneration, c.Problem)
+		}
+		if !strings.Contains(c.Fix, "fugaro update") || strings.Contains(c.Fix, "--firebase-project") {
+			t.Errorf("the check does not name the owner's fix: %+v", c)
+		}
+		if !strings.Contains(c.Fix, "the device's signature and the typed launch") || strings.Contains(c.Fix, "stop request") || strings.Contains(c.Fix, "credential route") || strings.Contains(c.Fix, "run's outcome") || strings.Contains(c.Fix, "stage report") || strings.Contains(c.Fix, "registration") || strings.Contains(c.Fix, "voice") || strings.Contains(c.Fix, "coordinator") {
+			t.Errorf("the fix for a generation-%d marker does not name what the redeploy adds (the tag a signing device carries and the typed launch it sends): %q", rulesLaunchGeneration, c.Fix)
+		}
+	})
+
 	t.Run("a marker that is a negative generation", func(t *testing.T) {
 		// A negative marker is an integer, so this check's gen < RulesVersion
 		// branch took it as an old deployment and printed
@@ -1379,24 +1431,10 @@ func TestDoctorDoesNotPromiseAHaltTheSwitchNeverReaches(t *testing.T) {
 	if !strings.Contains(res.Problem, "whose gateway is on halts at it") {
 		t.Fatalf("an explicit switch's halt is not reported: %+v", res)
 	}
-	// And with the node's own mode off, no run of the repository reaches the
-	// switch at all: nothing halts here, which the line now says instead of
-	// asserting the halt the budget's own state rules out. The mode is the
-	// node's, not this machine's config's: a run's ceiling is the node's key by
-	// key (runner.policyCeiling), so a machine whose own budget block says off
-	// under a node that says enforce runs with its gateway on — the check reads
-	// the node, and this is the state that shows it.
-	_, db := doctorPolicyRig(t, doctorPolicy(switchTo(config.RouteAuto)), rows())
-	off := doctorPolicy(switchTo(config.RouteAuto))
-	off.Budget.Mode = "off"
-	db.Set(projectpolicy.PathShared(), off)
-	res = doctorChecksByID(t)["routing-resolution"]
-	if !strings.Contains(res.Problem, "no run of this repository reaches the switch") || !strings.Contains(res.Problem, "budget.mode is off") {
-		t.Fatalf("a switch the node's budget never reaches is reported as a halt: %+v", res)
-	}
-	if strings.Contains(res.Problem, "whose gateway is on halts") {
-		t.Errorf("nothing halts under a node that is off, and the line says one does: %+v", res)
-	}
+	// The third state this test carried — the node's own mode off, where no
+	// run reached the switch at all and nothing halted — is gone with the mode
+	// (AB1b, D3009): no mode takes a gateway away from an api-key run, so the
+	// line above is the same one in every mode the node can name.
 }
 
 // TestDoctorResolvesTheSwitchOverTheLayerARunMerges is the second review
@@ -1502,9 +1540,8 @@ func doctorSwitchTo(via string) func(*projectpolicy.Policy) {
 //
 // The mode the check answers the node's silence with is the job's own: this
 // machine's config, whose ceiling update --repo deploys into the environment, the
-// same reading the drift note compares the deployed job with. Both sides are
-// exercised here, so the check is pinned to that reading rather than to the
-// string "off" happening to be wrong.
+// same reading the drift note compares the deployed job with — and the check is
+// pinned to that reading rather than to the string "off" happening to be wrong.
 func TestDoctorReadsTheJobModeANodeWithoutABudgetKeeps(t *testing.T) {
 	// The node with no budget key at all: the block is deleted rather than
 	// emptied, because an empty one is a node projectpolicy refuses.
@@ -1539,66 +1576,61 @@ func TestDoctorReadsTheJobModeANodeWithoutABudgetKeeps(t *testing.T) {
 	if strings.Contains(res.Problem, "budget.mode is off") {
 		t.Errorf("a node that sets no budget key is read as mode off: %+v", res)
 	}
-	// The same node under a machine that is off: nothing reaches the switch
-	// now, which is the state the line has to say — the node's silence is
-	// answered by the environment, in both directions.
-	r, db2 := doctorPolicyRig(t, nil, rows)
-	cfg := strings.Replace(r.cfg, "budget: { mode: enforce", "budget: { mode: off", 1)
-	if cfg == r.cfg {
-		t.Fatal("the rig's ceiling moved: this test rewrites its mode")
-	}
-	if err := os.WriteFile(r.cfgPath, []byte(cfg), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	r.cfg = cfg
-	db2.Set(projectpolicy.PathShared(), node(t))
-	res = doctorChecksByID(t)["routing-resolution"]
-	if !strings.Contains(res.Problem, "no run of this repository reaches the switch") || !strings.Contains(res.Problem, "budget.mode is off") {
-		t.Fatalf("a machine that is off is read as reaching the switch: %+v", res)
-	}
+	// The other direction — the same node under a machine whose mode is off,
+	// where nothing reached the switch — is gone with the mode (AB1b, D3009):
+	// the check asks its reach of an api-key credential (routingReachOf above),
+	// and an api-key run has a gateway whatever the mode says, so no mode of
+	// this machine leaves that line inert. The arm that words that state is the
+	// CLI's own reading of the mode, and it is dead here rather than false.
 }
 
-// TestDoctorDoesNotResolveASwitchNoRunTakes is the review finding on the
-// resolved arm of the routing-resolution check: it printed the resolution and
-// set routed, without ever asking whether a run of the repository reaches the
-// switch. Under a node whose budget mode is off doctor printed
+// TestDoctorResolvesASwitchEveryAPIKeyRunTakes is the review finding on the
+// resolved arm of the routing-resolution check, in the one state it can still
+// be in: it printed the resolution and set routed without ever asking whether a
+// run of the repository reaches the switch, and under a node whose budget mode
+// was off doctor printed
 // "acme/app: claude-sonnet-5-5 -> openrouter, sent as anthropic/claude-sonnet-5.5"
-// — a route no run takes, since the gateway is off and applyRouting returns
-// before it reads the switch — and routing-cache-markers followed it into "a
-// routed Claude senior's cost is unmeasured", for a policy whose calls all go
-// to Anthropic. validate prints the same state as "nothing takes it here", and
+// — a route no run took, since the gateway was off and applyRouting returned
+// before it read the switch — and routing-cache-markers followed it into "a
+// routed Claude senior's cost is unmeasured", for a policy whose calls all went
+// to Anthropic. validate printed the same state as "nothing takes it here", and
 // the two commands read one switch.
-func TestDoctorDoesNotResolveASwitchNoRunTakes(t *testing.T) {
+//
+// The mode is not what decided that, and it is what the check may no longer
+// take for the answer: it asks the reach of an api-key credential
+// (routingReachOf), and an api-key run has a gateway in every mode now (AB1b,
+// D3009), so a node that says observe and one that says enforce are one answer —
+// the resolution is the runs', the routed cost behind it is the repository's —
+// and the two states below are asserted to be that one line. The word that was
+// a mode until this release is not a third state to compare with: a node that
+// says it is refused by its own decoder, block and all (AB2, AB8a), so nothing
+// reads a mode out of it.
+// The clause the finding added is still reached where no run takes the switch
+// for a reason that outlives the mode (a via: cascade switch and a run that did
+// not ask for the cascade: routingInertWhy's own arm), and the note validate
+// writes for the same reasons is worded from the same function.
+func TestDoctorResolvesASwitchEveryAPIKeyRunTakes(t *testing.T) {
 	// The machine's route admits this repository, so the switch resolves for it:
 	// the resolved arm, which is the one that was never reach-aware.
 	rows := doctorRunRoutes(`["acme/app"]`, "  acme/app:\n    provider: github\n")
 	const resolved = "acme/app: claude-sonnet-5-5 -> openrouter, sent as anthropic/claude-sonnet-5.5"
-	_, db := doctorPolicyRig(t, doctorPolicy(doctorSwitchTo(config.RouteOpenRouter)), rows)
-	off := doctorPolicy(doctorSwitchTo(config.RouteOpenRouter))
-	off.Budget.Mode = "off"
-	db.Set(projectpolicy.PathShared(), off)
-	res := doctorChecksByID(t)["routing-resolution"]
-	if !strings.Contains(res.Problem, resolved) {
-		t.Fatalf("the resolution is not printed at all: %+v", res)
-	}
-	if !strings.Contains(res.Problem, "nothing takes it here") || !strings.Contains(res.Problem, "budget.mode is off") {
-		t.Fatalf("a resolution no run of this repository takes is printed as the run's: %+v", res)
-	}
-	if cm := doctorChecksByID(t)["routing-cache-markers"]; !strings.Contains(cm.Problem, "no Claude ID is routed") {
-		t.Errorf("a cost no run of this policy pays is called unmeasured: %+v", cm)
-	}
-	// The contrast on the same fixture: with the node enforcing, every run takes
-	// the route, the line says so, and the cost question is live.
-	doctorPolicyRig(t, doctorPolicy(doctorSwitchTo(config.RouteOpenRouter)), rows)
-	res = doctorChecksByID(t)["routing-resolution"]
-	if !strings.Contains(res.Problem, resolved) {
-		t.Fatalf("the resolution is not printed: %+v", res)
-	}
-	if strings.Contains(res.Problem, "nothing takes it here") {
-		t.Errorf("a resolution the runs do take is hedged: %+v", res)
-	}
-	if cm := doctorChecksByID(t)["routing-cache-markers"]; !strings.Contains(cm.Problem, "unmeasured") {
-		t.Errorf("a routed cost is not called unmeasured: %+v", cm)
+	observe := doctorPolicy(doctorSwitchTo(config.RouteOpenRouter))
+	observe.Budget.Mode = policy.ModeObserve
+	// The mode is the node's where it sets one and the job's own ceiling where
+	// it does not (doctorNodeMode: this machine enforces), which is the contrast
+	// the check used to draw and cannot any more.
+	for _, p := range []*projectpolicy.Policy{observe, doctorPolicy(doctorSwitchTo(config.RouteOpenRouter))} {
+		doctorPolicyRig(t, p, rows)
+		res := doctorChecksByID(t)["routing-resolution"]
+		if !strings.Contains(res.Problem, resolved) {
+			t.Fatalf("the resolution is not printed under a node whose mode is %q: %+v", p.Budget.Mode, res)
+		}
+		if strings.Contains(res.Problem, "nothing takes it here") {
+			t.Errorf("a resolution every run of this repository takes is hedged under a node whose mode is %q: %+v", p.Budget.Mode, res)
+		}
+		if cm := doctorChecksByID(t)["routing-cache-markers"]; !strings.Contains(cm.Problem, "unmeasured") {
+			t.Errorf("a routed cost is not called unmeasured under a node whose mode is %q: %+v", p.Budget.Mode, cm)
+		}
 	}
 }
 

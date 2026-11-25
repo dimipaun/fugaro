@@ -1,6 +1,6 @@
 # Teammates: no setup
 
-A launcher or an operator in a checkout of an onboarded repository can run `fugaro run`, `fugaro runs ls`, `fugaro diagnose`, `fugaro logs` and `fugaro watch` on a fresh machine with no local config and no `fugaro setup`. Design: [design/shared-config.md](../design/shared-config.md).
+A launcher or an operator in a checkout of an onboarded repository can run `fugaro run`, `fugaro runs ls`, `fugaro diagnose`, `fugaro logs` and `fugaro watch` on a fresh machine with no local config and no `fugaro setup`. Design: [shared-config/spec.md](../shared-config/spec.md).
 
 ## The shared file (**per installation**)
 
@@ -20,7 +20,7 @@ An owner or operator who wants the whole local config on a second machine — fo
 fugaro update --gcp-project <gcp-project> --region <region>
 ```
 
-On a machine with no config for the installation it takes the project's name from the installation, writes the local config from its outputs (the launchers, operators and budget backend included) and applies nothing; it then names the roles you may lack and the one command an owner runs to grant them. `fugaro setup` is never that command: it only starts fresh, and it refuses a GCP project that already holds an installation.
+On a machine with no config for the installation it takes the project's name from the installation, writes the local config from its outputs (the launchers, operators and budget backend included) and applies nothing; it then names the roles you may lack and the one command an owner runs to grant them. `fugaro setup` is never that command: it adopts only a project that holds nothing of Fugaro's, so it refuses a GCP project that already holds an installation.
 
 ## The cache
 

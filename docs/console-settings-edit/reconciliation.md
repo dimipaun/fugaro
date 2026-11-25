@@ -33,7 +33,7 @@ disagrees with [spec.md](spec.md), it wins.**
   typed project name) and [implementation-plan.md](../settings-commands/implementation-plan.md)
   **S5** (the task that lands the command), plus the joint order in [its
   README](../settings-commands/README.md).
-- **`docs/design/desktop-console.md`** §3.4 (~122) and §5.1 (~175): rule 5 (the IPC allow-list),
+- **`docs/desktop-console/spec.md`** §3.4 (~122) and §5.1 (~175): rule 5 (the IPC allow-list),
   rule 6 (the exact-argv spawn allow-list and its never table) and rule 11 (the launch: the one
   write, its confirmation window, the frozen spawn object).
 - The console's own code: `console/src/main/confirm.ts`, `console/src/main/launch.ts`,
@@ -96,7 +96,7 @@ there, and at 417, 979, 1019, 1051 and 2538 at `d1585a6f`. **The ones printed ab
 tree's and not that one's** — the sweep re-anchored every citation onto today's tree, which is §1's
 own rule — so that merge's count is what this sentence was written from, and its twenty-five is the
 table's: the twenty-fifth is `link.openPullRequest`, which is exactly the seventh operation a reader
-counting from `d1585a6f` finds. Rule 5 of `docs/design/desktop-console.md:191` states the count in
+counting from `d1585a6f` finds. Rule 5 of `docs/desktop-console/spec.md:191` states the count in
 words at both commits — twenty-four at `d1585a6f`, twenty-five at `0410c189` — and **D1114**'s
 25 → 27 baseline below counts from the same tree, so this sentence, that decision and the design
 document agree. It therefore stands: its six are the four named there and the two this design adds,
@@ -139,7 +139,7 @@ re-implements the diff (**D1103**).
 `settingsJSON.Sensitive` (`internal/cli/settings_render.go:45`, `json:"sensitive,omitempty"`), and
 the write path refuses a sensitive key outright (`settingsWriteRow`, **S5 #1525**
 `internal/cli/settings_set.go:560`). The registry marks them (`Row.Sensitive`,
-`internal/settings/registry.go:80`; `sensitiveKeys` in the same file). *Consequence:* **D1111** is
+`internal/settings/registry.go:81`; `sensitiveKeys` in the same file). *Consequence:* **D1111** is
 satisfiable from the CLI's own output, and the console keeps no list of sensitive keys — which is
 the same rule as F7's.
 
@@ -147,7 +147,7 @@ the same rule as F7's.
 each.** `settingsGenericKeys` (**S5 #1525** `internal/cli/settings_set.go:117`) is the exact key
 allow-list, `settingsGenericPrefixes` (`:248`) the blocks handed over whole, `settingsFamilyCommands`
 (`:47`) maps a registry `Owner` to the family that writes its keys, and `settingsDefaultLayer` (`:765`) picks the narrowest layer a key may be set in. `Row` carries `Owner`, `Sensitive` and
-`Layers` (`internal/settings/registry.go:80`). *Consequence:* the console's row set is the CLI's
+`Layers` (`internal/settings/registry.go:81`). *Consequence:* the console's row set is the CLI's
 answer, and **D1102** is about how it gets it.
 
 **F8: Exists. The registry's `--json` document, field by field.** `settingsJSON`
@@ -165,7 +165,7 @@ as it stands in #1525 has the **agent-session** refusal and nothing else: `apply
 `internal/cli/settings_set.go:868`) resolves a file, not a project posture. The commands that do
 refuse a managed project are `fugaro managed flag` and `fugaro allow-delete`
 (`internal/cli/managed_flag.go`, `internal/cli/allow_delete.go`), and managed projects are gated off
-(`docs/design/managed-projects.md`). *Consequence:* the console's refusal set is **smaller than the
+(`docs/managed-projects/spec.md`). *Consequence:* the console's refusal set is **smaller than the
 brief assumes**, and **D1111** records the set as it is rather than inventing a refusal. If the
 owner wants a managed-project refusal on `settings set`, it is a change to S5 and it belongs in
 **P1**'s commit, not in a console task.
@@ -252,7 +252,7 @@ written; read it again and repeat the edit" (**S5 #1525** `internal/cli/settings
 `.claude/rules/console.md`'s four-point rule of 2026-10-31 (independent sections, parallel reads,
 paint on arrival, a sequence token per section) is implemented in `console/src/renderer/section.ts`
 (`sectionRead`, `renderBusy`, `renderStamp`, `resultCache`), and the Project screen's own shell is
-`section.projects > div.projects-body > div.console-busy-slot` (`docs/design/console-styling.md`
+`section.projects > div.projects-body > div.console-busy-slot` (`docs/console-styling/spec.md`
 §2.5). *Consequence:* the settings read is a **section of its own**, started in parallel with
 `budget show` and painted when it answers — the tab paints before the writable-rows read lands,
 which is the rule **D1118** states.
@@ -603,7 +603,7 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
   text (and `aria-disabled`, the shape `disabledWrite` already uses at
   `console/src/renderer/writes.ts:36` — though this pencil is not one of those: it is a live control
   once it is offered). *Why:* the console's accessibility rules are drawn from the same DOM-hook
-  vocabulary `docs/design/console-styling.md` §2.5 pins, and a keyboard reader must be able to reach
+  vocabulary `docs/console-styling/spec.md` §2.5 pins, and a keyboard reader must be able to reach
   every edit and hear which key it is for. *Answered as recommended by the owner on 2026-11-01, in
   [spec.md](spec.md).*
 
@@ -664,12 +664,12 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
 
 - **D1121 (ANSWERED by the owner, 2026-11-01, as recommended: the four documents the implementing
   tasks change, named now and edited then).** *Recommendation:* the tasks that move a fence change
-  the documents that state it, in the same commit: **`docs/design/desktop-console.md` §5.1 rule 5**
+  the documents that state it, in the same commit: **`docs/desktop-console/spec.md` §5.1 rule 5**
   (the operation count, 25 → 27), **rule 6** (the two new allow-list rows, with the exact argvs),
   and a **new rule 12** for the second write — the settings confirmation window, its own-top-frame
   gate, its cancel default, and its widening tick; **`console/docs/json-contract.md` §6.15** (the
   settings document, including the fields **D1102** adds — the section D848 reserved);
-  **`docs/design/console-styling.md` §2.5** (the new panels, the pencil's hooks and the window's own
+  **`docs/console-styling/spec.md` §2.5** (the new panels, the pencil's hooks and the window's own
   document); and **`docs/settings-commands/reconciliation.md`'s D846 entry**, which P4 amends for
   `settings set|unset` and leaves untouched for `fugaro update`. `docs/` tests pin several of these sentences, so each
   task runs `go test ./internal/cli -run Docs` and, for the console documents, the console's own doc

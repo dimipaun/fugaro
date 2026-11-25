@@ -21,9 +21,9 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
-// computeBackendPlan is the plan this file pins: docs/plans/2026-10-19-compute-backend.md,
+// computeBackendPlan is the plan this file pins: docs/compute-backend/implementation-plan.md,
 // the implementation plan for the Cloud Batch compute backend (design
-// docs/design/compute-backend.md), written against the tree the branch
+// docs/compute-backend/spec.md), written against the tree the branch
 // fugaro/20261019-204914-8a1b stands on (= the branch `integration-0.9.5`, cut
 // from `integration-0.9.0` at `af953e5e`; when this file was added the branch's
 // own commits were this plan and this test, the documents and tests a review of
@@ -38,14 +38,14 @@ import (
 // every recommendation P1–P8 accepted as written), and three of its tasks are
 // built**: Task 14 (the seal's carrier on Batch, its refusal kept and
 // documented — see internal/backend/batch/run.go and
-// docs/design/budget-token-channel.md) and Task 8's first half, both merged
+// docs/budget-token-channel/spec.md) and Task 8's first half, both merged
 // into the base, and Task 9, landed on the branch that carries it — which is
 // why this file's release check is read against the tree rather than against
 // the branch as it was when it was added. The plan's Status line and its OWNER
 // APPROVAL GATE say so, and TestDocsComputeBackendStatusMatchesTheBranch and
 // TestDocsComputeBackendPlanStatusMatchesTheTree hold both paragraphs to the
 // tree, so a branch that carries more (or less) than they claim fails.
-const computeBackendPlan = "docs/plans/2026-10-19-compute-backend.md"
+const computeBackendPlan = "docs/compute-backend/implementation-plan.md"
 
 // TestDocsComputeBackendCitationsExist: every path the plan cites is a path a
 // later implementer has to find — the seam, the Batch package, the Terraform
@@ -67,16 +67,16 @@ func TestDocsComputeBackendCitationsExist(t *testing.T) {
 	doc := readDoc(t, computeBackendPlan)
 	for _, cited := range []string{
 		// The design and the documents it is read against.
-		"docs/design/compute-backend.md",
-		"docs/design/budget-token-channel.md",
+		"docs/compute-backend/spec.md",
+		"docs/budget-token-channel/spec.md",
 		// The boundary that keeps an artifact-producing run on Cloud Run:
 		// the plan's Global Constraint 13 and Task 8's fourth refusal are
 		// written from it, and it is the one design this plan must not
 		// contradict.
-		"docs/design/artifact-runs.md",
+		"docs/artifact-runs/spec.md",
 		"docs/gcp-live-checklist.md",
-		"docs/plans/2026-10-16-managed-projects.md",
-		"docs/plans/2026-10-14-project-centric.md",
+		"docs/managed-projects/implementation-plan.md",
+		"docs/project-centric/implementation-plan.md",
 		"docs/releases/v0.8.6.md",
 		"docs/release.md",
 		"docs/pending-workflows/README.md",
@@ -660,18 +660,22 @@ func TestDocsComputeBackendCheck57IsStillOnlyARow(t *testing.T) {
 	}
 	// A heading, not the sentence that explains its absence: the register says
 	// "There is no `## Check 57` section in this file yet" in prose, and that
-	// sentence is asserted below.
-	if strings.Contains(checklist, "\n## Check 57") {
-		t.Fatalf("docs/gcp-live-checklist.md now carries a `## Check 57` section: Task 12 of %s has landed, so that task's heading and this test both have to change in the same commit", computeBackendPlan)
+	// sentence is asserted below. The colon is part of the marker because 57's
+	// heading is written `## Check 57:` and never bare, both here and in
+	// docs_voice_switch_test.go -- without it a three-digit neighbour (570's own
+	// section, which the portal's P9.4 writes) reads as this one, and 570 is not
+	// the section Task 12 lands.
+	if strings.Contains(checklist, "\n## Check 57:") {
+		t.Fatalf("docs/gcp-live-checklist.md now carries a `## Check 57:` section: Task 12 of %s has landed, so that task's heading and this test both have to change in the same commit", computeBackendPlan)
 	}
 	if !strings.Contains(checklist, "There is no `## Check 57` section in this file yet") {
 		t.Errorf("docs/gcp-live-checklist.md no longer says why it has no `## Check 57` section; %s's Task 12 step 1 quotes that sentence", computeBackendPlan)
 	}
 	// The design is where the body lives until then, and the plan's Task 12 is
 	// written from it.
-	design := readDoc(t, "docs/design/compute-backend.md")
+	design := readDoc(t, "docs/compute-backend/spec.md")
 	if !strings.Contains(design, "## 7. The measurement: Check 57") {
-		t.Errorf("docs/design/compute-backend.md no longer carries §7, which %s's Task 12 writes the register's section from", computeBackendPlan)
+		t.Errorf("docs/compute-backend/spec.md no longer carries §7, which %s's Task 12 writes the register's section from", computeBackendPlan)
 	}
 }
 
@@ -921,7 +925,7 @@ func TestDocsComputeBackendTasksCarryTheirAnatomy(t *testing.T) {
 }
 
 // TestDocsComputeBackendKeepsTheArtifactBoundary: the Batch backend's account
-// is not per-repository, so docs/design/artifact-runs.md §8.5 and its D11 keep
+// is not per-repository, so docs/artifact-runs/spec.md §8.5 and its D11 keep
 // an artifact-producing run on the plain per-repository Cloud Run backend until
 // a per-run prefix condition or a per-run account exists — and that design says
 // in its own words that no code enforces it today and that the plan which
@@ -931,7 +935,7 @@ func TestDocsComputeBackendTasksCarryTheirAnatomy(t *testing.T) {
 // plan refuses the combination in both the task that adds the checks and the
 // task that lifts the refusal.
 func TestDocsComputeBackendKeepsTheArtifactBoundary(t *testing.T) {
-	const design = "docs/design/artifact-runs.md"
+	const design = "docs/artifact-runs/spec.md"
 	artifacts := readDoc(t, design)
 	for _, want := range []string{
 		"an artifact-producing run stays on the plain per-repository Cloud Run backend until a per-run prefix condition or a per-run account exists",
@@ -944,7 +948,7 @@ func TestDocsComputeBackendKeepsTheArtifactBoundary(t *testing.T) {
 	}
 	doc := readDoc(t, computeBackendPlan)
 	for _, want := range []string{
-		"docs/design/artifact-runs.md",
+		"docs/artifact-runs/spec.md",
 		"13. **An artifact-producing run is never launched on the Batch backend by this plan",
 		"`artifacts:` with `backend: cloud-batch` is an error",
 		"**the artifact boundary asserted to survive the enable**",
@@ -1290,7 +1294,7 @@ var computeBackendZeroNineZero = []struct {
 }{
 	{"docs/releases/v0.8.6.md", "Managed projects and `fugaro init --provision-batch` are turned off in this release", "both are planned to return in 0.9.0 after a redesign"},
 	{"docs/releases/v0.8.6.md", "**`fugaro init --provision-batch` is disabled.**", "The reaper will be redesigned for 0.9.0."},
-	{"docs/design/compute-backend.md", "**Not shipped, and not in 0.9.0.**", "`fugaro init --provision-batch` no longer refuses"},
+	{"docs/compute-backend/spec.md", "**Not shipped, and not in 0.9.0.**", "`fugaro init --provision-batch` no longer refuses"},
 	{"docs/releases/v0.9.0.md", "**The Batch backend is still disabled.**", "would return in 0.9.0, and neither returns here"},
 }
 
@@ -1522,7 +1526,7 @@ func TestDocsComputeBackendZeroNineZeroSurfacesAreAllListed(t *testing.T) {
 // placement supersedes: docs/release.md and docs/releases/v0.8.6.md are the two
 // the plan treats as release surfaces (they are in the table above, by their
 // places), and the rest are released notes and design and plan text no task in
-// this plan rewrites — of which docs/design/compute-backend.md is this work's
+// this plan rewrites — of which docs/compute-backend/spec.md is this work's
 // own design and docs/releases/v0.9.0.md is the note that recorded the work as a
 // known limit of the release it did not return in. docs/gcp-live-checklist.md
 // joined the set with Check 124, this work's own live check: its row for the
@@ -1533,16 +1537,16 @@ var computeBackendReleaseProse = []string{
 	"docs/release.md",
 	"docs/releases/v0.8.6.md",
 	"docs/releases/v0.9.0.md",
-	"docs/design/compute-backend.md",
-	"docs/design/generic-tool.md",
-	"docs/plans/2026-10-08-generic-tool.md",
-	"docs/design/managed-projects.md",
-	"docs/plans/2026-10-16-managed-projects.md",
-	"docs/plans/2026-10-14-project-centric.md",
-	"docs/design/voice.md",
-	"docs/plans/2026-10-16-voice.md",
-	"docs/design/project-named-oauth-tokens.md",
-	"docs/design/named-oauth-tokens.md",
+	"docs/compute-backend/spec.md",
+	"docs/generic-tool/spec.md",
+	"docs/generic-tool/implementation-plan.md",
+	"docs/managed-projects/spec.md",
+	"docs/managed-projects/implementation-plan.md",
+	"docs/project-centric/implementation-plan.md",
+	"docs/voice/spec.md",
+	"docs/voice/implementation-plan.md",
+	"docs/project-named-oauth-tokens/spec.md",
+	"docs/named-oauth-tokens/spec.md",
 	"docs/gcp-live-checklist.md",
 }
 
@@ -1696,12 +1700,12 @@ func TestDocsComputeBackendReaperRoleCountMatchesTheModule(t *testing.T) {
 	// Flattened, as everywhere else in this file: the design wraps at about 78
 	// columns, and a phrase that only ever appears wrapped is a phrase a
 	// substring check written without it will miss.
-	design := flattenDoc(readDoc(t, "docs/design/compute-backend.md"))
+	design := flattenDoc(readDoc(t, "docs/compute-backend/spec.md"))
 	if strings.Contains(design, "six permissions") || strings.Contains(design, "six-permission") {
-		t.Error("docs/design/compute-backend.md claims the reaper's list is six permissions: the module's role carries five, and the note that named a sixth is history (it says so itself) — a present-tense six in the same document as §3.7's five is the drift Task 9 left behind")
+		t.Error("docs/compute-backend/spec.md claims the reaper's list is six permissions: the module's role carries five, and the note that named a sixth is history (it says so itself) — a present-tense six in the same document as §3.7's five is the drift Task 9 left behind")
 	}
 	if !strings.Contains(design, "as **five** permissions") {
-		t.Error("docs/design/compute-backend.md's §3.7 Built note no longer states the count as **five** permissions: that sentence is what the tree's module is read against")
+		t.Error("docs/compute-backend/spec.md's §3.7 Built note no longer states the count as **five** permissions: that sentence is what the tree's module is read against")
 	}
 	backends := flattenDoc(readDoc(t, "docs/backends.md"))
 	if strings.Contains(backends, "below this one") {
@@ -1829,7 +1833,7 @@ func TestDocsComputeBackendQueueDeadlineKeepsLaunchJSON(t *testing.T) {
 	if launch < 0 || write < 0 || write < launch {
 		t.Fatalf("internal/cli/run.go no longer launches and then writes launch.json (%d, %d): the design's argument that a QUEUED job's run survives the reaper's delete rests on that order", launch, write)
 	}
-	for _, path := range []string{"docs/design/compute-backend.md", "internal/backend/batch/reap.go", "docs/backends.md"} {
+	for _, path := range []string{"docs/compute-backend/spec.md", "internal/backend/batch/reap.go", "docs/backends.md"} {
 		text := flattenDoc(readDoc(t, path))
 		for _, bad := range []string{"no `launch.json`", "no launch.json", "no launch.json and"} {
 			if strings.Contains(text, bad) {
@@ -1839,18 +1843,18 @@ func TestDocsComputeBackendQueueDeadlineKeepsLaunchJSON(t *testing.T) {
 	}
 	// And the amended passage has to say what the delete does not touch, not
 	// only what it costs.
-	design := readDoc(t, "docs/design/compute-backend.md")
+	design := readDoc(t, "docs/compute-backend/spec.md")
 	const amended = "**Amended by Task 9: the deadline deletes, not cancels**"
 	i := strings.Index(design, amended)
 	if i < 0 {
-		t.Fatalf("docs/design/compute-backend.md no longer carries §1.4's %q paragraph: that paragraph is where the delete is justified", amended)
+		t.Fatalf("docs/compute-backend/spec.md no longer carries §1.4's %q paragraph: that paragraph is where the delete is justified", amended)
 	}
 	passage := design[i:]
 	if end := strings.Index(passage, "\n  **Built**"); end >= 0 {
 		passage = passage[:end]
 	}
 	if !strings.Contains(passage, "`launch.json`") || !strings.Contains(passage, "survives") {
-		t.Errorf("docs/design/compute-backend.md's §1.4 amendment names no surviving `launch.json`: a reader is left with \"the delete destroys nothing that matters\" and no statement of what it does destroy, which is the shape a false claim grew in")
+		t.Errorf("docs/compute-backend/spec.md's §1.4 amendment names no surviving `launch.json`: a reader is left with \"the delete destroys nothing that matters\" and no statement of what it does destroy, which is the shape a false claim grew in")
 	}
 	// The other side of the same claim: the delete is affordable because of
 	// what it costs as well as what it spares, and the job's own record --
@@ -2047,9 +2051,9 @@ func TestDocsComputeBackendNamesTheDefaultMachineType(t *testing.T) {
 		t.Fatalf("the constant's value is not a quoted string: %q", rest[:min(len(rest), 40)])
 	}
 	name := rest[:j]
-	design := readDoc(t, "docs/design/compute-backend.md")
+	design := readDoc(t, "docs/compute-backend/spec.md")
 	if !strings.Contains(design, "`"+name+"`") || !strings.Contains(design, "defaultMachineType") {
-		t.Errorf("docs/design/compute-backend.md does not name %s (nor the constant that sets it), the machine type a run gets when the installation names none: the design's §1.3 cost figures are one type's and the default is the code's answer", name)
+		t.Errorf("docs/compute-backend/spec.md does not name %s (nor the constant that sets it), the machine type a run gets when the installation names none: the design's §1.3 cost figures are one type's and the default is the code's answer", name)
 	}
 	if strings.Contains(design, "likely default") {
 		t.Error("the design calls a machine type the likely default again: §1.3 states which type the 57a figures were measured on and what a run gets by default, and the default is the code's own constant")
@@ -2067,7 +2071,7 @@ func TestDocsComputeBackendNamesTheDefaultMachineType(t *testing.T) {
 // promising a refusal the code does not make (the plan's Task 10 step 5 owns the
 // remainder, and its own pin above).
 func TestDocsSharedConfigStatesTheImageChecksExactly(t *testing.T) {
-	const doc = "docs/design/shared-config.md"
+	const doc = "docs/shared-config/spec.md"
 	bullet := ""
 	for _, line := range strings.Split(readDoc(t, doc), "\n") {
 		if strings.Contains(line, "every value of the published `batch:` block") {
@@ -2167,7 +2171,7 @@ func TestDocsComputeBackendSaysWhichWatchShowsTheDerivation(t *testing.T) {
 	// The overclaim, verbatim as the two documents carried it: all three
 	// surfaces in one list. It flattens across the design's line break.
 	const overclaim = "`runs ls`, `fugaro watch` and `fugaro diagnose RUN`"
-	for _, path := range []string{"docs/design/compute-backend.md", computeBackendPlan} {
+	for _, path := range []string{"docs/compute-backend/spec.md", computeBackendPlan} {
 		doc := flattenDoc(readDoc(t, path))
 		if strings.Contains(doc, overclaim) {
 			t.Errorf("%s still says the derived status shows in %s: the live watch's queued scanner never opens the compute backend, so it cannot read a preemption — only the degraded mode (which reads runs as `runs ls` does) shows it", path, overclaim)
@@ -2181,9 +2185,9 @@ func TestDocsComputeBackendSaysWhichWatchShowsTheDerivation(t *testing.T) {
 	// And the debt the design owes the same reader: the history sweep writes its
 	// own word for the same run, so the two views disagree about the word and
 	// agree that the run did not finish.
-	design := flattenDoc(readDoc(t, "docs/design/compute-backend.md"))
+	design := flattenDoc(readDoc(t, "docs/compute-backend/spec.md"))
 	if !strings.Contains(design, "`infra_error` outcome in the history database (`internal/budget/sweep.go`)") {
-		t.Errorf("docs/design/compute-backend.md no longer says a preempted run's history sweep records an `infra_error` outcome for the same run: `runs ls` reads `failed (preempted)` while the history view says infra_error, and a reader told only the first would think the two agree")
+		t.Errorf("docs/compute-backend/spec.md no longer says a preempted run's history sweep records an `infra_error` outcome for the same run: `runs ls` reads `failed (preempted)` while the history view says infra_error, and a reader told only the first would think the two agree")
 	}
 }
 
@@ -2243,7 +2247,7 @@ func calleeName(e ast.Expr) string {
 }
 
 // TestTheQueuedScannerOpensNoComputeBackend holds the permission boundary
-// docs/design/compute-backend.md §1.3's sentence about which watch shows a
+// docs/compute-backend/spec.md §1.3's sentence about which watch shows a
 // preempted run is written against: the live watch's queued scanner reads the
 // runs bucket alone, so it holds no job report and has no preemption to derive
 // (design watch-queued.md §3, a boundary rather than an oversight: the scanner

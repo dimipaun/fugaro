@@ -4,7 +4,7 @@
 package keyservice
 
 // Abuse, and the one boundary the slice's security rests on (subscriptions plan
-// S3.2; the design docs/design/key-signing-service.md §3.2, §3.3, §7.2 and
+// S3.2; the design docs/key-signing-service/spec.md §3.2, §3.3, §7.2 and
 // Check 174). The tests here are about what a stranger can make the intake do,
 // and about which half of the service may sign.
 //

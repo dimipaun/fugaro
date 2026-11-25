@@ -652,7 +652,7 @@ func TestProjectJobAccountComesFromTheRef(t *testing.T) {
 // projectJobLayerAuthRepoYAML is the anchored checkout with an agent block
 // that only names the account and writes no auth of its own: the shape a
 // project that has adopted Claude accounts writes, because agent.auth is the
-// project layer's to set (docs/design/layered-config.md's scopes table, and
+// project layer's to set (docs/layered-config/spec.md's scopes table, and
 // the fixture layer's defaults say `agent: { auth: oauth }`) while only a
 // repository may name an account (named-oauth-tokens T2 — no layer may).
 func projectJobLayerAuthRepoYAML(token string) string {
@@ -2439,8 +2439,8 @@ func withholdSharedJobProvider(t *testing.T, provider string) {
 // test-local act.
 func admitSharedJobBaked(t *testing.T) {
 	t.Helper()
-	sharedJobBaked = true
-	t.Cleanup(func() { sharedJobBaked = false })
+	infra.SharedJobBaked = true
+	t.Cleanup(func() { infra.SharedJobBaked = false })
 }
 
 // The two profiles a project whose repositories are on both providers

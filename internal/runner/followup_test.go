@@ -105,11 +105,24 @@ func (h *fuHarness) followUp(t *testing.T, id, previous, text string) {
 // followUpRecipe is followUp with the recipe the task INHERITS: a follow-up
 // carries the previous run's (task.json's recipe), never one chosen for it,
 // which is how a recipe can reach a follow-up that no one picked for it.
-func (h *fuHarness) followUpRecipe(t *testing.T, id, previous, text string, rcp *task.Recipe) {
+// edit, when given, adjusts the stored spec: a follow-up that is not an
+// ordinary one (a promote follow-up carries the promote block) says so here.
+func (h *fuHarness) followUpRecipe(t *testing.T, id, previous, text string, rcp *task.Recipe, edit ...func(*task.Spec)) {
 	t.Helper()
 	spec := &task.Spec{Version: 1, RunID: id, Repo: "acme/app", Ref: "main", Workflow: h.first.Workflow, Task: text,
 		Branch: "fugaro/" + runID, PR: 1, PreviousRun: previous, Recipe: rcp}
-	store := runstore.Open(h.bucket, repoSlug, id)
+	for _, e := range edit {
+		e(spec)
+	}
+	h.followUpSpec(t, spec)
+}
+
+// followUpSpec is followUpRecipe for a task of another shape: a resumed run's
+// task is a follow-up's with the member that names the pause it picks up
+// (task.Spec.Resumes, resume_test.go), and it is stored and run the same way.
+func (h *fuHarness) followUpSpec(t *testing.T, spec *task.Spec) {
+	t.Helper()
+	store := runstore.Open(h.bucket, repoSlug, spec.RunID)
 	if err := store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)
 	}
@@ -1006,7 +1019,10 @@ func TestFollowUpCancelled(t *testing.T) {
 }
 
 func TestFollowUpCostIsOwnStagesOnly(t *testing.T) {
-	h := followUpHarness(t, "", nil)
+	// The oauth credential: the claim is about which stages' own figures add
+	// up into the run's, and a run behind a gateway takes that figure from its
+	// ledger instead of from the stages (AB1b, D3009, C1.16).
+	h := followUpHarness(t, oauthCfg(t, followUpYAML(t, "")), oauthEnv)
 	h.followUp(t, followID, runID, "Tidy up.")
 	costly := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		res, err := implement("tidy")(t, ctx, req)

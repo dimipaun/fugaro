@@ -95,9 +95,8 @@ func requireNoRehearsalCalls(t *testing.T, r *releaseRepo) {
 // back. The owner's ruling of 2026-11-19 is why: `run` builds in the sandbox
 // project only (guard_project) and tags nothing, so a session that runs it can
 // spoil nothing outward-facing. What stays the person's is the release around
-// it, and scripts/release.sh refuses a coding agent's session in its own
-// preconditions (TestReleaseRefusesToCutTheTagInACodingAgentsSession): from a
-// release this build is still the person's to run, by hand it is anybody's.
+// it, and scripts/release.sh no longer refuses a coding agent's session either
+// (TestReleaseRunsInACodingAgentsSession, the owner's order of 2026-11-21).
 //
 // The CLI's own gate is not such a fence either: it admits a coding agent's
 // session whose plan it admitted and prints AgentProceeded there
@@ -319,8 +318,16 @@ func TestReleaseRehearsalBuildsTheCLIFromTheCommit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the rehearsal did not build a CLI at all: %v", err)
 	}
-	if !strings.Contains(string(log), "cwd "+r.local+"\n") {
-		t.Errorf("the build did not run in the checkout (%s):\n%s", r.local, log)
+	// The fake logs the cwd a shell reports, which is getcwd() and not the
+	// path the test handed out: on macOS a temp dir under /var comes back out
+	// of /private/var, and the comparison is between resolved paths so that
+	// difference is not read as a build in the wrong directory.
+	local, err := filepath.EvalSymlinks(r.local)
+	if err != nil {
+		t.Fatalf("resolving the checkout's path (%s): %v", r.local, err)
+	}
+	if !strings.Contains(string(log), "cwd "+local+"\n") {
+		t.Errorf("the build did not run in the checkout (%s, as %s):\n%s", r.local, local, log)
 	}
 	if !strings.Contains(string(log), "./cmd/fugaro") {
 		t.Errorf("the build did not ask for this repository's CLI:\n%s", log)
@@ -370,52 +377,22 @@ func TestReleaseRefusesTheTagOnARedRehearsal(t *testing.T) {
 	requireNoTag(t, r, res)
 }
 
-// TestReleaseRefusesToCutTheTagInACodingAgentsSession: an agent's session cuts
-// no release, and release.sh refuses it in its PRECONDITIONS -- ahead of the
-// release branch, the pull request, the merge and the tag. An agent that
-// followed the new-release skill that far would otherwise have put the version
-// bump on main with no tag -- the half of the release nobody can undo -- so the
-// test pins that nothing outward-facing happened at all: no branch on origin, no
-// pull request, no merge, main where it was, and not even the fake CLI called.
-//
-// The refusal is this script's, and it is the only fence on the path: the
-// rehearsal it runs at step 4 holds none (the owner's ruling of 2026-11-19, and
-// TestReleaseRehearsalRunsInACodingAgentsSession above), so an agent that calls
-// scripts/release-rehearsal.sh by hand is admitted and this is what keeps the
-// release itself the person's.
-func TestReleaseRefusesToCutTheTagInACodingAgentsSession(t *testing.T) {
+// TestReleaseRunsInACodingAgentsSession: the owner's order of 2026-11-21 removed
+// the refusal of a coding agent's session ("Remove the guard"; the release is
+// not the person's alone). A session that carries an agent's marker cuts the
+// tag the same as any other, and it builds the rehearsal once.
+func TestReleaseRunsInACodingAgentsSession(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks()).with("CLAUDECODE=1")
-	main := testutil.Git(t, r.bare, "rev-parse", "main")
 
 	res := runRelease(t, r, g, "", "0.12.0")
+	res.requireSuccess(t)
 
-	res.requireFailureContaining(t, "CLAUDECODE says this is a coding agent's session")
-	requireNoTag(t, r, res)
-	requireNoRehearsalCalls(t, r)
-	if _, err := os.Stat(filepath.Join(r.recordDir, "record")); !os.IsNotExist(err) {
-		t.Error("an agent's session left a record behind: the tag gate would then read it as a build that happened")
+	if !refExists(t, r.bare, "refs/tags/v0.12.0") {
+		t.Errorf("a coding agent's session did not reach the tag:\n%s", res.out)
 	}
-	if refExists(t, r.bare, "refs/heads/release/v0.12.0") {
-		t.Error("an agent's session pushed the release branch: the refusal is a precondition, ahead of the branch")
-	}
-	if n := countLog(t, g, "pr create"); n != 0 {
-		t.Errorf("an agent's session opened %d pull request(s): the refusal is ahead of the pull request", n)
-	}
-	if n := countLog(t, g, "pr merge"); n != 0 {
-		t.Errorf("an agent's session asked for %d merge(s): that is the version bump on main with no tag", n)
-	}
-	if now := testutil.Git(t, r.bare, "rev-parse", "main"); now != main {
-		t.Errorf("main moved from %s to %s in an agent's session:\n%s", main, now, res.out)
-	}
-
-	// --dry-run is the one thing an agent's session may run, and the refusal
-	// must not take it away: it creates nothing outside its own scratch
-	// worktree, which it removes however it ends.
-	dry := runRelease(t, r, g, "", "0.12.0", "--dry-run")
-	dry.requireSuccess(t)
-	if !strings.Contains(dry.out, "Dry run for v0.12.0") {
-		t.Errorf("--dry-run must still pass in a coding agent's session:\n%s", dry.out)
+	if calls := fugaroCalls(t, r); len(calls) != 1 {
+		t.Errorf("the release made %d catalog builds, want exactly one:\n%v", len(calls), calls)
 	}
 }
 
@@ -453,4 +430,55 @@ func TestReleaseRefusesWithoutASandboxProject(t *testing.T) {
 			requireNoRehearsalCalls(t, r)
 		})
 	}
+}
+
+// TestReleaseSkipRehearsalCutsTheTagWithoutOne: the owner's ruling of 2026-11-21
+// is one release without the pre-tag rehearsal, because the sandbox it builds
+// in was not set up. The flag is the whole of the exemption: with no sandbox
+// project named the run still reaches the tag, the fake CLI is never called, no
+// record is read, and the summary and stderr both say the rehearsal is owed.
+func TestReleaseSkipRehearsalCutsTheTagWithoutOne(t *testing.T) {
+	r := newReleaseRepo(t)
+	g := newGHState(t, r, greenChecks()).with("FUGARO_LIVE_GCP_PROJECT=")
+
+	res := runRelease(t, r, g, "", "0.12.0", "--skip-rehearsal")
+	res.requireSuccess(t)
+
+	if !refExists(t, r.bare, "refs/tags/v0.12.0") {
+		t.Errorf("the run with --skip-rehearsal did not cut the tag:\n%s", res.out)
+	}
+	requireNoRehearsalCalls(t, r)
+	for _, want := range []string{
+		"--skip-rehearsal: this release is cut WITHOUT the pre-tag rehearsal",
+		"rehearsal: SKIPPED on the owner's explicit word of 2026-11-21",
+		"it is owed",
+	} {
+		if !strings.Contains(res.out, want) {
+			t.Errorf("the output does not say %q:\n%s", want, res.out)
+		}
+	}
+	if strings.Contains(res.out, "rehearsal: this repository's own go catalog entry built for real") {
+		t.Errorf("the summary claims a rehearsal that did not run:\n%s", res.out)
+	}
+}
+
+// TestReleaseSkipRehearsalIsOnlyWhatTheFlagSays: without the flag nothing about
+// the rehearsal changed -- a run with no sandbox project still refuses before the
+// branch -- and the dry-run plan with the flag names the skipped step instead of
+// the billable build.
+func TestReleaseSkipRehearsalIsOnlyWhatTheFlagSays(t *testing.T) {
+	r := newReleaseRepo(t)
+	g := newGHState(t, r, greenChecks()).with("FUGARO_LIVE_GCP_PROJECT=")
+
+	runRelease(t, r, g, "", "0.12.0").requireFailureContaining(t, "FUGARO_LIVE_GCP_PROJECT is not set")
+
+	dry := runRelease(t, r, g, "", "0.12.0", "--dry-run", "--skip-rehearsal")
+	dry.requireSuccess(t)
+	if !strings.Contains(dry.out, "4b. SKIPPED: --skip-rehearsal") {
+		t.Errorf("the dry-run plan does not name the skipped rehearsal:\n%s", dry.out)
+	}
+	if strings.Contains(dry.out, "ONE billable Cloud Build") {
+		t.Errorf("the dry-run plan still lists the billable build:\n%s", dry.out)
+	}
+	requireNoRehearsalCalls(t, r)
 }

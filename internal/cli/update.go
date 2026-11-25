@@ -70,7 +70,7 @@ seven scoped roles and their seven conditioned bindings live in the project and
 accounted for by nothing. The fence is the installation's and not a mode of the
 project — every run that rewrites the installation's settings carries the key
 forward — so taking a project out of managed mode does not remove it and does
-not lift the refusal (docs/design/managed-projects.md §10.2, "Rolling back").
+not lift the refusal (docs/managed-projects/spec.md §10.2, "Rolling back").
 
 Everything else is setup's help word for word, because it is the same
 converge: the review screen and the one typed project name in a project Fugaro
@@ -83,14 +83,17 @@ only a step that is money, permanence or a secret still asks for your own word
 and the billing link are setup's, and here they cannot arise at all, and a
 secret is a value, typed in a hidden prompt, which no flag can supply — against
 the ordinary steps this door owns, which by D12's answer of 2026-10-20 are every
-one of them: the Firestore database's permanent location, a billable
+one of them: a billable
 first image build, replacing a registry tag and onboarding an unlisted
 repository on a provider's own host with an origin git config that does not
 rewrite it (the build, the tag and the repository are covered in setup too); the
 secrets stage's hidden prompts and the one line of fugaro secrets set commands
 it leaves instead; the plugin wiring; --anchor, which writes the checkout's
 gcp_project line and nothing else; --plan-only, --print-vars, --config-only and
---publish-config; and --json, which prints the same result object. Exit codes:
+--publish-config; and --json, which prints the same result object. The Firestore
+database's location is not among the steps: where this door creates the
+database it prints where, and that the location is permanent, and creates it
+asking nobody (D3090 of docs/location-preference). Exit codes:
 0 done (or only planned), 1 a refusal or a step left for you, 2 a cloud
 failure.`
 

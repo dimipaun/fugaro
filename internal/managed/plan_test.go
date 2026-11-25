@@ -1114,6 +1114,69 @@ func TestGateAdmitsAnUpgradesOwnReplaceAndJudgesItsCreate(t *testing.T) {
 	}
 }
 
+// The minter rows this binary's own update removes when the
+// launcher-does-not-mint switch is turned off reach the managed gate the same
+// way the launcher upgrade's replaces do: infra.IdentityAllowDelete names them
+// out of THIS plan and they go through Spec.Upgrade, where GuardManaged admits
+// a delete whose address it was given (LM20, F25). An IAM member is a type
+// D1551 does not protect, so without the address the gate takes the removal as
+// a content warning (D1545) — the address is what turns a warning into an
+// admission with nothing left for the owner to decide, which is the whole point
+// of naming it (CLAUDE.md's HARD RULE about `fugaro update`).
+func TestManagedGuardAdmitsTheMinterRowDeletes(t *testing.T) {
+	const peopleRow = `module.firebase.google_service_account_iam_member.minter["user:launcher@example.com"]`
+	const orchestratorRow = "module.installation.google_service_account_iam_member.orchestrator_token_minter[0]"
+	minterRow := func(addr, member string) map[string]any {
+		return deleted(addr, "google_service_account_iam_member", map[string]any{
+			"member": member, "role": "projects/" + gcpProject + "/roles/fugaroTokenMinter",
+			"service_account_id": "projects/" + gcpProject + "/serviceAccounts/fugaro-token-signer@" + gcpProject + ".iam.gserviceaccount.com"})
+	}
+	r := newRig(t)
+	r.managedShow(t,
+		minterRow(peopleRow, "user:launcher@example.com"),
+		minterRow(orchestratorRow, "serviceAccount:fugaro-orchestrator@"+gcpProject+".iam.gserviceaccount.com"))
+	// The plan the switch-off stage plans: the same two deletes with
+	// people_minter = false in the plan's own variables, which is the whole of
+	// what makes them this binary's own removals rather than a roster that
+	// shrank (infra.PeopleMinter).
+	sh := r.script["show"].(map[string]any)
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(sh["stdout"].(string)), &doc); err != nil {
+		t.Fatal(err)
+	}
+	doc["variables"] = map[string]any{"people_minter": map[string]any{"value": false}}
+	b, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sh["stdout"] = string(b)
+
+	named := infra.IdentityAllowDelete(r.plan(t), infra.PeopleMinter(r.plan(t)))
+	if !slices.Equal(named, []string{peopleRow, orchestratorRow}) {
+		t.Fatalf("IdentityAllowDelete named %q, want the two minter rows", named)
+	}
+	upgrading := func(t *testing.T, r *rig) Spec {
+		t.Helper()
+		s := spec(t, r, managedCover())
+		s.Upgrade = infra.IdentityAllowDelete(r.plan(t), infra.PeopleMinter(r.plan(t)))
+		return s
+	}
+	v := gate(t, r, upgrading(t, r))
+	if !v.OK {
+		t.Fatalf("the minter rows' own deletes are refused: %v", v.Refusals)
+	}
+	if len(v.Warnings) != 0 {
+		t.Fatalf("the minter rows' own deletes are warned about rather than admitted: %v", v.Warnings)
+	}
+	// The same plan with no address named: the gate WARNS about the removal,
+	// which is the state the list clears — so the admission above is the list
+	// and not a plan that was going to pass anyway.
+	v = gate(t, r, spec(t, r, managedCover()))
+	if len(v.Warnings) == 0 {
+		t.Fatal("the minter row delete carries no warning without the list")
+	}
+}
+
 // The rule Task 6.3 exists for, at the managed Gate: an approval is of the
 // object the owner was shown, not a standing permission to delete whatever is
 // at the address later. The plan removes the object the entry was given for

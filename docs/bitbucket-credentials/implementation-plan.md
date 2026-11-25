@@ -114,7 +114,7 @@ the same for runs.
     separate per-repository switch);
   - `website/content/security.md` is regenerated with `go run ./internal/clidoc`.
 - **`.claude/rules/console.md`** (`console/**`): a new spawn or IPC argv is security-sensitive.
-  It needs its pinning tests and a row in the §5.1 table of `docs/design/desktop-console.md`.
+  It needs its pinning tests and a row in the §5.1 table of `docs/desktop-console/spec.md`.
 - **`.claude/rules/terraform.md`** (`deploy/terraform/**`, `internal/infra/**`), for every
   Terraform task:
   - `terraform fmt -check -recursive deploy/terraform`;
@@ -268,7 +268,7 @@ unchanged, and `textContent` only.
   - the pinning tests in `console/test/unit/`, including `console/test/unit/window.test.ts` (P6's
     CSP mutation);
   - `console/docs/json-contract.md`;
-  - the §5.1 table in `docs/design/desktop-console.md`.
+  - the §5.1 table in `docs/desktop-console/spec.md`.
 - **Tests:**
   - P6's three mutations;
   - the argv `coordinator status --from-store --all --json` pinned exactly, with the `--project`
@@ -459,7 +459,7 @@ T2.3's coordinator-account half returns in BB5.
     which is the operator step the plan is written to avoid. The residual exposure is honest and
     inherited, not BB4's: whoever can write the runs bucket could repoint that block, and both this
     read and the C3.9 chain's verifier send a person's ID token to whatever it names. The anchor
-    check in `ParseShared` and `docs/design/shared-config.md` §5 are what stand against that today,
+    check in `ParseShared` and `docs/shared-config/spec.md` §5 are what stand against that today,
     and a third caller class does not make that worse.
   - With no block and no override, Bitbucket is refused exactly as on `main`, and GitHub is
     untouched (G8).
@@ -1142,7 +1142,7 @@ changes.
 | `deploy/terraform/gcp/modules/installation/credentials.tf`, `variables.tf`, `internal/infra/tf/cover.go`, `internal/infra/tf/testdata/golden/*` | BB4 (L2), BB5 (L3) |
 | `deploy/terraform/gcp/modules/installation/coordinator.tf`, `roots/installation/*`, `internal/infra/firebase.go`, `projectjobs.go`, `tfvars.go`, `internal/cli/init_firebase.go` | BB5 (L3) |
 | `SECURITY.md`, `website/content/security.md`, `internal/cli/docs_bitbucket_security_test.go` | T2.11 (L4) |
-| `console/**`, `console/docs/json-contract.md`, `docs/design/desktop-console.md` | T1.2 (L1) |
+| `console/**`, `console/docs/json-contract.md`, `docs/desktop-console/spec.md` | T1.2 (L1) |
 
 BB4 and BB5 both write the credentials service's admission, its read-mint route and the coordinator
 command, and they are at different levels, so neither file is contended — but BB5's diff is small

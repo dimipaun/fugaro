@@ -444,7 +444,10 @@ func TestBudgetRaiseRefusesInAnAgentSession(t *testing.T) {
 		// own defaults answer, an empty --repo or a path would each land on
 		// another project's or checkout's caps than the one this run was about,
 		// and the typed project name that used to catch that is gone.
-		{[]string{"budget", "set", "--repo", "--daily", "150"}, "fugaro budget set --daily=150 --repo=acme/app --project=aurora"},
+		// A figure the ceiling admits ($50 under the global $100): one above it is
+		// refused earlier, naming the ceiling, because the command this fence
+		// hands back would meet that same ceiling (RC3, budget_ceiling_test.go).
+		{[]string{"budget", "set", "--repo", "--daily", "50"}, "fugaro budget set --daily=50 --repo=acme/app --project=aurora"},
 		// The mode is the fence's other form, and the one a session could
 		// otherwise make unopposed: with the mode node absent (an absent mode is
 		// observe, D1548) the mode edit is a no-op and the choice beside it is
@@ -866,6 +869,35 @@ func TestPricesShowsLocalOverrides(t *testing.T) {
 	}
 }
 
+// TestBudgetPricesNamesASecondPublishersRows: a row the embedded table prices
+// from a publisher that is not the Claude API — Vertex's Gemini rows (GV3 of
+// docs/model-credentials-routing) — names its own source and the day it was
+// read, on the row. The header line above the table is the embedded table's own
+// source and date, which are the Claude page's, and a row that left them to
+// speak for it would show Vertex's number under Anthropic's page.
+func TestBudgetPricesNamesASecondPublishersRows(t *testing.T) {
+	newBudgetFixture(t, "budget: { mode: observe, per_run_usd: 5, rtdb_url: http://127.0.0.1:9 }\n")
+	out, _, err := execute(t, "budget", "prices")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gemini, claude := "", ""
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, "google/gemini-3-pro") {
+			gemini = l
+		}
+		if strings.HasPrefix(l, "claude-opus-5-5") {
+			claude = l
+		}
+	}
+	if !strings.Contains(gemini, "cloud.google.com") || !strings.Contains(gemini, "2026-11-22") {
+		t.Errorf("the Gemini row does not name where its price came from and when:\n%s", out)
+	}
+	if strings.Contains(claude, "cloud.google.com") {
+		t.Errorf("a Claude row names a source of its own: the table's own is the header line's, and the row is one publisher's price under it:\n%s", claude)
+	}
+}
+
 // TestBudgetPricesJSONPinsTheFigures is the price pin M1 needs: the document
 // `budget prices --json` prints is held against rows written out here, field
 // for field — one embedded Claude row, one row the built-in provider price
@@ -904,10 +936,10 @@ func TestBudgetPricesJSONPinsTheFigures(t *testing.T) {
 		{"claude-opus-5-5", `{"id":"claude-opus-5-5","input_per_m":4,"output_per_m":20,"cache_read_per_m":0.2,"cache_write_5m_per_m":5,"cache_write_1h_per_m":8,"web_search_per_1k":10,"local":false,"unverified":false}`},
 		// The catalog row the openrouter route claims: the zdr tier's dearest
 		// end, which is what a route that names no price_policy is charged
-		// (D2644), its 15 endpoints (10 of them ZDR-eligible) and the dearest
+		// (D2644), its 13 endpoints (10 of them ZDR-eligible) and the dearest
 		// price the tier carries — the same figures, since the row is charged
 		// at the top of the range.
-		{"deepseek/deepseek-v4-flash", `{"id":"deepseek/deepseek-v4-flash","input_per_m":0.7,"output_per_m":1.32,"cache_read_per_m":0.2,"cache_write_5m_per_m":0.875,"cache_write_1h_per_m":1.4,"web_search_per_1k":0,"local":false,"unverified":false,"catalog":{"tier":"zdr","bound":"max","endpoints":15,"zdr_endpoints":10,"source":"https://openrouter.ai/api/v1/models","checked_at":"2026-10-23","stale":false,"tier_input_max_per_m":0.7,"tier_output_max_per_m":1.32}}`},
+		{"deepseek/deepseek-v4-flash", `{"id":"deepseek/deepseek-v4-flash","input_per_m":0.21,"output_per_m":0.56,"cache_read_per_m":0.07,"cache_write_5m_per_m":0.2625,"cache_write_1h_per_m":0.42,"web_search_per_1k":0,"local":false,"unverified":false,"catalog":{"tier":"zdr","bound":"max","endpoints":13,"zdr_endpoints":10,"source":"https://openrouter.ai/api/v1/models","checked_at":"2026-11-21","stale":false,"tier_input_max_per_m":0.21,"tier_output_max_per_m":0.56}}`},
 		// The override: the owner's own numbers, marked local, with the cache
 		// multipliers the table's defaults give them.
 		{"vendor/model-y", `{"id":"vendor/model-y","input_per_m":1,"output_per_m":2,"cache_read_per_m":0.1,"cache_write_5m_per_m":1.25,"cache_write_1h_per_m":2,"web_search_per_1k":10,"local":true,"unverified":false}`},

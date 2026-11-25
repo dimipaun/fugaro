@@ -4,7 +4,7 @@
 package keyservice
 
 // The manual queue (subscriptions plan S3.4; the design
-// docs/design/key-signing-service.md §4.5, §6 and Check 173). It is the surface
+// docs/key-signing-service/spec.md §4.5, §6 and Check 173). It is the surface
 // the Terms give the requests the checks cannot decide, so what is held here is
 // that a queued request reaches the owner, and that the notification leads to the
 // portal's own page for it (P5.1) rather than to a page of this service's.

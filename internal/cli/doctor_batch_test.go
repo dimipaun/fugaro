@@ -112,7 +112,7 @@ func batchSteps() []batchStep {
 		{batchStepSubnet, func(_ *testing.T, _ *doctorRig, f batchRigFakes) { f.compute.AddSubnetwork(batchRegion, "fugaro") }},
 		{batchStepSink, func(_ *testing.T, _ *doctorRig, f batchRigFakes) {
 			f.logging.AddSink("proj-1234", infra.LogSink,
-				"logging.googleapis.com/projects/proj-1234/locations/global/buckets/fugaro", batchBothArms)
+				"logging.googleapis.com/projects/proj-1234/locations/us/buckets/fugaro", batchBothArms)
 		}},
 		{batchStepExcl, func(_ *testing.T, _ *doctorRig, f batchRigFakes) {
 			f.logging.AddExclusion("proj-1234", infra.LogExclusion, batchBothArms)
@@ -329,7 +329,7 @@ func TestDoctorBatchReportsAMissingImageFamily(t *testing.T) {
 	f.compute.AddNetwork("fugaro")
 	f.compute.AddSubnetwork("us-east5", "fugaro")
 	f.logging.AddSink("proj-1234", infra.LogSink,
-		"logging.googleapis.com/projects/proj-1234/locations/global/buckets/fugaro", batchSinkArm)
+		"logging.googleapis.com/projects/proj-1234/locations/us/buckets/fugaro", batchSinkArm)
 	r := newDoctorRig(t)
 	r.withBatch(t, f, "")
 
@@ -539,7 +539,7 @@ func TestDoctorBatchReportsANetworkOrSubnetworkThatIsNotThere(t *testing.T) {
 // Mutation (drop the arm check, drop the destination check, or treat a missing
 // sink as ok): one of the three cases stops warning.
 func TestDoctorBatchReportsASinkWithoutTheBatchArm(t *testing.T) {
-	const wantDest = "logging.googleapis.com/projects/proj-1234/locations/global/buckets/fugaro"
+	const wantDest = "logging.googleapis.com/projects/proj-1234/locations/us/buckets/fugaro"
 	cloudRunArm := `resource.type="cloud_run_job" AND labels."fugaro"="managed"`
 	for _, tc := range []struct {
 		name     string
@@ -568,6 +568,48 @@ func TestDoctorBatchReportsASinkWithoutTheBatchArm(t *testing.T) {
 			}
 			if !strings.Contains(c.Problem, tc.wantInMs) {
 				t.Errorf("the warning does not say %q: %s", tc.wantInMs, c.Problem)
+			}
+		})
+	}
+}
+
+// TestDoctorReadsTheLogBucketWhereItIs (LP6, R5): the sink check compares the
+// live destination against the installation's OWN log bucket. That bucket's
+// location is the one the config's log view names -- the view path the module
+// wrote into the outputs an earlier update recorded -- and place.For's answer
+// for the region only when the config records no view at all. A bucket's
+// location is permanent, so a check that assumed one would warn about a sink
+// routing exactly where the installation's bucket is, which is the warning this
+// test must not see.
+func TestDoctorReadsTheLogBucketWhereItIs(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		view string
+		// bucket is where the sink routes, as the trailing locations/<bucket>
+		// pair of the project's own bucket path.
+		bucket string
+		ok     bool
+	}{
+		{"the location the recorded view names", "projects/proj-1234/locations/global/buckets/fugaro/views/fugaro-runs", "global", true},
+		{"the mapping's answer, with no view recorded", "", "us", true},
+		{"the mapping's answer, against a view that names another", "projects/proj-1234/locations/global/buckets/fugaro/views/fugaro-runs", "us", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newBatchFakes(t)
+			f.logging.AddSink("proj-1234", infra.LogSink,
+				"logging.googleapis.com/projects/proj-1234/locations/"+tc.bucket+"/buckets/fugaro", batchSinkArm)
+			r := newDoctorRig(t)
+			extra := ""
+			if tc.view != "" {
+				extra = "log_view: " + tc.view + "\n"
+			}
+			r.withBatch(t, f, extra)
+			c, found := doctorCheckByID(r.runDoctorJSON(t).Checks, "batch-log-sink")
+			if !found {
+				t.Fatal("doctor reports no batch-log-sink check")
+			}
+			if c.OK != tc.ok {
+				t.Fatalf("check = %+v, want ok=%v: the sink routes to the bucket's own location and nothing here derives it", c, tc.ok)
 			}
 		})
 	}
@@ -862,42 +904,66 @@ func TestDoctorBatchSkipsAreNeverPasses(t *testing.T) {
 // that made it reachable.
 //
 // The check asks budgetMintOn, the function a launch decides with, so these
-// three configs are the three states of its own answer: a mode that is not off
-// with a database and a signer (mints, and no policy is read), a mode that is
-// off with nothing published (does not mint), and a mode that is off with a
-// published policy (mints -- the arm a config alone cannot answer, and the
-// reason the check reads the node at all).
+// configs are the states of its own answer: a budget database, with the signer
+// account a run's identity is minted through -- which mints whatever the mode
+// says and whether or not a policy is published (AB4, F7) -- and no database at
+// all, where nothing mints because no launch of the installation happens (the
+// launcher refuses it with the fix), so the pair this check reads is not what
+// stops it and the check has nothing to report.
 //
-// Mutation (drop the check from doctorBatchChecks): the two minting cases read
-// as absent, and every "doctor reports no batch-budget-seal check" assertion
-// fails. Mutation (ask the config arm alone -- budgetBackendOn without the
-// policy read): the published-policy case stops being refused.
+// A database with no signer yet is refused here as well, which is the one shape
+// where an arm of this check could drift from `fugaro validate`'s offline arm:
+// the pair is the database's own (AB4, F7), and the two readers of it answer
+// for the same configs (validate_batch.go's case is a block with the same two
+// fields and no signer).
+//
+// Mutation (drop the check from doctorBatchChecks): the minting cases read as
+// absent, and every "doctor reports no batch-budget-seal check" assertion
+// fails. Mutation (read the mode again): the two off cases stop being refused,
+// which is the direction AB4 closed. Mutation (read the signer): the
+// database-with-no-signer case passes and fails here.
 func TestDoctorBatchRefusesAMintingInstallation(t *testing.T) {
 	// budgetYAML is one installation's budget block, with a database of its own
 	// per case: a policy published for one case must not be found by another.
-	budgetYAML := func(t *testing.T, mode string, publish bool) string {
+	budgetYAML := func(t *testing.T, mode string, publish bool, signer string) string {
 		t.Helper()
 		db := gcpfake.NewRTDB(t)
 		if publish {
 			db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
 			db.Set(projectpolicy.PathShared(), map[string]any{"version": projectpolicy.Version})
 		}
-		return "budget: { mode: " + mode + ", per_run_usd: 5, firebase_project: proj-1234, rtdb_url: " + db.URL + ", token_signer: " + testSigner + " }\n"
+		block := "budget: { mode: " + mode + ", per_run_usd: 5, firebase_project: proj-1234, rtdb_url: " + db.URL
+		if signer != "" {
+			block += ", token_signer: " + signer
+		}
+		return block + " }\n"
 	}
 	for _, tc := range []struct {
-		name    string
-		mode    string
-		publish bool
-		mints   bool
+		name       string
+		mode       string
+		publish    bool
+		noDatabase bool
+		noSigner   bool
+		mints      bool
 	}{
 		{name: "a budget mode that mints", mode: "enforce", mints: true},
-		{name: "a budget mode that is off with nothing published", mode: "off"},
-		{name: "a budget mode that is off with a published policy", mode: "off", publish: true, mints: true},
+		{name: "a mode that says off with nothing published", mode: "off", mints: true},
+		{name: "a mode that says off with a published policy", mode: "off", publish: true, mints: true},
+		{name: "a database with no signer yet", mode: "enforce", noSigner: true, mints: true},
+		{name: "an installation with no budget database", noDatabase: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, f := newDoctorRig(t), newBatchFakes(t)
 			batchProvisioned(t, r, f)
-			r.withBatchSelected(t, f, batchBlock, batchLists+budgetYAML(t, tc.mode, tc.publish))
+			signer := testSigner
+			if tc.noSigner {
+				signer = ""
+			}
+			block := batchLists + budgetYAML(t, tc.mode, tc.publish, signer)
+			if tc.noDatabase {
+				block = batchLists + "budget: { per_run_usd: 5 }\n"
+			}
+			r.withBatchSelected(t, f, batchBlock, block)
 			o := r.runDoctorJSON(t)
 			c, ok := doctorCheckByID(o.Checks, "batch-budget-seal")
 			if !ok {
@@ -915,7 +981,7 @@ func TestDoctorBatchRefusesAMintingInstallation(t *testing.T) {
 			if c.Severity != "" {
 				t.Errorf("the pair has severity %q, want doctor's own hard failure: an installation that selects the backend is refused for it", c.Severity)
 			}
-			for _, want := range []string{"mints budget tokens", "docs/design/budget-token-channel.md", "§1.6"} {
+			for _, want := range []string{"mints budget tokens", "docs/budget-token-channel/spec.md", "§1.6"} {
 				if !strings.Contains(c.Problem, want) {
 					t.Errorf("the finding does not name %q: %s", want, c.Problem)
 				}
@@ -997,7 +1063,7 @@ var batchGateConditions = []batchGateCondition{
 	{name: "the sink's Batch arm", id: "batch-log-sink", want: "has no Batch arm",
 		alter: func(_ *testing.T, _ *doctorRig, f batchRigFakes) {
 			f.logging.AddSink("proj-1234", infra.LogSink,
-				"logging.googleapis.com/projects/proj-1234/locations/global/buckets/fugaro", batchCloudRunArm)
+				"logging.googleapis.com/projects/proj-1234/locations/us/buckets/fugaro", batchCloudRunArm)
 		}},
 	{name: "the log exclusion", id: "batch-log-exclusion", want: "is not in proj-1234",
 		without: []string{batchStepExcl}},
@@ -1204,7 +1270,7 @@ func failingChecks(o doctorOutput) []doctorCheck {
 // than `fugaro-ghcr` -- the one `internal/cli`'s ParseShared refuses by name
 // and by that name alone, because the reader has no repository list to tell the
 // project's remote repositories from the ones this installation's builds push
-// to (docs/design/shared-config.md §5, TestParseSharedLeavesAnotherPullThroughRepository).
+// to (docs/shared-config/spec.md §5, TestParseSharedLeavesAnotherPullThroughRepository).
 //
 // The shape this task took is the second of the two the plan's vocabulary
 // allows: the project's remote repositories are refused AS A CLASS, and the
@@ -1343,7 +1409,7 @@ func TestDoctorBatchRefusesASecretTheInstallationDidNotCreate(t *testing.T) {
 // TestDoctorBatchNamesTheArtifactBoundary: Global Constraint 13 asks doctor to
 // name the boundary an artifact-producing run meets on this backend, and this
 // is the check that does it. Informational, never a warning: it describes the
-// plan's own decision (docs/design/artifact-runs.md §8.5 and D11), not a fault
+// plan's own decision (docs/artifact-runs/spec.md §8.5 and D11), not a fault
 // an installation can fix, and a warning no run of fugaro update could clear
 // would make Task 10's gate unsatisfiable -- which is why the severity matters
 // here and not only the text.
@@ -1362,7 +1428,7 @@ func TestDoctorBatchNamesTheArtifactBoundary(t *testing.T) {
 	if c.Severity != "info" {
 		t.Errorf("the boundary's check has severity %q, want info: it is a decision and not a fault, and a warning would fail doctor --strict for every Batch installation", c.Severity)
 	}
-	for _, want := range []string{"artifact-runs.md", "§8.5", "D11", "cloud-run"} {
+	for _, want := range []string{"artifact-runs/spec.md", "§8.5", "D11", "cloud-run"} {
 		if !strings.Contains(c.Problem+c.Fix, want) {
 			t.Errorf("the boundary's text does not name %q: %s / %s", want, c.Problem, c.Fix)
 		}

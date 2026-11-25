@@ -96,7 +96,7 @@ import type { TextClass } from './sanitize'
  * for most of the people who use it. The **whole** recorded value is drawn in
  * the Run screen's header, in `person`, exactly as this map says -- so no
  * address is drawn anywhere. `console/README.md`'s class table and
- * `docs/design/desktop-console.md` §6.2 record the decision; `launcher.ts` is
+ * `docs/desktop-console/spec.md` §6.2 record the decision; `launcher.ts` is
  * the module and carries the reasoning.
  */
 export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.freeze({
@@ -181,6 +181,12 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
   // `config_sha256` already are.
   base_branch: 'branch',
   previous_run: 'runId',
+  // `resumed_by` is the run that resumed a paused run's chain (PR7 of
+  // model-credentials-routing) -- the paused row's second fact beside
+  // `resume_at`, and a run id like `previous_run` and `run_id` above, so the
+  // class those carry. Its **presence** is the state: a pause nothing has picked
+  // up yet leaves the key out, and no screen is built from it yet (VS3).
+  resumed_by: 'runId',
   // `rigor.revision`: the revision the run's mode was read from
   // (`runstore.RigorRecord.Revision`, docs/rigor-modes D25) -- `origin/main`,
   // the same kind of value as `base_branch` above and a string a branch name
@@ -304,10 +310,9 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
   // URL -- the safe direction, and the read is offline either way.
   base_url: 'url',
   // `host` is the host of `base_url`: a machine name, so it takes the host
-  // class, which draws `HOST_PLACEHOLDER` for every value. That is the
-  // console's rule for a machine and not a decision this document gets to
-  // change -- the panel cannot show which host a route points at, and
-  // `docs/design/desktop-console.md` §5.1's row is where that is stated.
+  // class, which draws the name it was given (D3213, 2026-11-21). Which host a
+  // route points at is a fact about the operator's own configuration, and this
+  // console is the tool that reads it.
   host: 'host',
   // A route's or a model's `note`, a row's `refused` (why it has no price) and
   // a repository's `problems[]` (the refusals a launch would give for its pins)
@@ -334,15 +339,23 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
   // alike, as text, which is what a route's allow-list is.
   allow_data_to: 'label',
   allowed_to: 'label',
-  // `source` is the one key of this document with **two readings**, and the
-  // map cannot have two entries for one key: on a model row it is one of the
-  // CLI's four price-source words (`embedded`, `catalog`, `local`, `none`),
-  // and on the catalog block it is the price catalog's own source URL. It takes
-  // the **drawn** reading, `label`, which is what the four enum words need --
-  // a URL under a label is drawn as the free-text rules' marker rather than as
-  // a link, so the collision fails in the safe direction. (`state`, which has
-  // the same shape of collision between the CLI's own word and a host's, took
-  // the same reading in coordinator v2 C3.)
+  // `source` is the one key of this document with **more than one reading**,
+  // and the map cannot have two entries for one key: on a model row it is one
+  // of the CLI's four price-source words (`embedded`, `catalog`, `local`,
+  // `none`), on the catalog block it is the price catalog's own source URL, and
+  // on a live run it is the routing table's answer for the running stage
+  // (model-credentials-routing CS9) -- the kind of source that served and, when
+  // the kind names one, its name after a colon (`pool:team`, `anthropic`),
+  // which is `budget.AgentEntry.Source` and never a value. It takes the
+  // **drawn** reading, `label`, which is what the four enum words and the
+  // routing answer need -- a URL under a label is drawn as the free-text rules'
+  // marker rather than as a link, so the collision fails in the safe direction.
+  // (`state`, which has the same shape of collision between the CLI's own word
+  // and a host's, took the same reading in coordinator v2 C3.) The routing
+  // answer is classified although no screen draws it yet: the Live screen's
+  // replacement for the auth column is the visibility plan's VS1, and a string
+  // a screen *may* draw is a string that goes through the sanitizer when it
+  // does.
   source: 'label',
   // The graph read (contract §6.22, the graph plan's CG9a). A node's `key` and
   // its `source` and `id` beside it, and an edge's two endpoints, are all the
@@ -360,6 +373,16 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
   key: 'label',
   from: 'label',
   to: 'label',
+  // The orchestrator map (the console-fixes plan's CG7a, D3221). `driver` is the
+  // principal of the credential holding an orchestrator's lease -- a person's
+  // account or a service account's address, the address spelling the rest of the
+  // tree uses for a person and the class `by`, `account`, `requested_by` and
+  // `launched_by` carry. It is text a screen draws, so it goes through the
+  // sanitizer; the node's `id` and `name` beside it are **identity** and take the
+  // classes above (`id` is a label, `name` is a label). `reason` is already
+  // classified above -- the map's overlap reason is prose under the same key the
+  // feed's connection reason uses -- and the health's `note` is `sentence`.
+  driver: 'person',
 })
 
 /**
@@ -430,6 +453,11 @@ export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   // it decodes instead of reading as the skew state.
   'pr_state',
   'outcome',
+  // `auth` is the run's auth mode, one of the CLI's own words, and since D3070 a
+  // run with nothing to say about it carries `-` under this key rather than
+  // omitting it -- the key is a required string on the live run shape. The mark
+  // is not a mode: `authModeOf` is the one reader of this key and answers `null`
+  // for it, so a screen draws no auth mode rather than the `-` the CLI wrote.
   'auth',
   'deadline',
   'day',
@@ -447,6 +475,12 @@ export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   'pushed_head',
   'started_at',
   'pr_status_at',
+  // The orchestrator map's `health.ok_at` (the console-fixes plan's CG7a,
+  // D3221): the server time the coordinator's last sweep finished reading
+  // everything, RFC 3339 or null. It is the `started_at` beside it exactly -- a
+  // stamp a screen turns into an age and never a string it draws -- and its
+  // presence is the state, so it is exempted here rather than classified.
+  'ok_at',
   // 0.10.0 (credentials-service C1.21): when a run waiting for a credential
   // expects to resume at, RFC 3339 UTC. It is a stamp for the same reason the
   // others are -- an instant a reader compares with `now`, and one whose
@@ -455,6 +489,13 @@ export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   // clock (`tools/scrub-fixture/scrub.ts`'s `instant` rule, beside `now` and a
   // kill's `at`), so a fixture's copy is a reading and not the wire's own value.
   'waiting_until',
+  // PR7 of model-credentials-routing: when a paused run's chain comes back,
+  // RFC 3339 UTC, on a `runs ls` row whose record ended `paused`. It is
+  // `waiting_until`'s kind exactly -- a stamp a reader places in time next to
+  // `now`, and one whose presence is the state -- and it is exempted here for
+  // the same reason, rather than classified: no screen draws it today (the
+  // paused row is VS3's).
+  'resume_at',
   // The jobs-free totals read (contract §6.17): `since` and `until` are the
   // window's two UTC days and `days_unknown` the days neither source answered
   // for. They are the same kind of value as `day` above -- a day the CLI
@@ -834,6 +875,33 @@ export interface RunView {
 }
 
 /**
+ * NO_AUTH_MODE is the CLI's own word for a run that has no auth mode to name:
+ * since D3070 a document with nothing to say about the run's auth writes `-`
+ * under `auth`, because the key is a required string on the live run shape and
+ * omitting it would be a document the decoder refuses.
+ *
+ * It is a **value** the console compares and never text it draws -- `auth` sits
+ * in `NON_TEXT_STRING_KEYS` -- so it lives here beside the shape it belongs to
+ * rather than in a screen's own vocabulary.
+ */
+export const NO_AUTH_MODE = '-'
+
+/**
+ * authModeOf is the run's auth mode, or `null` when the document carries none.
+ *
+ * **A run with no auth mode draws no auth mode**, and the two ways a feed can
+ * say so are one answer here: `NO_AUTH_MODE`, which is what this CLI writes, and
+ * the empty string, which is what a decoder gives a key that was absent. Drawing
+ * either as a mode would put a word the CLI never meant as one on the screen, and
+ * drawing the console's `n/a` in its place would be the console reporting a
+ * question the feed answered.
+ */
+export function authModeOf(auth: string): string | null {
+  if (auth === '' || auth === NO_AUTH_MODE) return null
+  return auth
+}
+
+/**
  * FinishedView is a finished run (`JSONFinished`). `prUrl` and `prNumber` are
  * `null` when the run has no pull request -- the contract's `omitempty`, and
  * design section 4.3's gap 7: the console shows the repository, the number and
@@ -1108,6 +1176,23 @@ export const REPO_KEYS = [
  * present: a run under rules that predate them writes `-`, which is "not
  * recorded", never a mode this build picked.
  *
+ * **`source` arrived with the routing table** (model-credentials-routing CS9):
+ * what the run's running stage goes out on, as the project's table answered it
+ * -- `budget.AgentEntry.Source`, the live half of the record's `stages[].source`
+ * (the record keeps the `SourceName` object, this row keeps the one string a
+ * cell has room for: the kind, and the name after a colon when the kind names
+ * one, `pool:team` or `anthropic`). It is accepted and not read yet -- no
+ * Live-screen column draws it, and the screen that replaces the auth column
+ * with it is the visibility plan's VS1 -- and classified as a **label**, the
+ * class `job`, `profile`, `provider` and `credential` carry: an identifier a
+ * policy wrote, never a value. It sits after `from` in `JSONRun`, as the struct
+ * writes it, and it is always present: `-` is "not recorded" -- a run the
+ * project's table does not serve, and a run under rules that predate the member,
+ * which the run then goes without (the rules' `$other` refuses the whole entry
+ * for a child they do not know). For a run the table serves, `auth` is written
+ * as nothing and every view prints `-` for it (D3070): `auth` keeps its member
+ * and its meaning, and this key is what says what the run goes out on instead.
+ *
  * Exported so `schema.test.ts` can pin it against the struct, as it pins
  * `RECORD_KEYS` and `REPO_KEYS`. */
 export const RUN_KEYS = [
@@ -1123,6 +1208,7 @@ export const RUN_KEYS = [
   'auth',
   'mode',
   'from',
+  'source',
   'notional',
   'spent_usd',
   'age_seconds',
@@ -1170,6 +1256,8 @@ export const FINISHED_KEYS = [
   'account',
   'launched_by',
   'plan_task',
+  'resume_at',
+  'resumed_by',
 ]
 /**
  * RECORD_KEYS is **every** JSON key of `runview.Row`
@@ -1279,7 +1367,7 @@ export const FINISHED_KEYS = [
  * names a cause for — not on a row that did not fail, and not on a row the read
  * side ended itself, a row the CLI could not follow among them (contract
  * section 5): one value of the closed vocabulary of
- * `docs/design/failure-classes.md` §3 — the class the runner wrote beside the
+ * `docs/failure-classes/design.md` §3 — the class the runner wrote beside the
  * terminal status, or, for a record written before the field shipped, this
  * build's reading of the record's own `reason` (`runview.ClassOf`; contract
  * section 5). It is `plan_task`'s and `owner_decisions`' omission a fifth time,
@@ -1303,6 +1391,24 @@ export const FINISHED_KEYS = [
  * CLI's own table and not text a job wrote: it is in `NON_TEXT_STRING_KEYS`,
  * beside `status`, `outcome` and `derived`, whose vocabulary it is a second
  * closed list of.
+ *
+ * **`resume_at` and `resumed_by` arrived with pause and resume (PR7 of
+ * model-credentials-routing)**, between `pr_state` and `pushed` in the struct,
+ * and `runs ls` writes them on a row whose record ended `paused` and on no
+ * other: the instant the orchestrator will resume the run's chain at, and the
+ * run that did resume it (contract-pause R15, D3195). Neither is in the run's
+ * own records -- the instant is the credentials service's node for the pause
+ * under `paused/`, and the resumer is another run's task naming this one under
+ * `resumes` -- so a listing that could read neither writes neither, and a
+ * paused row with both absent is the degradation this listing has always had for
+ * a project whose pauses database it cannot see. It is `pr_state`'s omission a
+ * seventh time, and the pin against the struct is again what would catch it.
+ * The console reads no screen from either yet -- the paused row and its resume
+ * time are the visibility plan's VS3 -- and they are classified rather than
+ * exempted: `resume_at` is a stamp a reader compares with `now`
+ * (`NON_TEXT_STRING_KEYS`, beside `waiting_until`, and its **presence** is what
+ * says a resume is due rather than a string to draw) and `resumed_by` is a run
+ * id, the class `previous_run` and `run_id` carry.
  */
 export const RECORD_KEYS = [
   'run',
@@ -1343,6 +1449,8 @@ export const RECORD_KEYS = [
   'record_pr',
   'pr',
   'pr_state',
+  'resume_at',
+  'resumed_by',
   'pushed',
   'pushed_head',
   'started_at',
@@ -1694,6 +1802,9 @@ export const PLAN_STATUS_KEYS: readonly string[] = Object.freeze([
   'totals',
   'streams',
   'warnings',
+  'index_complete',
+  'folded_through',
+  'merges_read',
 ])
 
 export const PLAN_KEYS: readonly string[] = Object.freeze([
@@ -3672,4 +3783,226 @@ function graphAt(raw: Record<string, unknown>, where: string): GraphView {
  */
 export function decodeGraphDocument(raw: unknown, where = 'the graph document'): Decoded<GraphView> {
   return at(where, () => graphAt(objectAt(raw, 'the document', where), where))
+}
+
+// ---------------------------------------------------------------------------
+// The orchestrator map (the console-fixes plan's CG7a; C-ORCH's contract,
+// `docs/console-fixes/contract-orchestrators.md`; D3221).
+// ---------------------------------------------------------------------------
+
+/** ORCHESTRATOR_MAP_DOCUMENT_VERSION is the only `version` this build reads (the
+ * CLI's `orchestrator.MapDocVersion`, `internal/orchestrator/mapdoc.go`, pinned
+ * by the Go side's own document tests). It is checked exactly,
+ * for `GRAPH_DOCUMENT_VERSION`'s reason: the contract promises a field is only
+ * ever added within a version, so a version this build does not know is a
+ * document whose fields may have been re-meant rather than grown. */
+export const ORCHESTRATOR_MAP_DOCUMENT_VERSION = 1
+
+/** ORCHESTRATOR_MAP_KEYS and the three lists under it are every key of the
+ * document and of each object in it, read off `mapdoc.go`'s structs and pinned
+ * in both directions by `schema.test.ts` (`structTags`) -- the drift the pin
+ * exists for, because a key the CLI gained and this console did not list is a
+ * value no screen draws. */
+export const ORCHESTRATOR_MAP_KEYS = [
+  'version',
+  'project',
+  'generated_at',
+  'nodes',
+  'edges',
+  'health',
+] as const
+export const ORCHESTRATOR_MAP_NODE_KEYS = [
+  'id',
+  'name',
+  'driver',
+  'active_tasks',
+  'running_jobs',
+  'lease_age_seconds',
+] as const
+export const ORCHESTRATOR_MAP_EDGE_KEYS = ['from', 'to', 'kind', 'reason'] as const
+export const ORCHESTRATOR_MAP_HEALTH_KEYS = ['sweep', 'started_at', 'ok_at', 'at', 'note'] as const
+
+/** OrchestratorMapNode is one **active** orchestrator: a node is on the map
+ * because a credential is driving it now, so there is no node for an
+ * orchestrator nobody drives -- an empty `nodes` is "no orchestrator of this
+ * project is being driven", which is a fact and not an unreadable document.
+ *
+ * `name` is the id's own name half and `""` for the project's default
+ * orchestrator: a screen draws the project's name for that one, and must not
+ * read `""` as a named orchestrator whose name is blank (the id rule cannot
+ * produce one). `driver` is the principal of the credential holding the lease,
+ * `""` when that node is absent or unreadable -- which is a read that failed and
+ * not "nobody drives this". `leaseAgeSeconds` is `null` when the lease node
+ * carries no readable stamp, and **null is not `0`**: zero would be a claim
+ * about the beat this reader does not have. */
+export interface OrchestratorMapNode {
+  readonly id: string
+  readonly name: string
+  readonly driver: string
+  readonly activeTasks: number
+  readonly runningJobs: number
+  readonly leaseAgeSeconds: number | null
+}
+
+/** OrchestratorMapEdge is one connection between two active orchestrators.
+ * `from` and `to` are orchestrator ids and **both nodes of the same document**:
+ * an orchestrator nobody drives is drawn nowhere, so a consumer looks an
+ * endpoint up in `nodes` and nowhere else. A dependency points from the
+ * orchestrator that waits to the one it waits on; `reason` says what an overlap
+ * is, in words, and is `""` for a dependency, which the two ids already say. */
+export interface OrchestratorMapEdge {
+  readonly from: string
+  readonly to: string
+  readonly kind: string
+  readonly reason: string
+}
+
+/** OrchestratorMapHealth is the coordinator's own heartbeat as the map read it.
+ * `sweep: false` means the map carries **no overlap information at all** and the
+ * three times are `null`: nobody looked, so a screen must not draw the absence
+ * of dashed edges as "nothing overlaps". `note` says so in words. */
+export interface OrchestratorMapHealth {
+  readonly sweep: boolean
+  readonly startedAt: string | null
+  readonly okAt: string | null
+  readonly at: string | null
+  readonly note: string
+}
+
+/** OrchestratorMapView is one `fugaro orchestrator map --json` document: the
+ * project whose orchestrators these are, the active ones, the connections
+ * between them and the coordinator's health. `generatedAt` is the clock the
+ * document was assembled at on the reader's own machine and **not an as-of**:
+ * how old one node is, is its `leaseAgeSeconds`. One map is one project, so
+ * every node belongs to `project` and there is no scope to narrow. */
+export interface OrchestratorMapView {
+  readonly version: number
+  readonly project: string
+  readonly generatedAt: string
+  readonly nodes: readonly OrchestratorMapNode[]
+  readonly edges: readonly OrchestratorMapEdge[]
+  readonly health: OrchestratorMapHealth
+}
+
+/** orchestratorMapAgeAt reads `lease_age_seconds`: a key the contract always
+ * writes, a **number or `null`** and never absent -- null is "no readable
+ * stamp", which is not the same fact as an absent key, and a value that is there
+ * and is not a number is refused by field name. It is deliberately not
+ * `optionalInt`: that one folds an absent key into null, which would read a
+ * document that dropped the field as one whose every lease age is unreadable. */
+function orchestratorMapAgeAt(raw: Record<string, unknown>, key: string, field: string, where: string): number | null {
+  const value = required(raw, key, field, where)
+  if (value === null) return null
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return refuse('not-a-number', field === '' ? key : `${field}.${key}`, where)
+  }
+  return value
+}
+
+/** orchestratorMapStampAt reads one of the health's three times: always written,
+ * RFC 3339 or `null`, on `graphStampAt`'s terms -- null is "there is no
+ * heartbeat to read", which is not an absent key. */
+function orchestratorMapStampAt(raw: Record<string, unknown>, key: string, field: string, where: string): string | null {
+  const value = required(raw, key, field, where)
+  if (value === null) return null
+  return timestampAt(value, field === '' ? key : `${field}.${key}`, where)
+}
+
+function orchestratorMapNodeAt(raw: unknown, index: number, where: string): OrchestratorMapNode {
+  const field = `nodes[${String(index)}]`
+  const node = objectAt(raw, field, where)
+  return {
+    id: stringAt(required(node, 'id', field, where), `${field}.id`, where),
+    name: stringAt(required(node, 'name', field, where), `${field}.name`, where),
+    driver: stringAt(required(node, 'driver', field, where), `${field}.driver`, where),
+    activeTasks: intAt(required(node, 'active_tasks', field, where), `${field}.active_tasks`, where),
+    runningJobs: intAt(required(node, 'running_jobs', field, where), `${field}.running_jobs`, where),
+    leaseAgeSeconds: orchestratorMapAgeAt(node, 'lease_age_seconds', field, where),
+  }
+}
+
+function orchestratorMapEdgeAt(raw: unknown, index: number, where: string): OrchestratorMapEdge {
+  const field = `edges[${String(index)}]`
+  const edge = objectAt(raw, field, where)
+  return {
+    from: stringAt(required(edge, 'from', field, where), `${field}.from`, where),
+    to: stringAt(required(edge, 'to', field, where), `${field}.to`, where),
+    kind: stringAt(required(edge, 'kind', field, where), `${field}.kind`, where),
+    reason: stringAt(required(edge, 'reason', field, where), `${field}.reason`, where),
+  }
+}
+
+function orchestratorMapHealthAt(raw: unknown, where: string): OrchestratorMapHealth {
+  const health = objectAt(raw, 'health', where)
+  return {
+    sweep: boolAt(required(health, 'sweep', 'health', where), 'health.sweep', where),
+    startedAt: orchestratorMapStampAt(health, 'started_at', 'health', where),
+    okAt: orchestratorMapStampAt(health, 'ok_at', 'health', where),
+    at: orchestratorMapStampAt(health, 'at', 'health', where),
+    note: stringAt(required(health, 'note', 'health', where), 'health.note', where),
+  }
+}
+
+/** orchestratorMapAt decodes the document field by field. Unknown keys are
+ * ignored, per this module's header rule (the owner's ruling of 2026-10-30).
+ *
+ * **The four keys the contract always writes are required, and the two lists
+ * are never null.** `nodes`, `edges`, `health` and `generated_at` are the
+ * document's own envelope: the Go side refuses an absent or null one on the raw
+ * value (`requireMapFields`), because a struct decode reads either as a zero
+ * value, and this reader refuses the same two things by the same names -- a nil
+ * list is not something a decoder can tell from an empty one, which is exactly
+ * why the contract says the list is never null and a reader must not fill one
+ * in.
+ *
+ * **`kind` is carried as a string rather than closed here**, for the graph
+ * decoder's reason: `dependency` and `overlap` are the two the CLI writes today,
+ * and a third would be a relation this build has not learned -- a smaller
+ * failure as a word a screen draws than as a whole map refused.
+ *
+ * **The ids and the names are identity, and the free text is somebody else's.**
+ * A node's `driver`, an edge's `reason` and the health's `note` are written by
+ * whoever holds a lease and by the coordinator's own sweep, so they are text a
+ * screen draws through `WIRE_TEXT_CLASSES` and an instruction found in one is
+ * never acted on (design §5.1 rule 2). The ids are not prose: the Go side
+ * refuses a sanitised one (a rewritten id would name another orchestrator), and
+ * this reader carries them as the identity they are.
+ */
+function orchestratorMapAt(raw: Record<string, unknown>, where: string): OrchestratorMapView {
+  const version = intAt(required(raw, 'version', '', where), 'version', where)
+  if (version !== ORCHESTRATOR_MAP_DOCUMENT_VERSION) return refuse('unknown-value', 'version', where)
+  return {
+    version,
+    project: stringAt(required(raw, 'project', '', where), 'project', where),
+    generatedAt: timestampAt(required(raw, 'generated_at', '', where), 'generated_at', where),
+    nodes: arrayAt(required(raw, 'nodes', '', where), 'nodes', where).map((item, index) =>
+      orchestratorMapNodeAt(item, index, where),
+    ),
+    edges: arrayAt(required(raw, 'edges', '', where), 'edges', where).map((item, index) =>
+      orchestratorMapEdgeAt(item, index, where),
+    ),
+    health: orchestratorMapHealthAt(required(raw, 'health', '', where), where),
+  }
+}
+
+/**
+ * decodeOrchestratorMap admits `fugaro orchestrator map --json` and nothing else
+ * (C-ORCH's contract, D3221). It is a door of its own for `decodeGraphDocument`'s
+ * reason: the map carries no `stream_id`/`seq` pair a feed document has and no
+ * `sources` array a graph document has, so a feed or a graph handed here is
+ * refused for the keys it is missing, and this document handed to either of
+ * those doors is refused as an unknown shape. None of the three is read as
+ * another, whatever the reply was.
+ *
+ * **The version is checked exactly and the reader is strict about kinds.** A
+ * document whose version this build does not write, a key of the wrong kind, and
+ * a missing key the contract always writes are each a refusal -- and a screen
+ * draws the decoder's sentence rather than a partial map, because a map with
+ * half its nodes is a picture of the wrong project.
+ */
+export function decodeOrchestratorMap(
+  raw: unknown,
+  where = 'the orchestrator map document',
+): Decoded<OrchestratorMapView> {
+  return at(where, () => orchestratorMapAt(objectAt(raw, 'the document', where), where))
 }

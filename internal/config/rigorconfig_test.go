@@ -57,7 +57,7 @@ func TestRigorConfigKeepsTheTwoLayersApart(t *testing.T) {
 
 // TestRigorIsOutOfTheHashWhenTheFileWritesNone: SHA256 is the hash of this
 // struct's JSON (resolve.go) and is the quick check that a repository's
-// resolved values did not move (docs/design/layered-config.md §4). A pointer
+// resolved values did not move (docs/layered-config/spec.md §4). A pointer
 // with a yaml tag and no json name marshals as "rigor":null in every file
 // that writes no rigor: block — which is nearly every file — and so moves the
 // hash of a file nobody changed. Layer and RepoRigor, the two fields beside
@@ -130,12 +130,12 @@ func TestRigorConfigSaysWhetherTheRepositoryOptedIn(t *testing.T) {
 			if len(ps) > 0 {
 				t.Fatal(ps)
 			}
-			if got := c.RigorConfig().Configured(); got != tc.want {
-				t.Errorf("Configured() = %v; want %v", got, tc.want)
+			if got := c.RigorConfig().Configured(""); got != tc.want {
+				t.Errorf(`Configured("") = %v; want %v`, got, tc.want)
 			}
 		})
 	}
-	if !(&Config{Layer: mustLayer(t, rigorLayer)}).RigorConfig().Configured() {
+	if !(&Config{Layer: mustLayer(t, rigorLayer)}).RigorConfig().Configured("") {
 		t.Error("a project layer that sets defaults.rigor did not opt its repositories in")
 	}
 }

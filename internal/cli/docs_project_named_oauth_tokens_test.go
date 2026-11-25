@@ -17,7 +17,7 @@ import (
 
 // The tests below pin the wording this feature's security cost is stated in —
 // SECURITY.md's residual for a project job's Claude account token (plan task 3,
-// design docs/design/project-named-oauth-tokens.md §6.1, owner ruling D8), and
+// design docs/project-named-oauth-tokens/spec.md §6.1, owner ruling D8), and
 // the operator guide this feature ships with (plan task 4,
 // docs/project-claude-accounts.md). The wording is the feature's deliverable
 // here — the carrier is a static mount, so what a reader is told about it is
@@ -227,7 +227,7 @@ func releasedAtLeast(t *testing.T, version, want string) {
 // page describing a release that is no longer the latest one. (It had drifted:
 // the line named 0.8.6 while the tree was at 0.8.7.)
 func TestDocsProjectNamedOAuthTokensStatusNamesTheReleasedCLI(t *testing.T) {
-	doc := readDoc(t, "docs/design/project-named-oauth-tokens.md")
+	doc := readDoc(t, "docs/project-named-oauth-tokens/spec.md")
 	var status string
 	for _, line := range strings.Split(doc, "\n") {
 		if strings.HasPrefix(line, "Status:") {
@@ -236,7 +236,7 @@ func TestDocsProjectNamedOAuthTokensStatusNamesTheReleasedCLI(t *testing.T) {
 		}
 	}
 	if status == "" {
-		t.Fatal("docs/design/project-named-oauth-tokens.md carries no Status line")
+		t.Fatal("docs/project-named-oauth-tokens/spec.md carries no Status line")
 	}
 	released := releasedFugaroVersion(t)
 	releasedAtLeast(t, released, "0.9.0")
@@ -735,7 +735,7 @@ func TestDocsProjectClaudeAccountsSharedJobLimitsAreTrue(t *testing.T) {
 			"`projectJobGitHubAppID`",
 			"was not in the released\n  0.8.x, where a clone launch is refused",
 			"no live check has proved one end to end on a shared",
-			"the check that would (the plan's own, `docs/plans/2026-10-14-project-centric.md` Task 3.7)\n  has not been run",
+			"the check that would (the plan's own, `docs/project-centric/implementation-plan.md` Task 3.7)\n  has not been run",
 			// The other half: what the job does not carry.
 			"no `FUGARO_CHECKOUT` (a full clone rather than a blobless one, and no `mise install`)",
 			"only the profile's project-wide ones",
@@ -937,7 +937,7 @@ func TestDocsProjectClaudeAccountsExamplesValidate(t *testing.T) {
 // alone — this fails with validProfileAccounts' refusal, naming
 // github/acme/app.
 func TestDocsProjectNamedOAuthTokensPolicyExampleValidates(t *testing.T) {
-	const path = "docs/design/project-named-oauth-tokens.md"
+	const path = "docs/project-named-oauth-tokens/spec.md"
 	var (
 		profiles map[string]projectpolicy.Profile
 		accounts map[string]projectpolicy.Account

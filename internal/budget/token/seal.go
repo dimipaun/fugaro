@@ -10,7 +10,7 @@ import (
 )
 
 // The seal is the second factor the token object gets
-// (docs/design/budget-token-channel.md §7.1, D18): the launcher encrypts the
+// (docs/budget-token-channel/spec.md §7.1, D18): the launcher encrypts the
 // custom token under a key it generates for one launch, so what a peer run of
 // a shared job reads out of the bucket is ciphertext worth nothing without
 // that key. The key never goes into the bucket: it travels in the marker the

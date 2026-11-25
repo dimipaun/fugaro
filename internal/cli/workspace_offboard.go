@@ -58,6 +58,12 @@
 // published (a pool's text naming the person is inert once the roster does not
 // place them).
 //
+// BESIDE THE MEMBERS' SWEEPS, ONE MORE INSTALLATION IS SWEPT. A person's token
+// is stored once, at the workspace's own project (D2960), so `workspace user rm`
+// deletes the containers they own there too (F21) -- not through this core, which
+// is one member's, but through the workspace's own intake, and after the members'
+// sweeps and whatever they answered (offboardWorkspacePerson, workspaceSweeper).
+//
 // NOTHING HERE PRINTS, and that is a decision rather than an omission: the
 // caller owns the report (WU7's `user rm`, I1's command), and the record of
 // the act is the audit entry this creates. A core that printed would print
@@ -67,9 +73,7 @@ package cli
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
+	crand "crypto/rand"
 	"errors"
 	"fmt"
 	"os"
@@ -100,6 +104,27 @@ type memberSweeper interface {
 	// one a person knows and not the roster's `user:` spelling, exactly as the
 	// single installation's sweep takes it.
 	Sweep(ctx context.Context, m workspace.MemberTarget, address string) ([]string, error)
+}
+
+// workspaceSweeper deletes the containers one person stored on the WORKSPACE's
+// own project.
+//
+// It is memberSweeper's pattern for the other installation an offboarding
+// reaches (F21): a person's token is stored once, at the workspace (D2960), so
+// `workspace user rm` deletes every container they own there beside the members'
+// sweeps, and the delete is the intake's own admin-only route (DS2.3, DS2.4) --
+// the one call offboardSweepVia makes, at the workspace's own intake instead of
+// a member's. The workspace's intake is reached at the address the workspace
+// admin's own config carries (intakeURLOf, the project the workspace is named
+// after, D2821), which is never a member's.
+//
+// The address is the person's own and the answer is the names the delete
+// removed: nothing here reads a value, and no name travels in a log, an error or
+// a header.
+type workspaceSweeper interface {
+	// Sweep deletes every container whose owner annotation is address at the
+	// workspace's own intake and answers the names it removed.
+	Sweep(ctx context.Context, address string) ([]string, error)
 }
 
 // memberOffboarder is the core itself: the seam to the member (C2), the seam
@@ -190,6 +215,36 @@ func (o *memberOffboarder) Offboard(ctx context.Context, m workspace.MemberTarge
 	return nil
 }
 
+// offboardWorkspacePerson is one person's removal from a workspace as the two
+// sweeps F21 puts in order: every member the workspace holds is swept first
+// (members.Offboard, which is this file's core, once per member), and then the
+// workspace's OWN intake is swept, whatever the members answered.
+//
+// THE WORKSPACE'S SWEEP RUNS WHATEVER THE MEMBERS ANSWERED, and that is the
+// point rather than an oversight: a person's token is stored once, at the
+// workspace (D2960), so a member whose own update is pending -- a refusal this
+// command has always reported and half-removed nobody on -- would leave the
+// person's token behind at the workspace if it gated the workspace's sweep. The
+// two answers are carried apart: the caller reports the member's refusal (the
+// FIRST one, as the loop before this change returned it) and reports the
+// workspace's own answer after the node is written, so a sweep that failed does
+// not hide a member that refused and a member that refused does not hide the
+// workspace's containers still being there.
+//
+// The member's answer is a refusal and not a stop: every member is attempted, so
+// one refusal does not leave the members after it unswept, and the first refusal
+// is the one a person reads.
+func offboardWorkspacePerson(ctx context.Context, members workspace.MemberOps, sweep workspaceSweeper, linked []workspace.MemberTarget, address string) ([]string, error, error) {
+	var memberErr error
+	for _, m := range linked {
+		if err := members.Offboard(ctx, m, address); err != nil && memberErr == nil {
+			memberErr = fmt.Errorf("offboarding %s from %s: %w", safetext.Field(address), safetext.Field(m.Project), err)
+		}
+	}
+	deleted, sweepErr := sweep.Sweep(ctx, address)
+	return deleted, memberErr, sweepErr
+}
+
 // offboardMemberGrants reads the member's grants out of the document its
 // database holds, and refuses the two states a read of it can be in without
 // granting anybody anything: a node that is not there, and bytes this release
@@ -258,7 +313,7 @@ func (o *memberOffboarder) offboardDropRoster(ctx context.Context, m workspace.M
 		if dropped == 0 {
 			return 0, nil
 		}
-		if err := offboardNoAdminLeft(m.Project, person, grants, next); err != nil {
+		if err := offboardNoAdminLeft(m.Project, person, grants, next, true); err != nil {
 			return 0, err
 		}
 		raw, err := accesslib.Encode(next)
@@ -296,67 +351,37 @@ func (o *memberOffboarder) offboardDropRoster(ctx context.Context, m workspace.M
 }
 
 // offboardRecord is step 3: one create-only entry in the member's own trail
-// (PathMemberAudit, D2811), created under a name derived from what the entry
-// records.
+// (PathMemberAudit, D2811), created under an id minted for it (C1's
+// NewAuditEventID), in the shape every reader of that trail reads back.
 func (o *memberOffboarder) offboardRecord(ctx context.Context, m workspace.MemberTarget, me, person string, dropped int) error {
 	at := o.at().UTC()
-	event, err := json.Marshal(offboardAuditEvent{
-		Event:         "offboarded",
-		At:            at.Format(time.RFC3339Nano),
-		Actor:         me,
-		Member:        m.Project,
-		Firebase:      m.Firebase,
-		Person:        person,
-		GrantsDropped: dropped,
+	id, err := workspace.NewAuditEventID(at, crand.Reader)
+	if err != nil {
+		return remote(fmt.Errorf("minting the name of the audit entry for %s on %s: %w", safetext.Field(person), offboardMemberNamed(m), err))
+	}
+	// The entry is C1's own event (contract.md, "The audit event"): the trail a
+	// member's database carries is the same document the workspace's own
+	// Firestore trail holds, so its readers -- `status`, the drift check -- read
+	// an offboarding back with the reader they read every other change with. The
+	// actor and the subject are addresses and never the roster's "user:" member
+	// spelling (C1's Validate refuses one).
+	event, err := workspace.EncodeAuditEvent(workspace.AuditEvent{
+		Version: workspace.AuditEventVersion,
+		ID:      id,
+		Time:    at,
+		Actor:   strings.TrimPrefix(me, "user:"),
+		Action:  workspace.ActionUserOffboard,
+		Project: m.Project,
+		Subject: strings.TrimPrefix(person, "user:"),
 	})
 	if err != nil {
 		return remote(fmt.Errorf("rendering the audit entry for %s on %s: %w", safetext.Field(person), offboardMemberNamed(m), err))
 	}
-	if err := o.ops.Audit(ctx, m, offboardAuditID(m, person, at), event); err != nil {
+	if err := o.ops.Audit(ctx, m, id, event); err != nil {
 		return remote(fmt.Errorf("%s's grants are off %s's roster (%d removed), but the offboarding could not be created in that member's audit trail (%s): %w",
 			safetext.Field(person), offboardMemberNamed(m), dropped, workspace.PathMemberAudit, err))
 	}
 	return nil
-}
-
-// offboardAuditEvent is the entry one offboarding creates in the member's own
-// trail (D2811), as one JSON object: the act, when it happened, who did it,
-// which member it was on, which person it was about, and how many grants it
-// dropped.
-//
-// The roster contract's own AuditEvent is this object's type (C1) and C1 is
-// not in this tree yet — the plan breaks that edge and I1 joins it — so this
-// file renders the object itself, from the fields the act really has, and I1's
-// C1 takes the rendering over without changing what the trail holds.
-//
-// What it does NOT carry is the sweep's answer, and the reason is the order:
-// the entry is created as soon as the roster half lands and before the intake
-// is asked (Offboard says why), and a create-only entry cannot be amended by
-// what the sweep then answered (D2811).
-type offboardAuditEvent struct {
-	Event         string `json:"event"`
-	At            string `json:"at"`
-	Actor         string `json:"actor"`
-	Member        string `json:"member"`
-	Firebase      string `json:"firebase,omitempty"`
-	Person        string `json:"person"`
-	GrantsDropped int    `json:"grants_dropped"`
-}
-
-// offboardAuditID names the entry one offboarding creates.
-//
-// A member's trail holds one child per entry, and a Realtime Database key
-// carries no dot, hash, dollar, bracket or slash — a person's address carries a
-// dot — so the name is a digest of what the entry records rather than the
-// address it is about: sixteen bytes of SHA-256 over the member's two projects,
-// the person and the instant, hex-encoded. Two offboardings of one person are
-// an instant apart or about two different rosters, and two that recorded the
-// same thing would be one entry either way, which is the right reading of a
-// trail whose writes are create-only: the second write is refused and the
-// first stands (D2811).
-func offboardAuditID(m workspace.MemberTarget, person string, at time.Time) string {
-	sum := sha256.Sum256([]byte(strings.Join([]string{m.Project, m.Firebase, person, at.UTC().Format(time.RFC3339Nano)}, "\x00")))
-	return "offboard-" + hex.EncodeToString(sum[:16])
 }
 
 // offboardMemberNamed is the member as these refusals name it: both of its

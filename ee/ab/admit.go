@@ -232,18 +232,18 @@ func coderAgent(a config.Agent, model string) config.Agent {
 	return config.Agent{Auth: a.Auth, Models: config.ModelRoles{Coder: model}}
 }
 
-// policyMode is the run's effective budget mode as the runner reads it: a
-// merge that set no mode is off (internal/runner's resolvePolicy fills the
-// same value), and "" and "off" are the same answer to
-// config.CheckProviderGateway, which admits a provider's call only under
-// enforce. It is read off the merge rather than off the file because the mode
-// is a project key: a file that writes none is the ordinary shape, and its
-// runs enforce.
+// policyMode is the run's effective budget mode as the runner reads it, asked
+// through the one vocabulary that answers what a mode string means
+// (docs/always-a-budget/contract-mode.md, C1): a merge that set no mode is
+// observe and not off, and every other string that names no live mode is
+// observe too. config.CheckProviderGateway admits a provider's call only under
+// enforce, so a provider-served challenger is refused under either answer —
+// but which answer it is given, and the words of the refusal that answer
+// picks, are the vocabulary's rather than this file's. It is read off the
+// merge rather than off the file because the mode is a project key: a file
+// that writes none is the ordinary shape, and its runs enforce.
 func policyMode(eff policy.Effective) string {
-	if eff.Mode == "" {
-		return policy.ModeOff
-	}
-	return eff.Mode
+	return policy.Mode(eff.Mode).Effective()
 }
 
 // providerReason is why config.CheckProviderPolicy refused model for repo, in

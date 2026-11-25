@@ -30,7 +30,7 @@ at `c92093b6` (the mobile tree at `12fbe60e`, mobile P3.5, #677).
 |---|---|
 | **Baseline** | `main` at `c92093b6` — "website: retire the orphaned four-step flow and give its gates to what the pages show now (#756)", 2026-10-20. The mobile tree it carries is `12fbe60e` ("mobile P3.5: the voice screen — the interrupt switch, the queue, the offline refusal, the lease", #677), which is the commit `mobile/src/voice/` arrives at. |
 | **Date of the check** | 2026-10-20 |
-| **Read** | `mobile/` (all of `src/`, `index.js`, `app.json`, `app.config.js`, `eas.json`, `package.json`, `README.md`), `docs/mobile/**`, `docs/voice-module/**`, `docs/design/voice.md`, `docs/design/desktop-console.md` §7.4, `docs/gcp-live-checklist.md`, `docs/coordinator/README.md`, `docs/setup-wizard/**` (the folder shape this one follows). |
+| **Read** | `mobile/` (all of `src/`, `index.js`, `app.json`, `app.config.js`, `eas.json`, `package.json`, `README.md`), `docs/mobile/**`, `docs/voice-module/**`, `docs/voice/spec.md`, `docs/desktop-console/spec.md` §7.4, `docs/gcp-live-checklist.md`, `docs/coordinator/README.md`, `docs/setup-wizard/**` (the folder shape this one follows). |
 | **Fetched** | Every platform claim below was read from Apple's or Google's **own** documentation on 2026-10-20, by URL, and the URL is in the table. Apple's pages are read in their Markdown form (`<url>.md`), which is the form Apple publishes *for* automated readers. |
 | **Citations** | Every finding cites a **path and a symbol**, never a line number. Where a figure is volatile (a count that any edit changes) the **command** is given instead of the figure. |
 | **What this document is not** | It is not a second spec, and it decides nothing. Where it disagrees with [spec.md](spec.md), **it wins** — the spec was written without the repository and this was written against it. |
@@ -310,7 +310,7 @@ would have to be widened to allow it. The honest answer is that the demo does
 
 ### F11 — There is no telemetry in this tree, and the brief's ruling is not here. **Wrong.**
 
-**Evidence.** `docs/design/desktop-console.md` §7.4 — *"no telemetry, no
+**Evidence.** `docs/desktop-console/spec.md` §7.4 — *"no telemetry, no
 analytics"*, cited by `docs/mobile/design/voice-evaluation-switch.md`.
 `docs/mobile/design/push-notifications.md`: *"**No Firebase Analytics SDK is
 linked** (`mobile/package.json` declares no Firebase or …)"*. `mobile/package.json`
@@ -475,7 +475,7 @@ renumbered"* and the rule that decides between two claims, *"whichever of two
 open claims merges second renumbers itself"*
 ([../../gcp-live-checklist.md](../../gcp-live-checklist.md)); *"the phase that
 ships the check writes them"* is
-[../../design/voice.md](../../design/voice.md) §5.3's convention — the one the
+[../../voice/spec.md](../../voice/spec.md) §5.3's convention — the one the
 project-centric plan sets and the console plan follows, and **not** a sentence of
 the register's; and *"A check is never run before its text is in the register"* is
 [docs/mobile/implementation-plan.md](../implementation-plan.md)'s own sentence.
@@ -936,6 +936,6 @@ belongs to) · [../design/voice-evaluation-switch.md](../design/voice-evaluation
 (P5.3, the local/remote switch) · [../design/push-notifications.md](../design/push-notifications.md)
 (P5.2, and why this spec's local notification is not it) ·
 [../../voice-module/](../../voice-module/) (the pipeline this module drives) ·
-[../../design/voice.md](../../design/voice.md) (D39–D54b) ·
+[../../voice/spec.md](../../voice/spec.md) (D39–D54b) ·
 [../../gcp-live-checklist.md](../../gcp-live-checklist.md) (the register, and
 checks 113–118) · [../../../mobile/README.md](../../../mobile/README.md) (the app).

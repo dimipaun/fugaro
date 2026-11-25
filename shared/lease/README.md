@@ -178,4 +178,4 @@ not exist yet (P4.3 is owner-made, Global Constraint 8), so these tests run wher
 Related: [implementation-plan.md](../../docs/mobile/implementation-plan.md) (P1.2, and the "shared
 files" table that gives the package's manifest to P0.1 alone) ·
 [reconciliation.md](../../docs/mobile/reconciliation.md) (D110, D113b, F4) ·
-[voice.md](../../docs/design/voice.md) (D49, superseded by D110).
+[voice.md](../../docs/voice/spec.md) (D49, superseded by D110).

@@ -43,7 +43,7 @@ Three things this design settles that the ask does not:
 
 1. **The screens are read-only, and that is a fence rather than a feature list.** The console's whole
    surface is `CONSOLE_OPERATIONS` (`console/src/main/ipc.ts:529`) and its spawn allow-list is **exact
-   argv** (`argvFor`, `console/src/main/spawn.ts:1334`; rule 6's table, `docs/design/desktop-console.md`
+   argv** (`argvFor`, `console/src/main/spawn.ts:1334`; rule 6's table, `docs/desktop-console/spec.md`
    §5.1). Two of its operations write — `run.launch` (rule 11) and `settings.edit` (rule 12) — and
    **this work adds neither a third write nor a button that edits** (D1471). Nothing here spawns
    `managed apply`, `managed flag`, `managed unflag`, `settings set`, `project policy publish` or
@@ -88,7 +88,7 @@ Three things this design settles that the ask does not:
 
 ## Related
 
-- [docs/design/desktop-console.md](../design/desktop-console.md) §5.1 — the hard rules: rule 5 (the
+- [docs/desktop-console/spec.md](../desktop-console/spec.md) §5.1 — the hard rules: rule 5 (the
   IPC allow-list), rule 6 (the exact-argv spawn allow-list and its never table), rule 7 (job-written
   text is text), rule 11 (the launch, the first write) and rule 12 (the settings edit, the second).
 - [console/docs/json-contract.md](../../console/docs/json-contract.md) §6 (the other documents), §9
@@ -102,5 +102,5 @@ Three things this design settles that the ask does not:
 - [docs/credentials-service/default-on.md](../credentials-service/default-on.md) §DON7 — the one line
   the credentials-service screen draws, and the pull request (**#1816**) it waits on.
 - [docs/managed-agent-converge/](../managed-agent-converge/) and
-  [docs/design/managed-projects.md](../design/managed-projects.md) — the managed project itself: its
+  [docs/managed-projects/spec.md](../managed-projects/spec.md) — the managed project itself: its
   two marks, its gate and its audit trail.
