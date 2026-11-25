@@ -12,10 +12,13 @@
 // `launch.ts`'s `confirmView` is, so the whole of the window's content is
 // testable under plain Node.
 //
-// **What it carries is decided elsewhere, and it is six fields.** D1108: the
+// **What it carries is decided elsewhere, and it is six fields plus the
+// target.** D1108: the
 // key, the old value, the new value, the layer written, the layer that wins,
 // and one sentence present **only** when the edit will not change what runs
-// (D1113). Plus, for a widening, the CLI's own `why`; and, for every edit, the
+// (D1113). Plus, for a widening, the CLI's own `why`; the **target** line,
+// which a `repo`-layer edit and no other carries (RC80, L12) and which is read
+// out of the argv rather than out of a document; and, for every edit, the
 // exact argv field by field, so the window shows what is spawned rather than a
 // summary of it. Nothing here computes a value the CLI printed: the two values
 // are the dry run's, the two layers are the read's and the dry run's, and the

@@ -956,7 +956,7 @@ export interface SpawnCommand {
    * checkout with, and it too is present on exactly one row (`settings.edit`).
    * The flag is a column, for `layerFlag`'s reason and one more: the edit's
    * cwd is the installation's directory, so `--layer repo` without `--repo`
-   * writes the `fugaro.yaml` of *whatever checkout that directory happens to
+   * writes the config file of *whatever checkout that directory happens to
    * be in* (`settingsRepoFile`, `internal/cli/settings_set.go`) -- a file the
    * operator was shown no name for. The value is `context.directory`, the
    * installation's own directory and never a renderer's, and the word is
@@ -1511,8 +1511,8 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     // project name and the config path beside it. The CLI's `--repo` takes
     // `owner/name` **or a path inside its checkout** (`repoArg`,
     // `internal/cli/repo_arg.go`), so naming the directory is naming the
-    // checkout whose `fugaro.yaml` the write lands in: without it the child's
-    // cwd decides, and the file changed is whichever checkout that directory
+    // checkout the write lands in: without it the child's cwd decides, and the
+    // file changed is whichever checkout that directory
     // happens to be in -- a name the window could not have shown (RC80). A
     // `repo`-layer plan with no directory at all (the WSL route before Part D
     // translates one) is refused rather than spawned: an edit whose target
@@ -2233,7 +2233,7 @@ export const SETTINGS_EDIT_PHASE_WORD_GATES: Readonly<Record<string, SettingsEdi
 })
 
 /** SETTINGS_REPO_LAYER is the one of the three whose document is a
- * **repository's** `fugaro.yaml` rather than a file of the project or of the
+ * **repository's** own config file rather than a file of the project or of the
  * machine, and it is the one `argvFor` names a directory for (`repoFlag`) and
  * the one the window's target line is about (`settingsTargetLine`). It is
  * spelled once because those two, and the list below, must agree. */
@@ -2841,7 +2841,7 @@ export function argvFor(
     }
     argv.push(row.layerFlag, edit.layer)
     // **Which repository, for the one layer that writes one.** The layer word
-    // alone says *a repository's fugaro.yaml* and not *which*: without the pair
+    // alone says *a repository's config file* and not *which*: without the pair
     // below, the CLI falls back to the checkout in the child's own directory
     // (`settingsRepoFile`), and the file changed is that directory's -- a file
     // the operator was shown no name for. The pair is emitted here, right after

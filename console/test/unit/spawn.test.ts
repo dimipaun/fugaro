@@ -3012,8 +3012,8 @@ describe('the spawn table and the argv it builds', () => {
     expect(() =>
       assertSpawnSurface(replacingRow('settings.edit', { repoFlag: '--repo', layerFlag: undefined })),
     ).toThrow(/names a layer's document and not a layer/)
-    expect(() => assertSpawnSurface(replacingRow('settings.edit', { repoFlag: '--dir' }))).toThrow(
-      /--dir, which is not a flag this console may spawn/,
+    expect(() => assertSpawnSurface(replacingRow('settings.edit', { repoFlag: '--cd' }))).toThrow(
+      /--cd, which is not a flag this console may spawn/,
     )
     expect(() => assertSpawnSurface(SPAWN_COMMANDS)).not.toThrow()
   })
