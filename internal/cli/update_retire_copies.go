@@ -108,7 +108,7 @@ func (r *initRun) retireProjectCopies(ctx context.Context, c *infra.Clients, lc 
 		return nil
 	}
 	if agentMarker(os.Getenv, r.stdinTerminal()) != "" && !r.gateUnderway() {
-		r.warn(fmt.Sprintf("retired workflow-secret copies were left alone: a coding agent's session makes no cloud writes. Run `%s update` in your own terminal", selfCommand()))
+		r.warn(fmt.Sprintf("workflow-secret copies were not retired: a coding agent's session makes no cloud writes. Run `%s update` in your own terminal", selfCommand()))
 		return nil
 	}
 	// Whether a deployed job still names one, which is the only thing that
@@ -117,6 +117,17 @@ func (r *initRun) retireProjectCopies(ctx context.Context, c *infra.Clients, lc 
 	mounted, why := infra.DeployedSecretIDs(ctx, c, spec)
 	if why != "" {
 		r.warn(why)
+	}
+	// Which copies may be deleted is infra.ProjectCopiesToDelete's answer and
+	// not a second rule standing beside it, so the rule a test pins is the rule
+	// this run applies. A read that could not be made is not "nothing names
+	// it": with why non-empty the set is empty, every copy stays alive, and the
+	// next update asks again.
+	deletable := map[string]bool{}
+	if why == "" {
+		for _, cp := range infra.ProjectCopiesToDelete(copies, mounted) {
+			deletable[cp.ID] = true
+		}
 	}
 	var retired []infra.ProjectCopy
 	seen, marked, deleted, kept := 0, 0, 0, 0
@@ -136,7 +147,7 @@ func (r *initRun) retireProjectCopies(ctx context.Context, c *infra.Clients, lc 
 		seen++
 		alreadyRetired := info.Labels[gcp.LabelRetired] == cp.Name
 		if !alreadyRetired && !infra.HasMarks(info.Labels, projectCopyMarks(lc.Name, cp.Name)) {
-			r.warn(fmt.Sprintf("workflow secret %s: %s is not this installation's project copy (it carries %s), so it was left alone", cp.Name, cp.ID, projectCopyMarks(lc.Name, cp.Name)))
+			r.warn(fmt.Sprintf("workflow secret %s: not this installation's project copy (%s)", cp.Name, infra.Marks(info.Labels, projectCopyMarks(lc.Name, cp.Name))))
 			continue
 		}
 		if !alreadyRetired {
@@ -155,7 +166,7 @@ func (r *initRun) retireProjectCopies(ctx context.Context, c *infra.Clients, lc 
 		// because the delete failed — which is what makes the delete converge
 		// over the updates an in-flight run spans (G4).
 		retired = append(retired, cp)
-		if why != "" || mounted[cp.ID] {
+		if !deletable[cp.ID] {
 			kept++
 			continue
 		}
@@ -194,12 +205,12 @@ func (r *initRun) removeRetiredCopiesFromState(ctx context.Context, t *tf.TF, co
 	}
 	st, err := t.ShowState(ctx)
 	if err != nil {
-		r.warn(fmt.Sprintf("the retired workflow-secret copies are still in Terraform's state, so this plan refuses to drop them: the state could not be read (%s)", safetext.FieldErr(err)))
+		r.warn(fmt.Sprintf("the retired workflow-secret copies stay in Terraform's state, so this plan refuses to drop them: %s", safetext.FieldErr(err)))
 		return
 	}
 	removed, gone, err := infra.RemoveFromState(ctx, t.StateRm, infra.ProjectCopyRemovals(st.Addresses(), copies))
 	if err != nil {
-		r.warn(fmt.Sprintf("a retired workflow-secret copy is still in Terraform's state, so this plan refuses to drop it: %s", safetext.FieldErr(err)))
+		r.warn(fmt.Sprintf("a retired workflow-secret copy stays in Terraform's state, so this plan refuses to drop it: %s", safetext.FieldErr(err)))
 		return
 	}
 	if len(removed) == 0 {

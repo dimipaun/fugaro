@@ -1342,6 +1342,12 @@ func apiDeleted(r Retirement, spec RepoSpec, inState map[string]bool) bool {
 // either refuses a legitimate delete or takes another variant's job.
 func HasMarks(have, want map[string]string) bool { return hasMarks(have, want) }
 
+// Marks is marks (discover.go) exported for the same reader: it renders the
+// labels a container carries as the pairs a person reads, in the house form
+// (fugaro=managed fugaro_project=acme), where a Go map printed by %s reads as
+// map[fugaro:managed ...] and names nothing the reader can compare.
+func Marks(have, want map[string]string) string { return marks(have, want) }
+
 // JobDeleteLabels is the label set the API delete must find on the live job
 // of a retired address, and whether there is one: the fugaro mark and this
 // repository's label, plus fugaro_workflow=<the retired variant> for a

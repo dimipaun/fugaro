@@ -28,6 +28,7 @@ import (
 	"context"
 	"encoding/json"
 	"maps"
+	"net/http"
 	"slices"
 	"strings"
 	"testing"
@@ -231,6 +232,60 @@ func TestUpdateRetiresTheProjectCopiesItCopied(t *testing.T) {
 	}
 	if _, held := rec.Rule("kept-token"); !held {
 		t.Errorf("the record after the run holds %v; want the entry the retirement is driven by", rec.Secrets)
+	}
+}
+
+// TestUpdateKeepsTheCopiesWhenTheJobsReadFails is G4's fail-closed half, end to
+// end through the door: a run that could not read the installation's jobs
+// cannot see what still mounts a copy, so it deletes none of them. Every copy
+// is marked retired — which is what lets the plan drop the key, and what the
+// next update reads back — and every container stays alive, one update older
+// than the in-flight run that mounts it (G4). "Could not look" and "nothing
+// names it" must never be the same answer for a call that deletes a container.
+//
+// The state half is not gated on that read: the plan produces no container for
+// these names whatever the jobs say, so prevent_destroy would refuse the apply
+// if their instances stayed in it.
+func TestUpdateKeepsTheCopiesWhenTheJobsReadFails(t *testing.T) {
+	r, _, goneID, keptID, _ := retiredCopiesRig(t)
+	dropProjectCopies(t, true)
+	// The whole installation's jobs, not one job: this is the read G4 rests on.
+	r.run.FailListWith = http.StatusForbidden
+
+	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	if d := r.sm.Deleted(); len(d) != 0 {
+		t.Errorf("deleted = %v; want nothing from a run that could not read the jobs", d)
+	}
+	for id, name := range map[string]string{goneID: "gone-token", keptID: "kept-token"} {
+		want := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: initProjectName, gcp.LabelRetired: name}
+		if got := r.sm.Labels(id); !maps.Equal(got, want) {
+			t.Errorf("the %s copy carries %v; want %v: a retired copy stays alive until an update can see that nothing names it", name, got, want)
+		}
+	}
+	if !strings.Contains(out, "the Cloud Run jobs could not be read") || !strings.Contains(out, "gcloud run jobs list") {
+		t.Errorf("the run did not say the jobs could not be read, nor the call that answers it:\n%s", out)
+	}
+	if !strings.Contains(out, "retired workflow-secret copies: 2 marked, 0 deleted (2 left alive)") {
+		t.Errorf("the run did not report the retirement:\n%s", out)
+	}
+	wantRemoved := []string{
+		`module.installation.google_secret_manager_secret.project["gone-token"]`,
+		`module.installation.google_secret_manager_secret.project["kept-token"]`,
+	}
+	var removed [][]string
+	for _, c := range r.calls(t) {
+		if len(c) > 1 && c[0] == "state" && c[1] == "rm" {
+			removed = append(removed, c)
+		}
+	}
+	if len(removed) != len(wantRemoved) {
+		t.Fatalf("terraform state rm was called %d times (%v); want once per retired copy", len(removed), removed)
+	}
+	for _, addr := range wantRemoved {
+		if !slices.ContainsFunc(removed, func(c []string) bool { return slices.Contains(c, addr) }) {
+			t.Errorf("the state removal never named %s: %v", addr, removed)
+		}
 	}
 }
 
