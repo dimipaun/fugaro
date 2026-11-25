@@ -3017,12 +3017,19 @@ further: the row is **dropped whole**, so not even the key is drawn.
 write** (the settings-edit plan's C3, design §5.1 rule 12, SECURITY-SENSITIVE
 because a new write always is). `settings.edit` drives the pair on the argv
 §5.1's write row spells and nothing else of the group: the dry run's is
-`settings set|unset KEY --layer <L> --dry-run --json --project <name> [--config
-<path>] [-- <VALUE>]`, and the confirmed write is the same line with the phase
-words taken out — the write carries no flag at all, because the CLI asks no
-confirmation any more and the console's child has no terminal to answer one with
-(no-prompt policy, T11), and what the dry run's classification decides is the
-console's own window's shape and not the argv (§6.20). **Neither `--layer` nor a
+`settings set|unset KEY --layer <L> [--repo <directory>] --dry-run --json
+--project <name> [--config <path>] [-- <VALUE>]`, and the confirmed write is the
+same line with the phase words taken out — the write carries no flag at all,
+because the CLI asks no confirmation any more and the console's child has no
+terminal to answer one with (no-prompt policy, T11), and what the dry run's
+classification decides is the console's own window's shape and not the argv
+(§6.20). **`--repo` is the `repo` layer's alone and carries the installation's
+own directory** (the repo-coupling audit's L12, RC80): a `repo`-layer row writes
+one checkout's `fugaro.yaml`, and with no `--repo` the CLI resolves it from the
+child's working directory, so the file written would be a fact neither the argv
+nor the window named. A `local` or `project` edit carries no such word, and the
+directory is the console's own in every case rather than a renderer's. **Neither
+`--layer` nor a
 phase word is a renderer's**: the layer is this read's own `target_layer`, held
 in the console's main process, and the one phase spelling is that process's own
 — so no payload of a renderer's can name a layer the CLI did not offer, which is
@@ -3030,11 +3037,11 @@ the whole of D1105.
 
 **The group's other words stay off this surface.** `settings get` reads a single
 key this screen does not need (the row set is the whole document); the group's
-positional keys and globs, its `--repo`, `--all-repos`, `--layer`, `--grep`,
+positional keys and globs, its `--all-repos`, `--layer`, `--grep`,
 `--changed`, `--why` and `--offline` flags are not words of either row, because
 they narrow the table by a rule no screen control sets; and `--add`/`--remove`
 is a form no control can choose, since this document carries no member saying a
-key is list-shaped. **A refusal is not a document**: the CLI exits non-zero with
+key is list-shaped. **`--repo` is the write row's word and not the read's**: the read passes `--json` and the two project flags alone. **A refusal is not a document**: the CLI exits non-zero with
 its own sentence and prints none of these, so a consumer branches on the exit
 and draws that sentence verbatim — the console does, and **no write is ever
 retried silently** (D1112): the write's own compare-and-swap refuses an edit
@@ -4533,7 +4540,7 @@ and **not** off this document or the design:
 | `coordinator status` | yes (`newCoordinatorStatusCmd`, §6.13) — with `--from-store` it is the one read here that asks nothing of the host (the stored view, through the caller's own credentials), and it is a cloud read all the same: the view lives in the project's database, so it carries `--project` and `--config` like the rest |
 | `coordinator show` | yes (`newCoordinatorShowCmd`, §6.15) — the pull request read (coordinator v2 C3, D816): `--repo` and `--pr` are its own two arguments, both required, and it carries `--project` and `--config` like the rest because it resolves the repository's provider the way the project view does. **The second row here whose child mints a credential of the host's** — the first is `run`'s below, whose child is a run and mints the write-capable token it pushes and opens the pull request with; this row's is the person read set's own read-only installation token (contents, pull requests and metadata, all read), revoked when the command is done — so its argv is the whole of what a renderer may influence about it |
 | `coordinator intents` | yes (`newCoordinatorIntentsCmd`, §6.16) — the declarations read (coordinator v2 C4, D827): it has **no argument of its own** (`--all` and `--json` are the console row's fixed words), and it carries `--project` and `--config` like the rest because it resolves the local config the way the project view does. **The one row here whose child asks nothing of the host at all**: the declarations are the caller's own database node, read through the same credentials §6.13's stored read uses, so there is no App key, no installation token and no provider anywhere in it |
-| `settings set\|unset` | yes (`newSettingsCmd`, §6.20) — **the second row here that writes** (the settings-edit plan's C3, design §5.1 rule 12): the dry run and the confirmed write are the same command with the same aiming pair, and the layer written is §6.19's `target_layer` rather than a flag a renderer chose. The write carries `--no-apply` (the composite-commands plan's AP8, D1572), so the change is saved and its follow-up steps are owed rather than run — and it carries it only at or above the floor that registers the word (`NO_APPLY_CLI_FLOOR`, 0.26.0, where that plan's AP5 and AP6 ship it, §6.20), so a CLI older than that gets no word |
+| `settings set\|unset` | yes (`newSettingsCmd`, §6.20) — **the second row here that writes** (the settings-edit plan's C3, design §5.1 rule 12): the dry run and the confirmed write are the same command with the same aiming pair, and the layer written is §6.19's `target_layer` rather than a flag a renderer chose. A `repo`-layer edit carries `--repo <directory>` as well — the installation's own directory, in both phases (the repo-coupling audit's L12, RC80) — and no other layer carries it. The write carries `--no-apply` (the composite-commands plan's AP8, D1572), so the change is saved and its follow-up steps are owed rather than run — and it carries it only at or above the floor that registers the word (`NO_APPLY_CLI_FLOOR`, 0.26.0, where that plan's AP5 and AP6 ship it, §6.20), so a CLI older than that gets no word |
 | `user ls` | yes (`newUserLsCmd`, §6.29) — the Members view's roster read (the roles-and-scopes plan's RS7, roles.md D691(b)), and with `--me` the caller's own role, which reads no roster at all. Both forms carry the aiming pair, and the five words of the group that change a roster are the never table's |
 | `image ls` | yes (`newImageLsCmd`, §6.30) — the project's image catalog, and with `--shared` the installation's shared-image lock. **It is offline** and writes nothing, and the group's writers — `image add`, `image rm`, `image promote`, `image build`, `image refresh` — are the never table's as commands and as words of `image`, **save the add §6.34 documents, whose two operations that same rule grants the console by name** — so this read is not quite the group's whole reach any more, and the write's own two rows are the other half of it |
 | `recipes ls` | yes (`newRecipesLsCmd`, §6.31) — the recipes in force, one winner per name. **It is offline** and writes nothing, and `recipes publish` and `recipes validate` are the never table's as words of `recipes` (`publish` as a command too) |

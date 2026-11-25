@@ -188,6 +188,10 @@ PRINTED=""
 # BY the exchange, so a lost answer is a user that exists and that no uid
 # recorded after the answer would ever name.
 UIDS_CREATED=()
+# The uids a deletion has already been attempted for, so the exit trap does not
+# delete — or reach for an access token to delete — a user the last step already
+# answered for. A uid goes in BEFORE the attempt, like the record above.
+UIDS_TRIED=()
 # The service accounts this run bound the operator to as token creator, so the
 # exit trap removes exactly those and no binding the operator already held. A
 # removal that failed is kept with its command, because a standing grant on a job
@@ -221,6 +225,12 @@ scratch_up() {
 # answer away with the subshell.
 cleanup() {
   FACTS_CAPTURED=$(cat "$FACTS_FILE" 2>/dev/null || true)
+  # The users FIRST, and before the scratch directory: the deletion needs the
+  # scratch directory for nothing but its error file, and a run that stopped
+  # anywhere — an interrupted one, a guard, the crash of 2026-11-24 — reaches
+  # this trap with its users still in the project. Deleting them here is what
+  # makes every exit path clean up rather than only the last step.
+  delete_users
   revoke_impersonation
   remove_scratch
 }
@@ -348,7 +358,7 @@ restore_detail() {
     users="the run identity users were deleted ($DELETED_N of ${#UIDS_CREATED[@]} answered 200) and the project's own user list was read back holding none of their uids"
   else
     left=${UIDS_CREATED[*]}
-    users="the project's own user list was read back and still holds $SURVIVORS_READ of the uids this check may have created ($left): this is the call that deletes each of them — $delete_call"
+    users="the project's own user list was read back and still holds $SURVIVORS_READ of the uids this check may have created ($DELETED_N of ${#UIDS_CREATED[@]} deletions answered 200): the uids are $left, and this is the call that deletes each of them — $delete_call"
   fi
   local grants
   if [ "${#GRANTS_LEFT[@]}" -gt 0 ]; then
@@ -647,16 +657,18 @@ step_service() {
 # (one per workflow in its fugaro.yaml); the installation's support jobs carry
 # `fugaro_role` instead, so they are not the job a run lands on. Where the
 # repository has several of its own, the one read is the job the workflow named
-# with `--workflow` wears as its `fugaro_workflow` label; with several and no
-# flag this check is not told which workflow a run uses and stops rather than
-# read one of them (see the `*)` branch below).
+# with `--workflow` wears as its `fugaro_workflow` label, else the job of the one
+# workflow that is not a named account's (`<workflow>_<account>`, which is what
+# the reader derives and says in one line); with several workflows that are all
+# the repository's own and no flag, this check is not told which one a run uses
+# and stops rather than read one of them (see the `*)` branch below).
 step_job() {
   LABEL=$(reader label "$SLUG") || stop "the repository's own label could not be derived from its slug"
   if ! run_capture "$SCRATCH/jobs.json" gcloud run jobs list --project "$P" --region "$REGION" \
     --filter="metadata.labels.fugaro_repo=$LABEL" --format=json; then
     stop "gcloud run jobs list did not answer for $P/$REGION: the check needs an account that may read Cloud Run there"
   fi
-  local answer found wfs
+  local answer found wfs chosen derived=no
   if [ -n "${WORKFLOW_ARG:-}" ]; then
     # Told which workflow, the reader picks the one job that wears its label and
     # refuses a name no job of the repository carries — in one line, naming the
@@ -671,6 +683,7 @@ step_job() {
   fi
   found=$(field_of found "$answer")
   wfs=$(field_of workflows "$answer")
+  chosen=$(field_of chosen "$answer")
   case "$found" in
   "" | *[!0-9]*) stop "the project's job list did not say how many jobs the sandbox repository has, so this check cannot tell whether $REPO has a job of its own" ;;
   0)
@@ -693,14 +706,30 @@ step_job() {
     # -- and this check reads the job a run lands on. Which workflow a run uses
     # is a question the launch itself refuses to answer without being told
     # (internal/cli/run.go's resolveWorkflow: --workflow, else a config with
-    # exactly one), and this check is not told either, so it stops rather than
-    # read one job and report its account, its environment and its mint as the
-    # repository's. Reading the shared project job here instead is what this
-    # branch used to do, and it judged a repository with two jobs as a repository
-    # with none. A workflow named with --workflow is the one thing that lifts
-    # this: the reader then picked the job that wears its label, and it stopped
+    # exactly one), and with two workflows of the repository's own this check is
+    # not told either, so it stops rather than read one job and report its
+    # account, its environment and its mint as the repository's. Reading the
+    # shared project job here instead is what this branch used to do, and it
+    # judged a repository with two jobs as a repository with none. A workflow
+    # named with --workflow is the one thing that lifts this: the reader then
+    # picked the job that wears its label -- `chosen=named` -- and it stopped
     # the run itself if no job of the repository wears it.
-    [ -n "${WORKFLOW_ARG:-}" ] || stop "the sandbox repository $REPO has $found jobs of its own in $P/$REGION, one per workflow of its fugaro.yaml ($(printf '%s\n' "$answer" | sed -n 's/^own=//p' | tr '\n' ' ')), and this check reads the job a run lands on: a run on a repository with several workflows is told which one with --workflow (internal/cli/run.go's resolveWorkflow) and this check is not told, so it stops rather than read one of them and report its account, its environment and its mint as the repository's. Re-run with --workflow <one of: $wfs>"
+    #
+    # The one answer left to derive is the NAMED ACCOUNTS: a job of a named
+    # OAuth account wears the workflow joined to that account as its label
+    # (gcp.WorkflowVariant, `web_belong`), and a workflow of the repository's own
+    # never carries the '_' that joins them (config.WorkflowNameRE). So when the
+    # reader found exactly one label spelled without one, that is the workflow a
+    # run lands on and the job wearing it is the one read -- said here in one
+    # line, because a pick this check makes on the owner's behalf is a pick the
+    # block has to name.
+    if [ -z "$chosen" ]; then
+      stop "the sandbox repository $REPO has $found jobs of its own in $P/$REGION, and this check cannot tell which one a run of it lands on: $(printf '%s\n' "$answer" | sed -n 's/^own=//p' | tr '\n' ' '). Re-run with --workflow <one of: $wfs>"
+    fi
+    if [ "$chosen" = derived ]; then
+      derived=yes
+      say "$REPO has $found jobs of its own; reading the job of the workflow $(field_of workflow "$answer"), the only one of its workflows that is not a named account's"
+    fi
     ;;
   esac
   JOB=$(field_of job "$answer")
@@ -739,6 +768,7 @@ step_job() {
     # would read as a judgement of the repository rather than of that job.
     local wfsaid="the repository's only one"
     if [ -n "${WORKFLOW_ARG:-}" ]; then wfsaid="the one you named"; fi
+    if [ "$derived" = yes ]; then wfsaid="the only one of its workflows that is not a named account's"; fi
     namesaid="$namesaid, the job of the workflow $JOB_WORKFLOW (its fugaro_workflow label, $wfsaid)"
   fi
   fact job PASS "$namesaid, $kindsaid: it runs as $JOBSA and carries FUGARO_GITHUB_APP_ID=$APPID"
@@ -1236,24 +1266,77 @@ step_outsider() {
   fi
 }
 
+# delete_user_call TOKEN UID — one deletion of one Firebase Auth user, as the
+# owner and with the project's own Identity Toolkit API. It answers the HTTP
+# status on stdout and nothing else, and the status is the point: the call used
+# to be posted and its answer thrown away, so a deletion that answered 403 or
+# 500 read exactly like one that answered 200 — which is how the run of
+# 2026-11-24 left two users in the project and reported it as "0 of 2 deletions
+# answered 200" beside a user list nobody had read back. The token travels in a
+# curl config read from stdin, so it is in no argv.
+delete_user_call() { # delete_user_call TOKEN UID
+  local at=$1 uid=$2 code
+  code=$(printf 'url = "%s"\nheader = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\ndata = "{\\"localId\\":\\"%s\\"}"\n' \
+    "https://identitytoolkit.googleapis.com/v1/projects/$FB/accounts:delete" "$at" "$uid" |
+    curl -sS --config - -o /dev/null -w '%{http_code}' 2>"$SCRATCH/delete.err") || code=""
+  printf '%s' "$code"
+}
+
+# delete_users [TOKEN] — every user this check created that no deletion has been
+# attempted for yet. It is called from the last step AND from the exit trap, so
+# a run that stops before that step — a guard, an interrupt, a step that stopped
+# the run — deletes its users too instead of leaving them for the owner to find.
+# Each is deleted twice at most: Identity Toolkit answers a deletion with a
+# status, a first answer that is not 200 is retried once, and one that still
+# fails is said in one line with the uid rather than counted as done. A token is
+# fetched here only when there is something to delete with it, and never a
+# second time in the same run: the trap's call finds every uid already tried.
+delete_users() { # delete_users [TOKEN]
+  local at=${1:-} uid code attempt
+  local left=()
+  for uid in ${UIDS_CREATED[@]+"${UIDS_CREATED[@]}"}; do
+    case " ${UIDS_TRIED[*]-} " in
+    *" $uid "*) ;;
+    *) left+=("$uid") ;;
+    esac
+  done
+  [ "${#left[@]}" -gt 0 ] || return 0
+  if [ -z "$at" ]; then
+    at=$(gcloud auth print-access-token 2>"$SCRATCH/at.err") || at=""
+    if [ -z "$at" ]; then
+      say "no access token: ${left[*]} not deleted; see the restore line"
+      return 0
+    fi
+  fi
+  for uid in "${left[@]}"; do
+    UIDS_TRIED+=("$uid")
+    attempt=0
+    while :; do
+      attempt=$((attempt + 1))
+      code=$(delete_user_call "$at" "$uid")
+      [ "$code" = 200 ] && break
+      [ "$attempt" -ge 2 ] && break
+    done
+    if [ "$code" = 200 ]; then
+      DELETED_N=$((DELETED_N + 1))
+      say "deleted the run identity user $uid: status 200"
+    else
+      say "$uid NOT deleted (status ${code:-none}, twice): see the restore line"
+    fi
+  done
+  return 0
+}
+
 # step_survivors is the final assertion: the identities this check minted are
 # Firebase Auth users (r~<slug>~<run>, one per exchange) and they are deleted the
 # way they were created — as the owner, with the project's own API — and the
 # user list is read back. The access token is passed in a curl config read from
 # stdin, so it is never in argv either.
 step_survivors() {
-  local at uid deleted=0 code
+  local at
   at=$(gcloud auth print-access-token 2>"$SCRATCH/at.err") || stop "no access token for the project's own Identity Toolkit API: the two users this check created cannot be deleted"
   [ -n "$at" ] || stop "gcloud answered no access token"
-  for uid in ${UIDS_CREATED[@]+"${UIDS_CREATED[@]}"}; do
-    code=$(printf 'url = "https://identitytoolkit.googleapis.com/v1/projects/%s/accounts:delete"\nheader = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\ndata = "{\\"localId\\":\\"%s\\"}"\n' \
-      "$FB" "$at" "$uid" | curl -sS --config - -o /dev/null -w '%{http_code}') || code="curl-failed"
-    if [ "$code" = 200 ]; then
-      deleted=$((deleted + 1))
-      DELETED_N=$deleted
-    fi
-    say "deleted the run identity user $uid: status $code"
-  done
+  delete_users "$at"
   # A second access token for the read-back, read the same way and checked the
   # same way as the first one: a token fetched inside the pipeline below (a
   # command substitution whose status the pipeline discards) would go out as an
@@ -1298,9 +1381,9 @@ step_survivors() {
   at=""
   SURVIVORS_READ=$left
   if [ "$left" = 0 ]; then
-    fact survivors PASS "the two run identity users this check exchanged were deleted ($deleted of ${#UIDS_CREATED[@]} answered 200) and the project's own user list was read back — every page of it, on a 200 — holding 0 of their uids: nothing this check created survives it"
+    fact survivors PASS "the two run identity users this check exchanged were deleted ($DELETED_N of ${#UIDS_CREATED[@]} answered 200) and the project's own user list was read back — every page of it, on a 200 — holding 0 of their uids: nothing this check created survives it"
   else
-    fact survivors FAIL "the project's user list still holds $left of the uids this check created ($deleted of ${#UIDS_CREATED[@]} deletions answered 200): the read-back IS the assertion, and a survivor is a failure this check reports rather than leaves"
+    fact survivors FAIL "the project's user list still holds $left of the uids this check created ($DELETED_N of ${#UIDS_CREATED[@]} deletions answered 200): the read-back IS the assertion, and a survivor is a failure this check reports rather than leaves"
   fi
 }
 
@@ -1627,7 +1710,7 @@ def cmd_budget(want):
             fail("this installation has no repository with state")
         if len(with_state) > 1:
             fail("this installation has %d repositories with state and none was named, so this check cannot tell which one is the sandbox: name it, one of %s"
-                 % (len(with_state), ", ".join(sorted(r.get("repo") or "" for r in with_state))))
+                 % (len(with_state), ", ".join(sorted(str(r.get("repo") or "") for r in with_state))))
         mine = with_state[:1]
         chosen = "derived"
     others = [r for r in with_state if r.get("repo") != mine[0].get("repo")]
@@ -1766,7 +1849,20 @@ def cmd_jobs(want=""):
     A name no job of the repository wears is a refusal and not a read that could
     not be made -- the labels it did find are listed, because that list is the
     fix -- and a name more than one job wears is refused too: which of two jobs
-    a mint is read against is not a question to guess at."""
+    a mint is read against is not a question to guess at.
+
+    With no WANT and several jobs, the one thing this can still tell is a NAMED
+    ACCOUNT's job from the repository's own: a job of a named OAuth account wears
+    the workflow joined to that account as its label (gcp.WorkflowVariant:
+    `go_belong` is the workflow `go` on the account `belong`), and no workflow
+    name can carry the '_' that joins them (config.WorkflowNameRE is letters,
+    digits and dashes). So when exactly one of the workflows these jobs wear is
+    spelled without one, that is a workflow of the repository itself and the job
+    that wears it is the one reported, as `chosen=derived`; the run of
+    2026-11-24 had `web` and `web_belong` and stopped on a question with one
+    answer. Two plain workflows, or none, is still a question this check will
+    not answer by picking one, and `chosen` is then absent and the caller
+    stops."""
     found = []
     for job in load():
         labels = (job.get("metadata") or {}).get("labels") or {}
@@ -1777,14 +1873,14 @@ def cmd_jobs(want=""):
         labels = (job.get("metadata") or {}).get("labels") or {}
         print("own=%s workflow=%s" % ((job.get("metadata") or {}).get("name") or "",
                                       labels.get("fugaro_workflow") or ""))
-    workflows = sorted({(j.get("metadata") or {}).get("labels", {}).get("fugaro_workflow") or ""
+    workflows = sorted({str((j.get("metadata") or {}).get("labels", {}).get("fugaro_workflow") or "")
                         for j in found} - {""})
     print("workflows=%s" % ", ".join(workflows))
 
     def workflow_of(job):
         return (job.get("metadata") or {}).get("labels", {}).get("fugaro_workflow") or ""
 
-    chosen = None
+    chosen, how = None, ""
     if want:
         mine = [j for j in found if workflow_of(j) == want]
         if not mine:
@@ -1793,14 +1889,23 @@ def cmd_jobs(want=""):
         if len(mine) > 1:
             fail("%s is the fugaro_workflow label of %d of this repository's jobs, so this check cannot tell which one a run of it lands on"
                  % (want, len(mine)))
-        chosen = mine[0]
+        chosen, how = mine[0], "named"
     elif len(found) == 1:
-        chosen = found[0]
+        # One job of the repository's own, whatever its workflow label says --
+        # including a label that names a named account's (the only job a run of
+        # this repository could land on): there is nothing to choose between.
+        chosen, how = found[0], "only"
+    else:
+        plain = sorted(w for w in workflows if "_" not in w)
+        mine = [j for j in found if workflow_of(j) == plain[0]] if len(plain) == 1 else []
+        if len(mine) == 1:
+            chosen, how = mine[0], "derived"
     if chosen is not None:
         labels = (chosen.get("metadata") or {}).get("labels") or {}
         print("job=%s" % ((chosen.get("metadata") or {}).get("name") or ""))
         print("kind=%s" % ("project" if labels.get("fugaro_profile") else "repository"))
         print("workflow=%s" % (labels.get("fugaro_workflow") or ""))
+        print("chosen=%s" % how)
 
 
 def cmd_projectjob():
@@ -1831,10 +1936,10 @@ def cmd_job():
     containers = spec.get("containers") or [{}]
     container = containers[0]
     env = env_of(container)
-    names = sorted(n for n in env if n)
-    mounts = sorted({v.get("name") for v in spec.get("volumes") or [] if v.get("name")}
-                    | {m.get("name") for m in container.get("volumeMounts") or [] if m.get("name")})
-    refs = sorted({(e.get("valueSource") or {}).get("secretKeyRef", {}).get("secret") or ""
+    names = sorted(str(n) for n in env if n)
+    mounts = sorted({str(v.get("name")) for v in spec.get("volumes") or [] if v.get("name")}
+                    | {str(m.get("name")) for m in container.get("volumeMounts") or [] if m.get("name")})
+    refs = sorted({str((e.get("valueSource") or {}).get("secretKeyRef", {}).get("secret") or "")
                    for e in container.get("env") or []} - {""})
     appkey = "FUGARO_GITHUB_APP_PRIVATE_KEY"
     print("sa=%s" % (spec.get("serviceAccountName") or ""))
@@ -1914,19 +2019,19 @@ def cmd_policy(jobsa, svcsa):
     bindings = doc.get("bindings") or []
     roles, members, job_member, cond = [], 0, "no", "no"
     for b in bindings:
-        roles.append(b.get("role") or "")
+        roles.append(str(b.get("role") or ""))
         if b.get("condition"):
             cond = "yes"
         for m in b.get("members") or []:
             members += 1
-            if jobsa and m.endswith(":" + jobsa):
+            if jobsa and str(m).endswith(":" + jobsa):
                 job_member = "yes"
     print("bindings=%d" % len(bindings))
     print("role=%s" % ",".join(sorted(roles)))
     print("members=%d" % members)
     print("job_member=%s" % job_member)
     print("svc_member=%s" % ("yes" if any(
-        m.endswith(":" + svcsa)
+        str(m).endswith(":" + svcsa)
         for b in bindings for m in (b.get("members") or [])) else "no"))
     print("cond=%s" % cond)
 
@@ -2009,19 +2114,43 @@ def cmd_repos():
 
 
 def cmd_audit():
-    """One run's audit lines: how many, their statuses, and the first line's
+    """One run's AUDIT lines: how many, their statuses, and the first line's
     fields. The raw text is scanned for the token prefix and only the COUNT
-    leaves this function."""
+    leaves this function.
+
+    The read is filtered by the run id alone (the caller's filter), and the
+    service writes a SECOND line for a run whose call it refused: the diagnosis
+    it puts beside the audit line (internal/credsvc's logRefusal, the line an
+    operator greps as `credsvc: refused`, written wherever the shared refusal
+    path is -- the mint, the sign, the pairing, the proxy). It carries the run,
+    the repository and the HTTP status as a NUMBER. Counting it as an audited
+    act would read one refusal as two, and joining its status with the audit
+    line's -- a string -- is what stopped this check on 2026-11-24 with
+    `join`'s TypeError.
+
+    The line is told apart from every other line by the audit contract's own
+    shape and not by their messages: the audit line writes EVERY field of its
+    event, empty ones included (so a line is one shape and a reader does not
+    have to tell "not known" from "not there"), while a line written beside it
+    carries the few fields its author had and no more. All ten are required
+    here. One field is not the contract: internal/credsvc's github.go writes a
+    warn line when GitHub refuses the mint, carrying purpose, credential,
+    repository, run and -- when GitHub answered -- the status as a NUMBER, so
+    a filter of `purpose` alone counted that warn line as a second audited act
+    and this row then named an act that never happened."""
     raw = sys.stdin.read()
-    lines = json.loads(raw) if raw.strip() else []
+    entries = json.loads(raw) if raw.strip() else []
+    contract = ("run", "repository", "job", "caller", "credential", "purpose",
+                "tier", "status", "slip", "owner")
+    audit = [p for p in (e.get("jsonPayload") or {} for e in entries)
+             if all(k in p for k in contract)]
     fields = {}
     statuses = []
-    for entry in lines:
-        payload = entry.get("jsonPayload") or {}
-        statuses.append(payload.get("status") or "")
+    for payload in audit:
+        statuses.append(str(payload.get("status") or ""))
         for k in ("run", "repository", "job", "caller", "credential", "purpose", "tier", "status"):
             fields.setdefault(k, payload.get(k) or "")
-    print("lines=%d" % len(lines))
+    print("lines=%d" % len(audit))
     print("statuses=%s" % ",".join(statuses))
     for k, v in fields.items():
         print("%s=%s" % (k, v))

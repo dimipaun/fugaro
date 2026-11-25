@@ -9698,6 +9698,7 @@
         "internal/credsvc/auth.go",
         "internal/credsvc/server.go",
         "internal/credsvc/testdata/vertex_gemini/**",
+        "internal/credsvc/testdata/vertex_gemini_stream/**",
         "internal/diagnoseagent/**",
         "internal/digest/**",
         "internal/escalation/**",

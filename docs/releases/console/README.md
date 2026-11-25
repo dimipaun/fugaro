@@ -57,6 +57,7 @@ in this order:
 | `0.123.0` | Tangerine |
 | `0.124.0` | Ugli |
 | `0.125.0` | Watermelon |
+| `0.126.0` | Yuzu |
 
 **Granny Smith, Golden Delicious and Crab are not on the list**, and neither is Lemon: a
 name that spells "Apple" puts the word in a console release's title, and the desktop app is

@@ -61,7 +61,7 @@ import type { RigorView } from '../../shared/rigor'
 import { isMarkerText, sanitizeText } from '../../shared/sanitize'
 import { displayRuns, shortRun } from '../../shared/shortid'
 import type { RunRef } from '../../shared/shortid'
-import { authModeOf } from '../../shared/schema'
+import { PAUSED_STATUS, authModeOf } from '../../shared/schema'
 import type { BurnView, FinishedView, KillView, LiveDocument, RunView, TotalsView } from '../../shared/schema'
 import { putReading, putText } from '../app'
 import type { ElementLike } from '../app'
@@ -195,6 +195,29 @@ export const LIVE_REVIEW_TITLE = 'Ready for your review'
  * hedged sentence is true of both, so it is the one every empty panel says.
  */
 export const LIVE_REVIEW_EMPTY = 'no finished run in this feed is ready for review'
+
+/**
+ * LIVE_PAUSED_STATE, LIVE_PAUSED_RESUME_WORD and LIVE_PAUSED_RESUMED_BY_WORD
+ * are the three words a paused run's row says, and all three are the CLI's own:
+ * `internal/watch/render.go` draws a paused run's line as
+ * `<PAUSED> <ending> <title> · expected resume <stamp> · resumed by <ending>`,
+ * and the console's row draws the same three facts in the same words.
+ *
+ * **The state word is upper case in the markup, not lower case under a
+ * transform.** The CLI upper-cases it on the line, the styling spec's §2 pins
+ * this hook as the word `PAUSED` and the Run screen draws the same word
+ * (`run.ts`'s `PAUSED_WORD`), so a theme cannot peel the two screens apart.
+ *
+ * **The state word is on the row and not only on the section.** The CLI says it
+ * once per run, and a row that carried only its own facts would leave a reader
+ * who reaches it without the rows above it -- a screen reader, or a search --
+ * with no word for what the run is.
+ */
+export const LIVE_PAUSED_STATE = 'PAUSED'
+
+export const LIVE_PAUSED_RESUME_WORD = 'expected resume'
+
+export const LIVE_PAUSED_RESUMED_BY_WORD = 'resumed by'
 
 /**
  * LIVE_PR_NO_LINK_REASON is the sentence the section carries beneath its rows,
@@ -771,6 +794,30 @@ export interface LiveReviewRow {
 }
 
 /**
+ * LivePausedRow is one run that suspended itself: a `JSONFinished` whose record
+ * ended `paused` (contract-pause R15, D3185) -- its repository, its title, and
+ * the pause's own two facts.
+ *
+ * **The two are absent independently**, which is why neither is derived from the
+ * other: the instant comes from the credentials service's own node for the pause
+ * and the resumer from another run's task, so a pause still standing has the
+ * instant alone, and a listing that could read neither node writes neither
+ * (`JSONFinished`). `null` is that absence, never a value nobody filled in, and
+ * the row draws each half as the console's `n/a` with its reason.
+ */
+export interface LivePausedRow {
+  readonly run: string
+  readonly repo: string
+  readonly title: string
+  /** when the orchestrator will resume the run's chain, RFC 3339 UTC as the
+   * document spells every instant (`resume_at`) */
+  readonly resumeAt: string | null
+  /** the run that resumed it (`resumed_by`), or `null` for a pause nobody has
+   * resumed yet */
+  readonly resumedBy: string | null
+}
+
+/**
  * LiveFleet is the fleet budget panel's own figures: everything the panel draws
  * that is not one of `total`'s readings, and nothing a decoder carries.
  *
@@ -963,8 +1010,19 @@ export interface LiveModel {
    * a finished run whose outcome is `draft` or `none` is waiting on nobody.
    * Drawing the whole of `finished[]` would also make this screen a history,
    * which is not what the feed is read for; the same choice the CLI makes in
-   * its own view. */
+   * its own view. `paused` below is the one exception to that, and it is not a
+   * history: a run whose chain is suspended is a run that comes back. */
   readonly review: readonly LiveReviewRow[]
+  /** paused is `finished[]` filtered to the records that ended `paused` (R15):
+   * the runs that suspended themselves and will be resumed, each with the
+   * instant its resume is due at and the run that resumed it. It carries no cap
+   * of this console's own -- a paused run is one whose chain is held rather than
+   * over, so the list is bounded by what a project has in flight at a moment,
+   * where `ready[]` above is unbounded because the CLI never filters it -- and
+   * it is left in the document's own order rather than sorted by resume time,
+   * for the reason the review list is: a second sort is the console's opinion
+   * about an order the CLI already fixed. */
+  readonly paused: readonly LivePausedRow[]
   /** reviewCount is how many ready rows the document carried, which is more
    * than `review.length` exactly when the list was capped. It is the CLI's own
    * count -- `len(ReadyRowsOf(v))` -- taken over the list this console would
@@ -1231,6 +1289,20 @@ function reviewRowOf(finished: FinishedView): LiveReviewRow {
   }
 }
 
+/** pausedRowOf is `pausedRow`'s model from a finished row the document filtered
+ * to the one status a run carries while its chain is suspended. Nothing is
+ * derived here: the two facts are the row's own, each `null` where the wire left
+ * it out (`schema.ts`'s `FinishedView`). */
+function pausedRowOf(finished: FinishedView): LivePausedRow {
+  return {
+    run: finished.run,
+    repo: finished.repo,
+    title: finished.title,
+    resumeAt: finished.resumeAt,
+    resumedBy: finished.resumedBy,
+  }
+}
+
 /** prNumberAt is a pull request's number as a row may draw one: a positive
  * integer, or nothing. `schema.ts`'s `optionalInt` guarantees a finite number
  * and not that it is a whole one, and a number is drawn here as **text** --
@@ -1378,6 +1450,12 @@ export function buildLiveModel(
   // draw rather than quietly showing a shorter list.
   const review = document.ready.map(reviewRowOf)
 
+  // The paused rows are the feed's own finished list filtered to the one status
+  // a suspended chain carries (`PAUSED_STATUS`), in the document's own order:
+  // **the filter is the CLI's fact and not this console's reading of one**, and
+  // a record that ended any other way is not drawn here at all.
+  const paused = document.finished.filter((row) => row.status === PAUSED_STATUS).map(pausedRowOf)
+
   const age = document.connection.ageSeconds
   // The fleet's rate is the *total's* burn and not a repository's: the panel is
   // the whole fleet's, and a rate summed from the rows would be the console's
@@ -1421,6 +1499,7 @@ export function buildLiveModel(
     orphans,
     review: review.slice(0, LIVE_REVIEW_CAP),
     reviewCount: review.length,
+    paused,
     queuedNote: document.queuedNote,
     feed,
   }
@@ -1709,17 +1788,27 @@ function spark(factory: ScreenFactory, line: Sparkline, window: 'burn' | 'hour')
  * `auth` are the two fields the frame carries. */
 function putActor(element: ScreenElement, raw: string, field: string): void {
   if (raw === '') {
-    // **The mark and its reason are written here rather than through
+    // **The mark and its reason are written by `putAbsent` rather than through
     // `putReading`.** An actor is a string and not a number, so a reading's
     // `unit` would be a claim about a format that never runs -- and §2.10 scopes
     // Live's one `count` reading to the review inbox, a sentence
-    // `docs_console_styling_test.go` holds. The two lines below are the two
+    // `docs_console_styling_test.go` holds. `putAbsent` writes the two lines
     // `putReading` writes for a value with no number: the mark, and the reason.
-    literal(element, UNAVAILABLE_MARK)
-    element.setAttribute('title', `the document carries no ${field}`)
+    putAbsent(element, field)
     return
   }
   putText(element, raw, 'label', field)
+}
+
+/** putAbsent writes the console's `n/a` into an element and the reason into its
+ * `title`: **the mark and never an empty cell**, the rule `putActor` states for
+ * an actor and a paused run's own facts are drawn by (`pausedRow`) -- "the
+ * document carries no resume time" and "a resume at no time" must not look
+ * alike. The reason is the field's own wire path, which is the caller's string
+ * and never the document's. */
+function putAbsent(element: ScreenElement, field: string): void {
+  literal(element, UNAVAILABLE_MARK)
+  element.setAttribute('title', `the document carries no ${field}`)
 }
 
 /**
@@ -2953,6 +3042,80 @@ function reviewRow(factory: ScreenFactory, row: LiveReviewRow, ending: string): 
 }
 
 /**
+ * pausedSection draws the runs that suspended themselves, one row each, in the
+ * document's own order.
+ *
+ * **It is drawn only when there is one**, unlike the inbox below it: a run that
+ * paused is the exception in a feed, and a section whose empty state said
+ * "nothing is paused" on every frame would be a paragraph about the console on
+ * the screen whose first question is what is spending. The inbox is drawn
+ * whether or not it has a row because it is the operator's own list -- "nothing
+ * is waiting for you" is an answer a person came for -- where "nothing is
+ * paused" is the ordinary state of any feed.
+ *
+ * It sits above the inbox and below the run tables: a paused run is neither
+ * spending (`runs[]`) nor over (`finished[]`'s history), it is a chain that
+ * comes back, and the inbox keeps the last word for the operator's own work.
+ */
+function pausedSection(factory: LiveFactory, model: LiveModel): ScreenElement {
+  const element = make(factory, 'section', 'live-paused')
+  const list = cell(element, factory, 'ol', 'live-paused-list')
+  // The rows' endings are computed over the paused rows alone: they are the
+  // table drawn together (`runEndings`), and the inbox's own endings are a
+  // group of their own because a run cannot be both ready and paused.
+  const endings = runEndings(
+    model.paused.map((row) => ({ slug: row.repo, run: row.run })),
+    'finished[].run',
+  )
+  model.paused.forEach((row, at) => {
+    list.append(pausedRow(factory, row, endings[at] ?? shortRun(row.run)))
+  })
+  return element
+}
+
+/**
+ * pausedRow draws one run that suspended itself: its state word, its
+ * repository, its title, the instant its resume is due at, the run that resumed
+ * it, and its own id as the door to Run detail (`putRunId`, as the inbox's rows
+ * and the run tables draw theirs).
+ *
+ * **Each half of the pause is drawn only when the document carries it**, and an
+ * absent one is the console's `n/a` with the reason in the `title` rather than
+ * nothing at all: a pause still standing has no resumer yet, a listing that
+ * could not read the pause's own node has no instant, and the two are different
+ * facts a blank would run together (`putAbsent`). The resume instant is drawn as
+ * the stamp the CLI wrote -- `label`, the class `run.ts`'s halt line draws a
+ * halting's own moment with -- and not as a reading: it is a moment beside
+ * `now`, not a number this console counted.
+ *
+ * The resumer's ending is the plain four characters (`shortRun`) rather than a
+ * cut from this section's group: it is a **value inside a row**, not a row of
+ * the table, and a cell that grew its ending by the rows' collisions would be
+ * cutting a string the rule never grouped it with. The whole id still travels
+ * on the cell, so the door opens the run the four characters only partly name.
+ */
+function pausedRow(factory: LiveFactory, row: LivePausedRow, ending: string): ScreenElement {
+  const element = make(factory, 'li', 'live-paused-row')
+  literal(cell(element, factory, 'span', 'live-paused-state'), LIVE_PAUSED_STATE)
+  // The repository is drawn as `reviewRow` draws one: the slash decides the
+  // text class, and a slug is not a repository name.
+  textCell(element, factory, 'span', row.repo, row.repo.includes('/') ? 'repository' : 'slug', 'finished[].repo', 'live-paused-repo')
+  textCell(element, factory, 'span', row.title, 'sentence', 'finished[].title', 'live-paused-run-title')
+  const resume = cell(element, factory, 'span', 'live-paused-resume')
+  literal(cell(resume, factory, 'span', 'live-paused-resume-word'), LIVE_PAUSED_RESUME_WORD)
+  const at = cell(resume, factory, 'span', 'live-paused-resume-at')
+  if (row.resumeAt === null) putAbsent(at, 'finished[].resume_at')
+  else putText(at, row.resumeAt, 'label', 'finished[].resume_at')
+  const by = cell(element, factory, 'span', 'live-paused-by')
+  literal(cell(by, factory, 'span', 'live-paused-by-word'), LIVE_PAUSED_RESUMED_BY_WORD)
+  const id = cell(by, factory, 'span', 'live-paused-by-id')
+  if (row.resumedBy === null) putAbsent(id, 'finished[].resumed_by')
+  else putRunId(id, row.resumedBy, shortRun(row.resumedBy), 'finished[].resumed_by')
+  putRunId(cell(element, factory, 'span', 'live-paused-run-id'), row.run, ending, 'finished[].run')
+  return element
+}
+
+/**
  * renderLive draws the model and returns the tree it built, so a test can walk
  * what was drawn rather than read a window that no test can see.
  *
@@ -2995,6 +3158,11 @@ export function renderLive(factory: LiveFactory, model: LiveModel, theme: LiveTh
     const orphans = cell(root, factory, 'div', 'live-orphans')
     orphans.append(runTable(factory, drawn.orphans))
   }
+
+  // The paused runs come next, and only when there are any: a chain that is
+  // suspended is not spending and not over, so it belongs under the tables and
+  // above the inbox -- see `pausedSection`.
+  if (drawn.paused.length > 0) root.append(pausedSection(factory, drawn))
 
   // The review inbox is last: the screen answers "what is spending now" first,
   // and what is waiting for the operator after it (design section 6.1 rule 6,
