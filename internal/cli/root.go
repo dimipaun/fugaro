@@ -286,7 +286,7 @@ var managedExemptCommands = map[string]string{
 	"config list":                "it only reads: a listing of the installations this machine has",
 	"config show":                "it only reads: the checkout's fugaro.yaml resolved over the project layer",
 	"coordinator":                "a paid name: the stub this build shows refuses in one line and runs nothing, and the Subscription Edition's own command is not this table's to classify",
-	"craft ls":                   "it only reads: a listing of each craft's effective model and access",
+	"craft ls":                   "it only reads: a listing of each craft's effective model and the chain it goes out on",
 	"credentials serve":          "the credentials service's own image runs it: it serves the project's own credentials",
 	"creds":                      "a parent command: it prints its own help, and the work is in set and ls beside it",
 	"creds ls":                   "it only reads: the names and metadata of the bundle's credentials, never a value",

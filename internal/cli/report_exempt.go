@@ -167,7 +167,7 @@ var exemptListings = map[string]exemptListing{
 	"config layer":             {"a listing: the project layer published for this checkout, table or document", true},
 	"config list":              {"a listing: the installations this machine has, as a table or a document", true},
 	"config show":              {"a listing: the checkout's resolved fugaro.yaml, with where each value comes from", true},
-	"craft ls":                 {"a listing: each craft's effective model and access, and where each came from", true},
+	"craft ls":                 {"a listing: each craft's effective model and the chain it goes out on", true},
 	"creds ls":                 {"a listing: the credential names and metadata the bundle holds, never a value", true},
 	"diagnose":                 {"a listing: how one run went, as a report or a document under --json", true},
 	"doctor":                   {"a listing: one screen of checks, which G9 keeps to a single screen", true},
