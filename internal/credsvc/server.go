@@ -2236,13 +2236,18 @@ type slipBinding struct {
 	id      string
 	owner   string
 	allowed []string
-	// slip is the WHOLE record the binding was verified from, and it is
-	// carried only by a call admitted under a WORKSPACE slip (C2, R7): the
-	// personal reader is handed the record and answers the candidate the call
-	// is served first from it (Personal's own signature), and a member's slip
-	// has no such reader on its path. A nil here is therefore "this call was
-	// not admitted under a workspace slip", and it is what keeps the two
-	// halves apart without a second flag.
+	// slip is the WHOLE record the binding was verified from, and BOTH readers
+	// carry it: verifyCallSlip for an installation's call and
+	// verifyPersonCallSlip for a workspace's. The chain walk reads the run's
+	// launcher and its grant off it (chain.go's planSource, grantOf,
+	// principalOf), so a binding that left it out would resolve no launcher's
+	// pool for exactly the runs the pool is for — a project run's call is the
+	// installation reader's.
+	//
+	// A binding with no record is therefore not a shape either reader produces.
+	// It is held as the fail-closed direction of the gate (planSource resolves
+	// no pool for one, and grantOf answers "a run nothing granted"), never as
+	// "this call was not admitted under a workspace slip".
 	slip *creds.Slip
 	// secret is the claim secret the call presented. It is held for ONE thing:
 	// registering it with the call's scrub (callScrubs), so a value the run
@@ -2407,7 +2412,12 @@ func (s *Server) verifyCallSlip(ctx context.Context, r *http.Request, id Identit
 		// re-read from the record once the window has passed.
 		s.slips.put(slipID, sl, now)
 	}
-	return &slipBinding{id: slipID, owner: sl.Owner, allowed: slices.Clone(sl.Allowed), secret: secret}, nil
+	// The record travels with the binding: the walk reads the run's launcher and
+	// its grant off it (chain.go), and this is the reader every PROJECT run's
+	// call is admitted by — so without it no project run could be served from
+	// its launcher's pool at all (D3179-amended, F51, R7).
+	record := sl
+	return &slipBinding{id: slipID, owner: sl.Owner, allowed: slices.Clone(sl.Allowed), secret: secret, slip: &record}, nil
 }
 
 // verifyPersonCallSlip reads and verifies the slip a WORKSPACE's call presents

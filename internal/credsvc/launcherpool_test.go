@@ -395,6 +395,101 @@ func TestLauncherPoolIsTheSlipOwners(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// The loop, end to end: a real slip's call
+// ---------------------------------------------------------------------------
+
+// lpGrant is the fixture's launcher asking for a slip through ServeHTTP, and the
+// answer read as this contract reads it. The shape is the grant route's own: a
+// bearer and no run identity at all (slip.go's slipGrant refuses one), which is
+// why it is not postWith's two-identity default.
+func (f *lpFixture) lpGrant(t *testing.T, body string) SlipGrantResponse {
+	t.Helper()
+	bearer := func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+f.launcherToken()) }
+	resp := f.postWith(t, f.http.Client(), SlipPath, body, "", "", "", bearer)
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading the grant's answer: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the grant is %d, want 200: %s", resp.StatusCode, raw)
+	}
+	var ans SlipGrantResponse
+	if err := json.Unmarshal(raw, &ans); err != nil {
+		t.Fatalf("the grant's answer is not one this contract reads: %v", err)
+	}
+	return ans
+}
+
+// TestARealSlipsCallReachesTheLauncherPool is the one test here whose binding is
+// not hand-built: a launcher grants a slip covering the table's sources, its run
+// claims it, and the run's model call goes through ServeHTTP and is served from
+// the pool that launcher designated. It is what keeps PL4's acceptance —
+// "resolves «the launcher's pool» for a run from the verified owner of its slip"
+// — a claim about the service rather than about a fixture, because the binding
+// it resolves from is the one verifyCallSlip really builds for a project run
+// (server.go): a reader that left the record out would resolve no pool here and
+// the call would land on the repository's key behind the source.
+func TestARealSlipsCallReachesTheLauncherPool(t *testing.T) {
+	s := newLauncherPools(t, true, lpPools()...)
+	s.designates(t, lpLauncher(), testProject, lpOwnPool)
+
+	granted := s.lpGrant(t, chainBody(t, s.slug, s.run, testJobSA, 3600, "", lpCoverage(),
+		mustSharedToken(t, testPoolCredential), mustSharedToken(t, testSecondPoolCredential)))
+	if granted.Slip == "" {
+		t.Fatal("the grant answered no slip")
+	}
+	claimResp := s.postTokens(t, SlipClaimPath, claimBody(t, ""), s.runToken(), s.jobToken(), s.job,
+		func(r *http.Request) { r.Header.Set(HeaderSlip, granted.Slip) })
+	claimRaw, err := io.ReadAll(claimResp.Body)
+	claimResp.Body.Close()
+	if err != nil {
+		t.Fatalf("reading the claim's answer: %v", err)
+	}
+	if claimResp.StatusCode != http.StatusOK {
+		t.Fatalf("the claim is %d, want 200: %s", claimResp.StatusCode, claimRaw)
+	}
+	var claimed SlipClaimResponse
+	if err := json.Unmarshal(claimRaw, &claimed); err != nil {
+		t.Fatalf("the claim's answer is not one this contract reads: %v", err)
+	}
+	if claimed.ClaimSecret == "" {
+		t.Fatal("the claim answered no claim secret, so no call can be admitted under the slip")
+	}
+
+	resp, body := s.call(t, callBody("real-slip"), func(r *http.Request) {
+		r.Header.Set(HeaderSlip, granted.Slip)
+		r.Header.Set(HeaderSlipClaim, claimed.ClaimSecret)
+		r.Header.Set(HeaderStage, "coder")
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the run's call is %d, want 200: %s", resp.StatusCode, body)
+	}
+	var name routing.SourceName
+	if err := json.Unmarshal([]byte(resp.Header.Get(HeaderSource)), &name); err != nil {
+		t.Fatalf("the answer's source member %q is not a routing.SourceName: %v", resp.Header.Get(HeaderSource), err)
+	}
+	if name.Kind != routing.KindLauncherPool || name.Name != lpOwnPool {
+		t.Errorf("the call was served from %+v, want the launcher's own pool %q: the run's slip carries the person's "+
+			"verified subject and the pool is theirs (D3179-amended, R7)", name, lpOwnPool)
+	}
+	if got := resp.Header.Get(HeaderFallback); got != FallbackNo {
+		t.Errorf("the answer says fallback=%q, want %q: the chain's first source served (C1)", got, FallbackNo)
+	}
+	// And the credential the upstream was sent is one of the pool's own members
+	// and never the repository's key the chain names second.
+	sent := s.up.Seen()
+	if len(sent) != 1 {
+		t.Fatalf("the upstream saw %d calls, want exactly 1", len(sent))
+	}
+	switch auth := sent[0].Header.Get("Authorization"); auth {
+	case "Bearer " + fakeCred(t, testPoolCredential), "Bearer " + fakeCred(t, testSecondPoolCredential):
+	default:
+		t.Errorf("the upstream was sent the credential %q, want one of %q's members", auth, lpOwnPool)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // No designation, and every state that is not one, answers "none"
 // ---------------------------------------------------------------------------
 
@@ -459,8 +554,12 @@ func TestNoDesignationIsNone(t *testing.T) {
 // launcher's pool is a call the pool cannot be resolved for — even where the
 // person who designated one is the person who asked.
 //
-// It holds for both shapes a binding can have: none at all, and one a workspace
-// slip's reader left without the record (server.go's slipBinding).
+// It holds for the shape a call with no slip really has — no binding at all —
+// and for a binding carrying no record, which no reader of this service
+// produces (verifyCallSlip and verifyPersonCallSlip both carry the record) and
+// which is held here as the gate's fail-closed direction: if a reader ever left
+// the record out, its run resolves no pool rather than reading a zero
+// principal.
 func TestARunWithNoSlipHasNoLaunchersPool(t *testing.T) {
 	s := newLauncherPools(t, true, lpPools()...)
 	s.designates(t, lpLauncher(), testProject, lpOwnPool)
@@ -470,7 +569,7 @@ func TestARunWithNoSlipHasNoLaunchersPool(t *testing.T) {
 		wantFallback(t, w)
 	})
 
-	t.Run("a binding with no slip record", func(t *testing.T) {
+	t.Run("a binding with no record", func(t *testing.T) {
 		w := s.walk(t, callBody("pool-noslip"), &slipBinding{id: "none", owner: testLauncherAccount})
 		wantFallback(t, w)
 	})
