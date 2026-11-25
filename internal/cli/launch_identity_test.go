@@ -574,9 +574,13 @@ func ticketMetadataServer(t *testing.T) *ticketMetadata {
 }
 
 // publishTicketShared writes the installation's shared config into the
-// fixture's runs bucket with the credentials service's URL in it: the document a
-// container reads the URL out of, since the config such a service holds carries
-// no block of its own (orchestrator_serve.go).
+// fixture's runs bucket: its credentials service's URL, and — on the
+// repository the resident fixtures launch — the record saying whether that
+// repository's root was applied with the service on. It is the document a
+// container reads both halves of the switch out of, since the config such a
+// service holds carries neither (orchestrator_serve.go). ready is that record:
+// an apply that ran with the service on, or one that ran with it off and left
+// the repository where it was.
 //
 // The document is the published shape the fleet's own tests use (validShared,
 // which ParseShared holds to the registry, the region and the identity of the
@@ -584,7 +588,7 @@ func ticketMetadataServer(t *testing.T) *ticketMetadata {
 // with the runs bucket the anchor will look for: the fixture's config names one
 // that is no installation's (`unused-bucket`), because its bucket is a
 // directory and no build writes there.
-func publishTicketShared(t *testing.T, f *cloudFixture, url string) {
+func publishTicketShared(t *testing.T, f *cloudFixture, url string, ready bool) {
 	t.Helper()
 	lc, err := localcfg.Load(os.Getenv("FUGARO_CONFIG"))
 	if err != nil {
@@ -594,6 +598,12 @@ func publishTicketShared(t *testing.T, f *cloudFixture, url string) {
 	if doc == auroraShared() {
 		t.Fatal("the published document no longer names the runs bucket this test rewrites")
 	}
+	const entry = "    aurora/edgeweb:"
+	if !strings.Contains(doc, entry) {
+		t.Fatal("the published document no longer carries the repository entry this test inserts beside")
+	}
+	record := "    acme/app: { provider: github, workflows: [web], credentials_service_ready: " + fmt.Sprintf("%t", ready) + " }\n"
+	doc = strings.Replace(doc, entry, record+entry, 1)
 	doc += "credentials_service: { url: " + url + " }\n"
 	writeBucketFile(t, f, infra.SharedConfigObject, doc)
 }
@@ -604,12 +614,15 @@ func publishTicketShared(t *testing.T, f *cloudFixture, url string) {
 // named (D3136), presenting the token of the account it runs as — the metadata
 // server's, because a container holds no gcloud and no person — and reaching the
 // service at the URL the installation published, which is the one fact its own
-// config does not carry.
+// config does not carry. The execution is handed that same address, because a
+// ticket is claimed at the address and a run handed the ticket alone stops at
+// bootstrap: the published record is what both halves are read from, the
+// service's URL and this repository's record of the root applied with it on.
 func TestResidentLauncherAsksTheIssuer(t *testing.T) {
 	f := newLauncherFixture(t)
 	writeBuildRecord(t, f.cloudFixture, appSlug, "web", releaseIdentity)
 	svc := newLaunchService(t, ticketAnswers(time.Now().Add(30*time.Minute)))
-	publishTicketShared(t, f.cloudFixture, svc.serviceURL())
+	publishTicketShared(t, f.cloudFixture, svc.serviceURL(), true)
 	meta := ticketMetadataServer(t)
 	// The resident launcher presents its own account's token, which is the
 	// metadata server's: the person's mint a command uses is never reached, and
@@ -670,8 +683,72 @@ func TestResidentLauncherAsksTheIssuer(t *testing.T) {
 	if got := atLaunch[identitywire.TicketEnv]; got != ticketValue {
 		t.Fatalf("the execution carries %s=%q, want the ticket the service issued", identitywire.TicketEnv, got)
 	}
+	if got := atLaunch[envCredentialsServiceURL]; got != svc.serviceURL() {
+		t.Fatalf("the execution carries %s=%q, want the address its run claims the ticket at (%s): a ticket with no address stops the run at bootstrap", envCredentialsServiceURL, got, svc.serviceURL())
+	}
 	if raw := ticketObject(t, fileEnv(t, f.cloudFixture), ticketRun); raw != "" {
 		t.Fatal("a resident launch that holds a ticket wrote a token object")
+	}
+}
+
+// TestResidentLauncherSignsLocallyWhereTheServiceDoesNotServeTheRun: the same
+// installation — its service is published, so the resident reads a URL — and
+// the published record says THIS repository's root was applied with the service
+// off, so its job kept every mount it had and the execution is handed no address
+// to claim a ticket at. The resident asks nothing and takes R7's bridge, which
+// is the answer a person's launch of that repository reaches: the alternative is
+// a run holding a ticket at no address, which stops at bootstrap with no
+// identity at all.
+//
+// Mutation (run, restored): judge the published record by its URL alone — the
+// resident's own arm before this case existed — and the service is asked.
+func TestResidentLauncherSignsLocallyWhereTheServiceDoesNotServeTheRun(t *testing.T) {
+	f := newLauncherFixture(t)
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", releaseIdentity)
+	svc := newLaunchService(t, ticketAnswers(time.Now().Add(30*time.Minute)))
+	publishTicketShared(t, f.cloudFixture, svc.serviceURL(), false)
+	prevAsk, prevSelf := launchAskTicket, selfCommand
+	launchAskTicket = func(ctx context.Context, i *launchIssuer, req identitywire.TicketRequest) (identitywire.TicketResponse, error) {
+		return i.askRetry(ctx, req)
+	}
+	selfCommand = func() string { return "fugaro" }
+	t.Cleanup(func() { launchAskTicket, selfCommand = prevAsk, prevSelf })
+
+	const itemID = "p5-1d"
+	spec := orchestrator.Spec{ItemID: itemID, Title: "the launcher half", Repo: "acme/app",
+		Recipe: "standard", RigorTier: "medium", Brief: "Start the run the node recorded."}
+	seedResidentRun(t, f, ticketRun, spec, "dana@example.com")
+	state := orchestrator.State{Intents: []orchestrator.Intent{{
+		ID: orchestrator.IntentID(itemID, 1), RunID: ticketRun,
+	}}}
+	pass := residentPass{launch: f.resident(t), state: state}
+	var atLaunch map[string]string
+	f.run.OnRun = func(c gcpfake.RunCall) { atLaunch = c.Env }
+
+	got, err := pass.Launch(context.Background(), spec, ticketRun)
+	if err != nil {
+		t.Fatalf("the resident launch of a repository the switch holds off: %v", err)
+	}
+	if got != ticketRun {
+		t.Fatalf("the resident launcher started %q for the run the node recorded as %q", got, ticketRun)
+	}
+	if asked := svc.asked(); len(asked) != 0 {
+		t.Fatalf("the service was asked %v, and this run is handed no address to claim a ticket at", asked)
+	}
+	if got := atLaunch[identitywire.TicketEnv]; got != "" {
+		t.Fatalf("an unserved resident launch handed its execution %s=%q: its run reads the address to claim at, and would stop at bootstrap", identitywire.TicketEnv, got)
+	}
+	if got := atLaunch[envCredentialsServiceURL]; got != "" {
+		t.Fatalf("an unserved resident launch handed its execution %s=%q: the address is written where the switch serves, and it is off for this repository", envCredentialsServiceURL, got)
+	}
+	if _, ok := atLaunch[runner.BudgetTokenEnv]; !ok {
+		t.Fatalf("an unserved resident launch handed its execution no seal marker %s: its run has no identity at all", runner.BudgetTokenEnv)
+	}
+	if n := len(f.iam.SignCalls()); n != 1 {
+		t.Fatalf("the bridge minted %d tokens with this machine's own signer, want the run's one", n)
+	}
+	if raw := ticketObject(t, fileEnv(t, f.cloudFixture), ticketRun); raw == "" {
+		t.Fatal("an unserved resident launch wrote no token object: the local mint is the whole of what it falls back to")
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/identitywire"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -165,14 +166,16 @@ func residentAttempt(s orchestrator.State, itemID, runID string) (identitywire.A
 	return "", userErr("the record of the item %s carries no open attempt, and a resident pass starts an attempt its own node recorded: nothing was started. The node has moved on from this run id (%s), so wait for the next patch of the item, or launch it from a machine of your own (fugaro run --retry %s)", oneLine(itemID), task.ShortRun(oneLine(runID)), runID)
 }
 
-// residentServiceURL is the credentials service this installation published,
-// which is the URL this launch asks for its run's identity at. It is read from
-// the SHARED CONFIG — the published record of the installation, in the runs
+// residentService is the installation's published record of its credentials
+// service — the URL this launch asks for its run's identity at, and the
+// repositories' records of the roots applied with it on, which is the rest of
+// the switch the launch judges that ask by (cloudEnv.serviceConfig). It is read
+// from the SHARED CONFIG — the published record of the installation, in the runs
 // bucket the launch already holds open — because the container is told six
 // names and the service's URL is not one of them (orchestrator_serve.go's
 // header counts them; orchestrator.tf sets them), while a person's launch reads
-// the same fact out of the block their own config carries
-// (configuredCredentialsServiceURL).
+// the same facts out of the config their own machine holds
+// (configuredCredentialsServiceURL, and the repository's own entry).
 //
 // A READ THAT GIVES NOTHING IS R7'S FIRST ANSWER AND NOT A FAULT, and that is
 // what the three silent branches below are: no object published, a document
@@ -190,20 +193,20 @@ func residentAttempt(s orchestrator.State, itemID, runID string) (identitywire.A
 // A document that IS refused is read as that same absence rather than as an
 // error to act on, and the reader a person has for it is the CLI's own: a
 // `fugaro` command refuses a shared config it cannot validate, by name, at the
-// moment it reads one. What must not happen is the opposite direction — a URL
+// moment it reads one. What must not happen is the opposite direction — a fact
 // taken out of a document that names another installation — and ParseShared's
 // anchor is what prevents it: the bucket, the project and the name are the
 // three fields it holds to the reading machine's own, so a document from
-// elsewhere arrives here as `refused` and contributes no URL.
-func residentServiceURL(ctx context.Context, env *cloudEnv) string {
+// elsewhere arrives here as `refused` and contributes nothing.
+func residentService(ctx context.Context, env *cloudEnv) *localcfg.Config {
 	lc := env.lc
 	shared, _, err := readShared(ctx, env.bucket, SharedAnchor{
 		Name: lc.Name, GCPProject: lc.GCPProject, Bucket: lc.RunsBucketName(), ImageSource: lc.ImageSource,
 	})
-	if err != nil || shared == nil {
-		return ""
+	if err != nil {
+		return nil
 	}
-	return configuredCredentialsServiceURL(shared)
+	return shared
 }
 
 // Launch starts the run the node recorded, over the command's own launch.
@@ -246,10 +249,10 @@ func (l *residentLauncher) Launch(ctx context.Context, spec orchestrator.Spec, r
 	// THE THREE FACTS OF THE ASK THIS CONTAINER HAS TO BE TOLD (LM6 of
 	// docs/launcher-does-not-mint), and they are three because a container is
 	// not a person: who the launch is (its own account's token, not a person's
-	// gcloud), WHERE the issuer is (the URL the installation published, which
-	// its own config does not carry — the six names it is told are not one), and
-	// WHICH attempt it re-issues (D3136, set by residentPass on the copy it
-	// calls this on).
+	// gcloud), WHERE the issuer is and which repositories it serves (the record
+	// the installation published, which its own config carries neither half of —
+	// the six names it is told are not one), and WHICH attempt it re-issues
+	// (D3136, set by residentPass on the copy it calls this on).
 	//
 	// They are set before anything of the launch is read or written below, and
 	// before launchRun — which is where the ask is made and where the launch's
@@ -258,7 +261,7 @@ func (l *residentLauncher) Launch(ctx context.Context, spec orchestrator.Spec, r
 	// or refusing leaves no claim to release and no record to clean, because
 	// nothing of the run exists yet.
 	env.identity = residentIdentity
-	env.launchServiceURL = residentServiceURL(ctx, env)
+	env.launchService = residentService(ctx, env)
 	env.issuerAttempt = issuerAttemptOf(ctx)
 	// retrySpec is the command's --retry reader: the run is located in the
 	// runs bucket by the id the node recorded (a bare id, which is the

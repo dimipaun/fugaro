@@ -327,6 +327,12 @@ func (e *cloudEnv) launchTicketFor(ctx context.Context, slug string, spec *task.
 // own deployment (internal/infra's projectjobs gives a shared job the address
 // where its provider needs it, and a review variant always carries it).
 //
+// A resident service's launch judges that switch on the same config with the
+// facts the installation PUBLISHED filled in (serviceConfig): the one it
+// composes carries neither the block nor a repository's record, and a
+// container holds no gcloud, so a repository the switch holds off must be
+// judged off here rather than handed a ticket its run could never claim.
+//
 // A launch whose execution carries none signs locally (R7's first answer): the
 // job kept its mounts, and a ticket is an identity the run could not claim.
 //
@@ -338,23 +344,12 @@ func (e *cloudEnv) launchTicketFor(ctx context.Context, slug string, spec *task.
 // identity at all is exactly what cannot be answered then, and the same read
 // refuses a minting launch the same way (budgetJobBackend).
 func (e *cloudEnv) executionServesTheService(ctx context.Context, slug string, spec *task.Spec, job *launchProjectJob, reviewJob bool) (bool, error) {
-	// A resident service's launch is the installation's own (D3125), and the
-	// URL it reaches the service at is the one the installation PUBLISHED
-	// (launchServiceURL): the config it composes carries no credentials_service
-	// block at all (orchestrator_serve.go's base), so the per-repository switch
-	// a person's launch is judged by is not a question its config can answer,
-	// and the published record is the whole of what it knows about the service.
-	// What such a launch must not do is mint: a container holds no gcloud, so
-	// the local mint is a launch that fails rather than one that falls back.
-	if e.launchServiceURL != "" {
-		return true, nil
-	}
 	jobProfile := ""
 	if job != nil {
 		jobProfile = job.Profile
 	}
 	auth, deployed := e.repoServiceAuth(ctx, spec, io.Discard)
-	if len(credentialsServiceLaunchEnv(e.lc, jobProfile, spec.Repo, auth, e.policyMode(ctx), deployed, reviewJob)) > 0 {
+	if len(credentialsServiceLaunchEnv(e.serviceConfig(), jobProfile, spec.Repo, auth, e.policyMode(ctx), deployed, reviewJob)) > 0 {
 		return true, nil
 	}
 	be, ok := e.be.(jobBackendEnvReader)
@@ -373,17 +368,49 @@ func (e *cloudEnv) executionServesTheService(ctx context.Context, slug string, s
 }
 
 // ticketServiceURL is the installation's credentials service as THIS launch
-// reaches it: the block the local config publishes
-// (configuredCredentialsServiceURL, the one place the block is read), or the
-// URL a resident service read out of the shared config it holds — its own
-// config is the installation's and carries no block, and the shared document is
-// the installation's one record of its service (orchestrator_serve.go). ""
-// where there is none, which is R7's first answer.
+// reaches it: the block the config it judges the switch on publishes
+// (configuredCredentialsServiceURL, the one place the block is read). "" where
+// there is none, which is R7's first answer.
 func (e *cloudEnv) ticketServiceURL() string {
-	if e.launchServiceURL != "" {
-		return e.launchServiceURL
+	return configuredCredentialsServiceURL(e.serviceConfig())
+}
+
+// serviceConfig is the config this launch judges the credentials service's
+// switch on: its own, or — for the one launcher that holds no record of the
+// installation's (a resident service, whose composed config is the
+// deployment's own facts: orchestrator_serve.go's base) — that config with the
+// facts the switch reads filled in from the record the installation publishes
+// (launchService): the service's block where its own config has none, and the
+// repositories' records of the roots that were applied with the service on,
+// where an entry of its own carries none. Nothing else is taken from the
+// published copy, and a record the launch's own entry holds wins whatever it
+// says — a `false` is an apply that ran with the switch off, and it has to
+// travel — which is the rule the publish keeps (localcfg's mergeRepoRecords).
+//
+// That record is what makes a resident launch's answer the same one a person's
+// launch reaches: a repository whose root was applied with the service off is
+// held off for both, so neither hands it an address and neither asks for a
+// ticket it could not claim.
+func (e *cloudEnv) serviceConfig() *localcfg.Config {
+	if e.launchService == nil || e.lc == nil {
+		return e.lc
 	}
-	return configuredCredentialsServiceURL(e.lc)
+	lc := *e.lc
+	if lc.CredentialsService == nil {
+		lc.CredentialsService = e.launchService.CredentialsService
+	}
+	repos := make(map[string]localcfg.Repo, len(e.launchService.Repos)+len(lc.Repos))
+	for name, r := range e.launchService.Repos {
+		repos[name] = r
+	}
+	for name, r := range lc.Repos {
+		if r.CredentialsServiceReady == nil {
+			r.CredentialsServiceReady = e.launchService.Repos[name].CredentialsServiceReady
+		}
+		repos[name] = r
+	}
+	lc.Repos = repos
+	return &lc
 }
 
 // presentedIdentity is the identity this launch presents to the service: the

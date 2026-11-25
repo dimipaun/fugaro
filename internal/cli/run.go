@@ -6529,7 +6529,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		jobProfile = job.Profile
 	}
 	svcAuth, deployed := env.repoServiceAuth(ctx, spec, launchWarn)
-	lspec.Env = credentialsServiceLaunchEnv(env.lc, jobProfile, spec.Repo, svcAuth, env.policyMode(ctx), deployed, reviewJob)
+	lspec.Env = credentialsServiceLaunchEnv(env.serviceConfig(), jobProfile, spec.Repo, svcAuth, env.policyMode(ctx), deployed, reviewJob)
 	// The run's slip, asked for exactly where the service's address was just
 	// written: the grant the credentials service keeps for this run, whose id
 	// the job claims at its first call and presents on every call after it

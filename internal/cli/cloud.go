@@ -99,13 +99,15 @@ type cloudEnv struct {
 	// read from the metadata server. nil on every other path, which presents
 	// the launcher's own (launchIdentity).
 	identity func(ctx context.Context, serviceURL string) (string, error)
-	// launchServiceURL is the credentials service this launch asks for its
-	// ticket where it is not the one the local config publishes: a resident
-	// service's own config is the installation's and carries no
-	// credentials_service block, so the URL is read from the shared config the
-	// installation publishes (orchestrator_serve.go). Empty on every other
-	// path, which reads the block (configuredCredentialsServiceURL).
-	launchServiceURL string
+	// launchService is the installation's published record of its credentials
+	// service, put here by the one launcher whose own config does not carry it:
+	// a resident service composes a config of the deployment's own facts and
+	// nothing else (orchestrator_serve.go's base), so the block, and the
+	// repository records the switch's second condition reads, come out of the
+	// shared document the installation publishes (orchestrator_launcher.go's
+	// residentService, and launch_identity.go's serviceConfig, the one place
+	// they are read). nil on every other path, whose config is its own.
+	launchService *localcfg.Config
 }
 
 // openRecordBucket opens the bucket build records are read from. Tests
