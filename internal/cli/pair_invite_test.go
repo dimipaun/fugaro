@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -13,7 +16,10 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/budget/token"
+	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/mailbox"
 	"github.com/dimipaun/fugaro/internal/mobileauth"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
 // The invitation's fixture: the same project as the pairing's, with the two
@@ -381,6 +387,72 @@ func TestPairInviteLeavesAMemberRecordAlone(t *testing.T) {
 	member, _ := f.db.Value(pairMemberRoot + "/" + memberKey).(map[string]any)
 	if member["provider"] != "google.com" || member["sub"] != "provider-subject-1" {
 		t.Fatalf("the invitation rewrote the member record: %v", member)
+	}
+}
+
+// TestConsumerKeyNodeIsThePairReader is the contract between the node `fugaro
+// update` publishes (J6) and this package's reader, held where its two copies
+// live. internal/mailbox's ConsumerKeyNode and this package's
+// pairConsumerKeyNode are the same facts — the node's path, its version, the
+// field, the 32-byte spelling and the fingerprint over the bytes — and a drift
+// on either side is a QR whose fingerprint no phone can match, with nothing to
+// fail for it. The reader is driven here against a document the publisher's own
+// struct wrote, so a name, a version or a spelling that moved on one side is
+// this test's failure.
+func TestConsumerKeyNodeIsThePairReader(t *testing.T) {
+	if pairConsumerKeyPath != mailbox.ConsumerKeyNodePath || pairConsumerKeyVersion != mailbox.ConsumerKeyNodeVersion {
+		t.Fatalf("the reader reads %s v%d and `fugaro update` publishes %s v%d: the node is one, and a reader pointed at another path or another version reads nothing a publisher wrote",
+			pairConsumerKeyPath, pairConsumerKeyVersion, mailbox.ConsumerKeyNodePath, mailbox.ConsumerKeyNodeVersion)
+	}
+	key := make([]byte, mailbox.ConsumerPublicKeySize)
+	for i := range key {
+		key[i] = byte(0x40 + i)
+	}
+	f := newPairFixture(t, pairMe)
+	lc, err := localcfg.Load(os.Getenv("FUGARO_CONFIG"))
+	if err != nil {
+		t.Fatalf("the fixture's config: %v", err)
+	}
+	db, err := rtdb.New(f.db.URL, rtdb.Auth{IDToken: func() string { return "" }})
+	if err != nil {
+		t.Fatalf("the fixture's database: %v", err)
+	}
+
+	// What the publisher writes: its own struct and its own encoder, marshalled
+	// into the node. A field renamed on the publisher's side reaches this reader
+	// as an absent one.
+	doc, err := json.Marshal(mailbox.ConsumerKeyNode{V: mailbox.ConsumerKeyNodeVersion, PublicKey: mailbox.EncodeConsumerPublicKey(key)})
+	if err != nil {
+		t.Fatalf("marshalling the published node: %v", err)
+	}
+	var node any
+	if err := json.Unmarshal(doc, &node); err != nil {
+		t.Fatalf("the published node is not JSON: %v", err)
+	}
+	f.db.Set(mailbox.ConsumerKeyNodePath, node)
+
+	got, err := pairConsumerKey(context.Background(), lc, db)
+	if err != nil {
+		t.Fatalf("reading the node the publisher's own struct wrote at %s: %v", mailbox.ConsumerKeyNodePath, err)
+	}
+	if !bytes.Equal(got, key) {
+		t.Fatalf("the reader decoded %x, and the publisher wrote %x", got, key)
+	}
+	if got, want := pairConsumerKeyFingerprint(got), mailbox.ConsumerKeyFingerprint(key); got != want {
+		t.Fatalf("the QR carries the fingerprint %q and the phone computes %q over the same key: one key has one fingerprint, and a drift here is a QR no phone can match", got, want)
+	}
+
+	// The two decoders refuse the same spellings: the same 32 bytes in a padded
+	// spelling are refused on both sides rather than repaired, because a
+	// repaired key is a key whose fingerprint the phone computes over other
+	// bytes.
+	padded := base64.URLEncoding.EncodeToString(key)
+	if _, err := mailbox.DecodeConsumerPublicKey(padded); err == nil {
+		t.Fatalf("the publisher's decoder accepted the padded spelling %q", padded)
+	}
+	f.db.Set(mailbox.ConsumerKeyNodePath, map[string]any{"v": mailbox.ConsumerKeyNodeVersion, "public_key": padded})
+	if _, err := pairConsumerKey(context.Background(), lc, db); err == nil {
+		t.Errorf("the reader accepted the padded spelling %q, which the publisher's own decoder refuses: the reader's decode is its own copy, and this is where the copy has to agree", padded)
 	}
 }
 

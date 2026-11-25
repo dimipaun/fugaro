@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -110,7 +111,7 @@ func TestAProbeClearsOnlyABackedOffMark(t *testing.T) {
 	exhausted := Mark{State: StateExhausted, Until: now.Add(time.Hour), Since: now}
 
 	for _, prev := range []Mark{broken, exhausted, {}, {State: State("draining")}} {
-		if got := ProbeSucceeded(prev, now, set); got != prev {
+		if got := ProbeSucceeded(prev, now, set); !reflect.DeepEqual(got, prev) {
 			t.Fatalf("a successful probe of %+v left %+v; want the mark that was there", prev, got)
 		}
 	}
@@ -223,7 +224,7 @@ func TestConcurrentUsageLimitsDoNotDoubleTheWait(t *testing.T) {
 	m := first
 	for i := 0; i < 10; i++ {
 		m = Exhaust(m, now.Add(time.Duration(i)*time.Second), time.Time{}, set)
-		if m != first {
+		if !reflect.DeepEqual(m, first) {
 			t.Fatalf("a usage limit inside the hold left %+v; want %+v: the hold in force is the first one's", m, first)
 		}
 	}
@@ -264,7 +265,7 @@ func TestAUsageLimitDoesNotDiscardAnExhaustedHold(t *testing.T) {
 	// landed: a minute later, and three hours in.
 	for _, at := range []time.Time{now.Add(time.Minute), now.Add(3 * time.Hour)} {
 		m := Exhaust(held, at, time.Time{}, set)
-		if m != held {
+		if !reflect.DeepEqual(m, held) {
 			t.Fatalf("a no-reset 429 at +%s left %+v; want the hold the reset wrote, %+v", at.Sub(now), m, held)
 		}
 	}
@@ -279,7 +280,7 @@ func TestAUsageLimitDoesNotDiscardAnExhaustedHold(t *testing.T) {
 	// its one-minute answer is stale (review finding N5). On this tier the
 	// window is off, so Until is the whole hold. This guard used to be about
 	// the no-reset case only, and the reset branch walked around it.
-	if m := Exhaust(held, now.Add(time.Minute), now.Add(time.Hour), set); m != held {
+	if m := Exhaust(held, now.Add(time.Minute), now.Add(time.Hour), set); !reflect.DeepEqual(m, held) {
 		t.Fatalf("a 429 reporting a shorter reset left %+v; want the four-hour hold, %+v", m, held)
 	}
 	// A reset that lands *after* the hold is a different matter: it is the later
@@ -333,7 +334,7 @@ func TestAFailedProbeDoesNotShortenAnExhaustedHold(t *testing.T) {
 	backed := Mark{State: StateBackedOff, Until: now.Add(15 * time.Minute), Backoff: 15 * time.Minute, Since: now.Add(-time.Hour)}
 	held := Exhaust(backed, now, now.Add(4*time.Hour), set)
 
-	if m := ProbeFailed(held, now.Add(time.Minute), set); m != held {
+	if m := ProbeFailed(held, now.Add(time.Minute), set); !reflect.DeepEqual(m, held) {
 		t.Fatalf("a failed probe a minute into a four-hour reset left %+v; want the reset, %+v", m, held)
 	}
 
@@ -366,7 +367,7 @@ func TestARacingResetNeverShortensAHold(t *testing.T) {
 
 	// A minute later, a call already in flight reports a one-minute reset.
 	at := now.Add(time.Minute)
-	if m := Exhaust(held, at, at.Add(time.Minute), set); m != held {
+	if m := Exhaust(held, at, at.Add(time.Minute), set); !reflect.DeepEqual(m, held) {
 		t.Fatalf("a racing 429 reporting a one-minute reset left %+v; want the four-hour hold, %+v", m, held)
 	}
 	// The answer a selection gives is still the four hours: the token is not
@@ -387,7 +388,7 @@ func TestARacingResetNeverShortensAHold(t *testing.T) {
 	// And the guarded-before-it-lapses backed-off shape is the same rule: a
 	// racing reset shorter than the wait in force does not cut the wait short.
 	backed := Mark{State: StateBackedOff, Until: now.Add(15 * time.Minute), Backoff: 15 * time.Minute, Since: now}
-	if m := Exhaust(backed, now, now.Add(time.Minute), set); m != backed {
+	if m := Exhaust(backed, now, now.Add(time.Minute), set); !reflect.DeepEqual(m, backed) {
 		t.Fatalf("a racing 429 reporting a one-minute reset against a 15m wait left %+v; want the wait, %+v", m, backed)
 	}
 	// Once the wait has lapsed the credential is in rotation again, and a reset
@@ -583,7 +584,7 @@ func TestUnknownStateFailsClosed(t *testing.T) {
 		"Exhaust, with no reset (the backoff case)":   Exhaust(m, now, time.Time{}, Settings{}),
 		"ProbeFailed": ProbeFailed(m, now, Settings{}),
 	} {
-		if got != m {
+		if !reflect.DeepEqual(got, m) {
 			t.Errorf("%s on an unknown state left %+v; want the node untouched (%+v)", name, got, m)
 		}
 	}

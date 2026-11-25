@@ -402,8 +402,9 @@ func TestSetupAnswersFileRefusesUnknownKey(t *testing.T) {
 		// `location` is not in this list: it is the wizard's place question
 		// (LP4 of docs/location-preference; R2), and the members a person's
 		// steps are spelled with are the others. `firestore_location` stays:
-		// that permanent location is confirmed by a person at the terminal and
-		// is not an answer any document carries.
+		// the database's location is no question and no confirmation at all —
+		// it follows the place question (LP10, D3090) — so a document that
+		// named it would answer something the run never asks.
 		for _, key := range []string{
 			"create_project", "link_billing", "billing_account", "firestore_location",
 			"project", "yes", "confirm", "ask", "secrets", "secret",
@@ -642,9 +643,10 @@ func TestSetupAnswersFromStdin(t *testing.T) {
 func TestSetupAnswersFileGrantsNoConsent(t *testing.T) {
 	t.Run("no answer of the file's is a permission", func(t *testing.T) {
 		// The members are the questions alone: the creation of the GCP
-		// project, the billing link, the permanent Firestore location and
-		// every secret value have no key here, and a run that read one would
-		// be a run a document confirmed something for.
+		// project, the billing link and every secret value have no key here,
+		// and neither has the Firestore database's location — it is no
+		// question at all (LP10, D3090) — so a run that read one would be a run
+		// a document confirmed something for.
 		want := []string{"version", "gcp_project", "location", "region", "name", "rigor", "budget", "budget_currency", "bake_repos"}
 		if got := setupAnswerKeys(); !slices.Equal(got, want) {
 			t.Errorf("the answers file's members are %v, want %v", got, want)

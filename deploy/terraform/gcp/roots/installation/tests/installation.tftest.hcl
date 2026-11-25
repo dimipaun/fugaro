@@ -2593,6 +2593,29 @@ run "credentials_service_on" {
           account  = "acme-personal"
         },
       ]
+      # The shared coding class (B5.1), named here so this run renders its
+      # entry and the exact map below carries it. The row's account is the
+      # axis's OWN spelling, so the profile's no-account job is the EMPTY
+      # string here where the review row above spells it "default" — the
+      # caller this row admits holds the profile's CODING job, which is the job
+      # a repository of that profile is launched onto. Two rows for one account
+      # name, because repos is a fact about the job and not part of naming it:
+      # the profile carries the repositories it serves, and the migration of a
+      # row the deployment already has is a change of THIS member alone.
+      shared_job_accounts = [
+        {
+          profile  = "standard"
+          provider = "github"
+          account  = ""
+          repos    = ["github/acme/webapp", "github/acme/api"]
+        },
+        {
+          profile  = "standard"
+          provider = "github"
+          account  = "acme-personal"
+          repos    = ["github/acme/webapp"]
+        },
+      ]
       verifier_accounts = ["person-1@example.com", "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"]
       url               = "https://fugaro-credentials-123456789012.us-east5.run.app"
       # The identity half (LM12, D3121, D3123, F29/R16), named here so this
@@ -2786,13 +2809,14 @@ run "credentials_service_on" {
   # (B5, D2301 — the literal account ID, which is what lets the Go side name
   # that address before anything is planned).
   #
-  # This run also names two review job accounts, so the review class's own
-  # entry is rendered: the class's admitted set, which the class is dead
-  # without (a deployment carrying the coding table alone admits no review
-  # caller, and every review launch is refused with the fail-closed sentence).
-  # The runs below that name none are the other half: the entry is absent, the
-  # set is empty and the class admits nobody, which is the fail-closed state
-  # rather than a revision that refuses to bind a port.
+  # This run also names two review job accounts and two shared ones, so the
+  # review class's own entry and the shared coding class's are both rendered:
+  # the admitted set of each, which each class is dead without (a deployment
+  # carrying the coding table alone admits no review caller and no shared one,
+  # and every launch onto either is refused with the class's fail-closed
+  # sentence). The runs below that name none are the other half: the entries
+  # are absent, the sets are empty and both classes admit nobody, which is the
+  # fail-closed state rather than a revision that refuses to bind a port.
   assert {
     condition = tomap({
       for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e.name => e.value
@@ -2805,6 +2829,7 @@ run "credentials_service_on" {
       FUGARO_CREDENTIALS_SERVICE_URL = "https://fugaro-credentials-123456789012.us-east5.run.app"
       FUGARO_JOB_ACCOUNTS            = "[{\"provider\":\"github\",\"repo\":\"acme/webapp\",\"workflow\":\"web\"}]"
       FUGARO_REVIEW_JOB_ACCOUNTS     = "[{\"account\":\"default\",\"profile\":\"standard\",\"provider\":\"github\"},{\"account\":\"acme-personal\",\"profile\":\"standard\",\"provider\":\"github\"}]"
+      FUGARO_SHARED_JOB_ACCOUNTS     = "[{\"account\":\"\",\"profile\":\"standard\",\"provider\":\"github\",\"repos\":[\"github/acme/webapp\",\"github/acme/api\"]},{\"account\":\"acme-personal\",\"profile\":\"standard\",\"provider\":\"github\",\"repos\":[\"github/acme/webapp\"]}]"
       FUGARO_VERIFIER_ACCOUNTS       = "[\"person-1@example.com\",\"fugaro-coordinator@proj-1234.iam.gserviceaccount.com\"]"
       FUGARO_PERSON_ACCOUNTS         = "[\"operator@example.com\"]"
       FUGARO_BUILD_ACCOUNTS          = "[\"fugaro-build-identity@proj-1234.iam.gserviceaccount.com\"]"
@@ -2886,6 +2911,29 @@ run "credentials_service_on" {
     ]
     error_message = "the review set must be the variable's {profile, provider, account} rows as JSON, in the variable's own order: the service derives each review job's service account from the triple and serves its calls by the Claude account the row names, and the default account is spelled out rather than left empty (the axis spells it as the empty string and the admissions spell it config.DefaultClaudeAccount)"
   }
+  # The shared coding set is the third document, and it is held to the two
+  # above plus its own member: every row carries the repositories the profile
+  # serves, as an array that is PRESENT even where it is empty — the service
+  # refuses a row whose `repos` is absent by name (a row it read as deny-all
+  # would refuse every caller of the class), while an empty array is the
+  # deny-all profile the document may state on purpose. The account is the
+  # axis's own spelling, so the no-account row carries "" here and not the
+  # review row's "default": the caller it admits holds the CODING job.
+  #
+  # Mutation (run, restore): dropping repos from a row — or carrying the review
+  # rows under this name — fails this assertion and the run's exact map
+  # together, so a deployment cannot ship a shared set the service refuses to
+  # read at start-up.
+  assert {
+    condition = jsondecode([
+      for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e.value
+      if e.name == "FUGARO_SHARED_JOB_ACCOUNTS"
+      ][0]) == [
+      { profile = "standard", provider = "github", account = "", repos = ["github/acme/webapp", "github/acme/api"] },
+      { profile = "standard", provider = "github", account = "acme-personal", repos = ["github/acme/webapp"] },
+    ]
+    error_message = "the shared set must be the variable's {profile, provider, account, repos} rows as JSON, in the variable's own order: the service derives each shared job's service account from the triple and admits its calls for the repositories the row names, and repos is required — an absent one is a document the process refuses at start-up rather than a deny-all row"
+  }
   assert {
     condition = (length(google_cloud_run_v2_service.credentials[0].template[0].containers) == 1 &&
     google_cloud_run_v2_service.credentials[0].template[0].containers[0].resources[0].limits == tomap({ cpu = "1", memory = "512Mi" }))
@@ -2922,6 +2970,29 @@ run "credentials_service_on" {
       if g.member == google_service_account.credentials[0].member
     ]) == 0
     error_message = "the service's account holds no project-level role: it reads one secret and nothing else"
+  }
+  # And the build identity holds NOTHING in Secret Manager (IS8, D3330). A
+  # catalog entry's build used to mount the repository's provider credential as
+  # its AvailableSecrets, which Cloud Build resolves as the account the build
+  # runs as, so this module gave the identity one secretAccessor per repository
+  # of the catalog check's own input. The build asks the installation's
+  # credentials service for that credential now, so no container is read by the
+  # account a catalog build runs as and the plan must carry no grant naming it
+  # — every row above is another account's. The list is spelled out over each
+  # container the module can reach rather than over one of them, because the
+  # over-reach this rules out is a row on the container the next reader adds.
+  assert {
+    condition = length([
+      for m in concat(
+        [for g in google_secret_manager_secret_iam_member.credentials_bundle : g.member],
+        [for g in google_secret_manager_secret_iam_member.operator : g.member],
+        [for g in google_secret_manager_secret_iam_member.voice_provider_keys : g.member],
+        [for g in google_secret_manager_secret_iam_member.licence_renewal : g.member],
+        [for g in google_secret_manager_secret_iam_member.orchestrator_pairing_key : g.member],
+        [for g in google_secret_manager_secret_iam_member.coordinator_app_key : g.member],
+      ) : m if m == google_service_account.build_identity[0].member
+    ]) == 0
+    error_message = "the build identity must hold no secretAccessor on any container: a catalog entry's build reads its git credential from the credentials service, never from a secret the account it runs as may read (IS8, D3330), and a leftover accessor is a reach nothing uses"
   }
 }
 
@@ -3359,6 +3430,48 @@ run "credentials_service_review_job_row_needs_all_three_fields" {
         profile  = "standard"
         provider = "github"
         account  = ""
+      }]
+    }
+  }
+
+  expect_failures = [var.credentials_service]
+}
+
+# A shared job's row carries the repositories its profile serves, and an EMPTY
+# entry in that list is refused at plan time for the reason the process refuses
+# it at start-up by name: every entry is one canonical "<provider>/<owner>/<name>"
+# repository, and an empty one admits nothing — a row the service read as
+# deny-all would be a shared job it refuses every call of. The list itself may
+# be empty (the profile that serves no repository is a legal, fail-closed row),
+# so it is the ENTRY and not the length that is held here. The profile's
+# no-account job is the empty ACCOUNT, which this run names on purpose: that
+# member is deliberately not held to anything, and a validation that refused it
+# would stop the very deployment the class exists for.
+run "credentials_service_shared_job_row_needs_a_profile_and_no_empty_repo" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = "web"
+      }]
+      shared_job_accounts = [{
+        profile  = "standard"
+        provider = "github"
+        account  = ""
+        repos    = ["github/acme/webapp", ""]
       }]
     }
   }

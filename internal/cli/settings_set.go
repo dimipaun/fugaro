@@ -257,6 +257,7 @@ var settingsGenericKeys = map[string]bool{
 	// design's to write once the owner column names the generic writer (D1178),
 	// and a block listed in two places is the drift D1161's own cost names.
 	"layer.ab.rate":              true,
+	"layer.ab.repos":             true,
 	"layer.ab.max_pairs_per_day": true,
 	"layer.ab.challengers":       true,
 	"layer.ab.judge_model":       true,

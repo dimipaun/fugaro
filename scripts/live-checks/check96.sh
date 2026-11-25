@@ -648,7 +648,7 @@ step_service() {
   if [ -n "$CFG_URL" ] && [ "$CFG_URL" != "$SVCURL" ]; then
     stop "the config in force records the credentials service at $CFG_URL and the deployed service answers at $SVCURL: a launch would hand its repository jobs an address that is not this service, and every call would be answered 401"
   fi
-  fact service PASS "the credentials service is $SVC, deployed in $P/$REGION, serving at $SVCURL as $SVCSA, and its container names FUGARO_PROJECT=$SVC_FPROJ — the Fugaro project the installation's own state names$([ -n "$CFG_URL" ] && printf ', and the same URL the config in force records' || printf '; the config in force records no credentials service URL, so what the launch hands a job is judged in the job-env row') — and FUGARO_SHARED_JOB_ACCOUNTS reads $SVC_SHARED in its container environment, which is the shared class's own table: it is absent on this release because no module under deploy/terraform/ renders the name yet, so the service refuses a shared project job's caller whole"
+  fact service PASS "the credentials service is $SVC, deployed in $P/$REGION, serving at $SVCURL as $SVCSA, and its container names FUGARO_PROJECT=$SVC_FPROJ — the Fugaro project the installation's own state names$([ -n "$CFG_URL" ] && printf ', and the same URL the config in force records' || printf '; the config in force records no credentials service URL, so what the launch hands a job is judged in the job-env row') — and FUGARO_SHARED_JOB_ACCOUNTS reads $SVC_SHARED in its container environment, which is the shared class's own table: the installation module renders it, so absent means this service has not been re-applied since the release that renders it, and a service whose set is empty refuses a shared project job's caller whole"
 }
 
 # step_job finds the sandbox repository's job by its own label: the job's name
@@ -794,12 +794,12 @@ step_job() {
 # (B5.2, D505, D2078 — the class is admitted for the repositories its profile
 # admits, G21/F40), so the two jobs differ only in what these messages call them
 # and in what the service then does with the caller. What the service does with a
-# shared caller it knows from its own FUGARO_SHARED_JOB_ACCOUNTS table alone, and
-# no module under deploy/terraform/ renders that name yet: while the set is empty
-# the service refuses the class whole, so a shared job's own row is judged here
-# and the run then stops — every claim below this row calls as the job's own
-# account, and for a shared job they would read that refusal rather than an
-# answer about the release.
+# shared caller it knows from its own FUGARO_SHARED_JOB_ACCOUNTS table alone,
+# which the installation module renders on every service an installation has
+# re-applied: while the set is empty the service refuses the class whole, so a
+# shared job's own row is judged here and the run then stops — every claim below
+# this row calls as the job's own account, and for a shared job they would read
+# that refusal rather than an answer about the release.
 step_job_env() {
   local answer envs mounts refs appkey url
   answer=$(reader job <"$SCRATCH/job.json")
@@ -853,9 +853,10 @@ step_job_env() {
 # wiring it just judged. Every claim below the job-env row calls the service as
 # the job's own account — the mint it reads as that account, the pairing refusal,
 # the audit lines — and the service admits a shared caller only from its own
-# FUGARO_SHARED_JOB_ACCOUNTS table, which no module under deploy/terraform/
-# renders yet (internal/infra/tf's CredentialsServiceEnvAwaitingTheModule carries
-# the name ahead of its module). So with the table absent the class is refused
+# FUGARO_SHARED_JOB_ACCOUNTS table, which the installation module renders from
+# the installation's profiles (internal/infra/tf's CredentialsSharedJobAccounts).
+# So with the table absent — a service not re-applied since that release, whose
+# container the module gives no entry — the class is refused
 # whole — the caller falls through to the per-repository table and is refused
 # unverified_job_identity there — and those rows would report that refusal as
 # their own finding. Exit 2, which is this check's "the run could not tell", is
@@ -865,7 +866,7 @@ step_job_env() {
 shared_job_env_stop() {
   [ "$JOB_KIND" = project ] || return 0
   [ "$SVC_SHARED" = present ] && return 0
-  stop "$JOB is a shared project job (fugaro_profile), and the credentials service $SVC does not carry FUGARO_SHARED_JOB_ACCOUNTS: its shared set is empty, so it refuses this class whole (a shared caller falls through to the per-repository table and is refused unverified_job_identity there). Every claim below the job-env row is measured as this job's own account, so none of them can be read for a shared project job until the class is deployed. Run this check against a job of the repository's own ('fugaro setup --repo' in a checkout of $REPO deploys one), or deploy the class first: no module under deploy/terraform/ renders the name yet"
+  stop "$JOB is a shared project job (fugaro_profile), and the credentials service $SVC does not carry FUGARO_SHARED_JOB_ACCOUNTS: its shared set is empty, so it refuses this class whole (a shared caller falls through to the per-repository table and is refused unverified_job_identity there). Every claim below the job-env row is measured as this job's own account, so none of them can be read for a shared project job until the class is deployed. Run this check against a job of the repository's own ('fugaro setup --repo' in a checkout of $REPO deploys one), or deploy the class first: re-apply the installation ('fugaro update' in the project's directory) so its service carries the class's table"
 }
 
 # step_app_key is the first claim: the job holds no App key. Three reads, in the
@@ -1819,10 +1820,10 @@ def cmd_svc():
     print("sa=%s" % (spec.get("serviceAccountName") or ""))
     # The class's own table, read off the DEPLOYED revision the same way every
     # other environment fact here is: internal/cli/credentials_serve.go reads it
-    # from FUGARO_SHARED_JOB_ACCOUNTS and no module under deploy/terraform/
-    # renders that name yet (internal/infra/tf's
-    # CredentialsServiceEnvAwaitingTheModule), so a deployed service that does not
-    # carry it starts with the empty shared set and refuses the class whole. An
+    # from FUGARO_SHARED_JOB_ACCOUNTS, which the installation module
+    # renders from the installation's profiles (internal/infra/tf's
+    # CredentialsSharedJobAccounts): a service the module has not re-applied does
+    # not carry it, starts with the empty shared set and refuses the class whole. An
     # empty value reads as absent, which is the same judgement the job reader
     # makes of the address: present means a plain, non-empty value was set.
     print("shared=%s" % ("present" if env.get("FUGARO_SHARED_JOB_ACCOUNTS") else "absent"))

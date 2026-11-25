@@ -2130,15 +2130,18 @@ var runAccountGrants = setOf(
 	`google_artifact_registry_repository_iam_member | "roles/artifactregistry.reader" | repository=google_artifact_registry_repository.base.repository_id | google_service_account.build_identity[0].member | for_each= | perms=`,
 	`google_artifact_registry_repository_iam_member | "roles/artifactregistry.reader" | repository=google_artifact_registry_repository.ghcr.repository_id | google_service_account.build_identity[0].member | for_each= | perms=`,
 	// Reviewed for B6's review (a catalog build's own steps): the identity's
-	// reach inside the runs bucket and inside Secret Manager, which is what a
-	// build that ran as the per-repository build account had there and lost
-	// when the build moved onto this one account — the definition its pin step
-	// describes, the record its record step writes back and the provider
-	// credential its clone step resolves through Cloud Build's
-	// AvailableSecrets. Without them every catalog build, the operator's and
-	// the nightly check's alike, fails on the first of the three it reaches.
+	// reach inside the runs bucket, which is what a build that ran as the
+	// per-repository build account had there and lost when the build moved
+	// onto this one account — the definition its pin step describes and the
+	// record its record step writes back. Without them every catalog build,
+	// the operator's and the nightly check's alike, fails on the first of the
+	// two it reaches. The third thing that account held, the provider
+	// credential its clone step resolved through Cloud Build's
+	// AvailableSecrets, is gone from this identity entirely (IS8, D3330): a
+	// catalog build asks the credentials service for it, so there is no
+	// secretAccessor row below and no secret for the identity to reach.
 	//
-	// None of the three is a write path to the marker. The definitions read is
+	// Neither of the two is a write path to the marker. The definitions read is
 	// objectViewer, and its condition is the input's own byte for byte —
 	// builds/catalog/ of the runs bucket and nothing else (gcp.CatalogReadCondition),
 	// which does not contain fugaro/managed.json; objectViewer grants no write
@@ -2150,15 +2153,9 @@ var runAccountGrants = setOf(
 	// slugs is the catalog check's own input rather than a second list. Neither
 	// role carries a permission to grant a role, to act as another account or
 	// to mint a token, and the runs bucket is not a storage write of the
-	// managed configuration's own object path. The secretAccessor is on a
-	// secret_id and not on the project: it reads the VALUE of one repository's
-	// provider credential, which is the reach the repository's own build
-	// account held (modules/repo/build.tf's build row, whose key above reads
-	// the same way), and the for_each set is exactly the repositories of
-	// var.catalog_check that name one.
+	// managed configuration's own object path.
 	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=google_storage_bucket.runs.name | google_service_account.build_identity[0].member | for_each= | perms=`,
 	`google_storage_bucket_iam_member | "roles/storage.objectUser" | bucket=google_storage_bucket.runs.name | google_service_account.build_identity[0].member | for_each=local.credentials_service_on && var.catalog_check != null ? { for r in var.catalog_check.repositories : r.slug => r } : {} [local.credentials_service_on=var.credentials_service != null] | perms=`,
-	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=each.value | google_service_account.build_identity[0].member | for_each=local.credentials_service_on && var.catalog_check != null ? merge( { for r in var.catalog_check.repositories : r.slug => r.git_secret_id if try(r.git_secret_id, "") != "" }, { for r in var.catalog_check.repositories : "${r.slug}/own" => r.own_git_secret_id if r.own_git_secret_id != null && r.own_git_secret_id != "" }, ) : {} [local.credentials_service_on=var.credentials_service != null] | perms=`,
 	// Reviewed for B6's other half: the project's catalog check job may act as
 	// that identity, which is what makes every build it submits run as the
 	// project's one build account rather than a repository's. actAs on ONE
@@ -2922,6 +2919,26 @@ var runAccountGrants = setOf(
 	// nothing here widens what any run credential can reach.
 	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.orchestrator.service | google_service_account.scheduler.member | for_each= | perms=`,
 	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=google_secret_manager_secret.pairing_key[0].secret_id | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=`,
+	// Reviewed for J6 (mobile-identity-pairing O17): the account's ONE grant on
+	// the installation's consumer signing key, and the whole of what it reaches
+	// through it. The role is the module's own custom role, whose entire
+	// permission list is cloudkms.cryptoKeyVersions.useToSign — a signature
+	// made with a key whose material is in Cloud KMS, no material to read or
+	// export, no version to create, disable or destroy — and the target is the
+	// one key mailbox_key.tf creates (local.mailbox_crypto_key_id resolves at
+	// plan time to the literal that file composes; internal/infra/tf's
+	// mailboxSignerGrant is what holds a plan to that one key).
+	//
+	// Why none of it is a write path to the marker: useToSign carries no
+	// storage permission at all, nothing that grants a role, no
+	// iam.serviceAccounts.actAs and no token minting, and what it signs is the
+	// mailbox's own canonical bytes — the key and its ring are Cloud KMS
+	// resources in the installation's project and neither is the runs bucket
+	// nor a prefix any fence of this tree admits. The account itself is the
+	// resident orchestrator, whose six rows are the block above; this is the
+	// sixth, and it adds a signature the phones verify to what it could do,
+	// nothing it could reach.
+	`google_kms_crypto_key_iam_member | "projects/${var.project}/roles/fugaroMailboxSigner" | crypto_key_id=local.mailbox_crypto_key_id | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=cloudkms.cryptoKeyVersions.useToSign`,
 )
 
 // setOf is a set of strings.
@@ -3073,7 +3090,7 @@ func labelGrantWhy(role string, roles map[string][]string) (why string, resolved
 // grantTarget is the resource a grant is on: the first of the attributes
 // that name one, most specific first.
 func grantTarget(body string) string {
-	for _, k := range []string{"service_account_id", "secret_id", "repository", "name", "bucket", "project", "folder", "org_id"} {
+	for _, k := range []string{"service_account_id", "secret_id", "crypto_key_id", "repository", "name", "bucket", "project", "folder", "org_id"} {
 		if v := field(body, k); v != "" {
 			return k + "=" + v
 		}

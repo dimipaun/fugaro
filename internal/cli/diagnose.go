@@ -66,6 +66,14 @@ const (
 	// cut without claiming how many rounds it left out: the count is not one
 	// the reader of a cut list can know.
 	diagnoseReviews = 96
+	// diagnoseSwitches bounds the switch log a diagnosis prints. It sits above
+	// any honest run's log -- the gateway settles at most one switch per call,
+	// so a log longer than the stages it was settled in is already a record a
+	// hand wrote -- and it guards against the record a hand can edit, not
+	// against the loop. Unlike the stages, no identity here holds only for the
+	// whole list: a switch is a record of what the run did, and no figure on
+	// this screen is summed from one.
+	diagnoseSwitches = 128
 )
 
 // Diagnosis is what diagnose gathers about one run. Every string in it
@@ -143,6 +151,21 @@ type Diagnosis struct {
 	// sum(stages[].model_usd) + model_by["unattributed"] ==
 	// row.cost.model_usd.
 	Stages []runstore.StageTiming `json:"stages,omitempty"`
+	// Switches is the record's switch log (runstore.Record.Switches, C1.16,
+	// D140): every call the credentials service moved off the credential it was
+	// on, as the credential it left, the one that answered and the service's
+	// reason word, with the cache-miss estimate the gateway priced beside it
+	// (F24, runstore.Switch.CacheMissUSD). In the record's own order, which is
+	// the order the gateway settled the calls in, bounded at diagnoseSwitches
+	// and with every string redacted: from, to and reason are names and words
+	// the service wrote, which a hand can edit like any other byte of the
+	// record. Absent -- never an empty list -- for a run whose calls the service
+	// never moved, which is every run whose record predates the member.
+	//
+	// It is the log the console's Run screen draws a fallback from (D3188),
+	// which is why it is here rather than left in the record: the screen reads
+	// this document and no other, and the console adds no reader of its own.
+	Switches []runstore.Switch `json:"switches,omitempty"`
 	// Retries is the record's own count of attempts the run threw away and
 	// ran again because the model's stream was closed before its response
 	// finished (runstore.Record.Retries, issue #1827): why a stage's share of
@@ -452,6 +475,7 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 			d.ArtifactPaths = append(d.ArtifactPaths, s.Prefix()+runstore.ArtifactPrefix+red(a.Name))
 		}
 		d.Stages, d.Tolerated = stageTimingsOf(rec.Stages, red), toleratedOf(rec.Tolerated, red)
+		d.Switches = switchesOf(rec.Switches, red)
 		d.Row.OwnerDecisions = ownerDecisionsOf(rec.OwnerDecisions, red)
 		d.Ruling = clipRunes(red(rec.OwnerRuled), task.MaxOwnerRuledBytes)
 		d.Retries = rec.Retries
@@ -530,6 +554,35 @@ func stageTimingsOf(stages []runstore.StageTiming, red func(string) string) []ru
 			break
 		}
 		s.Name, s.Model = red(s.Name), red(s.Model)
+		if s.Source != nil {
+			// Source is a pointer into the record, so the copy above does not
+			// cover it: redacting through it would write into the record's own
+			// bytes, and leaving it alone would print a name the rest of this
+			// document redacts.
+			src := *s.Source
+			src.Name = red(src.Name)
+			s.Source = &src
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// switchesOf is the record's switch log for the document: the record's own
+// order, bounded at diagnoseSwitches, and redacted like every other string here
+// -- From, To and Reason are another writer's names and words, not this
+// build's. nil for a record with none, so the key is absent rather than an
+// empty list.
+func switchesOf(switches []runstore.Switch, red func(string) string) []runstore.Switch {
+	if len(switches) == 0 {
+		return nil
+	}
+	out := make([]runstore.Switch, 0, min(len(switches), diagnoseSwitches))
+	for _, s := range switches {
+		if len(out) == diagnoseSwitches {
+			break
+		}
+		s.From, s.To, s.Reason = red(s.From), red(s.To), red(s.Reason)
 		out = append(out, s)
 	}
 	return out

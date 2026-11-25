@@ -453,6 +453,11 @@ export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   // it decodes instead of reading as the skew state.
   'pr_state',
   'outcome',
+  // `auth` is the run's auth mode, one of the CLI's own words, and since D3070 a
+  // run with nothing to say about it carries `-` under this key rather than
+  // omitting it -- the key is a required string on the live run shape. The mark
+  // is not a mode: `authModeOf` is the one reader of this key and answers `null`
+  // for it, so a screen draws no auth mode rather than the `-` the CLI wrote.
   'auth',
   'deadline',
   'day',
@@ -867,6 +872,33 @@ export interface RunView {
    * its pull requests from 1. It is never a link: the console builds none from
    * a feed value (design section 5.1 rule 2). */
   readonly prNumber: number | null
+}
+
+/**
+ * NO_AUTH_MODE is the CLI's own word for a run that has no auth mode to name:
+ * since D3070 a document with nothing to say about the run's auth writes `-`
+ * under `auth`, because the key is a required string on the live run shape and
+ * omitting it would be a document the decoder refuses.
+ *
+ * It is a **value** the console compares and never text it draws -- `auth` sits
+ * in `NON_TEXT_STRING_KEYS` -- so it lives here beside the shape it belongs to
+ * rather than in a screen's own vocabulary.
+ */
+export const NO_AUTH_MODE = '-'
+
+/**
+ * authModeOf is the run's auth mode, or `null` when the document carries none.
+ *
+ * **A run with no auth mode draws no auth mode**, and the two ways a feed can
+ * say so are one answer here: `NO_AUTH_MODE`, which is what this CLI writes, and
+ * the empty string, which is what a decoder gives a key that was absent. Drawing
+ * either as a mode would put a word the CLI never meant as one on the screen, and
+ * drawing the console's `n/a` in its place would be the console reporting a
+ * question the feed answered.
+ */
+export function authModeOf(auth: string): string | null {
+  if (auth === '' || auth === NO_AUTH_MODE) return null
+  return auth
 }
 
 /**

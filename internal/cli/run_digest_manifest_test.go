@@ -32,8 +32,11 @@ const digestRepoRecipe = "version: 1\nname: report\ndescription: This repository
 	"steps:\n  - digest: {}\n  - review:\n      max_rounds: 1\n"
 
 // reportRecipeCheckout makes the working directory a checkout of acme/app
-// carrying digestRepoRecipe as .fugaro/recipes/report.yaml, the file a
-// launch of that repository recipe is resolved from.
+// carrying digestRepoRecipe as .fugaro/recipes/report.yaml. A launch resolves
+// that recipe as the project's copy of it (D3303), so the arms below that
+// launch one publish the copy (repoRecipeCopy); the file is still what the
+// launcher's repository-recipe readers read for a task an older release
+// wrote, digestRecipe's among them.
 func reportRecipeCheckout(t *testing.T) {
 	t.Helper()
 	testutil.IsolateGit(t)
@@ -367,6 +370,7 @@ func TestDigestFollowUpRefused(t *testing.T) {
 	t.Run("inherited as a repository recipe's name", func(t *testing.T) {
 		f := digestFixture(t)
 		reportRecipeCheckout(t)
+		repoRecipeCopy(t, f, "acme/app", "report", digestRepoRecipe)
 		seedReportRoot(t, f, &task.Recipe{Name: "report", Source: string(recipe.SourceRepo)})
 		wantRefusedReport(t, f, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "Have another look")
 	})
@@ -448,19 +452,19 @@ func TestDigestRetryRefused(t *testing.T) {
 }
 
 // TestDigestManifestRepoRecipe: the report recipe need not be the catalog's.
-// A repository's own recipe is resolved from the checkout, and its file is
-// where the launcher reads that the first step is the digest step — the
-// task carries the recipe's name alone, so nothing in the task says whether
-// the run is a report run.
+// A repository's own recipe is the project's copy of it (D3303), and the copy
+// is embedded in the task, so the launcher reads that its first step is the
+// digest step from the text it carries.
 func TestDigestManifestRepoRecipe(t *testing.T) {
 	f := digestFixture(t)
 	mine := []string{manifestRunID(time.Now().Add(-time.Hour))}
 	seedManifestRun(t, f, "acme/app", appSlug, mine[0])
 	reportRecipeCheckout(t)
+	copy := repoRecipeCopy(t, f, "acme/app", "report", digestRepoRecipe)
 
 	spec := launchWith(t, f, "report", "20261028-120000-abcd")
-	if spec.Recipe == nil || spec.Recipe.Name != "report" || spec.Recipe.Source != string(recipe.SourceRepo) {
-		t.Fatalf("recipe = %+v, want the repository's own report recipe", spec.Recipe)
+	if spec.Recipe == nil || spec.Recipe.Name != copy || spec.Recipe.Source != string(recipe.SourceProject) {
+		t.Fatalf("recipe = %+v, want the project's copy of the repository's report recipe", spec.Recipe)
 	}
 	if !slices.Equal(spec.DigestRuns, mine) {
 		t.Fatalf("digest_runs = %v, want %v", spec.DigestRuns, mine)
@@ -468,24 +472,23 @@ func TestDigestManifestRepoRecipe(t *testing.T) {
 }
 
 // TestDigestRepoRecipeImageGate: the digest release's own gate judges a
-// repository's report recipe by the manifest its task carries, not by the
-// recipe's text, which the task does not carry at all (a repository recipe is
-// a name, read at the run's own ref). Without that the launch is judged by
-// recipesSince, passes, and stores a task whose digest_runs a runner older
-// than digestSince refuses at bootstrap — a job started, and paid for, over a
-// field nobody can read. The gate is the field's, and a report launch always
-// carries one: a launch of the same recipe that lists nothing never reaches
-// the gate at all, since digestManifest refuses the empty listing before it
-// (TestDigestEmptyListingRefused). The recipe's own arm of recipeSinceFor
-// still judges a task that carries the recipe's text and no manifest, which no
-// launch of this release writes.
+// repository's report recipe — the project's copy of it, which the task
+// embeds (D3303) — by the recipe's own text, whose digest step is
+// digestSince's. Without that the launch is judged by recipesSince, passes,
+// and stores a task whose digest_runs a runner older than digestSince refuses
+// at bootstrap — a job started, and paid for, over a field nobody can read.
+// The manifest's own arm of recipeSinceFor judges a task an older release
+// wrote, whose repository recipe is a name alone. A launch of the same recipe
+// that lists nothing never reaches either arm: digestManifest refuses the
+// empty listing first (TestDigestEmptyListingRefused).
 //
-// Mutation (drop the `len(spec.DigestRuns) > 0` arm of recipeSinceFor): this
-// test launches, and fails on both the missing refusal and the stored task.
+// Mutation (drop the `UsesDigest` arm of recipeSinceFor): this test launches,
+// and fails on both the missing refusal and the stored task.
 func TestDigestRepoRecipeImageGate(t *testing.T) {
 	f := newCloudFixture(t)
 	writeBuildRecord(t, f, appSlug, "web", digestOldImage)
 	reportRecipeCheckout(t)
+	repoRecipeCopy(t, f, "acme/app", "report", digestRepoRecipe)
 	seedManifestRun(t, f, "acme/app", appSlug, manifestRunID(time.Now().Add(-time.Hour)))
 	// Minted from the wall clock the manifest's window reads, not fixed: the
 	// launch's own ID is read as a mint time like any other run's.
@@ -549,9 +552,10 @@ func TestDigestEmptyListingRefused(t *testing.T) {
 		}
 	}
 	refuse(t, "run-digest", "20261028-120000-abcd")
-	// A repository's own report recipe is judged the same way: the manifest
-	// is the recipe's, not the catalog's.
+	// A repository's own report recipe, resolved as the project's copy of it,
+	// is judged the same way: the manifest is the recipe's, not the catalog's.
 	reportRecipeCheckout(t)
+	repoRecipeCopy(t, f, "acme/app", "report", digestRepoRecipe)
 	refuse(t, "report", "20261028-120000-abcd")
 	// The same repository launches as soon as it has one run in the window.
 	seedManifestRun(t, f, "acme/app", appSlug, manifestRunID(time.Now().Add(-time.Hour)))

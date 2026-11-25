@@ -2295,6 +2295,16 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if err := checkCloneMergeJudgeCraftImage(env.lc, spec, fileCfg, warn); err != nil {
 			return config.Inputs{}, err
 		}
+		// The release-A gate: an image older than l8Since runs a runner
+		// that honours the keys release A lifts, reads the folder
+		// release A no longer reads, and refuses a copy name and the
+		// layer's ab.repos at bootstrap. Judged on the default branch's
+		// own files — R16's read, and not the ref the run checks out —
+		// and it prints the notes for the lifted keys that branch
+		// writes: see l8LaunchSkew.
+		if err := checkCloneL8Image(ctx, env, spec, warn); err != nil {
+			return config.Inputs{}, err
+		}
 	} else {
 		if needsRecipeImage(spec, agentRecipe) {
 			if err := checkRecipeImage(ctx, env, slug, spec, kind, warn); err != nil {
@@ -2503,11 +2513,14 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if err := checkMergeJudgeCraftImage(ctx, env, slug, spec, kind, fileCfg, warn); err != nil {
 			return config.Inputs{}, err
 		}
-		// The digest drift, last of this branch's image reads, and the
-		// only one that never refuses: a checkout: clone workflow has no
-		// derived image and so no record to compare (the branch above),
-		// and nothing here can stop a launch D619 ruled may not be
-		// pinned.
+		// The same gate as the clone branch's above: see checkL8Image.
+		if err := checkL8Image(ctx, env, slug, spec, kind, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The digest drift, and the only image read of this branch that
+		// never refuses: a checkout: clone workflow has no derived image
+		// and so no record to compare (the branch above), and nothing
+		// here can stop a launch D619 ruled may not be pinned.
 		warnImageDigestDrift(ctx, env, slug, spec, warn)
 	}
 	// A checkout: shared workflow's job runs a shared dependency-layer
