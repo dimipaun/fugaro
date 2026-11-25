@@ -405,12 +405,13 @@ func TestOnlyTheLauncherClassRegisters(t *testing.T) {
 // at the service's door and answers the contract's "not served" where the
 // identity configuration is not wired (C1, R7, I1).
 //
-// It is asked three ways, because "mounted" and "served" are two facts and the
+// It is asked four ways, because "mounted" and "served" are two facts and the
 // release needs both: the DOOR answers the contract's code rather than the
 // unknown-path 404, and the 404's own sentence names the path (so an operator
-// reading what this service is reads the registration); and the handler's own
-// floor answers the same code for a service with no issuer and for one whose
-// store cannot register a job.
+// reading what this service is reads the registration); the handler's own floor
+// answers the same code for a service with no issuer and for one whose store
+// cannot register a job; and a service with an issuer and NO store is the one
+// wiring state that is deliberately a different answer (see below).
 func TestTheRegistrationRouteAnswersNotServedUntilItIsWired(t *testing.T) {
 	s := newSlips(t, testLauncherAccount)
 	resp, body := s.postRaw(t, http.MethodPost, identitywire.JobPath)
@@ -440,6 +441,24 @@ func TestTheRegistrationRouteAnswersNotServedUntilItIsWired(t *testing.T) {
 			f.refused(t, rec, body, testLauncherAccount, StatusUnavailable, identitywire.RefusalNotServed, ErrorStateUnavailable)
 		})
 	}
+
+	// A service with an issuer and no record store is the one wiring state that
+	// is NOT "not served", and the difference is the whole reason the store
+	// check is its own branch: `not_served` is the code a CLI bridges on (R7),
+	// so answering it here would have the launcher sign the run's identity
+	// locally instead of failing loudly. The ticket route's guard
+	// (identity_ticket_test.go) and the claim's (identity_claim_test.go) pin the
+	// same branch for the same reason.
+	t.Run("a service with an issuer and no store is a wiring fault", func(t *testing.T) {
+		f := newTickets(t, func(s *svc, cfg *Config) { cfg.Identity.Store = nil })
+		rec, body := f.register(t, f.person(testLauncherAccount), identitywire.JobRequest{
+			Slug: f.slug, Run: f.run, Job: testJobName, JobID: testJobID,
+		})
+		e := f.refused(t, rec, body, testLauncherAccount, StatusUnavailable, ErrorStateUnavailable, ErrorStateUnavailable)
+		if e.Error == identitywire.RefusalNotServed {
+			t.Errorf("a wiring fault is answered %q: a CLI would bridge on it and sign the run's identity locally", identitywire.RefusalNotServed)
+		}
+	})
 }
 
 // TestEachRegistrationRefusalWritesOneAuditLine: every refusal of a verified
