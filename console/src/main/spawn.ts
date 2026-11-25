@@ -159,11 +159,15 @@ export type JSONObject = Readonly<Record<string, unknown>>
 /** FUGARO_BINARY_NAME is the one executable this task spawns. */
 export const FUGARO_BINARY_NAME = 'fugaro'
 
-/** PROJECT_FLAG, CONFIG_FLAG and DIR_FLAG are the three argv values this module
- * adds on top of the operation's own flags. */
+/** PROJECT_FLAG, CONFIG_FLAG, DIR_FLAG and REPO_FLAG are the four argv values
+ * this module adds on top of the operation's own flags. `REPO_FLAG` is the odd
+ * one of the four: it is a declared argument on the rows that read a repository
+ * (`live.watch`, `budget.show`, `runs.list`), and on `settings.edit` it is a
+ * main-process value like the other three -- see the row's `repoFlag`. */
 export const PROJECT_FLAG = '--project'
 export const CONFIG_FLAG = '--config'
 export const DIR_FLAG = '--dir'
+export const REPO_FLAG = '--repo'
 
 /**
  * PlatformRoute is which *kind* of answer a platform's row is. It exists so a
@@ -948,6 +952,18 @@ export interface SpawnCommand {
    */
   readonly layerFlag?: string
   /**
+   * `repoFlag` is the flag a **repository-layer** settings edit names its
+   * checkout with, and it too is present on exactly one row (`settings.edit`).
+   * The flag is a column, for `layerFlag`'s reason and one more: the edit's
+   * cwd is the installation's directory, so `--layer repo` without `--repo`
+   * writes the config file of *whatever checkout that directory happens to
+   * be in* (`settingsRepoFile`, `internal/cli/settings_set.go`) -- a file the
+   * operator was shown no name for. The value is `context.directory`, the
+   * installation's own directory and never a renderer's, and the word is
+   * emitted only when the layer being written is `repo` (`SETTINGS_REPO_LAYER`).
+   */
+  readonly repoFlag?: string
+  /**
    * `expectFlag` is the flag the move's **compare-and-set** is emitted under,
    * and it too is present on exactly one row (`roadmap.move`). It is a column
    * for `runIdFlag`'s reason and one more: its value is the release the document
@@ -1470,10 +1486,10 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
   {
     // **The settings write, and the console's second write** (the settings-edit
     // plan's C3, D1103, D1104, D1105, D1107). Its argv has two spellings, and
-    // both are the same five pieces in the same order:
+    // both are the same pieces in the same order:
     //
-    //   settings set|unset KEY --layer <L> <phase> --project <name>
-    //     [--config <path>] [-- <VALUE>]
+    //   settings set|unset KEY --layer <L> [--repo <directory>] <phase>
+    //     --project <name> [--config <path>] [-- <VALUE>]
     //
     // **`set` or `unset` is a declared argument and not a word of this row**,
     // because the subcommand is the edit's own first fact and a row's words are
@@ -1488,6 +1504,22 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     // computes the layer here rather than taking an enum from a renderer). The
     // layer is the read's `target_layer` -- the CLI's answer about where this
     // key may be written -- so no payload of a renderer's can choose one.
+    //
+    // **`--repo <directory>` is emitted for a `repo`-layer edit alone**, from
+    // the row's `repoFlag` column and from `context.directory` -- the
+    // installation's own directory, held to `isSafeInstallationValue` like the
+    // project name and the config path beside it. The CLI's `--repo` takes
+    // `owner/name` **or a path inside its checkout** (`repoArg`,
+    // `internal/cli/repo_arg.go`), so naming the directory is naming the
+    // checkout the write lands in: without it the child's cwd decides, and the
+    // file changed is whichever checkout that directory
+    // happens to be in -- a name the window could not have shown (RC80). A
+    // `repo`-layer plan with no directory at all (the WSL route before Part D
+    // translates one) is refused rather than spawned: an edit whose target
+    // cannot be named is an edit nobody can confirm. The line the confirmation
+    // window draws for it is read back out of this same argv
+    // (`settingsTargetLine`, `src/main/settingsview.ts`), so the window and the
+    // spawn cannot disagree about the target.
     //
     // **`<phase>` is the main process's too, and it is one of three spellings**
     // (`SETTINGS_EDIT_PHASE_WORDS`): the dry run's `--dry-run --json`, and then
@@ -1517,6 +1549,7 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     words: ['settings'],
     takesProject: true,
     layerFlag: '--layer',
+    repoFlag: '--repo',
     args: [
       { key: 'op', flag: null, kind: 'settingOp' },
       { key: 'key', flag: null, kind: 'value' },
@@ -2127,6 +2160,13 @@ export const SETTINGS_EDIT_PHASE_WORD_GATES: Readonly<Record<string, SettingsEdi
   [NO_APPLY_PHASE_WORD]: 'noApply',
 })
 
+/** SETTINGS_REPO_LAYER is the one of the three whose document is a
+ * **repository's** own config file rather than a file of the project or of the
+ * machine, and it is the one `argvFor` names a directory for (`repoFlag`) and
+ * the one the window's target line is about (`settingsTargetLine`). It is
+ * spelled once because those two, and the list below, must agree. */
+export const SETTINGS_REPO_LAYER = 'repo'
+
 /** SETTINGS_EDIT_LAYERS is the whole of the layer vocabulary
  * (`settingsWriteLayers`, `internal/cli/settings_set.go:41`): the three
  * documents one edit can land in. It is the console's own copy because the
@@ -2134,7 +2174,11 @@ export const SETTINGS_EDIT_PHASE_WORD_GATES: Readonly<Record<string, SettingsEdi
  * business in one -- the read's `target_layer` is held to this set before the
  * dry run is spawned, so a document that named a fourth word is a refusal
  * rather than an argv the CLI would have to refuse. */
-export const SETTINGS_EDIT_LAYERS: readonly string[] = Object.freeze(['local', 'project', 'repo'])
+export const SETTINGS_EDIT_LAYERS: readonly string[] = Object.freeze([
+  'local',
+  'project',
+  SETTINGS_REPO_LAYER,
+])
 
 /** TERMINATOR_WORD is the `--` an argv uses to say "everything after this is a
  * value": one row emits it (`settings.edit`, in front of its new value), and
@@ -2724,6 +2768,19 @@ export function argvFor(
       refused(`${operation} would write the ${edit.layer} layer, which is not one of the three documents an edit lands in`)
     }
     argv.push(row.layerFlag, edit.layer)
+    // **Which repository, for the one layer that writes one.** The layer word
+    // alone says *a repository's config file* and not *which*: without the pair
+    // below, the CLI falls back to the checkout in the child's own directory
+    // (`settingsRepoFile`), and the file changed is that directory's -- a file
+    // the operator was shown no name for. The pair is emitted here, right after
+    // the layer and before the phase, and the window reads its target line back
+    // out of this argv (`settingsTargetLine`), so the two cannot disagree.
+    if (edit.layer === SETTINGS_REPO_LAYER) {
+      const directory = context.directory
+      if (directory === undefined) refused('a repository-layer edit needs the installation’s directory')
+      if (!isSafeInstallationValue(directory)) refused('the installation’s directory is not a value this console will pass')
+      argv.push(REPO_FLAG, directory)
+    }
     const words = SETTINGS_EDIT_PHASE_WORDS[edit.phase]
     if (words === undefined) {
       refused(`${operation} was given a phase that is neither a dry run nor a write`)
@@ -3277,6 +3334,22 @@ export function assertSpawnSurface(rows: readonly SpawnCommand[]): void {
       }
       if (!SPAWN_FLAGS.includes(row.layerFlag)) {
         refused(`${row.operation} would emit ${row.layerFlag}, which is not a flag this console may spawn`)
+      }
+    }
+    // The repository column, held the same way as the layer beside it: it names
+    // the checkout a repository-layer edit writes into, so it belongs to the
+    // settings write's row alone, and it is only ever emitted paired with a
+    // layer. A row that carried one without the other would write a file no
+    // window could name.
+    if (row.repoFlag !== undefined) {
+      if (row.operation !== SETTINGS_EDIT_OPERATION) {
+        refused(`${row.operation} carries a repository flag: only the settings write's own row has one`)
+      }
+      if (row.layerFlag === undefined) {
+        refused(`${row.operation} would emit ${row.repoFlag}, which names a layer's document and not a layer`)
+      }
+      if (!SPAWN_FLAGS.includes(row.repoFlag)) {
+        refused(`${row.operation} would emit ${row.repoFlag}, which is not a flag this console may spawn`)
       }
     }
     // The move's two kinds and its compare-and-set column, held the same way:

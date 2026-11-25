@@ -728,13 +728,16 @@ func newImageRmCmd() *cobra.Command {
 }
 
 // runImageRm removes the entry, refusing while a repository's job runs it, and
-// then runs the steps that make the removal live: the same steps `image add`
-// owes, because the resource a change of the catalog acts on is the catalog and
-// not the command (internal/apply's catalogSteps).
+// then runs the steps that make the removal live: the repository stage, which
+// redeploys the checkout's own jobs without the entry, and the policy stage,
+// which publishes the catalog the removal leaves. It owes no build — the
+// entry's image is built and stays in the registry, and the removal changes
+// nothing another entry's build reads (internal/apply's ResourceImageRemoval),
+// where the add it used to share its steps with is the change that has an image
+// to build.
 //
-// The catalog image that is built is the one the catalog's remaining entries
-// make up, and the redeploy is the checkout's repository's, exactly as it is
-// after an add (D1574).
+// The redeploy is the checkout's repository's, exactly as it is after an add
+// (D1574).
 func runImageRm(cmd *cobra.Command, o cloudOptions, name string, noApply bool) error {
 	ctx := cmd.Context()
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
@@ -788,12 +791,13 @@ func runImageRm(cmd *cobra.Command, o cloudOptions, name string, noApply bool) e
 	if err := userSave(cmd.OutOrStdout(), path, old, next); err != nil {
 		return err
 	}
-	// The removal owes the same steps the add does, through the same chain, and
-	// the sentence below is gated the same way: a step left owed is an error out
-	// of the chain, and --no-apply has said the removal is saved and not live
-	// yet, so this never says a job that still runs the entry no longer does.
+	// The removal owes the two stages that make it live and no build, through
+	// the same chain, and the sentence below is gated the same way: a step left
+	// owed is an error out of the chain, and --no-apply has said the removal is
+	// saved and not live yet, so this never says a job that still runs the
+	// entry no longer does.
 	if err := chainApply(ctx, cmd, onDisk, localcfg.Selection{Path: path}, imageRmDoor,
-		[]apply.Change{{Kind: apply.Resource, Key: apply.ResourceImage}}, noApply); err != nil {
+		[]apply.Change{{Kind: apply.Resource, Key: apply.ResourceImageRemoval}}, noApply); err != nil {
 		return err
 	}
 	if noApply {

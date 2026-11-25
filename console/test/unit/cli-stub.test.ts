@@ -477,7 +477,8 @@ describe('the stub’s settings arms', () => {
   })
 
   it('answers the dry run from the document seeded for its key, and records its argv', () => {
-    // C3's first spawn: `settings set|unset KEY --layer <L> --dry-run --json`.
+    // C3's first spawn: `settings set|unset KEY --layer <L> [--repo <directory>]
+    // --dry-run --json`.
     // The document is seeded per key, the way every other answer of this stub is
     // seeded per file, and the argv is recorded so a spec can hold the window's
     // own drawing to what was actually spawned.
