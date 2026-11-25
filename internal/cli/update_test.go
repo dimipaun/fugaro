@@ -121,7 +121,7 @@ func TestUpdateWithoutAnInstallationNamesSetup(t *testing.T) {
 // themselves, pins that line, because an apply that stops at the installation
 // prints no left-for-you at all (report.Brief keeps one clause of a step's
 // reason; the whole of it is in the log the run names). The covered step is a
-// different matter, and TestUpdateAppliesTheFourStepsItOwns pins it: D12 makes
+// different matter, and TestUpdateAppliesTheThreeStepsItOwns pins it: D12 makes
 // the step a covered one, which is why the sentence above says "by asking".
 func TestUpdateLeavesAnUnenrolledRepositoryAloneAndExitsOne(t *testing.T) {
 	// The rig of an installation that converges with nothing to do, not a bare
@@ -276,53 +276,20 @@ func contains(list []string, want string) bool {
 	return false
 }
 
-// TestUpdateAppliesTheFourStepsItOwns is D12's call-site half, at the four
-// functions that take the steps. `update` covers all four: the Firestore
-// database's location, a billable first image build, replacing a registry tag
-// and onboarding an unlisted repository. `setup` keeps exactly one of them —
-// the location, the door that asks for it as a first-time question — and the
-// other three are covered in both doors, which is the answer's own row-by-row
-// statement of what moves.
+// TestUpdateAppliesTheThreeStepsItOwns is D12's call-site half, at the three
+// functions that take the steps. `update` covers all three: a billable first
+// image build, replacing a registry tag and onboarding an unlisted repository.
+// `setup` covers the same three, and each is covered in both doors, which is
+// the answer's own row-by-row statement of what moves.
 //
-// Planting the bug in either direction fails it: a call site relaxed for
-// `setup` (the location) fails the setup arm here, and one left Typed for
-// `update` fails the update arm — for the build and the tag, whose arms run
-// both doors, that is the same mutation seen twice.
-func TestUpdateAppliesTheFourStepsItOwns(t *testing.T) {
-	t.Run("the Firestore location", func(t *testing.T) {
-		for _, tc := range []struct {
-			door    string
-			covered bool
-		}{{setupDoor.name, false}, {updateDoor.name, true}} {
-			t.Run(tc.door, func(t *testing.T) {
-				e, out := stageEngine(t, fsLocation("us-east5")+"\n", &initOptions{door: tc.door, yes: true, firebase: "aurora-fp"})
-				err := e.r.confirmLocation(fsLocation("us-east5"))
-				if !tc.covered {
-					// The class is Typed for `setup`, so the run's own answer
-					// confirms nothing here and the run leaves the permanent
-					// location for the user: T7, nothing is typed at it, and the
-					// banner below is the note, which names the location.
-					if err == nil || !strings.Contains(err.Error(), "the Firestore database's permanent location") {
-						t.Fatalf("setup confirmed the permanent location: %v\n%s", err, out)
-					}
-					if !strings.Contains(out.String(), fsLocation("us-east5")) {
-						t.Errorf("the setup banner does not name the location it leaves:\n%s", out)
-					}
-					if strings.Contains(out.String(), "confirmed by this run's own answer") {
-						t.Errorf("setup's own answer confirmed the location:\n%s", out)
-					}
-					return
-				}
-				if err != nil {
-					t.Fatalf("update did not cover the location: %v\n%s", err, out)
-				}
-				if !strings.Contains(out.String(), "confirmed by this run's own answer") {
-					t.Errorf("the covered step does not say how it was confirmed:\n%s", out)
-				}
-			})
-		}
-	})
-
+// The Firestore database's location is no longer one of them: it is not a
+// confirmation at all any more (LP10 of docs/location-preference; D3090), so
+// there is no door left to relax it in and nothing to assert about it here.
+//
+// Planting the bug in either direction fails it: a call site left Typed fails
+// the arm that runs both doors, and one relaxed for a single door fails that
+// door's arm.
+func TestUpdateAppliesTheThreeStepsItOwns(t *testing.T) {
 	t.Run("a billable first image build", func(t *testing.T) {
 		cfg := &config.Config{Workflows: map[string]config.Workflow{"app": {}}}
 		spec := infra.RepoSpec{Name: "acme/app", Slug: "acme-app", RegistryPath: "r",
