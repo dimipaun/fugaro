@@ -679,11 +679,15 @@ same local config, in a `credentials:` block. The types the engine reads are:
 | `vertex` | nothing — it is built in, and it is never defined | the run's own gateway | no command: it exists in every installation |
 
 `fugaro accounts add <name> --type claude-oauth` writes the entry beside the account block it has
-always written (§3), and that is what makes the name one a pool (§13) may list. Without the flag the
-command writes exactly what it always wrote — `claude_accounts` and the profile — so nothing on this
-page changes for an installation that wants the account alone. A name the config already defines
-with another type is **refused** rather than retyped: a type decides which half of a run serves the
-name, and the file is where a type is changed.
+always written (§3), and that is what makes the name one a pool (§13) may list. It also puts the
+token in a **pool of one named after the account** — `pools.<name>.members = [<name>]` — unless
+`--pool <name>` names another pool, which the token joins with the members that pool already has. A
+key credential gets no pool: no pool walks a provider key. The pool takes the credential's own name,
+which is the one collision §13's namespace rule admits. Without the flag the command writes exactly
+what it always wrote — `claude_accounts` and the profile — so nothing on this page changes for an
+installation that wants the account alone. A name the config already defines with another type is
+**refused** rather than retyped: a type decides which half of a run serves the name, and the file is
+where a type is changed.
 
 A credential carries a **name and a type and no grant of its own**. `allow_data_to` (§2, §4) stays
 the account's, and every reader that scopes the token's reach still reads it there: a credential a
@@ -724,7 +728,9 @@ was. `fugaro update` is the command that runs it, and no second command is one.
 
 A **pool** is a name, a strategy and an ordered list of members, where each member is a credential
 the same file defines or the built-in `vertex`. Pools and credentials **share one namespace**: a pool
-may not take a credential's name.
+may not take a credential's name, except as that credential's **own pool of one** — the pool whose
+only member is the credential the name holds, which is what a subscription token is put in
+(D3176).
 
 ```yaml
 # per installation: the project's local config

@@ -241,12 +241,14 @@ account's credential as its one member where the config defines no pool of that
 name, and the credential joins the members the pool already has where it does.
 A subscription token lives in a pool (a single token is a pool of one), and a
 pool is what a craft's access, a launcher's designation and a run's --pool name,
-so this is the flag that makes a new account usable by them. It is refused
-without --type claude-oauth — a key credential is not a subscription token, and
-no pool walks one — and it is refused for a name a credential of this config
-already holds, because a craft's access names a credential or a pool and does
-not say which: name the pool anything else, which is why a pool of one for an
-account is not named after it.
+so this is the flag that makes a new account usable by them. Without it a
+subscription token is put in a pool of one named after the account, and a key
+credential is put in none. It is refused without --type claude-oauth — a key
+credential is not a subscription token, and no pool walks one — and it is
+refused for a name a credential of this config already holds, because a craft's
+access names a credential or a pool and does not say which: the two may share a
+name only where the pool is that credential's own pool of one, and any other
+pool of that name must be called something else.
 
 Then it converges, in one command and behind the one sentence it prints: the
 value is stored project-wide as a new version of the secret the name derives
@@ -286,7 +288,7 @@ Flags:
 | `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this declaration would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed |
 | `--claude` | bool | `false` | no | run Anthropic's own claude setup-token login on this terminal first, then paste the token at the hidden prompt |
 | `-h`, `--help` | bool | `false` | no | help for add |
-| `--pool` | string | "" | no | put the token in the named pool: declare the pool with this account's credential as its one member, or join the members it already has. Requires --type claude-oauth, and the name may not be one a credential of this config holds |
+| `--pool` | string | "" | no | put the token in the named pool: declare the pool with this account's credential as its one member, or join the members it already has. Requires --type claude-oauth; without the flag a subscription token goes in a pool of one named after the account, and a key credential in none. The name may not be one a credential of this config holds, unless the pool walks that credential alone |
 | `--profile` | string | "" | no | the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one); refused for a key credential, which is added to no profile's list |
 | `--repos` | string | "" | no | the repositories the token may be used by, as owner/name,owner/name (default: this checkout's origin) |
 | `--type` | string | "" | no | declare the name as a typed credential too, so a craft or a pool may spend it: claude-oauth (this command's OAuth token step), or a key type (openrouter or anthropic), whose value is read the same way and stored under the credential's own derived secret name (without it, the name is declared in claude_accounts alone, as it always was) |
