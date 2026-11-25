@@ -106,7 +106,13 @@ const RULES = [
   {
     name: 'the Keychain is reached through one module',
     pattern: /\.\w*ItemAsync\s*\(/,
-    allow: ['src/accounts/expo-secure-store.js'],
+    // `spike/` is the Check 733 spike app (docs/mobile-identity-pairing, task
+    // M0): its own Expo project under `mobile/`, so this walk reaches it, and
+    // its store is a second module that reaches the SDK on purpose -- it is
+    // the one file holding the accessibility decision, and the one door its
+    // U10 probe has to the platform store. Named here rather than left to a
+    // spelling the pattern misses, which is what this list is for.
+    allow: ['src/accounts/expo-secure-store.js', 'spike/src/secure/sdk.js'],
     why: 'a direct SDK call bypasses the port, the Secret check and the accessibility',
   },
   {
@@ -145,7 +151,13 @@ const RULES = [
     // a connection, and a rule that watched only the call shape would watch
     // none of them.
     pattern: /\bfetch\s*\(|\b(WebSocket|XMLHttpRequest|EventSource)\b/,
-    allow: ['src/voice-switch/hop.js'],
+    // `spike/src/firebase/idp.js` is the spike's (M0) one call site: the REST
+    // `accounts:signInWithIdp` exchange, which is U4's whole question and is a
+    // `POST` to Firebase with no SDK on the device. Named here rather than
+    // reached through a spelling the pattern does not read, so the rule's
+    // claim -- one reviewed file per egress -- still holds over the tree with
+    // the two of them on the list.
+    allow: ['src/voice-switch/hop.js', 'spike/src/firebase/idp.js'],
     why: 'P5.3.7: the egress path is the only thing in the app that talks to a third party, and a second file that could open the network is a second place a byte could leave from',
   },
 ];

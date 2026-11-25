@@ -99,7 +99,31 @@ const craftNodeKeyPrefix = "crafts"
 // sentence only through the closed set of agent auths and the shape an account
 // name has (ValidAuthMode, ValidAuthAccount): what is printed is a value this
 // contract already admitted, never an arbitrary string.
-type poolRefusal struct{ message string }
+type poolRefusal struct {
+	message string
+	// class is the wire error this refusal is answered as (server.go's cascade
+	// step). Empty is ErrorStateUnavailable, the class of a refusal about the
+	// CALL or about a document — the auth a call declared against the record,
+	// the crafts' own gaps, the personal half's switch — whose cause a run's
+	// halt cannot be told apart from a state that could not be read.
+	//
+	// ErrorNoCandidateCredentials is set by the walks that narrowed a candidate
+	// LIST to nothing (the repository's own recorded auth): there the state WAS
+	// read, and what it says is that this call has no candidate at all. That is
+	// the answer the class exists for (wire.go's own words), and the tried list
+	// beside it is what names the credentials that were considered — the
+	// owner's installation of 2026-11-14 read a state_unavailable instead and
+	// was sent to the database while the answer was in the bundle and the
+	// policy.
+	class string
+	// tried is what such a walk considered and why each was left out, filled by
+	// the caller that holds both halves of the list (candidates, cascade.go). It
+	// is bounded by the contract's own rules before it is written
+	// (boundedTried): a body the writer would refuse whole is answered as
+	// state_unavailable, which is the mis-diagnosis the class above exists to
+	// end.
+	tried []Tried
+}
 
 func (e *poolRefusal) Error() string { return e.message }
 

@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/orchestrator/service"
 	"github.com/dimipaun/fugaro/internal/report"
@@ -161,6 +162,16 @@ func TestMain(m *testing.M) {
 	// while their configs carry fake endpoints, so they turn the skip off and
 	// the tests of the skip itself turn it on.
 	skipGSOnFakeEndpoints = false
+	// The update's per-repository job step (update_jobimages.go) reads every
+	// repository the local config lists through a git provider — a host no
+	// test means to reach, and one no test can: the fake endpoints a rig
+	// writes give it no credential. A nil opener is the answer that makes the
+	// step leave before it lists anything, so every other test's converge is
+	// what it was; a test that means to exercise the step hands it a provider
+	// of its own (useRepoFilesProvider).
+	openRepoJobFiles = func([]string, func(string)) (string, gitprov.Opener, error) {
+		return "", nil, nil
+	}
 	// The two bucket openers a converge reaches on its own — the record
 	// bucket's (readPublishedLayer, updateResolvedWindow) and the update
 	// offer's (updateRetryOpen) — each get a rig's gs:// runs bucket URL, which
