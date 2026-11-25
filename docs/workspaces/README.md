@@ -1,6 +1,6 @@
 # Workspaces: an optional grouping of projects
 
-**Status as of 2026-11-10: in progress, 6/10 merged; see [docs/status.md](../status.md) for the current table.** The owner's spec of 2026-10-24 is carried in [spec.md](spec.md) §0 as this run recorded
+**Status as of 2026-11-24: built — this design is implemented, and the last of it landed through the [workspace-service](../workspace-service/implementation-plan.md) plan that finishes the credentials service; see [docs/status.md](../status.md) for the current table.** The owner's spec of 2026-10-24 is carried in [spec.md](spec.md) §0 as this run recorded
 it; [reconciliation.md](reconciliation.md) §4 puts sixteen decisions (**D1290–D1305**) in front of
 the owner, each with the recommendation first and the cost of the alternative, and **the owner
 answered all sixteen on 2026-11-04 — every one as recommended**. **The design merged as #1492, and
@@ -14,11 +14,12 @@ is not the option [reconciliation.md](reconciliation.md) had put first**. No dec
 and none was added; §5 of that file says so. **Two further decisions this design's implementation
 raised were reported afterwards and the owner answered both on 2026-11-10, each as recommended** —
 the pairing §8's residual risk 7 names, and which task carries the region of a member's database —
-and [reconciliation.md](reconciliation.md) §9 is the record: **this release ships the shape and
-states both gaps, and the task that first gives the per-member table a writer takes them**. **If the
-implementation happens,
-[implementation-plan.md](implementation-plan.md) §5 recommends 0.21.0 or later, after the MCP
-server**: the design is large and security-heavy, and §5 says why.
+and [reconciliation.md](reconciliation.md) §9 is the record, with **both now closed**: the task that
+first gives the per-member table a writer took them, and it is WS3, WS4 and WS2 of
+[workspace-service](../workspace-service/implementation-plan.md), which this folder's design landed
+through. **The plan below was written for 0.21.0 or later, after the MCP server**
+([implementation-plan.md](implementation-plan.md) §5): the design is large and security-heavy, and
+§5 says why.
 
 **Asked by.** The owner, on 2026-10-24: an optional grouping of Fugaro projects, with single sign-on
 through a workspace Firebase token exchange, credentials shared across the group's projects, and a
@@ -99,6 +100,65 @@ Four files, the shape the other design folders here use:
 | [reconciliation.md](reconciliation.md) | Each claim of §0 against the code at the base: **what exists** (F1, F4, F7–F11, F13–F17, F19, F21), **what is missing** (F2, F5, F12, F18, F20, F22) and **what conflicts** (F3, F6), each with a path and a line; §2f is what main has overtaken since, including the security re-reads F29–F32 and the post-merge review's **F33**; then the **sixteen decisions, D1290–D1305** (§4, with D1299, D1300 and D1301 carrying the dated amendments), the number block and how it was read (§5), the owner checks no hermetic test can stand in for (§6), the UNVERIFIED table (§7) and **the two owner decisions this round reported, answered 2026-11-04 after the security review (§8: O1 and O2)**. **Where it disagrees with [spec.md](spec.md), it wins** |
 | [implementation-plan.md](implementation-plan.md) | What the owner must answer first (§1), the order and the three dependencies that force it (§2), ten tasks **W0–W9** each with its files, its interface, its **red step**, its named tests and its **SEC** flag (§3), the **shared-files table** (§4), **the release slot** (§5), the test rules (§6) and what the plan does not own (§7) |
 | `README.md` | This file: the status, what was and was not recovered of the owner's spec, the reading of the number block, and what a reader should not take from here |
+
+## Setting one up: what an operator runs
+
+**Two machines, two halves, and one command each time a half changes.** A membership is written on
+the workspace owner's machine and on the member's own, and the converge brings both to the runs.
+
+**On the workspace owner's machine**, once per member, and again whenever a member adds a repository
+(F17): declare the member in the workspace's table, offer the workspace's credentials to it, record
+the cap, and let the converge publish what the declaration records — it is the owner's `fugaro
+update` that writes `workspace_credentials/<name>`, from the member table and the shared list.
+
+```bash
+fugaro workspace project add repo-a --workspace workspace-alpha \
+  --firebase-project <the member's Firebase project id> --fp <the member's Fugaro project> \
+  --exchange-url <the member's exchange endpoint> --job-service-account <the member's job account> \
+  --job-repos <that account>=owner/repo-a --repo owner/repo-a --database-region <its database region>
+fugaro workspace share <credential> --workspace workspace-alpha --projects repo-a
+fugaro workspace share <a forge credential> --workspace workspace-alpha --projects repo-a \
+  --covers owner/repo-a
+fugaro workspace cap set --workspace workspace-alpha --monthly <the group's ceiling>
+fugaro update
+```
+
+`--database-region` is omitted for a member whose Realtime Database sits in its project's own default
+region, and so is `--repo` for a member that contributes none; `--job-repos` is what holds a run's
+verified repository to the account that called (spec.md §8's residual risk 7, closed). A member
+declared here is adopted by the workspace once its owner links it (`fugaro workspace project
+link`, D2819), and the owner's `fugaro workspace project ls` and `status` read what the table holds.
+`--projects` names the members the entry is served to by their **project names** (`repo-a`, the name
+the declaration above used, never `owner/repo-a`), or `--all-members` offers it to every member;
+`--covers` is the repositories a **forge** entry reaches, and it is required for a `github` or
+`bitbucket` one.
+
+**On each member's own machine**, once, and again after the owner changes anything: pin what the
+member trusts, then converge. The pin is the member's own, so neither the exchange's issuer nor the
+service account the grant is bound to is ever aimed by a value the workspace's record supplies.
+
+```bash
+fugaro workspace add workspace-alpha --firebase-project <the workspace's Firebase project id> \
+  --issuer https://securetoken.google.com/<the same id> --assertion-key <the pinned key> \
+  --service-account <the workspace service account> --service-address <the service's address>
+fugaro update
+```
+
+**`fugaro update` is the whole of the member's step**, which is what the join's handoff prints
+(`internal/cli/workspace.go`). The workspace's account is bound to the member's database by the
+Firebase root of the converge, and a plain `fugaro update` is enough for it: while the member's pin
+names an account and that root's state does not already carry the binding, the stage that applies it
+is one the converge runs, with no flag and no second command. The same run publishes where each of
+the member's repositories is served (R4).
+
+A member that adds a repository of its own is the case above: the workspace owner declares it and
+converges first, and until then that repository's runs halt with a reason naming the step
+(F17, R16/R19). A member that uses an orchestrator, a coordinator or image builds **keeps its own
+forge credential**: a shared entry of the workspace's pool carries a forge credential too (its own
+kind, which is what a run's forge routes are served by), but the workspace's service admits a
+member's job accounts and the workspace owner's people and no other caller class, so the member's
+orchestrator, coordinator and image builds — different callers on different routes — keep calling
+their own project's service (D2988, F24).
 
 ## The owner's spec, and what was not recovered
 
@@ -195,15 +255,17 @@ notes the one false positive `grep -rhoE 'D[0-9]{3,4}' docs` returns on `main`.
 
 ## What a reader should not take from here
 
-- **Not an approval to implement.** The decisions are answered; **no task is approved**, and the
-  owner approves each task by name. An answered decision is not a merge.
+- **This folder approves nothing.** The decisions are answered; an answered decision is not a merge,
+  and a task is not approved by being written down: **the owner approves each task by name, and the
+  ten tasks of this plan were approved by name afterwards and each is merged.**
 - **Not a plan to start.** W4, W5, W6 and W7 each add a surface [spec.md](spec.md) §8 describes. That
   section's mandatory independent SECURITY review — which **the coordinator runs** — **has run** on
-  the merged design and returned seven findings, all answered on 2026-11-04; **no task is approved
-  yet**, and the owner approves each by name.
-- **Not a claim that the sign-in half can be built now.** W4's exchange is the hosted MCP server's
-  authorization server: that design is on `main`, and **none of its code is written**
-  ([implementation-plan.md](implementation-plan.md) §2 and §5 say what that costs the slot).
+  the merged design and returned seven findings, all answered on 2026-11-04. What those tasks built
+  is on `main`; [docs/status.md](../status.md) names the release.
+- **Not a claim that the sign-in half stayed unbuilt.** W4's exchange is the hosted MCP server's
+  authorization server, and it is what the member's own exchange is built on
+  ([implementation-plan.md](implementation-plan.md) §2 and §5 say what that dependency cost the
+  slot).
 - **Not a new kind of project.** A workspace owns no repository, no runs bucket, no job and no
   image; it is a grouping over projects that already exist.
 - **Not a second `ee/` boundary.** The workspace's own services are the coordinator's and the

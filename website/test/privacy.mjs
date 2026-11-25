@@ -10,7 +10,7 @@
 //
 // **Every sentence in "The software" is held to the thing that makes it true, never to a copy of
 // itself.** That is the whole rule of this file: a sentence and a fact, so that the fact moving
-// is the sentence failing. Nine rules, one function each, each with a case below that plants a
+// is the sentence failing. Ten rules, one function each, each with a case below that plants a
 // defect and watches the named refusal come back:
 //
 //   1. **The two parts.** The page carries "The website" and "The software" as its two `h2`s, in
@@ -110,6 +110,16 @@
 //      data (the design's section 7.3), which the card names. The card and its sources are held to
 //      each other in both directions: a card sentence the sources stopped making is refused, and a
 //      source obligation the card stopped stating is refused with it (`keySignupFailures`).
+//  10. **Push notifications, and the design's §9.** A paired phone can be notified when something
+//      needs its owner, and the card states what that costs rather than leaving it to be guessed:
+//      the app registers a token with the publisher's relay (Q7), a notification Fugaro sends
+//      carries a category and nothing else, the app resolves the detail from its own authenticated
+//      mailbox so a notification is never the source of truth, a forged push is not covered, quiet
+//      hours store one zone name (Q5), and retention is the pairing's (Q10). The design
+//      `docs/mobile/design/push-notifications.md` is the source — §9 is the statement's own
+//      requirements list — the sender `internal/cli/push.go` (Task P5.2.6) and the receipt
+//      `mobile/src/push/` (Task P5.2.9) are what it describes, and the page and the design are held
+//      to each other in both directions (`pushFailures`).
 //
 // It reads the built artifact and the repository's sources, standard library only, no network
 // (Global Constraint 4). The built half comes from `dist/`; `FUGARO_GATES_DIST` points it
@@ -838,6 +848,80 @@ export function consoleReportingFailures(page, design) {
     out.push(
       'the privacy page carries an ingest endpoint: the DSN is one embedded public constant in console/src/main/crash-dsn.ts and the switch is the only gate, so the statement names the reporter and the region and never the endpoint the events are sent to',
     )
+  }
+  return out
+}
+
+/** The design the push card comes from: `docs/mobile/design/push-notifications.md`, whose §9 states
+ * what a push disclosure has to say. Its Q5 (quiet hours store an IANA zone name), Q7 (the
+ * publisher holds the relay) and Q10 (retention is the pairing's) were answered on 2026-11-21, and
+ * the page states each. The card is Task P5.2.10's; the sender (`internal/cli/push.go`, P5.2.6) and
+ * the receipt (`mobile/src/push/`, P5.2.9) are the code it describes. */
+export const PUSH_DESIGN = 'docs/mobile/design/push-notifications.md'
+
+/** What the design's §9 says a push statement has to say, and therefore what the privacy page says
+ * too. The design is the source and the page states it: a notification carries a category and not
+ * a fact about the owner's work, the app resolves the detail from its own authenticated mailbox so
+ * a notification is never the source of truth, a notification Fugaro did not send is not covered,
+ * and retention is the pairing's. The phrases in `both` are held verbatim on both sides, because
+ * the page's promise to a reader is the design's sentence and not a paraphrase of it; `page` holds
+ * the facts the page states in its own words for a reader, and `design` the rule the page carries
+ * the substance of without quoting. */
+export const PUSH_DISCLOSURE = Object.freeze({
+  both: Object.freeze([
+    'no run title, repository name, code, error text or amount',
+    'a notification is never the source of truth',
+    'the push data lives only as long as the pairing',
+    "what Google and Apple keep on their side is not this project's to delete",
+  ]),
+  design: Object.freeze([
+    // The design's own framing of the limit: the page says the same thing in its own sentence
+    // ("A notification Fugaro did not send is not covered by any of this"), so only the design's
+    // wording is held here.
+    'a notification Fugaro did not send',
+  ]),
+  page: Object.freeze([
+    'the relay the Fugaro project operates',
+    'a forged push can lie on your lock screen',
+    'the time zone your device reports',
+    'no action, no link and no write',
+  ]),
+})
+
+/** Every way the privacy page and the design's §9 disagree about push notifications, or [].
+ *
+ * `page` is the page's HTML and `design` the design document's, both as strings. A sentence the
+ * build wraps is still one sentence: both sides are read with their whitespace collapsed, so a
+ * reflowed paragraph cannot fail a phrase that is on the page. */
+export function pushFailures(page, design) {
+  const out = []
+  page = page.replace(/\s+/g, ' ')
+  design = design.replace(/\s+/g, ' ')
+  for (const phrase of PUSH_DISCLOSURE.both) {
+    if (!design.includes(phrase)) {
+      out.push(
+        `the design's section 9 no longer says ${JSON.stringify(phrase)}: the privacy page repeats that section's sentence about push notifications, so a fact that leaves the design leaves the page stating something nothing in this repository holds`,
+      )
+    }
+    if (!page.includes(phrase)) {
+      out.push(
+        `the privacy page does not say ${JSON.stringify(phrase)} about push notifications: the page states what the design's section 9 states, and a page that drops a fact of it discloses less than the software does`,
+      )
+    }
+  }
+  for (const phrase of PUSH_DISCLOSURE.design) {
+    if (!design.includes(phrase)) {
+      out.push(
+        `the design's section 9 no longer says ${JSON.stringify(phrase)}: that claim is the reason a forged push is refused a rendering as state, and it is the design's to state`,
+      )
+    }
+  }
+  for (const phrase of PUSH_DISCLOSURE.page) {
+    if (!page.includes(phrase)) {
+      out.push(
+        `the privacy page does not say ${JSON.stringify(phrase)} about push notifications: the relay and the platform are in the message path, a forged push can lie on the lock screen, quiet hours store a zone name, and the receipt does nothing — a reader who is told the phone can be notified and not these is owed the sentences`,
+      )
+    }
   }
   return out
 }
@@ -2014,6 +2098,39 @@ test("the console's crash reporting is the design's sentence, the switch and all
     withEndpoint.some((line) => line.includes('ingest endpoint')),
     'a privacy page carrying an ingest endpoint was not refused: the constant lives in one file of the console and the page states facts, not the value',
   )
+})
+
+test("the push card is the design's section 9, and the page and the design agree about it", () => {
+  // Push is the flow the page describes that the owner's own installation drives, and the design
+  // is where every one of its sentences is decided: the relay the publisher holds (Q7), the
+  // category-only payload, the app resolving the detail from its own mailbox, the forged push that
+  // is not covered, and retention (Q10). The page states the design's sentence rather than a
+  // summary of it.
+  const design = readFileSync(path.join(REPO, PUSH_DESIGN), 'utf8')
+  assert.deepEqual(pushFailures(privacyPage().html, design), [])
+
+  // The red direction, phrase by phrase: dropping the payload's limit, the source-of-truth rule,
+  // the retention or the provider's copies is refused, and refused for the page rather than for the
+  // design.
+  const page = privacyPage().html
+  for (const phrase of [...PUSH_DISCLOSURE.both, ...PUSH_DISCLOSURE.page]) {
+    const without = pushFailures(page.split(phrase).join(''), design)
+    assert.ok(
+      without.some((line) => line.includes(JSON.stringify(phrase)) && line.includes('privacy page')),
+      `a page that dropped ${JSON.stringify(phrase)} was not refused: the push disclosure is only as good as every fact of it`,
+    )
+  }
+
+  // The other side of the split: the design's own framing of the forged-push limit is refused when
+  // it leaves the design, which is where the rule is decided — the page states the substance of it
+  // in its own sentence, not the design's words.
+  for (const phrase of PUSH_DISCLOSURE.design) {
+    const without = pushFailures(page, design.replace(phrase, ''))
+    assert.ok(
+      without.some((line) => line.includes(JSON.stringify(phrase)) && line.includes('design')),
+      `a design that dropped ${JSON.stringify(phrase)} was not refused: the forged-push limit is the design's to state`,
+    )
+  }
 })
 
 test('a source of the Subscription Edition that names a host the project operates is refused, and the two service trees are exempt', () => {

@@ -136,7 +136,10 @@ func runIssueSubmit(cmd *cobra.Command, ref string, ask bool) error {
 	if lc != nil {
 		installation = issues.Digest(lc.BucketURL())
 	}
-	sh := openIssueShared(ctx, agent)
+	sh, err := openIssueShared(ctx, agent)
+	if err != nil {
+		return err
+	}
 	defer sh.Close()
 	// A record this run writes is stamped with the project that wrote it, so an
 	// issue filed here is never carried by another project's commands and never

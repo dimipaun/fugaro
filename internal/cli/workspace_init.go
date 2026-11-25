@@ -58,6 +58,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/rtdb"
@@ -214,6 +215,15 @@ func workspaceInit(cmd *cobra.Command, d workspaceInitDeps, name string) error {
 	if strings.HasSuffix(caller, saAddressSuffix) {
 		return userErr("nothing was created: the credentials are a service account's (%s), and a workspace's first person is the human who runs this command — an admin entry names somebody the mechanism's binding confirms, and a machine is never a workspace admin (D2823)", pluginwire.Printable(caller))
 	}
+	// The live binding names a person the way every policy does — `user:<address>`
+	// — because both mechanisms hand the value straight to SetIamPolicy, and a
+	// bare address is not one Google resolves
+	// (internal/workspace/authority_sa.go's SAProjects; D2823's gate reads
+	// `user:<address>` back). The roster keeps the bare address, C1's own spelling.
+	member, err := accesslib.Member(caller)
+	if err != nil {
+		return userErr("nothing was created: the credentials belong to %q, which is not an address a policy can name as a member: %v", pluginwire.Printable(t.Caller), err)
+	}
 	// D2803's detection, and the whole of it: the search answers the
 	// organizations THIS credential can see, so an organization it cannot create
 	// a folder in is an organization it does not see. The first of several is
@@ -226,7 +236,7 @@ func workspaceInit(cmd *cobra.Command, d workspaceInitDeps, name string) error {
 	}
 	mech, folder, live := workspace.MechanismSA, "", ""
 	if len(orgs) > 0 {
-		folder, err = t.Folders.CreateFolder(ctx, orgs[0], caller)
+		folder, err = t.Folders.CreateFolder(ctx, orgs[0], member)
 		if err != nil {
 			return err
 		}
@@ -243,7 +253,7 @@ func workspaceInit(cmd *cobra.Command, d workspaceInitDeps, name string) error {
 		// creator and, R8, roles/owner on the workspace's own project. It is one
 		// call because it is one decision (WU20's AddAdmin), and it is made
 		// before the roster for the reason this file's header gives.
-		if err := t.Authority.AddAdmin(ctx, caller); err != nil {
+		if err := t.Authority.AddAdmin(ctx, member); err != nil {
 			return err
 		}
 		live = fmt.Sprintf("%s is a token creator of the workspace's IAM account and an owner of the workspace's own project %s", pluginwire.Printable(caller), name)

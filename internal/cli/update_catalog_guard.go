@@ -197,7 +197,7 @@ func (g *catalogGuard) opener(ctx context.Context, repo, kind string) (gitprov.O
 			return nil, err
 		}
 		provEnv, _, err := repoProviderEnv(ctx, r.stageDetail(), lc, rs, os.Environ(), guardKeyRead, os.Getenv,
-			r.stdinTerminal(), nodePolicy(ctx, &r.policy, lc))
+			r.stdinTerminal(), nodePolicy(ctx, r.policyMemo(), lc))
 		if err != nil {
 			return nil, err
 		}

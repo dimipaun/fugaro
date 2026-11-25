@@ -1778,7 +1778,7 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// table's because the row word is the plan's, and
 		// TestDocsDesktopConsoleSpawnWordsAreFlagsTheCLIRegisters is what holds
 		// the two halves together).
-		"settings set KEY --layer <L> [--dry-run --json] [--no-apply] --project <name> [--config <path>] -- <VALUE>",
+		"settings set KEY --layer <L> [--repo <directory>] [--dry-run --json] [--no-apply] --project <name> [--config <path>] -- <VALUE>",
 		// The managed state and its audit trail (the managed screens' plan's
 		// CM3, the `managed.status` operation, D1472 to D1477): the two marks'
 		// own answer and the bounded subset of the newest audit record, never
@@ -11311,7 +11311,7 @@ func TestDocsDesktopConsoleContractFinishesTheSettingsWrite(t *testing.T) {
 		"The write is an operation of the console",
 		"`settings.edit`",
 		"it is the console's second",
-		"`settings set|unset KEY --layer <L> --dry-run --json",
+		"`settings set|unset KEY --layer <L> [--repo <directory>] --dry-run --json",
 		"retried silently",
 		// The member the section had wrong: `target_layer` was written as
 		// "`project` or `local`, the two the generic path writes, or `""` when

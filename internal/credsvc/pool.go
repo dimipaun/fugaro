@@ -412,40 +412,25 @@ func bundleTiers(b *Bundle) map[string]creds.Tier {
 	return out
 }
 
-// modelRoutingKey is the top-level policy key the migration adds
-// (contract-table.md): the table, its admissions and the pools in their new
-// shape, published together. Its PRESENCE is what says an installation has been
-// migrated, which is the marker C2's contract fixes for the service (D3177,
-// contract-pools.md "What tells the service an installation is migrated").
-const modelRoutingKey = "model_routing"
-
 // migrated reports whether the published node is one a migrated installation
-// published: it carries `model_routing`.
+// published: it carries `model_routing`, the top-level key the migration adds —
+// the table, its admissions and the pools in their new shape, published
+// together (contract-table.md), which is the marker C2's contract fixes for the
+// service (D3177, contract-pools.md "What tells the service an installation is
+// migrated").
 //
-// It is read off Policy.UnknownKeys, and that is a fact about THIS release and
-// not about the key: RT4 is the task that publishes `model_routing` and the
-// reader that knows it, so until it lands the key is one this binary does not
-// know — which is exactly how a release-behind reader reads a node a newer
-// `fugaro update` wrote (R21), and what lets this task land before the
-// migration does.
+// It was the key's presence in Policy.UnknownKeys while this binary did not
+// know the key; RT4 made it a member, which is the same question asked of the
+// decoder instead of of the leftover list. Nothing else about the marker
+// changes: its PRESENCE is the whole of what this release reads
+// (contract-pools.md PL3), and no table, admission or pool inside it decides
+// anything on this path.
 //
-// **Whoever makes `model_routing` a key this package knows — RT4, or the
-// release that carries it — moves this read to the typed member it becomes.**
-// The key then leaves UnknownKeys and this function answers false for every
-// node, including a migrated one: the direction that keeps a pool inert and
-// never the one that spreads a pool nobody has migrated, so an omission fails
-// closed — and TestAPoolServesWithoutTheSpreadSwitch goes red, which is where
-// the omission is read rather than discovered later.
+// A key with an empty block decodes to no member (the policy's own rule), which
+// keeps a pool inert rather than spreading one nobody has migrated — the
+// direction that fails closed.
 func migrated(p *projectpolicy.Policy) bool {
-	if p == nil {
-		return false
-	}
-	for _, k := range p.UnknownKeys {
-		if k == modelRoutingKey {
-			return true
-		}
-	}
-	return false
+	return p != nil && p.ModelRouting != nil
 }
 
 // subscriptionSpread is whether this project's pools may spread subscription
