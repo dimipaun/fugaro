@@ -1,6 +1,6 @@
 # Image map keyed by provider (lift L11)
 
-**Status: plan only; nothing is implemented; no task approved.** Every decision is answered.
+**Status: plan only; nothing is implemented; no task approved.** Every decision is answered. One open tension waits on the owner: D3376 against its stated cost (O3).
 
 **Spec owner:** Dimi Paun. The owner approved the spec on 2026-11-25. It was reconciled and
 planned the same day, against `origin/main` at `3dfc5cb8f`.
@@ -13,8 +13,8 @@ member, `repo_images`, and `fugaro update` moves the old map once.
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The spec as approved. No typo was fixed |
-| [reconciliation.md](reconciliation.md) | Assumptions A1–A4, findings F1–F20 (F12–F20 from review round 1), decisions D3370–D3377 with the owner's answers (D3372 amended after review and confirmed; O3 asks to confirm D3376's stated cost), resolutions R1–R12, open items O1–O3, UNVERIFIED V1–V3. **Where it disagrees with the spec, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Sixteen tasks in five levels (T0, K1; T0b, S1; U1a, R1, R2a, R2b, R2c, R3, S2, S3; U1b, D1a, D1b; X1), the shared files, the edges kept, and the owner's Check 940. Nothing in it is approved |
+| [reconciliation.md](reconciliation.md) | Assumptions A1–A4, findings F1–F32 (F12–F20 from review round 1, F21–F32 from round 2), decisions D3370–D3377 with the owner's answers (D3372 amended after review and confirmed; O3 asks to confirm D3376's stated cost), resolutions R1–R15, one open tension, open items O1–O3, UNVERIFIED V1–V3. **Where it disagrees with the spec, it wins** |
+| [implementation-plan.md](implementation-plan.md) | Eighteen tasks in six levels (T0, K1; T0b, S1; T0c, U1a, R1, R2a, R2b, R2c; U1b, R2d, R3, S2; S3, D1a, D1b; X1), the shared files, the edges kept, and the owner's Check 940. Nothing in it is approved |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph, as `fugaro plan graph` reads it |
 
 **The owner's answers, all as recommended:**

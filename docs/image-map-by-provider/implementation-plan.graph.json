@@ -19,7 +19,9 @@
      "internal/projectpolicy/issuesync.go",
      "internal/catalog/select.go",
      "internal/catalog/select_test.go",
-     "docs/image-map-by-provider/contract.md"
+     "internal/cli/run_test.go",
+     "docs/image-map-by-provider/contract.md",
+     "docs/image-map-by-provider/README.md"
     ]
    }
   },
@@ -36,15 +38,32 @@
      "internal/localcfg/localcfg.go",
      "internal/localcfg/localcfg_test.go",
      "internal/localcfg/shared.go",
-     "internal/cli/sharedcfg.go",
-     "internal/cli/sharedcfg_test.go",
+     "internal/settings/registry.go",
+     "schemas/settings.schema.json",
      "internal/cli/testdata/writer_gaps.golden"
     ]
    }
   },
   {
+   "id": "T0c",
+   "title": "the shared config and settings set refuse repo_images",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/sharedcfg.go",
+     "internal/cli/sharedcfg_test.go",
+     "internal/cli/settings_set.go",
+     "internal/cli/settings_set_test.go"
+    ]
+   }
+  },
+  {
    "id": "U1a",
-   "title": "the migration from image_map to repo_images",
+   "title": "the migration from image_map to repo_images, and repoImageKey",
    "run": null,
    "version": null,
    "tier": "medium",
@@ -59,7 +78,7 @@
   },
   {
    "id": "U1b",
-   "title": "the Policy stage publishes repo_images and removes image_map",
+   "title": "the Policy stage moves image_map to repo_images",
    "run": null,
    "version": null,
    "tier": "large",
@@ -72,7 +91,8 @@
      "internal/cli/init_policy_publish.go",
      "internal/cli/init_policy_publish_test.go",
      "internal/cli/project_cmd.go",
-     "internal/cli/update_converge_test.go"
+     "internal/cli/update_converge_test.go",
+     "internal/apply/steps.go"
     ]
    }
   },
@@ -127,7 +147,8 @@
      "internal/imagebake/imagebake.go",
      "internal/imagebake/imagebake_test.go",
      "internal/cli/catalog_bake_e2e_test.go",
-     "internal/backend/gcp/catalog.go"
+     "internal/backend/gcp/catalog.go",
+     "internal/config/catalog.go"
     ]
    }
   },
@@ -144,9 +165,24 @@
      "internal/cli/image_survey.go",
      "internal/cli/image_survey_test.go",
      "schemas/image-survey.schema.json",
-     "internal/cli/skills_test.go",
+     "internal/cli/skills_test.go"
+    ]
+   }
+  },
+  {
+   "id": "R2d",
+   "title": "checks 500 and 581 read the survey's version 2",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
      "scripts/live-checks/check-500.sh",
-     "scripts/live-checks/check-581.sh"
+     "scripts/live-checks/check-500_test.sh",
+     "scripts/live-checks/check-581.sh",
+     "scripts/live-checks/check-581_test.sh"
     ]
    }
   },
@@ -165,7 +201,8 @@
      "internal/cli/repos_view.go",
      "internal/cli/repos_view_test.go",
      "internal/cli/project_repos_rm.go",
-     "internal/cli/project_repos_rm_test.go"
+     "internal/cli/project_repos_rm_test.go",
+     "scripts/live-checks/check670_test.sh"
     ]
    }
   },
@@ -195,9 +232,8 @@
     "prediction": true,
     "paths": [
      "internal/cli/image_map.go",
+     "internal/cli/image_map_managed.go",
      "internal/cli/image_map_test.go",
-     "internal/settings/registry.go",
-     "schemas/settings.schema.json",
      "website/content/cli-reference.md",
      "internal/cli/testdata/next_step_allow.golden"
     ]
@@ -266,6 +302,7 @@
      "scripts/live-checks/check940_test.sh",
      "scripts/live_checks_test.go",
      "scripts/live-checks/check196.sh",
+     "scripts/live-checks/check196_test.sh",
      "docs/secrets-brokering/check196-steps.md"
     ]
    }
@@ -291,12 +328,17 @@
   {
    "task": "T0b",
    "needs": "T0",
-   "reason": "kept: localcfg validates with T0's ValidRepoImages (localcfg imports projectpolicy)"
+   "reason": "kept: localcfg builds on T0's EffectiveRepoImages and validator"
   },
   {
    "task": "S1",
    "needs": "T0",
-   "reason": "kept: compiles against the node's RepoImages member"
+   "reason": "kept: compiles against the node's member and EffectiveRepoImages"
+  },
+  {
+   "task": "T0c",
+   "needs": "T0b",
+   "reason": "kept: compiles against the local member and the effective reader"
   },
   {
    "task": "U1a",
@@ -324,29 +366,49 @@
    "reason": "kept: compiles against the local member and the effective reader"
   },
   {
-   "task": "R3",
-   "needs": "T0b",
-   "reason": "kept: compiles against the local member and the effective reader"
-  },
-  {
-   "task": "S2",
-   "needs": "T0b",
-   "reason": "kept: compiles against the local member and the effective reader"
-  },
-  {
-   "task": "S3",
-   "needs": "T0b",
-   "reason": "kept: compiles against the local member and the effective reader"
-  },
-  {
    "task": "U1b",
    "needs": "U1a",
    "reason": "kept, behaviour: the Policy stage calls the migration"
   },
   {
+   "task": "R3",
+   "needs": "U1a",
+   "reason": "kept, behaviour: it migrates a legacy map first and keys through repoImageKey (R13)"
+  },
+  {
+   "task": "S2",
+   "needs": "U1a",
+   "reason": "kept, behaviour: it migrates a legacy map first and keys through repoImageKey (R13)"
+  },
+  {
+   "task": "S3",
+   "needs": "U1a",
+   "reason": "kept, behaviour: it migrates a legacy map first and keys through repoImageKey (R13)"
+  },
+  {
+   "task": "R3",
+   "needs": "R2a",
+   "reason": "kept: doctor calls effectiveImageMap, which R2a rewrites (F32)"
+  },
+  {
+   "task": "S2",
+   "needs": "R2a",
+   "reason": "kept: image map set calls noteBakedExposure, which R2a rewrites (F32)"
+  },
+  {
+   "task": "S3",
+   "needs": "R3",
+   "reason": "kept: repos add calls reposViewAllowOf and reposViewRowOf, which R3 rewrites (F32)"
+  },
+  {
+   "task": "R2d",
+   "needs": "R2b",
+   "reason": "kept, behaviour: the scripts read the version-2 document"
+  },
+  {
    "task": "D1a",
    "needs": "R2b",
-   "reason": "kept: the skills lint fails if a skill names setup.repo_images before the field exists"
+   "reason": "kept: the skills lint fails on a field that does not exist yet"
   },
   {
    "task": "D1a",
@@ -357,6 +419,16 @@
    "task": "D1b",
    "needs": "S2",
    "reason": "kept: the documents name the command as its help now reads"
+  },
+  {
+   "task": "D1b",
+   "needs": "S1",
+   "reason": "kept: SECURITY.md states the build-token rule S1 implements"
+  },
+  {
+   "task": "D1b",
+   "needs": "R2b",
+   "reason": "kept: the checklist names the survey's version 2"
   },
   {
    "task": "X1",
