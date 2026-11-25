@@ -94,6 +94,72 @@ craft=${FAKE_CRAFT:?}
 installation=${FAKE_INSTALLATION:?}
 run_id=${FAKE_RUN_ID:?}
 
+# The real CLI is cobra, and cobra refuses a flag its command does not declare:
+# "fugaro: unknown flag: --project" on stderr, exit 1. A fake that shrugged the
+# extra argument off is exactly what let this check hand `accounts add` a
+# --project it does not take and still look healthy; these are the flags each
+# command this check calls declares (read off the release's own --help), and a
+# call carrying any other is refused in the same words.
+flag_set() { # flag_set SUBCOMMAND...
+  case "$1" in
+  version) printf '%s' "" ;;
+  doctor) printf '%s' " --all --check-bitbucket-token --check-github-app --config --dir --gcp-project --json --offline --plugin --project --region --security --strict" ;;
+  craft) printf '%s' " --config --gcp-project --json --project --region" ;;
+  accounts)
+    case "${2:-}" in
+    add) printf '%s' " --ask --claude --profile --repos --type" ;;
+    rm) printf '%s' " --no-apply --profile" ;;
+    ls) printf '%s' " --config --gcp-project --json --project --region --repo" ;;
+    pool)
+      case "${3:-}" in
+      add) printf '%s' " --allow-user --layer --owner --strategy" ;;
+      rm) printf '%s' " --layer" ;;
+      ls) printf '%s' " --config --gcp-project --project --region" ;;
+      esac
+      ;;
+    craft)
+      case "${3:-}" in
+      set) printf '%s' " --access --layer" ;;
+      rm) printf '%s' " --layer" ;;
+      esac
+      ;;
+    esac
+    ;;
+  project) printf '%s' " --config --delete --gcp-project --json --project --region --remove-routing --seed-repos" ;;
+  run) printf '%s' " --allow-duplicate --attach --attempts --batch --change-set --code-only --commit-reports --config --context --continues --gcp-project --json --max-review-rounds --max-time --max-tokens --max-usd --mode --no-budget-check --no-compression --owner-ruled --path --plan-task --pr --project --recipe --ref --region --repo --retry --review-levels --run-id --security --spec --task-file --tier --title --token --total-timeout --used-review-rounds --used-time --used-tokens --used-usd --workflow" ;;
+  runs) printf '%s' " --after --all --batch --config --debt --gcp-project --group-by --json --limit --mine --pr --project --region --repo --since --state --stream --watch" ;;
+  esac
+}
+
+guard_flags() { # guard_flags — the whole call, command words first, then flags
+  local words=() f
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    -*) break ;;
+    *) words+=("$1"); shift ;;
+    esac
+  done
+  local set
+  set=$(flag_set "${words[@]+"${words[@]}"}")
+  for f in "$@"; do
+    case "$f" in
+    -*) ;;
+    *) continue ;;
+    esac
+    case "$f" in
+    --*=*) f=${f%%=*} ;;
+    esac
+    case " $set " in
+    *" $f "*) ;;
+    *)
+      printf 'fugaro: unknown flag: %s\n' "$f" >&2
+      exit 1
+      ;;
+    esac
+  done
+}
+guard_flags "$@"
+
 serving_path() {
   case "$1" in
   anthropic) printf 'credsvc\n' ;;
@@ -143,6 +209,10 @@ accounts_add() { # accounts_add NAME TYPE
   if [ -n "${CLAUDECODE:-}" ] && [ "$mode" != session-accepts ]; then
     if [ "$mode" = session-unnamed ]; then
       printf 'fugaro: this command cannot be run here\n' >&2
+      exit 1
+    fi
+    if [ "$mode" = session-other-words ]; then
+      printf 'fugaro: a key is written for the person it belongs to and for nobody else: %s was declared, and its value was not read\n' "$name" >&2
       exit 1
     fi
     printf 'fugaro: No key was stored for credential %s: a session may write the declaration, and never the key.\nRun this in your own terminal, not in an agent session.\n' "$name" >&2
@@ -717,6 +787,25 @@ test_the_project_flag_is_passed_through() {
   expect_contains "$fugaro_calls" "fugaro craft ls --json --project $installation" "a named project: the crafts read names it"
   expect_contains "$fugaro_calls" "fugaro accounts pool ls --project $installation" "a named project: the pools read names it"
   expect_contains "$fugaro_calls" "fugaro project policy publish --project $installation" "a named project: the publish names it"
+  expect_contains "$fugaro_calls" "fugaro accounts ls --json --project $installation" "a named project: the credentials read names it"
+  # `accounts add` declares no --project: the project is the checkout's own
+  # fugaro.yaml, which is the directory every call of this check is made in. The
+  # fake refuses an undeclared flag the way cobra does, so handing it one would
+  # end the row on 'unknown flag: --project' instead of on the refusal.
+  expect_contains "$fugaro_calls" "fugaro accounts add $anthropic --type anthropic (in $dir/sandbox)" "a named project: the declaration carries no flag accounts add does not take"
+  expect_absent "$fugaro_calls" "accounts add $anthropic --type anthropic --project" "a named project: the declaration is handed no --project"
+  expect_contains "$out" "FACT agent-refusal: PASS" "a named project: the refusal row is reached and holds"
+}
+
+# The row is a person's only account of what the CLI told a session: a refusal in
+# words the check does not recognize must still be quoted, not summarized.
+test_the_agent_refusal_row_reads_the_refusal_own_words() {
+  local dir=$work/session-words
+  prepare "$dir"
+  run_check_with_value_file "$dir" FAKE_MODE=session-other-words
+  expect_status "$status" 1 "a refusal in other words"
+  expect_contains "$out" "FACT agent-refusal: FAIL" "a refusal in other words: the row"
+  expect_contains "$out" "a key is written for the person it belongs to and for nobody else: $anthropic was declared, and its value was not read" "a refusal in other words: the row quotes the refusal's own words"
 }
 
 test_a_craft_with_no_access_is_not_measured() {
@@ -1007,6 +1096,7 @@ t test_a_session_that_is_refused
 t test_a_session_that_is_not_refused_is_a_finding
 t test_a_session_refusal_that_names_nothing_is_a_finding
 t test_the_project_flag_is_passed_through
+t test_the_agent_refusal_row_reads_the_refusal_own_words
 t test_a_craft_with_no_access_is_not_measured
 t test_an_installation_with_no_craft_is_not_measured
 t test_a_read_that_does_not_answer_is_not_measured

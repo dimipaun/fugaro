@@ -8554,3 +8554,192 @@ func names[T ~string](list []T) []string {
 	}
 	return out
 }
+
+// summaryJSONNames is a Go type's JSON member names, as the wire carries them:
+// what a schema's own property list is held to. An embedded or unexported field
+// is left out, as encoding/json leaves it out.
+func summaryJSONNames[T any](t *testing.T) []string {
+	t.Helper()
+	rt := reflect.TypeOf(*new(T))
+	var out []string
+	for i := range rt.NumField() {
+		name, _, _ := strings.Cut(rt.Field(i).Tag.Get("json"), ",")
+		if name == "" || name == "-" {
+			continue
+		}
+		out = append(out, name)
+	}
+	return slices.Sorted(slices.Values(out))
+}
+
+// summarySchemaProperties is a schema document's property names under path,
+// where path is a list of member names to walk ("$defs", "record",
+// "properties" for the record block's own properties).
+func summarySchemaProperties(t *testing.T, file string, path ...string) []string {
+	t.Helper()
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range path {
+		m, ok := doc.(map[string]any)
+		if !ok {
+			t.Fatalf("%s: %v: not an object", file, path)
+		}
+		if doc, ok = m[p]; !ok {
+			t.Fatalf("%s: no %v under %v", file, p, path)
+		}
+	}
+	m, ok := doc.(map[string]any)
+	if !ok {
+		t.Fatalf("%s: %v: not an object", file, path)
+	}
+	return slices.Sorted(maps.Keys(m))
+}
+
+// TestSummarySchemaRoundTrip holds schemas/run-summary.schema.json to the
+// object internal/runstore writes and reads (RL4 of docs/runs-ls-speed): the
+// document the Go side marshals is a document this schema accepts, the schema's
+// property lists are the Go types' own members -- so a field the projection
+// gains without the schema, or the schema without it, is a difference here --
+// the version const is runstore.SummaryVersion, and a document the reader
+// refuses is refused by the schema too.
+//
+// The one difference is deliberate and is the last case below: the contract
+// tolerates a member it does not know, so a summary a newer writer wrote is a
+// document an editor can validate, while the reader refuses what it cannot
+// vouch for and the listing reads the run's three objects instead.
+func TestSummarySchemaRoundTrip(t *testing.T) {
+	const (
+		file = "run-summary.schema.json"
+		slug = "acme-app"
+		id   = "20261119-130000-abcd"
+	)
+	sch := compile(t, file)
+	at := time.Date(2026, 11, 19, 13, 0, 0, 0, time.UTC)
+	built := at.Add(-24 * time.Hour)
+	deadline, statusAt := at.Add(2*time.Hour), at.Add(30*time.Minute)
+	cost := runstore.NewCost(1.25, 0.5, runstore.BasisAPIList)
+	rec := &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web",
+		Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady,
+		Branch: "fugaro/" + id, BaseBranch: "main",
+		HeadSHA: strings.Repeat("a", 40), PushedHead: strings.Repeat("b", 40),
+		PR:            &runstore.PRRef{Number: 42, URL: "https://example.test/acme/app/pull/42", StatusAt: &statusAt},
+		DraftFallback: true, StartedAt: at, Deadline: &deadline,
+		FollowUp:     &runstore.FollowUp{PR: 41, PreviousRun: "20261119-120000-9999", Comments: 2, Session: "fresh"},
+		OAuthAccount: "someone@example.com", Recipe: &runstore.RecipeRecord{Name: "ship", Source: "repo"},
+		ProjectLayer: &runstore.ProjectLayerRecord{SHA256: strings.Repeat("d", 64), Generation: 7, Applied: true},
+		ConfigSHA256: strings.Repeat("e", 64),
+		Image:        &runstore.ImageInfo{BuiltAt: &built, BakedCommit: strings.Repeat("f", 40)},
+		ChangedFiles: &runstore.ChangedFiles{Paths: []string{"a.go", "b.go"}, Total: 2},
+		Rigor:        &runstore.RigorRecord{Mode: rigor.Pro, Level: rigor.Pro, From: rigor.FromRepo, At: runstore.RigorAtBootstrap},
+		OwnerDecisions: &runstore.OwnerDecisions{
+			Decisions: []runstore.OwnerDecision{{File: "a.go", Summary: "only the owner can settle this"}}, Total: 1},
+		Artifacts: []runstore.ArtifactFile{{Name: "plan.md", Bytes: 120, SHA256: strings.Repeat("1", 64), ContentType: "text/markdown"}},
+		Execution: "projects/p/locations/r/jobs/j/executions/e-1", CostUSD: 1.25, Cost: &cost}
+	spec := &task.Spec{Version: 1, RunID: id, Repo: "acme/app", Ref: "main", Workflow: "web",
+		Task: "the run's prompt, which no row shows", Title: "the run's title", OAuthToken: "work",
+		Recipe: &task.Recipe{Name: "ship", Source: "repo"}, Batch: "nightly", RequestedBy: "someone@example.com",
+		Branch: "fugaro/" + id, PR: 42, PreviousRun: "20261119-120000-9999",
+		FollowUpOf: &task.FollowUpOf{Run: "20261119-120000-9999", Keys: []string{"k1"}, Importance: "important"},
+		Debt:       true}
+	sum := runstore.NewSummary(rec, spec, at)
+	// What the writer stamps and the caller never passes: the identity of the
+	// run the object sits under (runstore.WriteSummary).
+	sum.Version, sum.RunID, sum.Slug = runstore.SummaryVersion, id, slug
+	data, err := json.Marshal(sum)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("the schema rejects the summary runstore writes: %v\n%s", err, data)
+	}
+	// The document the schema accepts is one the reader takes: a contract that
+	// let through a shape DecodeSummary refuses would be a summary every
+	// listing falls back from.
+	back, err := runstore.DecodeSummary(data, slug, id)
+	if err != nil {
+		t.Fatalf("the summary this tree writes is refused by its own reader: %v", err)
+	}
+	if back.Record.Status != rec.Status || back.Spec().TitleLine() != spec.TitleLine() || back.AsRecord().PR.Number != rec.PR.Number {
+		t.Errorf("the summary read back = %+v, want the run it was written from", back)
+	}
+
+	// The property lists are the Go types' own members: the schema names every
+	// one of them and no other, so a field added to the projection alone (or
+	// to the schema alone) is red here.
+	for _, tc := range []struct {
+		what string
+		path []string
+		want []string
+	}{
+		{"the summary", []string{"properties"}, summaryJSONNames[runstore.Summary](t)},
+		{"the summary's task", []string{"$defs", "task", "properties"}, summaryJSONNames[runstore.SummaryTask](t)},
+		{"the summary's record", []string{"$defs", "record", "properties"}, summaryJSONNames[runstore.SummaryRecord](t)},
+	} {
+		if got := summarySchemaProperties(t, file, tc.path...); !slices.Equal(got, tc.want) {
+			t.Errorf("%s names the members %v, want the Go type's %v", tc.what, got, tc.want)
+		}
+	}
+
+	// The version the schema pins is the version the reader reads.
+	var doc struct {
+		Properties struct {
+			Version struct {
+				Const int `json:"const"`
+			} `json:"version"`
+		} `json:"properties"`
+	}
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Properties.Version.Const != runstore.SummaryVersion {
+		t.Errorf("%s pins version %d, want runstore.SummaryVersion (%d): a reader refuses every other version", file, doc.Properties.Version.Const, runstore.SummaryVersion)
+	}
+
+	// What the schema refuses: another version, no record, no time, no slug, an
+	// id or a slug that is not one, and a record that is not one.
+	for _, bad := range []string{
+		strings.Replace(string(data), `"version":1`, `"version":2`, 1),
+		strings.Replace(string(data), `"record":`, `"nothing":`, 1),
+		strings.Replace(string(data), `"at":"2026-11-19T13:00:00Z"`, `"at":5`, 1),
+		strings.Replace(string(data), `"slug":"acme-app"`, `"slug":"Acme-App"`, 1),
+		strings.Replace(string(data), `"run_id":"20261119-130000-abcd"`, `"run_id":"nope"`, 1),
+		strings.Replace(string(data), `"record":{"status":"succeeded"`, `"record":{"status":"other"`, 1),
+	} {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(bad))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(inst); err == nil {
+			t.Errorf("the schema accepts %s", bad)
+		}
+	}
+
+	// A member the schema does not know is the contract's own tolerance, and
+	// the reader's own refusal: a newer writer's summary validates here, and a
+	// listing reads the run's three objects for it.
+	extra := strings.Replace(string(data), `"version":1`, `"version":1,"future":true`, 1)
+	inst, err = jsonschema.UnmarshalJSON(strings.NewReader(extra))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("the schema refuses a member it does not know, which a newer writer's summary needs: %v", err)
+	}
+	if _, err := runstore.DecodeSummary([]byte(extra), slug, id); err == nil {
+		t.Error("the reader's strict decode accepted an unknown member")
+	}
+}
