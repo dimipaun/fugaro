@@ -8141,14 +8141,16 @@ token — it is dropped from the node and no further send is attempted to it; **
 re-registers on its next pair or run, and a **fresh** notification then arrives again (the positive control 
 that the reap narrowed nothing else).
 
-9. **The lure that must not act.** *(Guard block, run by you.)* Hand-craft a push through the relay the 
-publisher holds (the installation's own sends go through it too) with a **lure in its title** — the design's 
-own example, "your run needs approval: tap to confirm". **FACT:** the OS shows the attacker's words on the 
-lock screen — that is expected and unbounded — but tapping it opens the app on **its own authenticated 
-screen**, and the app shows the truth read from the mailbox, **never** the lure; the lure's words are 
-**not stored, not rendered as state, not quoted and not a link** (§3.9; §4 rules 8, 11). **FACT:** the app **did not act** — no confirmation was 
-submitted and **no write was made on receipt** (no `acked`, no seen-marker, no token refresh — §4 rules 3 
-and 12). **FACT:** the app registers **no** notification category, **no** action button and accepts **no** 
+9. **The lure that must not act.** *(Guard block, run by you.)* Hand-craft a push with a **lure in its 
+title** — the design's own example, "your run needs approval: tap to confirm" — at the leg that reaches the 
+OS: through FCM/APNs under the publisher's own credentials, the strongest attacker §5 prices. The sender's 
+own request carries the category and no title (§3.1), so no installation crafts this lure through the 
+sender's path, and whether the provider leg is **yours** to call is the plan's question 11. **FACT:** the OS 
+shows the attacker's words on the lock screen — that is expected and unbounded — but tapping it opens the 
+app on **its own authenticated screen**, and the app shows the truth read from the mailbox, **never** the 
+lure; the lure's words are **not stored, not rendered as state, not quoted and not a link** (§3.9; §4 rules 
+8, 11). **FACT:** the app **did not act** — no confirmation was submitted and **no write was made on 
+receipt** (no `acked`, no seen-marker, no token refresh — §4 rules 3 and 12). **FACT:** the app registers **no** notification category, **no** action button and accepts **no** 
 inline reply, so the forged push cannot put a working "Approve" on the lock screen (§4 rule 3).
 
 10. **What the check did not touch.** *(Guard block, run by you; read-only.)* **FACT:** every credential was 

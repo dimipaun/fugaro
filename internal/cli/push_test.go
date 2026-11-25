@@ -15,7 +15,8 @@ package cli
 // names: §3.6 (B) (the sweep derives its own events), §3.7 (the dedupe key and
 // the cap), §3.8 (the switches and quiet hours) and §6 (the failure modes). The
 // provider is a fake, because what a test can pin is what the sender asks it to
-// send — the FCM call itself is P5.2.7's grant and Check 88's owner run.
+// send — the FCM call itself is the tree's state until P5.2.7 replaces it with
+// the relay's caller, and Check 88 is the owner's run.
 
 import (
 	"context"
@@ -1152,8 +1153,8 @@ func TestPushRefusesALedgerLargerThanItWrites(t *testing.T) {
 // sweep, the user deletion and the rollover behind it. The intent is queued and
 // the next sweep retries it.
 //
-// This is also the state of the tree until P5.2.7 grants the FCM permission:
-// the send fails, and the sweep must be no worse for it.
+// This is also the state of the tree until P5.2.7 builds the sender's relay
+// identity: the send fails, and the sweep must be no worse for it.
 func TestPushFailuresAreWarningsNotTheJobsExitCode(t *testing.T) {
 	f := newPushFixture(t, pushTestNow)
 	f.pair(t, mailboxSwitchState(nil))
@@ -1181,8 +1182,8 @@ func TestPushFailuresAreWarningsNotTheJobsExitCode(t *testing.T) {
 
 // TestPushGivesUpOnAnIntentWhoseStateOutlastsItsRetryWindow is §6's "the intent
 // is dropped, never escalated into a late buzz" — and it is the state of the
-// tree until P5.2.7 grants the FCM permission, when every send fails and every
-// event goes through the retry path.
+// tree until P5.2.7 builds the sender's relay identity, when every send fails
+// and every event goes through the retry path.
 //
 // A switch nobody turns off is a state change that does not end. If the prune
 // deleted the timed-out intent, the same sweep's consider would derive the same
