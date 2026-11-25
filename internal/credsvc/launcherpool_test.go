@@ -421,6 +421,31 @@ func (f *lpFixture) lpGrant(t *testing.T, body string) SlipGrantResponse {
 	return ans
 }
 
+// lpClaim is the run's claim of the slip lpGrant just answered, as the secret
+// every call after it presents: the grant was the fixture's own launcher's, so
+// the run identity and the job's token are the fixture's too.
+func (f *lpFixture) lpClaim(t *testing.T, slipID string) string {
+	t.Helper()
+	resp := f.postTokens(t, SlipClaimPath, claimBody(t, ""), f.runToken(), f.jobToken(), f.job,
+		func(r *http.Request) { r.Header.Set(HeaderSlip, slipID) })
+	raw, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		t.Fatalf("reading the claim's answer: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the claim is %d, want 200: %s", resp.StatusCode, raw)
+	}
+	var claimed SlipClaimResponse
+	if err := json.Unmarshal(raw, &claimed); err != nil {
+		t.Fatalf("the claim's answer is not one this contract reads: %v", err)
+	}
+	if claimed.ClaimSecret == "" {
+		t.Fatal("the claim answered no claim secret, so no call can be admitted under the slip")
+	}
+	return claimed.ClaimSecret
+}
+
 // TestARealSlipsCallReachesTheLauncherPool is the one test here whose binding is
 // not hand-built: a launcher grants a slip covering the table's sources, its run
 // claims it, and the run's model call goes through ServeHTTP and is served from
@@ -439,27 +464,11 @@ func TestARealSlipsCallReachesTheLauncherPool(t *testing.T) {
 	if granted.Slip == "" {
 		t.Fatal("the grant answered no slip")
 	}
-	claimResp := s.postTokens(t, SlipClaimPath, claimBody(t, ""), s.runToken(), s.jobToken(), s.job,
-		func(r *http.Request) { r.Header.Set(HeaderSlip, granted.Slip) })
-	claimRaw, err := io.ReadAll(claimResp.Body)
-	claimResp.Body.Close()
-	if err != nil {
-		t.Fatalf("reading the claim's answer: %v", err)
-	}
-	if claimResp.StatusCode != http.StatusOK {
-		t.Fatalf("the claim is %d, want 200: %s", claimResp.StatusCode, claimRaw)
-	}
-	var claimed SlipClaimResponse
-	if err := json.Unmarshal(claimRaw, &claimed); err != nil {
-		t.Fatalf("the claim's answer is not one this contract reads: %v", err)
-	}
-	if claimed.ClaimSecret == "" {
-		t.Fatal("the claim answered no claim secret, so no call can be admitted under the slip")
-	}
+	claimSecret := s.lpClaim(t, granted.Slip)
 
 	resp, body := s.call(t, callBody("real-slip"), func(r *http.Request) {
 		r.Header.Set(HeaderSlip, granted.Slip)
-		r.Header.Set(HeaderSlipClaim, claimed.ClaimSecret)
+		r.Header.Set(HeaderSlipClaim, claimSecret)
 		r.Header.Set(HeaderStage, "coder")
 	})
 	if resp.StatusCode != http.StatusOK {
@@ -486,6 +495,67 @@ func TestARealSlipsCallReachesTheLauncherPool(t *testing.T) {
 	case "Bearer " + fakeCred(t, testPoolCredential), "Bearer " + fakeCred(t, testSecondPoolCredential):
 	default:
 		t.Errorf("the upstream was sent the credential %q, want one of %q's members", auth, lpOwnPool)
+	}
+}
+
+// TestALaunchWithNoGrantIsServedAfterTheUpdate is the other half of the binding
+// above, and the shape the installation's reader must tell apart from it: a
+// launcher that names no source — the grant body an older CLI sends, and the one
+// a launch before the installation published its table sends — is a slip that
+// covers nothing, and CS14's own rule is that a launcher which knows nothing of
+// the table is served the sources its repository is admitted to and no
+// launcher's pool: the chain's launcher-pool source is not covered and is never
+// served, and the repository's own key behind it is.
+//
+// The call goes through ServeHTTP for the reason the test above does: what is
+// under test is the binding verifyCallSlip really builds. Carrying the record
+// for this slip would send the call to the release-1 bridge, whose stub answers
+// "no record" and refuses it 503 (chain.go's chainFor) — and this is the run the
+// hard rule is about: it is in flight across the very update that published the
+// table, and an update may not stop it (CLAUDE.md). The designation is written
+// anyway, so that a service reading the record for this slip could not pass this
+// test on a pool that was never there.
+func TestALaunchWithNoGrantIsServedAfterTheUpdate(t *testing.T) {
+	s := newLauncherPools(t, true, lpPools()...)
+	s.designates(t, lpLauncher(), testProject, lpOwnPool)
+
+	granted := s.lpGrant(t, legacyGrantBody(t, s.slug, s.run, testJobSA, 3600))
+	if granted.Slip == "" {
+		t.Fatal("the grant answered no slip")
+	}
+	claimSecret := s.lpClaim(t, granted.Slip)
+
+	resp, body := s.call(t, callBody("no-grant"), func(r *http.Request) {
+		r.Header.Set(HeaderSlip, granted.Slip)
+		r.Header.Set(HeaderSlipClaim, claimSecret)
+		r.Header.Set(HeaderStage, "coder")
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("a launcher that sent no sources is %d, want 200: the run is in flight across the update that "+
+			"published the table, and the update may not stop it: %s", resp.StatusCode, body)
+	}
+	var name routing.SourceName
+	if err := json.Unmarshal([]byte(resp.Header.Get(HeaderSource)), &name); err != nil {
+		t.Fatalf("the answer's source member %q is not a routing.SourceName: %v", resp.Header.Get(HeaderSource), err)
+	}
+	if name.Kind != routing.KindAnthropic {
+		t.Errorf("the call was served from %+v, want the repository's own key: a grant that covers no source is a run "+
+			"nothing granted, so the chain's launcher-pool source is not covered and the key behind it serves (CS14)",
+			name)
+	}
+	// The chain's own first source is the launcher's pool, so a call served by
+	// the key behind it fell back — and it is the answer the runner flags and
+	// counts (C1), one source earlier than a run with no slip at all.
+	if got := resp.Header.Get(HeaderFallback); got != FallbackYes {
+		t.Errorf("the answer says fallback=%q, want %q: the call was served by the chain's SECOND source",
+			got, FallbackYes)
+	}
+	sent := s.up.Seen()
+	if len(sent) != 1 {
+		t.Fatalf("the upstream saw %d calls, want exactly 1", len(sent))
+	}
+	if got := sent[0].Header.Get("x-api-key"); !strings.Contains(got, fakeCred(t, "repo-key")) {
+		t.Errorf("the upstream was sent the key %q, want the repository's own", got)
 	}
 }
 
