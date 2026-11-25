@@ -154,7 +154,9 @@ each installation's owner. (D615)
 and GitHub forms only), the secret names and Terraform, the credentials service's mint, the
 schemas and the plugin skills. A third forge is an L-sized, security-sensitive change touching all of
 them, plus GitLab's own semantics (merge requests, `Draft:` title prefix, project and group access
-tokens). (D610)
+tokens). (D610) **Moved 2026-11-25:** the GitLab task and its first output are
+[docs/gitlab-support](../gitlab-support/), parked by the owner until a named need; D610 and D611 stay
+in §4.
 
 **F12, Wrong.** "Adapters never store long-lived secrets in jobs" is not today. GitHub jobs still
 mount the App private key (`config.ServiceHeldSecretNames` is empty; the flip, PR #907, waits on
@@ -435,6 +437,10 @@ owner's answer (all answered 2026-10-29: every one is the recommendation except 
 | **D647** | Trailers by default (F6) | **On for every run commit** (no personal data: run ID, rigor, model pin); stated in the release notes' Highlights | Opt-in with the author: no link from commits to runs by default | **2026-10-29:** Trailers on by default. Why: they carry no personal data. |
 | **D648** | Squash merges (F46) | **Measure first** (Check 230 adds a squash merge) before any further work; if the launcher and trailers do not survive, the PR body carries them for the squash message | Assume they survive: the spec's "shows up in blame" may silently fail on squash-merging repositories | **2026-10-29:** Check 230 verifies trailers survive a squash merge. Why: the blame claim may fail silently on squash-merging repos. |
 | **D649** | Which commit address a launcher may set | **Only their own**: `commit_email` must equal the launcher's recorded identity or be a forge noreply address; anything else is refused at launch | Free-form: one launcher can attribute commits to a colleague, and the forge links them to that person's account | **2026-10-29:** Limited to the launcher's own address or the Fugaro identity. Why: one launcher must not attribute commits to a colleague. |
+
+**D610 and D611 stay here.** The GitLab task B3 left this folder on 2026-11-25 for
+[docs/gitlab-support](../gitlab-support/), parked by the owner until a named need; these two rows are
+the decisions it rests on, and its first output is that folder's tokens and `Draft:` reconciliation.
 
 **Resolutions** (one defensible answer each):
 

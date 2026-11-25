@@ -276,15 +276,16 @@ type Row struct {
 	// flight — so it is a row of this listing like any other, and these two
 	// are what says the chain comes back.
 	//
-	// Both are the LISTING's computation and not Join's, like PRState beside
+	// Both are the READ SIDE's computation and not Join's, like PRState beside
 	// them, and neither is in the run's own records: the instant is the
 	// credentials service's node for the pause (`runstore.PauseNode`,
 	// `paused/<slug>/<run>`, written by the service alone before the run ends
 	// paused) and the resumer is another run's task naming this one under
 	// `resumes` (task.Spec.Resumes), which the read side stamps on
-	// (internal/cli's markPauses). A listing that makes neither read leaves
-	// both absent, which is the run's own record saying all it knows: it
-	// suspended itself and a resume is due, without when or by whom.
+	// (internal/cli's markPauses, which `runs ls` and `diagnose` both call). A
+	// read that makes neither leaves both absent, which is the run's own record
+	// saying all it knows: it suspended itself and a resume is due, without
+	// when or by whom.
 	//
 	// ResumeAt is absent rather than zero when the node could not be read —
 	// a project with no pauses database, a read that failed, a node this

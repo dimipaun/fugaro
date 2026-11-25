@@ -6,9 +6,9 @@
 // two of them, and the coordinator's own heartbeat beside them. It carries no
 // history — a node is on it because a credential is driving it now, and an
 // orchestrator nobody drives is not a node with no figures but no node at all.
-// The builder is ee/orchestrator's (CG6); this file is the shape, the stub the
-// command answers with until I-ORCH wires the builder in is map_stub.go, and
-// the console's decoder (CG7a) reads what these two agree on.
+// The builder is ee/orchestrator's (CG6), which the command calls (I-ORCH);
+// this file is the shape, and the console's decoder (CG7a) reads what the two
+// agree on.
 
 package orchestrator
 
