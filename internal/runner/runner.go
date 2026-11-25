@@ -907,14 +907,22 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		}
 		wctx, cancelWrite := context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
 		defer cancelWrite()
-		if werr := writeRecord(d.Store, wctx, r.recordSnapshot()); werr != nil && err == nil {
-			err = fmt.Errorf("writing run record: %w", werr)
+		final := r.recordSnapshot()
+		if werr := writeRecord(d.Store, wctx, final); werr != nil {
+			if err == nil {
+				err = fmt.Errorf("writing run record: %w", werr)
+			}
+		} else {
+			// The run's last summary goes with its last record, so a listing
+			// reads the ending a person's `runs ls` shows (saveSummary).
+			r.saveSummary(wctx, final)
 		}
 		rec = r.rec
 		err = r.redactErr(err)
 	}()
 
 	r.addSealKey()
+	r.addIdentityTicket()
 	r.addMountedSecrets()
 	r.registerModelCredentials()
 	if onNewRun != nil {
@@ -1031,8 +1039,44 @@ func (r *run) save(ctx context.Context) {
 	}
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
 	defer cancel()
-	if err := writeRecord(r.d.Store, wctx, r.recordSnapshot()); err != nil {
+	rec := r.recordSnapshot()
+	if err := writeRecord(r.d.Store, wctx, rec); err != nil {
 		r.d.Log.Warn("writing run record failed", "err", err)
+		return
+	}
+	// The summary follows the record it projects, and only a record that
+	// reached the bucket: an object standing in for one that is not there
+	// would be a listing's row of a run that never happened.
+	r.saveSummary(wctx, rec)
+}
+
+// saveSummary writes the run's summary object beside the record it projects:
+// the two objects `runs ls` reads a row from instead of three
+// (docs/runs-ls-speed, RL4, D2966). It is written where the record is written
+// -- every save, which is each stage end and the finalize -- because a listing
+// shows the run as it is now, and a summary that lagged its record would show
+// a row that never was.
+//
+// It is best-effort in the way the pull-request index is (prindex.go): the
+// object is a shortcut over the run's own objects, so a summary that fails to
+// write costs a listing its speedup and never the run, and a run that has none
+// is read from its three objects exactly as before. rec is the record as it
+// was written, so the summary and the record it stands in for cannot disagree.
+func (r *run) saveSummary(ctx context.Context, rec *runstore.Record) {
+	// A run with no bucket, no record or no clock is a run there is nothing to
+	// write here for: the first two are a run too early to have a record and a
+	// fixture that carries none, and the clock is the one Run fills in, absent
+	// from a run assembled by hand (which is where the other two come from).
+	// A summary names the moment it was written, so with no clock there is no
+	// object to write, and writing one is never worth a panic in a run.
+	now := r.d.Now
+	if r.d.Bucket == nil || rec == nil || now == nil {
+		return
+	}
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
+	defer cancel()
+	if err := runstore.WriteSummary(wctx, r.d.Store, runstore.NewSummary(rec, r.spec, now().UTC())); err != nil {
+		r.d.Log.Warn("writing the run summary failed", "err", err)
 	}
 }
 

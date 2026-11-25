@@ -5803,3 +5803,205 @@ func authorSkew(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec
 		drop()
 	}
 }
+
+// l8Since is the first fugaro release whose launcher and runner read a
+// repository as release A of lift L8 reads it (docs/repo-override-rulings,
+// D3237): the keys the project owns are dropped and named rather than honoured
+// (config.Resolve, LiftedKeyNotes, L8's S1), a recipe reaches a run from the
+// project store rather than from .fugaro/recipes/ (B16), and the two things
+// release A adds to the project layer are known — ab.repos (AB1, D3297) and a
+// recipe's project copy (PR0, D3302). A job image built before it runs a runner
+// that honours a repository's lifted keys, reads the folder the launch no longer
+// reads, and refuses the layer's ab.repos or a copy name at bootstrap, after the
+// launch was paid for, so a launch that would meet any of the four is refused
+// here (checkL8Image, checkCloneL8Image).
+//
+// It names 0.30.0, the release this work is slotted for: release A is cut at
+// least one release after the release that carries L1 (D3300), and that one is
+// 0.29.0 (docs/required-version-stamp, identitySince; docs/release-streams.yaml
+// has 0.28.0 current). It is not tagged yet: the release that tags release A
+// holds this number to the tag it cuts, and docs/release.md ("Before you tag")
+// has the checklist verify it.
+const l8Since = "0.30.0"
+
+// abReposSince is the first fugaro release whose layer reader knows ab.repos,
+// the per-repository sampling rate AB1 adds inside the ab: block (D3297). Both
+// the layer and the repository's file are decoded with KnownFields, and the map
+// is the layer's alone, so a runner older than this refuses the whole document
+// at bootstrap, whatever the map holds — an empty one and an explicit null are
+// the same line to that decoder (SetsABRepos) — and every repository of the
+// project whose job image predates release A fails the same way. It is release
+// A's number: the release that ships the key.
+const abReposSince = l8Since
+
+// recipeCopySince is the first fugaro release whose runner parses a project
+// recipe's copy name — <name>.<owner-repo>-<8 hex>, D3302's amended spelling,
+// PR0's IsCopyName — as a recipe name rather than as a name its grammar refuses
+// for holding a dot. A task that embeds one is refused on an older image, whose
+// runner's recipe.Parse refuses the whole task at bootstrap: the copy is the
+// name release A's launcher resolves for a migrated repository (D3303), so a
+// launch the newer CLI would run is one the older runner cannot.
+const recipeCopySince = l8Since
+
+// l8Skew is one trigger of a launch's release-A gate: the release the trigger's
+// subject needs in the job image, and the two clauses the shared image refusal
+// reads (checkImageSince): what the image has to know, and the behaviour that
+// subject needs of it.
+type l8Skew struct {
+	Since   string
+	Subject string
+	Knows   string
+}
+
+// l8LaunchSkew is the release-A launch gate's judge (S5; spec §7, R16, D3297,
+// D3302): the first of the four triggers a job image older than release A would
+// meet on this launch, and the notes for every lifted key the repository's
+// default branch still writes, which it prints to warn as it reads them.
+//
+// The four triggers, in the order they are judged: a copy name the task embeds,
+// which the older runner's recipe parser refuses; a lifted key the repository's
+// file writes on its default branch, which the older runner honours rather than
+// drops; .fugaro/recipes/ on that branch (R16, F19), which the release-A
+// launcher no longer reads the recipe from; and the project layer's ab.repos
+// (AB1). The notes are C1's (LiftedKeyNotes decides nothing: release A's keys
+// still decode and still validate), and they are printed by the judge so that
+// every launch prints them once and a launch refused for any trigger has named
+// the keys first.
+//
+// Everything is read from a checkout of the repository, or from the task's own
+// fields, and nothing at all otherwise — the pattern every other config-key gate
+// follows (checkoutRoot, launchFileConfig): a launch from outside the
+// repository, or one whose default branch cannot be listed, is judged on what
+// the task carries alone rather than refused for a read this CLI cannot make.
+//
+// The notes are printed whether or not the launch is refused, and the refusal
+// names the first key's path alone: the rest are the lines above it.
+func l8LaunchSkew(ctx context.Context, env *cloudEnv, spec *task.Spec, warn io.Writer) (l8Skew, bool) {
+	repo := pluginwire.Printable(spec.Repo)
+	root := checkoutRoot(ctx, spec.Repo)
+	var db defaultBranchResult
+	if root != "" {
+		db = defaultBranchParse(ctx, root)
+	}
+	var notes []config.RetiredKeyNote
+	if db.read {
+		notes = config.LiftedKeyNotes(db.data)
+	}
+	for _, n := range notes {
+		fmt.Fprintf(warn, "note: the default branch of %s writes a key the project now owns: %s\n", repo, n.Why)
+	}
+	if spec.Recipe != nil && recipe.IsCopyName(spec.Recipe.Name) {
+		return l8Skew{
+			Since:   recipeCopySince,
+			Subject: "the recipe " + pluginwire.Printable(spec.Recipe.Name) + " (a project recipe's copy)",
+			Knows:   "a project recipe's copy name (a recipe name, a dot, the repository and a hash)",
+		}, true
+	}
+	if len(notes) > 0 {
+		subject := "fugaro.yaml's " + notes[0].Path + " on the default branch of " + repo
+		if len(notes) > 1 {
+			subject += fmt.Sprintf(" (and %d more lifted keys)", len(notes)-1)
+		}
+		return l8Skew{
+			Since:   l8Since,
+			Subject: subject,
+			Knows:   "a repository's fugaro.yaml with the keys the project owns dropped and named",
+		}, true
+	}
+	if paths, known := defaultBranchRecipes(ctx, root); known && len(paths) > 0 {
+		return l8Skew{
+			Since:   l8Since,
+			Subject: recipe.RepoDir + "/ on the default branch of " + repo,
+			Knows:   "a recipe the project store holds rather than .fugaro/recipes/",
+		}, true
+	}
+	if launchSetsABRepos(ctx, env, spec) {
+		return l8Skew{
+			Since:   abReposSince,
+			Subject: "the project layer's ab.repos (read for " + repo + ")",
+			Knows:   "the project layer's ab.repos, its per-repository sampling rate",
+		}, true
+	}
+	return l8Skew{}, false
+}
+
+// launchSetsABRepos reports whether the layer this launch resolves over writes
+// ab.repos, from the two places the launcher can see it. The first is the layer
+// the task itself carries (spec.ProjectLayer, embedProjectLayer), which is the
+// layer the run reads and the one every launch has — a launch from outside a
+// checkout of the repository included, which is why the trigger cannot be read
+// from the configuration alone. The second is the configuration the checkout
+// resolves over (launchFileConfig), where a cascade project's own layer is read
+// from the ref the run checks out; a launch with neither is judged on the task
+// alone, like every other read here.
+//
+// The layer's own text is the question and not the block it decoded to
+// (SetsABRepos, AB1): ab.repos is what a runner older than release A refuses to
+// decode at all, so an empty map and an explicit null are the same line to it.
+func launchSetsABRepos(ctx context.Context, env *cloudEnv, spec *task.Spec) bool {
+	if cfg := launchLayerConfig(spec); cfg.Layer.SetsABRepos() {
+		return true
+	}
+	cfg := launchFileConfig(ctx, env, spec)
+	return cfg != nil && cfg.Layer.SetsABRepos()
+}
+
+// defaultBranchRecipes is what the checkout's default branch holds under
+// .fugaro/recipes/, as repository paths, and whether that could be read at all:
+// known is false for a checkout with no default branch and for a git read that
+// failed, which is not the same answer as a folder that is not there.
+//
+// It is the default branch's read and not the task's ref's (R16): the
+// release-A launcher resolves a repository's recipe as the project's copy
+// (PR1, PR2, D3303) whatever the ref it launches, and the migration that
+// publishes those copies is the default branch's own (`fugaro update`), so a
+// repository whose default branch still holds a folder is a repository whose
+// next run resolves another recipe — or none.
+//
+// A symbolic link at the directory itself is listed as .fugaro/recipes, which is
+// a folder this repository holds as much as a tree is.
+func defaultBranchRecipes(ctx context.Context, root string) (paths []string, known bool) {
+	if root == "" {
+		return nil, false
+	}
+	ref := defaultBranchRef(ctx, root)
+	if ref == "" {
+		return nil, false
+	}
+	out, err := gitCmd(ctx, root, "ls-tree", "-r", "-z", "--name-only", ref, "--", recipe.RepoDir).Output()
+	if err != nil {
+		return nil, false
+	}
+	for _, p := range strings.Split(string(out), "\x00") {
+		if p == recipe.RepoDir || strings.HasPrefix(p, recipe.RepoDir+"/") {
+			paths = append(paths, p)
+		}
+	}
+	return paths, true
+}
+
+// checkL8Image and checkCloneL8Image are the launch's own release-A gate, for a
+// workflow whose job image is a derived one and for a checkout: clone workflow
+// respectively: the pair every other per-workflow image gate has (checkImageSince
+// and checkCloneImageSince), judged by l8LaunchSkew, which prints the notes for
+// the lifted keys the default branch writes. The refusal is the shared one, so
+// it names the release, the image to move and `fugaro update` as the fix, and it
+// carries no second way out: every trigger is a document the repository or its
+// project holds, and the migration that empties it is that one command's.
+func checkL8Image(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, warn io.Writer) error {
+	sk, ok := l8LaunchSkew(ctx, env, spec, warn)
+	if !ok {
+		return nil
+	}
+	return checkImageSince(ctx, env, slug, spec, kind, sk.Since, sk.Subject, sk.Knows, "", warn)
+}
+
+// checkCloneL8Image is checkL8Image for a checkout: clone workflow: see
+// checkCloneImageSince.
+func checkCloneL8Image(ctx context.Context, env *cloudEnv, spec *task.Spec, warn io.Writer) error {
+	sk, ok := l8LaunchSkew(ctx, env, spec, warn)
+	if !ok {
+		return nil
+	}
+	return checkCloneImageSince(env.lc, spec, sk.Since, sk.Subject, sk.Knows, "", warn)
+}

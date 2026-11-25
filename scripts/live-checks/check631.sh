@@ -592,8 +592,13 @@ step_agent_refusal() {
   fi
   local pflag=()
   [ -z "$PROJECT_ARG" ] || pflag=(--project "$PROJECT_ARG")
+  # `accounts add` declares no --project (it is a write: the project is the
+  # checkout's own fugaro.yaml, which is the directory this runs in), so the act
+  # is run without one — passing it would exit 1 with 'unknown flag: --project'
+  # and the refusal this row measures would never be reached. The reads below do
+  # take it, and are given it.
   say "reading what a coding agent's session is told: CLAUDECODE=1 fugaro accounts add ${ANTHROPIC} --type anthropic"
-  run_bounded "$CLI_TIMEOUT" add-refused "$SANDBOX" env CLAUDECODE=1 "$FUGARO_BIN" accounts add "$ANTHROPIC" --type anthropic ${pflag[@]+"${pflag[@]}"}
+  run_bounded "$CLI_TIMEOUT" add-refused "$SANDBOX" env CLAUDECODE=1 "$FUGARO_BIN" accounts add "$ANTHROPIC" --type anthropic
   local out
   out=$(cat "$SCRATCH/add-refused.out" "$SCRATCH/add-refused.err" 2>/dev/null || true)
   if [ "$BOUNDED_TIMED_OUT" = yes ]; then

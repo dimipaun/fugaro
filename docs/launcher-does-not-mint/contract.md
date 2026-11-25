@@ -68,9 +68,14 @@ refuses an `account` that is not this repository's job's account, and judges eac
 repository for the view action and against the policy's allow-list before the list is signed
 (R4, R16, F31).
 
-`ClaimRequest` carries the ticket and the nonce and nothing else: the uid, the claims and the
-account are the record's, and the caller is the job's own Google ID token, of which nothing but
-the account is read.
+`ClaimRequest` carries the ticket and the nonce — and, where the job is on Batch, one field more —
+and nothing else: the uid, the claims and the account are the record's, and the caller is the
+job's own Google ID token, of which nothing but the account is read. **The extra field is BR4 of
+[batch-run-identity](../batch-run-identity/README.md)** (its R1): `attestation`, the run's own VM
+identity token in the metadata server's full format, which the service serves the identity to a
+job's own VM by. It is empty for a Cloud Run launch, whose job's token already names the one
+execution, and a service of the release behind refuses the field it does not know rather than
+serving an identity on the job's token alone.
 
 ## The claim's nonce (R2)
 

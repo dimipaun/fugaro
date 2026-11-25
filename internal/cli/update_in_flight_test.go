@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"net/http"
 	"slices"
 	"strings"
 	"testing"
@@ -23,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/versionstamp"
 )
 
 // update_in_flight_test.go is the owner's requirement of 2026-11-09: `fugaro
@@ -89,6 +91,11 @@ func TestUpdateLeavesARunInFlightRunning(t *testing.T) {
 	before := rulePaths(t, r.db.Rules())
 	run := startRunInFlight(t, r)
 	held := startPausedRunInFlight(t, r, false)
+	// The release bound answers for this binary's own release, so the update
+	// really raises the required-CLI stamp while the runs are in flight: the one
+	// node the stamp moves is one no run reads, and the raise is the step this
+	// test's own claim is read over.
+	stampReleaseAnswers(t, http.StatusOK)
 
 	out := convergeOn(t, r, []string{"policy-rules-skew", "policy-older-than-binary", "plugin-pin"})
 
@@ -161,6 +168,27 @@ func TestUpdateLeavesARunInFlightRunning(t *testing.T) {
 	}
 	if !found || p.Version != projectpolicy.Version {
 		t.Errorf("the policy reads as found=%v version=%d after the update, want version %d", found, p.Version, projectpolicy.Version)
+	}
+
+	// The required CLI moved to this release in the same run, over the runs in
+	// flight: the stamp is one node no stage of a run reads, so the fence the
+	// project's members are held to rises while a run of the release behind
+	// keeps going, and that run is neither asked to finish first nor refused
+	// (docs/design/update-in-flight.md's version-stamp row).
+	var stampRaw json.RawMessage
+	stampFound, err := db.Get(context.Background(), versionstamp.Path, &stampRaw)
+	if err != nil {
+		t.Fatalf("reading the required CLI back after the update: %v", err)
+	}
+	if !stampFound {
+		t.Fatalf("the update left no required CLI at %s: the step this test is read over never ran", versionstamp.Path)
+	}
+	stamp, present, err := versionstamp.Decode(stampRaw)
+	if err != nil {
+		t.Fatalf("the required CLI at %s is not a stamp this binary can read: %v", versionstamp.Path, err)
+	}
+	if !present || stamp.Min != convergeRelease {
+		t.Errorf("the required CLI at %s reads present=%v min=%q after the update, want this release (%s): the raise did not land", versionstamp.Path, present, stamp.Min, convergeRelease)
 	}
 
 	// The default profile this update writes is a local-config write (S5, R1):
