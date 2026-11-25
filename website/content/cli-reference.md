@@ -11335,6 +11335,12 @@ re-read and re-judged rather than overwritten. It refuses:
   - a revoke that would take the installation's last project admin away, your own
     removal included.
 
+Taking a person's LAST pair away also ends their mobile access: the member
+record, every paired device of the address and every refresh family are deleted
+with it (O14), through the same removal `fugaro pair revoke` makes per
+device. A person who keeps another pair keeps their devices, and a device's role
+follows the roster at its next refresh.
+
 Writing the node needs roles/firebasedatabase.admin, held by the GCP project's
 owners and editors and by terraform.budget_admins — an admin stored in the node
 holds no database write of its own (D1592), so the command refuses for them
