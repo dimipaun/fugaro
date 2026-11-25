@@ -234,6 +234,14 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	// name is what a person typed, so the refusal quotes it.
 	poolName := ""
 	if o.pool != "" {
+		// No type resolved at all is the other state a pool may not hold: the
+		// account declares no credential, so there is nothing for the pool to
+		// walk. It is a state of its own rather than a type to quote, and the
+		// refusal names the flag that leaves it behind.
+		if typ == "" {
+			return userErr("--pool %s: a pool walks subscription tokens, and %s declares none: pass --type claude-oauth to declare the account's token as this pool's member, or drop --pool; nothing was written",
+				pluginwire.Printable(o.pool), pluginwire.Printable(name))
+		}
 		if typ != config.CredentialTypeClaudeOAuth {
 			return userErr("--pool %s: a pool walks subscription tokens, and %s is a %s credential, whose value a run sends as a provider key: pass --type claude-oauth, or drop --pool; nothing was written",
 				pluginwire.Printable(o.pool), pluginwire.Printable(name), pluginwire.Printable(typ))
@@ -336,6 +344,15 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 			if next, err = yamledit.UpsertSeqItemListByKey(next, []string{"pools"}, "name", poolName, "members", members); err != nil {
 				return userErr("pools.%s.members: %v", pluginwire.Printable(poolName), err)
 			}
+		}
+		// A pool declared here is not a removed one, the same clearing
+		// `accounts pool add` writes (F22): the record of an earlier removal has
+		// the last word over the pools block when the node is published, so a
+		// name left in it would take the pool this run declares off the node.
+		// Nothing is removed where the record does not name the pool.
+		if next, err = yamledit.RemoveListItemWithOptions(next, []string{"node_removals", "pools"}, poolName,
+			yamledit.RemoveOptions{DropEmptyParents: true}); err != nil {
+			return userErr("node_removals.pools: %v", err)
 		}
 	}
 	// Read the edit back strictly before it is written: a file this Fugaro

@@ -97,6 +97,10 @@ func TestAccountsAddPoolRefusesWhatAPoolMayNotHold(t *testing.T) {
 	}{
 		{"a key credential", []string{"team-a", "--repos", "acme/app", "--type", "anthropic", "--pool", "paid"}, "a pool walks subscription tokens"},
 		{"a name a credential holds", []string{"team-a", "--repos", "acme/app", "--type", "claude-oauth", "--pool", "team-a"}, "a pool and a credential may not share one"},
+		// No type at all is a third state, and the refusal may not read as one
+		// with a blank where the type goes: nothing is declared for the pool to
+		// walk, and the sentence names the flag that leaves it that way.
+		{"no type at all", []string{"team-a", "--repos", "acme/app", "--pool", "paid"}, "team-a declares none"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := accountsAddFixture(t, accountsAddLocal)
@@ -119,6 +123,40 @@ func TestAccountsAddPoolRefusesWhatAPoolMayNotHold(t *testing.T) {
 		})
 	}
 }
+
+// TestAccountsAddPoolClearsTheRemovalRecord: a pool declared here is not a
+// removed one (F22). The record an earlier removal left has the last word over
+// the pools block when the node is published, so a name left in it would take
+// the pool this run declares off the node; `accounts pool add` clears it on the
+// bytes it writes, and this write declares a pool by the same right.
+func TestAccountsAddPoolClearsTheRemovalRecord(t *testing.T) {
+	path := accountsAddFixture(t, accountsAddLocal+accountsAddPoolRemovalRecord)
+	ownerAtTheTerminal(t)
+
+	if _, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a",
+		"--repos", "acme/app", "--type", "claude-oauth", "--pool", "paid"); err != nil {
+		t.Fatalf("accounts add --pool: %v", err)
+	}
+	lc, err := localcfg.Parse([]byte(readFileString(t, path)))
+	if err != nil {
+		t.Fatalf("the file this command wrote does not read back: %v", err)
+	}
+	if lc.NodeRemovals != nil && slices.Contains(lc.NodeRemovals.Pools, "paid") {
+		t.Errorf("node_removals.pools still names the pool this run declared: %+v", lc.NodeRemovals.Pools)
+	}
+	if _, ok := accountsPoolOf(lc, "paid"); !ok {
+		t.Errorf("pools.paid is not in the config this command wrote: %+v", lc.Pools)
+	}
+}
+
+// accountsAddPoolRemovalRecord is the state the clearing above is about: the
+// record of a pool an earlier `accounts rm` took away, naming the one this
+// fixture declares again.
+const accountsAddPoolRemovalRecord = `
+node_removals:
+  pools:
+    - paid
+`
 
 // TestPoolAddTakesARule: --rule is the member R5 adds, written on the pool's
 // own line beside the strategy it was written with — an absent rule resolves to
