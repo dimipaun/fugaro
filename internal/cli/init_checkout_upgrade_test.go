@@ -616,7 +616,7 @@ func TestUpdateAgentSessionRunsThePluginBeforeTheCheckout(t *testing.T) {
 // session, not only the one that moved the pin: the step is the user's until it
 // is run where it can be.
 //
-// Mutation (run, restore): drop planFor's agent arm (case u.agent != "") and
+// Mutation (run, restore): drop placeFor's agent arm (case u.agent != "") and
 // this test fails: the plan keeps the cloud step, the apply's own refusal
 // (cloudAgentRefusal) is then a skip with no Left beside it, and the run
 // reports the checkout changed with exit 0 — which is what the loop's
