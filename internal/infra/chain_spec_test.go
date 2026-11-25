@@ -307,15 +307,12 @@ func TestTheServiceIsPlannedVertexWhereNamed(t *testing.T) {
 // are planned no Vertex permission, and on an `observe` project they keep it
 // until release 2 (X8).
 //
-// The reason the split is safe is the split's own: a Vertex run that
-// authenticates to Vertex with its own job account is refused at bootstrap
-// under `budget.mode: enforce` (runner.VertexBudgetRefusal, internal/runner's
-// checkBudget) — the run an enforcing project starts anyway is one the
-// credentials service serves, and its Vertex call is the service's own (CS5,
-// D3174) — so no run in flight can hold the permission release 1 takes away,
-// while an `observe` project's in-flight run really does authenticate to Vertex
-// with its own job account, and a plan that took the permission away there
-// would break it mid-flight.
+// The reason the split is safe is the split's own: a Vertex run under
+// `budget.mode: enforce` is refused at bootstrap (runner.VertexBudgetRefusal,
+// internal/runner's checkBudget), so no run in flight can hold the permission
+// release 1 takes away — while an `observe` project's in-flight run really does
+// authenticate to Vertex with its own job account, and a plan that took the
+// permission away there would break it mid-flight.
 //
 // The SERVICE keeps Vertex either way, which is the half that is not a detail:
 // the service is what calls Vertex for a run of a table-served repository
