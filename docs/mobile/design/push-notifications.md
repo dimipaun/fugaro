@@ -1424,8 +1424,13 @@ P5.2.9 built as well.
   reviewer would read: it is where the app's credentials, its storage and its reporting are
   stated today, so a push subsection would sit there rather than in "The website", which is
   about what the site does with a visitor's browser. It is a *place*, not a promise: no push
-  sentence is on the page now, and `website/test/privacy.mjs` would hold one to this design
-  the way it holds the reporting sentences to that ruling's.
+  sentence was on the page when this section was written, and `website/test/privacy.mjs` would
+  hold one to this design the way it holds the reporting sentences to that ruling's. **Task
+  P5.2.10 wrote it there on 2026-11-24**, in the pull request that also brought `SECURITY.md`'s
+  push section current with the sender (P5.2.6) and the receipt (P5.2.9): the page's "Push
+  notifications" card states what this section's "What such a statement would have to say"
+  enumerates, and `website/test/privacy.mjs` rule 10 holds each sentence of it to this section —
+  the "no push sentence is on the page" reading above is history rather than the page's state.
 
 **What such a statement would have to say**, in the design's own words: the phone registers a
 push token with Google's Firebase Cloud Messaging (and, on iOS, Apple's APNs by relay);

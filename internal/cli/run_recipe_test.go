@@ -271,17 +271,17 @@ func TestRunClonedWorkflowRefusedBelowCloneSince(t *testing.T) {
 	}
 }
 
-// TestRunRepoRecipeFromCheckout: a repository's own recipe is the project's
-// copy of it now, and the launch embeds that copy (D3303, R7). The checkout's
-// folder is a leftover no launch reads (D3237), so the file is left where it
-// is: it is the same text the store holds, and the task carries the store's.
+// A repository's own recipe is the project's copy of it (D3303): the launch
+// resolves the copy from the store, and the task carries the copy's own name
+// and text rather than the folder's file, which is never read.
 func TestRunRepoRecipeFromCheckout(t *testing.T) {
 	f := newCloudFixture(t)
-	projectRecipesFixture(t, f, nil)
-	copied := publishCopy(t, f, "acme/other", "mine", repoRecipe)
-	recipeCheckout(t, f, "", map[string]string{recipe.RepoPath("mine"): repoRecipe})
+	recipeCheckout(t, f, "", map[string]string{".fugaro/recipes/mine.yaml": "version: 1\nname: mine\nsteps:\n  - review: { max_rounds: 4 }\n"})
 	other := mustSlug("github", "acme/other")
-	writeBuildRecord(t, f, other, "svc", releaseCopy)
+	writeBuildRecord(t, f, other, "svc", releaseL8)
+	copy := recipe.CopyName("mine", "github", "acme/other")
+	text := "version: 1\nname: " + copy + "\nsteps:\n  - review: { max_rounds: 1 }\n"
+	projectRecipesFixture(t, f, map[string]string{copy: text})
 	if _, _, err := execute(t, "run", "--run-id", "20261007-100000-abcd", "--recipe", "mine", "A task"); err != nil {
 		t.Fatal(err)
 	}
@@ -291,8 +291,8 @@ func TestRunRepoRecipeFromCheckout(t *testing.T) {
 	}
 	defer b.Close()
 	spec, err := runstore.Open(b, other, "20261007-100000-abcd").ReadTask(t.Context())
-	want := strings.Replace(repoRecipe, "name: mine", "name: "+copied, 1)
-	if err != nil || spec.Recipe == nil || spec.Recipe.Name != copied || spec.Recipe.Source != string(recipe.SourceProject) || spec.Recipe.YAML != want {
+	want := task.Recipe{Name: copy, Source: "project", SHA256: recipe.Sum([]byte(text)), YAML: text}
+	if err != nil || spec.Recipe == nil || *spec.Recipe != want {
 		t.Fatalf("task = %+v, %v", spec, err)
 	}
 }
@@ -530,10 +530,10 @@ func TestRunNoteOnlyForExplicitNonDefault(t *testing.T) {
 // folder beside it is a leftover no launch reads (D3237).
 func TestRunRepoRecipeRefusedOnOldImage(t *testing.T) {
 	f := newCloudFixture(t)
-	projectRecipesFixture(t, f, nil)
-	publishCopy(t, f, "acme/other", "mine", repoRecipe)
-	recipeCheckout(t, f, "", map[string]string{recipe.RepoPath("mine"): repoRecipe})
+	recipeCheckout(t, f, "", nil)
 	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:0.4.1")
+	copy := recipe.CopyName("mine", "github", "acme/other")
+	projectRecipesFixture(t, f, map[string]string{copy: "version: 1\nname: " + copy + "\nsteps:\n  - review: {}\n"})
 	_, _, err := execute(t, "run", "--run-id", "20261007-100000-abcd", "--recipe", "mine", "A task")
 	if err == nil || !strings.Contains(err.Error(), "release 0.4.1") {
 		t.Fatalf("err = %v", err)

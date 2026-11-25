@@ -12,7 +12,8 @@
 //      rather than from a table the tab may have fetched minutes ago. Nothing
 //      else in this process holds a settings document, and nothing needs to: a
 //      pencil press is one read, one dry run and one write.
-//   2. **the dry run** -- `settings set|unset KEY --layer <L> --dry-run --json`,
+//   2. **the dry run** -- `settings set|unset KEY --layer <L>
+//      [--repo <directory>] --dry-run --json`,
 //      which writes nothing, backs nothing up and classifies the edit (D1106,
 //      P3). Its document is what the window draws, and it is refused unless it
 //      answers about **this** edit: another key, another layer, a document this
@@ -21,7 +22,8 @@
 //      `SETTINGS_EDIT_REFUSED`).
 //   3. **the window** -- `confirm.ts`'s, one implementation for both questions
 //      (D1115), showing C2's `settingsView` of that dry run.
-//   4. **the write** -- `settings set|unset KEY --layer <L> [--no-apply]
+//   4. **the write** -- `settings set|unset KEY --layer <L>
+//      [--repo <directory>] [--no-apply]
 //      -- <VALUE>`, reached only from a yes on that window's own top frame. The
 //      write's one word is `--no-apply`: *save this and run none of its
 //      follow-up steps* (docs/composite-commands, D1565, D1572), so what the

@@ -2243,7 +2243,7 @@ test('the gate refuses each planted defect', (t) => {
   // every label is a phrase of it, so the only rule that can see this is the one that holds the
   // two to the same picture — which is what makes the owner's "the same drawing" true rather
   // than assumed.
-  const mismatched = planted(html, />turned off </, '>not on by default <')
+  const mismatched = planted(html, />turned off </, '>on by default <')
   assert.match(
     verdict(t, mismatched).join('\n'),
     /do not say the same thing/,

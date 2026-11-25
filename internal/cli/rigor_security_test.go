@@ -41,6 +41,22 @@ import (
 // seeded by the test, plus a real git checkout of owner/repo-a for the repo
 // layer.
 
+// rigorRepoLayerYAML is a checkout's own file as these tests write it: the
+// smallest document config.Parse accepts, carrying the project anchor a repo
+// write is held to and no rigor block at all, which is the state a repository
+// that never named a mode is in.
+const rigorRepoLayerYAML = `version: 1
+project: aurora
+gcp_project: aurora-gcp
+git:
+  provider: github
+workflows:
+  web:
+    commands:
+      test: go test ./...
+      build: go build ./...
+`
+
 // securityLayerSeedRows is the security block the two layer tests write into the
 // project layer file: two rows with names no floor row spends (a floor name is
 // refused by the loader, D1505) and the switch off, which is the state a

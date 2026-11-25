@@ -523,8 +523,12 @@ func TestValidatePerRunWarningNamesTheDatabaseCaps(t *testing.T) {
 }
 
 func TestValidateWarnsOnLooserThanCeiling(t *testing.T) {
-	path := fileWithBudget(t, "budget: { mode: observe, per_run_usd: 5, max_run_tokens: 1000 }\n",
-		"budget: { mode: off, per_run_usd: 20 }\n", pinnedAgent+"\n  max_run_tokens: 9000")
+	// The looser mode is observe against an enforcing ceiling, which is the
+	// only pair left: until D3009 the file wrote off and the ceiling observed,
+	// and the word is refused where a document is read now (AB2, D3022), so
+	// the same warning is reached the other way round rather than not at all.
+	path := fileWithBudget(t, "budget: { mode: enforce, per_run_usd: 5, max_run_tokens: 1000 }\n",
+		"budget: { mode: observe, per_run_usd: 20 }\n", pinnedAgent+"\n  max_run_tokens: 9000")
 	out, errOut, err := execute(t, "validate", path)
 	if err != nil || !strings.Contains(out, "is valid") {
 		t.Fatalf("looser values are not problems: %v %q", err, out)
@@ -532,7 +536,7 @@ func TestValidateWarnsOnLooserThanCeiling(t *testing.T) {
 	for _, want := range []string{
 		"warning: budget.per_run_usd: 20 is above the project's ceiling of 5; the runner will use 5",
 		"warning: agent.max_run_tokens: 9000 is above the project's ceiling of 1000; the runner will use 1000",
-		"warning: budget.mode: off is looser than the project's observe; the runner will use observe",
+		"warning: budget.mode: observe is looser than the project's enforce; the runner will use enforce",
 	} {
 		if !strings.Contains(errOut, want) {
 			t.Errorf("stderr lacks %q:\n%s", want, errOut)
@@ -713,6 +717,66 @@ func TestValidateRefusesVertexEnforceFromFile(t *testing.T) {
 	}
 }
 
+// TestTheVertexRefusalAgreesWithTheRunner is CS5's edge, and it is why this
+// release leaves the refusal in place on both sides: D3174 lifts it for a run
+// the credentials service serves, and the runner reads that off the run it
+// launched — the model path its gateway builds the upstream from
+// (vertexServedByTheService). A `vertex` file's coding run is on no such path
+// while the service serves api-key, oauth and cascade runs alone
+// (runner.ServiceSwitchedAuth), so the runner's checkBudget refuses it at
+// bootstrap (TestLegacyVertexIsStillRefusedUnderEnforce drives that check and
+// the pool refusal on the same shape). A gate lifting it here alone would
+// green-light a run that dies.
+//
+// One fixture, both CLI gates and the runner's own answer: the fixture is
+// exactly the one that would lift the refusal — the table admits this
+// repository, the service is installed and its record is ready — so nothing
+// but the runner's missing served path keeps the three agreeing.
+//
+// CS6 ("the run's model path follows the table") moves all three together: it
+// makes the first assertion here false, and it lands this half of D3174 with
+// the runner's.
+func TestTheVertexRefusalAgreesWithTheRunner(t *testing.T) {
+	const (
+		service = "credentials_service: { url: " + credentialsServiceURL + " }\n"
+		record  = "repos:\n  acme/app: { provider: github, workflows: [app], credentials_service_ready: true }\n"
+		table   = "model_routing:\n  - match: \"claude-*\"\n    chain:\n      - { kind: vertex, admit: [acme/app] }\n"
+		budget  = "budget: { mode: enforce, per_run_usd: 5 }\n"
+		vertex  = "  auth: vertex\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }"
+	)
+	path := fileWithBudget(t, budget+table+service+record, "", vertex)
+	inCheckoutOf(t, "acme/app")
+
+	// The runner's own answer for this job, and the whole reason the gates
+	// below still refuse it: the service does not serve a `vertex` run, so the
+	// run's model path is the job's own GCP identity and checkBudget refuses it
+	// under enforce.
+	if runner.ServiceSwitchedAuth("vertex") {
+		t.Fatal("the credentials service serves `vertex` runs now: the CLI's refusal may go with it (CS6), and this is the test to change")
+	}
+
+	// validate.
+	if out, _, err := execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, vertexBudgetRefusal) {
+		t.Fatalf("validate accepted a vertex file the runner refuses: exit %d: %s", ExitCode(err), out)
+	}
+	// update --repo's own gate (checkVertexBudget), on the same fixture.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, problems := config.Parse(data)
+	if len(problems) > 0 {
+		t.Fatalf("the fixture does not parse: %v", problems)
+	}
+	lc, _, err := localcfg.LoadProject(os.Getenv, "aurora")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := checkVertexBudget(lc, cfg); ExitCode(err) != ExitUserError {
+		t.Fatalf("update --repo accepted a vertex file the runner refuses: exit %d, err %v", ExitCode(err), err)
+	}
+}
+
 // A committed enforce under Vertex is refused by every run (the stricter of
 // the layers is enforce whatever the ceiling), so validate says so from the
 // file alone, with no project config selected, in the runner's words.
@@ -726,7 +790,10 @@ func TestValidateRefusesCommittedVertexEnforceWithoutProjectConfig(t *testing.T)
 	if ExitCode(err) != ExitUserError || !strings.Contains(out, "agent.auth") || !strings.Contains(out, vertexBudgetRefusal) {
 		t.Fatalf("exit %d: %s", ExitCode(err), out)
 	}
-	for _, budget := range []string{"budget: { mode: observe }\n", "budget: { mode: off }\n", ""} {
+	// The word that was a mode until this release is not one of these: the file
+	// is refused at budget.mode with C1's one text, which is what
+	// internal/config's TestOffIsRefusedWithTheFix asserts (AB2, D3022).
+	for _, budget := range []string{"budget: { mode: observe }\n", ""} {
 		if out, _, err := execute(t, "validate", writeConfig(t, vertex(budget))); err != nil {
 			t.Fatalf("%q: %v %s", budget, err, out)
 		}
@@ -915,13 +982,21 @@ func TestValidateProviderModels(t *testing.T) {
 	if out, _, err = execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, "agent.auth: api-key") {
 		t.Fatalf("exit %d: %s", ExitCode(err), out)
 	}
-	// A provider model with the gateway off (budget mode off) is refused, as
-	// the runner refuses it.
+	// A project config that still says the word that was a mode carries no mode
+	// at all — localcfg reads a mode it cannot use as unset, so the update can
+	// rewrite the file (AB8b, F22) — and the run then resolves observe. So the
+	// provider pin is judged exactly as the observe row below judges it: same
+	// sentence, and never the gateway-off one, which no mode this release has
+	// reaches any more (AB2, D3009: the word is refused where a document is
+	// read, so a document that reached a run says one of the two modes).
 	path = budgetProject(t, "budget: { mode: off }\n"+validateProviderBlock, coder)
-	if out, _, err = execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, "needs the budget gateway") || !strings.Contains(out, "budget.mode to enforce") {
-		t.Fatalf("exit %d: %s", ExitCode(err), out)
+	if out, _, err = execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, "budget.mode enforce") || !strings.Contains(out, "fugaro budget set --global --mode enforce") {
+		t.Fatalf("the removed word: exit %d: %s", ExitCode(err), out)
+	} else if strings.Contains(out, "needs the budget gateway") {
+		t.Fatalf("the removed word was judged as the gateway's off: %s", out)
 	}
-	// Observe never refuses a call: a provider's dollars need enforce.
+	// A provider's dollars need enforce: observe accounts for a call and never
+	// refuses one, so the pin is refused with the mode that would carry it.
 	path = budgetProject(t, "budget: { mode: observe }\n"+validateProviderBlock, coder)
 	if out, _, err = execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, "budget.mode enforce") || !strings.Contains(out, "fugaro budget set --global --mode enforce") {
 		t.Fatalf("observe: exit %d: %s", ExitCode(err), out)

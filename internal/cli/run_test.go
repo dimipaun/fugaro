@@ -991,35 +991,29 @@ func TestRetryRefusesTotalTimeout(t *testing.T) {
 // block, after the image gates and before createTask, so an over-memory
 // artifact launch is refused with nothing written at all — no task, no
 // execution. The runner's own bootstrap is the third arm, for a launch whose
-// recipe the launcher cannot resolve.
+// recipe the launcher cannot resolve. The recipe is the project's copy of
+// acme/other's own artifact recipe, which is what a launch of that repository
+// resolves (D3303).
 func TestAnArtifactLaunchRefusesACapSetThatCannotFitMemory(t *testing.T) {
 	f := newCloudFixture(t)
 	testutil.IsolateGit(t)
 	f.run.AddJob(gcp.JobName(mustSlug("github", "acme/other"), "svc"), "2", "4Gi")
-	// A job image whose runner knows mode: artifact (artifactsSince), the copy
-	// name the task will carry (recipeCopySince, releaseCopy) and the sealed
-	// budget token (sealSince): a spec carrying any of them is refused outright
-	// by an older one, so the launch would be refused by that gate before it
-	// reached the memory arithmetic this test is about, and every launch of this
-	// installation mints and is judged by the seal's gate (AB4, F7).
-	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseCopy)
+	// A job image whose runner knows mode: artifact (artifactsSince, below the
+	// seal) and the sealed budget token (releaseSeal): a spec carrying the mode
+	// is refused outright by an older one, so the launch would be refused by
+	// that gate before it reached the memory arithmetic this test is about, and
+	// every launch of this installation mints and is judged by the seal's gate
+	// (AB4, F7).
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseL8)
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
 	yaml := "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\n" +
 		"workflows:\n  svc:\n    commands: { build: sh build.sh, test: sh test.sh, render: sh render.sh }\n" +
 		"    resources: { memory: 2Gi }\n"
-	const sizzle = "version: 1\nname: sizzle\nmode: artifact\noutputs: { globs: [out/*.mp4] }\nsteps:\n  - render: {}\n"
-	testutil.WriteFiles(t, dir, map[string]string{
-		"fugaro.yaml":                 yaml,
-		".fugaro/recipes/sizzle.yaml": sizzle,
-	})
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": yaml})
 	t.Chdir(dir)
-	// The sizzle the launch resolves is the project's copy of the repository's
-	// own recipe (D3303, R7): a launch reads the store, and the file the
-	// checkout still holds is the leftover no launch reads (D3237).
-	projectRecipesFixture(t, f, nil)
-	publishCopy(t, f, "acme/other", "sizzle", sizzle)
+	repoRecipeCopy(t, f, "acme/other", "sizzle", projectSizzle)
 	_, _, err := execute(t, "run", "--recipe", "sizzle", "--run-id", "20261015-100000-a1b2", "Render the sizzle reel")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "resources.memory 2Gi") ||
 		!strings.Contains(err.Error(), "5 GiB") {

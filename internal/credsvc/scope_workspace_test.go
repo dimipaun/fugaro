@@ -1704,10 +1704,17 @@ type wsPerSecret struct {
 	held  map[string]string
 	err   error
 	reads []string
+	// marked is the containers that carry the intake's workflow-secret marker,
+	// and markerReads is what the source was asked about one, in order: the
+	// marker is a second question about the same container (F18, G2), and the
+	// two lists are separate so that "asked before the value was read" is a
+	// fact.
+	marked      map[string]bool
+	markerReads []string
 }
 
 func newWSPerSecret() *wsPerSecret {
-	return &wsPerSecret{held: map[string]string{}}
+	return &wsPerSecret{held: map[string]string{}, marked: map[string]bool{}}
 }
 
 // Latest is the bundle source's own read. **This fixture is both sources on
@@ -1733,6 +1740,17 @@ func (p *wsPerSecret) Value(_ context.Context, id string) (string, bool, error) 
 	}
 	v, ok := p.held[id]
 	return v, ok, nil
+}
+
+// Marked answers the workflow-secret marker (F18, G2). Every container this
+// fixture holds is a model credential's, so none of them is marked — and the
+// source answers rather than failing, because a source that cannot answer is a
+// read that failed (markedContainer), which would refuse every call here.
+func (p *wsPerSecret) Marked(_ context.Context, id string) (bool, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.markerReads = append(p.markerReads, id)
+	return p.marked[id], nil
 }
 
 // fail is a container read that did not answer (D143: the grant must refuse
@@ -2369,8 +2387,11 @@ func TestARemovedPersonIsRefusedAfterTheReread(t *testing.T) {
 }
 
 // TestARemovedPersonsSlipIsRefused: a slip whose owner has left the roster is
-// refused on every call (R3) — and the refusal is the record's own sentence, so
-// the run cannot tell "removed" from "not yours".
+// refused on every call (R3) — and on this form the refusal names the removal
+// (D3146), because the roster is asked after the slip's claim secret has been
+// matched: the answer reaches only the run the slip was granted to, which is
+// what makes naming the removal safe here. The claim route's forms keep the
+// record's own sentence instead (TestARemovedPersonsSlipIsRefusedAtTheClaim).
 func TestARemovedPersonsSlipIsRefused(t *testing.T) {
 	p := newWSPerson(t)
 	// The member's switch is ON: the grant names the person's own token, and a
@@ -2392,8 +2413,8 @@ func TestARemovedPersonsSlipIsRefused(t *testing.T) {
 	if resp.StatusCode != StatusUnverified {
 		t.Fatalf("a call under a removed person's slip = %d, want %d: %s", resp.StatusCode, StatusUnverified, body)
 	}
-	if e := refusal(t, resp.StatusCode, body); e.Error != ErrorUnverifiedRunIdentity || e.Message != slipNotThisRuns {
-		t.Errorf("the refusal is %q/%q, want %q/%q", e.Error, e.Message, ErrorUnverifiedRunIdentity, slipNotThisRuns)
+	if e := refusal(t, resp.StatusCode, body); e.Error != ErrorSlipOwnerRemoved || e.Message != slipOwnerRemoved {
+		t.Errorf("the refusal is %q/%q, want %q/%q", e.Error, e.Message, ErrorSlipOwnerRemoved, slipOwnerRemoved)
 	}
 	if len(svc.up.Seen()) != 1 {
 		t.Errorf("the upstream saw %d calls, want the one the control made: the removed person's call reached no upstream", len(svc.up.Seen()))

@@ -1223,7 +1223,7 @@ func (r *run) finalSection(ready bool, reason string, records []verify.Record) s
 	case r.rec.Status == runstore.StatusCancelled:
 		head = "**Cancelled**"
 	}
-	return r.sectionLines(head, why, r.checkpointReportPart(), r.rigorPart(), verifyPart(records), reviewsPart(r.rec.Reviews, r.findingsPolicy()), r.levelsPart(), r.narrowText, r.binariesPart(), r.costPart(), r.handBackPart(), r.updated("finished"))
+	return r.sectionLines(head, why, r.checkpointReportPart(), r.rigorPart(), verifyPart(records), reviewsPart(r.rec.Reviews, r.findingsPolicy()), r.levelsPart(), r.narrowText, r.binariesPart(), r.promotePart(), r.costPart(), r.handBackPart(), r.updated("finished"))
 }
 
 // ---- finalize ----

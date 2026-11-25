@@ -149,14 +149,19 @@ func TestAModeArtifactLaunchRefusesWhenTheRecipeCannotBeRead(t *testing.T) {
 // project recipe by its own name, a repository's own recipe as the copy the
 // project store holds for it (D3303, R7).
 //
-// The spec.Mode gate beside the project layer's and the named token's refuses a
-// task whose mode the launcher wrote but whose recipe it could not embed, which
-// no launch of this release writes; its evaluate arm has its own test
-// (recipes_skew_test.go).
+//   - a recipe the launcher resolves itself (a project or catalog one) is
+//     embedded in the task, so checkRecipeImage judges it — against
+//     artifactsSince, since a mode: artifact recipe is a 0.8.0 construct;
+//   - a repository's own recipe is the project's copy of it (D3303), so it is
+//     embedded the same way and judged by the same gate: after D3303 no
+//     launcher path resolves a recipe the task does not carry, which is why
+//     the spec.Mode gate beside this one has no launch of its own to refuse
+//     (PR7 removes the branch, and the launcher's other readers of a
+//     repository-sourced task are what remains of it).
 //
 // Mutation (revert recipeSinceFor's UsesV08 arm to recipesV07Since): both
-// subtests have their image gate pass and fail on the message, which then names
-// another refusal's sentence.
+// subtests are refused by a gate naming an older release than artifactsSince,
+// and fail on the message.
 func TestAnArtifactLaunchGatesOnTheImageThatKnowsMode(t *testing.T) {
 	t.Run("a recipe the launcher embeds", func(t *testing.T) {
 		f := newCloudFixture(t)
@@ -165,13 +170,12 @@ func TestAnArtifactLaunchGatesOnTheImageThatKnowsMode(t *testing.T) {
 		wantRefused(t, f, "recipe sizzle needs a job image whose runner knows recipes (fugaro "+artifactsSince+" or later)",
 			"run", "--repo", "acme/app", "--recipe", "sizzle", "x")
 	})
-	t.Run("a repository's own recipe, as its copy", func(t *testing.T) {
+	t.Run("a repository's own recipe, as its project copy", func(t *testing.T) {
 		f := newCloudFixture(t)
-		projectRecipesFixture(t, f, nil)
-		copied := publishCopy(t, f, "acme/other", "sizzle", projectSizzle)
-		recipeCheckout(t, f, "  recipe: sizzle\n", map[string]string{recipe.RepoPath("sizzle"): projectSizzle})
+		recipeCheckout(t, f, "  recipe: sizzle\n", nil)
+		copy := repoRecipeCopy(t, f, "acme/other", "sizzle", projectSizzle)
 		writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", release070)
-		wantRefused(t, f, "recipe "+copied+" needs a job image whose runner knows recipes (fugaro "+artifactsSince+" or later)",
+		wantRefused(t, f, "recipe "+copy+" needs a job image whose runner knows recipes (fugaro "+artifactsSince+" or later)",
 			"run", "--run-id", "20261015-100000-abcd", "x")
 	})
 }
@@ -212,9 +216,20 @@ func cloneCheckout(t *testing.T, f *cloudFixture, base, agentLines string, extra
 // project recipe by its own name, a repository's own recipe as the project's
 // copy of it (D3303, R7).
 //
+//   - a recipe the launcher embeds (here a project one, the same as in the
+//     baked test) reaches checkCloneRecipeImage and recipeSinceFor, whose
+//     UsesV08 arm raises the threshold to artifactsSince — without it the
+//     0.7.5 image passes and the spec.Mode gate below refuses instead, with
+//     the other gate's message;
+//   - a repository's own recipe, which the launcher resolves as the project's
+//     copy of it (D3303), is embedded and judged by that same gate: no
+//     launcher path resolves a repository recipe the task does not carry, so
+//     the spec.Mode gate's clone arm has nothing left to refuse (PR7 removes
+//     it).
+//
 // Mutation (drop the `UsesV08` arm of recipeSinceFor): both subtests are
-// refused by spec.Mode's clone arm instead, whose message names mode: artifact
-// rather than recipes, and they fail on the message.
+// refused by a gate naming an older release than artifactsSince, and fail on
+// the message.
 func TestAnArtifactRecipeOnACloneWorkflowGatesOnTheCloneImage(t *testing.T) {
 	t.Run("a recipe the launcher embeds", func(t *testing.T) {
 		f := newCloudFixture(t)
@@ -223,17 +238,17 @@ func TestAnArtifactRecipeOnACloneWorkflowGatesOnTheCloneImage(t *testing.T) {
 		wantRefused(t, f, "recipe sizzle needs a job image whose runner knows recipes (fugaro "+artifactsSince+" or later)",
 			"run", "--run-id", "20261015-100000-abcd", "Render the nightly bundle")
 	})
-	t.Run("a repository's own recipe, as its copy", func(t *testing.T) {
+	t.Run("a repository's own recipe, as its project copy", func(t *testing.T) {
 		f := newCloudFixture(t)
-		projectRecipesFixture(t, f, nil)
-		copied := publishCopy(t, f, "acme/other", "sizzle", projectSizzle)
-		cloneCheckout(t, f, release075, "", map[string]string{recipe.RepoPath("sizzle"): projectSizzle})
-		// The clone gate's own sentence, not another refusal's: the read
-		// path judges a BUILD RECORD, and for a clone workflow there is
-		// none, so its own refusal says "has no build record" — the shared
-		// prefix alone would let this subtest pass against the wrong gate.
-		wantRefused(t, f, "recipe "+copied+" needs a job image whose runner knows recipes (fugaro "+artifactsSince+" or later), "+
-			"but the checkout: clone job image of acme/other workflow svc is "+release075,
+		cloneCheckout(t, f, release075, "", nil)
+		copy := repoRecipeCopy(t, f, "acme/other", "sizzle", projectSizzle)
+		// The whole read-path sentence, not only its "needs a job image"
+		// half: the read path judges a BUILD RECORD, and for a clone
+		// workflow there is none, so its own refusal says "has no build
+		// record" — the shared prefix alone would let this subtest pass
+		// against the wrong gate (which is exactly the mutation above).
+		wantRefused(t, f, "recipe "+copy+" needs a job image whose runner knows recipes (fugaro "+artifactsSince+" or later), "+
+			"but the checkout: clone job image of acme/other workflow svc is "+release075+", release 0.7.5",
 			"run", "--run-id", "20261015-100000-abcd", "--recipe", "sizzle", "Render the nightly bundle")
 	})
 }
@@ -278,8 +293,8 @@ func appRepoCheckout(t *testing.T, files map[string]string) {
 func TestAFollowUpLaunchRefusesAModeItInheritsByRepoName(t *testing.T) {
 	t.Run("the previous task's recipe", func(t *testing.T) {
 		f := newCloudFixture(t)
-		projectRecipesFixture(t, f, nil)
-		publishCopy(t, f, "acme/app", "sizzle", projectSizzle)
+		appRepoCheckout(t, nil)
+		repoRecipeCopy(t, f, "acme/app", "sizzle", projectSizzle)
 		writeBuildRecord(t, f, appSlug, "web", release080)
 		root := firstRunSpec(rootID)
 		root.Recipe = &task.Recipe{Name: "sizzle", Source: string(recipe.SourceRepo)}
@@ -291,15 +306,15 @@ func TestAFollowUpLaunchRefusesAModeItInheritsByRepoName(t *testing.T) {
 	})
 	t.Run("the recipe the runner chose", func(t *testing.T) {
 		f := newCloudFixture(t)
-		projectRecipesFixture(t, f, nil)
-		publishCopy(t, f, "acme/app", "sizzle", projectSizzle)
+		appRepoCheckout(t, nil)
+		repoRecipeCopy(t, f, "acme/app", "sizzle", projectSizzle)
 		seedChosenRoot(t, f, &runstore.RecipeRecord{Name: "sizzle", Source: string(recipe.SourceRepo)})
 		wantRefused(t, f, "it takes no --pr", "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "Render the bundle")
 	})
 	t.Run("a mode: review recipe", func(t *testing.T) {
 		f := newCloudFixture(t)
-		projectRecipesFixture(t, f, nil)
-		publishCopy(t, f, "acme/app", "peek", "version: 1\nname: peek\nmode: review\nsteps:\n  - review: { max_rounds: 1 }\n")
+		appRepoCheckout(t, nil)
+		repoRecipeCopy(t, f, "acme/app", "peek", "version: 1\nname: peek\nmode: review\nsteps:\n  - review: { max_rounds: 1 }\n")
 		writeBuildRecord(t, f, appSlug, "web", release080)
 		root := firstRunSpec(rootID)
 		root.Recipe = &task.Recipe{Name: "peek", Source: string(recipe.SourceRepo)}

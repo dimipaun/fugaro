@@ -311,3 +311,221 @@ func TestAnUnreachableServiceNeverFallsBack(t *testing.T) {
 		t.Errorf("the project's service was called %d times: an unreachable workspace's service is waited for, and never fallen through to (D2989)", n)
 	}
 }
+
+// wsRosterUnreadable is a workspace's credentials service that ANSWERS, and
+// answers that it cannot read the state it must read: R3's second shape, where
+// the wait is for a service that is reachable and unable to serve this call
+// (WC8). It counts the calls it was sent, which is what says whether the run
+// waited for it at all and whether it was ever fallen through from.
+//
+// marker is what the service writes beside that refusal when it is refusing it
+// AS the workspace — its cap, stop or settle (workspace_refusal.go) — and "" is
+// the roster it could not read, which is the service's own state and no verdict
+// about the call. The two arrive as the same 503 state_unavailable, which is why
+// the marker and not the status is what tells them apart.
+func wsRosterUnreadable(t *testing.T, marker string) (address string, calls func() int) {
+	t.Helper()
+	var mu sync.Mutex
+	n := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		n++
+		mu.Unlock()
+		if marker != "" {
+			w.Header().Set(WorkspaceRefusalHeader, marker)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":"` + ErrorStateUnavailable + `","message":"the workspace's roster cannot be read"}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL, func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return n
+	}
+}
+
+// wsRosterHaltStub starts a run whose model kind the route serves from the
+// workspace (WS11) and whose calls go to the workspace's service the caller
+// built, with the workspace's own slip on them when withSlip is set. marker is
+// what that service marks its refusals with, "" for the roster it could not
+// read (wsRosterUnreadable).
+func wsRosterHaltStub(t *testing.T, withSlip bool, marker string, edit func(*Options)) (*harness, *anthropicfake.Fake, func() int) {
+	t.Helper()
+	address, calls := wsRosterUnreadable(t, marker)
+	h, project := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
+		return serviceOK(TierA, "repo-own-a")
+	}, func(o *Options) {
+		o.Workspace = &Workspace{
+			Address:    address,
+			Job:        serviceJob,
+			RunIDToken: func() string { return serviceRunToken(t) },
+			IDToken:    func(context.Context, string) (string, error) { return serviceIDToken(t), nil },
+		}
+		if withSlip {
+			o.Workspace.SlipID, o.Workspace.SlipClaim = "ws-slip-"+t.Name(), "ws-claim-"+t.Name()
+		}
+		o.ModelFromWorkspace = true
+		if edit != nil {
+			edit(o)
+		}
+	})
+	return h, project, calls
+}
+
+// TestTheWorkspaceRosterWaitIsNotRearmedByEveryRefusal: a refusal this run
+// waits for is not an answer that ends the outage, so the bound is measured
+// from the FIRST such refusal and the halt at its end stays reachable (R3,
+// WC8). An answer of any kind clears the outage clock (noteServiceReached), so
+// a refusal read after that clearing has to put it back: re-armed by every
+// call, the bound is never spent, the run idles in cycles of it until the job's
+// own clock stops it, and the halt that is supposed to name the workspace's
+// roster is never reached.
+//
+// Two calls inside one bound are the whole of the case: the second waits for
+// the same instant as the first, which is true only of a clock the first one
+// started. The bound is a minute, so neither call can meet it however slow the
+// machine is, and every call this run makes is answered by the workspace's
+// service — the project's is never reached (D2989).
+func TestTheWorkspaceRosterWaitIsNotRearmedByEveryRefusal(t *testing.T) {
+	bound(t, time.Minute)
+	var answers serviceAnswers
+	h, project, wsCalls := wsRosterHaltStub(t, true, "", func(o *Options) { o.OnServiceAnswer = answers.hook })
+
+	resp, body := h.post(msg(sonnet, 1000))
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("a call the workspace refused as unavailable: %d %s, want the wait's retryable 503", resp.StatusCode, body)
+	}
+	noHalt(t, h)
+	resp, body = h.post(msg(sonnet, 1000))
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("the second such call: %d %s, want the wait's 503 while the bound is unspent", resp.StatusCode, body)
+	}
+	noHalt(t, h)
+
+	waits := answers.all()
+	if len(waits) != 2 || waits[0].Unreachable == nil || waits[1].Unreachable == nil {
+		t.Fatalf("the run was handed %d answers, want two waits", len(waits))
+	}
+	if first, second := waits[0].Unreachable.RetryAt, waits[1].Unreachable.RetryAt; !first.Equal(second) {
+		t.Errorf("the second refusal moved the wait from %s to %s: the bound is the run's, and a refusal is not the service coming back (R3)", first, second)
+	}
+	if got := wsCalls(); got != 2 {
+		t.Errorf("the workspace's service received %d calls, want two: every call goes to the service the route names", got)
+	}
+	if got := project.Count(); got != 0 {
+		t.Errorf("the project's own service was called %d times by a run routed to the workspace (D2989)", got)
+	}
+}
+
+// TestTheWorkspaceRosterWaitIsBounded: the wait ends, and the halt it ends on
+// names the roster rather than the connection (R3, WC8). A bound already spent
+// when the first refusal arrives is the halt on that call: the service
+// answered, so the sentence an operator reads is the state it could not read,
+// and not the one a service that could not be reached gets.
+func TestTheWorkspaceRosterWaitIsBounded(t *testing.T) {
+	bound(t, 0)
+	h, project, _ := wsRosterHaltStub(t, true, "", nil)
+
+	resp, body := h.post(msg(sonnet, 1000))
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("a refusal meeting the spent bound: %d %s, want the halt's 403", resp.StatusCode, body)
+	}
+	halt := haltOf(t, h)
+	if halt.Reason != ReasonBudgetUnavailable || halt.Scope != "run" {
+		t.Errorf("the halt is %+v, want the reason an unavailable service already halts with", halt)
+	}
+	if halt.Detail != stateDetailWorkspaceRoster {
+		t.Errorf("the halt's detail is %q, want %q: the service answered, and what it could not do is read the roster", halt.Detail, stateDetailWorkspaceRoster)
+	}
+	if !strings.Contains(body, stateDetailWorkspaceRoster) {
+		t.Errorf("the agent wasn't told why: %s", body)
+	}
+	if strings.Contains(halt.Detail, "could not be reached") {
+		t.Errorf("the halt blames the connection for a service that answered: %q", halt.Detail)
+	}
+	if got := project.Count(); got != 0 {
+		t.Errorf("the project's own service was called %d times by a run routed to the workspace (D2989)", got)
+	}
+	assertNoSecret(t, "the halt's answer", body, secrets(h, t))
+}
+
+// TestARunWithNoWorkspaceSlipHaltsOnTheStateItCannotRead: R3's roster re-read
+// happens under the workspace's slip, so a run routed to the workspace that
+// holds none made no read for this call to fail, and its "I cannot read the
+// state" is the halt it always was — the sentence a run of the member's own
+// service gets, with no wait and no workspace roster named (R4's last clause,
+// D143).
+//
+// The bound is a minute, so a wait wrongly taken here is the 503 this test
+// would fail on rather than a halt reached by a spent clock.
+func TestARunWithNoWorkspaceSlipHaltsOnTheStateItCannotRead(t *testing.T) {
+	bound(t, time.Minute)
+	var answers serviceAnswers
+	h, project, wsCalls := wsRosterHaltStub(t, false, "", func(o *Options) { o.OnServiceAnswer = answers.hook })
+
+	resp, body := h.post(msg(sonnet, 1000))
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("a refusal to a run holding no workspace slip: %d %s, want the halt's 403", resp.StatusCode, body)
+	}
+	halt := haltOf(t, h)
+	if want := refusalDetail(ErrorStateUnavailable); halt.Detail != want {
+		t.Errorf("the halt's detail is %q, want %q: a run with no workspace slip is served exactly as it was", halt.Detail, want)
+	}
+	if strings.Contains(halt.Detail, "workspace") {
+		t.Errorf("the halt names a roster this call never read: %q", halt.Detail)
+	}
+	if got := answers.all(); len(got) != 0 {
+		t.Errorf("the run was handed %+v: a run with no workspace slip waits for no roster (R4)", got)
+	}
+	if got := wsCalls(); got != 1 {
+		t.Errorf("the workspace's service received %d calls, want one", got)
+	}
+	if got := project.Count(); got != 0 {
+		t.Errorf("the project's own service was called %d times by a run routed to the workspace (D2989)", got)
+	}
+}
+
+// TestAWorkspaceRefusalIsNeverWaitedFor: an answer the workspace's own service
+// MARKED is a verdict about the call and not an outage, so it halts on the call
+// that met it — the run is not sent to wait for a service that answered, and the
+// halt keeps the marker the run's record is read for (D2022's O19, R3).
+//
+// All three of the workspace's refusals reach a member as this same 503
+// state_unavailable, which is what the wait's trigger reads and why the marker
+// and not the status has to decide: waited for, a cap, a stop or a settle would
+// idle the run for the whole bound and then halt it naming the roster, with the
+// refusal the workspace really made absent from its record. The bound is a
+// minute, so a wait taken wrongly here is the 503 this test fails on.
+func TestAWorkspaceRefusalIsNeverWaitedFor(t *testing.T) {
+	bound(t, time.Minute)
+	for _, reason := range WorkspaceRefusals() {
+		t.Run(reason, func(t *testing.T) {
+			var answers serviceAnswers
+			h, project, wsCalls := wsRosterHaltStub(t, true, reason, func(o *Options) { o.OnServiceAnswer = answers.hook })
+
+			resp, body := h.post(msg(sonnet, 1000))
+			if resp.StatusCode != http.StatusForbidden {
+				t.Fatalf("the workspace's %s refusal: %d %s, want the halt's 403", reason, resp.StatusCode, body)
+			}
+			halt := haltOf(t, h)
+			if halt.WorkspaceRefusal != reason {
+				t.Errorf("the halt for the workspace's %s refusal carries %q: the marker is the one fact the refusal is read for", reason, halt.WorkspaceRefusal)
+			}
+			if want := refusalDetail(ErrorStateUnavailable); halt.Detail != want {
+				t.Errorf("the halt's detail is %q, want %q: a marked refusal is the state the service could not read, as it was before the roster wait (R3)", halt.Detail, want)
+			}
+			if got := answers.all(); len(got) != 0 {
+				t.Errorf("the run was handed %+v: a service that answered is not an outage to wait out (R3)", got)
+			}
+			if got := wsCalls(); got != 1 {
+				t.Errorf("the workspace's service received %d calls, want one: a marked refusal is a verdict, and is not sent again", got)
+			}
+			if got := project.Count(); got != 0 {
+				t.Errorf("the project's own service was called %d times by a run routed to the workspace (D2989)", got)
+			}
+			assertNoSecret(t, "the halt's answer", body, secrets(h, t))
+		})
+	}
+}

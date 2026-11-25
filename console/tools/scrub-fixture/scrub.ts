@@ -163,7 +163,7 @@ export const VOCAB = {
   auth: ['vertex', 'api-key', 'oauth', 'cascade', '-'],
   health: ['ok', 'silent', 'lost'],
   deadline: ['ok', 'near', 'over'],
-  status: ['succeeded', 'failed', 'unreviewed', 'halted', 'cancelled', 'infra_error'],
+  status: ['succeeded', 'failed', 'unreviewed', 'halted', 'cancelled', 'infra_error', 'paused'],
   outcome: ['ready', 'draft', 'none', 'reviewed', 'artifacts'],
 } as const
 

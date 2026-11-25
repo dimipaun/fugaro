@@ -560,6 +560,14 @@ const (
 	// refused: the ID token Cloud Run IAM admitted is not one of the
 	// installation's job service accounts.
 	ErrorUnverifiedJobIdentity = "unverified_job_identity"
+	// ErrorSlipOwnerRemoved is a call under a workspace slip whose owner the
+	// workspace's roster no longer lists (R3, D3146). It is not
+	// ErrorUnverifiedRunIdentity: the two are refused at different points of
+	// the same check, and this one is answered only past ClaimMatches, to the
+	// caller that holds the slip's own claim secret — so it can name a
+	// removal where the identity refusal must not tell one caller's slip from
+	// another's (slipNotThisRuns, personStillOnTheRoster).
+	ErrorSlipOwnerRemoved = "slip_owner_removed"
 	// ErrorStateUnavailable is the service being unable to read the state it
 	// must read (the write-once outcome, the cascade's marks): a refusal, so
 	// the run halts budget_unavailable-style, and never a fallback (D143).

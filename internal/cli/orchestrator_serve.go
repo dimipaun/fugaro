@@ -1141,7 +1141,14 @@ func (s *residentOrchestrator) carry(ctx context.Context, state orchestrator.Sta
 	// carried out through Starter.Launcher, and every other action a write's
 	// would reach a commit this resident pass has none of (resident_launch.go's
 	// own argument). ResidentCarry hands it only the re-issues.
-	out := orchestrator.ResidentCarry(ctx, orchestrator.Starter{Launcher: s.launch}, state, orchestrator.RunView{}, caps, now)
+	//
+	// The launcher is the pass's OWN (residentPass): the service's launcher is
+	// built once, and the attempt each re-issue asks the installation's
+	// credentials service for is a fact of the record this tick read (D3136), so
+	// the record travels with the launcher for the one call the carrying makes
+	// and nowhere else — the service holds no state a second tick of one
+	// instance could write, and nothing here outlives the pass.
+	out := orchestrator.ResidentCarry(ctx, orchestrator.Starter{Launcher: residentPass{launch: s.launch, state: state}}, state, orchestrator.RunView{}, caps, now)
 	pass.Unreported, pass.Carried, pass.Left = out.Read, out.Carried, out.Left
 	for _, err := range out.Refused {
 		// One line per attempt a launcher refused, and it names the run: the
