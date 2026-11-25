@@ -44,6 +44,21 @@ func PlanRemoval(path string) (*Removal, error) {
 	if err != nil {
 		return nil, err
 	}
+	return planRemoval(path, before, existed, perm)
+}
+
+// PlanRemovalBytes is PlanRemoval over a settings file's own bytes, for a
+// reader that holds the file and no path it may read: `fugaro update`'s notice
+// reads every enrolled repository's default branch (U6a of
+// docs/update-from-anywhere). path is the file's name — the repository-relative
+// .claude/settings.json — and nothing is read from it, so the path is not
+// checked the way a write's is. A removal planned here is for its Changed
+// alone: it carries no mode and Apply is never called on it.
+func PlanRemovalBytes(path string, before []byte) (*Removal, error) {
+	return planRemoval(path, before, len(before) > 0, 0)
+}
+
+func planRemoval(path string, before []byte, existed bool, perm fs.FileMode) (*Removal, error) {
 	rem := &Removal{Path: path, Before: before, After: before, existed: existed, perm: perm}
 	if !existed || strings.TrimSpace(string(before)) == "" {
 		return rem, nil

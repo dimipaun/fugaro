@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
@@ -48,6 +50,7 @@ var enrolledReposImpl = func(ctx context.Context, in enrolledIn) ([]repoView, []
 		v.Head = headOfDefaultBranch(ctx, root, db.ref)
 		v.YAML = db.data
 		v.Cfg = db.cfg
+		v.Files = repoFilesAt(root, in.Extra)
 	}
 	if v.Unread != "" {
 		// The reason is repository-controlled text (a parse's own sentence
@@ -57,6 +60,27 @@ var enrolledReposImpl = func(ctx context.Context, in enrolledIn) ([]repoView, []
 		v.Unread = pluginwire.Printable(oneLine(v.Unread))
 	}
 	return []repoView{v}, nil
+}
+
+// repoFilesAt reads the extra files a caller asked for out of the checkout at
+// root, under their repository-relative path (in.Extra). While the stub stands
+// in, this is the checkout's copy, the way the view's fugaro.yaml is; I1 reads
+// the same paths at the default branch. A file that is not there, and one that
+// cannot be read, is not carried: a view a stage asked for a file it did not
+// get is one the stage must treat as having no such file.
+func repoFilesAt(root string, extra []string) map[string][]byte {
+	if len(extra) == 0 {
+		return nil
+	}
+	out := map[string][]byte{}
+	for _, p := range extra {
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(p)))
+		if err != nil {
+			continue
+		}
+		out[p] = data
+	}
+	return out
 }
 
 // repoProviderOf is the git provider this machine's config records for a

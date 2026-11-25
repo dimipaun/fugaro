@@ -125,9 +125,9 @@ func updateStages(t *testing.T, e *initEngine, names ...string) *initflow.Result
 // base image: `fugaro update` runs the checkout's own steps for it, so the
 // plugin goes into Claude Code through the plugin stage (which took the step
 // over, U1) and the job images through the checkout stage's refresh. The pin an
-// older fugaro left in the checkout comes out of the same run: the merge that
-// wrote it is gone (U2) and the plugin stage takes the two entries it left out
-// of the checkout's settings (U5).
+// older fugaro left in the checkout is neither taken out nor rewritten: since
+// U6a it is a notice the run prints after the loop, naming the file and the
+// exact edit, and the checkout's own file is the repository's to change.
 func TestUpdateRunsThePluginAndImages(t *testing.T) {
 	_, root := upgradeRig(t)
 	settings := filepath.Join(root, ".claude", "settings.json")
@@ -150,16 +150,14 @@ func TestUpdateRunsThePluginAndImages(t *testing.T) {
 	if got := stateOf(res, string(initflow.Plugin)); got != initflow.Changed {
 		t.Errorf("the plugin stage is %q, want %q: the machine's install is its step (U1)\n%s", got, initflow.Changed, out)
 	}
-	// The checkout the run writes into comes out of it unpinned: the two
-	// entries an older fugaro left are the whole of what the run takes out of
-	// the file, and nothing puts a pin back (U2, U5).
-	if got := convergeRead(t, settings); got != "{}\n" {
-		t.Errorf("the checkout's settings after the run:\n%s\nwant the pin an older fugaro left taken out, and nothing else in the file:\n%s", got, "{}\n")
+	// The checkout the run stands in is not written at all: the pin an older
+	// fugaro left is the repository's own change to make, and the run names it
+	// as a notice rather than taking it out (U6a, D3340).
+	if got := convergeRead(t, settings); got != wiredAt("v0.5.0") {
+		t.Errorf("the checkout's settings after the run:\n%s\nwant the file exactly as the run found it, pin included:\n%s", got, wiredAt("v0.5.0"))
 	}
-	for _, want := range []string{"removed the fugaro@fugaro pin from", removalLoss()} {
-		if !strings.Contains(out.String(), want) {
-			t.Errorf("the run does not say %q about the pin it took out:\n%s", want, out)
-		}
+	if seen := out.String(); strings.Contains(seen, "removed the "+pluginwire.PluginID+" pin from") {
+		t.Errorf("the run takes the pin out of the checkout, which U6a made a notice:\n%s", seen)
 	}
 	if len(f.Changes(t)) == 0 {
 		t.Errorf("the plugin was not installed in Claude Code\n%s", out)

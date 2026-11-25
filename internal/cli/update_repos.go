@@ -95,6 +95,11 @@ type enrolledIn struct {
 	// (R21). Nil reads fresh every time, which is what a caller outside a run
 	// -- doctor, a test -- gets.
 	Memo *reposState
+	// Extra are the repository-relative files the caller needs read beside
+	// fugaro.yaml (.claude/settings.json), which the view carries under their
+	// own path (C1 §Extra files). A caller asks for what it reads, and the
+	// reader reads nothing it was not asked for.
+	Extra []string
 }
 
 // reposState is one run's per-repository state: the enrolled list it read,

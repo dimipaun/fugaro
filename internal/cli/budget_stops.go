@@ -72,7 +72,7 @@ func budgetStops(f budgetStopFacts) []budgetStop {
 		stops = append(stops, budgetStop{line: fmt.Sprintf("this repository's runs are refused: %s %s", p.Path, p.Message)})
 	}
 	if f.repoOff {
-		stops = append(stops, budgetStop{line: fmt.Sprintf("%s says budget.mode: off, which is not a mode any more: this update offers the removal of the line, and the repository's runs are refused until it is gone", f.repoPath)})
+		stops = append(stops, budgetStop{line: fmt.Sprintf("%s says budget.mode: off, which is not a mode any more: delete the line, and the repository's runs are refused until it is gone", f.repoPath)})
 	}
 	if f.modelKey != "" {
 		stops = append(stops, budgetStop{line: fmt.Sprintf("this repository's model key (%s) leaves its job at this apply: the credentials service serves the repository now", f.modelKey)})
