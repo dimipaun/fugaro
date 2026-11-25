@@ -12,15 +12,14 @@ package cli
 //     `coordinatorRuns`: a listing of the repository's runs over the window plus
 //     about three object reads for each of them, with no cache — and the
 //     coordinator's sweep is off on most installations, so it is the common case
-//     (F3). It is now one List of C-INDEX's Reader, whose cost does not grow
+//     (F3). It is now one List of the index's Reader, whose cost does not grow
 //     with the repository's history. The test holds the two things that makes
 //     true: the run the document draws is the index's row and not the bucket's
 //     copy of another run, and the index was asked once, for this repository,
 //     over the read's own window.
-//   - This file is where a fake index lives for this package's tests. The real
-//     reader is RI3's and I-INDEX wires it in; until then the command reads
-//     C-INDEX's stub, so `indexing` is how a test says what the index holds and
-//     what it was asked.
+//   - This file is where a fake index lives for this package's tests, which
+//     replace the wired reader (Cloud.RunIndex, I-INDEX) with one: `indexing` is
+//     how a test says what the index holds and what it was asked.
 
 import (
 	"context"
@@ -213,13 +212,12 @@ func TestGraphFallbackReadsIndex(t *testing.T) {
 // than drawing an empty repository.
 //
 // The state is not an edge case. IndexComplete is false from the first read
-// until a walk finishes — the wired stub says it, and after I-INDEX every
-// installation says it until its first reindex does (RI4, RI5) — and the
-// fallback is the common case, because the coordinator's sweep is off on most
-// installations (F3). Before this, `fugaro graph` drew zero nodes for such a
-// repository and nothing in the document said why, which the plan's own
-// constraint forbids (a reader never prints a silently short list while the
-// index is incomplete) and which the contract names as the stub's whole point.
+// until a walk finishes — every installation says it until its first reindex
+// does (RI4, RI5) — and the fallback is the common case, because the
+// coordinator's sweep is off on most installations (F3). Before this, `fugaro
+// graph` drew zero nodes for such a repository and nothing in the document said
+// why, which the plan's own constraint forbids (a reader never prints a
+// silently short list while the index is incomplete).
 // Two things are held here: the document carries the sentence, and the sentence
 // carries the summary's other field, so a reader can tell "folded nothing yet"
 // from "folded through this morning".

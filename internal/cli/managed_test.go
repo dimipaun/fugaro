@@ -897,6 +897,13 @@ var propertyAgentSites = map[string]string{
 	// all) and with a terminal on its stdin as well as without one; the second
 	// drives the same step with no marker, where it applies.
 	"init_compute.go Apply": "TestComputeStageRefusesInAnAgentSession (under a marker, with the root untouched) and TestComputeStageProvisionsAfterATypedConfirmation (with none)",
+	// The update half's Check answers before the read, for the reason the
+	// setup half's Apply refuses first: what the marker has to keep out of a
+	// session is the root's tfvars, init and show state, and a Check that read
+	// them would run terraform before the loop's own refusal. It answers "plans
+	// when applied" there, and the test drives the update door under a marker:
+	// the refusal names it and no Terraform subcommand runs.
+	"init_compute.go Check": "TestTheComputeStageUnderUpdateIsRefusedInAnAgentSession",
 }
 
 // The policy tail (init_policy_migrate.go policyMigrationConfirm) is not in

@@ -346,3 +346,67 @@ func TestImageAddRefusesExecutableContentForAnAgent(t *testing.T) {
 		})
 	}
 }
+
+// TestImageRmOwesNoBuild: a removal takes an entry out of the catalog and
+// changes nothing an image is built from — the entry's image is built, pushed
+// and left in the registry, and the catalog the removal leaves is the one the
+// remaining entries make up. The removal used to owe the catalog's own steps,
+// which include the build (internal/apply's catalogSteps), so `fugaro image rm`
+// rebuilt every entry of the catalog and failed the whole removal on the first
+// entry whose build failed — over a change that never touched it (check 390).
+//
+// What it owes is the two stages that make it live: the checkout's own
+// redeploy without the entry (D1574) and the publication of the catalog the
+// removal leaves.
+func TestImageRmOwesNoBuild(t *testing.T) {
+	r, fb := imageAddChainWorld(t)
+	// The first addition anchors the checkout (gcp_project in its fugaro.yaml),
+	// and every command after it resolves the project layer that anchor makes
+	// apply: a bucket this world names as gs://, which this package's TestMain
+	// refuses to open for real. The layer is empty here, the state every fixture
+	// in this package is in (managementWorldImageRm's own override).
+	oldOpen := layerBucketOpener
+	t.Cleanup(func() { layerBucketOpener = oldOpen })
+	layerBucketOpener = func(ctx context.Context, _ string) (*blobx.Bucket, error) {
+		return blobx.Open(ctx, "file://"+t.TempDir())
+	}
+	df := entryDockerfile(t, catalogBuildInline)
+	if out, errOut, err := executeStdin(t, "", "image", "add", "base", "--inline", df, "--default"); err != nil {
+		t.Fatalf("image add base: %v\n%s", err, out+errOut)
+	}
+	// The redeploy refuses a working tree that is not the default branch's until
+	// the anchor is committed (enrolLanded), which is what a person running the
+	// two commands a moment apart does.
+	enrolLanded(t)
+	if out, errOut, err := executeStdin(t, "", "image", "add", "tools", "--inline", df); err != nil {
+		t.Fatalf("image add tools: %v\n%s", err, out+errOut)
+	}
+	steps, ok := apply.Steps(apply.Change{Kind: apply.Resource, Key: apply.ResourceImageRemoval})
+	if !ok {
+		t.Fatal("the table declares no steps for a catalog removal")
+	}
+	if !slices.Equal(steps, []string{initflow.Repository, initflow.Policy}) {
+		t.Fatalf("the removal's steps = %v, want the redeploy and the publication and no build", steps)
+	}
+	plans, builds := len(r.ran(t, "plan")), buildPosts(fb)
+	out, errOut, err := executeStdin(t, "", "image", "rm", "tools")
+	if err != nil {
+		t.Fatalf("image rm: %v\n%s", err, out+errOut)
+	}
+	if got := buildPosts(fb); got != builds {
+		t.Errorf("the removal submitted %d builds, want none: an entry taken out of the catalog is nothing to build", got-builds)
+	}
+	if len(r.ran(t, "plan")) == plans {
+		t.Errorf("the removal ran no terraform plan: the checkout was not redeployed without the entry")
+	}
+	if got := configOnDisk(t); strings.Contains(got, "name: tools") {
+		t.Errorf("the entry is still in this machine's config:\n%s", got)
+	}
+	out, _, err = executeStdin(t, "", "apply", "--status", "--json")
+	if err != nil {
+		t.Fatalf("apply --status: %v\n%s", err, out)
+	}
+	if doc := applyDocOf(t, out); len(doc.Pending) != 0 {
+		t.Errorf("the removal left %v owed, want the change live", applySteps(doc.Pending))
+	}
+}

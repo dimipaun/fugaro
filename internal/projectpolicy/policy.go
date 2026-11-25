@@ -105,6 +105,7 @@ package projectpolicy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -119,6 +120,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/repourl"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/routing"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -443,6 +446,45 @@ type Policy struct {
 	// before this member existed.
 	ReviewAgainstTask *bool `json:"review_against_task,omitempty"`
 
+	// PersonalWorkspaceTokens is R9's switch for the personal half of a
+	// workspace's credentials (docs/workspace-credentials/, WC6, D2972): the
+	// one place a member's admin says that the workspace's service may serve
+	// its people the Claude token each of them stored at the workspace, ahead
+	// of the shared entries the run is admitted to. true turns the personal
+	// half on, false turns it off, and an absent member is OFF — the state
+	// every member is in today, which is what D2972 means by "off by default".
+	//
+	// It belongs to this node for Triage's reason and one of its own: the
+	// switch decides whether a person's own subscription is drawn on instead
+	// of the workspace's shared (and paid) ones, so a launcher must not be able
+	// to move it, and the shared file and the task are both launcher-written
+	// (docs/bucket-iam/spec.md §10 L1, L2). The workspace's service is the only
+	// enforcer and reads the key from the member's PUBLISHED policy and from
+	// nothing on the member's disk (U8, settled by C1 of the same plan), which
+	// is what makes the node its home rather than a plain local-config field.
+	//
+	// It is a pointer because true and false are two statements a reader must
+	// tell apart from silence, and because a project that sets neither publishes
+	// no member: the node of such a project stays byte for byte what it was
+	// before this member existed. Its key is
+	// creds.PersonSwitchKey ("personal_workspace_tokens") and it moves no
+	// policy version (R9): the decode tolerates it — an older reader lists it in
+	// UnknownKeys, reads every other member exactly as before and, in the runner
+	// of the release behind, warns once and keeps enforcing what it does
+	// understand (internal/runner/projectpolicy.go).
+	//
+	// **The decode is not the whole of the skew.** The readers that decide
+	// something by the node refuse one carrying a key they do not know rather
+	// than acting on part of it: the CLI's launch gate
+	// (internal/cli/launch_budget.go, projectPolicyRead), the publish and the
+	// migration stage each refuse such a node and name the upgrade. So the
+	// moment the member's `fugaro update` publishes this member, an older CLI in
+	// that project loses launches on it until it is upgraded — `brew upgrade`
+	// and `fugaro update` — which is the skew the `bitbucket_tokens` key set had
+	// (docs/releases/v0.25.0.md) and the reason the member's own CLI must be
+	// upgraded before the publish that carries the switch.
+	PersonalWorkspaceTokens *bool `json:"personal_workspace_tokens,omitempty"`
+
 	// VerifierAccounts are the identities that may ask the credentials
 	// service's verify route whether a verdict's signature is that service's
 	// (C3.9g3, D1068, D1075): the coordinator's own account once it exists,
@@ -729,6 +771,30 @@ type Policy struct {
 	// default.
 	MobileCrashReports *bool `json:"mobile_crash_reports,omitempty"`
 
+	// ModelRouting is the project's routing table, published: where each model
+	// is reached, which repositories each credential may serve, and the pools in
+	// the shape C2 gives them (docs/model-credentials-routing, RT4, R21, F49).
+	//
+	// **It is ONE new top-level key and not a member of a block the node
+	// already carries.** `craft_pools` and `craft_credentials` decode strictly
+	// in every job image of the installation, so a pool's own new members
+	// (`rule`, `principal`, `threshold`) written there make a reader of the
+	// release behind refuse the WHOLE policy — and the node is re-read while
+	// runs are in flight (internal/runner's projectpolicy.Read on every run, the
+	// credentials service on every model call), so that refusal would stop the
+	// runs an update promises to leave alone
+	// (docs/design/update-in-flight.md). An unknown top-level key is listed in
+	// UnknownKeys and tolerated, which is what lets this release publish the
+	// table while a release-behind runner keeps serving from `craft_pools`
+	// exactly as it did (contract-table.md: the rule that made
+	// `bitbucket_tokens`, `orchestrator_enabled` and `mobile_crash_reports`
+	// keys of their own rather than members of a block they belong to).
+	//
+	// It is a pointer and absent for a project that has published no table: the
+	// installation's own `model_routing:` block may be empty, and a node that
+	// carries no member is byte for byte what it was before this key existed.
+	ModelRouting *ModelRouting `json:"model_routing,omitempty"`
+
 	// UnknownKeys lists the top-level keys of the node this Fugaro does not
 	// know, sorted. Decode fills it in and never writes it back (json:"-"):
 	// the keys are tolerated so that a policy a newer Fugaro wrote does not
@@ -760,6 +826,15 @@ var knownTopLevelKeys = map[string]bool{
 	"reports_commit":      true,
 	"triage":              true,
 	"review_against_task": true,
+	// The member's personal-workspace-tokens switch (R9, D2972): a top-level
+	// key and not a member of a block, for the reason the two above are — a
+	// reader of the release behind lists it in UnknownKeys and reads every other
+	// member, which is what R9 asks of it (an older reader decodes past it and
+	// the version does not move). The readers that DECIDE by the node refuse one
+	// carrying it and name the upgrade, and the member's own CLI must be
+	// upgraded before the publish that carries the switch into it: the doc on
+	// Policy.PersonalWorkspaceTokens states the whole of the skew.
+	"personal_workspace_tokens": true,
 	// The daemon's own two (R1 of docs/orchestrator-graph-estimates): the
 	// switch that hands orchestration back (D2701, D2739) and the project's
 	// issue adapter (D2733). Both are top-level keys and not members of a
@@ -779,6 +854,13 @@ var knownTopLevelKeys = map[string]bool{
 	// reader of the release behind, which is what update must never do. Read by
 	// MobileCrashReportsOn, which answers an absent key off.
 	"mobile_crash_reports": true,
+	// The project's routing table (RT4 of docs/model-credentials-routing): a
+	// top-level key and not a member of any block, for the reason every key
+	// above is one — a reader of the release behind lists it in UnknownKeys and
+	// keeps reading the whole policy, which is what lets an update publish the
+	// table while runs are in flight (F49, R21). The pools' own new members live
+	// inside it, so `craft_pools` stays byte for byte what that reader decodes.
+	"model_routing": true,
 }
 
 // Budget is the ceiling a run is held to. An absent field is zero and means
@@ -893,6 +975,140 @@ type Routing = config.Routing
 // ClaudeRoute is the Claude routing switch: an explicit list of Claude IDs,
 // never a pattern (D1a). config.RoutingClaude, by the alias above.
 type ClaudeRoute = config.RoutingClaude
+
+// ModelRouting is the project's routing table, published: the one top-level key
+// a run of this release and the credentials service are served by
+// (docs/model-credentials-routing/contract-table.md, RT4).
+//
+// `entries` is the Table itself — the ordered entries, each source carrying its
+// own `admit` list, which is where the per-repository admissions live — and
+// `pools` is C2's shape: the project's pools with the three members a pool
+// gained here (rule, principal, threshold), which `craft_pools` may not carry.
+// The two blocks are the same facts the config holds, and the types are the
+// contract's own, so a source or a pool cannot be spelled one way in the
+// installation's file and another on the wire.
+//
+// The members are read the two ways every wire of this tree is read: the WRITER
+// reads them strictly and refuses a table RT3's checks refuse (DecodeStrict,
+// the publisher's gate — this document decides where a project's calls go and
+// what they cost), while every reader tolerates what it does not know (Decode).
+// What the key buys is the one thing a member of `craft_pools` cannot: a reader
+// of the release behind lists it in UnknownKeys and reads every block it does
+// know byte for byte, so an update publishes the table while runs are in flight
+// (F49, R21). The same rule holds one release further on, inside the key: a
+// member a later release adds here is read by the readers that know it and
+// ignored by the ones that do not, because a run in flight meets the newer node
+// before its own `fugaro update` can move it — which is why the tolerance has
+// to be in the shipped reader and not in the release that grows the key (R25).
+type ModelRouting struct {
+	// Entries is the table: the model or pattern each entry answers and the
+	// chain of sources that may serve it, first usable one wins. nil is a
+	// project that has published no entry, which routes nothing.
+	Entries routing.Table `json:"entries"`
+	// Pools are the project's pools in C2's shape, and they are what the
+	// service resolves a source of kind pool against: a pool's members, its
+	// rule, its threshold and the principal it belongs to.
+	Pools []config.Pool `json:"pools,omitempty"`
+}
+
+// ModelRoutingProblems is routing.Problems asked of this node's table (RT3):
+// every problem the published table has against the project's own credentials,
+// pools, providers and budget, plus the warnings it carries (today exactly X2's
+// lone subscription token, which release 1 reports and release 2 refuses).
+//
+// It is the writer's gate — DecodeStrict refuses the first problem it reports,
+// which is the read a command lands through, and the publisher asks it of the
+// table it has just built — so a table `fugaro routing set` or `fugaro
+// validate` refuses is a table no door of this release writes into the policy,
+// while a node a later release wrote is still READ by every run in flight.
+//
+// The project is read from the node itself, and the one list the node cannot
+// supply whole is the models a run can call: a run's rungs are the run's
+// (craft.ModelRungs: the task's grade, a level's model, a pinned role,
+// agent.model — none of them a member of this node) and a `--model` override is
+// the launcher's, so the models asked about here are the ones the node names:
+// the crafts' own and the two grades' (publishedModels). A model no entry
+// matches is therefore refused for those and left to the run's own door for the
+// rest (R22; RT5 and RT6 are where a person asks the whole ladder).
+//
+// Check 50 is left unrecorded, which is the refusal R3 asks for: nothing in
+// this release records the check as passed, and a Claude model through a
+// provider key is what D3196 leaves on the release-1 bridge rather than in a
+// table.
+func (p *Policy) ModelRoutingProblems() (problems, warnings []routing.Problem) {
+	if p == nil || p.ModelRouting == nil {
+		return nil, nil
+	}
+	return routing.Problems(routing.Checks{
+		Table:           p.ModelRouting.Entries,
+		Models:          p.publishedModels(),
+		Credentials:     p.CraftCredentials,
+		Pools:           p.routingPools(),
+		Providers:       providerCarrier(p.Providers),
+		BudgetMode:      p.Budget.Mode,
+		BudgetPerRunUSD: p.Budget.PerRunUSD,
+	})
+}
+
+// routingPools is the pools a source of the table is checked against: the key's
+// own list, plus every pool `craft_pools` declares and the key does not name.
+//
+// The node's pools are in the two blocks at once — `craft_pools` in the shape
+// every release reads, `model_routing.pools` in C2's — and this release resolves
+// a source of kind pool against the old one: `internal/credsvc`'s own lookup
+// walks `craft_pools`, and so does the layer it hands craft.Resolve. A source
+// naming a pool that is there and not in the key is therefore a source that
+// reaches a credential, and a check that read the key alone would refuse the
+// node such a source is published on.
+func (p *Policy) routingPools() []config.Pool {
+	if len(p.CraftPools) == 0 {
+		return p.ModelRouting.Pools
+	}
+	out := make([]config.Pool, 0, len(p.ModelRouting.Pools)+len(p.CraftPools))
+	out = append(out, p.ModelRouting.Pools...)
+	for _, pool := range p.CraftPools {
+		named := false
+		for _, have := range out {
+			if have.Name == pool.Name {
+				named = true
+				break
+			}
+		}
+		if !named {
+			out = append(out, pool)
+		}
+	}
+	return out
+}
+
+// publishedModels are the models the node itself says a run calls: the five
+// crafts, each with what it inherits (config.Crafts.Inherited, so a craft that
+// sets no model of its own is the coder's), and the two grades of the
+// escalation ladder (E2, D2039). A model the node names twice is named once,
+// and one it does not name at all is skipped: a craft with no model anywhere is
+// answered by the rungs below it, which are the run's (F17's carve-out).
+func (p *Policy) publishedModels() []string {
+	var out []string
+	seen := make(map[string]bool)
+	add := func(model string) {
+		if model == "" || seen[model] {
+			return
+		}
+		seen[model] = true
+		out = append(out, model)
+	}
+	if p.Crafts != nil {
+		for _, name := range config.CraftNames {
+			add(p.Crafts.Inherited(name).Model)
+		}
+	}
+	if p.ModelGrades != nil {
+		for _, name := range config.GradeNames {
+			add(p.ModelGrades.Of(name).Model)
+		}
+	}
+	return out
+}
 
 // ImageCatalog is the project's image catalog, the definitions its jobs are
 // built from (D1140, spec.md §Catalog entry). It is config.Catalog, aliased
@@ -1326,8 +1542,33 @@ const MaxPolicyBytes = 64 << 10
 //
 // Unknown JSON keys are ignored; version is not (see VersionError), and the
 // budget block is strict (see the package comment).
+//
+// The routing table is read the way an unknown key is: what this release does
+// not model inside `model_routing` is left alone rather than refused, and a
+// table the checks would refuse is read. It is the one block whose contents a
+// later release grows — a source, a pool or an entry gains a member, a
+// credential kind is added — and a run in flight meets a node a later release
+// published before its own `fugaro update` can move it: a reader that refused
+// it would halt every job image on the project over a member that reader was
+// never told about (contract-table.md, F49). DecodeStrict is the other half of
+// the pair, and it is the half the writer reads.
 func Decode(raw []byte) (*Policy, bool, error) {
 	return decodeWithKeys(raw, knownTopLevelKeys)
+}
+
+// DecodeStrict is the node as a WRITER must read it: the bytes a command is
+// about to land are refused unless this release understands every member of
+// them, and a routing table routing.Problems refuses is refused here rather
+// than by the run that cannot start (checkPolicyBytes, the publisher's own
+// gate).
+//
+// The two answers differ in exactly one place, `model_routing`: its members are
+// read strictly and the table is held to RT3's checks. Everything else is
+// Decode, and the rule the pair states is the one every wire this tree writes
+// is held to — a reader tolerates what it does not know, a writer lands only
+// what it does.
+func DecodeStrict(raw []byte) (*Policy, bool, error) {
+	return decodePolicy(raw, knownTopLevelKeys, true)
 }
 
 // decodeWithKeys is Decode under a named key set: the top-level keys the reader
@@ -1338,6 +1579,15 @@ func Decode(raw []byte) (*Policy, bool, error) {
 // this release writes, so a key spelled here is never one this reader does not
 // know.
 func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
+	return decodePolicy(raw, keys, false)
+}
+
+// decodePolicy is the read both of the above are: keys is the top-level key set
+// the reader being modelled knows, and strict is whether it is the writer
+// reading — the one place the answer differs is `model_routing`, whose members
+// are refused when this release does not model them only for a writer, and
+// whose table only a writer is held to RT3's checks about.
+func decodePolicy(raw []byte, keys map[string]bool, strict bool) (*Policy, bool, error) {
 	if IsNull(raw) {
 		return nil, false, nil
 	}
@@ -1674,6 +1924,45 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 		}
 		p.ModelGrades = grades
 	}
+	// The routing table is read last, after every block the writer's own checks
+	// judge it against — the credentials and the pools a chain's source names,
+	// the providers it resolves through, the budget a paid source after a pool
+	// is held to, and the crafts and grades whose models it must answer — so
+	// that the strict read below has the blocks in hand (routing.Problems, RT3).
+	// A block that sets neither an entry nor a pool is no block, the crafts'
+	// rule: two spellings of "this project routes nothing" are one answer and a
+	// writer that round trips this policy writes no member.
+	//
+	// The read is strict for the writer and tolerant for everyone else, which is
+	// the pair Decode and DecodeStrict document: a member a later release adds
+	// inside the key is a member a run in flight must not halt on, and a table
+	// the checks refuse is one only the writer's gate may land.
+	if mraw, ok := doc["model_routing"]; ok && !IsNull(mraw) {
+		dec := json.NewDecoder(bytes.NewReader(mraw))
+		if strict {
+			dec.DisallowUnknownFields()
+		}
+		var mr ModelRouting
+		if err := dec.Decode(&mr); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: model_routing: %w", err)
+		}
+		if len(mr.Entries) > 0 || len(mr.Pools) > 0 {
+			p.ModelRouting = &mr
+		}
+		if strict && p.ModelRouting != nil {
+			// The pools the table names are published pools, so they are held to
+			// the rules a published pool is held to (config.ValidatePublishedPools):
+			// craft_pools carries the same set beside this key, and the members
+			// that are only here — a pool's rule, its principal and its threshold
+			// — are the ones no earlier release could have refused.
+			for _, prob := range config.ValidatePublishedPools(mr.Pools, p.CraftCredentials) {
+				return nil, true, fmt.Errorf("projectpolicy: model_routing.%s: %s", prob.Path, prob.Message)
+			}
+			if problems, _ := p.ModelRoutingProblems(); len(problems) > 0 {
+				return nil, true, fmt.Errorf("projectpolicy: %s: %s", problems[0].Path, problems[0].Message)
+			}
+		}
+	}
 	// The Bitbucket block is judged *before* the profiles block, and the
 	// profiles against it: a profile that mounts the token admits a subset of
 	// this block's repositories, which is a property of the two together, and
@@ -1753,6 +2042,16 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 	if araw, ok := doc["review_against_task"]; ok && !IsNull(araw) {
 		if err := json.Unmarshal(araw, &p.ReviewAgainstTask); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: review_against_task: %w", err)
+		}
+	}
+	// The member's switch for the personal half of a workspace's credentials is
+	// read the same way and for the same reason: a bool or nothing at all,
+	// because the value decides whether the workspace's service serves a person
+	// their own token — a `"true"` the reader dropped would be a member
+	// publishing a switch the enforcer reads as off, with nobody told.
+	if wraw, ok := doc["personal_workspace_tokens"]; ok && !IsNull(wraw) {
+		if err := json.Unmarshal(wraw, &p.PersonalWorkspaceTokens); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: personal_workspace_tokens: %w", err)
 		}
 	}
 	// The daemon's switch and the project's issue adapter are read on their own:
@@ -2050,6 +2349,74 @@ func (p *Policy) BakesRepos() bool { return p == nil || p.BakeRepos == nil || *p
 // launched at all. The zero policy, and a nil one, are on.
 func (p *Policy) OrchestratorOn() bool {
 	return p == nil || p.OrchestratorEnabled == nil || *p.OrchestratorEnabled
+}
+
+// PersonalWorkspaceTokensOn reports whether this policy turns the personal half
+// of a workspace's credentials on (R9, D2972). Absent is OFF, which is the
+// default D2972 chose — so the answer is a method and not the field, because the
+// member is a pointer and a reader that tested it would read a project that
+// never answered as one that turned the personal half on, the direction that
+// would serve a person's own subscription on a member that never asked for it.
+// The zero policy, and a nil one, are off.
+func (p *Policy) PersonalWorkspaceTokensOn() bool {
+	return p != nil && p.PersonalWorkspaceTokens != nil && *p.PersonalWorkspaceTokens
+}
+
+// PersonSwitchReader is R9's switch as the two sides of the personal half read
+// it: the workspace's service, which is the only enforcer and serves many
+// members, and, on the member's own machine, the launcher and `fugaro doctor`,
+// which decide with it whether a launch asks for a grant at all (WC7, WC11).
+//
+// **It is C1's `creds.PersonSwitchReader` built out** (docs/workspace-credentials/
+// contract-person.md), and it lives here rather than in internal/creds for the
+// cycle the contract's own file states: internal/creds imports this package, so
+// the interface it declares and the reader that satisfies it cannot be in the
+// same package. The method signature is the whole of the agreement — this type
+// carries no import of internal/creds and satisfies the interface structurally —
+// and the conformance is pinned where both packages can be named
+// (internal/cli/person_switch_conformance_test.go), which is not this package's
+// own test: creds' boundary test keeps the credential state out of every
+// directory but its allow-list, and this package is a run-side one.
+//
+// **Read answers one member project's published policy**, and it is a function
+// because the two callers reach the node differently: a member's own machine
+// reads its one project's node (projectpolicy.Read over its own database) and
+// the workspace's service resolves the node of the member its caller's verified
+// project names (WC5's scope). A read that fails is an error and never off
+// (contract-person.md): WC5 refuses a call whose member's policy could not be
+// read rather than serving the shared entries as if the switch were off, and
+// WC7 starts the run without the personal token and says why (D3147). A member
+// project with no policy at all — found false — is the absent key's own state
+// and reads as off.
+type PersonSwitchReader struct {
+	Read func(ctx context.Context, project string) (*Policy, bool, error)
+}
+
+// PersonSwitchOn reports whether the member project's published policy names
+// PersonSwitchKey with a true value. Absent is off (R9), and a policy that
+// could not be read is an error and never a false.
+func (r PersonSwitchReader) PersonSwitchOn(ctx context.Context, project string) (bool, error) {
+	p, found, err := r.Read(ctx, project)
+	if err != nil {
+		return false, err
+	}
+	if !found {
+		return false, nil
+	}
+	return p.PersonalWorkspaceTokensOn(), nil
+}
+
+// PersonSwitchOverDB is the PersonSwitchReader a member's own machine uses: it
+// reads the one project's node through db, which is the member's own database
+// (projectpolicy.Read). The project argument it is handed names that project for
+// a caller's own record; the database is already the member's, so the read does
+// not choose by it.
+func PersonSwitchOverDB(db *rtdb.Client) PersonSwitchReader {
+	return PersonSwitchReader{
+		Read: func(ctx context.Context, _ string) (*Policy, bool, error) {
+			return Read(ctx, db)
+		},
+	}
 }
 
 // ImageMap is the image_map block of a policy: the catalog entry each of the
