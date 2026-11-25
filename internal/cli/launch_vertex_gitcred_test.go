@@ -304,7 +304,7 @@ func TestLaunchRefusesAVertexRunWhoseBundleCannotServeGitCredentials(t *testing.
 			case tc.refused && err == nil:
 				t.Fatal("a vertex repository whose service cannot serve its git credential was launched: the job's address opens its git provider keyless, so the run would stop at its first git call inside the container")
 			case tc.refused:
-				for _, want := range []string{"acme/app", "GitHub App private key", "fugaro creds set", "fugaro update --repo"} {
+				for _, want := range []string{"acme/app", "GitHub App key", "fugaro creds set", "fugaro update --repo"} {
 					if !strings.Contains(err.Error(), want) {
 						t.Errorf("the refusal does not name %q: %v", want, err)
 					}

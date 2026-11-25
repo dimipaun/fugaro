@@ -1136,7 +1136,7 @@ func (e *cloudEnv) gitCredentialGate(ctx context.Context, slug string, spec *tas
 	}
 	switch kind {
 	case gitprov.KindGitHub:
-		return userErr("%s: the credentials service holds no GitHub App private key. Run `fugaro creds set %s`, then `fugaro update --repo .`",
+		return userErr("%s: the credentials service holds no GitHub App key. Store it: `fugaro creds set %s`, then run `fugaro update --repo .`",
 			spec.Repo, config.GitHubAppKeySecret)
 	case gitprov.KindBitbucket:
 		if !e.proxiedRepo(ctx, slug, spec) {
@@ -1144,7 +1144,7 @@ func (e *cloudEnv) gitCredentialGate(ctx context.Context, slug string, spec *tas
 			// mounted token: the address is not what a Bitbucket run reads.
 			return nil
 		}
-		return userErr("%s: the credentials service holds no bitbucket-token. Run `fugaro creds set %s`, then `fugaro update --repo .`",
+		return userErr("%s: the credentials service holds no bitbucket-token. Store it: `fugaro creds set %s`, then run `fugaro update --repo .`",
 			spec.Repo, config.BitbucketSecret)
 	}
 	return nil
