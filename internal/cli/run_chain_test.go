@@ -7,10 +7,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/routing"
 )
+
+// chainLevelModel is the model a level of the task's own block names in the
+// tests below: one no other rung of the fixture's run names, so a grant that
+// covers it is a grant that read the level.
+const chainLevelModel = "gpt-5"
 
 // chainLaunchYAML is projectJobRepoYAML's checkout with the run's model written
 // down: the gate is judged on the models the rungs can choose, and a fixture
@@ -108,6 +114,56 @@ func TestRunGrantsByTheTable(t *testing.T) {
 	}
 }
 
+// chainLevelYAML routes the model a level of the task's own block names beside
+// the one the fixture's run calls by its file: the two entries are one per rung
+// the launch has to read, and the second is the one a launch reading the
+// configuration's level blocks alone would leave out.
+const chainLevelYAML = `model_routing:
+    - match: claude-*
+      chain:
+        - kind: pool
+          pool: team
+    - match: ` + chainLevelModel + `
+      chain:
+        - kind: launcher-pool
+`
+
+// TestRunGrantsTheTasksLevelModel: a level of the task's own review_levels
+// block — what `fugaro run --review-levels` writes — is a rung of the run
+// (craft.ModelRungs, agent.levels.<level>.model), and the launch reads it the
+// way the run itself resolves it: the grant covers the sources that model
+// resolves to by the table, and the gate below refuses a level model no entry
+// matches.
+//
+// The configuration's own level blocks are not that answer: a task's block is
+// the layer that writes a level's model last (config.ResolveLevels), so a
+// launch reading the file's levels would route a model the run never calls and
+// leave the one it does call to fail at its first review.
+//
+// Mutation (verified, run and restored): reading cfg.Agent.Levels directly
+// (launchRunModels' loop before this arm) leaves the launcher-pool source out of
+// the grant, and the gate arm below launches a run whose level has no source.
+func TestRunGrantsTheTasksLevelModel(t *testing.T) {
+	r := newSlipLaunchRigOver(t, func(t *testing.T, f *launchBudgetFixture) {
+		projectJobCheckoutYAML(t, cascadeLaunchYAML)
+		f.appendConfig(t, chainLevelYAML)
+	})
+	r.spec.ReviewLevels = &config.ReviewLevels{L2: &config.LevelSetting{Model: chainLevelModel}}
+	r.launch(t, func(req credsvc.SlipGrantRequest) (credsvc.SlipGrantResponse, error) {
+		return credsvc.SlipGrantResponse{Slip: fakeSlipID, MaxRuntimeSeconds: req.MaxRuntimeSeconds}, nil
+	})
+	// The level's model first: the rungs are read in the order craft.ModelRungs
+	// names, and the levels come before the crafts and agent.model, which are
+	// the models the pool-kind source below is asked for.
+	want := []creds.GrantSource{
+		{Kind: string(routing.KindLauncherPool)},
+		{Kind: string(routing.KindPool), Pool: "team"},
+	}
+	if got := r.req.Sources; !slices.Equal(got, want) {
+		t.Errorf("the grant asked for %+v, want %+v: the sources the level's own model reaches by the table, beside the run's other rungs", got, want)
+	}
+}
+
 // TestRunGrantsNothingWithoutATable: an installation that publishes no table is
 // the release-1 one, and its grant is the one it always was — the credentials
 // the run's configuration selects, and no sources member at all (omitempty,
@@ -176,6 +232,23 @@ func TestRunRefusesAnUnroutedModel(t *testing.T) {
 		}
 		if n := len(f.run.Executions()); n != 0 {
 			t.Errorf("the refused launch started %d executions, want none: the gate runs before the claim", n)
+		}
+	})
+
+	t.Run("the task's level model is unrouted", func(t *testing.T) {
+		r := newSlipLaunchRigOver(t, func(t *testing.T, f *launchBudgetFixture) {
+			projectJobCheckoutYAML(t, cascadeLaunchYAML)
+			f.appendConfig(t, chainTableYAML)
+		})
+		r.spec.ReviewLevels = &config.ReviewLevels{L2: &config.LevelSetting{Model: chainLevelModel}}
+		err := r.env.chainRoutingGate(context.Background(), r.spec)
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("a launch whose level model the table does not route: err = %v, want a refusal naming the level's model and the fix", err)
+		}
+		for _, want := range []string{chainLevelModel, "fugaro routing set"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not name %q: %v", want, err)
+			}
 		}
 	})
 

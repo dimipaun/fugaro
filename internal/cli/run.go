@@ -7187,8 +7187,10 @@ func launchCraftModelLayers(env *cloudEnv, co *config.Config) []craft.Layer {
 //
 // Each rung is read from the document the run's own resolution reads, resolved
 // over the installation's config: the crafts through the same two layers
-// slipCredentialNames resolves an access from, so the launcher and the runner
-// cannot disagree about what one configuration means.
+// slipCredentialNames resolves an access from, and the levels through the
+// resolver the run's own bootstrap resolves them with (launchLevelModels), so
+// the launcher and the runner cannot disagree about what one configuration
+// means.
 func launchRunModels(ctx context.Context, env *cloudEnv, spec *task.Spec) []string {
 	cfg := launchLevelsConfig(ctx, env, spec)
 	if cfg == nil {
@@ -7203,10 +7205,8 @@ func launchRunModels(ctx context.Context, env *cloudEnv, spec *task.Spec) []stri
 	if spec.ModelGrade != "" {
 		add(cfg.ModelGrades.Of(string(spec.ModelGrade)).Model)
 	}
-	for _, level := range []*config.LevelSetting{cfg.Agent.Levels.L1, cfg.Agent.Levels.L2, cfg.Agent.Levels.L3} {
-		if level != nil {
-			add(level.Model)
-		}
+	for _, model := range launchLevelModels(ctx, env, spec, cfg) {
+		add(model)
 	}
 	eff, _ := craft.Resolve(launchCraftModelLayers(env, cfg), false)
 	for _, name := range config.CraftNames {
@@ -7217,6 +7217,33 @@ func launchRunModels(ctx context.Context, env *cloudEnv, spec *task.Spec) []stri
 	}
 	add(cfg.Agent.Model)
 	add(spec.Overrides.Model)
+	return models
+}
+
+// launchLevelModels is the model each review level the run would run resolves
+// to: the resolution, and not the configuration's own level blocks, because a
+// task carries a level's block of its own (spec.ReviewLevels, written by
+// `fugaro run --review-levels`) and it is the layer that writes a level's model
+// last. A level the run does not run resolves to no model at all, so a level
+// `none` switched off is not a rung either reader asks about.
+//
+// The resolution is launched with its warnings discarded: it is the levels
+// gate's own read (launchResolve, launchReviewLevelsAsk), which printed them
+// for this launch and a run of it twice would be a note a person reads twice. A
+// resolution this launch cannot make is that gate's refusal — the launch is
+// refused before its grant — so the configuration's own level blocks stand in
+// and this read asks about no model the refusal did not already cover.
+func launchLevelModels(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config) []string {
+	recipe, _ := launchRecipeForLevels(ctx, spec)
+	if r := launchResolve(ctx, env, spec, cfg, recipe, io.Discard); r.err == nil {
+		return []string{r.levels.L1.Model, r.levels.L2.Model, r.levels.L3.Model}
+	}
+	var models []string
+	for _, level := range []*config.LevelSetting{cfg.Agent.Levels.L1, cfg.Agent.Levels.L2, cfg.Agent.Levels.L3} {
+		if level != nil {
+			models = append(models, level.Model)
+		}
+	}
 	return models
 }
 
