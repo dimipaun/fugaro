@@ -2,11 +2,16 @@ package cli
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/routing"
 )
 
@@ -14,7 +19,7 @@ import (
 // checkout of the installation's repository — which is where the migration
 // reads the repository's own file from — and a run of the update door, whose
 // writer is the buffer the report lands in.
-func routingMigrateRig(t *testing.T, repoYAML string) (*initRun, string, *bytes.Buffer) {
+func routingMigrateRig(t *testing.T, repoYAML string) (*initEngine, string, *bytes.Buffer) {
 	t.Helper()
 	dir := t.TempDir()
 	isolateProjects(t, dir)
@@ -27,7 +32,23 @@ func routingMigrateRig(t *testing.T, repoYAML string) (*initRun, string, *bytes.
 	o := &initOptions{yes: true, cloud: cloudOptions{stderr: discard}}
 	cmd := newUpdateCmdWith(o)
 	cmd.SetOut(&out)
-	return newInitRun(cmd, o), filepath.Join(dir, "config.yaml"), &out
+	path := filepath.Join(dir, "config.yaml")
+	return &initEngine{r: newInitRun(cmd, o), lc: parseLocalConfig(t, routingMigrateLocalYAML), path: path}, path, &out
+}
+
+// convergeTail runs the two steps MG2 is written into a converge as
+// (init.go's writeConfig, then init_stages.go's tail): the local config's own
+// write, converted by the craft migration every write makes, and then the
+// routing migration. The report is asked for first because the converge asks
+// for it before its first stage plans — every line about the migration is above
+// the writes, not between them.
+func convergeTail(t *testing.T, e *initEngine, path string, original []byte) {
+	t.Helper()
+	e.r.routingMigrationFor(e.lc)
+	if err := e.r.writeLocalConfig(e.lc, path, original, true); err != nil {
+		t.Fatal(err)
+	}
+	e.migrateRouting(&initflow.Result{})
 }
 
 // routingMigrateRepoYAML is acme/api's own file as the release behind leaves
@@ -58,11 +79,17 @@ repos:
 // already. Before this release the key was an unknown field and the update
 // wrote no table at all.
 func TestUpdateMigratesToTheTable(t *testing.T) {
-	r, path, _ := routingMigrateRig(t, routingMigrateRepoYAML)
-	lc := parseLocalConfig(t, routingMigrateLocalYAML)
-	if err := r.writeLocalConfig(lc, path, nil, true); err != nil {
+	e, path, _ := routingMigrateRig(t, routingMigrateRepoYAML)
+	// The write every stage of the converge makes: it carries no table, because
+	// the stages after it plan from this config and the table is what moves
+	// their plan (ChainPlanFor). The migration's own write is the tail's.
+	if err := e.r.writeLocalConfig(e.lc, path, nil, true); err != nil {
 		t.Fatal(err)
 	}
+	if planned := parseLocalConfigBytes(t, readFile(t, path)); len(planned.ModelRouting) > 0 {
+		t.Fatalf("the run's own write of the config carries the table, so the update plans from it: %+v", planned.ModelRouting)
+	}
+	e.migrateRouting(&initflow.Result{})
 	written := parseLocalConfigBytes(t, readFile(t, path))
 
 	if len(written.ModelRouting) == 0 {
@@ -105,20 +132,19 @@ func TestUpdateSaysWhatChangesFirst(t *testing.T) {
 		"agent:\n  auth: oauth\n  oauth_token: ada\n  model: claude-haiku-4-5\n" +
 		"  crafts:\n    coder: { access: vertex }\n" +
 		"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
-	r, path, out := routingMigrateRig(t, repoYAML)
+	e, path, out := routingMigrateRig(t, repoYAML)
 	// A pool with two members, the spread switch off: it rotates among its
 	// tokens once migrated (D3177). And a project whose fallback is auto: a run
 	// pays on the key as soon as its subscriptions are exhausted (D3192).
-	lc := parseLocalConfig(t, routingMigrateLocalYAML+`pools:
+	const local = routingMigrateLocalYAML + `pools:
   - { name: pair, members: [ada, grace], strategy: failover }
 credentials:
   - { name: ada, type: claude-oauth }
   - { name: grace, type: claude-oauth }
 credential_cascade: { fallback: auto }
-`)
-	if err := r.writeLocalConfig(lc, path, nil, true); err != nil {
-		t.Fatal(err)
-	}
+`
+	e.lc = parseLocalConfig(t, local)
+	convergeTail(t, e, path, nil)
 	report := out.String()
 	for _, want := range []string{
 		"routing: acme/api's runs go out on the account default, then the account ada, as they do today",
@@ -139,28 +165,119 @@ credential_cascade: { fallback: auto }
 // in the file is the marker (PL3 reads the same one off the published node),
 // and the file is written byte for byte as it stands.
 func TestUpdateMigrationIsIdempotent(t *testing.T) {
-	r, path, out := routingMigrateRig(t, routingMigrateRepoYAML)
-	first := parseLocalConfig(t, routingMigrateLocalYAML)
-	if err := r.writeLocalConfig(first, path, nil, true); err != nil {
-		t.Fatal(err)
-	}
+	e, path, out := routingMigrateRig(t, routingMigrateRepoYAML)
+	convergeTail(t, e, path, nil)
 	once := readFile(t, path)
 	out.Reset()
 
 	// A second run, on the file the first one left: the marker is the file's
 	// own, and a fresh run is what reads it rather than this run's guard.
-	o := &initOptions{yes: true, cloud: cloudOptions{stderr: discard}}
-	cmd := newUpdateCmdWith(o)
-	cmd.SetOut(out)
-	second := newInitRun(cmd, o)
-	if err := second.writeLocalConfig(parseLocalConfigBytes(t, once), path, once, true); err != nil {
-		t.Fatal(err)
-	}
+	second, _, out2 := routingMigrateRig(t, routingMigrateRepoYAML)
+	second.lc = parseLocalConfigBytes(t, once)
+	second.path = path
+	convergeTail(t, second, path, once)
 	if now := readFile(t, path); !bytes.Equal(once, now) {
 		t.Errorf("the second update changed the installation's config:\n--- first\n%s\n--- second\n%s", once, now)
 	}
-	if !strings.Contains(out.String(), "is up to date") {
-		t.Errorf("the second update did not report the config as current:\n%s", out.String())
+	if s := out2.String(); strings.Contains(s, "wrote "+path) || strings.Contains(s, "routing:") {
+		t.Errorf("the second update wrote the table again:\n%s", s)
+	}
+}
+
+// publishFixture is the fixture the two publish tests share: the project
+// fixture's own two repositories, both with a checkout this machine holds —
+// because a table written with one of them unreadable is no table at all, and
+// the migration's fail-safe would leave the node without a `model_routing`
+// member and the test would prove nothing — and the account both of them run
+// on. The extra block is the test's own.
+func publishFixture(t *testing.T, extra string) *projectFixture {
+	t.Helper()
+	f := newProjectFixture(t, "claude_accounts:\n  ada: { allow_data_to: [acme/app, acme/other] }\n"+extra)
+	origin := "https://github.com/acme/app.git"
+	co := checkoutsAt(t, filepath.Join(f.dir, "src", "app"),
+		strings.Replace(routingMigrateRepoYAML, "acme/api", "acme/app", -1), origin)
+	checkoutsRemember(t, "aurora", co, origin)
+	other := "https://bitbucket.org/acme/other"
+	coOther := checkoutsAt(t, filepath.Join(f.dir, "src", "other"),
+		"version: 1\nproject: aurora\ngit: { provider: bitbucket }\nagent: { auth: oauth, oauth_token: ada, model: claude-haiku-4-5 }\n"+
+			"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n", other)
+	// checkoutsRemember is the github shape alone; this fixture's second
+	// repository is the bitbucket one its own config names.
+	if err := localcfg.RecordCheckout(os.Getenv, "aurora",
+		localcfg.CheckoutIdentity{Provider: "bitbucket", Repo: "acme/other"}, coOther, time.Now(), checkoutTempRoots()); err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+// TestUpdatePublishesThemToTheNode: the same answer reaches the published node
+// through RT4's publisher, in the update that migrates — and it reaches it from
+// a copy of the config, so the config the run holds and plans from carries no
+// table while the node does. The node's `model_routing` key is PL3's marker:
+// the credentials service reads it as the installation's migration.
+//
+// The fixture is a project whose cascade serves, which is the shape both halves
+// agree on: the pool the migration writes is the cascade's, and the publisher
+// carries it as the ordinary legacy_open pool the node's readers resolve (F36).
+// The pool the migration writes for a project whose cascade does not serve is
+// the next test's.
+func TestUpdatePublishesThemToTheNode(t *testing.T) {
+	f := publishFixture(t, "routing: { claude: { via: cascade } }\n"+
+		"credentials:\n  - { name: ada, type: claude-oauth }\n"+
+		"pools:\n  - { name: cascade, members: [ada], cascade: true }\n")
+	// A node that is there, so this is the publish an update makes of a project
+	// it already serves rather than the first one a person confirms by typing
+	// the project's name.
+	f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
+	h := newMigrationRig(t, f, &initOptions{yes: true})
+	if out, err := h.apply(t, true); err != nil {
+		t.Fatalf("the update refused the publish: %v\n%s", err, out)
+	}
+	pol := publishedPolicy(t, f)
+	if pol.ModelRouting == nil {
+		t.Fatalf("the published node carries no model_routing: %s", nodeJSON(t, f, projectpolicy.PathShared()))
+	}
+	entry, ok := routingEntryFor(pol.ModelRouting.Entries, "claude-haiku-4-5")
+	if !ok {
+		t.Fatalf("the published table has no entry for claude-haiku-4-5: %+v", pol.ModelRouting.Entries)
+	}
+	if want := routing.SharedPool; len(entry.Chain) != 1 || entry.Chain[0].Pool != want {
+		t.Errorf("the published entry's chain is %+v, want the shared pool %s alone", entry.Chain, want)
+	}
+	pool, ok := publishedCraftPool(t, pol, routing.SharedPool)
+	if !ok || !pool.LegacyOpen {
+		t.Errorf("craft_pools %s = %+v, %v, want the ordinary legacy_open pool a source of the table is resolved against (F36)", routing.SharedPool, pool, ok)
+	}
+	// The copy is what the publisher read: the run's own config is left as it
+	// was, which is the whole reason the plan of this update cannot move.
+	if len(h.s.e.lc.ModelRouting) > 0 {
+		t.Errorf("the migration reached the run's own config, so this update plans from the migrated table: %+v", h.s.e.lc.ModelRouting)
+	}
+}
+
+// TestUpdatePublishesNoTableTheNodeCannotCarry: a project whose cascade does
+// not serve gets the same migration, and the pool it is served from — the
+// installation's own accounts, nobody's pool — is one the publisher's rule
+// leaves out of the node (an ownerless pool a config states is not published,
+// D2608). The table is not published rather than refused: `fugaro update` may
+// not end on a member of the migration's own answer (the HARD RULE), one line
+// names the pool that stayed behind, and the installation's config keeps the
+// table for the release that can publish it.
+func TestUpdatePublishesNoTableTheNodeCannotCarry(t *testing.T) {
+	f := publishFixture(t, "")
+	// A node the stage has a reason to rewrite, so the test reads the one it
+	// writes rather than a document nothing touched.
+	f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
+	h := newMigrationRig(t, f, &initOptions{yes: true})
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("the update ended on the table the node cannot carry: %v\n%s", err, out)
+	}
+	if want := "the routing table was not published: the node cannot carry the pool " + routing.SharedPool; !strings.Contains(out, want) {
+		t.Errorf("the update does not say the table stayed behind (%q):\n%s", want, out)
+	}
+	if pol := publishedPolicy(t, f); pol.ModelRouting != nil {
+		t.Errorf("the node carries a table naming a pool it does not carry: %+v", pol.ModelRouting)
 	}
 }
 

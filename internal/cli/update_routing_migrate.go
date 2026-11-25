@@ -3,12 +3,14 @@ package cli
 import (
 	"fmt"
 	"maps"
+	"os"
 	"slices"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/craft"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -31,10 +33,22 @@ import (
 //
 // # Where it runs, and why there
 //
-// It is called by writeLocalConfig (init.go), on the config about to be
-// written and BEFORE that write: the acceptance asks for the report before any
-// write, and the local config's own write is the first one this migration
-// makes. It is the update door's alone — `fugaro setup` creates an
+// Two steps, one answer, and the split is what keeps the update's own infra
+// plan out of it. The table moves what a repository's root is applied with —
+// `model_secrets_served`, the credentials service's chains, Vertex — so a local
+// config that carried it while the run was still planning would change the plan
+// of the very update that migrates (ChainPlanFor reads it). So nothing writes
+// it while the run plans:
+//
+//   - the policy stage publishes it (routingForPublish), from a copy of the
+//     config the run holds, through RT4's publisher: the node carries the table,
+//     the pools and the admissions, and the copy never reaches the run's config.
+//   - the converge's tail writes it into this machine's file
+//     (initEngine.migrateRouting), after every stage that plans an apply has
+//     run, so the plan the next update builds is the one that reads it.
+//
+// The report is printed when MG1's answer is first asked for, which is before
+// either write. It is the update door's alone — `fugaro setup` creates an
 // installation, and a project being created has no previous version to migrate
 // from — and `--plan-only` changes nothing.
 //
@@ -47,15 +61,8 @@ import (
 // warning naming what happened and the config keeps the routing it has today,
 // which is the state an installation that never migrated is already in (X2
 // refuses the retired keys in a later release; this release still reads them).
-//
-// # What it does not do
-//
-// It publishes nothing. The published node is RT4's (its block carries
-// `model_routing`, its publisher is the one both doors take), and this release
-// does not have it: the write here is the local config's, and the published
-// node is RT4's own task. Until it lands the migration is a local one — the
-// pointer is recorded in /work/state/followup.md and in the run's
-// discovered.json.
+// The one state that is neither a write nor a warning is a migration with no
+// entry to write, and routingMigrationFor says why.
 //
 // It also leaves every entry MG1 kept on the release-1 bridge exactly where it
 // is (D3196): the bridge serves those calls the credential their own
@@ -65,22 +72,58 @@ import (
 // the config refuses a pool and a credential of one name, and the account's own
 // credential — which the craft migration derived — is that pool of one already.
 
-// migrateRouting is MG2's step: it asks MG1 for the migration of this
-// installation and writes the answer into the config about to be written,
-// printing first what changes.
-func (r *initRun) migrateRouting(next *localcfg.Config) {
-	if next == nil || r.o.planOnly || r.o.doorName() != updateDoor.name || r.migratedRouting {
-		return
+// routingMigrationDone is MG1's answer for this installation, as the two writers
+// use it: the members the config is written with, and the documents the report
+// and the publish are made of.
+type routingMigrationDone struct {
+	table routing.Table
+	pools []config.Pool
+	creds []config.Credential
+	cfgs  map[string]*config.Config
+	mig   routing.Migration
+}
+
+// routingMigrationFor is MG1's answer for this installation, computed once per
+// run and printed once: the report is what changes — and what does not — and it
+// belongs before the writes, not to one of them. It answers nil when this run
+// migrates nothing (not the update door, --plan-only, nothing to migrate, or one
+// of the states the header calls the config as this run found it).
+func (r *initRun) routingMigrationFor(lc *localcfg.Config) *routingMigrationDone {
+	if r.routingAsked {
+		return r.routingMig
 	}
-	r.migratedRouting = true
+	r.routingAsked = true
+	if lc == nil || r.o.planOnly || r.o.doorName() != updateDoor.name {
+		return nil
+	}
 	// The marker is the table itself, and PL3 reads the same one off the
 	// published node: an installation whose config carries a table is migrated,
-	// and a second update writes nothing. It is also what keeps a converge that
-	// writes the local config more than once from migrating twice.
-	if len(next.ModelRouting) > 0 {
-		return
+	// and a second update writes nothing.
+	if len(lc.ModelRouting) > 0 {
+		return nil
 	}
-	cfgs, res, unseen := projectCheckoutResolved(next)
+	// The answer is the one the config written from this one would produce, and
+	// every write of the local config converts the craft keys first
+	// (migrateCraftKeys, init_craft_migrate.go): the credentials an account's
+	// keys derive are what says which of MG1's pools may be written beside them
+	// (routingConfig's namespace rule), so the conversion is applied to a copy
+	// here rather than assumed of the run's own config, which a converge that
+	// never reached the write would not have.
+	src := *lc
+	migrateCraftKeys(&src)
+	cfgs, res, unseen := projectCheckoutResolved(&src)
+	mig, pools, creds := routingMigration(&src, cfgs, res)
+	// An answer with nothing in it is not a migration, and the one state that
+	// gives it is a machine that holds no checkout of any repository: MG1 is
+	// answered no model at all (buildTable reads Repos alone), so there is no
+	// entry, no call on the bridge, no move and no pool that starts rotating. The
+	// update stays as quiet as it was before this release rather than carrying the
+	// fail-safe below on every run of a machine that will never hold them. The
+	// pools are not part of the question: the answer carries the shared pool
+	// whenever the installation has an account.
+	if len(mig.Table) == 0 && len(mig.Bridge) == 0 && len(mig.Moves) == 0 && len(mig.Inert) == 0 {
+		return nil
+	}
 	if len(unseen) > 0 {
 		// A table written without a repository's own file would route that
 		// repository's calls nowhere: the entries are built from the models the
@@ -89,28 +132,127 @@ func (r *initRun) migrateRouting(next *localcfg.Config) {
 		// migrates.
 		r.warn(fmt.Sprintf("the routing table was not written: %s has no readable fugaro.yaml here, and a table without it would route its calls nowhere",
 			strings.Join(unseen, ", ")))
-		return
-	}
-	mig, pools, creds := routingMigration(next, cfgs, res)
-	if len(mig.Table) == 0 && len(mig.Pools) == 0 {
-		return
+		return nil
 	}
 	// The config the migration would write is judged before it is written and
 	// before anything is printed: a file this release refuses would turn
-	// `fugaro update` into a failure on the next stage that wrote it, and a
+	// `fugaro update` into a failure on the next step that wrote it, and a
 	// report of a migration that did not happen would be worse than none.
-	oldTable, oldPools, oldCreds := next.ModelRouting, next.Pools, next.Credentials
+	next := src
 	next.ModelRouting, next.Pools, next.Credentials = mig.Table, pools, creds
 	data, err := next.Marshal()
 	if err == nil {
 		_, err = localcfg.Parse(data)
 	}
 	if err != nil {
-		next.ModelRouting, next.Pools, next.Credentials = oldTable, oldPools, oldCreds
+		r.warn(fmt.Sprintf("the routing table was not written: the config it writes does not validate (%s)", safetext.FieldErr(err)))
+		return nil
+	}
+	r.routingMig = &routingMigrationDone{table: mig.Table, pools: pools, creds: creds, cfgs: cfgs, mig: mig}
+	r.printRoutingMigration(&src, cfgs, mig)
+	return r.routingMig
+}
+
+// routingForPublish is the same answer applied to a COPY of the config the
+// publish is built from, so the node RT4's publisher writes carries the table,
+// the pools and the admissions. The run's own config is left as it is: every
+// stage that plans an apply reads it, and the table in it is what changes the
+// plan (the header's whole argument). It answers the config unchanged when this
+// run migrates nothing.
+//
+// A table whose source names a pool the publisher's own rule leaves out of the
+// node is answered unchanged too, with one line saying which pool: the pool the
+// migration writes for the installation's own accounts is nobody's (a project's
+// shared pool is its principal and names no owner), and publishing a table that
+// names it is refused by the publisher's read of the table rather than by its
+// own rule for the block — a refusal `fugaro update` may not end on (the HARD
+// RULE, and D2608's "an ownerless local pool is saved, is not published, and is
+// named in one line at update"). The installation's config keeps the table
+// either way, and the next update of a project whose pools the node can carry
+// publishes it.
+func (r *initRun) routingForPublish(lc *localcfg.Config) *localcfg.Config {
+	d := r.routingMigrationFor(lc)
+	if d == nil || lc == nil {
+		return lc
+	}
+	next := *lc
+	next.ModelRouting, next.Pools, next.Credentials = d.table, d.pools, d.creds
+	if left := poolsTheNodeCannotCarry(&next); len(left) > 0 {
+		r.warn(fmt.Sprintf("the routing table was not published: the node cannot carry the pool %s, and a table naming it is refused (D2608)",
+			strings.Join(left, ", ")))
+		return lc
+	}
+	return &next
+}
+
+// poolsTheNodeCannotCarry names the pools a source of the table names that the
+// node this publish would write does not carry, in the order the table meets
+// them. It asks the publisher's own rule for the block (publishedCraftPools)
+// rather than a second one: the block is what a source of the table is resolved
+// against, and the file's own pools are the whole of what the migration asks
+// the publish to carry. It is asked with no node behind the write — the pools
+// the node already holds are read only once the publish reads it, which is
+// after the config the publish is built from — so a pool the node carries and
+// this file does not is reported as one the node cannot carry, which is a table
+// left for the update that reads the node.
+func poolsTheNodeCannotCarry(lc *localcfg.Config) []string {
+	carried := map[string]bool{}
+	pools, _ := publishedCraftPools(lc, nil, publishedCraftCredentials(lc, nil))
+	for _, p := range pools {
+		carried[p.Name] = true
+	}
+	var out []string
+	for _, e := range lc.ModelRouting {
+		for _, s := range e.Chain {
+			if s.Kind == routing.KindPool && s.Pool != "" && !carried[s.Pool] {
+				out = appendName(out, s.Pool)
+			}
+		}
+	}
+	return out
+}
+
+// migrateRouting is the converge's tail: it writes MG1's answer into this
+// machine's local config, where every stage that plans an apply is behind it.
+// It is a warning and never an error — the HARD RULE — and it writes nothing
+// when the run changed nothing (--plan-only, a failed update).
+func (e *initEngine) migrateRouting(res *initflow.Result) {
+	r := e.r
+	if r == nil || e.lc == nil || e.path == "" || res == nil || res.PlanOnly || res.Failed != nil {
+		return
+	}
+	d := r.routingMigrationFor(e.lc)
+	if d == nil {
+		return
+	}
+	// The document is built from the file as it is at this moment and not from
+	// the engine's own copy of the config, for the reason writeRecordedLocations
+	// is: the repository stage writes the file from the config IT read, and a
+	// write from e.lc would put the whole of that back. This step writes three
+	// members and leaves every other one as the file has it.
+	old, err := os.ReadFile(e.path)
+	if err != nil {
+		r.warn(fmt.Sprintf("the routing table was not written: %s could not be read (%s)", e.path, safetext.FieldErr(err)))
+		return
+	}
+	cur, err := localcfg.Parse(old)
+	if err != nil {
+		r.warn(fmt.Sprintf("the routing table was not written: %s could not be read (%s)", e.path, safetext.FieldErr(err)))
+		return
+	}
+	next := *cur
+	next.ModelRouting, next.Pools, next.Credentials = d.table, d.pools, d.creds
+	data, err := next.Marshal()
+	if err == nil {
+		_, err = localcfg.Parse(data)
+	}
+	if err != nil {
 		r.warn(fmt.Sprintf("the routing table was not written: the config it writes does not validate (%s)", safetext.FieldErr(err)))
 		return
 	}
-	r.printRoutingMigration(next, cfgs, mig)
+	if err := r.writeLocalConfig(&next, e.path, old, true); err != nil {
+		r.warn(fmt.Sprintf("the routing table was not written: %s (%s)", e.path, safetext.FieldErr(err)))
+	}
 }
 
 // routingMigration is MG1's input and its answer, translated: the installation
@@ -213,7 +355,7 @@ func routingRepo(lc *localcfg.Config, cfg *config.Config, res *config.Resolution
 		auth = cfg.Agent.Auth
 	}
 	in := legacyInput(lc, cfg, auth)
-	repo := routing.Repo{Name: name, Auth: auth, Models: routingModels(lc, cfg, in.Grades)}
+	repo := routing.Repo{Name: name, Auth: auth, Models: routingRepoModels(lc, cfg, in.Grades)}
 	// The accounts the repository's stages go out on: the retired walk's answer
 	// for this repository, and the accounts a craft's or a grade's access names.
 	for _, stage := range config.RunStages {
@@ -270,10 +412,10 @@ func isAccountName(lc *localcfg.Config, name string) bool {
 	return false
 }
 
-// routingModels is every model the repository's file names, with the provider
+// routingRepoModels is every model the repository's file names, with the provider
 // entry that claims it: `agent.model`, `agent.models.*`, a craft's model and a
 // grade's (MG1's Repo.Models).
-func routingModels(lc *localcfg.Config, cfg *config.Config, grades config.ModelGrades) []routing.Model {
+func routingRepoModels(lc *localcfg.Config, cfg *config.Config, grades config.ModelGrades) []routing.Model {
 	var ids []string
 	for _, id := range []string{
 		cfg.Agent.Model,
