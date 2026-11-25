@@ -748,6 +748,25 @@ import (
 // over the designated mirror, so a case says which stored reports the commit
 // run had to add, what a file the checkout already held and the run rewrote
 // reads, and that a report the folder holds by hand is left alone.
+// Check 820 is the location preference's owner-run first-EU-installation check.
+// Its fakes are a fake `gcloud` over the reads a first installation is judged
+// by (the project, its buckets -- counted, because the premise reads them before
+// the setup and the buckets row after it -- their locations, the Firestore
+// databases, the Artifact Registry repositories, the containers and the log
+// buckets, and one access token) a fake `curl` that answers only the two
+// Realtime Database shapes through the 0600 config file the check hands over
+// and refuses a request carrying any other header, and a fake `fugaro` whose
+// `setup`, `doctor`, `run`, `runs ls` and `budget show` the case bends -- so a
+// case says what each row reads back from a setup that converged, and that the
+// check calls `fugaro` at all only after its premise held.
+// Check 821 is the same work's owner-run update-with-a-run-in-flight check. Its
+// fakes are one fake `fugaro` whose `doctor` (before and after the converge),
+// `run`, `runs ls`, `update` and `update --plan-only` the case serves call by
+// call, so a case says that the run in flight is followed across the update and
+// its record is still whole, that a plan which would change something is the
+// finding U9 exists for, that a step left for the owner is not a refusal, and
+// that an update which asks a question is a finding -- with no gcloud and no
+// curl anywhere, because the check holds no credential.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -890,6 +909,8 @@ var liveCheckScripts = []struct {
 	{"check-392.sh", "check-392_test.sh"},
 	{"check732.sh", "check732_test.sh"},
 	{"check733.sh", "check733_test.sh"},
+	{"check-820.sh", "check-820_test.sh"},
+	{"check-821.sh", "check-821_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent

@@ -1175,8 +1175,21 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 	s.withMeter(ctx, cl, id)
 
 	pool := cands
+	// next is the ORDERING this call goes out on, and it is the only thing a
+	// routing table changes about this loop: a project that publishes one walks
+	// the chain its entry names (cl.chain, CS1), and every other call selects
+	// from its own candidates exactly as it always did. Everything below — the
+	// money, the probe, the 401 and the 429, the switch record, U7's stream
+	// limit and the answer — is one code path over one answer, which is what
+	// keeps a chain-served call from being a second cascade.
+	next := func(ctx context.Context) (creds.Credential, time.Duration, error) {
+		if cl.chain != nil {
+			return cl.chain.next(ctx, sent)
+		}
+		return sel.Select(ctx, run, pool)
+	}
 	for {
-		c, _, err := sel.Select(ctx, run, pool)
+		c, _, err := next(ctx)
 		if err != nil {
 			// A probe being owed on the earliest candidate is the one answer
 			// this loop acts on rather than relays (C1.12): the credential is
@@ -1578,6 +1591,14 @@ func (s *Server) answer(ctx context.Context, w http.ResponseWriter, id Identity,
 		s.refuseCall(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
 			"the answer could not carry the credential that served it")
 		return
+	}
+	// C1's three members, for a call the routing table served (CS1): the source,
+	// whether it was the chain's first, and the model that served. They are
+	// written only to a caller that sent the stage header (chainAnswer,
+	// SentStage), so a gateway built before this contract meets exactly the
+	// answer it meets today.
+	if cl.chain != nil {
+		chainAnswer(hdr, cl, cl.chain.served)
 	}
 	if b, ok := callSlipOf(ctx); ok && credentialOwnedBy(c.Name, b.owner) {
 		// The owner of the credential that answered (F16): the verified `sub`

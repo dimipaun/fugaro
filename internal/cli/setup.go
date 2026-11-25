@@ -188,11 +188,16 @@ once its image exists). Between the last two it deploys the database's rules,
 mark, project name, mode (--budget-mode; an absent one is seeded observe) and
 largest lease, after a confirmation of their own, then writes the local
 config. The same step creates the Firestore database for the spend history
-(fugaro report) if the project has none: its location, us-east5, is permanent
-(chosen once, never changed or deleted by Fugaro), so the location's
-confirmation is the person at a real terminal (nothing is typed; --json and a pipe never confirm it, and the step is then
-left for you), and it
-refuses a database that holds data or is in another location; it also deploys
+(fugaro report) if the project has none: it goes in the installation's own
+region where Firestore offers it, and otherwise in the place's own default
+region — the mapping's answer, which the step's own plan row prints before
+anything is created — and its location is permanent (chosen once, never changed
+or deleted by Fugaro), so the run prints where and creates it, asking nobody
+(nothing is typed, and a coding agent's session, --json and a pipe are no
+different); a database that already exists is adopted as it is, wherever it is,
+when it is empty or carries the Fugaro mark — the plan row says where, and names
+it as outside the installation's place when it is — and a database that holds
+data and carries no mark, or that is not in native mode, is refused; it also deploys
 deny-everything Firestore rules and the Fugaro mark. --plan-only stops after the installation's plan. Each repository then
 needs fugaro setup --repo to pick up the jobs' environment.
 
@@ -221,14 +226,16 @@ review screen and one confirmation, taken by the person at the terminal and
 shown when the first of them has something to change (nothing is typed, so a
 rerun with nothing to do shows nothing). Each step
 still prints its own exact plan. It never covers creating a project, linking
-billing, the Firestore database's permanent location, a Cloud Build, replacing
+billing, a Cloud Build, replacing
 a registry tag (--replace-image), an unlisted repository or a secret. Those are
 their own steps: the build, the tag and onboarding an unlisted repository are
 covered by the run's own confirmation in a project whose gate stands in for it,
 and taken by the person at the terminal otherwise (D12's answer of 2026-10-20
 keeps them one class in either door), and a project's
-creation, the billing link, the location and a secret value keep a
-confirmation of their own, taken with the person at the terminal. The state bucket and the API enable are fixed, announced, free steps; every
+creation, the billing link and a secret value keep a
+confirmation of their own, taken with the person at the terminal. The Firestore
+database's location is no step at all: where the run creates the database it
+prints where, and that the location is permanent, and creates it. The state bucket and the API enable are fixed, announced, free steps; every
 Terraform plan is shown as it runs and is covered only if it is creates and
 in-place updates of the installation's own resource kinds, granting only the
 modules' roles to the listed launchers, operators and budget admins (the review
@@ -254,8 +261,7 @@ your registry (--replace-image KIND names the intent). D12's answer of
 door, while a repository whose origin git config rewrites, or whose host is not
 a provider's own, takes the confirmation of a person at the terminal whatever
 the run was given. What
-it still never covers: creating a project or linking billing, a secret, and
-the Firestore database's permanent location, this door's first-time question.
+it still never covers: creating a project or linking billing, and a secret.
 With no terminal, or with --json, each of those is left for you, with the
 one line to run: a first run that reaches the billing question is refused at
 once, in the sentence naming --link-billing, before any account of yours is
@@ -928,6 +934,15 @@ func (r *initRun) settleCreation(firstRun bool) error {
 	o := r.o
 	if o.setupCreates(firstRun) {
 		o.createProject = true
+	}
+	// A creating run's alert is on the account the run links, and this is where
+	// a creation no flag named is settled (takeLinkedBudgetAccount): the door
+	// took the account already where --create-project was explicit, and
+	// checkCreateProject below is what refuses the amount with no account
+	// otherwise — before the project stage, so a run that never had one is told
+	// rather than refused once the project exists.
+	if o.createProject {
+		o.takeLinkedBudgetAccount()
 	}
 	return o.checkCreateProject()
 }
