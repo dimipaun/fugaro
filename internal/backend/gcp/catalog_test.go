@@ -1565,7 +1565,11 @@ func runCatalogCloneGuard(t *testing.T, st *cloudbuild.BuildStep, ws, tree, cont
 	for _, kv := range st.Env {
 		env = append(env, strings.ReplaceAll(strings.ReplaceAll(kv, "${_CONTEXT_DIR}", context), "/workspace", ws))
 	}
-	cmd := exec.Command(bash, "-c", script)
+	args := []string{"-c", script, st.Args[2]}
+	for _, a := range st.Args[3:] {
+		args = append(args, strings.ReplaceAll(strings.ReplaceAll(a, "$$", "$"), "/workspace", ws))
+	}
+	cmd := exec.Command(bash, args...)
 	cmd.Env = env
 	return cmd.CombinedOutput()
 }
@@ -1602,8 +1606,8 @@ func TestCatalogContextStepRefusesAContextThatLeavesTheCheckoutByALink(t *testin
 		t.Fatal(err)
 	}
 	st := step(t, b, catalogCloneStepID)
-	if len(st.Args) != 2 {
-		t.Fatalf("the clone step's args = %q, want one script", st.Args)
+	if len(st.Args) < 5 {
+		t.Fatalf("the clone step's args = %q, want the shell, its name, a chunk count and the files", st.Args)
 	}
 	for _, tc := range []struct {
 		name    string
