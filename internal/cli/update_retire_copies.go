@@ -51,17 +51,27 @@ import (
 // first plan, because that is the mutation the plan depends on. Nothing between
 // the two halves plans anything.
 //
-// # Inert until IS6
+// # Inert until IS6, and why that is a switch
 //
-// A copy is retired only when the RUN'S OWN CONFIGURATION no longer produces a
-// project-wide container for its name (infra.RetiredProjectCopies). Until the
-// release that drops those keys reaches the installation, every name IS5 copied
-// is still planned, the set is empty, and this step does nothing at all — which
-// is what makes it safe to ship before the migration it serves (the plan's
-// slice: IS13, then IS6). What it never does is run ahead of the record: the
-// names it may retire are the ones the project record and the grammar both
-// know, so IS6 finds every mount, grant and copy it has to drop named in the
-// record already.
+// What a release may retire is what that release drops, and nothing else: the
+// set comes from IS5's record — the names whose value is in the grammar, the
+// same for every operator of the installation — gated on
+// infra.ProjectCopiesDropped, the one bit IS6 turns when it removes the
+// workflow_secrets loop from projectSecretContainers. While this release still
+// derives those containers the bit is off, the set is empty, and this step does
+// nothing on any installation, whatever an operator's own config holds and
+// whatever the cloud looks like.
+//
+// The run then subtracts the names ITS OWN plan still produces
+// (infra.UnplannedCopies, against the config before discovery and against the
+// plan after it): a copy the configuration wants is not retired out from under
+// it. That subtraction is one installation's own answer and never a reason for
+// another operator's update to fail — discovery adopts a container wearing the
+// retirement mark for a name its config plans (discover.go's projectSecrets),
+// and the module's labels map writes the copy's own label back on the apply.
+// What it never does is run ahead of the record: the names it may retire are
+// the ones the project record and the grammar both know, so IS6 finds every
+// mount, grant and copy it has to drop named in the record already.
 //
 // # Nothing here fails an update
 //
@@ -88,7 +98,12 @@ func (r *initRun) retireProjectCopies(ctx context.Context, c *infra.Clients, lc 
 		return nil
 	}
 	copied, svc := r.workflowCopiesInGrammar(ctx, lc)
-	copies := infra.RetiredProjectCopies(copied, spec.ProjectSecrets, lc.Name)
+	copies := infra.RetiredProjectCopies(copied, lc.Name, infra.ProjectCopiesDropped)
+	// A name the run's own configuration still produces a container for is not
+	// this run's to retire, whatever the record holds: it is the same
+	// subtraction the state removal makes below, against the config's own half
+	// of spec.ProjectSecrets rather than the plan discovery unions it with.
+	copies = infra.UnplannedCopies(copies, spec.ProjectSecrets)
 	if len(copies) == 0 {
 		return nil
 	}
@@ -166,7 +181,14 @@ func (r *initRun) retireProjectCopies(ctx context.Context, c *infra.Clients, lc 
 // (infra.RemoveFromState), so a second door into this root — `fugaro update
 // --firebase-project` runs the installation root three times — costs nothing
 // after the first.
-func (r *initRun) removeRetiredCopiesFromState(ctx context.Context, t *tf.TF, copies []infra.ProjectCopy) {
+//
+// planned is the plan the apply is about to make (spec.ProjectSecrets, after
+// discovery): a retired name it still produces a container for — the
+// configuration plans the name again, or the mark could not be written and
+// discovery adopted the container back by its own label — keeps its state row,
+// or the apply would create a container the state no longer knows about.
+func (r *initRun) removeRetiredCopiesFromState(ctx context.Context, t *tf.TF, copies []infra.ProjectCopy, planned map[string]string) {
+	copies = infra.UnplannedCopies(copies, planned)
 	if len(copies) == 0 {
 		return
 	}

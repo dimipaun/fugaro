@@ -39,9 +39,7 @@ func projectCopyAddresses(names ...string) []string {
 // has to happen before the plan, once, for exactly that instance.
 func TestProjectCopyLeavesStateBeforeApply(t *testing.T) {
 	state := projectCopyState()
-	// The copied name the configuration no longer derives a container for:
-	// planned is the module's for_each, which is what the plan is made from.
-	copies := RetiredProjectCopies([]string{"npm-token"}, map[string]string{}, "acme")
+	copies := RetiredProjectCopies([]string{"npm-token"}, "acme", true)
 	if len(copies) != 1 || copies[0].Name != "npm-token" {
 		t.Fatalf("retired = %+v, want the one copied name", copies)
 	}
@@ -83,7 +81,7 @@ func TestProjectCopyLeavesStateBeforeApply(t *testing.T) {
 // deployed job naming it. A job still mounting the copy is a run of the release
 // behind — its template names the container — so the copy stays alive for it.
 func TestRetiredCopyDeletedOnlyWhenUnreferenced(t *testing.T) {
-	copies := RetiredProjectCopies([]string{"npm-token", "pypi-token"}, map[string]string{}, "acme")
+	copies := RetiredProjectCopies([]string{"npm-token", "pypi-token"}, "acme", true)
 	mounted := map[string]bool{gcp.ProjectSecretID("acme", "npm-token"): true}
 	got := ProjectCopiesToDelete(copies, mounted)
 	want := []ProjectCopy{{Name: "pypi-token", ID: gcp.ProjectSecretID("acme", "pypi-token")}}
@@ -122,44 +120,57 @@ func TestRetiredCopyDeletedOnlyWhenUnreferenced(t *testing.T) {
 // what a run still reads: nothing here may touch it.
 func TestRetireSkipsAnUncopiedName(t *testing.T) {
 	state := projectCopyState()
-	copies := RetiredProjectCopies([]string{"npm-token"}, map[string]string{}, "acme")
+	copies := RetiredProjectCopies([]string{"npm-token"}, "acme", true)
 	if addrs := ProjectCopyRemovals(state, copies); slices.Contains(addrs, projectCopyAddress("bitbucket-token")) {
 		t.Fatalf("removals = %q: an uncopied name's copy left the state", addrs)
 	}
 
 	// A name the record does not hold is not retired, whether the config
 	// derives a container for it or not.
-	if got := RetiredProjectCopies(nil, map[string]string{}, "acme"); len(got) != 0 {
+	if got := RetiredProjectCopies(nil, "acme", true); len(got) != 0 {
 		t.Fatalf("retired = %+v with nothing copied", got)
 	}
-	// The same name, once its value IS in the grammar but while the config
-	// still derives the container: the release that drops the key has not run
-	// yet, so the copy stays and the step is inert.
-	planned := map[string]string{"bitbucket-token": gcp.ProjectSecretID("acme", "bitbucket-token")}
-	if got := RetiredProjectCopies([]string{"bitbucket-token"}, planned, "acme"); len(got) != 0 {
-		t.Fatalf("retired = %+v while the configuration still produces the container", got)
+	// The same name, held by the record and still produced by the plan the run
+	// is about to apply: the release did not drop it here — this installation's
+	// own project_secret still declares it — so the run marks nothing, deletes
+	// nothing and takes no row out of the state.
+	planned := map[string]string{"npm-token": gcp.ProjectSecretID("acme", "npm-token")}
+	if got := UnplannedCopies(RetiredProjectCopies([]string{"npm-token"}, "acme", true), planned); len(got) != 0 {
+		t.Fatalf("acted on = %+v while the plan still produces the container", got)
+	}
+	// And the plan discovery hands the removal is not the config's own: a name
+	// that reappears there because discovery adopted its container back — the
+	// mark could not be written — keeps its row exactly the same, or the apply
+	// creates a container the state no longer knows about.
+	discovered := map[string]string{"npm-token": gcp.ProjectSecretID("acme", "npm-token")}
+	if addrs := ProjectCopyRemovals(state, UnplannedCopies(RetiredProjectCopies([]string{"npm-token"}, "acme", true), discovered)); len(addrs) != 0 {
+		t.Fatalf("removals = %q for a name the plan still produces", addrs)
 	}
 }
 
 // TestRetireConvergesFromPreviousRelease: an installation at the release
-// behind converges. It retires nothing there — every name IS5 copied is still
-// planned, which is what "inert until IS6 drops the keys" means — then, at the
-// release that drops them, every copied instance leaves the state in one run,
-// and the next run names nothing and calls terraform for nothing.
+// behind converges. It retires nothing there — the switch that says this
+// release dropped the keys is off, whatever an operator's own config holds, so
+// a copy the config never planned is left as it is rather than retired out from
+// under the next operator's update — then, at the release that drops them,
+// every copied instance leaves the state in one run, and the next run names
+// nothing and calls terraform for nothing.
 func TestRetireConvergesFromPreviousRelease(t *testing.T) {
 	copied := []string{"npm-token", "pypi-token"}
-	planned := map[string]string{
-		"npm-token":  gcp.ProjectSecretID("acme", "npm-token"),
-		"pypi-token": gcp.ProjectSecretID("acme", "pypi-token"),
+	if got := RetiredProjectCopies(copied, "acme", false); len(got) != 0 {
+		t.Fatalf("retired = %+v at the release behind: nothing is retired before the release drops the keys", got)
 	}
-	if got := RetiredProjectCopies(copied, planned, "acme"); len(got) != 0 {
-		t.Fatalf("retired = %+v at the release behind: nothing is retired before the configuration drops the key", got)
+	// Not even when the operator's own config plans none of them, which is the
+	// reading this step used to make: one operator's config decided retirement,
+	// so the next operator's update met a container Fugaro had taken away.
+	if got := UnplannedCopies(RetiredProjectCopies(copied, "acme", false), map[string]string{}); len(got) != 0 {
+		t.Fatalf("acted on = %+v at the release behind with a config that plans nothing", got)
 	}
 
 	// The release that drops them, on the state an installation at the release
 	// behind has: both instances, and nothing else of the root's.
 	state := append(projectCopyAddresses(copied...), "module.installation.google_cloud_run_v2_job.coordinator[0]")
-	copies := RetiredProjectCopies(copied, map[string]string{}, "acme")
+	copies := RetiredProjectCopies(copied, "acme", true)
 	addrs := ProjectCopyRemovals(state, copies)
 	if want := projectCopyAddresses("npm-token", "pypi-token"); !slices.Equal(addrs, want) {
 		t.Fatalf("removals = %q, want %q", addrs, want)

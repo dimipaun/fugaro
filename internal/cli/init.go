@@ -3811,7 +3811,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	// The retired copies leave the state before the plan that drops their key:
 	// the module's prevent_destroy refuses that plan while the state still
 	// holds the instance (U5, IS13).
-	r.removeRetiredCopiesFromState(ctx, t, retiredCopies)
+	r.removeRetiredCopiesFromState(ctx, t, retiredCopies, spec.ProjectSecrets)
 	// What the installation already is: its name may not change, and an
 	// unnamed one is named only on request. Before any plan.
 	var prior infra.InstallationOutputs

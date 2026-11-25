@@ -23,31 +23,74 @@ type ProjectCopy struct {
 	ID   string
 }
 
-// RetiredProjectCopies is the project copies D3325 retires: every name whose
-// value the installation already holds in the fugaro_p_<name> grammar — copied,
-// IS5's project record written after the copy — and that this run's own
-// configuration no longer produces a project-wide container for. planned is the
-// module's for_each, keyed by logical name (InstallationSpec.ProjectSecrets).
+// ProjectCopiesDropped is whether THIS RELEASE still derives a project-wide
+// container per `workflow_secrets` entry. It is off, and the release that
+// removes that loop from projectSecretContainers (IS6) turns it on in the same
+// commit: retirement is decided by what the release drops, so IS13 ships inert
+// on every installation — no local config, no cloud state and no record can
+// retire a copy while the release that produced the container is the one
+// running.
 //
-// A name the config still plans is not retired, whatever the grammar holds: it
-// is what makes this step inert until the release that drops the keys reaches
-// the installation (IS6 keeps the copy alive and the run untouched), and it is
-// also what keeps the state removal below safe. Removing an instance the same
-// plan re-produces would be undone by that plan — discovery's live read unions
-// a correctly labelled container back into for_each (N3) and the apply adopts
-// its own row back into the state — so the state is only ever touched for a
-// name the plan has already stopped producing.
+// It is a variable rather than a constant for that one release to flip and for
+// the tests that pin both sides of it. Nothing else may write it.
+var ProjectCopiesDropped = false
+
+// RetiredProjectCopies is the project copies D3325 retires, once the release
+// has stopped deriving them (ProjectCopiesDropped): every name whose value the
+// installation already holds in the fugaro_p_<name> grammar — copied, IS5's
+// project record written after the copy. The answer is the record's, so it is
+// the same for every operator of an installation and never a reading of one
+// operator's local config; that is what keeps a copy this run does not retire
+// as it was, and what keeps the next operator's `fugaro update` from meeting a
+// container Fugaro retired out from under its own config.
+//
+// The one thing the set is NOT asked to be is what the run then acts on: a name
+// the run's OWN plan still produces a container for is subtracted before the
+// mark, the delete or the state removal (UnplannedCopies), because the release
+// did not drop it here.
 //
 // The container ID is derived and never read: it is the installation's own name
 // for the copy (gcp.ProjectSecretID), so a container that is not under it is
 // not this copy and nothing here touches one.
-func RetiredProjectCopies(copied []string, planned map[string]string, fugaroProject string) []ProjectCopy {
+func RetiredProjectCopies(copied []string, fugaroProject string, dropped bool) []ProjectCopy {
+	if !dropped {
+		return nil
+	}
 	var out []ProjectCopy
 	for _, name := range slices.Sorted(slices.Values(copied)) {
-		if _, live := planned[name]; live {
+		out = append(out, ProjectCopy{Name: name, ID: gcp.ProjectSecretID(fugaroProject, name)})
+	}
+	return out
+}
+
+// IsRetiredCopy is whether a live project-wide container carries the mark
+// retirement leaves: this installation's labels with the logical name on
+// LabelRetired and no LabelSecret, which is what takes the container out of the
+// union discovery adopts a live container by (N3). Discovery reads it to ADOPT
+// such a container when the configuration plans its name again — the module's
+// labels map writes LabelSecret back on the apply, so the copy is un-retired by
+// the run that still wants it, rather than refused as a foreign container.
+func IsRetiredCopy(labels map[string]string, fugaroProject, logical string) bool {
+	return labels[gcp.LabelManaged] == gcp.ManagedValue &&
+		labels[gcp.LabelProject] == fugaroProject &&
+		labels[gcp.LabelRetired] == logical
+}
+
+// UnplannedCopies is the retired set minus the names a plan still produces a
+// container for: a copy the run's own configuration (before discovery) or the
+// plan it is about to apply (after it) holds is left exactly as it is. Asked
+// twice, against the two plans a run has — the config's own names, which is the
+// half a person edits, and discovery's union of it with every live container,
+// which is the half an apply would create. A name that appears in the second
+// and not the first is one whose mark could not be written: discovery adopted
+// it back by its own label, the plan produces it, and its state row must stay.
+func UnplannedCopies(copies []ProjectCopy, planned map[string]string) []ProjectCopy {
+	var out []ProjectCopy
+	for _, cp := range copies {
+		if _, produced := planned[cp.Name]; produced {
 			continue
 		}
-		out = append(out, ProjectCopy{Name: name, ID: gcp.ProjectSecretID(fugaroProject, name)})
+		out = append(out, cp)
 	}
 	return out
 }

@@ -2385,6 +2385,48 @@ func TestDiscoverInstallationRefusesForeignProjectSecret(t *testing.T) {
 	}
 }
 
+// TestDiscoverInstallationAdoptsARetiredCopyItsConfigPlans (IS13, D3325): the
+// two-config case retirement has to leave converged. One operator's config does
+// not plan a copied name, so the run at the release that drops the keys retires
+// that name's project copy — and the next operator, whose config plans the name
+// again while their own local config never held the retirement decision, must
+// not meet a refusal: d.foreign's refusal is a UserError that fails that whole
+// `fugaro update`. Discovery adopts the container by the retirement mark, the
+// plan keeps it, and the module's labels map writes the copy's own label back
+// on the apply.
+func TestDiscoverInstallationAdoptsARetiredCopyItsConfigPlans(t *testing.T) {
+	f := newCloud(t)
+	inst := installationSpecWith(t, projectSecretLCBlock)
+	id := gcp.ProjectSecretID(inst.FugaroProject, "bitbucket-token")
+	// The mark retirement leaves: the installation's labels with the logical
+	// name on LabelRetired in place of the LabelSecret the module's own
+	// resource writes.
+	f.sm.Seed(id, with(managed, gcp.LabelProject, inst.FugaroProject, gcp.LabelRetired, "bitbucket-token"), []byte("project-value"))
+	im, err := DiscoverInstallation(context.Background(), f.c, inst)
+	if err != nil {
+		t.Fatalf("DiscoverInstallation = %v, want the retired copy adopted: this refusal fails the whole update of the operator whose config plans the name", err)
+	}
+	addr := `module.installation.google_secret_manager_secret.project["bitbucket-token"]`
+	if got := importMap(im)[addr]; got != "projects/proj-1234/secrets/"+id {
+		t.Errorf("imports = %v, want the retired copy's row adopted at %s", importMap(im), addr)
+	}
+	if im.ProjectSecrets["bitbucket-token"] != id {
+		t.Errorf("ProjectSecrets = %v, want bitbucket-token -> %s", im.ProjectSecrets, id)
+	}
+	if !slices.ContainsFunc(im.Notes, func(n string) bool { return strings.Contains(n, id) && strings.Contains(n, "retired") }) {
+		t.Errorf("notes = %q, want one saying the container is marked retired and is planned again", im.Notes)
+	}
+
+	// The mark is this installation's own answer and not a way past the
+	// refusal: a container marked retired for ANOTHER logical name is still
+	// foreign, exactly as one labelled for another installation is.
+	other := installationSpecWith(t, projectSecretLCBlock)
+	f.sm.Seed(id, with(managed, gcp.LabelProject, other.FugaroProject, gcp.LabelRetired, "pypi-token"), []byte("someone-elses"))
+	if _, err := DiscoverInstallation(context.Background(), f.c, other); err == nil || !strings.Contains(err.Error(), "project secret "+id) {
+		t.Fatalf("err = %v, want the foreign-project-secret refusal for a mark that does not name this container's logical name", err)
+	}
+}
+
 // TestDiscoverInstallationNeverShrinksProjectSecrets (N3 BLOCKER): a name
 // eligible on the first call, discovered live, must still be in the map on a
 // second call whose config no longer makes it eligible at all -- the exact
