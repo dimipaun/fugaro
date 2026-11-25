@@ -105,7 +105,7 @@ Ask, with your evidence and a recommendation for each, **one topic at a time**: 
 
 ## 6. Show what will execute, then get the go-ahead
 
-Before the first build, and again before any rebuild after a change, show every line that will run, and why:
+Before the first build, and before any rebuild after a change, show every line that will run, and why:
 - every `image.setup` step and `image.apt` package, and the build and test commands
 - `mise.toml`'s tools, each a download; if the repository has its own mise config (`mise.toml`, `.tool-versions`, a `mise/conf.d` fragment), show its **whole content**, not a tools summary: `mise install` reads it as a shell and can run arbitrary code (`[env]` `_.source`, a template's `exec()`, `[hooks]`), like any other file you run
 - a new Dockerfile: the whole file or the diff against the rendered one; a **fix of an existing** `.fugaro/*.Dockerfile` or `fugaro.yaml`: all of its executed lines, not only the ones you changed
@@ -113,7 +113,7 @@ Before the first build, and again before any rebuild after a change, show every 
 - the names of the declared `secrets` variables, and whether each is already set (presence only, never a value): the build mounts the workflow's `secrets:` as file secrets, so a registry token reaches it that way, never as a build argument or a copied file
 - any file you add that a command runs, such as the `agent.instructions` file (appended to the agent's prompt; it must exist in the repository)
 
-Pin every download by version and checksum. Don't pipe a download into a shell, use an unpinned `latest` or run a remote script. Wait for an explicit yes. The user then submits it in their own terminal, after the merge (step 10): it is billable. If the user declines, say what is unverified (the runtime contract's smoke checks); their first run is the test.
+Pin every download by version and checksum. Don't pipe a download into a shell, use an unpinned `latest` or run a remote script. Say plainly that the build runs the repository's code in Cloud Build, in the project's own cloud project, as the build account with the workflow's secrets. Wait for an explicit yes. The user then submits it in their own terminal, after the merge (step 10): it is billable. If the user declines, say what is unverified (the runtime contract's smoke checks); their first run is the test.
 
 ## 7. Check the image the workflow runs
 
@@ -167,4 +167,4 @@ The periodic reviews are the user's cadence: Fugaro schedules nothing, so say th
 
 ## 12. Changing the auth, a workflow, a secret or a provider
 
-A `fugaro.yaml` edit that retires resources, or a change to the auth, a credential, a pool or a provider: [reference/transitions.md](reference/transitions.md) has the steps and the commands, the routing table's among them (`fugaro routing ls`, `set`, `rm`).
+A `fugaro.yaml` edit that retires resources: [reference/transitions.md](reference/transitions.md) has the step and the command, and the routing table's (`fugaro routing ls`).
