@@ -478,6 +478,15 @@ func SecretCommands(spec RepoSpec, versions map[string]bool, bin, door string, q
 		if ignoredRepoSecret(spec, logical) {
 			continue
 		}
+		// No run of this project's configuration holds the unsuffixed default
+		// account (RepoSpec.DefaultAccountUnused), so this name is no step
+		// either: the command would send the owner to mint a token for an
+		// account their own config never picks, and the repository is asked
+		// for nothing it uses. Readiness drops the same name's mount, so the
+		// step and the gate agree.
+		if spec.DefaultAccountUnused && logical == config.ClaudeOAuthToken {
+			continue
+		}
 		st := SecretStep{Name: logical, What: spec.Secrets[logical], Optional: OptionalSecret(logical)}
 		// A name only the node admits has no `secrets set` line at all
 		// (SecretFix): its step is the run's own door, which stores the value

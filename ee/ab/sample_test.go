@@ -83,14 +83,14 @@ func TestSampledIsDeterministic(t *testing.T) {
 }
 
 // TestSampledRateZeroNever is the red half of the rule: a project that wrote
-// no ab: block, or opted out of sampling with ab.rate: 0, samples nothing at
-// all (D557). A stub that sampled every run ID would pass every other test
+// no ab: block, or opted a repository out with ab.repos.<repo>: 0, samples
+// nothing at all for it (D557, D3297). A stub that sampled every run ID would pass every other test
 // here and fail this one, which is what the rate's default being off means.
 func TestSampledRateZeroNever(t *testing.T) {
 	for _, rate := range []float64{0, -1, -0.5, math.NaN(), math.Inf(-1)} {
 		for _, id := range sampleIDs(2000) {
 			if ab.Sampled(id, rate) {
-				t.Fatalf("Sampled(%q, %v) = true: rate 0 is the default and what a repository's own ab: block may write to opt out, so it samples nothing — no rate a project layer may not write may sample anything either, and sampling nothing is the direction that spends nothing (D557)",
+				t.Fatalf("Sampled(%q, %v) = true: rate 0 is the default and what a layer writes in ab.repos to opt a repository out, so it samples nothing — no rate a project layer may not write may sample anything either, and sampling nothing is the direction that spends nothing (D557, D3297)",
 					id, rate)
 			}
 		}

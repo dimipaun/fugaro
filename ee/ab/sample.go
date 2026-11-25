@@ -49,11 +49,12 @@ import (
 // draw from a hash is a draw a developer can steer by trying IDs until one
 // lands under the rate.
 //
-// rate 0 — the default, and what a repository's own ab: block may write to
-// opt out — samples nothing. A rate of 1 or more samples everything, and a
-// rate that is neither (NaN, which no comparison is true for) samples
-// nothing: sampling nothing is the direction that spends nothing, and no
-// rate outside [0, 1] is one a project layer may write anyway.
+// rate 0 — the default, and what a layer writes in ab.repos to opt one
+// repository out (B9, D3297) — samples nothing. A rate of 1 or more samples
+// everything, and a rate that is neither (NaN, which no comparison is true
+// for) samples nothing: sampling nothing is the direction that spends
+// nothing, and no rate outside [0, 1] is one a project layer may write
+// anyway.
 func Sampled(runID string, rate float64) bool {
 	if !(rate > 0) {
 		return false
