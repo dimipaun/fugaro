@@ -6328,6 +6328,15 @@ func (r *initRun) gateWorkflowAB(o *initOptions, repo string, lc *localcfg.Confi
 // checkVertexBudget refuses a repository whose fugaro.yaml authenticates
 // the agent through Vertex AI (agent.auth: vertex) under a project budget
 // in enforce mode. observe and off are allowed.
+//
+// D3174's lift of this refusal belongs to the run the credentials service
+// serves, so it comes with CS6 ("the run's model path follows the table") and
+// not with this gate: the runner answers the same question off the path the run
+// is on (vertexServedByTheService), and a `vertex` file's coding run is on no
+// such path while the service serves api-key, oauth and cascade runs alone
+// (runner.ServiceSwitchedAuth), so the runner's checkBudget refuses the run at
+// bootstrap. Lifting it here alone would green-light a run that dies —
+// TestTheVertexRefusalAgreesWithTheRunner holds the two answers together.
 func checkVertexBudget(lc *localcfg.Config, cfg *config.Config) error {
 	if cfg.Agent.Auth != "vertex" {
 		return nil

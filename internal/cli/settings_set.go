@@ -311,10 +311,17 @@ var settingsGenericKeys = map[string]bool{
 	"issues.nudge_recurrence":               true,
 	"triage":                                true,
 	"review_against_task":                   true,
-	"verifier_accounts":                     true,
-	"layer.jobs.reports.paused":             true,
-	"layer.jobs.catalog_check.paused":       true,
-	"planning.decoupling":                   true,
+	// The member's switch for the personal half of a workspace's credentials
+	// (WC6 of docs/workspace-credentials/, R9, D2972) is the three above by
+	// their own reason: it is a boolean of the machine's own file the publish
+	// copies into the member's policy node, and a registry row no list here
+	// names is a switch the member's admin could not set at all — the service
+	// that enforces it reads the node and nothing on the member's disk.
+	"personal_workspace_tokens":       true,
+	"verifier_accounts":               true,
+	"layer.jobs.reports.paused":       true,
+	"layer.jobs.catalog_check.paused": true,
+	"planning.decoupling":             true,
 	// The three spellings R1's rows gained and this list did not yet name (W3):
 	// the repository's `workflows.*.needs` and `workflows.*.ab.reviewer_arm` are
 	// rows the registry holds with the generic writer's own token, and a row the

@@ -107,11 +107,23 @@ func batchValidateProblems(lc *localcfg.Config, cfg *config.Config, rcp *recipe.
 		}
 	}
 
-	// The seal's pair (design compute-backend.md §1.6): an installation that
-	// mints budget tokens cannot launch a run on Batch at all, so a config that
-	// selects the backend and mints is refused here rather than at
-	// jobs.create's doorstep, after a token was minted and dropped.
+	// The block's opt-in fact (BR7, R3, D3110/D3111): a launch on this backend
+	// proceeds only where the published block says the installation opted in,
+	// so a config that selects the name while its own block carries no such
+	// fact -- or carries the withdrawal -- is refused here, offline, before the
+	// launch. It is the same sentence doctor's batch-opt-in answers with
+	// (batchOptInRefusal), and the two readers of one field have to agree: an
+	// operator sent by doctor to the block and by validate to somewhere else
+	// would fix neither.
 	//
+	// This is the offline half of the claim. The other half -- whether the
+	// credentials service account holds the read the link makes -- is a grant
+	// in the project and no config answers it; `fugaro doctor`'s
+	// batch-link-grant is where it is read.
+	if !lc.Batch.OptedIn() {
+		ps = append(ps, config.Problem{Path: "batch.opt_in", Message: batchOptInRefusal(lc)})
+	}
+
 	// Offline this is the config's own arm, and since AB4 that arm is the whole
 	// answer: a launch mints for every configuration that names a budget
 	// database, whatever its mode and whether or not a policy is published
@@ -167,6 +179,39 @@ func batchValidateProblems(lc *localcfg.Config, cfg *config.Config, rcp *recipe.
 			d, backend.TaskTimeoutSlack, batch.MaxRunDuration, limit)})
 	}
 	return ps
+}
+
+// batchOptInRefusal is the sentence both readers of the block's opt-in fact
+// answer with: doctor's batch-opt-in check, against the live installation, and
+// validate's offline arm above. One function rather than two spellings,
+// because it is one field and one fact -- a doctor and a validate that
+// disagreed about it would send an operator to two places for one missing
+// answer (BR7, R3).
+//
+// It names the state the fact is in and not only its absence: the fact has
+// three states (D3110, D3111), and `withdrawn` is a written value -- an
+// operator's own answer -- where absent is a block written on a machine that
+// never chose Batch. The two are one refusal with one fix, and the difference
+// is what a reader needs to know which of them happened.
+func batchOptInRefusal(lc *localcfg.Config) string {
+	state := "is absent"
+	if lc.Batch != nil && lc.Batch.OptInWithdrawn() {
+		state = "is withdrawn"
+	}
+	return "the published batch block's opt-in fact " + state + " (batch.opt_in), and a Batch launch proceeds only where it is `in`: the fact is the installation's own answer to whether Batch runs are wanted, and it is neither a machine's local choice nor a fact the project holds (docs/batch-run-identity/implementation-plan.md, R3, D3110 and D3111). Every launch of this installation is refused before anything is created, and no launch reads the cloud to decide it"
+}
+
+// batchOptInFix is what the fact's reader has to do about it, and it names one
+// command: the selection, which is the write that publishes the fact (BR18,
+// R2). It does not hand over `fugaro update`, for the reason the update is not
+// what performs this: it applies the compute root only where the fact is
+// already there (BR6, R2), and the command that writes it is what chains the
+// update (the next-step lint, AP7's audit: a message may not send the reader to
+// a followed-up command by hand). Only an operator can opt an installation in,
+// which makes this check the one Batch check whose fix a config can still be
+// missing after every cloud fact is in place.
+func batchOptInFix(lc *localcfg.Config) string {
+	return "opt this installation in: the fact lives in the published batch block, and an operator's selection of the backend writes and publishes it (fugaro backends use cloud-batch, once the rest of the Batch checks pass -- R2, R15). Until the fact is there, nothing converges the installation's own " + lc.GCPProject + " for Batch (the compute root is applied where the fact is present, BR6 and R2), and no run of it can claim an identity"
 }
 
 // artifactOnBatchRefusal is the artifact boundary as both of its callers ask

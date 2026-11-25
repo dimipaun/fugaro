@@ -370,10 +370,12 @@ func applyRunRecord(cmd *cobra.Command, r *initRun, run *stepRun, lc *localcfg.C
 	for _, n := range stageNames {
 		if slices.Contains(unanswered, n) {
 			// A name this door registers no stage under — the services slot,
-			// the Batch backend's compute, the project stage, or a name that is
-			// no stage at all. It stays owed rather than being dropped: a run
-			// that quietly did fewer steps than it was asked for is the one
-			// thing neither the record nor this command may do.
+			// the Batch backend's compute on an installation that has not opted
+			// in (where it has, the stage is registered: updatesComputeRoot),
+			// the project stage, or a name that is no stage at all. It stays
+			// owed rather than being dropped: a run that quietly did fewer
+			// steps than it was asked for is the one thing neither the record
+			// nor this command may do.
 			kept = append(kept, n)
 			continue
 		}

@@ -202,7 +202,11 @@ func TestAGeminiCallGoesToTheGooglePublisher(t *testing.T) {
 		"/publishers/google/models/"
 
 	t.Run("a messages call is a generateContent", func(t *testing.T) {
-		s, watch, service := vertexGeminiFixture(t, anthropicfake.MessageOK("google/gemini-3-flash", testUsage))
+		// The answer is Vertex's own for this publisher, because GV2 translates
+		// it: an Anthropic-shaped one here would be refused as an answer this
+		// service cannot carry, and the routing this test is about would never
+		// be reached.
+		s, watch, service := vertexGeminiFixture(t, geminiWhole(t, "text"))
 		cl := vertexCall(t, MessagesPath, string(geminiPair(t, "tools", "anthropic")))
 
 		done, tried, rec, _ := serveVertexCall(t, s, vertexIdentity(s, testProject), cl, testVertexSource())
@@ -234,7 +238,7 @@ func TestAGeminiCallGoesToTheGooglePublisher(t *testing.T) {
 	})
 
 	t.Run("a streamed call is a streamGenerateContent", func(t *testing.T) {
-		s, watch, _ := vertexGeminiFixture(t, anthropicfake.StreamOK("google/gemini-3-flash", testUsage))
+		s, watch, _ := vertexGeminiFixture(t, geminiStreamed(t, "stream_text"))
 		// The sampling pair is the one that carries `"stream": true`, which is
 		// the caller's own member and the whole of how this method is chosen.
 		cl := vertexCall(t, MessagesPath, string(geminiPair(t, "sampling", "anthropic")))
@@ -248,7 +252,7 @@ func TestAGeminiCallGoesToTheGooglePublisher(t *testing.T) {
 	})
 
 	t.Run("a token count is a countTokens", func(t *testing.T) {
-		s, watch, _ := vertexGeminiFixture(t, anthropicfake.MessageOK("google/gemini-3-flash", testUsage))
+		s, watch, _ := vertexGeminiFixture(t, geminiCounted(1234))
 		// The tools pair is the one that carries a `tool_choice`, which is what
 		// makes this subtest about the COUNTING body and not only about the path:
 		// Vertex's CountTokensRequest has no toolConfig member at all.

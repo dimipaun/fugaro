@@ -34,7 +34,7 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "auth": { "enum": ["vertex", "api-key", "oauth", "cascade"], "description": "Where the run's model calls are authenticated. cascade asks for the project's credentials cascade (docs/credentials-service): it is refused with followup.allow_public, needs budget.mode observe or enforce, and is enabled only by the project policy's routing.claude: {via: cascade}, which only the operator can set. Fugaro before 0.10.0 refuses the value." },
+            "auth": { "enum": ["vertex", "api-key", "oauth", "cascade"], "description": "Retired: this release still reads it and a later one rejects it — the project's routing table and pools say which credential reaches which model (docs/model-credentials-routing/spec.md), and `fugaro update` migrates it and offers its removal. Where the run's model calls are authenticated. cascade asks for the project's credentials cascade (docs/credentials-service): it is refused with followup.allow_public, needs budget.mode observe or enforce, and is enabled only by the project policy's routing.claude: {via: cascade}, which only the operator can set. Fugaro before 0.10.0 refuses the value." },
             "model": { "type": "string", "maxLength": 100, "pattern": "^\\S*$" },
             "models": {
               "type": "object",

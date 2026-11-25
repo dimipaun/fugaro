@@ -1065,7 +1065,10 @@ func readListing(ctx context.Context, env *cloudEnv, gate accessRowGate, f lsFil
 	indexed := indexListing(o)
 	if indexed {
 		if idx, err := runIndexReader(ctx, env); err != nil {
-			return lsRead{}, remote(err)
+			// An index that cannot be opened is one that answered nothing: a
+			// listing says so in one line and reads the window beside it, the
+			// way it answers an index that could not be read (D3215).
+			noteIndexUnreadable(f.warn, err)
 		} else if idx != nil {
 			if read, ok := readIndex(ctx, env, idx, f, o, sinceSet, limitSet, now); ok {
 				return gateRead(gate, read, f.warn), nil

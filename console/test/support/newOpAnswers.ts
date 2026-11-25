@@ -45,7 +45,7 @@ const RUNS_STREAM_LINES: readonly JSONObject[] = Object.freeze([
   {"type":"row","row":{"run":"acme-app-dc4d4e59e884fc44/20261109-115900-cccc","repo":"acme/app","workflow":"web","title":"x","run_id":"20261109-115900-cccc","status":"unlaunched","requested_by":"someone@example.com","created":"2026-11-09T11:59:00Z","cost":{"model_usd":0,"compute_usd":0,"compute_estimated":true,"total_usd":0,"estimate":true,"model_basis":"api-list"},"terminal":false,"settled":true,"pushed":false,"follow_up":false}},
   {"type":"row","row":{"run":"acme-app-dc4d4e59e884fc44/20261109-115800-bbbb","repo":"acme/app","workflow":"web","title":"x","run_id":"20261109-115800-bbbb","status":"failed","stage":"verify","reason":"the run did not finish its work","failure_class":"no_commits","requested_by":"someone@example.com","created":"2026-11-09T11:58:00Z","cost":{"model_usd":1,"compute_usd":0,"compute_estimated":true,"total_usd":1,"estimate":true,"model_basis":"api-list"},"terminal":true,"settled":true,"pushed":false,"follow_up":false}},
   {"type":"row","row":{"run":"acme-app-dc4d4e59e884fc44/20261109-115700-aaaa","repo":"acme/app","workflow":"web","title":"x","run_id":"20261109-115700-aaaa","status":"failed","stage":"verify","reason":"the run did not finish its work","failure_class":"tests_failed","requested_by":"someone@example.com","created":"2026-11-09T11:57:00Z","cost":{"model_usd":4,"compute_usd":0,"compute_estimated":true,"total_usd":4,"estimate":true,"model_basis":"api-list"},"terminal":true,"settled":true,"pushed":false,"follow_up":false}},
-  {"type":"end","count":3,"version":1},
+  {"type":"end","count":3,"version":2},
 ])
 
 /** BUDGET_STREAM_LINES is `budget show --stream --json`'s: two repositories,

@@ -314,12 +314,17 @@ var liveRoots = []string{
 // flattened separator, not a promise about the source.
 var initNameRE = regexp.MustCompile(`fugaro init|init --[a-z]`)
 
-// otherInitRE is the other command in this tree that writes `init --<flag>`,
-// and the reason initNameRE can be as wide as it is. It is `fugaro config
+// otherInitRE is what this tree's other commands write `init --<flag>`, and
+// the reason initNameRE can be as wide as it is. The first is `fugaro config
 // init`, the live subcommand that writes the minimal `fugaro.yaml`
 // (internal/cli/config_cmd.go), whose own flags -- `--profile`, `--base-branch`
 // -- are spellings of the retired verb's pattern, so a flag list of the retired
-// command's own would swallow this one.
+// command's own would swallow this one. The second is `fugaro workspace init`,
+// another live subcommand (internal/cli/workspace_cmd.go), reached through
+// scripts/live-checks/lib/fugaro-surface.tsv: that table is generated from the
+// CLI's own command tree and carries one `flag <path> --help` line per command
+// path, so a path ending in the word is a spelling of the pattern by accident
+// rather than a mention of the retired verb.
 //
 // A file that mentions it *beside* a real mention must not be read as clean,
 // so the exclusion is not a second pattern that exempts the file: the match is
@@ -334,7 +339,7 @@ var initNameRE = regexp.MustCompile(`fugaro init|init --[a-z]`)
 // one does, the census fails on that file and the answer is one of the two
 // this file hands every unexpected mention -- rename it, or add the command
 // here with its reason.
-var otherInitRE = regexp.MustCompile(`config init`)
+var otherInitRE = regexp.MustCompile(`config init|workspace init`)
 
 // censusRoot is the repository root as this package's tests reach it.
 const censusRoot = "../.."
@@ -544,6 +549,11 @@ var censusOutputNames = []string{
 	// records the names of the tests it ran -- the console's test-results/
 	// writes one too.
 	"junit.xml",
+	// .gitignore's /test.json: the JSON stream a traced CI shard tees its
+	// `go test` output to, beside the strace.log the same shard writes (that
+	// one is on censusOutputMarkers, whose `.log` already covers it). Both are
+	// the run's own output rather than repository text.
+	"test.json",
 	// .gitignore's /THIRD_PARTY_NOTICES.md: the licence and notice texts of the
 	// Go modules the released binary links, which scripts/third-party-notices.sh
 	// generates from the module cache when GoReleaser's before hooks run. That
@@ -585,7 +595,9 @@ var censusOutputMarkers = []string{
 	// regenerates.
 	".jpg",
 	// mobile/.gitignore's *.log and .metro-health-check*: the app's own log, and
-	// the health-check file a Metro run leaves at the app's root.
+	// the health-check file a Metro run leaves at the app's root. The root
+	// .gitignore's /strace.log is the third: the read trace a traced CI shard
+	// runs strace into, in the tree root it runs in.
 	".log",
 	".metro-health-check",
 }
@@ -985,11 +997,13 @@ func TestCensusOutputAndExemptArePinned(t *testing.T) {
 		{"testdata/fixture-repo/node_modules/x/index.js", true},
 		{"deploy/terraform/prod/.terraform/providers/x/terraform-provider-google", true},
 		{"deploy/sandbox/junit.xml", true},
+		{"test.json", true},
 		// Every marker on censusOutputMarkers.
 		{"deploy/terraform/prod/terraform.tfstate", true},
 		{"deploy/terraform/prod/terraform.tfstate.backup", true},
 		{"internal/cli/.init.go.swp", true},
 		{"mobile/app.log", true},
+		{"strace.log", true},
 		{"mobile/.metro-health-check.json", true},
 		{"docs/website/redesign/after/home.jpg", true},
 		{"docs/website/redesign/current/home.jpg", true},
@@ -1126,6 +1140,13 @@ var censusIgnored = []struct {
 	// `go test` invocation it runs (fugaro.yaml, internal/verify/gotestjunit):
 	// a run's own output, never source text.
 	{".gitignore", "/reports/", "reports/tree.xml", false, ""},
+	// The traced CI shard's own two outputs, in the tree root it runs `go test`
+	// in: strace's read trace, and the JSON stream `tee` copies the test output
+	// to. Ignored because internal/ciselect indexes the untracked files a
+	// checkout holds, so either one would enter the committed read map and make
+	// it a fact about the machine the scan ran on.
+	{".gitignore", "/strace.log", "strace.log", false, ""},
+	{".gitignore", "/test.json", "test.json", false, ""},
 	{".gitignore", "/deploy/terraform/**/.terraform/", "deploy/terraform/prod/.terraform/providers/registry.terraform.io/hashicorp/google/6.0.0/linux_amd64/terraform-provider-google", false, ""},
 	{".gitignore", "/deploy/terraform/**/*.tfstate", "deploy/terraform/prod/terraform.tfstate", false, ""},
 	{".gitignore", "/deploy/terraform/**/*.tfstate.*", "deploy/terraform/prod/terraform.tfstate.backup", false, ""},

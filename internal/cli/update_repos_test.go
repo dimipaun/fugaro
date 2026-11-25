@@ -6,7 +6,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
@@ -98,6 +100,26 @@ func TestHintFirstMovesOnlyHumanLines(t *testing.T) {
 	}
 }
 
+// wantUnreadReasonLine fails when reason is not what repoView promises: one
+// printable line of a terminal, bounded in length. Unlike noControls a
+// newline is refused too, because the field is one line and a stage may print
+// it without newRepoLine.
+func wantUnreadReasonLine(t *testing.T, reason string) {
+	t.Helper()
+	for _, r := range reason {
+		if (r < 0x20 && r != '\t') || r == 0x7f || (r >= 0x80 && r <= 0x9f) ||
+			(r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069) || r == 0x2028 || r == 0x2029 {
+			t.Errorf("the reason came back holding %q, want one printable line: %q", r, reason)
+		}
+	}
+	if !utf8.ValidString(reason) {
+		t.Errorf("the reason came back as invalid UTF-8: %q", reason)
+	}
+	if n, max := len([]rune(reason)), pluginwire.MaxPrintable+len("... (truncated)"); n > max {
+		t.Errorf("the reason came back %d runes long, want at most %d: it is bounded", n, max)
+	}
+}
+
 // TestUnreadRepoViewCarriesTheReasonAlone: the reader's two shapes are whole
 // ones. A repository it could not read comes back with its reason and nothing
 // else -- no branch, no head commit, no bytes, no parse, no extra files -- so
@@ -121,6 +143,11 @@ func TestUnreadRepoViewCarriesTheReasonAlone(t *testing.T) {
 		{name: "a fugaro.yaml whose problem quotes more than a line may hold",
 			yaml: "version: 1\nproject: aurora\n" + strings.Repeat("x", pluginwire.MaxPrintable+50) + ": 1\n",
 			want: "its fugaro.yaml is not valid", long: true},
+		// And a field's name the file wrote an override character into: the
+		// sentence quotes it, and it comes back escaped rather than raw, so
+		// the check below holds a reason the file really did write into.
+		{name: "a fugaro.yaml whose refused field holds an override character",
+			yaml: "version: 1\nproject: aurora\n\"a\u202eb\": 1\n", want: "its fugaro.yaml is not valid"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Chdir(repoCheckout(t, "https://github.com/acme/app.git", tc.yaml))
@@ -145,14 +172,7 @@ func TestUnreadRepoViewCarriesTheReasonAlone(t *testing.T) {
 			// The reason is one printable line whatever the file held: a
 			// stage prints it without newRepoLine (a notice, doctor's row),
 			// and the parse's own sentence is not this program's text.
-			for _, r := range v.Unread {
-				if r < 0x20 || r == 0x7f || r == 0x202e {
-					t.Errorf("the reason came back holding %q, want one printable line: %q", r, v.Unread)
-				}
-			}
-			if n, max := len([]rune(v.Unread)), pluginwire.MaxPrintable+len("... (truncated)"); n > max {
-				t.Errorf("the reason came back %d runes long, want at most %d: it is bounded", n, max)
-			}
+			wantUnreadReasonLine(t, v.Unread)
 			if tc.long && !strings.HasSuffix(v.Unread, "(truncated)") {
 				t.Errorf("a reason too long for a line came back as %q, want it cut and saying so", v.Unread)
 			}
@@ -177,6 +197,37 @@ func TestUnreadRepoViewCarriesTheReasonAlone(t *testing.T) {
 			t.Errorf("the read view carries %d bytes of fugaro.yaml and the parse %+v, want both", len(v.YAML), v.Cfg)
 		}
 	})
+}
+
+// TestUnreadReasonIsOnePrintableLine: the reason an unread view carries is
+// the repository's text, and a stage may print it without newRepoLine -- in a
+// notice, or in doctor's row -- so the stub runs it through the line
+// sanitiser before it hands the view out (repoView, contract-repos.md). The
+// text below is what such a reason looks like when nothing upstream made it
+// safe: a parse's own sentence about the file it read, quoting a field the
+// file named, with a carriage return, a newline, an escape sequence, a bell
+// and an override character in it, and more words after the break.
+func TestUnreadReasonIsOnePrintableLine(t *testing.T) {
+	problem := config.Problem{
+		Path: "fugaro.yaml", Line: 3,
+		Message: "field a\r\nb\x1b[31m\x07\u202egpj.txt is not a key of this file\nand nothing else in it says more: " +
+			strings.Repeat("x", pluginwire.MaxPrintable+50),
+	}
+	raw := problem.String()
+	for _, nasty := range []string{"\r", "\n", "\x1b", "\x07", "\u202e"} {
+		if !strings.Contains(raw, nasty) {
+			t.Fatalf("the fixture's problem text %q holds no %q, so this test proves nothing", raw, nasty)
+		}
+	}
+
+	got := unreadReason(raw)
+	wantUnreadReasonLine(t, got)
+	if want := "fugaro.yaml (line 3): field a??b??gpj.txt is not a key of this file?and nothing else in it says more: "; !strings.HasPrefix(got, want) {
+		t.Errorf("the reason came back as %q, want it to begin %q: a newline and a carriage return are marked, an escape sequence goes, and the words either side of the break are still there", got, want)
+	}
+	if !strings.HasSuffix(got, "(truncated)") {
+		t.Errorf("a reason longer than a line came back as %q, want it cut and saying so", got)
+	}
 }
 
 // TestNewRepoLineSanitises: a line about a repository can quote a branch name,
