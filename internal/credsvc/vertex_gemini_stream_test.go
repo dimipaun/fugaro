@@ -49,6 +49,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
+	"github.com/dimipaun/fugaro/internal/pricing"
 )
 
 // geminiAnswersDir is where GV2's golden pairs live, one file per side of a
@@ -378,7 +379,7 @@ func TestAGeminiLimitMovesOn(t *testing.T) {
 			})
 
 			cl := vertexCall(t, MessagesPath, geminiLimitBody)
-			done, tried, rec, sel := serveVertexCallIn(t, f.svc, ctx, vertexIdentity(f.svc, wsMemberA), cl, testVertexSource())
+			done, tried, rec, _ := serveVertexCallIn(t, f.svc, ctx, vertexIdentity(f.svc, wsMemberA), cl, testVertexSource())
 			if done {
 				t.Fatalf("the source answered a call Vertex refused with a limit: %d %s", rec.Code, rec.Body)
 			}
@@ -387,6 +388,20 @@ func TestAGeminiLimitMovesOn(t *testing.T) {
 			}
 			if n := f.up.Count(); n != 1 {
 				t.Errorf("Vertex saw %d requests, want the one that was limited", n)
+			}
+			// The room the attempt took is what makes "settled at zero" a fact
+			// and not a vacuum: the reservation went out with the call, and the
+			// assertion below is that the refusal gave it back. What it bounds
+			// is what goes out, which for this publisher is the translated
+			// Google body — one that names no `max_tokens` at all, so the bound
+			// is the model's own output ceiling (the safe direction) and not the
+			// 16 the agent asked for.
+			sent := f.up.Body(0)
+			row := wsRow(t, geminiAnswerModel)
+			want := row.WorstCase(pricing.Request{BodyBytes: int64(len(sent)), MaxTokens: row.MaxOutputTokens})
+			if got := f.watch.reservedAt(t, 0); got.Reserved != want {
+				t.Errorf("at the limited call the workspace held %v of room, want the translated body's own worst case %v: the room is taken before the request goes out",
+					got.Reserved.USD(), want.USD())
 			}
 			m, ok := vertexMark(t, f.svc)
 			if !ok {
@@ -410,7 +425,6 @@ func TestAGeminiLimitMovesOn(t *testing.T) {
 				t.Errorf("the workspace holds %v settled and %v reserved after a refused call, want nothing: an attempt Vertex did not bill must not eat the workspace's month",
 					room.Settled.USD(), room.Reserved.USD())
 			}
-			_ = sel
 		})
 	}
 }
