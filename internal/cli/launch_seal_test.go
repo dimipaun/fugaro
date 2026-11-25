@@ -29,6 +29,11 @@ import (
 // release is refused by this gate and no longer tests what it means to.
 const releaseSeal = "ghcr.io/dimipaun/fugaro-base:" + sealSince
 
+// releaseL8 is the base image of release A: the launch gate that judges a
+// recipe copy, the recipes folder, ab.repos and a lifted key (l8Since) lets it
+// through.
+const releaseL8 = "ghcr.io/dimipaun/fugaro-base:" + l8Since
+
 // nodeRelease is the release that introduced the policy node's current version
 // (projectpolicy.VersionSince): the floor of every fixture whose launch must
 // pass the launcher's policy gate, which holds a job image to the release that
@@ -38,17 +43,10 @@ const releaseSeal = "ghcr.io/dimipaun/fugaro-base:" + sealSince
 // a build record of its own.
 var nodeRelease = projectpolicy.VersionSince[projectpolicy.Version]
 
-// releasePolicy is a derived base image at that release. It is the image the
-// policy gate holds a launch to, so a fixture that publishes a policy and then
+// releasePolicy is a derived base image at that release. It is the newest of
+// the fixtures' base images, so a fixture that publishes a policy and then
 // launches needs this one and not releaseSeal.
 var releasePolicy = "ghcr.io/dimipaun/fugaro-base:" + nodeRelease
-
-// releaseLift is a derived base image at release A, the newest release an image
-// gate in the launcher names: a launch whose subject meets the layer's ab.repos
-// or the project's copy of a repository's recipe is refused on anything older
-// (l8Since, recipeCopySince), so a fixture whose subject is something else there
-// needs this one and not releaseSeal.
-var releaseLift = "ghcr.io/dimipaun/fugaro-base:" + recipeCopySince
 
 // markerKey is the seal key a launch handed its execution: the marker's value,
 // strictly parsed. A launch that minted and handed anything else is a failure.

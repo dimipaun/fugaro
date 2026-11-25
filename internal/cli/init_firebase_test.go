@@ -942,15 +942,10 @@ func TestTheRunIndexIndexesWaitForTheDatabase(t *testing.T) {
 	}
 }
 
-// The other arm is an installation whose Firestore database is not there when
-// the root is applied: the run places it itself, in the installation's region,
-// with nothing asked (D3085, D3090 — no step confirms a location, LP10), and
-// what the gate must prevent is the apply of the eleven index creates against a
-// database that is not there yet. A managed project in a coding agent's session
-// is the state where the applies happen and nothing is confirmed (D3028, R11),
-// which is why the gate is the Firebase root's own input and not a step of its
-// own.
-func TestAnAbsentFirestoreDatabaseIsPlacedAndPlansNoIndex(t *testing.T) {
+// A managed project in a coding agent's session applies the root and still
+// creates the database: no step confirms a location any more (D3090), so the
+// run that once left it for a person converges the whole of it.
+func TestAManagedAgentSessionCreatesTheFirestoreLocation(t *testing.T) {
 	r := alwaysRig(t)
 	mayCreate(t, r)
 	noDatabaseYet(t, r)
@@ -961,17 +956,11 @@ func TestAnAbsentFirestoreDatabaseIsPlacedAndPlansNoIndex(t *testing.T) {
 
 	out, err := updateRun(t, r.initRig, "update")
 	noStepLeftBehind(t, err)
-	if v := r.fbVars(t)["firestore_database_exists"]; v != false {
-		t.Errorf("a run that meets no database applies the Firebase root with firestore_database_exists = %v, want false: the database this run places is not there when the root's plan is made, and an index under it is refused (RI2)", v)
+	if loc, _ := r.fs.Database(); loc == "" {
+		t.Errorf("the Firestore database was not created:\n%s", out)
 	}
-	if got := r.applies(t); !slices.Contains(got, "firebase") {
-		t.Fatalf("the Firebase root was not applied at all (%v): this run is about an apply that carries the gate's answer", got)
-	}
-	if loc, _ := r.fs.Database(); loc != fsLocation(defaultRegion) {
-		t.Errorf("the Firestore database is in %q, want %s: no step asks for the location, so this run places it in the installation's region (D3085, D3090)", loc, fsLocation(defaultRegion))
-	}
-	if !strings.Contains(out, "the Firestore database is created in "+fsLocation(defaultRegion)) {
-		t.Errorf("the run does not say where the database goes, and a database's location can never be changed (D3090):\n%s", out)
+	if strings.Contains(out, "⚠ CONFIRM (project ") {
+		t.Errorf("the run asks for the location's confirmation, which no step does now:\n%s", out)
 	}
 }
 

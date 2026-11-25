@@ -424,13 +424,15 @@ test.describe('the managed sections in the dashboard', () => {
         policy: THE_POLICY,
       },
     )
-    expect(inTheFrame).toEqual({
+    // The first read's body is the cached view when the prewarm queue (PW1) got
+    // to this tab first: its header and policy are drawn together or not at all.
+    const { header, policy: policyDrawn, ...marks } = inTheFrame
+    expect(policyDrawn).toBe(header)
+    expect(marks).toEqual({
       managed: { busy: 'true', label: MANAGED_BUSY },
       accountKeys: { busy: 'true', label: ACCOUNT_KEYS_BUSY },
       retirements: { busy: 'true', label: RETIREMENTS_BUSY },
       credentialsService: { busy: 'true', label: CREDENTIALS_SERVICE_BUSY },
-      header: false,
-      policy: false,
     })
 
     // **The four CM10 sections, each from its own read.** The managed state and

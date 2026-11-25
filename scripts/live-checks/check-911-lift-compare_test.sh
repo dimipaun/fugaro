@@ -373,7 +373,7 @@ test_the_snapshot_is_not_written_to() {
   # Nothing is written outside the scratch either: the work directory holds the
   # snapshot and the fixture's own checkouts, and this check adds no file to it.
   local strays
-  strays=$(find "$work/nothing_written" -maxdepth 1 -newer "$snapfile" -not -name err -not -name answers -not -name config 2>/dev/null | head -3)
+  strays=$(find "$work/nothing_written" -mindepth 1 -maxdepth 1 -newer "$snapfile" -not -name err -not -name answers -not -name config 2>/dev/null | head -3)
   [ -z "$strays" ] || fail "nothing is written: it left $strays"
 }
 

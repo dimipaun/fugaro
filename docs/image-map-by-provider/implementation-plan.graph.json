@@ -1,0 +1,504 @@
+{
+ "schema_version": 3,
+ "plan": "docs/image-map-by-provider/implementation-plan.md",
+ "stream": "cli",
+ "nodes": [
+  {
+   "id": "T0",
+   "title": "the repo_images member, its type and the lookup by provider",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/projectpolicy/repoimages.go",
+     "internal/projectpolicy/repoimages_test.go",
+     "internal/projectpolicy/policy.go",
+     "internal/projectpolicy/issuesync.go",
+     "internal/catalog/select.go",
+     "internal/catalog/select_test.go",
+     "internal/cli/run_test.go",
+     "docs/image-map-by-provider/contract.md",
+     "docs/image-map-by-provider/README.md"
+    ]
+   }
+  },
+  {
+   "id": "T0b",
+   "title": "repo_images in the local config, and the effective reader",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/localcfg/localcfg.go",
+     "internal/localcfg/localcfg_test.go",
+     "internal/localcfg/shared.go",
+     "internal/settings/registry.go",
+     "schemas/settings.schema.json",
+     "internal/cli/testdata/writer_gaps.golden",
+     "internal/cli/settings_set_test.go",
+     "internal/cli/docs_config_management_test.go",
+     "docs/config-management/README.md",
+     "docs/config-management/reconciliation.md"
+    ]
+   }
+  },
+  {
+   "id": "T0c",
+   "title": "the shared config refuses repo_images",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/sharedcfg.go",
+     "internal/cli/sharedcfg_test.go"
+    ]
+   }
+  },
+  {
+   "id": "U1a",
+   "title": "the migration from image_map to repo_images, and repoImageKey",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/repo_images_migrate.go",
+     "internal/cli/repo_images_migrate_test.go"
+    ]
+   }
+  },
+  {
+   "id": "U1b",
+   "title": "the Policy stage publishes repo_images",
+   "run": null,
+   "version": null,
+   "tier": "large",
+   "size": 3,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/init_policy_migrate.go",
+     "internal/cli/init_policy_migrate_test.go",
+     "internal/cli/init_policy_publish.go",
+     "internal/cli/init_policy_publish_test.go",
+     "internal/cli/project_cmd.go",
+     "internal/cli/update_converge_test.go",
+     "internal/apply/steps.go"
+    ]
+   }
+  },
+  {
+   "id": "U1c",
+   "title": "image_map leaves the node after the credentials service is redeployed",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/initflow/stage.go",
+     "internal/cli/init_stages.go",
+     "internal/cli/repo_images_retire.go",
+     "internal/cli/repo_images_retire_test.go"
+    ]
+   }
+  },
+  {
+   "id": "R1",
+   "title": "launch and update's job images read by provider",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/run.go",
+     "internal/infra/spec.go",
+     "internal/infra/catalogcheck.go",
+     "internal/infra/readiness.go",
+     "internal/infra/catalogcheck_test.go",
+     "internal/cli/update_jobimages_test.go",
+     "internal/cli/recipes_skew_catalog_test.go"
+    ]
+   }
+  },
+  {
+   "id": "R2a",
+   "title": "the image catalog commands read by provider",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/image_catalog.go",
+     "internal/cli/image_bake_note.go",
+     "internal/cli/image_catalog_test.go",
+     "internal/cli/image_refresh_test.go",
+     "internal/cli/doctor_layer.go",
+     "internal/cli/image_map.go"
+    ]
+   }
+  },
+  {
+   "id": "R2c",
+   "title": "the catalog build and the bake read by provider",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/image_build_catalog.go",
+     "internal/cli/image_build_catalog_test.go",
+     "internal/imagebake/imagebake.go",
+     "internal/imagebake/bake_test.go",
+     "internal/cli/catalog_bake_e2e_test.go",
+     "internal/backend/gcp/catalog.go",
+     "internal/config/catalog.go"
+    ]
+   }
+  },
+  {
+   "id": "R2b",
+   "title": "image survey --json version 2 prints repo_images",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/image_survey.go",
+     "internal/cli/image_survey_test.go",
+     "schemas/image-survey.schema.json",
+     "internal/cli/skills_test.go",
+     "plugin/skills/images/SKILL.md",
+     "plugin/images_skill_test.go"
+    ]
+   }
+  },
+  {
+   "id": "R2d",
+   "title": "checks 500 and 581 read the survey's version 2",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "scripts/live-checks/check-500.sh",
+     "scripts/live-checks/check-500_test.sh",
+     "scripts/live-checks/check-581.sh",
+     "scripts/live-checks/check-581_test.sh"
+    ]
+   }
+  },
+  {
+   "id": "R3",
+   "title": "doctor, repos view and repos rm by provider",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/doctor_layer.go",
+     "internal/cli/doctor_layer_test.go",
+     "internal/cli/repos_view.go",
+     "internal/cli/repos_view_test.go",
+     "internal/cli/project_repos_rm.go",
+     "internal/cli/project_repos_rm_test.go",
+     "scripts/live-checks/check670_test.sh",
+     "internal/cli/project_enroll_converge.go"
+    ]
+   }
+  },
+  {
+   "id": "S1",
+   "title": "the build token covers the request's provider only",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/credsvc/buildtoken.go",
+     "internal/credsvc/buildtoken_test.go"
+    ]
+   }
+  },
+  {
+   "id": "S2",
+   "title": "image map set writes repo_images",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/image_map.go",
+     "internal/cli/image_map_managed.go",
+     "internal/cli/image_map_test.go",
+     "website/content/cli-reference.md",
+     "internal/cli/testdata/next_step_allow.golden",
+     "internal/cli/image_catalog.go",
+     "internal/cli/image_survey.go"
+    ]
+   }
+  },
+  {
+   "id": "S3",
+   "title": "repos add writes repo_images",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/project_enroll_converge.go",
+     "internal/cli/project_enroll_converge_test.go"
+    ]
+   }
+  },
+  {
+   "id": "D1a",
+   "title": "the skills name repo_images",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "plugin/skills/images/SKILL.md",
+     "plugin/skills/setup/SKILL.md",
+     "plugin/images_skill_test.go"
+    ]
+   }
+  },
+  {
+   "id": "D1b",
+   "title": "the documents and security pages name repo_images",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "docs/project-layer.md",
+     "docs/gcp-live-checklist.md",
+     "docs/how-to/offboarding.md",
+     "SECURITY.md",
+     "website/content/security.md"
+    ]
+   }
+  },
+  {
+   "id": "K1",
+   "title": "Check 940 as a script",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "scripts/live-checks/check940.sh",
+     "scripts/live-checks/check940_test.sh",
+     "scripts/live_checks_test.go",
+     "scripts/live-checks/check196.sh",
+     "scripts/live-checks/check196_test.sh",
+     "docs/secrets-brokering/check196-steps.md"
+    ]
+   }
+  },
+  {
+   "id": "X1",
+   "title": "repo_images end to end, and the converge from the release before",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/repo_images_e2e_test.go",
+     "internal/cli/update_in_flight_test.go",
+     "internal/catalog/select.go",
+     "internal/catalog/select_test.go"
+    ]
+   }
+  }
+ ],
+ "edges": [
+  {
+   "task": "T0b",
+   "needs": "T0",
+   "reason": "kept: localcfg builds on T0's EffectiveRepoImages and validator"
+  },
+  {
+   "task": "S1",
+   "needs": "T0",
+   "reason": "kept: compiles against the node's member and EffectiveRepoImages"
+  },
+  {
+   "task": "T0c",
+   "needs": "T0b",
+   "reason": "kept: compiles against the local member and the effective reader"
+  },
+  {
+   "task": "U1a",
+   "needs": "T0b",
+   "reason": "kept: compiles against the local member and the effective reader"
+  },
+  {
+   "task": "R1",
+   "needs": "T0b",
+   "reason": "kept: compiles against the local member and the effective reader"
+  },
+  {
+   "task": "R2a",
+   "needs": "T0b",
+   "reason": "kept: compiles against the local member and the effective reader"
+  },
+  {
+   "task": "R2b",
+   "needs": "T0b",
+   "reason": "kept: compiles against the local member and the effective reader"
+  },
+  {
+   "task": "R2c",
+   "needs": "T0b",
+   "reason": "kept: compiles against the local member and the effective reader"
+  },
+  {
+   "task": "U1b",
+   "needs": "U1a",
+   "reason": "kept, behaviour: the Policy stage calls the migration"
+  },
+  {
+   "task": "R3",
+   "needs": "U1a",
+   "reason": "kept, behaviour: it migrates a legacy map first and keys through repoImageKey (R13)"
+  },
+  {
+   "task": "S2",
+   "needs": "U1a",
+   "reason": "kept, behaviour: it migrates a legacy map first and keys through repoImageKey (R13)"
+  },
+  {
+   "task": "S3",
+   "needs": "U1a",
+   "reason": "kept, behaviour: it migrates a legacy map first and keys through repoImageKey (R13)"
+  },
+  {
+   "task": "R3",
+   "needs": "R2a",
+   "reason": "kept: R2a edits doctor_layer.go's call site, and R3 writes that file (F32, R16)"
+  },
+  {
+   "task": "S2",
+   "needs": "R2a",
+   "reason": "kept: R2a edits image_map.go's call site and S2 writes that file and image_catalog.go's help (R16)"
+  },
+  {
+   "task": "S3",
+   "needs": "R3",
+   "reason": "kept: repos add calls reposViewAllowOf and reposViewRowOf, which R3 rewrites (F32)"
+  },
+  {
+   "task": "R2d",
+   "needs": "R2b",
+   "reason": "kept, behaviour: the scripts read the version-2 document"
+  },
+  {
+   "task": "D1a",
+   "needs": "R2b",
+   "reason": "kept: both write plugin/skills/images/SKILL.md and plugin/images_skill_test.go"
+  },
+  {
+   "task": "D1a",
+   "needs": "S2",
+   "reason": "kept: the skills name the command as its help now reads"
+  },
+  {
+   "task": "D1b",
+   "needs": "S2",
+   "reason": "kept: the documents name the command as its help now reads"
+  },
+  {
+   "task": "D1b",
+   "needs": "S1",
+   "reason": "kept: SECURITY.md states the build-token rule S1 implements"
+  },
+  {
+   "task": "D1b",
+   "needs": "R2b",
+   "reason": "kept: the checklist names the survey's version 2"
+  },
+  {
+   "task": "X1",
+   "needs": "U1c",
+   "reason": "kept, behaviour: X1 exercises it end to end"
+  },
+  {
+   "task": "X1",
+   "needs": "R1",
+   "reason": "kept, behaviour: X1 exercises it end to end"
+  },
+  {
+   "task": "X1",
+   "needs": "R2a",
+   "reason": "kept, behaviour: X1 exercises it end to end"
+  },
+  {
+   "task": "X1",
+   "needs": "R2c",
+   "reason": "kept, behaviour: X1 exercises it end to end"
+  },
+  {
+   "task": "X1",
+   "needs": "R3",
+   "reason": "kept, behaviour: X1 exercises it end to end"
+  },
+  {
+   "task": "X1",
+   "needs": "S3",
+   "reason": "kept, behaviour: X1 exercises it end to end"
+  },
+  {
+   "task": "U1c",
+   "needs": "U1b",
+   "reason": "kept, behaviour: it removes the image_map U1b leaves on the node"
+  },
+  {
+   "task": "S2",
+   "needs": "R2b",
+   "reason": "kept: S2 writes image_survey.go's help after R2b's change to that file"
+  }
+ ],
+ "decoupling": [],
+ "contract_changes": []
+}

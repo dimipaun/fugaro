@@ -71,9 +71,9 @@ func TestLsFiltersAndTotals(t *testing.T) {
 	f := newCloudFixture(t)
 	f.run.Project, f.run.Region = "proj-1234", "us-east5" // where the fixture's backend lists
 	today := time.Now().UTC().Format("20060102")
-	e1 := seedRun(t, f, today+"-090000-aaaa", "b1", "someone@example.com", true)
-	seedRun(t, f, today+"-091000-bbbb", "b1", "other@example.com", true)
-	seedRun(t, f, today+"-092000-cccc", "b2", "someone@example.com", false)
+	e1 := seedRun(t, f, today+"-000001-aaaa", "b1", "someone@example.com", true)
+	seedRun(t, f, today+"-000002-bbbb", "b1", "other@example.com", true)
+	seedRun(t, f, today+"-000003-cccc", "b2", "someone@example.com", false)
 	seedRun(t, f, "20200101-000000-dddd", "b1", "someone@example.com", false) // outside --since // runid-guard:allow
 	f.run.SetState(e1, backend.StateRunning)
 
@@ -150,7 +150,7 @@ func lsJSON(t *testing.T, args ...string) (lsOut, string) {
 func TestLsFollowsTheRecordsExecution(t *testing.T) {
 	f := newCloudFixture(t)
 	f.run.Project, f.run.Region = "proj-1234", "us-east5"
-	id := time.Now().UTC().Format("20060102") + "-090000-aaaa"
+	id := time.Now().UTC().Format("20060102") + "-000001-aaaa"
 	dup := seedRun(t, f, id, "", "someone@example.com", true)
 	owner := startRunExecution(f, gcp.JobName(appSlug, "web"), appSlug, id)
 	f.run.SetState(dup, backend.StateSucceeded)
@@ -172,7 +172,7 @@ func TestLsFollowsTheRecordsExecution(t *testing.T) {
 // not a failure of the listing: one bad run must not hide the others.
 func TestLsUnparseableExecutionWarns(t *testing.T) {
 	f := newCloudFixture(t)
-	id := time.Now().UTC().Format("20060102") + "-090000-aaaa"
+	id := time.Now().UTC().Format("20060102") + "-000001-aaaa"
 	seedRun(t, f, id, "", "someone@example.com", false)
 	ctx := context.Background()
 	b, _ := blob.OpenBucket(ctx, f.bucket)
@@ -324,7 +324,7 @@ func wantOverrideRatio(t *testing.T, list, override float64) {
 
 func TestLsUsesPriceOverride(t *testing.T) {
 	f := newCloudFixture(t)
-	seedFinishedRun(t, f, time.Now().UTC().Format("20060102")+"-090000-aaaa")
+	seedFinishedRun(t, f, time.Now().UTC().Format("20060102")+"-000001-aaaa")
 	compute := func() float64 {
 		out, _, err := execute(t, "runs", "ls", "--json")
 		if err != nil {

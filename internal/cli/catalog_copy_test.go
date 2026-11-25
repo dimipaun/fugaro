@@ -439,3 +439,35 @@ func TestCatalogCopyRefusesABakeThatLeavesTheBound(t *testing.T) {
 		t.Fatalf("the copy is %d bytes (%v), want the entry's own %d", len(data), err, len(def))
 	}
 }
+
+// TestCatalogBakedReposRefusesACopyAnEarlierReleaseComposed: the checkouts a
+// build's clone step clones are read from the copy's own marker lines, and both
+// submit sites read them from the object the build will read. A copy an earlier
+// release composed names only the directory it baked at: its clone ran inside
+// the entry's build, which this release hands no git credential at all (B8,
+// F19), so there is nothing for the clone step to clone. It is refused by name
+// rather than submitted to fail in the build with `could not read Username`.
+func TestCatalogBakedReposRefusesACopyAnEarlierReleaseComposed(t *testing.T) {
+	slug := mustSlug(gitprov.KindGitHub, "acme/app")
+	def, err := imagebake.Append([]byte(catalogCheckAppDef), imagebake.Plan{Baked: []imagebake.Repo{{
+		Repo: "acme/app", Slug: slug, URL: "https://github.com/acme/app.git", Branch: "main",
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repos, err := catalogBakedRepos(def, "tools"); err != nil || len(repos) != 1 || repos[0].Slug != slug {
+		t.Fatalf("repos = %+v (%v), want the one checkout this release's copy bakes", repos, err)
+	}
+	if repos, err := catalogBakedRepos([]byte(catalogCheckAppDef), "tools"); err != nil || len(repos) != 0 {
+		t.Fatalf("repos = %+v (%v), want none for a definition that bakes nothing", repos, err)
+	}
+	dir, err := imagebake.Path(slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := []byte(catalogCheckAppDef + "# fugaro bake: " + dir + "\nRUN true\n")
+	_, err = catalogBakedRepos(old, "tools")
+	if err == nil || !strings.Contains(err.Error(), "run fugaro image build tools to compose it again") {
+		t.Fatalf("a copy an earlier release composed was accepted: %v", err)
+	}
+}
