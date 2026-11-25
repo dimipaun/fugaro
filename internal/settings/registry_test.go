@@ -189,26 +189,50 @@ func TestRegistryCoversEveryConfigField(t *testing.T) {
 			t.Errorf("layer.defaults.%s: the registry says %q, and config.Scopes retires it with %q", s.Key, lr.RetiredWhy, s.RetiredWhy)
 		}
 	}
+	// The reverse direction, as the config's own test has it: a row the
+	// registry marks retired is a key config.Scopes retires, or one of the
+	// installation's own four — a mark nothing reads would leave a live key
+	// reading as retired.
+	for _, r := range Rows() {
+		if r.RetiredWhy == "" || strings.HasPrefix(r.Key, "layer.") {
+			continue
+		}
+		if s, ok := config.ScopeOf(r.Key); ok && s.Retired != 0 {
+			continue
+		}
+		if slices.ContainsFunc(installationRetired, func(tc retiredKeyPin) bool { return tc.key == r.Key }) {
+			continue
+		}
+		t.Errorf("%s: the registry retires it (%q), and neither config.Scopes nor the installation's own list does", r.Key, r.RetiredWhy)
+	}
 }
 
-// TestRegistryRetiresTheInstallationKeys is MG5's other half: the keys of the
-// installation's own files — the local config's `routing.claude.via` and
-// `subscription_spread`, the policy's `credentials.fallback` and
-// `credentials.wait_threshold` — are retired too, and no config.Scopes row
-// carries them (they are the installation's, not a repository's or a layer's),
-// so the coverage test above cannot pin them. Each sentence says what replaced
-// the key and names the document that states it, and the schema's own half is
-// TestSettingsSchema.
+// retiredKeyPin is one of the installation's own retired keys: the key and the
+// words its sentence has to carry, because the key has no config.Scopes row to
+// read the claim off (it is the local config's or the published node's).
+type retiredKeyPin struct {
+	key   string
+	words []string
+}
+
+// installationRetired is MG5's other half: the keys of the installation's own
+// files — the local config's `routing.claude.via` and `subscription_spread`,
+// the policy's `credentials.fallback` and `credentials.wait_threshold`. Each
+// sentence says what replaced the key and names the document that states it,
+// and the coverage test above holds this list to the registry's marks so that
+// no fifth key is retired by accident.
+var installationRetired = []retiredKeyPin{
+	{"routing.claude.via", []string{"routing table"}},
+	{"credentials.fallback", []string{"chain"}},
+	{"credentials.wait_threshold", []string{"chain"}},
+	{"subscription_spread", []string{"pool"}},
+}
+
+// TestRegistryRetiresTheInstallationKeys is what pins that list: a row of the
+// installation's own is marked retired, says what replaced it and names the
+// document that states it. The schema's half is TestSettingsSchema.
 func TestRegistryRetiresTheInstallationKeys(t *testing.T) {
-	for _, tc := range []struct {
-		key   string
-		words []string
-	}{
-		{"routing.claude.via", []string{"routing table"}},
-		{"credentials.fallback", []string{"chain"}},
-		{"credentials.wait_threshold", []string{"chain"}},
-		{"subscription_spread", []string{"pool"}},
-	} {
+	for _, tc := range installationRetired {
 		r, ok := Lookup(tc.key)
 		if !ok {
 			t.Errorf("%s: no registry row", tc.key)
