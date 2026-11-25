@@ -546,7 +546,7 @@ func ValidatePools(pools []Pool, creds []Credential) []Problem {
 		switch {
 		case p.Name != "" && poolNames[p.Name]:
 			ps = append(ps, Problem{Path: at, Message: "this name is defined twice; a pool is named once per block"})
-		case p.Name != "" && defined[p.Name] && !poolMayTakeItsOnlyMembersName(p, creds):
+		case p.Name != "" && defined[p.Name] && !PoolMayTakeItsOnlyMembersName(p, creds):
 			ps = append(ps, Problem{Path: at, Message: "a credential of this name is defined in the same block: a craft's access names a credential or a pool and does not say which, so one name may mean only one of them — rename the pool or the credential"})
 		default:
 			if msg := credentialNameProblem(p.Name); msg != "" {
@@ -582,17 +582,23 @@ func ValidatePools(pools []Pool, creds []Credential) []Problem {
 	return ps
 }
 
-// poolMayTakeItsOnlyMembersName reports whether a pool's name is the one
-// collision ValidatePools admits with the credentials block: the pool walks
-// exactly one credential, the one the block defines under the pool's own name,
-// and nothing else (D3176). It is the state `fugaro accounts add` writes for a
-// subscription token and `fugaro update` writes for every lone account.
+// PoolMayTakeItsOnlyMembersName reports whether a pool's name is the one
+// collision the namespace rule admits with the credentials block: the pool
+// walks exactly one credential, the one the block defines under the pool's own
+// name, and nothing else (D3176). It is the state `fugaro accounts add` writes
+// for a subscription token and `fugaro update` writes for every lone account.
+//
+// It is exported because the rule it answers is asked of a second document:
+// `fugaro project policy publish` builds the node's two blocks from two sources
+// and refuses a name both of them mean (craftNamespaceClash), and a pool of one
+// named after its own credential is the one collision that document admits
+// too.
 //
 // The credential has to be the block's OWN: the built-in vertex is a name a
 // reference may carry and a definition never does (ValidateCredentials), so a
 // pool named after it would be a pool of a credential the document does not
 // hold — which the name rule refuses, as it always did.
-func poolMayTakeItsOnlyMembersName(p Pool, creds []Credential) bool {
+func PoolMayTakeItsOnlyMembersName(p Pool, creds []Credential) bool {
 	if len(p.Members) != 1 || p.Members[0] != p.Name {
 		return false
 	}
