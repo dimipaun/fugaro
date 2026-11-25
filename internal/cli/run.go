@@ -26,12 +26,15 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
+	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/craft"
+	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/identitywire"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -41,6 +44,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/redact"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -2712,6 +2716,13 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	// record and the same local config as the gate above, and like it not at
 	// all for a launch the service does not serve.
 	if err := env.serviceAuthGate(ctx, slug, spec, kind, clone, warn); err != nil {
+		return config.Inputs{}, err
+	}
+	// The table's own gate (R22): a run of a repository whose project publishes
+	// a routing table, whose models the table does not all route, has no source
+	// to be served from — it is refused here, before the claim and before the
+	// task, rather than by the run that cannot start.
+	if err := env.chainRoutingGate(ctx, spec); err != nil {
 		return config.Inputs{}, err
 	}
 	// The workflow secrets' gate (B3.8, G17): a run of a switched repository
@@ -6382,6 +6393,11 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	// launcher that read the mode alone would start such a run on the job that
 	// mounts the App key and halt it at bootstrap for a marker it wrote.
 	reviewJob := spec.Mode == recipe.ModeReview || spec.ReviewClass
+	// The coding job the review variant below is derived from, kept because
+	// the variant does not carry the pair its own account is derived from
+	// (projectJobReviewFor) and the run's identity is asked for as that
+	// account (runAccount).
+	codingJob := job
 	if reviewJob {
 		if job, err = env.reviewJobFor(ctx, job, spec, slug); err != nil {
 			return res, err
@@ -6400,6 +6416,61 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	if job == nil && config.AxisNonAccountValue(spec.OAuthToken) {
 		return res, userErr("this launch names %s (%s) as the run's own account, and this repository runs on a job of its own: the value is not a Claude account and no per-repository job holds it, so the job this launch derived from the name is one no installation was ever asked for. The jobs it names are the shared project job of a profile that lists it and that job's review-only variant, and a repository reaches them when the published policy serves a profile for its provider and its workflow runs on a shared job — which a repository the policy serves no profile for does not, and neither does a `checkout: baked` workflow before a shared job carries the image it needs. Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called. Have the published policy serve this repository from a profile of its provider, run it from a clone workflow, or launch without --token",
 			nonAccountPhrase(spec.OAuthToken), spec.OAuthToken)
+	}
+	// The workflow variant is the per-repository job's name, so it is derived
+	// where the job is the repository's own and nowhere else: a launch that
+	// resolved a shared project job runs the job the project named (lspec.Job
+	// below), and the backend reads no workflow from the spec for a job it is
+	// handed by name. It is also the one derivation the account axis's
+	// non-account value cannot survive — gcp.WorkflowVariant refuses the
+	// sentinel's doubled hyphen — and a launch on the job the sentinel's
+	// profile deploys needs no per-repository name at all.
+	//
+	// It is derived here, before the ask below, because the variant is half of
+	// the account a per-repository job's execution runs as (runAccount): a
+	// launch that asked for its run's identity before it knew what its job is
+	// would ask as an account the run is not. spec.Workflow, unlike
+	// spec.OAuthToken, is never shape-checked by task.Parse: a bad --workflow, a
+	// stored task from before this feature validated anything about it, or
+	// tampered bucket data could all reach here.
+	variant, ok := spec.Workflow, true
+	if job == nil {
+		variant, ok = jobWorkflow(spec.Workflow, spec.OAuthToken)
+	}
+	if !ok {
+		return res, userErr("workflow %s is not a plain workflow name, so it can't be combined with Claude account %s; nothing started", oneLineCLI(spec.Workflow), pluginwire.Printable(spec.OAuthToken))
+	}
+	// The run's identity, asked of the installation's credentials service
+	// before this launch takes its claim and before it writes anything of the
+	// run (launch_identity.go): the ticket is what the execution carries to the
+	// run, and where the service issues one the launcher signs nothing and
+	// writes no object at all. R7's three answers — no service configured, a
+	// service whose revision holds no issuer, a service of a release behind —
+	// are the launch's own bridge, and the seal below is what they fall back
+	// to.
+	account, err := env.runAccount(ctx, slug, spec, codingJob, job, reviewJob, variant)
+	if err != nil {
+		return res, err
+	}
+	identityAsk, err := env.launchTicketFor(ctx, slug, spec, account, job, reviewJob, now)
+	if err != nil {
+		return res, err
+	}
+	if identityAsk.ticket != nil {
+		// LM8's gate, and only for a launch that really holds a ticket: the
+		// image this run starts must be one whose runner knows the claim, since
+		// a run that carries a ticket holds no sealed object and stops at
+		// bootstrap on an older runner with no identity at all (identityGate).
+		// It is judged on the same reads as every other *Since gate — the
+		// workflow's kind and checkout mode — and never on a bridged launch,
+		// which signs locally as before and whose marker an older runner opens.
+		_, kind, clone, _, _, err := launchWorkflowShape(ctx, env, spec)
+		if err != nil {
+			return res, err
+		}
+		if err := env.identityGate(ctx, slug, spec, kind, clone, launchWarn); err != nil {
+			return res, err
+		}
 	}
 	hook(launchHooks.beforeClaim)
 	holder := claimHolder()
@@ -6499,46 +6570,41 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	if err := declareLaunch(hctx, env, slug, spec); err != nil && !errors.Is(err, rtdb.ErrPermission) {
 		fmt.Fprintf(launchWarn, "warning: the launch was not reported to the coordinator: %s\n", oneLine(err.Error()))
 	}
-	// The run's budget identity: minted, sealed under a key drawn for this
-	// launch and left in the bucket before the execution can start, by the
-	// one CLI that holds the claim. A failure here means nothing started, so
-	// the claim goes back. sealKey is the only copy of the key: it goes into
-	// this execution's marker and nowhere else (D15). job, when the launch
-	// resolved a shared project job, is the job the identity window is
-	// measured from (project_job.go).
-	sealKey, err := env.mintBudgetToken(hctx, slug, spec, job)
-	minted := sealKey != nil
-	if err != nil {
-		rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		releaseClaim(rctx, env, s, holder)
-		rcancel()
-		return res, err
-	}
-	// The workflow variant is the per-repository job's name, so it is derived
-	// where the job is the repository's own and nowhere else: a launch that
-	// resolved a shared project job runs the job the project named (lspec.Job
-	// below), and the backend reads no workflow from the spec for a job it is
-	// handed by name. It is also the one derivation the account axis's
-	// non-account value cannot survive — gcp.WorkflowVariant refuses the
-	// sentinel's doubled hyphen — and a launch on the job the sentinel's
-	// profile deploys needs no per-repository name at all.
-	variant, ok := spec.Workflow, true
-	if job == nil {
-		variant, ok = jobWorkflow(spec.Workflow, spec.OAuthToken)
-	}
-	if !ok {
-		// spec.Workflow, unlike spec.OAuthToken, is never shape-checked by
-		// task.Parse: a bad --workflow, a stored task from before this
-		// feature validated anything about it, or tampered bucket data could
-		// all reach here. Definitive, same cleanup as a platform refusal:
-		// nothing started.
-		rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		releaseClaim(rctx, env, s, holder)
-		if minted {
-			env.dropBudgetToken(rctx, slug, spec.RunID)
+	// The run's identity, continued: where the service issued a ticket the
+	// launch mints nothing and seals nothing — the ticket IS the run's identity,
+	// and a launcher that sealed one anyway would hand the run two identities
+	// and write an object the release after this one deletes (R7, LM18). The
+	// local mint below is R7's bridge and nothing else.
+	//
+	// It is what this launch did before the service had an identity half: the
+	// run's budget identity, minted and sealed under a key drawn for this
+	// launch and left in the bucket before the execution can start, by the one
+	// CLI that holds the claim. A failure here means nothing started, so the
+	// claim goes back. sealKey is the only copy of the key: it goes into this
+	// execution's marker and nowhere else (D15). job, when the launch resolved a
+	// shared project job, is the job the identity window is measured from
+	// (project_job.go).
+	var sealKey []byte
+	minted := false
+	if identityAsk.ticket == nil {
+		sealKey, err = env.mintBudgetToken(hctx, slug, spec, job)
+		minted = sealKey != nil
+		if err != nil {
+			if identityAsk.fromService() && errors.Is(err, token.ErrNotMinter) {
+				// The bridge, and the one refusal a person acts on: this
+				// installation's service issues run tickets, so the
+				// fugaroTokenMinter role a local mint needs is the row
+				// `fugaro update` takes away once the issuer answers its probe
+				// (LM14). What an operator meets here is a release skew and not
+				// a missing grant, and it is said so rather than left as IAM's
+				// own error (pairMinterRefusal's rule for the same bridge).
+				err = launchMinterRefusal(env.lc, err)
+			}
+			rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			releaseClaim(rctx, env, s, holder)
+			rcancel()
+			return res, err
 		}
-		rcancel()
-		return res, userErr("workflow %s is not a plain workflow name, so it can't be combined with Claude account %s; nothing started", oneLineCLI(spec.Workflow), pluginwire.Printable(spec.OAuthToken))
 	}
 	lctx, cancel := context.WithTimeout(hctx, launchTimeout)
 	lspec := backend.LaunchSpec{Repo: backend.RepoRef{Repo: spec.Repo, Slug: slug}, Workflow: variant, RunID: spec.RunID, Timeout: launchTimeoutOf(spec), Docker: docker}
@@ -6575,7 +6641,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		jobProfile = job.Profile
 	}
 	svcAuth, deployed := env.repoServiceAuth(ctx, spec, launchWarn)
-	lspec.Env = credentialsServiceLaunchEnv(env.lc, jobProfile, spec.Repo, svcAuth, env.policyMode(ctx), deployed, reviewJob)
+	lspec.Env = credentialsServiceLaunchEnv(env.serviceConfig(), jobProfile, spec.Repo, svcAuth, env.policyMode(ctx), deployed, reviewJob)
 	// The run's slip, asked for exactly where the service's address was just
 	// written: the grant the credentials service keeps for this run, whose id
 	// the job claims at its first call and presents on every call after it
@@ -6604,12 +6670,12 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	// the coding job, so a slip granted for either derivation would be one
 	// that job can never claim.
 	if !reviewJob {
-		slipAccount := gcp.ServiceAccountID(slug, variant) + "@" + env.lc.GCPProject + ".iam.gserviceaccount.com"
-		if job != nil {
-			slipAccount = gcp.ProjectServiceAccountID(job.Profile, job.Provider, job.Account) + "@" + env.lc.GCPProject + ".iam.gserviceaccount.com"
-		}
+		// The same account the run's identity was asked for (account, above),
+		// and not a second derivation of it: the claim is checked against the
+		// account the grant named (slipIsThisRuns, D1937), so a slip naming
+		// another account is one the run can never claim.
 		if url, ok := credentialsServiceURLOf(lspec.Env); ok {
-			lspec.Env = append(lspec.Env, runSlipEnv(hctx, env, spec, slug, slipAccount, url)...)
+			lspec.Env = append(lspec.Env, runSlipEnv(hctx, env, spec, slug, account, url)...)
 		}
 		// The person's own token at the workspace (D3141, D3142, R8): asked for
 		// where this repository's own route record says the workspace serves its
@@ -6638,11 +6704,24 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		// running is the installation's own fact.
 		lspec.Env = append(slices.Clone(lspec.Env), runner.EnvReviewJob+"=1")
 	}
+	if t := identityAsk.ticket; t != nil {
+		// The run's identity, on the execution and nowhere else: the value is a
+		// one-time secret the run claims with (identitywire.TicketEnv), it is
+		// handed to ONE execution, and it is PLAIN environment and never
+		// SecretEnv — the backend that matters refuses SecretEnv outright
+		// (internal/backend/batch's sealedVars), and Cloud Run merges the two
+		// lists into the same overrides anyway. It is the slip's own rule for
+		// the same kind of value (envSlip), and the runner registers it with its
+		// redactor at bootstrap (internal/runner's BackendFromEnv).
+		lspec.Env = append(lspec.Env, identitywire.TicketEnv+"="+t.value)
+	}
 	ref, err := env.be.Launch(lctx, lspec)
 	cancel()
-	// A backend error may quote the request it was given; the key is in that
-	// request, so it is taken out of the error before anything formats it.
-	err = sealRedact(err, sealKey)
+	// A backend error may quote the request it was given, and both of this
+	// launch's secrets are in that request — the seal key of a bridged launch
+	// and the ticket of a served one — so they are taken out of the error before
+	// anything formats it.
+	err = ticketRedact(sealRedact(err, sealKey), identityAsk.ticket)
 	if err != nil {
 		if errors.Is(err, backend.ErrRejected) {
 			// Definitive: the platform refused, so nothing started. Drop our
@@ -6941,8 +7020,17 @@ func credentialsServiceLaunchEnv(lc *localcfg.Config, sharedProfile, repo, auth,
 		return []string{envCredentialsServiceURL + "=" + lc.CredentialsService.URL}
 	}
 	local, _ := lc.RepoFor(repo)
-	serves := infra.CredentialsServiceServes(installed, local.CredentialsServiceOn(), auth, mode)
-	if auth == "" {
+	// Two arms, one answer, exactly as the repository root's plan reads them
+	// (internal/infra's resolve): the release-1 bridge, which reads agent.auth,
+	// and the table, which does not. A repository the table serves is told
+	// about the service whatever its file names — a `vertex` repository above
+	// all, which has no credential to hand the service and whose chain the
+	// service serves on its own identity (D3174) — and a repository the bridge
+	// would serve keeps its answer.
+	ready := local.CredentialsServiceOn()
+	serves := infra.CredentialsServiceServes(installed, ready, auth, mode) ||
+		infra.CredentialsServiceServesChains(installed, ready, infra.ChainPlanFor(lc, repo))
+	if auth == "" && !serves {
 		// No document this launcher could read, so the switch's third
 		// condition is judged on the two answers that do not need one: the
 		// repository's own record, and this machine's tfvars of the root it
@@ -7157,6 +7245,15 @@ func runSlipEnv(ctx context.Context, env *cloudEnv, spec *task.Spec, slug, accou
 		Credentials:       names,
 		MaxRuntimeSeconds: int64(slipRunTime(spec) / time.Second),
 	}
+	// The sources the run's models can reach by the project's table (R4, D3171):
+	// what the walk serves this run from, and a positive list — a grant that
+	// named none is one covering no source of the new kinds, which is what a
+	// launcher of a release before this route asks for. A project that publishes
+	// no table sends the member not at all (omitempty), so an unmigrated
+	// installation's grant is byte for byte the one it always was.
+	if env.lc != nil && len(env.lc.ModelRouting) > 0 {
+		req.Sources = chainGrantSources(env.lc.ModelRouting, launchRunModels(ctx, env, spec), spec.Repo)
+	}
 	sctx, cancel := context.WithTimeout(ctx, slipGrantTimeout)
 	defer cancel()
 	ans, err := slipGrant(sctx, serviceURL, req)
@@ -7225,12 +7322,7 @@ func slipCredentialNames(ctx context.Context, env *cloudEnv, spec *task.Spec) ([
 	if co == nil {
 		return nil, "the repository's own fugaro.yaml could not be read at the ref this run will check out — there is no checkout of the repository here, or that ref carries no such file this launcher can resolve — so the credentials the run will ask for cannot be named, and the launcher's own working tree is not the document the run reads; run `fugaro run` from a checkout of the repository with the ref the run will clone to have this run served under a slip"
 	}
-	layers := []craft.Layer{{Name: craft.SourceRepo, Crafts: co.Agent.Crafts}}
-	if env.lc != nil {
-		layers = append(layers, craft.Layer{Name: craft.SourceLocal, Crafts: env.lc.Crafts,
-			Credentials: env.lc.Credentials, Pools: env.lc.Pools, KeyPrefix: craftLocalKeyPrefix})
-	}
-	eff, ps := craft.Resolve(layers, false)
+	eff, ps := craft.Resolve(launchCraftModelLayers(env, co), false)
 	if len(ps) > 0 {
 		// The path and not the name an access wrote: that name is what the
 		// slip must not carry, so it stays out of the launcher's output the
@@ -7244,6 +7336,132 @@ func slipCredentialNames(ctx context.Context, env *cloudEnv, spec *task.Spec) ([
 		}
 	}
 	return names, ""
+}
+
+// launchCraftModelLayers are the two layers that can write a craft's model or
+// access for a launch: the document this run will check out, and the
+// installation's own config, which is where the owner creates the credentials
+// and the pools a repository's file only selects among (F12, D1628). The
+// project layer is not read because it carries crafts and only their models
+// (config.Scopes refuses a craft access in a file anyone who can write the runs
+// bucket can write). slipCredentialNames and launchRunModels read the same two
+// layers through this one function, so a craft's access and a craft's model
+// cannot be resolved from two different documents.
+func launchCraftModelLayers(env *cloudEnv, co *config.Config) []craft.Layer {
+	layers := []craft.Layer{{Name: craft.SourceRepo, Crafts: co.Agent.Crafts}}
+	if env.lc != nil {
+		layers = append(layers, craft.Layer{Name: craft.SourceLocal, Crafts: env.lc.Crafts,
+			Credentials: env.lc.Credentials, Pools: env.lc.Pools, KeyPrefix: craftLocalKeyPrefix})
+	}
+	return layers
+}
+
+// launchRunModels are every model the run can call: the rungs a stage's model
+// is chosen by (craft.ModelRungs — the task's grade, a review level's model, a
+// craft's model, a pinned role of agent.models and agent.model) and the
+// override a task carries (task.Overrides.Model), which is the lowest rung of
+// the same ladder (D1660) and which no flag of this launcher writes.
+//
+// It is the set the project's routing table is judged against at launch (R22):
+// a model the table does not route is a run with no source to be served from,
+// refused before anything is written. It is also the set the run's grant is
+// read from — the entries these models resolve to are the sources the grant
+// asks for (chainGrantSources).
+//
+// Each rung is read from the document the run's own resolution reads, resolved
+// over the installation's config: the crafts through the same two layers
+// slipCredentialNames resolves an access from, and the levels through the
+// resolver the run's own bootstrap resolves them with (launchLevelModels), so
+// the launcher and the runner cannot disagree about what one configuration
+// means.
+func launchRunModels(ctx context.Context, env *cloudEnv, spec *task.Spec) []string {
+	cfg := launchLevelsConfig(ctx, env, spec)
+	if cfg == nil {
+		return nil
+	}
+	var models []string
+	add := func(model string) {
+		if model != "" && !slices.Contains(models, model) {
+			models = append(models, model)
+		}
+	}
+	if spec.ModelGrade != "" {
+		add(cfg.ModelGrades.Of(string(spec.ModelGrade)).Model)
+	}
+	for _, model := range launchLevelModels(ctx, env, spec, cfg) {
+		add(model)
+	}
+	eff, _ := craft.Resolve(launchCraftModelLayers(env, cfg), false)
+	for _, name := range config.CraftNames {
+		add(eff[name].Model)
+	}
+	for _, model := range cfg.Agent.PinnedModels() {
+		add(model)
+	}
+	add(cfg.Agent.Model)
+	add(spec.Overrides.Model)
+	return models
+}
+
+// launchLevelModels is the model each review level the run would run resolves
+// to: the resolution, and not the configuration's own level blocks, because a
+// task carries a level's block of its own (spec.ReviewLevels, written by
+// `fugaro run --review-levels`) and it is the layer that writes a level's model
+// last. A level the run does not run resolves to no model at all, so a level
+// `none` switched off is not a rung either reader asks about.
+//
+// The resolution is launched with its warnings discarded: it is the levels
+// gate's own read (launchResolve, launchReviewLevelsAsk), which printed them
+// for this launch and a run of it twice would be a note a person reads twice. A
+// resolution this launch cannot make is that gate's refusal — the launch is
+// refused before its grant — so the configuration's own level blocks stand in
+// and this read asks about no model the refusal did not already cover.
+func launchLevelModels(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config) []string {
+	recipe, _ := launchRecipeForLevels(ctx, spec)
+	if r := launchResolve(ctx, env, spec, cfg, recipe, io.Discard); r.err == nil {
+		return []string{r.levels.L1.Model, r.levels.L2.Model, r.levels.L3.Model}
+	}
+	var models []string
+	for _, level := range []*config.LevelSetting{cfg.Agent.Levels.L1, cfg.Agent.Levels.L2, cfg.Agent.Levels.L3} {
+		if level != nil {
+			models = append(models, level.Model)
+		}
+	}
+	return models
+}
+
+// chainGrantSources are the sources of the table this run's grant covers: every
+// entry the run's models resolve to, its chain reduced to the sources that may
+// serve this repository and deduplicated (C2's GrantSource).
+//
+// A source this repository is not admitted to is left out rather than sent: the
+// service refuses a grant naming a source the table does not give the
+// repository (CS14), and one such name would be the whole grant refused. The
+// pool kinds are asked for whatever the repository, since which member serves
+// them is the walk's answer at the call (D3180, D3182).
+//
+// A model no entry matches is left out here and not refused: that refusal is
+// the launch's own gate (chainRoutingGate), which runs before this read, and a
+// grant that named the other models' sources is the right one for the run that
+// gets that far.
+func chainGrantSources(table routing.Table, models []string, repo string) []creds.GrantSource {
+	var out []creds.GrantSource
+	for _, model := range models {
+		entry, err := routing.Resolve(table, model)
+		if err != nil {
+			continue
+		}
+		for _, source := range entry.Chain {
+			if !infra.ChainSourceServes(source, repo) {
+				continue
+			}
+			granted := creds.GrantSource{Kind: string(source.Kind), Pool: source.Pool}
+			if !slices.Contains(out, granted) {
+				out = append(out, granted)
+			}
+		}
+	}
+	return out
 }
 
 // slipRunTime is how long this run asks to be served for: the run's own

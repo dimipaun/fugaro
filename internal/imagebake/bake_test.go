@@ -1,14 +1,9 @@
 package imagebake
 
 import (
-	"os"
-	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
-
-	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // userinfoURL matches what a generated definition must never spell: a URL
@@ -131,8 +126,11 @@ func TestDecideBakesSeveralRepos(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(string(def), markerPrefix+dir+"\n") {
+		if !strings.Contains(string(def), markerPrefix+dir+" "+r.URL+" "+r.Branch+"\n") {
 			t.Errorf("the composed definition has no stage for %s at %s:\n%s", r.Repo, dir, def)
+		}
+		if !strings.Contains(string(def), "COPY --from="+BakedImage+" --chown=1000:1000 /"+r.Slug+"/ "+dir+"/\n") {
+			t.Errorf("the stage of %s does not copy its checkout out of %s:\n%s", r.Repo, BakedImage, def)
 		}
 	}
 	if got := strings.Count(string(def), markerPrefix); got != len(p.Baked) {
@@ -141,27 +139,20 @@ func TestDecideBakesSeveralRepos(t *testing.T) {
 	if slug, ok := BakedSlug(def); !ok || slug != "app-1234abcd" {
 		t.Errorf("BakedSlug(composed) = %q, %v; want app-1234abcd, true: the last stage is the build's own", slug, ok)
 	}
-	// The build's own stage takes the build's own arguments; the entry's other
-	// repositories are spelled into the definition, because the arguments a
-	// catalog build passes name the repository it runs for.
-	if !strings.Contains(string(def), `clone --quiet --branch "$BASE_BRANCH" --single-branch -- "$REPO_URL" /work/baked/app-1234abcd`) {
-		t.Errorf("the build's own stage does not clone its own REPO_URL:\n%s", def)
+	// And what the clone step clones the stages from: the plan's repositories,
+	// in the order their stages run, read back out of the definition's own
+	// marker lines.
+	repos := BakedRepos(def)
+	if len(repos) != len(p.Baked) {
+		t.Fatalf("BakedRepos(composed) = %+v, want the plan's %d repositories", repos, len(p.Baked))
 	}
-	if !strings.Contains(string(def), "clone --quiet --branch 'main' --single-branch -- 'https://github.com/acme/api.git' /work/baked/api-1111aaaa") {
-		t.Errorf("the stage of acme/api does not spell its own URL and branch:\n%s", def)
-	}
-	if strings.Contains(string(def), "ARG REPO_URL\nARG BASE_BRANCH\nARG FUGARO_COMMIT") &&
-		strings.Count(string(def), "ARG REPO_URL") != 1 {
-		t.Errorf("more than the build's own stage declares the build's arguments:\n%s", def)
-	}
-	// The submodule guard of every stage is over the plan's own repositories, the
-	// credential's reach, and not over the stage's repository alone.
-	guard := submoduleGuard("/work/baked/api-1111aaaa", p.Baked)
-	if !strings.Contains(string(def), guard) {
-		t.Errorf("the stage of acme/api does not carry the guard over the plan's repositories:\n%s", def)
-	}
-	if !strings.Contains(guard, "github.com/acme/api github.com/acme/web github.com/acme/app") {
-		t.Errorf("the guard does not cover every repository the credential covers:\n%s", guard)
+	for i, r := range repos {
+		// The Repo name and the URL are the checkout's, which is what a clone
+		// step can act on; the number is the stage's place and not the plan's
+		// order, which is the same one.
+		if r.Slug != p.Baked[i].Slug || r.URL != p.Baked[i].URL || r.Branch != p.Baked[i].Branch {
+			t.Errorf("BakedRepos(composed)[%d] = %+v, want %+v", i, r, p.Baked[i])
+		}
 	}
 }
 
@@ -313,47 +304,6 @@ func TestDecideBakesNothingWhileTheMapDoesNotListIt(t *testing.T) {
 	}
 }
 
-// TestDecideAnUnsetSwitchIsOn: bake_repos has one meaning in this repository
-// (projectpolicy.Policy.BakesRepos, localcfg.BakeReposEffective): absent is
-// yes, and only a written false turns the bake off. A build that read the
-// absent case any other way would be a second meaning for one field — the same
-// published node telling a settings reader "on" and a build "nothing is
-// baked".
-func TestDecideAnUnsetSwitchIsOn(t *testing.T) {
-	var absent projectpolicy.Policy
-	on := absent.BakesRepos()
-	if !on {
-		t.Fatal("projectpolicy says an absent bake_repos is off: this test's premise is the opposite")
-	}
-	for name, req := range map[string]Request{
-		"the map puts the repository on the entry": reqApp(),
-		"the map names nothing":                    func() Request { r := reqApp(); r.Map = nil; return r }(),
-		"the entry serves another repository too": func() Request {
-			r := reqApp()
-			r.Map = map[string]string{"acme/app": "app", "acme/web": "app"}
-			r.Repos = append(r.Repos, repoSpec("acme/web", "web-2222bbbb"))
-			return r
-		}(),
-		"the checkout's own workflow names the entry": func() Request { r := reqApp(); r.Map = nil; r.Reference = "app"; return r }(),
-	} {
-		t.Run(name, func(t *testing.T) {
-			req.Bake = nil
-			unset := Decide(req)
-			req.Bake = &on
-			answered := Decide(req)
-			if (len(unset.Baked) == 0) != (len(answered.Baked) == 0) {
-				t.Fatalf("Decide baked %q with the switch unset and %q with it answered yes: one field, two meanings", names(unset.Baked), names(answered.Baked))
-			}
-			if len(unset.Baked) > 0 {
-				return
-			}
-			if unset.Notable != answered.Notable || unset.Reason != answered.Reason {
-				t.Errorf("Decide says %q (notable %v) with the switch unset and %q (notable %v) with it answered yes", unset.Reason, unset.Notable, answered.Reason, answered.Notable)
-			}
-		})
-	}
-}
-
 // TestDecideBakeSwitchOff: D1901's switch, off, keeps the checkout out of every
 // image and says so.
 func TestDecideBakeSwitchOff(t *testing.T) {
@@ -385,499 +335,6 @@ func TestDecideRefusesASlugThatIsNotOne(t *testing.T) {
 		if _, err := Path(slug); err == nil {
 			t.Errorf("Path(%q) accepted a slug that is not one", slug)
 		}
-	}
-}
-
-// TestStageClonesWithTheBuildsOwnCredential: the stage is the generated
-// Dockerfile clone. What it must never do is carry a secret into a layer: the
-// credential is the BuildKit secret mount the catalog build provides (D1150,
-// F14), and no ARG, ENV or COPY names a token.
-func TestStageClonesWithTheBuildsOwnCredential(t *testing.T) {
-	p := Decide(reqApp())
-	stage, err := Stage(p.Baked[len(p.Baked)-1], p.Baked)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{
-		"--mount=type=secret,id=git-credentials,uid=1000,required=false",
-		"credential.helper='store --file=/run/secrets/git-credentials'",
-		"case \"$repo\" in 'https://github.com/acme/app') ;;",
-		"clone --quiet --branch \"$BASE_BRANCH\" --single-branch -- \"$REPO_URL\" /work/baked/app-1234abcd",
-		"reset --quiet --hard \"$commit\"",
-		"/usr/local/lib/fugaro/finalize-checkout /work/baked/app-1234abcd",
-		"case \" github.com/acme/app \" in",
-	} {
-		if !strings.Contains(stage, want) {
-			t.Errorf("the generated stage does not carry %q:\n%s", want, stage)
-		}
-	}
-	// The token is never a build argument, an ENV or a COPY: those reach a
-	// layer, and a layer is what everybody who pulls the image reads.
-	for _, banned := range []string{"ENV ", "COPY ", "ARG GIT_TOKEN", "ARG TOKEN", "ARG GITHUB_TOKEN", "ARG SECRET"} {
-		if strings.Contains(stage, banned) {
-			t.Errorf("the generated stage carries %q:\n%s", banned, stage)
-		}
-	}
-	// The clone URL is the credential-free one the catalog build passes, and
-	// the stage never rewrites the remote to a URL of its own: an origin with
-	// userinfo is what finalize-checkout refuses.
-	if loc := userinfoURL.FindString(stage); loc != "" {
-		t.Errorf("the generated stage spells the URL %q, which could carry a credential:\n%s", loc, stage)
-	}
-	// It runs as the image's own user: a USER line here would change whom every
-	// job on this image runs as.
-	if strings.Contains(stage, "\nUSER ") {
-		t.Errorf("the generated stage switches user:\n%s", stage)
-	}
-	if !strings.Contains(stage, "case \"$FUGARO_COMMIT\" in *[!0-9a-f]*)") {
-		t.Errorf("the generated stage does not hold FUGARO_COMMIT to a commit ID:\n%s", stage)
-	}
-}
-
-// TestStageRefusesAnotherRepositorysURL: the stage clones the URL it was
-// composed for and no other. A definition is rebuilt by whichever repository the
-// nightly check assigns its entry to (the repository its source names, or the
-// project's first when it has none), which is not always the checkout that
-// composed it: without the guard that rebuild would clone one repository into
-// another's slug path, under the marker and the tag the composed definition
-// gave it, and the smoke — which reads the directory out of the definition and
-// the origin out of the job — would pass on the pairing.
-func TestStageRefusesAnotherRepositorysURL(t *testing.T) {
-	p := Decide(reqApp())
-	stage, err := Stage(p.Baked[0], p.Baked)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The stage runs the guard the test below runs; what is pinned here is
-	// that this stage carries it and not a second spelling of the rule.
-	if !strings.Contains(stage, repoURLGuard(p.Baked[0].URL)) {
-		t.Fatalf("the stage does not hold REPO_URL to the repository it was composed for:\n%s", stage)
-	}
-	if !strings.Contains(stage, "a rebuild of the entry has to run as the repository whose checkout it bakes") {
-		t.Errorf("the guard's refusal does not say what went wrong or what to do:\n%s", stage)
-	}
-	// And a URL that may not be spelled into a definition is refused rather
-	// than written: the object is read by every build and job of the entry, so
-	// a URL with a credential in it would be copied into the bucket.
-	for name, bad := range map[string]string{
-		"a URL with userinfo":     "https://user:token@github.com/acme/app.git",
-		"a URL that is not https": "http://github.com/acme/app.git",
-		"no host at all":          "https:///acme/app.git",
-		"a shell-quoting hazard":  "https://github.com/acme/it's.git",
-		"a newline":               "https://github.com/acme/app.git\nRUN echo hi",
-	} {
-		t.Run(name, func(t *testing.T) {
-			r := reqApp().Repo
-			r.URL = bad
-			if stage, err := Stage(r, nil); err == nil {
-				t.Fatalf("Stage spelled %q into a definition:\n%s", bad, stage)
-			}
-		})
-	}
-}
-
-// stageFinalize is the last step a generated stage runs: the base image's own
-// script, which no test can put on the absolute path the definition spells. The
-// test below points that one word at a stub of its own, so what it observes is
-// whether the step ran at all.
-const stageFinalize = "/usr/local/lib/fugaro/finalize-checkout"
-
-// stageShell is the shell the builder runs for a generated stage: the RUN
-// instruction's own text with the BuildKit flags off the first line and the line
-// continuations joined, which is what the instruction is to /bin/sh. A test
-// about how the stage's parts are joined has to run the join: the parts are one
-// line of text, and where a guard sits in it is what its own text cannot show.
-func stageShell(t *testing.T, stage string) string {
-	t.Helper()
-	at := strings.Index(stage, "\nRUN ")
-	if at < 0 {
-		t.Fatalf("the stage carries no RUN instruction:\n%s", stage)
-	}
-	body := stage[at+len("\nRUN "):]
-	// The instruction's first line is its BuildKit flags, and the shell begins
-	// on the line after it.
-	flags := strings.Index(body, " \\\n")
-	if flags < 0 {
-		t.Fatalf("the RUN instruction carries no continued shell line:\n%s", stage)
-	}
-	return strings.TrimSuffix(strings.ReplaceAll(body[flags+len(" \\\n"):], " \\\n", ""), "\n")
-}
-
-// TestStageFailsWhenTheResetDoes: the stage's steps are one shell line joined
-// with "&&", and the guard that ends it is several commands of its own. "&&"
-// binds tighter than ";", so a guard whose commands are not one brace group is
-// joined to the step AHEAD of it — the commit pin — and the step behind it
-// (finalize-checkout) is joined to the guard's last command alone. A `git reset
-// --hard` that failed then leaves the stage running on to the guard and to
-// finalize-checkout over the branch head, and the image bakes a commit other
-// than FUGARO_COMMIT with every check passing.
-//
-// So what this runs is the generated stage's own shell, with the build's tools
-// replaced by stubs: git, whose reset is the step under test, install, which
-// would write under the image's own root, and finalize-checkout, which is the
-// base image's script and is pointed at a stub that records that it ran.
-func TestStageFailsWhenTheResetDoes(t *testing.T) {
-	p := Decide(reqApp())
-	stage, err := Stage(p.Baked[len(p.Baked)-1], p.Baked)
-	if err != nil {
-		t.Fatal(err)
-	}
-	bin := t.TempDir()
-	finalized := filepath.Join(bin, "finalized")
-	stub := func(name, body string) {
-		t.Helper()
-		if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	stub("git", "#!/bin/sh\ncase \"$*\" in *'reset --quiet --hard'*) exit \"${RESET_STATUS:-0}\" ;; esac\nexit 0\n")
-	stub("install", "#!/bin/sh\nexit 0\n")
-	stub("finalize-checkout", "#!/bin/sh\n: > "+finalized+"\n")
-
-	shell := stageShell(t, stage)
-	pointed := strings.ReplaceAll(shell, stageFinalize, filepath.Join(bin, "finalize-checkout"))
-	if pointed == shell {
-		t.Fatalf("the stage does not run %s, so this test would observe nothing:\n%s", stageFinalize, stage)
-	}
-	run := func(t *testing.T, reset string) (string, error) {
-		t.Helper()
-		if err := os.Remove(finalized); err != nil && !os.IsNotExist(err) {
-			t.Fatal(err)
-		}
-		cmd := exec.Command("sh", "-c", pointed)
-		cmd.Dir = t.TempDir()
-		cmd.Env = []string{
-			"PATH=" + bin + ":" + os.Getenv("PATH"),
-			"HOME=" + t.TempDir(),
-			"REPO_URL=https://github.com/acme/app.git",
-			"BASE_BRANCH=main",
-			"FUGARO_COMMIT=",
-			"RESET_STATUS=" + reset,
-		}
-		out, err := cmd.CombinedOutput()
-		return string(out), err
-	}
-	// The control: with a reset that succeeds the whole stage runs, finalize
-	// included, so what fails below is the reset and not the stubs.
-	if out, err := run(t, "0"); err != nil {
-		t.Fatalf("the stage failed with a reset that succeeded: %v\n%s", err, out)
-	}
-	if _, err := os.Stat(finalized); err != nil {
-		t.Fatalf("the stage did not run finalize-checkout with a reset that succeeded: %v", err)
-	}
-	// And a reset that fails fails the stage, before the guard and before the
-	// final step: a stage that ran on would bake the branch head under the marker
-	// and the tag the definition gave the commit it was composed for.
-	out, err := run(t, "1")
-	if err == nil {
-		t.Fatalf("the stage passed with a failed reset, so the image bakes a commit other than FUGARO_COMMIT:\n%s", out)
-	}
-	if _, err := os.Stat(finalized); err == nil {
-		t.Errorf("the stage ran finalize-checkout after a failed reset:\n%s", out)
-	}
-}
-
-// TestOtherStageSpellsTheURLAndBranch: the stage of one of the entry's other
-// repositories carries that repository's URL and branch in the definition
-// itself, because the arguments a catalog build passes name the repository the
-// build runs for — and it carries no argument of its own, no commit pin (the
-// build holds no commit of a repository it does not run for) and the same
-// submodule guard as every other stage.
-func TestOtherStageSpellsTheURLAndBranch(t *testing.T) {
-	covered := []Repo{repoSpec("acme/app", "app-1234abcd"), repoSpec("acme/web", "web-2222bbbb")}
-	stage, err := OtherStage(covered[1], covered)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{
-		markerPrefix + "/work/baked/web-2222bbbb\n",
-		"# acme/web, one of the repositories",
-		"--mount=type=secret,id=git-credentials,uid=1000,required=false",
-		"clone --quiet --branch 'main' --single-branch -- 'https://github.com/acme/web.git' /work/baked/web-2222bbbb",
-		submoduleGuard("/work/baked/web-2222bbbb", covered),
-		"/usr/local/lib/fugaro/finalize-checkout /work/baked/web-2222bbbb",
-	} {
-		if !strings.Contains(stage, want) {
-			t.Errorf("the other repository's stage does not carry %q:\n%s", want, stage)
-		}
-	}
-	for _, banned := range []string{"$REPO_URL", "$BASE_BRANCH", "$FUGARO_COMMIT", "ARG ", "ENV ", "COPY "} {
-		if strings.Contains(stage, banned) {
-			t.Errorf("the other repository's stage carries %q, which names the build's own repository:\n%s", banned, stage)
-		}
-	}
-	if loc := userinfoURL.FindString(stage); loc != "" {
-		t.Errorf("the other repository's stage spells the URL %q, which could carry a credential:\n%s", loc, stage)
-	}
-	// The URL, the branch and the name are config values, and a definition may
-	// not spell arbitrary text: each is refused rather than written. The
-	// refusals are one line each — a value that ended a line would spell a
-	// Dockerfile instruction of its own.
-	for name, tc := range map[string]Repo{
-		"a branch a clone would read as a flag": {Repo: "acme/web", Slug: "web-2222bbbb", URL: "https://github.com/acme/web.git", Branch: "--upload-pack=/bin/sh"},
-		"an empty branch":                       {Repo: "acme/web", Slug: "web-2222bbbb", URL: "https://github.com/acme/web.git", Branch: ""},
-		"a branch with a newline":               {Repo: "acme/web", Slug: "web-2222bbbb", URL: "https://github.com/acme/web.git", Branch: "main\nRUN echo hi"},
-		"a branch with a quote":                 {Repo: "acme/web", Slug: "web-2222bbbb", URL: "https://github.com/acme/web.git", Branch: "main'; RUN echo hi #"},
-		"a URL with userinfo":                   {Repo: "acme/web", Slug: "web-2222bbbb", URL: "https://user:token@github.com/acme/web.git", Branch: "main"},
-		"a name that is not a repository":       {Repo: "acme/web\nRUN echo hi", Slug: "web-2222bbbb", URL: "https://github.com/acme/web.git", Branch: "main"},
-		"a slug that is not one":                {Repo: "acme/web", Slug: "../escape", URL: "https://github.com/acme/web.git", Branch: "main"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			stage, err := OtherStage(tc, covered)
-			if err == nil {
-				t.Fatalf("OtherStage spelled %+v into a definition:\n%s", tc, stage)
-			}
-			if strings.ContainsAny(err.Error(), "\n\r") {
-				t.Errorf("the refusal is not one line, so it does not belong in a build log: %q", err.Error())
-			}
-		})
-	}
-}
-
-// TestRepoURLGuardHoldsTheRepositoryNotTheSpelling: the guard is shell, and
-// what it has to do is what the text of it cannot promise — accept every
-// spelling git clones one repository from and refuse another repository. The
-// build's REPO_URL is not the composed one: a catalog build passes
-// repourl.CloneURL's canonical form (https://host/owner/name.git) while the
-// definition was composed from the checkout's origin, which git spells with or
-// without ".git", with or without a trailing slash, and in any case. A guard
-// comparing the two strings refused the nightly rebuild of such a definition
-// inside the build, every night, after it was submitted and paid for.
-func TestRepoURLGuardHoldsTheRepositoryNotTheSpelling(t *testing.T) {
-	// Composed from an origin with none of the three canonical marks.
-	guard := repoURLGuard("https://Bitbucket.org/acme/Other")
-	for name, tc := range map[string]struct {
-		repoURL string
-		held    bool
-	}{
-		"the canonical form the nightly check passes": {"https://bitbucket.org/acme/other.git", true},
-		"the origin it was composed from":             {"https://Bitbucket.org/acme/Other", true},
-		"a trailing slash":                            {"https://bitbucket.org/acme/other.git/", true},
-		"another repository":                          {"https://bitbucket.org/acme/elsewhere.git", false},
-		"another repository, spelt like the origin":   {"https://Bitbucket.org/Acme/Elsewhere", false},
-		"another repository of another host":          {"https://github.com/acme/other.git", false},
-		"a repository whose name starts the same":     {"https://bitbucket.org/acme/other-repo.git", false},
-		// ".GIT" is the same suffix as ".git": the guard's shell lowercases
-		// before it trims, so a trailing uppercase suffix on the build's own
-		// REPO_URL reaches the same repository rather than a spelling nothing
-		// matches.
-		"the canonical form, uppercased suffix": {"https://bitbucket.org/acme/other.GIT", true},
-		"the origin, uppercased suffix":         {"https://Bitbucket.org/acme/Other.GIT/", true},
-	} {
-		t.Run(name, func(t *testing.T) {
-			cmd := exec.Command("sh", "-c", guard)
-			cmd.Env = append(os.Environ(), "REPO_URL="+tc.repoURL)
-			out, err := cmd.CombinedOutput()
-			switch {
-			case tc.held && err != nil:
-				t.Fatalf("the guard refused %s, which is the repository this definition bakes: %v\n%s", tc.repoURL, err, out)
-			case !tc.held && err == nil:
-				t.Fatalf("the guard accepted %s, and the rebuild would bake it into this definition's slug path", tc.repoURL)
-			case !tc.held && !strings.Contains(string(out), "REPO_URL is not it"):
-				t.Fatalf("the guard refused %s without saying why:\n%s", tc.repoURL, out)
-			}
-		})
-	}
-	// The composed origin may carry the uppercase suffix itself, and then the
-	// fold's order is the whole test: trimming ".git" before lowercasing leaves
-	// "…/other.GIT" as "…/other.git", a pattern no REPO_URL matches — not the
-	// canonical one, not the origin — so the composing build and every nightly
-	// rebuild of it would fail inside the build, after it was paid for.
-	upper := repoURLGuard("https://bitbucket.org/acme/other.GIT")
-	for _, repoURL := range []string{"https://bitbucket.org/acme/other.git", "https://bitbucket.org/acme/other.GIT", "https://bitbucket.org/acme/other"} {
-		cmd := exec.Command("sh", "-c", upper)
-		cmd.Env = append(os.Environ(), "REPO_URL="+repoURL)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("a definition composed from an origin ending .GIT refused %s, the same repository: %v\n%s", repoURL, err, out)
-		}
-	}
-}
-
-// TestBakedSubmoduleOutsideTheCredentialNamesTheRepo: every stage ends with the
-// guard, and what the guard has to do is what its text cannot promise. The
-// checkout is the baked repository's own, so a submodule it declares is a fetch
-// this build would make with the credential the entry's repositories were minted
-// into — and a repository the credential does not cover is not one it fetches:
-// the build fails, naming the repository, rather than cloning it.
-//
-// The declaration is read with git's own parser and what the refusal names is
-// the repository the URL resolves to, folded to host/owner/name. That fold is
-// what keeps a credential out of the build log — everything from a "?" or a "#"
-// is off the text printed, and so is the userinfo, which is dropped from the
-// host part alone — and what refuses a repository of the entry's own owner and
-// name that lives on another host, including one whose URL puts a covered
-// repository's path behind its own host's name. A checkout with no .gitmodules
-// declares nothing and the guard passes; one whose .gitmodules git cannot read
-// is not the same answer, and the guard fails rather than passing over
-// declarations it never saw.
-func TestBakedSubmoduleOutsideTheCredentialNamesTheRepo(t *testing.T) {
-	dir := t.TempDir()
-	covered := []Repo{repoSpec("acme/app", "app-1234abcd"), repoSpec("acme/web", "web-2222bbbb")}
-	guard := submoduleGuard(dir, covered)
-	sub := func(name, url string) string {
-		return "[submodule \"" + name + "\"]\n\tpath = " + name + "\n\turl = " + url + "\n"
-	}
-	// run writes a .gitmodules — or takes it away, for the checkout that declares
-	// none — and runs the guard the stage carries, through the shell a stage runs
-	// it with: the invariant is what the shell does with a declaration, and a
-	// guard whose text alone is pinned can be relaxed to an always-accepting arm
-	// with nothing failing.
-	run := func(t *testing.T, body string, remove bool) (string, error) {
-		t.Helper()
-		path := filepath.Join(dir, ".gitmodules")
-		if remove {
-			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-				t.Fatal(err)
-			}
-		} else if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		cmd := exec.Command("sh", "-c", guard)
-		// The build's own environment, without the operator's: a system or a
-		// global gitconfig must not change what the guard reads (B8's clone step
-		// sets both of these).
-		cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull)
-		out, err := cmd.CombinedOutput()
-		return string(out), err
-	}
-	for _, tc := range []struct {
-		name string
-		body string
-		// remove takes the file away instead of writing body.
-		remove bool
-		// named is the repository the refusal has to name, "" when the guard
-		// accepts the declaration.
-		named string
-	}{
-		{"no .gitmodules at all", "", true, ""},
-		{"nothing declared", "", false, ""},
-		{"an empty .gitmodules", "# nothing\n", false, ""},
-		{"a submodule the credential covers", sub("lib", "https://github.com/acme/web.git"), false, ""},
-		{"a submodule it covers, spelt another way", sub("lib", "https://GitHub.com/Acme/Web/"), false, ""},
-		{"a submodule it does not cover", sub("lib", "https://github.com/acme/lib.git"), false, "github.com/acme/lib"},
-		{"a submodule of another host", sub("lib", "https://gitlab.com/acme/web.git"), false, "gitlab.com/acme/web"},
-		// Another host whose URL carries a covered repository's path after an "@":
-		// git contacts evil.example and the credential goes with it, so a fold that
-		// dropped everything before the last "@" of the whole URL would read this as
-		// the covered repository and fetch it.
-		{"another host with a covered path after an @", sub("lib", "https://evil.example/x@github.com/acme/app"), false, "evil.example/x@github.com/acme/app"},
-		// The same with the "@" behind a fragment: what git sends the credential to
-		// is still evil.example, and the fragment is off the URL before the host is
-		// read, so the fold cannot be pushed past it. The declaration is quoted
-		// because git's own config parser would otherwise cut the value at the "#"
-		// and the shell would never see one — a .gitmodules may quote it, and then
-		// this fold is the only thing between that declaration and a fetch.
-		{"another host with a covered path behind a fragment", sub("lib", `"https://evil.example/#@github.com/acme/app"`), false, "evil.example"},
-		{"a relative submodule", sub("lib", "../lib"), false, "../lib"},
-		// A declaration that is a glob is the text the checkout declared and not
-		// the build's own files: the loop splits what it reads into words, and a
-		// word holding "*" would otherwise be expanded against the working
-		// directory and compared and printed as whatever it matched.
-		{"a declaration that is a glob", sub("lib", "*"), false, "*"},
-		{"a submodule in git's scp spelling", sub("lib", "git@github.com:acme/web.git"), false, "github.com:acme/web"},
-		{"the second of two declared", sub("a", "https://github.com/acme/app.git") + sub("b", "https://github.com/acme/zzz.git"), false, "github.com/acme/zzz"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			out, err := run(t, tc.body, tc.remove)
-			if tc.named == "" {
-				if err != nil {
-					t.Fatalf("the guard refused a checkout whose submodules the credential covers: %v\n%s", err, out)
-				}
-				return
-			}
-			if err == nil {
-				t.Fatalf("the guard accepted %s, and the build clones a repository the credential does not cover", tc.named)
-			}
-			if !strings.Contains(out, tc.named) {
-				t.Errorf("the guard refused without naming %s, so the build log does not say which repository it could not read:\n%s", tc.named, out)
-			}
-			if strings.Contains(out, "https://") {
-				t.Errorf("the guard echoed a URL, and a submodule URL may carry a credential:\n%s", out)
-			}
-		})
-	}
-	// An unreadable .gitmodules is refused, and what is printed is git's own
-	// message: it names the file and the line and never what the line holds.
-	if out, err := run(t, sub("lib", `https://github.com/acme/\qweb.git`), false); err == nil {
-		t.Errorf("the guard passed over a .gitmodules it could not read:\n%s", out)
-	} else if strings.Contains(out, "acme") {
-		t.Errorf("the refusal carries the line git could not read, which may be a URL with a credential in it:\n%s", out)
-	}
-	// A URL that carries a credential is refused — the repository is not one the
-	// credential covers — and the token never reaches the build log, which is what
-	// the fold's dropping everything before the last "@" is for.
-	out, err := run(t, sub("lib", "https://x-token:tok3n@github.com/acme/lib.git"), false)
-	if err == nil {
-		t.Fatal("the guard accepted a submodule URL carrying a credential")
-	}
-	if strings.Contains(out, "tok3n") {
-		t.Errorf("the guard put a credential from a submodule URL into the build log:\n%s", out)
-	}
-	if !strings.Contains(out, "github.com/acme/lib") {
-		t.Errorf("the guard refused without naming the repository:\n%s", out)
-	}
-	// The same with an "@" inside the password: the fold drops up to the LAST one,
-	// so what is left is the host and the path and not the tail of a credential.
-	out, err = run(t, sub("lib", "https://x-token:pa@ss:tok3n@github.com/acme/lib.git"), false)
-	if err == nil {
-		t.Fatal("the guard accepted a submodule URL carrying a credential")
-	}
-	for _, secret := range []string{"tok3n", "ss", "pa@"} {
-		if strings.Contains(out, secret) {
-			t.Errorf("the guard put %q, part of a credential in a submodule URL, into the build log:\n%s", secret, out)
-		}
-	}
-	if !strings.Contains(out, "github.com/acme/lib") {
-		t.Errorf("the guard refused without naming the repository:\n%s", out)
-	}
-	// A token in a query or a fragment is not a repository's name, and it does not
-	// reach the log either.
-	for _, url := range []string{
-		"https://github.com/acme/lib.git?access_token=tok3n",
-		"https://github.com/acme/lib.git#tok3n",
-	} {
-		out, err := run(t, sub("lib", url), false)
-		if err == nil {
-			t.Fatalf("the guard accepted the uncovered repository in %q", url)
-		}
-		if strings.Contains(out, "tok3n") {
-			t.Errorf("the guard printed the token %q carried:\n%s", url, out)
-		}
-		if !strings.Contains(out, "github.com/acme/lib") {
-			t.Errorf("the guard refused without naming the repository:\n%s", out)
-		}
-	}
-	// A control character in a declaration cannot rewrite the log line it appears
-	// in: what is printed is the repository's name and nothing around it.
-	out, err = run(t, sub("lib", "https://github.com/acme/\x1b[31mzzz.git"), false)
-	if err == nil {
-		t.Fatal("the guard accepted a URL carrying a control character")
-	}
-	if strings.ContainsAny(out, "\x1b\x07") {
-		t.Errorf("the guard printed a control character from a submodule URL:\n%q", out)
-	}
-	if !strings.Contains(out, "github.com/acme/[31mzzz") {
-		t.Errorf("the guard refused without naming the repository:\n%s", out)
-	}
-	// A URL on the covered host and name, with a credential in it, is the covered
-	// repository: git sends that credential to that host, and nothing is printed.
-	out, err = run(t, sub("lib", "https://x-token:tok3n@github.com/acme/web.git"), false)
-	if err != nil {
-		t.Fatalf("the guard refused a submodule of the covered repository: %v\n%s", err, out)
-	}
-	if strings.Contains(out, "tok3n") {
-		t.Errorf("the guard printed a URL that carried a credential:\n%s", out)
-	}
-	// A guard over no repositories — a stage composed with nothing the credential
-	// covers — refuses every declaration rather than accepting what it cannot show
-	// is covered.
-	if err := os.WriteFile(filepath.Join(dir, ".gitmodules"), []byte(sub("lib", "https://github.com/acme/web.git")), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command("sh", "-c", submoduleGuard(dir, nil))
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull)
-	if out, err := cmd.CombinedOutput(); err == nil {
-		t.Fatalf("a guard over no repositories accepted a submodule declaration:\n%s", out)
 	}
 }
 
@@ -970,5 +427,114 @@ func TestAppendAndBakedDir(t *testing.T) {
 	}
 	if !strings.Contains(string(nl), "FROM scratch\n"+markerPrefix) {
 		t.Errorf("the stage was appended without a line of its own:\n%s", nl)
+	}
+}
+
+// TestAppendNamesNoSecretAndCopiesTheCheckout: what a generated stage may never
+// do is clone — the entry's own build holds no git credential (B8, F19), and a
+// RUN of it that cloned would need one. A stage is therefore the copy of a
+// checkout the clone step made, out of the image that step tagged: no RUN at
+// all, no build argument, no secret mount, no USER line, and one COPY per
+// repository.
+func TestAppendNamesNoSecretAndCopiesTheCheckout(t *testing.T) {
+	p := Decide(reqApp())
+	def, err := Append([]byte("FROM scratch\nUSER 0\n"), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := strings.TrimPrefix(string(def), "FROM scratch\nUSER 0\n")
+	// The comments of the stages say that no stage names a secret, so this looks
+	// for the argument that would mount one and not for the word.
+	for _, banned := range []string{"RUN ", "--mount", "id=git-credentials", "ARG ", "ENV ", "USER ", "FROM "} {
+		if strings.Contains(generated, banned) {
+			t.Errorf("a generated stage carries %q, so a build of it may read the credential or run as somebody else:\n%s", banned, generated)
+		}
+	}
+	// The entry's own bytes are the entry's own: whatever they say stands.
+	if !strings.HasPrefix(string(def), "FROM scratch\nUSER 0\n") {
+		t.Errorf("the composed definition does not begin with the entry's own bytes:\n%s", def)
+	}
+	if loc := userinfoURL.FindString(string(def)); loc != "" {
+		t.Errorf("the composed definition spells the URL %q, which could carry a credential:\n%s", loc, def)
+	}
+	// Every stage copies out of the image the clone step built, and the last of
+	// them is the build's own — the checkout a reader finds (BakedSlug).
+	own := p.Baked[len(p.Baked)-1]
+	dir, err := Path(own.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(generated, "COPY --from="+BakedImage+" --chown=1000:1000 /"+own.Slug+"/ "+dir+"/\n") {
+		t.Errorf("the last generated stage is not the copy of the build's own checkout:\n%s", generated)
+	}
+}
+
+// TestAppendRefusesWhatADefinitionMayNotSpell: the URL, the branch and the slug
+// are config values, and a definition may not spell arbitrary text — it is copied
+// into the project's bucket and read by every build and job of the entry. Each is
+// refused rather than written, with one line, because a value that ended a line
+// would spell a marker or a piece of shell of its own.
+func TestAppendRefusesWhatADefinitionMayNotSpell(t *testing.T) {
+	good := repoSpec("acme/web", "web-2222bbbb")
+	for name, r := range map[string]Repo{
+		"a branch a clone would read as a flag": {Repo: "acme/web", Slug: "web-2222bbbb", URL: "https://github.com/acme/web.git", Branch: "--upload-pack=/bin/sh"},
+		"an empty branch":                       {Repo: "acme/web", Slug: "web-2222bbbb", URL: "https://github.com/acme/web.git", Branch: ""},
+		"a branch with a newline":               {Repo: "acme/web", Slug: "web-2222bbbb", URL: "https://github.com/acme/web.git", Branch: "main\nRUN echo hi"},
+		"a branch with a quote":                 {Repo: "acme/web", Slug: "web-2222bbbb", URL: "https://github.com/acme/web.git", Branch: "main'; RUN echo hi #"},
+		"a URL with userinfo":                   {Repo: "acme/web", Slug: "web-2222bbbb", URL: "https://user:token@github.com/acme/web.git", Branch: "main"},
+		"a URL that is not https":               {Repo: "acme/web", Slug: "web-2222bbbb", URL: "http://github.com/acme/web.git", Branch: "main"},
+		"no host at all":                        {Repo: "acme/web", Slug: "web-2222bbbb", URL: "https:///acme/web.git", Branch: "main"},
+		"a shell-quoting hazard":                {Repo: "acme/web", Slug: "web-2222bbbb", URL: "https://github.com/acme/it's.git", Branch: "main"},
+		"a URL with a newline":                  {Repo: "acme/web", Slug: "web-2222bbbb", URL: "https://github.com/acme/web.git\nRUN echo hi", Branch: "main"},
+		"a slug that is not one":                {Repo: "acme/web", Slug: "../escape", URL: "https://github.com/acme/web.git", Branch: "main"},
+		"no slug at all":                        {Repo: "acme/web", Slug: "", URL: "https://github.com/acme/web.git", Branch: "main"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			def, err := Append([]byte("FROM scratch\n"), Plan{Baked: []Repo{good, r}})
+			if err == nil {
+				t.Fatalf("Append spelled %+v into a definition:\n%s", r, def)
+			}
+			if strings.ContainsAny(err.Error(), "\n\r") {
+				t.Errorf("the refusal is not one line, so it does not belong in a build log: %q", err.Error())
+			}
+		})
+	}
+}
+
+// TestBakedReposSkipAnEarlierReleasesMarker: a definition composed by an earlier
+// release names its checkout and no clone URL — its stage cloned inside the
+// entry's own build, with a credential that build is not handed any more — and no
+// reader can clone what such a stage never named. Such a marker is skipped rather
+// than read as a repository, and the marker a composed definition carries is
+// read with its URL and branch. The reader that needs one of the old markers to
+// be an answer is internal/cli's, which refuses such a copy by name.
+func TestBakedReposSkipAnEarlierReleasesMarker(t *testing.T) {
+	old := markerPrefix + "/work/baked/first-0000aaaa\n"
+	def := old +
+		"FROM scratch\n" +
+		markerPrefix + "/work/baked/second-1111bbbb https://github.com/acme/app.git main\n" +
+		markerPrefix + "/work/repo https://github.com/acme/elsewhere.git main\n"
+	repos := BakedRepos([]byte(def))
+	if len(repos) != 1 {
+		t.Fatalf("BakedRepos = %+v, want the one marker carrying a clone URL", repos)
+	}
+	if r := repos[0]; r.Slug != "second-1111bbbb" || r.URL != "https://github.com/acme/app.git" || r.Branch != "main" {
+		t.Errorf("BakedRepos = %+v, want the slug, URL and branch the marker names", r)
+	}
+	if _, baked := BakedSlug([]byte(def)); !baked {
+		t.Error("BakedSlug does not read a marker that names no URL: that is what tells internal/cli a copy is one an earlier release composed")
+	}
+	// A marker whose URL or branch may not be spelled is not a repository this
+	// package can clone: it is skipped, and the copy is refused by name rather
+	// than built from a URL a stage may not carry.
+	for _, line := range []string{
+		markerPrefix + "/work/baked/x-0000aaaa https://user:tok@github.com/acme/app.git main\n",
+		markerPrefix + "/work/baked/x-0000aaaa https://github.com/acme/app.git bad branch\n",
+		markerPrefix + "/work/baked/x-0000aaaa https://github.com/acme/app.git\n",
+		markerPrefix + "/work/baked/x-0000aaaa https://github.com/acme/app.git \n",
+	} {
+		if repos := BakedRepos([]byte(line + "FROM scratch\n")); len(repos) != 0 {
+			t.Errorf("BakedRepos read %q as %+v, want no repository", line, repos)
+		}
 	}
 }

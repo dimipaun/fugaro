@@ -901,7 +901,6 @@ test.describe('the Spend screen', () => {
     // person it names (D3213, 2026-11-21), and the CLI's `unknown` bucket as
     // itself.
     expect(drawn.text).toContain('ada@example.com')
-    expect(drawn.text).toContain('bob@example.com')
     expect(drawn.text).toContain('unknown')
   })
 

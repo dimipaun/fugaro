@@ -2,10 +2,11 @@
 
 ## Status
 
-**Status as of 2026-11-21: 12/25 merged, 2 closed as superseded (E0, by
+**Status as of 2026-11-21: 12/24 merged, 2 closed as superseded (E0, by
 [docs/roles-scopes](../roles-scopes/); B2, by [docs/outer-loop-escalation](../outer-loop-escalation/)'s
-**E8** — the owner's ruling of 2026-11-21), 11 open — C8's C8a built; B3 and C8b/C8c stay parked; see
-[docs/status.md](../status.md) for the current table.** Every task below carries a **State** line
+**E8** — the owner's ruling of 2026-11-21), 10 open — C8's C8a built; C8b/C8c stay parked; see
+[docs/status.md](../status.md) for the current table.** **B3 (GitLab) left this plan on 2026-11-25
+for [docs/gitlab-support](../gitlab-support/), parked by the owner until a named need.** Every task below carries a **State** line
 from [reconciliation-image-setup.md](reconciliation-image-setup.md), which checked each one against
 `origin/main` and against [docs/image-setup-skill](../image-setup-skill/) at the owner's ask of
 2026-11-10 and wins where the two disagree about a task's state. It builds [spec.md](spec.md) **as amended by
@@ -14,7 +15,7 @@ from [reconciliation-image-setup.md](reconciliation-image-setup.md), which check
 **The owner answered D600–D649 on 2026-10-29: every answer is the recommendation except D618**
 (shared images across repos, scoped to repos with an identical resolved dependency set), which
 slice C below follows (C7, C8). Its tension T6 (open item O6) was resolved on 2026-10-29: shared
-images stay under user control, a divergence is proposed and confirmed, never forked silently. Answers are not task approvals: slice A still needed the owner's explicit go, **given on 2026-11-16 with every other agent task of this folder; owner-run A5 (Check 230), C8b/C8c (unscheduled, D650), and tasks that wait on a merged dependency (D3 and D4 on ee-reorg's coordinator move, B3 on its own first reconciliation) stay gated, as the plan already says.** Every task
+images stay under user control, a divergence is proposed and confirmed, never forked silently. Answers are not task approvals: slice A still needed the owner's explicit go, **given on 2026-11-16 with every other agent task of this folder; owner-run A5 (Check 230), C8b/C8c (unscheduled, D650), and tasks that wait on a merged dependency (D3 and D4 on ee-reorg's coordinator move) stay gated, as the plan already says.** Every task
 names the decisions it rests on. Tasks marked **GATED** are not planned in detail
 because their decision may remove them.
 
@@ -23,7 +24,7 @@ Slices, each independent and orderable (D600 recommends A first, alone):
 | Slice | What it ships | Licence (D637, proposed) | Gated on |
 | --- | --- | --- | --- |
 | **A** Authorship and trailers | Commits authored by the launcher when a repository opts in; `Fugaro-Run`, `Fugaro-Rigor`, `Fugaro-Model` trailers on the commits the runner pushes, on by default (D647) | MIT | D600–D606, D644, D645, D647–D649 |
-| **B** Forge cleanup, CI status, GitLab | One list of forge kinds; a CI-status read (**B2**, closed as superseded by the outer loop's E8 on 2026-11-21); GitLab only after its own reconciliation (**B3**, parked) | MIT | D610, D611 |
+| **B** Forge cleanup, CI status | One list of forge kinds; a CI-status read (**B2**, closed as superseded by the outer loop's E8 on 2026-11-21); GitLab left for [docs/gitlab-support](../gitlab-support/) (parked by the owner, 2026-11-25) | MIT | D610, D611 |
 | **C** Repositories and images | Bitbucket listing in `fugaro project sync`; lockfile-first image layers; a digest check at launch; images shared between repos with the same normalised dependency set, under user control; read-only context repositories; a SECURITY.md registry note | MIT | D613, D617–D625 (D618 answered against the recommendation) |
 | **D** Change sets | Linked runs created together, a draft hold, a settle step, advisory merge order | `ee/` (D616, amended in round 2); the task's wire fields in core (ee-reorg D521) | D613–D616, D641, D642; ee-reorg's coordinator move |
 | **E** People and tokens | The roles design (D446) first; `fugaro user` over the existing IAM lists | MIT for E1; the rest per E0 | D627–D638 |
@@ -319,7 +320,7 @@ the stage runs (Constraint 1). Commits are now born stamped.
   `ErrChecksPermission` on an installation that has not granted both. They stay the **owner's** and
   nobody's built task: Check 231 remains in the register, NOT RUN, and a task that next widens
   `tokenPermissions` takes it. The bullet list below is the task as it was planned, kept as the
-  record. **B3** (GitLab) stays parked, gated on D610, and C8b/C8c stay parked (D650). See
+  record. C8b/C8c stay parked (D650). See
   [reconciliation-image-setup.md](reconciliation-image-setup.md) §2.
 
 - **Files:** `internal/gitprov/gitprov.go` (`Checks(ctx, sha) ([]CheckState, error)`),
@@ -341,15 +342,8 @@ the stage runs (Constraint 1). Commits are now born stamped.
   Checks -count=1` with the sandbox variables the live tests already read.
 - **Reviewer:** opus + mandatory independent review (forge permissions).
 
-#### B3. GitLab (GATED: D610 answered "build")
-
-- **State:** Kept — **parked** (the owner's ruling of 2026-11-21 keeps it so), gated, and unwritten: no
-  file under `docs/` reconciles GitLab.
-
-A docs-only reconciliation in this folder first: tokens (project or group access tokens and what they
-cost), `Draft:` semantics, the image build's credential step, the credentials service's mint, the
-secrets and Terraform, using B1's inventory table as the list of places. The adapter tasks are written
-from it. **Not sized here** beyond: L, security-sensitive throughout.
+**B3 (GitLab) left this plan on 2026-11-25:** it is parked by the owner until a named need, and its
+task text, D610 and D611 live in [docs/gitlab-support](../gitlab-support/).
 
 ### Slice C: repositories and images
 
@@ -782,7 +776,7 @@ from E0.
 | D604, D605 | A2a, A2b, A3, A4; E0 replaces the claim |
 | D606, D645 | A2a, A2b, A3 |
 | D607, D608, D609 | none (no signing, no API commits); revisit with a customer need |
-| D610, D611 | B1, B3 |
+| D610, D611 | B1; GitLab left for [docs/gitlab-support](../gitlab-support/) (parked by the owner, 2026-11-25) |
 | D612 | A4 (`TestDocsSupportedForges`) |
 | D613 | C5a–C5c, D1–D4 |
 | D614 | D2, D3 — B2's "if needed" is closed with it (2026-11-21): D615 answered advisory, and the read a blocking check would have needed is the outer loop's E8 |
@@ -822,7 +816,7 @@ only.**
 
 | Level | Tasks (concurrent) |
 | --- | --- |
-| **L0** | A1, A2a, B1, C3, C4, C6, E1, X1; docs B3, C7, E0 |
+| **L0** | A1, A2a, B1, C3, C4, C6, E1, X1; docs C7, E0 |
 | **L1** | A2b, C1, C8 (B2 was here and is closed, 2026-11-21) |
 | **L2** | A3, C5a |
 | **L3** | A4, C5b, D1 |

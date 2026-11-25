@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -20,7 +21,15 @@ import (
 type Request struct {
 	Method, Path, Query string
 	Body                []byte
+	// Seq is the order the call was made in, across every fake in the process:
+	// a test that reads two fakes' logs can merge them into the one order its
+	// client made the calls in.
+	Seq int64
 }
+
+// callSeq numbers the calls every fake in the process serves, so two fakes'
+// logs can be merged (Request.Seq).
+var callSeq atomic.Int64
 
 // Server records requests and hands them to a handler.
 type Server struct {
@@ -62,7 +71,7 @@ func newServer(t *testing.T, h func(w http.ResponseWriter, r *http.Request, body
 			return
 		}
 		s.mu.Lock()
-		s.reqs = append(s.reqs, Request{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery, Body: body})
+		s.reqs = append(s.reqs, Request{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery, Body: body, Seq: callSeq.Add(1)})
 		refusal, disabled := s.refusal, s.disabled
 		for sub, e := range s.pathRefusals {
 			if strings.Contains(r.URL.Path, sub) {

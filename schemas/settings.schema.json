@@ -291,7 +291,7 @@
     },
     "keyDefaults": {
       "type": "object",
-      "description": "Every key of the registry and its built-in default, the DEFAULT column's own source (D841). A generator would be a go generate step a release must remember and a diff nobody reads, so this is written out and pinned to settings.Rows() by TestSettingsSchema in schemas_test.go.",
+      "description": "Every key of the registry and its built-in default, the DEFAULT column's own source (D841). A generator would be a go generate step a release must remember and a diff nobody reads, so this is written out and pinned to settings.Rows() by TestSettingsSchema in schemas_test.go. An entry of a key this release still reads and no longer honours carries `retired`, the sentence a person reads (settings.Row.RetiredWhy); absent is a live key, and a consumer that draws an edit reads it before offering one.",
       "properties": {
         "ab.rate": {
           "default": "unset = the project layer's ab.rate, or 0: no run is a challenger"
@@ -301,37 +301,43 @@
         },
         "agent.auth": {
           "$comment": "config.DefaultAgentAuth",
-          "default": "vertex"
+          "default": "vertex",
+          "retired": "a repository has no auth mode any more: the project's routing table and pools say which credential reaches which model \u2014 `fugaro update` migrates this key into them and offers its removal, see docs/model-credentials-routing"
         },
         "agent.compression": {
           "default": "unset = inherit"
         },
         "agent.crafts.coder.access": {
-          "default": "unset = required: the coder's calls go out on a credential or a pool"
+          "default": "unset = required: the coder's calls go out on a credential or a pool",
+          "retired": "a repository's file no longer chooses a credential or pool: the project's routing table and pools say which source serves each model \u2014 `fugaro update` moves this key there and offers its removal, see docs/model-credentials-routing"
         },
         "agent.crafts.coder.model": {
           "default": "unset = required: the coder implements, so a run needs its model"
         },
         "agent.crafts.merge-judge.access": {
-          "default": "unset = the coder's access"
+          "default": "unset = the coder's access",
+          "retired": "a repository's file no longer chooses a credential or pool: the project's routing table and pools say which source serves each model \u2014 `fugaro update` moves this key there and offers its removal, see docs/model-credentials-routing"
         },
         "agent.crafts.merge-judge.model": {
           "default": "unset = the coder's model"
         },
         "agent.crafts.review.access": {
-          "default": "unset = the coder's access"
+          "default": "unset = the coder's access",
+          "retired": "a repository's file no longer chooses a credential or pool: the project's routing table and pools say which source serves each model \u2014 `fugaro update` moves this key there and offers its removal, see docs/model-credentials-routing"
         },
         "agent.crafts.review.model": {
           "default": "unset = the coder's model"
         },
         "agent.crafts.security-review.access": {
-          "default": "unset = the senior review's access"
+          "default": "unset = the senior review's access",
+          "retired": "a repository's file no longer chooses a credential or pool: the project's routing table and pools say which source serves each model \u2014 `fugaro update` moves this key there and offers its removal, see docs/model-credentials-routing"
         },
         "agent.crafts.security-review.model": {
           "default": "unset = the senior review's model"
         },
         "agent.crafts.senior-review.access": {
-          "default": "unset = required: the senior review's calls go out on a credential or a pool"
+          "default": "unset = required: the senior review's calls go out on a credential or a pool",
+          "retired": "a repository's file no longer chooses a credential or pool: the project's routing table and pools say which source serves each model \u2014 `fugaro update` moves this key there and offers its removal, see docs/model-credentials-routing"
         },
         "agent.crafts.senior-review.model": {
           "default": "unset = required: the senior review is the second opinion a run needs"
@@ -415,7 +421,8 @@
           "description": "Fugaro before 0.23.0 refuses the key, in fugaro.yaml and in a project layer's defaults: both files are decoded strictly, so a job image older than that release fails at bootstrap on a key its runner does not know, and the launch is what refuses it (internal/cli's visionSince). The slot is unusable before that release for a second reason: pricing a model's images needs model_prices' image_tokens, which the same release carries."
         },
         "agent.oauth_token": {
-          "default": "unset = the job's own credential"
+          "default": "unset = the job's own credential",
+          "retired": "a Claude account is a source the project's routing table names now, and its pools say which one serves which model \u2014 `fugaro update` migrates this key into them and offers its removal, see docs/model-credentials-routing"
         },
         "agent.recipe": {
           "default": "unset = the built-in recipe"
@@ -665,13 +672,15 @@
           "default": "unset = 1: how many runs may hold one shared credential at a time (projectpolicy.DefaultConcurrencyPerToken), where a written 0 is no cap at all"
         },
         "credentials.fallback": {
-          "default": "unset = oauth-only: a run does not fail over to the paid tier (projectpolicy.FallbackOAuthOnly), and the one value that spends the project's money is written by an operator"
+          "default": "unset = oauth-only: a run does not fail over to the paid tier (projectpolicy.FallbackOAuthOnly), and the one value that spends the project's money is written by an operator",
+          "retired": "the chain's own order replaces it: `fugaro update` puts the key in the chain where `fallback: auto` was set and leaves it out for `oauth-only`, then offers its removal, see docs/model-credentials-routing/spec.md"
         },
         "credentials.stop_after_exhaustion_per_window": {
           "default": "unset = true: a credential exhausted within its window stops the runs that need it (projectpolicy.Credentials.StopsAfterExhaustion)"
         },
         "credentials.wait_threshold": {
-          "default": "unset = 15m: how long a run waits for an exhausted credential's reset before failing over (projectpolicy.DefaultWaitThreshold)"
+          "default": "unset = 15m: how long a run waits for an exhausted credential's reset before failing over (projectpolicy.DefaultWaitThreshold)",
+          "retired": "the chain's own order replaces it: a run moves to the next source at once rather than waiting for a reset, and `fugaro update` offers its removal, see docs/model-credentials-routing/spec.md"
         },
         "credentials_service.url": {
           "default": "unset = none: the credentials service is not deployed"
@@ -1003,7 +1012,8 @@
           "default": "unset = the run's rigor mode decides (rigor.AdversarialDefault)"
         },
         "layer.defaults.agent.auth": {
-          "default": "unset = vertex"
+          "default": "unset = vertex",
+          "retired": "a repository has no auth mode any more: the project's routing table and pools say which credential reaches which model \u2014 `fugaro update` migrates this key into them and offers its removal, see docs/model-credentials-routing"
         },
         "layer.defaults.agent.crafts.coder.access": {
           "default": "unset = none: only the local config and the policy node name a credential"
@@ -1408,13 +1418,15 @@
           "default": "unset = required: an entry with no role is refused rather than given one"
         },
         "model_grades.strong.access": {
-          "default": "unset = the project's default credential"
+          "default": "unset = the project's default credential",
+          "retired": "a grade's source is the project's own now: the project's routing table and pools say how the grade's model is reached \u2014 `fugaro update` moves this key into the project's config and offers its removal, see docs/model-credentials-routing"
         },
         "model_grades.strong.model": {
           "default": "unset = none: a rung whose grade the project sets nowhere refuses and asks"
         },
         "model_grades.strongest.access": {
-          "default": "unset = the project's default credential"
+          "default": "unset = the project's default credential",
+          "retired": "a grade's source is the project's own now: the project's routing table and pools say how the grade's model is reached \u2014 `fugaro update` moves this key into the project's config and offers its removal, see docs/model-credentials-routing"
         },
         "model_grades.strongest.model": {
           "default": "unset = none: a rung whose grade the project sets nowhere refuses and asks"
@@ -1665,7 +1677,8 @@
           "default": "unset = none"
         },
         "routing.claude.via": {
-          "default": "unset = direct: the model is called at its own provider"
+          "default": "unset = direct: the model is called at its own provider",
+          "retired": "the project's routing table replaces it: a chain names the sources a model is reached through, and `fugaro update` writes the Claude entry from this value and offers its removal, see docs/model-credentials-routing/spec.md"
         },
         "runs_bucket": {
           "default": "unset = the file is refused (runs_bucket: is required)"
@@ -1710,7 +1723,8 @@
           "default": "unset = the project's default account"
         },
         "subscription_spread": {
-          "default": "unset = false: a run spreads across one subscription at a time"
+          "default": "unset = false: a run spreads across one subscription at a time",
+          "retired": "the project's pools replace it: which subscriptions a run may spread over is the pool's own rule, and `fugaro update` offers its removal, see docs/model-credentials-routing/spec.md"
         },
         "terraform.admins": {
           "default": "unset = none"

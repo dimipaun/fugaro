@@ -194,7 +194,7 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 		// The check is ONE command now: the register tells the owner to run the
 		// script rather than to paste five guard-block steps by hand, and the
 		// script is named as the artifact the block comes from.
-		"**Run it:** `bash scripts/live-checks/check96.sh [--dry-run] [--workflow <name>] [<owner/name>]`",
+		"**Run it:** `bash scripts/live-checks/check96.sh [--dry-run] [--preflight] [--workflow <name>] [<owner/name>]`",
 		"scripts/live-checks/check96.sh",
 		// The wiring, which the check has to state per job: the launch sets the
 		// variable on the job of a switched-on repository — its own job and the
@@ -497,13 +497,13 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 		"Re-run with --workflow <one of:",
 		"a workflow of the owner's own `belong` account is refused by name",
 		"bash scripts/live-checks/check96.sh acme/sandbox --workflow go",
-		"`bash scripts/live-checks/check96.sh [--dry-run] [--workflow <name>] [<owner/name>]`",
+		"`bash scripts/live-checks/check96.sh [--dry-run] [--preflight] [--workflow <name>] [<owner/name>]`",
 	} {
 		if !strings.Contains(check, want) {
 			t.Errorf("docs/gcp-live-checklist.md's Check 96 does not say %q: the word that answers the several-jobs case is the one a run is told, and a section that stops on several without naming it is a stop the owner cannot clear", want)
 		}
 	}
-	if !strings.Contains(readDoc(t, "docs/gcp-live-checklist.md"), "`bash scripts/live-checks/check96.sh [--dry-run] [--workflow <name>] [<owner/name>]`") {
+	if !strings.Contains(readDoc(t, "docs/gcp-live-checklist.md"), "`bash scripts/live-checks/check96.sh [--dry-run] [--preflight] [--workflow <name>] [<owner/name>]`") {
 		t.Errorf("docs/gcp-live-checklist.md's register row 96 no longer carries the check's own usage line with `--workflow` in it: the row is where the owner reads the one command to run, and a repository with several workflows is one they cannot run it on without that word")
 	}
 

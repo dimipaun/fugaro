@@ -73,16 +73,6 @@
 #     about twenty-three: a spec that wants the two sections to land apart gives
 #     the two files different delays. Its answer is a `budget` line in the same
 #     `reads.log`.
-#   * `coordinator status --from-store --all --json --project P` -- the document
-#     in `coordinator-status.json` beside it, which `cliStub.ts` writes from the
-#     committed `test/fixtures/coordinator-status.json` (Bitbucket credentials
-#     T1.2, D364). **No screen makes this read any more** (D3210 retired the
-#     Coordinator tab that did), so the answer is kept only because the console's
-#     spawn row still lists it: the row, this answer and the fixture go together.
-#     It was the read whose argv fixed the most -- `--from-store` and `--all` are
-#     the spawn row's own words, because the retired screen had no control that
-#     turned either off -- so the stub still holds all three flags exactly rather
-#     than answering a question this console should never have been able to ask.
 #   * `models ls --json --project P` -- the document in `models-ls.json` beside
 #     it, which `cliStub.ts`'s `seedModels` writes. This is the read the
 #     **Project** tab's models panel makes (console 0.119.0, contract section
@@ -96,9 +86,10 @@
 #     and it is the one this console draws a pencil from: the rows' own
 #     `writable`, `owner` and `target_layer` are the whole of what decides
 #     whether a row may be edited (D1102).
-#   * `settings set|unset KEY --layer <L> [--dry-run --json] --project P
-#     [--config C] [-- VALUE]` -- the console's **second write** (the
-#     settings-edit plan's C3, design section 5.1 rule 12). It answers two
+#   * `settings set|unset KEY --layer <L> [--repo <directory>] [--dry-run
+#     --json] --project P [--config C] [-- VALUE]` -- the console's **second
+#     write** (the settings-edit plan's C3, design section 5.1 rule 12). It
+#     answers two
 #     phases and writes nothing either way: the dry run (`--dry-run --json`)
 #     prints the document seeded for the key it names
 #     (`settings-dryrun-<KEY>.json` beside this script), and the write (no flag)
@@ -106,6 +97,14 @@
 #     `wrote <path> (backup at <backup>)` and `next: fugaro update`. There is no
 #     file to edit here and none is written: what a spec reads is the child's
 #     answer and the argv below.
+#
+#     `--repo <directory>` is the console's own word for a `repo`-layer edit
+#     (RC80, L12): the checkout the write names, which the window drew and
+#     which the console took from the plan's directory rather than from the
+#     renderer. A layer that is not `repo` carries none and a `repo`-layer
+#     edit carries one -- either other pairing is refused below, so a spec
+#     that fed the renderer a `--repo` of its own would meet the refusal
+#     rather than a write.
 #
 #     Every invocation of the write appends **its whole command line** to
 #     `reads.log` beside this script, `$0` included, because the property the
@@ -208,7 +207,7 @@ refuse() {
 # failing spec's message is the only place a reader learns what it would have
 # answered.
 refuse_allowlist() {
-  echo "the stub fugaro answers 'version', 'config list --json', 'plan status --json', 'coordinator status --from-store --all --json', 'doctor --json', 'watch --json', 'report --json', 'budget show --json', 'models ls --json', 'settings --json', 'settings set|unset', 'managed status --json', 'project policy show --json', 'project repos ls --json', 'project repos status --json', 'runs summary --json' and 'run --task-file - --json', and was asked for '$1'" >&2
+  echo "the stub fugaro answers 'version', 'config list --json', 'plan status --json', 'doctor --json', 'watch --json', 'report --json', 'budget show --json', 'models ls --json', 'settings --json', 'settings set|unset', 'managed status --json', 'project policy show --json', 'project repos ls --json', 'project repos status --json', 'runs summary --json' and 'run --task-file - --json', and was asked for '$1'" >&2
   exit 2
 }
 
@@ -428,36 +427,6 @@ case "$command" in
     fi
     cat "${here}/plan-status.json"
     ;;
-  coordinator)
-    # `coordinator status --from-store --all --json` is the project view's one
-    # read (Bitbucket credentials T1.2, D364): every repository of the
-    # installation, from the view the coordinator's sweep last stored. The three
-    # words are the console's spawn row and not a screen's control, so the stub
-    # holds them exactly -- a console that dropped `--from-store` would be making
-    # a host call this build has no credential for, and the spec would rather see
-    # that here than pass on a document it should never have been able to obtain.
-    if [ "${1:-}" != 'status' ] || [ "${2:-}" != '--from-store' ] || [ "${3:-}" != '--all' ] || [ "${4:-}" != '--json' ]; then
-      refuse "the stub fugaro answers 'coordinator status --from-store --all --json' and was asked for 'coordinator $*'"
-    fi
-    shift 4
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        --project | --config)
-          if [ $# -lt 2 ]; then
-            refuse "'coordinator status' was given '$1' with no value"
-          fi
-          shift 2
-          ;;
-        *)
-          refuse "'coordinator status' was asked for '$1'"
-          ;;
-      esac
-    done
-    if [ ! -f "${here}/coordinator-status.json" ]; then
-      refuse 'no coordinator document is seeded beside this stub'
-    fi
-    cat "${here}/coordinator-status.json"
-    ;;
   models)
     # The Project tab's read-only models panel (console 0.119.0, contract
     # section 6.18): the routes, the models a run can name and the catalog's
@@ -651,6 +620,7 @@ case "$command" in
     key=$2
     shift 2
     layer=''
+    repo=''
     phase='write'
     value=''
     while [ $# -gt 0 ]; do
@@ -660,6 +630,13 @@ case "$command" in
             refuse "'settings $op' was given '--layer' with no value"
           fi
           layer=$2
+          shift 2
+          ;;
+        --repo)
+          if [ $# -lt 2 ]; then
+            refuse "'settings $op' was given '--repo' with no value"
+          fi
+          repo=$2
           shift 2
           ;;
         --dry-run)
@@ -701,6 +678,12 @@ case "$command" in
     done
     if [ -z "$layer" ]; then
       refuse "'settings $op' was asked for no --layer, and the layer is the read's own row"
+    fi
+    if [ "$layer" = 'repo' ] && [ -z "$repo" ]; then
+      refuse "'settings $op' was asked for no --repo, and a repository-layer edit names its checkout"
+    fi
+    if [ "$layer" != 'repo' ] && [ -n "$repo" ]; then
+      refuse "'settings $op' was given '--repo' on a '$layer'-layer edit, which writes no repository's file"
     fi
     if [ "$op" = 'unset' ] && [ -n "$value" ]; then
       refuse "an unset carries no value, and 'settings unset $key' was asked for '$value' behind --"

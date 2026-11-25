@@ -1,0 +1,19 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "role": "model",
+        "parts": [{ "text": "the third line says 42" }]
+      },
+      "finishReason": "MAX_TOKENS",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 5000,
+    "cachedContentTokenCount": 4096,
+    "candidatesTokenCount": 10,
+    "totalTokenCount": 5010
+  },
+  "responseId": "aCachedPrompt"
+}
