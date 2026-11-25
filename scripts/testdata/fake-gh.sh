@@ -79,6 +79,9 @@
 #   FAKE_GH_RUN_OTHER  an extra run on the tag, "name:state" (default none),
 #                    for the rule that any other workflow the tag started has
 #                    to be green too
+#   FAKE_GH_DISPATCH_NO_RUN   non-empty: a dispatch is recorded in workflow_run
+#                    and starts no run at all, so the commit keeps having none
+#                    on every pass of a wait
 # A `gh workflow run` appends the run it started to ci_runs -- the workflow's
 # newest run, which is what a dispatch is: the head is the tip of the ref the
 # dispatch named (`--ref`) or of origin's own HEAD when it named none, the title
@@ -255,7 +258,12 @@ case "$1 ${2:-}" in
     # tip, the title the dispatch asked for, the commit's own checks, and a run
     # number above everything already there (the file's header).
     printf '%s\n' "$*" >>"$dir/workflow_run"
-    echo "DEBUG fake dispatch dir=$dir args=$*" >>/tmp/dbg4
+    # FAKE_GH_DISPATCH_NO_RUN: GitHub accepts the dispatch and the commit still
+    # has no run the gate can read -- the ref moved between the read that made
+    # the gate dispatch and the dispatch itself, or the run never started. The
+    # invocation is recorded above either way, so a test can count the
+    # dispatches a wait made.
+    [ -z "${FAKE_GH_DISPATCH_NO_RUN:-}" ] || exit 0
     ref=""
     full=false
     prev=""

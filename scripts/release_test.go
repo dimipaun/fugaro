@@ -2670,6 +2670,118 @@ func TestGateDispatchesARunNobodyStarted(t *testing.T) {
 	}
 }
 
+// TestGateDispatchesOnceWhenTheRunNeverAppears: GitHub can accept a dispatch
+// and still leave the commit without a run this gate can read -- the ref moved
+// between the read that made the gate dispatch and the dispatch itself, or the
+// run never started. The commit then has no run on every pass, and the gate
+// dispatches once per commit rather than once per pass: without that guard a
+// 60-minute wait at 30 seconds a pass starts 120 full ci runs.
+func TestGateDispatchesOnceWhenTheRunNeverAppears(t *testing.T) {
+	r := newReleaseRepo(t)
+	sha := tagCommit(t, r)
+	g := newGHState(t, r, greenChecks()).with("FAKE_GH_DISPATCH_NO_RUN=1")
+	ciRuns(t, g)
+
+	res := runGateEnv(t, r, g, sha, "v0.12.0", "GATE_WAIT_SECONDS=3", "GATE_POLL_SECONDS=1")
+	if res.err == nil {
+		t.Fatalf("the gate passed on a commit whose dispatched run never appeared:\n%s", res.out)
+	}
+	if lines := workflowRunLines(t, g); len(lines) != 1 {
+		t.Errorf("the gate dispatched %v, want exactly one run for %s: one commit gets one ci run from this gate, however many passes the wait makes", lines, sha)
+	}
+	if n := strings.Count(res.out, "dispatched one"); n != 1 {
+		t.Errorf("the gate announced %d dispatches, want one:\n%s", n, res.out)
+	}
+	if !strings.Contains(res.out, "3s is up, not green: test (missing), terraform (missing), rules (missing)") {
+		t.Errorf("the wait does not end on its deadline naming the checks that are not green:\n%s", res.out)
+	}
+}
+
+// gateJobWorkflow writes the workflow file the gate reads its own job's bound
+// out of (GITHUB_WORKFLOW_REF) and returns the two variables that name it and
+// the job. minutes of 0 writes a job with no `timeout-minutes` at all.
+func gateJobWorkflow(t *testing.T, r *releaseRepo, job string, minutes int) []string {
+	t.Helper()
+	dir := filepath.Join(r.local, ".github", "workflows")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "name: release\non:\n  push:\n    tags: [\"v*\"]\njobs:\n  " + job + ":\n    runs-on: ubuntu-latest\n"
+	if minutes > 0 {
+		body += fmt.Sprintf("    timeout-minutes: %d\n", minutes)
+	}
+	body += "    steps:\n      - run: scripts/release-gate.sh v0.12.0\n"
+	if err := os.WriteFile(filepath.Join(dir, "release.yml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return []string{
+		"GITHUB_JOB=" + job,
+		"GITHUB_WORKFLOW_REF=" + repoSlug(r.bare) + "/.github/workflows/release.yml@refs/tags/v0.12.0",
+	}
+}
+
+// TestGateWaitNeverOutlivesTheJobItRunsIn: the two tag workflows that run the
+// gate unattended hold less than the default wait -- release.yml's release job
+// 30 minutes, images.yml's version job 5 -- so a 60-minute deadline there is a
+// sleep GitHub ends by killing the job, and the line naming the checks is never
+// printed. The gate reads its own job's `timeout-minutes` out of the workflow
+// file it runs from and waits a minute less than that at most.
+func TestGateWaitNeverOutlivesTheJobItRunsIn(t *testing.T) {
+	cases := []struct {
+		name    string
+		job     string
+		minutes int
+		env     []string
+		want    string
+	}{
+		{"the five-minute job the images gate runs in", "version", 5, nil, "would wait up to 4m"},
+		{"the thirty-minute job the release gate runs in", "release", 30, nil, "would wait up to 29m"},
+		{"a job with no bound", "release", 0, nil, "would wait up to 60m"},
+		{"a caller that asks for less than the job allows", "release", 90, []string{"RELEASE_GATE_TIMEOUT_MIN=30"}, "would wait up to 30m"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newReleaseRepo(t)
+			sha := tagCommit(t, r)
+			// A full run that is over and green, with `rules` still running on
+			// it: the pass reads the checks and the dry run names the wait it
+			// would take, without sleeping.
+			g := newGHState(t, r, greenChecks()).with("FAKE_GH_CHECK_RULES=pending")
+			ciRuns(t, g, sha+"\tci (full)\t"+sha)
+			env := append([]string{"GATE_DRY_RUN=1", "GATE_WAIT_SECONDS="}, gateJobWorkflow(t, r, tc.job, tc.minutes)...)
+			env = append(env, tc.env...)
+
+			res := runGateEnv(t, r, g, sha, "v0.12.0", env...)
+			res.requireSuccess(t)
+			if !strings.Contains(res.out, tc.want) {
+				t.Errorf("the dry run does not name the wait it would take (%q):\n%s", tc.want, res.out)
+			}
+		})
+	}
+
+	// And the wait itself: a job whose bound leaves the gate no room prints the
+	// line the wait ends on rather than sleeping into the job's kill.
+	t.Run("a job too short to wait in ends the wait at once", func(t *testing.T) {
+		r := newReleaseRepo(t)
+		sha := tagCommit(t, r)
+		g := newGHState(t, r, greenChecks()).with("FAKE_GH_CHECK_RULES=pending")
+		ciRuns(t, g, sha+"\tci (full)\t"+sha)
+
+		start := time.Now()
+		env := append([]string{"GATE_WAIT_SECONDS="}, gateJobWorkflow(t, r, "version", 1)...)
+		res := runGateEnv(t, r, g, sha, "v0.12.0", env...)
+		if res.err == nil {
+			t.Fatalf("the gate passed with a required check still running:\n%s", res.out)
+		}
+		if elapsed := time.Since(start); elapsed > 20*time.Second {
+			t.Errorf("the gate waited %s in a one-minute job: the wait must end before the job is killed", elapsed)
+		}
+		if !strings.Contains(res.out, "0s is up, not green: rules (pending)") {
+			t.Errorf("the wait does not end naming the check that is not green:\n%s", res.out)
+		}
+	})
+}
+
 // TestGateRefusesACommitNoRefPointsAt: a dispatch runs a workflow at a ref's
 // tip, so a commit no ref this gate knows points at cannot get a run from it --
 // an --at release reads a commit that is no longer main's tip. The gate invents

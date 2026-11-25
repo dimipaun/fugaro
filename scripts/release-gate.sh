@@ -22,6 +22,13 @@
 # before CI has finished. A conclusive failure always fails at once, and so does
 # a full `ci` run that completed red: waiting out a run that is over only spends
 # the wait. The wait ends with the checks that are not green and the run's URL.
+# The wait never outlives the job the gate runs in: a deadline the job's own
+# `timeout-minutes` cannot serve is a sleep GitHub ends by killing the job, with
+# no line naming the checks, so the gate reads that bound out of the workflow
+# file it is running from (GITHUB_WORKFLOW_REF, GITHUB_JOB) and waits at most a
+# minute less than it (release.yml's release job holds 30 minutes, images.yml's
+# version job 5). A gate run outside a workflow, or in a job with no bound,
+# keeps the caller's wait.
 # A commit with no `ci` run at all -- CI runs on no commit by itself -- gets one
 # dispatched on it by the gate itself (`gh workflow run ci --ref <the ref that
 # points at it> -f full=true`), once per commit, then waits for it; nothing will
@@ -119,12 +126,47 @@ if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
     exit 1
   fi
 fi
-wait_seconds=${GATE_WAIT_SECONDS:-$(( ${RELEASE_GATE_TIMEOUT_MIN:-60} * 60 ))}
+# job_timeout_minutes FILE JOB prints the `timeout-minutes` of the job GitHub
+# names, or nothing: FILE is GITHUB_WORKFLOW_REF (owner/repo/.github/workflows/
+# ci.yml@ref), which is the workflow file this job runs from, in the workspace,
+# and JOB is GITHUB_JOB, its id -- the YAML key. Nothing is printed for a gate
+# run outside a workflow, for a file that is not there, and for a job that
+# declares no bound (GitHub's own default is six hours), which leaves the
+# caller's wait in place.
+job_timeout_minutes() {
+  [ -n "$2" ] || return 0
+  file="${1%%@*}"
+  file=${file#*/}
+  file=${file#*/}
+  [ -f "$file" ] || return 0
+  awk -v job="$2" '
+    !inj && index($0, "  " job ":") == 1 { inj = 1; next }
+    inj && /^  [^ \t]/ { exit }
+    inj && /^[ \t]+timeout-minutes:[ \t]*[0-9]+[ \t]*$/ {
+      sub(/^[ \t]+timeout-minutes:[ \t]*/, ""); sub(/[ \t]+$/, ""); print; exit
+    }' "$file"
+}
+# Wait as the caller asks, capped by the job the gate runs in and a minute short
+# of it: the gate's own exit is what the line naming the checks is printed by.
+wait_seconds=${RELEASE_GATE_TIMEOUT_MIN:-60}
+wait_seconds=$((wait_seconds * 60))
+job_minutes=$(job_timeout_minutes "${GITHUB_WORKFLOW_REF:-}" "${GITHUB_JOB:-}")
+if [ -n "$job_minutes" ]; then
+  job_bound=$((job_minutes * 60 - 60))
+  if [ "$job_bound" -lt 0 ]; then
+    job_bound=0
+  fi
+  if [ "$wait_seconds" -gt "$job_bound" ]; then
+    wait_seconds=$job_bound
+  fi
+fi
+wait_seconds=${GATE_WAIT_SECONDS:-$wait_seconds}
 poll_seconds=${GATE_POLL_SECONDS:-30}
-# The wait as a message reads it: whole minutes when it is whole minutes, and
-# seconds otherwise (GATE_WAIT_SECONDS is the tests' own, and a wait of 45
-# seconds must not read as 0m).
-if [ "$((wait_seconds % 60))" = 0 ]; then
+# The wait as a message reads it: whole minutes when it is whole minutes and not
+# none, and seconds otherwise (GATE_WAIT_SECONDS is the tests' own, a wait of 45
+# seconds must not read as 0m, and a job whose bound leaves the wait nothing --
+# a one-minute job -- reads as 0s rather than as no wait at all).
+if [ "$((wait_seconds % 60))" = 0 ] && [ "$wait_seconds" != 0 ]; then
   wait_label="$((wait_seconds / 60))m"
 else
   wait_label="${wait_seconds}s"
