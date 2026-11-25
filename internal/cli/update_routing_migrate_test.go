@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/routing"
 )
 
@@ -51,9 +52,11 @@ repos:
 
 // TestUpdateMigratesToTheTable: `fugaro update` writes what MG1 answers into
 // the installation's own config — the table for the model the repository
-// calls, with the shared pool in its chain, and the pool of one D3176 wraps
-// the account in. Before this release the key was an unknown field and the
-// update wrote no table at all.
+// calls, with the shared pool in its chain, and the account's credential that
+// member resolves to. D3176's pool of one of that name is not written: a pool
+// and a credential share one namespace, and the credential is that pool of one
+// already. Before this release the key was an unknown field and the update
+// wrote no table at all.
 func TestUpdateMigratesToTheTable(t *testing.T) {
 	r, path, _ := routingMigrateRig(t, routingMigrateRepoYAML)
 	lc := parseLocalConfig(t, routingMigrateLocalYAML)
@@ -73,25 +76,20 @@ func TestUpdateMigratesToTheTable(t *testing.T) {
 		t.Errorf("the entry's chain is %+v, want the shared pool %s alone: an oauth repository's calls go out on its accounts, which the shared pool is (D3183)",
 			entry.Chain, routing.SharedPool)
 	}
-	if len(written.Pools) != 2 {
-		t.Fatalf("the update wrote %d pools (%+v), want the shared pool and the account's pool of one (D3176, D3183)", len(written.Pools), written.Pools)
+	if len(written.Pools) != 1 || written.Pools[0].Name != routing.SharedPool {
+		t.Fatalf("the update wrote the pools %+v, want the shared pool alone: a pool and a credential share one namespace, so the account's pool of one cannot stand beside the credential of its own name (D3176, D3183)", written.Pools)
 	}
-	pools := map[string]bool{}
-	for _, p := range written.Pools {
-		pools[p.Name] = true
-	}
-	for _, name := range []string{routing.SharedPool, "ada"} {
-		if !pools[name] {
-			t.Errorf("the update wrote no pool %q: %+v", name, written.Pools)
-		}
-	}
-	// A pool and a credential of one name may not both exist (config.ValidatePools):
-	// the account's pool of one stands for the credential the craft migration
-	// derived for it.
+	// The account's credential is what the shared pool's member resolves to, and
+	// what the craft migration derived for it: the migration keeps it, and the
+	// file's own validation is the proof that the member resolves at all.
+	var held bool
 	for _, c := range written.Credentials {
 		if c.Name == "ada" {
-			t.Errorf("the account's credential %q was left beside the pool of the same name: an access names a name and not a kind, so the file refuses itself", c.Name)
+			held = c.Type == config.CredentialTypeClaudeOAuth
 		}
+	}
+	if !held {
+		t.Errorf("the account's claude-oauth credential was not written: %+v, and the shared pool's member names it", written.Credentials)
 	}
 }
 
@@ -123,7 +121,7 @@ credential_cascade: { fallback: auto }
 	}
 	report := out.String()
 	for _, want := range []string{
-		"routing: acme/api's runs go out on the account ada, as they do today",
+		"routing: acme/api's runs go out on the account default, then the account ada, as they do today",
 		"routing: the pool pair rotates among its tokens now that subscription_spread is gone",
 		"routing: fallback is auto, so a run pays on the project's key as soon as its subscriptions are exhausted",
 		"routing: acme/api's calls of claude-haiku-4-5 stay on the release-1 bridge (craft-access)",

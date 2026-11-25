@@ -60,6 +60,10 @@ import (
 // It also leaves every entry MG1 kept on the release-1 bridge exactly where it
 // is (D3196): the bridge serves those calls the credential their own
 // configuration names today, and the migration names each of them.
+//
+// D3176's per-account pool of one is not written, and routingConfig says why:
+// the config refuses a pool and a credential of one name, and the account's own
+// credential — which the craft migration derived — is that pool of one already.
 
 // migrateRouting is MG2's step: it asks MG1 for the migration of this
 // installation and writes the answer into the config about to be written,
@@ -368,22 +372,33 @@ func appendName(list []string, name string) []string {
 // own `rule` and `strategy` do not already say it, so a pool the migration only
 // resolved is not a pool the document moves (R21).
 //
-// The credentials are the second half of D3176: a pool of one is written for
-// every account, and a credential and a pool of one name may not both exist
-// (config.ValidatePools refuses the pair, because an access names a name and
-// not a kind), so the claude-oauth credential an account's pool now stands for
-// is dropped — the pool serves the same token, and `crafts.<craft>.access`
-// naming the account names it still. A member nothing declares and no
-// credential may carry is left to the write's own validation, which refuses the
-// file and leaves the config as it was.
+// D3176's pool of one per account is the one pool that is not written, and the
+// credential the account's name already holds is why. A pool and a credential
+// share one namespace — a craft's access names a name and does not say which
+// (config.ValidatePools) — so a pool named after an account, which is what the
+// migration answers, is refused beside the claude-oauth credential the craft
+// migration derived for that same account: the file would refuse itself and
+// `fugaro update` with it (HARD RULE). The credential IS that pool of one
+// (config.craftAccessRefusal reads a single credential as one), its token is a
+// member of the shared pool below, and no chain of the table names the pool of
+// one — MG1 writes it for `--pool <account>` alone — so no call moves by its
+// absence. A member nothing declares and no credential may carry is left to the
+// write's own validation, which refuses the file and leaves the config as it was.
 func routingConfig(lc *localcfg.Config, specs []routing.PoolSpec) ([]config.Pool, []config.Credential) {
 	carried := map[string]config.Pool{}
 	for _, p := range lc.Pools {
 		carried[p.Name] = p
 	}
+	held := map[string]bool{config.CredentialVertex: true}
+	for _, c := range lc.Credentials {
+		held[c.Name] = true
+	}
 	pools := make([]config.Pool, 0, len(specs))
 	members := map[string]bool{}
 	for _, spec := range specs {
+		if held[spec.Name] {
+			continue
+		}
 		old := carried[spec.Name]
 		p := config.Pool{
 			Name:         spec.Name,
@@ -413,27 +428,24 @@ func routingConfig(lc *localcfg.Config, specs []routing.PoolSpec) ([]config.Pool
 			members[member] = true
 		}
 	}
-	// Every name the block declares stays declared, whether or not a pool took
-	// its name: the member is a credential of the project's and needs none
-	// written for it.
-	declared := map[string]bool{config.CredentialVertex: true}
-	for _, c := range lc.Credentials {
-		declared[c.Name] = true
+	// Every name the file already declares stays declared, and a member of a
+	// written pool that nothing declares gains the claude-oauth entry its type
+	// is: a pool's member names a credential of the same document, or the
+	// built-in vertex (config.ValidatePools). A name a written pool holds is
+	// left alone — the namespace rule above refuses the pair — and the write's
+	// own validation then answers for the file, which is the state the header
+	// describes.
+	written := map[string]bool{}
+	for _, p := range pools {
+		written[p.Name] = true
 	}
-	creds := make([]config.Credential, 0, len(lc.Credentials)+len(members))
-	for _, c := range lc.Credentials {
-		if members[c.Name] && c.Type == config.CredentialTypeClaudeOAuth {
-			continue
-		}
-		creds = append(creds, c)
-	}
-	names := slices.Sorted(maps.Keys(members))
-	for _, name := range names {
-		if declared[name] {
+	creds := slices.Clone(lc.Credentials)
+	for _, name := range slices.Sorted(maps.Keys(members)) {
+		if held[name] || written[name] {
 			continue
 		}
 		creds = append(creds, config.Credential{Name: name, Type: config.CredentialTypeClaudeOAuth})
-		declared[name] = true
+		held[name] = true
 	}
 	return pools, creds
 }
