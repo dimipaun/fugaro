@@ -6907,6 +6907,11 @@ func (r *run) finalize(ctx context.Context) error {
 	// they are what the pull request's body and the report name as the
 	// follow-ups the run left (T-TR8, T-TR9).
 	r.recordCapDeferrals()
+	// The open findings the run ended with, written beside the record for the
+	// readers that judge a long run by them (findings.go, BF1). The three
+	// blocks above are the record's account of the same round, and this is the
+	// artifact those readers take instead of the record the run wrote itself.
+	r.writeFindings(ctx)
 	// The answer is replaced whole rather than having its sentence rewritten:
 	// the one reason this fires on is Decide's own, and the kind it came with is
 	// the one the replacement keeps (Decision, D995).
