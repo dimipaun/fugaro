@@ -61,7 +61,7 @@ func Plan(ctx context.Context, run fcli.PlannedRun) (*fcli.Pair, error) {
 		return nil, nil
 	}
 	layer := abBlock(cfg)
-	if !Sampled(spec.RunID, abRate(cfg, layer)) {
+	if !Sampled(spec.RunID, abRate(layer, run.Repo)) {
 		// The rate's own roll, or a project that samples nothing: most
 		// launches of an installation with a challenger configured are this,
 		// and neither has anything to say (D550, D557).
@@ -132,10 +132,10 @@ func launchAgent(cfg config.Config) config.Agent {
 }
 
 // abBlock is the ab: block a launch is sampled on: the project layer's, which
-// is the only one that may name a challenger or a daily count (D556), and
-// otherwise the repository's own block, whose rate alone a repository may
-// write — the opt-out (A1.2). It is never nil by the time a rate has been read
-// from one of the two: a rate above 0 comes from a block.
+// is the only one that may name a challenger, a daily count or a
+// per-repository rate (D556, D3297), and otherwise the repository's own
+// block, whose rate release A drops before a reader sees it (D3237) — which
+// is why only the layer's block carries a rate above 0.
 func abBlock(cfg *config.Config) *config.AB {
 	if cfg.Layer != nil && cfg.Layer.AB != nil {
 		return cfg.Layer.AB
@@ -143,21 +143,26 @@ func abBlock(cfg *config.Config) *config.AB {
 	return cfg.AB
 }
 
-// abRate is the rate the launch samples at: the project layer's, lowered by
-// the repository's own opt-out when it writes one (D556, D557). The merge is
-// internal/policy's, so the tightening rule lives where every other layer
-// boundary does, and it is built here rather than read off PlannedRun.Policy
-// because no other builder fills a policy layer's A/B rate (policy.Layer.ABRate
-// is written by this launcher and by nothing else).
-func abRate(cfg *config.Config, layer *config.AB) float64 {
-	var ceiling, repo policy.Layer
+// abRate is the rate the launch samples at: the block's own rate, lowered for
+// the repository `repo` by its entry in ab.repos when the layer writes one
+// (B9, D3297). That map is the only per-repository opt-out a launch reads: a
+// repository's own ab.rate is dropped before any reader sees it (D3237), and
+// the repository's own block reaches abBlock only when the project layer is
+// absent, where it carries no rate above 0 anyway.
+//
+// The merge is internal/policy's, so the tightening rule lives where every
+// other layer boundary does, and it is built here rather than read off
+// PlannedRun.Policy because no other builder fills a policy layer's A/B rate
+// (policy.Layer.ABRate is written by this launcher and by nothing else).
+func abRate(layer *config.AB, repo string) float64 {
+	var ceiling, own policy.Layer
 	if layer != nil {
 		ceiling.ABRate = &layer.Rate
+		if rate, ok := layer.Repos[repo]; ok {
+			own.ABRate = &rate
+		}
 	}
-	if cfg.AB != nil {
-		repo.ABRate = &cfg.AB.Rate
-	}
-	eff := policy.Merge(ceiling, repo)
+	eff := policy.Merge(ceiling, own)
 	if eff.ABRate == nil {
 		return 0
 	}
