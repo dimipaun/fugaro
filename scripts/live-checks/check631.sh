@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Check 631 — the key credential, on a real installation: `fugaro accounts add
 # <name> --type anthropic` (and `--type openrouter`) at YOUR terminal — the
-# hidden prompt and nothing echoed, the value in no file under
-# ~/.config/fugaro/ and in no shell history, the refusal in a coding agent's
+# hidden prompt and nothing echoed, no key shape in a file under
+# ~/.config/fugaro/ and none in a shell history, the refusal in a coding agent's
 # session, `fugaro accounts ls --json` naming each credential's serving path,
 # `fugaro accounts rm` against the pool that listed it, and one sandbox run
 # served by the credential the check declared.
@@ -442,8 +442,18 @@ bound_loop() { # bound_loop SECONDS PID
 run_bounded() { # run_bounded SECONDS KEY DIR CMD...
   local secs=$1 key=$2 dir=$3
   shift 3
-  ( trap - ERR; cd "$dir" || exit 1; exec "$@" ) >>"$SCRATCH/$key.out" 2>>"$SCRATCH/$key.err" &
+  # A background job of a non-interactive shell gets /dev/null for stdin, which
+  # would take the terminal away from the commands that read a value at their own
+  # prompt — so those hand it back from fd 5 (open_terminal) inside the subshell.
+  ( trap - ERR; cd "$dir" || exit 1
+    [ -z "${TTY_STDIN:-}" ] || exec 0<&5
+    exec "$@" ) >>"$SCRATCH/$key.out" 2>>"$SCRATCH/$key.err" &
   bound_loop "$secs" "$!"
+}
+
+# run_bounded_tty runs a command with the owner's terminal as its stdin.
+run_bounded_tty() { # run_bounded_tty SECONDS KEY DIR CMD...
+  TTY_STDIN=1 run_bounded "$@"
 }
 
 # ---------------------------------------------------------------- the guards
@@ -642,7 +652,7 @@ step_add_anthropic() {
   owner "That prompt is the one the acceptance names: it is hidden by the command itself, what you type is read by the command and by nothing else here, and this check never holds it."
   owner ""
   say "declaring the Anthropic-key credential: fugaro accounts add ${ANTHROPIC} --type anthropic (its own hidden prompt, on your terminal)"
-  run_bounded "$CLI_TIMEOUT" add-anthropic "$SANDBOX" "$FUGARO_BIN" accounts add "$ANTHROPIC" --type anthropic <&5
+  run_bounded_tty "$CLI_TIMEOUT" add-anthropic "$SANDBOX" "$FUGARO_BIN" accounts add "$ANTHROPIC" --type anthropic
   if [ "$BOUNDED_TIMED_OUT" = yes ]; then
     unmeasured add-anthropic "fugaro accounts add ${ANTHROPIC} --type anthropic did not finish inside ${CLI_TIMEOUT}s and was ended: what it printed is in $SCRATCH/add-anthropic.out and $SCRATCH/add-anthropic.err"
     return 0
@@ -699,7 +709,7 @@ step_add_openrouter() {
   owner "That prompt is the one the acceptance names: it is hidden by the command itself, and what you type is read by the command and by nothing else here."
   owner ""
   say "declaring the OpenRouter credential: fugaro accounts add ${OPENROUTER} --type openrouter (its own hidden prompt, on your terminal)"
-  run_bounded "$CLI_TIMEOUT" add-openrouter "$SANDBOX" "$FUGARO_BIN" accounts add "$OPENROUTER" --type openrouter <&5
+  run_bounded_tty "$CLI_TIMEOUT" add-openrouter "$SANDBOX" "$FUGARO_BIN" accounts add "$OPENROUTER" --type openrouter
   if [ "$BOUNDED_TIMED_OUT" = yes ]; then
     unmeasured add-openrouter "fugaro accounts add ${OPENROUTER} --type openrouter did not finish inside ${CLI_TIMEOUT}s and was ended: what it printed is in $SCRATCH/add-openrouter.out and $SCRATCH/add-openrouter.err"
     return 0
