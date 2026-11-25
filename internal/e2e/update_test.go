@@ -31,6 +31,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/place"
+	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -981,6 +982,72 @@ func TestUpdateIdempotent(t *testing.T) {
 	}
 	if got := dig(r.vars(t, 1), "repo", "check", "paused"); got != false {
 		t.Errorf("paused = %v with every record", got)
+	}
+}
+
+// TestUpdateMigratesRouting: an installation at the release behind — a local
+// config that names its account the old way, and a checkout whose fugaro.yaml
+// calls one Claude model on it — converges, and the routing migration (MG2)
+// writes the table, the pool and the credential into the installation's config
+// in that same update, which is what an installation at the release behind has
+// none of. The second update finds the table in the file and changes nothing.
+func TestUpdateMigratesRouting(t *testing.T) {
+	r := newInitRepoRig(t, "acme/sandbox", "https://bitbucket.org/acme/sandbox.git", func(y string) string {
+		return strings.Replace(y, "agent: { auth: oauth,", "agent: { auth: oauth, oauth_token: ada, model: claude-haiku-4-5,", 1)
+	})
+	// The installation's own config at the release behind: the account the
+	// repository's runs go out on, and nothing about routing.
+	if err := os.WriteFile(r.cfg, []byte(r.cfgText+"claude_accounts:\n  ada: { allow_data_to: [acme/sandbox] }\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The checkout is remembered here as a command run inside it records it:
+	// the migration reads the repository's own fugaro.yaml out of a remembered
+	// checkout, and this rig's runs are outside it (cmd.Dir is the rig's
+	// directory, not the checkout). The path is the machine's scratch space,
+	// which the recording path refuses, so stating its own roots is the
+	// fixture's to do.
+	if err := localcfg.RecordCheckout(os.Getenv, initRepoProjectName,
+		localcfg.CheckoutIdentity{Provider: "bitbucket", Repo: "acme/sandbox"}, r.checkout, time.Now(), []string{}); err != nil {
+		t.Fatal(err)
+	}
+
+	first := r.fugaroInit(t, "--repo", r.checkout)
+	if first.code != 0 {
+		t.Fatalf("want exit 0:\n%s\n%s", first.stdout, first.stderr)
+	}
+	if !strings.Contains(first.stdout, "routing: acme/sandbox's runs go out on") {
+		t.Errorf("the run did not say what the repository's runs go out on:\n%s", first.stdout)
+	}
+	before, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lc, err := localcfg.Parse(before)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := -1
+	for i, e := range lc.ModelRouting {
+		if e.Match == "claude-haiku-4-5" {
+			entry = i
+		}
+	}
+	if entry < 0 {
+		t.Fatalf("the update wrote no table for claude-haiku-4-5: %+v", lc.ModelRouting)
+	}
+	if chain := lc.ModelRouting[entry].Chain; len(chain) != 1 || chain[0].Pool != routing.SharedPool {
+		t.Errorf("the entry's chain is %+v, want the shared pool %s alone (D3183)", chain, routing.SharedPool)
+	}
+
+	// The second update, on the file the first one left: the table in it is
+	// the marker, and the file is written byte for byte as it stands.
+	r.script(t, "repo", -1, map[string]any{"plan": map[string]any{"exit": 0}})
+	second := r.fugaroInit(t, "--repo", r.checkout)
+	if second.code != 0 {
+		t.Fatalf("second run:\n%s\n%s", second.stdout, second.stderr)
+	}
+	if after, _ := os.ReadFile(r.cfg); !bytes.Equal(after, before) {
+		t.Errorf("the second update changed the installation's config")
 	}
 }
 
