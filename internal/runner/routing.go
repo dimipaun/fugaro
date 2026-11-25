@@ -488,6 +488,14 @@ func GatewayOn(auth, mode string) bool {
 // service is where a served `vertex` run's model calls go, the same statement
 // it makes for api-key and oauth.
 //
+// It is the auth set and not a run's own answer: a `vertex` run is switched
+// where the launcher states, beside the address, that the table serves this
+// repository (TableServesEnv, which serviceSwitched reads for this auth alone).
+// The address on its own is handed to a documentless launch on a served profile
+// whether or not the table places the repository, and a `vertex` file's run on
+// such a job keeps the job's own GCP identity — its file's own path — rather
+// than being moved onto a service whose chain names nothing for it.
+//
 // cascade is deliberately not here: it is served by the service on every
 // installation that has one, and reaches it through GatewayOn's own arm
 // whatever this answers.

@@ -1157,7 +1157,10 @@ func TestCodingRunKeepsItsOwnModelPath(t *testing.T) {
 	// The other side of the same three runs, from this same rig (B2.2, and
 	// vertex with CS6): with the URL left in their job they are on the switch,
 	// and the service — not the job's own mount or GCP identity — is what serves
-	// them. The behaviour itself is pinned
+	// them. Vertex is the one that needs the launch's second entry beside the
+	// URL (TableServesEnv): the URL alone is handed to a documentless launch on
+	// a served profile, and a `vertex` run reads the table's statement and not
+	// the address. The behaviour itself is pinned
 	// where the switch's own tests are (service_auth_test.go's
 	// TestSwitchedAPIKeyRunGoesThroughTheService and
 	// TestSwitchedOAuthRunStartsTheGateway, on svcRun's bare rig); what this
@@ -1166,6 +1169,9 @@ func TestCodingRunKeepsItsOwnModelPath(t *testing.T) {
 	for _, auth := range []string{"oauth", "api-key", "vertex"} {
 		t.Run(auth+" on the switch", func(t *testing.T) {
 			r := codingRun(t, auth, policy.ModeEnforce)
+			if auth == "vertex" {
+				r.d.Env = append(r.d.Env, TableServesEnv+"=1")
+			}
 			if !r.serviceSwitched() {
 				t.Fatalf("a coding %s run whose job carries %s is not on the switch", auth, credentialsServiceURLEnv)
 			}

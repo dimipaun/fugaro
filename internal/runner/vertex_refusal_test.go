@@ -13,9 +13,13 @@ package runner
 //     identity, so both refusals stand.
 //
 // The fact both turn on is the run's model path (serviceModelPath) and never
-// the auth alone: the launch's address on the job is what says the table serves
-// this repository (B2.2/D2072), and CS6 put `vertex` in that set (D3174), so a
-// `vertex` run carrying the address is served while one without it is not.
+// the auth alone: for the auths the release-1 bridge serves it is the launch's
+// address on the job (B2.2/D2072), and `vertex` is the one CS6 added to that
+// set (D3174) whose launch writes a second fact beside it — that the project's
+// routing table reaches this repository (TableServesEnv) — because the address
+// alone is handed to a documentless launch on a served profile whose table this
+// repository is not in. Both are read (serviceSwitched), and a `vertex` run
+// carrying the address and no statement is still the job's own identity.
 // The CLI's half of the same rule (validate and update --repo's
 // checkVertexBudget) reads the local config rather than a run, and it answers
 // from the table itself: a repository the table serves is accepted and one it
@@ -32,9 +36,12 @@ import (
 	"github.com/dimipaun/fugaro/internal/recipe"
 )
 
-// vertexServiceEnv is the job's entry that says the installation's credentials
-// service is where this repository's model calls go
-// (credentialsServiceURLEnv).
+// vertexServiceEnv is the job entry that carries the installation's credentials
+// service address (credentialsServiceURLEnv) and nothing else: what the bridge
+// serves an api-key or oauth repository's run on, and — for a `vertex` file —
+// the shape a documentless launch on a served profile produces, since the table
+// states nothing about a repository it does not serve (TableServesEnv is the
+// second entry, and the one this function deliberately leaves out).
 func vertexServiceEnv() []string {
 	return []string{credentialsServiceURLEnv + "=https://creds.example.run.app"}
 }
@@ -105,28 +112,40 @@ func TestVertexInAChainIsAcceptedUnderEnforce(t *testing.T) {
 // serve it — so nothing caps its Vertex calls and the refusal stands, at
 // bootstrap and for a pool that lists the credential.
 //
-// The job's address is what separates the two: without it the launch served
-// this repository nothing, and a `vertex` run authenticates to Vertex itself
-// (gatewayUpstream's vertex arm), so the two refusals stand over exactly the
-// uncapped path they exist for. With it the run is the service's, which is the
-// path TestEveryStageGoesThroughTheChain (CS6) pins instead.
+// The table's own statement is what separates the two, and the address is not
+// it: what the launch wrote where the table reaches this repository
+// (TableServesEnv) is the served path TestEveryStageGoesThroughTheChain (CS6)
+// pins, while a job carrying the address alone — the documentless launch on a
+// served profile — is still a `vertex` run that authenticates to Vertex itself
+// (gatewayUpstream's vertex arm), over exactly the uncapped path these refusals
+// exist for.
 func TestLegacyVertexIsStillRefusedUnderEnforce(t *testing.T) {
 	ctx := context.Background()
-	r, _ := poolRun(t, poolSpec{auth: "vertex", model: poolDirectModel})
-	if r.serviceModelPath() || r.vertexServedByTheService() {
-		t.Fatal("a vertex run whose job carries no service address is read as served by the service")
-	}
-	r.spend = enforceSpend()
-	if err := r.checkBudget(ctx); !vertexRefused(err) {
-		t.Fatalf("an unmigrated vertex run was not refused under enforce: %v", err)
-	}
-	// The pool's half: the built-in credential in a pool of the same run, whose
-	// Vertex calls are the job's own.
-	r, _ = poolRun(t, poolSpec{auth: "vertex", access: "with-vertex", pools: []config.Pool{vertexPool()},
-		creds: poolCreds("acct-one"), model: poolDirectModel})
-	r.spend = enforceSpend()
-	got := r.vertexPoolRefusal(ctx)
-	if !strings.Contains(got, VertexBudgetRefusal) || !strings.Contains(got, "with-vertex") || !strings.Contains(got, "vertex") {
-		t.Fatalf("a pool listing the built-in vertex was not refused for an unmigrated run: %q", got)
+	for _, tc := range []struct {
+		name string
+		env  []string
+	}{
+		{"a job with no address", nil},
+		{"a job carrying the address, and no statement about the table", vertexServiceEnv()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, _ := poolRun(t, poolSpec{auth: "vertex", model: poolDirectModel, env: tc.env})
+			if r.serviceModelPath() || r.vertexServedByTheService() {
+				t.Fatal("a vertex run whose model path is the job's own identity is read as served by the service")
+			}
+			r.spend = enforceSpend()
+			if err := r.checkBudget(ctx); !vertexRefused(err) {
+				t.Fatalf("an unmigrated vertex run was not refused under enforce: %v", err)
+			}
+			// The pool's half: the built-in credential in a pool of the same
+			// run, whose Vertex calls are the job's own.
+			r, _ = poolRun(t, poolSpec{auth: "vertex", access: "with-vertex", pools: []config.Pool{vertexPool()},
+				creds: poolCreds("acct-one"), model: poolDirectModel, env: tc.env})
+			r.spend = enforceSpend()
+			got := r.vertexPoolRefusal(ctx)
+			if !strings.Contains(got, VertexBudgetRefusal) || !strings.Contains(got, "with-vertex") || !strings.Contains(got, "vertex") {
+				t.Fatalf("a pool listing the built-in vertex was not refused for an unmigrated run: %q", got)
+			}
+		})
 	}
 }

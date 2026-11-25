@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/routing"
+	"github.com/dimipaun/fugaro/internal/runner"
 )
 
 // launchCredsURL is the URL an opted-in installation's config carries in
@@ -466,6 +468,12 @@ func TestCredentialsServiceLaunchEnv(t *testing.T) {
 		auth     string
 		deployed bool
 		want     bool
+		// wantTable is the second entry the launch writes where the project's
+		// routing table is what serves the repository (runner.TableServesEnv):
+		// the fact a `vertex` run's model path turns on, which the address is
+		// not (a documentless launch is handed the address on the profile's
+		// answer alone).
+		wantTable bool
 	}{
 		"a served profile, the document read": {lc: sharedJob(appOn), auth: config.AuthCascade, want: true},
 		"a served profile, this repository's own record off": {
@@ -494,12 +502,27 @@ func TestCredentialsServiceLaunchEnv(t *testing.T) {
 		// The arm's other half, and the reason it reads the table: the same
 		// `vertex` document IS told on a repository the project's table serves
 		// (D3174, CS6) — a chain naming Vertex is the service calling Vertex on
-		// its own identity and pricing the call as a key's, so the address is
-		// what the run's model path turns on and the file's own path is not it.
+		// its own identity and pricing the call as a key's, so the table's own
+		// statement is what the run's model path turns on and the file's own
+		// path is not it — and the statement is the entry the runner's `vertex`
+		// arm reads beside the address (runner.TableServesEnv).
 		"a served profile, a vertex document the table serves": {
-			lc:   servedByTable(appOn),
-			auth: config.DefaultAgentAuth,
-			want: true,
+			lc:        servedByTable(appOn),
+			auth:      config.DefaultAgentAuth,
+			want:      true,
+			wantTable: true,
+		},
+		// The two decisions come apart, and this row is where: a document the
+		// launcher could not read is handed the address on the profile's answer
+		// whatever the table says (the rows above), while the table's statement
+		// is a fact about this repository and is written here — so the `vertex`
+		// file such a launch turns out to be starting is the service's, and one
+		// on a repository the table does not serve keeps the job's own identity
+		// (the row above it, which carries the address and no statement).
+		"a served profile with no readable document, on a repository the table serves": {
+			lc:        servedByTable(appOn),
+			want:      true,
+			wantTable: true,
 		},
 		"a profile no repository of which is on the switch": {
 			lc:   sharedJob(appOff),
@@ -510,8 +533,12 @@ func TestCredentialsServiceLaunchEnv(t *testing.T) {
 	} {
 		got := credentialsServiceLaunchEnv(tc.lc, "standard", "acme/app", tc.auth, "", tc.deployed, false)
 		if tc.want {
-			if len(got) != 1 || got[0] != envCredentialsServiceURL+"="+launchCredsURL {
-				t.Errorf("%s: a launch on a shared project job put %v in the execution's plain Env, want [%s=%s]: a profile the service serves reaches it from the account the module granted roles/run.invoker to (deploy/terraform/gcp/modules/project/sa.tf)", name, got, envCredentialsServiceURL, launchCredsURL)
+			want := []string{envCredentialsServiceURL + "=" + launchCredsURL}
+			if tc.wantTable {
+				want = append(want, runner.TableServesEnv+"=1")
+			}
+			if !slices.Equal(got, want) {
+				t.Errorf("%s: a launch on a shared project job put %v in the execution's plain Env, want %v: a profile the service serves reaches it from the account the module granted roles/run.invoker to (deploy/terraform/gcp/modules/project/sa.tf), and the table's own statement is written exactly where the table serves this repository", name, got, want)
 			}
 			continue
 		}

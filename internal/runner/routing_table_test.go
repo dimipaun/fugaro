@@ -16,8 +16,10 @@ package runner
 //
 // What decides between the two is one fact and not the auth: whether this run's
 // model path is the credentials service's (serviceModelPath), which is the
-// switch the launch's own address states (ServiceSwitchedAuth, B2.2/D2072) and
-// the value the gateway's ChainServed option is built from (CS6).
+// switch the launch's own entries state — the address for the auths the bridge
+// serves (B2.2/D2072), and, for `vertex`, the launch's statement that the
+// project's routing table reaches this repository (TableServesEnv) — and the
+// value the gateway's ChainServed option is built from (CS6).
 
 import (
 	"context"
@@ -48,11 +50,14 @@ const chainModel = "claude-sonnet-5-5"
 // the credential that kind names).
 var chainPool = routing.SourceName{Kind: routing.KindPool, Name: "team"}
 
-// chainJob is the job of a repository the table serves: the credentials
-// service as a stand-in that answers a served call the way one of this contract
-// answers it — the tier and the credential's name it has always written, and
-// the chain's own three members — plus the metadata server the job's own ID
-// token is minted from. seen returns the calls the service received, in order.
+// chainJob is the job of a repository the table serves: the launch's two
+// entries for it (the address, and the statement that the project's routing
+// table reaches this repository — TableServesEnv, the fact a `vertex` run's
+// model path needs beside the address), the credentials service as a stand-in
+// that answers a served call the way one of this contract answers it — the tier
+// and the credential's name it has always written, and the chain's own three
+// members — plus the metadata server the job's own ID token is minted from.
+// seen returns the calls the service received, in order.
 func chainJob(t *testing.T) (env []string, seen func() []*http.Request) {
 	t.Helper()
 	fake, svc := anthropicfake.New(t)
@@ -73,6 +78,7 @@ func chainJob(t *testing.T) (env []string, seen func() []*http.Request) {
 	t.Cleanup(meta.Close)
 	return []string{
 		credentialsServiceURLEnv + "=" + svc.URL,
+		TableServesEnv + "=1",
 		metadataHostEnv + "=" + strings.TrimPrefix(meta.URL, "http://"),
 	}, fake.Seen
 }
@@ -136,11 +142,12 @@ func tableRun(t *testing.T, auth string) (*run, func() []*http.Request) {
 // record, and the live registry entry a watcher reads.
 //
 // The auths are the ones a file can name, and they all take the same path: the
-// address on the job is the launch's statement that the table serves this
-// repository (CS10), and from there the runner chooses no upstream of its own.
-// `vertex` is the auth this task adds to that set (D3174): its calls were the
-// job's own uncapped GCP identity before, and the service is what makes them a
-// source the table's chain can name.
+// job carries the launch's entries for a repository the table serves — the
+// address, and the statement that the project's routing table reaches it
+// (TableServesEnv, CS10) — and from there the runner chooses no upstream of its
+// own. `vertex` is the auth this task adds to that set (D3174): its calls were
+// the job's own uncapped GCP identity before, and the service is what makes them
+// a source the table's chain can name.
 //
 // What the run declares to the service is the repository's own auth; what
 // served the call is the table's answer, and the two are different facts.
@@ -242,11 +249,19 @@ func TestTheLiveEntryCarriesTheSource(t *testing.T) {
 
 // TestAnUnmigratedRepositoryRunsAsItsFileSays (CS6, R3 kept): a repository the
 // table does not serve — no chain of it reaches this repository, so its launch
-// hands its job no service address — runs exactly as its file says. Its model
+// states nothing about the table — runs exactly as its file says. Its model
 // path is its own credential's, its upstream is built from the auth the file
 // names, a `vertex` file's run is the job's own GCP identity and is refused
 // under `enforce` as it always was, and its live registry entry keeps the auth
 // the file names.
+//
+// The address is not the statement, and the row that carries one is why: a
+// launch hands it to a job whose document it could not read, on the profile's
+// own answer (B5.2, D505, D2078), so the job of a `vertex` file the table says
+// nothing about can carry it. That run keeps the job's own identity, which is
+// the path that works whatever the profile dropped, and this is the shape
+// TestEveryStageGoesThroughTheChain's rows are told apart from by the table's
+// own statement alone.
 //
 // A cascade file is not a row here: a cascade run has no credential of its own,
 // its model path is the service's by construction, and a job that cannot reach
@@ -258,13 +273,29 @@ func TestAnUnmigratedRepositoryRunsAsItsFileSays(t *testing.T) {
 		auth        string
 		upstream    string
 		refusedPath bool
+		// address is the shape a documentless launch produces on a served
+		// profile: the job carries the service's address, handed on the
+		// PROFILE's answer, while the table states nothing about this
+		// repository (internal/cli's credentialsServiceLaunchEnv). The address
+		// is not the table's statement, and no auth's path may move on it.
+		address bool
 	}{
 		{name: "an api-key file keeps the job's own key", auth: "api-key", upstream: "anthropic"},
 		{name: "a vertex file keeps the job's own identity", auth: "vertex", upstream: "vertex"},
+		{name: "a vertex file on a job the address alone was handed", auth: "vertex", upstream: "vertex", address: true},
 		{name: "an oauth file has no gateway and no upstream", auth: "oauth", refusedPath: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := withoutCredentialsService(codingRun(t, tc.auth, policy.ModeEnforce))
+			r := codingRun(t, tc.auth, policy.ModeEnforce)
+			if !tc.address {
+				r = withoutCredentialsService(r)
+			}
+			if got := envLookup(r.d.Env, credentialsServiceURLEnv); (got != "") != tc.address {
+				t.Fatalf("this row's job carries the service's address %q, want it carried=%v: the row is about the address and nothing else", got, tc.address)
+			}
+			if envLookup(r.d.Env, TableServesEnv) != "" {
+				t.Fatal("this row's job carries the table's statement: no row here is a repository the table serves")
+			}
 			r.d.Env = append(r.d.Env, "ANTHROPIC_API_KEY="+plantedKey)
 			r.rec = &runstore.Record{Version: 1, RunID: r.spec.RunID, Status: runstore.StatusRunning}
 			if r.serviceModelPath() || r.serviceSwitched() {
