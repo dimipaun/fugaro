@@ -483,7 +483,6 @@ describe('the lapse, at the handler', () => {
       'spend.report',
       'runs.stats',
       'runs.summary',
-      'coordinator.status',
       'budget.show',
       'live.watch',
       'licence.read',
