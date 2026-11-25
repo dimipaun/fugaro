@@ -138,7 +138,11 @@ const maxUSD = 1e6
 // outside them is a record this runner did not write, and it renders "other"
 // rather than itself. The status set is read from runstore.Statuses — the
 // vocabulary's one spelling — rather than restated here, so a status this
-// runner can write is never a word this report cannot name.
+// runner can write is never a word this report cannot name. A paused run is
+// one of them (contract-pause, R15): it renders as `paused`, raises no halt
+// flag and is in no row of the failure table, since a run that suspended
+// itself to be resumed by its chain is neither a failure nor a success and
+// the digest counts no success at all.
 var (
 	statuses    = statusWords()
 	haltReasons = []string{
