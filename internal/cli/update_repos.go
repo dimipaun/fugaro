@@ -11,6 +11,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -232,15 +233,36 @@ func (e *initEngine) printRepoLines(lines []initflow.RepoLine) {
 // stage's result already carries them (`repos`) and a reader would otherwise
 // count every repository twice.
 func (e *initEngine) notices() []initflow.Notice {
+	held := e.redaction()()
 	e.reposState.mu.Lock()
 	defer e.reposState.mu.Unlock()
 	var out []initflow.Notice
 	for _, rep := range e.reposState.steps {
 		for _, ln := range rep.lines {
-			out = append(out, initflow.Notice{Step: rep.name, Repo: ln.Repo, State: ln.State, Detail: ln.Detail})
+			out = append(out, initflow.Notice{
+				Step:   rep.name,
+				Repo:   redactHeld(held, ln.Repo),
+				State:  ln.State,
+				Detail: redactHeld(held, ln.Detail),
+			})
 		}
 	}
 	return out
+}
+
+// redactHeld is one line with every value the run holds taken out of it, in the
+// word the log and the loop's own lines use (report.Redacted). The loop redacts
+// a stage's lines as it records them (reposOf) and the run's notices are built
+// here, from lines a step reported about the same repositories: a reader of the
+// document and of the feed reads the two side by side, so both are redacted with
+// the run's values and neither can carry one the other hides (F6).
+func redactHeld(held []string, s string) string {
+	for _, v := range held {
+		if v != "" {
+			s = strings.ReplaceAll(s, v, report.Redacted)
+		}
+	}
+	return s
 }
 
 // hintFirst is lines with the hinted repository's own line first and the rest

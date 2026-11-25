@@ -11,6 +11,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/report"
 )
 
 // C1's tests are about the contract around the reader: the order of the list
@@ -284,6 +285,38 @@ func TestReposNoticesAreTheStepsAlone(t *testing.T) {
 	}
 	if got[0].Step != "backlog" || got[0].Repo != "acme/app" || got[0].State != initflow.RepoNeedsYou || got[0].Detail != "the pin" {
 		t.Errorf("the notice is %+v, want the step's own name on the line it reported", got[0])
+	}
+}
+
+// TestRepoNoticesAreRedacted: a step's line about a repository can quote a
+// value the run holds -- a token its read returned, the installation's own name
+// in a URL -- and a notice is a line of the document and of the feed like a
+// stage's is. The loop redacts a stage's lines as it records them (reposOf), and
+// notices() is the one place the run's notices are built, so a step's lines are
+// redacted there, with the run's own values and the same word (F6).
+func TestRepoNoticesAreRedacted(t *testing.T) {
+	const held = "AGENTSECRETVALUE"
+	// The empty string is the normal state of a slot no stage has reached yet:
+	// it is a substring of every line, so it is skipped as the loop skips it.
+	e := &initEngine{r: &initRun{}, redact: []string{"", held}}
+	e.reportRepos("backlog", []initflow.RepoLine{
+		{Repo: "acme/" + held, State: initflow.RepoNeedsYou, Detail: "the pin " + held + " is missing"},
+	})
+
+	got := e.notices()
+	if len(got) != 1 {
+		t.Fatalf("the notices are %+v, want the one line the step reported", got)
+	}
+	for _, s := range []string{got[0].Repo, got[0].Detail} {
+		if strings.Contains(s, held) {
+			t.Errorf("the notice carries %q, want the value the run holds redacted out of it", s)
+		}
+	}
+	if !strings.Contains(got[0].Detail, report.Redacted) {
+		t.Errorf("the notice's detail is %q, want the run's own marker %q in place of the value", got[0].Detail, report.Redacted)
+	}
+	if got[0].State != initflow.RepoNeedsYou || got[0].Step != "backlog" {
+		t.Errorf("the notice is %+v, want the step's own name and the state the line carried: neither is a value the run holds", got[0])
 	}
 }
 
