@@ -641,7 +641,16 @@ import (
 // Every row of the block has a failing form and an unmeasurable one, and every
 // case holds that the App's private key reaches neither the block, the output
 // nor the scratch directory.
-// Checks 881 and 882 are the model-credentials routing work's owner-run checks.
+// Checks 880 to 882 are the model-credentials routing work's owner-run checks.
+// 880 reads, for each source the credentials service has served, the NAMES of
+// the rate-limit headers that source's last answer carried — the node of its own
+// PL7 writes beside a credential's mark, creds/observed/<name>, so the marks
+// stay readable by a release behind — and says whether one of them is a utilisation
+// figure, which is U1 and the gate on PL8. Its fakes are a fake `gcloud` that
+// mints the access token and a fake `curl` that serves the record out of the
+// case's own file and answers no other URL, so a case says what the block
+// judges and that the check makes no model call of its own and prints no value
+// the record holds.
 // 881's fakes are a fake `fugaro` (a routing table, a budget, a pool of
 // accounts whose members the case sets a state on, a launch and a run listing)
 // and a fake `gcloud` serving the run's own record out of the runs bucket, so a
@@ -834,6 +843,7 @@ var liveCheckScripts = []struct {
 	{"check-720.sh", "check-720_test.sh"},
 	{"check-721.sh", "check-721_test.sh"},
 	{"check670.sh", "check670_test.sh"},
+	{"check-880-token-utilisation.sh", "check-880-token-utilisation_test.sh"},
 	{"check-881-chain-falls-through.sh", "check-881-chain-falls-through_test.sh"},
 	{"check-882-vertex-capped.sh", "check-882-vertex-capped_test.sh"},
 	{"check680.sh", "check680_test.sh"},
