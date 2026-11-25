@@ -5,6 +5,7 @@ import (
 	"errors"
 	"maps"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -88,6 +89,14 @@ const (
 	// of the line.
 	enrolledMintRefusal     = "the installation's credentials service would not mint this read: ask the owner to add you to the installation's people and run `fugaro update`"
 	enrolledIdentityRefusal = "your own Google ID token could not be minted for the installation's credentials service: run `gcloud auth login` and try again"
+	// enrolledNoJobReason is the fix for R1's second refusal: the service read
+	// this call and refused the REPOSITORY, because its own inventory holds no
+	// job for it. The mint resolves the repository through the repositories the
+	// installation deployed jobs for, so a repository nobody enrolled is
+	// answered by name rather than minted for, and the door that enrolls one is
+	// `project repos add` run in its checkout (F42: the checkout is where its
+	// jobs are deployed from).
+	enrolledNoJobReason = "no job of this installation serves it: enroll it with `fugaro project repos add` in its checkout"
 )
 
 // enrolledAdmits is the published policy's allow-list, and the seam a test
@@ -365,16 +374,20 @@ func (r enrolledReads) Commit(ctx context.Context, ref string) (string, error) {
 // sentence that names its fix, and every other failure keeps the provider's own
 // sentence, which is short enough to carry one (a 404, a rate limit).
 //
-// The class is the house's (reviewReadMintRefusal, D3343): the read mint's own
-// refusal, and the caller's identity it verifies. That converter's sentence is
-// written for a top-level error line and is longer than a repository's reason is
-// printed in, so it decides WHICH reason this is and this read writes it; the
-// failure the service itself answered stays beneath the short line (Unwrap), so
-// a caller that logs the whole error still has the service's own words.
+// That this failure IS a mint's is the house's answer (reviewReadMintRefusal,
+// D3343); everything past it is this read's, because that converter's sentence
+// is written for a top-level error line and is longer than a repository's
+// reason is printed in — its fix is the whole point of the line and has to
+// survive. The failure the read itself got stays beneath the short line
+// (Unwrap), so a caller that logs the whole error still has the service's own
+// words.
 //
-// The two fixes are different people's: a mint the service refused is the
-// owner's to unblock (its people are the installation's operators), and an
-// identity that could not be minted is the reader's own gcloud login.
+// The two fixes are different people's, and which one a refusal is, is the
+// service's own answer: a mint it read and refused the REPOSITORY is one
+// nobody enrolled (R1's second fix, the door that enrolls it); a mint it would
+// not verify the CALLER for is the owner's to unblock (its people are the
+// installation's operators); and a caller whose own identity could not be
+// minted is the reader's gcloud login.
 func enrolledReadRefusal(err error) error {
 	if err == nil {
 		return nil
@@ -382,11 +395,36 @@ func enrolledReadRefusal(err error) error {
 	if reviewReadMintRefusal(err, enrolledReadWhat) == nil {
 		return err
 	}
-	line := enrolledMintRefusal
-	if errors.Is(err, github.ErrServiceReadIdentity) || errors.Is(err, bitbucket.ErrServiceReadIdentity) {
-		line = enrolledIdentityRefusal
+	switch {
+	case enrolledServiceRefusedTheCall(err):
+		return &enrolledReadError{line: enrolledNoJobReason, err: err}
+	case errors.Is(err, github.ErrServiceReadIdentity), errors.Is(err, bitbucket.ErrServiceReadIdentity):
+		return &enrolledReadError{line: enrolledIdentityRefusal, err: err}
 	}
-	return &enrolledReadError{line: line, err: err}
+	return &enrolledReadError{line: enrolledMintRefusal, err: err}
+}
+
+// enrolledAnswered is the two read mints' own sentence for a call the service
+// answered outside 2xx (github.ServiceReadTokens.mint and bitbucket's), and the
+// status it carries is the whole of what a caller can act on: the message
+// beside the service's code is written for an operator's log and is dropped
+// there by design, so the class of the answer reaches a caller as this phrase
+// and nothing finer.
+var enrolledAnswered = regexp.MustCompile(`the service answered (\d{3})`)
+
+// enrolledServiceRefusedTheCall is whether the read mint failed because the
+// service read the call and refused it — credsvc's 400, request_refused —
+// rather than because this caller or the service was the problem.
+//
+// What that means on this route is the repository and never the request: the
+// body a read mint sends is two fields this read built (the canonical name of
+// the repository and an App ID recorded in the project's own config), so a
+// service that refuses it has refused the repository — its inventory holds no
+// job for it. The other answers are the caller's: 403 is a caller the service
+// would not verify, and 503 an installation that cannot mint now.
+func enrolledServiceRefusedTheCall(err error) bool {
+	m := enrolledAnswered.FindStringSubmatch(err.Error())
+	return m != nil && m[1] == "400"
 }
 
 // enrolledReadError is a translated refusal: the short line a repository's

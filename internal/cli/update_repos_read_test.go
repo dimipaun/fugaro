@@ -190,10 +190,11 @@ func TestEnrolledReposMissingOrInvalidIsUnread(t *testing.T) {
 }
 
 // TestEnrolledReposNameTheFix: every reason a repository gets names what to do
-// about it (R1, spec §Reading a default branch). The four an admin meets first:
+// about it (R1, spec §Reading a default branch). The five an admin meets first:
 // an installation that publishes no credentials service (R22), a GitHub
-// repository no App ID can be read for anywhere (F43), a mint the service
-// refuses, and an identity the reader's own gcloud login could not mint.
+// repository no App ID can be read for anywhere (F43), a service that refuses
+// the repository itself, a mint it refuses for who the caller is, and an
+// identity the reader's own gcloud login could not mint.
 func TestEnrolledReposNameTheFix(t *testing.T) {
 	t.Run("no credentials service", func(t *testing.T) {
 		lc := enrolledLC(map[string]localcfg.Repo{
@@ -252,6 +253,37 @@ func TestEnrolledReposNameTheFix(t *testing.T) {
 		}
 		if mint.calls() == 0 {
 			t.Error("the read never asked the installation's credentials service for a token")
+		}
+	})
+
+	t.Run("no job serves it", func(t *testing.T) {
+		// The service read the call and refused the repository: its inventory
+		// holds no job for it (credsvc's request_refused).
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"request_refused","message":"refused"}`))
+		}))
+		t.Cleanup(srv.Close)
+		setReviewReadIdentity(t)
+		lc := enrolledLC(map[string]localcfg.Repo{
+			"acme/app": {Provider: gitprov.KindGitHub, GitHubAppID: reviewHeadAppID},
+		})
+		lc.CredentialsService = &localcfg.CredentialsService{URL: srv.URL}
+		stubEnrolledRead(t, nil, enrolledProvider)
+		views, _ := readEnrolledRepos(context.Background(), enrolledIn{LC: lc})
+		reason := onlyView(t, views).Unread
+		// R1's second fix: what unsticks it is enrolling the repository, and not
+		// the people list the caller IS on.
+		for _, want := range []string{"no job of this installation serves it", "fugaro project repos add", "in its checkout"} {
+			if !strings.Contains(reason, want) {
+				t.Errorf("the reason %q does not name %q", reason, want)
+			}
+		}
+		if strings.Contains(reason, "the installation's people") {
+			t.Errorf("the reason %q sends the reader to the people list, and the repository is what the service refused", reason)
+		}
+		if strings.Contains(reason, "truncated") {
+			t.Errorf("the reason %q is cut, and a reason a stage prints has to carry its fix whole", reason)
 		}
 	})
 
