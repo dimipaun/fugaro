@@ -154,6 +154,27 @@ func knownEnvName(t *testing.T, name string) bool {
 	return false
 }
 
+// TestSecurityMdBoundsTheSlipTheftWindow: "only" is what bounds *when* a
+// launcher can steal an unclaimed slip -- before the run's own start-up claim,
+// and no later (D1941) -- and the In-short bullet and the paragraph stating
+// the rule are the two places a reader takes it from. The laconic tightening
+// of SECURITY.md (PR #3907) dropped the word from the bullet and a review of
+// the same change put it back, but nothing pinned it: a later tightening could
+// drop it again and leave the bullet reading as if a launcher could steal a
+// slip at any time. Both statements are pinned, so the bound survives the next
+// rewrite of either.
+func TestSecurityMdBoundsTheSlipTheftWindow(t *testing.T) {
+	s := flattenDoc(readDoc(t, "SECURITY.md"))
+	for _, want := range []string{
+		"a launcher can steal an unclaimed slip only before the run claims it",
+		"A launcher can steal an unclaimed slip, and only that",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("SECURITY.md no longer says %q: `only` bounds the slip theft window to before the run's start-up claim (D1941), and a sentence without it reads as a theft with no window at all", want)
+		}
+	}
+}
+
 // TestSecurityMdNamesTheDeployersNinthGrant: the managed-deployer bullet said
 // the account holds "one unconditioned custom role ... and nothing else unless
 // the installation sets the module's `managed_deployer_scoped`", which is a
