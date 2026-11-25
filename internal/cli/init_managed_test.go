@@ -107,8 +107,14 @@ func TestMarkCreatedWritesOnlyForACreationThisRunCreatedOrResumed(t *testing.T) 
 		if !ok {
 			t.Fatalf("no %s in gs://%s after the run that created the project:\n%s", managed.MarkerObject, bucket, out)
 		}
-		if want := `{"version":1,"gcp_project":"` + newProj + `"}`; b != want {
+		// The fact records the budget this run created the alert with: the
+		// defaults, since a run that creates the project has no installation
+		// whose figures the flags could leave to (D2211, D2212, T2a).
+		if want := defaultCreationFact(newProj); b != want {
 			t.Errorf("gs://%s/%s = %s, want %s", bucket, managed.MarkerObject, b, want)
+		}
+		if strings.Contains(out, "no alert was created") {
+			t.Errorf("the run says it created no alert, and the account it links is the one its budget block is on:\n%s", out)
 		}
 		// And the other half of the same fact, written by the same step
 		// (Task 3.0): the label on the project itself, which the read
@@ -242,7 +248,7 @@ func TestMarkCreatedWritesOnlyForACreationThisRunCreatedOrResumed(t *testing.T) 
 			t.Errorf("the resumed mark's banner is missing:\n%s", out)
 		}
 		b, ok := markerAt(t, r.gcs, bucket)
-		if want := `{"version":1,"gcp_project":"` + newProj + `"}`; !ok || b != want {
+		if want := defaultCreationFact(newProj); !ok || b != want {
 			t.Errorf("the resumed project's fact = %q (present %v), want %s", b, ok, want)
 		}
 	})
@@ -278,8 +284,14 @@ func TestMarkCreatedWritesOnlyForACreationThisRunCreatedOrResumed(t *testing.T) 
 		if !ok {
 			t.Fatalf("no %s in gs://%s after the run that created the project and put Firebase on it:\n%s", managed.MarkerObject, bucket, out)
 		}
-		if want := `{"version":1,"gcp_project":"` + newProj + `"}`; b != want {
+		if want := defaultCreationFact(newProj); b != want {
 			t.Errorf("gs://%s/%s = %s, want %s", bucket, managed.MarkerObject, b, want)
+		}
+		// The same account the installation's variables carry, from the other
+		// engine's write: the alert is created either way, so the run does not
+		// tell the owner to add one.
+		if strings.Contains(out, "no alert was created") {
+			t.Errorf("the run says it created no alert, and it linked the account its budget block is on:\n%s", out)
 		}
 		// Once, and on its own first try: a second write would have to get
 		// past WriteMarker's IfGenerationMatch(0), and the run says so
