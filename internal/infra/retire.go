@@ -6,12 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"net/http"
 	"slices"
 	"strconv"
 	"strings"
 
-	"google.golang.org/api/googleapi"
 	run "google.golang.org/api/run/v2"
 	secretmanager "google.golang.org/api/secretmanager/v1"
 
@@ -1157,56 +1155,48 @@ func orphanContainers(ctx context.Context, c *Clients, spec RepoSpec, stateAddrs
 //
 // It is what answers G4 for a project copy D3325 retires: the state removal
 // destroys nothing, so the copy may be deleted only on a run that can see that
-// no deployed template reads it any more (ProjectCopiesToDelete). A job's
-// environment is not in the listing — jobs.list answers names and labels — so
-// each job is read, and a job that vanished between the two reads names
-// nothing.
+// no deployed template reads it any more (ProjectCopiesToDelete). One paged
+// jobs.list answers the whole question — the listing carries each job's
+// template with its containers and their env, the same read this package's
+// timeout lookup and the owner's check920 script are built on — so no job is
+// read a second time, and the Cloud Run read quota launches share pays for one
+// walk however many jobs the installation has.
 //
 // The read covers EVERY job of the installation, not this repository's: the
 // job that still mounts a project copy is any repository's, including one this
-// run never touches. It fails closed — a refused or failed read answers no IDs
-// and the warning — and that is the whole point: "could not look" and "nothing
-// names it" must never be the same answer for a call that deletes a container.
+// run never touches. It fails closed — a listing that was refused or failed
+// answers no IDs and the warning — and that is the whole point: "could not
+// look" and "nothing names it" must never be the same answer for a call that
+// deletes a container.
 func DeployedSecretIDs(ctx context.Context, c *Clients, spec InstallationSpec) (ids map[string]bool, warning string) {
 	if c == nil || c.Run == nil {
 		return nil, ""
 	}
 	parent := "projects/" + spec.Project + "/locations/" + spec.Region
-	var names []string
+	out := map[string]bool{}
 	err := c.Run.Projects.Locations.Jobs.List(parent).Pages(ctx, func(p *run.GoogleCloudRunV2ListJobsResponse) error {
 		for _, j := range p.Jobs {
-			if name := lastSegment(j.Name); name != "" {
-				names = append(names, name)
+			if j == nil || j.Template == nil || j.Template.Template == nil {
+				continue
+			}
+			for _, ctr := range j.Template.Template.Containers {
+				if ctr == nil {
+					continue
+				}
+				for _, e := range ctr.Env {
+					if e == nil || e.ValueSource == nil || e.ValueSource.SecretKeyRef == nil {
+						continue
+					}
+					if id := lastSegment(e.ValueSource.SecretKeyRef.Secret); id != "" {
+						out[id] = true
+					}
+				}
 			}
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, jobsReadFailed(ctx, err, spec, "")
-	}
-	out := map[string]bool{}
-	for _, name := range slices.Sorted(slices.Values(names)) {
-		j, err := c.Run.Projects.Locations.Jobs.Get(parent + "/jobs/" + name).Context(ctx).Do()
-		if err != nil {
-			var ge *googleapi.Error
-			if errors.As(err, &ge) && ge.Code == http.StatusNotFound {
-				continue
-			}
-			return nil, jobsReadFailed(ctx, err, spec, name)
-		}
-		if j.Template == nil || j.Template.Template == nil {
-			continue
-		}
-		for _, ctr := range j.Template.Template.Containers {
-			for _, e := range ctr.Env {
-				if e.ValueSource == nil || e.ValueSource.SecretKeyRef == nil {
-					continue
-				}
-				if id := lastSegment(e.ValueSource.SecretKeyRef.Secret); id != "" {
-					out[id] = true
-				}
-			}
-		}
+		return nil, jobsReadFailed(ctx, err, spec)
 	}
 	return out, ""
 }
@@ -1216,14 +1206,11 @@ func DeployedSecretIDs(ctx context.Context, c *Clients, spec InstallationSpec) (
 // asks the same question by hand. Empty, with the run abandoned, is a run that
 // is giving up rather than a permission the operator lacks — the caller prints
 // no line for a run that is already over.
-func jobsReadFailed(ctx context.Context, err error, spec InstallationSpec, job string) string {
+func jobsReadFailed(ctx context.Context, err error, spec InstallationSpec) string {
 	if ctx.Err() != nil {
 		return ""
 	}
 	call := "gcloud run jobs list --project " + spec.Project + " --region " + spec.Region
-	if job != "" {
-		call = "gcloud run jobs describe " + job + " --project " + spec.Project + " --region " + spec.Region
-	}
 	return fmt.Sprintf("workflow-secret copies were marked retired but not deleted: the Cloud Run jobs could not be read (%v); check with: %s",
 		err, call)
 }
