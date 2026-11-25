@@ -14,8 +14,10 @@
 #     (`fugaro craft ls`, `fugaro accounts pool ls`, `fugaro project policy
 #     show`, `fugaro creds ls`). A build without it stops here rather than
 #     measuring a pool that cannot exist;
-#   * the premise, from the installation's own words. The coder craft's
-#     effective access names a pool (`fugaro craft ls --json`), that pool's
+#   * the premise, from the installation's own words. The chain the coder craft's
+#     model resolves to names a pool (`fugaro craft ls --json`) — or, on a project
+#     that publishes no routing table, its calls go out the release-1 way and the
+#     published node names the pool the craft goes out on. That pool's
 #     strategy is `round-robin` and it lists two or more members the credentials
 #     service serves (`fugaro project policy show --json` — the node the service
 #     itself reads), every member is in the service's bundle (`fugaro creds ls
@@ -157,8 +159,13 @@ CLEANUP_RUNNING=no
 RESTORE_VERDICT=""
 RESTORE_NOTE=""
 PROJECT=""
-CRAFT_ACCESS=""
+CRAFT_POOL=""
+CRAFT_CHAIN=""
 CRAFT_MODEL=""
+# CRAFT_READ says whether the crafts came back as one answer: a document with
+# problems on it is not one to look a pool up in, and step_pool says so rather
+# than reading a chain out of a list the CLI itself refuses.
+CRAFT_READ=no
 POOL_NAME=""
 POOL_MEMBERS=""
 POOL_SECOND=""
@@ -184,10 +191,11 @@ ENDED=0
 RECORDS=0
 SUCCEEDED=0
 TOTAL_USD=0
-# The crafts the published node will serve this call with, one `<name>=<access>`
-# per craft as `fugaro craft ls --json` reports them: step_pool walks them to
-# answer MC7's own question, whether ANY craft the credentials service serves is
-# pinned to something that is not a round-robin pool.
+# The crafts the published node will serve this call with, one `<name>=<chain>`
+# per craft as `fugaro craft ls --json` reports them, with the chain its model
+# resolves to (RT6, D3170): step_pool walks them to answer MC7's own question,
+# whether ANY craft the credentials service serves is pinned to something that is
+# not a round-robin pool.
 CRAFT_TABLE=""
 
 scratch_up() {
@@ -255,13 +263,14 @@ elif what == "crafts":
     print("problems=%d" % len(doc.get("problems") or []))
     for problem in doc.get("problems") or []:
         print("problem\t%s" % flat(problem))
+    # Version 2 (RT6): the chain a craft's model resolves to, in place of the
+    # access, access_from and inert columns the version-1 document carried.
     for row in doc.get("crafts") or []:
-        print("craft\t%s\t%s\t%s\t%s\t%s" % (
+        print("craft\t%s\t%s\t%s\t%s" % (
             row.get("craft") or "",
             flat(row.get("model")),
             flat(row.get("model_from")),
-            flat(row.get("access")),
-            yes(row.get("inert")),
+            ",".join(row.get("chain") or []),
         ))
 elif what == "policy":
     pol = doc.get("policy")
@@ -355,6 +364,56 @@ field() { # field FILE KEY — the value of one `key=value` line, "" when absent
 # craft_field FILE CRAFT COLUMN — one column of a `craft\t<name>\t...` row.
 craft_field() { # craft_field FILE NAME COLUMN
   awk -F'\t' -v name="$2" -v col="$3" '$1 == "craft" && $2 == name { print $col; exit }' "$1" 2>/dev/null || true
+}
+
+# chain_pool CHAIN — the name of the pool a craft's chain goes out on, from the
+# `chain` column of a `craft ls --json` row (RT6, D3170): the first source
+# spelled `pool:<name>`, with the `@MODEL` a written downgrade appends cut off.
+# Every other kind — launcher-pool, anthropic, provider:<name>, vertex — names no
+# pool, and neither does an empty chain (a project that publishes no routing
+# table), so both answer "" and the caller says what it read.
+chain_pool() { # chain_pool CHAIN
+  local source pool
+  for source in $(printf '%s' "$1" | tr ',' ' '); do
+    case "$source" in
+    pool:*)
+      pool=${source#pool:}
+      printf '%s' "${pool%@*}"
+      return 0
+      ;;
+    esac
+  done
+}
+
+# chain_named CHAIN KIND — true when the chain carries a source of that kind, as
+# the spelling before any `@MODEL` a written downgrade appends. It is what tells
+# a chain of `anthropic` (the project's own single Anthropic credential, which
+# pins the call) from one of vertex, provider or launcher-pool (which contributes
+# nothing to the credentials service's candidate list).
+chain_named() { # chain_named CHAIN KIND
+  local source
+  for source in $(printf '%s' "$1" | tr ',' ' '); do
+    case "${source%%@*}" in "$2") return 0 ;; esac
+  done
+  return 1
+}
+
+# craft_pool CRAFT — the pool the craft's calls go out on, out of the two
+# documents this check has already read. The chain answers it where it names a
+# pool: that is the table's own answer for the craft's model (D3170). An EMPTY
+# chain is a project that publishes no routing table, whose calls go out the
+# release-1 way (R25) — on the access the published node names for the craft,
+# which is the document the credentials service itself reads — so the node
+# answers there. A chain that names sources and no pool answers "": the craft's
+# model resolves to something that is no pool, and the caller reports it.
+craft_pool() { # craft_pool CRAFT
+  local chain pool
+  chain=$(craft_field "$SCRATCH/crafts.txt" "$1" 5)
+  pool=$(chain_pool "$chain")
+  if [ -z "$pool" ] && [ -z "$chain" ]; then
+    pool=$(craft_field "$SCRATCH/policy.txt" "$1" 4)
+  fi
+  printf '%s' "$pool"
 }
 
 # pool_field FILE POOL COLUMN — one column of a `pool\t<name>\t...` row.
@@ -529,16 +588,17 @@ step_sandbox() {
   fact sandbox PASS "${SANDBOX} is a Fugaro repository's checkout, and it belongs to ${PROJECT}: the check launches ${RUNS} runs from this checkout and reads their records in this project's bucket"
 }
 
-# step_crafts: every craft's effective access, from the command that answers
-# "which credential or pool, and from where". The coder's has to be SET and to
-# name something other than the built-in vertex, because the runs below are a
-# reading of a pool; the others are read because MC7's own rule needs them (a
-# craft this service serves that is pinned stops the rotation).
+# step_crafts: every craft's model and the chain it resolves to, from the command
+# that answers "where this craft's calls go out". The coder's chain is what the
+# rows below look the pool up by — the pool it names, or, on a project that
+# publishes no routing table, the pool the published node names for the craft;
+# the others are read because MC7's own rule needs them (a craft this service
+# serves that is pinned stops the rotation).
 step_crafts() {
   say "reading the crafts: fugaro craft ls --json, in ${SANDBOX}"
   run_bounded "$CLI_TIMEOUT" crafts "$SANDBOX" "$FUGARO_BIN" craft ls --json
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
-    unmeasured crafts "fugaro craft ls --json did not answer in ${SANDBOX} (exit ${BOUNDED_STATUS}): the coder craft's access is the pool this check reads the spread on, and without it there is nothing to look the pool up by. Its output is in $SCRATCH/crafts.out and $SCRATCH/crafts.err"
+    unmeasured crafts "fugaro craft ls --json did not answer in ${SANDBOX} (exit ${BOUNDED_STATUS}): the chain the coder craft's model resolves to is where this check reads the pool the spread is over, and without it there is nothing to look the pool up by. Its output is in $SCRATCH/crafts.out and $SCRATCH/crafts.err"
     return 0
   fi
   if ! read_json crafts "$SCRATCH/crafts.out" "$SCRATCH/crafts.txt"; then
@@ -548,21 +608,14 @@ step_crafts() {
   local problems
   problems=$(field "$SCRATCH/crafts.txt" problems)
   if [ "${problems:-0}" != 0 ]; then
-    fact crafts FAIL "fugaro craft ls --json reports ${problems} problem(s): $(awk -F'\t' '$1 == "problem" { printf "%s; ", $2 }' "$SCRATCH/crafts.txt")— a craft list with problems on it is one where an access may not be the access a run would use, and the runs below would be a reading of something this check cannot name. Settle them ('fugaro craft ls' prints the same problems as prose) and run this check again"
+    fact crafts FAIL "fugaro craft ls --json reports ${problems} problem(s): $(awk -F'\t' '$1 == "problem" { printf "%s; ", $2 }' "$SCRATCH/crafts.txt")— a craft list with problems on it is one where the chain a run goes out on may not be the chain this check reads, and the runs below would be a reading of something this check cannot name. Settle them ('fugaro craft ls' prints the same problems as prose) and run this check again"
     return 0
   fi
-  CRAFT_ACCESS=$(craft_field "$SCRATCH/crafts.txt" coder 5)
+  CRAFT_CHAIN=$(craft_field "$SCRATCH/crafts.txt" coder 5)
   CRAFT_MODEL=$(craft_field "$SCRATCH/crafts.txt" coder 3)
   CRAFT_TABLE=$(awk -F'\t' '$1 == "craft" { printf "%s=%s ", $2, ($5 == "" ? "none" : $5) }' "$SCRATCH/crafts.txt")
-  if [ -z "$CRAFT_ACCESS" ]; then
-    fact crafts FAIL "the coder craft resolves to no access at all (model=${CRAFT_MODEL:-none}): every craft that sets no access anywhere resolves to the project's default credential, which is the built-in vertex and not a pool, so the runs below would measure nothing about a rotation. Declare the round-robin pool and point the craft at it ('fugaro accounts pool add <name> <member> <member> --strategy round-robin') and run this check again"
-    return 0
-  fi
-  if [ "$CRAFT_ACCESS" = vertex ]; then
-    fact crafts FAIL "the coder craft's access is the built-in vertex credential: vertex is the project's own GCP service, no pool of it exists, and it is the runner path's rather than the credentials service's, so the runs below measure nothing about a rotation. Point the craft at the round-robin pool you declared and run this check again"
-    return 0
-  fi
-  fact crafts PASS "the coder craft's access is '${CRAFT_ACCESS}' (model ${CRAFT_MODEL:-none}, from $(craft_field "$SCRATCH/crafts.txt" coder 4)); every craft reads: ${CRAFT_TABLE}— the runs below go out on this access, and the rows that follow read the pool it names"
+  CRAFT_READ=yes
+  fact crafts PASS "the coder craft's chain is '${CRAFT_CHAIN:-none}' (model ${CRAFT_MODEL:-none}, from $(craft_field "$SCRATCH/crafts.txt" coder 4)); every craft reads: ${CRAFT_TABLE}— the pool the runs below are spread over is the one that chain names, and the rows that follow read it"
 }
 
 # step_pool: the premise, from the published node — the document the credentials
@@ -580,8 +633,8 @@ step_crafts() {
 # pool's members. A craft on the built-in vertex or on an OpenRouter key
 # contributes nothing to that list and stops nothing.
 step_pool() {
-  if [ -z "$CRAFT_ACCESS" ]; then
-    unmeasured pool "there is no access to look a pool up by: the row above says why"
+  if [ "$CRAFT_READ" != yes ]; then
+    unmeasured pool "there is no chain to look a pool up by: the row above says why"
     return 0
   fi
   say "reading the published policy: fugaro project policy show --json"
@@ -595,27 +648,32 @@ step_pool() {
     return 0
   fi
   if [ "$(field "$SCRATCH/policy.txt" published)" != true ]; then
-    fact pool FAIL "no project policy is published for ${PROJECT}, so no pool is published either: a craft's access is read by the credentials service out of the published node, and with none published the service offers the whole bundle rather than the pool you declared. Publish it ('fugaro project publish') and run this check again"
+    fact pool FAIL "no project policy is published for ${PROJECT}, so no pool is published either: the credentials service reads the craft's access out of the published node, and with none published the service offers the whole bundle rather than the pool you declared. Publish it ('fugaro project publish') and run this check again"
+    return 0
+  fi
+  CRAFT_POOL=$(craft_pool coder)
+  if [ -z "$CRAFT_POOL" ]; then
+    fact pool FAIL "the coder craft goes out on no pool (chain: ${CRAFT_CHAIN:-none}, model ${CRAFT_MODEL:-none}): Check 421 measures a pool sharing its runs out over its members, and a chain of launcher-pool, anthropic, provider or vertex — or a project that publishes no routing table and whose published node names no pool for the coder craft — has no pool to read. Point the craft's model at the round-robin pool ('fugaro routing set <model> pool:<name>') and run this check again"
     return 0
   fi
   local strategy members spread typ first second
-  strategy=$(pool_field "$SCRATCH/policy.txt" "$CRAFT_ACCESS" 3)
-  members=$(pool_field "$SCRATCH/policy.txt" "$CRAFT_ACCESS" 4)
+  strategy=$(pool_field "$SCRATCH/policy.txt" "$CRAFT_POOL" 3)
+  members=$(pool_field "$SCRATCH/policy.txt" "$CRAFT_POOL" 4)
   spread=$(field "$SCRATCH/policy.txt" spread)
   if [ -z "$members" ] && [ -z "$strategy" ]; then
-    typ=$(cred_type "$SCRATCH/policy.txt" "$CRAFT_ACCESS")
+    typ=$(cred_type "$SCRATCH/policy.txt" "$CRAFT_POOL")
     if [ -n "$typ" ]; then
-      fact pool FAIL "the coder craft's access '${CRAFT_ACCESS}' is a CREDENTIAL of type ${typ} and not a pool: a single credential has no members to rotate between, which is the whole of what this check measures. Declare the pool of two or more members ('fugaro accounts pool add <name> <member> <member> --strategy round-robin') and point the craft at the pool, then run this check again"
+      fact pool FAIL "the coder craft goes out on '${CRAFT_POOL}', which the published node holds as a CREDENTIAL of type ${typ} and not as a pool: a single credential has no members to rotate between, which is the whole of what this check measures. Declare the pool of two or more members ('fugaro accounts pool add <name> <member> <member> --strategy round-robin') and point the craft at the pool, then run this check again"
       return 0
     fi
-    fact pool FAIL "the coder craft's access '${CRAFT_ACCESS}' is neither a pool nor a credential the published node holds: a name the node does not hold is one no run can resolve. Re-publish the node ('fugaro project publish') and run this check again"
+    fact pool FAIL "the coder craft goes out on '${CRAFT_POOL}', which is neither a pool nor a credential the published node holds: a name the node does not hold is one no run can resolve. Re-publish the node ('fugaro project publish') and run this check again"
     return 0
   fi
   if [ "$strategy" != round-robin ]; then
-    fact pool FAIL "the pool '${CRAFT_ACCESS}' walks its members with strategy '${strategy:-failover}' (members: ${members}): Check 421 is about the ROTATION — the pool sharing its runs out over its members — and a failover pool hands every run the first member that answers, which is Check 420's reading. Write the pool with --strategy round-robin ('fugaro accounts pool add ${CRAFT_ACCESS} <member> <member> --strategy round-robin') and run this check again"
+    fact pool FAIL "the pool '${CRAFT_POOL}' walks its members with strategy '${strategy:-failover}' (members: ${members}): Check 421 is about the ROTATION — the pool sharing its runs out over its members — and a failover pool hands every run the first member that answers, which is Check 420's reading. Write the pool with --strategy round-robin ('fugaro accounts pool add ${CRAFT_POOL} <member> <member> --strategy round-robin') and run this check again"
     return 0
   fi
-  POOL_NAME=$CRAFT_ACCESS
+  POOL_NAME=$CRAFT_POOL
   POOL_MEMBERS=$members
   first=${members%%,*}
   second=${members#*,}
@@ -649,20 +707,20 @@ step_pool() {
   fi
   # MC7's own rule, walked over the crafts this check read: a craft this service
   # serves that is pinned to a credential, or to a pool of the other strategy,
-  # makes the call's whole candidate list pinned with it.
-  local pinned="" name access ptyp pstrategy quiet="" inert
-  while IFS=$'\t' read -r kind name _ _ access inert; do
+  # makes the call's whole candidate list pinned with it. Each craft contributes
+  # through the pool it goes out on (craft_pool): the chain's answer, or the
+  # published node's where the craft has no chain at all.
+  local pinned="" name chain access ptyp pstrategy quiet=""
+  while IFS=$'\t' read -r kind name _ _ chain; do
     [ "$kind" = craft ] || continue
-    case "$access" in
-    "" | vertex) quiet="${quiet}${quiet:+, }${name}=${access:-none}"; continue ;;
-    esac
-    # An inert craft is one whose access serves nothing at all (a pool of
-    # subscriptions with the project's spread switch off, D1622): it contributes
-    # no candidate and pins nothing, and it is named rather than counted.
-    if [ "$inert" = true ]; then
-      quiet="${quiet}${quiet:+, }${name}=${access} (inert)"
+    access=$(craft_pool "$name")
+    if [ -z "$access" ] && chain_named "$chain" anthropic; then
+      pinned="${pinned}${pinned:+, }${name} goes out on the single credential the chain's anthropic source names"
       continue
     fi
+    case "$access" in
+    "") quiet="${quiet}${quiet:+, }${name}=${chain:-none}"; continue ;;
+    esac
     # A pool is looked up FIRST: it is not a credential, so a credential lookup
     # would leave the pool the call is served by in the list below as though the
     # node did not hold it.
@@ -685,7 +743,7 @@ step_pool() {
     fi
     # A craft whose access the node does not hold contributes nothing either: the
     # service refuses the call rather than rotating it, which is a state the
-    # check's own FAIL row would have named, not a pin.
+    # check's own pool row would have named for the coder, not a pin.
     quiet="${quiet}${quiet:+, }${name}=${access} (not in the node)"
   done <"$SCRATCH/crafts.txt"
   if [ -n "$pinned" ]; then
