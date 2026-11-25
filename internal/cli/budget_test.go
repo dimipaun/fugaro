@@ -444,7 +444,10 @@ func TestBudgetRaiseRefusesInAnAgentSession(t *testing.T) {
 		// own defaults answer, an empty --repo or a path would each land on
 		// another project's or checkout's caps than the one this run was about,
 		// and the typed project name that used to catch that is gone.
-		{[]string{"budget", "set", "--repo", "--daily", "150"}, "fugaro budget set --daily=150 --repo=acme/app --project=aurora"},
+		// A figure the ceiling admits ($50 under the global $100): one above it is
+		// refused earlier, naming the ceiling, because the command this fence
+		// hands back would meet that same ceiling (RC3, budget_ceiling_test.go).
+		{[]string{"budget", "set", "--repo", "--daily", "50"}, "fugaro budget set --daily=50 --repo=acme/app --project=aurora"},
 		// The mode is the fence's other form, and the one a session could
 		// otherwise make unopposed: with the mode node absent (an absent mode is
 		// observe, D1548) the mode edit is a no-op and the choice beside it is
