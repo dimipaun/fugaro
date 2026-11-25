@@ -305,8 +305,8 @@ repos.acme/web.stage_account_served	open:no-writer
 repos.acme/web.vertex	open:no-writer
 repos.acme/web.workflows	open:writer-unproven
 review_floor	open:no-writer
-rigor.areas	open:writer-unproven
-rigor.default	open:writer-unproven
+rigor.areas	label:file
+rigor.default	label:file
 rigor.repos	label:file
 rigor_pending	label:plumbing
 routing.claude.models	open:no-writer

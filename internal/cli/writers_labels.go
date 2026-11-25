@@ -62,12 +62,21 @@ var settingsUnwrittenOwners = map[string]bool{
 
 // settingsUnwrittenKeys are the rows no command writes although their Owner
 // names a command family. An owner token is a family's claim on a key and not a
-// statement that the family writes it, and the one row where the two come apart
-// is F21's: `secrets` owns `batch.secrets` — the block naming the Secret Manager
-// secrets a batch job mounts — and the family writes secret expiry and
-// rotation, never a key of the batch block.
+// statement that the family writes it, and the three rows where the two come
+// apart are these:
+//
+//   - F21's `batch.secrets`: `secrets` owns the block naming the Secret Manager
+//     secrets a batch job mounts, and the family writes secret expiry and
+//     rotation, never a key of the batch block;
+//   - R15's `rigor.default` and `rigor.areas` (D3237): `rigor` owns both keys,
+//     and since the ruling moved them into the project no command writes a
+//     repository's own — `fugaro rigor set --layer repo` is refused for them,
+//     and `rigor set`'s own file registers the layer's rows alone. Their labels
+//     name the writer of each key's new home.
 var settingsUnwrittenKeys = map[string]bool{
 	"batch.secrets": true,
+	"rigor.areas":   true,
+	"rigor.default": true,
 }
 
 // Two task-scoped exemptions have stood here and are gone, both because the
@@ -109,13 +118,13 @@ const (
 
 	reasonTerraform = "`fugaro setup` writes it from its flags as it applies the installation's root: a Terraform input of the installation"
 
-	// LD4's two shapes (docs/rigor-modes, plan LV3.1): what a project area is
-	// made of, and the level of one repository the project names by itself. The
-	// project layer is published from a file a person writes, and no command
-	// names a member or a per-repository entry — `fugaro rigor set --area`
-	// writes a rule's glob, name and level, which are the rows beside these.
-	reasonRigorMembers = "a member of a project layer's rigor area: the layer is published from a file a person writes, and no command names the repositories and paths an area is made of"
-	reasonRigorRepos   = "the project layer's per-repository rigor levels: the layer is published from a file a person writes, and a repository's own level is its rigor.default, which `fugaro rigor set --layer repo` writes"
+	// R15's three (D3237): a repository's file states neither of the two keys
+	// any more, and the project states them. Each reason names the command that
+	// writes the key in its new home, because the label is about the spelling
+	// the row is and not about the question being open.
+	reasonRigorDefault = "a repository's own rigor level, which no command writes any more: the project states it (D3237), and `fugaro rigor set <mode> --repo <owner/name>` writes the `defaults.rigor.repos` entry it resolves to"
+	reasonRigorAreas   = "a repository's own rigor areas, which no command writes any more: the project states them (D3237), and `fugaro rigor set <mode> --area <glob> --name <name> --repo <owner/name>` writes the member area of its own"
+	reasonRigorRepos   = "the project layer's per-repository rigor levels, which a repository's file may not state at all: `fugaro rigor set <mode> --repo <owner/name>` writes one entry, and a person writes the rest of the map in the layer file"
 
 	// The locations record: `fugaro setup` and `fugaro update` write the
 	// block from what the cloud holds, after the last apply (LP14 of
@@ -196,6 +205,8 @@ var settingsLabelRows = []settingsLabelRow{
 	{"region", labelPlumbing, "`fugaro setup` writes it when it creates the file: the installation's GCP region"},
 	{"registry", labelFile, "the legacy shared registry's address, stated in the local config: no command writes it"},
 	{"registry_host", labelPlumbing, "`fugaro setup` writes it from the apply's outputs as it installs: the registry's host"},
+	{"rigor.areas", labelFile, reasonRigorAreas},
+	{"rigor.default", labelFile, reasonRigorDefault},
 	{"rigor.repos", labelFile, reasonRigorRepos},
 	{"rigor_pending", labelPlumbing, "`fugaro setup` writes the wizard's rigor answer into it, and the layer stage clears it once the project layer carries the mode: the answer a run that stopped before its Layer stage left for the next one"},
 	{"runs_bucket", labelPlumbing, "`fugaro setup` writes it from the apply's outputs as it installs: the bucket a run's task is written to"},

@@ -2430,6 +2430,14 @@ func TestPolicyPublishCarriesACatalogContextMember(t *testing.T) {
 // answer the node does not carry is exactly the gap `fugaro update` exists to
 // close, and a config silent about either keeps the node's.
 //
+// The member's switch for the personal half of a workspace's credentials is the
+// newest of the switches beside triage (R9 of docs/workspace-credentials/, WC6,
+// D2972), and it takes the same two directions here because it is the same row:
+// a written true against a node that says nothing is the difference the stage
+// republishes for, a silent config against a node that says true reports
+// nothing, and a written true the node already carries reports nothing either —
+// the row must not republish the node on every run of the one command.
+//
 // The map's equal case is the one worth stating: what is compared is the JSON
 // the node is written with, and the node's own spelling of a repository key is
 // the escaped one (ImageMap), so a comparison done in the config's spelling
@@ -2539,6 +2547,24 @@ func TestPolicyConfigDriftSeesTheImageMapAndTheSwitches(t *testing.T) {
 			"the config is silent about triage and the node turns it off",
 			file(nil),
 			node(func(p *projectpolicy.Policy) { p.Triage = &no }),
+			nil,
+		},
+		{
+			"the config turns the personal half on where the node says nothing",
+			file(func(lc *localcfg.Config) { lc.PersonalWorkspaceTokens = &yes }),
+			node(nil),
+			[]string{"personal_workspace_tokens"},
+		},
+		{
+			"the config's personal-half answer is the node's",
+			file(func(lc *localcfg.Config) { lc.PersonalWorkspaceTokens = &yes }),
+			node(func(p *projectpolicy.Policy) { p.PersonalWorkspaceTokens = &yes }),
+			nil,
+		},
+		{
+			"the config is silent about the personal half and the node turns it on",
+			file(nil),
+			node(func(p *projectpolicy.Policy) { p.PersonalWorkspaceTokens = &yes }),
 			nil,
 		},
 	}

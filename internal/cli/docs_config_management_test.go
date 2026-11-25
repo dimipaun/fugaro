@@ -377,6 +377,11 @@ const (
 // carries and not the generic path, whose allowlist reaches no key of that
 // family — so the rows without a generic writer move by the one.
 //
+// WC6 of docs/workspace-credentials/ is the last mover after it, by one row and by
+// one: the member's personal-workspace-tokens switch is a boolean of the machine's
+// own file and the generic path is its door, so the allowlist names one key more
+// and the rows without one stay where they were.
+//
 // IS9 of docs/secrets-brokering/image-secrets/ is the last mover after it, by one
 // row and by none: a repository entry in the local project config gains
 // `repos.git_credentials_served` (internal/localcfg/localcfg.go), the fact
@@ -387,8 +392,8 @@ const (
 // the allowlist and no prefix of it reaches the key, so the rows without a
 // generic writer move by the one.
 const (
-	cfmRegistryRows   = 542
-	cfmAllowlistNamed = 121
+	cfmRegistryRows   = 543
+	cfmAllowlistNamed = 122
 )
 
 func TestDocsConfigManagementIsWritten(t *testing.T) {

@@ -1,0 +1,15 @@
+{
+  "id": "msg_aCachedPrompt",
+  "type": "message",
+  "role": "assistant",
+  "model": "google/gemini-3-flash",
+  "content": [{ "type": "text", "text": "the third line says 42" }],
+  "stop_reason": "max_tokens",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 904,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 4096,
+    "output_tokens": 10
+  }
+}

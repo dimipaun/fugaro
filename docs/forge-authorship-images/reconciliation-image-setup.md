@@ -4,19 +4,21 @@
 `256106ec` (2026-11-10) and against [docs/image-setup-skill](../image-setup-skill/) — its spec, its
 reconciliation and its plan. **Where this file disagrees with [implementation-plan.md](implementation-plan.md)
 or [README.md](README.md) about a task's *state*, this file wins.** It changes no task's design,
-reopens no answered decision, and approves nothing. **Answered 2026-11-16:** D650–D653 (§5), each as recommended; the same day the owner approved every agent task of this folder (the README's status line). **Amended 2026-11-21:** the owner's ruling of that day closes **B2** as superseded by [docs/outer-loop-escalation](../outer-loop-escalation/)'s task **E8**, so its row in §2 reads superseded, it leaves the open list in §1, and the counts below read **12 merged / 2 superseded / 11 open**. B3 and C8b/C8c stay parked, as D650 and their own rows say.
+reopens no answered decision, and approves nothing. **Answered 2026-11-16:** D650–D653 (§5), each as recommended; the same day the owner approved every agent task of this folder (the README's status line). **Amended 2026-11-21:** the owner's ruling of that day closes **B2** as superseded by [docs/outer-loop-escalation](../outer-loop-escalation/)'s task **E8**, so its row in §2 reads superseded, it leaves the open list in §1, and the counts below read **12 merged / 2 superseded / 10 open**. C8b/C8c stay parked, as D650 and their own rows say; **B3 (GitLab) left this plan on 2026-11-25 for [docs/gitlab-support](../gitlab-support/)**, parked by the owner until a named need.
 
 **The ask.** The owner, 2026-11-10: this folder and [docs/image-setup-skill](../image-setup-skill/)
 overlap, "about 16 of forge-authorship-images' tasks being image work"; every task here must say
 which task of that plan, or which code on `main`, already builds it.
 
-**The answer.** Of this plan's **25 tasks**: **12 are merged** on `main` — the census below read nine,
+**The answer.** Of this plan's **24 tasks**: **12 are merged** on `main` — the census below read nine,
 and **B1** (`9af1fd50`, #2332, 2026-11-11), **X1** (`90cfd931`, #2331, 2026-11-11) and **C1**
 (`d37c8af6`, #2428, 2026-11-12) landed after it — **2 are closed as
 superseded** (E0 — and by [docs/roles-scopes](../roles-scopes/), *not* by image-setup; **B2**, the
 census's own reading of 2026-11-10 being Kept, by the owner's ruling of 2026-11-21 and
-[docs/outer-loop-escalation](../outer-loop-escalation/)'s **E8**), and **11 are
-open**, one of which (**C8**) has its first third built (C8a). **The image overlap is four tasks, not
+[docs/outer-loop-escalation](../outer-loop-escalation/)'s **E8**), and **10 are
+open**, one of which (**C8**) has its first third built (C8a). **B3 (GitLab) left this plan on
+2026-11-25** ([docs/gitlab-support](../gitlab-support/)), so it is counted in neither list.
+**The image overlap is four tasks, not
 sixteen**: the two merged ones (C3, C4) and the two open ones (C6, and C8's C8b/C8c). What "about 16"
 was is the number of tasks *left* when the status row was written — §1.
 
@@ -44,9 +46,9 @@ today against `main`, are:
 | --- | --- | --- |
 | **Merged** (path and symbol on `main`, §2) | 12 | A1, A2a, A2b, A3, A4, B1, C1, C3, C4, C7, E1, X1 — B1, C1 and X1 after the census |
 | **Superseded** (closed, winner named) | 2 | E0 — by [docs/roles-scopes](../roles-scopes/); **B2** — by [docs/outer-loop-escalation](../outer-loop-escalation/)'s E8 (2026-11-21) |
-| **Open** | 11 | A5, B3, C5a, C5b, C5c, C6, C8, D1, D2, D3, D4 |
+| **Open** | 10 | A5, C5a, C5b, C5c, C6, C8, D1, D2, D3, D4 |
 
-Of the 11 open, **C8's C8a is built** (`internal/imagecheck`'s key, lock and superset, 2026-10-30);
+Of the 10 open, **C8's C8a is built** (`internal/imagecheck`'s key, lock and superset, 2026-10-30);
 C8b and C8c are not, and `checkout: shared` is refused until a release ships them
 (`config.SharedCheckoutRefusal`, `internal/config/image.go`).
 
@@ -59,7 +61,7 @@ C8b and C8c are not, and `checkout: shared` is refused until a release ships the
 | C6 — `SECURITY.md`: baked source and registry readers | open | its shared-key half is merged with C8a; its baked-source half describes an image the catalog now publishes |
 | C8 — build, lock, proposal and job update for shared images | open (C8a built) | the shared layer is the one image kind IS1's resolver names and does not define |
 
-That is four of 25, and it is the whole of the overlap: image-setup's plan touches
+That is four of 24, and it is the whole of the overlap: image-setup's plan touches
 `internal/infra/spec.go`, `internal/catalog/`, `internal/projectpolicy/`, `internal/cli/setup.go`,
 `internal/runner/runner.go`'s checkout opening and the plugin skills; this folder's open tasks touch
 `internal/gitprov/`, `internal/task/`, `internal/cli/run.go`, `internal/imagecheck/`, `ee/` and the
@@ -98,8 +100,7 @@ IS1–IS13 with IS6 unused); its own folder's merged count is stale in both dire
 | **A4** — docs | **Merged** | `docs/git-providers.md` §"Commit author and trailers"; `SECURITY.md` §"Known limits" ("A run's commit author is the launcher's claim, and its trailers are a record"); pinned by `internal/cli/docs_commit_author_test.go` (`TestDocsCommitAuthorIsAClaim`, `TestDocsTrailerNames`, `TestDocsSupportedForges`) |
 | **A5** — Check 230 (OWNER-RUN) | **Kept** | the check it measures can run — A3 is merged — and its entry is written now that X1 has landed (`90cfd931`, #2331): what is left is the owner's run, and `docs/gcp-live-checklist.md`'s Check 230 section reads NOT RUN. image-setup writes into the same file with its own numbers (IS13: Checks 500, 501), and no task of its plan writes a Check 230 entry |
 | **B1** — one list of forge kinds | **Merged** (the census read **Kept**) | The census: no `internal/gitprov/kinds.go`; `internal/gitprov/gitprov.go` still declared `KindGitHub`/`KindBitbucket` and `internal/gitprov/providers/providers.go` read them ad hoc. image-setup names forge kinds nowhere; its IS10 survey consumes `gitprov.ContentsReader` and so is forge-agnostic. **`9af1fd50` (#2332) landed the task after this census was read**: `internal/gitprov/kinds.go` declares the two constants and `Kinds`, `FromEnv`'s unknown-kind refusal is built from the list, and `internal/gitprov/kinds_test.go` pins `TestKindsListedOnce` and `TestEveryKindSwitchIsInventoried` — [evidence, point by point](b1-already-landed.md) |
-| **B2** — a CI-status read | **Superseded** (the census read **Kept**, correctly, on 2026-11-10) | The census: no `Checks` on `gitprov.Provider` (`internal/gitprov/gitprov.go`); image-setup's IS11 smokes a catalog entry's prebuilt image — a build-time contract check, not a commit's CI status. **Closed 2026-11-21 by the owner's ruling, superseded by [docs/outer-loop-escalation](../outer-loop-escalation/)'s E8**: `gitprov.Provider.Checks(ctx, number, sha)` is the read, with `CIState`/`ChecksState`, `ErrChecksUnsupported` and `ErrChecksPermission` (`internal/gitprov/checks.go`, `github/checks.go`, `bitbucket/escalation.go`, `fake/fake.go`) — the ladder's own gate is its consumer. E8's plan says its config is none, so the widening B2 also planned (the App's **Checks: read** and **Commit statuses: read** in `tokenPermissions`/`RequiredPermissions`, `doctor`'s report, `docs/git-providers.md`, the live test and **Check 231**) is **not** built and is the owner's; until a task widens it the read fails closed. B3 and C8b/C8c stay parked |
-| **B3** — GitLab | **Kept** | gated on D610 ("build"); no file under `docs/` reconciles GitLab, and the plan's own first output (the tokens/`Draft:` reconciliation) is unwritten |
+| **B2** — a CI-status read | **Superseded** (the census read **Kept**, correctly, on 2026-11-10) | The census: no `Checks` on `gitprov.Provider` (`internal/gitprov/gitprov.go`); image-setup's IS11 smokes a catalog entry's prebuilt image — a build-time contract check, not a commit's CI status. **Closed 2026-11-21 by the owner's ruling, superseded by [docs/outer-loop-escalation](../outer-loop-escalation/)'s E8**: `gitprov.Provider.Checks(ctx, number, sha)` is the read, with `CIState`/`ChecksState`, `ErrChecksUnsupported` and `ErrChecksPermission` (`internal/gitprov/checks.go`, `github/checks.go`, `bitbucket/escalation.go`, `fake/fake.go`) — the ladder's own gate is its consumer. E8's plan says its config is none, so the widening B2 also planned (the App's **Checks: read** and **Commit statuses: read** in `tokenPermissions`/`RequiredPermissions`, `doctor`'s report, `docs/git-providers.md`, the live test and **Check 231**) is **not** built and is the owner's; until a task widens it the read fails closed. C8b/C8c stay parked |
 | **C1** — `fugaro project sync` for Bitbucket, with `--check` | **Merged** (the census read **Kept**) | The census: `internal/gitprov/bitbucket/` has no `list.go`, and `newProjectSyncCmd` (`internal/cli/project_enroll.go`) offered the GitHub App's installed repositories only. **`d37c8af6` (#2428, 2026-11-12) landed the task after this census was read**: `internal/gitprov/bitbucket/list.go` lists a workspace's repositories, `newProjectSyncCmd` offers them behind `--bitbucket` (narrowed by `--bitbucket-project`), `--check` reports without writing, pinned by `internal/cli/project_sync_bitbucket_test.go` and `internal/gitprov/bitbucket/list_test.go` |
 | **C3** — lockfiles before source in the derived image | **Merged** | `image.RenderInput.KeyFiles` and `ShellKeyFiles` (`internal/image/render.go`), pinned by `internal/image/render_test.go` `TestRenderPutsKeyFilesBeforeSource` (merged as `4c3d50ee`). Its subject is the path image-setup's IS1/IS2 retire — F1 above |
 | **C4** — the image digest checked at launch | **Merged** | `warnImageDigestDrift` (`internal/cli/run.go`), pinned by `internal/cli/run_image_digest_test.go` `TestRunDigestWarnsOnMismatch`. The catalog kept the same shape (project-image-catalog D1152: `:latest` in the job, a warning at launch) |
@@ -122,8 +123,9 @@ IS1–IS13 with IS6 unused); its own folder's merged count is stale in both dire
 Grouped, so the answer to "how much of this folder is really image work" is legible:
 
 - **Slice A** is one owner-run check away from done (A5, Check 230); the code it measures is merged.
-- **Slice B** (B1, B2, B3) is forge work: the kind list, CI status and GitLab. B1 is merged and B2 is
-  closed (2026-11-21, superseded by the outer loop's E8); **B3 is parked**. None of it is an image.
+- **Slice B** (B1, B2) is forge work: the kind list and CI status. B1 is merged and B2 is
+  closed (2026-11-21, superseded by the outer loop's E8); **B3 (GitLab) left this plan on
+  2026-11-25 for [docs/gitlab-support](../gitlab-support/)**. None of it is an image.
 - **C1** is the Bitbucket listing in `fugaro project sync`; **C5a–C5c** are read-only context
   repositories. Both are repository-and-run work, not image work.
 - **Slice D** (D1–D4) is change sets under `ee/`, itself gated on D613/D614/D616/D641/D642 and on
@@ -144,9 +146,12 @@ Grouped, so the answer to "how much of this folder is really image work" is legi
 - Nothing outside `docs/` changes, and no code, schema, policy or image changes: this is a reading.
 - **Amended 2026-11-21** (the owner's ruling): §2's B2 row reads **superseded** by the outer loop's
   E8, and §1's counts and the two status lines (README.md, implementation-plan.md) move with it
-  (12 merged / 2 superseded / 11 open). No other row, task or decision changes, and the two Go
+  (then 12 merged / 2 superseded / 11 open). No other row, task or decision changes, and the two Go
   comments that named B2 as the owner of the widening (`internal/gitprov/merge.go`,
   `internal/gitprov/github/checks.go`) now say it is unwritten instead: comments only, no code.
+- **Amended 2026-11-25** (the owner's ruling): B3 (GitLab) leaves this plan for
+  [docs/gitlab-support](../gitlab-support/), so §1's counts and the two status lines move with it
+  (12 merged / 2 superseded / 10 open), and B3's §2 row goes.
 
 ## 5. Decisions for the owner (D650–D653 written and answered 2026-11-16, D654–D659 held)
 

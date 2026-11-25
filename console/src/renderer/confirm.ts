@@ -152,6 +152,7 @@ export interface SettingsFields {
   readonly oldValue: string
   readonly newValue: string
   readonly layer: string
+  readonly target: string
   readonly wins: string
   readonly sentence: string
   readonly widening: boolean
@@ -397,6 +398,7 @@ const FIELDS = Object.freeze({
   newValue: 'New value',
   oldValue: 'Current value',
   layer: 'Written at',
+  target: 'Target',
   wins: 'Decides today',
   sentence: 'What this changes',
   why: 'Why the CLI asks',
@@ -692,6 +694,7 @@ export async function mountConfirm(document: ConfirmDocument, bridge: ConfirmBri
     safeRow(FIELDS.oldValue, edit.oldValue, 'label', 'settings[].old')
     safeRow(FIELDS.newValue, edit.newValue, 'label', 'settings[].new')
     safeRow(FIELDS.layer, edit.layer, 'label', 'settings[].layer')
+    if (edit.target !== '') safeRow(FIELDS.target, edit.target, 'path', 'settings[].target')
     safeRow(FIELDS.wins, edit.wins, 'label', 'settings[].wins')
     if (edit.sentence !== '') safeRow(FIELDS.sentence, edit.sentence, 'sentence', 'settings[].sentence')
     if (edit.why !== '') safeRow(FIELDS.why, edit.why, 'sentence', 'settings[].why')

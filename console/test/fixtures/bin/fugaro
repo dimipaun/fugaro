@@ -96,9 +96,10 @@
 #     and it is the one this console draws a pencil from: the rows' own
 #     `writable`, `owner` and `target_layer` are the whole of what decides
 #     whether a row may be edited (D1102).
-#   * `settings set|unset KEY --layer <L> [--dry-run --json] --project P
-#     [--config C] [-- VALUE]` -- the console's **second write** (the
-#     settings-edit plan's C3, design section 5.1 rule 12). It answers two
+#   * `settings set|unset KEY --layer <L> [--repo <directory>] [--dry-run
+#     --json] --project P [--config C] [-- VALUE]` -- the console's **second
+#     write** (the settings-edit plan's C3, design section 5.1 rule 12). It
+#     answers two
 #     phases and writes nothing either way: the dry run (`--dry-run --json`)
 #     prints the document seeded for the key it names
 #     (`settings-dryrun-<KEY>.json` beside this script), and the write (no flag)
@@ -106,6 +107,14 @@
 #     `wrote <path> (backup at <backup>)` and `next: fugaro update`. There is no
 #     file to edit here and none is written: what a spec reads is the child's
 #     answer and the argv below.
+#
+#     `--repo <directory>` is the console's own word for a `repo`-layer edit
+#     (RC80, L12): the checkout the write names, which the window drew and
+#     which the console took from the plan's directory rather than from the
+#     renderer. A layer that is not `repo` carries none and a `repo`-layer
+#     edit carries one -- either other pairing is refused below, so a spec
+#     that fed the renderer a `--repo` of its own would meet the refusal
+#     rather than a write.
 #
 #     Every invocation of the write appends **its whole command line** to
 #     `reads.log` beside this script, `$0` included, because the property the
@@ -651,6 +660,7 @@ case "$command" in
     key=$2
     shift 2
     layer=''
+    repo=''
     phase='write'
     value=''
     while [ $# -gt 0 ]; do
@@ -660,6 +670,13 @@ case "$command" in
             refuse "'settings $op' was given '--layer' with no value"
           fi
           layer=$2
+          shift 2
+          ;;
+        --repo)
+          if [ $# -lt 2 ]; then
+            refuse "'settings $op' was given '--repo' with no value"
+          fi
+          repo=$2
           shift 2
           ;;
         --dry-run)
@@ -701,6 +718,12 @@ case "$command" in
     done
     if [ -z "$layer" ]; then
       refuse "'settings $op' was asked for no --layer, and the layer is the read's own row"
+    fi
+    if [ "$layer" = 'repo' ] && [ -z "$repo" ]; then
+      refuse "'settings $op' was asked for no --repo, and a repository-layer edit names its checkout"
+    fi
+    if [ "$layer" != 'repo' ] && [ -n "$repo" ]; then
+      refuse "'settings $op' was given '--repo' on a '$layer'-layer edit, which writes no repository's file"
     fi
     if [ "$op" = 'unset' ] && [ -n "$value" ]; then
       refuse "an unset carries no value, and 'settings unset $key' was asked for '$value' behind --"

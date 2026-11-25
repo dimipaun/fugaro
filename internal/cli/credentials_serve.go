@@ -972,6 +972,12 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 		// value — which is why the reader is wired with the route's own field
 		// and not left to the database the other routes write through.
 		WorkflowSecrets: credsvc.RTDBWorkflowSecrets{DB: db},
+		// The project record (IS3, D3328, D3333): which repositories may fetch
+		// a project-shared workflow secret by name. It is the fence a
+		// version-2 call and a build's read of a `fugaro_p_` container are
+		// admitted by, read over the same client and the same service identity
+		// as the record above.
+		ProjectSecrets: credsvc.RTDBProjectSecrets{DB: db},
 		// Every audited act goes to the process's log, which is the stream
 		// Cloud Logging reads; the one auditor that redacts is built inside
 		// NewServer (NewProbeAuditor arms it with this service's loader).
