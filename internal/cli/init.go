@@ -599,7 +599,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// this is where its answers travel. The help names the members because the
 	// file is the reader's whole contract, and it says what the file is not: an
 	// answer is not a confirmation.
-	f.StringVar(&o.answersFile, "answers-file", "", "answer the wizard's questions from one JSON document: "+strings.Join(setupAnswerKeys(), ", ")+" — the questions a first run asks (--gcp-project, --location or its precise form --region, --name, --rigor, --budget with --budget-currency, and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, the permanent Firestore location, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation")
+	f.StringVar(&o.answersFile, "answers-file", "", "answer the wizard's questions from one JSON document: "+strings.Join(setupAnswerKeys(), ", ")+" — the questions a first run asks (--gcp-project, --location or its precise form --region, --name, --rigor, --budget with --budget-currency, and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation")
 	// --events writes the same account --json prints as a stream of lines
 	// instead of one document (setup_events.go, D2904 of
 	// docs/console-improvements). The help names every kind of line, because
@@ -628,7 +628,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.StringVar(&o.alertEmail, "alert-email", "", "where failed image checks and rebuilds are reported (default: the local config's)")
 	f.BoolVar(&o.noLogIsolation, "no-log-isolation", false, "leave Fugaro job logs in _Default instead of their own log bucket")
 	f.StringVar(&o.registryCleanup, "registry-cleanup", "", "Artifact Registry cleanup: dry-run (the default), on or off")
-	f.StringVar(&o.firebase, "firebase-project", "", "turn the shared budget on: the value is the installation's own GCP project id (the default; the flag is only needed to turn the shared budget on), and any other id is refused. It is the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location: confirmed by the person at the terminal where it is a first-time question, already there on a run that re-converges an installation that has it) and the config")
+	f.StringVar(&o.firebase, "firebase-project", "", "turn the shared budget on: the value is the installation's own GCP project id (the default; the flag is only needed to turn the shared budget on), and any other id is refused. It is the flag that asks for the backend — a run without it builds none — and that backend is three applies: the database's rules and mark, the Firestore history database (the run creates it in the installation's own region where Firestore offers it, and otherwise in the place's default region, and its location is permanent: where the run creates the database it prints where, and that the location can never be changed, and creates it, asking nothing — nothing is typed, and --json, a pipe and a coding agent's session are no different; it is already there on a run that re-converges an installation that has it) and the config")
 	f.StringVar(&o.budgetMode, "budget-mode", "", "with --firebase-project: observe or enforce: the jobs' budget mode in the project config, and the project-wide mode in the database (an absent one is seeded observe)")
 	f.StringArrayVar(&o.budgetAdmins, "budget-admin", nil, "with --firebase-project: an IAM member who may change caps and kill switches besides the GCP project's owners and editors (repeatable; default: the local config's terraform.budget_admins)")
 	f.BoolVar(&o.createProject, "create-project", false, "create the GCP project --gcp-project names and add Firebase to it, as you, at your own real terminal (never with --json; nothing is typed there, being at it is what confirms the step). A first run of "+d.name+" always creates its project, so the flag only says so explicitly. An ID that already exists is refused unless an earlier run of "+d.name+" made it Fugaro's (the resume), and one that holds nothing of Fugaro's is adopted instead: "+d.name+" uses it as if it had created it. Billing is not linked unless --link-billing is also given; without it "+d.name+" prints the one gcloud command that links it, unless the run asks the billing question (no --json and no coding agent's session) and has no terminal, where it is refused there at once instead, in the sentence naming --link-billing")
@@ -2009,8 +2009,8 @@ func (o *initOptions) checkOnboardRepo() error {
 // goes in — its own, or a separate one. An empty `--firebase-project=` is
 // pflag's empty value, which reads as no flag at all, deliberately: a script
 // whose variable is unset names no project, and three applies against the
-// installation's own project (one of them a Firestore database with a
-// permanent location) must not be what an empty string buys.
+// installation's own project (one of them a Firestore database whose location
+// can never be changed) must not be what an empty string buys.
 //
 // Every site that resolves the id — the flag's validation here, the pairing
 // rule, the Firebase engine and the commands it prints, the review screen —
@@ -2957,10 +2957,11 @@ const (
 // of its branches, whatever it had been given.
 //
 // What is left is the run's own answer, which decides the whole answer, and
-// ownAnswer is what keeps it from widening a step: creating the project,
-// linking the billing account and the Firestore location are the person's alone
-// (D12, 2026-10-20), and only a billable first image build and replacing a
-// registry tag are covered by the answer the command was opened with.
+// ownAnswer is what keeps it from widening a step: creating the project and
+// linking the billing account are the person's alone (D12, 2026-10-20), and
+// only a billable first image build and replacing a registry tag are covered
+// by the answer the command was opened with. The Firestore database's location
+// is neither: no step confirms it (D3090 of docs/location-preference).
 //
 // The run's own answer is r.o.yes, which no flag sets any more (T11): what
 // still carries one is an internal converge a command opens on an answer the
@@ -3010,19 +3011,17 @@ func (r *initRun) askClass(what string, ownAnswer bool) (confirmed, reachable bo
 }
 
 // askTyped is askClass for a step the run's own answer never reaches: creating
-// the project, linking the billing account and the Firestore location in
-// `setup` are the person's alone (D12, 2026-10-20). A pipe, --json,
-// --non-interactive or a coding agent's session answers them no more than it
-// answers anything else.
+// the project and linking the billing account in `setup` are the person's alone
+// (D12, 2026-10-20). A pipe, --json, --non-interactive or a coding agent's
+// session answers them no more than it answers anything else.
 func (r *initRun) askTyped(what string) (confirmed, reachable bool, err error) {
 	return r.askClass(what, false)
 }
 
 // askCovered is askClass for a step D12's answer of 2026-10-20 covers in BOTH
 // front doors — a billable first image build and replacing a registry tag. The
-// door is not asked: only three things stay the person's (creating the project,
-// linking the billing account, and the Firestore location in `setup`), and
-// neither of these is one of them.
+// door is not asked: only two things stay the person's (creating the project
+// and linking the billing account), and neither of these is one of them.
 func (r *initRun) askCovered(what string) (confirmed, reachable bool, err error) {
 	return r.askClass(what, true)
 }

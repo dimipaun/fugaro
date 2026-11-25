@@ -4227,10 +4227,9 @@ memory, so no file exists for another process of the same user to change between
 main's validation and the CLI's read, and no word of the argv is a path. A flag
 given beside the file wins over it, and the run says which. **The file answers
 questions and confirms nothing**: the steps that need a person — creating the GCP
-project, linking its billing, the permanent Firestore location, every secret
-value — have no member in it, so a `--json` run with a whole answers file applies
-only what needs no confirmation (`unconfirmedWhy`, `internal/cli/init.go`; F27,
-O6).
+project, linking its billing, every secret value — have no member in it, so a
+`--json` run with a whole answers file applies only what needs no confirmation
+(`unconfirmedWhy`, `internal/cli/init.go`; F27, O6).
 
 **`--plan-only` reads and creates nothing.** The plan document is one object; a
 run with `--plan-only` is the console's `setup.plan` (design §5.1 rule 5), and
