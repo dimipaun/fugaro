@@ -22,9 +22,9 @@ import (
 // --yes — which fails this file.
 //
 // The rows are the stages internal/cli/init_stages.go's converge() registers,
-// and the four things inside them that are money or permanent: project
-// creation, the billing link, the Firestore location and a billable first
-// image build. The columns are the plan's five run modes — --yes,
+// and the three things inside them that are money or permanent: project
+// creation, the billing link and a billable first image build. The columns are
+// the plan's five run modes — --yes,
 // --non-interactive with and without --yes, --json, no terminal and a coding
 // agent's session — with the --yes variants the seed
 // (internal/initflow/loop_test.go's TestYesDoesNotCoverCreateOrBilling) and
@@ -37,9 +37,10 @@ import (
 // call-site table, where D12's answer of 2026-10-20 covers more — and every row
 // that moves is a call site, so **no stage row here changes**: the five covered
 // stages and the three `noYes` ones are exactly as they were, in both doors.
-// After the flip the rule reads "these three rows may never be relaxed, in
-// either front door": creating the project, linking the billing account, and
-// the Firestore database's location in `setup`.
+// After the flip the rule reads "these two rows may never be relaxed, in either
+// front door": creating the project and linking the billing account. The
+// Firestore database's location was a third until LP10 (D3090 of
+// docs/location-preference) removed its confirmation: it is no step at all now.
 //
 // One row has gone since, and it is not one of these: the credentials stage
 // (docs/credentials-service, D146; C1.20) was registered behind
@@ -322,7 +323,7 @@ func TestRefusalMatrixListsEveryStageTheCLIRegisters(t *testing.T) {
 		}
 	}
 
-	// And the four typed steps sit inside stages the CLI registers, in stages
+	// And the five typed steps sit inside stages the CLI registers, in stages
 	// whose SelfConfirming is the table's.
 	for _, s := range typedSteps() {
 		row, ok := rowFor(s.stage)
@@ -436,7 +437,7 @@ type typedStep struct {
 	// other before its apply.
 	self bool
 	// yesCovers is whether --yes may confirm the stage: false for the two
-	// inside initflow.Project, which noYes declares, and true for the four
+	// inside initflow.Project, which noYes declares, and true for the three
 	// inside a covered stage. It is written down here and not read off
 	// initflow.YesCovers, so that taking a noYes away fails the matrix and not
 	// only the table. It is a fact about the stage, and no row of it moves:
@@ -461,21 +462,23 @@ func (s typedStep) leftKind(door, agent string) initflow.LeftKind {
 	return s.kind(door, agent)
 }
 
-// typedSteps is the plan's list, six rows after W5.1: the two inside
+// typedSteps is the plan's list, five rows after LP10: the two inside
 // initflow.Project — which noYes declares, so --yes never reaches the stage at
-// all, in either door — and the four call sites W5.1's table names, which are
+// all, in either door — and the three call sites W5.1's table names, which are
 // guards inside stages the run's one confirmation already covers (runCovered
 // names Firebase, Images and Repository). That is the plan's own description of
 // them: what was never covered is the step, not the stage. D12's answer moves
-// the four call sites and none of the stage rows, and it moves them per door,
+// the three call sites and none of the stage rows, and it moves them per door,
 // which is what covers carries. The left-for-you is the real one wherever the
 // CLI builds it in one place, so a change to a prompt moves here too.
+//
+// The Firestore database's location was a sixth row until LP10 (D3090 of
+// docs/location-preference): it is no step at all now, so it leaves no refusal
+// and no row.
 func typedSteps() []typedStep {
 	return []typedStep{
 		{what: "project creation", stage: initflow.Project, left: projectCreateLeft},
 		{what: "the billing link", stage: initflow.Project, left: projectLinkLeft},
-		{what: "the Firestore location", stage: initflow.Firebase, left: firestoreLocationLeft,
-			self: true, yesCovers: true, covers: coversUpdate},
 		{what: "a billable first image build", stage: initflow.Repository, left: billableBuildPrompt,
 			self: true, yesCovers: true, covers: coversBoth},
 		{what: "replacing a registry tag", stage: initflow.Images, left: registryTagLeft,
@@ -530,23 +533,6 @@ func noTypedTerminal(t *testing.T) {
 	t.Cleanup(func() { stdinIsTerminal = old })
 }
 
-// firestoreLocationLeft is the Firestore location's own refusal, from the
-// engine that owns it: confirmLocation at a run that cannot confirm it, at this
-// door. `setup` keeps the step Typed and `update` covers it, so the same call
-// site leaves the line in either door when the run cannot take it — which is
-// the point of W5.1's per-door class.
-func firestoreLocationLeft(t *testing.T, door string) initflow.Left {
-	t.Helper()
-	noTypedTerminal(t)
-	r := &initRun{o: &initOptions{door: door, firebase: "aurora-fp"}, w: io.Discard, in: bufio.NewReader(strings.NewReader(""))}
-	err := r.confirmLocation(fsLocation("us-east5"))
-	var ny *initflow.NeedsYouError
-	if !asNeedsYou(err, &ny) {
-		t.Fatalf("the Firestore location's refusal is %v, want needs-you", err)
-	}
-	return ny.Left
-}
-
 // registryTagLeft is the same for replacing a registry tag: init_images.go's own
 // confirmReplace, reached with a plan that would replace the tag, at a run that
 // cannot confirm it.
@@ -591,7 +577,7 @@ func billableBuildPrompt(_ *testing.T, door string) initflow.Left {
 
 // TestTheTypedStepsLeaveTheirOwnRefusal is the other half of the plan's
 // sentence: each of these answers needs-you with its own kind of line, in each
-// door — a prompt for the five that a person types (they are told to type the
+// door — a prompt for the four that a person types (they are told to type the
 // confirmation in their own terminal), and the repository row's command or
 // console line, which is why that row's kind is not a rule over LeftKind.
 func TestTheTypedStepsLeaveTheirOwnRefusal(t *testing.T) {
@@ -730,7 +716,7 @@ type refusalEngineStage struct{ *refusalStage }
 func (*refusalEngineStage) SelfConfirming() {}
 
 // TestRefusalMatrixNeverConfirmsWhatIsMoneyOrPermanent is the matrix itself:
-// for each of the six steps, each door and each mode, the state the loop
+// for each of the five steps, each door and each mode, the state the loop
 // reaches, whether the step was applied, and whether --yes reached a stage it
 // never covers.
 //

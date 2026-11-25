@@ -190,10 +190,12 @@ func strs(v any) []string {
 	return out
 }
 
-// Each of the three applies, the database and its location has its own plan
-// and its own banner: a person at the terminal reads five separate
-// confirmations and every step goes on, with nothing typed (T7). Where nobody
-// can confirm it, the first step is left and nothing after it happens.
+// Each of the three applies and the database has its own plan and its own
+// banner: a person at the terminal reads four separate confirmations and every
+// step goes on, with nothing typed (T7). The Firestore database's location is
+// not one of them (LP10, D3090): the step that creates it prints where and
+// creates it, and the run reads no line for it. Where nobody can confirm the
+// first step, it is left and nothing after it happens.
 func TestInitFirebaseThreeAppliesConfirmedSeparately(t *testing.T) {
 	r := newFBRig(t)
 	r.historyImage()
@@ -205,8 +207,8 @@ func TestInitFirebaseThreeAppliesConfirmedSeparately(t *testing.T) {
 	if got, want := r.applies(t), []string{"installation", "firebase", "installation"}; !slices.Equal(got, want) {
 		t.Fatalf("applies in %v, want %v", got, want)
 	}
-	if n := strings.Count(out, "⚠ CONFIRM"); n != 5 {
-		t.Errorf("%d confirmations, want 5 (three applies, the database and its location):\n%s", n, out)
+	if n := strings.Count(out, "⚠ CONFIRM"); n != 4 {
+		t.Errorf("%d confirmations, want 4 (three applies and the database):\n%s", n, out)
 	}
 	for _, want := range []string{"to the Firebase project proj-1234", "(the history job and its sweep schedule)", "writes the database as listed"} {
 		if !strings.Contains(out, want) {
@@ -1785,7 +1787,9 @@ func TestOldFirebaseFlagIsGone(t *testing.T) {
 // root's engine for a credential that may not make the project's IAM changes
 // (this rig's, which holds none). What keeps an unset script variable from
 // buying a Firestore database in a permanent location is that arm's own
-// probes and the confirmation it needs, not the flag's absence.
+// probes and the confirmation the firebase stage itself takes — the location
+// is no confirmation of its own (LP10, D3090), and it is the stage's own that
+// is left where nobody is at the terminal — not the flag's absence.
 func TestTheFirebaseProjectDefaultNamesTheIdAndNotTheStage(t *testing.T) {
 	// The value is the id, whatever it names: the installation's own project
 	// spelled out, or a separate one (the advanced case).

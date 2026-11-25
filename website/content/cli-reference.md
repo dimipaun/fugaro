@@ -10484,11 +10484,16 @@ once its image exists). Between the last two it deploys the database's rules,
 mark, project name, mode (--budget-mode; an absent one is seeded observe) and
 largest lease, after a confirmation of their own, then writes the local
 config. The same step creates the Firestore database for the spend history
-(fugaro report) if the project has none: its location, us-east5, is permanent
-(chosen once, never changed or deleted by Fugaro), so the location's
-confirmation is the person at a real terminal (nothing is typed; --json and a pipe never confirm it, and the step is then
-left for you), and it
-refuses a database that holds data or is in another location; it also deploys
+(fugaro report) if the project has none: it goes in the installation's own
+region where Firestore offers it, and otherwise in the place's own default
+region — the mapping's answer, which the step's own plan row prints before
+anything is created — and its location is permanent (chosen once, never changed
+or deleted by Fugaro), so the run prints where and creates it, asking nobody
+(nothing is typed, and a coding agent's session, --json and a pipe are no
+different); a database that already exists is adopted as it is, wherever it is,
+when it is empty or carries the Fugaro mark — the plan row says where, and names
+it as outside the installation's place when it is — and a database that holds
+data and carries no mark, or that is not in native mode, is refused; it also deploys
 deny-everything Firestore rules and the Fugaro mark. --plan-only stops after the installation's plan. Each repository then
 needs fugaro setup --repo to pick up the jobs' environment.
 
@@ -10517,14 +10522,16 @@ review screen and one confirmation, taken by the person at the terminal and
 shown when the first of them has something to change (nothing is typed, so a
 rerun with nothing to do shows nothing). Each step
 still prints its own exact plan. It never covers creating a project, linking
-billing, the Firestore database's permanent location, a Cloud Build, replacing
+billing, a Cloud Build, replacing
 a registry tag (--replace-image), an unlisted repository or a secret. Those are
 their own steps: the build, the tag and onboarding an unlisted repository are
 covered by the run's own confirmation in a project whose gate stands in for it,
 and taken by the person at the terminal otherwise (D12's answer of 2026-10-20
 keeps them one class in either door), and a project's
-creation, the billing link, the location and a secret value keep a
-confirmation of their own, taken with the person at the terminal. The state bucket and the API enable are fixed, announced, free steps; every
+creation, the billing link and a secret value keep a
+confirmation of their own, taken with the person at the terminal. The Firestore
+database's location is no step at all: where the run creates the database it
+prints where, and that the location is permanent, and creates it. The state bucket and the API enable are fixed, announced, free steps; every
 Terraform plan is shown as it runs and is covered only if it is creates and
 in-place updates of the installation's own resource kinds, granting only the
 modules' roles to the listed launchers, operators and budget admins (the review
@@ -10550,8 +10557,7 @@ your registry (--replace-image KIND names the intent). D12's answer of
 door, while a repository whose origin git config rewrites, or whose host is not
 a provider's own, takes the confirmation of a person at the terminal whatever
 the run was given. What
-it still never covers: creating a project or linking billing, a secret, and
-the Firestore database's permanent location, this door's first-time question.
+it still never covers: creating a project or linking billing, and a secret.
 With no terminal, or with --json, each of those is left for you, with the
 one line to run: a first run that reaches the billing question is refused at
 once, in the sentence naming --link-billing, before any account of yours is
@@ -10656,7 +10662,7 @@ Flags:
 | `--allow-delete` | stringArray | `[]` | no | a resource address the plan may delete or replace (repeatable) |
 | `--allow-job-delete` | bool | `false` | no | with --repo: lower the jobs' deletion protection, for offboarding |
 | `--anchor` | bool | `false` | no | in a checkout of an onboarded repository, only write the gcp_project line into its fugaro.yaml, after checking that every workflow's job image was submitted by fugaro 0.4.0 or later and built FROM a release base image of 0.4.0 or later, and that no base image the local config sets is a development or older one (no Terraform, no publish, no image copy; the diff, then the person at the terminal confirms it, and a run with no terminal prints the line and writes nothing) |
-| `--answers-file` | string | "" | no | answer the wizard's questions from one JSON document: version, gcp_project, location, region, name, rigor, budget, budget_currency, bake_repos — the questions a first run asks (--gcp-project, --location or its precise form --region, --name, --rigor, --budget with --budget-currency, and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, the permanent Firestore location, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation |
+| `--answers-file` | string | "" | no | answer the wizard's questions from one JSON document: version, gcp_project, location, region, name, rigor, budget, budget_currency, bake_repos — the questions a first run asks (--gcp-project, --location or its precise form --region, --name, --rigor, --budget with --budget-currency, and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation |
 | `--bake-repos` | bool | `false` | no | answer the bake question without a terminal: whether a repository the build can read is baked into the image its job runs (the default is yes, and an absent key means the same). --bake-repos says yes, --bake-repos=false says no, and either one writes the value into the local config this run writes, which the same run publishes. Passing neither asks the question where it can be asked — on a run that creates the installation, and nowhere else: a run with a project config keeps the answer the project's own (the published policy's) and is never asked, which is the rule for a managed project. Either way the answer takes effect in the images built from then on: the build is what bakes a repository in, so the images already built keep what they have until they are rebuilt |
 | `--base` | stringSlice | `[]` | no | copy the release's base image (the only kind: base) into the project's registry now, besides what the checkout's fugaro.yaml needs (comma-separated or repeated) |
 | `--base-image` | stringArray | `[]` | no | a base image the image checks run and builds start from, recorded in the local config under its base kind (repeatable; KIND=IMAGE, or just IMAGE when its repository is named fugaro-<kind>; the kinds you don't name keep theirs) |
@@ -10673,7 +10679,7 @@ Flags:
 | `--display-name` | string | "" | no | on a first run, which creates the project: its display name (default: its ID) |
 | `--events` | bool | `false` | no | write the run to stdout as newline-delimited events instead of the one --json document: one `step` line as the run reaches a stage, one `stage` line as a stage settles (its name, state, detail and the stage it waited for), one `left_for_you` line for each thing only you can do — with the one line to run — and one last line that ends the feed: `done` with the run's exit code, or `error` naming the stage the run stopped at. A run that ends with steps left for you ends `done` with exit code 1 — it did not fail, and the steps are the left_for_you lines above it — which is the hand-off a surface draws rather than an error. It needs --json: the feed takes the document's place on stdout, and the run's own progress stays on stderr where --json already puts it. Nothing here confirms a step: --json confirms none, so every step that needs a confirmation arrives as left_for_you for you to run in your own terminal window |
 | `--expect-digest` | stringArray | `[]` | no | pin the digest of a release image, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. A base kind is cross-checked against it: its digest is verified against the release's cosign signature either way, and the two must agree. For history it is the trust anchor: without it setup trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag |
-| `--firebase-project` | string | "" | no | turn the shared budget on: the value is the installation's own GCP project id (the default; the flag is only needed to turn the shared budget on), and any other id is refused. It is the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location: confirmed by the person at the terminal where it is a first-time question, already there on a run that re-converges an installation that has it) and the config |
+| `--firebase-project` | string | "" | no | turn the shared budget on: the value is the installation's own GCP project id (the default; the flag is only needed to turn the shared budget on), and any other id is refused. It is the flag that asks for the backend — a run without it builds none — and that backend is three applies: the database's rules and mark, the Firestore history database (the run creates it in the installation's own region where Firestore offers it, and otherwise in the place's default region, and its location is permanent: where the run creates the database it prints where, and that the location can never be changed, and creates it, asking nothing — nothing is typed, and --json, a pipe and a coding agent's session are no different; it is already there on a run that re-converges an installation that has it) and the config |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `--github-app-id` | string | "" | no | the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config; setup asks once at a terminal) |
 | `-h`, `--help` | bool | `false` | no | help for setup |
@@ -10931,14 +10937,17 @@ only a step that is money, permanence or a secret still asks for your own word
 and the billing link are setup's, and here they cannot arise at all, and a
 secret is a value, typed in a hidden prompt, which no flag can supply — against
 the ordinary steps this door owns, which by D12's answer of 2026-10-20 are every
-one of them: the Firestore database's permanent location, a billable
+one of them: a billable
 first image build, replacing a registry tag and onboarding an unlisted
 repository on a provider's own host with an origin git config that does not
 rewrite it (the build, the tag and the repository are covered in setup too); the
 secrets stage's hidden prompts and the one line of fugaro secrets set commands
 it leaves instead; the plugin wiring; --anchor, which writes the checkout's
 gcp_project line and nothing else; --plan-only, --print-vars, --config-only and
---publish-config; and --json, which prints the same result object. Exit codes:
+--publish-config; and --json, which prints the same result object. The Firestore
+database's location is not among the steps: where this door creates the
+database it prints where, and that the location is permanent, and creates it
+asking nobody (D3090 of docs/location-preference). Exit codes:
 0 done (or only planned), 1 a refusal or a step left for you, 2 a cloud
 failure.
 
@@ -10953,7 +10962,7 @@ Flags:
 | `--allow-delete` | stringArray | `[]` | no | a resource address the plan may delete or replace (repeatable) |
 | `--allow-job-delete` | bool | `false` | no | with --repo: lower the jobs' deletion protection, for offboarding |
 | `--anchor` | bool | `false` | no | in a checkout of an onboarded repository, only write the gcp_project line into its fugaro.yaml, after checking that every workflow's job image was submitted by fugaro 0.4.0 or later and built FROM a release base image of 0.4.0 or later, and that no base image the local config sets is a development or older one (no Terraform, no publish, no image copy; the diff, then the person at the terminal confirms it, and a run with no terminal prints the line and writes nothing) |
-| `--answers-file` | string | "" | no | answer the wizard's questions from one JSON document: version, gcp_project, location, region, name, rigor, budget, budget_currency, bake_repos — the questions a first run asks (--gcp-project, --location or its precise form --region, --name, --rigor, --budget with --budget-currency, and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, the permanent Firestore location, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation |
+| `--answers-file` | string | "" | no | answer the wizard's questions from one JSON document: version, gcp_project, location, region, name, rigor, budget, budget_currency, bake_repos — the questions a first run asks (--gcp-project, --location or its precise form --region, --name, --rigor, --budget with --budget-currency, and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation |
 | `--ask` | bool | `false` | no | ask for the confirmations a managed project's gate would have stood in for, one step at a time: without it a managed project takes no confirmation at all (the ruling of 2026-11-01), and this is the flag that puts them back for one run — the review's own question, and each step's own, the billable builds included. It never weakens the gate, which judges every document and refuses in its own sentence before any prompt, and it never stands in for a confirmation: the step's own question is asked, and a no is a no. In a project whose marks do not answer "managed" it changes nothing and says so, and where no prompt can be answered — a coding agent's session, --json, no terminal — it refuses the run rather than letting the gate's verdict stand in: a confirmation nobody can answer is never a silent proceed |
 | `--bake-repos` | bool | `false` | no | answer the bake question without a terminal: whether a repository the build can read is baked into the image its job runs (the default is yes, and an absent key means the same). --bake-repos says yes, --bake-repos=false says no, and either one writes the value into the local config this run writes, which the same run publishes. Passing neither asks the question where it can be asked — on a run that creates the installation, and nowhere else: a run with a project config keeps the answer the project's own (the published policy's) and is never asked, which is the rule for a managed project. Either way the answer takes effect in the images built from then on: the build is what bakes a repository in, so the images already built keep what they have until they are rebuilt |
 | `--base` | stringSlice | `[]` | no | copy the release's base image (the only kind: base) into the project's registry now, besides what the checkout's fugaro.yaml needs (comma-separated or repeated) |
@@ -10970,7 +10979,7 @@ Flags:
 | `--coordinator` | bool | `false` | no | with --firebase-project, opt the installation in to the coordinator's aggregation job (docs/coordinator, P5): the fugaro-coordinator service account, its roles/firebasedatabase.admin on the Firebase project (IAM cannot scope it to the coordinator's subtree; the job's own code does), roles/storage.objectViewer on the runs bucket, and — once the history image exists and the local config records a GitHub App ID — the Cloud Run job that holds the App key, its accessor on that one secret and a Scheduler job that runs it every 15 minutes. Nothing creates any of it by default. The opt-in is recorded in the local config (terraform.coordinator) once the apply has created the account, so later runs keep it. No flag covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor) |
 | `--events` | bool | `false` | no | write the run to stdout as newline-delimited events instead of the one --json document: one `step` line as the run reaches a stage, one `stage` line as a stage settles (its name, state, detail and the stage it waited for), one `left_for_you` line for each thing only you can do — with the one line to run — and one last line that ends the feed: `done` with the run's exit code, or `error` naming the stage the run stopped at. A run that ends with steps left for you ends `done` with exit code 1 — it did not fail, and the steps are the left_for_you lines above it — which is the hand-off a surface draws rather than an error. It needs --json: the feed takes the document's place on stdout, and the run's own progress stays on stderr where --json already puts it. Nothing here confirms a step: --json confirms none, so every step that needs a confirmation arrives as left_for_you for you to run in your own terminal window |
 | `--expect-digest` | stringArray | `[]` | no | pin the digest of a release image, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. A base kind is cross-checked against it: its digest is verified against the release's cosign signature either way, and the two must agree. For history it is the trust anchor: without it update trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag |
-| `--firebase-project` | string | "" | no | turn the shared budget on: the value is the installation's own GCP project id (the default; the flag is only needed to turn the shared budget on), and any other id is refused. It is the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location: confirmed by the person at the terminal where it is a first-time question, already there on a run that re-converges an installation that has it) and the config |
+| `--firebase-project` | string | "" | no | turn the shared budget on: the value is the installation's own GCP project id (the default; the flag is only needed to turn the shared budget on), and any other id is refused. It is the flag that asks for the backend — a run without it builds none — and that backend is three applies: the database's rules and mark, the Firestore history database (the run creates it in the installation's own region where Firestore offers it, and otherwise in the place's default region, and its location is permanent: where the run creates the database it prints where, and that the location can never be changed, and creates it, asking nothing — nothing is typed, and --json, a pipe and a coding agent's session are no different; it is already there on a run that re-converges an installation that has it) and the config |
 | `--forget` | bool | `false` | no | roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state. An installation that holds the managed deployer's fence has no rollback and this is refused there: the state removal would leave the seven scoped roles and their seven conditioned bindings live in the project, accounted for by nothing, and taking the project out of managed mode does not remove them (docs/managed-projects/spec.md §10.2, "Rolling back") |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `--github-app-id` | string | "" | no | the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config; update asks once at a terminal) |
@@ -11325,6 +11334,12 @@ re-read and re-judged rather than overwritten. It refuses:
     revoke a project-scope pair);
   - a revoke that would take the installation's last project admin away, your own
     removal included.
+
+Taking a person's LAST pair away also ends their mobile access: the member
+record, every paired device of the address and every refresh family are deleted
+with it (O14), through the same removal `fugaro pair revoke` makes per
+device. A person who keeps another pair keeps their devices, and a device's role
+follows the roster at its next refresh.
 
 Writing the node needs roles/firebasedatabase.admin, held by the GCP project's
 owners and editors and by terraform.budget_admins — an admin stored in the node
