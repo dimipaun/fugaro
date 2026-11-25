@@ -112,6 +112,15 @@ workflows:
       # 25m `timeouts.verify`. Every test of the package still runs here, because the bound
       # moves and the selection does not; CI splits the same package by name too (cli-update
       # and cli-0..7).
+      # The tree invocation's own bound moves with it, from 15m to 20m: ./scripts is its
+      # longest package and it shares that one bound with every other package in the same
+      # invocation. Measured alone on a five-vCPU job on 2026-11-25, the package without the
+      # live-check suites takes 853 s -- 4.6 minutes when docs/test-time/measurement.md
+      # measured the same package on 2026-11-17, so the tree has grown past what the bound was
+      # set for -- and the two bash suites of Checks 870 and 871, which
+      # scripts/check_run_index_checks_test.go drives, add about 60 s of it. Beside the two cli
+      # invocations it needs more than 900 s, so the bound here is 20m too: a bound and not a
+      # target, inside the 25m `timeouts.verify`.
       build: |
         set -e
         go build ./...
@@ -183,7 +192,7 @@ workflows:
         # on a package, and narrowing inside it by name is what flakes the update tests.
         pids=
         if [ -n "$pkgs" ]; then
-          w --junitfile reports/tree.xml go test $json -timeout 15m -skip '^TestLiveCheckScripts$' $pkgs &
+          w --junitfile reports/tree.xml go test $json -timeout 20m -skip '^TestLiveCheckScripts$' $pkgs &
           pids="$pids $!"
         fi
         if [ -n "$cli" ]; then
