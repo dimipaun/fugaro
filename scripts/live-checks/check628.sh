@@ -56,8 +56,16 @@
 # the same way.
 #
 # Usage:      bash scripts/live-checks/check628.sh --sandbox <a sandbox repository checkout> [--project <name>]
+#             bash scripts/live-checks/check628.sh --sandbox <path> --preflight
 #             bash scripts/live-checks/check628.sh --sandbox <path> --dry-run
 #             bash scripts/live-checks/check628.sh --help
+#             --preflight makes the check's own READS and evaluates every
+#             precondition before anything is written or launched (the
+#             installation `fugaro doctor --project <name> --all` reads, the
+#             project layer's craft model, the coder craft's own answer and the
+#             published allow-list), prints every blocker at once with the
+#             command that clears it, writes nothing and launches nothing, and
+#             exits non-zero when anything blocks.
 # Needs:      bash, mktemp, date, python3 (the `--json` documents are read with
 #             it), gcloud (authenticated as YOU, able to read the runs bucket
 #             and Cloud Logging) and fugaro (the installed release: the whole
@@ -85,7 +93,7 @@
 #             one, a read did not answer, or the run never ended. A key the run
 #             never reached reads `FAIL — not reached`.
 #
-# Knobs (all CHECK628_*): DRY_RUN, KEEP_SCRATCH, SANDBOX (the checkout, when you
+# Knobs (all CHECK628_*): DRY_RUN, PREFLIGHT, KEEP_SCRATCH, SANDBOX (the checkout, when you
 # would rather set it in the environment), PROJECT (the installation's own name,
 # when the checkout's is not the one to read), CRAFT (coder), TASK and RECIPE
 # (what the run is launched with), LOG_VIEW (a Cloud Logging view to scope the
@@ -138,6 +146,13 @@ on_error() {
   say "an internal error ended this check at line $line"
   exit 2
 }
+
+# The shared `--preflight` driver (scripts/live-checks/lib/preflight.sh).
+live_check_lib_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib
+LIVE_CHECK_LIB=${LIVE_CHECK_LIB:-$live_check_lib_dir}
+# shellcheck source=lib/preflight.sh
+. "$LIVE_CHECK_LIB/preflight.sh"
+PREFLIGHT_TOOL=check628
 
 need_tools() {
   command -v bash >/dev/null 2>&1 || die "Check 628 needs bash"
@@ -473,6 +488,130 @@ version_row() {
   local v
   v=$(fugaro version 2>/dev/null | head -n 1 || true)
   fact "fugaro-version" PASS "${v:-fugaro version printed nothing} (the release whose craft ladder this check measures)"
+}
+
+# ---------------------------------------------------------------- preflight
+# step_preflight: --preflight. The reads this check makes, every precondition it
+# has evaluated before its first write, nothing written and nothing launched. The
+# sandbox checkout is the owner's own (there is no --preflight-only clone here),
+# and every command below is a read run from it.
+step_preflight() {
+  if [ ! -d "$SANDBOX" ]; then
+    die "--sandbox is not a directory: $SANDBOX (pass the checkout of a repository of the sandbox project)"
+  fi
+  if [ ! -f "$SANDBOX/fugaro.yaml" ]; then
+    die "--sandbox carries no fugaro.yaml: $SANDBOX is not a Fugaro repository's checkout, and every command below is run from it"
+  fi
+  local pflag=()
+  [ -z "$PROJECT_ARG" ] || pflag=(--project "$PROJECT_ARG")
+  local doctor_fix="cd $SANDBOX && fugaro doctor --all"
+  [ -z "$PROJECT_ARG" ] || doctor_fix="cd $SANDBOX && fugaro doctor --project $PROJECT_ARG --all"
+
+  say "preflight: reading the installation: fugaro doctor ${pflag[@]+"${pflag[@]} "}--all, in ${SANDBOX}"
+  run_bounded "$DOCTOR_TIMEOUT" pf-doctor "$SANDBOX" "$FUGARO_BIN" doctor ${pflag[@]+"${pflag[@]}"} --all
+  local line
+  line=$(grep -m1 '^project: ' "$SCRATCH/pf-doctor.out" 2>/dev/null || true)
+  if [ -z "$line" ]; then
+    preflight_block installation \
+      "fugaro doctor ${pflag[@]+"${pflag[@]} "}--all prints no 'project: <name> (GCP <project>, <region>)' line in ${SANDBOX} (exit ${BOUNDED_STATUS}), so the installation this check reads cannot be read" \
+      "$doctor_fix"
+  else
+    PROJECT=$(printf '%s' "$line" | sed -n 's/^project: \([^ ]*\) .*/\1/p')
+    INSTALLATION=$PROJECT
+    GCP_PROJECT=$(printf '%s' "$line" | sed -n 's/^.*(GCP \([^,]*\),.*/\1/p')
+    REGION_USED=$(printf '%s' "$line" | sed -n 's/^.*, \([^)]*\)).*/\1/p')
+    preflight_note installation "${SANDBOX} is a checkout of the installation ${PROJECT} (GCP ${GCP_PROJECT:-unknown}, ${REGION_USED:-unknown})"
+  fi
+
+  say "preflight: reading the resolved config: fugaro config show --json, in ${SANDBOX}"
+  local layer_ok=yes slot slot_from
+  if run_bounded "$CLI_TIMEOUT" pf-config "$SANDBOX" "$FUGARO_BIN" config show --json &&
+    read_json config "$SCRATCH/pf-config.out" "$SCRATCH/pf-config.txt"; then
+    LAYER_MODEL=$(table_field "$SCRATCH/pf-config.txt" value "agent.crafts.${CRAFT}.model" 3)
+    local model_from
+    model_from=$(table_field "$SCRATCH/pf-config.txt" value "agent.crafts.${CRAFT}.model" 4)
+    if [ -z "$LAYER_MODEL" ]; then
+      preflight_block layer \
+        "the resolved config names no model for agent.crafts.${CRAFT}.model in ${SANDBOX}, and the acceptance's first clause is a project layer that names one" \
+        "fugaro update"
+    elif [ "$model_from" != project ]; then
+      preflight_block layer \
+        "agent.crafts.${CRAFT}.model resolves to ${LAYER_MODEL} with source '${model_from}', not the project layer the acceptance names" \
+        "fugaro update"
+    else
+      preflight_note layer "the project layer sets agent.crafts.${CRAFT}.model = ${LAYER_MODEL}, read from fugaro config show --json in ${SANDBOX}"
+    fi
+    slot=$(table_field "$SCRATCH/pf-config.txt" value "agent.models.${ROLE}" 3)
+    slot_from=$(table_field "$SCRATCH/pf-config.txt" value "agent.models.${ROLE}" 4)
+    if [ "$slot_from" = project ] && [ -n "$slot" ]; then
+      preflight_block role-slot \
+        "agent.models.${ROLE} resolves to ${slot} with source 'project', so a run would pin this model whether or not the craft key is read" \
+        "fugaro update"
+    else
+      preflight_note role-slot "agent.models.${ROLE} resolves to ${slot:-nothing} with source '${slot_from:-default}' in ${SANDBOX}, so the craft's own key is what names the model"
+    fi
+  else
+    layer_ok=no
+    preflight_block layer \
+      "fugaro config show --json did not answer in ${SANDBOX} (exit ${BOUNDED_STATUS}), so the project layer's craft model cannot be read" \
+      "cd $SANDBOX && fugaro config show --json"
+    preflight_block role-slot \
+      "fugaro config show --json did not answer in ${SANDBOX} (exit ${BOUNDED_STATUS}), so the role slot cannot be read either" \
+      "cd $SANDBOX && fugaro config show --json"
+  fi
+
+  say "preflight: reading the crafts: fugaro craft ls --json, in ${SANDBOX}"
+  local craft_model=""
+  if run_bounded "$CLI_TIMEOUT" pf-crafts "$SANDBOX" "$FUGARO_BIN" craft ls --json &&
+    read_json crafts "$SCRATCH/pf-crafts.out" "$SCRATCH/pf-crafts.txt"; then
+    craft_model=$(table_field "$SCRATCH/pf-crafts.txt" craft "$CRAFT" 3)
+    local craft_from
+    craft_from=$(table_field "$SCRATCH/pf-crafts.txt" craft "$CRAFT" 4)
+    if [ -z "$craft_model" ]; then
+      preflight_block craft-ls \
+        "fugaro craft ls --json names no model for the ${CRAFT} craft in ${SANDBOX}, so a run would resolve the coder's model from the role slot and not the craft" \
+        "fugaro update"
+    elif [ "$craft_from" != project ]; then
+      preflight_block craft-ls \
+        "fugaro craft ls --json resolves the ${CRAFT} craft's model to ${craft_model} from '${craft_from}', not the project layer" \
+        "fugaro update"
+    elif [ -n "$LAYER_MODEL" ] && [ "$craft_model" != "$LAYER_MODEL" ]; then
+      preflight_block craft-ls \
+        "fugaro craft ls --json resolves the ${CRAFT} craft's model to ${craft_model} while the resolved config names ${LAYER_MODEL}: the two surfaces disagree" \
+        "fugaro update"
+    else
+      preflight_note craft-ls "fugaro craft ls --json resolves the ${CRAFT} craft to model ${craft_model} from '${craft_from}', the same model the project layer names"
+    fi
+  else
+    preflight_block craft-ls \
+      "fugaro craft ls --json did not answer in ${SANDBOX} (exit ${BOUNDED_STATUS}): if this build has no craft command, this check is not for it" \
+      "fugaro update"
+  fi
+
+  say "preflight: reading the published node: fugaro project policy show --json, in ${SANDBOX}"
+  if run_bounded "$CLI_TIMEOUT" pf-node "$SANDBOX" "$FUGARO_BIN" project policy show --json ${pflag[@]+"${pflag[@]}"} &&
+    read_json node "$SCRATCH/pf-node.out" "$SCRATCH/pf-node.txt"; then
+    local allowed
+    allowed=$(field "$SCRATCH/pf-node.txt" allowed_models)
+    if [ -z "$LAYER_MODEL" ]; then
+      preflight_note allow-list "there is no layer model to look for in the allow-list (the row above says why)"
+    elif [ -z "$allowed" ]; then
+      preflight_note allow-list "the published node names no allowed_models, so the ceiling is the job's own environment and the craft's own model_servable is what the check reads"
+    else
+      case ";$allowed;" in
+      *";$LAYER_MODEL;"*)
+        preflight_note allow-list "${LAYER_MODEL} is in the published node's allowed_models (${allowed})" ;;
+      *)
+        preflight_block allow-list \
+          "the published node's allowed_models is ${allowed} and the model the project layer names is ${LAYER_MODEL}, so a run is refused before its first call" \
+          "fugaro models add $LAYER_MODEL" ;;
+      esac
+    fi
+  else
+    preflight_block allow-list \
+      "fugaro project policy show --json did not answer in ${SANDBOX} (exit ${BOUNDED_STATUS}), so the project's published allow-list cannot be read" \
+      "cd $SANDBOX && fugaro project policy show --json"
+  fi
 }
 
 # ---------------------------------------------------------------- the steps
@@ -933,6 +1072,12 @@ finish() {
   local status=$?
   trap - EXIT
   trap - ERR
+  if [ "$PREFLIGHT_MODE" = yes ]; then
+    # A preflight wrote nothing and launched nothing: it prints its own lines
+    # and no RESULT block.
+    remove_scratch
+    exit "$status"
+  fi
   CLEANUP_RUNNING=yes
   cleanup
   local facts=$FACTS_CAPTURED
@@ -1028,6 +1173,7 @@ on_signal() {
 
 # ---------------------------------------------------------------------- inputs
 DRY_RUN_CLI=""
+PREFLIGHT_CLI=""
 SANDBOX_CLI=""
 PROJECT_CLI=""
 TASK_CLI=""
@@ -1061,6 +1207,10 @@ while [ $# -gt 0 ]; do
     DRY_RUN_CLI=1
     shift
     ;;
+  --preflight)
+    PREFLIGHT_CLI=1
+    shift
+    ;;
   -h | --help)
     usage
     exit 0
@@ -1091,6 +1241,9 @@ ROLE=${CHECK628_ROLE:-coder}
 TASK=${CHECK628_TASK:-${TASK_CLI:-"Reply with the single word ok and change nothing in the repository."}}
 RECIPE=${CHECK628_RECIPE:-${RECIPE_CLI:-}}
 DRY_RUN=${CHECK628_DRY_RUN:-$DRY_RUN_CLI}
+PREFLIGHT=${CHECK628_PREFLIGHT:-$PREFLIGHT_CLI}
+PREFLIGHT_MODE=no
+[ -z "$PREFLIGHT" ] || PREFLIGHT_MODE=yes
 KEEP_SCRATCH=${CHECK628_KEEP_SCRATCH:-}
 LOG_VIEW=${CHECK628_LOG_VIEW:-}
 REGION=${CHECK628_REGION:-us-east5}
@@ -1122,6 +1275,10 @@ main() {
   if [ -n "$DRY_RUN" ]; then
     plan
     return 0
+  fi
+  if [ -n "$PREFLIGHT" ]; then
+    step_preflight
+    preflight_report
   fi
   step_installation
   step_layer

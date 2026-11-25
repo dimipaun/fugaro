@@ -8245,14 +8245,14 @@ The rigor mode decides how much review a run gets and what it costs.
 `fugaro rigor set <mode>` writes `defaults.rigor.default` of this machine's own
 project layer file, and `--area <glob>` writes one rule of
 `defaults.rigor.areas` — the mode a run touching that glob is held to, which is
-the strictest of the rules that match it. The file is the one `fugaro update`
-publishes, and every write ends with `next: fugaro update`.
+the strictest of the rules that match it. `--repo <owner/name>` states one
+repository's level instead: `defaults.rigor.repos.<owner/name>`, or — with
+`--area <glob> --name <name>` — a member of that named rule. The file is the one
+`fugaro update` publishes, and every write ends with `next: fugaro update`.
 
-`--layer repo` writes the same two keys into a checkout's own `fugaro.yaml`
-instead: there they are live once your branch is merged to the base branch,
-which is what every run reads, and this command commits, pushes and opens
-nothing. The project layer file stays the layer a write lands in when no
-`--layer` says otherwise.
+A repository's own `fugaro.yaml` states neither key any more: since D3237 the
+project sets every repository's rigor mode, so `--layer repo` is refused with
+the command that states the level in its new home.
 
 A mode is `poc`, `startup`, `pro`, `critical` or `hotfix`, and `hotfix` is the one
 no layer sets: it is a per-run mode, reached with
@@ -8280,7 +8280,7 @@ Subcommands:
 
 - `fugaro rigor floor` -- Set or remove the review floor a project's runs are held to
 - `fugaro rigor security` -- Add or remove a security path, or the project's always-level-3 switch
-- `fugaro rigor set` -- Write the project layer's rigor default, or one area rule
+- `fugaro rigor set` -- Write the project layer's rigor default, one area rule, or one repository's level
 
 ## `fugaro rigor floor`
 
@@ -8516,32 +8516,41 @@ This command has no subcommands.
 
 ## `fugaro rigor set`
 
-Write the project layer's rigor default, or one area rule
+Write the project layer's rigor default, one area rule, or one repository's level
 
 Write a rigor mode into this machine's own project layer file.
 
 With no --area the command writes `defaults.rigor.default`: the mode every run of
-this project starts from unless an area rule or a repository's own file moves
-it. With --area GLOB it writes one rule of `defaults.rigor.areas`: a glob a rule
-already carries has its mode replaced, and a glob the layer does not carry yet
-is added and then needs --name — the rule's name is what the run record and the
-pull request say decided the mode. --name on a rule the layer already carries
-renames it. A second rule with the same glob is refused: one glob addresses one
-rule, and two rules matching one path leave only the strictest of them deciding.
+this project starts from unless a member area of the project's, `defaults.rigor.repos` or
+the run's own `--mode` moves it. With --area GLOB it writes one rule of
+`defaults.rigor.areas`: a glob a rule already carries has its mode replaced, and a
+glob the layer does not carry yet is added and then needs --name — the rule's
+name is what the run record and the pull request say decided the mode. --name on
+a rule the layer already carries renames it. A second rule with the same glob is
+refused: one glob addresses one rule, and two rules matching one path leave only
+the strictest of them deciding.
 
-`--layer repo` writes the same key into a checkout's own `fugaro.yaml`, where
-the two keys are spelled `rigor.default` and `rigor.areas`: that file is the
-repository's own, reviewed like the rest of it, and what it sets is live once
-your branch is merged to the base branch — every run reads the base branch, and
-this command commits, pushes and opens nothing. `--repo` names the repository,
-as owner/name or as a path to its checkout; without it the checkout the command
-runs in is the one written. A layer the key does not have is refused naming the
-layers it does: `local` is not one of them.
+`--repo <owner/name>` states the level for one repository of the project, as
+owner/name or as a path to its checkout, and it is the project layer that carries
+it either way. Without --area it writes `defaults.rigor.repos.<owner/name>` — the
+whole-repository level, which a project area naming the repository and the
+repository's own file both outrank. With `--area GLOB --name NAME` it writes one
+member of that rule: `{repo: <owner/name>, paths: [GLOB]}`, beside whatever else
+the rule is made of. The rule is addressed by its name — the name is what
+identifies it across the project — so a name the layer does not carry yet adds
+the rule, and GLOB is unioned into the paths of a member the rule already has
+for this repository.
 
-A mode below what this project's runs resolve to today is the sensitive
-direction: a coding agent's session is refused it with the diff and the command
-to run at your own terminal, and your own terminal writes it and asks
-nothing. `hotfix` is refused in either form, naming `fugaro run --mode hotfix`.
+Neither key is a repository's own any more (D3237): a repository's `rigor.default`
+and `rigor.areas` are the project's, and `--layer repo` is refused for both with
+the command that states the level here instead. `--layer local` is refused too: a
+rigor mode lands in the project layer file and nowhere else.
+
+A mode below what this project's runs resolve to today — with --repo, below what
+that repository's runs resolve to — is the sensitive direction: a coding agent's
+session is refused it with the diff and the command to run at your own terminal,
+and your own terminal writes it and asks nothing. `hotfix` is refused in either
+form, naming `fugaro run --mode hotfix`.
 
 The command prints the review floor beside the write, and it cannot lower it:
 the floor is outside every layer, and `fugaro rigor floor` is the command that
@@ -8555,20 +8564,20 @@ document carrying this installation's anchors and the change that was asked for
 is not written over: with no local file there the command refuses and names
 `fugaro update`, whose Layer stage seeds the file from that layer.
 
-Usage: `fugaro rigor set MODE [--area GLOB [--name NAME]] [--layer LAYER] [--repo REPO]`
+Usage: `fugaro rigor set MODE [--area GLOB [--name NAME]] [--repo REPO]`
 
 Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `--area` | string | "" | no | write this glob's rule in defaults.rigor.areas instead of the layer's default (e.g. docs/**) |
+| `--area` | string | "" | no | the glob of the rule to write in defaults.rigor.areas (e.g. docs/**); with --repo, the paths of that repository the member is about |
 | `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this write would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `-h`, `--help` | bool | `false` | no | help for set |
-| `--layer` | string | "" | no | where the write lands: project (this machine's project layer file, the default) or repo (a checkout's own fugaro.yaml, where the keys are spelled rigor.default and rigor.areas and are live once your branch is merged to the base branch) |
-| `--name` | string | "" | no | the rule's name; required for a glob the layer does not carry yet, and a rename for one it does |
+| `--layer` | string | "" | no | where the write lands: project (this machine's project layer file, the default); repo is refused, because a repository's own fugaro.yaml states neither key any more |
+| `--name` | string | "" | no | the rule's name: required for a glob the layer does not carry yet and for a --repo member write, and a rename for a rule the layer does |
 | `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
-| `--repo` | string | "" | no | the repository a --layer repo write is for, as owner/name or as a path to its checkout; without it, the checkout the command runs in |
+| `--repo` | string | "" | no | state the level for one repository of the project, as owner/name or as a path to its checkout: defaults.rigor.repos.<owner/name>, or the member --repo and --area name of the rule --name gives. Without it the write is about the whole project |
 
 Subcommands:
 
