@@ -35,7 +35,7 @@ Run `fugaro doctor --offline --json` once at the start of a session: where its `
 fugaro update
 ```
 
-A coding agent's session cannot apply cloud changes, by design: never look for a flag or another command that would let this session apply those writes, and never unset the marker that says this session is one. A check `--offline` did not run comes back `skipped: true` with severity `info`, and is not one of these. Where `plugin-install` is not ok the user has no Fugaro skills yet, so the wizard's own step comes first; and a status report nobody asked for is the failure this sentence exists to avoid, so if everything `--offline` could check is ok, say nothing and carry on.
+A coding agent's session cannot apply cloud changes, by design: never look for a flag or another command that would let this session apply those writes, and never unset the marker that says this session is one. A check `--offline` did not run comes back `skipped: true` with severity `info`, and is not one of these. Where `plugin-install` is not ok the user has no Fugaro skills yet, so the wizard's own step comes first; and a status report nobody asked for is the failure to avoid, so where everything `--offline` could check is ok, say nothing and carry on.
 
 From the repository root (`git rev-parse --show-toplevel`) run `fugaro doctor --json`. If it reports no installation, say the wizard's step comes first and stop: no project config can be selected without it. The user runs it once per project, in their own terminal window, not through the agent:
 
@@ -57,7 +57,7 @@ A project is managed when its runs bucket holds Fugaro's marker (`fugaro/managed
 
 Check `fugaro version` and `fugaro backends ls`: it marks the project's own — `cloud-run`, the default, and `cloud-batch`, gated by `--provision-batch` and `fugaro doctor`, selected with `fugaro backends use cloud-batch`. Never write it yourself. On Windows, run everything in WSL2, in the repository's Linux checkout.
 
-`FUGARO_PROJECT=<name> fugaro config example` (just `fugaro config example` when none was asked for) prints the template; its `project:` line is the selected project's name. When it shows `example`, no project is selectable: ask the user. Never invent one: a wrong name makes every run refuse.
+`FUGARO_PROJECT=<name> fugaro config example` (just `fugaro config example` when none was asked for) prints the template; its `project:` line is the selected project's name. When it shows `example`, no project is selectable: ask the user; a wrong name makes every run refuse.
 
 ### Does the project publish a project layer?
 
@@ -105,7 +105,7 @@ Ask, with your evidence and a recommendation for each, **one topic at a time**: 
 
 ## 6. Show what will execute, then get the go-ahead
 
-Before the first build, and again before any rebuild after a change, show every line that will run, and why:
+Before the first build, and before any rebuild after a change, show every line that will run, and why:
 - every `image.setup` step and `image.apt` package, and the build and test commands
 - `mise.toml`'s tools, each a download; if the repository has its own mise config (`mise.toml`, `.tool-versions`, a `mise/conf.d` fragment), show its **whole content**, not a tools summary: `mise install` reads it as a shell and can run arbitrary code (`[env]` `_.source`, a template's `exec()`, `[hooks]`), like any other file you run
 - a new Dockerfile: the whole file or the diff against the rendered one; a **fix of an existing** `.fugaro/*.Dockerfile` or `fugaro.yaml`: all of its executed lines, not only the ones you changed
@@ -167,4 +167,4 @@ The periodic reviews are the user's cadence: Fugaro schedules nothing, so say th
 
 ## 12. Changing the auth, a workflow, a secret or a provider
 
-A `fugaro.yaml` edit that retires resources: [reference/transitions.md](reference/transitions.md) has the step and the command.
+A `fugaro.yaml` edit that retires resources: [reference/transitions.md](reference/transitions.md) has the step and the command, and the routing table's (`fugaro routing ls`).
