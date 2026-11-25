@@ -410,10 +410,9 @@ func modelsUseParse(lc *localcfg.Config, target settingsTarget, data []byte) (*c
 // the block a run reads rather than a second reading of it that could drift
 // from the first.
 //
-// Auth carries the default the rest of Fugaro applies to a block that names
-// none (config.DefaultAgentAuth), which is what a repository file naming no
-// auth reads as: of everything applyDefaults fills in, it is the one field the
-// two checks below read.
+// Auth stays as the layer states it, and empty when it states none: an absent
+// auth is "not stated", never vertex, so the write is not judged against an
+// auth nobody chose. Each repository's own launch judges its own stated auth.
 func modelsUseLayerAgent(l *config.ProjectLayer) (config.Agent, error) {
 	data, err := yaml.Marshal(l.Defaults.Agent)
 	if err != nil {
@@ -424,9 +423,6 @@ func modelsUseLayerAgent(l *config.ProjectLayer) (config.Agent, error) {
 	dec.KnownFields(true)
 	if err := dec.Decode(&agent); err != nil {
 		return config.Agent{}, userErr("the project layer's defaults.agent: %v", err)
-	}
-	if agent.Auth == "" {
-		agent.Auth = config.DefaultAgentAuth
 	}
 	return agent, nil
 }
@@ -623,7 +619,8 @@ func modelsUseModelCheck(lc *localcfg.Config, launch modelsUseLaunch, target set
 		return userErr("budget.allowed_models of the project config does not name %s, so %s use it: the owner names it there, or adds the model with `fugaro models add %s`", config.CodeSpan(id), scope.reach(), id)
 	}
 	agent := modelsUseAgent(launch.agent, base, id)
-	if ps := config.CheckProviderAuth(agent, lc.Providers); len(ps) > 0 {
+	layerStatesNoAuth := target.kind == settingsDocLayer && agent.Auth == ""
+	if ps := config.CheckProviderAuth(agent, lc.Providers); len(ps) > 0 && !layerStatesNoAuth {
 		return userErr("%s would not launch with %s pinned for %s: %s", target.path, config.CodeSpan(id), base, ps[0].String())
 	}
 	if ps := config.CheckProviderGateway(agent, config.EffectiveBackground(agent, lc.Providers), lc.Providers, launch.mode); len(ps) > 0 {

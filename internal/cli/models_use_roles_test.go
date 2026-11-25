@@ -246,20 +246,19 @@ func TestClaudeModelsWideningRefusedInAnAgentSession(t *testing.T) {
 }
 
 // TestModelsUseJudgesTheProjectLayerAsALaunchWould is the layer half of the
-// same rule the repository's own file is held to: defaults.agent is the agent
-// block every repository that names none of its own runs with, so a
-// project-layer default pinning a provider model under an auth that cannot
-// carry one is refused here — with the sentence the identical write in a
-// repository's own file gets — rather than left to be refused at the launch of
-// each repository that inherits it.
+// same rule the repository's own file is held to: a project-layer default
+// pinning a provider model under an auth the layer STATES and that cannot carry
+// one is refused here, rather than at the launch of each repository that
+// inherits it. A layer that states no auth is not judged as vertex (nobody
+// chose it): the repositories state their own, and each launch judges that.
 func TestModelsUseJudgesTheProjectLayerAsALaunchWould(t *testing.T) {
 	modelsWriteHomeWith(t, modelsUseProjectExtra)
-	layer := settingsWriteLayerFile(t, "")
+	layer := settingsWriteLayerFile(t, "defaults:\n  agent:\n    auth: oauth\n")
 	before := readFileString(t, layer)
 
 	_, _, err := execute(t, "models", "use", "coder", "deepseek/deepseek-v4-pro", "--layer", "project")
 	if err == nil {
-		t.Fatal("a provider model was accepted as a project-layer default under no auth")
+		t.Fatal("a provider model was accepted as a project-layer default under oauth")
 	}
 	if !strings.Contains(err.Error(), "api-key") {
 		t.Errorf("the refusal does not say which auth the model needs: %v", err)
