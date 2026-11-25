@@ -40,13 +40,17 @@
      "internal/localcfg/shared.go",
      "internal/settings/registry.go",
      "schemas/settings.schema.json",
-     "internal/cli/testdata/writer_gaps.golden"
+     "internal/cli/testdata/writer_gaps.golden",
+     "internal/cli/settings_set_test.go",
+     "internal/cli/docs_config_management_test.go",
+     "docs/config-management/README.md",
+     "docs/config-management/reconciliation.md"
     ]
    }
   },
   {
    "id": "T0c",
-   "title": "the shared config and settings set refuse repo_images",
+   "title": "the shared config refuses repo_images",
    "run": null,
    "version": null,
    "tier": "small",
@@ -55,9 +59,7 @@
     "prediction": true,
     "paths": [
      "internal/cli/sharedcfg.go",
-     "internal/cli/sharedcfg_test.go",
-     "internal/cli/settings_set.go",
-     "internal/cli/settings_set_test.go"
+     "internal/cli/sharedcfg_test.go"
     ]
    }
   },
@@ -78,7 +80,7 @@
   },
   {
    "id": "U1b",
-   "title": "the Policy stage moves image_map to repo_images",
+   "title": "the Policy stage publishes repo_images",
    "run": null,
    "version": null,
    "tier": "large",
@@ -97,6 +99,23 @@
    }
   },
   {
+   "id": "U1c",
+   "title": "image_map leaves the node after the credentials service is redeployed",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/initflow/stage.go",
+     "internal/cli/init_stages.go",
+     "internal/cli/repo_images_retire.go",
+     "internal/cli/repo_images_retire_test.go"
+    ]
+   }
+  },
+  {
    "id": "R1",
    "title": "launch and update's job images read by provider",
    "run": null,
@@ -111,7 +130,8 @@
      "internal/infra/catalogcheck.go",
      "internal/infra/readiness.go",
      "internal/infra/catalogcheck_test.go",
-     "internal/cli/update_jobimages_test.go"
+     "internal/cli/update_jobimages_test.go",
+     "internal/cli/recipes_skew_catalog_test.go"
     ]
    }
   },
@@ -128,7 +148,9 @@
      "internal/cli/image_catalog.go",
      "internal/cli/image_bake_note.go",
      "internal/cli/image_catalog_test.go",
-     "internal/cli/image_refresh_test.go"
+     "internal/cli/image_refresh_test.go",
+     "internal/cli/doctor_layer.go",
+     "internal/cli/image_map.go"
     ]
    }
   },
@@ -145,7 +167,7 @@
      "internal/cli/image_build_catalog.go",
      "internal/cli/image_build_catalog_test.go",
      "internal/imagebake/imagebake.go",
-     "internal/imagebake/imagebake_test.go",
+     "internal/imagebake/bake_test.go",
      "internal/cli/catalog_bake_e2e_test.go",
      "internal/backend/gcp/catalog.go",
      "internal/config/catalog.go"
@@ -165,7 +187,9 @@
      "internal/cli/image_survey.go",
      "internal/cli/image_survey_test.go",
      "schemas/image-survey.schema.json",
-     "internal/cli/skills_test.go"
+     "internal/cli/skills_test.go",
+     "plugin/skills/images/SKILL.md",
+     "plugin/images_skill_test.go"
     ]
    }
   },
@@ -202,7 +226,8 @@
      "internal/cli/repos_view_test.go",
      "internal/cli/project_repos_rm.go",
      "internal/cli/project_repos_rm_test.go",
-     "scripts/live-checks/check670_test.sh"
+     "scripts/live-checks/check670_test.sh",
+     "internal/cli/project_enroll_converge.go"
     ]
    }
   },
@@ -235,7 +260,9 @@
      "internal/cli/image_map_managed.go",
      "internal/cli/image_map_test.go",
      "website/content/cli-reference.md",
-     "internal/cli/testdata/next_step_allow.golden"
+     "internal/cli/testdata/next_step_allow.golden",
+     "internal/cli/image_catalog.go",
+     "internal/cli/image_survey.go"
     ]
    }
   },
@@ -319,7 +346,8 @@
     "paths": [
      "internal/cli/repo_images_e2e_test.go",
      "internal/cli/update_in_flight_test.go",
-     "internal/catalog/select.go"
+     "internal/catalog/select.go",
+     "internal/catalog/select_test.go"
     ]
    }
   }
@@ -388,12 +416,12 @@
   {
    "task": "R3",
    "needs": "R2a",
-   "reason": "kept: doctor calls effectiveImageMap, which R2a rewrites (F32)"
+   "reason": "kept: R2a edits doctor_layer.go's call site, and R3 writes that file (F32, R16)"
   },
   {
    "task": "S2",
    "needs": "R2a",
-   "reason": "kept: image map set calls noteBakedExposure, which R2a rewrites (F32)"
+   "reason": "kept: R2a edits image_map.go's call site and S2 writes that file and image_catalog.go's help (R16)"
   },
   {
    "task": "S3",
@@ -408,7 +436,7 @@
   {
    "task": "D1a",
    "needs": "R2b",
-   "reason": "kept: the skills lint fails on a field that does not exist yet"
+   "reason": "kept: both write plugin/skills/images/SKILL.md and plugin/images_skill_test.go"
   },
   {
    "task": "D1a",
@@ -432,7 +460,7 @@
   },
   {
    "task": "X1",
-   "needs": "U1b",
+   "needs": "U1c",
    "reason": "kept, behaviour: X1 exercises it end to end"
   },
   {
@@ -459,6 +487,16 @@
    "task": "X1",
    "needs": "S3",
    "reason": "kept, behaviour: X1 exercises it end to end"
+  },
+  {
+   "task": "U1c",
+   "needs": "U1b",
+   "reason": "kept, behaviour: it removes the image_map U1b leaves on the node"
+  },
+  {
+   "task": "S2",
+   "needs": "R2b",
+   "reason": "kept: S2 writes image_survey.go's help after R2b's change to that file"
   }
  ],
  "decoupling": [],

@@ -102,15 +102,16 @@ This document is checked against `origin/main` at `3dfc5cb8f`, on 2026-11-25. It
 - **F16 (Gap, review round 1).** The old member must not come back. A per-key fallback to
   `image_map` would let one written by a CLI from before L1 revive the collision. R2 is per member.
 - **F17 (Gap, review round 1).** These are the known gaps:
-  - **A CLI from before L1, with no local map, reading a migrated node** sees no map. It picks the
-    catalog's default entry instead of the mapped one: a wrong image, not a refusal. This is the
-    gap the owner accepted for CLIs from before L1 (L1's Q2, D3374).
+  - **A CLI from before L1 reading a node that carries `repo_images`** refuses its launch and
+    repository stage with "upgrade Fugaro": `policyReadWith` (`launch_budget.go`) refuses any node
+    with an unknown member. Amended after review round 3: this is loud. The first draft said the
+    CLI ran the default entry.
   - **A CLI from before L1, reading a migrated local config,** fails to load it: `localcfg` decodes
     strictly. That is loud.
-  - **The old credentials service** refuses every build token between `Policy` and
-    `CredentialsService`, and for as long as an `update` stopped between them. The project's
-    scheduled catalog rebuilds are among them. The next `update` ends it. This is the cost of D3376,
-    stated in O3.
+  - **The old credentials service** would have refused every build token between `Policy` and
+    `CredentialsService`, and for as long as an `update` stopped between them, the scheduled
+    catalog rebuilds included. D3376, as amended, removes this window: `image_map` stays until the
+    new service is deployed.
 - **F18 (Rule, review round 1).** `repo_images` sits beside the "repo-level images" vocabulary of
   D1900 (`repoImagesOff`, `internal/cli/image.go`), which means a repository's own image rows. R11
   keeps the two apart.
@@ -189,6 +190,29 @@ This document is checked against `origin/main` at `3dfc5cb8f`, on 2026-11-25. It
   - `noteBakedExposure` (`image_bake_note.go`) is called by `image map set`.
 
   The plan orders those tasks.
+- **F33 (Wrong, review round 3).** R1 had three faults:
+  - It took the first hit, so D3373's two keys never happened: with a local entry present, the
+    admits were never read.
+  - Its step 3 read whatever checkout `update` runs in, which for another repository gives a wrong
+    provider.
+  - It dropped a name that only a wildcard admit names, which a job does reach today.
+
+  R1 is amended.
+- **F34 (Gap, review round 3).** Helpers change signature under callers in later tasks:
+  - `reposViewAllowOf` and `reposViewRowOf` (R3), called from `project_enroll_converge.go`;
+  - `effectiveImageMap` (R2a), called from `doctor_layer.go`;
+  - `mappedEntryName` (R1), called from `recipes_skew_catalog_test.go`.
+
+  R16 fixes this.
+- **F35 (Gap, review round 3).**
+  - The registry's row count is pinned (`cfmRegistryRows` in
+    `docs_config_management_test.go`, and `docs/config-management/`'s README and reconciliation).
+  - The generated CLI reference is byte-checked by `ee/clidoc`'s `TestCliReferenceIsCurrent`.
+  - The images skill's survey lines are read by the skills lint against the survey's table.
+  - `check196.sh` looks the map up by bare name.
+  - `check-500.sh` parses the text survey too.
+
+  Each lands in the task that changes what it pins.
 
 ## Decisions
 
@@ -203,23 +227,31 @@ were raised here and answered the same day.
 | D3373 | Q4: a name at two providers | **Both keys, same entry.** As recommended |
 | D3374 | Q5: when it ships | **One release after L1**, as L8. As recommended |
 | D3375 | An enrolled name whose provider `update` cannot find (no local provider, no admit naming it, default branch unread) | **Every provider** (`github` and `bitbucket`): today's behaviour exactly. As recommended |
-| D3376 | The old `image_map` member when `Policy` writes `repo_images` | **Removed in the same write.** As recommended. Review round 1 found that the old credentials service's refusal can outlast "seconds" (F17), and that a CLI from before L1 picks the default entry rather than refusing. Both are stated in F17, and O3 asks the owner to confirm |
+| D3376 | The old `image_map` member when `Policy` writes `repo_images` | First answer: removed in the same write. **Amended after review, by the owner on 2026-11-25** (F17): `Policy` writes `repo_images` and keeps `image_map`. A step after `CredentialsService` removes `image_map`, so the old service never reads a node without a map it knows. While both members are on the node, `repo_images` wins (R2). An `update` that stops between the two steps leaves both members, which is harmless, and the next `update` removes `image_map` |
 | D3377 | A catalog entry's `Source.Repo` (F9) | **A follow-up, not L11.** As recommended |
 
 ## Resolutions
 
-- **R1.** **Provider resolution in the migration**, in order. Amended after review rounds 1 and 2
-  (F13, F27).
+- **R1.** **Provider resolution.** Amended after review rounds 1, 2 and 3 (F13, F27, F33). The
+  sources are:
   1. the local config's entry (`localcfg.Repo.Provider`);
-  2. the providers of the node's own `allow_repos` entries that name the repository exactly (no
-     wildcard). This is read from the published policy on `main` today, so it needs nothing from
-     L5;
-  3. the checkout's `git.provider`, when this machine has a checkout (`repoProvider`);
-  4. D3375 (every provider).
+  2. the providers of the node's own `allow_repos` entries that admit the name, an exact entry or a
+     wildcard that matches it (`projectpolicy.MatchRepo`). This is read from the published policy
+     on `main` today, so it needs nothing from L5;
+  3. the `git.provider` of a checkout of *that same repository* (its slug matches), never the
+     checkout `update` happens to run in;
+  4. D3375: every provider.
 
-  A name that is none of these, so not enrolled at all, is dropped with one line, as the spec says.
-  **The "enrolled" set** is steps 1 and 2: the local config's `repos` at their providers, plus the
-  exact admits.
+  **Two modes.**
+  - **The migration takes the union of 1 and 2** (D3373: a local GitHub entry and a Bitbucket admit
+    give two keys). Only when both are empty does it try 3, then 4.
+  - **A writer of one key** (`repoImageKey`, used by `image map set` and `repos add`) takes the
+    first hit in order 1, 2, 3. It refuses, naming the `provider/owner/name` form, when 1 and 2
+    disagree or nothing answers.
+
+  **Enrolled** means admitted by 1 or 2, wildcards included. A name that is in neither is dropped
+  with one line, because no job reaches it today either. A name only a wildcard admits is kept
+  (F33).
 - **R2.** **The temporary read of the old member** (D3372). It is per member, never per key (F16).
   - Any `repo_images` wins over any `image_map`: the local config's `repo_images` first, then the
     node's. `image_map`, local first, is read only when neither place has `repo_images`.
@@ -289,37 +321,35 @@ were raised here and answered the same day.
   lost. One helper, `repoImageKey`, written in U1a, turns a repository into its key: R1's provider
   order, then `projectpolicy.Canonical`. Every writer uses it.
 - **R14.** **`update` rewrites the local config at the `Policy` stage** (F26), in the same step that
-  publishes from it, with the file's backup (`userSave`). In a coding agent's session the `Policy`
-  stage is skipped, as it is today, so neither file changes, and the readers keep the legacy map
-  (R2).
+  publishes from it, with the file's backup (`userSave`). The local file drops `image_map` at once,
+  because no older service reads it. The node keeps `image_map` until the step after
+  `CredentialsService` removes it (D3376 as amended). In a coding agent's session both stages are
+  skipped, as they are today, so neither file changes, and the readers keep the legacy map (R2).
+- **R16.** **A task that changes a helper's signature edits every caller in the same task**, so
+  `main` builds after each merge (F34). An edge orders the caller's own task after it. Where a
+  caller lives in another plan's file, the task adds a new helper beside the old one, and X1 removes
+  the old one.
 - **R15.** **The settings registry keeps both rows** (F24). `repo_images` is added beside
   `image_map` in the task that adds the field (T0b), with `settings.schema.json`, because the
   registry tests cover every config field.
 
 ## Open tensions
 
-- **D3376 against its stated cost (O3).** The owner chose to remove the old member in the same
-  write, when the stated cost was "seconds". Review found the old credentials service can refuse
-  build tokens for longer (F17). This waits on the owner's confirmation. The plan builds D3376 as
-  answered.
+None. The tension over D3376's cost was settled by the owner's amendment on 2026-11-25.
 
 ## Open items
 
 - **O1.** A follow-up one release after L11: remove R2's read of the old member.
 - **O2.** A follow-up spec for `Source.Repo` (D3377). L3 moves the catalog's records and may carry
   it.
-- **O3.** The cost of D3376 (F17): the old credentials service refuses build tokens from `Policy`
-  until `CredentialsService`, longer if an `update` stops between them, and that includes the
-  scheduled catalog rebuilds. The owner chose D3376 being told only "for the seconds until its own
-  redeploy". A request to confirm it, now that the longer case is stated. The alternative is to
-  remove `image_map` in a step after `CredentialsService`.
+- **O3.** Closed. The owner amended D3376 on 2026-11-25.
+- **O4.** Review round 3's fixes have had no independent re-read, because review stops at three
+  rounds. The first task runs meet them.
 
 ## UNVERIFIED
 
-- **V1.** That every published admit names its provider. `allow_repos` patterns are
-  `provider/owner/name` by `projectpolicy.ValidPattern`, but a wildcard such as `github/acme/*`
-  covers names `update` cannot list. The task that implements R1 settles this; a wildcard admit
-  without a listed name leaves R1 to step 3 or 4.
+- **V1.** Closed by R1, as amended in round 3. `allow_repos` patterns name their provider
+  (`projectpolicy.ValidPattern`), and a wildcard that matches the name gives its provider.
 - **V2.** That no console or mobile code reads `image_map`. `git grep` finds none in `console/`,
   `mobile/` or `shared/`. Check 940 confirms it on a live installation.
 - **V3.** Whether project `fugaro` holds a Bitbucket repository for Check 940's third step. The
