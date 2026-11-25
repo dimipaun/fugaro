@@ -233,14 +233,15 @@ func TestUpdateRunsTheCheckoutTheCloudStepCannotSee(t *testing.T) {
 		if len(*ran) != 0 {
 			t.Errorf("a checkout already at this release refreshed its job images: %q\n%s", *ran, out)
 		}
-		// The leftover pin is the whole of what the run has to do here: the
-		// plugin stage takes it out and installs nothing, because the machine
-		// already has this release's plugin (U5).
-		if got := stateOf(res, string(initflow.Plugin)); got != initflow.Changed {
-			t.Errorf("the plugin stage is %q on a checkout still carrying the pin an older fugaro left, want %q\n%s", got, initflow.Changed, out)
+		// The leftover pin is nothing this run does: since U6a the plugin stage
+		// installs the machine's plugin and leaves the checkout alone, and the
+		// pin is a notice the run prints (repo_notices.go). The machine already
+		// has this release's plugin, so the stage has nothing to do at all.
+		if got := stateOf(res, string(initflow.Plugin)); got != initflow.Done {
+			t.Errorf("the plugin stage is %q on a checkout still carrying the pin an older fugaro left, want %q\n%s", got, initflow.Done, out)
 		}
-		if got := convergeRead(t, settings); got != "{}\n" {
-			t.Errorf("the checkout's settings after the run:\n%s\nwant the leftover pin taken out:\n%s", got, "{}\n")
+		if got := convergeRead(t, settings); got != wiredAt("v0.5.1") {
+			t.Errorf("the checkout's settings after the run:\n%s\nwant the leftover pin left alone (U6a):\n%s", got, wiredAt("v0.5.1"))
 		}
 		if len(f.Changes(t)) != 0 {
 			t.Errorf("a run whose machine already has this release's plugin reinstalled it: %q\n%s", f.Changes(t), out)
@@ -272,11 +273,11 @@ func TestUpdateRunsTheCheckoutTheCloudStepCannotSee(t *testing.T) {
 		if res.Failed != nil || len(res.Left) != 0 {
 			t.Fatalf("a current checkout was not done: failed %+v, left %+v\n%s", res.Failed, res.Left, out)
 		}
-		// The plugin stage writes the leftover pin out (U5); the behind
-		// project-scope install is not what it reads for the machine's own, so
-		// the checkout is still done and nothing is built.
-		if got := stateOf(res, string(initflow.Plugin)); got != initflow.Changed {
-			t.Errorf("the plugin stage is %q beside a behind project install, want %q: the install it maintains is current and the pin is the run's own write\n%s", got, initflow.Changed, out)
+		// The plugin stage writes nothing here (U6a): the install it maintains
+		// is current, the leftover pin is a notice, and the behind project-scope
+		// install is not what it reads for the machine's own.
+		if got := stateOf(res, string(initflow.Plugin)); got != initflow.Done {
+			t.Errorf("the plugin stage is %q beside a behind project install, want %q: the install it maintains is current and the pin is not this run's write\n%s", got, initflow.Done, out)
 		}
 		if got := stateOf(res, checkoutStageName); got != initflow.Done {
 			t.Errorf("the checkout stage is %q, want %q: the run has nothing to move\n%s", got, initflow.Done, out)
@@ -284,12 +285,12 @@ func TestUpdateRunsTheCheckoutTheCloudStepCannotSee(t *testing.T) {
 		if len(*ran) != 0 {
 			t.Errorf("a checkout already at this release refreshed its job images: %q\n%s", *ran, out)
 		}
-		if got := convergeRead(t, settings); got != "{}\n" {
-			t.Errorf("the checkout's settings after the run:\n%s\nwant the leftover pin taken out:\n%s", got, "{}\n")
+		if got := convergeRead(t, settings); got != wiredAt("v0.5.1") {
+			t.Errorf("the checkout's settings after the run:\n%s\nwant the leftover pin left alone (U6a):\n%s", got, wiredAt("v0.5.1"))
 		}
 		// The record is Claude Code's own, and the project-scope entry in it is
-		// the trusted folder's install, not this run's to move: taking the pin
-		// out of the checkout leaves it exactly as it was (D949, U2).
+		// the trusted folder's install, not this run's to move: the pin the
+		// checkout carries is not written out any more either (D949, U2, U6a).
 		if got := convergeRead(t, record); !strings.Contains(got, `{"scope":"project","version":"0.5.0","projectPath":"`+root+`"}`) {
 			t.Errorf("the run rewrote Claude Code's record of the project-scope install:\n%s", got)
 		}
