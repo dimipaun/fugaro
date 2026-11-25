@@ -502,7 +502,6 @@ export const SPAWN_FLAGS: readonly string[] = Object.freeze([
   '--mine',
   '--pr',
   '--project-wide',
-  '--from-store',
   // The graph stream's own mode word (the graph plan's CG9b), and the graph
   // watch's argv is its only user: it is a fixed word of that row's command path
   // (`graph --watch --json`) rather than a declared flag, so nothing a renderer
@@ -828,10 +827,6 @@ export const SPAWN_KIND_FOR: Record<ArgumentKind, SpawnArgumentKind> = Object.fr
   pullRequest: 'pullRequest',
   flag: 'boolean',
   link: 'value',
-  // `gitProvider` is the one kind whose operation spawns nothing
-  // (`link.openPullRequest`, K2a): the mapping is total over Task 1.2's kinds,
-  // and `value` is what a bare word would reach an argv as if one ever did.
-  gitProvider: 'value',
   installationName: 'value',
   installationCheckout: 'value',
   // The graph read's scope (CG9a): one word behind `--source`, held to the
@@ -879,12 +874,12 @@ export const SPAWN_KIND_FOR: Record<ArgumentKind, SpawnArgumentKind> = Object.fr
   imageDockerfile: 'equalsValue',
   imageTags: 'equalsList',
   imageDescription: 'equalsText',
-  // `licenceKey` is the second kind whose operation spawns nothing
-  // (`licence.read`/`licence.save`, S2.7, carry `command: null`), for
-  // `gitProvider`'s reason: the mapping is total over ipc.ts's kinds, and
-  // `value` is what a bare word would reach an argv as if one ever did -- which
-  // is the one thing a licence key must never do (S2.1's hand-off: the key
-  // travels in a child's environment and in no argv).
+  // `licenceKey` is the kind whose operation spawns nothing
+  // (`licence.read`/`licence.save`, S2.7, carry `command: null`): the mapping is
+  // total over ipc.ts's kinds, and `value` is what a bare word would reach an
+  // argv as if one ever did -- which is the one thing a licence key must never
+  // do (S2.1's hand-off: the key travels in a child's environment and in no
+  // argv).
   licenceKey: 'value',
 })
 
@@ -1587,83 +1582,11 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     dirFlag: false,
   },
   {
-    // The project view (Bitbucket credentials T1.2, D364): every repository of
-    // the installation, from the view the coordinator's sweep last stored. The
-    // two flags are fixed words rather than declared arguments -- the screen has
-    // no control that turns either off -- so `args` is empty and `argvFor` emits
-    // exactly the three words below plus `--project`/`--config` (rule 3; the
-    // command carries the cloud group's two, and it is a read of a project, so
-    // it is not on `COMMANDS_WITHOUT_PROJECT`).
-    //
-    // `--repo` and `--since` are deliberately absent: the read is about the
-    // project's whole repository set, and the stored view carries no time for a
-    // window to filter (`src/main/ipc.ts`'s comment on the operation says both
-    // at length). `--from-store` is on `SPAWN_FLAGS` and on no never-row: it is
-    // the read that touches no credential, and it is the whole point of this
-    // row that the console may make it.
-    operation: 'coordinator.status',
-    words: ['coordinator', 'status', '--from-store', '--all', '--json'],
-    takesProject: true,
-    args: [],
-    dirFlag: false,
-  },
-  {
-    // The pull request read (coordinator v2 C3, D816): `coordinator show --repo
-    // <owner/name> --pr <n> --json`, one pull request as the host has it, the
-    // description included. The two arguments are the operation's own and both
-    // required (`src/main/ipc.ts`): the repository as the CLI's canonical
-    // `owner/name` and the number as the digits `IntVar --pr` reads, which is
-    // what the `pullRequest` kind is for.
-    //
-    // **This is the second row whose child mints a credential of the host's**:
-    // `run.launch` is the first, and its child is a run whose token can write.
-    // This one's is the person read set's own read-only GitHub App installation
-    // token (contents, pull requests and metadata, all read) -- so what the
-    // table lets this argv carry is the whole security question, and the answer
-    // is the two arguments and nothing else: no `--token`, no `--host`, no
-    // `--url`, no `--dir` and no positional word. `--json` is the only flag the
-    // row fixes, and every other word it could emit is refused by
-    // `assertArgvFlags` unless it is on `SPAWN_FLAGS` and off `NEVER_REACHABLE`.
-    // It takes `--project`/`--config` like every other read (rule 3): the CLI
-    // resolves the repository's provider the way the project view does.
-    operation: 'coordinator.show',
-    words: ['coordinator', 'show', '--json'],
-    takesProject: true,
-    args: [
-      { key: 'repo', flag: '--repo', kind: 'value' },
-      { key: 'pr', flag: '--pr', kind: 'pullRequest' },
-    ],
-    dirFlag: false,
-  },
-  {
-    // The declarations read (coordinator v2 C4, D827): `coordinator intents --all
-    // --json`, what the fleet's writers have stored, newest first. It is
-    // `coordinator status`'s shape rather than `coordinator show`'s -- `words`
-    // carries the whole argv and `args` is empty -- and that is the security
-    // answer here: there is no field a renderer could fill, so no word of the
-    // argv is caller-influenced at all.
-    //
-    // `--all` is a fixed word and not a control. The stored view is the caller's
-    // own database node (`declared_by` included) and the command wraps it
-    // project-wide itself; there is no argument that narrows it to one
-    // repository, and `--repo`/`--since` -- which the CLI does have -- are on no
-    // row here. It takes `--project`/`--config` like every other read (rule 3),
-    // because the command resolves the local config the way the project view
-    // does, and it writes nothing: no credential of the host's is minted, no
-    // provider is opened and nothing is sent anywhere.
-    operation: 'coordinator.intents',
-    words: ['coordinator', 'intents', '--all', '--json'],
-    takesProject: true,
-    args: [],
-    dirFlag: false,
-  },
-  {
     // The orchestrator map (the console-fixes plan's CG7a; C-ORCH's document,
     // D3221): `fugaro orchestrator map --json`, the project's active
     // orchestrators, their connections and the coordinator's heartbeat, which is
-    // what the Coordinator tab draws. It is `coordinator status`'s shape rather
-    // than `coordinator show`'s -- `words` carries the whole argv and `args` is
-    // empty -- and that is the security answer here too: there is no field a
+    // what the Coordinator tab draws. `words` carries the whole argv and `args`
+    // is empty, and that is the security answer here: there is no field a
     // renderer could fill, so no word of the argv is caller-influenced at all.
     //
     // **The command is registered from `ee/`** (`ee/orchestrator/cli/map.go`) and

@@ -22,6 +22,7 @@
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+LIVE_CHECK_LIB=${LIVE_CHECK_LIB:-$here/lib}
 script=$here/check628.sh
 work=$(mktemp -d)
 cleanup_all() {
@@ -68,6 +69,8 @@ write_fake_gcloud() { # dir
   mkdir -p "$1/bin"
   cat >"$1/bin/gcloud" <<'GCLOUD_EOF'
 #!/usr/bin/env bash
+. "$LIVE_CHECK_LIB/strict.sh"
+strict_gcloud_verify "$LIVE_CHECK_LIB/allow/check628.gcloud" "$@" || exit $?
 # A stand-in for `gcloud`, for scripts/live-checks/check628.sh's test only. It
 # answers the account read, the run's record and the two log reads — the last
 # two from whatever files the case wrote. Nothing here reaches a real project.
@@ -136,6 +139,8 @@ write_fake_fugaro() { # dir
 # come from files the case wrote, and every call is logged with the directory it
 # was made in.
 set -euo pipefail
+. "$LIVE_CHECK_LIB/strict.sh"
+strict_fugaro_verify "$@" || exit $?
 printf 'fugaro %s (in %s)\n' "$*" "$PWD" >>"$FAKE_LOG_DIR/fugaro.calls"
 mode=${FAKE_MODE:-default}
 
@@ -516,6 +521,7 @@ run_check() { # run_check DIR ENV... [-- ARGS...]
   # marker again, and a variable given as an argument wins over `env -u`.
   env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_REMOTE -u CURSOR_AGENT -u AI_AGENT \
     PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
+    LIVE_CHECK_LIB="$LIVE_CHECK_LIB" \
     FAKE_LOG_DIR="$dir/logs" FAKE_JSON_DIR="$dir/json" \
     CHECK628_SANDBOX="$dir/sandbox" \
     CHECK628_RUN_TIMEOUT_SECONDS="${CHECK628_RUN_TIMEOUT_SECONDS:-10}" \
@@ -910,6 +916,46 @@ test_an_unknown_argument_is_refused() {
   expect_contains "$err" "unknown argument: --wat" "an unknown argument: the message"
 }
 
+test_preflight_passes_and_writes_nothing() {
+  local dir=$work/preflight-ok
+  prepare "$dir"
+  run_check "$dir" -- --preflight
+  expect_status "$status" 0 "a preflight"
+  expect_contains "$err" "check628: preflight passed" "a preflight: the verdict"
+  expect_contains "$err" "read: $dir/sandbox is a checkout of the installation $installation" "a preflight: the installation it read"
+  expect_contains "$err" "read: the project layer sets agent.crafts.coder.model = $model" "a preflight: the layer it read"
+  expect_contains "$err" "read: fugaro craft ls --json resolves the coder craft to model $model" "a preflight: the craft it read"
+  expect_contains "$err" "read: $model is in the published node's allowed_models" "a preflight: the allow-list it read"
+  expect_absent "$fugaro_calls" "fugaro run " "a preflight: nothing is launched"
+  expect_absent "$out" "CHECK 628 RESULT" "a preflight: no RESULT block"
+  assert_scratch_removed "$dir" "a preflight"
+}
+
+test_preflight_reports_every_blocker_at_once() {
+  local dir=$work/preflight-blocked
+  prepare "$dir" repo-source
+  run_check "$dir" FAKE_MODE=node-other-allow-list -- --preflight
+  expect_status "$status" 1 "a blocked preflight"
+  expect_contains "$err" "BLOCKED layer:" "a blocked preflight: the layer"
+  expect_contains "$err" "BLOCKED craft-ls:" "a blocked preflight: the craft"
+  expect_contains "$err" "BLOCKED allow-list:" "a blocked preflight: the allow-list"
+  expect_contains "$err" "fix: fugaro update" "a blocked preflight: the layer's fix"
+  expect_contains "$err" "fix: fugaro models add $model" "a blocked preflight: the allow-list's fix"
+  expect_contains "$err" "found 3 blocker(s)" "a blocked preflight: every blocker at once"
+  expect_absent "$fugaro_calls" "fugaro run " "a blocked preflight: nothing is launched"
+  expect_absent "$out" "CHECK 628 RESULT" "a blocked preflight: no RESULT block"
+  assert_scratch_removed "$dir" "a blocked preflight"
+}
+
+test_preflight_is_refused_for_a_coding_agents_session() {
+  local dir=$work/preflight-agent
+  prepare "$dir"
+  run_check "$dir" CLAUDECODE=1 -- --preflight
+  expect_status "$status" 1 "a preflight in a coding agent's session"
+  expect_contains "$err" "a coding agent's session" "a preflight in a coding agent's session: the refusal"
+  expect_absent "$fugaro_calls" "fugaro " "a preflight in a coding agent's session: nothing is read"
+}
+
 # Sharding, so a Go test could run these side by side: CHECK_TEST_SHARD="i/n"
 # runs every n-th test starting at i (each case works in its own directory under
 # $work), CHECK_TEST_ONLY=name runs that one alone.
@@ -963,6 +1009,9 @@ t test_belong_is_refused_by_name
 t test_an_installation_naming_belong_stops_the_check
 t test_kept_scratch_is_reported
 t test_an_unknown_argument_is_refused
+t test_preflight_passes_and_writes_nothing
+t test_preflight_reports_every_blocker_at_once
+t test_preflight_is_refused_for_a_coding_agents_session
 
 if [ "$failures" -ne 0 ]; then
   echo "check628_test.sh: $failures failure(s)" >&2
