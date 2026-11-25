@@ -104,6 +104,14 @@ func TestDoctorFlagsASwitchTheRouteShadows(t *testing.T) {
 	if strings.Contains(shadowed.Problem, "repo-a") {
 		t.Errorf("the shadowed line names a repository whose route is the workspace's: %s", shadowed.Problem)
 	}
+	// The shadow is the one state of this line that asks a person to act, so
+	// the command its fix names has to be one this CLI has: the fix named
+	// `fugaro creds rm` once, and creds carries set and ls only, so a person
+	// following the warning landed on an unknown command. It is resolved here
+	// on the real command tree, so a rename on either side fails this.
+	if got := commandNamedInFix(t, shadowed.Fix); got != "accounts rm" {
+		t.Errorf("the shadowed line's fix names %q, want accounts rm: the command that removes an account and the admission its allow-list is published as", got)
+	}
 
 	// A pin that names no service address is the same shadow reached another
 	// way: the project publishes no route at all, so no repository of it can
@@ -127,6 +135,35 @@ func TestDoctorFlagsASwitchTheRouteShadows(t *testing.T) {
 	if !unread.unread || unread.OK {
 		t.Errorf("unread = %+v, want an unread line", unread)
 	}
+}
+
+// commandNamedInFix is the path of the command a check's fix names, resolved on
+// the real root: the fix a person acts on has to name a command this CLI has,
+// and a name nothing resolves is the unknown command they would have run. The
+// invocation is the first backticked one in the fix, and the words after the
+// program name are what the tree is walked with.
+func commandNamedInFix(t *testing.T, fix string) string {
+	t.Helper()
+	open := strings.Index(fix, "`")
+	if open < 0 {
+		t.Fatalf("the fix names no command: %s", fix)
+	}
+	invocation, _, ok := strings.Cut(fix[open+1:], "`")
+	if !ok {
+		t.Fatalf("the fix's command is not closed: %s", fix)
+	}
+	words := strings.Fields(invocation)
+	if len(words) < 2 {
+		t.Fatalf("the fix names no command after the program: %q", invocation)
+	}
+	cmd, _, err := NewRootCmd().Find(words[1:])
+	if err != nil || cmd == nil || cmd.Root() == cmd {
+		t.Fatalf("the fix names `%s`, which this CLI does not have: %v", invocation, err)
+	}
+	if cmd.Parent() == nil {
+		return cmd.Name()
+	}
+	return cmd.Parent().Name() + " " + cmd.Name()
 }
 
 // TestDoctorMemberChecksCarryThePersonalTokenLine: the member's line inside

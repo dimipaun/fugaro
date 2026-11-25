@@ -444,7 +444,7 @@ func workspacePersonalLine(lc *localcfg.Config, on bool, rc routeConfig, routes 
 	}
 	return doctorCheck{ID: id, Severity: "warning",
 		Problem: fmt.Sprintf("%s and the switch %s is on, and %d of its repositories take their model credential from this project's own copy (%s): a personal token is served only where the model route is the workspace, so the switch is shadowed there until that credential is removed (D3141, WC11)", where, creds.PersonSwitchKey, len(shadowed), strings.Join(shadowed, ", ")),
-		Fix:     "remove the credential that serves them (`" + selfCommand() + " creds rm <name>`), or turn the switch off: while a repository's model route is this project's, no personal token is served in it"}
+		Fix:     "remove the account that serves them (`" + selfCommand() + " accounts rm <name>` removes it, its admission and its secret), or turn the switch off: while a repository's model route is this project's, no personal token is served in it"}
 }
 
 // doctorWorkspacePinCheck reports the pin's own half of the membership: the
