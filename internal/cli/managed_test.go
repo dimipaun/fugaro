@@ -1323,7 +1323,7 @@ func TestManagedPluginStageApplyIsTheInstallUnderEveryMarker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(src), "newPluginStage(e), e.repo)") || !strings.Contains(string(src), "e.runStages(ctx, stages, e.options())") {
+	if !strings.Contains(string(src), "newPluginStage(e), e.repo)") || !strings.Contains(string(src), "e.r.runStages(ctx, stages, e.options())") {
 		t.Error("init_stages.go no longer hands the plugin stage to the loop with e.options(): re-check what gates its Apply")
 	}
 	for _, path := range mustGlob(t, "*.go") {

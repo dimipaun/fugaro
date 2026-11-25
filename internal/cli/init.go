@@ -696,6 +696,20 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	return cmd
 }
 
+// runStages runs the stage loop with the options a caller built, with the loop
+// marked as running while it does: a stage reports its per-repository lines
+// through the same entry point a step does, and this is what tells the two
+// apart (reportRepos). Every loop this run drives goes through here — the
+// converge, the wizard's questions, `apply`, `project enroll`, the accounts
+// and the after-write door — so a stage's lines are a stage's wherever they
+// were reported from.
+func (r *initRun) runStages(ctx context.Context, stages []initflow.Stage, o initflow.Options) (*initflow.Result, error) {
+	prev := r.inStages
+	r.inStages = true
+	defer func() { r.inStages = prev }()
+	return initflow.Run(ctx, stages, o)
+}
+
 // initRun is one run of the converge, whichever front door it is (task
 // W2.1: the verb it used to name was `init`, which is a tombstone now).
 type initRun struct {
@@ -739,6 +753,13 @@ type initRun struct {
 	// (refreshOptions.detail) writes its lines where that converge keeps its
 	// own, instead of onto a screen that run has already accounted for (§9.2).
 	detail io.Writer
+	// inStages is whether the stage loop is running: a stage reports its
+	// per-repository lines while it does and a step after the loop reports
+	// them outside it, and only a step's are the run's notices
+	// (reportRepos, runStages). It is the run's and not the engine's because
+	// the wizard's questions are a loop of their own, asked before there is an
+	// engine to drive them (gatherInputs).
+	inStages bool
 	// cover is the run's own cover (initEngine.cover), set by the one door that
 	// has no review screen: `fugaro apply` converges the installation as it is
 	// and asks nothing, so its steps' plans are judged by the cover the review

@@ -195,10 +195,10 @@ func (e *initEngine) repos(ctx context.Context) ([]repoView, []string) {
 // reads the same lines back off the stage and prints them under its header
 // (RepoLines, printRepoLines); a step reports with no loop running and has no
 // stage to carry them, so its lines are the run's notices (notices). The two
-// are told apart here, by the loop's own phase (inStages), because a stage's
+// are told apart here, by the run's own phase (inStages), because a stage's
 // lines are on its result and must never be the document's notices twice.
 func (e *initEngine) reportRepos(name string, lines []initflow.RepoLine) {
-	if e.inStages {
+	if e.r.inStages {
 		e.reposState.report(name, lines)
 		return
 	}

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -212,10 +213,10 @@ func TestNewRepoLineSanitises(t *testing.T) {
 // its header, so a reader that took them from both would count every
 // repository twice (U13, R12).
 func TestReposNoticesAreTheStepsAlone(t *testing.T) {
-	e := &initEngine{}
+	e := &initEngine{r: &initRun{}}
 	lines := []initflow.RepoLine{{Repo: "acme/app", State: initflow.RepoNeedsYou, Detail: "the pin"}}
 
-	e.inStages = true
+	e.r.inStages = true
 	e.reportRepos("plugin", lines)
 	if got := e.notices(); len(got) != 0 {
 		t.Fatalf("a stage's lines came back as the notices %+v, want none: a stage's lines are its own, and the loop reads them off the stage", got)
@@ -224,7 +225,7 @@ func TestReposNoticesAreTheStepsAlone(t *testing.T) {
 		t.Errorf("the stage's report was not recorded: the run keeps what a stage reported")
 	}
 
-	e.inStages = false
+	e.r.inStages = false
 	e.reportRepos("backlog", lines)
 	got := e.notices()
 	if len(got) != 1 {
@@ -232,5 +233,30 @@ func TestReposNoticesAreTheStepsAlone(t *testing.T) {
 	}
 	if got[0].Step != "backlog" || got[0].Repo != "acme/app" || got[0].State != initflow.RepoNeedsYou || got[0].Detail != "the pin" {
 		t.Errorf("the notice is %+v, want the step's own name on the line it reported", got[0])
+	}
+}
+
+// TestTheLoopsGoThroughRunStages: a stage reports its per-repository lines
+// through the same entry point a step does (C1), and the run tells the two
+// apart by whether the stage loop is running (initRun.inStages, reportRepos).
+// That is right only while every loop the run drives marks it — the converge,
+// the wizard's questions, `apply`, `project enroll`, the accounts and the
+// after-write door — so this pins the one place that may call the loop.
+func TestTheLoopsGoThroughRunStages(t *testing.T) {
+	var loops []string
+	for _, path := range mustGlob(t, "*.go") {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(b), "initflow.Run(") {
+			loops = append(loops, path)
+		}
+	}
+	if len(loops) != 1 || loops[0] != "init.go" {
+		t.Errorf("the stage loop is called from %v, want init.go alone (runStages): a loop that does not mark the run as running files its stages' lines as a step's notices, and the document would carry them twice", loops)
 	}
 }
