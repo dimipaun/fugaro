@@ -150,6 +150,12 @@ func TestStepsMatchesRealSettingKeys(t *testing.T) {
 		{"providers.*.auth", []string{initflow.Policy, initflow.CredentialsCopy}},
 		{"providers.*.secret", []string{initflow.Policy, initflow.CredentialsCopy}},
 		{"providers.*.route_fee_pct", []string{initflow.Policy, initflow.CredentialsCopy}},
+		// The opt-in fact: the key the operator's own command writes to put
+		// this installation on Cloud Batch, which is live when the compute
+		// root is applied (BR6, R2, D3110). The publish is restated beside it
+		// because this row replaces the registry's answer for the key rather
+		// than adding to it (R15).
+		{"batch.opt_in", []string{initflow.Policy, initflow.Compute}},
 	} {
 		got, ok := Steps(Change{Kind: Setting, Key: tc.key})
 		if !ok {

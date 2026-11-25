@@ -27,9 +27,11 @@
 // --entry`). It is what makes a second repository's checkout bakeable at all,
 // and it is F19's single point of compromise: the clone runs in a build step
 // Fugaro generates entirely, whose Dockerfile the entry cannot alter, so no
-// entry RUN can read the credential (B8 — the stages this package composes into
-// the entry's own definition carry the credential until B8 moves the clone out
-// of it).
+// entry RUN can read the credential (B8). That step is the only one of an
+// entry's build that holds it: the stages this package composes into the entry's
+// own definition copy the checkouts out of the image it tagged (BakedImage) and
+// name no secret at all, and an entry that mounts the credential itself is
+// refused by name (B9, D2311).
 //
 // What that leaves is F23: a job whose image carries several checkouts can read
 // the others' source, which is the exposure F18 named. Its answer is not a
@@ -38,33 +40,36 @@
 //
 // # The generated stages
 //
-// One stage per repository the entry serves. Each bakes at Path(slug) — a
-// per-slug directory under Root, so an image can hold several repositories'
-// checkouts without them colliding — and never at /work/repo: the work
-// directory an old image baked at belongs to the repository that authored its
-// Dockerfile, and an engine stage that wrote there would hand one repository's
+// One stage per repository the entry serves, and every one of them is a COPY:
+// the checkout arrives from the image the clone step built (BakedImage), which
+// holds each of them at its repository's slug, and the stage copies it to
+// Path(slug) — a per-slug directory under Root, so an image can hold several
+// repositories' checkouts without them colliding — and never to /work/repo: the
+// work directory an old image baked at belongs to the repository that authored
+// its Dockerfile, and a stage that wrote there would hand one repository's
 // checkout to every job the image serves. A job finds its own checkout at its
 // slug's path (IS8).
 //
-// The stage for the repository the build runs for is the one a nightly rebuild
-// composes again, so it takes REPO_URL, BASE_BRANCH and FUGARO_COMMIT as build
-// arguments and holds REPO_URL to the repository it was composed for (Stage).
-// The stages for the entry's other repositories spell their clone URL and
-// branch into the definition, because the build's own arguments name another
-// repository and the build holds no commit of a repository it does not run for
-// (OtherStage).
+// Nothing the definition carries names a build argument or a secret: the marker
+// line each stage opens with holds the repository's slug, its clone URL and its
+// branch, and it is what the clone step reads the definition for (BakedRepos) —
+// which is how a rebuild of an entry that bakes produces the same checkouts
+// without the entry's own build seeing a credential. A definition an earlier
+// release composed, whose stages cloned inside the entry's own build, carries
+// markers with no URL: it is refused rather than built (internal/cli's
+// catalogBakedRepos), because no build of it could be.
 //
-// Nothing of a credential reaches a layer: the clone mounts the git-credentials
-// BuildKit secret (docs/project-image-catalog, D1150) and no ARG, ENV or COPY
-// names a token, and the one secret mount of a step is what B8 replaces with the
-// build route's narrowing.
+// What clones, and with what, is the clone step's own business
+// (internal/backend/gcp's catalog_clone.go): the pinned base, the system git
+// config off, the credential out of the container's own secret mount, and the
+// revoke at the end. A repository a checkout declares as a submodule, and that
+// the entry's repositories do not cover, fails that build naming the repository
+// rather than being fetched.
 //
-// Every stage ends with the submodule guard: a repository a checkout declares as
-// a submodule, and that the build's credential does not cover, fails the build
-// naming the repository rather than being fetched (submoduleGuard). The
-// credential reaches one host, so the guard holds a submodule's own host to the
-// plan's: a repository of the entry's owner and name on some other host is not
-// one this build's credential covers.
+// The marker line is what a reader holding nothing but the bytes finds the
+// checkout by as well (BakedSlug, BakedDir), and the build's own repository is
+// the last of the stages: the last stage is the one that runs, so the checkout a
+// definition is known by is the one the build baked as its own (Append).
 //
 // # When nothing is baked
 //
@@ -415,280 +420,143 @@ func Path(slug string) (string, error) {
 	return Root + "/" + slug, nil
 }
 
-// Stage is the Dockerfile stage a build appends to bake r: the marker, the
-// three build arguments the catalog build already passes, and one RUN that
-// clones, pins the commit, and hands the checkout to the rest of the image
-// through finalize-checkout (the derived build's own last step, which strips
-// credential configuration and holds the origin to an https URL).
-//
-// It is written to run as the image's own user, which the base image sets to
-// fugaro and which owns /work: no USER line, so the stage cannot change whom a
-// job's image runs as.
-//
-// The stage clones r.URL and no other URL: the build arguments a catalog build
-// passes are the building repository's, and the ones a REBUILD passes are its
-// own — the nightly check assigns an entry to the repository its source names,
-// or, for an inline definition, to the repository the project's map puts it on,
-// falling back to the project's first (infra's catalogCheckRepos), which is not
-// always the checkout that composed the definition. Without the check,
-// that rebuild would clone one repository into another's slug path, under the
-// marker and the tag the composed definition gave it, and the smoke would pass
-// on the pairing it read from the two. So the stage refuses a REPO_URL that is
-// not the one it was composed for, and the rebuild fails saying so instead of
-// baking the wrong source.
-//
-// The refusal is about the repository, not about the spelling: a definition is
-// composed from a checkout's origin, which is the operator's remote, while the
-// catalog build itself passes repourl.CloneURL's canonical form — so a guard
-// holding the two to one string would refuse the nightly rebuild of every
-// definition composed from an origin without ".git", or with a trailing slash,
-// or with a capital letter. The guard and the composed spelling are one fold
-// (originID), which is task.CanonicalRepo's: what git and every other reader
-// here call one repository is one answer to this REFUSAL too.
-//
-// covered is the credential's own reach — Plan.Baked of the plan this stage was
-// composed for — and the stage ends with the submodule guard over it
-// (submoduleGuard).
-func Stage(r Repo, covered []Repo) (string, error) {
-	dir, err := Path(r.Slug)
-	if err != nil {
-		return "", err
-	}
-	if err := httpsOrigin(r.URL); err != nil {
-		return "", err
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s%s\n", markerPrefix, dir)
-	b.WriteString("# Engine-generated by fugaro image build (the image setup skill's bake step): the checkout of\n")
-	b.WriteString("# the repository this build runs for, at the commit the build recorded, for that repository's\n")
-	b.WriteString("# own jobs. The entry's other repositories are baked by the stages beside this one.\n")
-	b.WriteString("ARG REPO_URL\nARG BASE_BRANCH\nARG FUGARO_COMMIT=\"\"\n")
-	fmt.Fprintf(&b, "RUN --mount=type=secret,id=git-credentials,uid=1000,required=false \\\n"+
-		"    case \"$FUGARO_COMMIT\" in *[!0-9a-f]*) echo \"FUGARO_COMMIT is not a commit ID\" >&2; exit 1 ;; esac \\\n"+
-		" && %s \\\n"+
-		" && install -d -m 0755 %s \\\n"+
-		" && GIT_TERMINAL_PROMPT=0 git -c credential.helper= \\\n"+
-		"      -c credential.helper='store --file=/run/secrets/git-credentials' \\\n"+
-		"      clone --quiet --branch \"$BASE_BRANCH\" --single-branch -- \"$REPO_URL\" %s \\\n"+
-		" && commit=\"${FUGARO_COMMIT:-HEAD}\" \\\n"+
-		" && { git -C %s cat-file -e \"$commit^{commit}\" 2>/dev/null \\\n"+
-		"      || GIT_TERMINAL_PROMPT=0 git -C %s -c credential.helper= \\\n"+
-		"           -c credential.helper='store --file=/run/secrets/git-credentials' \\\n"+
-		"           fetch --quiet origin \"$commit\" \\\n"+
-		"      || { echo \"commit $commit is no longer reachable: the branch was force-pushed; re-run the build\" >&2; exit 1; }; } \\\n"+
-		" && git -C %s reset --quiet --hard \"$commit\" \\\n"+
-		" && %s \\\n"+
-		" && /usr/local/lib/fugaro/finalize-checkout %s\n",
-		repoURLGuard(r.URL), Root, dir, dir, dir, dir, submoduleGuard(dir, covered), dir)
-	return b.String(), nil
-}
+// BakedImage is the name the clone step tags the image its generated stages copy
+// out of: one directory per repository the entry serves, named by that
+// repository's slug, and nothing else. internal/backend/gcp's catalog_clone.go
+// is the other half of this name — it is the step that builds and tags it — and
+// the copy is what keeps every stage of an entry free of a secret: the build
+// that holds the git credential is the clone step's and no build of the entry's
+// own (B8, F19).
+const BakedImage = "fugaro-baked"
 
-// OtherStage is the stage that bakes one of the entry's other repositories: the
-// same clone as Stage, with r's own URL and branch spelled into the definition
-// instead of the build's REPO_URL and BASE_BRANCH arguments, which name another
-// repository.
+// Spellable refuses a repository a generated definition, and the script the
+// clone step generates from it, may not spell: a slug, a clone URL and a branch,
+// each of them one word of text that no shell and no Dockerfile reads as syntax
+// of its own. A slug that is not one would name a path no reader opens, a URL
+// with a credential in it would be copied into the project's bucket, and a URL or
+// a branch holding a quote, a space or a newline would end the word it is written
+// in — the clone step writes the same values into the shell it runs, where they
+// are the words of a clone.
 //
-// It pins no commit, and that is the one thing it cannot do: the build holds the
-// commit of the repository it runs for and no other, so the clone takes the
-// branch's head at the moment the build runs. A definition composed once and
-// rebuilt later therefore bakes a newer checkout of those repositories than of
-// the build's own, which is what an entry's own Dockerfile that clones by hand
-// has always done — and the reason a repository that wants its image pinned
-// pins it by naming the entry its own workflow runs.
-//
-// The branch and the URL are config values: the branch is held to the shape of a
-// branch name (a definition may not spell arbitrary text) and the URL to the
-// same https-without-credentials rule the build's own is held to, with the
-// repository named in the refusal, since a definition is composed for several of
-// them. The repository's name is held to its canonical form for the same reason
-// a slug is: it is a config value too, and the refusal and the definition's own
-// comment both name it.
-func OtherStage(r Repo, covered []Repo) (string, error) {
-	if _, err := task.CanonicalRepo(r.Repo); err != nil {
-		return "", fmt.Errorf("the repository name %q is not a repository", r.Repo)
-	}
-	dir, err := Path(r.Slug)
-	if err != nil {
-		return "", err
+// The refusals are one line each: they reach an operator through a build log.
+func (r Repo) Spellable() error {
+	if _, err := Path(r.Slug); err != nil {
+		return err
 	}
 	if err := httpsOrigin(r.URL); err != nil {
-		return "", fmt.Errorf("%s: %w", r.Repo, err)
+		return err
 	}
 	if !branchRE.MatchString(r.Branch) {
-		return "", fmt.Errorf("the branch %q of %s is not a branch name a generated definition may spell", r.Branch, r.Repo)
+		return fmt.Errorf("the branch %q is not a branch name a generated definition may spell", r.Branch)
 	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s%s\n", markerPrefix, dir)
-	fmt.Fprintf(&b, "# Engine-generated by fugaro image build (the image setup skill's bake step): the checkout of\n")
-	fmt.Fprintf(&b, "# %s, one of the repositories the catalog entry's image serves, at the head of %s when this\n",
-		r.Repo, r.Branch)
-	b.WriteString("# build ran. The repository this build runs for is baked by the last stage of this definition.\n")
-	fmt.Fprintf(&b, "RUN --mount=type=secret,id=git-credentials,uid=1000,required=false \\\n"+
-		"    install -d -m 0755 %s \\\n"+
-		" && GIT_TERMINAL_PROMPT=0 git -c credential.helper= \\\n"+
-		"      -c credential.helper='store --file=/run/secrets/git-credentials' \\\n"+
-		"      clone --quiet --branch '%s' --single-branch -- '%s' %s \\\n"+
-		" && %s \\\n"+
-		" && /usr/local/lib/fugaro/finalize-checkout %s\n",
-		Root, r.Branch, r.URL, dir, submoduleGuard(dir, covered), dir)
-	return b.String(), nil
+	return nil
 }
 
 // branchRE is what a branch a generated definition may spell looks like: the
 // characters git's own refname rules allow a branch, starting with one a shell
-// word cannot read as an option. The stage quotes it, so what this closes is not
-// a quoting break but a branch a `git clone --branch` would refuse at build time
-// — an empty one, or one starting with "-".
+// word cannot read as an option. The clone step quotes it, so what this closes is
+// not a quoting break (httpsOrigin) but a branch a `git clone --branch` would
+// refuse at build time — an empty one, or one starting with "-".
 var branchRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
 
-// submoduleGuard is the shell a stage runs after its clone: every submodule the
-// checkout declares must be a repository the build's credential covers (covered,
-// the plan's own repositories), and one that is not fails the build naming the
-// repository rather than being fetched.
+// copyStage is the one generated stage a baked repository gets: the marker line
+// the clone step reads the repository out of, a comment, and the copy of that
+// repository's checkout out of the image the clone step built.
 //
-// It reads the checkout's .gitmodules with git's own parser — the file is the
-// baked repository's, so a line-oriented read of it here would be a second
-// parser for a format that has one — and what a refusal names is the repository
-// that declaration resolves to, folded the way the covered set is: the host, the
-// owner and the name, lower-cased, with a trailing "/" and ".git" off. Two
-// things follow from that fold and both are the point of it. A URL that carries
-// a credential cannot put it in the build log, because everything from a "?" or
-// a "#" is off the text a refusal prints, and so is a userinfo — the text before
-// the URL's first "/" is its host, and only there does the fold drop everything
-// up to the last "@", so a token in a userinfo, a query or a fragment is off a
-// build log line (the fold also drops control characters, so nothing in that URL
-// can rewrite the log it appears in). And a repository on another host is not
-// this build's to fetch whatever its owner and name are: what the shell compares
-// is the host the URL names — the part before its first "/", with the userinfo
-// off it and the path kept whole — so a URL that puts a covered repository's
-// path behind another host's name is refused rather than read as that
-// repository, because the credential is for one host (rule 5 of
-// contract-build-token.md) and this stage's clone is the one place a submodule
-// URL would be followed with it.
+// It carries no RUN at all, and that is the point of it: the entry's own build
+// holds no git credential (B8, F19), so a stage of it cannot clone, and what
+// would have been a clone is the copy of a checkout already made by the one
+// build that may spend the credential. It also carries no USER line, so the
+// stage cannot change whom a job's image runs as.
 //
-// A URL it cannot read as a repository — a relative one, an ssh one in git's
-// scp spelling, one whose path is not owner/name — is refused: a repository the
-// credential does not demonstrably cover is not one this build fetches. The
-// refusal is fail-closed in the direction that matters, since a fold that
-// matched more than the URL really names would fetch source the credential does
-// not cover.
-//
-// What it returns is one brace group and not a list of commands, because a stage
-// joins it to the steps around it with "&&" and "&&" binds tighter than ";". The
-// guard's first command is an assignment and its last is a `for`, so as a bare
-// list the assignment would join the commit pin ahead of it and the final step
-// behind it would join the `for` alone: a `git reset --hard` that failed would
-// be swallowed and the image would bake the branch head with every check
-// passing (TestStageFailsWhenTheResetDoes).
-func submoduleGuard(dir string, covered []Repo) string {
-	folded := make([]string, 0, len(covered))
-	for _, r := range covered {
-		if id := submoduleID(r.URL); id != "" {
-			folded = append(folded, id)
-		}
+// own marks the repository the build runs for, which is the last of the stages
+// (Append): its checkout is the one the build pinned to FUGARO_COMMIT, and the
+// one a reader of the definition finds (BakedSlug).
+func copyStage(r Repo, own bool) (string, error) {
+	if err := r.Spellable(); err != nil {
+		return "", err
 	}
-	return "{ submodules='';" +
-		// A checkout with no .gitmodules is the ordinary case and declares nothing.
-		// One that is there and that git cannot read is not the same answer: the
-		// declarations would go unread, and a guard that passed over them would be
-		// passing over submodules it never saw. git's own message names the file
-		// and the line and never its content, so a URL in it stays out of the log.
-		" if [ -e " + dir + "/.gitmodules ]; then" +
-		// git alone in the substitution, so its status is the one read here: beside
-		// a pipeline it would be the last command's, and an unreadable file would
-		// read as a checkout that declares nothing. 1 is git's "no match", which is
-		// a .gitmodules with nothing in it; anything else — a file git cannot parse
-		// — fails the stage rather than passing over declarations nobody read.
-		" submodules=$(git -C " + dir + " config --file " + dir + "/.gitmodules --get-regexp '^submodule\\..*\\.url$'); st=$?;" +
-		" [ \"$st\" -le 1 ] || exit 1;" +
-		" submodules=$(printf '%s\\n' \"$submodules\" | cut -d' ' -f2-);" +
-		" fi;" +
-		// The loop splits $submodules on whitespace, which is how a line of the
-		// substitution becomes one URL, and it must not glob: a declaration holding
-		// "*", "?" or "[" would otherwise be expanded against the build's filesystem
-		// and read as whatever it matched rather than as the URL it is.
-		" set -f; for url in $submodules; do" +
-		// The fold, and the one thing it does beyond submoduleID's: the URL is text
-		// from the checkout, and this shell's refusal is a build log line, so the
-		// scheme, a query, a fragment, a userinfo and control characters come off it
-		// before anything is compared or printed. The userinfo comes off the host
-		// alone — the text before the first "/" — because dropping everything up to
-		// the last "@" of the whole URL would read a path's own "@" as a userinfo's
-		// and fold "https://evil.example/x@github.com/acme/app" to a repository the
-		// credential covers, which is a host this build would never contact.
-		" repo=$(printf '%s' \"$url\" | tr 'A-Z' 'a-z' | tr -d '\\000-\\037\\177');" +
-		" repo=${repo#*://}; repo=${repo%%[?]*}; repo=${repo%%[#]*};" +
-		" auth=${repo%%/*}; rest=${repo#\"$auth\"}; repo=${auth##*@}$rest;" +
-		" repo=${repo%/}; repo=${repo%%.git};" +
-		" case \" " + strings.Join(folded, " ") + " \" in *\" $repo \"*) [ -n \"$repo\" ] && continue ;; esac;" +
-		" echo \"a submodule of this checkout is ${repo:-a repository this build cannot read}, which this build's credential does not cover: it covers the repositories of the entry being built and no others\" >&2; exit 1;" +
-		" done; set +f; }"
+	dir, err := Path(r.Slug)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s%s %s %s\n", markerPrefix, dir, r.URL, r.Branch)
+	b.WriteString("# Engine-generated by fugaro image build (the image setup skill's bake step): ")
+	if own {
+		b.WriteString("the checkout of\n# the repository this build runs for, at the commit the build recorded, for that repository's\n# own jobs.\n")
+	} else {
+		fmt.Fprintf(&b, "one of the\n# repositories this entry's image serves, at the head of %s when the build ran.\n", r.Branch)
+	}
+	fmt.Fprintf(&b, "# It was cloned by the clone step — the one build of this entry that holds a git credential\n"+
+		"# (B8, F19) — and this stage copies it out of the image that build tagged. No stage of this\n"+
+		"# definition names a secret.\n"+
+		"COPY --from=%s --chown=1000:1000 /%s/ %s/\n", BakedImage, r.Slug, dir)
+	return b.String(), nil
 }
 
-// submoduleID is the repository a clone URL names, as submoduleGuard's own
-// shell spells it: the host and the path, lower-cased, with a trailing "/" and
-// ".git" off. Go computes the covered set here and the shell folds the
-// submodule's own URL, so the two spellings have to be one — a stage whose
-// covered set the shell could not match would refuse every submodule of a
-// repository the credential does cover.
-//
-// The path is the escaped one, which is the text a URL really carries: a
-// repository spelled with an escape (repourl.CloneURL's note about
-// https://bitbucket.org/acme/sandb%6fx.git) folds to the bytes the shell sees
-// only this way. An empty answer drops the repository from the covered set
-// rather than adding a name nothing matches: a URL without a host is one this
-// package refused a stage for already (httpsOrigin), and a covered set that lost
-// a member refuses MORE submodules, which is the direction a guard may be wrong
-// in.
-func submoduleID(u string) string {
-	parsed, err := url.Parse(u)
-	if err != nil || parsed.Host == "" {
-		return ""
+// markerSlug reads the directory a marker line names, and whether the line is one
+// of this package's at all. The marker names Root/slug, and only a path under
+// Root is one: a definition that spells anything else was not composed by this
+// package and is not read as though it had been.
+func markerSlug(line string) (string, bool) {
+	rest, ok := strings.CutPrefix(line, markerPrefix)
+	if !ok {
+		return "", false
 	}
-	id := task.ASCIILower(parsed.Host + parsed.EscapedPath())
-	return strings.TrimSuffix(strings.TrimSuffix(id, "/"), ".git")
+	field, _, _ := strings.Cut(rest, " ")
+	slug, ok := strings.CutPrefix(field, Root+"/")
+	if !ok {
+		return "", false
+	}
+	if _, err := Path(slug); err != nil {
+		return "", false
+	}
+	return slug, true
 }
 
-// repoURLGuardFormat is the shell the generated stage runs to hold a build's
-// REPO_URL to the repository the definition was composed for, with the one
-// substitution it takes: the composed origin as originID spells it. The two
-// folds the shell does are the two originID does — ASCII case down, then a
-// trailing "/" and a trailing ".git" off — because the build's REPO_URL is not
-// the composed spelling: a catalog build passes repourl.CloneURL's canonical
-// form while this definition was composed from the checkout's origin, and the
-// two differ by exactly those.
+// markerRepo reads a marker line as the repository it bakes: the slug, and the
+// clone URL and branch the clone step clones it from.
 //
-// It is a constant, and separate from the stage, so a test can run it through
-// sh -c with a REPO_URL of each spelling: the invariant is what the shell does
-// with two URLs and not the words of its refusal, and a guard whose text alone
-// is pinned can be relaxed to an always-matching arm with nothing failing.
-const repoURLGuardFormat = `repo=$(printf '%%s' "$REPO_URL" | tr 'A-Z' 'a-z') \
- && repo=${repo%%/} && repo=${repo%%.git} \
- && case "$repo" in '%s') ;; \
-      *) echo "this definition bakes one repository's checkout, and REPO_URL is not it: a rebuild of the entry has to run as the repository whose checkout it bakes" >&2; exit 1 ;; esac`
+// A marker that carries no URL is a line an earlier release of this package wrote
+// — its stages cloned inside the entry's own build, with a credential that build
+// is no longer handed — and no reader can clone what such a stage never named.
+func markerRepo(line string) (Repo, bool) {
+	slug, ok := markerSlug(line)
+	if !ok {
+		return Repo{}, false
+	}
+	rest, _ := strings.CutPrefix(line, markerPrefix)
+	fields := strings.SplitN(rest, " ", 3)
+	if len(fields) != 3 {
+		return Repo{}, false
+	}
+	r := Repo{Slug: slug, URL: fields[1], Branch: fields[2]}
+	if err := r.Spellable(); err != nil {
+		return Repo{}, false
+	}
+	return r, true
+}
 
-// repoURLGuard is that shell for one composed URL, byte for byte what the
-// stage carries.
-func repoURLGuard(url string) string { return fmt.Sprintf(repoURLGuardFormat, originID(url)) }
-
-// originID is a clone URL as the repository it names, spelled one way: the
-// fold task.CanonicalRepo puts a repository name through — ASCII case down and
-// a trailing ".git" off — applied to the whole URL, with a trailing "/" off
-// first because a URL may carry one and a repository name may not.
+// OriginID is a clone URL as the repository it names, spelled one way: the fold
+// task.CanonicalRepo puts a repository name through — ASCII case down and a
+// trailing ".git" off — applied to the whole URL, with a trailing "/" off first
+// because a URL may carry one and a repository name may not.
 //
-// The case fold comes first, as it does in the shell guard and in CanonicalRepo:
-// ".GIT" is the same suffix as ".git" to whoever wrote the remote, and a fold
-// that trimmed before lowercasing would leave "…/app.GIT" as "…/app.git" — a
-// spelling the guard then refuses against every REPO_URL, its own included.
+// The case fold comes first, as it does in the clone step's own shell guard and
+// in CanonicalRepo: ".GIT" is the same suffix as ".git" to whoever wrote the
+// remote, and a fold that trimmed before lowercasing would leave "…/app.GIT" as
+// "…/app.git" — a spelling the guard then refuses against every clone URL, its
+// own included.
 //
-// It is the identity the guard compares and the spelling the stage writes into
-// it, so a definition composed from any of git's spellings of one repository
-// is rebuilt by the nightly check, which passes the canonical one. It is not a
-// second parse of the URL: nothing here decides where the host ends, because
-// two URLs git clones the same repository from are already the same string
-// once this fold is applied, and a URL that is not one is refused before a
-// stage is written (httpsOrigin).
-func originID(u string) string {
+// It is the identity the clone step's guard compares and the spelling it writes
+// into its script, so a definition composed from any of git's spellings of one
+// repository is rebuilt by the checkout the nightly check assigns it. It is not a
+// second parse of the URL: nothing here decides where the host ends, because two
+// URLs git clones the same repository from are already the same string once this
+// fold is applied, and a URL that is not one is refused before a stage is written
+// (Repo.Spellable).
+func OriginID(u string) string {
 	return strings.TrimSuffix(strings.TrimSuffix(task.ASCIILower(u), "/"), ".git")
 }
 
@@ -716,43 +584,30 @@ func httpsOrigin(u string) error {
 
 // Append is the composed definition: the entry's own bytes with one stage per
 // repository p bakes on the end, and the bytes unchanged when p bakes nothing. A
-// definition is appended to, never rewritten: the entry's own Dockerfile is
-// what it is, and the stages at the end of it run in the image's last stage —
-// the one every job starts from.
+// definition is appended to, never rewritten: the entry's own Dockerfile is what
+// it is, and the stages at the end of it run in the image's last stage — the one
+// every job starts from.
 //
 // The stages are composed in Baked's order, which puts the build's own last: the
 // last stage is the one BakedSlug and the smoke read a definition by, so the
 // checkout a definition is known by is the one the build baked as its own, and a
-// rebuild that appends again lands its own stage where the reader looks (Stage,
-// OtherStage).
+// rebuild that appends again lands its own stage where the reader looks.
 //
-// An entry whose own Dockerfile already clones (the hand-written definitions
-// of D1208, e.g. images/catalog/*/Dockerfile) gets these stages as well, which
-// pay a second clone for a repository the image already holds. Reading a
-// Dockerfile to find out whether it clones is not a thing this package can do
-// honestly, and the two checkouts are at different paths, so the entry's own
-// bytes are left alone and the duplicate is a cost the person who wrote them
-// can drop — the skill's generated definitions carry no clone of their own,
-// which is what makes the engine's stages the only ones.
+// An entry whose own Dockerfile already clones (the hand-written definitions of
+// D1208, e.g. images/catalog/*/Dockerfile) gets these stages as well, which copy a
+// checkout the image already holds. Reading a Dockerfile to find out whether it
+// clones is not a thing this package can do honestly, and the two checkouts are at
+// different paths, so the entry's own bytes are left alone and the duplicate is a
+// cost the person who wrote them can drop — the skill's generated definitions
+// carry no clone of their own, which is what makes the engine's stages the only
+// ones.
 func Append(definition []byte, p Plan) ([]byte, error) {
 	if len(p.Baked) == 0 {
 		return definition, nil
 	}
-	covered := p.Baked
 	var stages strings.Builder
 	for i, r := range p.Baked {
-		var (
-			stage string
-			err   error
-		)
-		// The build's own is the last, and the one stage that reads the build's
-		// arguments: every other repository's URL and branch are spelled into the
-		// definition, because the build's arguments name the build's repository.
-		if i == len(p.Baked)-1 {
-			stage, err = Stage(r, covered)
-		} else {
-			stage, err = OtherStage(r, covered)
-		}
+		stage, err := copyStage(r, i == len(p.Baked)-1)
 		if err != nil {
 			return nil, err
 		}
@@ -767,37 +622,45 @@ func Append(definition []byte, p Plan) ([]byte, error) {
 	return append(out, body...), nil
 }
 
-// BakedSlug is the repository slug a composed definition bakes its checkout
-// for, and whether it bakes one at all. A reader that has to know WHICH
-// repository a definition bakes — the nightly rebuild, which runs as one
-// repository and cannot reproduce another's definition — reads this; BakedDir
-// is the path derived from it.
+// BakedSlug is the repository slug a composed definition bakes its checkout for,
+// and whether it bakes one at all. A reader that has to know WHICH repository a
+// definition bakes — the nightly rebuild, which runs as one repository and cannot
+// reproduce another's definition — reads this; BakedDir is the path derived from
+// it.
 //
 // It answers with the LAST marker: a definition that already bakes is composed
-// again by appending, so it can carry several stages and the one that runs is
-// the last. Reading the first would hand a reader the directory of a stage an
-// earlier one replaced — and the repository of a build that is not the one the
-// definition now bakes.
+// again by appending, so it can carry several stages and the one that runs is the
+// last. Reading the first would hand a reader the directory of a stage an earlier
+// one replaced — and the repository of a build that is not the one the definition
+// now bakes.
 func BakedSlug(definition []byte) (string, bool) {
 	var found string
 	for line := range strings.Lines(string(definition)) {
-		line = strings.TrimSuffix(line, "\n")
-		rest, ok := strings.CutPrefix(line, markerPrefix)
-		if !ok {
-			continue
-		}
-		// The marker names Root/slug, and only a path under Root is one: a
-		// definition that spells anything else was not composed by this package
-		// and is not read as though it had been.
-		slug, ok := strings.CutPrefix(rest, Root+"/")
-		if !ok {
-			continue
-		}
-		if _, err := Path(slug); err == nil {
+		if slug, ok := markerSlug(strings.TrimSuffix(line, "\n")); ok {
 			found = slug
 		}
 	}
 	return found, found != ""
+}
+
+// BakedRepos are the repositories a composed definition bakes its checkouts of,
+// in the order its stages run — the plan the clone step clones from
+// (internal/backend/gcp's CatalogBuildSpec.Baked).
+//
+// It answers from the marker lines alone: a definition is the one object both the
+// build that wrote it and a reader holding nothing but the bytes can agree on.
+// A marker that carries no clone URL is skipped, because it is a stage an earlier
+// release generated and no build can clone what it never named — the reader that
+// needs one of those to be an answer is internal/cli's, which refuses such a copy
+// by name.
+func BakedRepos(definition []byte) []Repo {
+	var out []Repo
+	for line := range strings.Lines(string(definition)) {
+		if r, ok := markerRepo(strings.TrimSuffix(line, "\n")); ok {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // BakedDir is the directory a composed definition bakes its checkout at, and

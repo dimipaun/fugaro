@@ -17,22 +17,15 @@
 //     (`src/main/picker.ts`: no rows and no records), and it goes through the
 //     console's own parser here rather than through a hand-written `JSON.parse`
 //     -- what is asserted is that the stub and the console agree.
-//   - **the documents a screen is a function of.** `plan status --json` and
-//     `coordinator status --from-store --all --json` are the Graph's and the
-//     project view's whole input, and the committed fixtures are what the stub
-//     answers with: a shape either decoder refuses is a spec that opens the
-//     refusal screen instead of the view, which is a failure worth having here
-//     rather than in a suite that needs a display. The project view's case also
-//     holds the **states** its spec's words are drawn for -- a draft pull
-//     request, a record in flight, a record with no run behind it and an unread
-//     pull request -- since those are facts about the fixture and not about the
-//     browser.
+//   - **the documents a screen is a function of.** `plan status --json` is the
+//     Graph's whole input, and the committed fixture is what the stub answers
+//     with: a shape the decoder refuses is a spec that opens the refusal screen
+//     instead of the view, which is a failure worth having here rather than in a
+//     suite that needs a display.
 //   - **the refusals.** `config list --json` takes no `--project` and no
-//     arguments it was not written for, a command outside the allow-list is
+//     arguments it was not written for, and a command outside the allow-list is
 //     refused by name -- with `config list --json` in the sentence, so a failing
-//     spec prints the command it should have been asked for -- and
-//     `coordinator status` holds its three fixed words, which are the spawn
-//     row's and not a screen's.
+//     spec prints the command it should have been asked for.
 //   - **the launch's answer** (V2.5.1c). The stub's `run --task-file - --json`
 //     is the console's one write, and it is answered through the launcher's own
 //     `decodeLaunchResult` here rather than in a suite that needs a display: the
@@ -54,7 +47,7 @@ import { parseInstallationsDocument } from '../../src/main/installlist'
 import { decodeLaunchResult } from '../../src/main/launchrules'
 import { settingsDryRun } from '../../src/main/settingsview'
 import { buildProjectsSettings } from '../../src/renderer/screens/projects'
-import { decodeCoordinatorStatus, decodePlanStatus, decodeRunsSummary, RUNS_SUMMARY_VERSION } from '../../src/shared/schema'
+import { decodePlanStatus, decodeRunsSummary, RUNS_SUMMARY_VERSION } from '../../src/shared/schema'
 
 /** STUB is the fixture this file runs, at the path the e2e helper copies from. */
 const STUB = join(__dirname, '..', 'fixtures', 'bin', 'fugaro')
@@ -134,63 +127,6 @@ describe('the e2e stub’s own answers', () => {
     // `--all` is the screen's control over how much of the document the CLI
     // lists, not a different read: the same document comes back without it.
     expect(run(directory, ['plan', 'status', '--json', '--project', 'e2e']).stdout).toBe(seeded)
-  })
-
-  it('prints the coordinator document for `coordinator status`, and the decoder admits it', () => {
-    // The v2 project view's own read (Bitbucket credentials T1.2, D364), which
-    // D3210 retired with that tab: **no screen spawns `coordinator status
-    // --from-store --all --json` any more**. The stub still answers it, the
-    // console's spawn row still lists it and the fixture is still committed, so
-    // what is held here is that the three agree -- a leftover that a follow-up
-    // deletes together rather than a shape left to rot.
-    const directory = install()
-    writeFileSync(join(directory, 'project.txt'), 'e2e\n')
-    // The committed document, which is the one `cliStub.ts` writes beside the
-    // stub the e2e specs install.
-    const seeded = readFileSync(join(__dirname, '..', 'fixtures', 'coordinator-status.json'), 'utf8')
-    writeFileSync(join(directory, 'coordinator-status.json'), seeded)
-    const answered = run(directory, [
-      'coordinator',
-      'status',
-      '--from-store',
-      '--all',
-      '--json',
-      '--project',
-      'e2e',
-    ])
-    expect(answered.status).toBe(0)
-    expect(answered.stdout).toBe(seeded)
-    const decoded = decodeCoordinatorStatus(JSON.parse(answered.stdout))
-    expect(decoded.ok).toBe(true)
-    // **The states the retired tab's words were drawn for, held here where there
-    // is no Electron.** `draft`, `in flight`, `no run behind it` and `state
-    // unread` are facts about this fixture, and a test that had to launch an app
-    // to find them out would be asserting them in the slowest place there is.
-    const repos = decoded.ok ? decoded.value.repos : []
-    expect(repos.map((repo) => repo.stored)).toEqual([true, false])
-    const stored = repos[0]
-    expect(stored?.view.records[0]?.pr?.draft).toBe(true)
-    expect(stored?.view.records[0]?.inFlight).toBe(true)
-    expect(stored?.view.records[0]?.runs[0]?.terminal).toBe(false)
-    expect(stored?.view.records[1]?.runs).toEqual([])
-    expect(stored?.view.unread).toHaveLength(1)
-    expect(stored?.stale).not.toBeNull()
-  })
-
-  it('refuses a `coordinator status` without its fixed words, and a document that was never seeded', () => {
-    const directory = install()
-    writeFileSync(join(directory, 'project.txt'), 'e2e\n')
-    // `--from-store` and `--all` are the spawn row's own words and not a screen's
-    // control (`src/main/spawn.ts`), so a console that dropped either would be
-    // making a read this build must never make: the refusal is the spec's only
-    // way of seeing that, and it names the whole argv.
-    const dropped = run(directory, ['coordinator', 'status', '--all', '--json', '--project', 'e2e'])
-    expect(dropped.status).toBe(2)
-    expect(dropped.stderr).toContain("answers 'coordinator status --from-store --all --json'")
-    // Unseeded, the read is refused by name rather than by `cat`'s own message.
-    const missing = run(directory, ['coordinator', 'status', '--from-store', '--all', '--json', '--project', 'e2e'])
-    expect(missing.status).toBe(2)
-    expect(missing.stderr).toContain('no coordinator document is seeded')
   })
 
   it('refuses a word `plan status --json` does not take, and a document that was never seeded', () => {
@@ -387,7 +323,6 @@ describe('the e2e stub’s own answers', () => {
     // answered.
     expect(answered.stderr).toContain('config list --json')
     expect(answered.stderr).toContain('plan status --json')
-    expect(answered.stderr).toContain('coordinator status --from-store --all --json')
     expect(answered.stderr).toContain('watch --json')
     // ...and the one **write** (V2.5.1a): a launch a spec did not expect is
     // named in that same sentence rather than answered by a fallback.
@@ -477,7 +412,8 @@ describe('the stub’s settings arms', () => {
   })
 
   it('answers the dry run from the document seeded for its key, and records its argv', () => {
-    // C3's first spawn: `settings set|unset KEY --layer <L> --dry-run --json`.
+    // C3's first spawn: `settings set|unset KEY --layer <L> [--repo <directory>]
+    // --dry-run --json`.
     // The document is seeded per key, the way every other answer of this stub is
     // seeded per file, and the argv is recorded so a spec can hold the window's
     // own drawing to what was actually spawned.

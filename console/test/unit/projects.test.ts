@@ -88,7 +88,7 @@ import {
 } from '../../src/renderer/screens/run'
 import type { RunFactory, RunInputs } from '../../src/renderer/screens/run'
 import { ReplayBuffer } from '../../src/shared/replay'
-import { decodeModelsList } from '../../src/shared/schema'
+import { UNKNOWN_STATUS_WORD, decodeModelsList } from '../../src/shared/schema'
 import type { ModelsListView } from '../../src/shared/schema'
 import { ADDRESS_PLACEHOLDER, sanitizeText, TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
 import { githubToken, highEntropyRun } from '../support/fakeSecrets'
@@ -2461,11 +2461,17 @@ describe('renderRun', () => {
     expect(all(renderRun(factory, buildRunModel(runInputs()), 'light'), 'run-started-by')).toHaveLength(0)
   })
 
-  it('puts the run record\'s status through the sanitizer too', () => {
+  it('draws the run record\'s status from the console\'s own table, never from the document', () => {
+    // The status stopped being a document string on this screen when the status
+    // set arrived (model-credentials-routing VS3): a word on `RUN_STATUSES` is
+    // drawn as the console's own copy of it and every other word as the
+    // console's `unknown`, so **nothing a record spells reaches this cell** --
+    // which is why the token below is drawn as the console's word for a status
+    // it does not know, and not as `[redacted-token]`.
     const token = githubToken()
     const status = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, status: token } }
     const tree = renderRun(factory, buildRunModel(runInputs({ diagnosis: status })), 'light')
-    expect(one(tree, 'run-status').textContent).toBe(TOKEN_PLACEHOLDER)
+    expect(one(tree, 'run-status').textContent).toBe(UNKNOWN_STATUS_WORD)
     expect(drawnText(tree)).not.toContain(token)
   })
 

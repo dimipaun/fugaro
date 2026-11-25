@@ -56,7 +56,14 @@ export interface FakeEvent {
   /** target is where the event happened, which is the node a listener reads to
    * tell a click on a control *inside* it from a click on itself. */
   readonly target: FakeNode | null
+  /** propagationStopped is what `stopPropagation` sets. This fake fires no
+   * ancestor's listeners, so nothing is left to stop here; the field is what a
+   * case reads to hold a listener that answered a click **and said so** --
+   * `wireRuns`' second door on a paused row, whose row's own listener would
+   * otherwise answer the same click in a window that bubbles. */
+  readonly propagationStopped: boolean
   preventDefault(): void
+  stopPropagation(): void
 }
 
 /** fakeEvent builds one, with `defaultPrevented` flipped by its own
@@ -75,9 +82,13 @@ function fakeEvent(
     metaKey,
     ctrlKey,
     defaultPrevented: false,
+    propagationStopped: false,
     target,
     preventDefault(): void {
       event.defaultPrevented = true
+    },
+    stopPropagation(): void {
+      event.propagationStopped = true
     },
   }
   return event
@@ -220,13 +231,16 @@ export class FakeNode {
 
   /** click fires this node's click listeners, in the order they were added, with
    * `target` where the click happened -- this node when a case does not say
-   * otherwise.
+   * otherwise -- and answers the event, so a case can hold what a listener did
+   * to it (`propagationStopped`), as `press` answers its own.
    *
    * The fake fires no ancestor's listeners: a real click on a control drawn
    * inside a row bubbles to the row, and a case that means that click says so
    * by firing the row's own with the control as the target. */
-  click(target: FakeNode | null = this): void {
-    for (const listener of this.listeners.get('click') ?? []) listener(fakeEvent('', '', false, false, target))
+  click(target: FakeNode | null = this): FakeEvent {
+    const event = fakeEvent('', '', false, false, target)
+    for (const listener of this.listeners.get('click') ?? []) listener(event)
+    return event
   }
 
   /**

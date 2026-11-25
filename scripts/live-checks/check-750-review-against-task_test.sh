@@ -124,13 +124,13 @@ project)
   ;;
 runs)
   [ "${2:-}" = ls ] || { printf 'fake fugaro: unexpected runs %s\n' "${2:-}" >&2; exit 64; }
-  if printf ' %s ' "$*" | grep -q -- ' --pr '; then
+  if grep -q -- ' --pr ' <<<" $* "; then
     # The CLI refuses a `runs ls --pr` with no `--repo` unless the local config
     # names exactly one repository, so the check passes `--repo .` — the
     # checkout's own repository, which the CLI resolves from its origin. The
     # refusal is mirrored here: a case whose premise read lost that argument
     # fails rather than reading rows out of a repository nobody named.
-    if ! printf ' %s ' "$*" | grep -q -- ' --repo '; then
+    if ! grep -q -- ' --repo ' <<<" $* "; then
       printf 'runs ls --pr needs --repo: the local config lists 2 repositories\n' >&2
       exit 1
     fi
@@ -158,7 +158,7 @@ review)
   if [ "${2:-}" = "--help" ]; then cat "$D/reviewhelp.out"; exit 0; fi
   if [ "${2:-}" = show ]; then
     id=$(shown "${3:-}")
-    if printf ' %s ' "$*" | grep -q -- ' --json '; then
+    if grep -q -- ' --json ' <<<" $* "; then
       serve "$D/artifact.$id.json" "$D/show.exit"
       exit 0
     fi

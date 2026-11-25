@@ -51,6 +51,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/plan"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -474,6 +475,13 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(modelsAddPlanStep{}),
 		reflect.TypeOf(imageAddPlanDoc{}), reflect.TypeOf(imageAddPlanEntry{}),
 		reflect.TypeOf(imageAddPlanStep{}),
+		// §6.35's map document (C-ORCH, D3221): the Coordinator tab's read, and
+		// the one shape here whose builder lives under ee/ while the document
+		// itself is the core's (`internal/orchestrator/mapdoc.go`). It is here
+		// because the section is a contract the console reads, and a field table
+		// is held to the shape it documents.
+		reflect.TypeOf(orchestrator.MapDoc{}), reflect.TypeOf(orchestrator.MapNode{}),
+		reflect.TypeOf(orchestrator.MapEdge{}), reflect.TypeOf(orchestrator.MapHealth{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command:
 		// ee/coordinator/cli/console_contract_test.go pins them against the
 		// tagged tree, which is the tree that still serves the console.
@@ -884,6 +892,12 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(modelsAddPlanStep{}),
 		reflect.TypeOf(imageAddPlanDoc{}), reflect.TypeOf(imageAddPlanEntry{}),
 		reflect.TypeOf(imageAddPlanStep{}),
+		// §6.35's map document (C-ORCH, D3221), the same four shapes as the test
+		// above: the Coordinator tab's read. It is here for this test's own
+		// reason — a field table that names a key no shape carries is a field
+		// invented rather than read.
+		reflect.TypeOf(orchestrator.MapDoc{}), reflect.TypeOf(orchestrator.MapNode{}),
+		reflect.TypeOf(orchestrator.MapEdge{}), reflect.TypeOf(orchestrator.MapHealth{}),
 		// §6.29's document (WH1, the console improvements plan's AL): the
 		// caller's own role, the scope it is held at and the patterns that scope
 		// names -- the `whoami` read. It is here for this test's own reason: a
@@ -1719,25 +1733,6 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// `visible` argument the window sends to stop the child reaches no word
 		// of this argv, so the row spells the command's argv back whole.
 		"graph --watch --json",
-		// The project view (Bitbucket credentials T1.2, the
-		// `coordinator.status` operation): read-only, no path in the argv.
-		// `--from-store` is what makes it need no host credential at all --
-		// it prints the view the sweep stored -- and `--all` is every
-		// repository the installation's config lists.
-		"coordinator status --from-store --all --json",
-		// The pull request read (coordinator v2 C3, the `coordinator.show`
-		// operation): one pull request as the host has it, the description
-		// included. `--repo` and `--pr` are arguments the operation's own schema
-		// fills (both required, `src/main/ipc.ts`), so the table spells them in
-		// the order the console emits them -- the row's fixed words, then the
-		// arguments -- and this list spells that back.
-		"coordinator show --json --repo <owner/name> --pr <n>",
-		// The declarations read (coordinator v2 C4c, the `coordinator.intents`
-		// operation): what the fleet's writers have declared, newest first.
-		// It has no argument of its own -- `--all` and `--json` are the row's
-		// fixed words -- so this list spells the whole argv back with nothing
-		// an operation's schema fills.
-		"coordinator intents --all --json",
 		// The orchestrator map (the console-fixes plan's CG7a, the
 		// `orchestrator.map` operation, D3221; C-ORCH's document,
 		// `internal/orchestrator/mapdoc.go`): the project's **active**
@@ -1778,7 +1773,7 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// table's because the row word is the plan's, and
 		// TestDocsDesktopConsoleSpawnWordsAreFlagsTheCLIRegisters is what holds
 		// the two halves together).
-		"settings set KEY --layer <L> [--dry-run --json] [--no-apply] --project <name> [--config <path>] -- <VALUE>",
+		"settings set KEY --layer <L> [--repo <directory>] [--dry-run --json] [--no-apply] --project <name> [--config <path>] -- <VALUE>",
 		// The managed state and its audit trail (the managed screens' plan's
 		// CM3, the `managed.status` operation, D1472 to D1477): the two marks'
 		// own answer and the bounded subset of the newest audit record, never
@@ -2215,11 +2210,7 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	// Thirty-four commands: the thirteen dashboard reads (logs has two argvs), the
 	// rail's `config list --json` (D13's amendment of 2026-10-20), the graph
 	// screen's `plan status --json` (GV2.1), the dependency graph read
-	// `graph --json` (the graph plan's CG9a), the project view's
-	// `coordinator status --from-store --all --json` (Bitbucket credentials
-	// T1.2), the pull request read `coordinator show --json --repo <owner/name>
-	// --pr <n>` (coordinator v2 C3), the declarations read
-	// `coordinator intents --all --json` (coordinator v2 C4c), the jobs-free
+	// `graph --json` (the graph plan's CG9a), the jobs-free
 	// totals read `runs summary --json` (console 0.119.0, B4/#1580), the models
 	// read `models ls --json` (console 0.119.0, the owner's ruling of
 	// 2026-11-02), the settings read `settings --json` (the settings-edit
@@ -2240,10 +2231,11 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	// shares its command with the chain the console runs after a management
 	// command saved a change (D1572): the two are two argvs and one command. The
 	// two enrolment reads of the repos-management plan's RE5 (D2413) are the
-	// thirtieth and thirty-first commands: `project repos ls --json` and `project
-	// repos status --json`, the `project repos` group's whole reach, since its two
-	// writes are on the never table below. The console improvements plan's AL
-	// adds the thirty-second to thirty-fourth: the Code tab's two catalogue reads
+	// twenty-seventh and twenty-eighth commands: `project repos ls --json` and
+	// `project repos status --json`, the `project repos` group's whole reach,
+	// since its two writes are on the never table below. The console improvements
+	// plan's AL adds the twenty-ninth to thirty-first: the Code tab's two
+	// catalogue reads
 	// `image ls --json` and `recipes ls --json`, each offline and each the whole
 	// of its group's reach, and the first-run wizard's `setup`, whose two rows
 	// are the plan (`setup --plan-only …`) and the apply (`setup …`) -- a write,
@@ -2251,24 +2243,31 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	// three streams are second argvs of commands this census already carries
 	// (`budget show`, `report` and `runs ls`), so they move the argv count and
 	// not the command count. The console improvements plan's MW1 adds the
-	// thirty-fifth: `fugaro models add`, the models write, whose two rows on the
+	// thirty-second: `fugaro models add`, the models write, whose two rows on the
 	// table are its dry run (`models add --no-apply --dry-run --json …`) and the
 	// write itself (`models add --no-apply …`) -- a write, so `fugaro models add`
 	// is named in consoleLaunchPaths rather than here, and the group's other
 	// words stay on the never table below. The same plan's MW2 adds the
-	// thirty-sixth: `fugaro image add`, the image write, whose two rows are its
+	// thirty-third: `fugaro image add`, the image write, whose two rows are its
 	// dry run (`image add --no-apply --dry-run --json …`) and the write itself
 	// (`image add --no-apply …`) -- a write too, so `fugaro image add` is named
 	// in consoleLaunchPaths rather than here, and the group's other writers stay
 	// on the never table below. The console-fixes plan's CG7a adds the
-	// thirty-seventh, and the first of its own this list has carried: `fugaro
+	// thirty-fourth, and the first of its own this list has carried: `fugaro
 	// orchestrator map --json`, the Coordinator tab's map of the project's active
 	// orchestrators (C-ORCH's document, D3221). It is a read -- one document,
 	// assembled from the caller's own database node, needing no checkout -- so it
 	// is named here, and the command lives under `ee/` until a release carries it
-	// (which is why the console's own read is behind a version floor).
-	if len(allowed) != 37 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 37 (logs and apply have two argvs each, `settings` and `settings set` are one command's two rows, `models add` and `image add` are the same for the two writes, and each of the console improvements' three streams is a second row on a command the table already carries)", path, argvs, len(allowed))
+	// (which is why the console's own read is behind a version floor). The same
+	// plan's I-ORCH then removed the three coordinator reads this census had
+	// carried -- `coordinator status --from-store --all --json`, `coordinator
+	// show --json …` and `coordinator intents --all --json` -- because no screen
+	// reaches them any more: they leave §5.1's table in the task that drops the
+	// console's surface for them, while their documents stay where they are
+	// (§6.13, §6.15 and §6.16) and so do the commands themselves, which the CLI
+	// keeps. What left the console is the read, not the command.
+	if len(allowed) != 34 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 34 (logs and apply have two argvs each, `settings` and `settings set` are one command's two rows, `models add` and `image add` are the same for the two writes, and each of the console improvements' three streams is a second row on a command the table already carries)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the read the design names for the console and §5.1 has not grown
@@ -2460,15 +2459,18 @@ func consoleSpelledNumber(t *testing.T, spelled string) int {
 //     plan's CG7a -- the Coordinator tab's map read, `orchestrator.map`, the
 //     first operation here whose command the table had not carried and the one
 //     whose read sits behind a CLI version floor because no release carries the
-//     command yet -- to the fifty-seven rule 5 carries today.
+//     command yet -- to the fifty-seven, and the same plan's I-ORCH -- which
+//     took four back, `coordinator.status`, `coordinator.show`,
+//     `coordinator.intents` and `link.openPullRequest`, no screen reaching any
+//     of them -- to the fifty-three rule 5 carries today.
 //   - **every row of spawn.ts's `SPAWN_COMMANDS` is admitted by rule 6's table**:
 //     the row's own words lead some row of the design's table **and what that row
 //     carries after them is flags, nothing else**. The second half is the whole
 //     check rather than a refinement of it: on a leading-words test alone a row
-//     cut back to its group word reads as admitted -- `['project']` against
-//     `project policy show --json …`, `['coordinator']` against `coordinator
-//     intents --all --json` -- which is a spawn that lost its subcommand passing
-//     as an argv the design allows. A bare word after the row's words is another
+//     cut back to its group word reads as admitted -- `['graph']` against
+//     `graph --watch --json …`, `['logs']` against `logs --url …` -- which is a
+//     spawn that lost the word telling it apart from its sibling passing as an
+//     argv the design allows. A bare word after the row's words is another
 //     word of the command, and the one exception is the design's own: the
 //     `settings.edit` row states the `set`/`unset` its `op` argument becomes
 //     while `SPAWN_COMMANDS` carries `['settings']`.
@@ -2546,9 +2548,9 @@ func TestDocsDesktopConsoleDesignSurfaceIsTheConsoleSource(t *testing.T) {
 			}
 			// What the design row carries after the row's own words must be
 			// flags and nothing else. A prefix alone admits a row cut back to
-			// its group word -- `['project']` would pass against `project policy
-			// show --json …`, and `['coordinator']` against `coordinator intents
-			// --all --json` -- so a spawn that lost its subcommand would read as
+			// its group word -- `['graph']` would pass against `graph --watch
+			// --json …`, and `['logs']` against `logs --url …` -- so a spawn
+			// that lost the word telling it apart from its sibling would read as
 			// an argv the design allows, which is the hole this half exists to
 			// close.
 			if consoleOnlyFlags(rest) {
@@ -6914,6 +6916,169 @@ func releaseGateSuite(t *testing.T, want []string, env []string) {
 	}
 }
 
+// TestReleaseGateDispatchesARunACommitNeverHad holds the gate to what it does
+// on a commit with no `ci` run at all, which is the state main's tip is in most
+// of the time: CI runs on dispatch only, so a gate that only polls waits out its
+// whole timeout for checks nobody started. On 2026-11-24 `scripts/release.sh
+// 0.29.0 --dry-run` spent 42 minutes in exactly that wait. The gate dispatches
+// one full run itself -- once per commit, on a ref it knows points at the commit
+// -- and the wait is bounded: it ends on the deadline, or at once when the run
+// it reads concluded red. GATE_DRY_RUN=1 (which --dry-run sets) reads once,
+// prints what the real run would do and dispatches nothing.
+func TestReleaseGateDispatchesARunACommitNeverHad(t *testing.T) {
+	// greenTarget is every required check of the tagged commit, green.
+	greenTarget := func(t *testing.T, h *gateHarness) {
+		t.Helper()
+		var checks []string
+		for _, name := range []string{"test", "terraform", "rules"} {
+			checks = append(checks, gateCheckRun(name, "github-actions", "success"))
+		}
+		h.setTargetChecks(t, checks)
+	}
+	dispatchLine := func(h *gateHarness) string {
+		return fmt.Sprintf("no ci run on %s: dispatched one (gh workflow run ci --ref main -f full=true), waiting for it", h.sha)
+	}
+
+	t.Run("a commit with no ci run gets one dispatched and passes on it", func(t *testing.T) {
+		h := newGateHarness(t)
+		greenTarget(t, h)
+		h.setCIRuns(t, nil)
+		// A wait long enough for the dispatched run to be read on the next pass.
+		ok, out := h.run(t, "GATE_WAIT_SECONDS=60", "GATE_POLL_SECONDS=1")
+		if !ok {
+			t.Fatalf("the gate refused a commit whose checks are green once the run it dispatched appeared:\n%s", out)
+		}
+		if !strings.Contains(out, dispatchLine(h)) {
+			t.Errorf("the gate did not say it dispatched a run, and the command it used:\n%s", out)
+		}
+		if n := h.dispatches(t); n != 1 {
+			t.Errorf("the gate dispatched %d runs for one commit, want 1", n)
+		}
+	})
+
+	t.Run("the wait is bounded and the deadline names the checks and the run", func(t *testing.T) {
+		h := newGateHarness(t)
+		h.setTargetChecks(t, []string{gateCheckRun("test", "github-actions", "pending")})
+		h.setCIRuns(t, []string{h.sha + "\tci (full)\t" + h.sha + "\t.github/workflows/ci.yml\tfailed"})
+		start := time.Now()
+		// A deadline far past the test's own patience: a run that is over and red
+		// is not waited out.
+		ok, out := h.run(t, "GATE_WAIT_SECONDS=600")
+		if ok {
+			t.Fatalf("the gate passed on a commit whose ci run concluded red:\n%s", out)
+		}
+		if elapsed := time.Since(start); elapsed > 30*time.Second {
+			t.Errorf("the gate waited %s on a run that is over: it must end the wait at once", elapsed)
+		}
+		for _, want := range []string{
+			"concluded 'failure'",
+			"test (pending), terraform (missing), rules (missing)",
+			"ci run: https://github.com/dimipaun/fugaro/actions/runs/1",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("the refusal does not carry %q:\n%s", want, out)
+			}
+		}
+	})
+
+	t.Run("a run that is still going is waited for, not dispatched a second time", func(t *testing.T) {
+		h := newGateHarness(t)
+		h.setTargetChecks(t, []string{gateCheckRun("test", "github-actions", "pending")})
+		h.setCIRuns(t, []string{h.sha + "\tci (full)\t" + h.sha + "\t.github/workflows/ci.yml\trunning"})
+		ok, out := h.run(t, "GATE_WAIT_SECONDS=2", "GATE_POLL_SECONDS=1")
+		if ok {
+			t.Fatalf("the gate passed while the only ci run on the commit was still running:\n%s", out)
+		}
+		if !strings.Contains(out, "still waiting: check 'test' is pending") {
+			t.Errorf("the gate did not wait for the run that is going:\n%s", out)
+		}
+		for _, want := range []string{
+			"required check 'test' is pending on " + h.sha + ": 2s is up, not green: test (pending), terraform (missing), rules (missing)",
+			"ci run: https://github.com/dimipaun/fugaro/actions/runs/1",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("the deadline line does not carry %q:\n%s", want, out)
+			}
+		}
+		if n := h.dispatches(t); n != 0 {
+			t.Errorf("the gate dispatched %d runs on a commit that already had one, want 0", n)
+		}
+	})
+
+	t.Run("a commit with no run is dispatched once, however long the wait", func(t *testing.T) {
+		h := newGateHarness(t)
+		h.setTargetChecks(t, []string{gateCheckRun("test", "github-actions", "pending")})
+		h.setCIRuns(t, nil)
+		ok, out := h.run(t, "GATE_WAIT_SECONDS=3", "GATE_POLL_SECONDS=1")
+		if ok {
+			t.Fatalf("the gate passed on a commit whose checks never went green:\n%s", out)
+		}
+		if n := strings.Count(out, "dispatched one"); n != 1 {
+			t.Errorf("the gate said it dispatched a run %d times, want once:\n%s", n, out)
+		}
+		if n := h.dispatches(t); n != 1 {
+			t.Errorf("the gate dispatched %d runs while polling, want 1: one commit gets one run from this gate", n)
+		}
+	})
+
+	t.Run("a commit no ref this gate knows points at is refused with the command", func(t *testing.T) {
+		h := newGateHarness(t)
+		behind := h.aheadOfMain(t)
+		h.setTargetChecks(t, nil)
+		h.setCIRuns(t, nil)
+		ok, out := h.run(t, "GITHUB_SHA="+behind, "GATE_WAIT_SECONDS=600")
+		if ok {
+			t.Fatalf("the gate passed on a commit with no ci run and no ref at it:\n%s", out)
+		}
+		if n := h.dispatches(t); n != 0 {
+			t.Errorf("the gate dispatched %d runs on a commit no ref points at, want 0: a run lands at a ref's tip", n)
+		}
+		if want := "no ref this gate knows points at it to dispatch one on"; !strings.Contains(out, want) {
+			t.Errorf("the refusal does not say why it dispatched nothing:\n%s", out)
+		}
+		if want := "gh workflow run ci --ref <a ref pointing at " + behind + "> -f full=true"; !strings.Contains(out, want) {
+			t.Errorf("the refusal does not print the command that puts a run on the commit:\n%s", out)
+		}
+	})
+
+	t.Run("a dry run says what it would do and dispatches nothing", func(t *testing.T) {
+		h := newGateHarness(t)
+		greenTarget(t, h)
+		h.setCIRuns(t, nil)
+		ok, out := h.run(t, "GATE_DRY_RUN=1")
+		if !ok {
+			t.Fatalf("the dry run refused a commit it would only have read:\n%s", out)
+		}
+		want := fmt.Sprintf("no ci run on %s: the real run would dispatch one (gh workflow run ci --ref main -f full=true)", h.sha)
+		if !strings.Contains(out, want) {
+			t.Errorf("want %q in:\n%s", want, out)
+		}
+		if n := h.dispatches(t); n != 0 {
+			t.Errorf("the dry run dispatched %d runs, want 0: scripts/release.sh --dry-run changes nothing", n)
+		}
+	})
+
+	t.Run("a dry run reads a running check once and names the wait it would take", func(t *testing.T) {
+		h := newGateHarness(t)
+		h.setTargetChecks(t, []string{gateCheckRun("test", "github-actions", "pending")})
+		h.setCIRuns(t, []string{h.sha + "\tci (full)\t" + h.sha + "\t.github/workflows/ci.yml\trunning"})
+		start := time.Now()
+		// Empty GATE_WAIT_SECONDS falls back to RELEASE_GATE_TIMEOUT_MIN, so this
+		// also pins the default deadline and the minutes it is reported in.
+		ok, out := h.run(t, "GATE_DRY_RUN=1", "GATE_WAIT_SECONDS=", "RELEASE_GATE_TIMEOUT_MIN=90", "GITHUB_ACTIONS=")
+		if !ok {
+			t.Fatalf("the dry run refused a commit whose checks are only running:\n%s", out)
+		}
+		want := "check 'test' is pending on " + h.sha + ": the real run would wait up to 90m"
+		if !strings.Contains(out, want) {
+			t.Errorf("want %q in:\n%s", want, out)
+		}
+		if elapsed := time.Since(start); elapsed > 30*time.Second {
+			t.Errorf("the dry run waited %s: it reads once", elapsed)
+		}
+	})
+}
+
 // gateCheckRun is one check run as the fake gh's state file writes it: the
 // check-run name, the app slug that owns it, and the state the gate reads.
 func gateCheckRun(name, app, state string) string {
@@ -6962,34 +7127,67 @@ check_runs_json() {
 }
 
 # runs_json SHA prints the runs API's own shape for SHA, one run per line of
-# the runs state file ("<sha><TAB><title><TAB><suite>" and an optional fourth
-# field, the workflow file the run belongs to). The fourth field is what lets a
-# test put a run titled like a full ci run in the listing under another
-# workflow file: only the gate's own .path filter keeps it out. Each run is
-# numbered by its line, which is the run_number the gate orders the runs by
-# (its newest full run is the one whose checks count). Without the file every
+# the runs state file ("<sha><TAB><title><TAB><suite>" and two optional fields,
+# the workflow file the run belongs to and the run's own state). The file field
+# is what lets a test put a run titled like a full ci run in the listing under
+# another workflow file: only the gate's own .path filter keeps it out. The
+# state field -- running, failed or cancelled, success when it is not written --
+# is the run's own verdict, which the gate reads to end a wait on a run that is
+# over and red. Each run is numbered by its line, which is the run_number the
+# gate orders the runs by (its newest full run is the one whose checks count).
+# A state file that EXISTS and holds no line for SHA is a commit with no ci run
+# at all, which is what the gate dispatches one for; with no file at all every
 # commit has one full run of .github/workflows/ci.yml, whose check suite is the
-# commit itself.
+# commit itself, and that run is over and green.
 runs_json() {
   tab=$(printf '\t')
   number=0
   {
-    if [ -s "${FAKE_GH_RUNS:-}" ]; then
-      while IFS="$tab" read -r rsha title suite file; do
+    if [ -e "${FAKE_GH_RUNS:-}" ]; then
+      while IFS="$tab" read -r rsha title suite file state; do
         [ -n "$rsha" ] || continue
         number=$((number + 1))
         [ "$rsha" = "$1" ] || continue
         [ -n "$file" ] || file=.github/workflows/ci.yml
-        printf '%s\t%s\t%s\t%s\t%s\n' "$rsha" "$title" "$suite" "$file" "$number"
+        [ -n "$state" ] || state=success
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$rsha" "$title" "$suite" "$file" "$number" "$state"
       done <"$FAKE_GH_RUNS"
     else
-      printf '%s\t%s\t%s\t%s\t%s\n' "$1" 'ci (full)' "$1" .github/workflows/ci.yml 1
+      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$1" 'ci (full)' "$1" .github/workflows/ci.yml 1 success
     fi
   } | jq -Rn '
     [inputs | select(length > 0) | split("\t")
-     | {head_sha: .[0], display_title: .[1], check_suite_id: .[2], path: .[3], run_number: (.[4] | tonumber), id: 1}]
+     | {head_sha: .[0], display_title: .[1], check_suite_id: .[2], path: .[3],
+        run_number: (.[4] | tonumber), id: (.[4] | tonumber), state: .[5]}
+     | . + (if .state == "running" then {status: "in_progress", conclusion: null}
+            elif .state == "failed" then {status: "completed", conclusion: "failure"}
+            elif .state == "cancelled" then {status: "completed", conclusion: "cancelled"}
+            elif .state == "success" then {status: "completed", conclusion: "success"}
+            else error("fake gh: unknown run state \(.state)") end)
+     | . + {html_url: "https://github.com/dimipaun/fugaro/actions/runs/\(.id)"}
+     | del(.state)]
     | {workflow_runs: .}'
 }
+
+case "$1 ${2:-}" in
+  "workflow run")
+    # A dispatch, which the gate starts itself for a commit that has no ci run
+    # at all. The run it starts is appended to the runs state file -- the ref's
+    # tip, a full title, that commit's own check suite and the state a freshly
+    # dispatched run is in -- so the next read of that commit answers a run the
+    # gate can wait on, numbered last and so newest. The call is in the log (the
+    # top of this script), so a test counts the dispatches.
+    ref=""
+    prev=""
+    for a in "$@"; do
+      [ "$prev" = "--ref" ] && ref=$a
+      prev=$a
+    done
+    head=$(git -C "${FAKE_GH_ORIGIN:?}" rev-parse "refs/heads/$ref")
+    printf '%s\t%s\t%s\t%s\t%s\n' "$head" 'ci (full)' "$head" .github/workflows/ci.yml running >>"${FAKE_GH_RUNS:?}"
+    exit 0
+    ;;
+esac
 
 case "$api" in
   */check-suites/*)
@@ -7095,12 +7293,42 @@ func (h *gateHarness) setHeadChecks(t *testing.T, lines []string) {
 // setCIRuns is the runs API's listing of the `ci` runs on a commit: one
 // "<sha><TAB><title><TAB><suite>" line per run, plus an optional fourth field
 // for the workflow file the run belongs to (default .github/workflows/ci.yml,
-// the only file the gate reads runs of). Not calling it leaves every commit
-// with one full `ci` run, which is the ordinary state of a commit CI has
-// finished on.
+// the only file the gate reads runs of) and a fifth for the run's own state --
+// running, failed, cancelled or, when it is not written, success. Not calling it
+// leaves every commit with one full `ci` run, which is the ordinary state of a
+// commit CI has finished on; calling it with no line for the target's sha is a
+// commit with no `ci` run at all, which is what the gate dispatches one for.
 func (h *gateHarness) setCIRuns(t *testing.T, lines []string) {
 	t.Helper()
 	h.write(t, "runs.tsv", lines)
+}
+
+// dispatches is how many `gh workflow run` calls the gate made: the fake logs
+// every invocation it is handed, one per line.
+func (h *gateHarness) dispatches(t *testing.T) int {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(h.root, "gh.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, line := range strings.Split(string(body), "\n") {
+		if strings.HasPrefix(line, "gh workflow run") {
+			n++
+		}
+	}
+	return n
+}
+
+// aheadOfMain pushes an empty commit to origin/main and returns the commit main
+// was on before it: a commit that is still reachable from main but is no longer
+// its tip, which no ref the gate knows points at.
+func (h *gateHarness) aheadOfMain(t *testing.T) string {
+	t.Helper()
+	behind := testutil.Git(t, h.work, "rev-parse", "HEAD")
+	testutil.Git(t, h.work, "commit", "--quiet", "--allow-empty", "-m", "something else landed")
+	testutil.Git(t, h.work, "push", "--quiet", "origin", "HEAD:refs/heads/main")
+	return behind
 }
 
 // setMergedPR is the checks API's listing of the pull request merged as the
@@ -11311,7 +11539,7 @@ func TestDocsDesktopConsoleContractFinishesTheSettingsWrite(t *testing.T) {
 		"The write is an operation of the console",
 		"`settings.edit`",
 		"it is the console's second",
-		"`settings set|unset KEY --layer <L> --dry-run --json",
+		"`settings set|unset KEY --layer <L> [--repo <directory>] --dry-run --json",
 		"retried silently",
 		// The member the section had wrong: `target_layer` was written as
 		// "`project` or `local`, the two the generic path writes, or `""` when
