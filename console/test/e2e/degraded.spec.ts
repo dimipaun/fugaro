@@ -663,14 +663,10 @@ test.describe('the console with nothing to read', () => {
     expect(screen.refusal).toBe(THE_REFUSAL)
     expect(screen.refusal).toContain('roles/datastore.viewer')
     expect(screen.refusal).toContain('roles/serviceusage.serviceUsageConsumer')
-    // The screen is the operator's only copy, and this is why it does not go
-    // through the `sentence` class: the same sentence read as prose loses both
-    // roles. The window that just drew it is the one that says so -- and it
-    // says the other half too, that the door the screen really uses drew it
-    // character for character (review round 5 of PR 478: that door is
-    // `sanitizeRefusal`, the credential rules, so a token is still redacted).
-    expect(result.sanitized).not.toBe(THE_REFUSAL)
-    expect(result.sanitized).not.toContain('roles/datastore.viewer')
+    // The sanitizer masks only secrets (ID1), so the prose door keeps the roles
+    // too and both doors draw the sentence character for character; the
+    // credential rules still redact a token (below).
+    expect(result.sanitized).toBe(THE_REFUSAL)
     expect(result.refusalDrawn).toBe(THE_REFUSAL)
     // And the model is where the sentence is sanitized, so the drawing reads
     // exactly what the door produced.

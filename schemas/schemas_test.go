@@ -6270,6 +6270,15 @@ func TestSettingsSchema(t *testing.T) {
 		if got, _ := entry["$comment"].(string); got != r.Default.Const {
 			t.Errorf("%s: the schema's $comment is %q, and the registry's constant is %q", r.Key, got, r.Default.Const)
 		}
+		// The retirement half of an entry (MG5 of
+		// docs/model-credentials-routing/implementation-plan.md): a key this
+		// release still reads and no longer honours says so, with the sentence
+		// the registry carries, and a live key carries no such member. Absent
+		// is the live answer, so a consumer that reads a document an older CLI
+		// wrote sees the same thing it always did.
+		if got, _ := entry["retired"].(string); got != r.RetiredWhy {
+			t.Errorf("%s: the schema's retired is %q, and the registry says %q", r.Key, got, r.RetiredWhy)
+		}
 		delete(props, r.Key)
 	}
 	for key := range props {

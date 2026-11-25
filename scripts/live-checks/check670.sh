@@ -77,8 +77,15 @@
 # agent runs any step of it.
 #
 # Usage:      bash scripts/live-checks/check670.sh --installation <name> --app-key-file <pem>
+#             bash scripts/live-checks/check670.sh --installation <name> --app-key-file <pem> --preflight
 #             bash scripts/live-checks/check670.sh --installation <name> --app-key-file <pem> --dry-run
 #             bash scripts/live-checks/check670.sh --help
+#             --preflight makes the check's own READS and evaluates every
+#             precondition before anything is written or launched (the checkout,
+#             the installation `fugaro doctor --json` reads, the enrolment and
+#             the empty github-app-key container F11 turns on), prints every
+#             blocker at once with the command that clears it, writes nothing and
+#             launches nothing, and exits non-zero when anything blocks.
 # Needs:      bash, mktemp, python3 (every `--json` document is read with it),
 #             git (the throwaway checkout and the remote branch), gcloud (the
 #             image, the secret and the runs bucket), gh (the App installation
@@ -127,7 +134,7 @@
 # project is read from the checkout's `fugaro doctor --json`),
 # CHECK670_RUNS_BUCKET (with none, `gs://fugaro-runs-<project>`),
 # CHECK670_PRODUCTION (a project named fugaro-prod is refused unless it is set),
-# CHECK670_DRY_RUN, CHECK670_KEEP_SCRATCH, CHECK670_RUN_SECONDS (2400, the bound
+# CHECK670_DRY_RUN, CHECK670_PREFLIGHT, CHECK670_KEEP_SCRATCH, CHECK670_RUN_SECONDS (2400, the bound
 # on waiting for one run to end), CHECK670_POLL_SECONDS (20),
 # CHECK670_LAUNCH_SECONDS (300), CHECK670_CLI_TIMEOUT_SECONDS (300),
 # CHECK670_CLONE_SECONDS (300) and CHECK670_LOG_LIMIT (50, how many rows of the
@@ -275,6 +282,13 @@ run_tee() { # run_tee KEY CMD...
   return "$st"
 }
 
+# The shared `--preflight` driver (scripts/live-checks/lib/preflight.sh).
+live_check_lib_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib
+LIVE_CHECK_LIB=${LIVE_CHECK_LIB:-$live_check_lib_dir}
+# shellcheck source=lib/preflight.sh
+. "$LIVE_CHECK_LIB/preflight.sh"
+PREFLIGHT_TOOL=check670
+
 need_tools() {
   local t
   for t in bash mktemp python3 git gcloud gh; do
@@ -358,6 +372,12 @@ finish() {
   local status=$?
   CLEANUP_RUNNING=yes
   trap - ERR
+  if [ "$PREFLIGHT_MODE" = yes ]; then
+    # A preflight wrote nothing and launched nothing: it prints its own lines
+    # and no RESULT block.
+    scratch_down
+    exit "$status"
+  fi
   local facts=""
   if [ -n "$FACTS_FILE" ] && [ -f "$FACTS_FILE" ]; then facts=$(cat "$FACTS_FILE"); fi
   scratch_down
@@ -621,6 +641,99 @@ version_row() {
   local v=""
   v=$("$FUGARO_BIN" version 2>/dev/null | head -n 1 || true)
   fact fugaro-version PASS "${v:-fugaro version printed nothing} (the build this check drives: the enrolment, the four verbs and the update are the ones this release makes)"
+}
+
+# ---------------------------------------------------------------- preflight
+# step_preflight: --preflight. The reads this check makes, every precondition it
+# has evaluated before its first write, nothing written and nothing launched. It
+# clones the repository into this check's own scratch directory — the one write
+# it makes, and it goes with the exit trap — because the checkout is where the
+# installation is read from and the enrolment's own first step runs.
+step_preflight() {
+  if [ -e "$CHECKOUT" ]; then
+    die "$CHECKOUT is already there, so this check cannot make its own throwaway checkout from it"
+  fi
+  say "preflight: cloning https://github.com/$REPO.git to read the checkout it runs from"
+  if ! run_bounded_in "$SCRATCH" "$CLONE_SECONDS" pf-clone "$GIT_BIN" clone --depth 1 "https://github.com/$REPO.git" "$CHECKOUT"; then
+    preflight_block checkout \
+      "the clone of $REPO did not answer (exit ${BOUNDED_STATUS}), so the checkout this check runs from cannot be read" \
+      "git clone --depth 1 https://github.com/$REPO.git"
+    preflight_report
+  fi
+  if [ ! -f "$CHECKOUT/fugaro.yaml" ]; then
+    die "the checkout of $REPO carries no fugaro.yaml at its root, so it is not a Fugaro repository and the enrolment's own first step has nothing to read"
+  fi
+
+  # doctor exits 1 when it finds a problem and still prints its document, and the
+  # empty container this check needs is exactly such a problem: an exit 1 with a
+  # readable document is an answer, anything else is not.
+  say "preflight: reading the installation: fugaro doctor --json, in ${CHECKOUT}"
+  local doctor_ok=yes
+  if ! run_bounded "$CLI_TIMEOUT" pf-doctor "$FUGARO_BIN" doctor --json; then
+    if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 1 ]; then doctor_ok=no; fi
+  fi
+  if [ "$doctor_ok" = yes ] && ! read_json doctor "$SCRATCH/pf-doctor.out" "$SCRATCH/pf-doctor.txt"; then
+    doctor_ok=no
+  fi
+  if [ "$doctor_ok" = no ]; then
+    preflight_block installation \
+      "fugaro doctor --json does not answer in the checkout (exit ${BOUNDED_STATUS}), so the installation this check would enrol into cannot be read" \
+      "git clone --depth 1 https://github.com/$REPO.git && cd ${REPO##*/} && fugaro doctor --json"
+  elif [ -z "$(field "$SCRATCH/pf-doctor.txt" project)" ]; then
+    preflight_block installation \
+      "the checkout's doctor names no GCP project, so the registry, the secrets and the runs bucket this check reads from the outside have no project" \
+      "git clone --depth 1 https://github.com/$REPO.git && cd ${REPO##*/} && fugaro doctor --json"
+  else
+    GCP_PROJECT=${GCP_PROJECT:-$(field "$SCRATCH/pf-doctor.txt" project)}
+    preflight_note installation \
+      "the installation is $(field "$SCRATCH/pf-doctor.txt" install) in $GCP_PROJECT (the checkout's own doctor; the runs bucket is ${RUNS_BUCKET:-gs://fugaro-runs-$GCP_PROJECT})"
+  fi
+
+  say "preflight: reading $INSTALLATION's enrolment: fugaro project show --json"
+  if run_bounded "$CLI_TIMEOUT" pf-show "$FUGARO_BIN" project show --json --project "$INSTALLATION" &&
+    read_json show "$SCRATCH/pf-show.out" "$SCRATCH/pf-show.txt"; then
+    local enrolled
+    enrolled=$(field "$SCRATCH/pf-show.txt" enrolled)
+    case ",$enrolled," in
+    *",$REPO,"*)
+      preflight_note enrolment "$REPO is already enrolled in $INSTALLATION; the enrolment's own step converges what is there" ;;
+    *)
+      preflight_note enrolment "$REPO is not yet enrolled in $INSTALLATION, which is what the enrolment's own step reads" ;;
+    esac
+  else
+    preflight_note enrolment "the enrolment of $REPO could not be read (exit ${BOUNDED_STATUS}); this check enrols it itself, so nothing is assumed"
+  fi
+
+  # F11's premise, read from the outside: the github-app-key container EXISTS and
+  # holds no enabled version. A listing that names no row, or a row with no
+  # container, is a repository Terraform has not created the container for; a row
+  # that already holds a version has no empty container to read.
+  say "preflight: reading $REPO's credentials: fugaro secrets ls --repo $REPO --json"
+  if ! run_bounded "$CLI_TIMEOUT" pf-secrets "$FUGARO_BIN" secrets ls --repo "$REPO" --json; then
+    preflight_block container \
+      "fugaro secrets ls --repo $REPO --json does not answer (exit ${BOUNDED_STATUS}), so F11's empty container cannot be read" \
+      "fugaro secrets ls --repo $REPO --json"
+  elif ! read_json secrets "$SCRATCH/pf-secrets.out" "$SCRATCH/pf-secrets.txt"; then
+    preflight_block container \
+      "fugaro secrets ls --repo $REPO --json prints a document this check cannot read" \
+      "fugaro secrets ls --repo $REPO --json"
+  else
+    local row id latest
+    row=$(grep -m1 '^secret	github-app-key	' "$SCRATCH/pf-secrets.txt" || true)
+    id=$(printf '%s' "$row" | awk -F'\t' '{ print $3 }')
+    latest=$(printf '%s' "$row" | awk -F'\t' '{ print $5 }')
+    if [ -z "$row" ] || [ -z "$id" ]; then
+      preflight_block container \
+        "$REPO has no github-app-key container yet, and F11 is about the empty container Terraform creates for an enrolled repository" \
+        "fugaro project repos add $REPO --project $INSTALLATION"
+    elif [ -n "$latest" ]; then
+      preflight_block container \
+        "$REPO's github-app-key container ($id) already holds an enabled version ('$latest'), so there is no empty container to read" \
+        "gcloud secrets versions disable $latest --secret=$id"
+    else
+      preflight_note container "$REPO's github-app-key container ($id) exists and holds no enabled version, which is F11's premise"
+    fi
+  fi
 }
 
 # ------------------------------------------------------------------ the steps
@@ -1280,6 +1393,10 @@ main() {
     plan
     return 0
   fi
+  if [ -n "$PREFLIGHT" ]; then
+    step_preflight
+    preflight_report
+  fi
   if [ -z "$TASK_FILE" ]; then
     TASK_FILE="$SCRATCH/task.md"
     cat >"$TASK_FILE" <<'TASK'
@@ -1302,6 +1419,7 @@ TASK
 
 # ---------------------------------------------------------------------- inputs
 DRY_RUN_CLI=""
+PREFLIGHT_CLI=""
 INSTALLATION_CLI=""
 REPO_CLI=""
 APP_KEY_CLI=""
@@ -1352,6 +1470,10 @@ while [ $# -gt 0 ]; do
     DRY_RUN_CLI=1
     shift
     ;;
+  --preflight)
+    PREFLIGHT_CLI=1
+    shift
+    ;;
   -h | --help)
     usage
     exit 0
@@ -1372,6 +1494,9 @@ GCP_PROJECT=${CHECK670_GCP_PROJECT:-${GCP_PROJECT_CLI:-}}
 RUNS_BUCKET=${CHECK670_RUNS_BUCKET:-}
 PRODUCTION=${CHECK670_PRODUCTION:-${PRODUCTION:-}}
 DRY_RUN=${CHECK670_DRY_RUN:-${DRY_RUN_CLI:-}}
+PREFLIGHT=${CHECK670_PREFLIGHT:-${PREFLIGHT_CLI:-}}
+PREFLIGHT_MODE=no
+[ -z "$PREFLIGHT" ] || PREFLIGHT_MODE=yes
 KEEP_SCRATCH=${CHECK670_KEEP_SCRATCH:-}
 RUN_SECONDS=${CHECK670_RUN_SECONDS:-2400}
 POLL_SECONDS=${CHECK670_POLL_SECONDS:-20}

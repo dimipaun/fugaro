@@ -33,6 +33,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,7 +45,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
-	managed "github.com/dimipaun/fugaro/internal/infra/managed"
+	inframanaged "github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/intake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
@@ -196,19 +197,21 @@ func wu21New(t *testing.T) *wu21World {
 	// simulates, because that is the step they belong to.
 	w.gcs.AddProject(wu21Member, 900000000002)
 	w.gcs.AddBucket(managedmode.InstallationsStateBucket(wu21Member), 900000000002, nil)
-	// Both projects are managed, and that is a fixture rather than a claim of
-	// this test: every command that writes to a project refuses one that is not
-	// managed (D2217, T7a-T7c), and this family writes to the workspace's own
-	// project and to each member's. Unmarked, the chain stops at its first write
-	// — which is the fence working, not this test's subject. Each side is given
-	// the three things the read takes: the project's own `fugaro_managed` label,
-	// its runs bucket's label, and the creation fact in that bucket.
-	labelled(w.crm, wu21Workspace)
-	labelled(w.crm, wu21Member)
-	for project, number := range map[string]uint64{wu21Workspace: 900000000001, wu21Member: 900000000002} {
-		bucket := wu21RunsBucketOf(project)
-		w.gcs.AddBucket(bucket, number, map[string]string{gcp.LabelManaged: gcp.ManagedValue})
-		w.gcs.Put(bucket, managed.MarkerObject, wu21Marker(project))
+	// Both projects are managed (D2217): every command that writes to one
+	// refuses an unmanaged project, so each carries the label and the creation
+	// fact the gate reads.
+	for _, p := range []struct {
+		id  string
+		num uint64
+	}{{wu21Workspace, 900000000001}, {wu21Member, 900000000002}} {
+		labelled(w.crm, p.id)
+		w.gcs.AddProject(p.id, p.num)
+		bucket := "fugaro-runs-" + p.id
+		if p.id == wu21Member {
+			bucket = wu21RunsBucket()
+		}
+		w.gcs.AddBucket(bucket, p.num, map[string]string{gcp.LabelManaged: gcp.ManagedValue})
+		w.gcs.Put(bucket, inframanaged.MarkerObject, []byte(fmt.Sprintf(`{"version":1,"gcp_project":%q}`, p.id)))
 	}
 	w.seedFirebaseState(w.mbdb.URL)
 	// Each database names its own project at /fugaro/project, which every command
@@ -238,19 +241,9 @@ func wu21CommitReports() string {
 	return "reports_commit:\n  repo: acme/state\n  dir: docs/state\n"
 }
 
-// wu21RunsBucketOf is one installation's runs bucket, the name both sides of
-// this world are read from.
-func wu21RunsBucketOf(project string) string { return "fugaro-runs-" + project }
-
 // wu21RunsBucket is the member's own runs bucket, where its `fugaro update`
 // publishes the derived admin list the workspace's commands read.
-func wu21RunsBucket() string { return wu21RunsBucketOf(wu21Member) }
-
-// wu21Marker is the creation fact a `fugaro init` leaves in the runs bucket,
-// which is what makes a project managed rather than merely labelled.
-func wu21Marker(project string) []byte {
-	return []byte(`{"version":1,"gcp_project":"` + project + `"}`)
-}
+func wu21RunsBucket() string { return "fugaro-runs-" + wu21Member }
 
 // writeConfig writes one project's config, pointed at every fake. extra is what
 // only one of the two carries: the member's membership, and the workspace's own

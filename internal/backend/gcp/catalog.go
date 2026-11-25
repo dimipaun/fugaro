@@ -21,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/imagebake"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -252,6 +253,20 @@ type CatalogBuildSpec struct {
 	Prebuilt string
 	// Definition is the copy the build reads and pins.
 	Definition CatalogDefinition
+	// Baked are the repositories the copied definition bakes checkouts of
+	// (imagebake.BakedRepos): a stage imagebake appended copies each of them
+	// out of the image the clone step builds, and the marker line that stage
+	// opens with names the clone URL and branch the clone step clones it from.
+	//
+	// The list is what the clone step produces and the definition copies, and
+	// the entry's own build step is handed no secret for it: the build that
+	// holds the git credential is the clone step's and no build of the
+	// entry's own (B8, F19), so a definition that bakes is built exactly as
+	// one that does not (catalogEntryBuildStep). It is empty for a definition
+	// the entry's own text holds, which is every entry that names its own
+	// checkout, and its LAST element is the repository the build runs for —
+	// the checkout the definition is known by (imagebake.BakedSlug).
+	Baked []imagebake.Repo
 	// Context is the directory of the entry's repository the build runs on —
 	// config.Source.Context, the entry's own value — and "" when the entry
 	// names none, which is the shape every entry had before the key existed.
@@ -437,7 +452,9 @@ func CatalogBuildRequest(project string, s CatalogBuildSpec) (*cloudbuild.Build,
 	// the spec is checked, so the variables the request reserves are the ones
 	// that step really carries: the checkout reaches it as an image of the
 	// worker's own instead, and the secret and the volume that held it stay in
-	// the clone step's build (B8, F19).
+	// the clone step's build (B8, F19) — unless the definition bakes, which is
+	// the one definition whose own build step is the last to read the
+	// credential and keeps both (Baked).
 	if err := catalogEntryBuildStep(build); err != nil {
 		return nil, err
 	}

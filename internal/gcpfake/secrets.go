@@ -134,7 +134,12 @@ type Secrets struct {
 }
 
 type fakeSecret struct {
-	labels   map[string]string
+	labels      map[string]string
+	annotations map[string]string
+	// ttl is the container's time-to-live as a duration the API accepts
+	// ("3600s"), empty when it has none: the shape fact a pre-created
+	// container carries (R12, F35) and the one SeedWithTTL sets.
+	ttl      string
 	created  time.Time
 	versions [][]byte
 	policy   []Binding
@@ -352,9 +357,32 @@ func (f *Secrets) AddVersion(id string, value []byte) {
 // Seed creates secret id with labels and one version holding value, as
 // another tool would. A nil value creates the secret with no version.
 func (f *Secrets) Seed(id string, labels map[string]string, value []byte) {
+	f.SeedShape(id, labels, nil, value)
+}
+
+// SeedShape is Seed with the container's annotations beside its labels: the
+// intake's own shape check reads them (R12), so a test that stands a container
+// another writer made in front of a write path has to be able to say what it
+// carries there.
+func (f *Secrets) SeedShape(id string, labels, annotations map[string]string, value []byte) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	s := &fakeSecret{labels: maps.Clone(labels), created: time.Now()}
+	f.seed(id, labels, annotations, "", value)
+}
+
+// SeedWithTTL is SeedShape with a time-to-live on the container, as a
+// duration the API takes ("3600s"): the shape fact a container somebody else
+// pre-created carries so that the value written into it is taken away on their
+// clock (R12, F35). A write path that reads the container's shape refuses it,
+// which is what a test using this is asking about.
+func (f *Secrets) SeedWithTTL(id string, labels, annotations map[string]string, ttl string, value []byte) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.seed(id, labels, annotations, ttl, value)
+}
+
+func (f *Secrets) seed(id string, labels, annotations map[string]string, ttl string, value []byte) {
+	s := &fakeSecret{labels: maps.Clone(labels), annotations: maps.Clone(annotations), ttl: ttl, created: time.Now()}
 	if value != nil {
 		s.versions = [][]byte{append([]byte(nil), value...)}
 	}
@@ -580,6 +608,7 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		id := r.URL.Query().Get("secretId")
 		var req struct {
 			Labels      map[string]string `json:"labels"`
+			Annotations map[string]string `json:"annotations"`
 			Replication createReplication `json:"replication"`
 		}
 		if err := json.Unmarshal(body, &req); err != nil || id == "" {
@@ -595,7 +624,7 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 			writeError(w, http.StatusConflict, "ALREADY_EXISTS", "Secret ["+id+"] already exists.")
 			return
 		}
-		s := &fakeSecret{labels: req.Labels, created: time.Now(), regions: regions}
+		s := &fakeSecret{labels: req.Labels, annotations: req.Annotations, created: time.Now(), regions: regions}
 		f.secrets[id] = s
 		writeJSON(w, http.StatusOK, s.json(m[1], id))
 	case r.Method == http.MethodGet && secretsPathRE.MatchString(p):
@@ -695,12 +724,21 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 }
 
 func (s *fakeSecret) json(project, id string) map[string]any {
-	return map[string]any{
+	out := map[string]any{
 		"name":        "projects/" + project + "/secrets/" + id,
 		"createTime":  s.created.UTC().Format(time.RFC3339Nano),
 		"labels":      s.labels,
 		"replication": replicationJSON(s.regions),
 	}
+	// As the API answers a container that carries none: the member is absent
+	// and not an empty object.
+	if len(s.annotations) > 0 {
+		out["annotations"] = s.annotations
+	}
+	if s.ttl != "" {
+		out["ttl"] = s.ttl
+	}
+	return out
 }
 
 // replicationJSON is a replication policy as the API answers it: automatic,

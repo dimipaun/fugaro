@@ -23,6 +23,7 @@
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+LIVE_CHECK_LIB=${LIVE_CHECK_LIB:-$here/lib}
 script=$here/check630.sh
 work=$(mktemp -d)
 cleanup_all() {
@@ -69,11 +70,18 @@ write_fake_fugaro() { # dir
 # case wrote or from the mode it set, and every call is logged with the
 # directory it was made in.
 #
+# The FIRST thing it does is the strict check: the command and every flag are
+# held against the real CLI's own surface (scripts/live-checks/lib/), so a case
+# that passes this fake a flag `fugaro` does not take is refused here rather
+# than at the owner's terminal.
+#
 # The pools listing and the node's read answer differently once `update` has been
 # called — the check reads each of them before and after it — and the mode names
 # which side is bent: an `*-after*` mode bends the read that follows the update,
 # a `*-before*` one bends the read before it.
 set -euo pipefail
+. "$LIVE_CHECK_LIB/strict.sh"
+strict_fugaro_verify "$@" || exit $?
 printf 'fugaro %s (in %s)\n' "$*" "$PWD" >>"$FAKE_LOG_DIR/fugaro.calls"
 mode=${FAKE_MODE:-default}
 pools_mode=${FAKE_POOLS_MODE:-$mode}
@@ -456,6 +464,7 @@ run_check() { # run_check DIR ENV... [-- ARGS...]
   # marker again, and a variable given as an argument wins over `env -u`.
   env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_REMOTE -u CURSOR_AGENT -u AI_AGENT \
     PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
+    LIVE_CHECK_LIB="$LIVE_CHECK_LIB" \
     FAKE_LOG_DIR="$dir/logs" FAKE_JSON_DIR="$dir/json" FAKE_STATE="$dir/state" \
     FAKE_RUNNER="$runner_member" FAKE_CREDSVCC="$credsvc_member" FAKE_POOL="$crossed_pool" \
     CHECK630_SANDBOX="$dir/sandbox" \
@@ -813,6 +822,61 @@ test_an_unknown_argument_is_refused() {
   expect_contains "$err" "unknown argument: --wat" "an unknown argument: the message"
 }
 
+test_preflight_passes_and_writes_nothing() {
+  local dir=$work/preflight-ok
+  prepare "$dir"
+  run_check "$dir" -- --preflight
+  expect_status "$status" 0 "a preflight with nothing blocking"
+  expect_contains "$err" "preflight passed" "a preflight: the pass line"
+  expect_contains "$err" "read: the installation is $installation" "a preflight: the installation it read"
+  expect_contains "$err" "read: the crossing list would name" "a preflight: the pair it would hand the write door"
+  expect_absent "$fugaro_calls" "accounts pool add" "a preflight: the write door is not asked"
+  expect_absent "$fugaro_calls" "fugaro update" "a preflight: nothing is updated"
+  expect_absent "$out" "CHECK 630 RESULT" "a preflight: no result block is printed"
+  assert_scratch_removed "a preflight"
+}
+
+test_preflight_reports_every_blocker_at_once() {
+  local dir=$work/preflight-blocked
+  prepare "$dir"
+  # The pool the write door would be asked for is already there, and the config
+  # declares no member of the run's own path: two blockers, printed together.
+  cat >"$dir/json/pools.txt" <<TXT
+pools for project $installation (offline)
+
+NAME         STRATEGY   MEMBERS       SERVED BY
+$pool_name   failover   $oauth_member  the credentials service
+TXT
+  run_check "$dir" FAKE_MODE=creds-no-pair -- --preflight
+  expect_status "$status" 1 "a preflight with blockers"
+  expect_contains "$err" "BLOCKED refused-at-add: the config declares no OpenRouter or vertex member" "a preflight: the missing member"
+  expect_contains "$err" "BLOCKED refused-at-add: the pool $pool_name is already declared" "a preflight: the pool that is already there"
+  expect_contains "$err" "fix: fugaro accounts add openrouter-key --type openrouter" "a preflight: the command that declares the member"
+  expect_contains "$err" "fix: fugaro accounts pool rm $pool_name" "a preflight: the command that clears the pool"
+  expect_contains "$err" "found 2 blocker(s)" "a preflight: both blockers at once"
+  expect_absent "$fugaro_calls" "accounts pool add" "a preflight: the write door is not asked"
+  expect_absent "$fugaro_calls" "fugaro update" "a preflight: nothing is updated"
+}
+
+test_preflight_names_a_node_the_read_does_not_refuse() {
+  local dir=$work/preflight-node
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=node-crossing-ok -- --preflight
+  expect_status "$status" 1 "a preflight on a node that crosses unreffused"
+  expect_contains "$err" "BLOCKED node-crossing: the published node (version 11) carries a crossing pool and this build's read did NOT refuse it" "a preflight: the node blocker"
+  expect_contains "$err" "fix: fugaro update" "a preflight: the fix names the update"
+  expect_absent "$fugaro_calls" "fugaro update (in" "a preflight: the update is named, never run"
+}
+
+test_preflight_is_refused_for_a_coding_agents_session() {
+  local dir=$work/preflight-agent
+  prepare "$dir"
+  run_check "$dir" CLAUDECODE=1 -- --preflight
+  expect_status "$status" 1 "a coding agent's preflight"
+  expect_contains "$err" "a coding agent's session" "a preflight: the session refusal"
+  expect_absent "$fugaro_calls" "accounts ls --json" "a preflight: no live read is made"
+}
+
 # Sharding, so a Go test could run these side by side: CHECK_TEST_SHARD="i/n"
 # runs every n-th test starting at i (each case works in its own directory under
 # $work), CHECK_TEST_ONLY=name runs that one alone.
@@ -858,6 +922,10 @@ t test_belong_is_refused_by_name
 t test_an_installation_naming_belong_stops_the_check
 t test_xtrace_refused
 t test_a_coding_agents_session_is_refused
+t test_preflight_passes_and_writes_nothing
+t test_preflight_reports_every_blocker_at_once
+t test_preflight_names_a_node_the_read_does_not_refuse
+t test_preflight_is_refused_for_a_coding_agents_session
 t test_kept_scratch_is_reported
 t test_an_unknown_argument_is_refused
 
