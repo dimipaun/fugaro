@@ -211,12 +211,19 @@ func runPersonalEnv(ctx context.Context, env *cloudEnv, spec *task.Spec, slug, a
 		// the personal half on launches exactly what it launched before.
 		return nil
 	}
-	cfg, err := personGcloudAccount(ctx)
-	if err != nil || cfg.serviceAccount() {
+	// The listing is bounded like the mint that would follow it
+	// (personGrantIdentity, personIDToken): a gcloud that stalls is a machine
+	// that cannot answer, which is D3147's launch-on-the-shared-entries and
+	// never a launch that spends the hold waiting for it.
+	gctx, gcancel := context.WithTimeout(ctx, reviewIdentityTimeout)
+	defer gcancel()
+	cfg, err := personGcloudAccount(gctx)
+	if err != nil || cfg.serviceAccount() || !cfg.loggedIn() {
 		// D2976's consequence: a machine that is a service account — or one
-		// whose gcloud names no account this launch could mint as — holds no
-		// personal token and is asked for none. Nothing is said: a daemon's
-		// launch is the ordinary state of this machine, not a fault of it.
+		// whose gcloud names no account this launch could mint as, which is
+		// what loggedIn reports — holds no personal token and is asked for
+		// none. Nothing is said: a daemon's launch is the ordinary state of
+		// this machine, not a fault of it.
 		return nil
 	}
 	// The request is built in its own statement, as runSlipEnv's is, so that the

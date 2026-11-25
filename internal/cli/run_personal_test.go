@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -275,34 +276,57 @@ var errPersonalUnreachable = fmt.Errorf("the workspace's credentials service cou
 // Mutation (run, restored): return an error from the launch instead of the
 // warning and this fails on the launch that never started.
 func TestAFailedGrantStartsTheRunWithoutIt(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		why  string
-		err  error
-	}{
-		{"the workspace refused the grant", "refused", fmt.Errorf("%w: the workspace answered %d", creds.ErrPersonGrantRefused, 400)},
-		{"the service could not be reached", "could not be reached", errPersonalUnreachable},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			r := newPersonalLaunchRig(t, personalRouteRecord(fakeWorkspaceAddress), true)
-			plain := r.launch(t, func(creds.PersonGrantRequest) (creds.PersonGrant, error) {
-				return creds.PersonGrant{}, c.err
-			})
-			if r.calls != 1 {
-				t.Fatalf("the launch made %d grant calls, want one", r.calls)
-			}
-			if len(plain) != 0 {
-				t.Errorf("the launch handed the job %v, want no entry: no slip was granted", plain)
-			}
-			said := r.warned.String()
-			if !strings.Contains(said, "shared entries") || !strings.Contains(said, c.why) {
-				t.Errorf("the launch said %q, want one line saying the run spends the shared entries and why (%q): D3147 is the run starting anyway, and the person being told which entries it spends", said, c.why)
-			}
-			if n := len(r.f.run.Executions()); n == 0 {
-				t.Error("no execution was started: a failed grant must never stop a launch (D3147)")
-			}
-		})
+	// The three parts of D3147, asserted the same way for both answers: no
+	// entry handed to the job, one line saying which entries the run spends and
+	// why, and an execution that started anyway.
+	check := func(t *testing.T, r *personalLaunchRig, plain []string, why string) {
+		t.Helper()
+		if len(plain) != 0 {
+			t.Errorf("the launch handed the job %v, want no entry: no slip was granted", plain)
+		}
+		said := r.warned.String()
+		if !strings.Contains(said, "shared entries") || !strings.Contains(said, why) {
+			t.Errorf("the launch said %q, want one line saying the run spends the shared entries and why (%q): D3147 is the run starting anyway, and the person being told which entries it spends", said, why)
+		}
+		if n := len(r.f.run.Executions()); n == 0 {
+			t.Error("no execution was started: a failed grant must never stop a launch (D3147)")
+		}
 	}
+
+	t.Run("the workspace refused the grant", func(t *testing.T) {
+		// The REAL call, against a service answering the launcher's own class of
+		// refusal: the mapping from that status to creds.ErrPersonGrantRefused
+		// is the shipped one, and a stub carrying the sentinel already wrapped
+		// would assert nothing about it — the launch would read the service's
+		// answer as any other status and say so.
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(credsvc.StatusRequestRefused)
+		}))
+		t.Cleanup(srv.Close)
+		prev := personGrant
+		personGrant = personGrantOverService
+		t.Cleanup(func() { personGrant = prev })
+
+		r := newPersonalLaunchRig(t, personalRouteRecord(srv.URL), true)
+		plain := r.launch(t, nil)
+		if r.calls != 0 {
+			t.Errorf("the fixture's own grant answer was asked for %d times: this case drives the real call", r.calls)
+		}
+		check(t, r, plain, "the workspace refused its grant")
+	})
+
+	t.Run("the service could not be reached", func(t *testing.T) {
+		// The transport failure is the client's and not a service's answer, so
+		// it is the one case a stub stands for: there is no answer to read.
+		r := newPersonalLaunchRig(t, personalRouteRecord(fakeWorkspaceAddress), true)
+		plain := r.launch(t, func(creds.PersonGrantRequest) (creds.PersonGrant, error) {
+			return creds.PersonGrant{}, errPersonalUnreachable
+		})
+		if r.calls != 1 {
+			t.Fatalf("the launch made %d grant calls, want one", r.calls)
+		}
+		check(t, r, plain, "could not be reached")
+	})
 }
 
 // TestTheGrantCarriesNoClaimSecret: F14, and the launcher's end of it. The
@@ -407,6 +431,9 @@ func TestTheLaunchSaysWhichTokenItDrawsOn(t *testing.T) {
 // with is read first, and the grant is never called. Nothing is said about it —
 // a daemon's or a coordinator's launch is the ordinary state of that machine,
 // and a line on every one of them would be noise about a fact its owner set.
+// A gcloud naming no account at all is the same answer: there is no credential
+// to mint the person's token with, so the launch asks for nothing and says
+// nothing rather than warning about a login this machine never had.
 //
 // Mutation (run, restored): ask before reading the account and this fails on
 // the grant call a service-account launcher makes.
@@ -420,6 +447,11 @@ func TestAServiceAccountLaunchAsksForNoGrant(t *testing.T) {
 			`{"core":{"account":"fugaro-run@proj-1234.iam.gserviceaccount.com"}}`, "a service account"},
 		{"gcloud is impersonating a service account",
 			`{"core":{"account":"someone@example.com"},"auth":{"impersonate_service_account":"fugaro-run@proj-1234.iam.gserviceaccount.com"}}`, "an impersonated account"},
+		// A machine whose gcloud names no account at all has nothing to mint
+		// with either, and the same silence: it is the state of every daemon
+		// whose gcloud was never logged in, and a line on each of its launches
+		// would be a warning about a credential the machine never had.
+		{"gcloud names no account", `{}`, "a machine with no account at all"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			r := newPersonalLaunchRig(t, personalRouteRecord(fakeWorkspaceAddress), true)
