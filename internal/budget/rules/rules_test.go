@@ -2290,9 +2290,10 @@ func TestAgentEntryFieldsAreTemplateChildren(t *testing.T) {
 //
 // Two rules already there are allowed to move, and both are named. One is a
 // change: the outcome's status validator gains the run status 'unreviewed'
-// (isNamedRuleChange, docs/binary-allow-rule's NV0, D994), the one change of
-// that shape because it is what keeps the database true about a status a
-// release adds, and the widening is exact — the one clause and nothing else.
+// (isNamedRuleChange, docs/binary-allow-rule's NV0, D994) and, for PR1, the
+// status 'paused' (model-credentials-routing, D3185, R15) — the one change of
+// that shape, because it is what keeps the database true about a status a
+// release adds, and each widening is exact: one clause and nothing else.
 // The other is an *addition to a rule*: the node the outcome itself sits at
 // gains the paired device's read (isNamedReadGrant, mobile identity-pairing J1,
 // F30, D2797, O3), which is a new attribute on a path generation 3 already
@@ -2302,8 +2303,8 @@ func TestAgentEntryFieldsAreTemplateChildren(t *testing.T) {
 //
 // Hand mutation this fails on: editing any existing rule (a loosened bound, a
 // dropped conjunct) while adding the new nodes, widening the outcome's status
-// validator by anything but that one clause (a second word, a bound instead of
-// an equality), a read granted at a second path or to an expression other than
+// validator by anything but those clauses (a third word, a bound instead of an
+// equality), a read granted at a second path or to an expression other than
 // the user claim, or dropping the new node from the template (the addition check
 // below).
 func TestRulesPreexistingPathsUnchanged(t *testing.T) {
@@ -2384,9 +2385,14 @@ func TestRulesPreexistingPathsUnchanged(t *testing.T) {
 // generatedPaths spells it (the model slug, not the document's $slug variable).
 const outcomeStatusPath = "outcomes/$day/" + slugForPath + "/$run/status"
 
-// unreviewedClause is the one disjunct the widening adds to that rule, with the
-// spacing the template writes it in.
+// unreviewedClause and pausedClause are the two disjuncts the widening adds to
+// that rule, with the spacing the template writes them in. The second is PR1's
+// (model-credentials-routing, D3185, R15): a run that suspends itself writes
+// its outcome as `paused`, and a document that does not spell the word refuses
+// that outcome — which internal/budget's Finish would file as an
+// infrastructure error, a fault that never happened.
 const unreviewedClause = " || newData.val() == 'unreviewed'"
+const pausedClause = " || newData.val() == 'paused'"
 
 // registeredKindClause is the disjunct P5.2.2 adds to the kind enumeration, on
 // both messages, with the spacing the template writes it in.
@@ -2481,8 +2487,9 @@ type ruleChange struct {
 
 var namedRuleChanges = map[string][]ruleChange{
 	// The outcome's status gains the run status 'unreviewed' (docs/
-	// binary-allow-rule's NV0, D994).
-	outcomeStatusPath: {{now: unreviewedClause}},
+	// binary-allow-rule's NV0, D994) and, for PR1, 'paused' — the word a run
+	// that suspended itself ends with (model-credentials-routing, D3185, R15).
+	outcomeStatusPath: {{now: unreviewedClause}, {now: pausedClause}},
 	// The two messages gain the registration kind (mobile plan task P5.2.2):
 	// the word in the enumeration, and the required fields on the message —
 	// and, for J5r, a tag that is one of `mac` and `sig` in place of the `mac`
@@ -2598,6 +2605,7 @@ const outcomeStatusNone = "none"
 // Two of the paths it names are the outcome's status, which gains the run
 // status 'unreviewed' — the label of a run that finished and pushed with no
 // review verdict (docs/binary-allow-rule/implementation-plan.md's NV0, D994) —
+// and the run status 'paused' (model-credentials-routing's PR1, D3185, R15) —
 // and, for J5r, the mailbox: a message and the heartbeat carry a tag that is
 // one of `mac` and `sig` (O6), and an inbox action may be a typed launch
 // carrying a `mode` (O10). The others are earlier tasks' (P5.2.2's registration

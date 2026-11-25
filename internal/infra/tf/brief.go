@@ -31,48 +31,9 @@ func Brief(p *Plan) string {
 	if p == nil {
 		return "No plan.\n"
 	}
-	var counts counts
-	var review []string
-	for _, rc := range p.ResourceChanges {
-		acts := rc.Change.Actions
-		importing := rc.Change.Importing != nil
-		replace := slices.Contains(acts, "delete") && slices.Contains(acts, "create")
-		if importing {
-			counts.imports++
-		}
-		switch {
-		case replace:
-			counts.replaces++
-			review = append(review, "⚠ "+describe(rc, "replaced"))
-			continue
-		case slices.Equal(acts, []string{"delete"}):
-			counts.deletes++
-			review = append(review, "⚠ "+describe(rc, "removed"))
-			continue
-		case slices.Equal(acts, []string{"create"}):
-			counts.creates++
-			continue
-		case slices.Equal(acts, []string{"forget"}):
-			counts.forgets++
-			continue
-		case slices.Equal(acts, []string{"update"}):
-			counts.updates++
-		case importing && slices.Equal(acts, []string{"no-op"}):
-			continue
-		case slices.Equal(acts, []string{"no-op"}), slices.Equal(acts, []string{"read"}):
-			continue
-		default:
-			review = append(review, fmt.Sprintf("⚠ %s is %s", thing(rc), strings.Join(acts, " and ")))
-			continue
-		}
-		paths := changedPaths(rc.Type, rc.Change)
-		if isSensitive(rc.Type, paths) {
-			review = append(review, "⚠ "+describe(rc, pathWords(rc.Type, paths)))
-		}
-	}
-
+	c, review, _ := tally(p)
 	var b strings.Builder
-	b.WriteString(counts.line() + "\n")
+	b.WriteString(c.line() + "\n")
 	if len(review) > 0 {
 		b.WriteString("\n⚠ Review these first:\n")
 		for _, l := range review {
@@ -82,17 +43,114 @@ func Brief(p *Plan) string {
 	return b.String()
 }
 
+// Counts is a plan's totals as the one line a step's own line carries —
+// "6 to create, 2 to update, 5 to delete" — without Brief's heading: the
+// terminal's account of a plan a caller prints as a step rather than as a
+// block (the update --repo door's own line). It is counts.brief and not a
+// second reading of the plan, so the step line and the plan view cannot
+// disagree about what the plan holds.
+func Counts(p *Plan) string {
+	if p == nil {
+		return "no plan"
+	}
+	c, _, _ := tally(p)
+	if s := c.brief(); s != "" {
+		return s
+	}
+	return "no changes"
+}
+
+// Removals is a plan's removals in Fugaro's words, as one clause: one line per
+// change that removes something ("the admin grant to user:old@example.com is
+// removed, the job is replaced"), at most max of them, and a count for the
+// rest. It is "" for a plan that removes nothing.
+//
+// It exists for the refusal a person reads instead of Guard's own address
+// list: what the plan does, in words, before the addresses it does it at. The
+// clauses are tally's — the same ones Brief prints — so a refusal that quotes
+// them and the plan's own view cannot describe one change two ways.
+func Removals(p *Plan, max int) string {
+	if p == nil {
+		return ""
+	}
+	_, _, removals := tally(p)
+	if len(removals) == 0 {
+		return ""
+	}
+	shown := removals
+	rest := 0
+	if max > 0 && len(removals) > max {
+		shown, rest = removals[:max], len(removals)-max
+	}
+	out := strings.Join(shown, ", ")
+	if rest > 0 {
+		out += fmt.Sprintf(", and %d more", rest)
+	}
+	return out
+}
+
+// tally walks a plan once and answers its three readers: the counts Brief's
+// line and a step line are built from, the review lines Brief prints (every
+// removal, and every in-place update the sensitive table marks), and the
+// removal lines alone — the same clauses, for a caller that says what a plan
+// removes without the sensitive updates beside them (Removals). One walk means
+// the three cannot count or describe the same plan differently.
+func tally(p *Plan) (c counts, review, removals []string) {
+	for _, rc := range p.ResourceChanges {
+		acts := rc.Change.Actions
+		importing := rc.Change.Importing != nil
+		replace := slices.Contains(acts, "delete") && slices.Contains(acts, "create")
+		if importing {
+			c.imports++
+		}
+		switch {
+		case replace:
+			c.replaces++
+			removals = append(removals, describe(rc, "replaced"))
+			review = append(review, "⚠ "+describe(rc, "replaced"))
+			continue
+		case slices.Equal(acts, []string{"delete"}):
+			c.deletes++
+			removals = append(removals, describe(rc, "removed"))
+			review = append(review, "⚠ "+describe(rc, "removed"))
+			continue
+		case slices.Equal(acts, []string{"create"}):
+			c.creates++
+			continue
+		case slices.Equal(acts, []string{"forget"}):
+			c.forgets++
+			continue
+		case slices.Equal(acts, []string{"update"}):
+			c.updates++
+		case importing && slices.Equal(acts, []string{"no-op"}):
+			continue
+		case slices.Equal(acts, []string{"no-op"}), slices.Equal(acts, []string{"read"}):
+			continue
+		default:
+			line := fmt.Sprintf("%s is %s", thing(rc), strings.Join(acts, " and "))
+			removals = append(removals, line)
+			review = append(review, "⚠ "+line)
+			continue
+		}
+		paths := changedPaths(rc.Type, rc.Change)
+		if isSensitive(rc.Type, paths) {
+			review = append(review, "⚠ "+describe(rc, pathWords(rc.Type, paths)))
+		}
+	}
+	return c, review, removals
+}
+
 // counts is a plan's totals, kept apart from Summary's own so the two cannot
 // drift into disagreeing about what they counted.
 type counts struct {
 	imports, creates, updates, forgets, replaces, deletes int
 }
 
-// line is the counts as the one line the screen gets. A zero is left out
-// rather than printed as "0 to import": the person reads the line to know
-// what is about to happen, and "0 to update" is not something that happens.
-// A plan with nothing in it says so.
-func (c counts) line() string {
+// brief is the counts as the list a line carries. A zero is left out rather
+// than printed as "0 to import": the person reads the line to know what is
+// about to happen, and "0 to update" is not something that happens. A plan
+// with nothing in it is "".
+func (c counts) brief() string {
 	var parts []string
 	for _, p := range []struct {
 		n    int
@@ -105,10 +163,16 @@ func (c counts) line() string {
 			parts = append(parts, fmt.Sprintf("%d %s", p.n, p.what))
 		}
 	}
-	if len(parts) == 0 {
-		return "Plan: no changes."
+	return strings.Join(parts, ", ")
+}
+
+// line is the counts as the one line the plan's own view gets, with its
+// heading.
+func (c counts) line() string {
+	if s := c.brief(); s != "" {
+		return "Plan: " + s + "."
 	}
-	return "Plan: " + strings.Join(parts, ", ") + "."
+	return "Plan: no changes."
 }
 
 // describe is one change in Fugaro's words: what the thing is, and what

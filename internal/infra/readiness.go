@@ -461,6 +461,20 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 				ignoredHere = append(ignoredHere, logical)
 				continue
 			}
+			if spec.DefaultAccountUnused && logical == config.ClaudeOAuthToken {
+				// No run of this project's configuration holds the unsuffixed
+				// default account (RepoSpec.DefaultAccountUnused), so this job
+				// mounts a token nothing of the owner's ever uses and its
+				// absence is not a gate: the mount goes the way the optional
+				// key's does, so the job still deploys and the repository is
+				// not stranded on a name no command of its configuration
+				// reaches. What a launch naming the default account anyway
+				// (`--token default`) meets is the runner's own refusal of a
+				// run that holds no credential, which is a run told what is
+				// wrong rather than a repository that cannot be brought up.
+				dropMount(ws, logical)
+				continue
+			}
 			if OptionalSecret(logical) {
 				// Mounted whenever the secret has a version, and a fact
 				// about data rather than about policy, so flipping a
