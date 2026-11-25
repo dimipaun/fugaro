@@ -7,6 +7,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/routing"
@@ -133,6 +134,11 @@ func (r *run) stageTiming(name string, started time.Time, claudeUSD float64, sub
 // stage is a fallback stage once ANY of its calls came from a source that is
 // not the chain's first, and the source is the last answered call's, which is
 // the one the stage ended on.
+// The same two facts reach the live registry entry from here (D3070, CS9), so
+// that a run in flight shows what its calls go out on: `source` as the wire
+// spells it and `fallback` as the stage's own. The entry takes them to the
+// stage's row being built, which is where chainStage clears them.
+//
 // The hook's shape is the contract's: held here at compile time, so a change to
 // C1's ChainAnswerFunc fails in this package rather than in the wiring that
 // hands the run's hook to its gateway.
@@ -145,7 +151,23 @@ func (r *run) chainAnswered(a gateway.ChainAnswer) {
 	if a.Fallback {
 		r.chainFallback = true
 	}
+	text, fallback := chainSourceText(source), r.chainFallback
 	r.mu.Unlock()
+	r.noteRegistry(func(e *budget.AgentEntry) {
+		e.Source, e.Fallback = text, fallback
+	})
+}
+
+// chainSourceText is a routing.SourceName as the live registry entry and
+// `fugaro watch --json` spell it: the kind, and the name after a colon when the
+// kind names one (`pool:team`, `anthropic`; contract-table.md, D3070). The
+// record's own member is the object (runstore's stages[].source) and keeps the
+// shape routing.SourceName declares; this is the one string a row prints.
+func chainSourceText(s routing.SourceName) string {
+	if s.Name == "" {
+		return string(s.Kind)
+	}
+	return string(s.Kind) + ":" + s.Name
 }
 
 // chainStage is what the service's answers said about the stage that has just
@@ -159,12 +181,19 @@ func (r *run) chainAnswered(a gateway.ChainAnswer) {
 // was taken -- the case closeGateway records money for -- can name the next
 // stage's source. Nothing is decided by the figure, it is a name the run's own
 // record carries, and naming the next stage's source is the direction to keep
-// against dropping a stage's source altogether.
+// against dropping a stage's source altogether. The live registry entry is
+// cleared here too, so the two never name different stages.
 func (r *run) chainStage() (source *routing.SourceName, fallback bool) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	source, fallback = r.chainSource, r.chainFallback
 	r.chainSource, r.chainFallback = nil, false
+	r.mu.Unlock()
+	// The live entry is cleared with them and for the same reason: the stage
+	// they were folded over is the one whose row has just been built, and a
+	// row that kept its source would draw the next stage's answer beside this
+	// one's flag (chainAnswered). An absent member is "not recorded", which is
+	// what a stage that has answered nothing yet is.
+	r.noteRegistry(func(e *budget.AgentEntry) { e.Source, e.Fallback = "", false })
 	return source, fallback
 }
 

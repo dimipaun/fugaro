@@ -467,7 +467,8 @@ func GatewayOn(auth, mode string) bool {
 }
 
 // ServiceSwitchedAuth reports whether an auth is one the credentials service
-// serves once the installation's switch is on: api-key and oauth (B2.2, F30).
+// serves once the installation's switch is on: every auth a repository's file
+// can name, api-key, oauth and vertex (B2.2, F30; D3174, CS6).
 //
 // It is not GatewayOn, and GatewayOn keeps its two-argument answer, because the
 // two are different questions. GatewayOn answers whether a run's gateway exists
@@ -478,12 +479,21 @@ func GatewayOn(auth, mode string) bool {
 // in GatewayOn's place would answer "switched" for every api-key repository
 // there is, and read a mount that is not there.
 //
+// vertex is here after CS6, and it is the one the served path needed: the
+// job's own GCP identity is an auth nothing in this gateway can cap (D1626), so
+// a `vertex` repository is served by the credentials service — which calls
+// Vertex on the service's own identity and prices the call as a key's (D3174) —
+// exactly where the project's routing table reaches it. Which source serves a
+// call is the table's answer and not this predicate's: what it says is that the
+// service is where a served `vertex` run's model calls go, the same statement
+// it makes for api-key and oauth.
+//
 // cascade is deliberately not here: it is served by the service on every
 // installation that has one, and reaches it through GatewayOn's own arm
 // whatever this answers.
 func ServiceSwitchedAuth(auth string) bool {
 	switch auth {
-	case "api-key", "oauth":
+	case "api-key", "oauth", "vertex":
 		return true
 	}
 	return false

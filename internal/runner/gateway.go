@@ -422,15 +422,14 @@ func (r *run) serviceModelPath() bool {
 // (gatewayUpstream's vertex arm), and reading the address here would lift both
 // refusals over exactly the uncapped path they exist for.
 //
-// For a `vertex` auth the predicate is false in this release, and that is what
-// D3174's dependency asks for: the release-1 bridge serves api-key and oauth
-// alone (ServiceSwitchedAuth) and a served project job admits a vertex run
-// without the service (projectjob's checkProjectJobServed, where Vertex is the
-// job's own identity and no mount), so nothing serves a vertex repository's
-// Vertex yet and the refusal holds. It goes when the served path does — CS6
-// spells the run's model path as the service's for a repository the table
-// serves, and CS10 hands that repository's job the address. A local run is
-// never the service's (D149).
+// A `vertex` file's run is the third shape the predicate answers (CS6): its
+// job carries the service's address where the project's routing table reaches
+// the repository (ServiceSwitchedAuth admits vertex, CS10 hands the address
+// over), and its Vertex calls are then the service's, so both refusals stand
+// down. Where the address is not there — an unmigrated repository, which no
+// chain of the table serves and whose launch hands nothing over — the run's
+// Vertex calls are still the job's own GCP identity and both refusals hold
+// (D1626). A local run is never the service's (D149).
 func (r *run) vertexServedByTheService() bool {
 	return r.serviceModelPath()
 }
@@ -544,6 +543,17 @@ func (r *run) startGateway(ctx context.Context) error {
 	// is the one hand-off C1.15 owns, and an answer that is not the exhausted
 	// one is left alone rather than guessed at here.
 	o.OnServiceAnswer = r.serviceAnswer
+	// And the credentials service is what serves this run's model calls, which
+	// is the whole of what this run's model path is (serviceModelPath, CS6):
+	// the gateway then sends the run's current stage on every call it makes to
+	// the service and reads the chain's own answer back — the source that
+	// served the call, whether it was the chain's first and which model served
+	// — through the hook below. A run whose model path is its own repository's
+	// keeps both off, sends no stage header and is answered exactly as it was
+	// before this contract: that is what lets the migration land one repository
+	// at a time (R25, chain_names.go).
+	o.ChainServed = gateway.ChainServed(r.serviceModelPath())
+	o.OnChainAnswer = r.chainAnswered
 	// Where each kind of this repository's credentials is served from, read
 	// once here, at the run's start (C2, D2982): a record that moves a kind to
 	// the workspace is a second upstream for that kind, and the record's answer
@@ -594,13 +604,14 @@ func (r *run) startGateway(ctx context.Context) error {
 // the review job's own file — oauth, whose arm is refused here — is exactly
 // what must not happen.
 //
-// An api-key or oauth run on the switch is the service arm too, and it is
-// asked first (B2.2, F30): the switch replaces this run's own credential with
-// the service's, so the api-key arm below — which is the mounted key, the very
-// credential the switch takes the repository off (F31, D2072) — must not be
-// reached for it. What is left of the run's own auth is the declaration
-// serviceUpstream makes, which is the whole reason the auth is still read
-// here.
+// A run on the switch is the service arm too, and it is asked first (B2.2,
+// F30; a `vertex` run with CS6): the switch replaces this run's own credential
+// with the service's, so the api-key arm below — which is the mounted key, the
+// very credential the switch takes the repository off (F31, D2072) — and the
+// vertex arm — which is the job's own uncapped GCP identity (D1626, D3174) —
+// must not be reached for it. What is left of the run's own auth is the
+// declaration serviceUpstream makes, which is the whole reason the auth is
+// still read here.
 func (r *run) gatewayUpstream(ctx context.Context) (gateway.Upstream, error) {
 	if r.serviceSwitched() {
 		return r.serviceUpstream()
