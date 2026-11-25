@@ -618,7 +618,7 @@ func catalogCloneStep(s CatalogBuildSpec, buildCwd string) (*cloudbuild.BuildSte
 		env = append(env, "CONTEXT_DIR=${_CONTEXT_DIR}", "BUILD_CWD="+buildCwd)
 	}
 	if s.GitProvider == gitprov.KindBitbucket {
-		env = append(env, "CREDENTIALS_SERVICE_URL=${_CREDENTIALS_SERVICE_URL}")
+		env = append(env, "CREDENTIALS_SERVICE_URL=${_CREDENTIALS_SERVICE_URL}", "BUILD_ID=$BUILD_ID")
 	}
 	return &cloudbuild.BuildStep{
 		Id:         catalogCloneStepID,
@@ -716,7 +716,10 @@ idtoken=$(curl --silent --show-error --fail --max-time 30 --header "Metadata-Fla
 case "$idtoken" in
   ""|*[!A-Za-z0-9._-]*) echo "the build identity's ID token is not one clean value" >&2; exit 1 ;;
 esac
-(umask 077 && printf '[http "%s"]\n\textraHeader = Authorization: Bearer %s\n' "$proxy" "$idtoken" >> ` + catalogCloneCredential + `)
+case "$BUILD_ID" in
+  ""|[!A-Za-z0-9]*|*[!A-Za-z0-9_-]*) echo "the build's own id is not one clean value" >&2; exit 1 ;;
+esac
+(umask 077 && printf '[http "%s"]\n\textraHeader = Authorization: Bearer %s\n\textraHeader = X-Fugaro-Build: %s\n' "$proxy" "$idtoken" "$BUILD_ID" >> ` + catalogCloneCredential + `)
 unset idtoken
 `
 

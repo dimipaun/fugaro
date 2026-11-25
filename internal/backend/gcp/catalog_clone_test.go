@@ -1263,7 +1263,7 @@ func runCatalogGrantStep(t *testing.T, svc, first, idToken string, code int) (st
 	testutil.WriteFiles(t, ws, map[string]string{"git-credentials": first + "\n\tinsteadOf = https://bitbucket.org/\n"})
 	script := strings.ReplaceAll(catalogCloneGrantStep, catalogCloneCredential, cred)
 	cmd := exec.Command(bash, "-c", "set -eu\n"+script)
-	cmd.Env = []string{"PATH=" + bin + ":" + os.Getenv("PATH"), "CREDENTIALS_SERVICE_URL=" + svc}
+	cmd.Env = []string{"PATH=" + bin + ":" + os.Getenv("PATH"), "CREDENTIALS_SERVICE_URL=" + svc, "BUILD_ID=3a67fac5-e201-46ce-88e3-6437cf2e0e11"}
 	out, err := cmd.CombinedOutput()
 	got, rerr := os.ReadFile(cred)
 	if rerr != nil {
@@ -1295,7 +1295,7 @@ func TestCatalogGrantStepPresentsTheBuildIdentityAtTheGrantsProxy(t *testing.T) 
 		if err != nil {
 			t.Fatalf("the step refused its own installation's grant: %v\n%s", err, out)
 		}
-		want := first + "\n\tinsteadOf = https://bitbucket.org/\n[http \"" + proxy + "\"]\n\textraHeader = Authorization: Bearer " + token + "\n"
+		want := first + "\n\tinsteadOf = https://bitbucket.org/\n[http \"" + proxy + "\"]\n\textraHeader = Authorization: Bearer " + token + "\n\textraHeader = X-Fugaro-Build: 3a67fac5-e201-46ce-88e3-6437cf2e0e11\n"
 		if got != want {
 			t.Errorf("the credential file is %q, want %q", got, want)
 		}
@@ -1354,7 +1354,7 @@ func TestCatalogCloneBitbucketHoldsNoStoreCredential(t *testing.T) {
 		hasGrant := strings.Contains(cs, "GIT_CONFIG_GLOBAL=\"$CRED\"")
 		hasStore := strings.Contains(cs, "credential.helper=store")
 		hasStep := strings.Contains(script, "bitbucket/proxy/")
-		hasEnv := slices.Contains(st.Env, "CREDENTIALS_SERVICE_URL=${_CREDENTIALS_SERVICE_URL}")
+		hasEnv := slices.Contains(st.Env, "CREDENTIALS_SERVICE_URL=${_CREDENTIALS_SERVICE_URL}") && slices.Contains(st.Env, "BUILD_ID=$BUILD_ID")
 		if bb := kind == gitprov.KindBitbucket; hasGrant != bb || hasStore == bb || hasStep != bb || hasEnv != bb {
 			t.Errorf("%s: grant wrapper %v, store wrapper %v, grant step %v, service env %v", kind, hasGrant, hasStore, hasStep, hasEnv)
 		}
