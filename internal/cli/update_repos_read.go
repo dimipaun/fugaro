@@ -74,24 +74,39 @@ const (
 	// enrolledNoAppID is the fix when no App ID can be read anywhere for a
 	// GitHub repository (F43, R1): the read mint is signed as an App, and the
 	// project's own door onboards one.
-	enrolledNoAppID = "no github_app_id is recorded for it and the project names none to borrow: onboard it with `fugaro project repos add`"
+	enrolledNoAppID = "no App ID in the project: run `fugaro project repos add` in its checkout"
 	// enrolledNoService is the reason when the project publishes no credentials
 	// service at all (R22). It is this read's own line rather than the read
 	// mint's longer one: a repository's reason is one line a stage prints, and
 	// the fix has to survive in it.
-	enrolledNoService = "no credentials service is published for this project: run `fugaro update` at the installation's checkout to publish one"
+	enrolledNoService = "no credentials service is published for this project: run `fugaro update`"
 
-	// enrolledMintRefusal and enrolledIdentityRefusal are what a read the
-	// installation's credentials service would not make reads (R1). They are
-	// this read's own sentences and not the house's (reviewReadMintRefusal),
-	// which is written for a top-level error line: that one is longer than the
-	// runes a repository's reason is printed in, and its fix is the whole point
-	// of the line.
-	enrolledMintRefusal     = "the installation's credentials service would not mint this read: ask the owner to add you to the installation's people and run `fugaro update`"
-	enrolledIdentityRefusal = "your own Google ID token could not be minted for the installation's credentials service: run `gcloud auth login` and try again"
-	// enrolledNoJobReason is the fix for R1's second refusal: the service read
-	// this call and refused the REPOSITORY, because its own inventory holds no
-	// job for it. The mint resolves the repository through the repositories the
+	// What a read the installation's credentials service would not make is, by
+	// the class of answer the service gave (R1). Every one is this read's own
+	// sentence and not the house's (reviewReadMintRefusal), which is written
+	// for a top-level error line: that one is several times longer than a
+	// repository's reason is printed in, and its fix is the whole point of the
+	// line. Each is one line a stage prints whole.
+	//
+	// enrolledMintRefusal is the caller the service would not mint for: it
+	// verifies a person's own identity against the installation's people, and
+	// the people are the owner's to add.
+	enrolledMintRefusal = "the credentials service would not mint for you: ask the owner to add you to its people"
+	// enrolledIdentityRefusal is the reader's own half: the Google ID token the
+	// read presents could not be minted here.
+	enrolledIdentityRefusal = "your Google ID token could not be minted: run `gcloud auth login`"
+	// enrolledUnavailable is the service that cannot mint now — a kill switch
+	// that is on, a bundle it cannot read, a key it does not hold, or a mint
+	// GitHub refused. Nothing of this read's is wrong, and the service's own
+	// state is what `doctor` reports.
+	enrolledUnavailable = "the credentials service could not mint this read: run `fugaro doctor`"
+	// enrolledNoReadConsumer is the one unavailable state a reader can fix
+	// without the owner: a Bitbucket installation holds no read consumer at
+	// all, which is its own command (BB2, F21).
+	enrolledNoReadConsumer = "the credentials service holds no Bitbucket read consumer: run `fugaro creds set bitbucket-read-consumer`"
+	// enrolledNoJobReason is R1's second refusal: the service read the call and
+	// refused the REPOSITORY, because its own inventory holds no job for it.
+	// The mint resolves the repository through the repositories the
 	// installation deployed jobs for, so a repository nobody enrolled is
 	// answered by name rather than minted for, and the door that enrolls one is
 	// `project repos add` run in its checkout (F42: the checkout is where its
@@ -382,12 +397,16 @@ func (r enrolledReads) Commit(ctx context.Context, ref string) (string, error) {
 // (Unwrap), so a caller that logs the whole error still has the service's own
 // words.
 //
-// The two fixes are different people's, and which one a refusal is, is the
-// service's own answer: a mint it read and refused the REPOSITORY is one
-// nobody enrolled (R1's second fix, the door that enrolls it); a mint it would
-// not verify the CALLER for is the owner's to unblock (its people are the
-// installation's operators); and a caller whose own identity could not be
-// minted is the reader's gcloud login.
+// The fixes are different people's, and which one a refusal is comes from the
+// class of answer the service gave: a call it read and refused is about the
+// repository (R1's second fix, the door that enrolls it); a caller it would not
+// verify is the owner's (its people); a service that cannot mint now is its own
+// state (`doctor`, or the one credential a reader can set itself); and a caller
+// whose own identity could not be minted is the reader's gcloud login.
+//
+// A failure that carries no answer at all — the service could not be reached,
+// or answered something this contract does not read — is that same state read
+// from the other end, and gets the same fix: nothing of this read's is wrong.
 func enrolledReadRefusal(err error) error {
 	if err == nil {
 		return nil
@@ -395,13 +414,17 @@ func enrolledReadRefusal(err error) error {
 	if reviewReadMintRefusal(err, enrolledReadWhat) == nil {
 		return err
 	}
-	switch {
-	case enrolledServiceRefusedTheCall(err):
+	switch status := enrolledServiceAnswered(err); {
+	case status == "400":
 		return &enrolledReadError{line: enrolledNoJobReason, err: err}
+	case status == "403":
+		return &enrolledReadError{line: enrolledMintRefusal, err: err}
+	case status == "503" && errors.Is(err, bitbucket.ErrServiceRead):
+		return &enrolledReadError{line: enrolledNoReadConsumer, err: err}
 	case errors.Is(err, github.ErrServiceReadIdentity), errors.Is(err, bitbucket.ErrServiceReadIdentity):
 		return &enrolledReadError{line: enrolledIdentityRefusal, err: err}
 	}
-	return &enrolledReadError{line: enrolledMintRefusal, err: err}
+	return &enrolledReadError{line: enrolledUnavailable, err: err}
 }
 
 // enrolledAnswered is the two read mints' own sentence for a call the service
@@ -412,19 +435,23 @@ func enrolledReadRefusal(err error) error {
 // and nothing finer.
 var enrolledAnswered = regexp.MustCompile(`the service answered (\d{3})`)
 
-// enrolledServiceRefusedTheCall is whether the read mint failed because the
-// service read the call and refused it — credsvc's 400, request_refused —
-// rather than because this caller or the service was the problem.
+// enrolledServiceAnswered is the status the credentials service answered the
+// read mint with, or "" when it answered nothing at all.
 //
-// What that means on this route is the repository and never the request: the
-// body a read mint sends is two fields this read built (the canonical name of
-// the repository and an App ID recorded in the project's own config), so a
-// service that refuses it has refused the repository — its inventory holds no
-// job for it. The other answers are the caller's: 403 is a caller the service
-// would not verify, and 503 an installation that cannot mint now.
-func enrolledServiceRefusedTheCall(err error) bool {
+// What each one means is the service's own route (credsvc): 400 is a call it
+// read and refused, and on this read that is the repository and never the
+// request — the body a read mint sends is two fields this read built (the
+// canonical name of the repository, and an App ID out of the project's own
+// config), and the installation's own inventory is what resolves them. 403 is a
+// caller it would not verify. 503 is a service that cannot mint now: a kill
+// switch that is on, a bundle it cannot read, an App key it does not hold, or a
+// mint GitHub refused.
+func enrolledServiceAnswered(err error) string {
 	m := enrolledAnswered.FindStringSubmatch(err.Error())
-	return m != nil && m[1] == "400"
+	if m == nil {
+		return ""
+	}
+	return m[1]
 }
 
 // enrolledReadError is a translated refusal: the short line a repository's

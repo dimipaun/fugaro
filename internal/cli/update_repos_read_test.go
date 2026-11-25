@@ -190,11 +190,12 @@ func TestEnrolledReposMissingOrInvalidIsUnread(t *testing.T) {
 }
 
 // TestEnrolledReposNameTheFix: every reason a repository gets names what to do
-// about it (R1, spec §Reading a default branch). The five an admin meets first:
+// about it (R1, spec §Reading a default branch). The six an admin meets first:
 // an installation that publishes no credentials service (R22), a GitHub
 // repository no App ID can be read for anywhere (F43), a service that refuses
-// the repository itself, a mint it refuses for who the caller is, and an
-// identity the reader's own gcloud login could not mint.
+// the repository itself, a service that refuses the caller, a service that
+// cannot mint at all, and an identity the reader's own gcloud login could not
+// mint.
 func TestEnrolledReposNameTheFix(t *testing.T) {
 	t.Run("no credentials service", func(t *testing.T) {
 		lc := enrolledLC(map[string]localcfg.Repo{
@@ -243,7 +244,7 @@ func TestEnrolledReposNameTheFix(t *testing.T) {
 		// The reason is the short sentence and not the service's chain, which is
 		// several times longer than a repository's reason is printed in: what a
 		// person has to act on is the fix, and a truncated line carries none.
-		for _, want := range []string{"credentials service", "the installation's people", "fugaro update"} {
+		for _, want := range []string{"would not mint for you", "add you to its people"} {
 			if !strings.Contains(reason, want) {
 				t.Errorf("the reason %q does not name %q", reason, want)
 			}
@@ -259,16 +260,12 @@ func TestEnrolledReposNameTheFix(t *testing.T) {
 	t.Run("no job serves it", func(t *testing.T) {
 		// The service read the call and refused the repository: its inventory
 		// holds no job for it (credsvc's request_refused).
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte(`{"error":"request_refused","message":"refused"}`))
-		}))
-		t.Cleanup(srv.Close)
+		url := startEnrolledMintRefusal(t, http.StatusBadRequest, "request_refused")
 		setReviewReadIdentity(t)
 		lc := enrolledLC(map[string]localcfg.Repo{
 			"acme/app": {Provider: gitprov.KindGitHub, GitHubAppID: reviewHeadAppID},
 		})
-		lc.CredentialsService = &localcfg.CredentialsService{URL: srv.URL}
+		lc.CredentialsService = &localcfg.CredentialsService{URL: url}
 		stubEnrolledRead(t, nil, enrolledProvider)
 		views, _ := readEnrolledRepos(context.Background(), enrolledIn{LC: lc})
 		reason := onlyView(t, views).Unread
@@ -279,8 +276,56 @@ func TestEnrolledReposNameTheFix(t *testing.T) {
 				t.Errorf("the reason %q does not name %q", reason, want)
 			}
 		}
-		if strings.Contains(reason, "the installation's people") {
+		if strings.Contains(reason, "the people") {
 			t.Errorf("the reason %q sends the reader to the people list, and the repository is what the service refused", reason)
+		}
+		if strings.Contains(reason, "truncated") {
+			t.Errorf("the reason %q is cut, and a reason a stage prints has to carry its fix whole", reason)
+		}
+	})
+
+	t.Run("the service cannot mint", func(t *testing.T) {
+		// The service is unavailable: a kill switch, a bundle it cannot read, an
+		// App key it does not hold, a mint GitHub refused. Nothing of this
+		// read's is wrong, so the fix is the service's own state and not the
+		// reader's people.
+		url := startEnrolledMintRefusal(t, http.StatusServiceUnavailable, "state_unavailable")
+		setReviewReadIdentity(t)
+		lc := enrolledLC(map[string]localcfg.Repo{
+			"acme/app": {Provider: gitprov.KindGitHub, GitHubAppID: reviewHeadAppID},
+		})
+		lc.CredentialsService = &localcfg.CredentialsService{URL: url}
+		stubEnrolledRead(t, nil, enrolledProvider)
+		views, _ := readEnrolledRepos(context.Background(), enrolledIn{LC: lc})
+		reason := onlyView(t, views).Unread
+		for _, want := range []string{"could not mint this read", "fugaro doctor"} {
+			if !strings.Contains(reason, want) {
+				t.Errorf("the reason %q does not name %q", reason, want)
+			}
+		}
+		if strings.Contains(reason, "the people") {
+			t.Errorf("the reason %q sends the reader to the people list, and the service's own state is what failed", reason)
+		}
+		if strings.Contains(reason, "truncated") {
+			t.Errorf("the reason %q is cut, and a reason a stage prints has to carry its fix whole", reason)
+		}
+	})
+
+	t.Run("no Bitbucket read consumer", func(t *testing.T) {
+		url := startEnrolledMintRefusal(t, http.StatusServiceUnavailable, "state_unavailable")
+		setReviewReadIdentity(t)
+		lc := enrolledLC(map[string]localcfg.Repo{
+			"acme/app": {Provider: gitprov.KindBitbucket},
+		})
+		lc.CredentialsService = &localcfg.CredentialsService{URL: url}
+		stubEnrolledRead(t, nil, enrolledProvider)
+		views, _ := readEnrolledRepos(context.Background(), enrolledIn{LC: lc})
+		reason := onlyView(t, views).Unread
+		// The one unavailable state a reader fixes itself (BB2, F21).
+		for _, want := range []string{"Bitbucket read consumer", "fugaro creds set bitbucket-read-consumer"} {
+			if !strings.Contains(reason, want) {
+				t.Errorf("the reason %q does not name %q", reason, want)
+			}
 		}
 		if strings.Contains(reason, "truncated") {
 			t.Errorf("the reason %q is cut, and a reason a stage prints has to carry its fix whole", reason)
@@ -313,6 +358,49 @@ func TestEnrolledReposNameTheFix(t *testing.T) {
 			t.Errorf("the reason %q is cut, and a reason a stage prints has to carry its fix whole", reason)
 		}
 	})
+}
+
+// TestEnrolledReposReasonsAreShort: every reason this read writes is one line a
+// stage prints whole. repofiles puts one of its own prefixes in front of the
+// reason before a stage adds the repository name to it, so the reason and that
+// prefix together are what CLAUDE.md's "about 140 characters" bounds.
+//
+// A file that does not parse is the one reason not here: its second half is the
+// parse's own first problem, which is as long as the layer's message is.
+func TestEnrolledReposReasonsAreShort(t *testing.T) {
+	const (
+		opened   = "its provider could not be opened: "
+		unreadAt = "the repository could not be read: "
+	)
+	for _, c := range []struct{ name, prefix, reason string }{
+		{"no credentials service", opened, enrolledNoService},
+		{"no App ID", opened, enrolledNoAppID},
+		{"the mint refuses", unreadAt, enrolledMintRefusal},
+		{"no identity", unreadAt, enrolledIdentityRefusal},
+		{"the service cannot mint", unreadAt, enrolledUnavailable},
+		{"no Bitbucket read consumer", unreadAt, enrolledNoReadConsumer},
+		{"no job serves it", unreadAt, enrolledNoJobReason},
+		{"a coding agent's session", "", enrolledAgentReason},
+		{"no fugaro.yaml", "", enrolledNoYAMLReason},
+		{"a file that does not parse", "", enrolledInvalidYAML},
+	} {
+		if got := len(c.prefix) + len(c.reason); got > 140 {
+			t.Errorf("%s prints at %d runes with the reader's own prefix, and a message over about 140 is a defect to shorten: %q", c.name, got, c.reason)
+		}
+	}
+}
+
+// startEnrolledMintRefusal is a credentials service that answers every read
+// mint with one refusal: the status and the wire code the service itself would
+// write for it.
+func startEnrolledMintRefusal(t *testing.T, status int, code string) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(`{"error":"` + code + `","message":"refused"}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
 }
 
 // onlyView is the single view a one-repository case answered.
