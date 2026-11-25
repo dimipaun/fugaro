@@ -3322,7 +3322,8 @@ the security review and the merge judge.
 Each craft runs a model, and the chain the project's routing table resolves that
 model to is where its calls go out: the sources of the entry that matches it, in
 order, first usable one wins. A model no entry matches has no chain and no run
-can call it.
+can call it. A project that publishes no routing table is served the release-1
+way, so its crafts have no chain to show.
 
 A craft's model inherits separately from the chain: the first-line review and
 the merge judge follow the coder, and the security review follows the senior
