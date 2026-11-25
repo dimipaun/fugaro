@@ -1023,6 +1023,11 @@ test_a_repository_with_several_jobs_of_its_own_is_not_read_as_none() {
   expect_contains "$out" "$JOB-second workflow=second" "two jobs of its own: the other one too"
   expect_contains "$out" "Re-run with --workflow <one of: default, second>" \
     "two jobs of its own: the refusal ends with the flag and every workflow found"
+  # And the refusal says what it could not do, not something false about the
+  # jobs it just listed: both of these ARE the jobs of the repository's own
+  # workflows, and the sentence used to say none of them was.
+  expect_contains "$out" "cannot tell which one a run of it lands on" \
+    "two jobs of its own: the refusal names the choice it cannot make"
   expect_absent "$out" "has NO job of its own" "two jobs of its own: it is not read as none"
   expect_absent "$out" "FACT job: PASS" "two jobs of its own: no job was read"
   expect_contains "$out" "FACT job: FAIL — not reached" "two jobs of its own: the row says it was never measured"

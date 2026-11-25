@@ -724,7 +724,7 @@ step_job() {
     # line, because a pick this check makes on the owner's behalf is a pick the
     # block has to name.
     if [ -z "$chosen" ]; then
-      stop "the sandbox repository $REPO has $found jobs of its own in $P/$REGION, none of them the job of a workflow of its own: $(printf '%s\n' "$answer" | sed -n 's/^own=//p' | tr '\n' ' '). Re-run with --workflow <one of: $wfs>"
+      stop "the sandbox repository $REPO has $found jobs of its own in $P/$REGION, and this check cannot tell which one a run of it lands on: $(printf '%s\n' "$answer" | sed -n 's/^own=//p' | tr '\n' ' '). Re-run with --workflow <one of: $wfs>"
     fi
     if [ "$chosen" = derived ]; then
       derived=yes
