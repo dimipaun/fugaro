@@ -60,11 +60,14 @@ import (
 // name of that refusal.
 var ErrJobNotThisRuns = errors.New("credsvc: the job is not the one this run's ticket ask named")
 
-// ErrJobAlreadyRegistered is the store's answer to a registration on a record
-// that already carries an id (R19): the id is written once, and a second
-// registration is refused rather than applied. It is a decision about the RUN —
-// the launcher that lost a race, or one that re-created its job — and the fix
-// is the same as a re-ask's: a new run id.
+// ErrJobAlreadyRegistered is the store's answer to a write on a record that
+// already carries an id (R19): the id is written once, and a second write is
+// refused rather than applied. Two writes are refused by it — a registration,
+// and the re-ask that would replace the whole record and wipe the id with it
+// (identity_record.go's Put) — because the record stops being re-askable once
+// its job is registered, exactly as it stops being re-askable once claimed. It
+// is a decision about the RUN — the launcher that lost a race, or one that
+// re-created its job — and the fix is the same as any re-ask's: a new run id.
 var ErrJobAlreadyRegistered = errors.New("credsvc: this run's job id is already registered")
 
 // JobRegistration is the one write the registration makes on a run's issuance

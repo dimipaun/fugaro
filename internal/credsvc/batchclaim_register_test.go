@@ -266,6 +266,36 @@ func TestTheJobIdIsWrittenOnce(t *testing.T) {
 			}
 		})
 	}
+
+	// The other way the id could move is the ticket route: R6 lets the record's
+	// own caller ask again while it is unclaimed, and the ask writes a WHOLE new
+	// record (identity_ticket.go), which carries no id — so an ask served here
+	// would wipe the registration and let the next one write a different id
+	// under the same run id, which is exactly what "written once" forbids. Once
+	// the job is registered the record is past the point of a re-ask, as it is
+	// past the claim, and the re-ask is refused the way every other re-ask of a
+	// record that cannot be replaced is: naming the fix, a new run id.
+	t.Run("a re-ask cannot move the id", func(t *testing.T) {
+		lines := f.auditCount(t)
+		rec, body := f.ask(t, caller, ask)
+		e := f.refusedAnswer(t, rec, body, StatusRequestRefused, identitywire.RefusalIdentityRefused)
+		if got := f.auditCount(t); got != lines+1 {
+			t.Errorf("the re-ask wrote %d audit lines, want exactly one: a refusal is one line, and a call that writes none is a refusal nobody can see", got-lines)
+		}
+		if !strings.Contains(e.Message, "new run id") {
+			t.Errorf("the refusal does not name the fix: %s", e.Message)
+		}
+		if got := f.jobID(t, ask.Slug, ask.Run); got != testJobID {
+			t.Errorf("the re-ask left the record's id %q, want the registered one (%q): the id is written once", got, testJobID)
+		}
+		// And with the record still carrying the first id, the second one is
+		// refused exactly as it was before the ask.
+		rec, body = f.register(t, caller, identitywire.JobRequest{Slug: ask.Slug, Run: ask.Run, Job: testJobName, JobID: "job-9999"})
+		f.refusedAnswer(t, rec, body, StatusRequestRefused, identitywire.RefusalIdentityRefused)
+		if got := f.jobID(t, ask.Slug, ask.Run); got != testJobID {
+			t.Errorf("after the re-ask the record carries the id %q, want the registered one (%q): the id is written once", got, testJobID)
+		}
+	})
 }
 
 // TestAnIdThatIsNotTheJobsIsRefused: the registration names the job the ticket
