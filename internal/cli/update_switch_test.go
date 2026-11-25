@@ -142,13 +142,13 @@ func TestAnOAuthInstallationStillLaunchesAfterUpdateAlone(t *testing.T) {
 // RULE): an installation whose owner edits agent.auth must not need a second
 // command before the change is honoured. One fixture, one local config and one
 // record, two launches: the first on a checkout of the cascade, the second on a
-// checkout of the same repository with agent.auth: oauth. Nothing between them
-// writes the config.
+// checkout of the same repository with agent.auth: vertex, the one auth the
+// service does not serve. Nothing between them writes the config.
 //
 // Mutation (verified, run and restored): store agent.auth on the record at the
 // write and read it at the launch (pass the recorded auth into
 // credentialsServiceLaunchEnv's third argument instead of the checkout's), and
-// this fails on the second launch — the oauth checkout is still handed the
+// this fails on the second launch — the vertex checkout is still handed the
 // service's address.
 func TestEditingTheAuthModeTakesEffectWithoutAnotherUpdate(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
@@ -170,10 +170,11 @@ func TestEditingTheAuthModeTakesEffectWithoutAnotherUpdate(t *testing.T) {
 	if want := envCredentialsServiceURL + "=" + launchCredsURL; len(on) != 1 || on[0] != want {
 		t.Fatalf("the cascade checkout launched with %v, want [%s]: the fixture is the switch on, or the second launch below says nothing", on, want)
 	}
-	off := launch(oauthLaunchYAML, "20261107-100000-0a5c")
+	vertex := strings.Replace(cascadeLaunchYAML, "auth: cascade", "auth: vertex", 1)
+	off := launch(vertex, "20261107-100000-0a5c")
 	for _, kv := range off {
 		if strings.HasPrefix(kv, envCredentialsServiceURL+"=") {
-			t.Errorf("after the repository's fugaro.yaml was edited to agent.auth: oauth, the launch carried %q: the auth the switch is judged with is the one the run will read from that file, so an owner's edit takes effect without another update", kv)
+			t.Errorf("after the repository's fugaro.yaml was edited to agent.auth: vertex, the launch carried %q: the auth the switch is judged with is the one the run will read from that file — the service serves no vertex runs — so an owner's edit takes effect without another update", kv)
 		}
 	}
 	if off := readFileString(t, os.Getenv("FUGARO_CONFIG")); !strings.Contains(off, "credentials_service_ready: true") {
