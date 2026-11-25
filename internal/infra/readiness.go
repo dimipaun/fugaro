@@ -132,8 +132,9 @@ func dropMount(ws WorkflowSpec, logical string) {
 //
 // `none` is the empty arm rather than a case left to the caller: it is the
 // value a repository the switch holds off carries — a `vertex` one, or an
-// `api-key` or `oauth` one whose root was applied with the switch off or whose
-// project's mode is off — so a caller that lost its guard would take away the
+// `api-key` or `oauth` one whose root was applied with the switch off (a mode
+// is not a condition of the switch any more, AB15, D3009) — so a caller that
+// lost its guard would take away the
 // credential a run of exactly the repository this drop must not touch still
 // reads (D2072, G17).
 //

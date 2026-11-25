@@ -82,3 +82,4 @@ summaries:
   v0.4.0: A teammate can now launch runs in a repository they were merely given access to, because the installation's shared settings come from the cloud instead of from a setup step each person runs. Moving an existing Firebase project into Fugaro no longer needs hand-edited state, and a second project can sit beside the first.
   v0.29.0: fugaro update moves what a repository's own file decided into the project, the project names the oldest CLI that may act on it, a workflow secret is stored once for the project, one management command is enough and --no-apply stops it, and fugaro setup adopts an empty project, with fugaro update as the whole upgrade.
   v0.29.1: fugaro update completes on an installation that already runs the orchestrator, which 0.29.0 stopped on.
+  v0.29.2: fugaro update builds the job images on an installation whose build identity could not get its token.

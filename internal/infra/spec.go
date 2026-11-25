@@ -336,7 +336,7 @@ type VoiceService struct {
 // through the installation's credentials service, and therefore whether that
 // repository's jobs stop mounting a model credential of their own
 // (dropModelMounts) and its launch is handed the service's address
-// (internal/cli's credentialsServiceLaunchEnv). All three conditions must
+// (internal/cli's credentialsServiceLaunchEnv). Both conditions must
 // hold (docs/credentials-service/default-on.md §1.5):
 //
 //   - installed: the installation has the service's block. It is the
@@ -365,41 +365,25 @@ type VoiceService struct {
 //     one another machine wrote).
 //
 //   - auth: the repository's agent.auth is one the service serves:
-//     config.AuthCascade, always, and `api-key` or `oauth` under the mode
-//     below (B2.3, D498). It is READ LIVE from the repository's fugaro.yaml
+//     config.AuthCascade, `api-key` or `oauth` (B2.3, D498). It is READ LIVE
+//     from the repository's fugaro.yaml
 //     at every build of its spec and never stored: a stored copy could outlive
 //     an edit to the file, and an `oauth` repository whose mounts were dropped
 //     would have no App key to open its git provider with while the service
 //     refuses to serve it. `vertex` is served by nothing: its calls go to
 //     Vertex AI on the job's own service account.
 //
-//   - mode: the budget mode the published node carries, and it is a condition
-//     for `api-key` and `oauth` alone (D2071): the gateway is what reaches the
-//     service, and it exists only in `observe` and `enforce`. A repository on
-//     a project whose mode is `off` is held off the switch — mounts kept, no
-//     invoker grant — because its run would be handed an address its own
-//     runner refuses to use, and its job would be left with a mount gone and
-//     nothing to read instead. It is read from Inputs.Policy, the node the
-//     caller read: nil means this caller read no node (fugaro image, fugaro
-//     doctor, --print-vars), and "" is then the answer — held off, the
-//     fail-closed direction — while an empty Policy is the different answer
-//     "read, and the project has published no block". Neither is a repository
-//     left broken: nothing is dropped for an auth the flip list does not carry
-//     (config.ServiceServedAuths), and an auth it does carry is held off here
-//     only where this answer is false — a mode off, a root applied with the
-//     switch off, no install — and then nothing is dropped either, so a
-//     held-off `api-key` repository keeps exactly the mounts it had and its
-//     run reads its own key, no service being reached (D2071).
-//
-//     The cascade is deliberately not held to this condition, and that is what
-//     keeps the mode's own rule whole: a `cascade` workflow is REFUSED outright
-//     when its effective mode is off (config.CheckCascadeGateway, judged at
-//     validate and at launch), because the cascade has no in-job path at all.
-//     So a cascade repository whose node says off is one whose runs the launch
-//     stops before a job is started, whatever this switch answers, and
-//     answering off here would put its model mounts back on a job whose next
-//     launch is refused — the mounts and the refusal disagreeing over a state
-//     neither of them produced.
+// The published node's budget mode is no longer a condition (AB15, F15): it
+// existed for `api-key` and `oauth` alone (D2071) because the gateway is what
+// reaches the service and the gateway existed only in `observe` and `enforce`.
+// Every run has a gateway now (D3009), so a repository handed the address is
+// one whose run reads it whatever the project's mode says, and the mode that
+// used to hold a repository off the switch — `off` — is not a mode any more.
+// Nothing is dropped for an auth the flip list does not carry
+// (config.ServiceServedAuths), and a root applied with the switch off still
+// reads false here through the record, so a held-off `api-key` repository keeps
+// exactly the mounts it had and its run reads its own key, no service being
+// reached (D2071).
 //
 // It is one function on purpose. The plan a repository root writes and the
 // address a launcher puts on its job's execution have to come from the same
@@ -414,17 +398,11 @@ type VoiceService struct {
 // (resolve). This one keeps its meaning and its signature — it answers about
 // agent.auth, which is what a repository with no table is still served by
 // (O7: the flip list and this question are the owner's to retire, not CS11's).
-func CredentialsServiceServes(installed, ready bool, auth, mode string) bool {
+func CredentialsServiceServes(installed, ready bool, auth string) bool {
 	if !installed || !ready {
 		return false
 	}
-	if auth == config.AuthCascade {
-		return true
-	}
-	if auth != config.AuthAPIKey && auth != config.AuthOAuth {
-		return false
-	}
-	return mode == config.BudgetObserve || mode == config.BudgetEnforce
+	return auth == config.AuthCascade || auth == config.AuthAPIKey || auth == config.AuthOAuth
 }
 
 // ModelSecretsServed answers which model secrets the credentials service
@@ -941,9 +919,9 @@ type repoCtx struct {
 	// beside it wherever a mount is dropped.
 	credentialsServiceOn bool
 	// budgetMode is the mode the published node carries, read once by resolve
-	// from Inputs.Policy: the switch's fourth condition for an `api-key` or
-	// `oauth` repository (D2071), and the fact VertexGrantForJob reads to take
-	// a job's Vertex permission away on an enforcing project. It is "" where
+	// from Inputs.Policy: the fact VertexGrantForJob reads to take a job's
+	// Vertex permission away on an enforcing project. It was also the switch's
+	// fourth condition until AB15 and is none any more (D3009). It is "" where
 	// the caller read no node.
 	budgetMode string
 	// chain is what the project's routing table decides for this repository,
@@ -1064,7 +1042,7 @@ func resolve(in Inputs) (*repoCtx, error) {
 	// is on the service whatever its file names — and a repository the bridge
 	// would serve keeps its answer, so an installation whose table names no
 	// chain for it moves nothing (MG1's per-repository migration).
-	c.credentialsServiceOn = CredentialsServiceServes(installed, ready, in.Cfg.Agent.Auth, c.budgetMode) ||
+	c.credentialsServiceOn = CredentialsServiceServes(installed, ready, in.Cfg.Agent.Auth) ||
 		CredentialsServiceServesChains(installed, ready, c.chain)
 	c.providerKeysServed = local.ProviderKeysServedOn()
 	c.stageAccountServed = local.StageAccountServedOn()

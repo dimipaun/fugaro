@@ -498,10 +498,12 @@ def crafts(path=""):
     out([("problems", len(doc.get("problems") or []))])
     for problem in doc.get("problems") or []:
         out([("problem", flat(problem))])
+    # Version 2 (RT6): the chain the craft's model resolves to, in place of the
+    # access, access_from and inert members the version-1 document carried.
     for row in doc.get("crafts") or []:
         print("craft\t%s\t%s\t%s\t%s" % (
             flat(row.get("craft")), flat(row.get("model")),
-            flat(row.get("model_from")), flat(row.get("access"))))
+            flat(row.get("model_from")), ",".join(row.get("chain") or [])))
 
 
 def policy(path=""):
@@ -890,9 +892,9 @@ step_no_step_left() {
 }
 
 # step_crafts reads the crafts back through the CLI: no craft may have a
-# problem, and every access the migrated config states must be the one the CLI
-# resolves. This is the half the config's own text cannot show — that the keys
-# the migration wrote are keys this build's resolver reads.
+# problem, and every craft the migrated config states must be one the CLI
+# answers for. This is the half the config's own text cannot show — that the
+# keys the migration wrote are keys this build's resolver reads.
 step_crafts() {
   run_bounded "$READ_TIMEOUT" crafts "$WORKDIR" "$FUGARO_BIN" craft ls --json
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" -ne 0 ]; then
@@ -919,29 +921,26 @@ step_crafts() {
     fact crafts FAIL "fugaro craft ls reports $CRAFTS_PROBLEMS problem(s) after the converge, the first being: ${first:-unnamed}. The keys the migration wrote are keys this build cannot resolve"
     return 0
   fi
-  # Every access the config states must be the one the CLI resolves for that
-  # craft, when the configuration names the craft itself. The craft ls table has
-  # one row per craft with its effective access, so the comparison needs a lookup
-  # by name.
-  local mismatch="" pair name want got
+  # Every craft the config states, when the configuration names the craft itself,
+  # must be one the CLI answers for. The craft ls table has one row per craft it
+  # resolves, so the comparison needs a lookup by name.
+  local missing="" pair name row
   for pair in $(printf '%s' "$AFTER_CRAFT_ACCESSES" | tr ',' ' '); do
     name=${pair%%=*}
-    want=${pair#*=}
-    [ "$want" != none ] || continue
-    got=$(awk -F'\t' -v n="$name" '$1 == "craft" && $2 == n { print $5; exit }' "$SCRATCH/crafts.txt")
-    if [ "$got" != "$want" ]; then
-      mismatch="$mismatch;$name"
+    row=$(awk -F'\t' -v n="$name" '$1 == "craft" && $2 == n { print $2; exit }' "$SCRATCH/crafts.txt")
+    if [ -z "$row" ]; then
+      missing="$missing;$name"
     fi
   done
-  if [ -n "$mismatch" ]; then
-    fact crafts FAIL "the config's own crafts do not resolve as they are written: ${mismatch#;} resolves to another access in fugaro craft ls --json (the table is $CRAFT_TABLE), so the keys the migration wrote are not the ones a run would use"
+  if [ -n "$missing" ]; then
+    fact crafts FAIL "fugaro craft ls --json answers for no craft named ${missing#;} while the config states it (the crafts it resolves: $CRAFT_TABLE), so the keys the migration wrote are not the ones a run would use"
     return 0
   fi
   local read_back=""
   if [ "$PRE_SHAPE" = previous ] && [ "$AFTER_CRAFTS" = 0 ]; then
     read_back=" The migration wrote no craft access, which is what a config whose crafts' stages name no account (or name two of them) gives, and the converge's own notes say which"
   fi
-  fact crafts PASS "fugaro craft ls reports no problem and answers for every craft — $CRAFT_TABLE — and each of the $AFTER_CRAFTS craft access(es) the config states is the one the CLI resolves for that craft: the keys the migration wrote are keys this build reads$read_back"
+  fact crafts PASS "fugaro craft ls reports no problem and answers for each of the $AFTER_CRAFTS craft(s) the config states — $CRAFT_TABLE, each being the chain its model resolves to: the keys the migration wrote are keys this build reads$read_back"
 }
 
 # step_policy_before reads the published node outside the CLI. It records what

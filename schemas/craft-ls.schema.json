@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/craft-ls.schema.json",
   "title": "Fugaro craft ls",
-  "description": "The document `fugaro craft ls --json` prints: one row per craft -- the coder, the first-line review, the senior review and the security review -- with the model it runs, the credential or pool its calls go out on, the layer each half came from, and whether what it names serves anything yet (docs/model-crafts/spec.md §3, reconciliation MC8 and D1633). The read is offline: the layers it resolves are the checkout the command runs in (agent.crafts), the installation's own config (crafts, credentials, pools) and the project layer file the last cloud read cached (defaults.agent.crafts), so what it says about the cloud is what the local files already say. A credential is a NAME and a type in every document here and its value is stored nowhere a reader of this one can reach (spec §1), so no member of this document is a secret and no member is ever a secret's value. Members are only ever added within a version, so a renamed or re-meant member is a new member under a new name and the old one is kept, and removing or retyping one bumps version. No object here is closed for that reason: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's document, which the same rule promises to keep readable under the same version.",
+  "description": "The document `fugaro craft ls --json` prints: one row per craft -- the coder, the first-line review, the senior review and the security review -- with the model it runs, the chain the project's routing table resolves that model to, where the model came from, and whether a run can serve it (docs/model-crafts/spec.md §3, reconciliation MC8 and D1633; RT6 of docs/model-credentials-routing replaced the craft's access with the chain, D3170). The read is offline: the layers it resolves are the checkout the command runs in (agent.crafts), the installation's own config (crafts, credentials, pools) and the project layer file the last cloud read cached (defaults.agent.crafts), so what it says about the cloud is what the local files already say. A credential is a NAME and a type in every document here and its value is stored nowhere a reader of this one can reach (spec §1), so no member of this document is a secret and no member is ever a secret's value. Members are only ever added within a version, so a renamed or re-meant member is a new member under a new name and the old one is kept, and removing or retyping one bumps version. No object here is closed for that reason: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's document, which the same rule promises to keep readable under the same version.",
   "type": "object",
   "required": [
     "version",
@@ -10,8 +10,8 @@
   ],
   "properties": {
     "version": {
-      "const": 1,
-      "$comment": "craftLsDocVersion in internal/cli/craft.go."
+      "const": 2,
+      "$comment": "craftLsDocVersion in internal/cli/craft.go: 1 held the model, the access and the layer each came from (MC8, MC16); 2 replaces the access, its layer and the inert flag with the chain the model resolves to (RT6, D3170)."
     },
     "project": {
       "type": "string",
@@ -40,9 +40,7 @@
       "required": [
         "craft",
         "model_from",
-        "access",
-        "access_from",
-        "inert",
+        "chain",
         "model_servable"
       ],
       "properties": {
@@ -67,23 +65,22 @@
           "minLength": 1,
           "description": "Where `model` came from: `repo`, `local` or `project` for the layer that wrote it, `inherited from <craft>` for the craft it follows, and `default` when nothing set it (internal/craft's Effective.ModelFrom)."
         },
-        "access": {
+        "chain": {
+          "type": "array",
+          "description": "Where this craft's calls go out: the sources of the entry the project's routing table resolves `model` to, in the order the project wrote them, first usable one wins. Each item is a source spelled the way `fugaro routing ls` spells one and `fugaro routing set` takes it -- `launcher-pool`, `anthropic`, `vertex`, `pool:<name>`, `provider:<name>`, with `@<model>` appended on a source that serves another model than the one asked for. Always written, empty included, so a consumer reads it without a nil check: empty with no `chain_problem` is a craft that names no model, which the role slot below it serves (F17), and every row of a repository the table does not serve -- none published, or none of its sources admitted here (D3182) -- whose calls go out the release-1 way (D3170, O7, R25, D3196). A source names a credential and never carries its value (spec §1 of docs/model-credentials-routing).",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "chain_problem": {
           "type": "string",
           "minLength": 1,
-          "description": "The credential or pool this craft's calls go out on, as the layer that set it wrote the name. Never empty: an access no layer sets is the project's default credential (config.DefaultCredential, `vertex` today). The name is a reference and not a value -- the secret behind it is stored where no reader of this document can reach (spec §1)."
-        },
-        "access_from": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Where `access` came from, in `model_from`'s own vocabulary."
-        },
-        "inert": {
-          "type": "boolean",
-          "description": "Whether `access` names a pool that serves nothing yet: a pool holding two or more Claude OAuth subscription credentials while the project's subscription-spread switch is off (D1622). A credential, an undefined name and a pool of another shape are never inert."
+          "description": "Why `model` resolves to no chain, in one sentence: no entry of the table matches it, two entries claim it with one pattern, or the entry that wins names no source. It names the fix where one applies (`fugaro routing set <model> <source>...`). Absent when `chain` is not empty, for a craft that names no model, and for every row of a repository the table does not serve, which has no entry to match."
         },
         "model_servable": {
           "type": "boolean",
-          "description": "Whether a run can serve `model`: the project's allow-list admits it, a route claims it and a price row covers it -- the verdict `fugaro validate` and a launch report (MC15, D1665), asked of the three checks that read the model's own facts. It is true for a craft that names no model, which adds no problem and changes no verdict (F17): the role slot below it serves the craft, and no model of its own is missing. A craft's access is a separate question, and the row's `access`, `access_from` and `inert` are its answer."
+          "description": "Whether a run can serve `model`: the project's allow-list admits it, a route claims it and a price row covers it -- the verdict `fugaro validate` and a launch report (MC15, D1665), asked of the three checks that read the model's own facts. It is true for a craft that names no model, which adds no problem and changes no verdict (F17): the role slot below it serves the craft, and no model of its own is missing. Whether the model is routed at all is the separate question `chain` answers."
         },
         "model_problem": {
           "type": "string",

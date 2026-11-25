@@ -13,7 +13,7 @@ paths:
   - an independent review,
   - its pinning tests in `test/unit/`,
   - a matching update to the §5.1 table in `docs/desktop-console/spec.md`.
-- Treat everything that comes from the CLI or a run as untrusted text. Put it through a class in `src/shared/sanitize.ts` (`TEXT_CLASSES`) before it reaches the renderer.
+- Treat everything that comes from the CLI or a run as untrusted text. Put it through a class in `src/shared/sanitize.ts` (`TEXT_CLASSES`) before it reaches the renderer. A class cleans markup and control characters and **masks secrets only**: since D3213 (2026-11-21) it masks no identity, so an address, a repository name, a branch, a project, a host and a path are drawn as they came. The recorder (`src/source/redact.ts`) is unchanged — it still redacts identity in the fixtures it writes (D3219).
 - A view that shows spend, caps or the kill controls must ask `hidesView` (`src/shared/version.ts`, `REDUCED_VIEWS`). In the reduced mode it then withholds its figures instead of misreading a CLI shape it does not know.
 - A child gets exactly `CHILD_ENV_KEYS` (12 keys) and nothing merged from `process.env`. macOS adds `__CF_USER_TEXT_ENCODING` to every process, and the tests exempt that key and nothing else. `FUGARO_LICENCE_KEY` is written only for a child whose own version is at or above `LICENCE_KEY_CLI_FLOOR` (`src/shared/version.ts`, asked at both call sites that pass a key; the constant is unset until a CLI release takes the variable back out of its own environment, so no child gets a key today).
 - WSL route (`docs/console-windows/`):

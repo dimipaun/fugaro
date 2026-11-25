@@ -16,7 +16,7 @@
 # repository's own file, a project layer that wrote the ROLE SLOT as well, a
 # craft that resolves another model, an allow-list that does not admit it, a
 # stage that records another model, a gateway that refused a model as not pinned
-# for a stage, an audit line that names a credential the craft's access is not.
+# for a stage, an audit line that names a credential the craft's chain is not.
 #
 # Usage: bash scripts/live-checks/check628_test.sh
 set -euo pipefail
@@ -335,22 +335,27 @@ write_crafts() { # json-dir MODE
   case "$2" in
   other-model)
     cat >"$1/crafts.json" <<'JSON'
-{"version":1,"project":"chk628","crafts":[{"craft":"coder","model":"claude-sonnet-5","model_from":"project","access":"deepseek-key","access_from":"project","inert":false,"model_servable":true,"model_problem":""}]}
+{"version":2,"project":"chk628","crafts":[{"craft":"coder","model":"claude-sonnet-5","model_from":"project","chain":[],"chain_problem":"","model_servable":true,"model_problem":""}]}
 JSON
     ;;
   repo-source)
     cat >"$1/crafts.json" <<JSON
-{"version":1,"project":"$installation","crafts":[{"craft":"coder","model":"$model","model_from":"repo","access":"$credential","access_from":"project","inert":false,"model_servable":true,"model_problem":""}]}
+{"version":2,"project":"$installation","crafts":[{"craft":"coder","model":"$model","model_from":"repo","chain":[],"chain_problem":"","model_servable":true,"model_problem":""}]}
+JSON
+    ;;
+  chain-no-pool)
+    cat >"$1/crafts.json" <<JSON
+{"version":2,"project":"$installation","crafts":[{"craft":"coder","model":"$model","model_from":"project","chain":["vertex"],"chain_problem":"","model_servable":true,"model_problem":""}]}
 JSON
     ;;
   pool-member)
     cat >"$1/crafts.json" <<JSON
-{"version":1,"project":"$installation","crafts":[{"craft":"coder","model":"$model","model_from":"project","access":"coder-pool","access_from":"project","inert":false,"model_servable":true,"model_problem":""},{"craft":"review","model":"claude-sonnet-5","model_from":"project","access":"claude-oauth-work","access_from":"project","inert":false,"model_servable":true,"model_problem":""}]}
+{"version":2,"project":"$installation","crafts":[{"craft":"coder","model":"$model","model_from":"project","chain":["pool:coder-pool"],"chain_problem":"","model_servable":true,"model_problem":""},{"craft":"review","model":"claude-sonnet-5","model_from":"project","chain":[],"chain_problem":"","model_servable":true,"model_problem":""}]}
 JSON
     ;;
   *)
     cat >"$1/crafts.json" <<JSON
-{"version":1,"project":"$installation","crafts":[{"craft":"coder","model":"$model","model_from":"project","access":"$credential","access_from":"project","inert":false,"model_servable":true,"model_problem":""},{"craft":"review","model":"claude-sonnet-5","model_from":"project","access":"claude-oauth-work","access_from":"project","inert":false,"model_servable":true,"model_problem":""}]}
+{"version":2,"project":"$installation","crafts":[{"craft":"coder","model":"$model","model_from":"project","chain":[],"chain_problem":"","model_servable":true,"model_problem":""},{"craft":"review","model":"claude-sonnet-5","model_from":"project","chain":[],"chain_problem":"","model_servable":true,"model_problem":""}]}
 JSON
     ;;
   esac
@@ -579,7 +584,7 @@ test_happy_path() {
   expect_contains "$out" "the project layer sets agent.crafts.coder.model = $model" "the happy path: the layer row names the model and its source"
   expect_contains "$out" "every coder stage of $run_id records model $model" "the happy path: the stages are the coder craft's"
   expect_contains "$out" "FACT credential: PASS" "the happy path: the credential row"
-  expect_contains "$out" "was served by $credential — the access the coder craft names" "the happy path: the credential row names the access and the credential that answered"
+  expect_contains "$out" "was served by $credential — the access the coder craft goes out on" "the happy path: the credential row names the access and the credential that answered"
   expect_contains "$out" "read from the credentials service's own audit line" "the happy path: the audit line is what named it"
   expect_contains "$out" "per-stage credential/served_by: implement=$credential/api-key" "the happy path: the record's own stage rows are read beside it"
   expect_contains "$out" "no 'budget: request refused' line at all" "the happy path: the gateway raised no refusal"
@@ -809,6 +814,15 @@ test_a_pools_member_that_served_the_run_passes() {
   expect_contains "$out" "which is a member of the pool coder-pool (members $credential,openrouter-x)" "a pool's second member: the pool is named with its members"
 }
 
+test_a_chain_that_names_no_pool_is_a_finding() {
+  local dir=$work/chain-no-pool
+  prepare "$dir" chain-no-pool
+  run_check "$dir"
+  expect_status "$status" 1 "a chain that names no pool"
+  expect_contains "$out" "FACT credential: FAIL" "a chain that names no pool: the row"
+  expect_contains "$out" "chain (vertex) names no pool" "a chain that names no pool: the chain is named"
+}
+
 test_not_pinned_refusals_are_a_finding() {
   local dir=$work/not-pinned
   prepare "$dir"
@@ -984,6 +998,7 @@ t test_a_run_that_reached_no_coder_stage_is_a_finding
 t test_a_run_whose_credential_nobody_names_is_a_finding
 t test_a_credential_the_craft_does_not_name_is_a_finding
 t test_a_pools_member_that_served_the_run_passes
+t test_a_chain_that_names_no_pool_is_a_finding
 t test_not_pinned_refusals_are_a_finding
 t test_a_log_read_that_does_not_answer_is_not_measured
 t test_a_log_with_no_gateway_line_is_not_measured

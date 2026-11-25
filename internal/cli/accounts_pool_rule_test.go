@@ -24,12 +24,11 @@ import (
 // run declares, so the file that is left names the token once and walks it in
 // one pool.
 //
-// The clauses that bound the write are the reasons the flag is not a default:
-// a pool holds a subscription token, so a key credential is refused rather than
-// pooled; the pool joins one the config already defines with its own members
-// and their order kept; and the name is refused where a credential of the same
-// config holds it, because a craft's access names a credential or a pool and
-// does not say which (config.ValidatePools).
+// The clauses that bound the write: a pool holds a subscription token, so a key
+// credential is refused rather than pooled; the pool joins one the config
+// already defines with its own members and their order kept; and the name is
+// refused where a credential of the same config holds it, unless the pool would
+// walk that credential alone (config.ValidatePools).
 func TestAccountsAddMakesAPoolOfOne(t *testing.T) {
 	path := accountsAddFixture(t, accountsAddLocal)
 	ownerAtTheTerminal(t)
@@ -55,6 +54,77 @@ func TestAccountsAddMakesAPoolOfOne(t *testing.T) {
 	}
 	if c, ok := config.CredentialNamed(lc.Credentials, "team-a"); !ok || c.Type != config.CredentialTypeClaudeOAuth {
 		t.Errorf("the credential the pool walks was not declared as a subscription token: %+v", lc.Credentials)
+	}
+}
+
+// TestAccountsAddDefaultsToAPoolOfOneNamedAfterTheAccount is PL2's first clause
+// and D3176's shape: with no --pool, a subscription token is put in a pool of
+// one named after the account, and a key credential is put in none — no pool
+// walks a provider key.
+//
+// The name the pool takes is the credential's own, which is the one collision
+// the loader admits between the two blocks (config.ValidatePools): the pool's
+// only member is the credential the name holds. The run that spells the name
+// out is the same write, which is what keeps the command a person re-runs equal
+// to the default.
+func TestAccountsAddDefaultsToAPoolOfOneNamedAfterTheAccount(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		account  string
+		typ      string
+		wantPool string
+	}{
+		{"a subscription token", "team-a", "claude-oauth", "team-a"},
+		{"a key credential", "key-one", "anthropic", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := accountsAddFixture(t, accountsAddLocal)
+			ownerAtTheTerminal(t)
+
+			out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", tc.account,
+				"--repos", "acme/app", "--type", tc.typ)
+			if err != nil {
+				t.Fatalf("accounts add --type %s: %v\n%s", tc.typ, err, out)
+			}
+			lc, err := localcfg.Parse([]byte(readFileString(t, path)))
+			if err != nil {
+				t.Fatalf("the file this command wrote does not read back: %v", err)
+			}
+			pool, ok := accountsPoolOf(lc, tc.wantPool)
+			if tc.wantPool == "" {
+				if ok {
+					t.Fatalf("a key credential was put in pools.%s: %+v", tc.wantPool, lc.Pools)
+				}
+				if strings.Contains(out, "declare pools.") {
+					t.Errorf("the sentence names a pool no key credential has:\n%s", out)
+				}
+				return
+			}
+			if !ok {
+				t.Fatalf("a subscription token was left out of pools.%s: %+v", tc.wantPool, lc.Pools)
+			}
+			if got := strings.Join(pool.Members, ", "); got != tc.account {
+				t.Errorf("pools.%s.members = %q, want the account alone", tc.wantPool, got)
+			}
+			if !strings.Contains(out, "declare pools."+tc.wantPool+".members = ["+tc.account+"]") {
+				t.Errorf("the sentence does not name the pool of one it wrote:\n%s", out)
+			}
+			// The name is the credential's own, so the run that spells it out
+			// makes the same edit.
+			explicit := accountsAddFixture(t, accountsAddLocal)
+			if _, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", tc.account,
+				"--repos", "acme/app", "--type", tc.typ, "--pool", tc.account); err != nil {
+				t.Fatalf("accounts add --pool %s: %v", tc.account, err)
+			}
+			other, err := localcfg.Parse([]byte(readFileString(t, explicit)))
+			if err != nil {
+				t.Fatalf("the file --pool wrote does not read back: %v", err)
+			}
+			explicitPool, ok := accountsPoolOf(other, tc.account)
+			if len(other.Pools) != len(lc.Pools) || !ok || !slices.Equal(explicitPool.Members, pool.Members) {
+				t.Errorf("--pool %s wrote other pools than the default: %+v, want %+v", tc.account, other.Pools, lc.Pools)
+			}
+		})
 	}
 }
 
@@ -85,25 +155,31 @@ func TestAccountsAddPoolJoinsOneThatExists(t *testing.T) {
 	}
 }
 
-// TestAccountsAddPoolRefusesWhatAPoolMayNotHold: the two states the write may
-// not leave behind, each refused before anything is written — a pool of a
-// credential whose value is a provider key, and a pool whose name a credential
-// of the same config holds.
+// TestAccountsAddPoolRefusesWhatAPoolMayNotHold: the states the write may not
+// leave behind, each refused before anything is written — a pool of a credential
+// whose value is a provider key, a pool whose name another credential of the
+// same config holds (the shared name is admitted only for the credential's own
+// pool of one, config.ValidatePools), and an account that declares no credential
+// at all for the pool to walk.
 func TestAccountsAddPoolRefusesWhatAPoolMayNotHold(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		args []string
-		want string
+		name  string
+		local string
+		args  []string
+		want  string
 	}{
-		{"a key credential", []string{"team-a", "--repos", "acme/app", "--type", "anthropic", "--pool", "paid"}, "a pool walks subscription tokens"},
-		{"a name a credential holds", []string{"team-a", "--repos", "acme/app", "--type", "claude-oauth", "--pool", "team-a"}, "a pool and a credential may not share one"},
+		{"a key credential", accountsAddLocal, []string{"team-a", "--repos", "acme/app", "--type", "anthropic", "--pool", "paid"}, "a pool walks subscription tokens"},
+		// The name is another account's credential, so a pool of it would walk
+		// that credential and this one: the shared name means two things and
+		// the loader refuses it (config.ValidatePools).
+		{"a name another credential holds", accountsPoolTypedLocalSameType, []string{"team-a", "--repos", "owner/repo-a", "--type", "claude-oauth", "--pool", "key-one"}, "would walk more than that credential alone"},
 		// No type at all is a third state, and the refusal may not read as one
 		// with a blank where the type goes: nothing is declared for the pool to
 		// walk, and the sentence names the flag that leaves it that way.
-		{"no type at all", []string{"team-a", "--repos", "acme/app", "--pool", "paid"}, "team-a declares none"},
+		{"no type at all", accountsAddLocal, []string{"team-a", "--repos", "acme/app", "--pool", "paid"}, "team-a declares none"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			path := accountsAddFixture(t, accountsAddLocal)
+			path := accountsAddFixture(t, tc.local)
 			ownerAtTheTerminal(t)
 			before := readFileString(t, path)
 

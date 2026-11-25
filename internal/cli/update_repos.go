@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/dimipaun/fugaro/internal/backlog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -95,7 +96,19 @@ type enrolledIn struct {
 	// (R21). Nil reads fresh every time, which is what a caller outside a run
 	// -- doctor, a test -- gets.
 	Memo *reposState
+	// ExtraPaths are the files to read beside every view's fugaro.yaml, each
+	// by its path in the repository (`.claude/settings.json`, `docs/backlog/`).
+	// A stage reads none it did not ask for, and the list is read once with
+	// every path the run needs, so one stage's request is answered out of the
+	// same views as the next one's (contract-repos.md §Extra files).
+	ExtraPaths []string
 }
+
+// updateExtraPaths are the repository files `fugaro update` reads beside every
+// enrolled repository's fugaro.yaml: the folder the backlog fold folds (U8).
+// U6a adds the plugin pin's .claude/settings.json, and the reader reads the
+// whole list in one pass, because the run's views answer every stage at once.
+var updateExtraPaths = append(append([]string{}, repoNoticeExtra...), backlog.Dir+"/")
 
 // reposState is one run's per-repository state: the enrolled list it read,
 // and the lines every stage and step reported about it.
@@ -171,9 +184,11 @@ func repoSortKey(repo string) string {
 }
 
 // repos is this run's enrolled repositories, and the admit patterns the
-// reader could not list.
+// reader could not list. It reads every file the run's stages need
+// (updateExtraPaths): the list is read once, so a stage that asked for a path
+// of its own would otherwise be answered out of views read before it asked.
 func (e *initEngine) repos(ctx context.Context) ([]repoView, []string) {
-	return enrolledRepos(ctx, enrolledIn{LC: e.lc, Memo: &e.reposState})
+	return enrolledRepos(ctx, enrolledIn{LC: e.lc, Memo: &e.reposState, ExtraPaths: updateExtraPaths})
 }
 
 // reportRepos records the lines a stage or a step after the loop reports

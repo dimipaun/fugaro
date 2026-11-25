@@ -103,12 +103,14 @@ account's credential as its one member where the config defines no pool of that
 name, and the credential joins the members the pool already has where it does.
 A subscription token lives in a pool (a single token is a pool of one), and a
 pool is what a craft's access, a launcher's designation and a run's --pool name,
-so this is the flag that makes a new account usable by them. It is refused
-without --type claude-oauth — a key credential is not a subscription token, and
-no pool walks one — and it is refused for a name a credential of this config
-already holds, because a craft's access names a credential or a pool and does
-not say which: name the pool anything else, which is why a pool of one for an
-account is not named after it.
+so this is the flag that makes a new account usable by them. Without it a
+subscription token is put in a pool of one named after the account, and a key
+credential is put in none. It is refused without --type claude-oauth — a key
+credential is not a subscription token, and no pool walks one — and it is
+refused for a name a credential of this config already holds, because a craft's
+access names a credential or a pool and does not say which: the two may share a
+name only where the pool is that credential's own pool of one, and any other
+pool of that name must be called something else.
 
 Then it converges, in one command and behind the one sentence it prints: the
 value is stored project-wide as a new version of the secret the name derives
@@ -148,7 +150,7 @@ step no plan admits.`,
 	f.StringVar(&o.profile, "profile", "", "the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one); refused for a key credential, which is added to no profile's list")
 	f.BoolVar(&o.claude, "claude", false, "run Anthropic's own claude setup-token login on this terminal first, then paste the token at the hidden prompt")
 	f.StringVar(&o.typ, "type", "", "declare the name as a typed credential too, so a craft or a pool may spend it: claude-oauth (this command's OAuth token step), or a key type (openrouter or anthropic), whose value is read the same way and stored under the credential's own derived secret name (without it, the name is declared in claude_accounts alone, as it always was)")
-	f.StringVar(&o.pool, "pool", "", "put the token in the named pool: declare the pool with this account's credential as its one member, or join the members it already has. Requires --type claude-oauth, and the name may not be one a credential of this config holds")
+	f.StringVar(&o.pool, "pool", "", "put the token in the named pool: declare the pool with this account's credential as its one member, or join the members it already has. Requires --type claude-oauth; without the flag a subscription token goes in a pool of one named after the account, and a key credential in none. The name may not be one a credential of this config holds, unless the pool walks that credential alone")
 	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmation this declaration would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed")
 	return cmd
 }
@@ -229,9 +231,11 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	// credential is one no pool may hold, and the member the pool is written
 	// with is the credential entry this run declares (or the config already
 	// declares) under the account's own name. A pool and a credential share one
-	// namespace — a craft's access names one of them and does not say which — so
-	// the pool's name may not be one this config already gives a credential. A
-	// name is what a person typed, so the refusal quotes it.
+	// namespace — a craft's access names one of them and does not say which —
+	// and the one collision the loader admits is the pool of one named after its
+	// only member (D3176), which is why the DEFAULT below can be the account's
+	// own name and why every other collision is still refused. A name is what a
+	// person typed, so the refusal quotes it.
 	poolName := ""
 	if o.pool != "" {
 		// No type resolved at all is the other state a pool may not hold: the
@@ -248,9 +252,17 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 		}
 		poolName = o.pool
 		if held := accountsAddPoolNameHeld(lc, name, o.typ, poolName); held != "" {
-			return userErr("--pool %s: a credential of this config holds that name, and a pool and a credential may not share one — a craft's access names a credential or a pool and does not say which. Name the pool with --pool and a name no credential holds; nothing was written",
+			return userErr("--pool %s: a credential of this config holds that name, and this pool would walk more than that credential alone — a craft's access names a credential or a pool and does not say which, so the two may share a name only where the pool is that credential's own pool of one. Name the pool with --pool and a name no credential holds, or list it alone; nothing was written",
 				pluginwire.Printable(held))
 		}
+	} else if typ == config.CredentialTypeClaudeOAuth {
+		// The default PL2 gives every subscription token: a pool of one named
+		// after the account (D3176). A pool is what a craft's access, a
+		// launcher's designation and a run's --pool name, so a token left out
+		// of one is a token no launcher can name. The name is the account's own
+		// because that is what a person types, and the loader admits the
+		// collision: the pool's only member is the credential of its own name.
+		poolName = name
 	}
 	// --claude is refused for a key credential, and it is refused for the VALUE
 	// and not for the terminal: the login is Anthropic's, run so that the token
@@ -373,6 +385,20 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	what := accountsAddWhat(after, name, profile, beyond, rotation, o.typ, poolName)
 	command := accountsAddCommand(name, repos, profile, o.claude, o.typ, poolName)
 	changed := yamledit.Changed(old, next)
+
+	// D2217's fence, and it is asked here rather than left to the two gates
+	// around this line. The access gate above answers before it opens anything
+	// on an installation whose config names no budget database — it has no
+	// roster to read there (accessJudge's own return) — and the managed gate
+	// below reads its marks through a budget client whose failure it swallows,
+	// being the managed gate and not the fence: a project that is not managed
+	// is not the question it asks. Neither leaves a refusal here, so an
+	// installation with no budget.rtdb_url would write this declaration and
+	// meet the fence only at the cloud client the converge opens, with the file
+	// already on disk.
+	if err := requireManaged(cmd.Context(), cmd, lc); err != nil {
+		return err
+	}
 
 	// The managed gate, before anything is screened or written
 	// (accounts_managed.go; the managed plan's §2 accounts row): in a managed
@@ -498,21 +524,42 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 }
 
 // accountsAddPoolNameHeld is the credential of the config this run would write
-// that holds the pool's name, or "" when none does. It is asked of the
-// credentials as they will be and not as they were: --type claude-oauth declares
-// the entry this run is about to write, so the account's own name is held the
-// moment it is typed — which is why a pool of one is not named after the
-// account it is a pool of.
+// that holds the pool's name, or "" when none does — or when the collision is
+// the one the loader admits (config.ValidatePools): a pool whose only member is
+// the credential of its own name, which is the pool of one D3176 writes.
+//
+// It is asked of the credentials as they will be and not as they were: --type
+// claude-oauth declares the entry this run is about to write, so the account's
+// own name is held the moment it is typed. That is what makes `--pool <name>`
+// the account's own pool of one, and what refuses any pool that would walk a
+// name holding a credential beside another member.
 func accountsAddPoolNameHeld(lc *localcfg.Config, name, typ, pool string) string {
+	held := ""
 	if typ != "" && name == pool {
-		return name
+		held = name
+	} else if c, ok := config.CredentialNamed(lc.Credentials, pool); ok {
+		held = c.Name
 	}
-	for _, c := range lc.Credentials {
-		if c.Name == pool {
-			return c.Name
+	if held == "" {
+		return ""
+	}
+	// The members this run would write: the pool's own where the config
+	// already defines one, this account's appended where it does not.
+	members := []string{name}
+	for _, p := range lc.Pools {
+		if p.Name != pool {
+			continue
 		}
+		members = slices.Clone(p.Members)
+		if !slices.Contains(members, name) {
+			members = append(members, name)
+		}
+		break
 	}
-	return ""
+	if len(members) == 1 && members[0] == pool {
+		return ""
+	}
+	return held
 }
 
 // accountsAddRepos is the repository list: the flag, or the checkout the
