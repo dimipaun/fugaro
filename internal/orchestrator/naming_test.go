@@ -393,8 +393,7 @@ func TestParseItemRef(t *testing.T) {
 }
 
 // TestMapDocRoundTrip pins the `orchestrator map --json` document (D3221): its
-// shape, the JSON its fields write as, the rules a reader may rely on, and the
-// stub the command answers with until I-ORCH wires the builder in.
+// shape, the JSON its fields write as, and the rules a reader may rely on.
 func TestMapDocRoundTrip(t *testing.T) {
 	now := time.Date(2026, 11, 22, 10, 0, 0, 0, time.UTC)
 	age := 12.5
@@ -638,26 +637,6 @@ func TestMapDocRoundTrip(t *testing.T) {
 					t.Errorf("a document whose %q is %s read as %v, want ErrInvalid", c.key, spelled, err)
 				}
 			})
-		}
-	})
-
-	t.Run("the stub answers with the empty document", func(t *testing.T) {
-		d, err := orchestrator.BuildMap("fugaro", now)
-		if err != nil {
-			t.Fatalf("BuildMap: %v", err)
-		}
-		if d.Project != "fugaro" || !d.GeneratedAt.Equal(now) || len(d.Nodes) != 0 || len(d.Edges) != 0 {
-			t.Errorf("the stub answered %+v, and the empty document is the project and no node", d)
-		}
-		if d.Health.Sweep || d.Health.Note == "" {
-			t.Errorf("the stub's health is %+v, and a map with no builder says the sweep is off and why", d.Health)
-		}
-		raw, err := orchestrator.EncodeMapDoc(d)
-		if err != nil {
-			t.Fatalf("the stub's document does not encode: %v", err)
-		}
-		if _, err := orchestrator.DecodeMapDoc(raw); err != nil {
-			t.Fatalf("the stub's document does not read back: %v", err)
 		}
 	})
 
