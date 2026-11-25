@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/accounts-pool-ls.schema.json",
+  "title": "Fugaro accounts pool ls",
+  "description": "The document `fugaro accounts pool ls --json` prints: the project, its pools, and each pool's members with the state that holds them and the figures the service counts (docs/model-credentials-routing/contract-pools.md, F19). The document is the listing's own shape and not a reference: `rule` is the pool's own, as its owner wrote it, and is empty where the pool names none -- the listing resolves nothing, so a reader that needs the resolved rule reads it through the pool's `strategy` (R21, routing.Rule.RuleOrDefault). The figures arrive with PL10 and are ABSENT until then, which is why `next_reset`, `usage` and `headroom` are nullable and why a member nothing holds is `available`: a figure the service has not counted is never guessed. It is display data and never an input to an authorization decision, and it carries names and figures and never a value (F19): no token, no key and no secret appears here, for anyone. No object is closed for the reason the other listing documents state: a consumer that refused a member this schema does not know would refuse a newer CLI's document, and the closed shape is the Go type the command marshals (routing.PoolListDoc).",
+  "type": "object",
+  "required": [
+    "project",
+    "pools"
+  ],
+  "properties": {
+    "project": {
+      "type": "string",
+      "description": "The project whose pools these are, as the selected config names it. Empty when no project config was selected, which leaves the pool list empty too."
+    },
+    "pools": {
+      "type": "array",
+      "description": "The project's pools, in the order the config lists them. An empty list is a fact -- the project has no pool -- and never a null (routing.PoolListDoc.MarshalJSON).",
+      "items": {
+        "$ref": "#/$defs/pool"
+      }
+    }
+  },
+  "$defs": {
+    "pool": {
+      "type": "object",
+      "required": [
+        "name",
+        "rule",
+        "principal",
+        "threshold",
+        "members"
+      ],
+      "description": "One pool and who it belongs to.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The pool's name."
+        },
+        "rule": {
+          "type": "string",
+          "enum": [
+            "",
+            "ordered",
+            "round-robin",
+            "failover"
+          ],
+          "$comment": "routing.Rule: the three of the contract's rule column, and \"\" for a pool whose owner wrote none -- the member carries no omitempty, so a pool that names no rule prints an empty string rather than leaving the key out.",
+          "description": "How the service picks among the pool's members, as the pool's owner wrote it. Empty where the pool names none."
+        },
+        "principal": {
+          "$ref": "#/$defs/principal",
+          "description": "Whose pool it is (D3181): an identity and never display text, and not a reading of `owner`, which stays an email address."
+        },
+        "threshold": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "$comment": "routing.Threshold.Valid: greater than 0 and at most 1 (D3178, PL1's validation and PL8's picker read the same bound).",
+          "description": "The pool's optional usage threshold: the fraction of a member's limit at which the pool moves off that member. Null where the pool names none."
+        },
+        "members": {
+          "type": "array",
+          "description": "The pool's members, in the order its owner listed them, which is the order `ordered` walks and the order a round robin turns in.",
+          "items": {
+            "$ref": "#/$defs/member"
+          }
+        }
+      }
+    },
+    "principal": {
+      "type": "object",
+      "required": [
+        "kind",
+        "id"
+      ],
+      "$comment": "routing.Principal, whose kind and id both carry no omitempty: a pool that names no principal prints {\"kind\":\"\",\"id\":\"\"} and never an absent member.",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "",
+            "person",
+            "service-account",
+            "project"
+          ],
+          "description": "What the pool's principal is (D3181). Empty where the pool names no principal."
+        },
+        "id": {
+          "type": "string",
+          "description": "The principal's own identifier: a person's Google subject, a service account's address, or the project's name. A name and never a value."
+        }
+      }
+    },
+    "member": {
+      "type": "object",
+      "required": [
+        "name",
+        "state",
+        "next_reset",
+        "usage",
+        "headroom"
+      ],
+      "description": "One member of a pool: what holds it, what it has spent, and what is left of it.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The member's name -- a container's, in the project's or the principal's own namespace -- and never its value (F19)."
+        },
+        "state": {
+          "type": "string",
+          "minLength": 1,
+          "$comment": "creds.State's words, which `fugaro accounts ls --json` already prints; \"available\" is a member nothing holds (creds.StateAvailable), and it is what this command prints for every member until PL10 fills the figures.",
+          "description": "What holds the member, in internal/creds' own words."
+        },
+        "next_reset": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "When the member becomes usable again -- a mark's own instant, or the time its leases lapse -- and null when nothing holds it."
+        },
+        "usage": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/usage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the member has spent in the window the service counts (PL10), and null where the service counts nothing for it."
+        },
+        "headroom": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "The fraction of the member's limit that is left, where the provider reported a utilisation figure, and null otherwise: it is never guessed (D3178, U1)."
+        }
+      }
+    },
+    "usage": {
+      "type": "object",
+      "required": [
+        "calls",
+        "tokens"
+      ],
+      "description": "What one member has spent in the current window (PL10).",
+      "properties": {
+        "calls": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many calls the member has served in the window."
+        },
+        "tokens": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many tokens those calls spent. A count and not a price."
+        }
+      }
+    }
+  }
+}

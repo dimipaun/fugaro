@@ -1,10 +1,15 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
@@ -226,6 +231,38 @@ func TestPoolLsJSONHasNoValue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("accounts pool ls --json: %v", err)
 	}
+	// The bytes are held to schemas/accounts-pool-ls.schema.json as well as to
+	// C2's Go: the schema is what a consumer reads the document by, and a member
+	// the command writes that it does not know is a contract the two sides do
+	// not share.
+	raw, err := os.ReadFile(filepath.Join("..", "..", "schemas", "accounts-pool-ls.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := schema.(map[string]any)["$id"].(string)
+	if id == "" {
+		t.Fatal("schemas/accounts-pool-ls.schema.json has no $id")
+	}
+	c := jsonschema.NewCompiler()
+	if err := c.AddResource(id, schema); err != nil {
+		t.Fatal(err)
+	}
+	sch, err := c.Compile(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, err := jsonschema.UnmarshalJSON(strings.NewReader(out))
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("the document does not match schemas/accounts-pool-ls.schema.json: %v\n%s", err, out)
+	}
+
 	var doc routing.PoolListDoc
 	if err := json.Unmarshal([]byte(out), &doc); err != nil {
 		t.Fatalf("the document is not C2's shape: %v\n%s", err, out)
@@ -262,13 +299,13 @@ func TestPoolLsJSONHasNoValue(t *testing.T) {
 		"pool":   {"name", "rule", "principal", "threshold", "members"},
 		"member": {"name", "state", "next_reset", "usage", "headroom"},
 	}
-	var raw struct {
+	var fields struct {
 		Pools []map[string]json.RawMessage `json:"pools"`
 	}
-	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+	if err := json.Unmarshal([]byte(out), &fields); err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range raw.Pools {
+	for _, p := range fields.Pools {
 		if !onlyFields(p, keys["pool"]) {
 			t.Errorf("a pool carries fields outside the contract: %v", fieldNames(p))
 		}
