@@ -717,6 +717,66 @@ func TestValidateRefusesVertexEnforceFromFile(t *testing.T) {
 	}
 }
 
+// TestTheVertexRefusalAgreesWithTheRunner is CS5's edge, and it is why this
+// release leaves the refusal in place on both sides: D3174 lifts it for a run
+// the credentials service serves, and the runner reads that off the run it
+// launched — the model path its gateway builds the upstream from
+// (vertexServedByTheService). A `vertex` file's coding run is on no such path
+// while the service serves api-key, oauth and cascade runs alone
+// (runner.ServiceSwitchedAuth), so the runner's checkBudget refuses it at
+// bootstrap (TestLegacyVertexIsStillRefusedUnderEnforce drives that check and
+// the pool refusal on the same shape). A gate lifting it here alone would
+// green-light a run that dies.
+//
+// One fixture, both CLI gates and the runner's own answer: the fixture is
+// exactly the one that would lift the refusal — the table admits this
+// repository, the service is installed and its record is ready — so nothing
+// but the runner's missing served path keeps the three agreeing.
+//
+// CS6 ("the run's model path follows the table") moves all three together: it
+// makes the first assertion here false, and it lands this half of D3174 with
+// the runner's.
+func TestTheVertexRefusalAgreesWithTheRunner(t *testing.T) {
+	const (
+		service = "credentials_service: { url: " + credentialsServiceURL + " }\n"
+		record  = "repos:\n  acme/app: { provider: github, workflows: [app], credentials_service_ready: true }\n"
+		table   = "model_routing:\n  - match: \"claude-*\"\n    chain:\n      - { kind: vertex, admit: [acme/app] }\n"
+		budget  = "budget: { mode: enforce, per_run_usd: 5 }\n"
+		vertex  = "  auth: vertex\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }"
+	)
+	path := fileWithBudget(t, budget+table+service+record, "", vertex)
+	inCheckoutOf(t, "acme/app")
+
+	// The runner's own answer for this job, and the whole reason the gates
+	// below still refuse it: the service does not serve a `vertex` run, so the
+	// run's model path is the job's own GCP identity and checkBudget refuses it
+	// under enforce.
+	if runner.ServiceSwitchedAuth("vertex") {
+		t.Fatal("the credentials service serves `vertex` runs now: the CLI's refusal may go with it (CS6), and this is the test to change")
+	}
+
+	// validate.
+	if out, _, err := execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, vertexBudgetRefusal) {
+		t.Fatalf("validate accepted a vertex file the runner refuses: exit %d: %s", ExitCode(err), out)
+	}
+	// update --repo's own gate (checkVertexBudget), on the same fixture.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, problems := config.Parse(data)
+	if len(problems) > 0 {
+		t.Fatalf("the fixture does not parse: %v", problems)
+	}
+	lc, _, err := localcfg.LoadProject(os.Getenv, "aurora")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := checkVertexBudget(lc, cfg); ExitCode(err) != ExitUserError {
+		t.Fatalf("update --repo accepted a vertex file the runner refuses: exit %d, err %v", ExitCode(err), err)
+	}
+}
+
 // A committed enforce under Vertex is refused by every run (the stricter of
 // the layers is enforce whatever the ceiling), so validate says so from the
 // file alone, with no project config selected, in the runner's words.

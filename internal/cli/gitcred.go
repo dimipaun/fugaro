@@ -591,7 +591,11 @@ func credEscape(s string) string {
 }
 
 // writeCredential writes line to path, mode 0600 even when the file was
-// already there with a looser one.
+// already there with a looser one, and reads it back: a credential step that
+// wrote none has to fail here, where the step that owed the credential is
+// named, rather than leave a build to clone with an empty file and answer
+// `could not read Username for 'https://github.com'` — a sentence naming
+// neither the credential nor the build that failed to write it (check 390).
 //
 // The mode is the POSIX half of what keeps the line — a credential the build
 // clones with — to its owner, and it is not claimed to protect it on Windows:
@@ -614,6 +618,23 @@ func writeCredential(path, line string) error {
 	if err = errors.Join(err, f.Close()); err != nil {
 		_ = os.Remove(path)
 		return userErr("writing the git credential: %v", err)
+	}
+	return credentialLanded(path, line)
+}
+
+// credentialLanded is what the file a credential step wrote holds, read back
+// and held to the line the step wrote. It is the one way that step can know it
+// wrote none: the volume a build mounts is not this step's to read, so a file
+// that kept nothing is a build that clones with an empty credential and answers
+// `could not read Username for 'https://github.com'` — a sentence naming
+// neither the credential nor the build that failed to write it (check 390).
+func credentialLanded(path, line string) error {
+	got, err := os.ReadFile(path)
+	if err != nil {
+		return userErr("reading back the git credential: %v", err)
+	}
+	if string(got) != line {
+		return userErr("the git credential %s holds no credential after writing it: a build mounting it would clone with none", path)
 	}
 	return nil
 }

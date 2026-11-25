@@ -76,7 +76,7 @@ func ChainPlanFor(lc *localcfg.Config, repo string) ChainPlan {
 	}
 	for _, entry := range lc.ModelRouting {
 		for _, s := range entry.Chain {
-			if !chainSourceServes(s, repo) {
+			if !ChainSourceServes(s, repo) {
 				continue
 			}
 			plan.Serves = true
@@ -169,10 +169,16 @@ func (c *repoCtx) reachesVertex() bool {
 	return c.in.Cfg.Agent.Auth == "vertex" || c.chain.Vertex
 }
 
-// chainSourceServes reports whether a source may serve repo: its own admit list
+// ChainSourceServes reports whether a source may serve repo: its own admit list
 // for the kinds that carry one, and true for the two pool kinds, whose
 // admissions are walked at the call (ChainPlanFor).
-func chainSourceServes(s routing.Source, repo string) bool {
+//
+// It is exported because the launch reads it too: the sources a run's grant
+// asks for are the ones that may serve its repository (internal/cli's
+// chainGrantSources), and a second spelling of the admission rule there would
+// be a grant that asked for a source the plan itself refuses — or, drifting the
+// other way, one that left out a source the container is told about.
+func ChainSourceServes(s routing.Source, repo string) bool {
 	switch s.Kind {
 	case routing.KindLauncherPool, routing.KindPool:
 		return true
@@ -192,7 +198,7 @@ func chainSourceServes(s routing.Source, repo string) bool {
 // spelling they carry, and no call of it is made on the project's GCP identity.
 //
 // The launcher-pool kind is true, and it is the one arm that differs from its
-// sibling in chainSourceServes in the other direction: a launcher-pool source
+// sibling in ChainSourceServes in the other direction: a launcher-pool source
 // names NO pool in the table (routing.Source.Pool is empty for it — which pool
 // serves is decided per run, D3176, and the plan cannot follow it), so there is
 // no member list here to walk and no name to look up. The answer is the walk's

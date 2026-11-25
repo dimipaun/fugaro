@@ -1,0 +1,15 @@
+{
+  "id": "msg_aTextAnswer",
+  "type": "message",
+  "role": "assistant",
+  "model": "google/gemini-3-flash",
+  "content": [{ "type": "text", "text": "the file holds three lines\n" }],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 412,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "output_tokens": 27
+  }
+}
