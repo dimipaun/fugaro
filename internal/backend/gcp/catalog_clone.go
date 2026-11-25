@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	cloudbuild "google.golang.org/api/cloudbuild/v1"
 
@@ -623,7 +625,7 @@ func catalogCloneStep(s CatalogBuildSpec, buildCwd string) (*cloudbuild.BuildSte
 		Name:       "gcr.io/cloud-builders/docker",
 		Entrypoint: "bash",
 		Env:        env,
-		Args:       []string{"-c", cloudBuildEscape(catalogCloneStepScript(s, script))},
+		Args:       catalogCloneStepArgs(s, script),
 		Volumes:    []*cloudbuild.Volume{{Name: "fugaro-creds", Path: "/creds"}},
 	}, nil
 }
@@ -640,8 +642,9 @@ func (s CatalogBuildSpec) cloneCommit() string {
 	return s.Definition.SourceCommit
 }
 
-// catalogCloneStepScript is the step's shell, with the script the generated
-// build runs written into its build context: the step composes the two files of
+// catalogCloneStepScript is the step's shell, which writes the two files the
+// generated build runs into its build context (catalogCloneStepArgs hands it
+// their text as arguments): the step composes the two files of
 // that build and nothing else, so what the credential-holding build reads is
 // what this function wrote (F19: a Dockerfile Fugaro generates entirely).
 //
@@ -661,11 +664,10 @@ func (s CatalogBuildSpec) cloneCommit() string {
 // the same Dockerfile at the same arguments, so the clone itself runs once, and
 // what each writes is the tree its own scratch stage carries out and nothing
 // else.
-func catalogCloneStepScript(s CatalogBuildSpec, script string) string {
+func catalogCloneStepScript(s CatalogBuildSpec) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "set -eu\nexport LC_ALL=C\ninstall -d -m 0700 %s\ntrap 'rm -f %s' EXIT\n", catalogCloneWork, catalogCloneCredential)
-	fmt.Fprintf(&b, "cat > %s <<'FUGARO_DOCKERFILE'\n%sFUGARO_DOCKERFILE\n", catalogCloneDockerfilePath, catalogCloneDockerfile(s))
-	fmt.Fprintf(&b, "cat > %s <<'FUGARO_SCRIPT'\n%sFUGARO_SCRIPT\n", catalogCloneScriptPath, script)
+	fmt.Fprintf(&b, "nd=$1\nshift\nprintf '%%s' \"${@:1:nd}\" > %s\nshift \"$nd\"\nprintf '%%s' \"$@\" > %s\nset --\n", catalogCloneDockerfilePath, catalogCloneScriptPath)
 	if s.GitProvider == gitprov.KindBitbucket {
 		b.WriteString(catalogCloneGrantStep)
 	}
@@ -717,6 +719,42 @@ esac
 (umask 077 && printf '[http "%s"]\n\textraHeader = Authorization: Bearer %s\n' "$proxy" "$idtoken" >> ` + catalogCloneCredential + `)
 unset idtoken
 `
+
+// catalogArgChunk is how many bytes of a generated file one argument of the
+// clone step carries. Cloud Build refuses a step argument over 10000 characters,
+// and escaping a dollar (cloudBuildEscape) can double a chunk, so it is held to
+// less than half of that: the two files and the shell outgrew one argument once
+// an entry baked a second repository.
+const catalogArgChunk = 4000
+
+// catalogCloneStepArgs is the clone step's arguments: the shell, its own name,
+// the count of the Dockerfile's chunks, then the Dockerfile's chunks and the
+// script's. The shell writes each file by printing its chunks one after the
+// other, so the file is exactly the text this package generated and the shell
+// never reads it as code.
+func catalogCloneStepArgs(s CatalogBuildSpec, script string) []string {
+	dockerfile := catalogChunks(catalogCloneDockerfile(s))
+	args := []string{"-c", cloudBuildEscape(catalogCloneStepScript(s)), catalogCloneStepID, strconv.Itoa(len(dockerfile))}
+	for _, chunk := range append(dockerfile, catalogChunks(script)...) {
+		args = append(args, cloudBuildEscape(chunk))
+	}
+	return args
+}
+
+// catalogChunks cuts text into pieces of at most catalogArgChunk bytes, never in
+// the middle of a character.
+func catalogChunks(text string) []string {
+	var chunks []string
+	for len(text) > catalogArgChunk {
+		n := catalogArgChunk
+		for n > 0 && !utf8.RuneStart(text[n]) {
+			n--
+		}
+		chunks = append(chunks, text[:n])
+		text = text[n:]
+	}
+	return append(chunks, text)
+}
 
 // catalogCloneBuildFlags is the flag list every build of the generated
 // Dockerfile takes, ending in the continuation that joins the line after it: the

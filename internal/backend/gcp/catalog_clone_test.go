@@ -52,18 +52,21 @@ func catalogCloneStepOf(t *testing.T, s CatalogBuildSpec) *cloudbuild.BuildStep 
 // beside it.
 func catalogCloneFile(t *testing.T, st *cloudbuild.BuildStep, marker string) string {
 	t.Helper()
-	script := strings.Join(st.Args, "\n")
-	open := "<<'" + marker + "'\n"
-	i := strings.Index(script, open)
-	if i < 0 {
-		t.Fatalf("the clone step does not write %s: %q", marker, script)
+	if len(st.Args) < 5 {
+		t.Fatalf("the clone step carries no file text: %q", st.Args)
 	}
-	rest := script[i+len(open):]
-	j := strings.Index(rest, "\n"+marker+"\n")
-	if j < 0 {
-		t.Fatalf("the clone step's %s heredoc is not closed: %q", marker, rest)
+	nd, err := strconv.Atoi(st.Args[3])
+	if err != nil || nd < 1 || 4+nd > len(st.Args) {
+		t.Fatalf("the clone step's Dockerfile chunk count is %q of %d arguments", st.Args[3], len(st.Args))
 	}
-	return rest[:j+1]
+	switch marker {
+	case "FUGARO_DOCKERFILE":
+		return strings.Join(st.Args[4:4+nd], "")
+	case "FUGARO_SCRIPT":
+		return strings.Join(st.Args[4+nd:], "")
+	}
+	t.Fatalf("the clone step writes no file called %s", marker)
+	return ""
 }
 
 // catalogCloneDockerfileOf and catalogCloneScriptOf are the two generated files
@@ -1355,5 +1358,100 @@ func TestCatalogCloneBitbucketHoldsNoStoreCredential(t *testing.T) {
 		if bb := kind == gitprov.KindBitbucket; hasGrant != bb || hasStore == bb || hasStep != bb || hasEnv != bb {
 			t.Errorf("%s: grant wrapper %v, store wrapper %v, grant step %v, service env %v", kind, hasGrant, hasStore, hasStep, hasEnv)
 		}
+	}
+}
+
+// manyBakedSpec is the spec of an entry that bakes n repositories: every one adds
+// its own lines to the clone script.
+func manyBakedSpec(t *testing.T, n int) CatalogBuildSpec {
+	t.Helper()
+	s := catalogGitHubSpec(t)
+	for i := 0; i < n; i++ {
+		name := "repo-" + strconv.Itoa(i)
+		s.Baked = append(s.Baked, imagebake.Repo{Repo: "acme/" + name, Slug: name + "-1111aaaa", URL: "https://github.com/acme/" + name + ".git", Branch: "main"})
+	}
+	s.Baked = append(s.Baked, imagebake.Repo{Repo: "acme/app", Slug: "app-1234abcd", URL: s.RepoURL, Branch: "main"})
+	return s
+}
+
+// TestNoStepArgumentIsOverCloudBuildsLimit: Cloud Build refuses a step argument of
+// more than 10000 characters ("invalid .steps field: build step 3 arg 1 too
+// long"), which `image build sandbox-web-gh` met once its entry baked a
+// checkout. Every argument of every step is held under it, for the entries that
+// bake as many repositories as a project serves.
+func TestNoStepArgumentIsOverCloudBuildsLimit(t *testing.T) {
+	cases := append(catalogCloneSpecs(t),
+		struct {
+			name string
+			spec CatalogBuildSpec
+		}{"github", catalogGitHubSpec(t)},
+		struct {
+			name string
+			spec CatalogBuildSpec
+		}{"baked", catalogBakedSpec(t)},
+		struct {
+			name string
+			spec CatalogBuildSpec
+		}{"baked many", manyBakedSpec(t, 40)},
+	)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := CatalogBuildRequest("proj-1234", tc.spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, st := range b.Steps {
+				for i, arg := range st.Args {
+					if len(arg) > 10000 {
+						t.Errorf("step %s arg %d is %d characters, over Cloud Build's 10000", st.Id, i, len(arg))
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestCloneStepWritesTheFilesItWasGiven runs the step's own shell up to the
+// files and reads them back: chunked across arguments, the Dockerfile and the
+// script are still exactly the text this package generated.
+func TestCloneStepWritesTheFilesItWasGiven(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("no bash")
+	}
+	for _, tc := range []struct {
+		name string
+		spec CatalogBuildSpec
+	}{{"baked", catalogBakedSpec(t)}, {"baked many", manyBakedSpec(t, 40)}} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := catalogCloneStepOf(t, tc.spec)
+			dir := t.TempDir()
+			shell := strings.ReplaceAll(st.Args[1], "$$", "$")
+			head, _, ok := strings.Cut(shell, "set --\n")
+			if !ok {
+				t.Fatalf("the clone step's shell has no file writes: %q", shell)
+			}
+			head = strings.ReplaceAll(head+"set --\n", catalogCloneWork, filepath.Join(dir, "clone"))
+			head = strings.ReplaceAll(head, catalogCloneCredential, filepath.Join(dir, "credential"))
+			args := []string{"-c", head, st.Args[2]}
+			for _, a := range st.Args[3:] {
+				args = append(args, strings.ReplaceAll(a, "$$", "$"))
+			}
+			if out, err := exec.Command(bash, args...).CombinedOutput(); err != nil {
+				t.Fatalf("the files were not written: %v\n%s", err, out)
+			}
+			for file, want := range map[string]string{
+				"Dockerfile": catalogCloneDockerfileOf(t, st),
+				"clone.sh":   catalogCloneScriptOf(t, st),
+			} {
+				got, err := os.ReadFile(filepath.Join(dir, "clone", file))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(got) != want {
+					t.Errorf("%s differs from the generated text (%d bytes written, %d generated)", file, len(got), len(want))
+				}
+			}
+		})
 	}
 }

@@ -253,6 +253,7 @@ func (e *initEngine) options() initflow.Options {
 		Yes: o.yes, NonInteractive: o.nonInteractive, PlanOnly: o.planOnly,
 		Terminal: r.stdinTerminal(), JSON: o.asJSON, Agent: agentMarker(os.Getenv, r.stdinTerminal()), Out: r.w,
 		Program: o.loopProgram(),
+		AtEnd:   e.joinCatalogBuilds,
 		// The run's account: one line per stage and the closing line, in place
 		// of the result header and the plan view (CL5b). A run that has no
 		// reporter — --print-vars, --forget, --config-only, or a test's
@@ -593,6 +594,9 @@ func (e *initEngine) converge(ctx context.Context) error {
 	// it is the steps themselves.
 	e.r.printRunHeader(e.lc.Name, "")
 	fmt.Fprintln(e.r.w, e.r.qs.Header(convergeSection(e.r.o)))
+	if e.images != nil && e.r.o.doorName() == "update" && !e.r.o.planOnly {
+		e.images.background = true
+	}
 	res, err := initflow.Run(ctx, stages, e.options())
 	// The steps this run answered are steps nothing owes any more: `update`
 	// runs every stage, and the entries of the stages it ran successfully are

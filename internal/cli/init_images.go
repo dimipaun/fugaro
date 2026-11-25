@@ -194,6 +194,13 @@ type imagesStage struct {
 	// It limits base kinds only: the history image (--firebase-project) is unaffected.
 	// Kinds are de-duplicated and unknown ones (not in config.Bases) dropped.
 	only []string
+	// background, when set by the converge, starts the stale catalog entries'
+	// rebuilds on one worker and returns, and the run joins them after its last
+	// stage (initEngine.joinCatalogBuilds): nothing the later stages do reads a
+	// rebuilt entry, and the one step that does (reconcileRepoJobs) runs after
+	// the join. The converge sets it; the stage's own tests do not.
+	background bool
+	builds     *catalogBuilds
 }
 
 func newImagesStage(e *initEngine) *imagesStage { return &imagesStage{e: e} }
