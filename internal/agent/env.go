@@ -76,6 +76,17 @@ type EnvSpec struct {
 	// reason the existing oauth-vs-gateway refusal is -- the point closest
 	// to the real credential refuses the combination itself.
 	Compression *CompressionProxy
+	// ChainServed is C1's fact — gateway.ChainServed — for a run whose model
+	// calls the installation's credentials service serves: the service holds
+	// every credential and attaches one per call, so this run has no credential
+	// of its own to hand the agent (D143, D3171). Where it is set the
+	// environment is built as the cascade's whatever Auth says — no
+	// subscription token, no key of the job's, the gateway required and its own
+	// per-run token presented — because the credential the file names is the
+	// service's to attach and never the agent's to hold. False is the release-1
+	// environment of a repository the table does not serve: Auth's own arm, the
+	// token where the gateway does not serve the run (X1 deletes that branch).
+	ChainServed bool
 	// Docker is whether this run's workflow asked for `docker: true`
 	// (design compute-backend.md §4.2): the one fact that lets DOCKER_HOST
 	// through, because it is the one fact that says a socket was mounted
@@ -94,7 +105,9 @@ type EnvSpec struct {
 // (OAuthStageEnv), which is what keeps the coder's own environment an
 // allow-list: the account's token is in no environment this function returns,
 // whatever the runner's own environment holds
-// (docs/mixed-credentials/spec.md §11).
+// (docs/mixed-credentials/spec.md §11). A run the credentials service serves is
+// built as the cascade's instead and holds no credential of the job's at all
+// (EnvSpec.ChainServed, D3171).
 func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err error) {
 	p := map[string]string{}
 	for _, kv := range parent {
@@ -140,13 +153,23 @@ func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err er
 			out[k] = v
 		}
 	}
+	// Where the credentials service serves this run's calls, the environment is
+	// the cascade's, whatever the file's auth says (D3171): the service holds
+	// the credential and attaches one per call, so the agent gets none of the
+	// job's — not the subscription token an oauth file names, and not the key an
+	// api-key one does. It is read once here, so every arm below judges the auth
+	// this run's model path is spelled as.
+	auth := spec.Auth
+	if spec.ChainServed {
+		auth = config.AuthCascade
+	}
 	for _, k := range spec.Secrets {
 		if config.IsProviderKeyEnv(k) {
 			// A provider's key belongs to the runner's gateway, never to the
 			// agent, whatever a workflow declares.
 			return nil, nil, fmt.Errorf("secret %s is a provider key, which the agent never gets", k)
 		}
-		if spec.Auth == config.AuthCascade && config.IsModelSecretEnv(k) {
+		if auth == config.AuthCascade && config.IsModelSecretEnv(k) {
 			// A cascade run's agent gets no model credential at all (D143):
 			// the credentials service holds them and attaches one per call,
 			// so a declared mount of one is refused rather than mounted.
@@ -162,15 +185,15 @@ func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err er
 		}
 	}
 	if spec.Compression != nil {
-		if spec.Auth == "oauth" || spec.Auth == "vertex" {
-			return nil, nil, fmt.Errorf("agent.compression cannot be combined with auth: %s: it routes %s's calls its own way, so the sidecar could only be skipped, never used", spec.Auth, spec.Auth)
+		if auth == "oauth" || auth == "vertex" {
+			return nil, nil, fmt.Errorf("agent.compression cannot be combined with auth: %s: it routes %s's calls its own way, so the sidecar could only be skipped, never used", auth, auth)
 		}
 		if spec.Gateway == nil {
 			return nil, nil, fmt.Errorf("agent.compression needs the budget gateway, and this run has none: the sidecar holds no credential of its own to send to Anthropic")
 		}
 	}
 	secretNames := slices.Clone(spec.Secrets)
-	switch spec.Auth {
+	switch auth {
 	case "vertex":
 		out["CLAUDE_CODE_USE_VERTEX"] = "1"
 		for k, v := range p {
@@ -264,7 +287,7 @@ func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err er
 	maps.Copy(out, spec.Set)
 	if spec.Gateway != nil {
 		// Last, so nothing declared or inherited can override the routing.
-		vars, err := GatewayVars(spec.Auth, *spec.Gateway, p)
+		vars, err := GatewayVars(auth, *spec.Gateway, p)
 		if err != nil {
 			return nil, nil, err
 		}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 
@@ -244,5 +245,103 @@ func TestAccountFailoverIsClosedToTheAccountsOwnAllowance(t *testing.T) {
 				t.Fatalf("accountEndedTheAttempt(%+v) on a %s run = %v, want %v", c.res, c.auth, got, c.want)
 			}
 		})
+	}
+}
+
+// TestNoAccountWalk is CS7: where the credentials service serves the run's
+// calls, neither account rule of the runner's is read. The walk
+// (accountWalkApplies) and the mix (resolveMixedStages) are the release-1
+// arrangement the pool's own rule replaces (D3171), and a run the service serves
+// keeps the other one: an unmigrated repository, on the image this release
+// ships, is walked and mixed exactly as before.
+//
+// The pool's half is the same fact from the other side: a member's admission is
+// the account's own allow_repos (F10, R20) and never the walk's list, which is
+// this run's own and gone where the service serves.
+//
+// Mutation (restore a walk read, in poolMemberAdmits): judge a Claude OAuth
+// member by stageAccountCandidates again, and the member this repository's
+// accounts admit but this stage's own list holds no place for is skipped.
+func TestNoAccountWalk(t *testing.T) {
+	ctx := context.Background()
+
+	// The walk, on a run the credentials service serves: the switch is not read
+	// at all, and no stage's start is refused for an account.
+	served := newAutoFakeRun(t, false, true, autoPolicyNode(), "", nil)
+	served.r.d.Env = append(served.r.d.Env, credentialsServiceURLEnv+"=https://creds.example.run.app")
+	if !served.r.chainServed() {
+		t.Fatal("a run whose model path is the credentials service's is not read as served by it")
+	}
+	served.r.accounts = accountChoice{}
+	if served.r.accountWalkApplies() {
+		t.Fatal("the walk still applies to a run the credentials service serves")
+	}
+	if served.r.accountAuto(ctx) {
+		t.Fatal("Fugaro still chooses an account for a run the credentials service serves")
+	}
+	for _, stage := range config.RunStages {
+		if reason := served.r.checkStageAccount(ctx, stage); reason != "" {
+			t.Fatalf("stage %s was refused by the run-level account choice: %s", stage, reason)
+		}
+	}
+	// The same fixture with no credentials service is the release-1 run, and the
+	// walk is its own: this is what D3171 removes, and it is not what a served
+	// run does.
+	if unserved := newAutoFakeRun(t, false, true, autoPolicyNode(), "", nil); !unserved.r.accountWalkApplies() {
+		t.Fatal("the walk does not apply to the unmigrated run it is the release-1 arrangement of")
+	}
+
+	// The pool's own rule: the account's own admission, asked even where the
+	// walk's list is not this run's. team-b is admitted for this repository by
+	// its own allow_repos and is no review-class account, so the list this
+	// review job's walk stands on (autoPolicyNode's profile is built for the
+	// default account and team-a) holds no place for it.
+	member := config.PoolMember{Name: "team-b", Type: config.CredentialTypeClaudeOAuth}
+	admits, why, err := served.r.poolMemberAdmits(ctx, member)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !admits {
+		t.Fatalf("a pool member whose own allow_repos admits this repository was skipped: %s", why)
+	}
+	candidates, err := served.r.stageAccountCandidates(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(candidates, "team-b") {
+		t.Fatalf("the fixture does not tell the two rules apart: the walk's list holds team-b (%v)", candidates)
+	}
+	// And a member the account's own list leaves this repository out of is
+	// skipped, whether or not the walk would have held it.
+	foreign := newAutoFakeRun(t, false, false, &projectpolicy.Policy{Version: projectpolicy.Version,
+		Accounts: map[string]projectpolicy.Account{"team-c": {AllowRepos: []string{"github/other/repo"}}}}, "", nil)
+	if admits, why, err := foreign.r.poolMemberAdmits(ctx, config.PoolMember{Name: "team-c",
+		Type: config.CredentialTypeClaudeOAuth}); err != nil || admits || why != poolSkipNotAdmitted {
+		t.Fatalf("a member whose account does not admit this repository: admits=%v why=%q err=%v, want the skip", admits, why, err)
+	}
+
+	// The mix, on an api-key run: the release-1 environment first, which is the
+	// account's token in the stage the node names for it.
+	mixed := mixedStageRun(t, map[string]string{"review": "team-a"})
+	if mixed.mixedStages["review"] != "team-a" {
+		t.Fatalf("the fixture's mix is not the one the node names: %v", mixed.mixedStages)
+	}
+	if keys := envKeysOf(stageEnvOf(t, mixed, "review")); keys["CLAUDE_CODE_OAUTH_TOKEN"] != mixedToken {
+		t.Fatalf("the unmigrated run's stage does not present the account's token: %v", keys)
+	}
+	// Where the credentials service serves the run, no stage of it holds the
+	// account: the service attaches the credential per call, and the stage's
+	// calls are the run's own, through the gateway.
+	mixed.d.Env = append(mixed.d.Env, credentialsServiceURLEnv+"=https://creds.example.run.app")
+	stages, err := mixed.resolveMixedStages(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stages) != 0 {
+		t.Fatalf("the mix still serves stages of a run the credentials service serves: %v", stages)
+	}
+	mixed.mixedStages = stages
+	if keys := envKeysOf(stageEnvOf(t, mixed, "review")); keys["CLAUDE_CODE_OAUTH_TOKEN"] != "" {
+		t.Fatalf("a served run's stage carries the account's token: %v", keys)
 	}
 }

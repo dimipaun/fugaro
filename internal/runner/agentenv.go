@@ -119,6 +119,16 @@ func (r *run) imageEnv(declared, held []string) map[string]string {
 	return out
 }
 
+// chainServed is C1's fact for this run — gateway.ChainServed — as the pieces
+// that must decide before the gateway's own options exist read it: the agent's
+// environment (agent.EnvSpec.ChainServed) and the account rules that go where it
+// is true (accountWalkApplies, resolveMixedStages). It is this run's model path
+// (serviceModelPath), the predicate gatewayUpstream builds the service's
+// upstream from, so a reader of this fact and the gateway cannot disagree about
+// whether the credentials service serves this run's calls (CS6 spells the same
+// fact for the gateway itself).
+func (r *run) chainServed() bool { return r.serviceModelPath() }
+
 // resolveMixedStages answers the run's stage accounts: the stages of the one
 // mix the owner's B0 ruling admits, and the account each of them runs on
 // (docs/mixed-credentials/spec.md §11). A run whose own credential is a
@@ -126,7 +136,8 @@ func (r *run) imageEnv(declared, held []string) map[string]string {
 // Claude OAuth account, declared by that stage's own key in the project's
 // published policy, and it serves the senior review and the adversarial review
 // and no other stage. Every other run, and every node that names no stage
-// account, answers an empty map: a run's own stages are the gateway's.
+// account, answers an empty map: a run's own stages are the gateway's. So does a
+// run the credentials service serves, whatever its node names (D3171).
 //
 // The stage list is an allow-list and it is this function's, never the node's:
 // a node that named a stage outside it — the coder's own, the cheap first
@@ -147,6 +158,15 @@ func (r *run) imageEnv(declared, held []string) map[string]string {
 // (docs/account-aliases/reconciliation.md F3), and the same window a hand edit
 // of a stage key opens.
 func (r *run) resolveMixedStages(ctx context.Context) (map[string]string, error) {
+	if r.chainServed() {
+		// The mix's case is gone where the credentials service serves the run
+		// (D3171): the service holds the credential and attaches one per call, so
+		// no stage of this run runs on an account of its own — a stage-scoped
+		// token in its environment would be a credential neither this run's
+		// gateway nor the service reads, and the calls it made with it would be
+		// the only ones of the run outside the ledger.
+		return nil, nil
+	}
 	if r.cfg == nil || r.cfg.Agent.Auth != "api-key" {
 		// The mix exists to give an api-key run a Claude review credential it
 		// otherwise has none of. Under oauth the keys keep the meaning the
