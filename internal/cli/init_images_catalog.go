@@ -1,9 +1,13 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"strings"
+
+	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -283,13 +287,25 @@ func (s *imagesStage) catalogOutcome(ctx context.Context, set catalogStaleSet, o
 	if out.Changed && out.Detail != "" {
 		parts = append(parts, out.Detail)
 	}
-	var built []string
 	var missed []catalogLeft
+	var mine []catalogStaleEntry
 	for _, se := range set.entries {
 		if !s.buildable(ctx, se) {
 			missed = append(missed, catalogLeft{entry: se, why: fmt.Sprintf("its build runs as %s's build account, with that repository's credential and secrets", pluginwire.Printable(se.repo.Repo))})
 			continue
 		}
+		mine = append(mine, se)
+	}
+	if s.background && len(mine) > 0 {
+		s.builds = startCatalogBuilds(ctx, s, mine, missed)
+		parts = append(parts, fmt.Sprintf("%d catalog image(s) rebuilding FROM this release's base image (%s), joined when the run's other steps are done", len(mine), strings.Join(catalogEntryNames(mine), ", ")))
+		if set.unread != "" {
+			parts = append(parts, "the catalog images' build records could not be read ("+set.unread+"), so this run cannot say whether they are on this release's base")
+		}
+		return initflow.Outcome{Changed: true, Detail: strings.Join(parts, "; ")}
+	}
+	var built []string
+	for _, se := range mine {
 		// The rebuild's own failure is read before it is described: the one
 		// failure `fugaro image build <entry>` could not answer differently on
 		// the same bytes is the entry's own definition being refused
@@ -304,6 +320,23 @@ func (s *imagesStage) catalogOutcome(ctx context.Context, set catalogStaleSet, o
 		}
 		built = append(built, pluginwire.Printable(se.entry.Name))
 	}
+	parts = append(parts, reportCatalogBuilds(w, built, missed)...)
+	if set.unread != "" {
+		parts = append(parts, "the catalog images' build records could not be read ("+set.unread+"), so this run cannot say whether they are on this release's base")
+	}
+	detail := strings.Join(parts, "; ")
+	if detail == "" {
+		detail = "No changes"
+	}
+	return initflow.Outcome{Changed: out.Changed || len(built) > 0, Detail: detail, Left: catalogLeftFor(missed)}
+}
+
+// reportCatalogBuilds prints what a run's catalog rebuilds came to, one line
+// per entry it did not rebuild, and returns the parts of the stage's own line.
+// It is the one place both arms (the stage's own sequential rebuilds and the
+// converge's joined ones) say it, so the two cannot disagree.
+func reportCatalogBuilds(w io.Writer, built []string, missed []catalogLeft) []string {
+	var parts []string
 	if len(built) > 0 {
 		fmt.Fprintf(w, "  rebuilt %d catalog image(s) FROM this release's base image: %s\n", len(built), strings.Join(built, ", "))
 		parts = append(parts, fmt.Sprintf("%d catalog image(s) rebuilt FROM this release's base image (%s)", len(built), strings.Join(built, ", ")))
@@ -323,14 +356,65 @@ func (s *imagesStage) catalogOutcome(ctx context.Context, set catalogStaleSet, o
 		fmt.Fprintf(w, "  not covered: %d catalog image(s) of this installation are on a base older than this release's and this run did not rebuild them — the lines above name each one and what rebuilding it takes\n", len(missed))
 		parts = append(parts, catalogNotCovered(len(missed)))
 	}
-	if set.unread != "" {
-		parts = append(parts, "the catalog images' build records could not be read ("+set.unread+"), so this run cannot say whether they are on this release's base")
+	return parts
+}
+
+// catalogBuilds is the rebuilds the converge started on one worker and has not
+// joined yet. One worker and not one per entry: the builds are submitted one at
+// a time (the Cloud Build and Cloud Run read quotas), and a second build in the
+// same second would open the same log file name.
+type catalogBuilds struct {
+	entries []catalogStaleEntry
+	missed  []catalogLeft
+	results []catalogBuildResult
+	done    chan struct{}
+}
+
+type catalogBuildResult struct {
+	err error
+	out bytes.Buffer
+}
+
+// startCatalogBuilds starts the worker. Each rebuild runs on a command of its
+// own that shares the run's flags and its input — the input is what the managed
+// gate reads a person at a terminal by, so the build is judged as it would be
+// on the run's own command — and writes to a buffer, so its progress does not
+// interleave with the steps running beside it; the buffer is printed only for a
+// build that failed.
+func startCatalogBuilds(ctx context.Context, s *imagesStage, mine []catalogStaleEntry, missed []catalogLeft) *catalogBuilds {
+	b := &catalogBuilds{entries: mine, missed: missed, results: make([]catalogBuildResult, len(mine)), done: make(chan struct{})}
+	r := s.e.r
+	go func() {
+		defer close(b.done)
+		for i, se := range mine {
+			res := &b.results[i]
+			sub := &cobra.Command{Use: r.cmd.Use}
+			sub.Flags().AddFlagSet(r.cmd.Flags())
+			sub.SetIn(r.cmd.InOrStdin())
+			sub.SetOut(&res.out)
+			sub.SetErr(&res.out)
+			sub.SetContext(ctx)
+			res.err = catalogRebuild(sub, se.entry.Name, imageBuildOptions{cloud: r.o.cloud})
+		}
+	}()
+	return b
+}
+
+// join waits for every started rebuild and says what they came to.
+func (b *catalogBuilds) join(w io.Writer, errw io.Writer) (parts []string, left *initflow.Left) {
+	<-b.done
+	var built []string
+	missed := append([]catalogLeft(nil), b.missed...)
+	for i, se := range b.entries {
+		res := &b.results[i]
+		if res.err != nil {
+			missed = append(missed, catalogLeft{entry: se, why: catalogRebuildWhy(res.err), refused: catalog.IsRefused(res.err)})
+			_, _ = errw.Write(res.out.Bytes())
+			continue
+		}
+		built = append(built, pluginwire.Printable(se.entry.Name))
 	}
-	detail := strings.Join(parts, "; ")
-	if detail == "" {
-		detail = "No changes"
-	}
-	return initflow.Outcome{Changed: out.Changed || len(built) > 0, Detail: detail, Left: catalogLeftFor(missed)}
+	return reportCatalogBuilds(w, built, missed), catalogLeftFor(missed)
 }
 
 // catalogLeftFor is the step this run leaves for the person when a stale
@@ -415,4 +499,26 @@ func catalogRebuildWhy(err error) string {
 // process for the entries of this checkout.
 func catalogBuildCommand(entry string) string {
 	return selfCommand() + " image build " + quoteWord(entry)
+}
+
+// joinCatalogBuilds is the end of the converge's background rebuilds: the loop
+// calls it after the last stage and before its closing account, which is also
+// before the steps that read the catalog a rebuild moves (reconcileRepoJobs).
+// It waits for what the images stage started and returns the step they leave,
+// so the run says the same thing it said when the stage rebuilt in line. A run
+// that failed or was interrupted joins too: a build already submitted is never
+// abandoned, and nothing joins twice.
+func (e *initEngine) joinCatalogBuilds() *initflow.Left {
+	if e.images == nil || e.images.builds == nil {
+		return nil
+	}
+	b := e.images.builds
+	e.images.builds = nil
+	select {
+	case <-b.done:
+	default:
+		fmt.Fprintf(e.r.w, "  images: waiting for %d catalog rebuild(s) still running\n", len(b.entries))
+	}
+	_, left := b.join(e.r.w, e.r.cmd.ErrOrStderr())
+	return left
 }
