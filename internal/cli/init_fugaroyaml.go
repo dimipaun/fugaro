@@ -260,6 +260,57 @@ type budgetModeEdit struct {
 	old, out []byte
 }
 
+// fugaroYAMLWithoutRemovedMode is a checkout's fugaro.yaml with the word that
+// was a budget mode spliced out of it, and whether the file said it: the bytes
+// this run's own removal offer leaves in the working tree
+// (writeBudgetModeRemoval). Nothing validates the file here — the word is read
+// out of the bytes (localcfg.RemovedBudgetMode, F22) — and a splice the editor
+// refuses leaves the bytes as they are and the word in the file, so the reader
+// that asked judges them as they always were.
+//
+// The readers that take it are the update's own, and they take it because the
+// update is the one command that has to load a file that still says the word:
+// from this release the word is refused by the config's own validation (D3022),
+// and the update is the one that offers to take the line out — a stage that
+// stopped on the line it is about to remove would need a person to commit the
+// removal and run `fugaro update` a second time, which the upgrade may never
+// ask (CLAUDE.md's HARD RULE). Every other reader of these bytes refuses the
+// word, `fugaro validate` first among them, and a run in this repository still
+// halts in its job on the file it checks out until the line is gone.
+func fugaroYAMLWithoutRemovedMode(data []byte) ([]byte, bool) {
+	if _, off := localcfg.RemovedBudgetMode(data); !off {
+		return data, false
+	}
+	out, err := yamledit.RemoveKey(data, []string{"budget", "mode"})
+	if err != nil {
+		return data, false
+	}
+	return out, true
+}
+
+// updateRemovalKey is the context key theUpdateLeavesTheRemoval installs.
+type updateRemovalKey struct{}
+
+// theUpdateLeavesTheRemoval marks every read of a checkout's fugaro.yaml in
+// this run as the update's own: the bytes as this run's removal offer leaves
+// them (fugaroYAMLWithoutRemovedMode). It is installed once, at the door
+// (runInit), because a run of the init door is the one whose own writes
+// include taking that line out — and because the readers of a checkout's file
+// along its way are many (the repository and checkout stages, the image
+// refresh, the image check, the image stage, the job resolution), so a flag
+// each of them has to remember is a flag one of them is found without. Every
+// other door reads the bytes as they are and refuses a file that still says
+// the word (D3022): `fugaro validate`, a launch, doctor.
+func theUpdateLeavesTheRemoval(ctx context.Context) context.Context {
+	return context.WithValue(ctx, updateRemovalKey{}, true)
+}
+
+// updateLeavesTheRemoval reports whether ctx carries theUpdateLeavesTheRemoval.
+func updateLeavesTheRemoval(ctx context.Context) bool {
+	on, _ := ctx.Value(updateRemovalKey{}).(bool)
+	return on
+}
+
 // prepareBudgetModeRemoval reads the fugaro.yaml of the checkout at root and
 // makes the edit that takes the word which is not a budget mode any more out of
 // it; nil when the file does not say it.

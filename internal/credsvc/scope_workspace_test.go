@@ -2387,8 +2387,11 @@ func TestARemovedPersonIsRefusedAfterTheReread(t *testing.T) {
 }
 
 // TestARemovedPersonsSlipIsRefused: a slip whose owner has left the roster is
-// refused on every call (R3) — and the refusal is the record's own sentence, so
-// the run cannot tell "removed" from "not yours".
+// refused on every call (R3) — and on this form the refusal names the removal
+// (D3146), because the roster is asked after the slip's claim secret has been
+// matched: the answer reaches only the run the slip was granted to, which is
+// what makes naming the removal safe here. The claim route's forms keep the
+// record's own sentence instead (TestARemovedPersonsSlipIsRefusedAtTheClaim).
 func TestARemovedPersonsSlipIsRefused(t *testing.T) {
 	p := newWSPerson(t)
 	// The member's switch is ON: the grant names the person's own token, and a
@@ -2410,8 +2413,8 @@ func TestARemovedPersonsSlipIsRefused(t *testing.T) {
 	if resp.StatusCode != StatusUnverified {
 		t.Fatalf("a call under a removed person's slip = %d, want %d: %s", resp.StatusCode, StatusUnverified, body)
 	}
-	if e := refusal(t, resp.StatusCode, body); e.Error != ErrorUnverifiedRunIdentity || e.Message != slipNotThisRuns {
-		t.Errorf("the refusal is %q/%q, want %q/%q", e.Error, e.Message, ErrorUnverifiedRunIdentity, slipNotThisRuns)
+	if e := refusal(t, resp.StatusCode, body); e.Error != ErrorSlipOwnerRemoved || e.Message != slipOwnerRemoved {
+		t.Errorf("the refusal is %q/%q, want %q/%q", e.Error, e.Message, ErrorSlipOwnerRemoved, slipOwnerRemoved)
 	}
 	if len(svc.up.Seen()) != 1 {
 		t.Errorf("the upstream saw %d calls, want the one the control made: the removed person's call reached no upstream", len(svc.up.Seen()))

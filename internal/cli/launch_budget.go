@@ -167,11 +167,13 @@ func projectPolicyRead(ctx context.Context, lc *localcfg.Config) (*projectpolicy
 // ShapeFreeFloor up (projectpolicy's doc on that floor is the argument), and
 // nothing is written back here.
 //
-// It is deliberately not the memoized read (policyReadOnce): that one is the
-// read the gates and the launch decide by, where a node no version of this
-// reader understands is a refusal rather than a document to enforce, and it is
-// shared by a dozen callers whose answer must not change. This read is the
-// repository stage's alone, so an update reads the node one more time.
+// A launch's memo does not carry (policyReadOnce.carry): that one is the read
+// the gates and the launch decide by, where a node no version of this reader
+// understands is a refusal rather than a document to enforce. The converging
+// door's memo does, and it is this read, so every stage of one `fugaro update`
+// answers from the node the same run's policy stage is about to write — the
+// stages that store a secret, the Readiness gate and the repository stage
+// included.
 func repoPolicyRead(ctx context.Context, lc *localcfg.Config) (*projectpolicy.Policy, bool, error) {
 	return policyReadWith(ctx, lc, projectpolicy.ReadCarriedForwardShapeFree)
 }
@@ -255,16 +257,18 @@ func policyReadErr(err error) error {
 // on one path — the gate before anything of it exists, and the mint decision —
 // where two reads could disagree about the policy a single launch is admitted
 // against, and the Readiness gate planRepo reads shares that one answer with
-// every other caller of the run. The repository stage's own read is deliberately
-// not this one (repoPolicyRead carries a predecessor forward, which this read
-// must not do), so a run that converges a checkout reads the node one time more
-// than the memo alone would. The answer cannot change under any of them (and
-// where it could, the run reads the node itself and is the one that counts).
+// every other caller of the run. A launch is not marked (carry below) and reads
+// the node strictly, which is what the memo must do for a decision. A run that
+// converges a checkout is marked, and every caller of that run then reads the
+// node the same run's policy stage is about to write, so the read is one node's
+// answer from the first stage to the last. The answer cannot change under any of
+// them (and where it could, the run reads the node itself and is the one that
+// counts).
 //
-// What is memoized is the raw read, projectPolicyRead's result with
-// projectpolicy's typed errors intact, because two callers word the same error
-// differently: the launch gate names the release a policy's version is from
-// (policySkewRefusal), and every other caller wants policyReadErr.
+// What is memoized is the raw read, with projectpolicy's typed errors intact,
+// because two callers word the same error differently: the launch gate names the
+// release a policy's version is from (policySkewRefusal), and every other caller
+// wants policyReadErr.
 type policyReadOnce struct {
 	// mu makes the memo safe for the goroutines a batch of launches shares one
 	// cloudEnv with (a best-of-N launch, or the concurrent same-run-ID test):
@@ -274,16 +278,35 @@ type policyReadOnce struct {
 	p     *projectpolicy.Policy
 	found bool
 	err   error
+	// carry makes the read the converging door's own: the node is read as the
+	// same run's policy stage is about to write it
+	// (projectpolicy.ReadCarriedForwardShapeFree, repoPolicyRead) instead of
+	// refused where it is a predecessor or says the word the budget mode's
+	// vocabulary dropped. It is what the upgrade's HARD RULE needs of every
+	// stage of that run: the node the release behind published is exactly the
+	// one this release's strict reader refuses, and the same run is the one that
+	// rewrites it — a stage that stopped, or answered "no policy", would leave
+	// the operator a second command, or would store a secret in the wrong place
+	// for a repository the node admits (initsecrets' projectScope).
+	//
+	// It is set by initRun.policyMemo, the one way a run that converges reaches
+	// this memo, and never by a launch: a launch decides by the node and must
+	// refuse one no version of this reader understands (docs on repoPolicyRead).
+	carry bool
 }
 
-// read is the memoized projectPolicyRead: the policy, whether one was
-// published, and the read's own error.
+// read is the memoized read: the policy, whether one was published, and the
+// read's own error.
 func (p *policyReadOnce) read(ctx context.Context, lc *localcfg.Config) (*projectpolicy.Policy, bool, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if !p.done {
 		p.done = true
-		p.p, p.found, p.err = projectPolicyRead(ctx, lc)
+		if p.carry {
+			p.p, p.found, p.err = repoPolicyRead(ctx, lc)
+		} else {
+			p.p, p.found, p.err = projectPolicyRead(ctx, lc)
+		}
 	}
 	return p.p, p.found, p.err
 }

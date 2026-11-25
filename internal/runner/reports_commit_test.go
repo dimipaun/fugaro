@@ -71,15 +71,18 @@ func commitReportsSpec(reports ...task.InputFile) *task.Spec {
 // commitReportsPolicy is the policy node a commit run reads: version 10, with
 // the project designating repo for its reports into dir (the layout's own
 // folder when dir is ""), or designating nothing at all when repo is empty.
+// Its budget mode is observe because every node a run reads must name one of the
+// two live ones now: a node that still says the word the vocabulary dropped is
+// refused at bootstrap (AB2, D3009), and these tests are about the designation.
 func commitReportsPolicy(repo, dir string) string {
 	if repo == "" {
-		return `{"version":10,"budget":{"mode":"off"}}`
+		return `{"version":10,"budget":{"mode":"observe"}}`
 	}
 	block := fmt.Sprintf(`{"repo":%q`, repo)
 	if dir != "" {
 		block += fmt.Sprintf(`,"dir":%q`, dir)
 	}
-	return `{"version":10,"budget":{"mode":"off"},"reports_commit":` + block + `}}`
+	return `{"version":10,"budget":{"mode":"observe"},"reports_commit":` + block + `}}`
 }
 
 // commitReportsObject writes one stored report into the run's own prefix, where

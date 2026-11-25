@@ -1351,24 +1351,28 @@ func TestBillingLeftForTheAdminAndTheRerunResumes(t *testing.T) {
 	}
 	// The budget question is one of them, and its answer is the one a resumed
 	// creation takes: the project the pause left is linked already, and this run
-	// links nothing, so no alert is created on an account it cannot name — the
-	// amount is dropped with the one line that says what adds it, rather than
-	// reaching the installation's Terraform, whose own rule refuses a budget
-	// with no billing account. The question is read off its prompt line like
-	// every other check that one was asked (askedPrompt): the row's `what` is
-	// the question in a sentence and belongs to a refusal, so no output carries
-	// it.
+	// links nothing, so no alert is created on an account it cannot name: the
+	// amount the person answered is what the creation fact records and what the
+	// lines that say how to add the alert name (settleBudget, markCreated),
+	// while no budget block reaches the installation's Terraform, whose own rule
+	// refuses one with no billing account. The question is read off its prompt
+	// line like every other check that one was asked (askedPrompt): the row's
+	// `what` is the question in a sentence and belongs to a refusal, so no
+	// output carries it.
 	if !strings.Contains(all, askedPrompt("--budget")) {
 		t.Errorf("the resumed creation never asked the budget question:\n%s", all)
 	}
 	if !strings.Contains(all, fmt.Sprintf(budgetNoAccount, resumedBudgetAmount)) {
 		t.Errorf("the resumed creation's budget answer is not settled against the account it has none of:\n%s", all)
 	}
+	if want := fmt.Sprintf("fugaro update --budget %d --budget-currency USD --billing-account", resumedBudgetAmount); !strings.Contains(all, want) {
+		t.Errorf("the line that adds the alert does not name the amount the person answered (%q):\n%s", want, all)
+	}
 	if n := len(r.crm.Creates()); n != 1 {
 		t.Errorf("%d project(s) created over the two runs, want the one", n)
 	}
-	if got, ok := markerAt(t, r.gcs, bucket); !ok || !strings.Contains(got, `"gcp_project":"`+newProj+`"`) {
-		t.Errorf("the resumed run did not mark the project managed: %q (present %v)\n%s", got, ok, all)
+	if got, ok := markerAt(t, r.gcs, bucket); !ok || got != creationFact(newProj, resumedBudgetAmount, "USD") {
+		t.Errorf("the creation fact = %q (present %v), want the budget the person answered, %d USD:\n%s", got, ok, resumedBudgetAmount, all)
 	}
 	if v := r.crm.Labels(newProj)[managed.ProjectLabelKey]; v != managed.ProjectLabelValue {
 		t.Errorf("the resumed project is not labelled %s=%s (got %q)", managed.ProjectLabelKey, managed.ProjectLabelValue, v)
@@ -1387,10 +1391,10 @@ func TestBillingLeftForTheAdminAndTheRerunResumes(t *testing.T) {
 // wait the no-prompt policy refuses.
 //
 // The amount is read off the options after the phase's own check, which is
-// where a run that took the default keeps it: settleBudget drops an amount no
-// billing account can carry, so this run is given the account with
-// --link-billing — the same place a first run's account comes from — and the
-// default it took is what the installation's variables are written with.
+// where a run that took the default keeps it: the run links an account with
+// --link-billing — the same place a first run's account comes from — so the
+// alert is created on it, and the default it took is what the installation's
+// variables and the creation fact are written with (settleBudget).
 func TestAResumedCreationWithNoTerminalTakesTheDefaultBudget(t *testing.T) {
 	r := newProjectRig(t)
 	cfg, err := os.ReadFile(r.cfg)
