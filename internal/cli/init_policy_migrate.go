@@ -2395,6 +2395,11 @@ func (e *initEngine) defaultCatalogEntryRefusal(ctx context.Context, cat *config
 	}
 	asked := config.Catalog{Entries: append(catalogEntries(cat), entry)}
 	for _, v := range views {
+		if !v.Read() {
+			// A view that could not be read carries its reason alone, nothing to
+			// resolve workflows against — and it is one of unreadRepos' above.
+			continue
+		}
 		for _, name := range slices.Sorted(maps.Keys(v.Cfg.Workflows)) {
 			req := catalog.ImageRequest{ImageMap: imageMap, Canonical: v.Repo, Workflow: v.Cfg.Workflows[name], Backend: catalog.Backend(e.lc.Backend())}
 			// The workflow's image is asked of the resolver twice, with the catalog
@@ -2453,14 +2458,19 @@ func unadmittedRepos(lc *localcfg.Config, node *projectpolicy.Policy) []string {
 	return out
 }
 
-// unreadRepos is the repositories this project's config lists that this run
-// read no workflows of, in the order the config names them, spelled the way its
-// lists spell one ("github/acme/app"): the ones the reader answered with a view
-// that says why, and the ones it answered with no view at all. A repository
-// this run could not read keeps the per-repository job its own root deploys —
-// a job the project's catalog default is the image of just as much as an
-// unadmitted repository's — and its workflows are not this run's to read, so
+// unreadRepos is every repository this run was to read and read no workflows
+// of: the repositories the reader answered with a view that says why, and the
+// ones this project's config lists that it answered with no view of at all. A
+// repository this run could not read keeps the per-repository job its own root
+// deploys — a job the project's catalog default is the image of just as much as
+// an unadmitted repository's — and its workflows are not this run's to read, so
 // nothing here writes the entry on a guess at them (R13).
+//
+// A name is spelled the way this project's lists spell one ("github/acme/app")
+// where the config names the repository's provider, and as the reader named it
+// ("acme/app") where it does not: a repository this config does not list is
+// still one the project lists (the published list names repositories a
+// machine's config need not), and it is the reader that knows it.
 //
 // A repository the config lists with no provider is no repository this run
 // reads, so it is not one the write waits for either (usedProviders is the same
@@ -2484,6 +2494,20 @@ func unreadRepos(lc *localcfg.Config, views []repoView) []string {
 			if !read[canonical] {
 				out = append(out, canonical)
 			}
+		}
+	}
+	for _, v := range views {
+		if v.Read() {
+			continue
+		}
+		name := v.Repo
+		if p := repoProviderOf(lc, v.Repo); p != "" {
+			if c, err := projectpolicy.Canonical(p, v.Repo); err == nil {
+				name = c
+			}
+		}
+		if !slices.Contains(out, name) {
+			out = append(out, name)
 		}
 	}
 	return out

@@ -129,4 +129,23 @@ func TestDefaultEntryHeldWhileARepositoryIsUnread(t *testing.T) {
 			t.Errorf("the log does not hold the repository the line names and the refusal behind it, so the facts the line cut are nowhere:\n%s", log)
 		}
 	})
+
+	t.Run("a repository this machine's config does not list", func(t *testing.T) {
+		// The list a project publishes names repositories a machine's config
+		// need not, and it is the reader that knows them: one of those, unread,
+		// holds the write just as a config-listed one does, and the line names
+		// it as the reader did — this config knows no provider to spell it with.
+		r := ownImageRigNode(t, node)
+		onlyRepos(t, r)
+		stubViews(t, read, repoView{Repo: sibling, Unread: "no fugaro.yaml on the default branch"})
+		out := convergeOn(t, r, []string{"policy-vs-jobs"})
+
+		if entry, ok := writtenDefaultEntry(t); ok {
+			t.Errorf("this update wrote the default entry %+v while %s could not be read: every repository the project lists is one this run was to read, and one it did not read holds the write\n%s",
+				entry, sibling, out)
+		}
+		if line := oneWithheldEntryLine(t, out); !strings.Contains(line, sibling) || !strings.Contains(line, "read no fugaro.yaml of") {
+			t.Errorf("the line this update prints about the entry does not name %s and say it read no fugaro.yaml of it: %q", sibling, line)
+		}
+	})
 }
