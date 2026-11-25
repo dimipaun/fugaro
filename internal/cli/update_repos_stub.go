@@ -2,6 +2,9 @@ package cli
 
 import (
 	"context"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
@@ -48,6 +51,7 @@ var enrolledReposImpl = func(ctx context.Context, in enrolledIn) ([]repoView, []
 		v.Head = headOfDefaultBranch(ctx, root, db.ref)
 		v.YAML = db.data
 		v.Cfg = db.cfg
+		v.Files = checkoutFiles(root, in.ExtraPaths)
 	}
 	if v.Unread != "" {
 		// The reason is repository-controlled text (a parse's own sentence
@@ -57,6 +61,48 @@ var enrolledReposImpl = func(ctx context.Context, in enrolledIn) ([]repoView, []
 		v.Unread = pluginwire.Printable(oneLine(v.Unread))
 	}
 	return []repoView{v}, nil
+}
+
+// checkoutFiles is the extra paths a caller asked for, read out of the
+// checkout this stand-in knows: a path ending in "/" is a folder and is walked,
+// anything else is one file, and each file is keyed by its path in the
+// repository -- which is what repoView.Files holds and what repofiles answers
+// (U1). A path the checkout does not hold answers no files, which is the
+// ordinary case for the paths `fugaro update` asks for (a checkout that keeps
+// no backlog) and never a repository nobody could read.
+func checkoutFiles(root string, paths []string) map[string][]byte {
+	var out map[string][]byte
+	for _, p := range paths {
+		at := filepath.Join(root, filepath.FromSlash(p))
+		if !strings.HasSuffix(p, "/") {
+			if data, err := os.ReadFile(at); err == nil {
+				if out == nil {
+					out = map[string][]byte{}
+				}
+				out[p] = data
+			}
+			continue
+		}
+		_ = filepath.WalkDir(at, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return nil
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return nil
+			}
+			if out == nil {
+				out = map[string][]byte{}
+			}
+			out[filepath.ToSlash(rel)] = data
+			return nil
+		})
+	}
+	return out
 }
 
 // repoProviderOf is the git provider this machine's config records for a
