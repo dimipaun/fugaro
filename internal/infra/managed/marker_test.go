@@ -2919,6 +2919,26 @@ var runAccountGrants = setOf(
 	// nothing here widens what any run credential can reach.
 	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.orchestrator.service | google_service_account.scheduler.member | for_each= | perms=`,
 	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=google_secret_manager_secret.pairing_key[0].secret_id | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=`,
+	// Reviewed for J6 (mobile-identity-pairing O17): the account's ONE grant on
+	// the installation's consumer signing key, and the whole of what it reaches
+	// through it. The role is the module's own custom role, whose entire
+	// permission list is cloudkms.cryptoKeyVersions.useToSign — a signature
+	// made with a key whose material is in Cloud KMS, no material to read or
+	// export, no version to create, disable or destroy — and the target is the
+	// one key mailbox_key.tf creates (local.mailbox_crypto_key_id resolves at
+	// plan time to the literal that file composes; internal/infra/tf's
+	// mailboxSignerGrant is what holds a plan to that one key).
+	//
+	// Why none of it is a write path to the marker: useToSign carries no
+	// storage permission at all, nothing that grants a role, no
+	// iam.serviceAccounts.actAs and no token minting, and what it signs is the
+	// mailbox's own canonical bytes — the key and its ring are Cloud KMS
+	// resources in the installation's project and neither is the runs bucket
+	// nor a prefix any fence of this tree admits. The account itself is the
+	// resident orchestrator, whose six rows are the block above; this is the
+	// sixth, and it adds a signature the phones verify to what it could do,
+	// nothing it could reach.
+	`google_kms_crypto_key_iam_member | "projects/${var.project}/roles/fugaroMailboxSigner" | crypto_key_id=local.mailbox_crypto_key_id | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=cloudkms.cryptoKeyVersions.useToSign`,
 )
 
 // setOf is a set of strings.
@@ -3070,7 +3090,7 @@ func labelGrantWhy(role string, roles map[string][]string) (why string, resolved
 // grantTarget is the resource a grant is on: the first of the attributes
 // that name one, most specific first.
 func grantTarget(body string) string {
-	for _, k := range []string{"service_account_id", "secret_id", "repository", "name", "bucket", "project", "folder", "org_id"} {
+	for _, k := range []string{"service_account_id", "secret_id", "crypto_key_id", "repository", "name", "bucket", "project", "folder", "org_id"} {
 		if v := field(body, k); v != "" {
 			return k + "=" + v
 		}

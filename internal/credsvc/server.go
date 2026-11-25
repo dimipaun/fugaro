@@ -2456,7 +2456,7 @@ func (s *Server) verifyPersonCallSlip(ctx context.Context, r *http.Request, id I
 		return nil, &slipRefusal{StatusUnavailable, ErrorStateUnavailable, "the workspace's roster could not be read", labelRead(readSlip, err)}
 	}
 	if !rosterListsHuman(roster, sl.OwnerAddress) {
-		return nil, slipNotThisRunsRefusal()
+		return nil, slipOwnerRemovedRefusal()
 	}
 	if !held {
 		s.slips.put(slipID, sl, now)
@@ -2479,6 +2479,25 @@ func (s *Server) endPersonSlip(ctx context.Context, ps personScope, id, why stri
 // given (slipNotThisRuns), in this path's shape.
 func slipNotThisRunsRefusal() *slipRefusal {
 	return &slipRefusal{StatusUnverified, ErrorUnverifiedRunIdentity, slipNotThisRuns, nil}
+}
+
+// slipOwnerRemoved is the sentence a call under a live slip from a person the
+// roster no longer lists is refused with (R3, D3146).
+//
+// It names the removal, where slipNotThisRuns deliberately does not, and the
+// two are apart because the check is: verifyPersonCallSlip asks the roster
+// after ClaimMatches, so only a caller holding the slip's own claim secret ever
+// sees this answer — the run the slip was granted to, whose operator is the one
+// who needs to know a person left the workspace. The claim route's own reading
+// of the same fact keeps the one sentence (personStillOnTheRoster), because a
+// caller there presents a slip id before it holds any secret.
+const slipOwnerRemoved = "the slip's owner is no longer on this workspace's roster"
+
+// slipOwnerRemovedRefusal is slipOwnerRemoved in this path's shape. It halts
+// the run (D143) and moves it to no other credential, which is what makes D3146
+// a halt rather than a switch.
+func slipOwnerRemovedRefusal() *slipRefusal {
+	return &slipRefusal{StatusUnverified, ErrorSlipOwnerRemoved, slipOwnerRemoved, nil}
 }
 
 // endSlip ends one slip and forgets the body held for it. It is the service's

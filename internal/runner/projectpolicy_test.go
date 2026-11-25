@@ -13,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -852,6 +853,32 @@ func TestPolicyCarriedVersionHaltsTheRunWithTheUpdateRemedy(t *testing.T) {
 	}
 }
 
+// R4's own direction, and the one the fixtures above used to prove by accident:
+// a node that still says the word the budget mode's vocabulary dropped is not
+// one a run may read as "no mode" or as the observe it used to mean. The
+// release behind published one — it kept its version, because that step left no
+// bump behind (D3025, AB8a) — and a run that meets it, because `fugaro update`
+// has not run yet or an older CLI published it, is refused at bootstrap with
+// C1's one text, which names the fix (AB2, D3009, D3022). The node is the
+// operator's own to fix, so the refusal names it and offers nothing the run
+// cannot do: only the update rewrites it in place (F22), and the run is not the
+// update.
+func TestPolicyWithTheRemovedModeHaltsTheRunWithTheOneText(t *testing.T) {
+	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":9,"budget":{"mode":"off"}}`, capScript(3)...)
+	rec, err := b.run(t, implement("feature"))
+	if err == nil {
+		t.Fatalf("a policy node that says the word must stop the run: rec = %+v", rec)
+	}
+	for _, want := range []string{projectpolicy.PathShared(), policy.ModeOffRefusal} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if len(b.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded {
+		t.Fatalf("%d stages ran", len(b.agent.calls))
+	}
+}
+
 // Carried review item (d): a marker that is not an integer generation is a
 // user's node, named as itself — never read as "no marker", which would make a
 // project-centric installation a legacy one.
@@ -1017,7 +1044,7 @@ func TestPolicySetsOnlyItsOwnKeys(t *testing.T) {
 	// alone and the node allows haiku and sonnet, so the run the job's own
 	// list would have refused goes through.
 	b = policyRun(t, gwConfig(t, ""), "off", "",
-		`{"version":9,"budget":{"mode":"off","allowed_models":["`+sonnet+`","`+haiku+`"]}}`, capScript(3)...)
+		`{"version":9,"budget":{"mode":"observe","allowed_models":["`+sonnet+`","`+haiku+`"]}}`, capScript(3)...)
 	b.deps.Spend = ceilingOf(t, runner.AllowedModelsEnv, haiku)
 	rec, err = b.run(t, implement("feature"), review("ship", 0))
 	if err != nil || rec.Status != runstore.StatusSucceeded {
@@ -1093,7 +1120,7 @@ func TestPolicyBudgetWithoutAModeHaltsTheRun(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), projectpolicy.PathShared()) {
 		t.Fatalf("a budget block with no mode must stop the run: err = %v, rec = %+v", err, rec)
 	}
-	for _, want := range []string{"mode", "off, observe or enforce", "leaves the budget block out"} {
+	for _, want := range []string{"mode", "observe or enforce", "leaves the budget block out"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}

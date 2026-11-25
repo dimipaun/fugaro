@@ -70,6 +70,17 @@
 // neither re-stamped nor released, because nothing the holder reads names it any
 // more: it is one node, and a rival that still carries the plan still skips it.
 //
+// **A plan task taken off the plan is not a finished one**, and its claim stands
+// the same way, with nothing recorded on it (CG4's leftovers). Nothing the holder
+// reads names the task any more, so no cycle of its settles that node — and none
+// of them may free it, for the reason the whole file is about: a rival whose own
+// copy still carries the task reads a freed path as an item nobody has taken and
+// starts a run for work the plan no longer has. That is a decision and not an
+// oversight: the node carries the plan task and its holder and nothing that tells
+// a task taken off the plan from one of a plan this holder is not the one working,
+// so the node that names a holder is left standing and every rival keeps skipping
+// it.
+//
 // Nothing here reads a clock of its own: the stamp is rtdb.ServerNow's, and a
 // claim with no server time behind it is not made at all (D1230).
 //

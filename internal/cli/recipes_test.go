@@ -217,10 +217,11 @@ func TestRecipesLsLayers(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &doc); err != nil {
 		t.Fatal(err)
 	}
+	// The checkout's .fugaro/recipes/team.yaml is not read (D3303): the
+	// project's own team is the row, and it shadows nothing.
 	want := []recipeRow{
-		{Name: "team", Source: "repo"},
 		{Name: "claude-solo", Source: "project"},
-		{Name: "team", Source: "project", ShadowedBy: "repo"},
+		{Name: "team", Source: "project"},
 		{Name: "commit-reports", Source: "catalog"},
 		{Name: "default", Source: "catalog"},
 		{Name: "escalate", Source: "catalog"},
@@ -386,17 +387,15 @@ func TestRecipesLsVerboseDoesNotTruncateUseWhen(t *testing.T) {
 // (default) is exempt: it is not custom, and every other catalog entry is
 // required to have one (TestCatalogIsTheStarterSet).
 func TestRecipesLsNotesMissingUseWhen(t *testing.T) {
-	newCloudFixture(t)
+	f := newCloudFixture(t)
+	projectRecipesFixture(t, f, map[string]string{"no-use-when": "version: 1\nname: no-use-when\nsteps:\n  - review: {}\n"})
 	testutil.IsolateGit(t)
-	dir := t.TempDir()
-	testutil.Git(t, dir, "init", "-q")
-	writeRecipeFile(t, dir, ".fugaro/recipes/no-use-when.yaml", "version: 1\nname: no-use-when\nsteps:\n  - review: {}\n")
-	t.Chdir(dir)
+	t.Chdir(t.TempDir())
 	_, errOut, err := execute(t, "recipes", "ls")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(errOut, "repo recipe no-use-when has no use_when; the routing skill matches on use_when, add one") {
+	if !strings.Contains(errOut, "project recipe no-use-when has no use_when; the routing skill matches on use_when, add one") {
 		t.Fatalf("stderr = %q", errOut)
 	}
 	if strings.Contains(errOut, "default has no use_when") {
@@ -641,17 +640,17 @@ func TestRecipesLsAndShowRefreshTheCache(t *testing.T) {
 	}
 }
 
-func TestRecipesLsReportsSkippedFiles(t *testing.T) {
+// TestRecipesLsReportsSkippedStoreFiles: the store's listing names every
+// object that is not <recipe name>.yaml, since the runner reads only that. The
+// checkout's own folder is not listed at all (TestRecipesLsSaysTheFolderIsNotRead).
+func TestRecipesLsReportsSkippedStoreFiles(t *testing.T) {
 	f := newCloudFixture(t)
 	projectRecipesFixture(t, f, map[string]string{"team": projectTeam})
 	writeBucketFile(t, f, recipe.ObjectPrefix+"Bad_Name.yaml", projectTeam)
 	testutil.IsolateGit(t)
-	dir := t.TempDir()
-	testutil.Git(t, dir, "init", "-q")
-	writeRecipeFile(t, dir, ".fugaro/recipes/notes.txt", "x")
-	t.Chdir(dir)
+	t.Chdir(t.TempDir())
 	_, errOut, err := execute(t, "recipes", "ls")
-	if err != nil || !strings.Contains(errOut, "note: skipped .fugaro/recipes/notes.txt") || !strings.Contains(errOut, "note: skipped gs://fugaro-runs-proj-1234/"+recipe.ObjectPrefix+"Bad_Name.yaml") {
+	if err != nil || !strings.Contains(errOut, "note: skipped gs://fugaro-runs-proj-1234/"+recipe.ObjectPrefix+"Bad_Name.yaml") {
 		t.Fatalf("stderr %q, err %v", errOut, err)
 	}
 }

@@ -441,7 +441,7 @@ finish() {
   else
     facts="${facts}"$'\n'"restore-token-file|$([ "$AUTH_CONF_REMOVED" = yes ] && echo PASS || echo FAIL)|the credential file $([ "$AUTH_CONF_REMOVED" = yes ] && echo "is gone" || echo "IS STILL THERE at $AUTH_CONF (mode 600, holding a minted identity token) — remove it yourself")"
   fi
-  if printf '%s\n' "$facts" | grep -q '|FAIL|' && [ "$status" = 0 ]; then
+  if grep -q '|FAIL|' <<<"$facts" && [ "$status" = 0 ]; then
     # A guard stop is exit 1 already; a FAILed fact with exit 0 would read as a
     # pass, so the verdict is taken from the facts, not from the exit path.
     status=1
@@ -1395,7 +1395,7 @@ print_block() { # print_block FACTS STATUS — always on the owner's own stdout
   printf '\nCHECK 91 RESULT\n' >&3
   for key in "${BLOCK_KEYS[@]}"; do
     local line
-    line=$(printf '%s\n' "$facts" | grep -m1 "^$key|" || true)
+    line=$(grep -m1 "^$key|" <<<"$facts" || true)
     if [ -n "$line" ]; then
       printf 'FACT %s: %s — %s\n' "$key" \
         "$(printf '%s' "$line" | cut -d'|' -f2)" \

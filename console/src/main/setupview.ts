@@ -25,9 +25,9 @@
 //   - `setup --json` confirms no step (`unconfirmedWhy`, `internal/cli/init.go`;
 //     F27), so apply runs **only** what the CLI applies without a confirmation;
 //   - every step that needs a person -- creating the GCP project, linking its
-//     billing account, the Firestore location, a Terraform review in a managed
-//     project, every secret value -- arrives from the child as a
-//     `left_for_you` event with its own line to run in the owner's terminal;
+//     billing account, a Terraform review in a managed project, every secret
+//     value -- arrives from the child as a `left_for_you` event with its own
+//     line to run in the owner's terminal;
 //   - this window's yes is therefore the operator's **go to run the CLI**, and
 //     never a consent the CLI accepts (O6: no consent mechanism is planned, and
 //     a coding agent's own command line must not be able to pass one);
@@ -64,7 +64,7 @@ export const SETUP_NOTE_NO_CONFIRMATION =
  * needs a person comes back as a line, and the window names them so that a run
  * which ends "leaving steps for you" is not read as a failure. */
 export const SETUP_NOTE_LEFT_FOR_YOU =
-  'creating the GCP project, linking its billing account, the Firestore location, a Terraform review in a managed project and every secret value need a person: each one comes back as a line to run in your own terminal.'
+  'creating the GCP project, linking its billing account, a Terraform review in a managed project and every secret value need a person: each one comes back as a line to run in your own terminal.'
 
 /** SETUP_NOTE_GO is what this window's yes is and is not (O6). */
 export const SETUP_NOTE_GO =

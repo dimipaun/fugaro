@@ -11,8 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
@@ -198,6 +200,20 @@ func newOwnershipWorld(t *testing.T) *ownershipWorld {
 	clearAgentMarkers(t)
 	terminal(t, false)
 	r, db := updateBudgetRig(t)
+	// D2217: every command of the walk writes the project's own state — the
+	// published node, the pool, the craft's access — so the installation they
+	// run at is a managed one, with both halves of the read the fence makes:
+	// the creation fact in the project's runs bucket and the label on the
+	// project itself. A walk run at an installation carrying neither would
+	// measure the fence rather than the hook: the first publish is refused
+	// before it reads the node, which is the refusal managed_require_test.go
+	// pins for exactly this command.
+	r.gcs.AddBucket(initRunsBucket, initProjectNumber, map[string]string{gcp.LabelManaged: gcp.ManagedValue})
+	r.gcs.Put(initRunsBucket, managed.MarkerObject, managedAddMarker())
+	labelled(r.crm, initProject)
+	// A managed project's steps record the account they run as (D1014), so the
+	// walk needs the identity the other managed fixtures stub.
+	actingAccount(t)
 	// The rules are deployed: a publish refuses under rules that carry no
 	// policy marker, which is the state before an installation has updated
 	// once. The project's own marker is the rig's already (budget.PathProject).

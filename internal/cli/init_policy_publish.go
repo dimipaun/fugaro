@@ -301,6 +301,22 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy, identities 
 	if lc.ReviewAgainstTask != nil {
 		add("review_against_task", lc.ReviewAgainstTaskEffective(p.ReviewAgainstTask), p.ReviewAgainstTask, false)
 	}
+	// The member's switch for the personal half of a workspace's credentials
+	// reaches the workspace's service off this node and nowhere else (R9 of
+	// docs/workspace-credentials/, WC6, D2972) — the service reads the member's
+	// PUBLISHED policy, never anything on the member's disk — so a config that
+	// states it where the node states the other answer is a difference a publish
+	// closes, and it is compared the triage switch's way: the node's value is
+	// handed to the publisher's keep rule, so a config that writes nothing is
+	// not reported as a difference — nil would read as one against a node that
+	// states either answer — while a written true against a node that says
+	// nothing (or false) is exactly the edit this stage exists to carry. Without
+	// the row the member's admin's own act would reach no run: `settings set`
+	// writes the local config, and `fugaro update` — the one command that brings
+	// an installation forward — is where the node learns it.
+	if lc.PersonalWorkspaceTokens != nil {
+		add("personal_workspace_tokens", lc.PersonalWorkspaceTokensEffective(p.PersonalWorkspaceTokens), p.PersonalWorkspaceTokens, false)
+	}
 	// The pools' subscription switch reaches a run off this node too (F22,
 	// D1636), so a config that states it where the node states the other answer
 	// is a difference a publish closes, and it is compared the triage switch's
