@@ -67,7 +67,23 @@ func afterWriteCmd(t *testing.T, args ...string) (*cobra.Command, *syncBuf) {
 // installation that has converged carries, a version-3 node published, and a
 // local config stating an orchestrator ceiling the node does not carry — which
 // is a publish the stage makes and not a loosening of anything the node states.
+//
+// The project is a managed one, because the publish under a command the fence
+// classifies exempt is a write to the project all the same and asks the read
+// for itself (publishAfterWrite): a world that answered "not managed" would
+// refuse every publish below for that reason rather than the test's own. The
+// unmanaged world is afterWriteUnmanagedFixture's, and what happens there is
+// TestWritePublishRefusesUnmanaged's.
 func afterWriteFixture(t *testing.T) (*initRig, *gcpfake.RTDB) {
+	t.Helper()
+	r, db := afterWriteUnmanagedFixture(t)
+	r.managedRuns(t, initProjectName, initProject)
+	return r, db
+}
+
+// afterWriteUnmanagedFixture is the same world with a project carrying no
+// mark: the one explicit unmanaged case the refusals are read in.
+func afterWriteUnmanagedFixture(t *testing.T) (*initRig, *gcpfake.RTDB) {
 	t.Helper()
 	r, db := updateBudgetRig(t)
 	r.appendConfig(t, "orchestrator: { max_running: 7 }\n")
@@ -284,7 +300,13 @@ func TestAfterWriteFromAnIDETerminalPublishes(t *testing.T) {
 	t.Run("the same marker with no terminal", func(t *testing.T) {
 		noTerminal(t)
 		t.Setenv(agentenv.IDEMarker, "1")
-		_, db := afterWriteFixture(t)
+		r, db := afterWriteFixture(t)
+		// A project whose marks cannot be read, which is the one world where the
+		// run is built at all on an installation the read did not answer "managed"
+		// for (the fence warns and goes on, D2218) and the run's own gate keeps
+		// every confirmation it had — so the session is judged by its marker here,
+		// which is the classification this sub-test is about.
+		r.crm.FailGet(initProject, 500, "INTERNAL", "the marks could not be read")
 		cmd, out := afterWriteCmd(t, "settings", "set")
 		change := afterWriteChange{Key: "orchestrator.max_running", Store: settings.StoreLocal}
 		err := publishAfterWrite(t.Context(), cmd, change)
@@ -440,7 +462,8 @@ func owedStepsAfterTheHook(t *testing.T) []string {
 // nothing to say about, so the run is the layer stage and the layer stage is
 // what runs.
 func TestAfterWriteRunsTheLayerStageForAProjectLayerKey(t *testing.T) {
-	updateBudgetRig(t)
+	r, _ := updateBudgetRig(t)
+	r.managedRuns(t, initProjectName, initProject)
 	cmd, out := afterWriteCmd(t, "settings", "set")
 	change := afterWriteChange{Key: "layer.defaults.agent.model", Store: settings.StoreProject}
 	if err := publishAfterWrite(t.Context(), cmd, change); err != nil {
@@ -506,39 +529,69 @@ func TestAfterWriteStagesFollowTheRegistryRow(t *testing.T) {
 
 // TestWritePublishRefusesUnmanaged is D1541's fence on this file (T7c): the
 // after-write hook is where a semantic command's write reaches the project's
-// own state — the policy node, and the layer file the node is read through — so
-// a command the fence applies to is refused before the run is built, and nothing
-// is published and no stage of the update runs.
+// own state — the policy node, and the layer file the node is read through —
+// and its clients come from the init engine rather than from the two seams the
+// fence is free at (openCloud, openCloudFor), so it asks for itself, on the
+// world's own unmanaged project. Nothing is published either way: what the
+// classification decides is the answer the command itself gives.
 //
-// The hook opens its clients through the init engine rather than through the two
-// seams the fence is free at (openCloud, openCloudFor), so it asks for itself,
-// and it asks about the command that called (publishAfterWrite's own cmd): the
-// selection and the door are that command's, and so is the answer. The command
-// here is the one fenced command that really reaches this hook —
+// A command the fence applies to is refused before the run is built:
 // `fugaro secrets set NAME --expires` writes `secret_expires` into the machine's
-// own config, whose own layers declare the policy stage (settings.KeySteps, AP5)
-// — so the pair of key and command is the one a person's line makes, and the
-// refusal is the one that line meets.
+// own config, whose own layers declare the policy stage (settings.KeySteps,
+// AP5), and it is the one fenced command that really reaches this hook — so the
+// pair of key and command is the one a person's line makes, the refusal is the
+// one that line meets, and no step is left owed.
 //
-// The world is the hook's own fixture, whose project carries no mark: the node
-// stays at the version it was published at, which is the assertion that nothing
-// was published, and `fugaro apply`'s sentence is nowhere, because no step was
-// left owed for it to run.
+// A command the classification exempts is not a licence for the publish that
+// runs under it: `settings set` writes this machine's own file and names no
+// project, and the stage behind it writes the project's node, so it is the hook
+// that refuses here — the write has landed already, the steps stay owed, and
+// the command ends on the one sentence that points `fugaro apply` at them
+// (afterWriteOwed, D2614).
 func TestWritePublishRefusesUnmanaged(t *testing.T) {
 	fugaroAtItsOwnName(t)
-	_, db := afterWriteFixture(t)
-	cmd, out := afterWriteCmd(t, "secrets", "set")
-	change := afterWriteChange{Key: "secret_expires", Store: secretsSettingsStore("secret_expires")}
-	if names := afterWriteStages(change); len(names) == 0 {
-		t.Fatalf("a write of %s in %s owes no stage, so this test would be about a hook that returned before its fence", change.Key, change.Store)
-	}
 
-	err := publishAfterWrite(t.Context(), cmd, change)
-	checkFenceRefusal(t, err, "secrets set")
-	if v := nodeVersionOn(t, db); v != 3 {
-		t.Errorf("the node is version %d after a refused run, want the 3 the fixture published: the hook published a project that is not managed", v)
-	}
-	if said := out.String(); strings.Contains(said, "is not live yet") {
-		t.Errorf("the refused run said the change is saved and owes steps, so it filed a record for `fugaro apply`:\n%s", said)
-	}
+	t.Run("a fenced command is refused", func(t *testing.T) {
+		_, db := afterWriteUnmanagedFixture(t)
+		cmd, out := afterWriteCmd(t, "secrets", "set")
+		change := afterWriteChange{Key: "secret_expires", Store: secretsSettingsStore("secret_expires")}
+		if names := afterWriteStages(change); len(names) == 0 {
+			t.Fatalf("a write of %s in %s owes no stage, so this test would be about a hook that returned before its fence", change.Key, change.Store)
+		}
+
+		err := publishAfterWrite(t.Context(), cmd, change)
+		checkFenceRefusal(t, err, "secrets set")
+		if v := nodeVersionOn(t, db); v != 3 {
+			t.Errorf("the node is version %d after a refused run, want the 3 the fixture published: the hook published a project that is not managed", v)
+		}
+		if said := out.String(); strings.Contains(said, "is not live yet") {
+			t.Errorf("the refused run said the change is saved and owes steps, so it filed a record for `fugaro apply`:\n%s", said)
+		}
+	})
+
+	t.Run("an exempt command publishes nothing", func(t *testing.T) {
+		_, db := afterWriteUnmanagedFixture(t)
+		cmd, out := afterWriteCmd(t, "settings", "set")
+		change := afterWriteChange{Key: "orchestrator.max_running", Store: settings.StoreLocal}
+		if names := afterWriteStages(change); len(names) == 0 {
+			t.Fatalf("a write of %s in %s owes no stage, so this test would be about a hook that returned before its fence", change.Key, change.Store)
+		}
+
+		err := publishAfterWrite(t.Context(), cmd, change)
+		if err == nil {
+			t.Fatalf("the publish of an exempt command's write was reported live on a project that is not managed:\n%s", out.String())
+		}
+		if got, want := ErrorText(err), ErrorText(afterWriteNotLive(change)); got != want {
+			t.Errorf("the refused publish ends the command on %q, want the one sentence %q", got, want)
+		}
+		if v := nodeVersionOn(t, db); v != 3 {
+			t.Errorf("the node is version %d after a refused run, want the 3 the fixture published: the hook published a project that is not managed", v)
+		}
+		// The steps stay owed, which is what makes the sentence true: `fugaro
+		// apply` runs them once the project is flagged managed, and it reaches
+		// the same fence until it is.
+		if got, want := owedStepsAfterTheHook(t), []string{initflow.Policy}; !slices.Equal(got, want) {
+			t.Errorf("the refused publish left %v owed, want %v", got, want)
+		}
+	})
 }

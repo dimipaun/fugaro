@@ -130,28 +130,56 @@ var errNoCloudForManagedRead = errors.New("no storage or resource manager endpoi
 // argument's, and a caller that let a repository or a run choose it has handed
 // the answer away.
 //
-// A read that fails WARNS and proceeds (D2218): the path an unmanaged project
-// took before this plan, with its confirmations and its agent-session refusals,
-// and never admission through the managed gate. A read that answers "not
-// managed" stops. The warning goes to cmd's stderr and names the read that
-// failed, because the owner's own terminal is where a fenced command's refusal
-// is read — a coding agent's session is not a surface this line was written
-// for, and it is not one that can act on it.
+// A command the fence does not apply to is answered without a read, as it is at
+// every other seam: what the fence asks is whether the command's own argv
+// writes to a project. The read itself, and what a read that failed or could
+// not be made means, are managedWriteAllowed's below.
 func requireManaged(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config) error {
 	if !managedFenced(cmd) {
 		return nil
 	}
+	_, err := managedWriteAllowed(ctx, cmd, lc)
+	return err
+}
+
+// managedWriteAllowed is the fence's read and its two non-answers, said once
+// for its two askers: a command that asks about the write its own argv makes
+// (requireManaged above), and the after-write hook, which asks about the write
+// that runs under a command whatever the classification says about that command
+// (write_publish.go).
+//
+// It answers whether the write may go ahead and, when it may not, the refusal a
+// fenced command ends on. A project that is not managed is that refusal for a
+// command the classification fences; for a caller that is not one — the publish
+// under a command the classification exempts, whose own argv wrote this
+// machine's file and no project — it is a false with no error, because that
+// caller's write has already landed and the command ends in its own words on
+// what the change still owes.
+//
+// Neither way of being unable to ask is an answer. A read that cannot be made
+// at all is a test configuration (no_auth with no endpoint for one of the two
+// APIs) and grants nothing. A read that failed WARNS and lets the write go on
+// (D2218): the path an unmanaged project took before this plan, with its
+// confirmations and its agent-session refusals, and never admission through the
+// managed gate. The warning goes to cmd's stderr and names the read that
+// failed, because the owner's own terminal is where a fenced command's refusal
+// is read — a coding agent's session is not a surface this line was written
+// for, and it is not one that can act on it.
+func managedWriteAllowed(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config) (bool, error) {
 	ok, reason, err := readManagedFor(ctx, lc)
 	switch {
 	case err == nil && ok:
-		return nil
+		return true, nil
 	case err == nil:
-		return managedRequired(cmd, lc.GCPProject, reason)
+		if managedFenced(cmd) {
+			return false, managedRequired(cmd, lc.GCPProject, reason)
+		}
+		return false, nil
 	case errors.Is(err, errNoCloudForManagedRead):
-		return nil
+		return true, nil
 	default:
 		warnManagedUnreadable(cmd, lc, err)
-		return nil
+		return true, nil
 	}
 }
 

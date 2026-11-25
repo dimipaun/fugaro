@@ -66,15 +66,26 @@ func publishAfterWrite(ctx context.Context, cmd *cobra.Command, change afterWrit
 		// write was made from.
 		return afterWriteNotLive(change)
 	}
-	// D1541's fence: this hook is where a semantic command's publish reaches the
+	// D1541's fence: this hook is where a semantic command's write reaches the
 	// project's own state (its policy node, and the layer the node is read
 	// through), and it opens its clients through the init engine rather than
 	// through the two seams the fence is free at, so it asks for itself. The
-	// refusal comes before the run is built, so nothing is published and no
-	// stage of the update runs; a command the fence does not apply to is
-	// answered without a read, as it is at every other seam.
-	if err := requireManaged(ctx, cmd, lc); err != nil {
+	// question is the publish's and not the calling command's: every caller of
+	// this hook but `secrets set` is a command the classification exempts — its
+	// own argv writes this machine's file and names no project — and the
+	// publish it leaves behind is a write to the project all the same, so the
+	// read is made whenever a stage is owed, whatever the caller is. A fenced
+	// command is refused before the run is built, so nothing is published and no
+	// stage of the update runs; under an exempt one the command's own write has
+	// landed already, so the hook does what it does for every stage that cannot
+	// leave the change live: the steps stay owed and the command ends on the one
+	// sentence (afterWriteOwed, D2614).
+	allowed, err := managedWriteAllowed(ctx, cmd, lc)
+	if err != nil {
 		return err
+	}
+	if !allowed {
+		return afterWriteOwed(lc, change, names)
 	}
 	// The run's own door is the command that called: it names the run on every
 	// line it prints and it is the command the audit record files (the door's
