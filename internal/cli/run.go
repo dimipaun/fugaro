@@ -288,7 +288,12 @@ type runOptions struct {
 	commitReports bool
 	asJSON        bool
 	noBudgetCheck bool
-	recipe        string
+	// noPersonalToken is --no-personal-token: this launch asks the workspace
+	// for no grant, so its runs draw on the shared entries rather than on the
+	// launcher's own token (D3142). It is read where the grant would be asked
+	// for (run_personal.go) and changes nothing else about the run.
+	noPersonalToken bool
+	recipe          string
 	// attempts is --attempts: 2 to 4 launches a best-of-N batch of
 	// independent runs of the same task, workflow, ref and recipe (G13).
 	// It is refused together with --pr, --run-id, --retry or a
@@ -598,6 +603,7 @@ func newRunCmd() *cobra.Command {
 	f.BoolVar(&o.noCompression, "no-compression", false, "turn agent.compression off for this run only, overriding fugaro.yaml; there is no flag to turn it on, which is a reviewed fugaro.yaml change")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 	f.BoolVar(&o.noBudgetCheck, "no-budget-check", false, "skip the launch pre-check of the budget (kill switches, missing caps, no headroom); the run is held to the same limits when it starts")
+	f.BoolVar(&o.noPersonalToken, "no-personal-token", false, "launch without asking the workspace for your own token: this run draws on the shared entries, as every run did before the personal half existed (D3142)")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
@@ -813,6 +819,7 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	}
 	defer env.Close()
 	env.noBudgetCheck = o.noBudgetCheck
+	env.noPersonalToken = o.noPersonalToken
 
 	// --repo, resolved once for every launch shape below and written back, so
 	// that a path (`.`, a subdirectory, an absolute one) is the owner/name of
@@ -6669,6 +6676,16 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		// another account is one the run can never claim.
 		if url, ok := credentialsServiceURLOf(lspec.Env); ok {
 			lspec.Env = append(lspec.Env, runSlipEnv(hctx, env, spec, slug, account, url)...)
+		}
+		// The person's own token at the workspace (D3141, D3142, R8): asked for
+		// where this repository's own route record says the workspace serves its
+		// model kind and the member's published policy turns the switch on, and
+		// handed to the job under C1's own name, which the run claims at
+		// bootstrap (WC8). It is a SECOND entry beside the member's slip and not
+		// the same one: the two are served by two services and are not
+		// interchangeable (creds.PersonSlipEnv).
+		if !env.noPersonalToken {
+			lspec.Env = append(lspec.Env, runPersonalEnv(hctx, env, spec, slug, account)...)
 		}
 	}
 	// The services the job's own catalog entry declares, on EVERY launch and
