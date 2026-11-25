@@ -61,10 +61,15 @@ interface; it does not replace it.
   prefix, project and group access tokens). **U3** leaves GitLab.com's and self-managed signing of API
   and web commits unverified.
 - **The compatibility matrix** ([docs/compatibility-matrix](../compatibility-matrix/)) lists GitLab
-  Cloud as Coming soon and GitLab self-managed as Roadmap (D1529); nothing schedules either.
+  Cloud and GitLab self-managed as **Roadmap** (D1529, F21: the spec's "Coming soon" for GitLab Cloud
+  was the gap); nothing schedules either.
 - **forge-labels** ([docs/forge-labels](../forge-labels/)): its spec names GitLab labels, the code has
   no GitLab provider, and D2431 rules GitHub only until one exists.
-- **Three places know the name and nothing else:** `internal/cli/run.go` accepts
+- **Four places know the name and nothing else:** `internal/cli/project_profile.go` names `gitlab`
+  (with `fake`) in `project profile add --provider`'s help, the one user-facing text that calls GitLab
+  a provider (published in `website/content/cli-reference.md`) — and the value is refused at publish,
+  where `internal/projectpolicy/profiles.go` holds a profile's provider to `config.Providers`
+  (`github, bitbucket`); `internal/cli/run.go` accepts
   `<id>-<login>@users.noreply.gitlab.com` as a forge noreply commit address (D649);
   `internal/imagesurvey/signals.go` reads `.gitlab-ci.yml` as a repository's CI signal; and
   `internal/imagecheck/reduce.go` lists `gitlab:` as a source that is not an ecosystem registry.
