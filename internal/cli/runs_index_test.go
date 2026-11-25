@@ -725,7 +725,7 @@ func TestRunsLsIndexUnreadableFallsBackToTheWindow(t *testing.T) {
 		t.Errorf("the fallback's document carries an index fact: the listing read no index\n%s", out)
 	}
 
-	lsIndex(t, runindex.NewStub())
+	lsIndex(t, emptyIndexReader{})
 	plain, _, err := execute(t, "runs", "ls", "--json")
 	if err != nil {
 		t.Fatalf("runs ls --json: %v", err)
