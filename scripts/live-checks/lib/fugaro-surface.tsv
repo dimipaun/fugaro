@@ -1138,6 +1138,7 @@ flag	run	bool		--commit-reports
 flag	run	bool		--json
 flag	run	bool		--no-budget-check
 flag	run	bool		--no-compression
+flag	run	bool		--no-personal-token
 flag	run	bool		--promote
 flag	run	bool		--security
 flag	run	bool	-h	--help
