@@ -6896,26 +6896,17 @@ func servicesLaunchEnv(entry config.Entry) string {
 // path of such a run reads: its own flip is config.ServiceHeldSecretNames'
 // (#907, G22).
 //
-// ONE THING A SHARED JOB KEEPS OUT OF ITS PROFILE'S ANSWER, and it is an auth
-// the service does not serve on a repository the table does not place: a
-// `vertex` file the project's routing table names no chain for reads no
-// credential of the service's (its model calls go through the gateway on the
-// job's own Google credentials) and its git traffic is served by the App key
-// the drop leaves mounted, so the address would move a path that works onto a
-// mint that repository has no use for. Its model mounts are gone all the same —
-// the drop is the profile's and reads no auth — and neither of the two it takes
-// is one such a `vertex` run reads (internal/runner's providers), so the state
-// that leaves is a job whose own auth needs neither, and its run is still
-// refused under `enforce` on both sides (the table's own gate). A repository
-// the table serves is told whatever its file says — a chain naming Vertex above
-// all, which the service calls on its own identity and prices as a key's
-// (D3174, CS6), and, with the address, the table's own statement
-// (credentialsServiceEnv) — and so are a repository whose auth IS one the
-// service serves and the documentless launch whose auth this read does not know:
-// withholding there is the mountless, addressless run above. The address and the
-// table's statement are two facts, and this arm decides them separately, because
-// a `vertex` file's run reads the two together where the first alone would move
-// a path that works onto one that does not (serviceSwitched).
+// ONE THING A SHARED JOB KEEPS OUT OF ITS PROFILE'S ANSWER, and it is the auth
+// the service does not serve: a `vertex` run reads no credential of the
+// service's (its model calls go through the gateway on the job's own Google
+// credentials) and its git traffic is served by the App key the drop leaves
+// mounted, so the address would move a path that works onto a mint that
+// repository has no use for. Its model mounts are gone all the same — the drop
+// is the profile's and reads no auth — and neither of the two it takes is one a
+// `vertex` run reads (internal/runner's providers), so the state that leaves is
+// a job whose own auth needs neither. A repository whose auth IS one the
+// service serves, and the documentless launch whose auth this read does not
+// know, are told: withholding there is the mountless, addressless run above.
 //
 // The DOCUMENTLESS launch is where the two arms differ most, and it is why this
 // one reads neither a record nor a tfvars: an empty auth is a launcher that
@@ -6926,15 +6917,6 @@ func servicesLaunchEnv(entry config.Entry) string {
 // its job has none to read. A served profile's shared job is therefore handed
 // the address on its profile alone, and the run reads its real auth from the
 // ref, which is the first place either side sees it.
-//
-// The table's own statement is not part of that hand-over: it is written only
-// where a chain of the table may serve this repository, which is a fact about
-// the repository and is known here even for a document this launcher could not
-// read. A `vertex` file read out of the ref on a job that carries the address
-// and not the statement is therefore still the job's own GCP identity — the
-// path that works whatever the profile dropped (internal/runner's
-// serviceSwitched, R3) — while one on a repository the table serves is the
-// service's, as the paragraph above says.
 //
 // A REVIEW LAUNCH IS NOT TOLD, and it is the variant's own deployment that
 // carries the address (internal/infra's reviewVariant): a review runs on the
@@ -7009,19 +6991,7 @@ func credentialsServiceLaunchEnv(lc *localcfg.Config, sharedProfile, repo, auth,
 		if !installed || !declared || !infra.CredentialsServiceServesProfile(lc, pr) {
 			return nil
 		}
-		// Two answers, one arm: the project's table, which serves this
-		// repository whatever its file names (D3174 — a `vertex` repository
-		// whose chain names Vertex above all, since CS6), and the release-1
-		// bridge's own list (config.ServiceServedAuths, and the cascade, which
-		// the mode never holds off). The runner's predicate is deliberately not
-		// read here: since CS6 it admits `vertex` off the job's own address, and
-		// a shared job is judged on its profile, which reads no address at all.
-		// The profile's answer above stands in for this repository's record in
-		// the table's half, because this job's mounts were dropped on the
-		// profile.
-		tableServes := infra.CredentialsServiceServesChains(installed, true, infra.ChainPlanFor(lc, repo))
-		bridgeServes := auth == config.AuthCascade || slices.Contains(config.ServiceServedAuths, auth)
-		if auth != "" && !tableServes && !bridgeServes {
+		if auth != "" && auth != config.AuthCascade && !runner.ServiceSwitchedAuth(auth) {
 			// An auth the service does not serve: the address would open this
 			// job's git provider keyless for a credential a run of that auth
 			// reads from the App key the drop leaves mounted, and its model
@@ -7030,7 +7000,7 @@ func credentialsServiceLaunchEnv(lc *localcfg.Config, sharedProfile, repo, auth,
 			// own answer already says the mount is gone.
 			return nil
 		}
-		return credentialsServiceEnv(lc, tableServes)
+		return []string{envCredentialsServiceURL + "=" + lc.CredentialsService.URL}
 	}
 	local, _ := lc.RepoFor(repo)
 	// Two arms, one answer, exactly as the repository root's plan reads them
@@ -7041,8 +7011,8 @@ func credentialsServiceLaunchEnv(lc *localcfg.Config, sharedProfile, repo, auth,
 	// service serves on its own identity (D3174) — and a repository the bridge
 	// would serve keeps its answer.
 	ready := local.CredentialsServiceOn()
-	tableServes := infra.CredentialsServiceServesChains(installed, ready, infra.ChainPlanFor(lc, repo))
-	serves := infra.CredentialsServiceServes(installed, ready, auth, mode) || tableServes
+	serves := infra.CredentialsServiceServes(installed, ready, auth, mode) ||
+		infra.CredentialsServiceServesChains(installed, ready, infra.ChainPlanFor(lc, repo))
 	if auth == "" && !serves {
 		// No document this launcher could read, so the switch's third
 		// condition is judged on the two answers that do not need one: the
@@ -7057,27 +7027,7 @@ func credentialsServiceLaunchEnv(lc *localcfg.Config, sharedProfile, repo, auth,
 	if !serves {
 		return nil
 	}
-	return credentialsServiceEnv(lc, tableServes)
-}
-
-// credentialsServiceEnv is what a launch that decided to tell this job about
-// the service puts on its environment: the service's address, and the table's
-// own statement (runner.TableServesEnv) where the project's routing table is
-// what serves the repository — the fact the runner's `vertex` arm reads beside
-// the address (internal/runner's serviceSwitched), and a different fact from it
-// because the two come apart: the address is handed to a documentless launch on
-// a profile's answer, whose project's table may place no chain for this
-// repository at all, and a `vertex` file's run in such a job keeps the job's own
-// GCP identity, the only path it has (D1626, R3), rather than being sent to a
-// service whose chain names nothing for it.
-//
-// The two arms above decide the two facts separately, and this writes them.
-func credentialsServiceEnv(lc *localcfg.Config, tableServes bool) []string {
-	env := []string{envCredentialsServiceURL + "=" + lc.CredentialsService.URL}
-	if tableServes {
-		env = append(env, runner.TableServesEnv+"=1")
-	}
-	return env
+	return []string{envCredentialsServiceURL + "=" + lc.CredentialsService.URL}
 }
 
 // envSlip is the variable a run reads its slip's id from, and this is an alias

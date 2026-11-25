@@ -3330,10 +3330,8 @@ func TestTheSlipOfASwitchedProjectJobNamesTheJobsOwnAccount(t *testing.T) {
 // The two rows are the switch's own conditions and nothing else: the
 // installation has the service in both, and the row that differs is the
 // repository's record (`fugaro update`'s answer about its own root) or the
-// document the run will read (`agent.auth`, which the release-1 bridge serves
-// as the cascade alone, and whose `vertex` value the project's routing table
-// serves — this project publishes no table, so the file's own Vertex path is
-// the one that runs and nothing caps it).
+// document the run will read (`agent.auth`, which the service serves only as
+// the cascade).
 func TestLaunchKeepsAnUnswitchedProjectJobOffTheService(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -3358,7 +3356,7 @@ func TestLaunchKeepsAnUnswitchedProjectJobOffTheService(t *testing.T) {
 				t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the shared job %s: without that this test says nothing about a shared project job", len(calls), calls, f.job)
 			}
 			if got, ok := calls[0].Env[providers.EnvCredentialsServiceURL]; ok {
-				t.Errorf("the execution carries %s = %q, want no entry at all: the switch this launcher hands the address on is the one the plan decides with (infra.CredentialsServiceServes, and the table's own arm beside it), and a job off it keeps every mount it has (G17) rather than being sent to a service that cannot serve it", providers.EnvCredentialsServiceURL, got)
+				t.Errorf("the execution carries %s = %q, want no entry at all: the switch this launcher hands the address on is the one the plan decides with (infra.CredentialsServiceServes), and a job off it keeps every mount it has (G17) rather than being sent to a service that cannot serve it", providers.EnvCredentialsServiceURL, got)
 			}
 		})
 	}

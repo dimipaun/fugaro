@@ -306,14 +306,7 @@ func budgetProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config
 	for _, p := range allowNotes {
 		named[p.Path] = true
 	}
-	// A `vertex` file the project's table serves is D3174's: its calls are the
-	// credentials service's, capped and priced as a key's, so the refusal is
-	// left for the run that would authenticate with its own job account — the
-	// same answer the runner reads off the path such a run is on (its
-	// vertexServedByTheService). The branch above, which has no project
-	// config to read the table from, keeps refusing (servedByTheTable answers
-	// false for a repository this command cannot name).
-	if cfg.Agent.Auth == "vertex" && e.Mode == policy.ModeEnforce && !servedByTheTable(lc, repo) {
+	if cfg.Agent.Auth == "vertex" && e.Mode == policy.ModeEnforce {
 		problems = append(problems, config.Problem{Path: "agent.auth", Message: vertexBudgetRefusal})
 	}
 	// The price rules are every mode's: a model the gateway cannot price is

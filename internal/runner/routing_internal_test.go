@@ -1110,13 +1110,13 @@ func TestReviewRunIsStillHeldToTheAllowList(t *testing.T) {
 // its agent's environment would be the cascade's), and so do the record's
 // basis and the account walk with it.
 //
-// What the rows measure is a run that is not a review AND whose own credential
-// is what serves it: a job carrying the credentials service's URL puts an
-// api-key, oauth or vertex run on the switch (B2.2; vertex with CS6, D3174), so
-// all three rows take the URL out (withoutCredentialsService) and the switched
-// side of the same runs is pinned below. The cascade row keeps it: a cascade
-// run is served by the service on every installation that has one, so its
-// upstream is the service and it needs the URL.
+// What the rows measure is a run that is not a review AND not on the switch
+// (B2.2): a job carrying the credentials service's URL puts an api-key or
+// oauth run on the switch, so those two rows take the URL out
+// (withoutCredentialsService) and the switched side of the same two runs is
+// pinned below. The cascade and vertex rows keep it — a cascade run is served
+// by the service on every installation that has one (its upstream is the
+// service, so it needs the URL), and a vertex run is not switched at all.
 func TestCodingRunKeepsItsOwnModelPath(t *testing.T) {
 	for _, tc := range []struct {
 		auth              string
@@ -1126,7 +1126,7 @@ func TestCodingRunKeepsItsOwnModelPath(t *testing.T) {
 	}{
 		{"oauth", false, "", false},
 		{"api-key", true, "anthropic", false},
-		{"vertex", true, "vertex", false},
+		{"vertex", true, "vertex", true},
 		{config.AuthCascade, true, gateway.KindService, true},
 	} {
 		t.Run(tc.auth, func(t *testing.T) {
@@ -1154,24 +1154,17 @@ func TestCodingRunKeepsItsOwnModelPath(t *testing.T) {
 		})
 	}
 
-	// The other side of the same three runs, from this same rig (B2.2, and
-	// vertex with CS6): with the URL left in their job they are on the switch,
-	// and the service — not the job's own mount or GCP identity — is what serves
-	// them. Vertex is the one that needs the launch's second entry beside the
-	// URL (TableServesEnv): the URL alone is handed to a documentless launch on
-	// a served profile, and a `vertex` run reads the table's statement and not
-	// the address. The behaviour itself is pinned
+	// The other side of the same two runs, from this same rig (B2.2): with the
+	// URL left in their job they are on the switch, and the service — not the
+	// job's own mount — is what serves them. The behaviour itself is pinned
 	// where the switch's own tests are (service_auth_test.go's
 	// TestSwitchedAPIKeyRunGoesThroughTheService and
 	// TestSwitchedOAuthRunStartsTheGateway, on svcRun's bare rig); what this
 	// adds is the same answer for the coding run's own job, spec and mode,
 	// which are the facts the class is keyed on.
-	for _, auth := range []string{"oauth", "api-key", "vertex"} {
+	for _, auth := range []string{"oauth", "api-key"} {
 		t.Run(auth+" on the switch", func(t *testing.T) {
 			r := codingRun(t, auth, policy.ModeEnforce)
-			if auth == "vertex" {
-				r.d.Env = append(r.d.Env, TableServesEnv+"=1")
-			}
 			if !r.serviceSwitched() {
 				t.Fatalf("a coding %s run whose job carries %s is not on the switch", auth, credentialsServiceURLEnv)
 			}

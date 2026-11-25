@@ -263,21 +263,6 @@ const vertexRegionPrefix = "VERTEX_REGION_"
 // (rather than a run reaching for a service that is not there).
 const credentialsServiceURLEnv = "FUGARO_CREDENTIALS_SERVICE_URL"
 
-// TableServesEnv is the launcher's own statement that the project's routing
-// table serves this repository — a chain of it may serve this repository, on an
-// installation whose service is on (internal/cli's credentialsServiceLaunchEnv,
-// infra.CredentialsServiceServesChains). It is written on the execution's
-// environment, and on no stored document, exactly as EnvReviewJob is, and the
-// launcher writes it only where that answer is true.
-//
-// It is a second entry beside the address rather than a value of it because the
-// address is not that statement: the same launch hands the address to a
-// documentless launch on a served profile, on the PROFILE's answer and whatever
-// the table says (B5.2, D505, D2078). A run whose file says `vertex` is the one
-// shape for which the two answers come apart — the fact its model path turns on
-// (serviceSwitched) and the reason the address cannot stand in for it.
-const TableServesEnv = "FUGARO_TABLE_SERVES"
-
 // metadataHostEnv and the metadata path below are the job's own identity:
 // the Google ID token the metadata server mints for the credentials
 // service's URL, which Cloud Run IAM admits for run.invoker (D135). The host
@@ -391,39 +376,20 @@ func (r *run) gatewayOn() bool {
 // installation's credentials service because its repository is on the switch
 // (B2.2, F30): its auth is one the service serves (ServiceSwitchedAuth) and
 // this job's environment carries the service's URL
-// (credentialsServiceURLEnv). The URL is what the installation's own root hands
-// a switched repository's job (B2.3, D2072), and the flip list
-// (config.ServiceServedAuths) is not read here on purpose: the URL is what the
-// rollout orders first — B2.3 handed it out while every mount was still there —
-// so a run keyed on the list would ignore the URL that arrived first, and the
-// flip that filled the list (B2.7) left this answer exactly what it was.
-//
-// A `vertex` run is the one auth the URL alone does not answer for, and
-// TableServesEnv is the second fact it reads (CS6's review): a launch hands the
-// address to a job whose document it could not read, judged on the profile the
-// drop was taken on (internal/cli's credentialsServiceLaunchEnv), so a `vertex`
-// file on such a job carries the address while the project's table places no
-// chain for its repository. Reading the address there as the statement that the
-// table serves this repository would move that run off the job's own GCP
-// identity — the only path it has (D1626; the service has no chain to serve it
-// on) — onto a service that refuses its first call, where it ran as its file
-// says before CS6 (R3). Both facts are the launcher's, and the launcher writes
-// the second only where the table really serves the repository: an auth the
-// bridge serves (api-key, oauth, cascade) keeps the URL's own answer.
+// (credentialsServiceURLEnv). The URL is the whole of it — it is what the
+// installation's own root hands a switched repository's job (B2.3, D2072), and
+// the flip list (config.ServiceServedAuths) is not read here on purpose: the
+// URL is what the rollout orders first — B2.3 handed it out while every mount
+// was still there — so a run keyed on the list would ignore the URL that
+// arrived first, and the flip that filled the list (B2.7) left this answer
+// exactly what it was.
 //
 // A local run is never switched (D149, as for cascade): `fugaro exec` runs on
 // the developer's own credentials, has no installation identity and no path to
 // a private service, so a developer whose environment happens to carry the
 // variable is not sent through one.
 func (r *run) serviceSwitched() bool {
-	if r.d.Local {
-		return false
-	}
-	auth := r.modelAuth()
-	if !ServiceSwitchedAuth(auth) || envLookup(r.d.Env, credentialsServiceURLEnv) == "" {
-		return false
-	}
-	return auth != "vertex" || envLookup(r.d.Env, TableServesEnv) != ""
+	return !r.d.Local && ServiceSwitchedAuth(r.modelAuth()) && envLookup(r.d.Env, credentialsServiceURLEnv) != ""
 }
 
 // serviceModelPath reports whether this run's model calls reach the
@@ -456,15 +422,16 @@ func (r *run) serviceModelPath() bool {
 // (gatewayUpstream's vertex arm), and reading the address here would lift both
 // refusals over exactly the uncapped path they exist for.
 //
-// A `vertex` file's run is the third shape the predicate answers (CS6): its
-// model path is the service's where the launcher states that the project's
-// routing table serves this repository (TableServesEnv, written only there —
-// ServiceSwitchedAuth admits vertex, and the address beside that statement is
-// not one), and its Vertex calls are then the service's, so both refusals stand
-// down. Where that statement is not there — an unmigrated repository, which no
-// chain of the table serves and whose launch writes neither — the run's Vertex
-// calls are still the job's own GCP identity and both refusals hold (D1626),
-// whatever address the job carries. A local run is never the service's (D149).
+// For a `vertex` auth the predicate is false in this release, and that is what
+// D3174's dependency asks for: the release-1 bridge serves api-key and oauth
+// alone (ServiceSwitchedAuth) and a served project job admits a vertex run
+// without the service (projectjob's checkProjectJobServed, where Vertex is the
+// job's own identity and no mount), so nothing serves a vertex repository's
+// Vertex yet and the refusal holds. It goes when the served path does — the
+// service walk's Vertex arm (credsvc's KindVertex, CS4) has to serve a call
+// before a launch may hand such a repository's job the address, and until then
+// the CLI's own refusals (validate, update --repo) stay too. A local run is
+// never the service's (D149).
 func (r *run) vertexServedByTheService() bool {
 	return r.serviceModelPath()
 }
@@ -639,14 +606,13 @@ func (r *run) startGateway(ctx context.Context) error {
 // the review job's own file — oauth, whose arm is refused here — is exactly
 // what must not happen.
 //
-// A run on the switch is the service arm too, and it is asked first (B2.2,
-// F30; a `vertex` run with CS6): the switch replaces this run's own credential
-// with the service's, so the api-key arm below — which is the mounted key, the
-// very credential the switch takes the repository off (F31, D2072) — and the
-// vertex arm — which is the job's own uncapped GCP identity (D1626, D3174) —
-// must not be reached for it. What is left of the run's own auth is the
-// declaration serviceUpstream makes, which is the whole reason the auth is
-// still read here.
+// An api-key or oauth run on the switch is the service arm too, and it is
+// asked first (B2.2, F30): the switch replaces this run's own credential with
+// the service's, so the api-key arm below — which is the mounted key, the very
+// credential the switch takes the repository off (F31, D2072) — must not be
+// reached for it. What is left of the run's own auth is the declaration
+// serviceUpstream makes, which is the whole reason the auth is still read
+// here.
 func (r *run) gatewayUpstream(ctx context.Context) (gateway.Upstream, error) {
 	if r.serviceSwitched() {
 		return r.serviceUpstream()

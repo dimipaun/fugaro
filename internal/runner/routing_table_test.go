@@ -16,10 +16,11 @@ package runner
 //
 // What decides between the two is one fact and not the auth: whether this run's
 // model path is the credentials service's (serviceModelPath), which is the
-// switch the launch's own entries state — the address for the auths the bridge
-// serves (B2.2/D2072), and, for `vertex`, the launch's statement that the
-// project's routing table reaches this repository (TableServesEnv) — and the
-// value the gateway's ChainServed option is built from (CS6).
+// switch the launch's own address states for the auths the release-1 bridge
+// serves (B2.2/D2072) and the value the gateway's ChainServed option is built
+// from (CS6). A `vertex` run is not among them: the service walk's Vertex arm
+// serves nothing until CS4 lands (credsvc's KindVertex), so a `vertex` file's
+// run keeps the job's own GCP identity whatever its job carries (D1626, R3).
 
 import (
 	"context"
@@ -50,14 +51,13 @@ const chainModel = "claude-sonnet-5-5"
 // the credential that kind names).
 var chainPool = routing.SourceName{Kind: routing.KindPool, Name: "team"}
 
-// chainJob is the job of a repository the table serves: the launch's two
-// entries for it (the address, and the statement that the project's routing
-// table reaches this repository — TableServesEnv, the fact a `vertex` run's
-// model path needs beside the address), the credentials service as a stand-in
-// that answers a served call the way one of this contract answers it — the tier
-// and the credential's name it has always written, and the chain's own three
-// members — plus the metadata server the job's own ID token is minted from.
-// seen returns the calls the service received, in order.
+// chainJob is the job of a repository the table serves: the launch's own entry
+// for it (the service's address, which is what the switch's auths read), the
+// credentials service as a stand-in that answers a served call the way one of
+// this contract answers it — the tier and the credential's name it has always
+// written, and the chain's own three members — plus the metadata server the
+// job's own ID token is minted from. seen returns the calls the service
+// received, in order.
 func chainJob(t *testing.T) (env []string, seen func() []*http.Request) {
 	t.Helper()
 	fake, svc := anthropicfake.New(t)
@@ -78,7 +78,6 @@ func chainJob(t *testing.T) (env []string, seen func() []*http.Request) {
 	t.Cleanup(meta.Close)
 	return []string{
 		credentialsServiceURLEnv + "=" + svc.URL,
-		TableServesEnv + "=1",
 		metadataHostEnv + "=" + strings.TrimPrefix(meta.URL, "http://"),
 	}, fake.Seen
 }
@@ -141,18 +140,17 @@ func tableRun(t *testing.T, auth string) (*run, func() []*http.Request) {
 // chain's own answer about each call reaches the run — the stage's row in its
 // record, and the live registry entry a watcher reads.
 //
-// The auths are the ones a file can name, and they all take the same path: the
-// job carries the launch's entries for a repository the table serves — the
-// address, and the statement that the project's routing table reaches it
-// (TableServesEnv, CS10) — and from there the runner chooses no upstream of its
-// own. `vertex` is the auth this task adds to that set (D3174): its calls were
-// the job's own uncapped GCP identity before, and the service is what makes them
-// a source the table's chain can name.
+// The auths are the ones a file can name and the release-1 bridge serves, and
+// they all take the same path: the job carries the launch's own entry for a
+// repository the table serves (the address, CS10) and from there the runner
+// chooses no upstream of its own. `vertex` is not among them: what the service
+// serves a chain's Vertex source from is CS4's work, so a `vertex` file's run
+// keeps the job's own GCP identity until it lands (D1626, D3174).
 //
 // What the run declares to the service is the repository's own auth; what
 // served the call is the table's answer, and the two are different facts.
 func TestEveryStageGoesThroughTheChain(t *testing.T) {
-	for _, auth := range []string{"api-key", "oauth", "vertex", config.AuthCascade} {
+	for _, auth := range []string{"api-key", "oauth", config.AuthCascade} {
 		t.Run(auth, func(t *testing.T) {
 			r, seen := tableRun(t, auth)
 			if !r.serviceModelPath() {
@@ -255,13 +253,13 @@ func TestTheLiveEntryCarriesTheSource(t *testing.T) {
 // under `enforce` as it always was, and its live registry entry keeps the auth
 // the file names.
 //
-// The address is not the statement, and the row that carries one is why: a
-// launch hands it to a job whose document it could not read, on the profile's
-// own answer (B5.2, D505, D2078), so the job of a `vertex` file the table says
-// nothing about can carry it. That run keeps the job's own identity, which is
-// the path that works whatever the profile dropped, and this is the shape
-// TestEveryStageGoesThroughTheChain's rows are told apart from by the table's
-// own statement alone.
+// A job carrying the service's address is a row here, and the one that carries
+// it on a `vertex` file is why: a launch hands the address to a job whose
+// document it could not read, on the profile's own answer (B5.2, D505, D2078),
+// and to a `vertex` repository the release-1 bridge does not serve the address
+// is all it can carry. The run in it keeps the job's own GCP identity, which is
+// the path that works whatever the profile dropped, and nothing about the
+// address may move it (R3).
 //
 // A cascade file is not a row here: a cascade run has no credential of its own,
 // its model path is the service's by construction, and a job that cannot reach
@@ -275,9 +273,8 @@ func TestAnUnmigratedRepositoryRunsAsItsFileSays(t *testing.T) {
 		refusedPath bool
 		// address is the shape a documentless launch produces on a served
 		// profile: the job carries the service's address, handed on the
-		// PROFILE's answer, while the table states nothing about this
-		// repository (internal/cli's credentialsServiceLaunchEnv). The address
-		// is not the table's statement, and no auth's path may move on it.
+		// PROFILE's answer (internal/cli's credentialsServiceLaunchEnv). No
+		// auth's path may move on it alone.
 		address bool
 	}{
 		{name: "an api-key file keeps the job's own key", auth: "api-key", upstream: "anthropic"},
@@ -292,9 +289,6 @@ func TestAnUnmigratedRepositoryRunsAsItsFileSays(t *testing.T) {
 			}
 			if got := envLookup(r.d.Env, credentialsServiceURLEnv); (got != "") != tc.address {
 				t.Fatalf("this row's job carries the service's address %q, want it carried=%v: the row is about the address and nothing else", got, tc.address)
-			}
-			if envLookup(r.d.Env, TableServesEnv) != "" {
-				t.Fatal("this row's job carries the table's statement: no row here is a repository the table serves")
 			}
 			r.d.Env = append(r.d.Env, "ANTHROPIC_API_KEY="+plantedKey)
 			r.rec = &runstore.Record{Version: 1, RunID: r.spec.RunID, Status: runstore.StatusRunning}

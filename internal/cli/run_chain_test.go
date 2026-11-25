@@ -11,7 +11,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/routing"
-	"github.com/dimipaun/fugaro/internal/runner"
 )
 
 // chainLevelModel is the model a level of the task's own block names in the
@@ -107,8 +106,8 @@ func TestRunGrantsByTheTable(t *testing.T) {
 	if got := r.req.Sources; !slices.Equal(got, want) {
 		t.Errorf("the grant asked for %+v, want %+v: the sources the run's models reach by the table, minus the ones this repository is not admitted to", got, want)
 	}
-	if want := []string{envCredentialsServiceURL + "=" + launchCredsURL, runner.TableServesEnv + "=1", envSlip + "=" + fakeSlipID}; !slices.Equal(plain, want) {
-		t.Errorf("the launch handed the job %v, want %v: a run the table serves is told about the service — the address, and the table's own statement beside it, which is the fact a `vertex` run's model path turns on — and carries its slip", plain, want)
+	if want := []string{envCredentialsServiceURL + "=" + launchCredsURL, envSlip + "=" + fakeSlipID}; !slices.Equal(plain, want) {
+		t.Errorf("the launch handed the job %v, want %v: a run the table serves is told about the service and carries its slip", plain, want)
 	}
 	if r.warned.Len() != 0 {
 		t.Errorf("the launch warned about a grant it was given: %s", r.warned)

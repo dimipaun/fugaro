@@ -8,24 +8,21 @@ package runner
 //     service's own identity and capped as a key's (D3174): neither
 //     VertexBudgetRefusal nor the refusal of a pool with a Vertex member fires
 //     for it.
-//   - TestLegacyVertexIsStillRefusedUnderEnforce — a repository the table does
-//     not serve, whose file still says `auth: vertex`, runs on the job's own GCP
-//     identity, so both refusals stand.
+//   - TestLegacyVertexIsStillRefusedUnderEnforce — an unmigrated repository
+//     whose file still says `auth: vertex` runs on the job's own GCP identity
+//     whatever its job carries, so both refusals stand.
 //
 // The fact both turn on is the run's model path (serviceModelPath) and never
-// the auth alone: for the auths the release-1 bridge serves it is the launch's
-// address on the job (B2.2/D2072), and `vertex` is the one CS6 added to that
-// set (D3174) whose launch writes a second fact beside it — that the project's
-// routing table reaches this repository (TableServesEnv) — because the address
-// alone is handed to a documentless launch on a served profile whose table this
-// repository is not in. Both are read (serviceSwitched), and a `vertex` run
-// carrying the address and no statement is still the job's own identity.
-// The CLI's half of the same rule (validate and update --repo's
-// checkVertexBudget) reads the local config rather than a run, and it answers
-// from the table itself: a repository the table serves is accepted and one it
-// does not is refused exactly as before. internal/cli's
-// TestTheVertexRefusalAgreesWithTheRunner holds the two answers on one fixture,
-// which is why neither side can move alone.
+// the service's address on the job: a launch hands the address to a job whose
+// document it could not read (internal/cli's credentialsServiceLaunchEnv), so
+// a `vertex` run can carry it while its Vertex calls are still the job's own.
+// The CLI's halves of the same rule (validate, update --repo) read the local
+// config, which a run has no document for, and this release leaves them
+// refusing: a `vertex` run never takes the service here (ServiceSwitchedAuth),
+// so a gate lifting the refusal would green-light a run this file's
+// TestLegacyVertexIsStillRefusedUnderEnforce refuses. CS6 moves both, and
+// internal/cli's TestTheVertexRefusalAgreesWithTheRunner holds the two answers
+// on one fixture.
 
 import (
 	"context"
@@ -36,12 +33,9 @@ import (
 	"github.com/dimipaun/fugaro/internal/recipe"
 )
 
-// vertexServiceEnv is the job entry that carries the installation's credentials
-// service address (credentialsServiceURLEnv) and nothing else: what the bridge
-// serves an api-key or oauth repository's run on, and — for a `vertex` file —
-// the shape a documentless launch on a served profile produces, since the table
-// states nothing about a repository it does not serve (TableServesEnv is the
-// second entry, and the one this function deliberately leaves out).
+// vertexServiceEnv is the job's entry that says the installation's credentials
+// service is where this repository's model calls go
+// (credentialsServiceURLEnv).
 func vertexServiceEnv() []string {
 	return []string{credentialsServiceURLEnv + "=https://creds.example.run.app"}
 }
@@ -112,13 +106,12 @@ func TestVertexInAChainIsAcceptedUnderEnforce(t *testing.T) {
 // serve it — so nothing caps its Vertex calls and the refusal stands, at
 // bootstrap and for a pool that lists the credential.
 //
-// The table's own statement is what separates the two, and the address is not
-// it: what the launch wrote where the table reaches this repository
-// (TableServesEnv) is the served path TestEveryStageGoesThroughTheChain (CS6)
-// pins, while a job carrying the address alone — the documentless launch on a
-// served profile — is still a `vertex` run that authenticates to Vertex itself
-// (gatewayUpstream's vertex arm), over exactly the uncapped path these refusals
-// exist for.
+// Its job carrying the service's address does not change that, and this is the
+// test of it: a launch hands the address to a job whose document it could not
+// read, judged on the repository's record or the deploy root's tfvars, and a
+// `vertex` run in that job still authenticates to Vertex itself
+// (gatewayUpstream's vertex arm). Keyed on the address, the two refusals would
+// stand down over exactly the uncapped path they exist for.
 func TestLegacyVertexIsStillRefusedUnderEnforce(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range []struct {
@@ -126,11 +119,11 @@ func TestLegacyVertexIsStillRefusedUnderEnforce(t *testing.T) {
 		env  []string
 	}{
 		{"a job with no address", nil},
-		{"a job carrying the address, and no statement about the table", vertexServiceEnv()},
+		{"a job carrying the address anyway", vertexServiceEnv()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, _ := poolRun(t, poolSpec{auth: "vertex", model: poolDirectModel, env: tc.env})
-			if r.serviceModelPath() || r.vertexServedByTheService() {
+			if r.vertexServedByTheService() {
 				t.Fatal("a vertex run whose model path is the job's own identity is read as served by the service")
 			}
 			r.spend = enforceSpend()

@@ -1538,9 +1538,8 @@ func TestInitWriteConfigChecksName(t *testing.T) {
 	}
 }
 
-// A Vertex workflow the project's routing table does not serve can't be
-// enforced yet — nothing caps the job's own Vertex calls — so update --repo
-// refuses before any plan or cloud call, while observe and off pass.
+// A Vertex workflow can't be enforced yet: update --repo refuses before any
+// plan or cloud call, while observe and off pass.
 func TestInitRepoRefusesVertexEnforce(t *testing.T) {
 	isolateProjects(t, t.TempDir())
 	path := writeProject(t, "aurora", "proj-1234")
@@ -1570,27 +1569,9 @@ func TestInitRepoRefusesVertexEnforce(t *testing.T) {
 	}
 	vertex, apiKey := cfgFile("vertex"), cfgFile("api-key")
 	enforce := withBudget("budget: { mode: enforce, per_run_usd: 5 }\n")
-	err := checkVertexBudget(enforce, "acme/webapp", vertex)
+	err := checkVertexBudget(enforce, vertex)
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "Vertex budgets are not supported yet: use budget.mode observe for this repository") {
 		t.Fatalf("vertex + enforce: exit %d, err %v", ExitCode(err), err)
-	}
-	// A repository the project's table serves is D3174's, and this gate lifts
-	// its refusal for it (CS6): the service calls Vertex on its own identity
-	// and prices the call as a key's, so nothing is left to refuse. The fixture
-	// is the one the launch hands the address on — the table admits this
-	// repository, the service is installed, this machine's record of the
-	// repository is ready.
-	served := withBudget("budget: { mode: enforce, per_run_usd: 5 }\ncredentials_service: { url: " + credentialsServiceURL + " }\n" +
-		"model_routing:\n  - match: \"claude-*\"\n    chain:\n      - { kind: vertex, admit: [acme/webapp] }\n")
-	served.Repos = map[string]localcfg.Repo{"acme/webapp": {Provider: "github", CredentialsServiceReady: localcfg.RecordSwitch(true)}}
-	if err := checkVertexBudget(served, "acme/webapp", vertex); err != nil {
-		t.Fatalf("vertex + enforce on a repository the table serves: %v", err)
-	}
-	// A repository the table does not place keeps the refusal, whatever its
-	// auth is: nothing serves its Vertex call, so the job's own identity is
-	// still the path, and nothing caps it.
-	if err := checkVertexBudget(served, "acme/other", vertex); ExitCode(err) != ExitUserError {
-		t.Fatalf("vertex + enforce on a repository the table does not admit: exit %d, err %v", ExitCode(err), err)
 	}
 	// A committed enforce is the effective mode under an off ceiling, and
 	// under an observe one (the stricter wins).
@@ -1603,25 +1584,24 @@ func TestInitRepoRefusesVertexEnforce(t *testing.T) {
 		return c
 	}
 	for name, lc := range map[string]*localcfg.Config{"off ceiling": withBudget(""), "observe ceiling": withBudget("budget: { mode: observe }\n")} {
-		err := checkVertexBudget(lc, "acme/webapp", committed("enforce"))
+		err := checkVertexBudget(lc, committed("enforce"))
 		if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "Vertex budgets are not supported yet") {
 			t.Errorf("committed enforce under %s: exit %d, err %v", name, ExitCode(err), err)
 		}
-		if err := checkVertexBudget(lc, "acme/webapp", committed("observe")); err != nil {
+		if err := checkVertexBudget(lc, committed("observe")); err != nil {
 			t.Errorf("committed observe under %s: %v", name, err)
 		}
 	}
 	for name, tc := range map[string]struct {
-		lc   *localcfg.Config
-		repo string
-		cfg  *config.Config
+		lc  *localcfg.Config
+		cfg *config.Config
 	}{
-		"vertex + observe":  {withBudget("budget: { mode: observe }\n"), "acme/webapp", vertex},
-		"vertex + off":      {withBudget("budget: { mode: off }\n"), "acme/webapp", vertex},
-		"vertex + none":     {withBudget(""), "acme/webapp", vertex},
-		"api-key + enforce": {enforce, "acme/webapp", apiKey},
+		"vertex + observe":  {withBudget("budget: { mode: observe }\n"), vertex},
+		"vertex + off":      {withBudget("budget: { mode: off }\n"), vertex},
+		"vertex + none":     {withBudget(""), vertex},
+		"api-key + enforce": {enforce, apiKey},
 	} {
-		if err := checkVertexBudget(tc.lc, tc.repo, tc.cfg); err != nil {
+		if err := checkVertexBudget(tc.lc, tc.cfg); err != nil {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
