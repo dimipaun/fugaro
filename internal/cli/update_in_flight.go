@@ -36,7 +36,7 @@ import (
 // internal/budget/rules); and no step of the update writes a run's registry
 // entry, its ledger, its day counters or its record.
 //
-// Eight steps can still reach one, and the note names every one of them this run
+// More than a handful of steps can still reach one, and the note names every one this run
 // can take — naming a step, rather than either claiming a safety that is not
 // there or dropping the claim: the budget mode's raise to enforce, which a
 // session re-reads on every lease and every report while the policy node is read
@@ -59,10 +59,14 @@ import (
 // typed confirmation it would have applied without; the workspace credentials
 // node that stage's neighbour publishes, which the workspace's own service
 // re-reads as it serves (R13), so a member this run takes out of the table, or
-// an entry it unshares, stops being served at that service's next read; and a
+// an entry it unshares, stops being served at that service's next read; a
 // retirement, which deletes an orphaned Cloud Run job and takes the executions
-// running on it with it (`deleteOrphanedJob`, init_retire.go). None of the nine
-// is the update stopping a run, and none of them is asked to wait.
+// running on it with it (`deleteOrphanedJob`, init_retire.go); and the two the
+// workspace credentials half added (R11, WC11) — the member's switch for the
+// personal half published off, which the workspace's service refuses from its
+// next read of the member's policy, and a person the roster no longer holds,
+// whose runs halt within a minute (R3). None of them is the update stopping a
+// run, and none of them is asked to wait.
 //
 // The note is the count's own line and then ONE SHORT LINE PER STEP, because the
 // owner met it with fourteen runs in flight and could not find what they were
@@ -413,6 +417,14 @@ func (e *initEngine) inFlightSteps(ctx context.Context, db *rtdb.Client) []inFli
 	if e.workspaceDropsReach(ctx, db) {
 		steps = append(steps, inFlightStep{
 			line: "workspace: a removed member or an unshared entry stops being served by the service"})
+	}
+	if e.personalSwitchTurnsOff(ctx, db) {
+		steps = append(steps, inFlightStep{
+			line: "personal tokens: a member's switch published off is refused at the service's next call"})
+	}
+	if e.rosterDropsAPerson(ctx) {
+		steps = append(steps, inFlightStep{
+			line: "roster: a person the roster dropped is refused at the service's next call"})
 	}
 	if e.markerConverges(ctx) {
 		steps = append(steps, inFlightStep{
@@ -811,6 +823,80 @@ func (e *initEngine) workspaceDropsReach(ctx context.Context, db *rtdb.Client) b
 	}
 	for _, s := range node.Shared {
 		if !shared[s.Name] {
+			return true
+		}
+	}
+	return false
+}
+
+// personalSwitchTurnsOff is whether this run's publish of the member's policy
+// turns the personal half's switch off under a run in flight (R11 of
+// docs/workspace-credentials/, WC11, R9, D2972): the workspace's service
+// re-reads the member's published policy as it serves a call, so a person's run
+// whose project no longer states the switch falls back to the shared entries at
+// the service's next call instead of being served the token it started with
+// (D3144's direction, taken for a state the person did not choose).
+//
+// What it asks is the pair of values and not the stage's own decision, as every
+// clause here: the node as it stands, read before any stage of this run has
+// written, against this machine's own file. A config that states nothing
+// publishes no member at all — the keep rule is
+// localcfg.PersonalWorkspaceTokensEffective, so a teammate's machine whose file
+// never carried the key cannot turn it off — and only a member's machine can
+// make the edit at all, a workspace's own project being in no workspace (R12).
+// A node that is not there, a read that failed and a policy this build does not
+// read are all silence.
+func (e *initEngine) personalSwitchTurnsOff(ctx context.Context, db *rtdb.Client) bool {
+	if e.lc == nil || !workspaceMember(e.lc) || e.lc.PersonalWorkspaceTokens == nil || *e.lc.PersonalWorkspaceTokens {
+		return false
+	}
+	on, err := projectpolicy.PersonSwitchOverDB(db).PersonSwitchOn(ctx, e.lc.Name)
+	return err == nil && on
+}
+
+// rosterDropsAPerson is whether this run's workspace apply takes a person off
+// the workspace's own service (R11, R3, D2971): the root's var.people is
+// rendered from the roster node on every run (workspaceProjectStage.people), so
+// a person the roster no longer holds loses their invoke grant on the service
+// in this run's own apply — and a run of theirs in flight is refused at the
+// service's next call, which is R3's minute.
+//
+// What it asks is the recorded document against the roster, and not the stage's
+// own decision: the var.people this run would replace, read out of the workspace
+// root's own tfvars, against the people the roster names now. The stage is the
+// one that reads them for real, with the workdir set; the door has none, so it
+// reads the same two lists out of the same places — infra.WorkspaceWorkdir is
+// where the workspace root's document is, and the roster is the node beside it
+// (e.rosterPeople). A workdir with no document, an absent roster and a read that
+// failed are all silence, as every other read in this file answers: a run this
+// note cannot place is one it does not name.
+func (e *initEngine) rosterDropsAPerson(ctx context.Context) bool {
+	lc := e.lc
+	if lc == nil || !workspaceDeclared(lc) {
+		return false
+	}
+	dir, err := infra.WorkspaceWorkdir(os.Getenv, lc.GCPProject)
+	if err != nil {
+		return false
+	}
+	vars, err := infra.ReadWorkdirVars(dir, "workspace")
+	if err != nil {
+		return false
+	}
+	recorded := recordedWorkspacePeople(vars)
+	if len(recorded) == 0 {
+		return false
+	}
+	people, err := e.rosterPeople(ctx)
+	if err != nil {
+		return false
+	}
+	held := make(map[string]bool, len(people))
+	for _, person := range people {
+		held[person] = true
+	}
+	for _, person := range recorded {
+		if !held[person] {
 			return true
 		}
 	}
