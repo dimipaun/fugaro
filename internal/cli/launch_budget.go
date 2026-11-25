@@ -1156,7 +1156,12 @@ func (e *cloudEnv) gitCredentialGate(ctx context.Context, slug string, spec *tas
 		// the address, and every review job's container mounts nothing at all
 		// and carries it for that reason (reviewVariant, and the implicit
 		// review-only job). Nothing else is judged here.
-		review := spec.Mode == recipe.ModeReview
+		// The launcher's own class marker and the runner's twin (run.go's
+		// reviewJob, projectjob.go's runClass): a review CLASS without a review
+		// recipe — `fugaro troubleshoot cloud`'s diagnosis — runs on the same
+		// review-only variant, so reading the mode alone would leave it
+		// unrefused on a job that mounts nothing and carries the address.
+		review := spec.Mode == recipe.ModeReview || spec.ReviewClass
 		sharedBitbucket := job != nil && kind == gitprov.KindBitbucket
 		if !review && !sharedBitbucket {
 			return nil

@@ -32,6 +32,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // vertexGitServiceTokenPrefix is the shape of the installation token the
@@ -462,6 +464,66 @@ func TestLaunchRefusesAProxiedVertexBitbucketRunWithoutAToken(t *testing.T) {
 				t.Fatal("a brokered vertex repository whose service holds no Bitbucket token was launched: its job mounts none and its provider is opened with nothing to forward (G1, G9)")
 			case tc.refused:
 				for _, want := range []string{proxiedRepo, "bitbucket-token", "fugaro creds set", "fugaro update --repo"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not name %q: %v", want, err)
+					}
+				}
+			case err != nil:
+				t.Fatalf("a launch this gate does not judge was refused: %v", err)
+			}
+		})
+	}
+}
+
+// TestLaunchRefusesAReviewClassDiagnosisOnASharedJob is the state the three
+// rows above never reach: the launch is on a SHARED project job, so the address
+// is asked of the job's own PROFILE rather than of the repository's entry, and
+// the run lands on the review-only variant of it — which is deployed WITH the
+// address and mounts nothing at all (internal/infra's projectjobs.go), exactly
+// as a review recipe's own job is.
+//
+// The class marker is the launcher's own (run.go's reviewJob: Mode == review OR
+// ReviewClass) and the runner's twin (projectjob.go's runClass reads the same
+// pair). `fugaro troubleshoot cloud`'s spec is Mode artifact with
+// ReviewClass set (troubleshoot_launch.go), and it reaches this gate through the
+// pre-flight's freshLaunchGates (troubleshoot_preflight.go) — so a gate reading
+// the recipe's mode alone leaves a diagnosis unrefused on a job that holds no
+// App key and carries the address, and the run stops inside the container
+// instead of meeting the one-line remedy here.
+//
+// The first row is the boundary and not a second subject: a CODING launch of
+// the same repository on the same shared job is admitted, because the profile's
+// own arm withholds the address from an auth the service does not serve and the
+// job keeps the App key it mounts (internal/infra's projectjobs.go, and
+// TestLaunchKeepsAnUnswitchedProjectJobOffTheService beside the job tests).
+func TestLaunchRefusesAReviewClassDiagnosisOnASharedJob(t *testing.T) {
+	vertexSharedYAML := strings.Replace(projectJobRepoYAML, "auth: api-key", "auth: vertex", 1)
+	for name, tc := range map[string]struct {
+		spec    *task.Spec
+		refused bool
+	}{
+		"a coding launch on the shared job": {
+			&task.Spec{Version: 1, RunID: budgetRun, Repo: "acme/app", Ref: "main", Workflow: "web",
+				Task: "Add a feature", Mode: recipe.ModeArtifact},
+			false},
+		"a review class diagnosis on the shared job": {
+			&task.Spec{Version: 1, RunID: budgetRun, Repo: "acme/app", Ref: "main", Workflow: "web",
+				Task: "diagnose a failed run", Mode: recipe.ModeArtifact, ReviewClass: true},
+			true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newCascadeProjectJobFixture(t, vertexSharedYAML)
+			f.appendConfig(t, "credentials_service:\n  url: "+credentialsServiceFixtureURL+"\n")
+			// No record: no `fugaro update --repo` has judged this repository's
+			// bundle, which reads as "not served" and is the state the remedy
+			// names.
+			env := memEnv(t, f.cloudFixture)
+			err := env.gitCredentialGate(context.Background(), appSlug, tc.spec)
+			switch {
+			case tc.refused && err == nil:
+				t.Fatal("a review class diagnosis of a vertex repository was launched on the shared job's review-only variant: that variant mounts nothing and carries the address, so the run opens GitHub keyless and stops at bootstrap instead of meeting this gate's remedy")
+			case tc.refused:
+				for _, want := range []string{"acme/app", "GitHub App key", "fugaro creds set", "fugaro update --repo"} {
 					if !strings.Contains(err.Error(), want) {
 						t.Errorf("the refusal does not name %q: %v", want, err)
 					}
