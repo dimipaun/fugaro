@@ -239,6 +239,43 @@ func listItemLeaf(keyField, keyValue, field string, values []string) leafOf {
 	}
 }
 
+// mapLines is a mapping-valued field as a block mapping: the key on its own line
+// and one `key: value` per line under it, in the one order two runs of the same
+// edit write.
+func mapLines(indent, step int, field string, keys map[string]string) []string {
+	return append([]string{indentOf(indent) + renderKey(field) + ":"},
+		mapValueLines(indent, step, keys)...)
+}
+
+// mapValueLines is a block mapping's entries alone, at the indentation a mapping
+// under a key at `indent` writes them: the shape a mapping being replaced needs,
+// where the field's own key line is one the document already has and keeps.
+func mapValueLines(indent, step int, keys map[string]string) []string {
+	out := make([]string, 0, len(keys))
+	for _, k := range sortedKeys(keys) {
+		out = append(out, indentOf(indent+step)+renderKey(k)+": "+renderValue(keys[k], 0))
+	}
+	return out
+}
+
+// mapItemLines is one sequence item — the keyField first, the mapping under it —
+// at the indentation the item holds its own keys at.
+func mapItemLines(indent, step int, keyField, keyValue, field string, keys map[string]string) []string {
+	lines := []string{indentOf(indent) + "- " + renderKey(keyField) + ": " + renderValue(keyValue, 0)}
+	return append(lines, mapLines(indent+2, step, field, keys)...)
+}
+
+// mapItemLeaf renders `key:` with one sequence item under it, that item a mapping
+// whose keyField comes first and whose field is a block mapping of its own —
+// listItemLeaf's shape for a field whose value is a mapping rather than a list,
+// which is what UpsertSeqItemMapByKey writes.
+func mapItemLeaf(keyField, keyValue, field string, keys map[string]string) leafOf {
+	return func(key string, indent, step int) []string {
+		lines := []string{indentOf(indent) + renderKey(key) + ":"}
+		return append(lines, mapItemLines(indent+step, step, keyField, keyValue, field, keys)...)
+	}
+}
+
 // seqItemLines is one item of a nested sequence of mappings — the keyField
 // first, then its scalars, then its lists of scalars, then its own sequences of
 // mappings — at the indentation the item holds its own keys at.
