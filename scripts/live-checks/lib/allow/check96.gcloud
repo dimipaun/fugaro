@@ -1,0 +1,29 @@
+# gcloud calls scripts/live-checks/check96.sh makes. See lib/strict.sh.
+cmd	config get-value
+cmd	iam service-accounts add-iam-policy-binding
+flag	--member
+flag	--role
+cmd	iam service-accounts remove-iam-policy-binding
+flag	--member
+flag	--role
+cmd	iam service-accounts get-iam-policy
+cmd	iam service-accounts sign-jwt
+flag	--iam-account
+cmd	auth print-identity-token
+flag	--impersonate-service-account
+flag	--audiences
+flag	--include-email
+cmd	auth print-access-token
+cmd	run services list
+flag	--platform
+flag	--filter
+cmd	run services describe
+cmd	run jobs list
+flag	--filter
+cmd	run jobs describe
+cmd	secrets list
+cmd	secrets get-iam-policy
+cmd	logging read
+flag	--limit
+flag	--freshness
+flag	--region
