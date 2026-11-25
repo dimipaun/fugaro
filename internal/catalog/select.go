@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -338,10 +339,29 @@ type ImageRequest struct {
 	// when it states one, the published node's otherwise (localcfg's keep
 	// rule, D1140). nil when the project has neither.
 	Catalog *config.Catalog
-	// ImageMap is the project's repo-to-image map (D1906): the entry each
-	// repository's jobs run, keyed by canonical repository name. nil when the
-	// project maps none.
+	// ImageMap is the project's repo-to-image map in its old form (D1906): the
+	// entry each repository's jobs run, keyed by canonical repository name.
+	// nil when the project maps none, or when the map is RepoImages' below. It
+	// is read until X1 has moved every caller onto RepoImages and LegacyMap.
 	ImageMap map[string]string
+	// RepoImages is the project's repository-to-image map in the form L11 gives
+	// it (D3371): the entry each repository's jobs run, keyed by
+	// provider/owner/name (projectpolicy.Canonical). It is looked up under
+	// Canonical(Provider, Canonical), and Provider is what makes a GitHub and a
+	// Bitbucket repository of one name two keys rather than one. nil when the
+	// project maps none, or when the map is still legacy.
+	RepoImages map[string]string
+	// LegacyMap is the map in its old form — bare repository names, matched
+	// against every provider, as ImageMap was — and it is read only where
+	// RepoImages is nil (R2). A caller fills exactly one of the two, from
+	// projectpolicy.Policy.EffectiveRepoImages.
+	LegacyMap map[string]string
+	// Provider is the provider kind of Canonical's repository ("github",
+	// "bitbucket"): the half of a repo_images key a repository name does not
+	// carry. It names the key RepoImages is read under and is read by nothing
+	// else; a caller that cannot name its repository's provider has no
+	// repo_images answer, rather than a fallback to the old lookup (R10).
+	Provider string
 	// Canonical is the job's repository, as a person spells it ("Acme/App");
 	// the map is read under its canonical form, which is the form the map's
 	// keys are validated in (ValidImageMap).
@@ -546,18 +566,44 @@ func (req ImageRequest) choose(pin string) (Choice, error) {
 }
 
 // mappedEntry is the entry the project's map gives req's repository, if it
-// gives it one. A name that is not a repository — a slug this package cannot
-// canonicalize — is no mapping rather than an error: the map is keyed by
-// canonical names, and nothing here is asked about a string that is not one.
+// gives it one. A name that is not a repository, and a provider this package
+// cannot canonicalize a key with — a slug or a provider kind it cannot spell —
+// is no mapping rather than an error: the map is keyed by canonical names, and
+// nothing here is asked about a string that is not one.
+//
+// RepoImages wins over the legacy map, per member and never per key (R2): the
+// effective reader fills exactly one of the two, so a caller that filled
+// RepoImages is answered by it whatever LegacyMap holds. The two keyspaces are
+// told apart by which field is set and never by the shape of a key, because a
+// bare name and a provider-qualified one are both strings and a lookup that
+// guessed would map a repository nobody mapped.
 func (req ImageRequest) mappedEntry() (string, bool) {
-	if len(req.ImageMap) == 0 {
+	if len(req.RepoImages) > 0 {
+		c, err := task.CanonicalRepo(req.Canonical)
+		if err != nil {
+			return "", false
+		}
+		key, err := projectpolicy.Canonical(req.Provider, c)
+		if err != nil {
+			return "", false
+		}
+		name, ok := req.RepoImages[key]
+		return name, ok && name != ""
+	}
+	legacy := req.LegacyMap
+	if len(legacy) == 0 {
+		// ImageMap is the same map under the name it had before this release,
+		// and it is read until X1 has moved every caller onto LegacyMap.
+		legacy = req.ImageMap
+	}
+	if len(legacy) == 0 {
 		return "", false
 	}
 	c, err := task.CanonicalRepo(req.Canonical)
 	if err != nil {
 		return "", false
 	}
-	name, ok := req.ImageMap[c]
+	name, ok := legacy[c]
 	return name, ok && name != ""
 }
 
@@ -612,13 +658,15 @@ func rebuildWritten(r config.Rebuild) bool {
 		len(r.Paths) > 0
 }
 
-// UnknownMappedEntryError refuses a repository the project's image_map points
-// at an entry its catalog does not hold. It is not a pin's refusal
+// UnknownMappedEntryError refuses a repository the project's repository-to-image
+// map points at an entry its catalog does not hold. It is not a pin's refusal
 // (UnknownEntryError) although it is the same kind of mistake: the map is
 // written by a command and published, so the sentence names the map, which is
-// where the person's fix is.
+// where the person's fix is. It names the member under its new name, which is
+// the one the command writes from L11 on, whatever member the project still
+// holds (R11).
 func UnknownMappedEntryError(repo, name string) error {
-	return fmt.Errorf("%w: the image_map of this project points %s at %q, which its image catalog does not hold; fugaro image ls lists the entries the catalog has, and fugaro image map set changes the mapping",
+	return fmt.Errorf("%w: the repository-to-image map (`repo_images`) of this project points %s at %q, which its image catalog does not hold; fugaro image ls lists the entries the catalog has, and fugaro image map set changes the mapping",
 		ErrUnknownEntry, repo, name)
 }
 

@@ -533,10 +533,42 @@ type Policy struct {
 	// member existed.
 	ImageCatalog *ImageCatalog `json:"image_catalog,omitempty"`
 
-	// ImageMap is the project's repo-to-image map (D1906): the catalog entry
-	// each repository's jobs run, keyed by the repository's canonical name
-	// ("acme/app" — the spelling a --repo reads as and task.CanonicalRepo
-	// lower-cases, and the one every image_map key is held to). It is written
+	// RepoImages is the project's repository-to-image map, keyed by the
+	// repository's canonical name ("<provider>/<owner>/<name>", Canonical —
+	// "github/acme/app"). It is ImageMap's successor (D3371): the map must tell
+	// a GitHub acme/app and a Bitbucket acme/app apart, which a bare owner/name
+	// key cannot, so it is a *new member* rather than the old one with new keys
+	// — a key that meant owner/name would otherwise start meaning
+	// provider/owner/name under the same name, and an older reader would read a
+	// provider as an owner and map the wrong repository, silently. A reader of
+	// the release behind sees no map here and refuses loudly instead (R4).
+	//
+	// It travels ImageMap's road and for its reason: a map that names an image
+	// decides what code a job executes, so it is the owner's policy — written by
+	// `fugaro image map set` in the local config and published by `fugaro
+	// update` — and never a key of the shared config in the runs bucket, which
+	// any launcher can write. `sharedForbidden` refuses it there and Shared nils
+	// it.
+	//
+	// ImageMap stays BESIDE it until a step after the credentials service is
+	// redeployed removes it (D3376 as amended): `update` builds images before it
+	// rewrites the policy, so a node that still holds the old member is read as
+	// it is read today, and the old service never meets a node without a map it
+	// knows. While both members are there, this one wins (EffectiveRepoImages,
+	// R2).
+	//
+	// A map with no entry is nil, so a project that maps nothing writes no
+	// member and its node is byte for byte what it was before this member
+	// existed.
+	RepoImages RepoImages `json:"repo_images,omitempty"`
+
+	// ImageMap is the project's repo-to-image map in its old form (D1906): the
+	// catalog entry each repository's jobs run, keyed by the repository's
+	// canonical name ("acme/app" — the spelling a --repo reads as and
+	// task.CanonicalRepo lower-cases, and the one every image_map key is held
+	// to). It is read until `update` has rewritten it (D3372) and removed by
+	// the step after the credentials service (D3376 as amended); RepoImages
+	// above is where the map lives from L11 on. It is written
 	// here rather than in each repository's fugaro.yaml because a project's
 	// repositories are mapped together: fifty repositories are one change
 	// rather than fifty, and the map is the project's own decision about which
@@ -817,7 +849,12 @@ var knownTopLevelKeys = map[string]bool{
 	"bitbucket_token": true, "bitbucket_tokens": true, "bitbucket_api_roots": true,
 	"review_floor": true, "verifier_accounts": true,
 	"image_catalog": true,
-	"image_map":     true, "bake_repos": true, "image_services": true,
+	// The repository-to-image map's two members (D3371): repo_images is the
+	// new one and image_map the old, which stays until a step after the
+	// credentials service removes it. Both are top-level keys, so a reader of
+	// the release behind lists the new one in UnknownKeys and reads the rest
+	// of the policy (R4).
+	"repo_images": true, "image_map": true, "bake_repos": true, "image_services": true,
 	"default_claude_account": true, "claude_account_stages": true,
 	"crafts": true, "craft_credentials": true, "craft_pools": true,
 	"model_grades":        true,
@@ -2105,6 +2142,22 @@ func decodePolicy(raw []byte, keys map[string]bool, strict bool) (*Policy, bool,
 			return nil, true, err
 		}
 		p.ImageCatalog = catalog
+	}
+	if rraw, ok := doc["repo_images"]; ok && !IsNull(rraw) {
+		// The block's own rules — the escaped keys, no repository twice — are
+		// RepoImages' decode, which this call is, and the keys and values are
+		// held to ValidRepoImages. A provider this release does not serve is
+		// deliberately not refused here (R10): a later release's provider must
+		// not brick an older reader of the node.
+		if err := json.Unmarshal(rraw, &p.RepoImages); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: repo_images: %w", err)
+		}
+		if err := ValidRepoImages(p.RepoImages); err != nil {
+			return nil, true, err
+		}
+		if len(p.RepoImages) == 0 {
+			p.RepoImages = nil
+		}
 	}
 	if mraw, ok := doc["image_map"]; ok && !IsNull(mraw) {
 		// The block's own rules — the escaped keys, no name twice, no two keys
