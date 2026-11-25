@@ -92,7 +92,7 @@ const (
 
 // doctorWorkspaceChecks is WS14's whole contribution to one doctor run, on
 // whichever side of a workspace the machine running it is: the owner's three
-// checks, or the member's two. A project in no workspace gets nothing at all,
+// checks, or the member's three. A project in no workspace gets nothing at all,
 // which is every installation that has not joined one.
 //
 // The split installation is deliberately absent here: the workspace's own
