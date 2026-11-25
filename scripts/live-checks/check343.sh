@@ -75,6 +75,7 @@ REPO=""
 DIR=""
 RUN1="" RUN2="" RUN3=""
 RUN1_PR=0
+RUN1_SETTLED=no
 FACTS=""
 SCRATCH=""
 SCRATCH_REMOVED=no
@@ -392,6 +393,7 @@ step_commit() {
     ;;
   esac
   fact settled1 PASS "run $run settled $RUN_STATUS"
+  RUN1_SETTLED=yes
   RUN1_PR=$RUN_PR
   local missing
   missing=$(wc -l <"${SCRATCH}/missing.txt" | tr -d ' ')
@@ -439,21 +441,23 @@ PY
   fact pr1 INFO "the pull request the commit run opened: #$RUN_PR $(python3 -c 'import json,sys; print(json.load(open(sys.argv[1],encoding="utf-8")).get("url",""))' "${SCRATCH}/pr1.json")"
 }
 
-# Step 4: the same launch over a base that already holds the store, which is the
-# only checkout a run opens no pull request on. A launch clones the base branch
-# again and is handed every stored report, so over a base that still lacks them
-# the second run opens a pull request by construction: the criterion is read on
-# the run the owner makes after the first one's pull request is in.
+# Step 4: the same launch over a folder that already holds the store, which is
+# the only checkout a run opens no pull request on. A launch clones the base
+# branch and is handed every stored report; it writes the ones the clone's
+# folder does not already hold with the same bytes, so a folder behind the
+# store — a report it lacks, or one whose bytes the store has since overwritten
+# — opens a pull request by construction. The first run's own answer is what
+# says the folder holds them: no pull request, from a launch handed every
+# stored report, is the product's own byte-for-byte reading of that folder.
 step_nothing_new() {
-  local run missing how
+  local run missing
   missing=$(wc -l <"${SCRATCH}/missing.txt" | tr -d ' ')
-  if [ "$missing" != 0 ]; then
+  if [ "$RUN1_SETTLED" != yes ] || [ "$RUN1_PR" != 0 ] || [ "$missing" != 0 ]; then
     if [ "$RUN1_PR" != 0 ]; then
-      how="merge pull request #$RUN1_PR into ${BASE}"
+      fact nothing-new UNVERIFIED "not judged here: the commit run opened pull request #$RUN1_PR, so its clone's folder did not hold every stored report as the store has them. Merge it into ${BASE}, then run the check again — this step is read on a run over a folder that already holds them"
     else
-      how="bring origin/${BASE} up to the store yourself (the first run opened no pull request)"
+      fact nothing-new UNVERIFIED "not judged here: the first run's own answer is what says the folder holds the store's reports, and it gave none. Read the rows above, put origin/${BASE} level with the store, then run the check again"
     fi
-    fact nothing-new UNVERIFIED "not judged here: origin/${BASE} still lacks $missing of the store's report(s), so a second run over it opens a pull request by construction. $how, then run the check again — this step is read on a run over a base that holds them"
     return 0
   fi
   run=$(launch launch2)
@@ -473,7 +477,7 @@ step_nothing_new() {
     ;;
   esac
   if [ "$RUN_PR" = 0 ]; then
-    fact nothing-new PASS "the second run $run settled $RUN_STATUS with no pull request, over a store whose reports the checkout now holds"
+    fact nothing-new PASS "the second run $run settled $RUN_STATUS with no pull request, over a folder the first run's own launch already found holding every stored report"
   else
     fact nothing-new FAIL "the second run $run opened pull request #$RUN_PR over a store with nothing new in it"
   fi

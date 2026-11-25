@@ -26122,10 +26122,12 @@ designated repository, so **never point the installation at a project whose name
    over the whole folder.
 4. Run `fugaro run --recipe commit-reports --commit-reports "commit the stored reports"` again with
    nothing new in the store: it must end **without** a pull request. "Nothing new" is a base branch
-   that already holds the store's reports — every launch clones that branch and is handed every
-   stored report, so a run whose clone lacks one commits it by construction. Merge step 2's pull
-   request first; until then the check records this step as not judged, names the pull request to
-   merge, and launches nothing, so no run is paid for whose answer is known before it starts.
+   that already holds the store's reports as the store has them — every launch clones that branch
+   and is handed every stored report, so a run whose clone lacks one, or holds bytes the store has
+   since rewritten, commits it by construction. Merge step 2's pull request first: until then the
+   check records this step as not judged, names the pull request to merge, and launches nothing, so
+   no run is paid for whose answer is known before it starts — and it reads the criterion off that
+   first run's own answer, a launch handed every report that opened no pull request at all.
 5. Leave a file in the folder the store does not hold, run
    `fugaro run --recipe commit-reports --commit-reports "commit the stored reports"` once more, and
    check the file is still there and named in the run's own record.

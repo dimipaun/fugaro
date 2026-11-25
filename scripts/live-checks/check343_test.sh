@@ -327,7 +327,8 @@ test_the_commit_run_passes_and_the_empty_case_waits_for_the_merge() {
   expect_contains "$out" "FACT files: PASS" "the pull request carries exactly what the commit had to"
   expect_contains "$out" "FACT nothing-new: UNVERIFIED" "step 4 says it was not judged here"
   expect_contains "$out" "not judged here" "and that the base is why"
-  expect_contains "$out" "merge pull request #41" "with the line that reaches it"
+  expect_contains "$out" "opened pull request #41" "and names the pull request the first run opened"
+  expect_contains "$out" "Merge it into main" "with the line that reaches it"
   expect_contains "$out" "FACT stray: PASS" "the folder's own file survives and is named"
   expect_contains "$out" "FACT restore: PASS" "nothing the check creates has to be put back"
   expect_absent "$out" "not reached" "every row was reached"
@@ -377,7 +378,7 @@ test_fails_when_the_first_run_opens_no_pull_request() {
   expect_contains "$out" "FACT files: FAIL" "the row fails"
   expect_contains "$out" "opened no pull request" "and says so"
   expect_contains "$out" "FACT nothing-new: UNVERIFIED" "and step 4 is still not judged over this base"
-  expect_contains "$out" "bring origin/main up to the store yourself" "with a line that does not name a pull request there is none of"
+  expect_contains "$out" "put origin/main level with the store" "with a line that does not name a pull request there is none of"
   [ "$(grep -c '^fugaro run ' "$state/calls")" = 1 ] || fail "step 4's run is not launched: calls: $(calls)"
 }
 
@@ -387,6 +388,28 @@ test_a_rewritten_report_is_not_a_file_the_store_does_not_hold() {
   run_check
   expect_status "$status" 3 "a report the store overwrote is a report the store holds"
   expect_contains "$out" "FACT files: PASS" "the row passes"
+}
+
+# A base branch holding every stored report by name is not a base branch holding
+# them: the run's commit writes a report the store has rewritten, so the bytes
+# are what says the folder is level with the store, and the criterion is read off
+# the first run's own answer rather than off the names on the base branch.
+test_the_empty_case_is_not_judged_when_the_store_rewrote_a_report() {
+  reset_state
+  cat >"$state/base.txt" <<EOF
+$DIR/acme-sandbox/2026/2026-11-22.md
+$DIR/2026/2026-W46.md
+$DIR/README.md
+EOF
+  pr_doc 41 "$DIR/acme-sandbox/2026/2026-11-22.md modified" "$DIR/2026/2026-W46.md modified" "$DIR/README.md modified"
+  ls_doc "$RUN1 ready 41" "$RUN2 ready 0"
+  run_check
+  expect_status "$status" 3 "a base branch the store has since overwritten is not a base branch that holds it"
+  expect_contains "$out" "FACT files: PASS" "the pull request is what the commit had to carry"
+  expect_contains "$out" "FACT nothing-new: UNVERIFIED" "step 4 says it was not judged here"
+  expect_contains "$out" "opened pull request #41" "and names the pull request the first run opened"
+  [ "$(grep -c '^fugaro run ' "$state/calls")" = 1 ] ||
+    fail "a first run that opened a pull request is not a folder holding the store: calls: $(calls)"
 }
 
 test_is_unverified_when_the_mirror_already_holds_everything() {
@@ -539,6 +562,7 @@ t test_fails_on_a_file_the_store_does_not_hold
 t test_fails_on_a_report_the_checkout_lacked
 t test_fails_when_the_first_run_opens_no_pull_request
 t test_a_rewritten_report_is_not_a_file_the_store_does_not_hold
+t test_the_empty_case_is_not_judged_when_the_store_rewrote_a_report
 t test_is_unverified_when_the_mirror_already_holds_everything
 t test_fails_when_the_second_run_opens_a_pull_request
 t test_fails_when_the_stray_file_is_not_on_the_base_branch
