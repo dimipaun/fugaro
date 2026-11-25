@@ -74,16 +74,19 @@ func publishAfterWrite(ctx context.Context, cmd *cobra.Command, change afterWrit
 	// this hook but `secrets set` is a command the classification exempts — its
 	// own argv writes this machine's file and names no project — and the
 	// publish it leaves behind is a write to the project all the same, so the
-	// read is made whenever a stage is owed, whatever the caller is. A fenced
-	// command is refused before the run is built, so nothing is published and no
-	// stage of the update runs; under an exempt one the command's own write has
-	// landed already, so the hook does what it does for every stage that cannot
-	// leave the change live: the steps stay owed and the command ends on the one
-	// sentence (afterWriteOwed, D2614).
-	allowed, err := managedWriteAllowed(ctx, cmd, lc)
-	if err != nil {
-		return err
-	}
+	// read is made whenever a stage is owed, whatever the caller is.
+	//
+	// What the answer is worth here is not what it is worth to a command: this
+	// line is reached only after the calling command's own write has landed, a
+	// fenced one included — `fugaro secrets set NAME --expires` writes the record
+	// into this machine's config and reaches the hook with it written — so the
+	// fence's own refusal, which says nothing was written, would be a sentence
+	// about a write that is on the machine and about a value the person never
+	// passed. A project the read does not answer "managed" for gets what every
+	// stage that cannot leave a change live gets: nothing is published, the steps
+	// stay owed, and the command ends on the one sentence (afterWriteOwed,
+	// D2614).
+	allowed, _ := managedWriteAllowed(ctx, cmd, lc)
 	if !allowed {
 		return afterWriteOwed(lc, change, names)
 	}

@@ -532,40 +532,55 @@ func TestAfterWriteStagesFollowTheRegistryRow(t *testing.T) {
 // own state — the policy node, and the layer file the node is read through —
 // and its clients come from the init engine rather than from the two seams the
 // fence is free at (openCloud, openCloudFor), so it asks for itself, on the
-// world's own unmanaged project. Nothing is published either way: what the
-// classification decides is the answer the command itself gives.
+// world's own unmanaged project. Nothing is published either way, and what the
+// classification decides is what the command's own refusal would have said — not
+// what the person reads here.
 //
-// A command the fence applies to is refused before the run is built:
+// Both commands are answered at the hook's own moment, which is after the
+// calling command's write: a command the classification fences reaches it too —
 // `fugaro secrets set NAME --expires` writes `secret_expires` into the machine's
-// own config, whose own layers declare the policy stage (settings.KeySteps,
-// AP5), and it is the one fenced command that really reaches this hook — so the
-// pair of key and command is the one a person's line makes, the refusal is the
-// one that line meets, and no step is left owed.
-//
-// A command the classification exempts is not a licence for the publish that
-// runs under it: `settings set` writes this machine's own file and names no
-// project, and the stage behind it writes the project's node, so it is the hook
-// that refuses here — the write has landed already, the steps stay owed, and
-// the command ends on the one sentence that points `fugaro apply` at them
-// (afterWriteOwed, D2614).
+// own config, whose row declares the policy stage (settings.KeySteps, AP5), and
+// then arrives here — so the fence's own refusal, that sentence saying nothing
+// was stored, may not be what the person reads about a record that IS written
+// and a value they never passed. A command the classification exempts is no
+// licence for the publish that runs under it either (`settings set` writes this
+// machine's file and names no project, and the stage behind it writes the
+// project's node). What either gets is what every stage that cannot leave a
+// change live gets: nothing is published, the steps stay owed, and the command
+// ends on the one sentence that points `fugaro apply` at them (afterWriteOwed,
+// D2614).
 func TestWritePublishRefusesUnmanaged(t *testing.T) {
 	fugaroAtItsOwnName(t)
 
-	t.Run("a fenced command is refused", func(t *testing.T) {
+	t.Run("a fenced command is not denied the write that landed", func(t *testing.T) {
 		_, db := afterWriteUnmanagedFixture(t)
 		cmd, out := afterWriteCmd(t, "secrets", "set")
 		change := afterWriteChange{Key: "secret_expires", Store: secretsSettingsStore("secret_expires")}
-		if names := afterWriteStages(change); len(names) == 0 {
+		names := afterWriteStages(change)
+		if len(names) == 0 {
 			t.Fatalf("a write of %s in %s owes no stage, so this test would be about a hook that returned before its fence", change.Key, change.Store)
 		}
 
 		err := publishAfterWrite(t.Context(), cmd, change)
-		checkFenceRefusal(t, err, "secrets set")
+		if err == nil {
+			t.Fatalf("the publish of a fenced command's write was reported live on a project that is not managed:\n%s", out.String())
+		}
+		said := ErrorText(err)
+		if got, want := said, ErrorText(afterWriteNotLive(change)); got != want {
+			t.Errorf("the unmanaged publish ends the command on %q, want the one sentence %q", got, want)
+		}
+		for _, never := range []string{managedFencedCommands["secrets set"], managedFlagCommand()} {
+			if strings.Contains(said, never) {
+				t.Errorf("the command reads the fence's own refusal (%q) about a write that has landed:\n%s", never, said)
+			}
+		}
 		if v := nodeVersionOn(t, db); v != 3 {
 			t.Errorf("the node is version %d after a refused run, want the 3 the fixture published: the hook published a project that is not managed", v)
 		}
-		if said := out.String(); strings.Contains(said, "is not live yet") {
-			t.Errorf("the refused run said the change is saved and owes steps, so it filed a record for `fugaro apply`:\n%s", said)
+		// The record is what makes the sentence true: `fugaro apply` reads it
+		// and runs the steps once the project is flagged managed.
+		if got := owedStepsAfterTheHook(t); !slices.Equal(got, names) {
+			t.Errorf("the refused publish left %v owed, want %v", got, names)
 		}
 	})
 

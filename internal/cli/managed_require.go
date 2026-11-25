@@ -138,8 +138,11 @@ func requireManaged(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config
 	if !managedFenced(cmd) {
 		return nil
 	}
-	_, err := managedWriteAllowed(ctx, cmd, lc)
-	return err
+	ok, reason := managedWriteAllowed(ctx, cmd, lc)
+	if ok {
+		return nil
+	}
+	return managedRequired(cmd, lc.GCPProject, reason)
 }
 
 // managedWriteAllowed is the fence's read and its two non-answers, said once
@@ -148,13 +151,15 @@ func requireManaged(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config
 // that runs under a command whatever the classification says about that command
 // (write_publish.go).
 //
-// It answers whether the write may go ahead and, when it may not, the refusal a
-// fenced command ends on. A project that is not managed is that refusal for a
-// command the classification fences; for a caller that is not one — the publish
-// under a command the classification exempts, whose own argv wrote this
-// machine's file and no project — it is a false with no error, because that
-// caller's write has already landed and the command ends in its own words on
-// what the change still owes.
+// It answers whether the write may go ahead and, when it may not, the read's own
+// reason — the marks' answer, and not a sentence about any command. What a
+// caller says with that answer is the caller's own, because the two askers are
+// asking at two different moments: a command builds managedRequired's refusal
+// from it before it writes, and the hook — which runs only after the write has
+// landed — never refuses that write, so what it says is what a stage that cannot
+// leave a change live leaves behind (afterWriteOwed, D2614). A sentence from the
+// first moment read at the second would be about a write that is on the machine
+// and about a value the person never passed.
 //
 // Neither way of being unable to ask is an answer. A read that cannot be made
 // at all is a test configuration (no_auth with no endpoint for one of the two
@@ -165,21 +170,16 @@ func requireManaged(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config
 // failed, because the owner's own terminal is where a fenced command's refusal
 // is read — a coding agent's session is not a surface this line was written
 // for, and it is not one that can act on it.
-func managedWriteAllowed(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config) (bool, error) {
+func managedWriteAllowed(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config) (bool, string) {
 	ok, reason, err := readManagedFor(ctx, lc)
 	switch {
-	case err == nil && ok:
-		return true, nil
 	case err == nil:
-		if managedFenced(cmd) {
-			return false, managedRequired(cmd, lc.GCPProject, reason)
-		}
-		return false, nil
+		return ok, reason
 	case errors.Is(err, errNoCloudForManagedRead):
-		return true, nil
+		return true, ""
 	default:
 		warnManagedUnreadable(cmd, lc, err)
-		return true, nil
+		return true, ""
 	}
 }
 
