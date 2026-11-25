@@ -1688,9 +1688,9 @@ truncated.
 **One key is drawn in a class other than the one `WIRE_TEXT_CLASSES` gives it,
 and it is deliberate.** `launched_by` — who started a run — is classified
 `person`, and the Live and Project rows draw it through the **`label`** class:
-one line, the 200-character bound, the invisible characters stripped, a
-credential shape masked, which is what a table cell needs and not what a
-`person` cell gives. What it draws is **the whole value the record holds**, an
+one line, the 200-character bound, a refusal rather than a clip where `person`
+clips at 512, the invisible characters stripped, a credential shape masked,
+which is what a table cell needs. What it draws is **the whole value the record holds**, an
 address included — the cut at an address's first `@`
 (`runview.LauncherShort`) is `fugaro runs ls`'s own `BY` column's, and D3213
 (2026-11-21) removed it here with the rest of the console's identity masks. The
