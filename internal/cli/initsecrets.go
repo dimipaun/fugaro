@@ -1130,8 +1130,18 @@ func (s *secretsStage) leftText() string {
 
 // leftCommands appends the commands that store tg's names to cmds and answers
 // the whole slice: one repository of the run's list is one call of this, in the
-// canonical order, over the one slice the door line is deduplicated in.
+// canonical order, over the one slice every line is deduplicated in -- a name
+// several repositories want is one line when the command that stores it is the
+// project's own, and one per repository when `secrets set` has to name one
+// (R2).
 func (s *secretsStage) leftCommands(tg *secretTarget, needs []string, cmds []string) []string {
+	add := func(lines ...string) {
+		for _, line := range lines {
+			if !slices.Contains(cmds, line) {
+				cmds = append(cmds, line)
+			}
+		}
+	}
 	for _, name := range needs {
 		// The scope the command stores to is projectScopeLocal's, which is the
 		// scope `secrets set` itself decides: the line below is that command,
@@ -1147,10 +1157,7 @@ func (s *secretsStage) leftCommands(tg *secretTarget, needs []string, cmds []str
 		// at a terminal that door's prompt is take's, which stores the value in
 		// the container this stage's own decision picks.
 		if s.scopeIn(tg, name) && !s.scopeLocalIn(tg, name) {
-			door := selfCommand() + " " + s.e.r.o.doorName()
-			if !slices.Contains(cmds, door) {
-				cmds = append(cmds, door)
-			}
+			add(selfCommand() + " " + s.e.r.o.doorName())
 			continue
 		}
 		set := selfCommand() + " secrets set " + quoteWord(name)
@@ -1164,7 +1171,7 @@ func (s *secretsStage) leftCommands(tg *secretTarget, needs []string, cmds []str
 		}
 		switch {
 		case name == config.ClaudeOAuthToken:
-			cmds = append(cmds, "claude setup-token", set)
+			add("claude setup-token", set)
 		case strings.HasPrefix(name, config.ClaudeOAuthTokenPrefix):
 			// A named account's token is the one command that declares the
 			// account, stores the token where the shared job mounts it and
@@ -1189,7 +1196,7 @@ func (s *secretsStage) leftCommands(tg *secretTarget, needs []string, cmds []str
 				// profile to choose for itself: the pair that mints the token and
 				// stores it in the container such a job would mount is the whole
 				// step, as it was before `accounts add` took it over.
-				cmds = append(cmds, "claude setup-token", set)
+				add("claude setup-token", set)
 				break
 			}
 			// --repos is this checkout's own repository, which is the one the
@@ -1201,12 +1208,12 @@ func (s *secretsStage) leftCommands(tg *secretTarget, needs []string, cmds []str
 			// say nothing. It is a union with the list the account already has
 			// (accountsAddWhat reads it back from the config the command would
 			// write), so naming this repository cannot narrow it.
-			cmds = append(cmds, selfCommand()+" accounts add "+quoteWord(account)+
-				" --repos "+quoteWord(tg.repo)+" --profile "+quoteWord(profile))
+			add(selfCommand() + " accounts add " + quoteWord(account) +
+				" --repos " + quoteWord(tg.repo) + " --profile " + quoteWord(profile))
 		case name == multilineSecret:
-			cmds = append(cmds, set+" < PATH-TO-THE-KEY-FILE")
+			add(set + " < PATH-TO-THE-KEY-FILE")
 		default:
-			cmds = append(cmds, set)
+			add(set)
 		}
 	}
 	return cmds
