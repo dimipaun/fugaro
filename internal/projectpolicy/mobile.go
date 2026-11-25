@@ -270,6 +270,61 @@ func MobileCrashReportsForPublish(node *bool) *bool {
 	return boolPtr(DefaultMobileCrashReports)
 }
 
+// MobileCompactionThresholdKey is the top-level key the phone's automatic
+// compaction threshold travels as (Z2), beside the mobile block and never
+// inside it, for the reason the switch above is: a member added inside the
+// block is refused by every reader of the release behind, which would make one
+// `fugaro update` stop the runs in flight the block's own comment forbids
+// stopping (Policy.MobileCrashReports's comment, F46).
+const MobileCompactionThresholdKey = "mobile_compaction_threshold"
+
+// DefaultMobileCompactionThreshold is the threshold a project that never
+// answered has: none. It is the same value C1 spells for "this project set no
+// automatic compaction" (mobilesession.SessionPolicy.CompactThresholdPercent),
+// so the project policy and the session the phone holds state it one way, and a
+// reader that converts the percent into the fraction the app compares with
+// (C2's `compaction_threshold`) has one rule and not two.
+const DefaultMobileCompactionThreshold = 0
+
+// MobileCompactionThresholdMax is the highest threshold a node may write: a
+// window can be full and no more, so a written value above this is a mistake in
+// the node rather than a threshold that never fires.
+const MobileCompactionThresholdMax = 100
+
+// MobileCompactionThreshold is how full the context may grow before this
+// project's phones compact it without being asked, as a whole percent
+// (DefaultMobileCompactionThreshold when the node carries no key, which is no
+// automatic compaction at all).
+//
+// The node's value and not a product default: the threshold is the project's
+// own answer (the spec's "user-set ... Configurable per project"), and the app
+// compacts on it only while the agent is idle, so a project that sets none
+// compacts only when the person taps the button. A nil Policy, and a key that
+// is not there, both answer zero for the reason every accessor here does — the
+// pairing route asks before it has read anything, and a fail-safe value is not
+// an invented one: zero is "compaction is the person's to ask for", which is
+// what a phone told nothing must do.
+func (p *Policy) MobileCompactionThresholdPercent() int {
+	if p == nil || p.MobileCompactionThreshold == nil {
+		return DefaultMobileCompactionThreshold
+	}
+	return *p.MobileCompactionThreshold
+}
+
+// validMobileCompactionThreshold refuses a threshold no fullness can reach, so
+// that a hand-edited node is a load error rather than a rule that never fires:
+// a negative percent, and one above MobileCompactionThresholdMax, are both
+// unreachable states of a window. Zero is accepted and is the default, which is
+// the project saying in so many words that it compacts nothing automatically —
+// the same thing an absent key says.
+func validMobileCompactionThreshold(percent int) error {
+	if percent < 0 || percent > MobileCompactionThresholdMax {
+		return fmt.Errorf("projectpolicy: mobile_compaction_threshold is %d, and a threshold is a whole percent of the context window (0 for no automatic compaction, up to %d): a fullness no session can reach would be a rule that never fires",
+			percent, MobileCompactionThresholdMax)
+	}
+	return nil
+}
+
 // MobileEnabled reports whether this project's phones may pair at all.
 //
 // A nil Policy, a nil block and a written `false` all answer false: the block's
