@@ -9,7 +9,7 @@ Approved by counsel. Dated 2026-10-28.
 
 ## 1. Parties and acceptance
 
-1.1 These Terms are an agreement between **DSSD SOFTWARE INC**, a corporation incorporated
+1.1 These Terms are an agreement between **DSSD SOFTWARE INC.**, a corporation incorporated
 under the laws of Ontario, of 1621 Maple Ridge Dr., Mississauga, Ontario, L4W 3R6, Canada (the **"Licensor"**), and the business that
 accepts them (the **"Customer"**).
 

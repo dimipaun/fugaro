@@ -303,7 +303,10 @@ func runPlanStatus(cmd *cobra.Command, o *planStatusOptions) error {
 		// own is joined (plan/state.go's rule iii). No listing of the runs
 		// bucket is made at all, so the read costs what the plans hold rather
 		// than what the repository's history holds (D3205, F1).
-		reader := planIndexReader(env)
+		reader, err := runIndexReader(ctx, env)
+		if err != nil {
+			return err
+		}
 		sum, err := reader.Summary(ctx)
 		if err != nil {
 			return err

@@ -603,6 +603,31 @@ type Config struct {
 	// and must not turn it back on for the project (ReviewAgainstTaskEffective);
 	// a written false is the switch.
 	ReviewAgainstTask *bool `yaml:"review_against_task,omitempty"`
+	// PersonalWorkspaceTokens is whether the personal half of a workspace's
+	// credentials is on for this member (R9 of docs/workspace-credentials/, WC6,
+	// D2972): true lets the workspace's service serve this project's people the
+	// Claude token each of them stored at the workspace, ahead of the shared
+	// entries a run is admitted to, and false turns it off. It travels the
+	// triage switch's way and for the floor's reason: the switch decides whether
+	// a person's own subscription is drawn on instead of the workspace's shared
+	// and paid ones, so a launcher who could write it into the runs bucket's
+	// shared file would be moving every teammate of the project onto a spend the
+	// owner's own statement is about. Shared nils it and ParseShared refuses the
+	// key.
+	//
+	// It is the local key the published node is written FROM and not the home
+	// the switch is read at: the workspace's service is the only enforcer and
+	// reads the member's PUBLISHED policy and nothing on the member's disk
+	// (U8, settled by C1). The member's admin sets it with `fugaro settings set`
+	// — a boolean in the machine's own config is the generic path's, exactly as
+	// triage's is — and the member's `fugaro update` carries it to the node.
+	//
+	// An absent key is OFF, and it is a pointer rather than a bool for the
+	// triage switch's reason: absent and false are one statement to every reader
+	// (projectpolicy.PersonalWorkspaceTokensOn reads an absent member as off), so
+	// only a written true has anything to say and the publisher omits the member
+	// when the answer is nil.
+	PersonalWorkspaceTokens *bool `yaml:"personal_workspace_tokens,omitempty"`
 	// Orchestrator is the owner's block of the orchestrator daemon's own
 	// guardrails (D1239, D1234): how many runs it may have running at once, how
 	// many it launches in one batch, the rate it may spawn at, and the model
@@ -3133,6 +3158,29 @@ func (c *Config) TriageEffective(published *bool) *bool {
 func (c *Config) ReviewAgainstTaskEffective(published *bool) *bool {
 	if c.ReviewAgainstTask != nil {
 		return c.ReviewAgainstTask
+	}
+	return published
+}
+
+// PersonalWorkspaceTokensEffective is the keep rule for the member's switch for
+// the personal half of a workspace's credentials, stated here beside the field
+// for the triage switch's reason (R9 of docs/workspace-credentials/, WC6,
+// D2972): this file's answer when it writes one, and the published node's
+// otherwise — so a machine whose config predates the key does not publish a
+// node that turns the personal half off for every run of the project. The cost
+// of the other reading is the switch's own: the member's admin turned the half
+// on for the whole project, and a publish from a teammate's machine whose config
+// never carried the key would silently take it away from every run.
+//
+// The answer is a pointer for the triage switch's reason read the other way
+// round: absent is OFF (projectpolicy.PersonalWorkspaceTokensOn reads an absent
+// member as off), so a written false and an absent key are one statement to the
+// enforcer, and the only statement the publisher must carry is a written true —
+// which it writes as a member, while a config and a node that both say nothing
+// publish no member at all.
+func (c *Config) PersonalWorkspaceTokensEffective(published *bool) *bool {
+	if c.PersonalWorkspaceTokens != nil {
+		return c.PersonalWorkspaceTokens
 	}
 	return published
 }
