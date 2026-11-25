@@ -623,6 +623,13 @@ const (
 	// two directions are stated there and nowhere else yet, and a document of
 	// the check's own would take the row over.
 	docReviewAgainstTask = "docs/review-against-task/implementation-plan.md"
+	// docWorkspaceCredentials is the document that states the personal half of
+	// a workspace's credentials and the member's own switch for it (R9, D2972).
+	// It is the work's plan, docTriage's reason: the key, its home on the
+	// published node and its off-when-absent default are stated there and
+	// nowhere else yet (its contract C1 fixes the key's spelling and its home),
+	// and a document of the personal half's own would take the row over.
+	docWorkspaceCredentials = "docs/workspace-credentials/implementation-plan.md"
 	// docABJobmax is the document that states the A/B reviewer arm's key (O12).
 	// It is the work's plan rather than a spec, for docOrchestrator's reason:
 	// the ask is named there and in the reconciliation that records the ruling,
@@ -1351,6 +1358,18 @@ var localRows = []Row{
 	// `true` overrides, and a written true is the check no repository may walk
 	// out of.
 	loc("review_against_task", "on: every review stage is handed the task its pull request was written for, and a written false is the project-wide default a repository's own true turns back on", "settings set", docReviewAgainstTask),
+	// The member's own switch for the personal half of a workspace's
+	// credentials (R9 of docs/workspace-credentials/, WC6, D2972) is the triage
+	// switch's shape once more: a local key the node is published from, whose
+	// owner is `settings set` for the triage row's reason — a boolean in the
+	// machine's own config is the generic path's. It is the member's admin's
+	// answer for the whole project, and the member's `fugaro update` is what
+	// carries it onto the node, where the workspace's service — the only
+	// enforcer — reads it. The absent key reads as OFF rather than as "none",
+	// because a reader would take "none" for a value the key does not have: off
+	// is what every member is before its admin sets it, which is D2972's own
+	// "off by default", so the sentence states it.
+	loc("personal_workspace_tokens", "off: the workspace's service serves this project's people no personal token and its runs are offered the shared entries as before, and a written true turns the personal half on", "settings set", docWorkspaceCredentials),
 	// The clone URLs the project's repositories clone from (settings spec
 	// §5.6, SD5, D842). The block moved out of the policy node and into the
 	// owner's local config, and `fugaro project clone-url` is the family that

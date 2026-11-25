@@ -36,6 +36,24 @@ func projectRecipesFixture(t *testing.T, f *cloudFixture, recipes map[string]str
 	}
 }
 
+// repoRecipeCopy publishes text as the project's copy of repo's recipe name
+// — the copy a launch of that repository resolves (D3303) — and returns the
+// copy name. A copy names itself, and the store refuses one whose file name
+// and its own name disagree, so the copy's name replaces the name the text
+// carries. It is the fixture's stand-in for the migration fugaro update
+// performs, and it makes the project store readable the way
+// projectRecipesFixture does.
+func repoRecipeCopy(t *testing.T, f *cloudFixture, repo, name, text string) string {
+	t.Helper()
+	copy := recipe.CopyName(name, "github", repo)
+	named := strings.Replace(text, "\nname: "+name+"\n", "\nname: "+copy+"\n", 1)
+	if named == text {
+		t.Fatalf("the recipe text does not name %s", name)
+	}
+	projectRecipesFixture(t, f, map[string]string{copy: named})
+	return copy
+}
+
 // writeBucketFile writes key into the fixture's file:// runs bucket.
 func writeBucketFile(t *testing.T, f *cloudFixture, key, text string) {
 	t.Helper()

@@ -506,7 +506,7 @@ These record where the build settled something the design left open. The authori
 ### 6.1 APIs, region and IAM
 
 - **APIs on the FP:** `firebase`, `firebasedatabase`, `firestore`, `firebaserules` (for Firestore rules) and `identitytoolkit` plus `securetoken` (for custom-token sign-in). `iamcredentials` must be enabled where the signer account lives.
-- **Regions (D4).** RTDB goes in `us-central1`: RTDB offers only `us-central1`, `europe-west1` and `asia-southeast1`, and a location can't be changed later. Firestore goes in `us-east5` (check 23 confirms the location is offered; there is no `nam5` fallback in the code, see D4) and can't be changed either.
+- **Regions (D4).** RTDB goes in `us-central1`: RTDB offers only `us-central1`, `europe-west1` and `asia-southeast1`, and a location can't be changed later. Firestore goes in `us-east5` (check 23 confirms the location is offered; there is no `nam5` fallback in the code, see D4) and can't be changed either. **This holds for an installation made before the location preference**: a database's location can't be changed, so such an installation keeps these where it made them, while a new one places both by its own region and place ([docs/location-preference/](../location-preference/README.md)).
 - **IAM.** Each grant is an `*_iam_member` in the Firebase root (§6.6). Every grant to a principal of the project is cross-project, onto the FP.
 
 | Principal | Grants |

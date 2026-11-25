@@ -1454,3 +1454,67 @@ func TestSharedNeverPublishesReviewAgainstTask(t *testing.T) {
 		t.Error("Shared/MergeShared cleared the switch on the config they were given")
 	}
 }
+
+// TestSharedNeverPublishesPersonalWorkspaceTokens: the member's switch for the
+// personal half of a workspace's credentials is the review-against-task switch's
+// case once more (R9 of docs/workspace-credentials/, WC6, D2972), and its own
+// reason is the reason the fence exists at all: what the key turns on is a
+// person's own token being served ahead of the shared entries the workspace pays
+// for, so a launcher — which can write the runs bucket's shared file — must not
+// be able to switch it on for every member of the project from a file it can
+// write. The key is refused by name before the file is parsed, the way the two
+// switches beside it are, and again on the decoded value, so a config that
+// arrived some other way cannot publish it either.
+//
+// The local config keeps its own copy: the switch is the member's admin's answer
+// for the whole project, published through the policy node, so dropping it from
+// the shared file must not touch the answer on the machine that wrote it.
+func TestSharedNeverPublishesPersonalWorkspaceTokens(t *testing.T) {
+	if !slices.Contains(sharedForbidden, "personal_workspace_tokens") {
+		t.Fatal("sharedForbidden does not name personal_workspace_tokens, so a shared file could switch the personal half on for every member")
+	}
+	_, err := ParseShared([]byte(validShared()+"personal_workspace_tokens: true\n"), sharedAnchor)
+	if err == nil {
+		t.Fatal("a published shared config carrying personal_workspace_tokens: was accepted")
+	}
+	for _, want := range []string{"personal_workspace_tokens", "never published", "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	on := true
+	c, err := localcfg.Parse([]byte(validShared() + "personal_workspace_tokens: true\n"))
+	if err != nil {
+		t.Fatalf("the fixture does not read back: %v", err)
+	}
+	if !sharedNeverPublished(c) {
+		t.Error("a decoded config carrying personal_workspace_tokens: is called publishable, so a shared file could carry the switch")
+	}
+	// The switch alone, so the arm that answered is the one this test is about
+	// and not another key the fixture happens to carry, and the control that
+	// keeps the predicate from being one that refuses everything.
+	if !sharedNeverPublished(&localcfg.Config{PersonalWorkspaceTokens: &on}) {
+		t.Error("only the personal-workspace-tokens switch is set, and the config is called publishable")
+	}
+	if sharedNeverPublished(&localcfg.Config{}) {
+		t.Error("a config carrying no section at all is called unpublishable, so the check is not the sections it names")
+	}
+	// The layer the shared file is written from, and the merge a launcher's
+	// copy is read through: both drop the switch and neither touches the
+	// config they were given.
+	for name, got := range map[string]*localcfg.Config{"shared": c.Shared(), "merged": localcfg.MergeShared(nil, c)} {
+		if got.PersonalWorkspaceTokens != nil {
+			t.Errorf("%s: personal_workspace_tokens = %v, want it dropped: a launcher may not turn the personal half on for the project", name, got.PersonalWorkspaceTokens)
+		}
+		out, err := got.Marshal()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if strings.Contains(string(out), "personal_workspace_tokens") {
+			t.Errorf("%s: the marshalled config carries the switch:\n%s", name, out)
+		}
+	}
+	if c.PersonalWorkspaceTokens == nil || !*c.PersonalWorkspaceTokens {
+		t.Error("Shared/MergeShared cleared the switch on the config they were given")
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"slices"
 	"strconv"
 	"time"
@@ -340,6 +341,150 @@ func markPauses(rows []runview.Row, resumers map[string]string, pauses pauseLook
 // Row.Run. Neither half can hold the separator — a slug is a bucket key and a
 // run id is digits, dashes and hex — so the join names exactly one pair.
 func pauseRowKey(slug, run string) string { return slug + "\x00" + run }
+
+// stampPause stamps one paused row with its pause, for a reader that holds a
+// single run and no listing (`diagnose`): the instant the service's own node
+// names, and the run of the repository whose task resumed it. It is markPauses
+// over a one-row listing, so the two facts degrade exactly as they do there —
+// a node this read could not see, and a chain nothing in the scan resumed,
+// leave the row with the word its own record carries and nothing invented
+// beside it.
+func stampPause(ctx context.Context, env *cloudEnv, row runview.Row, warn func(string, ...any)) runview.Row {
+	if row.Status != string(runstore.StatusPaused) {
+		return row
+	}
+	ref := rowRef(row)
+	pauses := pauseFactsFor(ctx, env, warn)
+	rows := []runview.Row{row}
+	markPauses(rows, resumersOf(ctx, env, ref, pauses, warn), pauses)
+	return rows[0]
+}
+
+// pauseResumerScan bounds the runs one single-run read asks about: the number of
+// the repository's runs, nearest in time to the pause's own resume instant, whose
+// task a `diagnose` of a paused run reads.
+//
+// A single-run read has no window of its own to take the resumer from, so it
+// makes one, and that instant is where the resumer is: the service refuses a
+// resume asked for before it, and the orchestrator's tick after it starts the
+// run whose task names the pause. The runs beside the instant are therefore the
+// ones worth asking, and a window that ran on to the repository's newest run
+// would grow with every run minted after the pause — a paused run's node is
+// never deleted and its instant is never bumped, so nothing ends that growth —
+// at one task read per run, on a read the console's Run screen makes when a
+// person opens a paused run.
+//
+// A scan that fills this many candidates without one of them naming the pause
+// stops there: the row keeps the word alone and one line says so. That is a
+// pause nothing resumed (a cancelled one, or an installation whose orchestrator
+// was down through the instant) and a repository that minted more than this many
+// runs around the instant alike, and in both the fact is absent rather than
+// invented — which is what a listing whose window holds no resumer draws too.
+const pauseResumerScan = 32
+
+// resumersOf is the resumer map markPauses reads, for a reader that holds one
+// run and no listing: the repository's runs whose own task names the paused run
+// under `resumes` (task.Spec.Resumes, contract-pause R17). It is the scan
+// `runs ls` makes over its window, narrowed to the window a resumer of this
+// pause can be in and bounded by pauseResumerScan.
+//
+// That window starts an hour under the pause's own resume instant: a resume
+// asked for before it is refused (contract-pause, "Resuming"), so no resumer can
+// have been launched before then, and the hour is the allowance for clock
+// difference the listing's execution read makes — an id's mint time is the
+// launcher's clock and the instant is the service's. Within it the scan reads
+// the candidates pauseResumerCandidates picks, oldest first, and the first id
+// that names the pause wins.
+//
+// A pause whose node this read could not see has no instant to bound the scan
+// by, and no scan is made: the row then carries the word alone, which is what a
+// listing whose window holds no resumer draws.
+func resumersOf(ctx context.Context, env *cloudEnv, ref task.Ref, pauses pauseLookup, warn func(string, ...any)) map[string]string {
+	if pauses == nil {
+		return nil
+	}
+	f, ok := pauses(ref.Slug, ref.RunID)
+	if !ok || f.resumeAt.IsZero() {
+		return nil
+	}
+	ids, err := runstore.ListRunIDs(ctx, env.bucket.Bucket, ref.Slug, f.resumeAt.Add(-time.Hour))
+	if err != nil {
+		if warn != nil {
+			warn("warning: run %s/%s ended paused and the runs that could have resumed it could not be listed (%s); the run that resumed it is not named\n",
+				safetext.Field(ref.Slug), task.ShortRun(oneLine(ref.RunID)), safetext.OneLine(err.Error()))
+		}
+		return nil
+	}
+	candidates, stopped := pauseResumerCandidates(ids, f.resumeAt)
+	for _, id := range candidates {
+		if id == ref.RunID {
+			continue
+		}
+		// A task this scan cannot read is not this diagnosis's failure: the
+		// run is one of the repository's, its own read is where that belongs,
+		// and the row loses only the resumer it might have been.
+		spec, err := runstore.Open(env.bucket.Bucket, ref.Slug, id).ReadTask(ctx)
+		if err != nil || spec == nil || spec.Resumes != ref.RunID {
+			continue
+		}
+		return map[string]string{pauseRowKey(ref.Slug, ref.RunID): id}
+	}
+	if stopped && warn != nil {
+		warn("warning: run %s/%s ended paused and the %d runs nearest its resume instant name no resume of it; the run that resumed it is not named\n",
+			safetext.Field(ref.Slug), task.ShortRun(oneLine(ref.RunID)), pauseResumerScan)
+	}
+	return nil
+}
+
+// pauseResumerCandidates is what one scan will ask: the pauseResumerScan ids of
+// the window whose mint time is nearest the pause's own resume instant, oldest
+// first, and whether the window held more than that.
+//
+// The ids come newest first (ListRunIDs' order) and this is the only order the
+// bound leaves free: a resume the service granted is the run its own tick after
+// the instant started, so the runs beside the instant are the ones a bounded
+// scan spends its reads on, and a run minted an hour later is read only where
+// the instant's own neighbourhood is thinner than the bound. Two runs an equal
+// distance away are broken by the id, so two reads of one repository ask the
+// same runs; which of the runs that name a pause is answered does not depend on
+// the order, because the grant is single-use (contract-pause, "Resuming" — once).
+func pauseResumerCandidates(ids []string, resumeAt time.Time) ([]string, bool) {
+	if len(ids) <= pauseResumerScan {
+		out := slices.Clone(ids)
+		slices.Sort(out)
+		return out, false
+	}
+	nearest := slices.Clone(ids)
+	slices.SortFunc(nearest, func(a, b string) int {
+		switch da, db := pauseRunGap(a, resumeAt), pauseRunGap(b, resumeAt); {
+		case da < db, da == db && a < b:
+			return -1
+		case da > db, da == db && a > b:
+			return 1
+		}
+		return 0
+	})
+	out := nearest[:pauseResumerScan]
+	slices.Sort(out)
+	return out, true
+}
+
+// pauseRunGap is how far a run's mint time is from the pause's own resume
+// instant, either way: the ordering key above. An id whose mint time cannot be
+// read is as far as a run can be — every id of the window has one (ListRunIDs
+// parses each before it keeps it), so this is a shape the scan never meets and
+// answers without inventing a neighbour for it.
+func pauseRunGap(id string, at time.Time) time.Duration {
+	t, err := runstore.RunTime(id)
+	if err != nil {
+		return time.Duration(math.MaxInt64)
+	}
+	d := t.Sub(at)
+	if d < 0 {
+		return -d
+	}
+	return d
+}
 
 // pauseLookupWith is pauseFactsFor over a client the caller already holds: the
 // daemon's own, which is the same database the state node lives in

@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/policy"
@@ -29,6 +30,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -167,11 +169,13 @@ func projectPolicyRead(ctx context.Context, lc *localcfg.Config) (*projectpolicy
 // ShapeFreeFloor up (projectpolicy's doc on that floor is the argument), and
 // nothing is written back here.
 //
-// It is deliberately not the memoized read (policyReadOnce): that one is the
-// read the gates and the launch decide by, where a node no version of this
-// reader understands is a refusal rather than a document to enforce, and it is
-// shared by a dozen callers whose answer must not change. This read is the
-// repository stage's alone, so an update reads the node one more time.
+// A launch's memo does not carry (policyReadOnce.carry): that one is the read
+// the gates and the launch decide by, where a node no version of this reader
+// understands is a refusal rather than a document to enforce. The converging
+// door's memo does, and it is this read, so every stage of one `fugaro update`
+// answers from the node the same run's policy stage is about to write — the
+// stages that store a secret, the Readiness gate and the repository stage
+// included.
 func repoPolicyRead(ctx context.Context, lc *localcfg.Config) (*projectpolicy.Policy, bool, error) {
 	return policyReadWith(ctx, lc, projectpolicy.ReadCarriedForwardShapeFree)
 }
@@ -255,16 +259,18 @@ func policyReadErr(err error) error {
 // on one path — the gate before anything of it exists, and the mint decision —
 // where two reads could disagree about the policy a single launch is admitted
 // against, and the Readiness gate planRepo reads shares that one answer with
-// every other caller of the run. The repository stage's own read is deliberately
-// not this one (repoPolicyRead carries a predecessor forward, which this read
-// must not do), so a run that converges a checkout reads the node one time more
-// than the memo alone would. The answer cannot change under any of them (and
-// where it could, the run reads the node itself and is the one that counts).
+// every other caller of the run. A launch is not marked (carry below) and reads
+// the node strictly, which is what the memo must do for a decision. A run that
+// converges a checkout is marked, and every caller of that run then reads the
+// node the same run's policy stage is about to write, so the read is one node's
+// answer from the first stage to the last. The answer cannot change under any of
+// them (and where it could, the run reads the node itself and is the one that
+// counts).
 //
-// What is memoized is the raw read, projectPolicyRead's result with
-// projectpolicy's typed errors intact, because two callers word the same error
-// differently: the launch gate names the release a policy's version is from
-// (policySkewRefusal), and every other caller wants policyReadErr.
+// What is memoized is the raw read, with projectpolicy's typed errors intact,
+// because two callers word the same error differently: the launch gate names the
+// release a policy's version is from (policySkewRefusal), and every other caller
+// wants policyReadErr.
 type policyReadOnce struct {
 	// mu makes the memo safe for the goroutines a batch of launches shares one
 	// cloudEnv with (a best-of-N launch, or the concurrent same-run-ID test):
@@ -274,16 +280,35 @@ type policyReadOnce struct {
 	p     *projectpolicy.Policy
 	found bool
 	err   error
+	// carry makes the read the converging door's own: the node is read as the
+	// same run's policy stage is about to write it
+	// (projectpolicy.ReadCarriedForwardShapeFree, repoPolicyRead) instead of
+	// refused where it is a predecessor or says the word the budget mode's
+	// vocabulary dropped. It is what the upgrade's HARD RULE needs of every
+	// stage of that run: the node the release behind published is exactly the
+	// one this release's strict reader refuses, and the same run is the one that
+	// rewrites it — a stage that stopped, or answered "no policy", would leave
+	// the operator a second command, or would store a secret in the wrong place
+	// for a repository the node admits (initsecrets' projectScope).
+	//
+	// It is set by initRun.policyMemo, the one way a run that converges reaches
+	// this memo, and never by a launch: a launch decides by the node and must
+	// refuse one no version of this reader understands (docs on repoPolicyRead).
+	carry bool
 }
 
-// read is the memoized projectPolicyRead: the policy, whether one was
-// published, and the read's own error.
+// read is the memoized read: the policy, whether one was published, and the
+// read's own error.
 func (p *policyReadOnce) read(ctx context.Context, lc *localcfg.Config) (*projectpolicy.Policy, bool, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if !p.done {
 		p.done = true
-		p.p, p.found, p.err = projectPolicyRead(ctx, lc)
+		if p.carry {
+			p.p, p.found, p.err = repoPolicyRead(ctx, lc)
+		} else {
+			p.p, p.found, p.err = projectPolicyRead(ctx, lc)
+		}
 	}
 	return p.p, p.found, p.err
 }
@@ -880,6 +905,35 @@ func (e *cloudEnv) serviceAuthGate(ctx context.Context, slug string, spec *task.
 	return checkImageSince(ctx, e, slug, spec, kind, serviceAuthSince, subject, knows, "", warn)
 }
 
+// chainRoutingGate refuses a launch of a repository whose project publishes a
+// routing table where a model the run can call has no entry (R22, D3172): such
+// a run has no source to be served from at all, and it is refused here — before
+// the claim and before the task, like every gate in this file — rather than by
+// the run that cannot start.
+//
+// It reads the project's table (the local config's `model_routing`, the
+// document `fugaro update` publishes from, CS11) and the models the rungs can
+// choose, the same two the launch's grant is read from (launchRunModels), so
+// the sources asked for and the refusal are one answer.
+//
+// A repository the table does not serve is not judged either: a project that
+// publishes no table and one whose every source is admitted to another
+// repository are one answer here (infra.ChainPlanFor), because such a run goes
+// out on the release-1 bridge exactly as it did (O7, R25) and a model no entry
+// matches there is the config's own refusal to make. The table governs a run's
+// models only where it serves the run.
+func (e *cloudEnv) chainRoutingGate(ctx context.Context, spec *task.Spec) error {
+	if e.lc == nil || !infra.ChainPlanFor(e.lc, spec.Repo).Serves {
+		return nil
+	}
+	for _, model := range launchRunModels(ctx, e, spec) {
+		if _, err := routing.Resolve(e.lc.ModelRouting, model); errors.Is(err, routing.ErrNoEntry) {
+			return userErr("no model_routing entry matches %s: this run has no source to be served from, so add one with fugaro routing set", oneLineCLI(model))
+		}
+	}
+	return nil
+}
+
 // switchedServiceAuth is the auth a switched repository's run reaches the
 // credentials service for its model calls under, "" where this launch's run is
 // not one: the document's auth is one the flip list carries
@@ -1161,34 +1215,9 @@ func (e *cloudEnv) mintBudgetToken(ctx context.Context, slug string, spec *task.
 	if err != nil {
 		return nil, err
 	}
-	// The identity window is the target job's own timeout (a long job
-	// elsewhere must not lengthen it). On a shared project job the launch
-	// resolved it already (project_job.go, from the profile's timeout_class —
-	// the same number the job was deployed with, so there is nothing to read
-	// back from the API). Elsewhere it is the job a named run actually starts,
-	// gcp.WorkflowVariant(spec.Workflow, spec.OAuthToken), not the bare
-	// workflow — the two can have different timeouts (review finding: this
-	// used to read the default account's job's timeout for every named run).
-	var jobTimeout time.Duration
-	switch {
-	case job != nil:
-		jobTimeout = job.Timeout
-	default:
-		if variant, ok := jobWorkflow(spec.Workflow, spec.OAuthToken); ok {
-			jobTimeout, err = e.be.TaskTimeout(ctx, slug, variant)
-		} else {
-			err = backend.ErrNotFound // not a workflow name: no job can match it either
-		}
-		if errors.Is(err, backend.ErrNotFound) {
-			// No such job: the launch itself reports that, after the mint.
-			jobTimeout, err = backend.DefaultTaskTimeout, nil
-		}
-		if err != nil {
-			return nil, remote(err)
-		}
-	}
-	if o := launchTimeoutOf(spec); o > 0 {
-		jobTimeout = max(jobTimeout, o+backend.TaskTimeoutSlack)
+	jobTimeout, err := e.launchIdentityWindow(ctx, slug, spec, job)
+	if err != nil {
+		return nil, err
 	}
 	// The key is drawn before the mint, so a draw that fails costs no
 	// signature and leaves nothing to clean up. Its error names no value
@@ -1219,7 +1248,11 @@ func (e *cloudEnv) mintBudgetToken(ctx context.Context, slug string, spec *task.
 	tok, err := token.Mint(ctx, signer, claims)
 	switch {
 	case errors.Is(err, token.ErrNotMinter):
-		return nil, userErr("%v", err)
+		// %w and not %v, so the refusal the launcher's own caller reads is
+		// still the minter's: a bridged launch tells this one case apart from
+		// every other mint failure and rewraps it (launchMinterRefusal), and
+		// the sentence a person reads is the same either way.
+		return nil, userErr("%w", err)
 	case errors.Is(err, token.ErrUnavailable):
 		return nil, remote(err)
 	case err != nil:
@@ -1243,6 +1276,50 @@ func (e *cloudEnv) mintBudgetToken(ctx context.Context, slug string, spec *task.
 		return nil, remote(err)
 	}
 	return k, nil
+}
+
+// launchIdentityWindow is how long this run's identity may live, measured from
+// the moment it is taken: the target job's own timeout, floor'd by the
+// launch's own timeout.
+//
+// It is the ticket's MaxRuntimeSeconds and the sealed token's FX, in one
+// function rather than two spellings, because the two mechanisms are one
+// identity (R7): a launch that asked the service for one window and sealed the
+// other would hand a bridged run an identity of a different length than the
+// release beside it gives the same launch.
+//
+// The window is the target job's own timeout (a long job elsewhere must not
+// lengthen it). On a shared project job the launch resolved it already
+// (project_job.go, from the profile's timeout_class — the same number the job
+// was deployed with, so there is nothing to read back from the API). Elsewhere
+// it is the job a named run actually starts,
+// gcp.WorkflowVariant(spec.Workflow, spec.OAuthToken), not the bare workflow —
+// the two can have different timeouts (review finding: this used to read the
+// default account's job's timeout for every named run).
+func (e *cloudEnv) launchIdentityWindow(ctx context.Context, slug string, spec *task.Spec, job *launchProjectJob) (time.Duration, error) {
+	var jobTimeout time.Duration
+	var err error
+	switch {
+	case job != nil:
+		jobTimeout = job.Timeout
+	default:
+		if variant, ok := jobWorkflow(spec.Workflow, spec.OAuthToken); ok {
+			jobTimeout, err = e.be.TaskTimeout(ctx, slug, variant)
+		} else {
+			err = backend.ErrNotFound // not a workflow name: no job can match it either
+		}
+		if errors.Is(err, backend.ErrNotFound) {
+			// No such job: the launch itself reports that, after the mint.
+			jobTimeout, err = backend.DefaultTaskTimeout, nil
+		}
+		if err != nil {
+			return 0, remote(err)
+		}
+	}
+	if o := launchTimeoutOf(spec); o > 0 {
+		jobTimeout = max(jobTimeout, o+backend.TaskTimeoutSlack)
+	}
+	return jobTimeout, nil
 }
 
 // jobBackendEnvReader is the backend's read of a deployed job's whole
@@ -1282,12 +1359,7 @@ func (e *cloudEnv) budgetJobBackend(ctx context.Context, slug string, spec *task
 	if !ok {
 		return nil
 	}
-	name := ""
-	if job != nil {
-		name = job.Name
-	} else if variant, ok := jobWorkflow(spec.Workflow, spec.OAuthToken); ok {
-		name = gcp.JobName(slug, variant)
-	}
+	name := launchJobName(slug, spec, job)
 	if name == "" {
 		return nil
 	}
@@ -1300,6 +1372,26 @@ func (e *cloudEnv) budgetJobBackend(ctx context.Context, slug string, spec *task
 	}
 	return userErr("the job %s this launch would start carries no budget database (%s is not set in its environment), and it was deployed by a fugaro update run for %s from before this installation had a database: a repository's job is re-applied only by an update run for that repository, so the budget identity this launch would mint would be one the run cannot use. Nothing is launched: run fugaro update --repo in %s's checkout, which re-deploys the job with the database, then launch the run again",
 		name, runner.RTDBURLEnv, spec.Repo, spec.Repo)
+}
+
+// launchJobName is the deployed job this launch's execution lands on: the
+// shared project job the launch resolved by name, else the repository's own job
+// derived from the workflow variant exactly as the backend derives it (gcp's
+// jobFor, from the same pair). "" where this launch names a workflow that is no
+// job name, which the launch's own steps refuse.
+//
+// Two readers hold it — the mint's budget-database check and the identity ask's
+// own (executionServesTheService) — because both ask a deployed job's
+// environment about the run they are about to start, and a second derivation
+// would be a second answer to which job that is.
+func launchJobName(slug string, spec *task.Spec, job *launchProjectJob) string {
+	if job != nil {
+		return job.Name
+	}
+	if variant, ok := jobWorkflow(spec.Workflow, spec.OAuthToken); ok {
+		return gcp.JobName(slug, variant)
+	}
+	return ""
 }
 
 // sealMarker is the marker entry of a launch that minted: the variable's name

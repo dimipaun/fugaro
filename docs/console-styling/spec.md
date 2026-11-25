@@ -224,11 +224,12 @@ not `ok`**: `startConsole` appends the version-skew notice to the same mount fir
 | Installation switcher | `div.console-switcher` → `button.console-switcher-button` (`span.console-switcher-dot` with `data-state` and `role="img"`, `span.console-switcher-name`, `span.console-switcher-version`; `aria-haspopup`, `aria-expanded`, `aria-controls`), `div.console-switcher-menu` (`hidden` while folded) → `section.console-installation`, `aside.console-rail` | the installation the console reads, its CLI version and mode, and the status dot carrying the open row's rail word. The menu holds the installation line (the CLI's full path) and the rail's tree; Escape and a click outside fold it |
 | Fleet gauge | `div.console-gauge` (`role="group"`) → `span.console-gauge-label`, `span.console-gauge-notional`, `svg.console-gauge-bar` (`rect.console-gauge-track`, `rect.console-gauge-fill`), `span.console-gauge-cap` | GLOBAL, today's notional spend, the counted dollars against the global daily cap as the fill's `width` attribute (no notional segment: notional counts toward no cap), and the cap. `n/a` until a read lands, and when the mode withholds caps |
 | Halt fleet | `button.console-halt` with `aria-disabled="true"` | drawn as designed and not performed (`src/renderer/writes.ts`): no listener, no IPC, no spawn entry. The console's one approved write is launch-from-console |
-| Installation rail | `aside.console-rail` → `div.console-rail-head` (`p.console-rail-title`), `div.console-rail-list` → one `button.console-rail-row` per installation it draws (`div.console-rail-nameline` → `span.console-rail-name` and, for an installation with an issue, `span.console-rail-warning` with `role="img"` and an `aria-label`; `span.console-rail-project`, `span.console-rail-state` with `data-state`, `span.console-rail-spend`), `p.console-rail-empty` (the line drawn, unhidden, when the rail has no row), `div.console-rail-add` → `button.console-rail-add`, `p.console-rail-hint`; the ARIA is `role="tablist"` on the list, `role="tab"` and `aria-selected` on its rows | the rail's tree, drawn inside the switcher's menu (§4.1): the header row, one tab per row, **one row per installation the CLI listed or this console holds, readable or not** (§4.1, owner's design ruling of 2026-10-25), the add row and the hint. **Fourteen hooks on fifteen elements** — `console-rail-add` names the foot row and its button both — and a rule selects no other. `data-state` on the state span is the word it already draws, repeated as the tone's hook |
+| Installation rail | `aside.console-rail` → `div.console-rail-head` (`p.console-rail-title`), `div.console-rail-list` → one `button.console-rail-row` per installation it draws (`div.console-rail-nameline` → `span.console-rail-name` and, for an installation with an issue, `span.console-rail-warning` with `role="img"` and an `aria-label`; `span.console-rail-project`, `span.console-rail-state` with `data-state`, `span.console-rail-spend`), `p.console-rail-empty` (the line drawn, unhidden, when the rail has no row), `div.console-rail-add` → `button.console-rail-add` and, when the rail has a row, `button.console-rail-add-project`, `p.console-rail-hint`; the ARIA is `role="tablist"` on the list, `role="tab"` and `aria-selected` on its rows | the rail's tree, drawn inside the switcher's menu (§4.1): the header row, one tab per row, **one row per installation the CLI listed or this console holds, readable or not** (§4.1, owner's design ruling of 2026-10-25), the add row and the hint. **Fifteen hooks on sixteen elements** — `console-rail-add` names the foot row and its button both, and `console-rail-add-project` is the foot's second door (the console-improvements plan, task SW3c) — and a rule selects no other. `data-state` on the state span is the word it already draws, repeated as the tone's hook |
 | Installation line | `section.console-installation`, `data-installation`, `data-mode` | `data-installation="chosen"` with `p.installation-project`, `p.installation-binary`, `p.installation-version` and `data-mode`; `data-installation="none"` with `p.installation-none`; `data-installation="unreadable"` with `p.installation-unreadable`; and `p.installation-store-refusal` |
 | Navigation | `nav.console-views` → one `button.console-view` per view | `type="button"`, at least 44 px tall (the redesign draws links; the renderer writes no `href`, so they stay buttons), `data-view="live\|graph\|spend\|projects\|coordinator"`, `aria-current="page"` on the view on screen and on no other, label as text |
 | Page | `main.console-page` → `div.console-panel` | the page scrolls and the header does not; the panel is the page container (`max-width: var(--page-max)`, centred, padding 28 px 32 px 64 px) and holds the mounted screen's root, the installation issue view, or the onboarding view |
 | Onboarding | `section.installation-onboarding` → `h1.installation-onboarding-title`, `p.installation-onboarding-body`, `p.installation-onboarding-reason` (the CLI resolution's own sentence, only when no CLI was found), `code.installation-onboarding-command` | drawn by `drawOnboarding` into the panel when the machine has no installation at all: the picker's own words for the two onboarding screens (`ONBOARDING_COPY`) and the command the main process names (`src/main/onboarding.ts`). Nothing is read |
+| Add project | `section.installation-add-project` → `h1.installation-add-project-title`, `p.installation-add-project-lead`, `button.installation-add-project-cancel`, and the wizard's own tree inside it (§2.1's `console-wizard` table) | drawn by `drawAddProject` into the panel for a console that already has an installation and was asked for a second one (SW3c, O7): the rail's second foot door (`button.console-rail-add-project`) and the picker window's own `addProject` operation both land here. The same wizard the first run mounts, in place of the installation the console is reading, and Cancel hands that view back. The run itself is the main process's (`wizardrun.ts`) |
 | Installation issue | `section.installation-issue` → `h1.installation-issue-headline`, `p.installation-issue-sentence`, `code.installation-issue-command`, `details.installation-issue-details` (`summary.installation-issue-summary`, `pre.installation-issue-lines`), `div.installation-issue-actions` (`button.installation-issue-choose`, `button.installation-issue-remove`, `button.installation-issue-reveal`, `p.installation-issue-checkout-lead`, `select.installation-checkout-select`, `button.installation-issue-checkout`) | drawn by `drawIssue` into the panel when a rail row with an issue is clicked, or at boot when no installation can be read (§4.1): the installation's name, **one plain sentence first** with the exact command, the CLI's own text behind the `details` disclosure, and the row's actions. No banner. The `data-issue` it carries is the main process's classification and no rule selects it. **`select.installation-checkout-select` is the one hook here drawn in two places** (`renderCheckoutSelect`, `src/renderer/checkout.ts`): this row's actions and the Graph's no-checkout card, which offers the same list of the installation's re-validated, enrolled checkouts. It is one rule in `screens.css` and not two, and `button.installation-issue-checkout` beside it is the button that sends what the menu has selected |
 | Reduced/refused notice | `section.notice` with `console-skew`, drawn by `renderVersionSkew` through `renderNotice` into the mount, **first of all** — before the header and the page: `data-severity`, `span.notice-mark`, `div.notice-body` → `h1\|h2.notice-title`, `p.notice-reason`, `button.notice-toggle`, `div.notice-details` → `dl.notice-facts` → `dt`/`dd`, and `button.notice-dismiss` when it can be put away | see §2.8 and §2.14 |
 | Reduced-mode chip | `button.console-reduced-chip` (`data-severity="warning"`, `aria-describedby`) with `span.console-reduced-chip-reason` beside it, in the header **after** `div.console-switcher` and before `nav.console-views` | drawn in the reduced mode and no other: the mode's headline for a reader who reaches the chip, and what brings a dismissed notice back (§2.14) |
@@ -290,8 +291,9 @@ The default screen: one glance at what is spending money now. Regions in tree or
 header → total block → `div.live-repos` of `section.live-repo`, each with a meters row (a
 cap bar and the two sparklines, `5 min` and `1 h`), a kill banner and a `div.live-runs` holding a
 `table.live-table` of `tr.live-run` → an optional
-`div.live-orphans` → **`section.live-review`**, the review inbox (v2 plan Task V2.7.1,
-design F26). **The header is the title row**: `header.live-header` is one wrapping row whose
+`div.live-orphans` → an optional **`section.live-paused`**, the runs a pause suspended
+(model-credentials-routing plan **VS3**, contract-pause R15) → **`section.live-review`**, the
+review inbox (v2 plan Task V2.7.1, design F26). **The header is the title row**: `header.live-header` is one wrapping row whose
 cells share a baseline — `h1.live-project` (the project's name, at the heading size),
 then the connection as `span.live-connection-dot` beside the cell that carries its word
 (`span.live-connection`, with `span.live-connection-age` and an optional
@@ -304,9 +306,9 @@ the lost ones, and the neutral `--decor` for a state this build does not know), 
 word beside it is always the state the CLI reported, so no state is carried by colour
 alone (§3.5). **The stale banner and the last-read line are the header's last children, not
 siblings after the repositories**: `header()` appends them itself, inside the `header` it
-builds, and `renderLive` appends exactly five things to the
-root — the header, the total, `div.live-repos`, the optional `div.live-orphans` and
-`section.live-review`.
+builds, and `renderLive` appends exactly six things to the
+root — the header, the total, `div.live-repos`, the optional `div.live-orphans`, the optional
+`section.live-paused` and `section.live-review`.
 A rule that puts the banner below the repos list is a rule that selects it in a place it
 never occupies. **The orphan box holds the same `table.live-table` as a repository panel
 does**: `runTable` draws the table and no box around it, so each caller draws the box that
@@ -395,6 +397,7 @@ signal that would earn it (a note for the not-yet-read state) is not in this doc
 | Repository | `live-repos`, `live-repo` (a `section` with an accessible name — "Project runs"), `live-repo-head`, `live-repo-label`, `live-repo-name`, `live-repo-figures`, `live-repo-figure`, `live-repo-figure-label`, `live-repo-sep`, `live-repo-counted`, `live-repo-cap`, `live-repo-notional`, `live-repo-percent`, `live-repo-meters`, `live-halt` (a `button`, drawn disabled), `live-burn-rate`, `live-meter` (one sparkline and its window word: two per repository), `live-meter-word`, `live-burn`, `live-burn-bar`, `live-hour` (the console's own hour), `live-hour-bar`, `live-burn-unit`, `live-runs`, `live-orphans` |
 | Run row | `live-table` (the `table` itself), `live-table-head` (one `th` per column), `live-run` (a `tr`), `live-run-id`, `live-run-title`, `live-run-mode`, `live-pipeline`, `live-pipeline-segments`, `live-pipeline-segment` (one `li` per segment, keyed by `data-mark`), `live-run-when`, `live-run-dot`, `live-run-word`, `live-run-stage`, `live-run-round`, `live-run-state`, `live-run-coder`, `live-run-models`, `live-run-auth`, `live-run-spend`, `live-run-age`, `live-run-by` (the `td` of the launcher's column, the one `watch` prints), `live-run-started-by` (a `span` drawing the launcher in the CLI's own short form, and none at all when the record carries none), `live-run-status`, `live-run-chip` (the state's own word), `live-run-pip` (the lost chip's decorative mark), `live-run-flag` (one per flag **except** a flag whose name is the chip's own word — the health `lost` and the bucket `queued` — which joins the chip's `title` instead, §2.9), `live-run-contradiction`, `live-reap` (a `button`, drawn disabled and only on a lost run) |
 | Condition classes on a row | `live-run-queued`, `live-run-stuck`, `live-run-lost`, `live-run-done` |
+| Paused runs (**VS3**, model-credentials-routing) | `live-paused` (the `section`, drawn only when the feed carries a `finished[]` row whose status is `paused`), `live-paused-list`, `live-paused-row` (a `li`; its whole id is on `live-paused-run-id`, so the row is a door), `live-paused-state` (the word `PAUSED`), `live-paused-repo`, `live-paused-run-title`, `live-paused-resume`, `live-paused-resume-word` (`expected resume`), `live-paused-resume-at` (the instant, or the `n/a` mark with its reason in `title`), `live-paused-by`, `live-paused-by-word` (`resumed by`), `live-paused-by-id` (the resuming run's ending, with `data-run-id` — the second door of the row — or the `n/a` mark and **no attribute** when nobody resumed it) |
 | Review inbox | `live-review`, `live-review-icon` (the decorative mark, an `svg` whose two shapes are `live-review-icon-box` and `live-review-icon-check`), `live-review-title` (the CLI's one line, `Ready for your review (N)`, drawn as **one text run** — `reviewSection` writes the words, the parentheses and the count together, so no rule can space them apart), `live-review-list`, `live-review-row`, `live-review-repo`, `live-review-number`, `live-review-url`, `live-review-run-title`, `live-review-age`, `live-review-run-id`, `live-review-empty`, `live-review-note`, `live-review-capped`, `live-review-dropped` (the count of rows the cap left out), `live-review-of`, `live-review-total` |
 | Kill banner | `live-kill`, `live-kill-word`, `live-kill-by`, `live-kill-at`, `live-kill-reason` |
 | Stale / recency | `live-stale`, `live-stale-word`, `live-stale-silence`, `live-stale-threshold`, `live-stale-at`, `live-since`, `live-since-word`, `live-since-at`, `live-since-age` |
@@ -960,7 +963,8 @@ row that used to repeat it went with the run list.
 
 ### 2.6 Run detail — `console/src/renderer/screens/run.ts`
 
-Reached from a `live-run` row. The header, its status strip and its halt banner sit above
+Reached from a `live-run` row. The header, its status strip — with the paused line a paused
+run draws under it (model-credentials-routing plan **VS3**) — and its halt banner sit above
 the two columns: the main column (stages → spend by stage → tolerated by the mode →
 review levels → diagnosis → logs → replay) beside the aside (ledger → pull request), with
 the warnings after both. Two steps drew it — 3a the header, at a glance at the run, the timeline and
@@ -971,6 +975,7 @@ the log window, 3b the ledger, the pull request and the replay scrubber.
 | Breadcrumb | `run-crumb`, `run-crumb-live`, `run-crumb-sep`, `run-crumb-repo`, `run-crumb-run` |
 | Header | `run-header`, `run-head`, `run-id`, `run-retry`, `run-meta`, `run-meta-field`, `run-meta-label`, `run-meta-value`, `run-meta-absent`, `run-repo`, `run-workflow`, `run-recipe`, `run-branch`, `run-account`, `run-requested-by`, `run-started-by`, `run-rigor`, `run-rigor-word`, `run-rigor-mode`, `run-rigor-from-word`, `run-rigor-from`, `run-rigor-area`, `run-rigor-area-name`, `run-rigor-area-mode` |
 | Status strip | `run-strip`, `run-strip-cell`, `run-strip-label`, `run-strip-value`, `run-status`, `run-outcome`, `run-stage`, `run-flags`, `run-settled`, `run-flags-state`, `run-stale`, `run-follow-up` |
+| Paused line (**VS3**, model-credentials-routing) | `run-paused` (drawn only when the record's status is `paused`), `run-paused-word` (`PAUSED`), `run-paused-at`, `run-paused-at-word` (`expected resume`), `run-paused-at-value` (the instant, or the `n/a` mark with its reason in `title`), `run-paused-by`, `run-paused-by-word` (`resumed by`), `run-paused-by-value` (the resuming run's ending, with `data-run-id` — the cell's door — or the `n/a` mark and **no attribute** when nobody resumed it) |
 | Halt banner | `run-halt`, `run-halt-word`, `run-halt-reason`, `run-halt-where`, `run-halt-scope-word`, `run-halt-scope`, `run-halt-sep`, `run-halt-at-word`, `run-halt-at`, `run-halt-detail` |
 | Layout | `run-layout`, `run-main`, `run-aside` |
 | Ledger | `run-ledger`, `run-ledger-hero`, `run-ledger-word`, `run-ledger-total-value`, `run-ledger-bar`, `run-ledger-rail`, `run-ledger-billed`, `run-ledger-estimate`, `run-ledger-legend`, `run-ledger-key`, `run-ledger-swatch`, `run-ledger-swatch-billed`, `run-ledger-swatch-estimate`, `run-ledger-key-word`, `run-ledger-model-value`, `run-ledger-compute-value`, `run-ledger-notional`, `run-ledger-notional-value`, `run-number`, `run-panel-title` |
@@ -987,11 +992,15 @@ the log window, 3b the ledger, the pull request and the replay scrubber.
 | Warnings | `run-warning` |
 
 `data-*`: `data-theme`, `data-tone` on the status strip's `span.run-outcome`
-(`success`/`failure`, written by the screen and never by a reader of the row), and
-`data-href` on a log link (written by `putLink`, never the navigating attribute).
+(`success`/`failure`, written by the screen and never by a reader of the row), `data-href` on
+a log link (written by `putLink`, never the navigating attribute), and `data-run-id` on the
+paused line's `span.run-paused-by-value` — **another** run's whole id, which is what the cell
+opens (VS3); the run this screen is about never carries one.
 
 States: terminal / still running / settled / stale draft / follow-up (header flags, as
-text); halted (`div.run-halt`, the word `HALTED`); the outcome's tone (`span.run-outcome`
+text); halted (`div.run-halt`, the word `HALTED`); paused (`div.run-paused`, the word
+`PAUSED` with the instant the resume is due and the run that performed it — §2.3's paused
+section draws the same run on Live); the outcome's tone (`span.run-outcome`
 with `data-tone`: `success` for the three outcomes of a run that delivered what it
 promised -- `ready`, `reviewed`, `artifacts` -- and `failure` for `draft`, which runstore's
 own `StatusFailed` calls a draft PR; the word is drawn either way and the tone only ever
@@ -1891,7 +1900,7 @@ setup may take is not what a read in flight should look like here.
 
 | Hook | Element | What it is |
 |---|---|---|
-| `console-wizard` | the screen's root, a `section` | the questions and the attempts and nothing else. No heading, no card, no `h1`: the view that mounts it owns the title, and SW3c's dialog will draw its own. It carries `aria-busy="true"` while an attempt is in flight, and never `data-busy` |
+| `console-wizard` | the screen's root, a `section` | the questions and the attempts and nothing else. No heading, no card, no `h1`: the view that mounts it owns the title, and the Add project screen (§2.1) draws its own. It carries `aria-busy="true"` while an attempt is in flight, and never `data-busy` |
 | `console-wizard-lead` | the sentence above the questions | the console's own words for what is about to happen, muted. It is `max-width`-capped like the prose below it rather than stretched across a wide window |
 | `console-wizard-questions` | the questions' column | the five questions as a grid, narrower than the events below them: a form is read in one column and a feed is read across |
 | `console-wizard-question` | one question, a `div` | the label and its box as one unit, with `data-wizard-question` naming the answer key it collects so the tree can be read back against `SETUP_ANSWER_KEYS` |
@@ -2537,11 +2546,11 @@ The entry appends up to **three** children to `document.body`, which is the moun
 2026-10-28 replaced it with the redesign's header switcher, so the rail is no longer a column
 and has no collapse control. What it held is unchanged and is drawn inside
 `div.console-switcher-menu`, under the installation line: the rail itself is
-`aside.console-rail`, and its tree is **fifteen classed elements**. Those fifteen elements carry
-**fourteen classes**: the foot row and its button share `console-rail-add` (a row and the
+`aside.console-rail`, and its tree is **sixteen classed elements**. Those sixteen elements carry
+**fifteen classes**: the foot row and its button share `console-rail-add` (a row and the
 control inside it are one region, and the class names the region), so a stylesheet selects
-fourteen distinct hooks and [§2.1](#21-the-dashboards-chrome--srcrendererentryts) lists the same
-fourteen. **The count is stated here and in §2.1 because it is what a reader checks the tree
+fifteen distinct hooks and [§2.1](#21-the-dashboards-chrome--srcrendererentryts) lists the same
+fifteen. **The count is stated here and in §2.1 because it is what a reader checks the tree
 against**, and the tree below is the list:
 
 ```
@@ -2558,7 +2567,8 @@ aside.console-rail                        the rail's tree, inside the switcher's
 │       └─ span.console-rail-spend        the spend
 ├─ p.console-rail-empty                   "No installations yet", only when there is no row
 ├─ div.console-rail-add                   the foot row, with a top divider above it
-│   └─ button.console-rail-add            "+ Add installation"
+│   ├─ button.console-rail-add            "+ Add installation"
+│   └─ button.console-rail-add-project    "Add project", only when the rail has a row
 └─ p.console-rail-hint                    "Switch with the shortcut keys 1 2 3"
 ```
 
