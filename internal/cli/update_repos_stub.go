@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
@@ -76,13 +75,4 @@ func headOfDefaultBranch(ctx context.Context, root, ref string) string {
 		return ""
 	}
 	return sha
-}
-
-// firstProblemText is a parse's first problem, or "unreadable" for a parse
-// that answered with no problem at all and no config either.
-func firstProblemText(ps []config.Problem) string {
-	if len(ps) == 0 {
-		return "unreadable"
-	}
-	return ps[0].String()
 }
