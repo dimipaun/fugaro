@@ -738,14 +738,28 @@ func TestBudgetModeSeedsRTDB(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mode(r) != "observe" || r.localConfig(t).BudgetMode() != localcfg.BudgetOff {
-		t.Errorf("mode %v, local %s", mode(r), r.localConfig(t).BudgetMode())
+	// The local config is left alone: it writes no mode, and an installation
+	// that writes none resolves observe (AB2, D3010, localcfg.BudgetMode).
+	// Until D3009 this row read that empty mode as the off it was taken for,
+	// and the flag's absence left the jobs' backend off — which is the state
+	// the sentence asserted below used to describe.
+	lc := r.localConfig(t)
+	local := ""
+	if lc.Budget != nil {
+		local = lc.Budget.Mode
+	}
+	if mode(r) != "observe" || local != "" {
+		t.Errorf("mode %v, local budget.mode %q: setup without the flag writes no mode", mode(r), local)
 	}
 	if s := modeSet(r); s != nil {
 		t.Errorf("%s = %v: the seed of an absent mode is nobody's choice, and a node here would make `fugaro update` leave it observing for ever", budget.PathModeSet, s)
 	}
-	if !strings.Contains(out, "budget.mode is off") {
-		t.Errorf("no word that jobs don't use the backend yet:\n%s", out)
+	// And nothing says the jobs do not use the backend yet: that sentence named
+	// a local mode that is off, and no installation is in that state any more —
+	// an absent mode is observe, and the word itself is not a mode
+	// (init_firebase.go's own condition is AB7's and I1's to drop).
+	if strings.Contains(out, "budget.mode is off") {
+		t.Errorf("setup named a budget mode this release does not have:\n%s", out)
 	}
 	// ... and a mode set since is kept by a run without the flag.
 	r.db.Set("config/mode", "enforce")
