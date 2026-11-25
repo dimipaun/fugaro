@@ -465,6 +465,7 @@ test_a_raw_file_rewritten_at_the_ref_is_compared_too() {
   expect_status "$status" 1 "a raw file rewritten at the ref"
   expect_row "$out" raw FAIL "a raw file rewritten at the ref"
   expect_contains "$out" 'acme/app agent.model' "the row names the raw key that moved"
+  expect_contains "$out" "CHECK 911 RESULT: FAIL (exit 1)" "the verdict is the exit status"
 }
 
 test_a_recipe_whose_text_changed_is_compared_too() {

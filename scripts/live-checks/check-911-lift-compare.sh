@@ -269,12 +269,27 @@ cleanup() {
   [ -e "$SCRATCH" ] || SCRATCH_REMOVED=yes
 }
 
+# carries answers whether any row of the facts is in this state, and it does it
+# with the shell's own matching rather than `printf ... | grep -q`: under `set -o
+# pipefail` the writer's SIGPIPE is the pipeline's status, so a reader that stops
+# at the match can make a row that is there read as absent — and this is the one
+# answer of this check that must never be wrong. `aborted` is not a state of a
+# row but the row that says the run could not be measured at all, and it is the
+# line's own start that says so.
+carries() { # carries <facts> <FAIL|UNVERIFIED|aborted>
+  case "$2" in
+  aborted) case "$1" in aborted\|*|*$'\n'aborted\|*) return 0 ;; esac ;;
+  *) case "$1" in *"|$2|"*) return 0 ;; esac ;;
+  esac
+  return 1
+}
+
 verdict() { # verdict <facts>
-  if printf '%s\n' "$1" | grep -q '^aborted|'; then
+  if carries "$1" aborted; then
     printf 'INCOMPLETE'
-  elif printf '%s\n' "$1" | grep -q '|FAIL|'; then
+  elif carries "$1" FAIL; then
     printf 'FAIL'
-  elif printf '%s\n' "$1" | grep -q '|UNVERIFIED|'; then
+  elif carries "$1" UNVERIFIED; then
     printf 'INCOMPLETE'
   else
     printf 'PASS'
@@ -297,10 +312,10 @@ finish() {
   local facts
   facts=$(cat "$FACTS" 2>/dev/null || true)
   cleanup
-  if [ -n "$ABORT" ] && ! printf '%s\n' "$facts" | grep -q '^aborted|'; then
+  if [ -n "$ABORT" ] && ! carries "$facts" aborted; then
     facts="${facts}"$'\n'"aborted|FAIL|$ABORT"
   fi
-  if [ "$REACHED_END" = no ] && ! printf '%s\n' "$facts" | grep -q '^aborted|'; then
+  if [ "$REACHED_END" = no ] && ! carries "$facts" aborted; then
     facts="${facts}"$'\n'"aborted|FAIL|the run ended before its last step (exit ${status}): the rows that were not reached were NOT measured, which is this script ending on an error rather than an answer about the migration"
     if [ "$status" -eq 0 ] || [ "$status" -eq 1 ]; then status=2; fi
   fi
