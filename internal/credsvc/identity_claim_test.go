@@ -870,6 +870,18 @@ func TestClaimChecksTheRecordTheStoreReturns(t *testing.T) {
 				rec.At = rec.At.Add(-2 * ticketLifetime)
 			},
 		},
+		{
+			// BR2's clause, and the one the release behind has no spelling of:
+			// the read answered a record that named no job — a Cloud Run
+			// launch's, whose claim owes no attestation — and the fence answered
+			// a Batch launch's, which the VM question was never asked about. The
+			// job and the id the registration writes travel together and are
+			// held together (R19, D3114).
+			name: "the fence answered a record that names a job",
+			moved: func(_ *testing.T, _ *claimFixture, rec *identitywire.Record) {
+				rec.Job, rec.JobID = otherAttestedJob, attestedJobID
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newClaimFixture(t)

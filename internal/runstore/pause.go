@@ -27,24 +27,11 @@ import (
 // is suspended, and until when, is a Realtime Database node under paused/,
 // written by the credentials service alone (R19, D3189): the job cannot write
 // it, and the service never writes the record.
-
-// StatusPaused is the word a run that suspended itself ends with (D3185, R15).
-// It is a status of its own and not a reuse of an existing one: a paused run
-// is in flight — it will be resumed — where a halted one has stopped, and a
-// reader that could not tell the two apart would count a paused chain as lost.
 //
-// It is deliberately not in Statuses yet. That slice is the vocabulary a
-// finished run's record is held to, and four readers of it learn the word
-// together (result.schema.json's enum, internal/digest's closed set,
-// internal/budget's outcome words and the console's set): PR1 of this plan
-// adds it to them at once, which is where the word becomes one a record and a
-// rule may carry. Until then nothing writes it.
-//
-// Nothing is needed in Status.Terminal for it. The execution that ends paused
-// has ended — its container stops and its lease is released (R12) — and
-// Terminal's own rule (a status that is not running has ended) already says
-// so; the word is in no outcome vocabulary until PR1 puts it there.
-const StatusPaused Status = "paused"
+// The word a paused run ends with is the one member of the pause that is not
+// here: StatusPaused is a status of the run vocabulary and lives with it in
+// runstore.go, because Statuses — the set every reader of a status is held to
+// — must name it (PR1 of this plan).
 
 // PauseFile is the object a suspending run writes in its own prefix, and the
 // only thing the run that resumes it reads to know where to pick up (D3185).

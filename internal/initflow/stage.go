@@ -457,13 +457,12 @@ var order = []slot{
 // own y/N).
 //
 // The map answers for WHOLE STAGES, and that is the whole of what it says. A
-// step finer than its stage — the Firestore database's location inside
-// Firebase, a billable image build inside Images, replacing a registry tag and
-// onboarding an unlisted repository inside Repository — is not a row here and
-// cannot be one: whether such a step is covered is the confirmation of the
-// caller that takes it, decided where the step is taken, which is also the
-// only place that knows which front door is running and so which steps that
-// door owns.
+// step finer than its stage — a billable image build inside Images, replacing a
+// registry tag and onboarding an unlisted repository inside Repository — is not
+// a row here and cannot be one: whether such a step is covered is the
+// confirmation of the caller that takes it, decided where the step is taken,
+// which is also the only place that knows which front door is running and so
+// which steps that door owns.
 var runCovered = map[string]bool{
 	Installation: true, Firebase: true, Images: true, Installation2: true, Repository: true, Rules: true,
 	CredentialsService: true,
@@ -651,8 +650,8 @@ type Outcome struct {
 
 // Stage is one step of the converge. Check, Plan and Verify only read;
 // Apply is called only after the loop has decided a confirmation can be
-// had, and keeps its own confirmations (typed project name, permanent
-// location, billable build): the loop never confirms for a stage.
+// had, and keeps its own confirmations (typed project name, billable build):
+// the loop never confirms for a stage.
 type Stage interface {
 	Name() string
 	// Check says what is missing or different, without changing anything.
@@ -993,7 +992,7 @@ func gateUnjudged(reason string) string {
 // owner's delete list, the marker) are named where they are decided, and the
 // session that reads this is the one that could go around all three.
 func AgentProceeded(marker string) string {
-	return "a coding agent's session is present (" + marker + " is set), and this step proceeds: the project is managed and the plan passed the deterministic gate, which is what replaces the confirmation here (not a person's approval, and not a flag to pass)"
+	return "a coding agent's session (" + marker + " is set) on a managed project: the gate admitted the plan, so nothing is confirmed here"
 }
 
 // GateProceeded is the sentence for the same step in the OWNER'S OWN session: a
@@ -1008,7 +1007,7 @@ func AgentProceeded(marker string) string {
 // where the verdict was written instead, because an owner who wants to check
 // afterwards is not trying to get past anything.
 func GateProceeded() string {
-	return "this project is managed, and the plan passed the deterministic gate: the verdict is the confirmation here, so nothing is asked and nothing is typed (the project's own record of it is written after the step)"
+	return "this project is managed and the gate admitted the plan: it recorded the verdict, so nothing is typed here"
 }
 
 // GateOrdinary is the sentence for an ordinary step of the same run that the
@@ -1021,7 +1020,7 @@ func GateProceeded() string {
 // no rule read, which is the direction every other sentence in this file
 // refuses to take.
 func GateOrdinary() string {
-	return "this project is managed, so this step takes no confirmation: the marks were read, the step is one the run announced, and what it changes is printed above (the owner's ruling of 2026-11-01)"
+	return "this project is managed and the run announced this step: the marks were read, so nothing is confirmed here"
 }
 
 // OwnerProceeded is the sentence for the same reader as GateOrdinary — the
@@ -1040,7 +1039,7 @@ func GateOrdinary() string {
 // GateOrdinary speaks for a step the run announced and the gate let through,
 // this one for a step no rule judged at all.
 func OwnerProceeded() string {
-	return "this project is managed and this is the owner's own terminal: the marks were read, what this step changes is printed above, and nothing is typed for it here (the owner's ruling of 2026-11-06)"
+	return "this project is managed and this is the owner's own terminal: the marks were read, so nothing is typed here"
 }
 
 // AskRestored is the line a managed project's own terminal reads when --ask
@@ -1051,7 +1050,7 @@ func OwnerProceeded() string {
 // gate refuses is still refused, before any prompt) — because the one mistake
 // this flag could be read as is "the gate is off for this run".
 func AskRestored() string {
-	return "--ask: this project is managed, and its gate's verdict would have replaced the confirmations of this run: they are asked here instead, one step at a time. The gate itself is unchanged — every document it judges is still judged, and a step it refuses is still refused before any prompt"
+	return "--ask: on this managed project the confirmations the gate replaces are asked here, and the gate is unchanged: still judged, still refused"
 }
 
 // AskUnmanaged is the one line --ask prints where the marks did not answer
@@ -1061,7 +1060,7 @@ func AskRestored() string {
 // is not an error, because the alternative a caller might reach for — refusing
 // the flag — would fail a command that behaves exactly as it always has.
 func AskUnmanaged() string {
-	return "--ask: the marks of this project did not answer \"managed\", so there is nothing for the flag to restore here: every confirmation this run gives is the one it always gives, and asking for them is not an error"
+	return "--ask: this project's marks do not answer \"managed\", so this run asks the confirmations it always asks; that is not an error"
 }
 
 // AskNoGate is the line --ask prints in a run the managed gate never covers:
@@ -1071,7 +1070,7 @@ func AskUnmanaged() string {
 // gate stands in for, so there is nothing for --ask to restore and no mark is
 // read for it.
 func AskNoGate() string {
-	return "--ask: this run applies nothing the managed gate stands in for (--plan-only, or a run whose own arguments shape the installation), so no confirmation was replaced and there is nothing for the flag to restore here"
+	return "--ask: this run applies nothing the managed gate stands in for, so no confirmation was replaced and there is nothing to restore"
 }
 
 // AskRefusal is the refusal of --ask where there is no prompt to answer it: a
