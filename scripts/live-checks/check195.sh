@@ -1330,7 +1330,7 @@ step_build() {
       fact line-object INFO "line not read from the object: gcloud storage cat ${LINE_URI}; read out of the build's own log instead: gcloud builds log ${BUILD_ID} --project=${P}"
     else
       owner "the step's own line was read from NEITHER place: gcloud storage cat ${LINE_URI} answered '${obj_why}' within ${LINE_WAIT_SECONDS} s, and the build's own log carried no line with status= within ${LOG_WAIT_SECONDS} s (it carried '$(last_lines "$SCRATCH/build-log.txt")', and the command answered $(last_lines "$SCRATCH/build-log.err")) — the step says in that log when its write did not land"
-      fact line-object INFO "line not read: gcloud storage cat ${LINE_URI}; gcloud builds log ${BUILD_ID} --project=${P}. The reading below is the step's own exit code, out of the build's own record"
+      fact line-object INFO "line not read: gcloud storage cat ${LINE_URI}; gcloud builds log ${BUILD_ID} --project=${P}"
     fi
   fi
   local code email
@@ -1393,41 +1393,42 @@ step_build() {
 # shell's own status — means the step died before it decided anything.
 call_from_step_exit_code() {
   local code=$1 detail=$2 zero_omitted=${3:-no}
-  # Every row below is a code that was read WITHOUT the line, so every one of
-  # them says the one clause. The two commands that would read it by hand are in
-  # the line-object row above, which is the row that says the line did not come;
-  # what the object cat answered and what the log carried is progress for the
-  # terminal, on stderr, and not a fact in the block.
+  # The one row that says the line did not come is the line-object row above,
+  # which carries both commands that would read it by hand; what the object cat
+  # answered and what the log carried is progress for the terminal, on stderr,
+  # and not a fact in the block. The rows below are then the reading itself, one
+  # line each.
   owner "the step's own line was read from NEITHER place: gcloud storage cat ${LINE_URI} answered '$(last_lines "$SCRATCH/line-object.err")' within ${LINE_WAIT_SECONDS} s, and the build's own log carried no line with status= in it within ${LOG_WAIT_SECONDS} s (it carried '$(last_lines "$SCRATCH/build-log.txt")', and the command answered $(last_lines "$SCRATCH/build-log.err"))"
   local nowhere="the step's own line was read from neither place"
   case "$code" in
   0)
-    local read_as="the build's own record says its step exited 0"
+    local claim="the service answered 200 and the token's email claim is ${CALLER_EMAIL}, the account this check granted roles/run.invoker on ${SVC} alone"
     if [ "$zero_omitted" = yes ]; then
-      read_as="the build ended SUCCESS with no steps[0].exitCode in its record, and that empty column IS the code 0: Cloud Build omits a zero exit code, and this build has no step other than this one"
+      fact call PASS "the build ended SUCCESS with no steps[0].exitCode in its record, and that empty column IS the code 0: Cloud Build omits a zero exit code. ${nowhere}, so the exit code is the reading: ${claim}"
+    else
+      fact call PASS "the build's own record says its step exited 0, the one code the step exits for: ${claim}"
     fi
-    fact call PASS "${read_as}, the one code the step exits for: the service answered 200 and the token's email claim is ${CALLER_EMAIL}, the account this check granted roles/run.invoker on ${SVC} alone. ${nowhere}, so the claim is asserted by the exit code and not printed, and no token is in any line of this block"
     ;;
   11)
-    fact call FAIL "the build's own record says its step exited 11, the one code it exits for a 401 — the front end refusing the token itself. ${nowhere}, so the email claim was not printed. A 401 refuses the token rather than the grant, so this is not yet the reading S4 rests on"
+    fact call FAIL "the build's own record says its step exited 11, the one code it exits for a 401 — the front end refusing the token itself, not the grant, so this is not yet the reading S4 rests on"
     ;;
   12)
-    fact call FAIL "the build's own record says its step exited 12, the one code it exits for a 403 — Cloud Run refusing this caller. ${nowhere}, so the email claim was not printed. This is the reading S4's build exception would rest on: the grant does not admit the account's own token"
+    fact call FAIL "the build's own record says its step exited 12, the one code it exits for a 403 — Cloud Run refusing this caller: the grant does not admit the account's own token, the reading S4's build exception rests on"
     ;;
   13)
-    fact call FAIL "the build's own record says its step exited 13, the one code it exits for any other status or none at all. ${nowhere}, so neither the claim nor the status was printed. The build's own failureInfo.detail: ${detail:-none given}"
+    fact call FAIL "the build's own record says its step exited 13, the one code it exits for any other status or none at all: neither the claim nor the status was printed"
     ;;
   14)
-    fact call FAIL "the build's own record says its step exited 14, the one code it exits for the metadata server minting it no ID token: ${SVC} was never called and the grant was not measured. ${nowhere}. The build's own default service account and the metadata server are the two things to read"
+    fact call FAIL "the build's own record says its step exited 14, the one code it exits for the metadata server minting it no ID token: ${SVC} was never called, so the grant was not measured"
     ;;
   15)
-    fact call FAIL "the build's own record says its step exited 15, the one code it exits for a 200 whose token is NOT ${CALLER_EMAIL}: it was minted for another identity, so the 200 says nothing about the account this check granted. ${nowhere}, so the claim itself was not printed. The build's serviceAccount field, the grant and the metadata server are the three things to read"
+    fact call FAIL "the build's own record says its step exited 15, the one code it exits for a 200 whose token is NOT ${CALLER_EMAIL}: the 200 is another identity's, so it says nothing about the account this check granted"
     ;;
   "")
-    fact call FAIL "${nowhere}, and the build's own record carries no steps[0].exitCode either — and the build did NOT end SUCCESS, so this empty column is not the zero Cloud Build omits — so neither the claim nor the status the service answered was measured. A record with no step exit code on a build that did not succeed is a step that never ran: a container that could not start, or an API that refused the step, and its failureInfo.detail says so: ${detail:-none given}. Read it with 'gcloud builds describe ${BUILD_ID} --project=${P}' and its lines with 'gcloud builds log ${BUILD_ID} --project=${P}'"
+    fact call FAIL "${nowhere}, and the build's own record carries no steps[0].exitCode either, on a build that did NOT end SUCCESS: not the zero Cloud Build omits, but a step that never ran — a container that could not start, or an API that refused the step, which its failureInfo.detail names: ${detail:-none given}"
     ;;
   *)
-    fact call FAIL "${nowhere}, and the build's own record says its step exited ${code}, which is not a code this step writes — 0, 11, 12, 13, 14 and 15 are the only ones it can end with — so the cause is NOT named and the grant was not measured. It is a step that died before it decided anything: a shell that could not run the script, a pull the container could not make. The build's own failureInfo.detail says: ${detail:-none given}. Read it with 'gcloud builds describe ${BUILD_ID} --project=${P}' and its lines with 'gcloud builds log ${BUILD_ID} --project=${P}'"
+    fact call FAIL "${nowhere}, and the build's own record says its step exited ${code}, which is not a code this step writes — 0, 11, 12, 13, 14 and 15 are the only ones it can end with — so the cause is NOT named: a step that died before it decided anything, a shell that could not run the script or a pull the container could not make. Its failureInfo.detail says: ${detail:-none given}"
     ;;
   esac
 }
