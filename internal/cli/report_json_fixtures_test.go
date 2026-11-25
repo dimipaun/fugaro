@@ -854,8 +854,8 @@ const consoleReadEESubcommand = "the command is the Subscription Edition's, regi
 // and fails on a read that is in none of the three, on an entry here that is
 // not a console read, and on exemptions that became most of the list.
 var consoleReadExempt = map[string]string{
-	"fugaro graph":               consoleReadEE,
-	"fugaro report":              consoleReadEE,
+	"fugaro graph":  consoleReadEE,
+	"fugaro report": consoleReadEE,
 	// The console-fixes plan's CG7a: the Coordinator tab's map read, the one
 	// entry here that is a subcommand of a family the released tree builds
 	// rather than a paid name at the root.
