@@ -369,13 +369,14 @@ run "only offline refuses: stale is still an orchestrator" \
   "  const offline = () => presence !== null && presence.state === STATE.OFFLINE;" \
   "  const offline = () => presence !== null && presence.state !== STATE.LIVE;"
 run "the message is judged before the presence is" \
-  "    if (typeof text !== 'string' || text.length === 0) return noteRefusal(refuse(SCREEN_CODES.BAD_TEXT, 'text'));
+  "    const engine = readEngineTag();
     if (offline()) {
       const refusedByLicence = await client.licenceRefusal(text, options);" \
   "    if (offline()) {
       return noteRefusal(refuse(SCREEN_CODES.OFFLINE, 'presence'));
     }
     if (typeof text !== 'string' || text.length === 0) return noteRefusal(refuse(SCREEN_CODES.BAD_TEXT, 'text'));
+    const engine = readEngineTag();
     if (offline()) {
       const refusedByLicence = await client.licenceRefusal(text, options);"
 run "an empty message is refused as an empty message" \
@@ -388,7 +389,9 @@ run "an empty message is refused as an empty message" \
 #     applies -- so the module's own rule was enforced on a path the app does
 #     not take.
 run "an accepted message clears the refusal it followed" \
-  "    if (sent.ok) lastRefused = null;" ""
+  "    if (!sent.ok) return sent;
+    lastRefused = null;" \
+  "    if (!sent.ok) return sent;"
 run "the poll's presence goes through the same guard a caller's does" \
   "        const adopted = setPresence(report.presence);" \
   "        const adopted = Object.freeze({ ok: true });
@@ -554,7 +557,34 @@ run "a question is marked heard only when its announcement played out" \
   "      const marks = true;" \
   mobile/src/voice/dialogue.js src/voice/dialogue.test.js
 
-echo
+# 18. X1 (D2788): the one conversation holds what REACHED the session. The
+#     voice view records the owner's spoken words after the client accepted
+#     them and appends nothing when it refused them (D167 keeps the refused
+#     text in `unsent`), so a recording that runs first is a conversation
+#     holding words nobody was sent.
+run "a send the client refused is not a line in the one conversation" \
+  "    if (!sent.ok) return sent;" \
+  "    if (!sent.ok) { record(text, engine); return sent; }" \
+  mobile/src/voice/screen.js src/voice/screen.test.js
+
+# 19. X1 (D2788): the tag on the line is the engine that produced the words the
+#     line holds. `accept` reads it when the utterance arrives, because the send
+#     is a round trip: reading it again where the line is appended tags the
+#     owner's words with whatever the pipeline heard while the send was out --
+#     the same lie the snapshot's `transcript` event refuses one function up.
+run "a line keeps the engine of the words it holds, not the next utterance's" \
+  "    record(sent.text, engine);" \
+  "    record(sent.text, readEngineTag());" \
+  mobile/src/voice/screen.js src/voice/screen.test.js
+
+# 20. X1 (D2788) + D118: the voice view records the REDACTED text the client
+#     signed, not the words the owner said. The client hands its redaction back
+#     as `sent.text`, and the owner's raw words never reach the one conversation.
+run "a spoken line is the text the client signed, not the words the owner said" \
+  "    record(sent.text, engine);" \
+  "    record(text, engine);" \
+  mobile/src/voice/screen.js src/text/one-transcript.test.js
+
 echo "guards proved: $killed killed, $survivors survived, $unapplied not applied"
 if [ "$survivors" -ne 0 ] || [ "$unapplied" -ne 0 ] || [ "$killed" -ne "$guards" ]; then
   echo "FAILED: a guard above is not proved by any test" >&2

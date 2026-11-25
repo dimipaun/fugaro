@@ -110,7 +110,7 @@ func (r *run) projectPolicy(ctx context.Context) (*projectpolicy.Policy, bool, e
 		return p.policy, p.found, p.err
 	}
 	p.done = true
-	if !r.d.Backend.On() && !r.d.Backend.MalformedEnv && !r.d.Backend.Issued() {
+	if !r.d.Backend.On() && !r.d.Backend.MalformedEnv && !r.d.Backend.Issued() && !r.onBatch() {
 		// No database in the job's environment: no client, nothing a launcher
 		// left, no node. This is the absence the readiness gate refuses (fugaro
 		// update) once the project has published a policy; a run cannot invent
@@ -122,7 +122,12 @@ func (r *run) projectPolicy(ctx context.Context) (*projectpolicy.Policy, bool, e
 		// budgetClient, which refuses them. Answering "no policy" here for such
 		// a job is the fail-open M2 closed one step too late: admissionCheck
 		// would never see the allow-list, and the clone would be made before
-		// startBudgetBackend refused.
+		// budgetClient refused. A Batch task is the third: its launcher creates
+		// the job only once the credentials service has issued it this run's
+		// ticket, so a task carrying nothing is not one this installation
+		// launched and the absence below is not the one it is in -- budgetClient
+		// refuses it there, before admission and before any git credential
+		// exists (BR1, R18).
 		return nil, false, nil
 	}
 	db, err := r.budgetClient(ctx)
@@ -421,6 +426,25 @@ func (r *run) budgetClient(ctx context.Context) (*rtdb.Client, error) {
 		// project has published nothing" and ran on the environment ceiling
 		// with no session, no cap and no kill switch.
 		c.err = fmt.Errorf("the budget backend in the job's environment: %w", r.d.BackendErr)
+		return nil, c.err
+	}
+	// A Batch task is the one place a launcher always leaves an identity behind:
+	// the ticket it asked the installation's credentials service for before it
+	// created the job, or the marker of the release behind (BR1, R7). A task
+	// carrying neither is not one this installation launched at all -- a
+	// hand-started job, or an environment somebody emptied -- and the absence it
+	// is in is the one the markless arm below reads as "this installation has
+	// published nothing": the right answer for a Cloud Run launch whose
+	// launcher minted nothing, and never right here, because on Batch a
+	// launcher that minted nothing launched nothing. Read either way the run
+	// would go on with no identity, no session, no cap and no kill switch, so
+	// it is refused here, at the policy read, and not at startBudgetBackend:
+	// the two mechanisms answer through one predicate (Backend.Issued, the
+	// clause above), and the refusal has to come before admission and before
+	// any git credential exists -- not after the clone (M2's own rule, and the
+	// review finding on this change).
+	if r.onBatch() && !r.d.Backend.Issued() {
+		c.err = batchLaunchWithNoTicket()
 		return nil, c.err
 	}
 	if !r.d.Backend.On() {

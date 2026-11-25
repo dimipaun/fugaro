@@ -1,0 +1,51 @@
+{
+  "systemInstruction": {"parts": [{"text": "You are a careful engineer."}]},
+  "contents": [{"role": "user", "parts": [{"text": "what is in config.yaml?"}]}],
+  "tools": [
+    {
+      "functionDeclarations": [
+        {
+          "name": "Bash",
+          "description": "Run a shell command",
+          "parametersJsonSchema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {
+              "command": {"type": "string", "description": "the command to run"},
+              "timeout": {"type": "number", "minimum": 0, "maximum": 600000, "description": "milliseconds"}
+            },
+            "required": ["command"],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "Read",
+          "description": "Read a file from the filesystem",
+          "parametersJsonSchema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {
+              "file_path": {"type": "string", "description": "the path to read"},
+              "offset": {"type": "integer", "minimum": 0},
+              "limit": {"type": "integer", "minimum": 1, "maximum": 2000},
+              "mode": {"type": "string", "enum": ["text", "bytes"]},
+              "ranges": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {"start": {"type": "integer"}, "end": {"type": "integer"}},
+                  "required": ["start", "end"],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": ["file_path"],
+            "additionalProperties": false
+          }
+        }
+      ]
+    }
+  ],
+  "toolConfig": {"functionCallingConfig": {"mode": "AUTO"}},
+  "generationConfig": {"maxOutputTokens": 4096}
+}

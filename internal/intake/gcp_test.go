@@ -59,6 +59,64 @@ func ownerLabels(sub string) map[string]string {
 	return map[string]string{LabelScope: string(ScopeUser), LabelOwnerSub: sub}
 }
 
+// TestSecretManagerReadsTheWorkflowSecretMarker (F18, G2): the marker is a
+// label, and secretFromAPI is the only place it reaches the Secret the write
+// path compares — the list call answers labels and nothing else does. No other
+// test in this tree can catch a production read that drops them: the routes'
+// own tests seed fakeStore, which hands the whole Secret back (server_test.go),
+// so a marker that never left Secret Manager reads as "unmarked" there and in
+// every test, while in production every rotation of a workflow's secret would
+// be refused as another writer's container and `fugaro secrets shared set NAME`
+// would write a project-shared credential into the workflow's own.
+func TestSecretManagerReadsTheWorkflowSecretMarker(t *testing.T) {
+	f, store := fakeSecrets(t, testRegion)
+	marked := secretname.ProjectPrefix + "npm-token"
+	plain := secretname.ProjectPrefix + "model-key"
+	f.Seed(marked, map[string]string{LabelScope: string(ScopeShared), LabelWorkflowSecret: WorkflowSecretMarker}, []byte(testValue))
+	f.Seed(plain, map[string]string{LabelScope: string(ScopeShared)}, []byte(testValue))
+
+	// The write path's read: Describe, and the class it decides from.
+	got, found, err := store.Describe(context.Background(), marked)
+	if err != nil || !found {
+		t.Fatalf("describing the workflow's container: %v, found %v", err, found)
+	}
+	if got.Labels[LabelWorkflowSecret] != WorkflowSecretMarker {
+		t.Fatalf("the described container's labels are %v, want %s=%s: the write path reads the marker from here alone (G2)",
+			got.Labels, LabelWorkflowSecret, WorkflowSecretMarker)
+	}
+	// The other class's container is read the same way, so a label set that
+	// arrived short — the scope without the marker, or nothing at all — reads
+	// as this one, and the check above is not passing by accident.
+	got, found, err = store.Describe(context.Background(), plain)
+	if err != nil || !found {
+		t.Fatalf("describing the credential's container: %v, found %v", err, found)
+	}
+	if _, ok := got.Labels[LabelWorkflowSecret]; ok {
+		t.Fatalf("a project-shared credential's container answers the workflow-secret marker: %v", got.Labels)
+	}
+	if got.Labels[LabelScope] != string(ScopeShared) {
+		t.Fatalf("the described container's scope label is %q, want %q: labels have to arrive whole", got.Labels[LabelScope], ScopeShared)
+	}
+
+	// And the service's read is the same label through the list call (IS1,
+	// G2): the marker has to survive that one too.
+	listed, err := store.List(context.Background(), ScopeShared)
+	if err != nil {
+		t.Fatalf("listing the shared scope: %v", err)
+	}
+	markers := map[string]string{}
+	for _, s := range listed {
+		markers[s.ID] = s.Labels[LabelWorkflowSecret]
+	}
+	if len(markers) != 2 {
+		t.Fatalf("the shared scope listed %d containers, want the two seeded ones: %v", len(markers), markers)
+	}
+	if markers[marked] != WorkflowSecretMarker || markers[plain] != "" {
+		t.Fatalf("the shared listing answered markers %v, want %s for %s and none for %s",
+			markers, WorkflowSecretMarker, marked, plain)
+	}
+}
+
 // TestSecretManagerDescribesOnlyItsOwnContainers: a container is described
 // through the list call — there is no secrets.get in the grant — and a
 // container another writer made without the intake's labels is not found,

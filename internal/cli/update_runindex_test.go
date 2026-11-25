@@ -204,7 +204,7 @@ func TestUpdateStandsWhenTheReindexJobStartIsRefused(t *testing.T) {
 
 	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
 
-	if !strings.Contains(out, "but no reindex execution was started") || !strings.Contains(out, "The walk is owed all the same") {
+	if !strings.Contains(out, "no reindex execution was started") || !strings.Contains(out, "the walk stands, and the history job's next sweep carries it") {
 		t.Fatalf("the update does not report the refused start and the mark that stands:\n%s", out)
 	}
 	// The mark landed before the start was tried, which is what makes the

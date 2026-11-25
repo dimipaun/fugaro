@@ -8,10 +8,13 @@
 # kind a test can pass by accident: it must NOT send an utterance the router did
 # not understand (D164's fail-closed rule), it must NOT send a destructive
 # command as text (D169), it must NOT confirm twice or past the deadline or
-# against a target that moved, and it must NOT draw one installation's
-# questions under another's name or a total across them (D170). Each mutation
-# below disables exactly ONE of those guards -- in `input.js` or in `screen.js`
-# -- and every one must make that guard's own suite fail. A guard whose mutation
+# against a target that moved, it must NOT draw one installation's
+# questions under another's name or a total across them (D170), and it must NOT
+# lose a pasted character or read a table out loud (X2). Each mutation
+# below disables exactly ONE of those guards -- in `input.js`, in `screen.js`,
+# in `transcript.js`, X1's conversation (D2788), in `composer.js` or in
+# `detail.js`, X2's long paste and detail-to-screen -- and every one must make
+# that guard's own suite fail. A guard whose mutation
 # survives is a guard no test defends.
 #
 #   mobile/src/text/mutation-proof.sh
@@ -229,16 +232,12 @@ run "a context field this module does not read is refused" \
 
 # 5. The client is the one that sends: its id, its stamp, and its refusals.
 run "the mailbox client's id and stamp are the ones reported" \
-  "    const sent = await mailbox.send(text);
-    if (!sent.ok) return refuse(sent.code, sent.field);
-    return Object.freeze({ ok: true, outcome: INPUT_OUTCOME.SENT, id: sent.id, at: sent.at });" \
-  "    const sent = await mailbox.send(text);
-    if (!sent.ok) return refuse(sent.code, sent.field);
-    return Object.freeze({ ok: true, outcome: INPUT_OUTCOME.SENT, id: 'made-up', at: at });"
+  "    return Object.freeze({ ok: true, outcome: INPUT_OUTCOME.SENT, id: sent.id, at: sent.at });" \
+  "    return Object.freeze({ ok: true, outcome: INPUT_OUTCOME.SENT, id: 'made-up', at: sent.at });"
 run "a send the client refused keeps the client's code" \
-  "    const sent = await mailbox.send(text);
+  "    const sent = await mailbox.send(text, options);
     if (!sent.ok) return refuse(sent.code, sent.field);" \
-  "    const sent = await mailbox.send(text);
+  "    const sent = await mailbox.send(text, options);
     if (false) return refuse(sent.code, sent.field);"
 
 # 6. What propose must refuse before the machine ever sees it.
@@ -254,13 +253,8 @@ run "a wake word P6.2's machine cannot confirm with is refused where the app is 
   "    throw new TypeError('createTypedInput: no configured wake word can confirm');" \
   "    void isConfirmPhrase;"
 run "a launch goes straight through to the agent (D162)" \
-  "    if (stepped.outcome === CONFIRM_OUTCOME.PASS_THROUGH) {
-      // D162: a launch goes straight through, and the caps are what bound it.
-      return send(text);
-    }" \
-  "    if (false) {
-      return send(text);
-    }"
+  "    if (stepped.outcome === CONFIRM_OUTCOME.PASS_THROUGH) {" \
+  "    if (false) {"
 
 # 8. The confirmation: the phrase confirms the action that was read back, and
 #    nothing else -- not a second time, not a target that moved.
@@ -375,9 +369,11 @@ run "a read-back with no sentence is not drawn as an empty confirmation" \
 run "the UNSENT text is shown (D167's first half)" \
   "      if (typeof one.text !== 'string' || one.text === '') return;" "" \
   mobile/src/text/screen.js "$SCREEN_SUITE"
-run "a message the database already has is NOT shown as unsent (D167a)" \
-  "      if (one.landed === true) return;" "" \
-  mobile/src/text/screen.js "$SCREEN_SUITE"
+# D167a's `landed` guard is deliberately NOT mutated here any more: X1 removed
+# it from `screen.js` (the screen takes `unsent()`, whose entries were never
+# written, so there is no `landed` flag to filter on) and `screen.test.js`
+# pins the boundary as the caller's instead. A mutation of a guard that no
+# longer exists would be APPLY-FAILED and read as a broken harness.
 run "a malformed prompt entry is dropped, not a render crash" \
   "    if (prompt === null || typeof prompt !== 'object') return false;" \
   "    if (prompt === null) return false;" \
@@ -398,7 +394,52 @@ run "a notice is drawn only when there is one" \
   "    if (typeof props.notice === 'string') {" \
   mobile/src/text/screen.js "$SCREEN_SUITE"
 
-echo
+# 11. X1 (D2788): one conversation, and the app's own refusal sentence is not
+#     one of its lines. The client says that sentence over the speaker port the
+#     transcript sits behind (S6.3) and marks it as what it is; a wrapper that
+#     records it anyway puts words in the agent's mouth.
+run "the app's own refusal sentence is not the agent's line" \
+  "      if (said !== null && typeof said === 'object' && said.ok === true && !isRefusal) {" \
+  "      if (said !== null && typeof said === 'object' && said.ok === true) {" \
+  mobile/src/text/transcript.js src/text/transcript.test.js
+
+# 12. X1 (D2788): a line is what REACHED the session, and what reached it is the
+#     REDACTED text -- the client signs `body.text` and hands it back as
+#     `sent.text` (D118). A wrapper that recorded the words it was handed would
+#     keep a secret in the one conversation, and the text view would draw it.
+run "a line is the text the client signed, not the words handed in" \
+  "        transcript.append({ who: TRANSCRIPT_WHO.OPERATOR, source, text: sent.text });" \
+  "        transcript.append({ who: TRANSCRIPT_WHO.OPERATOR, source, text });" \
+  mobile/src/text/transcript.js src/text/transcript.test.js
+
+# 13. X2: the composer holds the paste whole, and a bad value cannot wipe it.
+run "a paste is stored whole, not shortened (the 100000-character claim)" \
+  "    draft = value;" "    draft = value.slice(0, 1000);" \
+  mobile/src/text/composer.js src/text/composer.test.js
+run "a value that is not a string is refused, and the draft is kept" \
+  "    if (typeof value !== 'string') return refuse(COMPOSER_CODES.BAD_TEXT, 'text');" \
+  "    if (false) return refuse(COMPOSER_CODES.BAD_TEXT, 'text');" \
+  mobile/src/text/composer.js src/text/composer.test.js
+
+# 14. X2: a dense reply is announced, not read out, and the detail reaches the
+#     transcript the text view draws.
+run "a dense reply is announced, not read out loud" \
+  "      const said = await recorder.speak(DETAIL_SPEECH, speech);" \
+  "      const said = await recorder.speak(text, speech);" \
+  mobile/src/text/detail.js src/text/detail.test.js
+run "the detail itself is what the text view is given to draw" \
+  "        transcript.append({ who: TRANSCRIPT_WHO.AGENT, source: TRANSCRIPT_SOURCE.OUTBOX, text });" \
+  "" \
+  mobile/src/text/detail.js src/text/detail.test.js
+run "a table is dense only with its rule row (no paragraph with pipes in it)" \
+  "    if (isRuleRow(lines[i]) && hasCells(lines[i - 1]) && hasCells(lines[i + 1])) {" \
+  "    if (hasCells(lines[i]) && hasCells(lines[i - 1]) && hasCells(lines[i + 1])) {" \
+  mobile/src/text/detail.js src/text/detail.test.js
+run "a list is dense only when it is nothing but ids (one prose line makes it a sentence)" \
+  "  if (spoken.length >= 2 && spoken.every(isIdLine)) return DETAIL_KINDS.IDS;" \
+  "  if (spoken.length >= 2 && spoken.some(isIdLine)) return DETAIL_KINDS.IDS;" \
+  mobile/src/text/detail.js src/text/detail.test.js
+
 echo "guards proved: $killed killed, $survivors survived, $unapplied not applied"
 if [ "$survivors" -ne 0 ] || [ "$unapplied" -ne 0 ] || [ "$killed" -ne "$guards" ]; then
   echo "FAILED: a guard above is not proved by any test" >&2

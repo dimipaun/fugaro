@@ -369,8 +369,15 @@ const (
 // same block RT2 above calls the local config's — and the allowlist's
 // `pools.*.members` and `pools.*.strategy` names reach none of them, so the
 // four join the rows with no generic writer.
+//
+// AB1 of docs/repo-override-rulings/ is the last mover after it, by one row and by
+// none: the project layer's ab: block gains ab.repos (D3297), the per-repository
+// sampling rate inside the block's own ab.rate, whose row is `layer.ab.repos` —
+// the `models` family's, since the layer file is what `fugaro config publish`
+// carries and not the generic path, whose allowlist reaches no key of that
+// family — so the rows without a generic writer move by the one.
 const (
-	cfmRegistryRows   = 540
+	cfmRegistryRows   = 541
 	cfmAllowlistNamed = 121
 )
 

@@ -392,8 +392,9 @@ func (f *claimFixture) identityLines(t *testing.T) []map[string]any {
 // the ticket must have nowhere to land (R2).
 //
 // The status is the audit's own closed vocabulary and not the contract's code
-// the caller is answered (identityAuditStatus): audit.go's validErrorType is
-// the older ten and no task of this plan edits that file.
+// the caller is answered (identityAuditStatus): audit.go's validErrorType
+// carries the wire's own codes and not the identity wire's, and no task of this
+// plan edits that file.
 func wantIdentityLine(t *testing.T, line map[string]any, run, repository, status string) {
 	t.Helper()
 	checkAuditShape(t, line)
@@ -867,6 +868,18 @@ func TestClaimChecksTheRecordTheStoreReturns(t *testing.T) {
 			name: "the record is past the ticket's life",
 			moved: func(_ *testing.T, _ *claimFixture, rec *identitywire.Record) {
 				rec.At = rec.At.Add(-2 * ticketLifetime)
+			},
+		},
+		{
+			// BR2's clause, and the one the release behind has no spelling of:
+			// the read answered a record that named no job — a Cloud Run
+			// launch's, whose claim owes no attestation — and the fence answered
+			// a Batch launch's, which the VM question was never asked about. The
+			// job and the id the registration writes travel together and are
+			// held together (R19, D3114).
+			name: "the fence answered a record that names a job",
+			moved: func(_ *testing.T, _ *claimFixture, rec *identitywire.Record) {
+				rec.Job, rec.JobID = otherAttestedJob, attestedJobID
 			},
 		},
 	} {

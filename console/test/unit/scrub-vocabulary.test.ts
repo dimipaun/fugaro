@@ -524,6 +524,10 @@ describe('the scrub: the keys the live run shapes write', () => {
   const NEWER_STAMP_KEYS = ['waiting_until'] as const
   const SHIFT = 30 * 60 * 1000
   const WAITING = '2026-03-01T13:00:00Z'
+  /** RESUMED_AT is `waiting_until`'s twin on the finished shape (PR7): the
+   * instant a paused run's chain comes back, which must be shifted with the
+   * clock for the same reason. */
+  const RESUMED_AT = '2026-03-01T14:00:00Z'
 
   /**
    * LIVE_VALUES is one plausible wire value for every key of `RUN_KEYS` and
@@ -539,6 +543,11 @@ describe('the scrub: the keys the live run shapes write', () => {
     job: 'x-job', profile: 'x-profile', provider: 'x-provider', account: 'x-account',
     launched_by: 'x-launcher', credential: 'x-credential', waiting_until: WAITING,
     plan_task: 'x-plan/x-task',
+    // PR7 of model-credentials-routing: the pause a finished row ended in --
+    // the instant the orchestrator resumes the chain at (`JSONFinished`'s own
+    // key, a stamp like `waiting_until` above) and the run that did resume it
+    // (a run id, invented as this fixture's other run ids are).
+    resume_at: RESUMED_AT, resumed_by: '20260301-140000-ee09',
     // CLI 0.23.0 (rigor-modes plan T1.7): the mode a live run resolved and
     // the layer that decided it, both words of the CLI's own tables.
     mode: 'pro', from: 'repo',
@@ -585,9 +594,13 @@ describe('the scrub: the keys the live run shapes write', () => {
     fill(finished, FINISHED_KEYS)
     const out = at(scrubDocument(doc, SHIFT), 'finished', 0)
     expect(Object.keys(out).sort()).toEqual([...FINISHED_KEYS].sort())
-    for (const key of ['job', 'profile', 'provider', 'account', 'launched_by']) {
+    for (const key of ['job', 'profile', 'provider', 'account', 'launched_by', 'resumed_by']) {
       expect(out[key], key).not.toBe(finished[key])
     }
+    // PR7's stamp is shifted with the rest of the clock, as `waiting_until` on
+    // the live shape above is: a pause's resume time is a fact about the
+    // installation's own day, and a copied-through instant would publish it.
+    expect(out['resume_at']).toBe('2026-03-01T14:30:00Z')
   })
 
   it('still refuses a run key neither shape writes', () => {

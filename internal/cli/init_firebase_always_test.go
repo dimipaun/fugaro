@@ -267,7 +267,7 @@ func TestAManagedProjectCreatesItsDatabaseUnderTheGate(t *testing.T) {
 	if b := r.localConfig(t).Budget; b == nil || b.RTDBURL != r.db.URL {
 		t.Errorf("the local config records budget %+v, want the database this run made", b)
 	}
-	if !strings.Contains(out, "passed the deterministic gate") {
+	if !strings.Contains(out, "the gate admitted the plan") {
 		t.Errorf("the database's step does not say the gate decided it:\n%s", out)
 	}
 	if strings.Contains(out, "Type "+initProjectName) {

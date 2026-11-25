@@ -74,6 +74,13 @@ import {
   ISSUE_CHECKOUT_LABEL,
   ISSUE_SENTENCE_CLASS,
   ISSUE_SUMMARY_CLASS,
+  ADD_PROJECT_CANCEL_LABEL,
+  ADD_PROJECT_CLASS,
+  ADD_PROJECT_TITLE_CLASS,
+  ADD_PROJECT_TITLE,
+  RAIL_ADD_PROJECT_CLASS,
+  RAIL_ADD_PROJECT_LABEL,
+  addProjectRequested,
   READ_UNREADABLE,
   VIEW_BUTTON_CLASS,
   VIEW_NAV_CLASS,
@@ -106,8 +113,19 @@ import {
   tabStop,
   tabTarget,
 } from '../../src/renderer/entry'
-import { NEW_OPS_NOT_AVAILABLE, NEW_OPS_UNREADABLE } from '../../src/shared/new-ops'
+import { NEW_OPS_NOT_AVAILABLE, NEW_OPS_UNREADABLE, SETUP_ANSWER_KEYS } from '../../src/shared/new-ops'
 import type { SettingsEditorOpenRequest, SettingsEditorOutcome } from '../../src/shared/new-ops'
+import {
+  WIZARD_CLASS,
+  WIZARD_FOLLOW_CLASS,
+  WIZARD_FOLLOW_LABEL,
+  WIZARD_INPUT_CLASS,
+  WIZARD_QUESTION_ATTRIBUTE,
+  WIZARD_QUESTION_CLASS,
+  WIZARD_SUBMIT_CLASS,
+  WIZARD_SUBMIT_LABEL,
+  WIZARD_YES,
+} from '../../src/renderer/wizard/wizard'
 import { GRAPH_DOCUMENT_VERSION, decodeSnapshot } from '../../src/shared/schema'
 import { UNAVAILABLE_MARK } from '../../src/shared/availability'
 import { NO_PLAN_CHECKOUT } from '../../src/source/source'
@@ -2358,16 +2376,22 @@ describe('the installation rail’s keyboard', () => {
     expect(row.attributes.get('aria-selected')).toBe('true')
   })
 
-  it('keeps the rail’s two tab stops in the order a reader sees them', async () => {
+  it('keeps the rail’s three tab stops in the order a reader sees them', async () => {
     // Inside the switcher's menu the rail's stops are the list -- **one stop however many
-    // installations it holds**, which is what the roving `tabindex` buys -- and the add row.
+    // installations it holds**, which is what the roving `tabindex` buys -- and the foot's
+    // two doors: the picker's add row and, with a row on the rail, the Add project one
+    // (SW3c).
     const { bridge } = fakeBridge({})
     const document = await boot(bridge, new FakeDocument())
     const rail = railOf(document)
     const stops = everyNode(rail).filter(
       (node) => node.tagName === 'BUTTON' || node.attributes.has('tabindex'),
     )
-    expect(stops.map((node) => node.attributes.get('class'))).toEqual([RAIL_ROW_CLASS, RAIL_ADD_CLASS])
+    expect(stops.map((node) => node.attributes.get('class'))).toEqual([
+      RAIL_ROW_CLASS,
+      RAIL_ADD_CLASS,
+      RAIL_ADD_PROJECT_CLASS,
+    ])
     // Exactly one of them is the roving stop and it is the selected row: a list with no `0`
     // at all is a list the keyboard cannot enter, and two of them is a list that is two
     // stops.
@@ -2931,6 +2955,236 @@ describe('the launch control the Live poll redraws around', () => {
   })
 })
 
+/**
+ * The Add project door (SW3c, R4) is one screen reached two ways: the rail's
+ * second foot button and the picker window's own operation, which hands the
+ * request to main and remakes this window on it. Both end in the same drawing --
+ * SW3b's wizard, in the main area, in place of the installation the console is
+ * reading -- and Cancel is what makes it a view rather than a flow.
+ *
+ * The picker's half of the row is pinned in `installations-ipc.test.ts` (the
+ * allow-list, and that it spawns nothing); what this suite holds is what the
+ * dashboard does with the request and with the door.
+ */
+describe('the Add project door', () => {
+  /** addProjectButton is the rail's second foot door, if it was drawn at all:
+   * only a rail with a row carries it, because a console with no installation
+   * is already showing the wizard in the main area. */
+  function addProjectButton(document: FakeDocument): FakeNode | undefined {
+    return classed(railOf(document), RAIL_ADD_PROJECT_CLASS).find((node) => node.tagName === 'BUTTON')
+  }
+
+  /** wizardIn is the wizard one screen holds, and the five question rows it drew. */
+  function wizardIn(screen: FakeNode): FakeNode {
+    const wizard = classed(screen, WIZARD_CLASS)[0]
+    if (wizard === undefined) throw new Error('the screen drew no wizard')
+    return wizard
+  }
+
+  /** currentViewButton is the navigation's marked button: the view the console
+   * says it is on, which is what Cancel has to hand back. */
+  function currentViewButton(document: FakeDocument): string {
+    const marked = classed(document.body, VIEW_BUTTON_CLASS).filter(
+      (button) => button.attributes.get('aria-current') === 'page',
+    )
+    return marked.length === 1 ? (marked[0]?.textContent ?? '') : `${marked.length} buttons are current`
+  }
+
+  /** answerEveryQuestion fills the wizard's five controls. The answers are not
+   * what this suite is about (`wizard.test.ts` drives the form); they are only
+   * what it takes to reach the run's end. */
+  function answerEveryQuestion(wizard: FakeNode): void {
+    for (const row of classed(wizard, WIZARD_QUESTION_CLASS)) {
+      const control = classed(row, WIZARD_INPUT_CLASS)[0]
+      if (control === undefined) throw new Error('a question drew no control')
+      const key = row.attributes.get(WIZARD_QUESTION_ATTRIBUTE) ?? ''
+      ;(control as unknown as { value: string }).value = key === 'bake_repos' ? WIZARD_YES : 'answer'
+    }
+  }
+
+  /** settle awaits the wizard's own clock: every event of a setup feed is drawn
+   * on the host's `setTimeout(step, 0)` (`NODE_PAINT` in `src/renderer/stream.ts`),
+   * which awaiting microtasks never reaches. */
+  async function settle(): Promise<void> {
+    for (let i = 0; i < 8; i += 1) await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+
+  /** feedOf is one setup operation's answer: the console's envelope around the
+   * document the child printed. */
+  function feedOf(lines: readonly Readonly<Record<string, unknown>>[]): Record<string, unknown> {
+    return { ok: true, data: { document: { lines } } }
+  }
+
+  const DONE = [{ type: 'done', exit_code: 0 }]
+
+  it('draws the door in the rail foot, and no door at all before there is an installation', async () => {
+    const { bridge } = railBridge([listRow('aurora', { open: true })])
+    const withRow = await boot(bridge, new FakeDocument())
+    const door = addProjectButton(withRow)
+    expect(door, 'the rail with a row drew no Add project door').toBeDefined()
+    expect(door?.textContent).toBe(RAIL_ADD_PROJECT_LABEL)
+
+    // The first-run console draws no such door: its main area is the same wizard
+    // already, and a door beside it would be a second control for one state.
+    const first = railBridge([], {}, { kind: 'first-installation', command: 'fugaro setup' })
+    const withNothing = await boot(first.bridge, new FakeDocument())
+    expect(addProjectButton(withNothing)).toBeUndefined()
+    expect(wizardIn(panelOf(withNothing))).toBeDefined()
+  })
+
+  it('opens the wizard in place of the installation, and Cancel hands the view back', async () => {
+    const { bridge } = railBridge([listRow('aurora', { open: true })])
+    const document = await boot(bridge, new FakeDocument())
+    expect(currentViewButton(document)).toBe('Live')
+
+    addProjectButton(document)?.click()
+    await flush()
+    const screen = classed(panelOf(document), ADD_PROJECT_CLASS)[0]
+    expect(screen, 'the door opened no Add project screen').toBeDefined()
+    expect(classed(screen as FakeNode, ADD_PROJECT_TITLE_CLASS)[0]?.textContent).toBe(ADD_PROJECT_TITLE)
+    // The same wizard as the first run, in the main area, with the installation
+    // itself nowhere in it: "in place of" and not "beside".
+    expect(classed(wizardIn(screen as FakeNode), WIZARD_QUESTION_CLASS)).toHaveLength(SETUP_ANSWER_KEYS.length)
+    expect(classed(panelOf(document), ONBOARDING_CLASS)).toHaveLength(0)
+    // No offered view is the one on screen, which is what the navigation says
+    // about a screen without a button of its own.
+    expect(currentViewButton(document)).toContain('0 buttons are current')
+
+    buttonLabelled(screen as FakeNode, ADD_PROJECT_CANCEL_LABEL).click()
+    await flush()
+    expect(classed(panelOf(document), ADD_PROJECT_CLASS)).toHaveLength(0)
+    expect(currentViewButton(document)).toBe('Live')
+  })
+
+  it('hands an issue screen back when the door was opened over one', async () => {
+    // The rail's foot is drawn on every screen, and two of the console's screens
+    // are not `show`'s five tabs: Cancel has to draw the issue the door replaced
+    // rather than a tab the operator was never standing on (review of SW3c).
+    const { bridge } = railBridge([orbitRow(true)])
+    const document = await boot(bridge, new FakeDocument())
+    expect(classed(panelOf(document), ISSUE_CLASS)).toHaveLength(1)
+
+    addProjectButton(document)?.click()
+    await flush()
+    expect(classed(panelOf(document), ADD_PROJECT_CLASS)).toHaveLength(1)
+
+    const screen = classed(panelOf(document), ADD_PROJECT_CLASS)[0] as FakeNode
+    buttonLabelled(screen, ADD_PROJECT_CANCEL_LABEL).click()
+    await flush()
+    expect(classed(panelOf(document), ADD_PROJECT_CLASS)).toHaveLength(0)
+    expect(classed(panelOf(document), ISSUE_CLASS), 'Cancel drew no issue back').toHaveLength(1)
+  })
+
+  it('hands a run’s detail back when the door was opened over that too', async () => {
+    const frame = syntheticDocuments()[syntheticDocuments().length - 1] as Readonly<Record<string, unknown>>
+    const { bridge } = railBridge([listRow('aurora', { open: true })], {}, undefined, {
+      subscribeLive: () => snapshotReply(frame),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const panel = panelOf(document)
+    ;(classed(panel, 'live-run')[0] as FakeNode).click()
+    await flush()
+    expect(panel.children[0]?.attributes.get('class')).toBe('run')
+
+    addProjectButton(document)?.click()
+    await flush()
+    const screen = classed(panel, ADD_PROJECT_CLASS)[0] as FakeNode
+    expect(screen, 'the door opened no Add project screen').toBeDefined()
+    buttonLabelled(screen, ADD_PROJECT_CANCEL_LABEL).click()
+    await flush()
+    expect(classed(panel, ADD_PROJECT_CLASS)).toHaveLength(0)
+    expect(panel.children[0]?.attributes.get('class'), 'Cancel drew no run back').toBe('run')
+    expect(classed(panel, 'run-id')[0]?.textContent).toBe('20261015-120000-aa01')
+  })
+
+  it('opens the wizard at boot when the picker window asked for it', async () => {
+    const { bridge } = railBridge([listRow('aurora', { open: true })])
+    // The picker's door is a window request, not a process: main holds it until
+    // the dashboard reads `installation.current` for the boot it caused
+    // (`addProjectPlease` in `src/main/index.ts`), and this is that read.
+    bridge.getInstallation = (): unknown => ({
+      ok: true,
+      data: { chosen: true, id: '0123456789abcdef', project: 'aurora', cliVersion: '1.2.3', mode: 'ok', addProject: true },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    expect(classed(panelOf(document), ADD_PROJECT_CLASS), 'the request opened no wizard').toHaveLength(1)
+  })
+
+  it('opens the wizard at boot on a console whose installations are all unchosen', async () => {
+    // The picker's row is drawn on its rows alone, so the door is offered on a
+    // machine that has projects and none chosen -- and the request has to ride
+    // *that* answer too, or the button does nothing there while the rail's
+    // identical door opens the wizard in the same state (review of SW3c).
+    const first = { kind: 'first-installation', command: 'fugaro setup' }
+    const asked = railBridge([listRow('aurora'), listRow('segundo')], {}, first)
+    asked.bridge.getInstallation = (): unknown => ({
+      ok: true,
+      data: { chosen: false, sentence: 'no installation is chosen', addProject: true },
+    })
+    const document = await boot(asked.bridge, new FakeDocument())
+    expect(classed(panelOf(document), ADD_PROJECT_CLASS), 'the request opened no wizard').toHaveLength(1)
+    expect(classed(panelOf(document), ONBOARDING_CLASS)).toHaveLength(0)
+
+    // The same boot without the member: no door, which is what makes the case
+    // above a claim about the request rather than about the state.
+    const plain = railBridge([listRow('aurora'), listRow('segundo')], {}, first)
+    plain.bridge.getInstallation = (): unknown => ({
+      ok: true,
+      data: { chosen: false, sentence: 'no installation is chosen' },
+    })
+    const unchanged = await boot(plain.bridge, new FakeDocument())
+    expect(classed(panelOf(unchanged), ADD_PROJECT_CLASS)).toHaveLength(0)
+  })
+
+  it('reads the installation list again when a setup run ends, so the new one is a row', async () => {
+    const aurora = listRow('aurora', { open: true })
+    const segundo = listRow('segundo')
+    let listed = 0
+    const { bridge } = railBridge([aurora])
+    bridge.listInstallations = (): unknown => {
+      listed += 1
+      return { ok: true, data: { rows: listed === 1 ? [aurora] : [aurora, segundo] } }
+    }
+    bridge.planSetup = async (): Promise<unknown> => feedOf(DONE)
+    bridge.applySetup = async (): Promise<unknown> => feedOf(DONE)
+    const document = await boot(bridge, new FakeDocument())
+    expect(rowsOf(document).map((row) => classed(row, RAIL_NAME_CLASS)[0]?.textContent)).toEqual(['aurora'])
+
+    addProjectButton(document)?.click()
+    await flush()
+    const wizard = wizardIn(classed(panelOf(document), ADD_PROJECT_CLASS)[0] as FakeNode)
+    answerEveryQuestion(wizard)
+    buttonLabelled(wizard, WIZARD_SUBMIT_LABEL).click()
+    await settle()
+    // The apply is main's own follow-up press (SW3a): the plan is confirmed, and
+    // the run's end is what the list read follows.
+    buttonLabelled(wizard, WIZARD_FOLLOW_LABEL).click()
+    await settle()
+
+    expect(listed, 'the setup run ended without the rail reading the list again').toBe(2)
+    expect(rowsOf(document).map((row) => classed(row, RAIL_NAME_CLASS)[0]?.textContent)).toEqual([
+      'aurora',
+      'segundo',
+    ])
+  })
+
+  it('reads the request off `installation.current`, and off no other answer', () => {
+    expect(addProjectRequested({ ok: true, data: { chosen: true, project: 'aurora', addProject: true } })).toBe(true)
+    // Everything else is the console opening where it always opens: an
+    // installation without the member, no installation, a read that failed, an
+    // answer that is not an object, and nothing at all.
+    expect(addProjectRequested({ ok: true, data: { chosen: true, project: 'aurora' } })).toBe(false)
+    expect(addProjectRequested({ ok: true, data: { chosen: false, sentence: 'none' } })).toBe(false)
+    // ...and the answer that names no installation does carry it when the picker
+    // asked there: the door is drawn on the picker's rows, and a console whose
+    // projects are all unchosen is a first run it is offered on.
+    expect(addProjectRequested({ ok: true, data: { chosen: false, sentence: 'none', addProject: true } })).toBe(true)
+    expect(addProjectRequested({ ok: false, reason: 'the store could not be read' })).toBe(false)
+    expect(addProjectRequested(null)).toBe(false)
+    expect(addProjectRequested(undefined)).toBe(false)
+  })
+})
+
 describe('the rail with nothing left to open', () => {
   const FIRST = { kind: 'first-installation', command: 'fugaro setup' }
 
@@ -2940,7 +3194,13 @@ describe('the rail with nothing left to open', () => {
     const onboarding = classed(panelOf(document), ONBOARDING_CLASS)[0]
     expect(onboarding, 'the panel drew no onboarding').toBeDefined()
     expect(classed(onboarding as FakeNode, ONBOARDING_TITLE_CLASS)[0]?.textContent).toBe('Set up your first installation')
-    expect(classed(onboarding as FakeNode, ONBOARDING_COMMAND_CLASS)[0]?.textContent).toBe('fugaro setup')
+    // The wizard takes the place of the sentence and the command line (SW3b,
+    // D2904): the console asks `setup.plan` itself, so nothing here tells the
+    // operator to run `fugaro setup` by hand.
+    expect(classed(onboarding as FakeNode, ONBOARDING_COMMAND_CLASS)).toHaveLength(0)
+    const wizard = classed(onboarding as FakeNode, WIZARD_CLASS)[0]
+    expect(wizard, 'the onboarding drew no wizard').toBeDefined()
+    expect(classed(wizard as FakeNode, WIZARD_QUESTION_CLASS)).toHaveLength(SETUP_ANSWER_KEYS.length)
     // Nothing to read, so nothing is read -- no Live refusal drawn in its place.
     expect(calls).toEqual([])
     const empty = classed(railOf(document), RAIL_EMPTY_CLASS)[0]
