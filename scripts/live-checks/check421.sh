@@ -984,7 +984,7 @@ step_spread() {
     return 0
   fi
   if [ "$distinct" -lt 2 ]; then
-    fact spread FAIL "every one of the ${RECORDS} runs was served by the SAME member of '${POOL_NAME}' (${table}): a round-robin pool shares its runs out over its members, and one member serving all of them is the pool not rotating — MC7's red step, 'three selections must not all pick member 1'. Check that the pool's strategy is round-robin in the published node ('fugaro accounts pool ls') and that no craft the credentials service serves is pinned to another access (a pinned craft resolves the whole call to the cascade's own rule, which is what the pool row above walks); then run this check again"
+    fact spread FAIL "every one of the ${RECORDS} runs was served by the SAME member of '${POOL_NAME}' (${table}): a round-robin pool shares its runs out over its members, and one member serving all of them is the pool not rotating — MC7's red step, 'three selections must not all pick member 1'. Check that the pool's strategy is round-robin in the published node ('fugaro accounts pool ls') and that no craft the credentials service serves is pinned to another pool (a pinned craft resolves the whole call to the cascade's own rule, which is what the pool row above walks); then run this check again"
     return 0
   fi
   fact spread PASS "${distinct} different members of '${POOL_NAME}' served the ${RECORDS} runs (${table}): the pool rotated, which is what Check 421 measures. The runs are one turn of the counter each, so with ${RECORDS} runs over ${POOL_MEMBERS//,/, } each member serves about $((RECORDS / distinct)) of them"
@@ -1042,7 +1042,7 @@ plan() {
   say "CHECK 421 plan (dry run: nothing below is run, and no row in the block was measured)"
   say "  [offline] fugaro craft ls --help, accounts pool ls --help, project policy show --help, creds ls --help — the model-crafts vocabulary must be in the build"
   say "  [network, read] fugaro doctor --json in ${SANDBOX} — the project this checkout belongs to"
-  say "  [read] fugaro craft ls --json — every craft's effective access (the rotation is only taken when no craft the service serves is pinned)"
+  say "  [read] fugaro craft ls --json — every craft's chain (the rotation is only taken when no craft the service serves is pinned)"
   say "  [network, read] fugaro project policy show --json — the published node: the pool's members, its round-robin strategy and subscription_spread"
   say "  [network, read] fugaro creds ls --json — the credential names the service's bundle holds (never a value)"
   say "  [network, BILLABLE] fugaro run --repo ${SANDBOX}${RECIPE:+ --recipe ${RECIPE}} --json \"${TASK}\" — ${RUNS} sandbox runs, one after another, each followed with fugaro runs ls --json until it is terminal"
