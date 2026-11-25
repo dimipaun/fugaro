@@ -27,10 +27,11 @@ const (
 )
 
 // pairRevokeEnv is the local config and the database the fixture's project
-// answers on, for the two tests that call the member removal directly: nothing
-// in the CLI reaches pairRemoveMember yet (P9's `fugaro user revoke` is what
-// will), so the only way to test it is to call it, and it takes the two things
-// a command's own open would have built.
+// answers on, for the two tests that call the member removal directly: P9's
+// `fugaro user revoke` is what reaches pairRemoveMember in the CLI, so calling
+// it here is what tests the removal itself — its order, its failures and the
+// paths it reports — apart from the command that asks for it, and it takes the
+// two things a command's own open would have built.
 func pairRevokeEnv(t *testing.T, f *pairFixture) (*localcfg.Config, *rtdb.Client) {
 	t.Helper()
 	lc, err := localcfg.Load(os.Getenv("FUGARO_CONFIG"))

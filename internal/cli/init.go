@@ -1644,19 +1644,35 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	// The number is what makes the marker about this project and not about a
 	// bucket of the same name in someone else's project (managed.WriteMarker
 	// checks the bucket against it).
-	// The amount a managed creation was required to choose, and nothing else:
-	// --managed is the one flag that says this creation is managed, and its
-	// own check refuses a run that passed it without the trio
-	// (init_project.go), so a non-nil budget here is one this run was given
-	// and the installation's Terraform budget carries the same figures. No
+	// The amount EVERY creating run records, and nothing else (T2a of
+	// docs/managed-flag-ergonomics, D2212): --managed was what used to say a
+	// creation carried a budget, and the record is now the fact of the run
+	// rather than of the flag — it is what a later run and the carry read the
+	// alert by (R5, R7), and a creation that recorded none leaves an alert
+	// with nothing to keep it by. The figures are the run's own where it has
+	// any and the defaults where it does not (budgetFigures); the
+	// installation's own block carries the same ones, unless the run linked no
+	// account, and then it carries none at all (installOptionsCarrying). No
 	// bound on the billable image builds is passed and none is asked for: the
-	// count is gone from the marker (D1543), so the object is the amount and
-	// nothing else, and a creation that is not managed passes nil and writes
-	// the object it always wrote, byte for byte (Task 4.2: the change reaches
-	// nobody else).
-	var budget *managed.Budget
-	if r.o.managed {
-		budget = &managed.Budget{Amount: r.o.budget, Currency: r.o.budgetCurrency}
+	// count is gone from the marker (D1543).
+	amount, currency := r.o.budgetFigures()
+	budget := &managed.Budget{Amount: amount, Currency: currency}
+	// The one command that adds the alert where this run created none: a
+	// budget is an alert on a billing account (D2216), and a creating run that
+	// linked none has an amount and a currency but no account to put them on.
+	// The amount is recorded above either way, so the command is the whole of
+	// what is left for the owner — and it is said here as well as at the
+	// wizard's own line, because the runs that reach here asked nothing (a
+	// project that is already there keeps the budget its own, askBudget) or
+	// nobody could answer them. A run that paused at billing and answered the
+	// question at its resume prints both (settleBudget): the same amount, once
+	// as what the installation's variables do not carry and once as what adds
+	// the alert.
+	// r.budgetAccount is the account this run's variables carry the alert on,
+	// so its absence is exactly the alert's absence: the review reads the same
+	// field to admit the plan's budget resource.
+	if r.budgetAccount == "" {
+		r.warn(fmt.Sprintf("no billing account is linked, so no alert was created: add it with `fugaro update --budget %d --budget-currency %s --billing-account <id>`", amount, currency))
 	}
 	number, err := infra.ProjectNumber(ctx, e.c, created)
 	if err == nil {
@@ -2191,6 +2207,13 @@ func (o *initOptions) check() error {
 			return userErr("--image-source: %v", err)
 		}
 	}
+	// The account a creating run's budget alert is on is the one the run links
+	// (takeLinkedBudgetAccount), where --create-project says this run creates.
+	// A first run of fugaro setup creates without the flag, and its creation is
+	// settled in the wizard's settleCreation, which takes the account there.
+	if o.createProject {
+		o.takeLinkedBudgetAccount()
+	}
 	// The creation's own flags are checked here only where --create-project
 	// says this run creates: whether a run without it creates (a first run of
 	// fugaro setup does) is known once its project config was looked for, and
@@ -2252,6 +2275,60 @@ func (o *initOptions) check() error {
 // account out of, and --forget is the rollback, which carries nothing forward
 // at all.
 func (o *initOptions) carriesBudget() bool { return !o.printVars && !o.forget }
+
+// budgetFigures is the amount and the currency a creating run's budget is
+// created with and recorded by: what --budget and --budget-currency settled (or
+// the wizard's question, or the answers file), and the defaults where nobody
+// chose one (T2a of docs/managed-flag-ergonomics, D2211, D2212). An amount and
+// its currency arrive together or not at all — the door's trio check is what
+// says so — which is why there is one branch and not two. The readers are the
+// installation's own budget block (installOptionsCarrying) and the creation
+// fact (markCreated): a creating run has figures even where it creates no
+// alert, so that a later run's carry can keep one alive (R5, R7).
+func (o *initOptions) budgetFigures() (int64, string) {
+	if o.budget > 0 {
+		return o.budget, o.budgetCurrency
+	}
+	return managed.DefaultBudgetAmount, managed.DefaultBudgetCurrency
+}
+
+// takeLinkedBudgetAccount points a creating run's budget at the account it
+// links (D2216 of docs/managed-flag-ergonomics): --billing-account where the
+// caller gave one, --link-billing otherwise, so a caller names the account once
+// instead of twice. It lands on the flag's own field only where the run also
+// named the amount, because that is what the checks read: the door's trio check
+// is the caller's flags and nothing else (R2, so a default never trips it), and
+// checkCreateProject refuses an explicit amount with no account — a run that
+// named no amount leaves the field empty, its figures being the defaults
+// (budgetFigures) and the link where they are created (creationBudgetAccount).
+//
+// The callers are the two places a run's creation is settled, and there are two
+// because a first run of fugaro setup creates without --create-project: the
+// door, for a run that names the creation (check), and the wizard's
+// settleCreation, for the creation it settles there. Both come before the
+// checkCreateProject that refuses an amount with no account to put an alert on.
+func (o *initOptions) takeLinkedBudgetAccount() {
+	if o.budget > 0 && o.billingAccount == "" {
+		o.billingAccount = o.linkBilling
+	}
+}
+
+// creationBudgetAccount is the account a creating run's budget alert is on
+// (D2216 of docs/managed-flag-ergonomics), which is the one the run links:
+// --billing-account where it was given, --link-billing where it was not, and
+// the wizard's own pick by way of the first of the two (billing_prompt,
+// settleBudget). "" is a creating run that links none: it creates no alert —
+// the module refuses a budget with no account — and the amount it has is
+// recorded in the creation fact with the one command that adds the alert
+// (markCreated, budgetFigures). The flag's own field first is not a
+// preference between the two: a run that named both named the account its
+// alert is on, and the link is what the run does to the project.
+func (o *initOptions) creationBudgetAccount() string {
+	if o.billingAccount != "" {
+		return o.billingAccount
+	}
+	return o.linkBilling
+}
 
 // setProject records lc's project: its GCP ID for the Google calls, its
 // name for the account and the confirmations.
@@ -2407,8 +2484,24 @@ func installOptionsCarrying(o *initOptions, lc *localcfg.Config, carried []strin
 	// The coordinator is the owner's opt-in and nothing else's: this run's
 	// --coordinator, or a local config that recorded an earlier one.
 	opts.Coordinator = o.coordinator || lc.Terraform.Coordinator
-	if o.budget > 0 {
-		opts.Budget = &infra.Budget{BillingAccount: o.billingAccount, Amount: o.budget, CurrencyCode: o.budgetCurrency}
+	// The installation's budget block: the one place the run's figures become a
+	// resource. A creating run has figures even where it was told none (T2a of
+	// docs/managed-flag-ergonomics, D2212) — and it composes the block only
+	// where it has an account to put the alert on, because a block with an
+	// empty account is one the module's own validation refuses and one the
+	// carry reads as an amount that must be completed. A run with no account
+	// records the amount in the creation fact and says what adds the alert
+	// (markCreated, D2216). Every other run is unchanged: the flags' own
+	// figures, or none, and a --budget with no --billing-account is completed
+	// from the installation's state (explicitBudgetAccount, R7).
+	switch {
+	case !o.createProject:
+		if o.budget > 0 {
+			opts.Budget = &infra.Budget{BillingAccount: o.billingAccount, Amount: o.budget, CurrencyCode: o.budgetCurrency}
+		}
+	case o.creationBudgetAccount() != "":
+		amount, currency := o.budgetFigures()
+		opts.Budget = &infra.Budget{BillingAccount: o.creationBudgetAccount(), Amount: amount, CurrencyCode: currency}
 	}
 	opts.ReportsPaused, opts.CatalogCheckPaused = jobsPaused(lc)
 	spec, err := infra.Installation(lc, opts)
@@ -3970,7 +4063,7 @@ func (r *initRun) runsBucketViewers(ctx context.Context, c *infra.Clients, spec 
 		return err
 	}
 	if !ok {
-		r.warn(fmt.Sprintf("project Viewers can still read gs://%s, transcripts and caches included: the removal was not confirmed; rerun "+r.o.doorProgram()+" to remove it", spec.RunsBucket))
+		r.warn(fmt.Sprintf("project Viewers can still read gs://%s: the removal was not confirmed; rerun "+r.o.doorProgram()+" to remove it", spec.RunsBucket))
 		return nil
 	}
 	if err := infra.RemoveProjectViewers(ctx, c, spec.RunsBucket, p); err != nil {
