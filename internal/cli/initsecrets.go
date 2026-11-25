@@ -413,8 +413,15 @@ func (s *secretsStage) resolveList(ctx context.Context) {
 		default:
 			local, _ := localRepo(lc, v.Repo)
 			tg.skip = s.fillTarget(tg, v.Repo, local, v.Cfg)
-			if tg.skip == "" && !s.enrolledRepo(tg) {
+			switch {
+			case tg.skip != "":
+			case !s.enrolledRepo(tg):
 				tg.enrol = true
+			default:
+				// The two names the stage does not take are dropped once the
+				// node is in hand, as they are for the checkout: D2313's
+				// repository-level names and a configured provider's own key.
+				s.scopeTarget(tg)
 			}
 		}
 		s.list = append(s.list, tg)
