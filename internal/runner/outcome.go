@@ -149,22 +149,24 @@ func unreviewedDecision(reason string) Decision {
 // the sentence back to work one out (design §4.2). A run Decide makes ready
 // carries no class, the way a succeeded record carries none.
 //
-// hb is the agent's own hand-back and fromAgent whether the agent wrote the
-// file it comes from at all (handBack, LV4.2's parse). Readiness asks it only
-// where a level resolved and that level's row carries a section the agent
-// writes (LV5.1): the file must be there, and the sections the level's promise
-// stands on must have something under them, while the lists beside them may be
-// empty — a list with nothing on it is honest. It is asked last, at the answers
-// that would otherwise be yes, so a run refused for a cause of its own still
-// reports that cause; the check proves the agent wrote a non-empty heading and
-// nothing about what the heading says, which is the reviewer's to judge.
+// hb is the agent's own hand-back, fromAgent whether the agent wrote the file
+// it comes from at all (handBack, LV4.2's parse), and owes whether this run's
+// level promised the reader an account of the agent's own (owesHandBack).
+// Readiness asks it only where the run owes one, a level resolved and that
+// level's row carries a section the agent writes (LV5.1): the file must be
+// there, and the sections the level's promise stands on must have something
+// under them, while the lists beside them may be empty — a list with nothing on
+// it is honest. It is asked last, at the answers that would otherwise be yes,
+// so a run refused for a cause of its own still reports that cause; the check
+// proves the agent wrote a non-empty heading and nothing about what the heading
+// says, which is the reviewer's to judge.
 //
 // The answer is one value, and its Kind is what finalize's status switch reads
 // instead of the sentence (Decision, D995): this is the only site that knows
 // whether the run was refused for a cause of its own or for the absence of a
 // verdict, and that difference is the difference between `failed` and the label
 // a run no review answered carries.
-func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSummary, pol FindingsPolicy, owner *runstore.OwnerDecisions, hb HandBack, fromAgent bool) Decision {
+func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSummary, pol FindingsPolicy, owner *runstore.OwnerDecisions, hb HandBack, fromAgent, owes bool) Decision {
 	latest := latestVerifiedTest(records, finalSHA)
 	switch {
 	case latest == nil:
@@ -226,10 +228,10 @@ func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSumma
 			// rule that ended the rounds — the record's own two words
 			// (runstore.StopRoundsSpent, StopTimeThreshold).
 			return pol.ready(fmt.Sprintf("review round %d left %s, accepted at %s (%s)",
-				last.Round, Plural(pol.through(), "finding"), pol.Mode, pol.AtStop), hb, fromAgent)
+				last.Round, Plural(pol.through(), "finding"), pol.Mode, pol.AtStop), hb, fromAgent, owes)
 		}
 		if pol.tolerates(last) && !pol.raisedAfterReview() {
-			return pol.ready(fmt.Sprintf("review round %d left %s, tolerated at %s", last.Round, Plural(pol.through(), "finding"), pol.Mode), hb, fromAgent)
+			return pol.ready(fmt.Sprintf("review round %d left %s, tolerated at %s", last.Round, Plural(pol.through(), "finding"), pol.Mode), hb, fromAgent, owes)
 		}
 		if pol.Raised != nil {
 			return blockedDecision(pol.raiseReason(last), failure.ReviewNotConverged)
@@ -244,7 +246,7 @@ func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSumma
 		// Decide is reading, not one held back beside it.
 		return blockedDecision(heldBackReason(*pol.HeldBack), failure.ReviewNotConverged)
 	}
-	return pol.ready("", hb, fromAgent)
+	return pol.ready("", hb, fromAgent, owes)
 }
 
 // ready is Decide's yes with the hand-back rule applied: a run whose level
@@ -252,8 +254,8 @@ func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSumma
 // its rounds were (LV5.1). It is the three answers that would otherwise be yes
 // that ask it, and no other, so a run refused for a cause of its own reports
 // that cause rather than this one.
-func (pol FindingsPolicy) ready(reason string, hb HandBack, fromAgent bool) Decision {
-	if dec, refused := handBackRefusal(pol.Mode, hb, fromAgent); refused {
+func (pol FindingsPolicy) ready(reason string, hb HandBack, fromAgent, owes bool) Decision {
+	if dec, refused := handBackRefusal(pol.Mode, hb, fromAgent, owes); refused {
 		return dec
 	}
 	return readyDecision(reason)
@@ -267,18 +269,19 @@ func (pol FindingsPolicy) ready(reason string, hb HandBack, fromAgent bool) Deci
 //
 // Which sections a level carries is the table's row and not a list here — the
 // plan's "the check reads it rather than a second list" — so a level that grew
-// a section grows this check with it. Two levels owe nothing and pass: POC,
-// whose row carries only the line the runner writes itself (LD5), and a level
+// a section grows this check with it. Three kinds of run owe nothing and pass:
+// POC, whose row carries only the line the runner writes itself (LD5); a level
 // that never resolved, which is a run built by hand rather than one whose
 // resolver failed — D19 resolves the default for a real run, so readiness is
-// not the place to invent a level for a record that has none.
+// not the place to invent a level for a record that has none; and a run whose
+// recipe begins with the runner's own step (owesHandBack).
 //
 // The sections the level's promise stands on are the row's own: a level that
 // owes a proof, a revert plan or a morning note owes the entries under it,
 // while the two lists beside them may be empty, because a list with nothing on
 // it is an honest answer and the level's promise is the list itself (LV5.1).
-func handBackRefusal(level rigor.Rigor, hb HandBack, fromAgent bool) (Decision, bool) {
-	if !rigor.Known(level) {
+func handBackRefusal(level rigor.Rigor, hb HandBack, fromAgent, owes bool) (Decision, bool) {
+	if !owes || !rigor.Known(level) {
 		return Decision{}, false
 	}
 	row := rigor.HandBackOf(level)
@@ -912,6 +915,20 @@ func (r *run) findingsPolicy() FindingsPolicy {
 	pol.UnreadFix = r.unreadFix()
 	return pol
 }
+
+// owesHandBack reports whether the level this run resolved promised the reader
+// an account of the agent's own, which is what readiness asks the hand-back
+// file for (LV5.1).
+//
+// A run whose pull request an agent wrote owes one. A run whose recipe begins
+// with the runner's own step (ownStepRecipe: digest, commit_reports) does not:
+// no coder stage runs at its implement, the pull request is the runner's own
+// work, and no agent could have written the file the check would ask for — a
+// rule that run can never meet is a refusal it can never answer, so the level
+// owes it nothing. The plan's own two carve-outs are the same case: a review
+// run and an artifact run open no pull request for an agent to account for, and
+// they never reach Decide at all (skipPR).
+func (r *run) owesHandBack() bool { return !r.ownStepRecipe() }
 
 // ordinaryFindingsPolicy is that policy without the stop: the run's deciding
 // round read by the mode's own row alone, which is the split a round of the

@@ -6904,7 +6904,7 @@ func (r *run) finalize(ctx context.Context) error {
 	// here so readiness reads the agent's own file rather than a second parse
 	// of it (LV5.1).
 	hb, fromAgent := r.handBack()
-	dec := Decide(records, decided, decidedRound, pol, r.rec.OwnerDecisions, hb, fromAgent)
+	dec := Decide(records, decided, decidedRound, pol, r.rec.OwnerDecisions, hb, fromAgent, r.owesHandBack())
 	r.rec.Tolerated = r.toleratedRecord(pol, decidedRound)
 	r.rec.Accepted = r.acceptedRecord(pol, decidedRound)
 	// The cap's leftovers are filed beside them and before the body is built:

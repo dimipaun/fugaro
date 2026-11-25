@@ -14,12 +14,12 @@ import (
 // not hand it back is not ready however clean its rounds were.
 //
 // These cases drive Decide itself, because the rule is one function of the
-// level, the file's presence and the sections the file carried: a run would
-// only put the stage machinery between the two. The two facts about a run that
-// the rule needs from one — that a follow-up's file is followup.md, and that a
-// review or artifact run never reaches readiness at all — are the harness's,
-// and handback_readiness_test.go and the existing review and artifact tests
-// hold them.
+// level, whether the run owes an account at all, the file's presence and the
+// sections the file carried: a run would only put the stage machinery between
+// the two. The two facts about a run that the rule needs from one — that a
+// follow-up's file is followup.md, and that a review or artifact run never
+// reaches readiness at all — are the harness's, and handback_readiness_test.go
+// and the existing review and artifact tests hold them.
 
 // decide is Decide for the tests whose subject is another rule: the hand-back
 // a level's promise is met by is handed in whole, so what they assert on is the
@@ -27,7 +27,7 @@ import (
 // calls Decide itself.
 func decide(records []verify.Record, finalSHA string, last *runstore.ReviewSummary, pol FindingsPolicy, owner *runstore.OwnerDecisions) Decision {
 	hb, fromAgent := fulfilled(pol.Mode)
-	return Decide(records, finalSHA, last, pol, owner, hb, fromAgent)
+	return Decide(records, finalSHA, last, pol, owner, hb, fromAgent, true)
 }
 
 // fulfilled is the hand-back a level's promise is met by: every section the
@@ -78,7 +78,7 @@ func TestDecideHandBackFileIsRequired(t *testing.T) {
 	for _, level := range []rigor.Rigor{rigor.Startup, rigor.Pro, rigor.Critical, rigor.Hotfix} {
 		t.Run(string(level), func(t *testing.T) {
 			records, last := shipped()
-			dec := Decide(records, "abc", last, FindingsPolicy{Mode: level, Round: 2}, nil, HandBack{}, false)
+			dec := Decide(records, "abc", last, FindingsPolicy{Mode: level, Round: 2}, nil, HandBack{}, false, true)
 			if dec.Ready {
 				t.Fatalf("%s is ready with no hand-back file: %q", level, dec.Reason)
 			}
@@ -118,7 +118,7 @@ func TestDecideHandBackSectionsThePromiseStandsOn(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			records, last := shipped()
-			dec := Decide(records, "abc", last, FindingsPolicy{Mode: tc.level, Round: 2}, nil, tc.hb, true)
+			dec := Decide(records, "abc", last, FindingsPolicy{Mode: tc.level, Round: 2}, nil, tc.hb, true, true)
 			if dec.Ready != (tc.want == "") || dec.Reason != tc.want {
 				t.Errorf("Decide = %v %q, want ready %v %q", dec.Ready, dec.Reason, tc.want == "", tc.want)
 			}
@@ -143,9 +143,30 @@ func TestDecideHandBackFallbackBodyIsNotTheFile(t *testing.T) {
 				t.Fatalf("%s has no hand-back to refuse", level)
 			}
 			records, last := shipped()
-			dec := Decide(records, "abc", last, FindingsPolicy{Mode: level, Round: 2}, nil, hb, false)
+			dec := Decide(records, "abc", last, FindingsPolicy{Mode: level, Round: 2}, nil, hb, false, true)
 			if dec.Ready || dec.Reason != ReasonNoHandBack {
 				t.Errorf("Decide = %v %q, want %q: no file of the agent's own is behind this run", dec.Ready, dec.Reason, ReasonNoHandBack)
+			}
+		})
+	}
+}
+
+// TestDecideHandBackRunThatOwesNone: a run whose recipe begins with the
+// runner's own step (digest, commit_reports) has no coder stage, so no agent
+// wrote its pull request and no file can exist for the check to find
+// (owesHandBack). Its level is the one the repository resolved like any other
+// run's, so the exemption is the run's and not the level's, which is what the
+// mutation proves: ask every run for the file and a report run is refused for
+// an account it was never able to write.
+//
+// Mutation: drop the !owes gate in handBackRefusal, and this run is a draft.
+func TestDecideHandBackRunThatOwesNone(t *testing.T) {
+	for _, level := range []rigor.Rigor{rigor.Startup, rigor.Pro, rigor.Critical, rigor.Hotfix} {
+		t.Run(string(level), func(t *testing.T) {
+			records, last := shipped()
+			dec := Decide(records, "abc", last, FindingsPolicy{Mode: level, Round: 2}, nil, HandBack{}, false, false)
+			if !dec.Ready {
+				t.Errorf("%s owes no account and is not ready: %q", level, dec.Reason)
 			}
 		})
 	}
@@ -160,7 +181,7 @@ func TestDecideHandBackFallbackBodyIsNotTheFile(t *testing.T) {
 // run is a draft.
 func TestDecideHandBackPocOwesNoFile(t *testing.T) {
 	records, last := shipped()
-	if dec := Decide(records, "abc", last, FindingsPolicy{Mode: rigor.POC, Round: 2}, nil, HandBack{}, false); !dec.Ready {
+	if dec := Decide(records, "abc", last, FindingsPolicy{Mode: rigor.POC, Round: 2}, nil, HandBack{}, false, true); !dec.Ready {
 		t.Errorf("POC is not ready without a hand-back file: %q", dec.Reason)
 	}
 }
@@ -172,7 +193,7 @@ func TestDecideHandBackPocOwesNoFile(t *testing.T) {
 // policy reads readiness through this gap (decide).
 func TestDecideHandBackLevelThatNeverResolved(t *testing.T) {
 	records, last := shipped()
-	if dec := Decide(records, "abc", last, FindingsPolicy{}, nil, HandBack{}, false); !dec.Ready {
+	if dec := Decide(records, "abc", last, FindingsPolicy{}, nil, HandBack{}, false, true); !dec.Ready {
 		t.Errorf("a run whose level never resolved is not ready: %q", dec.Reason)
 	}
 }
@@ -184,12 +205,12 @@ func TestDecideHandBackLevelThatNeverResolved(t *testing.T) {
 func TestDecideHandBackGatesOutrankIt(t *testing.T) {
 	failing := verify.Record{Kind: verify.KindTest, HeadSHA: "abc", CleanTree: true}
 	changes := &runstore.ReviewSummary{Round: 2, Tier: runstore.TierSenior, Verdict: "changes", Findings: 1}
-	dec := Decide([]verify.Record{failing}, "abc", changes, FindingsPolicy{Mode: rigor.Hotfix, Round: 2}, nil, HandBack{}, false)
+	dec := Decide([]verify.Record{failing}, "abc", changes, FindingsPolicy{Mode: rigor.Hotfix, Round: 2}, nil, HandBack{}, false, true)
 	if dec.Ready || dec.Reason != "tests failing on the final commit" {
 		t.Errorf("Decide = %v %q, want the failing suite's own reason", dec.Ready, dec.Reason)
 	}
 	records, _ := shipped()
-	dec = Decide(records, "abc", changes, FindingsPolicy{Mode: rigor.Hotfix, Round: 2}, nil, HandBack{}, false)
+	dec = Decide(records, "abc", changes, FindingsPolicy{Mode: rigor.Hotfix, Round: 2}, nil, HandBack{}, false, true)
 	if dec.Ready || dec.Reason != "review round 2 still has 1 finding" {
 		t.Errorf("Decide = %v %q, want the round's own reason", dec.Ready, dec.Reason)
 	}
