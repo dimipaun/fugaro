@@ -549,6 +549,32 @@ func TestAccountsAddManagedRecordsNothingWhenThereIsNoWrite(t *testing.T) {
 // that FAILS is the other half of this row and is not an answer: it warns and
 // goes on, and the sentence is this command's own again
 // (TestAccountsAddManagedUnreadMarksKeepTheRefusal).
+//
+// Two tests, because the fence is about the project and not the session: this
+// one runs at the owner's own terminal, and
+// TestAccountsAddUnmanagedKeepsTheRefusalInAnAgentSession runs the same world
+// in a coding agent's session and reads the same sentence.
+func TestAccountsManagedRefusesUnmanaged(t *testing.T) {
+	r := newManagedAddRig(t, addRigLocal, addMarksNone)
+	before := readFileString(t, r.cfg)
+
+	out, _, err := executeStdin(t, "", "accounts", "add", "team-a", "--repos", "owner/repo-a")
+	if err == nil {
+		t.Fatalf("the declaration of a project that is not managed was written:\n%s", out)
+	}
+	checkFenceRefusal(t, err, "accounts add")
+	if after := readFileString(t, r.cfg); after != before {
+		t.Errorf("a refused declaration changed the file:\n%s", after)
+	}
+	if recs := r.audits(t); len(recs) != 0 {
+		t.Errorf("an unmanaged project filed %+v, want no record at all (D1025)", recs)
+	}
+}
+
+// The same installation in a coding agent's session, and the same refusal
+// (D2217): the fence is asked at the access gate, before the token step and
+// before this command's own session fence, so what the session reads is the
+// sentence about the project rather than this command's own.
 func TestAccountsAddUnmanagedKeepsTheRefusalInAnAgentSession(t *testing.T) {
 	r := newManagedAddRig(t, addRigLocal, addMarksNone)
 	before := readFileString(t, r.cfg)
