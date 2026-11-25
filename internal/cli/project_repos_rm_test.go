@@ -324,9 +324,9 @@ var rmKeptPhrases = []string{
 // TestProjectReposRmRefusesUnmanaged: D2217's fence on this command (T7b). A
 // removal takes a repository's allow-list entry, its admission node, its
 // `repos:` and `image_map:` entries and its Cloud Run jobs out of the project,
-// so a project that is not managed is refused before the published node is read
-// and before anything is written — at the budget database the command opens
-// first, which is the fence, in the one sentence it writes.
+// so a project that is not managed is refused before anything is written — at
+// the budget database the command opens first, which is the fence, in the one
+// sentence it writes.
 func TestProjectReposRmRefusesUnmanaged(t *testing.T) {
 	r := rmRigUnmanaged(t)
 	before := readFileString(t, r.cfg)

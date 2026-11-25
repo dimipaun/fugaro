@@ -898,9 +898,9 @@ func TestPolicyPublishReadsTheGateBeforeAnyWrite(t *testing.T) {
 
 // TestProjectPolicyRefusesUnmanaged: the same refusal at the owner's own
 // terminal (T7b, D2217). The published node is what every run of the project is
-// admitted by, so a project that is not managed is refused before the node is
-// read and before anything is written — at the budget database this command
-// opens first, which is the fence — and nothing of it is recorded. What refuses
+// admitted by, so a project that is not managed is refused before anything is
+// written — at the budget database this command opens first, which is the fence
+// — and nothing of it is recorded. What refuses
 // is the project and not the session: TestPolicyPublishUnmanagedProject
 // KeepsTheAgentRefusal below is the same world in a coding agent's session.
 func TestProjectPolicyRefusesUnmanaged(t *testing.T) {
