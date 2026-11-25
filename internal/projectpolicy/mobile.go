@@ -286,10 +286,14 @@ const MobileCompactionThresholdKey = "mobile_compaction_threshold"
 // (C2's `compaction_threshold`) has one rule and not two.
 const DefaultMobileCompactionThreshold = 0
 
-// MobileCompactionThresholdMax is the highest threshold a node may write: a
-// window can be full and no more, so a written value above this is a mistake in
-// the node rather than a threshold that never fires.
-const MobileCompactionThresholdMax = 100
+// MobileCompactionThresholdMax is the highest threshold a node may write: 99,
+// and not a full window. The app fires the automatic compaction on a fraction
+// of the window that C2's port requires to be above zero and below one, so a
+// project at 100 would publish a threshold the phone refuses to mount its
+// session with — a refusal at pairing rather than "compact when the window is
+// full". A value above this is a mistake in the node rather than a threshold
+// that never fires, and the refusal names the percent it wrote.
+const MobileCompactionThresholdMax = 99
 
 // MobileCompactionThreshold is how full the context may grow before this
 // project's phones compact it without being asked, as a whole percent
@@ -311,15 +315,15 @@ func (p *Policy) MobileCompactionThresholdPercent() int {
 	return *p.MobileCompactionThreshold
 }
 
-// validMobileCompactionThreshold refuses a threshold no fullness can reach, so
-// that a hand-edited node is a load error rather than a rule that never fires:
-// a negative percent, and one above MobileCompactionThresholdMax, are both
-// unreachable states of a window. Zero is accepted and is the default, which is
-// the project saying in so many words that it compacts nothing automatically —
-// the same thing an absent key says.
+// validMobileCompactionThreshold refuses a threshold the phone cannot mount,
+// so that a hand-edited node is a load error rather than a rule that never
+// fires: a negative percent, and one above MobileCompactionThresholdMax, are
+// both values the app's own comparison has no room for. Zero is accepted and is
+// the default, which is the project saying in so many words that it compacts
+// nothing automatically — the same thing an absent key says.
 func validMobileCompactionThreshold(percent int) error {
 	if percent < 0 || percent > MobileCompactionThresholdMax {
-		return fmt.Errorf("projectpolicy: mobile_compaction_threshold is %d, and a threshold is a whole percent of the context window (0 for no automatic compaction, up to %d): a fullness no session can reach would be a rule that never fires",
+		return fmt.Errorf("projectpolicy: mobile_compaction_threshold is %d: write 0 for no automatic compaction, or 1 to %d — the app compares a fraction of the window that is above zero and below one",
 			percent, MobileCompactionThresholdMax)
 	}
 	return nil

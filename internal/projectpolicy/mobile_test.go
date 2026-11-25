@@ -638,10 +638,10 @@ func TestProjectPolicyMobileProviderNamesAreTheIdentityProviders(t *testing.T) {
 //     nothing (C2's `compaction_threshold` is null for the same state);
 //   - a nil Policy, because the pairing route asks before it has read anything.
 //
-// The value rules are here too: a percent above a full window, a negative one
-// and a value that is not a number are each a load error, because a threshold
-// nobody can reach is a rule that never fires and the node would look as if it
-// had one.
+// The value rules are here too: a percent above the highest the phone's own
+// comparison accepts, a negative one and a value that is not a number are each
+// a load error, because a threshold the app refuses at pairing is a session a
+// phone cannot mount and the node would look as if it had one.
 func TestProjectPolicyMobileCompactionThresholdHoldsTheThreshold(t *testing.T) {
 	if MobileCompactionThresholdKey != "mobile_compaction_threshold" {
 		t.Fatalf("MobileCompactionThresholdKey = %q: the key's spelling is the node's, and this test writes nodes with it", MobileCompactionThresholdKey)
@@ -655,7 +655,7 @@ func TestProjectPolicyMobileCompactionThresholdHoldsTheThreshold(t *testing.T) {
 		want int
 	}{
 		{name: "a written percent", key: "40", want: 40},
-		{name: "every window full", key: "100", want: 100},
+		{name: "the highest the phone's port mounts", key: "99", want: 99},
 		{name: "written off", key: "0", want: 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -694,10 +694,13 @@ func TestProjectPolicyMobileCompactionThresholdHoldsTheThreshold(t *testing.T) {
 	if got := none.MobileCompactionThresholdPercent(); got != DefaultMobileCompactionThreshold {
 		t.Errorf("MobileCompactionThresholdPercent() = %d for a nil Policy, want %d", got, DefaultMobileCompactionThreshold)
 	}
-	// A threshold no window can reach, and a value that is not a whole percent,
-	// are refused: the node would read as a project that compacts and never do it.
+	// A threshold the app cannot mount and a value that is not a whole percent
+	// are refused: 100 is a full window, and the fraction the phone compares
+	// with must be above zero and below one, so the node would read as a project
+	// that compacts and the phone would refuse the session it carries.
 	for _, tc := range []struct{ name, key string }{
-		{name: "above a full window", key: "101"},
+		{name: "a full window", key: "100"},
+		{name: "above the highest", key: "101"},
 		{name: "negative", key: "-1"},
 		{name: "a fractional percent", key: "40.5"},
 		{name: "a string", key: `"40"`},

@@ -1670,6 +1670,25 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		publishedCrashReports = old.MobileCrashReports
 	}
 	pol.MobileCrashReports = projectpolicy.MobileCrashReportsForPublish(publishedCrashReports)
+	// The phone's automatic compaction threshold travels as a top-level key
+	// beside the block for the switch's reason (policy.go's
+	// Policy.MobileCompactionThreshold, Z2 of the same plan, D2789), and no key
+	// of this machine's config states it either, so a publish keeps the value it
+	// finds: a node whose owner set one keeps it, and a node that carries no key
+	// keeps saying none. Before this member was modelled the publish *refused*
+	// the node rather than rewriting it (publishedPolicyOf's unknown-key
+	// refusal, "publishing would drop them"), so a build that left the member
+	// out would drop a value the release behind would have refused to touch.
+	//
+	// There is no default to fill here, unlike the switch one paragraph up: an
+	// absent key is already the project's own answer — no automatic compaction —
+	// so a publish writes nothing where the node carries nothing, and
+	// `fugaro update`'s policy stage has no row that would fire on it.
+	var publishedCompactionThreshold *int
+	if old != nil {
+		publishedCompactionThreshold = old.MobileCompactionThreshold
+	}
+	pol.MobileCompactionThreshold = publishedCompactionThreshold
 	// The crafts' credentials, their pools and the crafts that choose among
 	// them are the operator's own blocks from this release on (docs/model-crafts
 	// §1–3, MC18, D1667): the local config is their carrier, and this publish
