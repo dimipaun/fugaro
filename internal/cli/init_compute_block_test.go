@@ -99,11 +99,21 @@ func localBatchBlock(t *testing.T, r *initRig) *localcfg.Batch {
 // the public key as a BLOCK SCALAR -- which is the shape a rewrite has to
 // survive: a PEM is multi-line, and a removal that spliced lines out of the
 // file would have to know where a block scalar ends.
+//
+// Every field this stage forms is in it, and the values are the ones it forms
+// (the root's own outputs): the block the file holds is the block a converge
+// would write, so `sameBatch` says the two are the same and nothing but a
+// retired fact's NAME in the text can be what makes the write happen. A fixture
+// missing one of them would leave the merge itself forcing the write, and the
+// text scan every removal above rests on could be deleted with these tests
+// still green.
 func retiredBatchBlock(t *testing.T, r *initRig, secrets, key bool) {
 	t.Helper()
 	block := "batch:\n" +
 		"  image: " + computeOwnPin + "\n" +
 		"  boot_image: projects/" + initProject + "/global/images/family/" + infra.PreloadedImage(computeOwnPin) + "\n" +
+		"  network: " + infra.DefaultNetwork(initProject) + "\n" +
+		"  subnetwork: " + infra.DefaultSubnetwork(initProject, updateBatchRegion) + "\n" +
 		"  service_account: fugaro-acme-web@proj-1234.iam.gserviceaccount.com\n" +
 		"  opt_in: " + localcfg.BatchOptInOn + "\n"
 	if secrets {
@@ -118,15 +128,21 @@ func retiredBatchBlock(t *testing.T, r *initRig, secrets, key bool) {
 
 // updateRigOnTheReleaseBehind is the update door's rig on an installation an
 // earlier release provisioned: the block that release wrote, the operator whose
-// update converges it, and a compute root with a state of its own and a change
-// to apply.
-func updateRigOnTheReleaseBehind(t *testing.T, secrets, key bool) *initRig {
+// update converges it, and a compute root with a state of its own.
+//
+// The caller gives the root's plan: a change, which is the converge this stage
+// is registered for, or nothing at all, which is an installation whose root is
+// already what the plan would make it -- the path with no apply on it, and the
+// one a converged installation takes the block's write through.
+func updateRigOnTheReleaseBehind(t *testing.T, secrets, key bool, changes ...planChange) *initRig {
 	t.Helper()
 	r := updateRig(t)
 	computeReadyWith(t, r, computeOwnPin)
 	updateBatchOperatorOn(t, r)
 	computeProvisioned(t, r)
-	computePlans(t, r, launcherGrantChange(updateBatchOperator))
+	if len(changes) > 0 {
+		computePlans(t, r, changes...)
+	}
 	retiredBatchBlock(t, r, secrets, key)
 	return r
 }
@@ -523,7 +539,7 @@ func TestComputeStageRecordsNoBlockWhenTheApplyFails(t *testing.T) {
 // block stand, and the file the release behind wrote is kept beside it as the
 // backup every local-config write makes.
 func TestUpdateRemovesTheKeyFactInPlace(t *testing.T) {
-	r := updateRigOnTheReleaseBehind(t, false, true)
+	r := updateRigOnTheReleaseBehind(t, false, true, launcherGrantChange(updateBatchOperator))
 	before := readFileString(t, r.cfg)
 	if !strings.Contains(before, "seal_key") || !strings.Contains(before, "BEGIN PUBLIC KEY") {
 		t.Fatalf("the fixture did not write the key fact:\n%s", before)
@@ -556,6 +572,50 @@ func TestUpdateRemovesTheKeyFactInPlace(t *testing.T) {
 	}
 }
 
+// TestUpdateRemovesTheKeyFactWithNothingToApply: the block is written on the
+// path with no plan and no apply on it too. An installation whose compute root
+// is already what `terraform plan` would make it is the ordinary converged one,
+// and it is where the block's write is the ONLY thing the step does -- the
+// apply's own call would leave a machine that has converged before this release
+// holding the key fact for good. The no-changes line is asserted with it, so the
+// case cannot pass by having taken the apply's path by accident.
+func TestUpdateRemovesTheKeyFactWithNothingToApply(t *testing.T) {
+	r := updateRigOnTheReleaseBehind(t, false, true)
+	before := readFileString(t, r.cfg)
+	if !strings.Contains(before, "seal_key") || !strings.Contains(before, "BEGIN PUBLIC KEY") {
+		t.Fatalf("the fixture did not write the key fact:\n%s", before)
+	}
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, "", "update")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if calls := subcommands(computeCalls(t, r)); slicesContains(calls, "apply") {
+		t.Fatalf("an empty plan was applied: %q", calls)
+	}
+	// The stage's own word for nothing to do is the run's account, so it is the
+	// log's and the screen is the step's line (init_compute_test.go holds the
+	// same sentence on the provisioning's own path).
+	if all := out + newestLog(t, "update"); !strings.Contains(all, "No changes: the compute backend's provisioning matches the plan.") {
+		t.Fatalf("the update did not take the no-changes path this case is about:\n%s", all)
+	}
+	after := readFileString(t, r.cfg)
+	if strings.Contains(after, "seal_key") || strings.Contains(after, "BEGIN PUBLIC KEY") {
+		t.Errorf("the update left the key fact in the file with nothing to apply:\n%s", after)
+	}
+	b := localBatchBlock(t, r)
+	if b == nil {
+		t.Fatalf("the update dropped the block:\n%s", after)
+	}
+	if b.OptIn != localcfg.BatchOptInOn || b.Image != computeOwnPin ||
+		b.BootImage == "" || b.Network == "" || b.Subnetwork == "" || b.ServiceAccount == "" {
+		t.Errorf("the block the update left is not the installation's: %+v", b)
+	}
+	if got := backupHolding(t, r, "seal_key"); got == "" {
+		t.Errorf("the update removed the key fact without keeping the file it was in: %v", backupsOf(t, r))
+	}
+}
+
 // TestUpdateRemovesBatchSecretsInPlace: the Secret Manager mounts a launch
 // stopped carrying leave the machine's file in the same update (R10). They go
 // by the block's own merge -- which no longer copies them -- and not by the
@@ -563,7 +623,7 @@ func TestUpdateRemovesTheKeyFactInPlace(t *testing.T) {
 // the mapping, the variable name and the secret's own resource are gone, the
 // block reads back, and the installation's own facts stand.
 func TestUpdateRemovesBatchSecretsInPlace(t *testing.T) {
-	r := updateRigOnTheReleaseBehind(t, true, false)
+	r := updateRigOnTheReleaseBehind(t, true, false, launcherGrantChange(updateBatchOperator))
 	before := readFileString(t, r.cfg)
 	if !strings.Contains(before, "FUGARO_RUN_TOKEN") {
 		t.Fatalf("the fixture did not write the retired mounts:\n%s", before)
@@ -629,7 +689,7 @@ func TestNoKeyFactIsEverWritten(t *testing.T) {
 // read is a failure here and not a pass, and the machine's own file is the
 // first case of the same fact.
 func TestALaunchReadsTheOptInFromThePublishedBlock(t *testing.T) {
-	r := updateRigOnTheReleaseBehind(t, true, true)
+	r := updateRigOnTheReleaseBehind(t, true, true, launcherGrantChange(updateBatchOperator))
 	publishedBucketReady(t)
 	fakeTerminal(t)
 	out, _, err := executeStdin(t, "", "update")
