@@ -53,6 +53,9 @@ import { UPDATES_SWITCH_UNWRITTEN, createUpdateSettings, nodeUpdatesFs, readUpda
 import type { UpdateController } from '../../src/main/updates'
 import { TEMP_ROOTS } from '../../src/main/installationstate'
 import {
+  ADD_PROJECT_NOT_READY,
+  ADD_PROJECT_REFUSED,
+  ADD_PROJECT_UNWIRED,
   DISTROS_NOT_WINDOWS,
   INSTALLATIONS_MENU_LABEL,
   OPEN_EXTERNAL_FAILED,
@@ -61,6 +64,8 @@ import {
   CRASH_SEND_ITEM_LABEL,
   UPDATE_AUTO_LABEL,
   UPDATE_NOW_LABEL,
+  addProjectRefusal,
+  createAddProjectRequest,
   pickerOptions,
   pickerPreloadPath,
 } from '../../src/main/picker'
@@ -202,6 +207,11 @@ function pickerOver(
      * directory; the case that pins the rule passes the real one. */
     readonly tempRoots?: readonly string[]
     readonly spawnLog?: unknown
+    /** onAddProject is the entry point's seam for the picker's Add project door
+     * (SW3c): the picker hands the request over and the window that holds the
+     * wizard opens -- or the entry point answers a sentence, which is a console
+     * with no dashboard to draw it in. */
+    readonly onAddProject?: () => string | undefined
     readonly onChosen?: Parameters<typeof createInstallationPicker>[0]['onChosen']
     readonly onRemoved?: Parameters<typeof createInstallationPicker>[0]['onRemoved']
     readonly onRecordRemoved?: Parameters<typeof createInstallationPicker>[0]['onRecordRemoved']
@@ -273,6 +283,8 @@ function pickerOver(
     appEnv: options.appEnv ?? {},
     ...(options.wslPath === undefined ? {} : { wslPath: options.wslPath }),
     ...(options.platform === undefined ? {} : { platform: options.platform }),
+    ...(options.spawnLog === undefined ? {} : { spawnLog: options.spawnLog as never }),
+    ...(options.onAddProject === undefined ? {} : { onAddProject: options.onAddProject }),
     ...(options.onChosen === undefined ? {} : { onChosen: options.onChosen }),
     ...(options.onRemoved === undefined ? {} : { onRemoved: options.onRemoved }),
     ...(options.onRecordRemoved === undefined ? {} : { onRecordRemoved: options.onRecordRemoved }),
@@ -390,14 +402,15 @@ function listableStub(): Stub {
 // ---------------------------------------------------------------------------
 
 describe('the picker’s allow-list', () => {
-  it('is closed, frozen, and seven rows wide', () => {
-    // Seven, because the form is gone (owner's ruling of 2026-10-20) and the
-    // reveal affordance arrived with Part D: the list, one click that opens an
-    // installation, the checkout it is used from, the removal of this console's
-    // own record, the one directory Explorer opens, the one link, and -- the one
-    // row whose subject is the machine rather than this console -- the
-    // distributions `wsl.exe` lists (T-G3). A row that came back -- `add`,
-    // `pickBinary` -- fails here by name.
+  it('is closed, frozen, and eight rows wide', () => {
+    // Eight, because the form is gone (owner's ruling of 2026-10-20), the reveal
+    // affordance arrived with Part D and Add project with SW3c: the list, one
+    // click that opens an installation, the checkout it is used from, the removal
+    // of this console's own record, the one directory Explorer opens, the one
+    // link, the distributions `wsl.exe` lists (T-G3, the one row whose subject is
+    // the machine rather than this console), and the one door that opens the
+    // setup wizard (R4). A row that came back -- `add`, `pickBinary` -- fails
+    // here by name.
     expect(INSTALLATION_OPERATIONS.map((row) => row.name)).toEqual([
       'list',
       'choose',
@@ -406,6 +419,7 @@ describe('the picker’s allow-list', () => {
       'reveal',
       'openExternal',
       'distros',
+      'addProject',
     ])
     expect(Object.isFrozen(INSTALLATION_OPERATIONS)).toBe(true)
     for (const row of INSTALLATION_OPERATIONS) expect(Object.isFrozen(row)).toBe(true)
@@ -415,6 +429,10 @@ describe('the picker’s allow-list', () => {
     // crosses the boundary: a renderer that sends a `url` key has sent a key no
     // row declares.
     expect(INSTALLATION_OPERATIONS.find((row) => row.name === 'openExternal')?.args).toEqual([])
+    // Add project takes none either: the wizard it opens is the console's own
+    // screen, so there is nothing for a document to name -- no path, no project,
+    // no answers.
+    expect(INSTALLATION_OPERATIONS.find((row) => row.name === 'addProject')?.args).toEqual([])
   })
 
   it('is mirrored by the preload, exactly', () => {
@@ -446,9 +464,20 @@ describe('the picker’s bridge', () => {
       },
     })
     const keys = Object.keys(bridge).sort()
-    expect(
-      keys,
-    ).toEqual(['checkout', 'choose', 'list', 'openExternal', 'operations', 'remove', 'reveal', 'version', 'distros'].sort())
+    expect(keys).toEqual(
+      [
+        'addProject',
+        'checkout',
+        'choose',
+        'list',
+        'openExternal',
+        'operations',
+        'remove',
+        'reveal',
+        'version',
+        'distros',
+      ].sort(),
+    )
     // The three names a bridge would have, and their absence is the design's
     // rule 5: there is no general invoker to point at a channel.
     for (const forbidden of ['invoke', 'send', 'on', 'channel']) expect(keys).not.toContain(forbidden)
@@ -477,6 +506,112 @@ describe('the picker’s bridge', () => {
   it('answers a refusal for a reply that is not one', async () => {
     const reply = await invokeOperation({ invoke: async () => 'nonsense' }, 'list', undefined)
     expect(reply.ok).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Add project: the one row that opens a window rather than a process
+// ---------------------------------------------------------------------------
+
+describe('the picker’s Add project row', () => {
+  it('hands the request to the entry point and spawns no child', async () => {
+    const asked: string[] = []
+    const logged: unknown[] = []
+    // **The machine has a `fugaro`**, and the same log writer records the child
+    // the picker's own list spawns. That is what makes the empty log below a
+    // fact about the door: with no discoverable binary (or no live writer) the
+    // assertion would hold for a row that spawned anything at all.
+    const stub = listableStub()
+    const { ipcMain } = pickerOver({
+      prefixes: [stub.directory],
+      onAddProject: () => {
+        asked.push('asked')
+        return undefined
+      },
+      spawnLog: {
+        enabled: true,
+        path: null,
+        records: 0,
+        error: null,
+        record: (entry: unknown) => logged.push(entry),
+        close: () => undefined,
+      },
+    })
+    expect(await answer(ipcMain, 'list')).toMatchObject({ ok: true })
+    expect(
+      logged.length,
+      'the fixture recorded no spawn, so nothing here proves the door spawns nothing',
+    ).toBeGreaterThan(0)
+    logged.length = 0
+
+    expect(await answer(ipcMain, 'addProject')).toEqual({ ok: true, data: null })
+    expect(asked).toEqual(['asked'])
+    expect(logged).toEqual([])
+  })
+
+  it('refuses when the entry point wired no door', async () => {
+    const { ipcMain } = pickerOver()
+    expect(await answer(ipcMain, 'addProject')).toEqual({ ok: false, reason: ADD_PROJECT_UNWIRED })
+  })
+
+  it('shows the sentence the entry point refuses with', async () => {
+    // The entry point answers a sentence on a console with no dashboard to draw
+    // the wizard in -- one still reading its `fugaro`, and a refused one -- and
+    // the row shows it: the renderer draws `reason` and only `reason`
+    // (`src/renderer/installations.ts`), so an `ok` here would be a click that
+    // opened nothing, which is the one answer this row must not give.
+    for (const sentence of [ADD_PROJECT_REFUSED, ADD_PROJECT_NOT_READY]) {
+      let asked = 0
+      const { ipcMain } = pickerOver({
+        onAddProject: () => {
+          asked += 1
+          return sentence
+        },
+      })
+      expect(await answer(ipcMain, 'addProject'), sentence).toEqual({ ok: false, reason: sentence })
+      expect(asked, sentence).toBe(1)
+    }
+  })
+
+  it('refuses the door on a console that is refused or has not read a fugaro yet', () => {
+    // `addProjectRefusal` is the entry point's decision, and it lives here
+    // because `src/main/index.ts` cannot be imported: what it is handed is the
+    // handshake's answer as the console holds it. Neither of the two refusals
+    // may set the flag -- the flag is main's (`addProject`), and the one
+    // window that would spend it is the dashboard a refused console never gets.
+    expect(addProjectRefusal(null)).toBe(ADD_PROJECT_NOT_READY)
+    expect(addProjectRefusal(classifyCliVersion('not a version'))).toBe(ADD_PROJECT_REFUSED)
+    // The non-vacuity half: the door is *not* refused on a console that may
+    // drive its fugaro, which is the case the whole row exists for.
+    expect(addProjectRefusal(classifyCliVersion(CLOCKED))).toBeUndefined()
+  })
+
+  it('delivers a request to exactly one dashboard boot', () => {
+    // The delivery mechanism the whole operation rests on (SW3c review): the
+    // dashboard reads `installation.current` once, at boot, and that read is the
+    // door's entire delivery, so it must be the read that **spends** the
+    // request. A request that outlived it would open the wizard on every later
+    // boot -- a reload, a second window -- and no test of the row itself, or of
+    // the sentence it refuses with, would notice.
+    const request = createAddProjectRequest()
+    // A read before anything asked is not a request.
+    expect(request.take()).toBe(false)
+    expect(request.please()).toBe(true)
+    expect(request.take()).toBe(true)
+    // The whole rule, in one line: the boot after the one that delivered it
+    // opens nothing.
+    expect(request.take()).toBe(false)
+    // A second click while the window is coming is not a second request: it
+    // would remake the window the first one opened and race the two boots.
+    expect(request.please()).toBe(true)
+    expect(request.please()).toBe(false)
+    expect(request.take()).toBe(true)
+    expect(request.take()).toBe(false)
+    // And a request this console can never carry out goes with the choice that
+    // makes it a different console.
+    expect(request.please()).toBe(true)
+    request.clear()
+    expect(request.take()).toBe(false)
   })
 })
 
