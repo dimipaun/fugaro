@@ -27191,8 +27191,8 @@ cloud, no project, no checkout) — a fast project that passes, the **median** b
 fails, the bound and the repeats as asked for, an empty index and an unfinished one, a core build's `graph` stub, a
 checkout that joins no run, a read that exits non-zero, only the reads being called, the plan join running in the
 checkout, closed stdin, a `--dry-run` that calls nothing, and the refusals (a coding agent's session, a traced shell,
-the owner's own installation, a bad argument, a checkout that is not there) — and is run by `go test ./scripts`
-(`TestCheck870Script`).
+the owner's own installation, a bad argument, a checkout that is not there) — and is run by
+`go test ./scripts/runindexchecks` (`TestCheck870Script`).
 
 ## Check 871: the run index's three reads at 100x (a scratch project of yours, never `belong`; run by you; NOT RUN)
 
@@ -27264,4 +27264,4 @@ project that already holds a run refused, a config without a repository and a mi
 product and one given, a checkout with no plan task refused, only the needed commands being called (`fugaro` and the
 check's own `cd` per call), the access token never reaching an argv, `--dry-run` calling nothing, the kept scratch and
 the kept cloud, and the refusals (a coding agent's session, a traced shell, the owner's own installation, a bad
-argument) — and is run by `go test ./scripts` (`TestCheck871Script`).
+argument) — and is run by `go test ./scripts/runindexchecks` (`TestCheck871Script`).
