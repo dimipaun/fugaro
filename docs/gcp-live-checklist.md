@@ -8185,8 +8185,10 @@ undo:
 node together (§3.4); or re-pair if you are keeping push.
 - **The push node's contents** — the sender's ledger and any orphaned `push/$uid` are inert and get reaped; 
 delete any leftover by hand over IAM if you want it gone now.
-- **The build and the cloud** — the FCM permission grant, the FCM API enablement and the app build with 
-push on are **the owner's to keep or revert**; this check does not revert them.
+- **The build and the cloud** — the app build with push on is **the owner's to keep or revert**, and so is 
+**P5.2.7**'s sender identity once it lands (the Cloud KMS key and the one grant that signs with it); this 
+check does not revert them. The relay itself is the publisher's, outside this repository, and is not this 
+check's to undo.
 - **Nothing in this repository changed**: no node written by hand where a task owns the write, no rules 
 change, no commit.
 
