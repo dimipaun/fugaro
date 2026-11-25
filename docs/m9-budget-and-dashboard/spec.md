@@ -133,7 +133,7 @@ agent:
   max_budget_usd: 25             # unchanged: per stage, passed as claude --max-budget-usd
 ```
 
-- **When the budget is on, every role must name an explicit model ID.** `validate` and the runner refuse any role that doesn't. They also refuse aliases such as `sonnet` or `opus`, and IDs that aren't in the effective price table. With the budget off, today's behaviour is unchanged.
+- **Every role must name an explicit model ID.** `validate` and the runner refuse any role that doesn't. They also refuse aliases such as `sonnet` or `opus`, and IDs that aren't in the effective price table. There is no mode that skips this list ([always-a-budget](../always-a-budget/spec.md), D3020).
 - **The runner pins everything Claude Code might pick.** For each stage it passes `--model <role>` and sets:
   - `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL` and `CLAUDE_CODE_SUBAGENT_MODEL` to the role's model;
   - `ANTHROPIC_DEFAULT_HAIKU_MODEL` to `background`.
@@ -387,11 +387,12 @@ A refused write is re-read and evaluated locally, which tells a stale read (retr
 
 ### 5.7 Budget modes
 
-The local config's `budget.mode`:
+The local config's `budget.mode`, one of two ([always-a-budget](../always-a-budget/spec.md), D3009):
 
-- **`off`**: no gateway, the same as having no `budget:` block;
-- **`observe`** (M9b, correction R2: the mode is **project-wide**, stored at `config/mode` in the database and set by `init --firebase --budget-mode` or `fugaro budget set --global --mode`; the job's `FUGARO_BUDGET_MODE` is only the on/off gate and a committed or ceiling `off` means no backend at all; `budget show` prints both, since an env `observe` under a database `enforce` halts on cap refusals): account and lease in RTDB, but **caps are advisory**. Would-be cap halts are logged and never refused; the observe rules variant drops only the cap checks. **Kill switches and fail-closed still apply:** an observe run halts on a kill, and halts when the backend is unreachable after the 3-minute grace (D14). So observe relaxes caps only, which is why it keeps its name. For behaviour with no budget at all, use `off`.
+- **`observe`** (M9b, correction R2: the mode is **project-wide**, stored at `config/mode` in the database and set by `fugaro update --budget-mode` or `fugaro budget set --global --mode`; a mode left out of the job's environment is `observe` too, so the job's `FUGARO_BUDGET_MODE` and the database's mode agree; `budget show` prints both, since an env `observe` under a database `enforce` halts on cap refusals): account and lease in RTDB, but **caps are advisory**. Would-be cap halts are logged and never refused; the observe rules variant drops only the cap checks. **Kill switches and fail-closed still apply:** an observe run halts on a kill, and halts when the backend is unreachable after the 3-minute grace (D14). So observe relaxes caps only, which is why it keeps its name.
 - **`enforce`**: everything in this document.
+
+There is no third mode: the word that meant "no gateway" is refused wherever it is written, and every run opens a session (D3009).
 
 ### 5.8 What `oauth` runs get (A1: the user accepted the risk)
 
@@ -815,7 +816,7 @@ Two of the three things P6.4 adds narrow this and neither closes it. **The devic
 
   ```yaml
   budget:
-    mode: enforce                    # off | observe | enforce
+    mode: enforce                    # observe | enforce
     firebase_project: my-fugaro-fp   # the Firebase project: a project of its own, or the installation's gcp_project (D3, revised)
     rtdb_url: https://<instance>.firebaseio.com
     firebase_api_key: <web-api-key>  # not a secret; restricted to identitytoolkit and securetoken
@@ -892,7 +893,7 @@ Caps must be finite, non-negative and at most $100,000, and a per-run cap can't 
 | Figure | Source of truth | Also shown in |
 |---|---|---|
 | A run's model dollars (`api-key`, `vertex` with the budget on) | The gateway's per-run ledger | `result.json` `cost.model_usd` (`model_source: gateway`), the PR report, `ls`, and `/runs/<slug>/<run>.spent` |
-| Model dollars without a gateway (`oauth`, or the budget off) | Claude Code's `total_cost_usd` | The same places, with `model_source: claude-code`. `oauth` stays `model_basis: subscription` (notional) |
+| Model dollars without a gateway (`oauth`) | Claude Code's `total_cost_usd` | The same places, with `model_source: claude-code`. `oauth` stays `model_basis: subscription` (notional) |
 | Dollars counted against caps | RTDB `counted` (spent plus outstanding) | watch, `budget show` |
 | History | Firestore, copied from RTDB | `report` |
 | Compute | An estimate, as in §10.1 | Unchanged, plus `computeUsd` in the history. Never capped |
@@ -951,13 +952,13 @@ The attacker is a compromised agent in run A. It runs as the same user as the ru
 
 - **The runner and CLI understand only the new shapes.** Strict decoding rejects old local configs, job environments and `fugaro.yaml` files, each with a message that points at §13.1.
 - **The additions to `result.json` are optional fields.** Records already in the bucket still decode as they are, with no special code.
-- **The budget modes are features, not compatibility.** `off` (no `budget:` block) runs without the gateway or Firebase, and `observe` calibrates caps. Fail-closed behaviour (D14) is unchanged.
+- **The budget modes are features, not compatibility.** `observe` calibrates caps and `enforce` refuses a call; every installation has the database and there is no mode without a gateway ([always-a-budget](../always-a-budget/spec.md), D3009). Fail-closed behaviour (D14) is unchanged.
 - **Budget rollout,** once M9b ships:
   1. Create the FP and link billing (§6.0), then run `fugaro init --firebase <fp-id> --budget-mode observe`.
   2. Set generous caps.
   3. Watch a week of `report --by model` and `budget show`.
   4. Set the real caps and switch to `enforce`.
-- **Rollback.** `--budget-mode off` and re-init. The data is kept (`prevent_destroy`).
+- **Rollback.** There is none to the mode: set it back to `observe` and a run counts and refuses nothing. The database and its data are kept (`prevent_destroy`).
 
 ### 13.1 One-time migration of the existing installs
 
@@ -1093,7 +1094,7 @@ Sizes: **S** is up to a day, **M** a few days, **L** about a week.
 | D11 | Packaging | **The gateway is in the `fugaro` binary in the base image. The history job has its own small image** | The gateway reaches a repository through a derived-image rebuild. The history image is built by `init` until M7 publishes images |
 | D12 | The registry | **Heartbeats, plus a sweeper cross-checked against Cloud Run executions** | The history job sweeps every 15 minutes |
 | D13 | The TUI library | **Bubble Tea** | The first TUI dependency |
-| D14 | Budget backend unreachable | **Halt after a 3-minute grace, for every auth mode and every budget mode, `observe` included.** Image checks and rebuilds are unaffected | An outage of RTDB or Identity Toolkit stops even `oauth` runs and observe runs. `off` is the only mode that ignores the backend |
+| D14 | Budget backend unreachable | **Halt after a 3-minute grace, for every auth mode and every budget mode, `observe` included.** Image checks and rebuilds are unaffected | An outage of RTDB or Identity Toolkit stops even `oauth` runs and observe runs. No mode ignores the backend: every run has one ([always-a-budget](../always-a-budget/spec.md), D3009) |
 | D15 | The PR flow (**revised 2026-10-01**) | **A DRAFT PR opens after the first implement stage passes verification (the first push); its description is updated at each stage boundary; it flips to ready at the end.** A halt before the branch exists still opens no PR (D9). A halt after the first push leaves the draft with a `halted` comment. The sweeper marks the stale drafts of crashed runs. The structured review format still goes into the final report (no per-round comments) | Milestone M9e touches `internal/runner` (finalize, `EnsurePR` by number) and the `internal/gitprov` adapters. A live test must confirm that a Bitbucket draft does not notify the assigned reviewer. Was: PRs opened at finalize |
 | D16 | Project identity | **Each repository's `fugaro.yaml` names its project (`project: <slug>`)**, required by `init --repo` from M9 on and checked by the runner against the job's `FUGARO_PROJECT`. `fugaro init --name` sets the name once, in the cloud setup; project configs copy it; `fugaro use` is dropped. Renaming is unsupported in M9 | Mistakes can't cross projects. Existing repositories need one PR each, plus `init --repo`. The name is a label, not a boundary |
 | D17 | One word | **"Project" means only the Fugaro project, everywhere.** `--project <name>`, `FUGARO_PROJECT=<name>`, `projects/<name>.yaml` with `name:`; no profiles. The GCP ID becomes `--gcp-project`, `gcp_project:` and `FUGARO_GCP_PROJECT`. Terraform's `project` variable is the one exception | Breaking CLI, config and environment renames, applied directly (D18). `--gcp-project` can't override a selected project |
