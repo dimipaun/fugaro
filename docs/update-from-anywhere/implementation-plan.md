@@ -675,3 +675,7 @@ directory". It also says:
 - **Contract edges for U9a, U9b and U11.** U9a reads no repository through the view; U9b and U11
   share files.
 - **Moving `serviceReadProvider` to a file of its own.** U2 calls it where it is (round 3).
+- **A bound of concurrency in the read.** The spec's cost line asked for one; `repofiles.Read` is a
+  sequential loop and U2 adds none. Three calls per repository, tens of repositories per project,
+  is far below the host's hourly limit, and a bound adds a second thing per repository that can
+  fail. The spec's cost line now says what the read does.
