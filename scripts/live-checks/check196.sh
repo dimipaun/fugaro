@@ -52,6 +52,14 @@
 #             bash scripts/live-checks/check196.sh --after-flip   (Check 196's
 #             second half: the check job's accessor and availableSecrets gone, a
 #             build that still succeeds)
+#             bash scripts/live-checks/check196.sh --preflight
+#             --preflight makes the check's own READS and evaluates every
+#             precondition before anything is written or launched (the inputs,
+#             the installation's project and version, the image_map, the
+#             region's builds, the jobs, the service, its IAM policy, the
+#             executions and the log read), prints every blocker at once with
+#             the command that clears it, writes nothing and launches nothing,
+#             and exits non-zero when anything blocks.
 # Needs:      bash, mktemp, python3, gcloud (authenticated as you: list the
 #             REGION's own builds and read each repository's own catalog builds
 #             out of them, read the credentials service itself and ONE of its
@@ -109,7 +117,8 @@
 # repository, which the same installation serves); CHECK196_BUILDS (how many of
 # the project's recent builds to read; default 50), CHECK196_LOG_AGE,
 # CHECK196_LOG_LIMIT, CHECK196_LOG_WAIT_SECONDS, CHECK196_LOG_POLL_SECONDS,
-# CHECK196_DRY_RUN, CHECK196_KEEP_SCRATCH. None of them can point this check at
+# CHECK196_DRY_RUN, CHECK196_PREFLIGHT, CHECK196_KEEP_SCRATCH. None of them can
+# point this check at
 # another project or another region: those two are constants in this file.
 #
 # WHICH BUILDS ARE A REPOSITORY'S (changed 2026-11-25). The entry is the one the
@@ -203,6 +212,13 @@ on_error() {
   say "an internal error ended this check at line $line"
   exit 2
 }
+
+# The shared `--preflight` driver (scripts/live-checks/lib/preflight.sh).
+live_check_lib_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib
+LIVE_CHECK_LIB=${LIVE_CHECK_LIB:-$live_check_lib_dir}
+# shellcheck source=lib/preflight.sh
+. "$LIVE_CHECK_LIB/preflight.sh"
+PREFLIGHT_TOOL=check196
 
 # ---------------------------------------------------------------- requirements
 need() { command -v "$1" >/dev/null 2>&1 || die "Check 196 needs '$1' on PATH and it is not there${2:+ ($2)}"; }
@@ -309,6 +325,12 @@ cleanup() {
 finish() {
   local status=$?
   trap - EXIT
+  if [ "$PREFLIGHT_MODE" = yes ]; then
+    # A preflight wrote nothing and launched nothing: it prints its own lines
+    # and no RESULT block.
+    remove_scratch
+    exit "$status"
+  fi
   # INT, TERM and HUP are NOT reset here: cleanup is about to run, and a second
   # Ctrl-C during it would kill this shell with the reading half done.
   CLEANUP_RUNNING=yes
@@ -979,6 +1001,125 @@ guard_inputs() {
   guard_one_repo "$BB_REPO" CHECK196_BITBUCKET
   [ "$REPO" != "$BB_REPO" ] || stop "CHECK196_REPO and CHECK196_BITBUCKET name the same repository ($REPO): the two halves are a GitHub repository and a Bitbucket one, and one repository cannot be both"
   fact inputs PASS "GitHub ${REPO}, Bitbucket ${BB_REPO} (sandbox repositories of the fugaro-dev installation; never belong)"
+}
+
+# ---------------------------------------------------------------- preflight
+# step_preflight: --preflight. The reads this check makes, every precondition it
+# has evaluated, nothing written and nothing launched. The inputs are argument
+# validation (guard_inputs stops on a missing or owner's own repository, the way
+# check630's --sandbox does); everything else is the state of the live
+# installation, and each one that does not hold is one blocker, all of them
+# printed at once.
+step_preflight() {
+  preflight_agent_session
+  guard_inputs
+  preflight_note inputs "GitHub ${REPO}, Bitbucket ${BB_REPO} (the two sandbox repositories this run would read)"
+
+  local doctor_out v
+  doctor_out=$(fugaro doctor --project "${NAME}" --all || true)
+  if printf '%s\n' "$doctor_out" | grep "^project: .*(GCP ${P}," >/dev/null 2>&1; then
+    preflight_note installation "${NAME} (GCP ${P}, ${L}), read from fugaro doctor --project ${NAME} --all"
+  else
+    preflight_block installation \
+      "fugaro doctor --project ${NAME} --all prints no 'project: ... (GCP ${P},' line: this is not the ${P} installation, or --project ${NAME} disagrees with this checkout's project:, or doctor failed" \
+      "fugaro doctor --project ${NAME} --all"
+  fi
+  v=$(fugaro version 2>/dev/null | head -n 1 || true)
+  case "$v" in
+  dev | *-dev* | *dirty*)
+    preflight_block fugaro-version \
+      "fugaro version reads '${v}': a development build is not the release under test, and it resolves no released credentials-service image to deploy" \
+      "install the release under test, then run 'fugaro version' and check it is no longer '${v}'"
+    ;;
+  *) preflight_note fugaro-version "${v:-fugaro version printed nothing}" ;;
+  esac
+
+  # The effective image_map, read like read_image_map. A published node that
+  # cannot be read is NOT a blocker: the check tolerates it and the local half
+  # answers alone (D1906), so it is a note either way.
+  local cfg policy=$SCRATCH/pf-policy.json mapfile=$SCRATCH/pf-imagemap map_err=""
+  cfg=$(project_config_file)
+  if ! fugaro project policy show --json --project "${NAME}" >"$policy" 2>"$SCRATCH/pf-policy.err"; then
+    map_err="the published node could not be read ($(last_lines "$SCRATCH/pf-policy.err"))"
+    : >"$policy"
+  fi
+  if reader imagemap "$cfg" "$policy" >"$mapfile" 2>"$SCRATCH/pf-imagemap.err"; then
+    local mapread mapped
+    mapread=$(field_of map-read "$(cat "$mapfile")")
+    mapped=$(grep -c '^map=' "$mapfile" 2>/dev/null || true)
+    preflight_note image_map \
+      "the effective image_map reads ${mapread:-unknown}, naming ${mapped:-0} repo(s)${map_err:+ (${map_err})}"
+  else
+    preflight_block image_map \
+      "the project's image_map could not be read (the reader failed): $(last_lines "$SCRATCH/pf-imagemap.err")" \
+      "fugaro project policy show --json --project ${NAME}"
+  fi
+
+  local builds=$SCRATCH/pf-builds.json
+  if gcloud builds list --project="$P" --region="$L" --limit="$BUILDS" --format=json >"$builds" 2>"$SCRATCH/pf-builds.err"; then
+    preflight_note builds "the last ${BUILDS} builds of ${P}/${L} are readable (a regional listing: a catalog build is regional)"
+  else
+    preflight_block builds \
+      "the region's builds cannot be read (yours needs cloudbuild.builds.list in ${L}): $(last_lines "$SCRATCH/pf-builds.err")" \
+      "gcloud builds list --project=${P} --region=${L} --limit=${BUILDS} --format=json"
+  fi
+
+  local jobs=$SCRATCH/pf-jobs.json
+  if gcloud run jobs list --project="$P" --region="$L" --format=json >"$jobs" 2>"$SCRATCH/pf-jobs.err"; then
+    preflight_note jobs "the installation's Cloud Run jobs are readable (yours needs run.jobs.list on ${P})"
+  else
+    preflight_block jobs \
+      "the installation's Cloud Run jobs cannot be read (yours needs run.jobs.list on ${P}): $(last_lines "$SCRATCH/pf-jobs.err")" \
+      "gcloud run jobs list --project=${P} --region=${L} --format=json"
+  fi
+
+  local svc=$SCRATCH/pf-service.json
+  if gcloud run services describe "${SVC}" --project="$P" --region="$L" --format=json >"$svc" 2>"$SCRATCH/pf-service.err"; then
+    preflight_note service "the credentials service ${SVC} is readable in ${P}/${L} (yours needs run.services.get)"
+  else
+    preflight_block service \
+      "the credentials service ${SVC} cannot be read (yours needs run.services.get on ${P}): $(last_lines "$SCRATCH/pf-service.err")" \
+      "gcloud run services describe ${SVC} --project=${P} --region=${L} --format=json"
+  fi
+
+  local iam=$SCRATCH/pf-serviceiam.json
+  if gcloud run services get-iam-policy "${SVC}" --project="$P" --region="$L" --format=json >"$iam" 2>"$SCRATCH/pf-serviceiam.err"; then
+    preflight_note boundary "the service's own IAM policy is readable (yours needs run.services.getIamPolicy on ${P})"
+  else
+    preflight_block boundary \
+      "the credentials service's own IAM policy cannot be read (yours needs run.services.getIamPolicy on ${P}): $(last_lines "$SCRATCH/pf-serviceiam.err")" \
+      "gcloud run services get-iam-policy ${SVC} --project=${P} --region=${L} --format=json"
+  fi
+
+  # Each repository's daily check job and its newest execution, read off the jobs
+  # listing above. A repository with no `fugarochk-` job is the shape D1900 gives
+  # one that has none, and is a note rather than a blocker.
+  local label repo ans jname
+  for label in github bitbucket; do
+    if [ "$label" = github ]; then repo=$REPO; else repo=$BB_REPO; fi
+    ans=$(reader job "$jobs" "$repo" 2>/dev/null || true)
+    if [ "$(field_of found "$ans")" = yes ]; then
+      jname=$(field_of name "$ans")
+      if gcloud run jobs executions list --project="$P" --region="$L" --job="$jname" --limit=1 --format=json >/dev/null 2>"$SCRATCH/pf-exec-$label.err"; then
+        preflight_note "check-$label" "the daily check job ${jname} of ${repo} and its newest execution are readable"
+      else
+        preflight_block "check-$label" \
+          "the daily check job ${jname} of ${repo} exists but its executions cannot be read: $(last_lines "$SCRATCH/pf-exec-$label.err")" \
+          "gcloud run jobs executions list --project=${P} --region=${L} --job=${jname} --limit=1 --format=json"
+      fi
+    else
+      preflight_note "check-$label" "no daily check job (${CHECK_JOB_PREFIX}…) for ${repo}, which is the shape D1900 gives a repository that has none"
+    fi
+  done
+
+  local logfilter="resource.type=\"cloud_run_revision\" resource.labels.service_name=\"${SVC}\" jsonPayload.purpose=\"build\""
+  if gcloud logging read "$logfilter" --project="$P" --freshness="$LOG_AGE" --limit="$LOG_LIMIT" --format=json >/dev/null 2>"$SCRATCH/pf-log.err"; then
+    preflight_note log "the service's own credsvc: audit lines are readable in Cloud Logging (yours needs roles/logging.viewer on ${P})"
+  else
+    preflight_block log \
+      "the service's own lines cannot be read (yours needs roles/logging.viewer on ${P}): $(last_lines "$SCRATCH/pf-log.err")" \
+      "gcloud logging read \"resource.labels.service_name=${SVC} jsonPayload.purpose=build\" --project=${P} --freshness=${LOG_AGE} --limit=${LOG_LIMIT} --format=json"
+  fi
 }
 
 # ---------------------------------------------------------------- the reading
@@ -1768,6 +1909,12 @@ main() {
   scratch_up
   write_reader
   guard_xtrace
+
+  if [ -n "$PREFLIGHT" ]; then
+    step_preflight
+    preflight_report
+  fi
+
   guard_inputs
 
   if [ -n "$DRY_RUN" ]; then
@@ -1846,19 +1993,17 @@ on_signal() {
 }
 
 MODE=switch
-case "${1:-}" in
---dry-run) DRY_RUN=1 ;;
---after-flip)
-  MODE=flip
-  case "${2:-}" in
+PREFLIGHT_CLI=""
+while [ $# -gt 0 ]; do
+  case "$1" in
   --dry-run) DRY_RUN=1 ;;
+  --after-flip) MODE=flip ;;
+  --preflight) PREFLIGHT_CLI=1 ;;
   "") ;;
-  *) die "usage: $PROG [--dry-run|--after-flip [--dry-run]]" ;;
+  *) die "usage: $PROG [--dry-run|--after-flip|--preflight]" ;;
   esac
-  ;;
-"") ;;
-*) die "usage: $PROG [--dry-run|--after-flip [--dry-run]]" ;;
-esac
+  shift
+done
 
 REPO=${CHECK196_REPO:-}
 BB_REPO=${CHECK196_BITBUCKET:-}
@@ -1868,6 +2013,9 @@ LOG_LIMIT=${CHECK196_LOG_LIMIT:-200}
 LOG_WAIT_SECONDS=${CHECK196_LOG_WAIT_SECONDS:-60}
 LOG_POLL_SECONDS=${CHECK196_LOG_POLL_SECONDS:-10}
 DRY_RUN=${CHECK196_DRY_RUN:-${DRY_RUN:-}}
+PREFLIGHT=${CHECK196_PREFLIGHT:-$PREFLIGHT_CLI}
+PREFLIGHT_MODE=no
+[ -z "$PREFLIGHT" ] || PREFLIGHT_MODE=yes
 KEEP_SCRATCH=${CHECK196_KEEP_SCRATCH:-}
 
 trap finish EXIT

@@ -30,6 +30,7 @@ accounts_allow.go	next: fugaro update
 accounts_craft.go	fugaro update --repo . writes it
 accounts_rm.go	run fugaro update
 apply.go	Run fugaro update
+catalog_copy.go	run fugaro image build
 config_publish.go	run fugaro config publish
 config_publish.go	run fugaro image refresh
 config_publish.go	run fugaro update
@@ -119,7 +120,6 @@ launch_budget.go	then the job image from it with fugaro image build
 launch_budget.go	with fugaro image build
 launch_budget.go	with fugaro image refresh
 launch_budget.go	with fugaro update
-managed_flag.go	fugaro update that applies it
 operator_write.go	with fugaro update
 orchestrator_identity.go	run fugaro update
 pair_invite.go	fugaro update, which writes it

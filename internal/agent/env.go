@@ -39,6 +39,14 @@ type EnvSpec struct {
 	Secrets     []string          // declared workflow secret variables, passed through
 	Set         map[string]string // variables Fugaro sets, such as FUGARO_STATE_DIR
 	PathPrepend string            // directory put first on PATH
+	// FileSecrets are the declared variables whose value is a file the runner
+	// wrote rather than the secret itself (config.Secret.File, D3327): the
+	// variable is passed through like any other and receives that path, and
+	// the value is NOT registered for redaction here -- the runner registered
+	// it before it wrote the file, and the path is not a credential. It is
+	// always a subset of Secrets: a name here that no declared secret names is
+	// never reached.
+	FileSecrets []string
 	// ImageEnv are the variables the operator's own catalog image declares,
 	// already narrowed by the caller (runner.imageEnv): a name here is dropped
 	// if it is reserved, and it is written before everything Fugaro writes, so
@@ -237,6 +245,15 @@ func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err er
 			// loop -- the gateway's token stands in for any declared mount of
 			// it -- so the plain sentence is the whole of it.
 			return nil, nil, fmt.Errorf("secret %s is not set in the runner environment", k)
+		}
+		if slices.Contains(spec.FileSecrets, k) {
+			// The variable holds the path of the file the runner wrote the
+			// value to, and the runner registered the value before writing it:
+			// what the stage gets is the path, and the path is no secret to
+			// redact. The floor below is the value's, and it is not this
+			// path's to keep.
+			out[k] = v
+			continue
 		}
 		if len(v) < 4 {
 			return nil, nil, fmt.Errorf("secret %s is shorter than 4 bytes, so it cannot be redacted safely", k)

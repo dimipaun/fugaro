@@ -29,6 +29,11 @@ import (
 // release is refused by this gate and no longer tests what it means to.
 const releaseSeal = "ghcr.io/dimipaun/fugaro-base:" + sealSince
 
+// releaseL8 is the base image of release A: the launch gate that judges a
+// recipe copy, the recipes folder, ab.repos and a lifted key (l8Since) lets it
+// through.
+const releaseL8 = "ghcr.io/dimipaun/fugaro-base:" + l8Since
+
 // nodeRelease is the release that introduced the policy node's current version
 // (projectpolicy.VersionSince): the floor of every fixture whose launch must
 // pass the launcher's policy gate, which holds a job image to the release that

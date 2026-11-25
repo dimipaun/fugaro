@@ -1135,6 +1135,99 @@ func TestCatalogBuildBakesTheMappedReposCheckout(t *testing.T) {
 	}
 }
 
+// catalogBuildCredentialArg is the git credential the derived template hands a
+// build step, as the submitted request spells it: gcp's
+// catalogTemplateCredentialArg, whose text that package's own test pins
+// (TestCloneStepIsGeneratedAndSeparateFromTheEntryBuild). This is the request's
+// bytes and not the constant, because a CLI test reads what was posted.
+const catalogBuildCredentialArg = `--secret "id=git-credentials,src=/creds/git-credentials"`
+
+// buildStepArgs is the request's step id's arguments read as one script: an
+// argument is quoted text and the generated steps carry heredocs, so what a step
+// does is what its arguments say together, not what the marshaled JSON says.
+func buildStepArgs(t *testing.T, fb *gcpfake.Build, id string) string {
+	t.Helper()
+	step := catalogBuildStep(t, fb, id)
+	if step == nil {
+		t.Fatalf("the last request has no %s step: %v", id, catalogBuildStepIDs(t, fb))
+	}
+	script := ""
+	args, _ := step["args"].([]any)
+	for _, raw := range args {
+		s, _ := raw.(string)
+		script += s + "\n"
+	}
+	return script
+}
+
+// catalogBuildStepCredential is whether the last submitted build's own build
+// step is handed the git credential: the argument above and the fugaro-creds
+// volume at /creds that holds the file it names. The two go together — the
+// argument names a file only that volume puts in the step — so a request that
+// carries one and not the other fails here rather than passing as a half.
+func catalogBuildStepCredential(t *testing.T, fb *gcpfake.Build) bool {
+	t.Helper()
+	step := catalogBuildStep(t, fb, "build")
+	script := buildStepArgs(t, fb, "build")
+	held := strings.Contains(script, catalogBuildCredentialArg)
+	vols, _ := step["volumes"].([]any)
+	mounts := false
+	for _, raw := range vols {
+		v, _ := raw.(map[string]any)
+		if v["name"] == "fugaro-creds" && v["path"] == "/creds" {
+			mounts = true
+		}
+	}
+	if held != mounts {
+		t.Errorf("the build step's credential argument is there = %v and its fugaro-creds volume = %v: the argument names a file only that volume holds: %q", held, mounts, script)
+	}
+	return held
+}
+
+// TestCatalogBuildHandsNoCredentialToTheEntrysBuild: whatever the copy bakes,
+// the entry's own build step is secret-free — the clone step's build is the one
+// that holds the git credential, and the credential reaches no build that runs
+// the entry's definition (B8, F19, D2311). What the copy's own bytes decide
+// (gcp.CatalogBuildSpec.Baked) is what that clone step's build clones: a
+// definition that bakes gets one baked image, whose stages the entry's build
+// only copies out, and every other definition gets none.
+//
+// This is the CLI half of the wiring; the gcp half is
+// TestBakedDefinitionClonesInTheCloneStep. It is the one check 390 needed: a
+// submission that never read Baked off the copy composed a baked entry's clone
+// step with no baked image, and the entry's build failed on the COPY the
+// definition's own stages carry.
+func TestCatalogBuildHandsNoCredentialToTheEntrysBuild(t *testing.T) {
+	fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
+	if _, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1"); err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	if catalogBuildStepCredential(t, fb) {
+		t.Error("the entry's own build is handed the git credential: every entry's build is secret-free, and the credential reaches the clone step's build alone (B8, F19, D2311)")
+	}
+	if got := buildStepArgs(t, fb, "catalog-clone"); strings.Contains(got, "--target baked") {
+		t.Errorf("the clone step builds a baked image: this definition bakes nothing: %q", got)
+	}
+
+	// The project's map puts this build's own repository on the entry with the
+	// switch on, so the copy bakes this checkout: the clone step's build is the
+	// one that clones it and tags the image the definition copies from.
+	f.appendConfig(t, "image_map:\n  acme/app: tools\nbake_repos: true\n")
+	if _, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1"); err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	if catalogBuildStepCredential(t, fb) {
+		t.Error("the entry's build is handed the git credential: the stages this copy carries copy out of the clone step's image and run no RUN of the entry's own")
+	}
+	got := buildStepArgs(t, fb, "catalog-clone")
+	if !strings.Contains(got, "--target baked") || !strings.Contains(got, "--tag fugaro-baked") {
+		t.Errorf("the clone step does not build the baked image the definition's stages copy from: %q", got)
+	}
+	if !strings.Contains(got, "COVERED='bitbucket.org/acme/app'") {
+		t.Errorf("the clone step's covered set does not name this build's own repository: %q", got)
+	}
+}
+
 // TestCatalogBuildBakesNothingWithoutTheMap: a checkout that the project's map
 // does not put on this entry — every installation before this release, and one
 // whose operator answered the switch no — is byte for byte what it was: no
@@ -1263,15 +1356,15 @@ func TestCatalogBuildRefusesAnUnadmittedRepo(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		// One stage per repository — the marker each one opens with names the
-		// directory it bakes into — and the entry's other repository is the one
-		// whose URL the definition spells out: the build's own stage takes its
-		// URL and branch as ARGs (its commit is pinned), and acme/other has
-		// neither, so its stage carries them literally.
+		// One stage per repository, and the marker each one opens with is what
+		// the clone step clones: the directory the checkout is baked at, the
+		// URL it clones from and the branch it starts at (imagebake.copyStage).
+		// Both are spelled out here: the generated stage carries no RUN and no
+		// build argument, because the entry's own build holds no credential and
+		// the clone is the clone step's (B8, F19).
 		for _, want := range []string{
-			"# fugaro bake: " + appDir,
-			"# fugaro bake: " + otherDir,
-			"'https://bitbucket.org/acme/other.git' " + otherDir,
+			"# fugaro bake: " + appDir + " https://bitbucket.org/acme/app.git main",
+			"# fugaro bake: " + otherDir + " https://bitbucket.org/acme/other.git main",
 		} {
 			if !strings.Contains(got, want) {
 				t.Errorf("the copy has no stage with %q:\n%s", want, got)
@@ -1312,8 +1405,9 @@ func TestCatalogBuildRefusesAnUnadmittedRepo(t *testing.T) {
 
 // TestCatalogBuildClonesABakedRepoFromTheProjectsCloneURL: a repository's clone
 // URL is the project's to choose (`clone_urls`, SD5/D842) and not the provider's
-// to imply, so a stage composed for one of the entry's other repositories clones
-// from the URL the project gives it. The two blocks the URL is read out of are
+// to imply, so the stage composed for one of the entry's other repositories
+// clones from the URL the project gives it — the URL the marker line names,
+// which is what the clone step clones. The two blocks the URL is read out of are
 // keyed differently — `repos` and `image_map` by "acme/other", `clone_urls` by
 // "bitbucket/acme/other" (projectpolicy.Canonical) — and a lookup in the wrong
 // key space is silent: CloneURL answers the provider's usual host for a name the
@@ -1340,10 +1434,10 @@ func TestCatalogBuildClonesABakedRepoFromTheProjectsCloneURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "'https://bitbucket.org/acme/other' " + otherDir; !strings.Contains(got, want) {
+	if want := "# fugaro bake: " + otherDir + " https://bitbucket.org/acme/other main"; !strings.Contains(got, want) {
 		t.Errorf("the copy has no stage with %q: a baked repository clones from the URL the project gives it (clone_urls)\n%s", want, got)
 	}
-	if strings.Contains(got, "'https://bitbucket.org/acme/other.git'") {
+	if strings.Contains(got, "https://bitbucket.org/acme/other.git") {
 		t.Errorf("the copy clones acme/other from the provider's usual URL, not from the project's clone_urls entry:\n%s", got)
 	}
 }
