@@ -81,8 +81,8 @@ func tfRan(t *testing.T, r *initRig, root, sub string) []tfCall {
 
 // noStepLeftBehind fails on a run that stopped for anything but a step left for
 // the person: `fugaro update` closes such a run with "fugaro update is not
-// finished", and the Firestore location's note is one of those steps (D3027 —
-// the database is written before it, which is what these two tests are about).
+// finished" (D3027 — the budget database is written before the run history's
+// own, which is what these two tests are about).
 func noStepLeftBehind(t *testing.T, err error) {
 	t.Helper()
 	if err != nil && !strings.Contains(err.Error(), "step(s) left for you") {
@@ -267,7 +267,7 @@ func TestAManagedProjectCreatesItsDatabaseUnderTheGate(t *testing.T) {
 	if b := r.localConfig(t).Budget; b == nil || b.RTDBURL != r.db.URL {
 		t.Errorf("the local config records budget %+v, want the database this run made", b)
 	}
-	if !strings.Contains(out, "passed the deterministic gate") {
+	if !strings.Contains(out, "the gate admitted the plan") {
 		t.Errorf("the database's step does not say the gate decided it:\n%s", out)
 	}
 	if strings.Contains(out, "Type "+initProjectName) {
@@ -609,10 +609,13 @@ func TestWithNothingToAnswerTheStageIsSkippedWithItsLine(t *testing.T) {
 	}
 }
 
-// TestTheBudgetDatabaseIsWrittenBeforeTheLocationNote is D3027: the budget
-// database and the local config that records it come first, and a Firestore
-// location left for a person holds back the run history and nothing else.
-func TestTheBudgetDatabaseIsWrittenBeforeTheLocationNote(t *testing.T) {
+// TestTheBudgetDatabaseIsWrittenBeforeTheFirestoreDatabase is D3027: the budget
+// database and the local config that records it come first, and the run
+// history's own database — the only one whose location is permanent — is
+// created after them. No step confirms that location any more (LP10, D3090;
+// O2): the line saying where is printed and the database is created, in this
+// coding agent's session as anywhere else.
+func TestTheBudgetDatabaseIsWrittenBeforeTheFirestoreDatabase(t *testing.T) {
 	r := alwaysRig(t)
 	mayCreate(t, r)
 	noDatabaseYet(t, r)
@@ -629,16 +632,22 @@ func TestTheBudgetDatabaseIsWrittenBeforeTheLocationNote(t *testing.T) {
 	if b := r.localConfig(t).Budget; b == nil || b.RTDBURL != r.db.URL {
 		t.Errorf("the local config records budget %+v, want the database this run made", b)
 	}
-	if loc, _ := r.fs.Database(); loc != "" {
-		t.Errorf("the Firestore database was created in %s, and this run left its location for a person", loc)
+	loc := fsLocation(defaultRegion)
+	if got, _ := r.fs.Database(); got != loc {
+		t.Errorf("the Firestore database is in %q, want %s, created with nothing asked:\n%s", got, loc, out)
 	}
-	written, note := strings.Index(out, "wrote the database"), strings.Index(out, "⚠ CONFIRM (project ")
+	for _, l := range strings.Split(out, "\n") {
+		if strings.Contains(l, "⚠ CONFIRM") && strings.Contains(l, "Firestore") {
+			t.Errorf("the database's location is still a note of its own:\n%s", l)
+		}
+	}
+	line, written := strings.Index(out, "the Firestore database is created in "+loc), strings.Index(out, "wrote the database")
 	switch {
 	case written < 0:
 		t.Errorf("no line says the budget database was written:\n%s", out)
-	case note < 0:
-		t.Errorf("the Firestore location's note is not in the run at all, so the order this test is about was never reached:\n%s", out)
-	case written > note:
-		t.Errorf("the location's note comes before the budget database's write:\n%s", out)
+	case line < 0:
+		t.Errorf("no line says where the Firestore database is created:\n%s", out)
+	case written > line:
+		t.Errorf("the Firestore database's line comes before the budget database's write:\n%s", out)
 	}
 }

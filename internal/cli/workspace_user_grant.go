@@ -71,10 +71,8 @@ package cli
 // is where filling it belongs if WU4 cannot read it from the member's own outputs.
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -324,23 +322,11 @@ func workspaceGrantGate(ctx context.Context, ops workspace.MemberOps, target wor
 // document, because the database prunes an empty list and the absent key and
 // the empty one are the same node (C1's contract).
 func workspaceMirrorEntries(mirror workspace.MemberDoc) ([]workspace.MirrorEntry, error) {
-	dec := json.NewDecoder(bytes.NewReader(mirror.Raw))
-	dec.DisallowUnknownFields()
-	var wire struct {
-		Members []workspace.MirrorEntry `json:"members"`
-	}
-	if err := dec.Decode(&wire); err != nil {
+	entries, err := DecodeMemberMirror(mirror.Raw)
+	if err != nil {
 		return nil, fmt.Errorf("the member's member list at %s is not a document this command reads: %v", workspace.PathMemberMirror, err)
 	}
-	if _, err := dec.Token(); err != io.EOF {
-		return nil, fmt.Errorf("the member's member list at %s carries more than one JSON value", workspace.PathMemberMirror)
-	}
-	for i, entry := range wire.Members {
-		if err := entry.Validate(); err != nil {
-			return nil, fmt.Errorf("the member's member list at %s, entry %d: %v", workspace.PathMemberMirror, i+1, err)
-		}
-	}
-	return wire.Members, nil
+	return entries, nil
 }
 
 // workspaceMirrorEntryAt is the entry the list holds for one address, and

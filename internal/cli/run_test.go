@@ -991,7 +991,9 @@ func TestRetryRefusesTotalTimeout(t *testing.T) {
 // block, after the image gates and before createTask, so an over-memory
 // artifact launch is refused with nothing written at all — no task, no
 // execution. The runner's own bootstrap is the third arm, for a launch whose
-// recipe the launcher cannot resolve.
+// recipe the launcher cannot resolve. The recipe is the project's copy of
+// acme/other's own artifact recipe, which is what a launch of that repository
+// resolves (D3303).
 func TestAnArtifactLaunchRefusesACapSetThatCannotFitMemory(t *testing.T) {
 	f := newCloudFixture(t)
 	testutil.IsolateGit(t)
@@ -1009,11 +1011,9 @@ func TestAnArtifactLaunchRefusesACapSetThatCannotFitMemory(t *testing.T) {
 	yaml := "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\n" +
 		"workflows:\n  svc:\n    commands: { build: sh build.sh, test: sh test.sh, render: sh render.sh }\n" +
 		"    resources: { memory: 2Gi }\n"
-	testutil.WriteFiles(t, dir, map[string]string{
-		"fugaro.yaml":                 yaml,
-		".fugaro/recipes/sizzle.yaml": "version: 1\nname: sizzle\nmode: artifact\noutputs: { globs: [out/*.mp4] }\nsteps:\n  - render: {}\n",
-	})
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": yaml})
 	t.Chdir(dir)
+	repoRecipeCopy(t, f, "acme/other", "sizzle", projectSizzle)
 	_, _, err := execute(t, "run", "--recipe", "sizzle", "--run-id", "20261015-100000-a1b2", "Render the sizzle reel")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "resources.memory 2Gi") ||
 		!strings.Contains(err.Error(), "5 GiB") {

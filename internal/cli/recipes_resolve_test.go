@@ -31,7 +31,9 @@ func TestResolveRecipeLayers(t *testing.T) {
 		source     recipe.Source
 		text       string
 	}{
-		{root, "team", recipe.SourceRepo, repoTeam},
+		// The checkout's .fugaro/recipes/team.yaml is not read: the project's
+		// own team is what a run of this repository gets (D3303).
+		{root, "team", recipe.SourceProject, projectTeam},
 		{"", "team", recipe.SourceProject, projectTeam},
 		{root, "claude-solo", recipe.SourceProject, projectSolo},
 		{root, "standard", recipe.SourceCatalog, ""},
@@ -45,7 +47,7 @@ func TestResolveRecipeLayers(t *testing.T) {
 			t.Errorf("%s at %q: %+v", tc.name, tc.root, rr)
 		}
 	}
-	if _, err := resolveRecipe(ctx, env, root, "nope", now, false); err == nil || !strings.Contains(err.Error(), "recipe nope is not in .fugaro/recipes") {
+	if _, err := resolveRecipe(ctx, env, root, "nope", now, false); err == nil || !strings.Contains(err.Error(), "recipe nope is not in project aurora") {
 		t.Fatalf("unknown: %v", err)
 	}
 	if _, err := resolveRecipe(ctx, env, root, "Bad_Name", now, false); err == nil || !strings.Contains(err.Error(), "is not a recipe name") {

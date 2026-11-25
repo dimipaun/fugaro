@@ -631,3 +631,43 @@ resource "google_service_account_iam_member" "fugaro_orchestrator_token_creator"
 
   depends_on = [google_service_account.orchestrator]
 }
+
+# The consumer's signing grant (mobile-identity-pairing plan task J6; O17): the
+# whole of the account's reach on the installation's ONE Cloud KMS key, made in
+# this file because section 4.3's table is this file's alone. The key, the ring
+# and the role the account signs with are mailbox_key.tf's; what is here is the
+# binding between them, the way every other row of that table is.
+#
+# Why the grant is the interesting half and the key is not. The role holds
+# cloudkms.cryptoKeyVersions.useToSign alone (mailbox_key.tf), so the account
+# can make a signature with a key and do nothing else with it — no material to
+# read or export, no version to create or destroy. WHAT IT CANNOT SAY is which
+# key, and the difference matters more than it looks: a grant on another key of
+# the same project is a signature no phone of this installation verifies (they
+# pinned the public half of this one, O16), made with material no step of this
+# tree published and none of them can revoke. So crypto_key_id is the literal
+# mailbox_key.tf composes rather than a reference to the key resource — a
+# computed name reaches the plan as UNKNOWN and the cover could then admit a
+# grant on any key of the project; local.mailbox_crypto_key_id is that literal,
+# resolved at plan time — internal/infra/tf's mailboxSignerGrant
+# refuses a grant of this role on another key, in another project, under a
+# condition, or to an account that is not this installation's consumer, however
+# a hand-edited plan spelled it. That is O17's "with signing granted to the
+# mailbox consumer's account only" as a property of a PLAN.
+#
+# The member is this file's own literal, for the token-minter row's reason, and
+# depends_on orders the binding behind the account, the key and the role the
+# literals name: without the account's row, Terraform applies the two in
+# parallel and this one fails with notFound when it runs first
+# (deploy/terraform's TestStringNamedResourcesAreWaitedFor).
+resource "google_kms_crypto_key_iam_member" "orchestrator_mailbox_signer" {
+  count = local.orchestrator_on ? 1 : 0
+
+  # No project argument: the binding's project is the key's, which
+  # crypto_key_id names (the resource has no project field at this pin).
+  crypto_key_id = local.mailbox_crypto_key_id
+  role          = "projects/${var.project}/roles/fugaroMailboxSigner"
+  member        = "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com"
+
+  depends_on = [google_service_account.orchestrator, google_kms_crypto_key.mailbox_consumer, google_project_iam_custom_role.mailbox_signer]
+}
