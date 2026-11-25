@@ -35,9 +35,9 @@ func TestSecurityMdStatesTheModelAndItsLimits(t *testing.T) {
 		"followup.trusted",
 		"docs/design/v1.md",
 		"docs/bucket-iam/spec.md",
-		// The two sentences these replace said the budget defaults to off
-		// (docs/always-a-budget F17, AB13): the gateway is on with no
-		// `budget:` block, and the one run that has none is named instead.
+		// The gap the release now ships, where the document used to say the
+		// budget mode defaults to off (always-a-budget, F17): the real key
+		// stays out of the agent's environment in every mode.
 		"With no `budget:` block the mode is `observe`, so the caps record rather than stop.",
 		"Vertex has no dollar cap, in any mode.",
 		"roles/storage.objectAdmin",
