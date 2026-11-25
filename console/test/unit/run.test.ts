@@ -174,6 +174,8 @@ const ROW: RunRow = Object.freeze({
   reason: null,
   branch: 'main',
   outcome: 'ready',
+  resumeAt: null,
+  resumedBy: null,
   requestedBy: 'ana',
   launchedBy: 'ci-runner',
   created: null,

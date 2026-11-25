@@ -251,6 +251,11 @@ type catalogEvaluation struct {
 	// rebuild of this entry runs reads the checkout there.
 	bakedDir string
 	baked    bool
+	// bakedRepos are the repositories the copied definition bakes, read from
+	// its marker lines (catalogBakedRepos): the rebuild's clone step produces
+	// each of them, and the generated stages of the definition copy them out of
+	// the image it tags.
+	bakedRepos []imagebake.Repo
 	// inputs are what imagecheck.CheckCatalog decides the entry from: this
 	// run's read of everything a decision needs, which the pass below hands
 	// the library rather than deciding the entry itself.
@@ -349,6 +354,14 @@ func (t *catalogCheckTarget) evaluate(ctx context.Context, e config.Entry, r cat
 	// refuses it a step earlier, before a build is submitted, where the entry,
 	// the checkout and the command that fixes it can be named.
 	ev.bakedDir, ev.baked = imagebake.BakedDir(def)
+	// The repositories the definition bakes, which the rebuild's clone step
+	// produces and the definition's own stages copy out of the image it tags
+	// (gcp.CatalogBuildSpec.Baked). A copy an earlier release composed bakes
+	// with a clone of its own inside the entry's build, which this release hands
+	// no credential at all, so it has no rebuild to submit.
+	if ev.bakedRepos, err = catalogBakedRepos(def, e.Name); err != nil {
+		return ev, err
+	}
 	if ev.baked {
 		if bakedSlug, ok := imagebake.BakedSlug(def); !ok || bakedSlug != r.Slug {
 			what, fix := "a checkout at "+pluginwire.Printable(ev.bakedDir),
@@ -511,7 +524,11 @@ func (t *catalogCheckTarget) submit(ctx context.Context, e config.Entry, r catal
 		GitProvider: r.Provider, RepoURL: r.RepoURL, BaseBranch: r.BaseBranch,
 		GitSecretID: r.GitSecretID, GitUser: r.GitUser, GitHubAppID: r.GitHubAppID,
 		Base: t.base, Image: imageRef,
-		Definition:     gcp.CatalogDefinition{SourceCommit: commit, Generation: ev.definitionGeneration, SHA256: ev.definitionSHA256},
+		Definition: gcp.CatalogDefinition{SourceCommit: commit, Generation: ev.definitionGeneration, SHA256: ev.definitionSHA256},
+		// The repositories the definition bakes, which this rebuild's clone step
+		// clones and the definition's own stages copy out of the image it tags
+		// (gcp.CatalogBuildSpec.Baked).
+		Baked:          ev.bakedRepos,
 		ServiceAccount: gcp.BuildIdentityEmail(t.gcpProject), MachineType: t.spec.MachineType,
 		Bucket: "gs://" + t.bucket.GCSName,
 		// The entry's credential step asks the installation's credentials

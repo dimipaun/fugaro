@@ -1,0 +1,25 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "role": "model",
+        "parts": [
+          { "text": "I'll read the notes." },
+          {
+            "functionCall": { "name": "read_file", "args": { "path": "notes.md" } },
+            "thoughtSignature": "c2lnbmF0dXJlLWJ5dGVzLWZvci10aGUtY2FsbA=="
+          }
+        ]
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 1200,
+    "candidatesTokenCount": 48,
+    "thoughtsTokenCount": 256,
+    "totalTokenCount": 1504
+  },
+  "responseId": "aToolCall"
+}

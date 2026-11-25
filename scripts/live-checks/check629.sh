@@ -46,7 +46,14 @@
 #
 # Usage:      bash scripts/live-checks/check629.sh --sandbox <a sandbox repository checkout> --pool <name> [--project <name>]
 #             bash scripts/live-checks/check629.sh --sandbox <path> --pool <name> --dry-run
+#             bash scripts/live-checks/check629.sh --sandbox <path> --pool <name> --preflight
 #             bash scripts/live-checks/check629.sh --help
+#             --preflight makes the check's own READS and evaluates every
+#             precondition before anything is written or launched (the
+#             installation, the credentials, the pool the acceptance is about
+#             and the published node), prints every blocker at once with the
+#             command that clears it, writes nothing and launches nothing, and
+#             exits non-zero when anything blocks.
 # Needs:      bash, mktemp, date, python3, awk, gcloud (authenticated as YOU,
 #             able to read the runs bucket and Cloud Logging) and fugaro (the
 #             installed release, an admin of the project: the publish refuses an
@@ -69,7 +76,7 @@
 #             1: a criterion did not hold, or a guard stopped the run. 2: the
 #             check could not measure.
 #
-# Knobs (all CHECK629_*): DRY_RUN, KEEP_SCRATCH, SANDBOX, POOL (the pool, when
+# Knobs (all CHECK629_*): DRY_RUN, PREFLIGHT, KEEP_SCRATCH, SANDBOX, POOL (the pool, when
 # you would rather set it in the environment), PROJECT, CREDENTIAL (the member
 # the acceptance says served the run: the pool's second member is the default),
 # TASK and RECIPE (what the run is launched with), REGION (us-east5),
@@ -117,6 +124,13 @@ on_error() {
   say "an internal error ended this check at line $line"
   exit 2
 }
+
+# The shared `--preflight` driver (scripts/live-checks/lib/preflight.sh).
+live_check_lib_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib
+LIVE_CHECK_LIB=${LIVE_CHECK_LIB:-$live_check_lib_dir}
+# shellcheck source=lib/preflight.sh
+. "$LIVE_CHECK_LIB/preflight.sh"
+PREFLIGHT_TOOL=check629
 
 need_tools() {
   command -v bash >/dev/null 2>&1 || die "Check 629 needs bash"
@@ -380,6 +394,143 @@ version_row() {
   local v
   v=$(fugaro version 2>/dev/null | head -n 1 || true)
   fact "fugaro-version" PASS "${v:-fugaro version printed nothing} (the release whose publish this check measures)"
+}
+
+# ---------------------------------------------------------------- preflight
+# pf_declared_creds — "<name>\t<type>" for every credential the preflight's
+# `fugaro accounts ls --json` declared, which is what a pool's members are
+# checked against and what a fix's example values are taken from.
+pf_declared_creds() {
+  [ -f "$SCRATCH/pf-creds.txt" ] || return 0
+  awk -F'\t' '$1 == "cred" { print $2 "\t" $3 }' "$SCRATCH/pf-creds.txt" 2>/dev/null
+  return 0
+}
+
+# pf_example_members — up to two declared credential names, for a fix command
+# that declares a pool out of what the config already carries.
+pf_example_members() {
+  local names
+  names=$(pf_declared_creds | awk '{ print $1 }' | head -n 2 | tr '\n' ' ')
+  names=${names% }
+  printf '%s' "${names:-coder-a coder-b}"
+}
+
+# pf_example_member_not_in IN_POOL — a declared credential the pool does not
+# already list, for a fix command that gives a one-member pool its second.
+pf_example_member_not_in() {
+  local in=$1 ex
+  ex=$(pf_declared_creds | awk -v in="$in" \
+    'BEGIN { n=split(in,a,","); for (i=1;i<=n;i++) skip[a[i]]=1 } !($1 in skip) { print $1; exit }')
+  printf '%s' "${ex:-coder-b}"
+}
+
+# pf_example_type — the type of a declared credential, for a fix command that
+# declares a pool member that is missing from the credentials block.
+pf_example_type() {
+  local t
+  t=$(pf_declared_creds | awk 'NR==1 { print $2 }')
+  printf '%s' "${t:-openrouter}"
+}
+
+# preflight_pool_declaration CREDS_OK — the pool the acceptance is about, read
+# out of the listing the preflight made: declared, two members or more, every one
+# of them a declared credential. Every blocker of the three is raised at once.
+preflight_pool_declaration() {
+  local creds_ok=$1 row members
+  row=$(awk -F'  +' -v want="$POOL" '$1 == want { print; exit }' "$SCRATCH/pf-pools.out" 2>/dev/null || true)
+  if [ -z "$row" ]; then
+    preflight_block declaration \
+      "the config of ${INSTALLATION:-the installation} declares no pool '${POOL}', and the acceptance is about a run served by that pool" \
+      "cd $SANDBOX && fugaro accounts pool add ${POOL} $(pf_example_members)"
+    return 0
+  fi
+  members=$(printf '%s' "$row" | awk -F'  +' '{ print $3 }' | tr -d ' ')
+  case "$members" in
+  *,*) ;;
+  *)
+    preflight_block declaration \
+      "the pool ${POOL} declares only ${members:-no member}, and the acceptance needs its second member to serve a run once the first is exhausted" \
+      "cd $SANDBOX && fugaro accounts pool add ${POOL} $(pf_example_member_not_in "$members")"
+    return 0
+    ;;
+  esac
+  if [ "$creds_ok" != yes ]; then return 0; fi
+  local missing="" m
+  for m in ${members//,/ }; do
+    [ -n "$(table_field "$SCRATCH/pf-creds.txt" cred "$m" 2)" ] || missing="${missing:+$missing, }${m}"
+  done
+  if [ -n "$missing" ]; then
+    preflight_block declaration \
+      "the pool ${POOL} lists ${members} and fugaro accounts ls --json declares no credential ${missing}" \
+      "cd $SANDBOX && fugaro accounts add ${missing%%,*} --type $(pf_example_type)"
+    return 0
+  fi
+  preflight_note declaration "the pool ${POOL} declares ${members}, every one a declared credential of ${INSTALLATION:-the installation}; the second member serves the run"
+}
+
+# step_preflight: --preflight. The reads the check makes before its publish and
+# its run, every precondition it has evaluated, nothing written and nothing
+# launched. The sandbox is argument validation (the way step_installation refuses
+# a path that is not a checkout); everything else is the state of the live
+# installation, and each precondition that does not hold is one blocker.
+step_preflight() {
+  if [ ! -d "$SANDBOX" ]; then
+    die "--sandbox is not a directory: $SANDBOX (pass the checkout of a repository of the sandbox project)"
+  fi
+  if [ ! -f "$SANDBOX/fugaro.yaml" ]; then
+    die "--sandbox carries no fugaro.yaml: $SANDBOX is not a Fugaro repository's checkout, and the publish and the run are both made from it"
+  fi
+  local args=(doctor --all) line
+  [ -z "$PROJECT_ARG" ] || args=(doctor --project "$PROJECT_ARG" --all)
+  say "preflight: reading the installation: fugaro ${args[*]}, in ${SANDBOX}"
+  run_bounded "$DOCTOR_TIMEOUT" pf-doctor "$SANDBOX" "$FUGARO_BIN" "${args[@]}"
+  line=$(grep -m1 '^project: ' "$SCRATCH/pf-doctor.out" 2>/dev/null || true)
+  if [ "$BOUNDED_TIMED_OUT" = yes ] || [ -z "$line" ]; then
+    preflight_block installation \
+      "fugaro ${args[*]} prints no 'project: <name> (GCP <project>, <region>)' line in ${SANDBOX} (exit ${BOUNDED_STATUS}): the publish and the run are both made for the installation it names" \
+      "cd $SANDBOX && fugaro ${args[*]}"
+  else
+    local inst gcp
+    inst=$(printf '%s' "$line" | sed -n 's/^project: \([^ ]*\) .*/\1/p')
+    gcp=$(printf '%s' "$line" | sed -n 's/^.*(GCP \([^,]*\),.*/\1/p')
+    case "$gcp" in
+    *belong*) stop "the checkout at $SANDBOX belongs to ${gcp}: this check is never run there" ;;
+    esac
+    INSTALLATION=$inst
+    preflight_note installation "${SANDBOX} is a checkout of ${inst} (GCP ${gcp}), read from fugaro ${args[*]}"
+  fi
+
+  local pflag=()
+  [ -z "$PROJECT_ARG" ] || pflag=(--project "$PROJECT_ARG")
+
+  say "preflight: reading the credentials: fugaro accounts ls --json, in ${SANDBOX}"
+  run_bounded "$CLI_TIMEOUT" pf-creds "$SANDBOX" "$FUGARO_BIN" accounts ls --json ${pflag[@]+"${pflag[@]}"}
+  local creds_ok=yes
+  if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ] ||
+    ! read_json credentials "$SCRATCH/pf-creds.out" "$SCRATCH/pf-creds.txt"; then
+    creds_ok=no
+    preflight_block declaration \
+      "fugaro accounts ls --json does not answer in ${SANDBOX} (exit ${BOUNDED_STATUS}), and a pool's members are looked up among the credentials it declares" \
+      "cd $SANDBOX && fugaro accounts ls --json"
+  fi
+
+  say "preflight: reading the pools: fugaro accounts pool ls, in ${SANDBOX}"
+  run_bounded "$CLI_TIMEOUT" pf-pools "$SANDBOX" "$FUGARO_BIN" accounts pool ls ${pflag[@]+"${pflag[@]}"}
+  if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
+    preflight_block declaration \
+      "fugaro accounts pool ls does not answer in ${SANDBOX} (exit ${BOUNDED_STATUS}), so the pool the acceptance is about cannot be read" \
+      "cd $SANDBOX && fugaro accounts pool ls"
+  else
+    preflight_pool_declaration "$creds_ok"
+  fi
+
+  say "preflight: reading the published node: fugaro project policy show --json, in ${SANDBOX}"
+  run_bounded "$CLI_TIMEOUT" pf-node "$SANDBOX" "$FUGARO_BIN" project policy show --json ${pflag[@]+"${pflag[@]}"}
+  if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
+    preflight_note node-blocks "no published node reads back yet (fugaro project policy show --json exited ${BOUNDED_STATUS}); the publish below writes it from ${SANDBOX}'s config"
+  else
+    preflight_note node-blocks "the published node reads back in ${SANDBOX}; the publish below rewrites it from that config"
+  fi
 }
 
 # ---------------------------------------------------------------- the steps
@@ -796,6 +947,12 @@ finish() {
   local status=$?
   trap - EXIT
   trap - ERR
+  if [ "$PREFLIGHT_MODE" = yes ]; then
+    # A preflight wrote nothing and launched nothing: it prints its own lines
+    # and no RESULT block.
+    remove_scratch
+    exit "$status"
+  fi
   CLEANUP_RUNNING=yes
   cleanup
   local facts=$FACTS_CAPTURED
@@ -880,6 +1037,7 @@ on_signal() {
 
 # ---------------------------------------------------------------------- inputs
 DRY_RUN_CLI=""
+PREFLIGHT_CLI=""
 SANDBOX_CLI=""
 PROJECT_CLI=""
 POOL_CLI=""
@@ -919,6 +1077,10 @@ while [ $# -gt 0 ]; do
     DRY_RUN_CLI=1
     shift
     ;;
+  --preflight)
+    PREFLIGHT_CLI=1
+    shift
+    ;;
   -h | --help)
     usage
     exit 0
@@ -949,6 +1111,9 @@ WANT_MEMBER=${CHECK629_CREDENTIAL:-}
 TASK=${CHECK629_TASK:-${TASK_CLI:-"Reply with the single word ok and change nothing in the repository."}}
 RECIPE=${CHECK629_RECIPE:-${RECIPE_CLI:-}}
 DRY_RUN=${CHECK629_DRY_RUN:-$DRY_RUN_CLI}
+PREFLIGHT=${CHECK629_PREFLIGHT:-$PREFLIGHT_CLI}
+PREFLIGHT_MODE=no
+[ -z "$PREFLIGHT" ] || PREFLIGHT_MODE=yes
 KEEP_SCRATCH=${CHECK629_KEEP_SCRATCH:-}
 REGION=${CHECK629_REGION:-us-east5}
 RUN_TIMEOUT=${CHECK629_RUN_TIMEOUT_SECONDS:-3600}
@@ -977,6 +1142,10 @@ main() {
   if [ -n "$DRY_RUN" ]; then
     plan
     return 0
+  fi
+  if [ -n "$PREFLIGHT" ]; then
+    step_preflight
+    preflight_report
   fi
   step_installation
   step_declaration

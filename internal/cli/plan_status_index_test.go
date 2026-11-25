@@ -154,9 +154,9 @@ var planIndex *planIndexFake
 func installPlanIndex(t *testing.T) *planIndexFake {
 	t.Helper()
 	idx := newPlanIndexFake()
-	prevReader, prevIndex := planIndexReader, planIndex
-	planIndex, planIndexReader = idx, func(*cloudEnv) runindex.Reader { return idx }
-	t.Cleanup(func() { planIndex, planIndexReader = prevIndex, prevReader })
+	prevReader, prevIndex := runIndexReader, planIndex
+	planIndex, runIndexReader = idx, func(context.Context, *cloudEnv) (runindex.Reader, error) { return idx, nil }
+	t.Cleanup(func() { planIndex, runIndexReader = prevIndex, prevReader })
 	return idx
 }
 
