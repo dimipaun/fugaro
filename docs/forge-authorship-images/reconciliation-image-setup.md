@@ -61,7 +61,7 @@ C8b and C8c are not, and `checkout: shared` is refused until a release ships the
 | C6 — `SECURITY.md`: baked source and registry readers | open | its shared-key half is merged with C8a; its baked-source half describes an image the catalog now publishes |
 | C8 — build, lock, proposal and job update for shared images | open (C8a built) | the shared layer is the one image kind IS1's resolver names and does not define |
 
-That is four of 25, and it is the whole of the overlap: image-setup's plan touches
+That is four of 24, and it is the whole of the overlap: image-setup's plan touches
 `internal/infra/spec.go`, `internal/catalog/`, `internal/projectpolicy/`, `internal/cli/setup.go`,
 `internal/runner/runner.go`'s checkout opening and the plugin skills; this folder's open tasks touch
 `internal/gitprov/`, `internal/task/`, `internal/cli/run.go`, `internal/imagecheck/`, `ee/` and the
