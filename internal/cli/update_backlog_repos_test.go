@@ -15,6 +15,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -24,6 +25,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // foldUpdateRig is one update installation whose repositories the reader stands
@@ -86,6 +88,30 @@ func reportedOf(e *initEngine, name string) []initflow.RepoLine {
 		}
 	}
 	return out
+}
+
+// TestBacklogRepoListSanitises is the listing one of the fold's warnings names
+// repositories through, held to what newRepoLine holds a line to
+// (TestNewRepoLineSanitises, the same shape): a name comes out of a checkout's
+// own git config, so an escape sequence in one must not reach the terminal or
+// the --json warnings array, and a project's repositories must not push the
+// warning off the screen.
+func TestBacklogRepoListSanitises(t *testing.T) {
+	if got, want := backlogRepoList([]string{"acme/\x1b[31mweb\r\n", "acme/app"}), "acme/web??, acme/app"; got != want {
+		t.Errorf("the listing came back as %q, want %q: an escape sequence is dropped, and every other control becomes a printable one", got, want)
+	}
+
+	many := make([]string, safetext.FieldListMax+3)
+	for i := range many {
+		many[i] = fmt.Sprintf("acme/app-%d", i)
+	}
+	got := backlogRepoList(many)
+	if !strings.Contains(got, "(and 3 more, not listed here)") {
+		t.Errorf("a listing of %d repositories came back as %q, want it bounded and saying how many it left out", len(many), got)
+	}
+	if n := strings.Count(got, "acme/app-"); n != safetext.FieldListMax {
+		t.Errorf("the listing names %d repositories, want the %d of the cap", n, safetext.FieldListMax)
+	}
 }
 
 // TestFoldFromEveryDefaultBranch is U8's red step: the run stands in a

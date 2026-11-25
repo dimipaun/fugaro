@@ -10,6 +10,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -144,7 +145,7 @@ func (e *initEngine) foldBacklog(ctx context.Context) {
 		for _, it := range f.items {
 			if repos := holders[it.ID]; len(repos) > 1 && repos[0] == f.repo {
 				r.warn(fmt.Sprintf("%s: id %s is in %s, so neither item was folded until one file is renamed (D26)",
-					backlog.Dir, it.ID, strings.Join(repos, ", ")))
+					backlog.Dir, it.ID, backlogRepoList(repos)))
 			}
 		}
 	}
@@ -359,10 +360,26 @@ func backlogNotFiledElsewhere(warn func(string), s orchestrator.State, items []b
 		if repoSortKey(a) > repoSortKey(b) {
 			a, b = b, a
 		}
-		warn(fmt.Sprintf("%s: id %s is in %s, %s, so neither item was folded until one file is renamed (D26)",
-			backlog.Dir, it.ID, a, b))
+		warn(fmt.Sprintf("%s: id %s is in %s, so neither item was folded until one file is renamed (D26)",
+			backlog.Dir, it.ID, backlogRepoList([]string{a, b})))
 	}
 	return out
+}
+
+// backlogRepoList is repositories as one of the fold's warnings names them.
+// Each name goes through the two passes newRepoLine gives a line's repository
+// (F27, R12): they come out of a checkout's own git config, so they are
+// repository-controlled text, and nothing of that may reach the terminal or the
+// --json warnings array. The list is bounded the way every listing this program
+// puts inside one of its own sentences is (safetext.FieldListLine) and says how
+// many names it left out, because how many repositories state one id is not
+// this program's to decide.
+func backlogRepoList(repos []string) string {
+	names := make([]string, 0, len(repos))
+	for _, repo := range repos {
+		names = append(names, pluginwire.Printable(oneLine(repo)))
+	}
+	return safetext.FieldListLine(names)
 }
 
 // backlogRepoOf is the repository the node already files an id under, when that
