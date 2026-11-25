@@ -1762,6 +1762,55 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			BundleRefusal(err), labelRead(readBundle, err))
 		return
 	}
+	// CS1: a project that publishes a routing table has its model calls served
+	// by the chain its entry names (R4), and such a call never reaches the
+	// cascade's own offering below: the chain REPLACES the fixed tier order, so
+	// the crafts, the admission intersection and the fixed order are the path of
+	// a project that publishes no table. A project that publishes none answers
+	// here unchanged (PublishedTable's own default), which is every installation
+	// not yet migrated and every existing test.
+	binding, _ := callSlipOf(ctx)
+	chainSel := &creds.Selector{Store: sc.State(), Settings: settingsOf(shared), Now: s.now}
+	plan, byChain, cerr := s.chainFor(ctx, cl, id, canonical, shared, b, binding)
+	if cerr != nil {
+		var cr *chainRefusal
+		if errors.As(cerr, &cr) {
+			// A refusal the walk itself wrote: it names its own status and type,
+			// and it is audited by the one path that audits refusals — one line,
+			// and no value in it, because no credential was touched.
+			s.refuseCall(ctx, w, id, purpose, "", "", cr.status, cr.typ, cr.what)
+			return
+		}
+		s.refuseCallCause(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable,
+			"the call's routing table could not be read", labelRead(readPolicyShared, cerr))
+		return
+	}
+	if byChain {
+		chainSel.Model = plan.model
+		cl.chain = &chainWalk{
+			plan:  plan,
+			sel:   chainSel,
+			cl:    cl,
+			asked: cl.body,
+			run:   creds.Run{Slug: id.Slug, ID: id.Run},
+			// C2's picker is PL3's own rule over the scope's state: a pool's
+			// members are judged and picked by the same free/Settings algebra the
+			// selection uses, so a pool is one more place a credential comes from
+			// and not a second vocabulary.
+			pick: creds.PoolRule{Store: sc.State(), Settings: settingsOf(shared), Now: s.now},
+			now:  s.now,
+		}
+		// tried is the chain's own record of what it dropped, and cands is the
+		// flattened members — every member a probe may be owed on, because the
+		// plan decided which sources this call may go out on and the policy's
+		// tier gate is not asked a second time (probeCandidatesFor): the chain
+		// REPLACES the fixed tier order, so applying it here would leave a
+		// source the walk serves with a mark no probe could ever clear. forward
+		// keeps its whole loop — the money, the 401 and the 429, the switch, U7
+		// — and the chain changes only the ORDER it walks.
+		s.forward(ctx, w, cl, chainSel, id, b, chainMembers(plan), plan.skipped)
+		return
+	}
 	cands, strategy, exclusive, notAdmitted, err := s.candidates(ctx, id, canonical, shared, b)
 	if err != nil {
 		// Two refusals share this branch and they are not the same answer. A
@@ -1791,7 +1840,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// The slip's own fence on the offering (G12, R9), and the last thing
 	// between the candidates and the cascade: a credential that belongs to a
 	// person or to the project is served only under a slip that names it.
-	binding, _ := callSlipOf(ctx)
+	//
+	// binding was read above, before the chain was asked whether it serves this
+	// call at all, and it is the same value: callSlipOf is a pure read of the
+	// call's own context.
 	cands, notAdmitted = slipOffering(binding, cands, notAdmitted)
 	// R7's candidate is already in this list, first, and already marked as the
 	// call's own exclusive one: it is assembled where the list is built
