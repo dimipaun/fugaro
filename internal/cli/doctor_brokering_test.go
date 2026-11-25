@@ -521,6 +521,16 @@ func TestDoctorBrokeringCredentialsServiceDeployed(t *testing.T) {
 		if !strings.Contains(cs[0].Fix, "update --repo") {
 			t.Errorf("the fix does not name the command that grants it: %q", cs[0].Fix)
 		}
+		// The command carries the repository itself: the default view prints
+		// this fix under an ID-keyed sentence that names no repository, so a
+		// placeholder here is a command nobody can run (the fix the branch
+		// first shipped, "<each repository named above>").
+		if !strings.Contains(cs[0].Fix, "update --repo workspace-a/repo-a") {
+			t.Errorf("the fix does not name the repository the command is for: %q", cs[0].Fix)
+		}
+		if strings.Contains(cs[0].Fix, "<each repository named above>") {
+			t.Errorf("the fix still carries a placeholder where the repository's name goes: %q", cs[0].Fix)
+		}
 	})
 
 	// A custom role is a role doctor cannot judge, but only a binding that
@@ -624,6 +634,14 @@ func TestDoctorCredentialsServiceDeployedCountsTheDeployedVariants(t *testing.T)
 			if !strings.Contains(cs[0].Problem, want) {
 				t.Errorf("the warning does not name %s, and a repository off the switch keeps the whole allowed set: %q", want, cs[0].Problem)
 			}
+		}
+		// One repository, two workflows: the command is per repository, so the
+		// fix names it once rather than twice.
+		if got := strings.Count(cs[0].Fix, "update --repo"); got != 1 {
+			t.Errorf("the fix carries the repository's command %d times for its two workflows, want one: %q", got, cs[0].Fix)
+		}
+		if !strings.Contains(cs[0].Fix, "update --repo workspace-a/repo-a") {
+			t.Errorf("the fix does not name the repository the command is for: %q", cs[0].Fix)
 		}
 	})
 
@@ -2488,6 +2506,21 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 		}
 		def := doctorDefaultOutput(t, o.Checks)
 		wants(t, def, sentence, "fugaro update", "re-applies the installation root")
+	})
+
+	// The one warning state whose fix is a repository's own apply: the sentence
+	// above it is the ID's, and names no repository, so the fix is where the
+	// repository has to be — a reader who meets this line has to know which one
+	// `fugaro update --repo` is for.
+	t.Run("the credentials service does not admit a job account", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		r.svcs.AddService(infra.CredentialsServiceName)
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+		}
+		def := doctorDefaultOutput(t, o.Checks)
+		wants(t, def, sentence, "update --repo workspace-a/repo-a")
 	})
 
 	t.Run("the credentials service is deployed and its bundle holds no version", func(t *testing.T) {
