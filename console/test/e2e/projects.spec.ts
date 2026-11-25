@@ -1405,7 +1405,10 @@ test.describe('the Projects view in the dashboard', () => {
     // of its own: the argv is the command, the row's `--json` and the
     // installation's `--project`, and nothing a renderer chose.
     expect(everything).toContainEqual(['models', 'ls', '--json', '--project', 'e2e'])
-    expect(asked.filter((argv) => argv[0] === 'runs')).toEqual([])
+    // The Live view's own rigor join is not this view's read: its poll may land
+    // again while this tab is open, so it is admitted by its whole argv.
+    const liveJoin = ['runs', 'ls', '--json', '--since', '24h', '--project', 'e2e'].join(' ')
+    expect(asked.filter((argv) => argv[0] === 'runs' && argv.join(' ') !== liveJoin)).toEqual([])
   })
 
   test('draws the settings section from the read, and records that read', async () => {
