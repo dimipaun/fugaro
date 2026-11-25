@@ -199,14 +199,25 @@ describe('the app never reads the operator’s config', () => {
   })
 
   it('leaves the reading to the CLI, which is the only thing that names the file', () => {
-    // The console names `fugaro.yaml` in exactly one place, and it is a comment:
-    // the file itself is read by `localcfg.Select` in the CLI, whose refusal is
-    // what the add-an-installation screen shows. In code, the console knows the
-    // name nowhere.
+    // The console names `fugaro.yaml` in two files and **opens it in none of
+    // them**: the file itself is read by `localcfg.Select` in the CLI, whose
+    // refusal is what the add-an-installation screen shows.
+    //
+    // One namer is `source/cli.ts`'s comment (the CLI is the reader, rule 7).
+    // The other is the one **line the settings window draws**, `writes
+    // fugaro.yaml in <directory>` (`main/settingsview.ts`), which says which
+    // file a repository-layer write lands in -- the fact the argv's `--repo`
+    // carries and the confirmation used to leave unnamed (RC80, L12). That
+    // line is a string and not a path the console handles: it is printed into
+    // the window, and it is why the code scan below also holds the namer to
+    // opening nothing.
     const files = sourceFiles()
     const namers = files.filter((file) => codeOnly(file.source).includes('fugaro.yaml'))
-    expect(namers).toEqual([])
+    expect(namers.map((file) => file.path)).toEqual(['main/settingsview.ts'])
+    for (const file of namers) {
+      expect(codeOnly(file.source), file.path).not.toMatch(/readFileSync|readFile\(|createReadStream|openSync|stat\(/)
+    }
     const commentNamers = files.filter((file) => file.source.includes('fugaro.yaml'))
-    expect(commentNamers.map((file) => file.path)).toEqual(['source/cli.ts'])
+    expect(commentNamers.map((file) => file.path).sort()).toEqual(['main/settingsview.ts', 'source/cli.ts'])
   })
 })

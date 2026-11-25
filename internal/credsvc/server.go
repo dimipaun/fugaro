@@ -656,6 +656,15 @@ type Config struct {
 	// predates this release has no record to read and is a service this build
 	// still starts.
 	WorkflowSecrets WorkflowSecretRecords
+	// ProjectSecrets reads the project record that says which repositories may
+	// fetch a project-shared workflow secret by name (IS3, D3328, D3333): a
+	// version-2 workflow-secrets call and a build's read of a `fugaro_p_`
+	// container are both admitted by it, and by it alone. It may be nil, and
+	// nil is a service that serves no workflow secret by name — the routes
+	// refuse rather than reading an absent record as "every repository is
+	// allowed" (fail closed, G19). *RTDBProjectSecrets is the implementation a
+	// deployment wires (internal/cli/credentials_serve.go).
+	ProjectSecrets ProjectSecretRecords
 	// AuditLog is where the service's audited acts are written (C1.13): every
 	// line this service writes, the mint's (C2.1) and the probe's (C1.12)
 	// included. There is one writer and one handler — Server.audit is the ONLY
@@ -925,6 +934,11 @@ type Server struct {
 	// not the store's: the store is what the record IS, and this is what one
 	// process last read of it.
 	slips *slipCache
+	// markers holds each container's workflow-secret marker answer for a short
+	// window (markerCache, F18, G2): the read is a Secret Manager LIST, its
+	// low-quota call, and the per-secret resolution asks on every forwarded
+	// model request. This service's own memory, like the slip cache.
+	markers *markerCache
 	// mergeMints is the merge mint's per-repository rate limit (E16, D2049). It
 	// is this service's own memory, like the slip cache, and for a stronger
 	// reason: what it bounds is a daemon looping on one endpoint, and a node
@@ -1086,7 +1100,7 @@ func NewServer(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, log: cfg.Log, now: cfg.Now, jobs: make(map[string]JobAccount, len(cfg.JobAccounts)), review: make(map[string]ReviewJobAccount, len(cfg.ReviewAccounts)), shared: make(map[string]SharedJobAccount, len(cfg.SharedAccounts)), audit: audit, slips: newSlipCache(), mergeMints: newMergeMintRate(cfg.Now), labels: newLabelState(cfg.Now), issues: newIssueState(cfg.Now)}
+	s := &Server{cfg: cfg, log: cfg.Log, now: cfg.Now, jobs: make(map[string]JobAccount, len(cfg.JobAccounts)), review: make(map[string]ReviewJobAccount, len(cfg.ReviewAccounts)), shared: make(map[string]SharedJobAccount, len(cfg.SharedAccounts)), audit: audit, slips: newSlipCache(), markers: newMarkerCache(), mergeMints: newMergeMintRate(cfg.Now), labels: newLabelState(cfg.Now), issues: newIssueState(cfg.Now)}
 	// The scope resolver (C1): the deployment's own, unless the configuration
 	// named one. An installation's is built from this same Config — the one
 	// database, the one table, the bundle — so that the front door and the

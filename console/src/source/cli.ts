@@ -857,48 +857,12 @@ export class CliSource implements FugaroSource {
     }
   }
 
-  /** coordinatorStatus reads `coordinator status --from-store --all --json`,
-   * which is the one read here that touches nothing on this machine and no
-   * credential: the child reads the caller's own database node through
-   * `roles/firebasedatabase.viewer` and prints it. It is therefore the only read
-   * with **no precondition of its own** -- no checkout, no App key, no
-   * Bitbucket credential -- and the two flags that make it that are words of the
-   * spawn row, so no caller can turn either off. */
-  coordinatorStatus(args: ValidatedArguments): Promise<Snapshot> {
-    return this.#readDocument('coordinator.status', args)
-  }
-
-  /** coordinatorShow reads `coordinator show --json --repo <owner/name> --pr
-   * <n>`: one pull request as the host has it, the description included (C3,
-   * D816). It is the second read here whose child mints a credential of the
-   * host's: `run.launch` is the first, and its child is a run whose token can
-   * write. This one's is the coordinator's own read-only installation token,
-   * which the CLI resolves from the repository's provider, exactly as it does
-   * for the stored view above -- and no credential of the host's passes through
-   * this process:
-   * the argv carries the repository and the number, and the reply carries the
-   * host's own document. */
-  coordinatorShow(args: ValidatedArguments): Promise<Snapshot> {
-    return this.#readDocument('coordinator.show', args)
-  }
-
-  /** coordinatorIntents reads `coordinator intents --all --json`: what the
-   * fleet's writers have declared, newest first (C4, D827). It takes no
-   * argument at all -- the whole argv is the spawn row's, `--all --json` -- and
-   * like the stored view above its child asks nothing of the host: the
-   * declarations are the caller's own database node, read through the same
-   * store and the same ADC, so this read needs no published credentials service
-   * where `coordinatorShow`'s host read needs the one its project publishes. */
-  coordinatorIntents(args: ValidatedArguments): Promise<Snapshot> {
-    return this.#readDocument('coordinator.intents', args)
-  }
-
   /** orchestratorMap reads `orchestrator map --json`: the project's active
    * orchestrators, the connections between them and the coordinator's own
    * heartbeat (the console-fixes plan's CG7a; C-ORCH's document,
    * `internal/orchestrator/mapdoc.go`; D3221). It takes no argument at all --
    * the whole argv is the spawn row's, `--json` plus the two project flags
-   * main-process state settles -- and like the declarations read above its child
+   * main-process state settles -- and like the marks read below its child
    * asks nothing of the host: the map is built from the caller's own database
    * (the orchestrator nodes, their leases, the claims and the heartbeat), read
    * through the same store and the same ADC, so this read needs no published
@@ -916,8 +880,8 @@ export class CliSource implements FugaroSource {
    * read's own reason when they disagree, and the newest audit record's bounded
    * subset (the managed screens' plan's CM4, D1472 to D1477). It takes no
    * argument at all -- the whole argv is the spawn row's, `--json` plus the two
-   * project flags main-process state settles -- and like the declarations read
-   * above its child asks nothing of the host: the marks and the audit trail are
+   * project flags main-process state settles -- and like the map read above its
+   * child asks nothing of the host: the marks and the audit trail are
    * the caller's own database node, read through the same store and the same
    * ADC, so this read needs no credentials service of any kind. **The
    * subset is the command's** -- `argv` is not in it (D1476) -- so nothing this
@@ -2094,25 +2058,6 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
       )
       return reading
     },
-    /** coordinatorStatus has no precondition and no cadence: the read touches
-     * nothing on this machine (it is the caller's own database node) and the
-     * stored view is a document the sweep replaces in place, so there is no
-     * directory to refuse for and nothing to be gained by holding a floor
-     * between two calls. */
-    coordinatorStatus: (args) => read('coordinator.status', (source) => source.coordinatorStatus(args)),
-    /** coordinatorShow has no precondition and no cadence of its own: the
-     * repository and the number in the argv are the whole question, the CLI
-     * resolves the repository's provider and mints the coordinator's own
-     * read-only installation token for it, and there is nothing on this machine
-     * for this process to refuse a read for. Two calls with the same arguments
-     * are two host reads, which is what the caller asked for. */
-    coordinatorShow: (args) => read('coordinator.show', (source) => source.coordinatorShow(args)),
-    /** coordinatorIntents has no precondition and no cadence, for
-     * coordinatorStatus's reason: the read is the caller's own database node,
-     * so there is no directory on this machine to refuse for, and the store
-     * replaces the records in place as declarations arrive, so holding a floor
-     * between two calls would hide the newest one for no gain. */
-    coordinatorIntents: (args) => read('coordinator.intents', (source) => source.coordinatorIntents(args)),
     /**
      * orchestratorMap is the map read (CG7a), and it is the one read here whose
      * **floor is asked before `resolve`**: `orchestrator map --json` is
@@ -2126,11 +2071,10 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
      * a promise, so its refusal has to arrive as a rejected promise, never as a
      * synchronous throw out of a call the surface drew as pending.
      *
-     * It has no other precondition and no cadence, for `coordinatorIntents`'s
-     * reason: the read is the caller's own database node, so there is no
-     * directory on this machine to refuse for, and the map is rebuilt from the
-     * leases on every call -- a minimum interval between two calls would only
-     * delay the picture a screen opened to see.
+     * It has no other precondition and no cadence: the read is the caller's own
+     * database node, so there is no directory on this machine to refuse for,
+     * and the map is rebuilt from the leases on every call -- a minimum interval
+     * between two calls would only delay the picture a screen opened to see.
      *
      * **What the answer drew is recorded, exactly as `graphRead` records what its
      * answer listed** (CG7b): every `nodes[].id` of the document becomes an

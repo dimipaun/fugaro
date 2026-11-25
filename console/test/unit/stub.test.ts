@@ -99,15 +99,6 @@ describe('the stub’s command keys', () => {
       'version',
       'doctor',
       'config list',
-      'coordinator status',
-      // Coordinator v2 C3's `coordinator.show` / `coordinatorShow`: the pull
-      // request read next to the project view's, and the second row here whose
-      // child mints a credential of the host's (`run`'s below is the first).
-      'coordinator show',
-      // Coordinator v2 C4's `coordinator.intents` / `coordinatorIntents`: the
-      // declarations the fleet's writers stored, and the one row here with no
-      // argument at all -- its words are the whole argv.
-      'coordinator intents',
       // The console-fixes plan's CG7a (`orchestrator.map` / `orchestratorMap`,
       // D3221): the Coordinator tab's map read, and the second row here with no
       // argument at all -- its words are the whole argv, so its key is the
