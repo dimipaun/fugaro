@@ -1034,9 +1034,10 @@ func batchBlockAccount(members []string) (email, why string) {
 // Two of the block's fields are NOT carried, and that is the whole of what this
 // stage does to them: the key fact and `secrets` are facts the block no longer
 // carries (R10), so the block this merge returns holds neither, and a file that
-// carried one loses it at the first write. Neither is named here -- not the
-// field and not its type -- for retireBlockFacts' reason: what removes them is
-// the deletion that follows this task.
+// carried one loses it at the first write. This merge names neither of them:
+// the deletion that follows this task takes the key's field and its type out of
+// the tree, so what this stage knows of that fact is the word its config file
+// spells (retiredBlockFacts) and nothing else.
 func mergeBatch(owner, want *localcfg.Batch) *localcfg.Batch {
 	if owner == nil {
 		return want
@@ -1073,10 +1074,9 @@ func mergeBatch(owner, want *localcfg.Batch) *localcfg.Batch {
 }
 
 // sameBatch reports whether two blocks carry the same fields, nil included. The
-// two facts a file may still carry and the block no longer writes are compared
-// as they are read -- the retired one above all, which the merge drops and so
-// can only be told apart from a block without it by what the FILE holds
-// (retireBlockFacts), never by a comparison here.
+// mounts a file may still carry are compared as they are read; the retired key
+// is not compared at all, because the merge drops it, so a file still naming it
+// is told apart by the file's own text (retiredBlockFacts), never here.
 func sameBatch(a, b *localcfg.Batch) bool {
 	if a == nil || b == nil {
 		return a == b
