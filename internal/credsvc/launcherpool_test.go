@@ -33,6 +33,7 @@ package credsvc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -714,6 +715,54 @@ func TestDesignationRouteRefusesAnothersPool(t *testing.T) {
 		}
 		wantDesignationLine(t, s, before, ErrorRequestRefused)
 	})
+
+	// The operator's switches, which this route reads itself because it is
+	// answered ahead of the shared parse that reads them for every other route.
+	// A designation is a lasting statement — a run's later calls are served from
+	// what it names — so an operator who stopped the service stopped what it
+	// decides and not only what it serves, and the write must not land. A switch
+	// that cannot be read is the same refusal and not a serve: an unreadable
+	// switch is not an off switch (budget's own rule), and its sentence is the
+	// service's own, never the reader's text.
+	//
+	// Each is a refusal AFTER the caller was verified, so each owes exactly one
+	// audit line under the route's own purpose, and the store holds what it held
+	// before — a stop is not a burn.
+	for _, tc := range []struct {
+		name string
+		stop func(*lpFixture)
+	}{
+		{"the global switch", func(s *lpFixture) { s.kills.global = true }},
+		{"the switches that cannot be read", func(s *lpFixture) {
+			s.kills.err = errors.New("the switches node could not be read")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := len(lpAudit(t, s))
+			held, was := s.designation(t, lpLauncher())
+			tc.stop(s)
+			resp, body := s.lpDesignate(t, mustBody(t, PoolDesignateRequest{Pool: lpOwnPool}))
+			if resp.StatusCode != StatusUnavailable {
+				t.Fatalf("a stopped service answered %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
+			}
+			if e := refusal(t, resp.StatusCode, body); e.Error != ErrorStateUnavailable {
+				t.Errorf("the refusal's type is %q, want %q", e.Error, ErrorStateUnavailable)
+			} else if strings.Contains(e.Message, "switches node") {
+				t.Errorf("the refusal carries the reader's own text: %q", e.Message)
+			}
+			wantDesignationLine(t, s, before, ErrorStateUnavailable)
+			if d, found := s.designation(t, lpLauncher()); found != was || d != held {
+				t.Errorf("the store holds (%+v, %v), want the record before the switch (%+v, %v)", d, found, held, was)
+			}
+
+			// The switch is a stop and not a refusal of this call's shape:
+			// cleared, the same launcher's own designation is written.
+			s.kills.global, s.kills.err = false, nil
+			if resp, body := s.lpDesignate(t, mustBody(t, PoolDesignateRequest{Pool: lpOwnPool})); resp.StatusCode != http.StatusOK {
+				t.Errorf("the designation after the switch cleared is %d, want it written: %s", resp.StatusCode, body)
+			}
+		})
+	}
 }
 
 // wantDesignationLine holds ONE act of the route to having written exactly one
