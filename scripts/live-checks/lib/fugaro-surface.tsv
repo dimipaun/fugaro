@@ -178,6 +178,10 @@ cmd	rigor security
 cmd	rigor security add
 cmd	rigor security rm
 cmd	rigor set
+cmd	routing
+cmd	routing ls
+cmd	routing rm
+cmd	routing set
 cmd	run
 cmd	runs
 cmd	runs digest
@@ -267,6 +271,7 @@ flag		bool	-v	--version
 flag	ab	bool	-h	--help
 flag	account	bool	-h	--help
 flag	accounts	bool	-h	--help
+flag	accounts	bool	-v	--verbose
 flag	accounts add	bool		--ask
 flag	accounts add	bool		--claude
 flag	accounts add	bool	-h	--help
@@ -274,12 +279,14 @@ flag	accounts add	value		--profile
 flag	accounts add	value		--repos
 flag	accounts add	value		--type
 flag	accounts alias	bool	-h	--help
+flag	accounts alias	bool	-v	--verbose
 flag	accounts alias rm	bool		--yes
 flag	accounts alias rm	bool	-h	--help
 flag	accounts alias set	bool		--yes
 flag	accounts alias set	bool	-h	--help
 flag	accounts allow	bool	-h	--help
 flag	accounts cascade	bool	-h	--help
+flag	accounts cascade	bool	-v	--verbose
 flag	accounts cascade set	bool		--stop-after-exhaustion-per-window
 flag	accounts cascade set	bool	-h	--help
 flag	accounts cascade set	value		--backoff-cap
@@ -294,6 +301,7 @@ flag	accounts clear	value		--gcp-project
 flag	accounts clear	value		--project
 flag	accounts clear	value		--region
 flag	accounts craft	bool	-h	--help
+flag	accounts craft	bool	-v	--verbose
 flag	accounts craft rm	bool	-h	--help
 flag	accounts craft rm	value		--layer
 flag	accounts craft set	bool	-h	--help
@@ -301,6 +309,7 @@ flag	accounts craft set	value		--access
 flag	accounts craft set	value		--layer
 flag	accounts deny	bool	-h	--help
 flag	accounts grade	bool	-h	--help
+flag	accounts grade	bool	-v	--verbose
 flag	accounts grade set	bool	-h	--help
 flag	accounts grade set	value		--access
 flag	accounts grade set	value		--layer
@@ -312,6 +321,7 @@ flag	accounts ls	value		--project
 flag	accounts ls	value		--region
 flag	accounts ls	value		--repo
 flag	accounts pool	bool	-h	--help
+flag	accounts pool	bool	-v	--verbose
 flag	accounts pool add	bool	-h	--help
 flag	accounts pool add	value		--allow-user
 flag	accounts pool add	value		--layer
@@ -325,6 +335,7 @@ flag	accounts pool ls	value		--region
 flag	accounts pool rm	bool	-h	--help
 flag	accounts pool rm	value		--layer
 flag	accounts repo	bool	-h	--help
+flag	accounts repo	bool	-v	--verbose
 flag	accounts repo add	bool	-h	--help
 flag	accounts repo add	value		--layer
 flag	accounts rm	bool		--no-apply
@@ -344,6 +355,7 @@ flag	apply	bool	-h	--help
 flag	apply	value		--config
 flag	apply	value		--project
 flag	artifacts	bool	-h	--help
+flag	artifacts	bool	-v	--verbose
 flag	artifacts get	bool		--force
 flag	artifacts get	bool	-h	--help
 flag	artifacts get	value		--config
@@ -361,6 +373,7 @@ flag	artifacts ls	value		--region
 flag	artifacts ls	value		--repo
 flag	backend	bool	-h	--help
 flag	backends	bool	-h	--help
+flag	backends	bool	-v	--verbose
 flag	backends ls	bool		--json
 flag	backends ls	bool	-h	--help
 flag	backends ls	value		--config
@@ -371,6 +384,7 @@ flag	backends use	bool	-h	--help
 flag	backends use	value		--config
 flag	backends use	value		--project
 flag	backlog	bool	-h	--help
+flag	backlog	bool	-v	--verbose
 flag	backlog add	bool	-h	--help
 flag	backlog add	value		--brief-file
 flag	backlog add	value		--config
@@ -388,7 +402,9 @@ flag	backlog list	value		--gcp-project
 flag	backlog list	value		--project
 flag	backlog list	value		--region
 flag	budget	bool	-h	--help
+flag	budget	bool	-v	--verbose
 flag	budget chain	bool	-h	--help
+flag	budget chain	bool	-v	--verbose
 flag	budget chain raise	bool	-h	--help
 flag	budget chain raise	value		--config
 flag	budget chain raise	value		--gcp-project
@@ -480,6 +496,7 @@ flag	cancel	value		--poll
 flag	cancel	value		--project
 flag	cancel	value		--region
 flag	config	bool	-h	--help
+flag	config	bool	-v	--verbose
 flag	config example	bool	-h	--help
 flag	config init	bool	-h	--help
 flag	config init	value		--base-branch
@@ -505,6 +522,7 @@ flag	config show	value		--project-layer
 flag	config show	value		--workflow
 flag	coordinator	bool	-h	--help
 flag	craft	bool	-h	--help
+flag	craft	bool	-v	--verbose
 flag	craft ls	bool		--json
 flag	craft ls	bool	-h	--help
 flag	craft ls	value		--config
@@ -512,6 +530,7 @@ flag	craft ls	value		--gcp-project
 flag	craft ls	value		--project
 flag	craft ls	value		--region
 flag	creds	bool	-h	--help
+flag	creds	bool	-v	--verbose
 flag	creds ls	bool		--json
 flag	creds ls	bool	-h	--help
 flag	creds ls	value		--config
@@ -551,6 +570,7 @@ flag	doctor	value		--gcp-project
 flag	doctor	value		--project
 flag	doctor	value		--region
 flag	escalation	bool	-h	--help
+flag	escalation	bool	-v	--verbose
 flag	escalation ls	bool		--json
 flag	escalation ls	bool	-h	--help
 flag	escalation ls	value		--config
@@ -587,6 +607,7 @@ flag	followups	value		--region
 flag	graph	bool	-h	--help
 flag	help	bool	-h	--help
 flag	image	bool	-h	--help
+flag	image	bool	-v	--verbose
 flag	image add	bool		--default
 flag	image add	bool		--dry-run
 flag	image add	bool		--json
@@ -635,6 +656,7 @@ flag	image ls	value		--gcp-project
 flag	image ls	value		--project
 flag	image ls	value		--region
 flag	image map	bool	-h	--help
+flag	image map	bool	-v	--verbose
 flag	image map set	bool	-h	--help
 flag	image map set	value		--config
 flag	image map set	value		--gcp-project
@@ -682,6 +704,7 @@ flag	image survey	value		--gcp-project
 flag	image survey	value		--project
 flag	image survey	value		--region
 flag	issue	bool	-h	--help
+flag	issue	bool	-v	--verbose
 flag	issue dismiss	bool	-h	--help
 flag	issue list	bool		--all
 flag	issue list	bool		--json
@@ -707,12 +730,14 @@ flag	mailbox	bool		--json
 flag	mailbox	bool		--no-heartbeat
 flag	mailbox	bool		--once
 flag	mailbox	bool	-h	--help
+flag	mailbox	bool	-v	--verbose
 flag	mailbox	value		--config
 flag	mailbox	value		--gcp-project
 flag	mailbox	value		--interval
 flag	mailbox	value		--project
 flag	mailbox	value		--region
 flag	managed	bool	-h	--help
+flag	managed	bool	-v	--verbose
 flag	managed apply	bool	-h	--help
 flag	managed apply	value		--config
 flag	managed apply	value		--gcp-project
@@ -737,6 +762,7 @@ flag	managed unflag	value		--gcp-project
 flag	managed unflag	value		--project
 flag	managed unflag	value		--region
 flag	models	bool	-h	--help
+flag	models	bool	-v	--verbose
 flag	models add	bool		--dry-run
 flag	models add	bool		--json
 flag	models add	bool		--no-apply
@@ -753,6 +779,7 @@ flag	models ls	value		--gcp-project
 flag	models ls	value		--project
 flag	models ls	value		--region
 flag	models price	bool	-h	--help
+flag	models price	bool	-v	--verbose
 flag	models price set	bool	-h	--help
 flag	models price set	value		--cache-read
 flag	models price set	value		--cache-write-1h
@@ -762,6 +789,7 @@ flag	models price set	value		--layer
 flag	models price set	value		--output-per-m
 flag	models price set	value		--web-search-per-1k
 flag	models provider	bool	-h	--help
+flag	models provider	bool	-v	--verbose
 flag	models provider rm	bool	-h	--help
 flag	models provider rm	value		--layer
 flag	models provider set	bool		--require-zdr
@@ -785,6 +813,7 @@ flag	models search	value		--region
 flag	models use	bool	-h	--help
 flag	models use	value		--layer
 flag	orchestrator	bool	-h	--help
+flag	orchestrator	bool	-v	--verbose
 flag	orchestrator events	bool		--json
 flag	orchestrator events	bool	-h	--help
 flag	orchestrator events	value		--config
@@ -843,6 +872,7 @@ flag	orchestrator uninstall	bool	-h	--help
 flag	orchestrator uninstall	value		--name
 flag	pair	bool		--json
 flag	pair	bool	-h	--help
+flag	pair	bool	-v	--verbose
 flag	pair	value		--config
 flag	pair	value		--email
 flag	pair	value		--gcp-project
@@ -866,6 +896,7 @@ flag	pair revoke	value		--project
 flag	pair revoke	value		--region
 flag	pair revoke	value		--uid
 flag	plan	bool	-h	--help
+flag	plan	bool	-v	--verbose
 flag	plan graph	bool		--json
 flag	plan graph	bool	-h	--help
 flag	plan graph	value		--done
@@ -879,17 +910,21 @@ flag	plan status	value		--gcp-project
 flag	plan status	value		--project
 flag	plan status	value		--region
 flag	project	bool	-h	--help
+flag	project	bool	-v	--verbose
 flag	project binaries	bool	-h	--help
+flag	project binaries	bool	-v	--verbose
 flag	project binaries allow	bool	-h	--help
 flag	project binaries deny	bool	-h	--help
 flag	project binaries max-bytes	bool	-h	--help
 flag	project clone-url	bool	-h	--help
+flag	project clone-url	bool	-v	--verbose
 flag	project clone-url ls	bool		--json
 flag	project clone-url ls	bool	-h	--help
 flag	project clone-url rm	bool	-h	--help
 flag	project clone-url set	bool	-h	--help
 flag	project clone-url show	bool	-h	--help
 flag	project policy	bool	-h	--help
+flag	project policy	bool	-v	--verbose
 flag	project policy publish	bool		--delete
 flag	project policy publish	bool		--remove-routing
 flag	project policy publish	bool		--seed-repos
@@ -905,6 +940,7 @@ flag	project policy show	value		--gcp-project
 flag	project policy show	value		--project
 flag	project policy show	value		--region
 flag	project profile	bool	-h	--help
+flag	project profile	bool	-v	--verbose
 flag	project profile add	bool	-h	--help
 flag	project profile add	value		--cpu
 flag	project profile add	value		--memory
@@ -917,6 +953,7 @@ flag	project profile set	bool	-h	--help
 flag	project profile show	bool		--json
 flag	project profile show	bool	-h	--help
 flag	project repos	bool	-h	--help
+flag	project repos	bool	-v	--verbose
 flag	project repos add	bool		--allow-list-only
 flag	project repos add	bool		--no-apply
 flag	project repos add	bool	-h	--help
@@ -956,6 +993,7 @@ flag	project repos status	value		--gcp-project
 flag	project repos status	value		--project
 flag	project repos status	value		--region
 flag	project routing	bool	-h	--help
+flag	project routing	bool	-v	--verbose
 flag	project routing set	bool	-h	--help
 flag	project routing set	value		--models
 flag	project routing set	value		--via
@@ -986,6 +1024,7 @@ flag	reaper	value		--project
 flag	reaper	value		--region
 flag	recipe	bool	-h	--help
 flag	recipes	bool	-h	--help
+flag	recipes	bool	-v	--verbose
 flag	recipes ls	bool		--json
 flag	recipes ls	bool	-h	--help
 flag	recipes ls	bool	-v	--verbose
@@ -1025,6 +1064,7 @@ flag	restore	value		--region
 flag	review	bool		--code-only
 flag	review	bool		--json
 flag	review	bool	-h	--help
+flag	review	bool	-v	--verbose
 flag	review	value		--config
 flag	review	value		--gcp-project
 flag	review	value		--mutate
@@ -1040,7 +1080,9 @@ flag	review show	value		--gcp-project
 flag	review show	value		--project
 flag	review show	value		--region
 flag	rigor	bool	-h	--help
+flag	rigor	bool	-v	--verbose
 flag	rigor floor	bool	-h	--help
+flag	rigor floor	bool	-v	--verbose
 flag	rigor floor set	bool	-h	--help
 flag	rigor floor set	value		--config
 flag	rigor floor set	value		--project
@@ -1052,6 +1094,7 @@ flag	rigor floor unset	bool	-h	--help
 flag	rigor floor unset	value		--config
 flag	rigor floor unset	value		--project
 flag	rigor security	bool	-h	--help
+flag	rigor security	bool	-v	--verbose
 flag	rigor security add	bool		--always-level-3
 flag	rigor security add	bool		--ask
 flag	rigor security add	bool	-h	--help
@@ -1078,6 +1121,16 @@ flag	rigor set	value		--layer
 flag	rigor set	value		--name
 flag	rigor set	value		--project
 flag	rigor set	value		--repo
+flag	routing	bool	-h	--help
+flag	routing	bool	-v	--verbose
+flag	routing ls	bool		--json
+flag	routing ls	bool	-h	--help
+flag	routing ls	value		--config
+flag	routing ls	value		--gcp-project
+flag	routing ls	value		--project
+flag	routing ls	value		--region
+flag	routing rm	bool	-h	--help
+flag	routing set	bool	-h	--help
 flag	run	bool		--allow-duplicate
 flag	run	bool		--change-set
 flag	run	bool		--code-only
@@ -1085,6 +1138,7 @@ flag	run	bool		--commit-reports
 flag	run	bool		--json
 flag	run	bool		--no-budget-check
 flag	run	bool		--no-compression
+flag	run	bool		--promote
 flag	run	bool		--security
 flag	run	bool	-h	--help
 flag	run	value		--attach
@@ -1124,6 +1178,7 @@ flag	run	value		--used-tokens
 flag	run	value		--used-usd
 flag	run	value		--workflow
 flag	runs	bool	-h	--help
+flag	runs	bool	-v	--verbose
 flag	runs digest	bool		--due
 flag	runs digest	bool		--json
 flag	runs digest	bool		--stdout
@@ -1212,6 +1267,7 @@ flag	seats	value		--project
 flag	seats	value		--region
 flag	secret	bool	-h	--help
 flag	secrets	bool	-h	--help
+flag	secrets	bool	-v	--verbose
 flag	secrets allow	bool		--all-repos
 flag	secrets allow	bool		--proxy
 flag	secrets allow	bool	-h	--help
@@ -1248,6 +1304,7 @@ flag	secrets set	value		--remove-bitbucket-api-root
 flag	secrets set	value		--repo
 flag	secrets set	value		--rotation-days
 flag	secrets shared	bool	-h	--help
+flag	secrets shared	bool	-v	--verbose
 flag	secrets shared ls	bool		--json
 flag	secrets shared ls	bool	-h	--help
 flag	secrets shared ls	value		--config
@@ -1267,6 +1324,7 @@ flag	secrets shared set	value		--gcp-project
 flag	secrets shared set	value		--project
 flag	secrets shared set	value		--region
 flag	secrets user	bool	-h	--help
+flag	secrets user	bool	-v	--verbose
 flag	secrets user ls	bool		--json
 flag	secrets user ls	bool	-h	--help
 flag	secrets user ls	value		--config
@@ -1286,6 +1344,7 @@ flag	secrets user set	value		--gcp-project
 flag	secrets user set	value		--project
 flag	secrets user set	value		--region
 flag	security	bool	-h	--help
+flag	security	bool	-v	--verbose
 flag	security paths	bool		--json
 flag	security paths	bool	-h	--help
 flag	security paths	value		--check
@@ -1295,6 +1354,7 @@ flag	settings	bool		--json
 flag	settings	bool		--offline
 flag	settings	bool		--why
 flag	settings	bool	-h	--help
+flag	settings	bool	-v	--verbose
 flag	settings	value		--config
 flag	settings	value		--grep
 flag	settings	value		--layer
@@ -1384,6 +1444,7 @@ flag	setup	value		--runs-bucket
 flag	setup	value		--scheduler-region
 flag	setup	value		--state-bucket
 flag	stats	bool	-h	--help
+flag	stats	bool	-v	--verbose
 flag	stats runs	bool		--json
 flag	stats runs	bool	-h	--help
 flag	stats runs	value		--config
@@ -1463,6 +1524,7 @@ flag	update-skills	bool		--json
 flag	update-skills	bool	-h	--help
 flag	update-skills	value		--dir
 flag	user	bool	-h	--help
+flag	user	bool	-v	--verbose
 flag	user add	bool	-h	--help
 flag	user add	value		--config
 flag	user add	value		--gcp-project
@@ -1527,6 +1589,7 @@ flag	watch	value		--project
 flag	watch	value		--region
 flag	watch	value		--repo
 flag	workflow	bool	-h	--help
+flag	workflow	bool	-v	--verbose
 flag	workflow add	bool		--ask
 flag	workflow add	bool		--executable-changes
 flag	workflow add	bool	-h	--help
@@ -1541,6 +1604,7 @@ flag	workflow rm	value		--config
 flag	workflow rm	value		--project
 flag	workflow rm	value		--repo
 flag	workspace	bool	-h	--help
+flag	workspace	bool	-v	--verbose
 flag	workspace add	bool	-h	--help
 flag	workspace add	value		--assertion-key
 flag	workspace add	value		--firebase-project
@@ -1548,11 +1612,13 @@ flag	workspace add	value		--issuer
 flag	workspace add	value		--service-account
 flag	workspace add	value		--service-address
 flag	workspace cap	bool	-h	--help
+flag	workspace cap	bool	-v	--verbose
 flag	workspace cap set	bool		--no-apply
 flag	workspace cap set	bool	-h	--help
 flag	workspace cap set	value		--monthly
 flag	workspace cap set	value		--workspace
 flag	workspace domains	bool	-h	--help
+flag	workspace domains	bool	-v	--verbose
 flag	workspace domains add	bool	-h	--help
 flag	workspace domains add	value		--workspace
 flag	workspace domains ls	bool	-h	--help
@@ -1565,6 +1631,7 @@ flag	workspace login	bool	-h	--help
 flag	workspace ls	bool		--json
 flag	workspace ls	bool	-h	--help
 flag	workspace project	bool	-h	--help
+flag	workspace project	bool	-v	--verbose
 flag	workspace project add	bool		--external
 flag	workspace project add	bool		--no-apply
 flag	workspace project add	bool	-h	--help
@@ -1619,6 +1686,7 @@ flag	workspace unshare	bool		--no-apply
 flag	workspace unshare	bool	-h	--help
 flag	workspace unshare	value		--workspace
 flag	workspace user	bool	-h	--help
+flag	workspace user	bool	-v	--verbose
 flag	workspace user add	bool		--admin
 flag	workspace user add	bool		--external
 flag	workspace user add	bool	-h	--help
