@@ -19,8 +19,9 @@ import (
 // TestEveryAllowedTypeIsClassifiedDataBearingOrNot holds D1551's classification:
 // every entry of allowedTypes is decided — data-bearing or not — so a type
 // added to the list later cannot pass unclassified, the two tables neither
-// overlap nor name a type outside allowedTypes, and the nine data-bearing names
-// are exactly D1551's list.
+// overlap nor name a type outside allowedTypes, and the data-bearing names are
+// exactly D1551's list plus the one type a later task added to it on purpose
+// (the consumer's signing key, mobile-identity-pairing J6; O17).
 func TestEveryAllowedTypeIsClassifiedDataBearingOrNot(t *testing.T) {
 	for typ := range allowedTypes {
 		bearing, classified := DataBearingType(typ)
@@ -51,6 +52,11 @@ func TestEveryAllowedTypeIsClassifiedDataBearingOrNot(t *testing.T) {
 		"google_apikeys_key",
 		"google_artifact_registry_repository",
 		"google_firebase_database_instance",
+		// The consumer's signing key (mobile-identity-pairing plan task J6;
+		// O17): the private half every paired phone's pinned public key
+		// corresponds to, so a delete or a replace destroys the identity the
+		// installation signs with and every phone stops verifying, silently.
+		"google_kms_crypto_key",
 		"google_logging_log_view",
 		"google_logging_project_bucket_config",
 		"google_secret_manager_secret",
@@ -59,12 +65,12 @@ func TestEveryAllowedTypeIsClassifiedDataBearingOrNot(t *testing.T) {
 		"google_storage_bucket_object",
 	}
 	if got := slices.Sorted(maps.Keys(dataBearingTypes)); !slices.Equal(got, wantBearing) {
-		t.Errorf("the data-bearing types are %v, want D1551's nine:\n%v", got, wantBearing)
+		t.Errorf("the data-bearing types are %v, want D1551's nine plus J6's key:\n%v", got, wantBearing)
 	}
-	if got, want := len(dataBearingTypes), 9; got != want {
+	if got, want := len(dataBearingTypes), 10; got != want {
 		t.Errorf("data-bearing types = %d, want %d", got, want)
 	}
-	if got, want := len(nonDataBearingTypes), 23; got != want {
+	if got, want := len(nonDataBearingTypes), 25; got != want {
 		t.Errorf("non-data-bearing types = %d, want %d", got, want)
 	}
 	if got, want := len(dataBearingTypes)+len(nonDataBearingTypes), len(allowedTypes); got != want {

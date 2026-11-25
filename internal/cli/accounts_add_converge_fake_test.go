@@ -60,10 +60,12 @@ type addRig struct {
 	*initRig
 	db *gcpfake.RTDB
 	fs *gcpfake.Firestore
-	// managed is whether the project this rig's marks describe is one the gate
-	// proves is managed. It is the one fact `add` cannot read back off the
-	// filesystem — the two marks live in the fakes — and it decides whether the
-	// run it makes is shown the owner's own statement (accounts_managed_test.go).
+	// managed is whether the world is the managed project newAddRigMarks marked,
+	// and so whether the run `add` makes is shown the owner's own statement and
+	// stands at a terminal. It is the one fact the fixture cannot read back off
+	// the filesystem — the two marks live in the fakes, where the command reads
+	// them for itself — and it decides the shape of the run rather than the
+	// verdict of any gate (accounts_managed_test.go).
 	managed bool
 }
 
@@ -86,7 +88,26 @@ func newAddRig(t *testing.T) *addRig {
 // newAddRigWith is newAddRig over a caller's own local config: the fixtures that
 // are about the local-config half of the command write their own file, and the
 // command converges on the file it wrote whatever it holds.
+//
+// The project it stands for is a managed one (newAddRigMarks), because D2217
+// leaves these commands no other world to run in: a project with neither mark is
+// refused at the seam before any of the behaviour these files are about has
+// happened, so what a rig that stands for an ordinary installation has to carry
+// is the two marks. The worlds where the marks are absent, or half there, are
+// asked for by name (addMarksNone, addMarksUnlabelled) — one explicit unmanaged
+// case per refusal, and the fence's own tests are in managed_require_test.go.
 func newAddRigWith(t *testing.T, local string) *addRig {
+	t.Helper()
+	return newAddRigMarks(t, local, true)
+}
+
+// newAddRigMarks is the fixture with the world's marks chosen. marked false is
+// the project D2217's fence refuses — and the accounts gate with it, both reads
+// being the same one — and it is the world a refusal is studied in, so
+// newManagedAddRig is the only fixture that asks for it (addMarksNone and
+// addMarksUnlabelled; every other caller wants the installation the command is
+// run in).
+func newAddRigMarks(t *testing.T, local string, marked bool) *addRig {
 	t.Helper()
 	noAgentSession(t)
 	r := &addRig{initRig: newInitRig(t), db: gcpfake.NewRTDB(t), fs: gcpfake.NewFirestore(t)}
@@ -135,6 +156,11 @@ func newAddRigWith(t *testing.T, local string) *addRig {
 	// else the converge puts there is derived from the local config it writes.
 	r.db.Set(projectpolicy.PathShared(), addPolicyNode())
 	r.writeMarker(t, bucket, lc.Name, lc.GCPProject)
+	if marked {
+		r.markManaged(t, lc.GCPProject)
+		actingAccount(t)
+	}
+	r.managed = marked
 	return r
 }
 

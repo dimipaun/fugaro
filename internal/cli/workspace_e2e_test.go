@@ -33,6 +33,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,9 +41,11 @@ import (
 	"time"
 
 	accesslib "github.com/dimipaun/fugaro/internal/access"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
+	inframanaged "github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/intake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
@@ -194,7 +197,22 @@ func wu21New(t *testing.T) *wu21World {
 	// simulates, because that is the step they belong to.
 	w.gcs.AddProject(wu21Member, 900000000002)
 	w.gcs.AddBucket(managedmode.InstallationsStateBucket(wu21Member), 900000000002, nil)
-	w.gcs.AddBucket(wu21RunsBucket(), 900000000002, nil)
+	// Both projects are managed (D2217): every command that writes to one
+	// refuses an unmanaged project, so each carries the label and the creation
+	// fact the gate reads.
+	for _, p := range []struct {
+		id  string
+		num uint64
+	}{{wu21Workspace, 900000000001}, {wu21Member, 900000000002}} {
+		labelled(w.crm, p.id)
+		w.gcs.AddProject(p.id, p.num)
+		bucket := "fugaro-runs-" + p.id
+		if p.id == wu21Member {
+			bucket = wu21RunsBucket()
+		}
+		w.gcs.AddBucket(bucket, p.num, map[string]string{gcp.LabelManaged: gcp.ManagedValue})
+		w.gcs.Put(bucket, inframanaged.MarkerObject, []byte(fmt.Sprintf(`{"version":1,"gcp_project":%q}`, p.id)))
+	}
 	w.seedFirebaseState(w.mbdb.URL)
 	// Each database names its own project at /fugaro/project, which every command
 	// that opens one checks before it reads (plan R-9): the workspace's own

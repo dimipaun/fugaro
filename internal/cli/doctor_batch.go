@@ -86,14 +86,20 @@ import (
 //     pull-through repository of the project serves whatever its upstream's
 //     owner published, so a job image out of one is a stranger's code running
 //     as the installation's own run account.
-//   - The seal's pair (design §1.6, Task 14, the owner's answer P1): an
-//     installation that mints budget tokens cannot launch a run on Batch at
-//     all -- a launch carries the budget token's seal key in an environment
-//     entry and a Batch job's variables are the job's own definition -- so
-//     this is the last place an operator is told before paying for a launch
-//     that is refused at create. It is here rather than in validate alone
-//     because minting has a published-policy half no config answers; validate
-//     refuses the half a config alone decides, offline.
+//   - The block's OPT-IN fact (BR7, R3, D3110): a launch on this backend
+//     proceeds only where the published block says the installation is opted
+//     in, and the fact has three states -- absent, `in`, `withdrawn` -- of
+//     which the first two are one refusal. It is here and in validate because
+//     it is the one Batch fact a config alone answers: doctor asks it of the
+//     live installation, validate of the same block offline, and the two
+//     answer with one sentence (batchOptInRefusal) so they cannot disagree.
+//   - The link's read for the credentials service account (BR7, R14, D3102 as
+//     amended): the claim is served only to a VM of the job the record names,
+//     and the read that decides it is the service's, on the project's Batch
+//     jobs. The check reads whether the account holds a role whose permissions
+//     include batch.jobs.get, which is the half of the grant the compute root
+//     applies; the read's second permission and the condition on the binding
+//     are named by Check 830 (O1) and are not guessed here.
 //
 // A read that cannot be made is a warning that says so and never a pass (the
 // same rule doctor's other cloud checks follow), and a test configuration
@@ -140,10 +146,14 @@ func doctorBatchChecks(ctx context.Context, lc *localcfg.Config, c *crm.Service)
 			"provision the backend (fugaro setup --provision-batch in "+lc.GCPProject+"), which writes the block and applies the compute root, then rerun fugaro doctor")}
 	}
 	var out []doctorCheck
+	// The opt-in fact is read first: it is an installation's own answer rather
+	// than the project's, and it decides whether the grant below is even
+	// wanted (BR7, R3).
 	// The seal's pair is read first: it is the one finding on this path that no
 	// apply clears, so an operator who has it reads it before the provisioning
 	// below rather than after it.
 	out = append(out, doctorBatchBudgetSeal(ctx, lc)...)
+	out = append(out, doctorBatchOptIn(lc))
 	out = append(out, doctorBatchAPIs(ctx, lc)...)
 	out = append(out, doctorBatchJobDefinition(lc))
 	out = append(out, doctorBatchCost(lc))
@@ -153,6 +163,7 @@ func doctorBatchChecks(ctx context.Context, lc *localcfg.Config, c *crm.Service)
 	out = append(out, doctorBatchJobImage(ctx, lc))
 	out = append(out, doctorBatchSecrets(ctx, lc))
 	out = append(out, doctorBatchRunAccounts(ctx, lc, c)...)
+	out = append(out, doctorBatchLinkGrant(ctx, lc, c)...)
 	out = append(out, doctorBatchLauncherIAM(ctx, lc, c)...)
 	out = append(out, doctorBatchReaper(ctx, lc)...)
 	out = append(out, doctorBatchArtifactBoundary())
@@ -185,6 +196,23 @@ func batchProblem(lc *localcfg.Config, id, problem, fix string) doctorCheck {
 	return doctorCheck{ID: id, Severity: batchSeverity(lc), Problem: problem, Fix: fix}
 }
 
+// batchRootProblem is batchProblem for a failure only `fugaro update` puts
+// right, because the compute root it applies is what creates what the check
+// reads: the run accounts' roles and the launchers' actAs on them for accounts
+// the root has not yet been fed, and the credentials service account's read for
+// the link (R14). The mark is doctorCheck.updateFix, which `fugaro backends use`
+// reads before it refuses a selection.
+//
+// It is per RESULT and not per ID on purpose: one ID's unreadable arms are not
+// the root's work (a read that failed is nobody's grant), and a mark that came
+// with the ID would make the selection wait for a state the update cannot
+// change.
+func batchRootProblem(lc *localcfg.Config, id, problem, fix string) doctorCheck {
+	c := batchProblem(lc, id, problem, fix)
+	c.updateFix = true
+	return c
+}
+
 // doctorBatchArtifactBoundary names the boundary Global Constraint 13 leaves
 // standing, for an installation that carries a batch block: an
 // artifact-producing run is not launched on this backend, and `fugaro
@@ -204,6 +232,77 @@ func doctorBatchArtifactBoundary() doctorCheck {
 	return doctorCheck{ID: "batch-artifact-boundary", Severity: "info",
 		Problem: "an artifact-producing run is never launched on cloud-batch (docs/artifact-runs/spec.md §8.5 and D11): a Batch run's account is not per-repository, so the same run's inputs, artifacts and record would be readable and overwritable by every run on the profile. fugaro validate refuses `artifacts:` with `backend: cloud-batch`, and a launch naming an artifact recipe is refused by the launch's own gate",
 		Fix:     "keep artifact-producing recipes on backend: cloud-run. This is the boundary a later plan removes, with the per-run prefix condition or the per-run account it is waiting for (plan 2026-10-19-compute-backend.md, Global Constraint 13)"}
+}
+
+// doctorBatchOptIn reads the block's opt-in fact (BR7, R3, D3110): whether the
+// installation this block belongs to said, in the published copy, that Batch
+// runs are wanted.
+//
+// It is the one Batch check with no cloud read at all, and the only one whose
+// answer a config decides: the fact is the block's own field, it has three
+// states -- absent, `in`, `withdrawn` -- and a launch on this backend proceeds
+// only where it is `in`. Absent and withdrawn are one refusal with one fix
+// (opting in), because the difference between them is what an update has to
+// tell apart, not what an operator does next.
+//
+// The sentence is batchOptInRefusal's, which validate's offline arm answers
+// with as well -- a doctor and a validate that disagreed about one field would
+// send an operator to two different places for it.
+func doctorBatchOptIn(lc *localcfg.Config) doctorCheck {
+	const id = "batch-opt-in"
+	if lc.Batch.OptedIn() {
+		return doctorCheck{ID: id, OK: true}
+	}
+	return batchProblem(lc, id, batchOptInRefusal(lc), batchOptInFix(lc))
+}
+
+// doctorBatchLinkGrant reads the one grant the claim stands on (BR7, R14,
+// D3102 as amended): whether the credentials service account holds a role in
+// this project whose permissions carry batch.jobs.get, which is the read the
+// VM-to-job link makes when a Batch run claims its identity.
+//
+// What it does NOT read, and why, so a later reader does not take this for more
+// than it is: the condition the compute root puts on the binding (the Fugaro
+// job-name prefix) and the second permission Check 830 names for the link
+// (O1) are not asked here. Neither name exists in this tree yet -- they are
+// BR5's and the owner's measurement -- and a check written against a guess
+// would refuse the very installation it is about.
+//
+// The failure whose fix is the root is marked (doctorCheck.updateFix) and the
+// unreadable ones are not: a grant missing is `fugaro update`'s work, while a
+// read that did not answer is not work at all (R14).
+func doctorBatchLinkGrant(ctx context.Context, lc *localcfg.Config, c *crm.Service) []doctorCheck {
+	const id = "batch-link-grant"
+	if lc.Endpoints.NoAuth && lc.Endpoints.IAM == "" {
+		return []doctorCheck{batchSkipped(id, "the credentials service account's read on this installation's Batch jobs", "iam")}
+	}
+	if c == nil {
+		return nil
+	}
+	member := "serviceAccount:" + infra.CredentialsAccountID + "@" + lc.GCPProject + ".iam.gserviceaccount.com"
+	p, err := c.Projects.GetIamPolicy(lc.GCPProject, &crm.GetIamPolicyRequest{
+		Options: &crm.GetPolicyOptions{RequestedPolicyVersion: 3},
+	}).Context(ctx).Do()
+	if isAccessDenied(err) {
+		return []doctorCheck{batchRefused(id, "the credentials service account's read on the Batch jobs of "+lc.GCPProject, "an operator runs fugaro doctor, which can read the project's policy", lc)}
+	}
+	if err != nil {
+		return []doctorCheck{batchUnchecked(id, "the credentials service account's read on the Batch jobs of "+lc.GCPProject, batchReadFix, err, lc)}
+	}
+	svc, err := iam.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.IAM)...)
+	if err != nil {
+		return []doctorCheck{batchUnchecked(id, "the permissions of the roles the credentials service account holds in "+lc.GCPProject, batchReadFix, err, lc)}
+	}
+	granted, err := batchJobsGetGranted(ctx, svc, p, member)
+	if err != nil {
+		return []doctorCheck{batchUnchecked(id, "whether a role the credentials service account holds in "+lc.GCPProject+" carries batch.jobs.get", batchReadFix, err, lc)}
+	}
+	if !granted {
+		return []doctorCheck{batchRootProblem(lc, id,
+			"the credentials service account ("+member+") holds no role in "+lc.GCPProject+" whose permissions carry batch.jobs.get, so a Batch run of this installation could not claim its identity: the claim is served only to a VM of the job the issuance record names, and the read that decides it is this service's, on the project's Batch jobs (docs/batch-run-identity/implementation-plan.md, R1 and R14; D3102 as amended). The service's read is a custom role the compute root plans, granted only where Batch is provisioned",
+			"run fugaro update in "+lc.GCPProject+", which applies the compute root's grant for the credentials service account (or, if the grant was just written, rerun fugaro doctor once it propagates)")}
+	}
+	return []doctorCheck{{ID: id, OK: true}}
 }
 
 // doctorBatchBudgetSeal is the pair no provisioning clears: an installation
@@ -267,6 +366,52 @@ func doctorBatchBudgetSeal(ctx context.Context, lc *localcfg.Config) []doctorChe
 		"this installation names a budget database and its project config selects backend: cloud-batch (docs/compute-backend/spec.md §1.6): every launch of an installation with a database mints budget tokens (AB4, F7), so every launch of it is refused before the job is created. A launch carries the budget token's seal key in an environment entry, and a Batch job has no carrier for one: its variables are the job's definition, a standing copy readable by every launcher the IAM Condition admits and by the reaper (docs/budget-token-channel/spec.md, \"The Batch backend refuses a sealed launch\"). Minting is the installation's, not a run's, so there is no per-run fallback",
 		"keep this installation on backend: cloud-run: every installation with a budget database mints (AB4, F7), so there is no setting of this one that would let a run go to Batch. The seal's carrier is a documented limit rather than something this installation can provision around (plan 2026-10-19-compute-backend.md Task 14, P1)")}
 }
+
+// batchJobsGetGranted reports whether some binding of p that names member holds
+// a role whose permissions include batch.jobs.get. Both role kinds are asked of
+// the IAM API rather than matched against a list written here: a custom role's
+// permissions are this project's own (the compute root plans them), and a
+// predefined one's are Google's table, which a copy in this file would be a
+// second, drifting answer to -- and a wrong answer here either refuses an
+// installation whose read works or passes one whose read does not.
+func batchJobsGetGranted(ctx context.Context, svc *iam.Service, p *crm.Policy, member string) (bool, error) {
+	for _, b := range p.Bindings {
+		if !slices.Contains(b.Members, member) {
+			continue
+		}
+		var role *iam.Role
+		var err error
+		if name, ok := customRoleName(b.Role); ok {
+			role, err = svc.Projects.Roles.Get(name).Context(ctx).Do()
+		} else {
+			role, err = svc.Roles.Get(b.Role).Context(ctx).Do()
+		}
+		if err != nil {
+			return false, err
+		}
+		if slices.Contains(role.IncludedPermissions, batchJobsGetPermission) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// customRoleName turns a policy binding's role into the name projects.roles.get
+// takes, and reports false for a predefined role -- "roles/<id>" is looked up
+// through the API's own top-level collection. A custom role is the only kind
+// this project plans, and the two spellings are the API's own.
+func customRoleName(role string) (string, bool) {
+	if strings.HasPrefix(role, "projects/") || strings.HasPrefix(role, "organizations/") {
+		return role, true
+	}
+	return "", false
+}
+
+// batchJobsGetPermission is the permission the link's read needs: reading one
+// Batch job back, which is what says whose VM is asking. It is written as the
+// API spells it; the second permission the link's read needs is Check 830's
+// (O1) and is deliberately not named here.
+const batchJobsGetPermission = "batch.jobs.get"
 
 // batchUnchecked is a read that could not be made, in the shape every cloud
 // check here answers with: a warning naming what could not be read, never a
@@ -843,7 +988,7 @@ func doctorBatchAccountMembership(lc *localcfg.Config, id string, accounts []str
 	// naming an account that does not exist, as a block that named the wrong
 	// identity -- a different fault with a different fix.
 	if len(accounts) == 0 {
-		return batchProblem(lc, id,
+		return batchRootProblem(lc, id,
 			"this installation's project has no Fugaro run account at all: the accounts a Batch job's VM runs as are the run-class accounts the repository roots created, and with none of them every job this installation launched would be one whose VM cannot report its state (design compute-backend.md §3.2). The accounts are found by the display name the repository roots write (infra.JobRunAccounts)",
 			fmt.Sprintf("apply the repository roots for this installation's workflows (fugaro update in %s), then rerun fugaro doctor", lc.GCPProject))
 	}
@@ -902,7 +1047,7 @@ func doctorBatchRunAccountRoles(ctx context.Context, lc *localcfg.Config, c *crm
 		}
 	}
 	if len(missing) > 0 {
-		return []doctorCheck{batchProblem(lc, id,
+		return []doctorCheck{batchRootProblem(lc, id,
 			"these run accounts do not hold what a Batch job's VM runs on: "+strings.Join(missing, ", ")+". roles/batch.agentReporter is what reports a task's state -- without it the job never reaches a terminal state and the run sits until the queue deadline fires it -- and roles/logging.logWriter is what its own lines need, without which fugaro logs reads an empty view (design compute-backend.md §3.2, modules/compute/iam.tf)",
 			"run fugaro update in "+lc.GCPProject+", which applies the compute root's grants (or, if a grant was just written, rerun fugaro doctor once it propagates)")}
 	}
@@ -963,7 +1108,7 @@ func doctorBatchActAs(ctx context.Context, lc *localcfg.Config, svc *iam.Service
 		}
 	}
 	if len(missing) > 0 {
-		return []doctorCheck{batchProblem(lc, id,
+		return []doctorCheck{batchRootProblem(lc, id,
 			"these launchers cannot act as the run account their own jobs name, so creating a job that names it is refused: "+strings.Join(missing, ", ")+". Creating a Batch job that names a custom service account takes roles/iam.serviceAccountUser on that account (design compute-backend.md §3.7, cloud.google.com/batch/docs/create-run-job-custom-service-account)",
 			"run fugaro update in "+lc.GCPProject+", which applies the compute root's launcher grants for every run account (or, if a grant was just written, rerun fugaro doctor once it propagates)")}
 	}

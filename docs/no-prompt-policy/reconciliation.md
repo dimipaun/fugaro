@@ -66,6 +66,18 @@ project is the `Typed` class — exactly "money and permanence" — and the `--a
 `GateConfirms` answers false under it). Consequence: removal is a deletion of the class system's
 confirm paths, last, after every caller has stopped asking (plan T12).
 
+**Amended 2026-11-23** by [location-preference](../location-preference/reconciliation.md) **D3090**: the
+Firestore database's location is no longer one of the `Typed` class's members. [D12 of
+2026-10-20](../setup-wizard/reconciliation.md) gave that permanent location a confirmation of its own —
+one of the three steps `stepConfirmation` (`internal/cli/init.go`) names as "the person's alone", beside
+creating the GCP project and linking its billing — and D3090 reverses that ruling for it: `confirmLocation`
+(`internal/cli/init_firebase.go`) is gone, the comment names two steps, and where the run creates the
+database it prints the line saying where, and that the location is permanent, and creates it, in every
+session the stage itself may run in — nothing is typed, and `--json`, a pipe and a coding agent's session
+are no different. The class itself is unchanged and still "money and permanence": D12's other two steps
+keep their confirmations, and the stage's own fences (D3028's agent refusal and the managed gate) are what
+still decide whether the stage runs at all.
+
 **F4 — The flags.** `--yes` is registered in `accounts.go`, `accounts_add.go`, `accounts_rm.go`, `budget.go`,
 `config_init.go`, `image_refresh.go`, `init.go`, `models_add.go`, `models_rm.go`, `models_use.go`,
 `project_cmd.go`, `project_enroll.go`, `secrets.go`, `secrets_rm.go`, `settings_set.go`, `upgrade.go` and

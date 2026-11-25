@@ -489,6 +489,7 @@ func residentRunIsTheItems(spec orchestrator.Spec, slug string, ts *task.Spec) e
 		{ts.Mutate != nil, "a mutation list"},
 		{ts.Paths != nil, "declared paths"},
 		{ts.Rigor != "", "a requested rigor mode"},
+		{ts.Promote != nil, "a promote pass"},
 		{ts.Batch != "", "a batch label"},
 		{ts.ReviewLevels != nil, "review levels"},
 		{ts.ExpectedScope != nil, "an expected scope"},
