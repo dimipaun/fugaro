@@ -3,7 +3,7 @@
 //
 // Merge is total: it never fails and never panics. Values that carry no
 // meaning are treated as unset: a cap that is not a finite positive number
-// (zero, negative, NaN, +Inf) and a mode that is not one of the three known
+// (zero, negative, NaN, +Inf) and a mode that is not one of the two known
 // strings. Callers that must reject such input (validation) use ValidMode and
 // their own range checks before merging.
 //
@@ -706,8 +706,17 @@ type Effective struct {
 // record's ignored[].source is one of the layer names.
 type Ignored struct{ Key, Value, Effective, Source string }
 
-// ValidMode reports whether m is one of "off", "observe", "enforce". Merge
-// treats any other string (including "") as unset.
+// ValidMode reports whether m is one of the two budget modes, "observe" and
+// "enforce". Merge treats any other string (including "" and the word that was
+// a mode until this release) as unset.
+//
+// It answers a door that is about to refuse what it was handed, and the word
+// that was a mode is refused with one text everywhere: a door asks
+// Mode(m).Removed of the string it read and answers ModeOffRefusal, so no two
+// doors word that refusal differently (docs/always-a-budget/contract-mode.md,
+// AB2, D3009, D3022). An unset mode is not a value this refuses and not a
+// value that means off either: it is the observe Mode.Effective answers, which
+// is why every door here tests the empty string out before asking.
 func ValidMode(m string) bool { return modeRank(m) > 0 }
 
 // HasAllowList reports whether any layer set an allow-list. When it is true

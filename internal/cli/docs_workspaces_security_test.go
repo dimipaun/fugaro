@@ -456,3 +456,51 @@ func TestDesignV1NamesTheWorkspace(t *testing.T) {
 		t.Error("docs/design/v1.md does not carry the workspace as a bullet of the terminology list: the project section defines its units as bullets, and a paragraph anywhere else is a unit a reader does not meet where the others are")
 	}
 }
+
+// slipsSecurityHeading is the section of SECURITY.md that states what a slip is
+// and what a hostile launcher reaches of one. It is the section a workspace's
+// slip changes: the roster sentence it carried said a slip already issued keeps
+// serving the run it was granted for, which is true of the pool a grant is read
+// from and false of a workspace's roster, which its credentials service re-reads
+// under a live slip (D3146).
+const slipsSecurityHeading = "### The intake, and the slips a run holds"
+
+// TestSecurityMdStatesTheRostersOneException is WC8's pin on the sentence it
+// adds to the slips paragraph, reconciled with WC4's when the two tasks met on
+// `main`. WC4 narrowed the paragraph for a workspace's own slip -- the roster
+// re-read as the node is, the case-folded address, the claim deadline -- and
+// left the pool's own rule standing, because "a slip already issued keeps
+// serving the run it was granted for" is true of the publisher's pool a grant's
+// credential set is read from; WC8 adds what the run does when the roster its
+// slip is re-read against drops its person. So the paragraph states both, and
+// this pin holds them together: a rewrite that dropped either half would leave
+// a reader with the wrong rule.
+//
+// What the halt's reason says is pinned nowhere, deliberately: the reason a run
+// refused under a removed owner's slip carries is the open half of D3146 (the
+// landed service answers the one sentence it answers every refusal of a run's
+// identity, so the halt does not name the removal), and the document states the
+// halt itself rather than a sentence about its wording.
+func TestSecurityMdStatesTheRostersOneException(t *testing.T) {
+	doc := readDoc(t, "SECURITY.md")
+	section := flattenDoc(docSection(t, "SECURITY.md", doc, slipsSecurityHeading))
+	for _, want := range []string{
+		// The pool's own rule, kept: the roster a grant's credential set is
+		// read from is the publisher's, and a person taken off it is refused at
+		// the next grant.
+		"the roster that decided a slip's credential set is read at issue time and never remembered",
+		"a member the publisher takes off a pool is refused at the next grant",
+		"while a slip already issued keeps serving the run it was granted for",
+		// WC4's narrowing, which is what makes the sentence above safe to keep.
+		"A workspace's own slip is narrower than that on every count",
+		"every call under a slip they already hold within that minute",
+		// And WC8's own fact, which neither side of the paragraph stated: the
+		// run under such a slip ends rather than being served another
+		// credential (D3146).
+		"the run under such a slip halts rather than being served another credential",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("the `%s` section does not state %q: a slip that keeps serving a run whose person the workspace has dropped is the guarantee D3146 refuses", slipsSecurityHeading, want)
+		}
+	}
+}

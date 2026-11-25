@@ -23,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -1463,10 +1464,18 @@ func TestLaunchRefusesProxiedRunOnBatch(t *testing.T) {
 // and ServiceSwitchedAuth, which is the release BEFORE the flip's own), and
 // the rows are the switch's conditions taken one at a time: both auths the
 // list carries are refused on the image below it, and a repository whose
-// record says its root was never applied with the service on, an installation
-// that carries no service, and a published node whose budget mode is off are
-// admitted — a launch the service does not serve keeps every mount and is
-// judged by every gate it always was (G9, G17).
+// record says its root was never applied with the service on and an
+// installation that carries no service are admitted — a launch the service
+// does not serve keeps every mount and is judged by every gate it always was
+// (G9, G17).
+//
+// The switch's fourth condition — a published node whose budget mode is off,
+// the mode that left a cascade run without a gateway — is the one row that
+// cannot reach this gate at all any more: off is not a mode this release has
+// (D3009), so the node's own reader refuses it with the one text every door
+// refuses the word with (D3022, AB2) and the launch stops there. The row holds
+// that refusal instead of this gate's admission, and `fugaro update` is what
+// rewrites such a node (AB8b, F26).
 //
 // The admitted rows end at policyImageGate rather than at the launch, the way
 // TestLaunchRefusesProxiedRunOnOldImage's do and for the same reason: every
@@ -1493,7 +1502,7 @@ func TestLaunchRefusesASwitchedAPIKeyRunOnAnOldImage(t *testing.T) {
 		{"a switched oauth repository on an image below the flip", oauthLaunchYAML, config.AuthOAuth, old, proxiedBlock, "enforce", true, true},
 		{"the repository's own switch is off", apiKeyLaunchYAML, "", old, proxiedBlock, "enforce", false, false},
 		{"the installation carries no credentials service", apiKeyLaunchYAML, "", old, "", "enforce", true, false},
-		{"the published node's budget mode is off", apiKeyLaunchYAML, "", old, proxiedBlock, "off", true, false},
+		{"the published node still says the removed budget mode", apiKeyLaunchYAML, "", old, proxiedBlock, "off", true, false},
 		{"the job image is at the flip's release", apiKeyLaunchYAML, "", atFlip, proxiedBlock, "enforce", true, false},
 		{"the job image is the current release", apiKeyLaunchYAML, "", releasePolicy, proxiedBlock, "enforce", true, false},
 	} {
@@ -1514,6 +1523,21 @@ func TestLaunchRefusesASwitchedAPIKeyRunOnAnOldImage(t *testing.T) {
 				t.Fatal("a repository whose model mounts the flip has taken off was launched onto a job image whose runner cannot read them from the credentials service: it would halt at its first model call with no key and no account of its own (D2072, G17)")
 			case tc.refused:
 				for _, want := range []string{serviceAuthSince, "model credential is brokered", tc.auth, "job mounts neither the Anthropic key nor the Claude OAuth token", "fugaro update"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not name %q: %v", want, err)
+					}
+				}
+				if launchedAny(f) {
+					t.Error("the refused launch started an execution")
+				}
+				if storedTaskFor(t, f.cloudFixture, appSlug) {
+					t.Error("the refused launch stored a task")
+				}
+			case policy.Mode(tc.mode).Removed():
+				if err == nil {
+					t.Fatal("a published node that still says the word that was a budget mode was launched: this release has no such mode (D3009), so the node's own reader refuses it, and what serves this repository again is the update's rewrite of the node, not a run")
+				}
+				for _, want := range []string{projectpolicy.PathShared(), policy.ModeOffRefusal} {
 					if !strings.Contains(err.Error(), want) {
 						t.Errorf("the refusal does not name %q: %v", want, err)
 					}
@@ -1566,10 +1590,15 @@ workflows:
 // release BEFORE the flip's own), and the rows are the gate's conditions taken
 // one at a time: a switched repository declaring a secret is refused on the
 // image below that release, and a repository whose record says its root was
-// never applied with the service on, an installation that carries no service, a
-// published node whose budget mode is off and a workflow declaring no secret
-// are admitted — none of them loses a mount to the flip, and each is judged by
-// every gate it always was (G9, G17).
+// never applied with the service on, an installation that carries no service
+// and a workflow declaring no secret are admitted — none of them loses a mount
+// to the flip, and each is judged by every gate it always was (G9, G17).
+//
+// The row that carries a published node whose budget mode is off is the one
+// that stops at the node's own reader rather than here: off is not a mode this
+// release has (D3009), so the launch is refused with the one text every door
+// refuses the word with (D3022, AB2) and the fix is the update's rewrite of the
+// node (AB8b, F26).
 //
 // The admitted rows end at policyImageGate rather than at the launch, the way
 // TestLaunchRefusesASwitchedAPIKeyRunOnAnOldImage's do and for the same reason:
@@ -1596,7 +1625,7 @@ func TestLaunchRefusesAVaultRunOnAnOldImage(t *testing.T) {
 		{"the workflow declares no secret", apiKeyLaunchYAML, old, proxiedBlock, "enforce", true, false},
 		{"the repository's own switch is off", vaultLaunchYAML, old, proxiedBlock, "enforce", false, false},
 		{"the installation carries no credentials service", vaultLaunchYAML, old, "", "enforce", true, false},
-		{"the published node's budget mode is off", vaultLaunchYAML, old, proxiedBlock, "off", true, false},
+		{"the published node still says the removed budget mode", vaultLaunchYAML, old, proxiedBlock, "off", true, false},
 		{"the job image is at the fetch's release", vaultLaunchYAML, atFetch, proxiedBlock, "enforce", true, false},
 		{"the job image is the current release", vaultLaunchYAML, releasePolicy, proxiedBlock, "enforce", true, false},
 	} {
@@ -1617,6 +1646,21 @@ func TestLaunchRefusesAVaultRunOnAnOldImage(t *testing.T) {
 				t.Fatal("a repository whose workflow secrets the flip has taken the mounts off was launched onto a job image whose runner cannot fetch them from the credentials service: the run would stop at bootstrap over a declared secret it has no value for (G17)")
 			case tc.refused:
 				for _, want := range []string{vaultSince, "workflow secrets are brokered", "job mounts none of the workflow's own secrets", "fugaro update"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not name %q: %v", want, err)
+					}
+				}
+				if launchedAny(f) {
+					t.Error("the refused launch started an execution")
+				}
+				if storedTaskFor(t, f.cloudFixture, appSlug) {
+					t.Error("the refused launch stored a task")
+				}
+			case policy.Mode(tc.mode).Removed():
+				if err == nil {
+					t.Fatal("a published node that still says the word that was a budget mode was launched: this release has no such mode (D3009), so the node's own reader refuses it, and what serves this repository again is the update's rewrite of the node, not a run")
+				}
+				for _, want := range []string{projectpolicy.PathShared(), policy.ModeOffRefusal} {
 					if !strings.Contains(err.Error(), want) {
 						t.Errorf("the refusal does not name %q: %v", want, err)
 					}

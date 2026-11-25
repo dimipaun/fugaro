@@ -43,9 +43,9 @@ import (
 const (
 	// abLaunchBase is the release base image the fixture's job image was built
 	// from: a release at or past every *Since gate this launcher applies, so a
-	// launch here is judged on the thing its own test is about. It moves with
-	// the newest gate, or a test about the sampling rate fails as a skew
-	// refusal instead.
+	// launch here is judged on the thing its own test is about. It is release
+	// A's number, the highest gate (abReposSince): a fixture below it is refused
+	// before the thing its test is about is reached.
 	abLaunchBase = "ghcr.io/dimipaun/fugaro-base:0.30.0"
 	// abLaunchChampion is the fixture repository's own coder: a Claude model,
 	// which goes direct and needs no route.

@@ -376,9 +376,9 @@ func TestMemberGrantsDecodeWithTodaysAccess(t *testing.T) {
 	}
 	for _, tc := range []struct{ name, raw string }{
 		{"not an object", `[]`},
-		{"a key nobody writes", `{"people":[],"admins":[]}`},
-		{"an entry missing its kind", `{"people":[{"address":"alice@example.com"}]}`},
-		{"an entry the person grammar refuses", `{"people":[{"address":"alice","kind":"human","external":false}]}`},
+		{"a key nobody writes", `{"version":1,"members":[],"admins":[]}`},
+		{"an entry missing its kind", `{"version":1,"members":[{"address":"alice@example.com"}]}`},
+		{"an entry the person grammar refuses", `{"version":1,"members":[{"address":"alice","kind":"human","external":false}]}`},
 	} {
 		if err := r.ops.WriteMirror(ctx, r.m, mirror, []byte(tc.raw)); err == nil {
 			t.Errorf("WriteMirror wrote %s", tc.name)

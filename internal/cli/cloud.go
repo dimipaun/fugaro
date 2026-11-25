@@ -232,7 +232,17 @@ func openCloud(ctx context.Context, o cloudOptions) (*cloudEnv, error) {
 
 // openCloudFor connects to the backend and the runs bucket of an already
 // selected project config.
+//
+// D1541's fence is applied here, before any client exists: the command the
+// root's pre-run filed in ctx (managed_require.go) is asked whether it may
+// write to a project that is not managed, and a fenced one is refused with
+// nothing opened. A command that reaches its cloud clients another way asks the
+// same question itself (requireManaged); one whose clients are opened here gets
+// the fence by construction, and cannot forget it.
 func openCloudFor(ctx context.Context, lc *localcfg.Config) (*cloudEnv, error) {
+	if err := requireManaged(ctx, managedCommandFrom(ctx), lc); err != nil {
+		return nil, err
+	}
 	opts := gcp.Options{GCPProject: lc.GCPProject, Region: lc.Region, LogView: lc.LogView, Endpoints: gcp.Endpoints{
 		Run: lc.Endpoints.Run, Logging: lc.Endpoints.Logging, SecretManager: lc.Endpoints.SecretManager,
 		CloudBuild: lc.Endpoints.CloudBuild, NoAuth: lc.Endpoints.NoAuth}}
@@ -373,7 +383,18 @@ func openBudgetDB(ctx context.Context, o cloudOptions) (*localcfg.Config, *rtdb.
 }
 
 // budgetDBFor is openBudgetDB's second half, for a config already selected.
+//
+// D1541's fence is applied here as it is in openCloudFor, and for the same
+// reason: the budget database is the project's own store — its caps, its
+// counters, its kill switch, its orchestrator and its pairing record — so a
+// command that writes into it and is not managed-refused must not reach a
+// client at all. An exempt command is answered without a read
+// (requireManaged), which is what makes this safe to ask at a seam the
+// read-only commands open too.
 func budgetDBFor(ctx context.Context, lc *localcfg.Config) (*localcfg.Config, *rtdb.Client, error) {
+	if err := requireManaged(ctx, managedCommandFrom(ctx), lc); err != nil {
+		return nil, nil, err
+	}
 	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
 		return nil, nil, userErr("project %s has no Firebase budget backend (budget.rtdb_url is not set in its project config): an operator runs fugaro update --firebase-project %s --name %s", lc.Name, firebaseProjectIDWord(lc.GCPProject), lc.Name)
 	}

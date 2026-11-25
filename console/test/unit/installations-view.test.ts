@@ -43,6 +43,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 import {
+  ADD_PROJECT_LABEL,
   DISTROS_READING,
   DISTROS_TITLE,
   DISTRO_DEFAULT_MARK,
@@ -164,7 +165,14 @@ function fakeDocument(): FakeDocument {
 
 /** IDS are the containers the view looks up by name. The first test asserts every
  * one of them is in the document, which is what keeps this fake honest. */
-const IDS = ['picker-status', 'picker-list', 'picker-warnings', 'picker-onboarding', 'picker-distros'] as const
+const IDS = [
+  'picker-status',
+  'picker-list',
+  'picker-warnings',
+  'picker-onboarding',
+  'picker-new-project',
+  'picker-distros',
+] as const
 
 /** FORM_CONTROLS are the ids and the labels of the add form the owner's ruling
  * removed. They are a value and not a grep in the test below, so the mutation --
@@ -194,6 +202,7 @@ interface Recording {
   readonly calls: string[]
   readonly openExternal: unknown[][]
   readonly distros: unknown[][]
+  readonly addProject: unknown[][]
 }
 
 /** DEFAULT_PATH is the store path the fake answers with, so a refusal's sentence
@@ -207,7 +216,7 @@ function fakeBridge(options: {
   readonly onboard?: OnboardingState
   readonly refusal?: string
   readonly answer?: Partial<
-    Record<'list' | 'choose' | 'checkout' | 'remove' | 'reveal' | 'openExternal' | 'distros', InstallationReply>
+    Record<'list' | 'choose' | 'checkout' | 'remove' | 'reveal' | 'openExternal' | 'distros' | 'addProject', InstallationReply>
   >
   /** distros is what `wslDistributions` answered: `listed` by default, because
    * the read is about the machine and most cases are not about it. */
@@ -221,6 +230,7 @@ function fakeBridge(options: {
     calls: [],
     openExternal: [],
     distros: [],
+    addProject: [],
   }
   const listAnswer = (): InstallationReply =>
     options.answer?.list ??
@@ -274,6 +284,16 @@ function fakeBridge(options: {
       recording.calls.push('distros')
       recording.distros.push([...args])
       return options.answer?.distros ?? { ok: true, data: options.distros ?? { kind: 'listed', distributions: [] } }
+    },
+    // The Add project door (SW3c). Like `openExternal` it takes no arguments,
+    // and this fake takes none either: a view that tried to send one -- a
+    // project, a path, an answer -- would not compile against `PickerBridge`.
+    // What the operation answers is a window the dashboard owns, so there is
+    // nothing in the reply for this document to draw but a refusal.
+    addProject: async (...args: readonly unknown[]) => {
+      recording.calls.push('addProject')
+      recording.addProject.push([...args])
+      return options.answer?.addProject ?? { ok: true, data: null }
     },
   }
   return { bridge, recording }
@@ -484,6 +504,50 @@ describe('the picker’s document and its view', () => {
       'list',
       'distros',
     ])
+  })
+
+  it('draws the Add project door beside the installations, and nowhere without them', async () => {
+    // SW3c, R4: with installations present, the window offers a second project.
+    // A console with **none** draws no door: it is already showing the first-run
+    // screen, and a second control for the same wizard over that screen would be
+    // two affordances answering one state.
+    const withRows = await mount({ rows: [row()] })
+    const door = withRows.element('picker-new-project')
+    expect(door.children.map((child) => child.textContent)).toEqual([ADD_PROJECT_LABEL])
+    expect((door.children[0] as FakeElement).tag).toBe('button')
+
+    const empty = await mount({})
+    expect(empty.element('picker-new-project').children).toEqual([])
+  })
+
+  it('sends the Add project request with no arguments, and reads nothing after it', async () => {
+    // The operation takes no arguments at all -- there is no project, path or
+    // answer for this document to name -- and unlike every other control here it
+    // is not followed by a re-read: the main process opens the wizard in the
+    // dashboard window, so the list this window holds is about to be gone.
+    const { element, recording } = await mount({ rows: [row()] })
+    await element('picker-new-project').button(ADD_PROJECT_LABEL).fire('click')
+    expect(recording.addProject).toEqual([[]])
+    expect(recording.calls).toEqual(['list', 'distros', 'addProject'])
+    expect(recording.choose).toEqual([])
+    expect(recording.checkout).toEqual([])
+    expect(recording.remove).toEqual([])
+    expect(recording.reveal).toEqual([])
+  })
+
+  it('shows the main process’s sentence when Add project is refused', async () => {
+    // The one thing this window can draw for the row: a wizard that could not be
+    // opened is a sentence, and the sentence is the main process's -- drawn
+    // through `drawn` like every other string this view did not author.
+    const token = `${inert('gh', 'p_')}${'a'.repeat(36)}`
+    const reason = `the wizard could not be opened (${token})`
+    const { element, recording } = await mount({
+      rows: [row()],
+      answer: { addProject: { ok: false, reason } },
+    })
+    await element('picker-new-project').button(ADD_PROJECT_LABEL).fire('click')
+    expect(recording.addProject).toEqual([[]])
+    expect(element('picker-status').textContent).toBe(`the wizard could not be opened (${TOKEN_PLACEHOLDER})`)
   })
 
   it('draws this machine’s distributions, and marks the one wsl.exe named the default', async () => {

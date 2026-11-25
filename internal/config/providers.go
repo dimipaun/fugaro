@@ -1329,21 +1329,25 @@ func CheckProviderAuth(a Agent, providers map[string]ModelProvider) []Problem {
 }
 
 // CheckProviderGateway refuses a provider model unless the budget gateway is
-// on and enforcing. The gateway holds the key and routes the call, so without
-// it the call would go to Anthropic; and observe never refuses a call, while
-// a provider's calls are real dollars (and an injected agent could send what
-// the pins would stop), so the owner's default is enforce. mode is the run's
-// effective budget mode ("" and "off" are the gateway off); bg is the run's
+// enforcing. The gateway holds the key and routes the call, so without it the
+// call would go to Anthropic; and observe never refuses a call, while a
+// provider's calls are real dollars (and an injected agent could send what the
+// pins would stop), so the owner's default is enforce. bg is the run's
 // effective background model. One problem per pin that names a provider model,
 // the vision slot's included when it is set.
+//
+// mode is the run's effective budget mode, and the answer is the vocabulary's
+// (AB2, R3): an unset mode is observe, not the off it was read as, so a run
+// that writes no mode is refused with the sentence that names the mode it
+// resolves and what raising it takes. There is no second sentence for an off
+// any more — the word is not a mode, and a door that accepts text a person
+// wrote refuses it before a run is judged (internal/config's validateBudget,
+// D3022).
 func CheckProviderGateway(a Agent, bg string, providers map[string]ModelProvider, mode string) []Problem {
-	if mode == "enforce" {
+	if policy.Mode(mode).Effective() == policy.ModeEnforce {
 		return nil
 	}
-	why := "which needs the budget gateway: set budget.mode to enforce (with agent.auth api-key) and a per-run cap; without it the call would go to Anthropic"
-	if mode == "observe" {
-		why = "which needs budget.mode enforce: observe never refuses a call and a provider's calls are real dollars. Set budget.mode: enforce with budget.per_run_usd in the project config and run `fugaro update` (or budget.mode: enforce in fugaro.yaml); `fugaro budget set --global --mode enforce` makes the shared database enforce too (it needs the global --daily and --per-run caps)"
-	}
+	why := "which needs budget.mode enforce: observe never refuses a call and a provider's calls are real dollars. Set budget.mode: enforce with budget.per_run_usd in the project config and run `fugaro update` (or budget.mode: enforce in fugaro.yaml); `fugaro budget set --global --mode enforce` makes the shared database enforce too (it needs the global --daily and --per-run caps)"
 	var ps []Problem
 	for _, r := range []struct{ path, model string }{
 		{"agent.models.coder", a.ModelFor(RoleCoder)},
