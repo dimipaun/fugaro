@@ -17,6 +17,7 @@
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+LIVE_CHECK_LIB=${LIVE_CHECK_LIB:-$here/lib}
 script=$here/check196.sh
 work=$(mktemp -d)
 kept=()
@@ -54,6 +55,8 @@ write_fake_fugaro() { # dir
 #!/usr/bin/env bash
 # A stand-in for `fugaro`, for scripts/live-checks/check196.sh's test only.
 set -euo pipefail
+. "$LIVE_CHECK_LIB/strict.sh"
+strict_fugaro_verify "$@" || exit $?
 printf 'fugaro %s\n' "$*" >>"$FAKE_LOG_DIR/fugaro.calls"
 case "${1:-}" in
 version)
@@ -156,17 +159,27 @@ def flag(name, default=""):
     return default
 
 
-# Like the real CLI, a flag a subcommand does not have is an error: every
-# subcommand this check calls is listed with the flags it may pass, so a
-# misspelled or invented flag cannot hide in any call.
-ALLOWED = {
-    ("builds", "list"): ("--project", "--region", "--limit", "--format"),
-    ("run", "jobs", "list"): ("--project", "--region", "--format"),
-    ("run", "jobs", "executions", "list"): ("--project", "--region", "--job", "--limit", "--format"),
-    ("logging", "read"): ("--project", "--freshness", "--limit", "--format"),
-    ("run", "services", "get-iam-policy"): ("--project", "--region", "--format"),
-    ("run", "services", "describe"): ("--project", "--region", "--format"),
-}
+# Like the real CLI, a flag a subcommand does not have is an error: the
+# subcommands this check may call, and the flags each may pass, are the short
+# allow-list kept beside this test (scripts/live-checks/lib/allow/
+# check196.gcloud), so a misspelled or invented flag cannot hide in any call.
+# The list is shared with the check's own strict fake, so the two cannot drift:
+# a flag main's catalog-aware reading added (`--region` on every listing) is in
+# it, and one this check stops passing is one the fake stops accepting.
+BASE_FLAGS = {"--help", "-h", "--quiet", "--project", "--format", "--account",
+              "--verbosity", "--log-http"}
+ALLOWED = {}
+ALLOWED_FLAGS = set()
+with open(os.path.join(os.environ["LIVE_CHECK_LIB"], "allow", "check196.gcloud")) as fh:
+    for line in fh:
+        line = line.rstrip("\n")
+        if not line or line.startswith("#"):
+            continue
+        kind, _, rest = line.partition("\t")
+        if kind == "cmd":
+            ALLOWED[tuple(rest.split())] = True
+        elif kind == "flag":
+            ALLOWED_FLAGS.add(rest.strip())
 positionals = [a for a in args if not a.startswith("-")]
 sub = None
 for n in (4, 3, 2):
@@ -177,7 +190,7 @@ if sub is None:
     sys.stderr.write("ERROR: (gcloud) unknown command: %s\n" % " ".join(args))
     sys.exit(2)
 for a in args:
-    if a.startswith("--") and a.split("=")[0] not in ALLOWED[sub]:
+    if a.startswith("--") and a.split("=")[0] not in ALLOWED_FLAGS | BASE_FLAGS:
         sys.stderr.write("ERROR: (gcloud) unrecognized argument: %s\n" % a)
         sys.exit(2)
 
@@ -451,8 +464,13 @@ run196() { # dir mode — the script's own arguments are in run_args, extra env 
   local -a runner=(bash)
   if [ -n "${CHECK196_TEST_XTRACE:-}" ]; then runner=(bash -x); fi
   status=0
-  env \
+  # The suite may itself be launched from a coding agent's session, which
+  # --preflight refuses: the markers are dropped here, and the refusal case sets
+  # one again (a variable given as an argument wins over `env -u`).
+  env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_REMOTE \
+    -u CURSOR_AGENT -u AI_AGENT \
     PATH="$dir/bin:$PATH" HOME="$dir/home" XDG_CONFIG_HOME="$dir/home/.config" TMPDIR="$dir/tmp" \
+    LIVE_CHECK_LIB="$LIVE_CHECK_LIB" \
     FAKE_LOG_DIR="$dir/logs" FAKE_GCLOUD_MODE="$mode" \
     CHECK196_REPO=acme/sandbox CHECK196_BITBUCKET=acme/bb-sandbox \
     CHECK196_LOG_WAIT_SECONDS=0 CHECK196_LOG_POLL_SECONDS=0 \
@@ -1080,15 +1098,87 @@ test_every_advertised_knob_is_read() {
   local knob
   for knob in CHECK196_REPO CHECK196_BITBUCKET CHECK196_BUILDS CHECK196_LOG_AGE \
     CHECK196_LOG_LIMIT CHECK196_LOG_WAIT_SECONDS CHECK196_LOG_POLL_SECONDS \
-    CHECK196_DRY_RUN CHECK196_KEEP_SCRATCH; do
+    CHECK196_DRY_RUN CHECK196_PREFLIGHT CHECK196_KEEP_SCRATCH; do
     grep -q "\${${knob}:-" "$script" ||
       fail "knobs: $knob is documented in the header and not read"
   done
   # And the header documents every one of them, so a knob cannot be read without
   # being named where the owner reads how to set it.
-  for knob in CHECK196_REPO CHECK196_BITBUCKET CHECK196_BUILDS CHECK196_DRY_RUN CHECK196_KEEP_SCRATCH; do
-    expect_contains "$(sed -n '1,120p' "$script")" "$knob" "knobs: $knob is documented"
+  for knob in CHECK196_REPO CHECK196_BITBUCKET CHECK196_BUILDS CHECK196_DRY_RUN CHECK196_PREFLIGHT CHECK196_KEEP_SCRATCH; do
+    expect_contains "$(sed -n '1,125p' "$script")" "$knob" "knobs: $knob is documented"
   done
+}
+
+# --preflight reads every precondition the check has and prints every blocker
+# with the command that clears it, writing nothing and launching nothing. On a
+# project where every precondition holds it exits 0 and prints no RESULT block.
+test_preflight_passes_and_writes_nothing() {
+  local dir=$work/pfpass
+  prepare "$dir"
+  run_args=(--preflight)
+  run196 "$dir" ok
+  expect_status "$status" 0 "preflight: the verdict"
+  expect_contains "$err" "check196: preflight passed" "preflight: the report"
+  expect_contains "$err" "read: " "preflight: what it read"
+  expect_absent "$out" "CHECK 196 RESULT" "preflight: no RESULT block"
+  # Nothing was written and nothing was launched: every recorded call is a read.
+  local all
+  all=$(cat "$dir/logs/gcloud.calls" "$dir/logs/fugaro.calls")
+  expect_absent "$all" "accounts add" "preflight: no credential was added"
+  expect_absent "$all" "accounts pool add" "preflight: no pool was written"
+  expect_absent "$all" "policy publish" "preflight: no policy was published"
+  expect_absent "$all" "fugaro run" "preflight: no run was launched"
+  expect_absent "$all" "update" "preflight: no update ran"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "delete" "preflight: nothing was deleted"
+  if [ -d "$scratch" ]; then fail "preflight: the scratch directory survived"; fi
+}
+
+# A preflight evaluates every precondition and prints ALL blockers at once, each
+# with a real command and real values. Here the checkout names another project
+# AND the region's builds cannot be listed: both appear, not just the first.
+test_preflight_reports_every_blocker_at_once() {
+  local dir=$work/pfblocked
+  prepare "$dir"
+  run_args=(--preflight)
+  run_env=(FAKE_FUGARO_MODE=other)
+  run196 "$dir" builds-list-fails
+  expect_status "$status" 1 "preflight blocks: the verdict"
+  expect_contains "$err" "found 2 blocker(s)" "preflight blocks: every blocker at once"
+  expect_contains "$err" "BLOCKED installation" "preflight blocks: the installation"
+  expect_contains "$err" "BLOCKED builds" "preflight blocks: the builds"
+  # Every fix is a real command with real values in it, never a placeholder.
+  expect_contains "$err" "fix: fugaro doctor --project fugaro --all" "preflight blocks: the installation fix"
+  expect_contains "$err" "fix: gcloud builds list --project=fugaro-dev --region=us-east5 --limit=50 --format=json" "preflight blocks: the builds fix"
+  expect_absent "$err" "preflight passed" "preflight blocks: not a pass"
+  expect_absent "$out" "CHECK 196 RESULT" "preflight blocks: no RESULT block"
+}
+
+# The inputs are argument validation, the way check630's --sandbox is: a preflight
+# for an owner's own repository stops before any cloud read, as the run itself does.
+test_preflight_refuses_bad_inputs_without_reading() {
+  local dir=$work/pfbelong
+  prepare "$dir"
+  run_args=(--preflight)
+  run_env=(CHECK196_REPO=belong/sandbox)
+  run196 "$dir" ok
+  expect_status "$status" 1 "preflight belong: the verdict"
+  expect_contains "$err" "never belong" "preflight belong: the refusal"
+  if [ -s "$dir/logs/gcloud.calls" ]; then fail "preflight belong: gcloud was called before the guard"; fi
+  expect_absent "$out" "CHECK 196 RESULT" "preflight belong: no RESULT block"
+}
+
+test_preflight_is_refused_for_a_coding_agents_session() {
+  local dir=$work/pfagent
+  prepare "$dir"
+  run_args=(--preflight)
+  run_env=(CLAUDECODE=1)
+  run196 "$dir" ok
+  expect_status "$status" 2 "preflight agent session: the verdict"
+  expect_contains "$err" "a coding agent's session" "preflight agent session: the refusal"
+  if [ -s "$dir/logs/gcloud.calls" ] || [ -s "$dir/logs/fugaro.calls" ]; then
+    fail "preflight agent session: a read was made before the refusal"
+  fi
+  expect_absent "$out" "CHECK 196 RESULT" "preflight agent session: no RESULT block"
 }
 
 test_never_belong() {
@@ -1183,6 +1273,10 @@ t test_the_flip_with_a_build_that_still_mounts_is_a_failure
 t test_the_flip_with_the_check_job_mount_left_is_a_failure
 t test_the_flip_with_a_check_job_that_names_no_service_is_a_failure
 t test_keep_scratch_keeps_the_directory
+t test_preflight_passes_and_writes_nothing
+t test_preflight_reports_every_blocker_at_once
+t test_preflight_refuses_bad_inputs_without_reading
+t test_preflight_is_refused_for_a_coding_agents_session
 t test_every_advertised_knob_is_read
 t test_never_belong
 t test_nothing_secret_shaped_reaches_the_block

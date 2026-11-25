@@ -44,6 +44,7 @@
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+LIVE_CHECK_LIB=${LIVE_CHECK_LIB:-$here/lib}
 script=$here/check670.sh
 work=$(mktemp -d)
 cleanup_all() {
@@ -126,6 +127,8 @@ write_fake_fugaro() { # dir
 # marker file.
 set -euo pipefail
 state=${FAKE670_DIR:-}
+. "$LIVE_CHECK_LIB/strict.sh"
+strict_fugaro_verify "$@" || exit $?
 printf 'fugaro %s (in %s, ide-marker=%s)\n' "$*" "$PWD" "${CLAUDE_CODE_SSE_PORT:-none}" >>"$state/logs/fugaro.calls"
 
 knob() { # knob NAME [DEFAULT]
@@ -529,6 +532,8 @@ write_fake_gcloud() { # dir
   mkdir -p "$1/bin"
   cat >"$1/bin/gcloud" <<'GCLOUD_EOF'
 #!/usr/bin/env bash
+. "$LIVE_CHECK_LIB/strict.sh"
+strict_gcloud_verify "$LIVE_CHECK_LIB/allow/check670.gcloud" "$@" || exit $?
 # A stand-in for `gcloud`, for scripts/live-checks/check670_test.sh only: it
 # holds the three things Check 670 reads after the removal — the built image in
 # Artifact Registry, the github-app-key container with an enabled version, and
@@ -563,6 +568,8 @@ write_fake_gh() { # dir
   mkdir -p "$1/bin"
   cat >"$1/bin/gh" <<'GH_EOF'
 #!/usr/bin/env bash
+. "$LIVE_CHECK_LIB/strict.sh"
+strict_gh_verify "$LIVE_CHECK_LIB/allow/check670.gh" "$@" || exit $?
 # A stand-in for `gh`, for scripts/live-checks/check670_test.sh only: it holds
 # the two facts only the provider holds — the App's installation on the
 # repository, which the removal must never uninstall, and the pull request a run
@@ -652,6 +659,7 @@ run_check() { # run_check DIR ENV... [-- ARGS...]
   # marker again, and a variable given as an argument wins over `env -u`.
   env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_REMOTE -u CURSOR_AGENT -u AI_AGENT \
     PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
+    LIVE_CHECK_LIB="$LIVE_CHECK_LIB" \
     FAKE670_DIR="$dir/state" \
     CHECK670_RUN_SECONDS=6 CHECK670_POLL_SECONDS=1 \
     CHECK670_LAUNCH_SECONDS=10 CHECK670_CLI_TIMEOUT_SECONDS=10 CHECK670_CLONE_SECONDS=10 \
@@ -1364,6 +1372,68 @@ test_an_unknown_argument_is_refused() {
   expect_absent "$(cat "$dir/state/logs/fugaro.calls")" "fugaro" "an unknown argument: nothing is run"
 }
 
+test_preflight_passes_and_writes_nothing() {
+  local dir=$work/preflight-ok
+  prepare "$dir"
+  run_check "$dir" -- --preflight
+  expect_status "$status" 0 "a preflight with nothing blocking"
+  expect_contains "$err" "preflight passed" "a preflight: the pass line"
+  expect_contains "$err" "read: the installation is $install in $gcp_project" "a preflight: the installation it read"
+  expect_contains "$err" "read: $repo is already enrolled in $install" "a preflight: the enrolment it read"
+  expect_contains "$err" "read: $repo's github-app-key container" "a preflight: the empty container it read"
+  expect_absent "$(cat "$dir/state/logs/fugaro.calls")" "repos add" "a preflight: nothing is enrolled"
+  expect_absent "$(cat "$dir/state/logs/fugaro.calls")" "secrets set" "a preflight: the container is not filled"
+  expect_absent "$(cat "$dir/state/logs/fugaro.calls")" "fugaro run" "a preflight: nothing is launched"
+  expect_absent "$(cat "$dir/state/logs/gcloud.calls")" "gcloud" "a preflight: no cloud tool is called"
+  expect_absent "$(cat "$dir/state/logs/gh.calls")" "gh" "a preflight: no provider tool is called"
+  expect_absent "$out" "CHECK 670 RESULT" "a preflight: no result block is printed"
+  assert_scratch_removed "a preflight"
+}
+
+test_preflight_reports_every_blocker_at_once() {
+  local dir=$work/preflight-blocked
+  prepare "$dir"
+  # The doctor names no GCP project, and the repository has no github-app-key
+  # container yet: two blockers, printed together.
+  printf '{"ok":true,"checks":[],"project":{"name":"%s"}}\n' "$install" >"$dir/state/doctor.json"
+  : >"$dir/state/secrets.missing"
+  run_check "$dir" -- --preflight
+  expect_status "$status" 1 "a preflight with blockers"
+  expect_contains "$err" "BLOCKED installation: the checkout's doctor names no GCP project" "a preflight: the installation blocker"
+  expect_contains "$err" "BLOCKED container: $repo has no github-app-key container yet" "a preflight: the container blocker"
+  expect_contains "$err" "fix: git clone --depth 1 https://github.com/$repo.git && cd fugarosandbox && fugaro doctor --json" "a preflight: the command that reads the installation"
+  expect_contains "$err" "fix: fugaro project repos add $repo --project $install" "a preflight: the command that creates the container"
+  expect_contains "$err" "found 2 blocker(s)" "a preflight: both blockers at once"
+  expect_absent "$(cat "$dir/state/logs/fugaro.calls")" "repos add" "a preflight: nothing is enrolled"
+  expect_absent "$(cat "$dir/state/logs/fugaro.calls")" "secrets set" "a preflight: the container is not filled"
+  expect_absent "$(cat "$dir/state/logs/fugaro.calls")" "fugaro run" "a preflight: nothing is launched"
+}
+
+test_preflight_names_an_already_filled_container() {
+  local dir=$work/preflight-filled
+  prepare "$dir"
+  # The container the fill would write to already holds a version: there is no
+  # empty container for F11 to read, and the fix names the command that disables
+  # the version it read.
+  : >"$dir/state/secrets.already"
+  run_check "$dir" -- --preflight
+  expect_status "$status" 1 "a preflight on an already filled container"
+  expect_contains "$err" "BLOCKED container: $repo's github-app-key container" "a preflight: the container blocker"
+  expect_contains "$err" "already holds an enabled version ('1')" "a preflight: the version it read"
+  expect_contains "$err" "fix: gcloud secrets versions disable 1 --secret=projects/$gcp_project/secrets/fugaro-dimipaun-fugarosandbox-github-app-key" "a preflight: the command that clears it"
+  expect_contains "$err" "found 1 blocker(s)" "a preflight: one blocker"
+}
+
+test_preflight_is_refused_for_a_coding_agents_session() {
+  local dir=$work/preflight-agent
+  prepare "$dir"
+  run_check "$dir" CLAUDECODE=1 -- --preflight
+  expect_status "$status" 1 "a coding agent's preflight"
+  expect_contains "$err" "a coding agent's session" "a preflight: the session refusal"
+  expect_absent "$(cat "$dir/state/logs/git.calls")" "clone" "a preflight: nothing is cloned"
+  expect_absent "$(cat "$dir/state/logs/fugaro.calls")" "fugaro" "a preflight: no live read is made"
+}
+
 t test_help
 t test_dry_run
 t test_happy_path
@@ -1428,6 +1498,10 @@ t test_a_bound_that_is_not_a_number_is_refused
 t test_a_missing_app_key_file_argument_is_refused
 t test_kept_scratch_is_reported
 t test_an_unknown_argument_is_refused
+t test_preflight_passes_and_writes_nothing
+t test_preflight_reports_every_blocker_at_once
+t test_preflight_names_an_already_filled_container
+t test_preflight_is_refused_for_a_coding_agents_session
 
 if [ "$failures" -ne 0 ]; then
   echo "check670_test.sh: $failures failure(s)" >&2

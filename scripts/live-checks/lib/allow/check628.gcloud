@@ -1,0 +1,7 @@
+# gcloud calls scripts/live-checks/check628.sh makes. See lib/strict.sh.
+cmd	config get-value
+cmd	logging read
+flag	--resource-names
+flag	--limit
+flag	--freshness
+cmd	storage cat
