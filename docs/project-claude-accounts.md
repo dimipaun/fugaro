@@ -1,6 +1,6 @@
 # Project Claude accounts: one OAuth token per (profile, account)
 
-Status: **0.9.0, released.** The released Fugaro is 0.29.0, and 0.9.0 is the first release any of this page works on:
+Status: **0.9.0, released.** The released Fugaro is 0.29.1, and 0.9.0 is the first release any of this page works on:
 the `claude_accounts` field inside a profile, the `accounts` block in the published policy and the
 jobs they name all ship in 0.9.0 (policy version 3,
 [`internal/projectpolicy/version.go`](../internal/projectpolicy/version.go)), and a 0.8.x binary
@@ -679,11 +679,15 @@ same local config, in a `credentials:` block. The types the engine reads are:
 | `vertex` | nothing — it is built in, and it is never defined | the run's own gateway | no command: it exists in every installation |
 
 `fugaro accounts add <name> --type claude-oauth` writes the entry beside the account block it has
-always written (§3), and that is what makes the name one a pool (§13) may list. Without the flag the
-command writes exactly what it always wrote — `claude_accounts` and the profile — so nothing on this
-page changes for an installation that wants the account alone. A name the config already defines
-with another type is **refused** rather than retyped: a type decides which half of a run serves the
-name, and the file is where a type is changed.
+always written (§3), and that is what makes the name one a pool (§13) may list. It also puts the
+token in a **pool of one named after the account** — `pools.<name>.members = [<name>]` — unless
+`--pool <name>` names another pool, which the token joins with the members that pool already has. A
+key credential gets no pool: no pool walks a provider key. The pool takes the credential's own name,
+which is the one collision §13's namespace rule admits. Without the flag the command writes exactly
+what it always wrote — `claude_accounts` and the profile — so nothing on this page changes for an
+installation that wants the account alone. A name the config already defines with another type is
+**refused** rather than retyped: a type decides which half of a run serves the name, and the file is
+where a type is changed.
 
 A credential carries a **name and a type and no grant of its own**. `allow_data_to` (§2, §4) stays
 the account's, and every reader that scopes the token's reach still reads it there: a credential a
@@ -724,7 +728,9 @@ was. `fugaro update` is the command that runs it, and no second command is one.
 
 A **pool** is a name, a strategy and an ordered list of members, where each member is a credential
 the same file defines or the built-in `vertex`. Pools and credentials **share one namespace**: a pool
-may not take a credential's name.
+may not take a credential's name, except as that credential's **own pool of one** — the pool whose
+only member is the credential the name holds, which is what a subscription token is put in
+(D3176).
 
 ```yaml
 # per installation: the project's local config
@@ -803,11 +809,11 @@ built-in `vertex` at the floor of the layers.
 
 `fugaro craft ls` is the read that answers the question the three documents answer only by hand:
 
-Its columns are `CRAFT`, `MODEL`, `MODEL FROM`, `ACCESS`, `ACCESS FROM` and `SERVES`, one row per
-craft: the **model** and where it came from (the layer that wrote it — `repo`, `local` or `project`
-— the craft it was inherited from, or `default`), the **access** and where that came from, and
-whether it **serves** anything yet, which is `yes` or `no: the subscription-spread switch is off`
-for the inert pool of §13. It is **offline**: it reads this checkout's
+Its columns are `CRAFT`, `MODEL`, `MODEL FROM`, `CHAIN` and `SERVES`, one row per craft: the
+**model** and where it came from (the layer that wrote it — `repo`, `local` or `project` — the craft
+it was inherited from, or `default`), the **chain** the project's routing table resolves that model
+to (`docs/model-credentials-routing`), and whether a run **serves** it — `yes`, or `no:` and the
+first refusal, a model no entry of the table matches among them. It is **offline**: it reads this checkout's
 `fugaro.yaml`, this installation's own config and the project layer file the last cloud read cached,
 and reaches no bucket, no database and no host. `--json` prints the versioned document the console
 reads.

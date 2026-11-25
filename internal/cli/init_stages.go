@@ -743,17 +743,6 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// both doors — `fugaro setup` creates the installation whose record this
 	// is, and `fugaro update` is the command that keeps it true.
 	e.recordLocations(ctx)
-	// And D2965's, the seventh: the runs that opened, followed or reviewed a
-	// pull request before this release wrote an entry as it came to be on one,
-	// so `runs ls --pr N` finds them in the index instead of scanning the
-	// repository
-	// (update_prindex.go). It is here for the reason the six above are — the
-	// converge applied everything it had, so the runs it walks are the ones this
-	// run leaves behind — and it is beside writeAdminList because it is the
-	// other object of this run's that a later read of the installation takes:
-	// both are derived from what the installation holds and neither fails an
-	// update (the HARD RULE).
-	e.backfillPRIndex(ctx)
 	// And D2966's: the run summaries the runs before this release have none of,
 	// created in place so `runs ls` reads two objects a row instead of three
 	// (update_summary.go). It is here for the reason above — the converge

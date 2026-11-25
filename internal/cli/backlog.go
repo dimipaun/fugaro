@@ -282,16 +282,7 @@ type backlogItem struct {
 // takes, and a node that moved under the caller is returned as
 // orchestrator.ErrStateMoved rather than as a lost item.
 func backlogUpsert(ctx context.Context, node *orchestrator.Node, db *rtdb.Client, s orchestrator.State, etag orchestrator.ETag, items []backlogItem) ([]string, error) {
-	// The work list and the archive both: an item that has finished is one the
-	// node has already filed, and the file it came from is still in the
-	// checkout, so a skip that read the work list alone would file it again.
-	have := make(map[string]bool, len(s.WorkItems)+len(s.Archived))
-	for _, w := range s.WorkItems {
-		have[w.ID] = true
-	}
-	for _, a := range s.Archived {
-		have[a.ID] = true
-	}
+	have := backlogKnown(s)
 	var ops []orchestrator.Op
 	var wrote []string
 	recipeName, tierName := recipe.DefaultName, string(tier.Small)
@@ -324,6 +315,23 @@ func backlogUpsert(ctx context.Context, node *orchestrator.Node, db *rtdb.Client
 		return nil, err
 	}
 	return wrote, nil
+}
+
+// backlogKnown is the ids a node already knows: the work list and the archive
+// both, because an item that has finished is one the node has already filed and
+// the file it came from is still where it was, so a skip that read the work list
+// alone would file it again (D2716). One function, because the fold's write
+// skips by it and a plan-only run's count subtracts by it: two readings of
+// "knows" would let the count and the write disagree.
+func backlogKnown(s orchestrator.State) map[string]bool {
+	have := make(map[string]bool, len(s.WorkItems)+len(s.Archived))
+	for _, w := range s.WorkItems {
+		have[w.ID] = true
+	}
+	for _, a := range s.Archived {
+		have[a.ID] = true
+	}
+	return have
 }
 
 // backlogWriteErr is what a command says about a failed backlogUpsert: a node

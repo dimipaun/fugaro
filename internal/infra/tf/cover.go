@@ -2398,6 +2398,9 @@ func creates(p *Plan) map[string]bool {
 		if slices.Contains(rc.Change.Actions, "create") {
 			out[modulePrefix(rc)+"|"+rc.Type] = true
 		}
+		if slices.Contains(rc.Change.Actions, "update") {
+			out[modulePrefix(rc)+"|"+rc.Type+"|update"] = true
+		}
 	}
 	return out
 }
@@ -5561,8 +5564,8 @@ func (c Cover) orchestratorTickChange(rc ResourceChange, a map[string]any, unk a
 	// call reaches the block's own attribute in both the after and the
 	// after_unknown document.
 	if at(unk, "http_target", "uri") == true {
-		if !creates[pre+"|google_cloud_run_v2_service"] {
-			return "calls a service that is not known and none is created with it"
+		if !creates[pre+"|google_cloud_run_v2_service"] && !creates[pre+"|google_cloud_run_v2_service|update"] {
+			return "calls a service that is not known and none is created or updated with it"
 		}
 	} else if why := c.orchestratorTickURI(str(at(ht, "uri"))); why != "" {
 		return why

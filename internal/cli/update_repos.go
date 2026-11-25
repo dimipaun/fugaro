@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/dimipaun/fugaro/internal/backlog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -95,14 +96,19 @@ type enrolledIn struct {
 	// (R21). Nil reads fresh every time, which is what a caller outside a run
 	// -- doctor, a test -- gets.
 	Memo *reposState
-	// Extra are the repository-relative files the caller needs read beside
-	// fugaro.yaml (.claude/settings.json), which the view carries under their
-	// own path (C1 §Extra files). A caller asks for what it reads, and the
-	// reader reads nothing it was not asked for. Under a Memo it is the run's
-	// set (e.repoExtras), because the first read answers every later one: a
-	// caller that needs a file the run's read did not ask for is too late.
-	Extra []string
+	// ExtraPaths are the files to read beside every view's fugaro.yaml, each
+	// by its path in the repository (`.claude/settings.json`, `docs/backlog/`).
+	// A stage reads none it did not ask for, and the list is read once with
+	// every path the run needs, so one stage's request is answered out of the
+	// same views as the next one's (contract-repos.md §Extra files).
+	ExtraPaths []string
 }
+
+// updateExtraPaths are the repository files `fugaro update` reads beside every
+// enrolled repository's fugaro.yaml: the folder the backlog fold folds (U8).
+// U6a adds the plugin pin's .claude/settings.json, and the reader reads the
+// whole list in one pass, because the run's views answer every stage at once.
+var updateExtraPaths = append(append([]string{}, repoNoticeExtra...), backlog.Dir+"/")
 
 // reposState is one run's per-repository state: the enrolled list it read,
 // and the lines every stage and step reported about it.
@@ -178,24 +184,11 @@ func repoSortKey(repo string) string {
 }
 
 // repos is this run's enrolled repositories, and the admit patterns the
-// reader could not list.
+// reader could not list. It reads every file the run's stages need
+// (updateExtraPaths): the list is read once, so a stage that asked for a path
+// of its own would otherwise be answered out of views read before it asked.
 func (e *initEngine) repos(ctx context.Context) ([]repoView, []string) {
-	return enrolledRepos(ctx, enrolledIn{LC: e.lc, Memo: &e.reposState, Extra: e.repoExtras()})
-}
-
-// repoExtras are the extra files the run's own read of the list asks the
-// reader for beside each fugaro.yaml: the two `update`'s notices are judged
-// from (repo_notices.go, U6a), and nothing else.
-//
-// They are asked for here, on the read every stage goes through, and not at
-// the step that needs them: the memo answers every later call with the views
-// its first read took (C1 §Memoized per run), so a step asking at its own call
-// is answered before it asks, with Files it never got.
-func (e *initEngine) repoExtras() []string {
-	if e.r.o.doorName() != updateDoor.name {
-		return nil
-	}
-	return repoNoticeExtra
+	return enrolledRepos(ctx, enrolledIn{LC: e.lc, Memo: &e.reposState, ExtraPaths: updateExtraPaths})
 }
 
 // reportRepos records the lines a stage or a step after the loop reports

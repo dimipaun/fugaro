@@ -1149,6 +1149,72 @@ func orphanContainers(ctx context.Context, c *Clients, spec RepoSpec, stateAddrs
 	return rets, notes, "", nil
 }
 
+// DeployedSecretIDs is every Secret Manager container a deployed Cloud Run job
+// of the installation names in its environment, by container ID, with the one
+// warning a caller prints when the question could not be asked at all.
+//
+// It is what answers G4 for a project copy D3325 retires: the state removal
+// destroys nothing, so the copy may be deleted only on a run that can see that
+// no deployed template reads it any more (ProjectCopiesToDelete). One paged
+// jobs.list answers the whole question — the listing carries each job's
+// template with its containers and their env, the same read this package's
+// timeout lookup and the owner's check920 script are built on — so no job is
+// read a second time, and the Cloud Run read quota launches share pays for one
+// walk however many jobs the installation has.
+//
+// The read covers EVERY job of the installation, not this repository's: the
+// job that still mounts a project copy is any repository's, including one this
+// run never touches. It fails closed — a listing that was refused or failed
+// answers no IDs and the warning — and that is the whole point: "could not
+// look" and "nothing names it" must never be the same answer for a call that
+// deletes a container.
+func DeployedSecretIDs(ctx context.Context, c *Clients, spec InstallationSpec) (ids map[string]bool, warning string) {
+	if c == nil || c.Run == nil {
+		return nil, ""
+	}
+	parent := "projects/" + spec.Project + "/locations/" + spec.Region
+	out := map[string]bool{}
+	err := c.Run.Projects.Locations.Jobs.List(parent).Pages(ctx, func(p *run.GoogleCloudRunV2ListJobsResponse) error {
+		for _, j := range p.Jobs {
+			if j == nil || j.Template == nil || j.Template.Template == nil {
+				continue
+			}
+			for _, ctr := range j.Template.Template.Containers {
+				if ctr == nil {
+					continue
+				}
+				for _, e := range ctr.Env {
+					if e == nil || e.ValueSource == nil || e.ValueSource.SecretKeyRef == nil {
+						continue
+					}
+					if id := lastSegment(e.ValueSource.SecretKeyRef.Secret); id != "" {
+						out[id] = true
+					}
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, jobsReadFailed(ctx, err, spec)
+	}
+	return out, ""
+}
+
+// jobsReadFailed is the one warning DeployedSecretIDs answers a read it could
+// not make with: what stays undone because of it, and the gcloud command that
+// asks the same question by hand. Empty, with the run abandoned, is a run that
+// is giving up rather than a permission the operator lacks — the caller prints
+// no line for a run that is already over.
+func jobsReadFailed(ctx context.Context, err error, spec InstallationSpec) string {
+	if ctx.Err() != nil {
+		return ""
+	}
+	call := "gcloud run jobs list --project " + spec.Project + " --region " + spec.Region
+	return fmt.Sprintf("workflow-secret copies were marked retired but not deleted: the Cloud Run jobs could not be read (%v); check with: %s",
+		err, call)
+}
+
 // labelCallFailed is what a refused or failed label call is: a warning that
 // names the call, the permission and the gcloud command that answers the
 // question by hand, and nothing at all when the run itself was abandoned.
@@ -1275,6 +1341,12 @@ func apiDeleted(r Retirement, spec RepoSpec, inState map[string]bool) bool {
 // kinds of job carry different labels, and a delete judged by the wrong one
 // either refuses a legitimate delete or takes another variant's job.
 func HasMarks(have, want map[string]string) bool { return hasMarks(have, want) }
+
+// Marks is marks (discover.go) exported for the same reader: it renders the
+// labels a container carries as the pairs a person reads, in the house form
+// (fugaro=managed fugaro_project=acme), where a Go map printed by %s reads as
+// map[fugaro:managed ...] and names nothing the reader can compare.
+func Marks(have, want map[string]string) string { return marks(have, want) }
 
 // JobDeleteLabels is the label set the API delete must find on the live job
 // of a retired address, and whether there is one: the fugaro mark and this

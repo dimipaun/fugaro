@@ -354,6 +354,18 @@ if argv[:2] == ["compute", "instances"]:
             pass
         print("Deleted [%s]." % name)
         sys.exit(0)
+    if op == "get-serial-port-output":
+        # What the VM's serial console holds. A case that wants a specific tail
+        # writes serial/<name>.txt; without one the console answered with the
+        # boot line a Batch VM really prints. It is a reading the check takes
+        # when no line of the container's own arrived (probe-diag).
+        path = os.path.join(state, "serial", name + ".txt")
+        try:
+            with open(path) as fh:
+                sys.stdout.write(fh.read())
+        except OSError:
+            sys.stdout.write("Nov 25 03:51:28 batch-vm systemd[1]: Started Batch task container.\n")
+        sys.exit(0)
     die("fake gcloud: unhandled compute call: %s" % " ".join(argv))
 
 if argv[:2] == ["batch", "jobs"]:
@@ -390,6 +402,17 @@ if argv[:2] == ["batch", "jobs"]:
                     obj = json.loads(fh.read().replace("@MARKER@", marker_value()))
             except (OSError, ValueError):
                 obj = {}
+            # diag/<job>.json is what the platform says about a job that ran:
+            # its own state and status events, and each task's state with the
+            # events it carries — the task's exit code among them. It replaces
+            # the object's own status and adds its task groups, which is what a
+            # run whose lines never arrived is read through (probe-diag) and
+            # what the second channel is read out of (probe-exit).
+            try:
+                with open(os.path.join(state, "diag", name + ".json")) as fh:
+                    obj.update(json.loads(fh.read()))
+            except (OSError, ValueError):
+                pass
             # A job's own labels are the launcher's: Compute and Batch both
             # report back what the submit carried, so the object this answers
             # with carries the labels of the config that was submitted for that
@@ -460,8 +483,33 @@ if argv[:2] == ["logging", "read"]:
     uid = m.group(1) if m else ""
     if "CreateJob" in f:
         print(canned("audit.json"))
+    elif "resource.type=" in f:
+        # The broader reads probe-diag makes when no line of the container's own
+        # arrived: the same query under the job's own resource type, by the
+        # runner's label and then by the uid alone. They answer out of their own
+        # files so a case can model lines that landed under a log name the
+        # runner does not read, or under a label that is not labels.job_uid.
+        if "labels.job_uid=" in f:
+            print(canned("log-res-%s.json" % uid))
+        else:
+            quoted = re.findall(r'"([^"]+)"', f)
+            print(canned("log-any-%s.json" % (quoted[-1] if quoted else "")))
     elif "batch_task_logs" in f or "labels.job_uid" in f:
-        print(canned("log-%s.json" % uid))
+        # log_late=N is the platform where a job's lines land after a delay: the
+        # first N reads of that job's task logs answer with nothing and the
+        # reads after them answer with the lines. The wait is what this models,
+        # so a case that sets it gives the check a non-zero bound.
+        late = int(cfg("log_late", "0") or "0")
+        seen = 0
+        path = os.path.join(state, "loglate-%s" % uid)
+        if late > 0 and os.path.exists(path):
+            seen = int(open(path).read().strip() or "0")
+        if late > 0 and seen < late:
+            with open(path, "w") as fh:
+                fh.write(str(seen + 1) + "\n")
+            print("[]")
+        else:
+            print(canned("log-%s.json" % uid))
     elif f.startswith('"'):
         print(canned("log-value.json"))
     else:
@@ -605,6 +653,40 @@ with open(out, "w") as fh:
 PY
 }
 
+# write_diag: what the platform reports about a job that ran — the job's own
+# state and its status events, and its task's state with the events it carries.
+# A task-level event of a failed task is where the container's exit code lives
+# (TaskExecution.ExitCode), which is the second channel probe-exit reads when no
+# line of the container's own came back. It is the `diag/<job>.json` the fake
+# merges into that job's own object.
+write_diag() { # write_diag DIR JOB STATE TASK_STATE EXIT
+  local d=$1 job=$2 st=$3 tstate=$4 code=$5
+  mkdir -p "$d/state/diag"
+  python3 - "$d/state/diag/$job.json" "$st" "$tstate" "$code" <<'PY'
+import json, sys
+
+out, state, tstate, code = sys.argv[1:5]
+ev = {"type": "TASK_STATE_CHANGED", "taskState": tstate, "description": "task %s" % tstate}
+if code:
+    ev["taskExecution"] = {"exitCode": int(code)}
+obj = {
+    "status": {
+        "state": state,
+        "statusEvents": [{"type": "JOB_STATE_CHANGED", "description": "job %s" % state}],
+    },
+    "taskGroups": [{
+        "tasks": [{
+            "name": "projects/p/locations/us-east5/jobs/x/taskGroups/0/tasks/0",
+            "status": {"state": tstate, "statusEvents": [ev]},
+        }]
+    }],
+}
+with open(out, "w") as fh:
+    json.dump(obj, fh, indent=1)
+    fh.write("\n")
+PY
+}
+
 write_cfg() { # write_cfg DIR key=value ...
   local dir=$1
   shift
@@ -670,6 +752,13 @@ run_check() { # run_check [K=V ...] [-- ARGS...]
     TMPDIR="${RUN_TMPDIR:-$dir/tmp}"
     FAKE830_DIR="$dir/state"
     CHK830_WAIT_LINES=0
+    # probe-exit waits for the task to end before its exit status exists, and a
+    # case models a platform whose job has ended by handing the check the job's
+    # own object (state and task status), so the bound is zero: the case that
+    # models a job that has NOT ended sets it itself where it wants the wait.
+    CHK830_WAIT_EXIT=0
+    CHK830_LINGER_A=0
+    CHK830_LINGER_B=0
     CHK830_WAIT_AUDIT=0
     CHK830_REUSE_BOUND=0
     CHK830_REUSE_POLL=0
@@ -719,6 +808,28 @@ for f in sorted(os.listdir(d)):
     if m:
         print(m.group(1))
         break
+PY
+}
+# submitted_entrypoints: the interpreter every container the check submitted is
+# launched with, one per line, read out of the configurations the fake kept. The
+# probe's body is POSIX and the image need not carry bash, so the entrypoint and
+# the shebang have to agree: a body launched with an interpreter the image does
+# not have dies at start with nothing on stdout, which is the failure the first
+# run could not tell apart from a line that never reached Cloud Logging.
+submitted_entrypoints() {
+  python3 - "$dir/state/submits" <<'PY' 2>/dev/null || true
+import json, os, sys
+d = sys.argv[1]
+seen = set()
+for f in sorted(os.listdir(d)):
+    obj = json.load(open(os.path.join(d, f)))
+    for tg in obj.get("taskGroups", []):
+        for r in tg.get("taskSpec", {}).get("runnables", []):
+            c = r.get("container", {})
+            if c.get("commands"):
+                seen.add(c.get("entrypoint") or "<none>")
+for e in sorted(seen):
+    print(e)
 PY
 }
 # write_default_case: the platform answers most cases start from. Both jobs ran;
@@ -897,6 +1008,49 @@ write_default_case() { # write_default_case DIR [bend...]
     hide-vms)
       printf 'hide_vms=yes\n' >>"$d/state/cfg"
       ;;
+    probe-ran-no-lines)
+      # The case the first real run of this check hit: the container ran, took
+      # every one of its readings, and NOT ONE line of its own came back through
+      # the filter the runner reads. Its second channel still answers — 100 plus
+      # a bit per reading: reached the end of its reads (1), the metadata server
+      # answered (2), a token was obtained (4), all four claims were in it (8),
+      # the marker was in its own environment (16) — so u2-token and u3-marker
+      # have an answer that does not rest on the log channel, and both say which
+      # channel it is. The broader read under the job's own resource type is
+      # empty here too, which is the reading that tells "its lines do not land in
+      # the log the runner reads" apart from "nothing landed at all". The serial
+      # console carries a token-shaped value on purpose: a diagnostic that prints
+      # the platform's own output must redact it.
+      printf '[]\n' >"$d/state/log-$uid_a.json"
+      write_diag "$d" "$job_a" FAILED FAILED 131
+      mkdir -p "$d/state/serial"
+      printf 'Nov 25 03:51:28 batch-vm systemd[1]: Started Batch task container.\nNov 25 03:51:29 batch-vm kernel: metadata token ya29.fake-not-a-credential-000000\n' \
+        >"$d/state/serial/$vm_a.txt"
+      ;;
+    probe-never-ran)
+      # Nothing of the container's own came back and the task failed at Batch's
+      # own level: an exit code above 50000 is reserved for Batch, so it is not
+      # this container's own reading, and the second channel does not answer
+      # either. The rows must say UNKNOWN rather than absent.
+      printf '[]\n' >"$d/state/log-$uid_a.json"
+      write_diag "$d" "$job_a" FAILED FAILED 50000
+      ;;
+    probe-never-ends)
+      # The job that never gets to run: nothing of the container's own came back
+      # and, when the wait ends, the job's own state is still not a terminal one,
+      # so no task exit status was ever written. probe-exit has to say THAT; a row
+      # read from this state once asserted "the task ended (job state ...)" about
+      # a job that had not ended, which is the opposite of what happened.
+      printf '[]\n' >"$d/state/log-$uid_a.json"
+      write_diag "$d" "$job_a" QUEUED RUNNING ""
+      ;;
+    log-late)
+      # The platform where a job's lines land late: the first read of that job's
+      # task logs answers with nothing and the one after it answers with the
+      # lines, which is the delay the wait exists for. A case that sets this
+      # gives the check a non-zero CHK830_WAIT_LINES.
+      printf 'log_late=1\n' >>"$d/state/cfg"
+      ;;
     esac
   done
 }
@@ -1024,6 +1178,14 @@ test_happy_path() {
   [ -n "$marker" ] || fail "happy: no marker value was submitted at all, so u3-measured nothing"
   expect_absent "$out" "$marker" "happy: the block"
   expect_absent "$err" "$marker" "happy: the progress log"
+  # The body the check submitted is POSIX and its shebang is /bin/sh, and the
+  # image it runs in need not carry bash: a container launched with /bin/bash
+  # there dies at start with nothing on stdout, so the entrypoint the job names
+  # has to be the one the body can be read by.
+  local eps
+  eps=$(submitted_entrypoints)
+  [ "$eps" = "/bin/sh" ] \
+    || fail "happy: the submitted containers launch $(printf '%s' "$eps" | tr '\n' ' ')— the body is POSIX and the shebang is /bin/sh"
 }
 
 # The red step of BR0, as the plan states it: "the self-test fails when the
@@ -1503,6 +1665,121 @@ test_a_tree_without_the_plans_name_falls_back() {
   expect_verdict u3-marker PASS "a tree without the plan's name: the row is still measured"
 }
 
+# The case the first real run of this check hit, and the two the fix owes it: no
+# line of the container's own arrives, the lines arrive late, and a container
+# that never ran at all. probe-ran already says the log channel did not report
+# the run; what these cases are about is that the block says WHICH of the three
+# it was, and answers u2 and u3 from the container's second channel when the log
+# channel is empty — rather than reading "not measured" as "measured against the
+# design", which is what the first run's block did.
+test_no_line_arrives_and_the_exit_status_answers() {
+  setup_case no-lines
+  write_default_case "$dir" probe-ran-no-lines
+  run_check
+  expect_status "$status" 1 "no lines"
+  expect_no_unreached "no lines"
+  expect_verdict probe-ran FAIL "no lines: the row"
+  expect_row probe-ran "not one line of the container's own came back at all" "no lines: how far the container got"
+  expect_row probe-ran "probe-diag" "no lines: the readings taken next are named"
+  expect_row probe-ran "probe-exit" "no lines: and the second channel is named"
+  # The evidence the row owes the reader, taken while the job and the VM still
+  # exist: the job's own state, each task's state, their status events and the
+  # serial console — and, under the job's own resource type, the reading that
+  # tells "its lines land in another log" apart from "nothing landed".
+  expect_verdict probe-diag INFO "no lines: the diagnostics"
+  expect_row probe-diag "the job's own state is FAILED" "no lines: the job's own state"
+  expect_row probe-diag "its task's state(s) 0=FAILED" "no lines: each task's state"
+  expect_row probe-diag "exit=131" "no lines: the task's own status events, and the code on them"
+  expect_row probe-diag "serial console" "no lines: the serial console is a reading, not a skip"
+  expect_row probe-diag "Started Batch task container" "no lines: and its tail is printed"
+  expect_row probe-diag 'resource.type="batch.googleapis.com/Job"' "no lines: the broader read"
+  expect_row probe-diag "found 0 line(s) by the runner's label" "no lines: by the runner's label"
+  expect_row probe-diag "0 line(s) by the uid alone" "no lines: and by the uid alone"
+  # A diagnostic prints the platform's own output, and these lines carry a value
+  # shaped like a credential: it must never reach the block.
+  expect_row probe-diag "<redacted-token>" "no lines: a credential-shaped value in the serial output is redacted"
+  expect_absent "$out" "ya29.fake-not-a-credential-000000" "no lines: the serial output's credential"
+  # The second channel, and the two rows that answer from it.
+  expect_verdict probe-exit INFO "no lines: the exit status"
+  expect_row probe-exit "reported an exit status of its own: 131" "no lines: the code, and that it is this container's own"
+  expect_row probe-exit "it reached the end of its reads" "no lines: what the code says"
+  expect_row probe-exit "it obtained an identity token" "no lines: the token read"
+  expect_row probe-exit "all four claims" "no lines: the claims read"
+  expect_row probe-exit "marker variable was in its own environment" "no lines: the marker read"
+  expect_verdict u2-token PASS "no lines: U2 is measured without the log channel"
+  expect_row u2-token "answered by the task's exit status, not by the log channel" "no lines: and the row says which channel answered"
+  expect_row u2-token "all four claims" "no lines: what it answers"
+  expect_verdict u3-marker PASS "no lines: U3 too, and not read as void"
+  expect_row u3-marker "answered by the task's exit status, not by the log channel" "no lines: naming the channel that answered"
+  expect_verdict vm-a PASS "no lines: the VM is still found"
+  expect_row vm-a "the container did NOT name it" "no lines: and the row says this reading is the weaker one"
+  expect_last_line "CHECK 830 RESULT: FAIL" "no lines"
+  # The value the check generated is in the job's own configuration and nowhere
+  # else: not in the block, and not in the progress log.
+  local marker
+  marker=$(marker_sent)
+  [ -n "$marker" ] || fail "no lines: no marker value was submitted at all"
+  expect_absent "$out" "$marker" "no lines: the block"
+  expect_absent "$err" "$marker" "no lines: the progress log"
+}
+
+test_no_line_arrives_and_the_task_reported_nothing_either() {
+  setup_case never-ran
+  write_default_case "$dir" probe-never-ran
+  run_check
+  expect_status "$status" 1 "never ran"
+  expect_verdict probe-ran FAIL "never ran: the row"
+  expect_row probe-diag "the job's own state is FAILED" "never ran: the job's state is one of the readings"
+  expect_verdict probe-exit FAIL "never ran: the second channel did not answer"
+  expect_row probe-exit "not this container's own" "never ran: the code is Batch's, above the reserved 50000"
+  expect_row probe-exit "UNKNOWN rather than absent" "never ran: what that means for the rows below"
+  expect_verdict u2-token FAIL "never ran: U2 is not answered"
+  expect_row u2-token "neither channel answered" "never ran: and the row says so"
+  expect_row u2-token "UNKNOWN rather than absent" "never ran: a container that never ran measures nothing"
+  expect_last_line "CHECK 830 RESULT: FAIL" "never ran"
+}
+
+test_a_job_that_never_ended_says_so() {
+  setup_case never-ends
+  write_default_case "$dir" probe-never-ends
+  run_check CHK830_WAIT_EXIT=10
+  expect_status "$status" 1 "never ends"
+  expect_verdict probe-ran FAIL "never ends: the row"
+  expect_row probe-diag "the job's own state is QUEUED" "never ends: the job's own state is read and it is not a terminal one"
+  expect_verdict probe-exit FAIL "never ends: the second channel did not answer"
+  expect_row probe-exit "had not ended within 10s" "never ends: the wait expired, and the row says that rather than the opposite"
+  expect_row probe-exit "state read QUEUED at the last poll" "never ends: with the state the last poll saw"
+  expect_row probe-exit "UNKNOWN rather than absent" "never ends: and what that means for the rows below"
+  # The row this state used to print said the task HAD ended. A job that never
+  # scheduled is the one reading where that sentence is the opposite of what the
+  # platform reported, so it must not be there — the row says what it does NOT
+  # say, which is why the needle is the old sentence and not its words.
+  expect_absent "$out" "the task ended (job state" "never ends: the row does not claim the task ended"
+  expect_verdict u2-token FAIL "never ends: U2 is not answered"
+  expect_row u2-token "neither channel answered" "never ends: and the row says so"
+  expect_last_line "CHECK 830 RESULT: FAIL" "never ends"
+}
+
+test_lines_that_arrive_late_are_waited_for() {
+  setup_case late-lines
+  write_default_case "$dir" log-late
+  run_check CHK830_WAIT_LINES=10
+  expect_status "$status" 0 "late lines"
+  expect_verdict probe-ran PASS "late lines: the row"
+  expect_row probe-ran "the probe container ran and reported" "late lines: what it reads"
+  # The first read of that job's logs answered with nothing and the lines came on
+  # the one after it, so the row must have been read after a poll rather than
+  # concluded from a single empty read.
+  expect_contains "$err" "waiting for the probe's first line (10s of 10s)" "late lines: the poll"
+  expect_verdict probe-diag INFO "late lines: nothing to diagnose"
+  expect_row probe-diag "not taken" "late lines: and the row says so rather than inventing evidence"
+  expect_verdict probe-exit INFO "late lines: the second channel was not needed"
+  expect_row probe-exit "not taken" "late lines: and the row says so"
+  expect_verdict u2-token PASS "late lines: U2 from the log channel"
+  expect_verdict u3-marker PASS "late lines: U3 from the log channel"
+  expect_last_line "CHECK 830 RESULT: PASS" "late lines"
+}
+
 # ------------------------------------------------------------------- the run
 # CHECK_TEST_ONLY names one case; CHECK_TEST_SHARD=i/n runs every case whose
 # index is congruent to i modulo n. scripts/live_checks_test.go splits the suite
@@ -1545,6 +1822,10 @@ t test_a_marker_in_the_createjob_record_fails_u3
 t test_an_audit_record_that_was_never_read_fails_u3
 t test_an_audit_record_from_another_run_is_not_this_runs
 t test_a_marker_that_never_reached_the_container_is_void
+t test_no_line_arrives_and_the_exit_status_answers
+t test_no_line_arrives_and_the_task_reported_nothing_either
+t test_a_job_that_never_ended_says_so
+t test_lines_that_arrive_late_are_waited_for
 t test_a_name_that_comes_back_slowly_is_measured
 t test_a_name_that_never_comes_back_is_a_failure
 t test_resources_that_cannot_be_deleted_are_named

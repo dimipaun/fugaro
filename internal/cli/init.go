@@ -3666,6 +3666,10 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	if spec, err = r.carriedBudget(ctx, c, spec); err != nil {
 		return outs, false, err
 	}
+	// The project copies D3325 retires, marked before discovery reads the
+	// project's containers: the mark is what takes a retired copy out of the
+	// union that keeps for_each from shrinking (IS13).
+	retiredCopies := r.retireProjectCopies(ctx, c, lc, spec)
 	im, err := infra.DiscoverInstallation(ctx, c, spec)
 	if err != nil {
 		return outs, false, initErr(err)
@@ -3806,6 +3810,10 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	if err := t.Init(ctx, backend); err != nil {
 		return outs, false, remote(err)
 	}
+	// The retired copies leave the state before the plan that drops their key:
+	// the module's prevent_destroy refuses that plan while the state still
+	// holds the instance (U5, IS13).
+	r.removeRetiredCopiesFromState(ctx, t, retiredCopies, spec.ProjectSecrets)
 	// What the installation already is: its name may not change, and an
 	// unnamed one is named only on request. Before any plan.
 	var prior infra.InstallationOutputs

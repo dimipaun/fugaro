@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"io/fs"
 	"path/filepath"
 	"strings"
 
@@ -49,7 +50,7 @@ var enrolledReposImpl = func(ctx context.Context, in enrolledIn) ([]repoView, []
 		v.Head = headOfDefaultBranch(ctx, root, db.ref)
 		v.YAML = db.data
 		v.Cfg = db.cfg
-		v.Files = repoFilesAt(root, in.Extra)
+		v.Files = checkoutFiles(root, in.ExtraPaths)
 	}
 	if v.Unread != "" {
 		v.Unread = unreadReason(v.Unread)
@@ -57,28 +58,44 @@ var enrolledReposImpl = func(ctx context.Context, in enrolledIn) ([]repoView, []
 	return []repoView{v}, nil
 }
 
-// repoFilesAt reads the extra files a caller asked for out of the checkout at
-// root, under their repository-relative path (in.Extra). While the stub stands
-// in, this is the checkout's copy, the way the view's fugaro.yaml is; I1 reads
-// the same paths at the default branch. A file that is not there, and one that
-// cannot be read, is not carried: a view a stage asked for a file it did not
-// get is one the stage must treat as having no such file.
-//
-// The read is config.ReadRegular, the same one a checkout's own files get
-// (config.MaxCheckoutFile): a checkout is somebody else's, so a symlink, a
-// FIFO or a file past the bound is not read at all — and neither is it here,
-// where the read is unconditional on every update.
-func repoFilesAt(root string, extra []string) map[string][]byte {
-	if len(extra) == 0 {
-		return nil
-	}
-	out := map[string][]byte{}
-	for _, p := range extra {
-		data, err := config.ReadRegular(filepath.Join(root, filepath.FromSlash(p)), config.MaxCheckoutFile)
-		if err != nil {
+// checkoutFiles is the extra paths a caller asked for, read out of the
+// checkout this stand-in knows: a path ending in "/" is a folder and is walked,
+// anything else is one file, and each file is keyed by its path in the
+// repository -- which is what repoView.Files holds and what repofiles answers
+// (U1). A path the checkout does not hold answers no files, which is the
+// ordinary case for the paths `fugaro update` asks for (a checkout that keeps
+// no backlog) and never a repository nobody could read.
+func checkoutFiles(root string, paths []string) map[string][]byte {
+	var out map[string][]byte
+	for _, p := range paths {
+		at := filepath.Join(root, filepath.FromSlash(p))
+		if !strings.HasSuffix(p, "/") {
+			if data, err := config.ReadRegular(at, config.MaxCheckoutFile); err == nil {
+				if out == nil {
+					out = map[string][]byte{}
+				}
+				out[p] = data
+			}
 			continue
 		}
-		out[p] = data
+		_ = filepath.WalkDir(at, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return nil
+			}
+			data, err := config.ReadRegular(path, config.MaxCheckoutFile)
+			if err != nil {
+				return nil
+			}
+			if out == nil {
+				out = map[string][]byte{}
+			}
+			out[filepath.ToSlash(rel)] = data
+			return nil
+		})
 	}
 	return out
 }
