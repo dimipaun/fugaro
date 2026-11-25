@@ -60,12 +60,18 @@ type catalogStaleEntry struct {
 }
 
 // catalogStaleSet is what the images stage reads of the installation's
-// catalog before it does anything: the stale entries this checkout's build
-// account rebuilds, the ones only another checkout can, and why the records
-// could not be read when they could not.
+// catalog before it does anything: the stale entries, each with the repository
+// whose build account rebuilds it, and why the records could not be read when
+// they could not.
+//
+// There is no "here" split: an entry carries its building repository and
+// nothing about where this run stands, and whether this run may submit its
+// rebuild is asked of the repositories it read (buildable), the way every
+// other per-repository decision is (C1, R9).
 type catalogStaleSet struct {
-	here      []catalogStaleEntry
-	elsewhere []catalogStaleEntry
+	// entries are the stale entries, in the order their building repositories
+	// are named (infra.CatalogRepos: one repository's entries together).
+	entries []catalogStaleEntry
 	// unread is why no record could be read at all, "" when they were. It is
 	// a state of its own: a record nobody read is not a stale image, and it is
 	// not a current one either, so the stage says it could not tell rather
@@ -75,10 +81,10 @@ type catalogStaleSet struct {
 }
 
 // any reports whether any entry is known to be stale.
-func (s catalogStaleSet) any() bool { return len(s.here) > 0 || len(s.elsewhere) > 0 }
+func (s catalogStaleSet) any() bool { return len(s.entries) > 0 }
 
-// staleCatalog reads every catalog entry's build record and sorts the stale
-// ones by whose checkout rebuilds them. It changes nothing and returns no
+// staleCatalog reads every catalog entry's build record and lists the stale
+// ones with their building repository. It changes nothing and returns no
 // error: a record the run cannot read is a state the stage reports, never a
 // failure — `fugaro update` is the whole upgrade (the HARD RULE), and a
 // project whose records are unreadable still has every other stage applied.
@@ -112,7 +118,6 @@ func (s *imagesStage) staleCatalog(ctx context.Context) catalogStaleSet {
 		return catalogStaleSet{unread: oneLine(err.Error())}
 	}
 	defer func() { _ = rb.Close() }()
-	here := s.checkoutRepo(ctx)
 	var set catalogStaleSet
 	for _, rs := range repos {
 		for _, name := range rs.Entries {
@@ -128,26 +133,26 @@ func (s *imagesStage) staleCatalog(ctx context.Context) catalogStaleSet {
 			case rec == nil || !catalogBaseStale(rec.BaseRef):
 				continue
 			}
-			se := catalogStaleEntry{entry: e, repo: rs}
-			if here != "" && sameRepo(rs.Repo, here) {
-				set.here = append(set.here, se)
-			} else {
-				set.elsewhere = append(set.elsewhere, se)
-			}
+			set.entries = append(set.entries, catalogStaleEntry{entry: e, repo: rs})
 		}
 	}
 	return set
 }
 
-// checkoutRepo is the repository this run is running in, "" when it is not in
-// a checkout this tool can name — a plain `fugaro update` from anywhere else,
-// which is a state the update supports.
-func (s *imagesStage) checkoutRepo(ctx context.Context) string {
-	repo, err := originRepo(ctx)
-	if err != nil {
-		return ""
+// buildable reports whether this run may submit the entry's rebuild: its build
+// runs as the build account of the repository whose Dockerfile it reads, with
+// that repository's credential and secrets, so this run can submit it only from
+// that repository's own checkout — and the repositories it reads are the ones
+// C1 answers for it (the checkout this run is in, until I1 reads every enrolled
+// repository at its default branch). Which builds `update` may submit is L3's.
+func (s *imagesStage) buildable(ctx context.Context, se catalogStaleEntry) bool {
+	views, _ := s.e.repos(ctx)
+	for _, v := range views {
+		if v.Read() && sameRepo(v.Repo, se.repo.Repo) {
+			return true
+		}
 	}
-	return repo
+	return false
 }
 
 // catalogBaseStale reports whether ref — the base an entry's build record
@@ -192,13 +197,21 @@ type catalogLeft struct {
 
 // catalogPlanDetail is the catalog half of a plan line: what the run will
 // rebuild here, what it will name, and whether it could tell at all.
-func catalogPlanDetail(set catalogStaleSet) string {
-	var parts []string
-	if len(set.here) > 0 {
-		parts = append(parts, fmt.Sprintf("rebuilds %d catalog image(s) FROM this release's base image with Cloud Build (%s)", len(set.here), strings.Join(catalogEntryNames(set.here), ", ")))
+func (s *imagesStage) catalogPlanDetail(ctx context.Context, set catalogStaleSet) string {
+	var mine, others []catalogStaleEntry
+	for _, se := range set.entries {
+		if s.buildable(ctx, se) {
+			mine = append(mine, se)
+			continue
+		}
+		others = append(others, se)
 	}
-	if len(set.elsewhere) > 0 {
-		parts = append(parts, fmt.Sprintf("%d catalog image(s) are on a base older than this release's and are built from another checkout: this run names each one and the command that rebuilds it", len(set.elsewhere)))
+	var parts []string
+	if len(mine) > 0 {
+		parts = append(parts, fmt.Sprintf("rebuilds %d catalog image(s) FROM this release's base image with Cloud Build (%s)", len(mine), strings.Join(catalogEntryNames(mine), ", ")))
+	}
+	if len(others) > 0 {
+		parts = append(parts, fmt.Sprintf("%d catalog image(s) are on a base older than this release's and are built from another checkout: this run names each one and the command that rebuilds it", len(others)))
 	}
 	if set.unread != "" {
 		parts = append(parts, "the catalog images' build records could not be read ("+set.unread+"), so this run cannot say whether they are on this release's base")
@@ -245,8 +258,8 @@ func (s *imagesStage) rebuildCatalogEntry(se catalogStaleEntry) error {
 }
 
 // catalogOutcome is the images stage's catalog half, run once the base these
-// builds start FROM is recorded: it rebuilds the stale entries of this
-// checkout, prints one line per entry it cannot rebuild from here, and adds
+// builds start FROM is recorded: it rebuilds the stale entries of the
+// repositories this run reads, prints one line per entry it cannot, and adds
 // the half to the stage's own line.
 //
 // A "No changes" the ordinary half answered is replaced, never kept beside
@@ -261,7 +274,7 @@ func (s *imagesStage) rebuildCatalogEntry(se catalogStaleEntry) error {
 // checkout stage's image rebuilds and `fugaro image build <entry>` itself. A
 // session the gate refuses builds nothing here either: it is left the command,
 // which is the same step a stale entry of another checkout is left.
-func (s *imagesStage) catalogOutcome(set catalogStaleSet, out initflow.Outcome) initflow.Outcome {
+func (s *imagesStage) catalogOutcome(ctx context.Context, set catalogStaleSet, out initflow.Outcome) initflow.Outcome {
 	if !set.any() && set.unread == "" {
 		return out
 	}
@@ -272,7 +285,11 @@ func (s *imagesStage) catalogOutcome(set catalogStaleSet, out initflow.Outcome) 
 	}
 	var built []string
 	var missed []catalogLeft
-	for _, se := range set.here {
+	for _, se := range set.entries {
+		if !s.buildable(ctx, se) {
+			missed = append(missed, catalogLeft{entry: se, why: fmt.Sprintf("its build runs as %s's build account, with that repository's credential and secrets", pluginwire.Printable(se.repo.Repo))})
+			continue
+		}
 		// The rebuild's own failure is read before it is described: the one
 		// failure `fugaro image build <entry>` could not answer differently on
 		// the same bytes is the entry's own definition being refused
@@ -286,9 +303,6 @@ func (s *imagesStage) catalogOutcome(set catalogStaleSet, out initflow.Outcome) 
 			continue
 		}
 		built = append(built, pluginwire.Printable(se.entry.Name))
-	}
-	for _, se := range set.elsewhere {
-		missed = append(missed, catalogLeft{entry: se, why: fmt.Sprintf("its build runs as %s's build account, with that repository's credential and secrets", pluginwire.Printable(se.repo.Repo))})
 	}
 	if len(built) > 0 {
 		fmt.Fprintf(w, "  rebuilt %d catalog image(s) FROM this release's base image: %s\n", len(built), strings.Join(built, ", "))
