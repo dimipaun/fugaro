@@ -21,6 +21,8 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -30,6 +32,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/identitywire"
@@ -669,5 +672,75 @@ func TestResidentLauncherAsksTheIssuer(t *testing.T) {
 	}
 	if raw := ticketObject(t, fileEnv(t, f.cloudFixture), ticketRun); raw != "" {
 		t.Fatal("a resident launch that holds a ticket wrote a token object")
+	}
+}
+
+// TestLaunchSignsLocallyWhereTheServiceDoesNotServeTheRun: the installation
+// carries the service and the switch holds THIS repository off — its root was
+// applied with the service off, or its agent.auth is one the service cannot
+// serve under the node's mode — so the job kept every mount it had and the
+// execution is handed no address to claim a ticket at. The launch signs locally
+// and seals, exactly as it did before the issuer existed: the alternatives are a
+// run that stops at bootstrap with no identity (the runner reads the address to
+// claim at) and a job that lost a credential for nothing.
+//
+// The config is built here rather than by ticketWorld, whose url switch turns
+// the repository on: the pair a launch is judged by is the block AND the
+// repository's own record.
+//
+// Mutation (run, restored): ask wherever the block exists — the gate this test
+// is for, which is what the launch did before it — and the service is asked.
+func TestLaunchSignsLocallyWhereTheServiceDoesNotServeTheRun(t *testing.T) {
+	r := ticketWorld(t, releaseIdentity, "", nil)
+	svc := newLaunchService(t, ticketAnswers(time.Now().Add(30*time.Minute)))
+	r.svc = svc
+	// The block, and no switch-on record beside it, is the installation that
+	// serves other repositories and not this one.
+	r.f.appendConfig(t, "credentials_service:\n  url: "+svc.serviceURL()+"\n")
+	r.env = fileEnv(t, r.f.cloudFixture)
+
+	executed, err := r.launch(t)
+	if err != nil {
+		t.Fatalf("the launch of a repository the switch holds off: %v", err)
+	}
+	if asked := r.svc.asked(); len(asked) != 0 {
+		t.Fatalf("the service was asked %v, and this run is handed no address to claim a ticket at", asked)
+	}
+	if got := executed[identitywire.TicketEnv]; got != "" {
+		t.Fatalf("an unserved launch handed its execution %s=%q: its run reads the address to claim at, and would stop at bootstrap", identitywire.TicketEnv, got)
+	}
+	if _, ok := executed[runner.BudgetTokenEnv]; !ok {
+		t.Fatalf("an unserved launch handed its execution no seal marker %s: its run has no identity at all", runner.BudgetTokenEnv)
+	}
+	if n := len(r.f.iam.SignCalls()); n != 1 {
+		t.Fatalf("the bridge minted %d tokens with this machine's own signer, want the run's one", n)
+	}
+	if raw := ticketObject(t, r.env, r.spec.RunID); raw == "" {
+		t.Fatal("an unserved launch wrote no token object: the local mint is the whole of what it falls back to")
+	}
+}
+
+// TestTicketRedactRemovesTheTicket: ticketRedact is sealRedact's rule for the
+// other secret a launch hands an execution — a backend error may quote the
+// request it was given, and the ticket travels in that request — and the result
+// still unwraps to the original (a refusal stays ErrRejected).
+//
+// Mutation (run, restored): make ticketRedact redact nothing — this test fails
+// on the ticket it still carries.
+func TestTicketRedactRemovesTheTicket(t *testing.T) {
+	const value = "fake-ticket-not-a-real-credential-0000001"
+	err := ticketRedact(fmt.Errorf("refused env=%s=%s: %w", identitywire.TicketEnv, value, backend.ErrRejected), &launchTicket{value: value})
+	if strings.Contains(err.Error(), value) {
+		t.Fatalf("the redacted error carries the ticket: %v", err)
+	}
+	if !errors.Is(err, backend.ErrRejected) {
+		t.Fatalf("the redacted error lost its kind: %v", err)
+	}
+	if ticketRedact(nil, &launchTicket{value: value}) != nil {
+		t.Fatal("a nil error is not nil after redaction")
+	}
+	plain := fmt.Errorf("refused: %w", backend.ErrRejected)
+	if got := ticketRedact(plain, nil); got != plain {
+		t.Fatalf("a launch with no ticket rewrote its error: %v", got)
 	}
 }

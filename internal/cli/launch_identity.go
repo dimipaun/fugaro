@@ -323,15 +323,12 @@ func (e *cloudEnv) launchTicketFor(ctx context.Context, slug string, spec *task.
 // executionServesTheService reports whether the run this launch starts will
 // read a credentials service address out of its own environment, which is the
 // address it claims its ticket at: what this launch writes
-// (credentialsServiceLaunchEnv), or what the job it lands on was deployed with
-// (internal/infra writes the same address, on the same switch, into the job's
-// own environment).
+// (credentialsServiceLaunchEnv), or what the job it lands on carries from its
+// own deployment (internal/infra's projectjobs gives a shared job the address
+// where its provider needs it, and a review variant always carries it).
 //
-// The second half is what a resident service's launch has alone: its config
-// carries no block, so it writes nothing, and the jobs it starts hold the
-// address from their own deployment. A launch whose execution carries none
-// signs locally (R7's first answer): the job kept its mounts, and a ticket is
-// an identity the run could not claim.
+// A launch whose execution carries none signs locally (R7's first answer): the
+// job kept its mounts, and a ticket is an identity the run could not claim.
 //
 // A job this launch cannot read — a backend with no job to read (Cloud Batch,
 // whose launches this gate never decides: batchLaunchRefusal refuses an
@@ -341,6 +338,17 @@ func (e *cloudEnv) launchTicketFor(ctx context.Context, slug string, spec *task.
 // identity at all is exactly what cannot be answered then, and the same read
 // refuses a minting launch the same way (budgetJobBackend).
 func (e *cloudEnv) executionServesTheService(ctx context.Context, slug string, spec *task.Spec, job *launchProjectJob, reviewJob bool) (bool, error) {
+	// A resident service's launch is the installation's own (D3125), and the
+	// URL it reaches the service at is the one the installation PUBLISHED
+	// (launchServiceURL): the config it composes carries no credentials_service
+	// block at all (orchestrator_serve.go's base), so the per-repository switch
+	// a person's launch is judged by is not a question its config can answer,
+	// and the published record is the whole of what it knows about the service.
+	// What such a launch must not do is mint: a container holds no gcloud, so
+	// the local mint is a launch that fails rather than one that falls back.
+	if e.launchServiceURL != "" {
+		return true, nil
+	}
 	jobProfile := ""
 	if job != nil {
 		jobProfile = job.Profile
