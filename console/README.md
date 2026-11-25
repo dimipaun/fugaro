@@ -1631,9 +1631,15 @@ catch:
 
 ### Fourteen classes, deny-by-default
 
-`src/shared/sanitize.ts` is the display layer's **copy** of the recorder's rules
-(design §5.1 rule 7: the sanitization is re-applied here rather than trusted to
-have survived the subprocess boundary). It is a copy rather than an import
+`src/shared/sanitize.ts` is the display layer's **copy** of the recorder's
+credential rules and its markup and control-character cleaning (design §5.1
+rule 7: the sanitization is re-applied here rather than trusted to have survived
+the subprocess boundary). **It masks secrets only.** An identity is not a
+secret: since **D3213** (2026-11-21) an address, a repository name, a branch, a
+project, a host and a filesystem path are drawn as they came, and the recorder
+is the half that still redacts them — in the fixtures it writes, which are
+committed files and not an operator's screen (**D3219**). It is a copy rather
+than an import
 because `src/source/redact.ts` reaches for `node:crypto` and the renderer has no
 Node; `sanitize.test.ts` holds the two vocabularies **equal by test** — the
 markers, the placeholders and the bounds by importing both, and the keep-or-drop
@@ -1664,41 +1670,38 @@ truncated.
 
 | class | admits | on anything else |
 | --- | --- | --- |
-| `sentence` | free text a job wrote, one line, invisible characters stripped, credential-shaped runs neutralised, every URL replaced | clipped at 512 characters, never refused (an empty title is a title) |
+| `sentence` | free text a job wrote, one line, invisible characters stripped, credential-shaped runs neutralised; a URL replaced only when it carries a credential, one that carries none kept as it came | clipped at 512 characters, never refused (an empty title is a title) |
 | `label` | a short rendered field (`stage`, `round`, `verify`, `models`, `recipe`, `workflow`) | refused past 200 characters, or if it is not a single line |
 | `repository` | `owner/name`, at most 200 characters, no `..` | refused |
 | `repoPattern` | a policy allow-list entry: `*`, or three segments or more — `provider/owner/name`, a path that nests included — each matching the CLI's own segment grammar (`[a-z0-9*._-]`, a star matched inside a segment and never across a `/`, no `.` or `..` segment and no `.git` ending), at most 255 characters (`projectpolicy.MaxPatternLen`) | refused |
 | `scope` | a stored grant's scope: `project`, `all-repos`, or a comma-separated list of canonical repository patterns, each provider-qualified and at most 255 characters (`projectpolicy.MaxPatternLen`), with the two rules `internal/access`'s `ParseScope` adds to the allow-list's grammar — the provider segment is never `*` (a grant names the repositories it covers) and a `*` is matched inside one path segment, so no segment carries `**` | refused |
 | `imageRef` | a container image reference, the CLI's own `catalogImageRE` (`registry[:port]/path[:tag][@sha256:…]`, lower-case, at most 255 characters) | refused |
 | `slug` | the console's own slug grammar | refused |
-| `branch` | a git ref, no leading/trailing slash, no `.lock` | refused |
+| `branch` | a git ref, no leading/trailing slash, no `.lock`, drawn as it came | a credential-shaped value drawn as `<branch>` (the recorder's own marker for the key); anything else refused |
 | `project` | a GCP project name | refused |
-| `person` | a login or a pseudonym | an email address becomes `redacted@example.invalid`; anything else refused |
+| `person` | an identity — a login, a pseudonym or an address — drawn as it came, one line and clipped at 512 characters; a recorder marker kept | a credential-shaped value refused |
 | `runId` | the run-id grammar, or a marker | refused |
-| `host` | a machine name: every value, hostname, IP address or anything else, is drawn as `<host>` (a recorder marker is kept) | — |
-| `path` | a filesystem path | redacted to `<path>` |
+| `host` | a machine name, hostname or IP address, drawn as it came with a credential shape neutralised; a recorder marker kept | — |
+| `path` | a filesystem path, drawn as it came with a credential shape neutralised | — |
 | `url` | `https`, a non-empty host, no whitespace, no credential in the host, a path segment, the query or the fragment (each read as written and percent-decoded: the token families, a credential-named assignment such as `access_token=…`, and — in the host, the query and the fragment — the high-entropy rule, which there also reads a run that follows a dot), no random-looking host label (the host is read as written and as parsed, whole and label by label, each `xn--` label also punycode-decoded; a run of 20+ letters and digits with both, at 3.5+ bits per character, is refused even case-folded), and not a well-known webhook URL (Slack `hooks.slack.com/services/…`, Discord `…/api/webhooks/…`, Microsoft Teams, Zapier, IFTTT, Telegram); userinfo is dropped | refused — including `http:`, `javascript:` and a URL carrying a credential |
 
 **One key is drawn in a class other than the one `WIRE_TEXT_CLASSES` gives it,
 and it is deliberate.** `launched_by` — who started a run — is classified
-`person`, and the Live and Project rows draw its **short form** (the CLI's own
-cut, `runview.LauncherShort`: the part before an address's first `@`, the whole
-value for anything else — the cut `fugaro runs ls`'s own `BY` column makes)
-through the **`label`** class. `person` is a validating class: it draws a login
-or a pseudonym and the console's marker for an address, and refuses everything
-else, so `dana.lopez@example.com` — the commonest corporate local part — and
-every display name would be a refused cell reading `n/a`, on nearly every row of
-a column whose whole purpose is to say who started the run. The short form is
-**not an address**: the cut is at the first `@`, and what the `label` class does
-here is what a cell needs — one line, the 200-character bound, the invisible
-characters stripped, a credential shape masked. The **whole** recorded value is
-drawn in the Run screen's header, through `person` as the map says, so an
-address is the console's marker there and **no address is drawn anywhere**.
+`person`, and the Live row draws it through the **`label`** class:
+one line, the 200-character bound, a refusal rather than a clip where `person`
+clips at 512, the invisible characters stripped, a credential shape masked,
+which is what a table cell needs. What it draws is **the whole value the record holds**, an
+address included — the cut at an address's first `@`
+(`runview.LauncherShort`) is `fugaro runs ls`'s own `BY` column's, and D3213
+(2026-11-21) removed it here with the rest of the console's identity masks. The
+Run screen's header draws the same whole value through `person`, as the map
+says, so the two agree on the value and differ only in the class.
 `src/shared/launcher.ts` is the module and the reasoning;
-`docs/desktop-console/spec.md` §6.2 records the decision. This is not a
-narrowing of **D15**: that decision is about `report --by person`'s cost
-breakdown on the Spend screen, and the console already names people on Live and
-Project without a switch — a killed repository's row reads `KILLED by <who>`.
+`docs/desktop-console/spec.md` §6.2 records the decision. This is not **D15**'s
+ground: that decision is the Spend screen's per-person breakdown, which opens
+on since **D3214** (2026-11-21), and the console names people on Live and
+Project whatever its switch says — a killed repository's row reads
+`KILLED by <who>`.
 
 **The trade-off in the path, said out loud.** A path segment is not held to the
 high-entropy rule, because a commit link's 40-hex digest is a path segment and
