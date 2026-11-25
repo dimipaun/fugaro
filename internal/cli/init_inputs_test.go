@@ -812,11 +812,11 @@ func TestRegionDefaultIsUsEast5(t *testing.T) {
 // separate things (reconciliation C1). The first is the place question
 // `fugaro setup` asks once, with its suggestion, and the region it settles is
 // the installation's own — a later run may not move it (LP8, D3088); the
-// second is permanent too, and a person at the terminal reads its note and is
-// asked nothing for it (T7, docs/no-prompt-policy). Both are pinned here in one
-// golden, so the two cannot converge: an edit that made the wizard ask for the
-// database's location, or gave the database's own note the region question's
-// entry line, moves this file.
+// second is permanent too, and the line saying where is printed with nothing
+// asked and no note (LP10, D3090; O2). Both are pinned here in one golden, so
+// the two cannot converge: an edit that made the wizard ask for the database's
+// location, or gave the database's own line the region question's entry line,
+// moves this file.
 func TestRegionQuestionIsNotTheFirestoreQuestion(t *testing.T) {
 	// The wizard's first run chdirs into a temporary directory, so the
 	// golden's path is taken first — the same reason init_retire_test.go takes
@@ -834,17 +834,18 @@ func TestRegionQuestionIsNotTheFirestoreQuestion(t *testing.T) {
 	}
 	region := promptLine(t, out.String(), questionFor("--location").label, askedPrompt("--budget"))
 
-	// The database's own note, as the Firebase step prints it: the harness
+	// The database's own line, as the Firebase step prints it: the harness
 	// init_confirm_test.go uses, at a terminal, with nothing typed for it.
 	c := condition{name: "a terminal", opts: initOptions{door: setupDoor.name}, terminal: true}
-	location, _, locationOut := c.run(t, "")
-	if err := location.confirmLocation(fsLocation("us-east5")); err != nil {
-		t.Fatalf("%v\n%s", err, locationOut)
+	location, spy, locationOut := c.run(t, "")
+	location.locationLine(fsLocation("us-east5"))
+	if spy.read {
+		t.Fatalf("the database's location was read:\n%s", locationOut)
 	}
 
 	var b strings.Builder
 	b.WriteString("== the place question: fugaro setup's own, asked once (the region question in a person's words, LP4)\n" + region + "\n")
-	b.WriteString("== the Firestore location: the database's own, permanent, and nothing is typed for it\n" + trimTrailingSpaces(locationOut.String()))
+	b.WriteString("== the Firestore location: the database's own, permanent, printed and created with nothing asked (LP10)\n" + trimTrailingSpaces(locationOut.String()))
 
 	path := filepath.Join(wd, "testdata", "region_prompts.golden")
 	if *updateRegionGolden {

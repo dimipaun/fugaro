@@ -1107,6 +1107,19 @@ async function confirmWindow(app: ElectronApplication): Promise<Page> {
   return found
 }
 
+/** drawnField is one row of the window's own field list, read the way the
+ * operator reads it: the value the `<dt>` label names. `null` is a row the
+ * window did not draw at all, which is a different thing from an empty one. */
+function drawnField(confirm: Page, label: string): Promise<string | null> {
+  return confirm.evaluate((wanted) => {
+    const nodes = Array.from(document.getElementById('confirm-fields')?.children ?? [])
+    const at = nodes.findIndex((node) => node.tagName.toLowerCase() === 'dt' && node.textContent === wanted)
+    if (at < 0) return null
+    const value = nodes[at + 1]
+    return value?.tagName.toLowerCase() === 'dd' ? (value.textContent ?? '') : null
+  }, label)
+}
+
 /** shownArgv is the command line the window draws: the `Command` row's own
  * values, field by field and in order -- which is the argv and not a summary of
  * it, and therefore the thing this spec compares the stub's record against. */
@@ -1229,10 +1242,16 @@ test.describe('the Projects view in the dashboard', () => {
   let cli: CliStub
   let scratch: string
   let spawnLog: string
+  // The installation's checkout, which is the directory a `repo`-layer settings
+  // edit names (`--repo`, RC80 L12). Seeded because the line the window draws
+  // has to be readable: without one the console passes its own private working
+  // directory, which is a path no case here can spell.
+  let checkout: string
 
   test.beforeAll(async () => {
     cli = inRangeCliStub()
     cli.seedActiveInstallation()
+    checkout = cli.seedActiveCheckout()
     // The one document this view reads, handed to the stub the way the Spend
     // specs hand it their own: the stub answers `budget show --json` with
     // `spend-budget.json`, and refuses the read when no document is seeded.
@@ -1342,7 +1361,10 @@ test.describe('the Projects view in the dashboard', () => {
       },
       { button: tab('projects'), body: THE_BODY },
     )
-    expect(inTheFrame).toEqual({
+    // Cold, the frame is the marked skeleton. When the prewarm queue (PW1) read
+    // this tab first, it is the stamped view that read cached: a header and no
+    // mark.
+    const cold = {
       mounted: true,
       busy: 'true',
       marked: true,
@@ -1351,7 +1373,9 @@ test.describe('the Projects view in the dashboard', () => {
       skeleton: true,
       header: false,
       jobs: 0,
-    })
+    }
+    const warm = { ...cold, busy: null, marked: false, label: null, spinner: false, skeleton: false, header: true }
+    expect([cold, warm]).toContainEqual(inTheFrame)
 
     // Then the content, drawn from the document the stub answered with.
     await expect(page.locator(`${THE_PROJECTS} h1.projects-project`)).toHaveText('example-project')
@@ -1369,14 +1393,18 @@ test.describe('the Projects view in the dashboard', () => {
     // And the reads behind that drawing: `budget show` and `models ls`, the two
     // commands this tab's two sections name, and **no `runs` read at all**
     // since this view was opened.
+    // Both reads may predate this visit: a prewarmed tab read them from the
+    // queue, so they are looked for in the whole log, and only `runs` is held
+    // to what this view's own visit asked.
+    const everything = readsOf(spawnLog).map((record) => record.argv.slice(1))
     const asked = readsOf(spawnLog)
       .slice(before)
       .map((record) => record.argv.slice(1))
-    expect(asked).toContainEqual(['budget', 'show', '--json', '--project', 'e2e'])
+    expect(everything).toContainEqual(['budget', 'show', '--json', '--project', 'e2e'])
     // The models read is the group's one reachable word and takes no argument
     // of its own: the argv is the command, the row's `--json` and the
     // installation's `--project`, and nothing a renderer chose.
-    expect(asked).toContainEqual(['models', 'ls', '--json', '--project', 'e2e'])
+    expect(everything).toContainEqual(['models', 'ls', '--json', '--project', 'e2e'])
     expect(asked.filter((argv) => argv[0] === 'runs')).toEqual([])
   })
 
@@ -1478,8 +1506,14 @@ test.describe('the Projects view in the dashboard', () => {
     await expect(confirm.locator(`#${TICK_ID}`)).toHaveCount(0)
 
     const shown = await shownArgv(confirm)
+    // **The file the edit writes, drawn from the plan** (RC80, L12): the row is
+    // the window's own and names the checkout this installation records, which
+    // is the console's own directory and not a word the renderer sent. The
+    // argv's `--repo` below carries the same value, because both are read from
+    // the one plan (D1105).
+    expect(await drawnField(confirm, 'Target')).toBe(`writes fugaro.yaml in ${checkout}`)
     expect(shown.slice(1)).toEqual([
-      'settings', 'set', SETTINGS_KEY, '--layer', 'repo', '--project', 'e2e', '--', '3',
+      'settings', 'set', SETTINGS_KEY, '--layer', 'repo', '--repo', checkout, '--project', 'e2e', '--', '3',
     ])
     await pressWhenReady(confirm, SAVE_LABEL)
 
@@ -1490,7 +1524,7 @@ test.describe('the Projects view in the dashboard', () => {
     // carries `--dry-run --json`; the write's carries no phase flag at all
     // (D1107).
     const dryLine = [
-      shown[0], 'settings', 'set', SETTINGS_KEY, '--layer', 'repo', '--dry-run', '--json', '--project', 'e2e', '--', '3',
+      shown[0], 'settings', 'set', SETTINGS_KEY, '--layer', 'repo', '--repo', checkout, '--dry-run', '--json', '--project', 'e2e', '--', '3',
     ].join(' ')
     await expect
       .poll(() => stubWrites(cli).length, { message: 'the write never reached the stub' })
@@ -1543,6 +1577,10 @@ test.describe('the Projects view in the dashboard', () => {
     expect(shown.slice(1)).toEqual([
       'settings', 'set', SETTINGS_WIDENING_KEY, '--layer', 'local', '--project', 'e2e', '--', 'true',
     ])
+    // And a layer that writes no repository's file draws no target at all: the
+    // row is the `repo` layer's, and a window that named a checkout for a
+    // `local` edit would be a line about a file this write does not touch.
+    expect(await drawnField(confirm, 'Target')).toBeNull()
     await tick.check()
     await expect(confirm.getByRole('button', { name: SAVE_LABEL })).toBeEnabled()
     const before = stubWrites(cli).length

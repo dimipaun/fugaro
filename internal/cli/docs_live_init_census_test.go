@@ -544,6 +544,11 @@ var censusOutputNames = []string{
 	// records the names of the tests it ran -- the console's test-results/
 	// writes one too.
 	"junit.xml",
+	// .gitignore's /test.json: the JSON stream a traced CI shard tees its
+	// `go test` output to, beside the strace.log the same shard writes (that
+	// one is on censusOutputMarkers, whose `.log` already covers it). Both are
+	// the run's own output rather than repository text.
+	"test.json",
 	// .gitignore's /THIRD_PARTY_NOTICES.md: the licence and notice texts of the
 	// Go modules the released binary links, which scripts/third-party-notices.sh
 	// generates from the module cache when GoReleaser's before hooks run. That
@@ -585,7 +590,9 @@ var censusOutputMarkers = []string{
 	// regenerates.
 	".jpg",
 	// mobile/.gitignore's *.log and .metro-health-check*: the app's own log, and
-	// the health-check file a Metro run leaves at the app's root.
+	// the health-check file a Metro run leaves at the app's root. The root
+	// .gitignore's /strace.log is the third: the read trace a traced CI shard
+	// runs strace into, in the tree root it runs in.
 	".log",
 	".metro-health-check",
 }
@@ -985,11 +992,13 @@ func TestCensusOutputAndExemptArePinned(t *testing.T) {
 		{"testdata/fixture-repo/node_modules/x/index.js", true},
 		{"deploy/terraform/prod/.terraform/providers/x/terraform-provider-google", true},
 		{"deploy/sandbox/junit.xml", true},
+		{"test.json", true},
 		// Every marker on censusOutputMarkers.
 		{"deploy/terraform/prod/terraform.tfstate", true},
 		{"deploy/terraform/prod/terraform.tfstate.backup", true},
 		{"internal/cli/.init.go.swp", true},
 		{"mobile/app.log", true},
+		{"strace.log", true},
 		{"mobile/.metro-health-check.json", true},
 		{"docs/website/redesign/after/home.jpg", true},
 		{"docs/website/redesign/current/home.jpg", true},
@@ -1126,6 +1135,13 @@ var censusIgnored = []struct {
 	// `go test` invocation it runs (fugaro.yaml, internal/verify/gotestjunit):
 	// a run's own output, never source text.
 	{".gitignore", "/reports/", "reports/tree.xml", false, ""},
+	// The traced CI shard's own two outputs, in the tree root it runs `go test`
+	// in: strace's read trace, and the JSON stream `tee` copies the test output
+	// to. Ignored because internal/ciselect indexes the untracked files a
+	// checkout holds, so either one would enter the committed read map and make
+	// it a fact about the machine the scan ran on.
+	{".gitignore", "/strace.log", "strace.log", false, ""},
+	{".gitignore", "/test.json", "test.json", false, ""},
 	{".gitignore", "/deploy/terraform/**/.terraform/", "deploy/terraform/prod/.terraform/providers/registry.terraform.io/hashicorp/google/6.0.0/linux_amd64/terraform-provider-google", false, ""},
 	{".gitignore", "/deploy/terraform/**/*.tfstate", "deploy/terraform/prod/terraform.tfstate", false, ""},
 	{".gitignore", "/deploy/terraform/**/*.tfstate.*", "deploy/terraform/prod/terraform.tfstate.backup", false, ""},

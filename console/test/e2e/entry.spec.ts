@@ -179,6 +179,16 @@ async function launch(
   }
 }
 
+/** PREWARM_READS are the two reads the prewarm queue (PW1) makes of the tabs
+ * a first paint leaves behind. They land whenever the stub answers, so a case
+ * about the reads a tab makes admits them by their whole argv. */
+const PREWARM_READS: readonly string[][] = [
+  ['report', '--json', '--by', 'day', '--since', '7d', '--project', 'e2e'],
+  ['budget', 'show', '--json', '--project', 'e2e'],
+]
+const isPrewarmRead = (argv: readonly string[]): boolean =>
+  PREWARM_READS.some((read) => read.length === argv.length && read.every((word, at) => word === argv[at]))
+
 /** readSpawnLog parses the log at `path`, and answers an empty list when there
  * is no file: unset, unreadable, never written -- the honest answer, and why the
  * specs that need records assert a length. It is read *after* the handshake,
@@ -709,6 +719,7 @@ test.describe('the renderer entry, in the real window', () => {
                 ['version'],
                 ['watch', '--json', '--project', 'e2e'],
                 ['runs', 'ls', '--json', '--since', '24h', '--project', 'e2e'],
+                ...PREWARM_READS,
               ]
         // The watch is written by the entry's *first poll*, which is a message
         // round and a spawn behind the window's `domcontentloaded` -- so a mode
@@ -1020,7 +1031,7 @@ test.describe('the renderer entry, in the real window', () => {
         all.filter((record) => record.argv[1] === 'config').map((record) => record.argv.slice(1)),
         'the rail read the list more than once',
       ).toEqual([['config', 'list', '--json']])
-      const records = all.filter((record) => record.project !== '')
+      const records = all.filter((record) => record.project !== '' && !isPrewarmRead(record.argv.slice(1)))
       const reads = [...new Set(records.map((record) => record.argv[1]))].sort()
       expect(
         reads.filter((read) => read !== 'runs'),

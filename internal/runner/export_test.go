@@ -96,6 +96,12 @@ const PRAttempts = prAttempts
 // MaxCredentialResumes exposes maxCredentialResumes.
 const MaxCredentialResumes = maxCredentialResumes
 
+// SlipClaimAttempts is the bound on one claim's attempts: the first call and
+// the retries slipRetryDelays names (identity_claim.go's claimRetryCall, which
+// the slip's own retry shares the shape of). A test asserts the service sees no
+// more than this, so an unbounded retry is visible.
+var SlipClaimAttempts = len(slipRetryDelays) + 1
+
 // CredentialsServiceURLEnv and MetadataHostEnv are where a cascade run reads
 // its upstream from, exposed so a runner_test run can be pointed at a
 // stand-in the same way a job is pointed at the real service.
@@ -418,4 +424,15 @@ func ResetGatewayStageLimitHook(t *testing.T) {
 	t.Helper()
 	gatewayStageLimitFunc = nil
 	t.Cleanup(func() { gatewayStageLimitFunc = nil })
+}
+
+// SetSecretFileHook makes every file secret of t call f as its value is
+// registered with the redactor and before the file is written: the one moment
+// G3's ordering is observable, since a written file shows the value and not
+// whether the redactor held it first.
+func SetSecretFileHook(t *testing.T, f func(value string, registered bool)) {
+	t.Helper()
+	prev := secretFileHook
+	secretFileHook = f
+	t.Cleanup(func() { secretFileHook = prev })
 }

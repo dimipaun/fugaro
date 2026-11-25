@@ -39,7 +39,7 @@ import { app, BrowserWindow, Menu, ipcMain, protocol, session, shell } from 'ele
 
 import { APP_ENTRY_URL, handleAppRequests, registerAppScheme } from './protocol'
 import { consoleIconPath, installDevDockIcon } from './icon'
-import { installInstallationPicker } from './picker'
+import { addProjectRefusal, createAddProjectRequest, installInstallationPicker } from './picker'
 import type { InstallationPicker } from './picker'
 import {
   createConsoleLifecycle,
@@ -359,13 +359,39 @@ function storedCompatibility(): CliCompatibility {
  * refusal when the file could not be read.
  */
 function installationState(): ActiveInstallation | undefined {
+  // The picker's Add project request rides this read and is **spent** by it
+  // (SW3c, R4): the picker window has no channel to the dashboard, so the only
+  // way its door can reach the screen that shows the wizard is a fact main
+  // holds until the dashboard asks for its installation -- and the dashboard
+  // asks exactly once, at boot, which is the boot the door asked for by
+  // remaking the window. A later read (a reload, a second window) must not
+  // open the wizard again, so the request is taken here and not kept
+  // (`createAddProjectRequest`, whose three rules its own test pins).
+  //
+  // **Which answer it rides is not the door's business**: the first run's answer
+  // carries it too, because the picker draws its row whenever it has
+  // installations to add a project beside and a machine whose projects are all
+  // unchosen is that same console -- the one the rail's own door opens the wizard
+  // on. A request spent on an answer that names no installation is a button that
+  // does nothing, repeatably.
+  const asked = addProject.take()
   const chosen = picker?.installation()
   if (chosen === undefined) return undefined
   // `withResolvedBinary` is where the direction of the join is decided and
   // unit-tested; this file only supplies the two values.
   const resolved = chosen.chosen ? resolvedBinaries.get(chosen.project) : undefined
-  return withResolvedBinary(chosen, resolved)
+  const active = withResolvedBinary(chosen, resolved)
+  return asked ? { ...active, addProject: true } : active
 }
+
+/**
+ * addProject is the picker's Add project door waiting for the window that
+ * answers it (SW3c, R4). The state and the rules are `createAddProjectRequest`'s
+ * (`picker.ts`, where they are unit-tested); what is here is the wiring: the door
+ * records a request, `installationState` above is its only reader, and a choice
+ * of another installation drops one.
+ */
+const addProject = createAddProjectRequest()
 
 /**
  * activeBinding is the installation the source is bound to: the same state, as
@@ -1377,6 +1403,12 @@ async function main(): Promise<void> {
     // The picker awaits this inside its own serial chain (review S6), so a
     // second choose cannot start until the window this one asked for is up.
     onChosen: (chosen) => {
+      // An Add project request the console could not carry out -- a refused
+      // installation is a refusal window and no dashboard, so nothing ever read
+      // the request -- is dropped by the next real choice: the operator asked
+      // for the wizard on the console that was up, and this is a different
+      // console (SW3c).
+      addProject.clear()
       // Rule 11's "re-chosen": a launch names its own installation rather than
       // the active one, so the installation being chosen again is the window
       // that must close. Before `lifecycle.choose`, so the cancel is decided
@@ -1396,6 +1428,32 @@ async function main(): Promise<void> {
       newOperations.cancelFor(chosen.project)
       resolvedBinaries.set(chosen.project, chosen.resolvedBinaryPath)
       return lifecycle.choose(chosen.compatibility).catch(reportAndQuit)
+    },
+    // The picker window's Add project door (SW3c, R4). It opens no child and
+    // writes no record: the wizard is the **dashboard's** screen, so what this
+    // hands over is a window. The flag goes up before `choose`, because the boot
+    // that reads it is the one `choose` is about to cause -- a remade window
+    // reads `installation.current` once, and that read is the door's whole
+    // delivery. The same call a re-choice makes, with the answer the console
+    // already holds: nothing about which installation is active changes, and the
+    // operator is put back on the console with the wizard in its main area.
+    onAddProject: () => {
+      // **A console with no dashboard refuses, and holds nothing.** Neither a
+      // handshake still in flight (`current` is null: `storedCompatibility`
+      // would throw, and the throw would come after the flag went up) nor a
+      // refused one has a dashboard for the wizard to be drawn in -- the refusal
+      // window registers no `installation.current` read at all, so a flag set
+      // here would be spent by whatever reads next, and the row would answer
+      // `ok` for a door that opened nothing, repeatably.
+      const refusal = addProjectRefusal(current)
+      if (refusal !== undefined) return refusal
+      // A request already waiting for the window it asked for is not asked a
+      // second time: a second `choose` remakes the window the first one opened,
+      // and which of the two boots spends the flag is a race the operator would
+      // see as a console that flashed and came up on Live.
+      if (!addProject.please()) return undefined
+      void lifecycle.choose(storedCompatibility()).catch(reportAndQuit)
+      return undefined
     },
     // A removal that took the active installation drops the bound source (Task
     // 3.4c; the seam 3.4b left for it). Without this the surface would keep
