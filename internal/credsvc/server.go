@@ -2258,14 +2258,16 @@ type slipBinding struct {
 	// pool for exactly the runs the pool is for — a project run's call is the
 	// installation reader's.
 	//
-	// It travels with the record's GRANT and not with the record: a slip that
-	// covers no source of the new kinds is a run nothing granted, and is read
-	// that way (verifyCallSlip is where that shape is written down).
+	// It travels with EVERY record either reader verifies, the one whose grant
+	// covers nothing among them: the empty grant is the release-behind launcher,
+	// and the walk answers it from the old record rather than from the table
+	// (chain.go's chainFor), so a binding that left the record out would move
+	// that run.
 	//
 	// A binding with no record is therefore not "this call was not admitted
-	// under a slip". It is the fail-closed direction of the gate, which that
-	// shape reads as well: planSource resolves no pool for one, and grantOf
-	// answers "a run nothing granted".
+	// under a slip". It is the fail-closed direction of the gate — planSource
+	// resolves no pool for one, and grantOf answers "a run nothing granted" —
+	// which no reader produces today.
 	slip *creds.Slip
 	// secret is the claim secret the call presented. It is held for ONE thing:
 	// registering it with the call's scrub (callScrubs), so a value the run
@@ -2430,24 +2432,15 @@ func (s *Server) verifyCallSlip(ctx context.Context, r *http.Request, id Identit
 		// re-read from the record once the window has passed.
 		s.slips.put(slipID, sl, now)
 	}
-	// The record travels with the binding only when it carries a grant, and the
-	// walk reads the run's launcher and its grant off it (chain.go) — this is
-	// the reader every PROJECT run's call is admitted by, so without it no
-	// project run could be served from its launcher's pool at all
-	// (D3179-amended, F51, R7).
-	//
-	// A grant that covers no source of the new kinds is a launcher that is a
-	// release behind the table, whose run is in flight across the update that
-	// published it. It is read as a run nothing granted — the sources its repository is
-	// admitted to and no launcher's pool (CS14) — because the record's own
-	// reader would send that call to the release-1 bridge instead, which refuses
-	// rather than serve (chain.go's chainFor), and the update may not stop a
-	// run. Nothing is lost by it: a launcher's pool is a source the grant must
-	// COVER to be served at all, so a grant naming no source resolves no pool,
-	// whatever the record holds.
-	if len(sl.Sources) == 0 {
-		return &slipBinding{id: slipID, owner: sl.Owner, allowed: slices.Clone(sl.Allowed), secret: secret}, nil
-	}
+	// The record travels with the binding: the walk reads the run's launcher and
+	// its grant off it (chain.go), and this is the reader every PROJECT run's
+	// call is admitted by — so without it no project run could be served from
+	// its launcher's pool at all (D3179-amended, F51, R7). It travels for a slip
+	// that covers no source of the new kinds as well, and the empty grant is
+	// what the walk reads as the release-behind launcher: an empty list is never
+	// a grant that covers everything (CS14, contract-pools.md), so the call is
+	// answered from the repository's OLD record (chain.go's chainFor), which is
+	// that run's own reach and not the table's.
 	record := sl
 	return &slipBinding{id: slipID, owner: sl.Owner, allowed: slices.Clone(sl.Allowed), secret: secret, slip: &record}, nil
 }

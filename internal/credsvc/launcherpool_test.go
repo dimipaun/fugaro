@@ -498,26 +498,41 @@ func TestARealSlipsCallReachesTheLauncherPool(t *testing.T) {
 	}
 }
 
-// TestALaunchWithNoGrantIsServedAfterTheUpdate is the other half of the binding
-// above, and the shape the installation's reader must tell apart from it: a
-// launcher that names no source — the grant body an older CLI sends, and the one
-// a launch before the installation published its table sends — is a slip that
-// covers nothing, and CS14's own rule is that a launcher which knows nothing of
-// the table is served the sources its repository is admitted to and no
-// launcher's pool: the chain's launcher-pool source is not covered and is never
-// served, and the repository's own key behind it is.
+// TestAReleaseBehindLaunchersCallIsServedFromTheOldRecord is the other half of
+// the binding above: a launcher that names no source — the grant body an older
+// CLI sends, and the one a launch before the installation published its table
+// sends — is a slip whose grant covers no source of the new kinds, and CS14 is
+// explicit that an empty list is "what a release-behind launcher asks for — and
+// never a grant that covers everything" (contract-pools.md). So the call is NOT
+// served from the table: the walk sends it to the release-1 bridge, and the
+// bridge answers the sources the repository's OLD record stands for
+// (creds/repoauth/<slug>, which `fugaro update` keeps writing beside the table
+// for release 1) — that run's own reach, and the entries D3196 leaves on the
+// record among them.
+//
+// The bridge here is the one a deployment assigns (internal/cli's own
+// assignment, NewLegacyAuth over this fixture's database), not a fake, and the
+// record is written through creds' writer: what the walk reads is a record a
+// release behind really left. The record's source is a pool the TABLE does not
+// name at all — an `oauth` record's account is a pool of one (D3176) — so a call
+// served by the table's own chain could not answer this test: the table would
+// serve the launcher's pool or the repository's key, and only the record answers
+// the account's pool.
 //
 // The call goes through ServeHTTP for the reason the test above does: what is
-// under test is the binding verifyCallSlip really builds. Carrying the record
-// for this slip would send the call to the release-1 bridge, whose stub answers
-// "no record" and refuses it 503 (chain.go's chainFor) — and this is the run the
-// hard rule is about: it is in flight across the very update that published the
-// table, and an update may not stop it (CLAUDE.md). The designation is written
-// anyway, so that a service reading the record for this slip could not pass this
-// test on a pool that was never there.
-func TestALaunchWithNoGrantIsServedAfterTheUpdate(t *testing.T) {
-	s := newLauncherPools(t, true, lpPools()...)
-	s.designates(t, lpLauncher(), testProject, lpOwnPool)
+// under test is the binding verifyCallSlip really builds, and a reader that left
+// the record out would serve this run from the table instead — the migration
+// would move a run it promises not to move.
+func TestAReleaseBehindLaunchersCallIsServedFromTheOldRecord(t *testing.T) {
+	s := newLauncherPools(t, true, append(lpPools(),
+		lpPool(testAccount, testPoolOwner, lpPoolPrincipal(routing.PrincipalProject, testProject), testPoolCredential))...)
+
+	client := legacyClient(t, s.db)
+	prev := LegacyChain
+	LegacyChain = NewLegacyAuth(client, RTDBPolicy{DB: client})
+	t.Cleanup(func() { LegacyChain = prev })
+	legacyPolicyNode(t, s.db, "")
+	legacyRecord(t, s.db, s.slug, config.AuthOAuth, testAccount)
 
 	granted := s.lpGrant(t, legacyGrantBody(t, s.slug, s.run, testJobSA, 3600))
 	if granted.Slip == "" {
@@ -525,37 +540,32 @@ func TestALaunchWithNoGrantIsServedAfterTheUpdate(t *testing.T) {
 	}
 	claimSecret := s.lpClaim(t, granted.Slip)
 
-	resp, body := s.call(t, callBody("no-grant"), func(r *http.Request) {
+	resp, body := s.call(t, callBody("release-behind"), func(r *http.Request) {
 		r.Header.Set(HeaderSlip, granted.Slip)
 		r.Header.Set(HeaderSlipClaim, claimSecret)
 		r.Header.Set(HeaderStage, "coder")
 	})
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("a launcher that sent no sources is %d, want 200: the run is in flight across the update that "+
-			"published the table, and the update may not stop it: %s", resp.StatusCode, body)
+		t.Fatalf("the run's call is %d, want 200: %s", resp.StatusCode, body)
 	}
 	var name routing.SourceName
 	if err := json.Unmarshal([]byte(resp.Header.Get(HeaderSource)), &name); err != nil {
 		t.Fatalf("the answer's source member %q is not a routing.SourceName: %v", resp.Header.Get(HeaderSource), err)
 	}
-	if name.Kind != routing.KindAnthropic {
-		t.Errorf("the call was served from %+v, want the repository's own key: a grant that covers no source is a run "+
-			"nothing granted, so the chain's launcher-pool source is not covered and the key behind it serves (CS14)",
-			name)
+	if name.Kind != routing.KindPool || name.Name != testAccount {
+		t.Errorf("the call was served from %+v, want the record's own account %q as its pool of one: a grant that "+
+			"covers no source is the release-behind launcher, and its call is answered from the old record's sources "+
+			"and never the table's (CS14, MG3)", name, testAccount)
 	}
-	// The chain's own first source is the launcher's pool, so a call served by
-	// the key behind it fell back — and it is the answer the runner flags and
-	// counts (C1), one source earlier than a run with no slip at all.
-	if got := resp.Header.Get(HeaderFallback); got != FallbackYes {
-		t.Errorf("the answer says fallback=%q, want %q: the call was served by the chain's SECOND source",
-			got, FallbackYes)
+	if got := resp.Header.Get(HeaderFallback); got != FallbackNo {
+		t.Errorf("the answer says fallback=%q, want %q: the record names one source and it served", got, FallbackNo)
 	}
 	sent := s.up.Seen()
 	if len(sent) != 1 {
 		t.Fatalf("the upstream saw %d calls, want exactly 1", len(sent))
 	}
-	if got := sent[0].Header.Get("x-api-key"); !strings.Contains(got, fakeCred(t, "repo-key")) {
-		t.Errorf("the upstream was sent the key %q, want the repository's own", got)
+	if auth := sent[0].Header.Get("Authorization"); auth != "Bearer "+fakeCred(t, testPoolCredential) {
+		t.Errorf("the upstream was sent the credential %q, want the record's own account's pool member", auth)
 	}
 }
 
