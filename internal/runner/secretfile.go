@@ -102,6 +102,14 @@ func (r *run) exposeSecretFiles(declared []config.Secret) error {
 			// would say the same thing twice.
 			continue
 		}
+		if len(value) < minSecretLen {
+			// agent.BuildEnv's floor, in its own words: a file secret is the
+			// environment secret it stands in for (F19), so the same
+			// declaration without `file: true` stops the run here, and a mount
+			// must not be a way around it -- the value is refused before it is
+			// registered or written, not after.
+			return fmt.Errorf("secret %s is shorter than %d bytes, so it cannot be redacted safely", s.Env, minSecretLen)
+		}
 		path, err := r.writeSecretFile(s.Env, value)
 		if err != nil {
 			return fmt.Errorf("exposing workflow secret %s as a file: %w", s.Name, err)

@@ -156,6 +156,38 @@ func TestSecretFileRedactedBeforeWrite(t *testing.T) {
 	}
 }
 
+// TestFileSecretKeepsTheShortValueRefusal: a file secret is the environment
+// secret it stands in for (F19), so the floor under a value a run may redact is
+// the same one -- a 3-byte value is refused at bootstrap whether or not the
+// declaration says `file: true`, and the file exposure is no way around it. A
+// mounted value is the case that reaches here: the fetch refuses a short answer
+// of the service's on its own (workflowsecrets.go).
+//
+// Hand mutation this fails on: skipping the floor for a file secret (the run
+// reaches its stages and writes the value to a file the declaration was never
+// allowed to hold).
+func TestFileSecretKeepsTheShortValueRefusal(t *testing.T) {
+	tmp := secretFileTempDir(t)
+	svc := &secretsService{}
+	b := fileSecretsRun(t, "  first_line_review: off\n", nil, svc)
+	// The job mounts a value too short to redact safely under the variable the
+	// file secret's declaration names; nothing is fetched, because a mounted
+	// value wins (F7).
+	b.deps.Env = append(b.deps.Env, secretEnvVar+"="+shortSecretValue)
+
+	rec, err := b.run(t, implement("feature"), review("ship", 0))
+	want := fmt.Sprintf("secret %s is shorter than %d bytes, so it cannot be redacted safely", secretEnvVar, minFetchedSecretLen)
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %v, want the refusal the same declaration without `file: true` meets (rec = %s)", err, rec.Status)
+	}
+	if len(b.agent.calls) != 0 {
+		t.Errorf("the agent was called %d times, want none: the run stopped at bootstrap", len(b.agent.calls))
+	}
+	if roots := secretRoots(t, tmp); len(roots) != 0 {
+		t.Errorf("a value that cannot be redacted safely was written to a file anyway: %v", roots)
+	}
+}
+
 // TestTwoFileSecretsSharingANameGetTheirOwnFile: a workflow may declare the
 // same logical secret twice, under two variables (config's Validate refuses a
 // repeated env and no other repetition), and both entries may be exposed as
