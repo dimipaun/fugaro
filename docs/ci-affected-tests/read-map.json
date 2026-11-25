@@ -8298,6 +8298,7 @@
         "plugin/skills/working/reference/troubleshoot.md",
         "plugin/skills_lint_test.go",
         "plugin/testdata/repos/hostile/repo/**",
+        "schemas/accounts-pool-ls.schema.json",
         "schemas/escalation.schema.json",
         "schemas/fugaro.schema.json",
         "schemas/image-add-plan.schema.json",
