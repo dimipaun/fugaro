@@ -82,7 +82,7 @@ func vertexSecretsRun(t *testing.T, svc *secretsService) *bk {
 // run, the fetch stops at `this run has no run identity` before any stage, and
 // every assertion below fails on a run that never reached its first one.
 func TestVertexRunHasRunIdentity(t *testing.T) {
-	svc := &secretsService{envs: map[string]string{secretEnvVar: fetchedSecretValue}}
+	svc := &secretsService{names: map[string]string{secretName: fetchedSecretValue}}
 	b := vertexSecretsRun(t, svc)
 
 	var seen string
@@ -97,8 +97,11 @@ func TestVertexRunHasRunIdentity(t *testing.T) {
 		t.Errorf("the agent's environment carries %s=%q, want the value the service answered: a vertex run's workflow secrets arrive through the fetch like any other's, and a value that never arrived is a run that stopped before its first stage", secretEnvVar, seen)
 	}
 	calls := svc.callsOf()
-	if len(calls) != 1 || calls[0].env != secretEnvVar {
-		t.Fatalf("the service was asked for %v, want exactly [%s]: the fetch is the one caller a vertex repository's address exists for (D3326, F17)", svc.asked(), secretEnvVar)
+	if got := svc.askedNames(); len(got) != 1 || got[0] != secretName {
+		t.Fatalf("the service was asked for %v, want exactly [%s]: the fetch is the one caller a vertex repository's address exists for (D3326, F17), and it asks the contract's version-2 question like every repository's (D3325)", got, secretName)
+	}
+	if want := `{"name":"` + secretName + `","version":2}`; calls[0].body != want {
+		t.Errorf("the call carried %q, want the contract's version-2 body for %s", calls[0].body, secretName)
 	}
 	if got := calls[0].header.Get(gateway.HeaderRunIdentity); got == "" {
 		t.Error("the call presents no run identity: a vertex run of a repository the launcher handed the address must hold the budget session's identity, which is what the service verifies the run by and what this run's fetch refuses without (U1)")
