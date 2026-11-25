@@ -1175,13 +1175,20 @@ export const CONSOLE_OPERATIONS = [
   // path"). `argvFor` builds every word of the argv from the spawn table, and no
   // row can emit `--dir` for this command.
   //
-  // **`all` and nothing else.** `--all` is the screen's own control: it lists
-  // the closed tasks (merged and cancelled) that the read otherwise counts per
-  // release. It is a boolean and never a string, so a payload cannot spell a
-  // flag with it, and the cloud flags (`--project`, `--config`) are the
-  // installation's, exactly as `runs ls` carries them -- never `--gcp-project`
-  // or `--region`, which are no part of this surface. There is no positional
-  // argument: `newPlanStatusCmd` is cobra's `NoArgs`.
+  // **`all` and `noMerges`, and nothing else.** `--all` is the screen's own
+  // control: it lists the closed tasks (merged and cancelled) that the read
+  // otherwise counts per release. `--no-merges` is the Graph tab's first paint
+  // (IR4 of the console-fixes plan, D3217 as amended): the read spawns no `gh`
+  // and answers `merges_read: false`, so the canvas does not wait for up to
+  // thirty-two forge lookups -- and it is held behind
+  // `PLAN_STATUS_NO_MERGES_CLI_FLOOR` (`src/shared/version.ts`), which no
+  // release names yet, so the source refuses the argument below it rather than
+  // handing an older CLI a flag it answers `unknown flag` for. Both are
+  // booleans and never strings, so a payload cannot spell a flag with either,
+  // and the cloud flags (`--project`, `--config`) are the installation's,
+  // exactly as `runs ls` carries them -- never `--gcp-project` or `--region`,
+  // which are no part of this surface. There is no positional argument:
+  // `newPlanStatusCmd` is cobra's `NoArgs`.
   {
     name: 'plan.status',
     method: 'planStatus',
@@ -1193,7 +1200,13 @@ export const CONSOLE_OPERATIONS = [
         key: 'all',
         kind: 'flag',
         required: false,
-        why: '`newPlanStatusCmd` has this flag, and it is the screen’s own control: it lists the tasks the read otherwise counts per release, which is narrower than the count the screen already has. It is the one argument this operation declares, and the design’s §5.1 table has not carried a row for the command yet.',
+        why: '`newPlanStatusCmd` has this flag, and it is the screen’s own control: it lists the tasks the read otherwise counts per release, which is narrower than the count the screen already has. The design’s §5.1 table has carried a row for the command since IR4.',
+      },
+      {
+        key: 'noMerges',
+        kind: 'flag',
+        required: false,
+        why: '`newPlanStatusCmd` has this flag (IR2 of the indexed-reads plan), and the Graph tab’s first paint is its one caller: the canvas is drawn from the read that spawns no `gh`, and the plain read follows as its own section to decorate the merged nodes. Below `PLAN_STATUS_NO_MERGES_CLI_FLOOR` the argument reaches no child at all.',
       },
     ],
   },
@@ -5158,49 +5171,19 @@ export interface IpcMainLike {
  * verbatim -- and a generic one otherwise, so a thrown non-Error cannot put an
  * object on the wire.
  *
- * "Bounded" is meant literally, and it is the three things `boundReason` does: a
+ * "Bounded" is meant literally, and it is the two things `boundReason` does: a
  * message is flattened to one line (a CLI sentence is one line; a message with
  * newlines in it is either a stack or something written to look like the
- * console's own output), its absolute paths are replaced (the CLI's refusals
- * name flags and values, never the machine's directories, and a path in a
- * refusal is a path a screen would print), and it is cut at
- * `MAX_REPLY_REASON_LENGTH`. The CLI's own sentences are short enough that none
- * of the three touches them; a hostile message hits all three.
+ * console's own output), and it is cut at `MAX_REPLY_REASON_LENGTH`. A path is
+ * **not** one of them: the CLI's refusals name flags, values and the operator's
+ * own directories, so a path in a refusal is a path a screen would print, and
+ * D3213 (2026-11-21) leaves it as written -- the renderer's `sanitizeRefusal` is
+ * what masks a secret, wherever one stands. The CLI's own sentences are short
+ * enough that neither of the two touches them; a hostile message hits both.
  */
 function replyReason(error: unknown): string {
   if (error instanceof Error && error.message !== '') return boundReason(error.message)
   return 'the operation failed'
-}
-
-/**
- * ABSOLUTE_PATH_RE matches an absolute path in a message: a POSIX one (`/etc`,
- * `/home/me/x`), a home-relative one (`~/x`), or a Windows one with a drive
- * letter or a UNC prefix. It is anchored on a separator that cannot be part of
- * a word -- the start of the message, whitespace, a quote, a backtick, an
- * opening bracket, `=`, `,`, `;` or `:` -- so a flag like `--repo owner/name`
- * keeps its slash, and it stops at the first character that closes a path in a
- * sentence: whitespace, a quote, a backtick, `)`, `]` or `>`.
- *
- * A colon *is* an anchor, because Go's own wrapped errors put a path straight
- * after one (`open:/Users/me/.config/...`), and so is a drive letter after one
- * (`dir:C:\Users\me`). What keeps a URL from being cut at its `//` -- which
- * would turn `https://x/y` into `https:<path>`, a corrupted sentence rather than
- * a redaction -- is the first alternative: a `scheme://` URL is matched whole,
- * first, and kept, except a `file://` one, which *is* a path and is replaced
- * whole. `replacePath` is the replacer that makes that choice. The scheme is
- * bounded and must start a word, so a long run of letters is scanned once
- * rather than once per position.
- */
-const ABSOLUTE_PATH_RE =
-  /((?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\/[^\s'"`)\]>]*)|(^|[\s'"`([<{=,;:])(?:~[\\/]|[A-Za-z]:[\\/]|\\\\|\/)[^\s'"`)\]>]*/g
-
-/** PATH_PLACEHOLDER is what an absolute path in a message becomes. It names
- * *that* a path was there, which is what a reader needs, and not which one. */
-const PATH_PLACEHOLDER = '<path>'
-
-function replacePath(_match: string, url: string | undefined, anchor: string | undefined): string {
-  if (url !== undefined) return /^file:/i.test(url) ? PATH_PLACEHOLDER : url
-  return `${anchor ?? ''}${PATH_PLACEHOLDER}`
 }
 
 /** INVISIBLE_RE is the shared set of invisible characters
@@ -5218,10 +5201,10 @@ const LONE_SURROGATE_RE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff
 /**
  * boundReason is the one place a handler-authored message is made safe to put in
  * front of a user: control characters out, invisible format characters out,
- * half-characters replaced, absolute paths out, one line, and a hard length cut
- * on a character boundary. It never returns an empty string -- a refusal with
- * no text is a screen with nothing to draw -- and it never echoes more of the
- * message than the bound allows.
+ * half-characters replaced, one line, and a hard length cut on a character
+ * boundary. It never returns an empty string -- a refusal with no text is a
+ * screen with nothing to draw -- and it never echoes more of the message than
+ * the bound allows.
  */
 function boundReason(message: string): string {
   // Every pass below is linear, and the input is first cut to a few times the
@@ -5235,16 +5218,15 @@ function boundReason(message: string): string {
     .replace(/\s+/g, ' ')
     .trim()
   if (flattened === '') return 'the operation failed'
-  const redacted = flattened.replace(ABSOLUTE_PATH_RE, replacePath)
-  if (redacted.length <= MAX_REPLY_REASON_LENGTH) return redacted
+  if (flattened.length <= MAX_REPLY_REASON_LENGTH) return flattened
   // The cut is marked, so a reader can tell a truncated sentence from a whole
   // one rather than wondering what the CLI meant to say. It is in UTF-16 code
   // units, like the bound, and it steps back one when it would land between
   // the two halves of a surrogate pair: half an emoji is not text.
   let cut = MAX_REPLY_REASON_LENGTH - 1
-  const last = redacted.charCodeAt(cut - 1)
+  const last = flattened.charCodeAt(cut - 1)
   if (last >= 0xd800 && last <= 0xdbff) cut -= 1
-  return `${redacted.slice(0, cut).trimEnd()}…`
+  return `${flattened.slice(0, cut).trimEnd()}…`
 }
 
 /**

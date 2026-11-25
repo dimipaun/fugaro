@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/routing"
 )
 
 func sharedObjectPath(dir string) string {
@@ -210,7 +211,7 @@ func TestInitPublishFailureWarnsAndSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a publish failure must not fail init: %v", err)
 	}
-	if !strings.Contains(out, "warning: could not publish the shared config: ") || !strings.Contains(out, "teammates will need fugaro setup until it is published") {
+	if !strings.Contains(out, "Warning: could not publish the shared config: ") || !strings.Contains(out, "teammates will need fugaro setup until it is published") {
 		t.Errorf("no warning:\n%s", out)
 	}
 }
@@ -1070,6 +1071,41 @@ func TestSharedConfigRefusesCloneURLs(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %q: %v", want, err)
 		}
+	}
+}
+
+// TestSharedConfigRefusesModelRouting: the routing table names which credential
+// serves which model, and by which admissions, so it is local-only the way the
+// pools and crafts are (RT2 of docs/model-credentials-routing/, D3182, F12): a
+// launcher who could write it into the runs bucket's shared file would be
+// aiming every teammate's calls at a credential and admissions the owner never
+// granted. The table travels to the policy node instead, which the runner reads
+// and fails closed on, and localcfg.Config.Shared nils it — so the reader
+// refuses the key by name before the file is parsed and again on the decoded
+// value, the way review_floor and the catalog are refused.
+func TestSharedConfigRefusesModelRouting(t *testing.T) {
+	if !slices.Contains(sharedForbidden, "model_routing") {
+		t.Fatal("sharedForbidden does not name model_routing, so a published table would be read")
+	}
+	block := "model_routing:\n  - match: claude-*\n    chain:\n      - kind: vertex\n"
+	_, err := ParseShared([]byte(validShared()+block), sharedAnchor)
+	if err == nil {
+		t.Fatal("a published shared config carrying model_routing: was accepted")
+	}
+	for _, want := range []string{"model_routing", "never published", "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	// The decoded half, which no document reaches (the key is refused before
+	// Parse): a config built another way must not publish a table the converge
+	// never writes. The control beside it keeps the arm from being replaced by
+	// a predicate that refuses everything.
+	if !sharedNeverPublished(&localcfg.Config{ModelRouting: routing.Table{{Match: "claude-*", Chain: []routing.Source{{Kind: routing.KindVertex}}}}}) {
+		t.Error("only the routing table is set, and the config is called publishable")
+	}
+	if sharedNeverPublished(&localcfg.Config{}) {
+		t.Error("a config carrying no section at all is called unpublishable, so the check is not the sections it names")
 	}
 }
 

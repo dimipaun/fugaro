@@ -10,7 +10,7 @@
 //
 // **Every sentence in "The software" is held to the thing that makes it true, never to a copy of
 // itself.** That is the whole rule of this file: a sentence and a fact, so that the fact moving
-// is the sentence failing. Nine rules, one function each, each with a case below that plants a
+// is the sentence failing. Ten rules, one function each, each with a case below that plants a
 // defect and watches the named refusal come back:
 //
 //   1. **The two parts.** The page carries "The website" and "The software" as its two `h2`s, in
@@ -18,22 +18,25 @@
 //      first, which is the shape that would tuck the store reviewer's half inside the site's
 //      (`partFailures`).
 //   2. **The app's reporting, and the page and the package agreeing about it.** The app reports
-//      crashes through Firebase Crashlytics and anonymous usage through Firebase Analytics, to a
-//      Firebase project the Fugaro project operates (the owner's ruling of 2026-10-19), and this
+//      crashes through Firebase Crashlytics, to a
+//      Firebase project the Fugaro project operates (the owner's ruling of 2026-10-19, whose
+//      always-on half the ruling of 2026-10-30 supersedes — D731 drops Firebase Analytics from the
+//      app, and T3.1 of `docs/review-levels-ab-jobmax/` took it out of the manifest, the config and
+//      this page), and this
 //      rule holds the page and the
 //      repository to each other in both directions: a telemetry package the app's dependency list
 //      declares and the page does not name is refused, and the page naming a product that neither
 //      the telemetry plan nor the dependency carries is refused unless it says which version of
 //      the app carries the reports (`telemetryFailures`). The sentences a reader is owed are
-//      listed rather than trusted — what is sent, what is never sent, the app versions that
-//      carry the reports having no switch to turn them off, and what a reader can do instead,
+//      listed rather than trusted — what is sent, what is never sent, the project's own published
+//      switch with nothing sent before the app has read it, and what a reader can do instead,
 //      Google as the holder, and Google's own policy linked rather than restated. One of them
 //      is read as its SENTENCE rather than as its phrase: the clause naming the two other
 //      tools, because that phrase is true of the website too — so the sentence saying the
 //      website carries none of the reports, the page contradicting its own first half, is
 //      refused rather than passing on the phrase. Everything
 //      else that collects is still refused, by name, over the whole of `mobile/`: the page
-//      names two reporters, so a third one would be a flow nobody was told
+//      names its one reporter, so a second one would be a flow nobody was told
 //      about (`collectingFailures`). The names are listed rather than asked for by pattern,
 //      because a pattern that tried to recognise an analytics SDK would be a pattern that misses
 //      the next one. The section a reader deletes an app to find is held too, and held on its
@@ -107,6 +110,16 @@
 //      data (the design's section 7.3), which the card names. The card and its sources are held to
 //      each other in both directions: a card sentence the sources stopped making is refused, and a
 //      source obligation the card stopped stating is refused with it (`keySignupFailures`).
+//  10. **Push notifications, and the design's §9.** A paired phone can be notified when something
+//      needs its owner, and the card states what that costs rather than leaving it to be guessed:
+//      the app registers a token with the publisher's relay (Q7), a notification Fugaro sends
+//      carries a category and nothing else, the app resolves the detail from its own authenticated
+//      mailbox so a notification is never the source of truth, a forged push is not covered, quiet
+//      hours store one zone name (Q5), and retention is the pairing's (Q10). The design
+//      `docs/mobile/design/push-notifications.md` is the source — §9 is the statement's own
+//      requirements list — the sender `internal/cli/push.go` (Task P5.2.6) and the receipt
+//      `mobile/src/push/` (Task P5.2.9) are what it describes, and the page and the design are held
+//      to each other in both directions (`pushFailures`).
 //
 // It reads the built artifact and the repository's sources, standard library only, no network
 // (Global Constraint 4). The built half comes from `dist/`; `FUGARO_GATES_DIST` points it
@@ -219,24 +232,48 @@ function depthOf(el) {
 
 // ---- 2. the app's reporting, and the page and the package agreeing about it ---------------
 //
-// The app reports crashes and usage through Firebase Crashlytics and Firebase Analytics, to a
+// The app reports crashes through Firebase Crashlytics, to a
 // Firebase project the Fugaro project operates (the owner's ruling of 2026-10-19, which names
 // no decision number: the ruling is the authority here, not a number, and the repository's own
 // allocation records D193 onward as free — docs/coordinator/README.md — so a number cited for
-// it would be a number nobody gave). The
+// it would be a number nobody gave). **The owner's ruling of 2026-10-30 (D731) supersedes that
+// ruling's always-on half**: crash reports are on by default and opt-out, and Firebase Analytics
+// is dropped from the app, which T3.1 of `docs/review-levels-ab-jobmax/` carried out — so the
+// Analytics package left `mobile/package.json`, the page stopped naming a usage report, and
+// this list is one entry where it was two. The
 // page says so, and this section holds the page and the repository to each other in BOTH
 // directions: a package in the app's dependency list that the page does not name is a page
 // that stopped disclosing something the app does, and a page that names one of these products
 // when neither the plan nor the dependency carries it is a page claiming something the
 // repository does not hold.
 //
-// The two packages, each with the product name a reader is owed. They are named rather than
+// The package the app carries, with the product name a reader is owed. It is named rather than
 // matched by pattern, because a pattern that recognised "a Firebase analytics package" would
 // be a pattern that misses the next one — which is exactly what the refused list below is for.
 export const APP_TELEMETRY = Object.freeze([
   { pkg: '@react-native-firebase/crashlytics', product: 'Firebase Crashlytics' },
-  { pkg: '@react-native-firebase/analytics', product: 'Firebase Analytics' },
 ])
+
+// The package D731 removed, kept named here so direction A can still refuse it: a page and a
+// manifest have to agree in both directions, and "the app ships it again" is the way this
+// direction goes wrong next. It is deliberately NOT in `APP_TELEMETRY` — a list of what the app
+// carries — because the point of the plant is that the app does not carry it.
+const REMOVED_REPORTER = Object.freeze({
+  pkg: '@react-native-firebase/analytics',
+  product: 'Firebase Analytics',
+})
+
+/**
+ * Every reporter package this gate has a product name for: the one the app carries, and the one
+ * D731 took out.
+ *
+ * **Direction A reads this list, and direction B reads `APP_TELEMETRY`.** That asymmetry is the
+ * point: a manifest declaring a package on this list has to have its product named on the page,
+ * so a reporter coming back is refused here rather than passing because the page's own list no
+ * longer remembers it — while the page may not name a product the app does not carry, which is
+ * direction B, and that is a claim about what the app carries today.
+ */
+export const REPORTER_PACKAGES = Object.freeze([...APP_TELEMETRY, REMOVED_REPORTER])
 
 // The plan that records the work, as the sibling PR that owns it will land it. While it is not
 // in the tree, the page may only describe the reports as belonging to a version that carries
@@ -262,15 +299,15 @@ const EARLIER_BUILDS = /\b(?:earlier|previous|older) builds?\b[^.]*\bnothing\b/i
 export const TELEMETRY_CLAIMS = Object.freeze([
   { page: 'crash', why: 'Crashlytics reports crashes, and the page may not round that to "usage"' },
   { page: 'logs, diagnostics and app performance data', why: "the allow-list the owner's ruling of 2026-10-19 settled: a crash report is the crash's logs, its diagnostics and its performance data" },
-  { page: 'which screens were opened', why: 'the usage Analytics collects is the screen set, and nothing about what a reader did there' },
   { page: 'app-instance identifier', why: 'the identifier Firebase generates for the app instance is what the stores call "Device or other IDs", which the same ruling enumerated' },
   { page: 'Never sent', why: "the ruling's ban list, which the page states as what never leaves the device" },
   { page: 'message', why: 'no message content is ever sent, and it is the first thing a reader of this page wants to know' },
   { page: 'credentials and your keys', why: "D111's two items are never sent anywhere" },
   { page: 'mailbox', why: 'nothing from the reader\'s own mailbox reaches the Fugaro project' },
-  { page: 'no advertising identifier', why: 'google_analytics_adid_collection_enabled is false, and the scan below holds the tree to it' },
-  { page: 'no switch inside the app', why: "the owner's ruling of 2026-10-19: the versions that carry these reports send them whether or not a reader wants them sent, so the page has to say there is no switch rather than leave the reader looking for one" },
-  { page: 'uninstalling the app stops them', why: "uninstalling is the one thing that stops the reports, so the page owes a reader that sentence and not a switch the app does not have" },
+  { page: 'no advertising identifier', why: 'the app declares no advertising SDK and the resolved config removes the Android permission Play reads as one (`android.blockedPermissions` in `mobile/app.config.js`), and the scan below holds the tree to it' },
+  { page: "The switch is the project's own published policy", why: "D731 supersedes the always-on answer of 2026-10-19: the switch is the project's published policy key `mobile_crash_reports` (a top-level key beside the `mobile` block), read by the app as `crash_reports` in the pairing session, and not a control inside the app — so the page says where the switch is rather than leaving a reader looking for one in the app's settings" },
+  { page: 'nothing is sent before the app has read it', why: 'D734: the app sends nothing until it has read the switch, so the page says when the reports start rather than letting a reader read the paragraph as "on from the first launch"' },
+  { page: 'uninstalling the app stops them', why: "uninstalling the app is still a reader's way out, and the page owes that sentence whether or not a project turns its own switch off" },
   { page: 'not installing it avoids them', why: 'a reader who has not installed the app is owed the other half: the reports arrive with the installation, and not installing the version is what keeps them away' },
   { page: 'carry none of these reports', why: "the reports are the app's alone: the two other tools the software part covers carry none of them, and the page says so rather than leaving a reader of that part to guess. The clause names those two and not the website, whose own measurement is part one's subject — a software-part sentence calling the website unmeasured would contradict the half above it, and the flag that decides that half is not this gate's to read", names: ['command line tool', 'console'], notName: 'website' },
   { page: 'Google holds', why: "the data is held by Google as Firebase's processor for the Fugaro project, which is what the page says rather than restating Google's policy" },
@@ -292,7 +329,7 @@ export const DELETION_SECTION = 'Deleting your data'
 export const DELETION_CLAIMS = Object.freeze([
   { page: 'the Fugaro project', why: 'the section has to name the project that holds the reports, or "your own accounts" reads as the whole of the answer' },
   { page: 'does not remove', why: 'the reports are the one thing deleting the app leaves behind, and a reader who deletes the app is owed that sentence' },
-  { page: 'Uninstalling the app stops the sending', why: 'the section says how the reporting is stopped, and since the owner\'s ruling of 2026-10-19 the only thing that stops it is uninstalling the app — the version that carries the reports has no switch to turn them off' },
+  { page: 'Uninstalling the app stops the sending', why: 'the section says how the reporting is stopped, and uninstalling the app is the one a reader who is deleting the app is looking for: the project\'s own switch stops it too, and that sentence is the paragraph above this section\'s, not this one\'s' },
   { page: 'issue tracker', why: 'a report already sent is not the reader\'s to delete, so the section names the route by which they ask' },
 ])
 
@@ -353,8 +390,10 @@ export function telemetryFailures({ page, packageJSON, planExists }) {
   const named = APP_TELEMETRY.filter((one) => page.includes(one.product))
 
   // Direction A: the app carries it, so the page names it. A dependency the app declares and
-  // the page stays silent about is the disclosure that went stale.
-  for (const { pkg, product } of APP_TELEMETRY) {
+  // the page stays silent about is the disclosure that went stale. Read over
+  // `REPORTER_PACKAGES` and not over `APP_TELEMETRY`, so a package the app stopped carrying is
+  // still a package the page has to name if it comes back.
+  for (const { pkg, product } of REPORTER_PACKAGES) {
     if (deps.includes(pkg) && !page.includes(product)) {
       out.push(
         `mobile/package.json declares ${pkg} and the privacy page does not name ${product}: the page is the privacy policy the stores link, so a package the app carries and the page does not name is a collection the reader was not told about`,
@@ -503,6 +542,16 @@ const NOT_PRODUCTION = /(?:_test\.go|\.test\.(?:js|ts|jsx|tsx|mjs))$/
  * exactly what the rule is for while the host it names sits in a file the scan no longer reads. */
 const REACH_CALLS = Object.freeze(['fetch(', '.request(', 'XMLHttpRequest', 'WebSocket', 'EventSource', 'sendBeacon'])
 
+/** What the page discloses, read from `APP_TELEMETRY` so a refusal cannot describe a page that
+ * has moved: a reporter added to or removed from the list changes the sentence a reader of a
+ * failed scan is given, which is the sentence that tells them what to write on the page. */
+function disclosedReporters() {
+  const products = APP_TELEMETRY.map((one) => one.product)
+  return products.length === 1
+    ? `one reporter — ${products[0]} —`
+    : `${products.length} reporters — ${products.join(' and ')} —`
+}
+
 /** Every way a scanned file names something that collects, or []. `files` is `[{ rel, text }]`. */
 export function collectingFailures(files) {
   const out = []
@@ -513,7 +562,7 @@ export function collectingFailures(files) {
         ? `${name} is an analytics, crash-reporting or advertising SDK`
         : `${name} reads the platform's advertising identifier`
       out.push(
-        `${rel} names ${name}: the privacy page discloses two reporters — Firebase Crashlytics and Firebase Analytics — and says the app carries no advertising identifier, so ${what} is a collection the page does not account for — either take it out of the app or say on the page what it collects`,
+        `${rel} names ${name}: the privacy page discloses ${disclosedReporters()} and says the app carries no advertising identifier, so ${what} is a collection the page does not account for — either take it out of the app or say on the page what it collects`,
       )
     }
   }
@@ -799,6 +848,80 @@ export function consoleReportingFailures(page, design) {
     out.push(
       'the privacy page carries an ingest endpoint: the DSN is one embedded public constant in console/src/main/crash-dsn.ts and the switch is the only gate, so the statement names the reporter and the region and never the endpoint the events are sent to',
     )
+  }
+  return out
+}
+
+/** The design the push card comes from: `docs/mobile/design/push-notifications.md`, whose §9 states
+ * what a push disclosure has to say. Its Q5 (quiet hours store an IANA zone name), Q7 (the
+ * publisher holds the relay) and Q10 (retention is the pairing's) were answered on 2026-11-21, and
+ * the page states each. The card is Task P5.2.10's; the sender (`internal/cli/push.go`, P5.2.6) and
+ * the receipt (`mobile/src/push/`, P5.2.9) are the code it describes. */
+export const PUSH_DESIGN = 'docs/mobile/design/push-notifications.md'
+
+/** What the design's §9 says a push statement has to say, and therefore what the privacy page says
+ * too. The design is the source and the page states it: a notification carries a category and not
+ * a fact about the owner's work, the app resolves the detail from its own authenticated mailbox so
+ * a notification is never the source of truth, a notification Fugaro did not send is not covered,
+ * and retention is the pairing's. The phrases in `both` are held verbatim on both sides, because
+ * the page's promise to a reader is the design's sentence and not a paraphrase of it; `page` holds
+ * the facts the page states in its own words for a reader, and `design` the rule the page carries
+ * the substance of without quoting. */
+export const PUSH_DISCLOSURE = Object.freeze({
+  both: Object.freeze([
+    'no run title, repository name, code, error text or amount',
+    'a notification is never the source of truth',
+    'the push data lives only as long as the pairing',
+    "what Google and Apple keep on their side is not this project's to delete",
+  ]),
+  design: Object.freeze([
+    // The design's own framing of the limit: the page says the same thing in its own sentence
+    // ("A notification Fugaro did not send is not covered by any of this"), so only the design's
+    // wording is held here.
+    'a notification Fugaro did not send',
+  ]),
+  page: Object.freeze([
+    'the relay the Fugaro project operates',
+    'a forged push can lie on your lock screen',
+    'the time zone your device reports',
+    'no action, no link and no write',
+  ]),
+})
+
+/** Every way the privacy page and the design's §9 disagree about push notifications, or [].
+ *
+ * `page` is the page's HTML and `design` the design document's, both as strings. A sentence the
+ * build wraps is still one sentence: both sides are read with their whitespace collapsed, so a
+ * reflowed paragraph cannot fail a phrase that is on the page. */
+export function pushFailures(page, design) {
+  const out = []
+  page = page.replace(/\s+/g, ' ')
+  design = design.replace(/\s+/g, ' ')
+  for (const phrase of PUSH_DISCLOSURE.both) {
+    if (!design.includes(phrase)) {
+      out.push(
+        `the design's section 9 no longer says ${JSON.stringify(phrase)}: the privacy page repeats that section's sentence about push notifications, so a fact that leaves the design leaves the page stating something nothing in this repository holds`,
+      )
+    }
+    if (!page.includes(phrase)) {
+      out.push(
+        `the privacy page does not say ${JSON.stringify(phrase)} about push notifications: the page states what the design's section 9 states, and a page that drops a fact of it discloses less than the software does`,
+      )
+    }
+  }
+  for (const phrase of PUSH_DISCLOSURE.design) {
+    if (!design.includes(phrase)) {
+      out.push(
+        `the design's section 9 no longer says ${JSON.stringify(phrase)}: that claim is the reason a forged push is refused a rendering as state, and it is the design's to state`,
+      )
+    }
+  }
+  for (const phrase of PUSH_DISCLOSURE.page) {
+    if (!page.includes(phrase)) {
+      out.push(
+        `the privacy page does not say ${JSON.stringify(phrase)} about push notifications: the relay and the platform are in the message path, a forged push can lie on the lock screen, quiet hours store a zone name, and the receipt does nothing — a reader who is told the phone can be notified and not these is owed the sentences`,
+      )
+    }
   }
   return out
 }
@@ -1492,33 +1615,45 @@ test("the page naming a reporter the repository does not hold, or the app holdin
   const base = { page, packageJSON, planExists: false }
 
   // Direction A: the app declares it, the page stays silent. The package is planted in the
-  // app's own dependency list, which is where a later task would add it.
+  // app's own dependency list, which is where a later task would add it — and it is the one
+  // D731 removed, so this is also the case that fires the day Analytics comes back to the
+  // manifest without a sentence on the page.
   const declared = JSON.parse(packageJSON)
-  declared.dependencies = { ...(declared.dependencies ?? {}), [APP_TELEMETRY[1].pkg]: '^22.0.0' }
-  const silent = page.replace(/Firebase Analytics/g, 'the usage count')
+  declared.dependencies = { ...(declared.dependencies ?? {}), [REMOVED_REPORTER.pkg]: '^22.0.0' }
+  const silent = page.replaceAll(REMOVED_REPORTER.product, 'the usage count')
   assert.match(
     telemetryFailures({ page: silent, packageJSON: JSON.stringify(declared), planExists: false }).join('\n'),
-    new RegExp(`mobile/package.json declares ${APP_TELEMETRY[1].pkg.replace(/[/@.]/g, '\\$&')} and the privacy page does not name Firebase Analytics`),
+    new RegExp(`mobile/package.json declares ${REMOVED_REPORTER.pkg.replace(/[/@.]/g, '\\$&')} and the privacy page does not name ${REMOVED_REPORTER.product}`),
     `a dependency the app declares and the page does not name was not refused: ${telemetryFailures({ page: silent, packageJSON: JSON.stringify(declared), planExists: false }).join('\n')}`,
   )
-  // The control: the page's own naming, with the dependency declared and the plan in the tree,
-  // is the state the two directions agree on, and it is not refused.
+  // The control: the page's own naming, with the app's real manifest and the plan in the tree, is
+  // the state the two directions agree on, and it is not refused. The plant above stays refused
+  // even with the plan in the tree: the plan answers direction B (the page may name what nothing
+  // holds while the reports are still planned) and never direction A, which is about a package the
+  // app really declares.
   assert.deepEqual(
-    telemetryFailures({ page, packageJSON: JSON.stringify(declared), planExists: true }),
+    telemetryFailures({ page, packageJSON, planExists: true }),
     [],
     'the page and the repository name the same reporter and the gate still refuses one of them',
+  )
+  assert.ok(
+    telemetryFailures({ page, packageJSON: JSON.stringify(declared), planExists: true })
+      .some((line) => line.includes(`declares ${REMOVED_REPORTER.pkg}`)),
+    'a package declared in the manifest and unnamed on the page is accepted while the plan is in the tree, so a reporter coming back to the app would pass on the plan alone',
   )
 
   // Direction B: the page names a reporter nothing in the tree holds, and it does not say which
   // version carries it. This is the half the brief asks for, and the sentence the fixture strips
   // is what the page uses instead while the plan is still a plan.
-  // The app declares the reporters since P7.1a, which satisfies direction B on its own, so the
-  // fixture removes them from the dependency list to plant the state this half refuses.
+  // The app declares the reporter since P7.1a, which satisfies direction B on its own, so the
+  // fixture removes it from the dependency list to plant the state this half refuses: one product
+  // the page names that nothing holds, and the version sentence — two refusals, where the tree
+  // produced three while D731's package was the app's second reporter and the page named it too.
   const undeclared = JSON.parse(packageJSON)
   for (const { pkg } of APP_TELEMETRY) delete undeclared.dependencies?.[pkg]
   const noVersion = page.replace(/Earlier builds of the app send nothing at all\./, 'The app sends these reports.')
   const unbacked = telemetryFailures({ page: noVersion, packageJSON: JSON.stringify(undeclared), planExists: false })
-  assert.equal(unbacked.length, 3, unbacked.join('\n'))
+  assert.equal(unbacked.length, 2, unbacked.join('\n'))
   for (const product of APP_TELEMETRY.map((one) => one.product)) {
     assert.ok(
       unbacked.some((line) => line.includes(`names ${product} and the repository does not hold it`)),
@@ -1552,15 +1687,16 @@ test("the page naming a reporter the repository does not hold, or the app holdin
     'the sentence about which version carries the reports is direction B\'s to waive, and it is not: it is the owner\'s requirement in both states',
   )
 
-  // The claims the reader is owed, one planted omission at a time: the ban list, the absence of
-  // a switch in the versions that carry the reports, what a reader can do instead, what a reader
+  // The claims the reader is owed, one planted omission at a time: the ban list, where the switch
+  // is and when the reports start, what a reader can do instead, what a reader
   // who has not installed the app gets, the two other tools carrying none of the reports, and
   // the link to Google's own policy. Each case asserts the refusal names the claim it planted
   // absent, and not merely that something failed: a case that only counts failures proves a
   // sentence is refused by *a* rule, which is not the same as the rule written to hold it.
   for (const [what, gone, claim] of [
     ['the ban list', page.replaceAll('Never sent:', 'Also sent:'), 'Never sent'],
-    ['the absence of a switch', page.replaceAll('no switch inside the app', 'a switch in the settings'), 'no switch inside the app'],
+    ["where the switch is", page.replaceAll("The switch is the project's own published policy", 'There is a switch in the app settings'), "The switch is the project's own published policy"],
+    ['when the reports start', page.replaceAll('nothing is sent before the app has read it', 'the app sends from its first launch'), 'nothing is sent before the app has read it'],
     ['what a reader can do instead', page.replaceAll('uninstalling the app stops them', 'the app stops them'), 'uninstalling the app stops them'],
     ['what not installing the app avoids', page.replaceAll('not installing it avoids them', 'installing it is what avoids them'), 'not installing it avoids them'],
     ['the two other tools carrying none of the reports', page.replaceAll('carry none of these reports', 'send nothing of their own'), 'carry none of these reports'],
@@ -1962,6 +2098,39 @@ test("the console's crash reporting is the design's sentence, the switch and all
     withEndpoint.some((line) => line.includes('ingest endpoint')),
     'a privacy page carrying an ingest endpoint was not refused: the constant lives in one file of the console and the page states facts, not the value',
   )
+})
+
+test("the push card is the design's section 9, and the page and the design agree about it", () => {
+  // Push is the flow the page describes that the owner's own installation drives, and the design
+  // is where every one of its sentences is decided: the relay the publisher holds (Q7), the
+  // category-only payload, the app resolving the detail from its own mailbox, the forged push that
+  // is not covered, and retention (Q10). The page states the design's sentence rather than a
+  // summary of it.
+  const design = readFileSync(path.join(REPO, PUSH_DESIGN), 'utf8')
+  assert.deepEqual(pushFailures(privacyPage().html, design), [])
+
+  // The red direction, phrase by phrase: dropping the payload's limit, the source-of-truth rule,
+  // the retention or the provider's copies is refused, and refused for the page rather than for the
+  // design.
+  const page = privacyPage().html
+  for (const phrase of [...PUSH_DISCLOSURE.both, ...PUSH_DISCLOSURE.page]) {
+    const without = pushFailures(page.split(phrase).join(''), design)
+    assert.ok(
+      without.some((line) => line.includes(JSON.stringify(phrase)) && line.includes('privacy page')),
+      `a page that dropped ${JSON.stringify(phrase)} was not refused: the push disclosure is only as good as every fact of it`,
+    )
+  }
+
+  // The other side of the split: the design's own framing of the forged-push limit is refused when
+  // it leaves the design, which is where the rule is decided — the page states the substance of it
+  // in its own sentence, not the design's words.
+  for (const phrase of PUSH_DISCLOSURE.design) {
+    const without = pushFailures(page, design.replace(phrase, ''))
+    assert.ok(
+      without.some((line) => line.includes(JSON.stringify(phrase)) && line.includes('design')),
+      `a design that dropped ${JSON.stringify(phrase)} was not refused: the forged-push limit is the design's to state`,
+    )
+  }
 })
 
 test('a source of the Subscription Edition that names a host the project operates is refused, and the two service trees are exempt', () => {

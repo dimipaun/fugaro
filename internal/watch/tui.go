@@ -57,6 +57,12 @@ type TUIOptions struct {
 	// live row is built from (facts.go), so without this the screen names no
 	// launcher and no job for a running run.
 	Facts func() Facts
+	// Paused is what each paused run's own pause says about it — the instant
+	// its resume is due at and the run that resumed it — read fresh on every
+	// rebuild like Facts, and nil in degraded mode, which reads no budget
+	// backend and so has no paused subtree to take them from. A paused run it
+	// does not name keeps the word its own record carries and nothing else.
+	Paused func() Pauses
 
 	// All, Keep and KeepCount seed the finished-run filter (design
 	// generic-tool §10.3); Keep <= 0 means FinishedKeep (3m), KeepCount <= 0
@@ -138,13 +144,15 @@ type model struct {
 	prSeen uint64 // the PRState version the last frame was drawn at
 	// factsSeen is the run facts the last frame was drawn from: the scan
 	// answers off this loop, so a new map is a reason to redraw even though
-	// no row and no update changed.
-	factsSeen Facts
-	frame     string
-	notice    string
-	pend      *pending
-	closed    bool
-	act       Kind // the kind of the write in flight or pending
+	// no row and no update changed. pausesSeen is the same for the pauses
+	// read, which lands off this loop the same way.
+	factsSeen  Facts
+	pausesSeen Pauses
+	frame      string
+	notice     string
+	pend       *pending
+	closed     bool
+	act        Kind // the kind of the write in flight or pending
 }
 
 func newModel(ctx context.Context, o TUIOptions) *model {
@@ -237,7 +245,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// run that started between two scans gains its job and its launcher
 		// with no change to any row, so the map is part of what a frame says
 		// and so part of what makes one (watchStream, internal/cli).
-		if m.dirty || (m.o.PRState != nil && m.o.PRState.Version() != m.prSeen) || !maps.Equal(m.facts(), m.factsSeen) {
+		if m.dirty || (m.o.PRState != nil && m.o.PRState.Version() != m.prSeen) ||
+			!maps.Equal(m.facts(), m.factsSeen) || !maps.Equal(m.pauses(), m.pausesSeen) {
 			m.rebuild()
 		}
 		return m, m.tick()
@@ -292,6 +301,17 @@ func (m *model) facts() Facts {
 	return m.o.Facts()
 }
 
+// pauses is the pauses of the latest read, nil when the screen has no paused
+// subtree to ask (degraded mode, a hand-built TUIOptions). Like facts it is
+// asked directly and never cached here: the read behind it runs in its own
+// goroutine and the tick is what notices a new answer (pausesSeen).
+func (m *model) pauses() Pauses {
+	if m.o.Paused == nil {
+		return nil
+	}
+	return m.o.Paused()
+}
+
 // rebuild recomputes the view and the frame.
 func (m *model) rebuild() {
 	v := Build(m.st, m.now, m.o.Config)
@@ -306,6 +326,11 @@ func (m *model) rebuild() {
 	facts := m.facts()
 	v = MergeFacts(v, facts)
 	m.factsSeen = facts
+	// After the facts, so the resumer a pause names is stamped from the same
+	// read the rows were (PausesOf joined them before this point).
+	pauses := m.pauses()
+	v = MergePaused(v, pauses)
+	m.pausesSeen = pauses
 	if m.o.RepoKey != "" {
 		v = FilterRepo(v, m.o.RepoKey)
 	}

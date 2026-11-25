@@ -263,7 +263,7 @@ type Action struct {
 // ladder launches on top (LadderLaunch): a rung's runs are the executor's to
 // ask for, and its own bound is not this plan's caps.
 func Plan(s State, view RunView, caps Caps, now time.Time) []Action {
-	actions, _ := planNode(s, view, caps, now, CountsOf(s, now), 0, BreakerOpen(s, now), nil)
+	actions, _ := planNode(s, view, caps, now, CountsOf(s, now), 0, BreakerOpen(s, now), nil, nil)
 	return actions
 }
 
@@ -284,12 +284,19 @@ func Plan(s State, view RunView, caps Caps, now time.Time) []Action {
 // What hands it in is the cycle, over every node it works (Tick.Nodes); a
 // daemon's own node reads it off the state it plans, which is what Plan does.
 //
+// held is the claim of every item a cycle has learned another orchestrator
+// holds, by claim path (claimKey, D3209), and an item in it is left out before
+// the caps are read: it is not this daemon's work, so it must not spend the
+// cycle's allowance — a project whose first items are a rival's would otherwise
+// spend every cycle on skips and never plan past them. A plan that has learned
+// nothing (Plan, which reads no claims) hands nil and plans as it always did.
+//
 // other is what the cycle resolved this node's cross references to (D3208), and
 // nil for a caller that read no other orchestrator: an item depending on one
 // then waits, which is the direction a plan that cannot see the far end fails
 // in. The reading is of this node's references alone, so a node whose items name
 // nobody else is planned exactly as it was before there were references.
-func planNode(s State, view RunView, caps Caps, now time.Time, counts Counts, planned int, paused bool, other crossPhases) ([]Action, int) {
+func planNode(s State, view RunView, caps Caps, now time.Time, counts Counts, planned int, paused bool, other crossPhases, held map[string]bool) ([]Action, int) {
 	if caps.KillSwitch || OverCap(s) || paused {
 		return nil, planned
 	}
@@ -307,6 +314,9 @@ func planNode(s State, view RunView, caps Caps, now time.Time, counts Counts, pl
 		}
 		a, ok := nextAttempt(s, other, w)
 		if !ok {
+			continue
+		}
+		if held[claimKey(s.AgentID, w)] {
 			continue
 		}
 		if !counts.Room(caps, planned) {
@@ -540,16 +550,31 @@ type CommitFunc func(ctx context.Context, s State) error
 // what it hands back has to be a fresh one: the same id twice is the same run.
 type MintFunc func(now time.Time) (string, error)
 
-// Starter carries out the actions a plan called for, intent first: it mints
-// the run id, commits the intent that records it, and asks the launcher to
-// start it only then. A crash between any two of those leaves a state that
-// says which run id belongs to which attempt, so the next tick re-issues that
-// same launch instead of minting a second one — which is the whole of what
-// makes a daemon that dies mid-cycle spend once (D1231).
+// ErrItemClaimed is an action this orchestrator may not start: another
+// orchestrator holds the claim on the item (D3209). It is not a failure —
+// nothing was committed, nothing was started and the state is handed back as it
+// was — and the caller that meets it skips the item, spends no cap room on it
+// and carries on with the next one (tick's carry).
+var ErrItemClaimed = errors.New("orchestrator: another orchestrator holds the item")
+
+// Starter carries out the actions a plan called for, intent first: it claims
+// the item, mints the run id, commits the intent that records it, and asks the
+// launcher to start it only then. A crash between any two of those leaves a
+// state that says which run id belongs to which attempt, so the next tick
+// re-issues that same launch instead of minting a second one — which is the
+// whole of what makes a daemon that dies mid-cycle spend once (D1231).
 type Starter struct {
 	Launcher Launcher
 	Commit   CommitFunc
 	Mint     MintFunc
+	// Claims is the project's claims (claim.go, D3209), taken before an item's
+	// work starts: two orchestrators of one project that both hold the same
+	// plan task in front of them are decided by that write, and the one that
+	// does not win it starts nothing for the item. Nil is a starter that claims
+	// nothing — the resident pass, which makes no write to the node it drives
+	// (D1223, D1241) — and then every action is this starter's as it was before
+	// there were claims.
+	Claims ClaimGuard
 }
 
 // Start carries out one action and returns the state the node now holds. A
@@ -562,6 +587,14 @@ type Starter struct {
 // so nothing here starts a run the state does not carry — neither a run id the
 // state never recorded nor a spec it does not hold.
 //
+// The item is claimed before it is started (Claims, D3209), so an item another
+// orchestrator of the project is already working comes back as ErrItemClaimed:
+// the state is handed back as it was, nothing was minted, committed or started,
+// and the caller skips the item and goes on with the next action. The claim is
+// taken before the intent and not beside the launch, because what the claim
+// fences is the work: an orchestrator that committed an intent and found the
+// item claimed would leave an attempt the state records and no run may take.
+//
 // A ladder launch is not one of these (ActionLadder): the write that records an
 // attempt is a standing approval's to allow, and the run the ladder asks for is
 // one that approval has already spent. Refusing the kind here is what keeps the
@@ -569,10 +602,16 @@ type Starter struct {
 func (d Starter) Start(ctx context.Context, s State, a Action, now time.Time) (State, error) {
 	switch a.Kind {
 	case ActionLaunch, ActionRetry:
+		if err := d.claim(ctx, s, a.ItemID); err != nil {
+			return s, err
+		}
 		return d.begin(ctx, s, a, now)
 	case ActionReissue:
 		w, err := reissuable(s, a)
 		if err != nil {
+			return s, err
+		}
+		if err := d.claim(ctx, s, w.ID); err != nil {
 			return s, err
 		}
 		return s, d.start(ctx, SpecOf(w), a.RunID)
@@ -580,6 +619,29 @@ func (d Starter) Start(ctx context.Context, s State, a Action, now time.Time) (S
 		return d.abandon(ctx, s, a, now)
 	}
 	return s, fmt.Errorf("%w: %q is not an action this release carries out", ErrInvalid, safetext.OneLine(string(a.Kind)))
+}
+
+// claim takes this starter's claim on one item of the state, and answers
+// ErrItemClaimed when another orchestrator holds it. An item the state does not
+// hold is a refusal rather than a claim: a start whose item cannot be read is
+// one whose reference cannot be built, and a claim under a guessed reference
+// would be a claim on somebody else's item.
+func (d Starter) claim(ctx context.Context, s State, itemID string) error {
+	if d.Claims == nil {
+		return nil
+	}
+	w, ok := s.Item(itemID)
+	if !ok {
+		return fmt.Errorf("%w: the state holds no item %q, so no claim of it can be taken", ErrInvalid, safetext.OneLine(itemID))
+	}
+	taken, err := d.Claims.Take(ctx, ClaimRef(s.AgentID, w))
+	if err != nil {
+		return err
+	}
+	if !taken {
+		return fmt.Errorf("%w: the claim on the item %q is held by another orchestrator", ErrItemClaimed, safetext.OneLine(itemID))
+	}
+	return nil
 }
 
 // begin is the intent-first start of a new attempt: mint the run id, commit

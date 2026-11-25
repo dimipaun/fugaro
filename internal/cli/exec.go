@@ -22,11 +22,9 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
-	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
-	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -112,11 +110,15 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 	platform := execPlatform(o, os.Getenv)
 	// The budget backend (the project's Firebase database): a local run may
 	// point it at a loopback database, a cloud run never.
-	be, beErr := runner.BackendFromEnv(os.LookupEnv, platform.Local())
+	// The hidden --budget-identity-url, which only a loopback address passes
+	// (checkTestHooks), already moves the backend's auth to a fake, so a
+	// loopback database goes with it: a Cloud Run execution of a test rig has
+	// nowhere else to reach one.
+	be, beErr := runner.BackendFromEnv(os.LookupEnv, platform.Local() || loopbackUpstream(o.identityURL))
 	if o.identityURL != "" {
 		be.Tune = func(c *budget.Config) { c.IdentityURL, c.SecureTokenURL = o.identityURL, o.identityURL }
 	}
-	if err := checkTestHooks(o, spend, spendErr, localFileMode(o.workDir)); err != nil {
+	if err := checkTestHooks(o); err != nil {
 		return err
 	}
 	if o.taskFile != "" && o.run != "" {
@@ -228,15 +230,11 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 // checkTestHooks refuses the hidden test flags where they could take the
 // model's credential somewhere else: the gateway's upstream must be on
 // loopback, and the managed settings path can move only with such an
-// upstream. A malformed budget counts as on, since the runner will fail it
-// anyway. The mode used to decide that — an off ceiling, or an off mode in
-// the checkout's own fugaro.yaml, let the path move — and from AB1a every run
-// is accounted for whatever it asks for (D3009, R3), so the merged mode below
-// answers on whatever it merges. The read stays for the task that takes the
-// mode out of this file, and out of the flag's help, with the rest of them
-// (AB3).
-func checkTestHooks(o execOptions, spend runner.Spend, spendErr error, fileMode string) error {
-	on := runner.Spend{Mode: policy.Merge(policy.Layer{Mode: spend.Mode}, policy.Layer{Mode: fileMode}).Mode}.On()
+// upstream. The mode is not read here any more (AB3, D3009, R3): the ceiling
+// and the checkout's own fugaro.yaml used to decide it, and an off in either
+// let the path move, but there is always a budget now, so a real upstream
+// writes Claude Code's real managed settings whatever any layer says.
+func checkTestHooks(o execOptions) error {
 	if o.identityURL != "" && !loopbackUpstream(o.identityURL) {
 		return userErr("--budget-identity-url %q: it must be http://127.0.0.1:<port>", o.identityURL)
 	}
@@ -247,7 +245,7 @@ func checkTestHooks(o execOptions, spend runner.Spend, spendErr error, fileMode 
 		}
 		loopback = true
 	}
-	if o.managedSettings != "" && !loopback && (spendErr != nil || on) {
+	if o.managedSettings != "" && !loopback {
 		return userErr("--managed-settings (or FUGARO_MANAGED_SETTINGS) needs a loopback --gateway-upstream when the budget is on: a job with a real upstream writes Claude Code's real managed settings")
 	}
 	return nil
@@ -314,15 +312,29 @@ func refuseOldJobEnv(ctx context.Context, cmd *cobra.Command, o execOptions, pla
 	store := runstore.Open(bucket.Bucket, slug, runID)
 	rec := &runstore.Record{Version: 1, RunID: runID, Status: runstore.StatusInfraError, Stage: "bootstrap",
 		Outcome: runstore.OutcomeNone, Reason: reason, StartedAt: now().UTC()}
-	if spec, err := store.ReadTask(ctx); err == nil {
+	spec, terr := store.ReadTask(ctx)
+	if terr == nil {
 		rec.Repo, rec.Workflow = spec.Repo, spec.Workflow
+	} else {
+		spec = nil
 	}
 	finished := rec.StartedAt
 	rec.FinishedAt = &finished
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
-	if err := store.CreateRecord(wctx, rec); err != nil && !errors.Is(err, runstore.ErrExists) {
-		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro exec: could not record the failure: %v\n", err)
+	if err := store.CreateRecord(wctx, rec); err != nil {
+		if !errors.Is(err, runstore.ErrExists) {
+			fmt.Fprintf(cmd.ErrOrStderr(), "fugaro exec: could not record the failure: %v\n", err)
+		}
+		return fail
+	}
+	// The record this execution just created is the run's own, so its summary
+	// goes beside it: `runs ls` reads the summary where it read result.json,
+	// and a summary a deleted record left behind would otherwise stand in for
+	// this one. Best-effort, like the runner's own summary writes — a summary
+	// that fails costs a listing its speedup and never the record.
+	if err := runstore.WriteSummary(wctx, store, runstore.NewSummary(rec, spec, now().UTC())); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro exec: could not write the run summary: %v\n", err)
 	}
 	return fail
 }
@@ -428,20 +440,4 @@ func execPrices(platform backend.Platform, getenv func(string) string, warn func
 		p = gcp.ListPrices(getenv("FUGARO_REGION"))
 	}
 	return &p
-}
-
-// localFileMode is the budget mode the checkout's fugaro.yaml asks for, ""
-// when there is no readable file or it sets none. A file the policy can't
-// read counts as enforce: the runner will fail it, and the hook is refused
-// the same way a malformed budget is.
-func localFileMode(workDir string) string {
-	data, err := readFugaroYAML(filepath.Join(workDir, "fugaro.yaml"))
-	if err != nil {
-		return ""
-	}
-	p, err := config.PolicyOf(data)
-	if err != nil {
-		return policy.ModeEnforce
-	}
-	return p.Mode
 }

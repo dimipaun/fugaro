@@ -12,6 +12,7 @@ jobs:
     permissions:
       contents: read
       checks: read # the release gate reads the commit's check-runs
+      actions: read # the gate lists the tag's workflow runs and reads their titles
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:

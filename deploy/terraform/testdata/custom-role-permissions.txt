@@ -5,11 +5,19 @@
 # Generated 2026-10-18 with:
 #   gcloud iam list-testable-permissions //cloudresourcemanager.googleapis.com/projects/<project> --project <project> --format='value(name,customRolesSupportLevel)'
 # keeping the rows whose second column is empty and whose name starts with one of the prefixes
-#   apikeys artifactregistry batch billing* cloudasset cloudbuild cloudscheduler compute datastore firebase* iam
+#   aiplatform apikeys artifactregistry batch billing* cloudasset cloudbuild cloudscheduler cloudkms compute datastore firebase* iam
 #   identitytoolkit logging monitoring resourcemanager run secretmanager serviceusage storage
+#
+# cloudkms is a service a module started using in J6 (the consumer's signing key,
+# modules/installation/mailbox_key.tf). Its prefix was added by hand rather than
+# by a refresh -- an agent run makes no live gcloud call -- and only the
+# permissions the modules name are listed for it: cryptoKeyVersions.useToSign is
+# supported for custom roles (it is what roles/cloudkms.signerVerifier carries,
+# and the permission, unlike the role, has customRolesSupportLevel empty).
 # To refresh: re-run the command, filter the same way, replace the lines below (sorted, one per line),
 # and add the prefix of any new service a module uses. A permission at level TESTING or NOT_SUPPORTED
 # must stay out: Google refuses it in a custom role or may change it.
+aiplatform.endpoints.predict
 apikeys.keys.create
 apikeys.keys.delete
 apikeys.keys.get
@@ -697,6 +705,7 @@ cloudbuild.workerpools.get
 cloudbuild.workerpools.list
 cloudbuild.workerpools.update
 cloudbuild.workerpools.use
+cloudkms.cryptoKeyVersions.useToSign
 cloudscheduler.jobs.create
 cloudscheduler.jobs.delete
 cloudscheduler.jobs.enable

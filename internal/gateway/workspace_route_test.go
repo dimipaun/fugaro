@@ -39,6 +39,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/pricing"
@@ -77,6 +78,10 @@ type wsOpts struct {
 	// started: the run R18 is about is one that holds a slip and declares its
 	// own auth, and both of those hang off this upstream.
 	projectEdit func(*gateway.Upstream)
+	// workspaceEdit is applied to the run's second upstream, the one the record
+	// built: it is where the workspace's OWN slip hangs (WC8, R4), which is the
+	// pair that travels under C1's two names and to that service alone.
+	workspaceEdit func(*gateway.Workspace)
 	// projectAnswer and workspaceAnswer override what each service answers; the
 	// default is a served call naming one credential each.
 	projectAnswer   func(*http.Request, []byte) anthropicfake.Reply
@@ -220,6 +225,9 @@ func newWSRun(t *testing.T, o wsOpts) *wsRun {
 			IDToken:    func(_ context.Context, audience string) (string, error) { return r.minted(audience), nil },
 		}
 		opts.ModelFromWorkspace = route.Holder(creds.KindModel) == creds.HolderWorkspace
+		if o.workspaceEdit != nil {
+			o.workspaceEdit(opts.Workspace)
+		}
 	}
 	gw, err := gateway.Start(context.Background(), opts)
 	if err != nil {
@@ -409,34 +417,194 @@ func TestTheAddressIsNeverReadFromTheEnvironment(t *testing.T) {
 	}
 }
 
-// TestTheWorkspaceUpstreamCarriesNoSlip: a call to the workspace's service
-// carries no slip id, no claim secret and no auth-mode or account header (R18).
+// TestWorkspaceSlipMirrorsC1: the two header names the workspace's slip travels
+// in are C1's own, one by one. internal/gateway cannot spell them through
+// internal/creds — that package imports internal/budget, which imports this one
+// — so they are declared twice on purpose, and this is what keeps the two
+// spellings one (C1's own header comment asks for exactly this test; the shape
+// is TestServiceConstantsMirrorCredsvc's).
 //
-// The slip is the member's own grant, held by the runner and presented to the
-// member's own service; the workspace's scope refuses a call that presents one,
-// and the declaration of an auth mode and account is a statement about a
-// repository the workspace already decides for itself. The run in this test
-// holds a slip and declares its auth on its own upstream, and the agent sends a
-// slip and a declaration of its own: neither reaches the workspace.
-func TestTheWorkspaceUpstreamCarriesNoSlip(t *testing.T) {
-	slipID, claim := "slip-"+mirrorName(t), "claim-"+mirrorName(t)
+// A drift here is silent in the worst way: the run's own claim would write the
+// workspace's secret under one name and the gateway would present it under
+// another, so every call would carry a slip header the workspace's service does
+// not read — a call refused, or worse, read as no slip at all.
+func TestWorkspaceSlipMirrorsC1(t *testing.T) {
+	if gateway.WorkspaceSlipHeader != creds.PersonSlipHeader {
+		t.Errorf("the workspace slip's header is %q in the gateway and %q in C1", gateway.WorkspaceSlipHeader, creds.PersonSlipHeader)
+	}
+	if gateway.WorkspaceSlipClaimHeader != creds.PersonSlipClaimHeader {
+		t.Errorf("the claim secret's header is %q in the gateway and %q in C1", gateway.WorkspaceSlipClaimHeader, creds.PersonSlipClaimHeader)
+	}
+	if creds.PersonSlipHeader == credsvc.HeaderSlip || creds.PersonSlipClaimHeader == credsvc.HeaderSlipClaim {
+		// R4 as a spelling: two slips that share a header name cannot be told
+		// apart by the service that reads it.
+		t.Errorf("a workspace slip header is spelled the same as the member's (%q, %q): the two services could not tell the two slips apart", creds.PersonSlipHeader, creds.PersonSlipClaimHeader)
+	}
+}
+
+// TestEachSlipGoesToItsOwnService is WC8's headline (R4): a run holds two slips
+// at once, and each is presented to the service that granted it and to no
+// other. The member's goes on every call to the member's own service under the
+// member's own names (credsvc.HeaderSlip and its claim secret), and the workspace's is never sent to the member's service either.
+//
+// Both directions are here because either one alone passes for a gateway that
+// sent nothing anywhere: the call to the workspace's service is read for the
+// workspace's pair, and the call to the member's own service — a call whose
+// model kind the record leaves the project's — is read for the member's.
+func TestEachSlipGoesToItsOwnService(t *testing.T) {
+	member, memberClaim := "slip-"+mirrorName(t), "claim-"+mirrorName(t)
+	wsSlip, wsClaim := "ws-slip-"+mirrorName(t), "ws-claim-"+mirrorName(t)
+
+	t.Run("the workspace's own slip reaches the workspace's service", func(t *testing.T) {
+		r := newWSRun(t, wsOpts{
+			route: func(address string) creds.Route {
+				return creds.Route{Version: creds.RouteVersion, Address: address, Model: creds.HolderWorkspace}
+			},
+			projectEdit: func(up *gateway.Upstream) {
+				up.Service.SlipID, up.Service.SlipClaim = member, memberClaim
+			},
+			workspaceEdit: func(w *gateway.Workspace) { w.SlipID, w.SlipClaim = wsSlip, wsClaim },
+		})
+		wsServed(t, r, nil)
+
+		seen := r.workspace.Seen()
+		if len(seen) != 1 {
+			t.Fatalf("the workspace's service received %d calls, want one", len(seen))
+		}
+		if got := seen[0].Header.Get(gateway.WorkspaceSlipHeader); got != wsSlip {
+			t.Errorf("the workspace's service was sent %s = %q, want the workspace's own slip %q", gateway.WorkspaceSlipHeader, got, wsSlip)
+		}
+		if got := seen[0].Header.Get(gateway.WorkspaceSlipClaimHeader); got != wsClaim {
+			t.Errorf("the workspace's service was sent %s = %q, want the claim secret the workspace answered", gateway.WorkspaceSlipClaimHeader, got)
+		}
+		// The member's slip and its secret are the other half, and this is the
+		// whole point of R4: the workspace's service must not read them.
+		wsAbsent(t, seen[0], gateway.HeaderSlip, gateway.HeaderSlipClaim)
+	})
+
+	t.Run("the member's slip reaches the member's own service alone", func(t *testing.T) {
+		// The record moves the forge kind and leaves the model the project's, so
+		// the model call is the member's own service's and the run holds both
+		// slips at once (a run routed anywhere holds the workspace's).
+		r := newWSRun(t, wsOpts{
+			route: func(address string) creds.Route {
+				return creds.Route{Version: creds.RouteVersion, Address: address, Bitbucket: creds.HolderWorkspace}
+			},
+			projectEdit: func(up *gateway.Upstream) {
+				up.Service.SlipID, up.Service.SlipClaim = member, memberClaim
+			},
+			workspaceEdit: func(w *gateway.Workspace) { w.SlipID, w.SlipClaim = wsSlip, wsClaim },
+		})
+		wsServed(t, r, nil)
+
+		seen := r.project.Seen()
+		if len(seen) != 1 {
+			t.Fatalf("the member's own service received %d calls, want one", len(seen))
+		}
+		if got := seen[0].Header.Get(gateway.HeaderSlip); got != member {
+			t.Errorf("the member's own service was sent %s = %q, want the member's slip %q", gateway.HeaderSlip, got, member)
+		}
+		if got := seen[0].Header.Get(gateway.HeaderSlipClaim); got != memberClaim {
+			t.Errorf("the member's own service was sent %s = %q, want the member's claim secret", gateway.HeaderSlipClaim, got)
+		}
+		// And the workspace's pair never travels there: a member's admins own
+		// that service, and the workspace's slip is the workspace's own secret
+		// (F13).
+		wsAbsent(t, seen[0], gateway.WorkspaceSlipHeader, gateway.WorkspaceSlipClaimHeader)
+	})
+}
+
+// TestARunWithNoWorkspaceSlipIsUnchanged: a run the workspace granted no slip
+// behaves exactly as it did before that slip existed (R4's last clause). Its
+// gateway is built with a Workspace and no slip on it — the state of every run
+// of a member whose launcher holds no personal token, and of every run whose
+// grant did not land (D3147) — and its calls to the workspace's service carry
+// no slip of either pair.
+//
+// The positive half is here too, because "no slip" is also what a gateway that
+// sent nothing anywhere would look like: this run's own service is told the
+// member's slip, so the absence above is about the workspace's service and not
+// about a run that dropped every claim.
+//
+// The agent writes a slip of its own on the call, under both pairs of names:
+// this run holds no workspace slip that would displace it, so what keeps an
+// invented one off the wire is the drop of the caller's own headers and nothing
+// else.
+func TestARunWithNoWorkspaceSlipIsUnchanged(t *testing.T) {
+	member, memberClaim := "slip-"+mirrorName(t), "claim-"+mirrorName(t)
+	agent := http.Header{}
+	agent.Set(gateway.WorkspaceSlipHeader, "ws-slip-the-agent-invented")
+	agent.Set(gateway.WorkspaceSlipClaimHeader, "ws-claim-the-agent-invented")
+	r := newWSRun(t, wsOpts{
+		route: func(address string) creds.Route {
+			return creds.Route{Version: creds.RouteVersion, Address: address, Model: creds.HolderWorkspace}
+		},
+		projectEdit: func(up *gateway.Upstream) {
+			up.Service.SlipID, up.Service.SlipClaim = member, memberClaim
+		},
+	})
+	wsServed(t, r, agent)
+
+	seen := r.workspace.Seen()
+	if len(seen) != 1 {
+		t.Fatalf("the workspace's service received %d calls, want one", len(seen))
+	}
+	wsAbsent(t, seen[0], gateway.WorkspaceSlipHeader, gateway.WorkspaceSlipClaimHeader, gateway.HeaderSlip, gateway.HeaderSlipClaim)
+
+	own := newWSRun(t, wsOpts{
+		route: func(address string) creds.Route {
+			return creds.Route{Version: creds.RouteVersion, Address: address, Bitbucket: creds.HolderWorkspace}
+		},
+		projectEdit: func(up *gateway.Upstream) {
+			up.Service.SlipID, up.Service.SlipClaim = member, memberClaim
+		},
+	})
+	wsServed(t, own, nil)
+	seen = own.project.Seen()
+	if len(seen) != 1 || seen[0].Header.Get(gateway.HeaderSlip) != member {
+		t.Fatalf("the run's own service was sent %d calls with %s = %q, want the member's slip: this test says nothing about the workspace unless the run really holds one",
+			len(seen), gateway.HeaderSlip, seen[0].Header.Get(gateway.HeaderSlip))
+	}
+}
+
+// TestTheWorkspaceUpstreamCarriesNoMembersSlip: a call to the workspace's
+// service carries no slip a member's own service granted, and no auth-mode or
+// account header (R18, R4). The member's slip is the member's own grant: the
+// workspace's scope refuses a call that presents one, and the declaration of an
+// auth mode and account is a statement about a repository the workspace already
+// decides for itself.
+//
+// The slip it DOES carry is the workspace's own, under C1's two names, which is
+// TestEachSlipGoesToItsOwnService's subject: what this test holds is that the
+// member's pair never appears beside it. The run here holds a member's slip,
+// declares its own auth and is given the workspace's slip; the agent sends a
+// slip of its own as well: only the workspace's pair reaches the workspace.
+func TestTheWorkspaceUpstreamCarriesNoMembersSlip(t *testing.T) {
+	member, memberClaim := "slip-"+mirrorName(t), "claim-"+mirrorName(t)
+	wsSlip, wsClaim := "ws-slip-"+mirrorName(t), "ws-claim-"+mirrorName(t)
 	edit := func(up *gateway.Upstream) {
-		up.Service.SlipID, up.Service.SlipClaim = slipID, claim
+		up.Service.SlipID, up.Service.SlipClaim = member, memberClaim
 		up.AuthMode, up.Account = "oauth", config.DefaultClaudeAccount
 	}
 	route := func(address string) creds.Route {
 		return creds.Route{Version: creds.RouteVersion, Address: address, Model: creds.HolderWorkspace}
 	}
-	// What the agent writes on the call it makes: a slip of its own and a
-	// declaration of its own, which must not arrive as the runner's statement
-	// about this run.
+	// What the agent writes on the call it makes: a slip of its own — under
+	// both pairs of names, since it can spell either — and a declaration of its
+	// own, which must not arrive as the runner's statement about this run.
 	agent := http.Header{}
 	agent.Set(gateway.HeaderSlip, "slip-the-agent-invented")
 	agent.Set(gateway.HeaderSlipClaim, "claim-the-agent-invented")
+	agent.Set(gateway.WorkspaceSlipHeader, "ws-slip-the-agent-invented")
+	agent.Set(gateway.WorkspaceSlipClaimHeader, "ws-claim-the-agent-invented")
 	agent.Set(gateway.HeaderAuthMode, "api-key")
 	agent.Set(gateway.HeaderAuthAccount, "an-account-the-agent-named")
 
-	r := newWSRun(t, wsOpts{route: route, projectEdit: edit})
+	r := newWSRun(t, wsOpts{
+		route:         route,
+		projectEdit:   edit,
+		workspaceEdit: func(w *gateway.Workspace) { w.SlipID, w.SlipClaim = wsSlip, wsClaim },
+	})
 	wsServed(t, r, agent)
 
 	seen := r.workspace.Seen()
@@ -445,21 +613,29 @@ func TestTheWorkspaceUpstreamCarriesNoSlip(t *testing.T) {
 	}
 	wsAbsent(t, seen[0], gateway.HeaderSlip, gateway.HeaderSlipClaim, gateway.HeaderAuthMode, gateway.HeaderAuthAccount,
 		gateway.HeaderTier, gateway.HeaderCredential, gateway.HeaderSwitch, gateway.HeaderProbe)
+	// The pair that does travel is the workspace's own, and it is the run's
+	// claim rather than either value the agent wrote beside it.
+	if got := seen[0].Header.Get(gateway.WorkspaceSlipHeader); got != wsSlip {
+		t.Errorf("the workspace's service was sent %s = %q, want the workspace's own slip: the agent's own value must not arrive in its place", gateway.WorkspaceSlipHeader, got)
+	}
+	if got := seen[0].Header.Get(gateway.WorkspaceSlipClaimHeader); got != wsClaim {
+		t.Errorf("the workspace's service was sent %s = %q, want the claim secret the run holds", gateway.WorkspaceSlipClaimHeader, got)
+	}
 
-	// The contrast, so that "no slip travels" is about the workspace and not
-	// about a run that dropped its slip everywhere: the same run's own service,
-	// reached for a kind the record leaves the project's, is told the slip the
-	// run holds and the auth it declared (DS1.5, D2070 (a)).
+	// The contrast, so that "the member's slip does not travel" is about the
+	// workspace and not about a run that dropped its slip everywhere: the same
+	// run's own service, reached for a kind the record leaves the project's, is
+	// told the slip the run holds and the auth it declared (DS1.5, D2070 (a)).
 	own := newWSRun(t, wsOpts{route: func(address string) creds.Route {
 		return creds.Route{Version: creds.RouteVersion, Address: address, Bitbucket: creds.HolderWorkspace}
-	}, projectEdit: edit})
+	}, projectEdit: edit, workspaceEdit: func(w *gateway.Workspace) { w.SlipID, w.SlipClaim = wsSlip, wsClaim }})
 	wsServed(t, own, nil)
 	seen = own.project.Seen()
 	if len(seen) != 1 {
 		t.Fatalf("the project's own service received %d calls, want one", len(seen))
 	}
-	if got := seen[0].Header.Get(gateway.HeaderSlip); got != slipID {
-		t.Errorf("the member's own service was sent %s = %q, want the slip the run holds (%q)", gateway.HeaderSlip, got, slipID)
+	if got := seen[0].Header.Get(gateway.HeaderSlip); got != member {
+		t.Errorf("the member's own service was sent %s = %q, want the slip the run holds (%q)", gateway.HeaderSlip, got, member)
 	}
 	if got := seen[0].Header.Get(gateway.HeaderAuthMode); got != "oauth" {
 		t.Errorf("the member's own service was sent %s = %q, want the declaration the run resolved", gateway.HeaderAuthMode, got)
@@ -695,6 +871,16 @@ func TestTheGatewayRefusesAWorkspaceUpstreamItCannotCallSafely(t *testing.T) {
 			name: "no job name",
 			edit: func(o *gateway.Options) { o.Workspace.Job = "" },
 			want: "the workspace upstream reports no Cloud Run job name",
+		},
+		{
+			// The workspace's slip is what a run the workspace granted one
+			// carries for the model path (WC8), and upstream() is the one
+			// place the pair is set, so half of one is a mistake in code —
+			// refused here, where it is, rather than on every call the run
+			// makes afterwards.
+			name: "half the workspace's slip",
+			edit: func(o *gateway.Options) { o.Workspace.SlipID = "a-workspace-slip-id" },
+			want: "the workspace upstream carries half its slip",
 		},
 		{
 			name: "a route that serves the model from the workspace with no upstream for it",

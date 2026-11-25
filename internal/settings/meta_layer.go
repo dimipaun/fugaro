@@ -60,6 +60,12 @@ func registerLayerMeta() {
 		Min:         "0",
 		Max:         "0.1",
 	})
+	each("layer.ab.repos", Meta{
+		Label:       "Sampling rate by repository",
+		Description: "The sampling rate the project names for one repository, inside the block's own rate, where 0 opts that repository out.",
+		Group:       GroupProfiles,
+		Type:        TypeString,
+	})
 	each("layer.ab.max_pairs_per_day", Meta{
 		Label:       "Pairs per day",
 		Description: "The most pairs one repository is sampled for in a day, where 0 takes the built-in cap.",

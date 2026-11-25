@@ -1020,6 +1020,12 @@ func loadCheckoutResolved(ctx context.Context, dir string, lc *localcfg.Config, 
 	if err != nil {
 		return "", rf, userErr("%v", err)
 	}
+	if updateLeavesTheRemoval(ctx) {
+		// The update's own read: the file as this run's removal offer leaves it
+		// (F22). Every other reader resolves the bytes as they are and refuses
+		// a file that still says the word (D3022).
+		data, _ = fugaroYAMLWithoutRemovedMode(data)
+	}
 	if lc == nil {
 		lc = selectedProjectConfig(ctx)
 	}

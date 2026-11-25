@@ -24,9 +24,11 @@ import (
 // Check 91, fake `gcloud` and `fugaro` for Checks 27, 111, 146 and 401, fake `gcloud`,
 // `git`, `curl` and `fugaro` for Check 190, fake `gcloud`, `fugaro` and a fake
 // Realtime Database behind a fake `curl` for Checks 191 and 193 (193's fake
-// `gcloud` holds a Cloud Run job of each of two repositories, one of them
-// mounting a model credential when the case says the flip has not reached it,
-// and answers the check's Cloud Logging reads with the credentials service's
+// `gcloud` holds a Cloud Run job of each of two repositories — each running as
+// its own account, one of them mounting a model credential when the case says
+// the flip has not reached it, and the policy its `run services get-iam-policy`
+// read is answered with, whose roles/run.invoker binding is the other half of
+// the per-repository switch — and answers the check's Cloud Logging reads with the credentials service's
 // own `credsvc: audit` lines for the throwaway runs the fake `fugaro` records,
 // so a case can say what served a run, what the run declared and what it was
 // served instead), fake `gcloud`, `fugaro`
@@ -432,6 +434,42 @@ import (
 // docs/batch-run-identity/, and two cases bend those files to prove the check
 // reads them out of the tree rather than remembering them.
 
+// Check 831 is the proof R11 asks for, the one check that runs the whole thing
+// end to end: one real sandbox run launched on Batch, its job held to the run by
+// the run's own FUGARO_RUN variable rather than by a name, the ledger that says
+// it opened its session and was metered, the ticket the launcher put on the job
+// and where Batch printed it (the job's own document, the logs and the CreateJob
+// audit record -- D3115's rule measured rather than assumed) -- and then four
+// attacks made as a SECOND launcher, every one of them running as the run's own
+// job account so that a refusal is about the VM and not the account: the ticket
+// the second launcher's own read of the run's job found, replayed into a job of
+// its own, the same job with no ticket at all (the control), a SECOND launch's
+// job deleted while it is still queued and re-created under the same name with
+// that run's unspent ticket (D3108's id, F30 -- the queued window is the attack,
+// and the row FAILs when the job was not queued when it was deleted), and the
+// issuance record read straight out of the database with the second launcher's
+// own token. Its fakes are a `gcloud`, a `curl` and a `fugaro` over a small
+// model of Batch, the Realtime Database and Cloud Logging driven by files the
+// case writes -- the
+// jobs that exist, each job's uid, state and object, one task-log answer per
+// uid, the project-wide log answer, the CreateJob audit record, the database's
+// answers per path with a different answer from the second read on (so a row
+// that waits for a value rather than reading once is measured), every job
+// configuration the check submits, and a delete whose acceptance is listed for a
+// while afterwards and whose name stays un-submittable (ALREADY_EXISTS) until
+// the platform has finished with it -- so a case can read the body it sent,
+// including the ticket, which the test asserts never reaches the block, the
+// progress log or any file but the one of its own. The refusal a claim comes
+// back with is what the two claim rows -- the replay and the re-creation -- are
+// judged on, and its own sentence is
+// what tells the VM's refusal from the ones the route answers WITHOUT asking the
+// link -- the once-only fence's, the ticket's own life, and `not_served` -- so
+// cases bend that sentence each of those ways and the rows are required to FAIL
+// on every one of them: a row that read any refusal as its own would pass on a
+// tree with no VM-to-job link at all. The tree is a fixture too, and four cases
+// bend it: no ticket's variable, another path family, no run variable and a run
+// variable of another shape.
+
 // Checks 50, 780 and 781 are the keys-through-service work's owner-run checks,
 // and the three are the ones whose fakes have to hold STATE rather than answer
 // reads, because what each check measures is what its own commands changed.
@@ -475,6 +513,38 @@ import (
 // calls that all went direct, a routed call nobody reported, an audit line
 // whose forward was denied, a run that never ends and a record that is another
 // run's, and says what the check charged the provider's reported cost against.
+// Checks 628 to 632 are the model-crafts work's owner-run checks (its plan task
+// MC26), and each drives the same two fakes over one small model of a sandbox
+// installation: a fake `fugaro` whose reads and writes come out of the case's
+// own files and whose every call is logged with the directory it was made in,
+// and a fake `gcloud` serving the runs bucket and Cloud Logging. 628's fake
+// `fugaro` answers the config view, the craft list, the published node, the
+// launch and the runs list, and its fake `gcloud` the record and the gateway's
+// own lines, so a case bends a layer that names no model, a craft that resolves
+// another model, an allow-list that admits nothing, a stage that records
+// another model and a gateway refusal that names a stage -- and says what the
+// check made of each. 629 adds the pool's second member: its audit lines carry
+// the credential that answered each call, so a case says which member served
+// the run, whether the first was exhausted rather than skipped, and what the
+// publish wrote to the node. 630 writes NO pool at all -- it asks the write
+// door for one and reads the listing back to be sure it is absent -- and its
+// fake `fugaro update` is the convergence, splitting the crossed pool in the
+// order it listed its members and moving the node's version, so a case bends a
+// refusal that names one member, a validate that is not the second door and a
+// config the update finds already split. 631 is the one whose fake has to hold
+// the value: the fake `fugaro` declares, lists and removes the credentials, its
+// fake `gcloud` serves the record and the service's own audit line, and a pty
+// the case starts (python3's pty.openpty, handed to the check through
+// CHECK631_TTY) is the terminal the two pastes are made at -- with values
+// written into the terminal's own input queue, so the check's hidden prompt
+// reads the first and the command's own hidden prompt the second, and a case
+// says what was echoed, what was written into the config directory and into a
+// shell history, and what a session was refused. 632 holds the run and the
+// update at once: its fake `fugaro` launches a run and answers the runs list,
+// its fake `update` prints the one in-flight line and writes the converged
+// reads, and its fake `gcloud` serves the record and the run's own ledger, so a
+// case bends an update that fails, an update that asks for another command, a
+// run that never ends and a record that is another run's.
 // Checks 570 to 575 are the portal's live checks (P9.4), and each has fakes of
 // its own: Check 570's are a fake `fugaro` and a fake portal behind a fake
 // `curl`, over one installation and the licence it buys, so a case says what the
@@ -571,7 +641,16 @@ import (
 // Every row of the block has a failing form and an unmeasurable one, and every
 // case holds that the App's private key reaches neither the block, the output
 // nor the scratch directory.
-// Checks 881 and 882 are the model-credentials routing work's owner-run checks.
+// Checks 880 to 882 are the model-credentials routing work's owner-run checks.
+// 880 reads, for each source the credentials service has served, the NAMES of
+// the rate-limit headers that source's last answer carried — the node of its own
+// PL7 writes beside a credential's mark, creds/observed/<name>, so the marks
+// stay readable by a release behind — and says whether one of them is a utilisation
+// figure, which is U1 and the gate on PL8. Its fakes are a fake `gcloud` that
+// mints the access token and a fake `curl` that serves the record out of the
+// case's own file and answers no other URL, so a case says what the block
+// judges and that the check makes no model call of its own and prints no value
+// the record holds.
 // 881's fakes are a fake `fugaro` (a routing table, a budget, a pool of
 // accounts whose members the case sets a state on, a launch and a run listing)
 // and a fake `gcloud` serving the run's own record out of the runs bucket, so a
@@ -606,6 +685,62 @@ import (
 // is made only after the decline that proved it refused, that the config comes
 // back byte-identical with its sidecar removed, and that no value of the
 // installation's ever reaches the block.
+// Checks 720 and 721 are the workspace-and-members owner-run checks, and 721
+// makes one IAM write of its own. 720's fakes are a fake `fugaro` that records
+// each command it is given together with the installation it was selected on,
+// and a fake `gcloud` whose `projects describe` answers each project's PARENT
+// from the marker the fake `fugaro` leaves, so a case says which command ran
+// against which workspace and what the folder move and its return left behind;
+// its fake `fugaro` answers a pty-holding `setup --create-project` the way a
+// real terminal does. 721's are a fake `gcloud` that holds the member's project,
+// makes the binding its own writes ask for and serves Google's Admin Activity
+// -- one entry per binding ADDED, the member's own update's, the check's own and
+// a third party's when the case asks for one -- and a fake `fugaro` whose
+// `update` records that it ran and whose `workspace show` and `workspace
+// project status` answer with a member table and a drift row built out of what
+// that gcloud did, so a case says which entry the row names and which it leaves
+// out.
+// Checks 890 to 892 are the repo-coupling audit's owner-run checks, and each
+// only reads. 890's fakes are a fake `gcloud` and `curl` answering out of the
+// case's own Realtime Database tree, bucket listing and Firestore ids, so a case
+// says which listed path a storage-path row of the audit's report names and
+// which it leaves UNNAMED. 891's are a fake `fugaro` whose `update --plan-only
+// --json --events` feed differs by the directory it ran in, and a fake `gcloud`
+// serving each repository's launch.json, so a case says which stage differs
+// between an empty directory and a checkout and whether that stage is a §4
+// blocker. 892's are a fake `gcloud` holding the projects' and the build and
+// job accounts' IAM policies and a fake `curl` serving the grants node, so a
+// case says which principal is an admin in all but name.
+// Check 920 is the image-secrets work's owner-run check. Its fakes are a fake
+// `gcloud` (the jobs of two repositories, a run's own executions, the service's
+// `credsvc: audit` lines and the run's record out of the runs bucket, the
+// build identity's account and the project's IAM policy, the containers'
+// accessors and the catalog build's steps), a fake `curl` answering the
+// projectsecrets record only through the 0600 config file the check hands over,
+// and a fake `fugaro` whose `version`, `doctor`, `runs ls`, `run` and `review`
+// the case bends -- so a case says which container a job and a run's own pods
+// mount, what the service served a run and its review, what an unlisted
+// repository was refused with, and that a catalog build resolves no accessor
+// for the build identity.
+// Check 820 is the location preference's owner-run first-EU-installation check.
+// Its fakes are a fake `gcloud` over the reads a first installation is judged
+// by (the project, its buckets -- counted, because the premise reads them before
+// the setup and the buckets row after it -- their locations, the Firestore
+// databases, the Artifact Registry repositories, the containers and the log
+// buckets, and one access token) a fake `curl` that answers only the two
+// Realtime Database shapes through the 0600 config file the check hands over
+// and refuses a request carrying any other header, and a fake `fugaro` whose
+// `setup`, `doctor`, `run`, `runs ls` and `budget show` the case bends -- so a
+// case says what each row reads back from a setup that converged, and that the
+// check calls `fugaro` at all only after its premise held.
+// Check 821 is the same work's owner-run update-with-a-run-in-flight check. Its
+// fakes are one fake `fugaro` whose `doctor` (before and after the converge),
+// `run`, `runs ls`, `update` and `update --plan-only` the case serves call by
+// call, so a case says that the run in flight is followed across the update and
+// its record is still whole, that a plan which would change something is the
+// finding U9 exists for, that a step left for the owner is not a refusal, and
+// that an update which asks a question is a finding -- with no gcloud and no
+// curl anywhere, because the check holds no credential.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -624,6 +759,7 @@ var liveCheckScripts = []struct {
 	{"check148.sh", "check148_test.sh"},
 	{"check149.sh", "check149_test.sh"},
 	{"check180.sh", "check180_test.sh"},
+	{"check181.sh", "check181_test.sh"},
 	{"check190.sh", "check190_test.sh"},
 	{"check191.sh", "check191_test.sh"},
 	{"check193.sh", "check193_test.sh"},
@@ -688,6 +824,11 @@ var liveCheckScripts = []struct {
 	{"check591.sh", "check591_test.sh"},
 	{"check610.sh", "check610_test.sh"},
 	{"check611.sh", "check611_test.sh"},
+	{"check628.sh", "check628_test.sh"},
+	{"check629.sh", "check629_test.sh"},
+	{"check630.sh", "check630_test.sh"},
+	{"check631.sh", "check631_test.sh"},
+	{"check632.sh", "check632_test.sh"},
 	{"check640.sh", "check640_test.sh"},
 	{"check640-queue-probe.sh", "check640-queue-probe_test.sh"},
 	{"check770.sh", "check770_test.sh"},
@@ -714,15 +855,32 @@ var liveCheckScripts = []struct {
 	{"check810.sh", "check810_test.sh"},
 	{"check811.sh", "check811_test.sh"},
 	{"check-830.sh", "check-830_test.sh"},
+	{"check-831.sh", "check-831_test.sh"},
 	{"check-840.sh", "check-840_test.sh"},
 	{"check-740-run-messages.sh", "check-740-run-messages_test.sh"},
+	{"check-750-review-against-task.sh", "check-750-review-against-task_test.sh"},
+	{"check-720.sh", "check-720_test.sh"},
+	{"check-721.sh", "check-721_test.sh"},
 	{"check670.sh", "check670_test.sh"},
+	{"check-880-token-utilisation.sh", "check-880-token-utilisation_test.sh"},
 	{"check-881-chain-falls-through.sh", "check-881-chain-falls-through_test.sh"},
 	{"check-882-vertex-capped.sh", "check-882-vertex-capped_test.sh"},
 	{"check680.sh", "check680_test.sh"},
 	{"check-883-pause-resume.sh", "check-883-pause-resume_test.sh"},
 	{"check-884-update-migrates.sh", "check-884-update-migrates_test.sh"},
 	{"check-885-retired-keys.sh", "check-885-retired-keys_test.sh"},
+	{"check-890-data-layout.sh", "check-890-data-layout_test.sh"},
+	{"check-891-update-trace.sh", "check-891-update-trace_test.sh"},
+	{"check-892-iam.sh", "check-892-iam_test.sh"},
+	{"check-900-version-stamp.sh", "check-900-version-stamp_test.sh"},
+	{"check920.sh", "check920_test.sh"},
+	{"check-390.sh", "check-390_test.sh"},
+	{"check-391.sh", "check-391_test.sh"},
+	{"check-392.sh", "check-392_test.sh"},
+	{"check732.sh", "check732_test.sh"},
+	{"check733.sh", "check733_test.sh"},
+	{"check-820.sh", "check-820_test.sh"},
+	{"check-821.sh", "check-821_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent

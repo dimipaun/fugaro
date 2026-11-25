@@ -18,8 +18,10 @@
 # grant that binds them, the SA fallback's account with no role of its own, and
 # — once the workspace's owner has a member table and an image to deploy
 # (var.credentials_service) — the workspace's own credentials service, the ONE
-# accessor on the workspace's own bundle container, and one invoke grant per
-# member job account. That "nothing else" is the security property, not a
+# accessor on the workspace's own bundle container, the ONE conditioned accessor
+# that reads a person's own Claude token (R6, D2971), and one invoke grant per
+# member job account and per person of the workspace's roster. That "nothing
+# else" is the security property, not a
 # simplification: spec §9 has a workspace never holding another project's runs,
 # buckets, jobs or repositories, and the whole point of D1290's answer is that
 # the workspace's project is nobody's member. A job, a runs bucket or a
@@ -34,7 +36,14 @@
 # (R14), and is invoked by a member's own job accounts and by nobody else. It
 # runs as the account above, which is what makes the account's reach the whole of
 # the workspace's model access — one database grant for the record and the meter,
-# and one accessor on the bundle.
+# one accessor on the bundle, and one conditioned accessor on a person's own
+# token (R6).
+#
+# The person's own token is why the roster's people are here at all (WC2): the
+# workspace's credentials half serves a person's Claude OAuth token, so the
+# person invokes the service and the account reads exactly that person's
+# container and no other secret of the project (R6, D2971). The people come from
+# the workspace's own roster node, rendered into var.people by `fugaro update`.
 #
 # fugaro update writes this root's terraform.tfvars.json into a workdir of its
 # own (internal/infra's WorkspaceWorkdir, state fugaro/workspace) and plans and
@@ -76,6 +85,12 @@ locals {
   # and the map's keys are the members' names — which is what makes an account
   # that leaves the table a grant that is deleted and nothing else (F25).
   member_job_accounts = toset(flatten([for m in values(var.members) : m.job_service_accounts]))
+
+  # The roster's people, as a set: one invoke grant per person's address, and a
+  # person the roster no longer names is a grant that is deleted and nothing
+  # else (F25, R6). It is a set rather than the list, so a roster that names the
+  # same address twice cannot make terraform bind one address twice.
+  roster_people = toset(var.people)
 
   # The URL a revision carries on the apply that CREATES the service: Cloud Run
   # assigns the real one, nothing here may read the service's own uri from inside
@@ -377,4 +392,63 @@ resource "google_cloud_run_v2_service_iam_member" "workspace_invoker" {
   member   = "serviceAccount:${each.value}"
 
   depends_on = [google_cloud_run_v2_service.workspace]
+}
+
+# One invoke grant per person of the workspace's roster (R6, D2971): a person
+# signs in and reaches the workspace's own service with their own Google
+# identity, which is what lets the workspace's credentials half serve them, and
+# they reach that service and no other.
+#
+# It is a member resource and never a binding, so a person the roster drops
+# deletes their grant and nobody else's: `fugaro update` converges that with no
+# operator repair (F25), and internal/infra/tf's cover admits that deletion and
+# the members' and no other. The member is the ADDRESS itself — `user:<address>`
+# — and never a service account: a roster's `sa` entries are the members' job
+# accounts, which the invoker grant above is bound to, and the root's own
+# validation refuses an entry that is not an address and one in that class — a
+# machine's own address — because IAM refuses a `user:` member that is a machine.
+resource "google_cloud_run_v2_service_iam_member" "workspace_person_invoker" {
+  for_each = local.credentials_service_on ? local.roster_people : toset([])
+
+  project  = var.project
+  location = var.credentials_service.region
+  name     = var.credentials_service.service
+  role     = "roles/run.invoker"
+  member   = "user:${each.value}"
+
+  depends_on = [google_cloud_run_v2_service.workspace]
+}
+
+# The ONE conditioned accessor the workspace's own account holds (R6, D2971): a
+# person's own Claude OAuth token, and no other secret of the workspace's
+# project.
+#
+# It is per-project and conditioned, and both halves are the point. The
+# container is one per person and its name is the verified token's own `sub`
+# (`fugaro_u_<sub>_claude-oauth-token`, internal/secretname), which no plan
+# knows — so a per-container grant cannot be written here at all — and the
+# condition is what narrows a project-wide one to exactly the class the
+# workspace's service serves: the per-person prefix AND the name that ends in
+# the token's own. The prefix alone would hand the workspace's account every
+# personal secret a person keeps in the workspace's project, and the name alone
+# would reach a container of another project's naming. It carries the intake's
+# own extraction template and deliberately not its expression (intake.tf), which
+# admits the shared `fugaro_p_` class too: the workspace serves no member through
+# one — what is shared is a shared entry (D2976) — and the workspace's account
+# must hold none of it.
+#
+# internal/infra/tf's cover holds the title and the expression to
+# gcp.WorkspacePersonTokenConditionTitle and gcp.WorkspacePersonTokenCondition()
+# byte for byte, and refuses a wider one (WorkspaceNotCovered).
+resource "google_project_iam_member" "workspace_person_token" {
+  count = local.credentials_service_on ? 1 : 0
+
+  project = var.project
+  role    = "roles/secretmanager.secretAccessor"
+  member  = google_service_account.workspace.member
+
+  condition {
+    title      = "fugaro-workspace-person-token"
+    expression = "resource.name.extract(\"/secrets/{secret}\").startsWith(\"fugaro_u_\") && resource.name.extract(\"/secrets/{secret}\").endsWith(\"_claude-oauth-token\")"
+  }
 }

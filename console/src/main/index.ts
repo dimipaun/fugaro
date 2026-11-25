@@ -39,7 +39,7 @@ import { app, BrowserWindow, Menu, ipcMain, protocol, session, shell } from 'ele
 
 import { APP_ENTRY_URL, handleAppRequests, registerAppScheme } from './protocol'
 import { consoleIconPath, installDevDockIcon } from './icon'
-import { installInstallationPicker } from './picker'
+import { addProjectRefusal, createAddProjectRequest, installInstallationPicker } from './picker'
 import type { InstallationPicker } from './picker'
 import {
   createConsoleLifecycle,
@@ -60,7 +60,7 @@ import { createSpawnLog } from './spawnlog'
 import type { SpawnLogWriter } from './spawnlog'
 import { parseInstallationsDocument } from './installlist'
 import { createLaunchRunner, DECLINING_CONFIRMER } from './launch'
-import type { FrozenLaunch, LaunchRequest, TargetLookup } from './launch'
+import type { FrozenLaunch, LaunchConfirmer, LaunchRequest, TargetLookup } from './launch'
 import type { CrashReportingHandle } from './crash-electron'
 import { startCrashReportingSafely } from './crash'
 import { createCrashSettings, readCrashSwitch } from './crashstore'
@@ -85,8 +85,9 @@ import {
   registerConsoleHandlers,
   startupCompatibility,
 } from './ipc'
-import type { ConsoleHandler, ConsoleHandlers, ValidatedArguments } from './ipc'
-import { lapseHandlers } from './licence-state'
+import type { ConsoleHandlers, ValidatedArguments } from './ipc'
+import { lapseHandlers, licenceStateOf } from './licence-state'
+import { newOperationHandlers } from './handlers'
 import { handlersFor } from '../source/source'
 import { createBoundSource } from '../source/cli'
 import type { BoundInstallation } from '../source/cli'
@@ -358,13 +359,39 @@ function storedCompatibility(): CliCompatibility {
  * refusal when the file could not be read.
  */
 function installationState(): ActiveInstallation | undefined {
+  // The picker's Add project request rides this read and is **spent** by it
+  // (SW3c, R4): the picker window has no channel to the dashboard, so the only
+  // way its door can reach the screen that shows the wizard is a fact main
+  // holds until the dashboard asks for its installation -- and the dashboard
+  // asks exactly once, at boot, which is the boot the door asked for by
+  // remaking the window. A later read (a reload, a second window) must not
+  // open the wizard again, so the request is taken here and not kept
+  // (`createAddProjectRequest`, whose three rules its own test pins).
+  //
+  // **Which answer it rides is not the door's business**: the first run's answer
+  // carries it too, because the picker draws its row whenever it has
+  // installations to add a project beside and a machine whose projects are all
+  // unchosen is that same console -- the one the rail's own door opens the wizard
+  // on. A request spent on an answer that names no installation is a button that
+  // does nothing, repeatably.
+  const asked = addProject.take()
   const chosen = picker?.installation()
   if (chosen === undefined) return undefined
   // `withResolvedBinary` is where the direction of the join is decided and
   // unit-tested; this file only supplies the two values.
   const resolved = chosen.chosen ? resolvedBinaries.get(chosen.project) : undefined
-  return withResolvedBinary(chosen, resolved)
+  const active = withResolvedBinary(chosen, resolved)
+  return asked ? { ...active, addProject: true } : active
 }
+
+/**
+ * addProject is the picker's Add project door waiting for the window that
+ * answers it (SW3c, R4). The state and the rules are `createAddProjectRequest`'s
+ * (`picker.ts`, where they are unit-tested); what is here is the wiring: the door
+ * records a request, `installationState` above is its only reader, and a choice
+ * of another installation drops one.
+ */
+const addProject = createAddProjectRequest()
 
 /**
  * activeBinding is the installation the source is bound to: the same state, as
@@ -911,6 +938,52 @@ let settingsEditRunner: SettingsEditRunner = DECLINING_SETTINGS_EDITOR
 let settingsEditorRunner: SettingsEditorRunner = DECLINING_SETTINGS_EDITOR_FLOW
 
 /**
+ * confirmWindow is the one confirmation window as the console improvements'
+ * handlers read it (I-OPS): built in `main` over `createConfirmWindow`, and
+ * `DECLINING_CONFIRMER` until then, so a wizard, a models write or an image
+ * write that somehow arrived before the window exists is declined by name
+ * (`DECLINED_UNBUILT`) rather than shown a half-built one.
+ *
+ * It is read **at message time** and not captured, which is what makes the
+ * default the fail-closed one rather than the shipped one: the surface reaches
+ * `ipcMain` only from `onDecided`, which only `lifecycle.start()` and `choose`
+ * reach, both from inside `main` -- so the order is the launcher's own, and the
+ * two runners beside this name are the same shape.
+ */
+let confirmWindow: LaunchConfirmer = DECLINING_CONFIRMER
+
+/**
+ * newOperations is the console improvements' thirteen rows (I-OPS): the nine of
+ * the contract, and the models and image writes' four.
+ *
+ * It is built here, at module scope, over **readers** rather than values: the
+ * installation, the window and the licence are facts that change under the
+ * surface, and a row that closed over one of them would drive the installation
+ * the console was pointing at when the process started. Nothing is spawned and
+ * nothing is walked when this constant is built -- the binary is resolved once
+ * per installation, at the first message of the set (`src/main/handlers.ts`),
+ * which is the resolution the bound source pays per binding too.
+ *
+ * `lapsed` is the same predicate the lapse gate is built from
+ * (`licenceStateOf` over the store's reply), because the two writes ask it a
+ * second time **where they really start**: the window's own yes reaches
+ * `runApply` with no IPC handler on the path, so the gate on the row is not what
+ * stops a plan made after the lapse (`modelsadd.ts` says so at the field). The
+ * setup wizard is the third flow that asks it, for the same reason and on the
+ * same path: it is handed the bound installation's project when there is one and
+ * no project at all in the no-installation state, where there is no key that
+ * could have lapsed (`src/main/handlers.ts`).
+ */
+const newOperations = newOperationHandlers({
+  binding: activeBinding,
+  confirmer: () => confirmWindow,
+  settingsEditor: () => settingsEditorRunner,
+  lapsed: (project) => licenceStateOf(licenceStore.read(project, new Date())) === 'lapsed',
+  appEnv: process.env,
+  log: createSpawnLog(process.env),
+})
+
+/**
  * gated is the whole surface, and it is the join the two modules describe:
  * `handlersFor` answers the twelve operations that read the CLI -- eleven
  * before console L5b added `runs.stats` (`src/source/source.ts`'s
@@ -993,81 +1066,30 @@ const gated: ConsoleHandlers = {
   // to open (`docs/lapse-read-only/spec.md`).
   'licence.read': () => licenceRead(),
   'licence.save': (args) => licenceSave(args),
-  // **The console-improvements operations whose tasks have yet to land, each on
-  // an explicit stub** (the console improvements plan, AL). They are named one by
-  // one rather than spread from a table, and that is the whole point of them
-  // being here: the surface's `ConsoleHandlers` is closed,
-  // `registerConsoleHandlers` refuses to build a table with a handler missing,
-  // and the check has to keep stopping the console when a handler is *truly*
-  // missing. A spread of an object literal would let a name be dropped from the
-  // record and answered by nothing while the type still checked; a line each
-  // means the difference between a deliberate stub and a missing handler is one
-  // line in this diff.
+  // **The console-improvements operations, on their real handlers** (I-OPS).
+  // They are spread from one table rather than named one by one, and the table
+  // is `handlers.ts`'s: the nine the contract names, the models and image
+  // writes' four, and the settings editor's own -- thirteen rows over the active
+  // installation, built at the first message of the set and never at startup.
+  // The two setup rows are the exception to "over the active installation", and
+  // they are the state's whole point: with nothing chosen they are the
+  // onboarding wizard (`handlers.ts`'s `loadSetup`), which is what the
+  // no-installation view shows in place of a command line.
   //
-  // **I-OPS replaces them.** That task registers the real handlers through this
-  // same table, so the rows keep passing `reducedModeHandlers` and
-  // `lapseHandlers` -- a lapsed console refuses `setup.apply` and a refused
-  // console registers no channel at all, exactly as for every other row.
-  'runs.stream': newOperationStub(),
-  'spend.stream': newOperationStub(),
-  'budget.stream': newOperationStub(),
-  whoami: newOperationStub(),
-  'image.catalog.ls': newOperationStub(),
-  'recipes.ls': newOperationStub(),
-  'setup.plan': newOperationStub(),
-  'setup.apply': newOperationStub(),
-  // **`settings.editor.open` is no longer one of them** (SU2b): the Project
-  // tab's pencil is its one caller, and it registers the flow SU1 wrote
-  // (`settingsEditorRunner`, built in `main` over the same window) the way
-  // `settings.edit` above registers its own. The read at message time is what
-  // keeps the fail-closed default honest for a press that arrives before `main`
-  // has built the window: it is answered `SETTINGS_EDIT_UNBUILT` and no window
-  // opens.
-  'settings.editor.open': (args) => settingsEditorRunner.open(args),
-  // The models write's two rows (MW1, D2903), registered the way AL registered
-  // its nine: the surface, the argv and the flow behind them are here
-  // (`src/main/modelsadd.ts`, `src/main/modelsview.ts`), and what these two
-  // entries wait for is I-OPS, which registers `createModelsAdd`'s handlers
-  // through this same table. Until then a screen that asks for one is answered
-  // 'not available in this build' rather than spawn anything -- and the floor
-  // constant the Manage view reads (`MODELS_ADD_CLI_FLOOR`) is what keeps the
-  // action off the screen in the meantime.
-  'models.add.plan': newOperationStub(),
-  'models.add': newOperationStub(),
-  // The image write's two rows (MW2, D2903), registered the way the models
-  // write's are: the surface, the argv and the flow behind them are here
-  // (`src/main/imageadd.ts`, `src/main/imagesview.ts`), and what these two
-  // entries wait for is I-OPS, which registers `createImageAdd`'s handlers
-  // through this same table. Until then a screen that asks for one is answered
-  // 'not available in this build' rather than spawn anything -- and the floor
-  // constant the Manage view reads (`IMAGE_ADD_CLI_FLOOR`) is what keeps the
-  // action off the screen in the meantime.
-  'image.add.plan': newOperationStub(),
-  'image.add': newOperationStub(),
-}
-
-/**
- * NEW_OPERATIONS_UNBUILT is what an operation the console improvements declare
- * answers before the task that implements it lands. It is the same sentence
- * `src/shared/new-ops.ts` gives a missing bridge method for the same reason: a
- * screen that asked anyway is told the read is not available in this build, and
- * not that the CLI failed -- the child was never spawned.
- *
- * It is **spelled here and not imported** from that module, on the direction the
- * plan states: the allow-list implements the operations beside the contract and
- * imports nothing from it, so a renderer-loadable file is never the thing that
- * decides what main answers.
- */
-const NEW_OPERATIONS_UNBUILT = 'not available in this build'
-
-/** newOperationStub is one unbuilt operation's handler. It throws rather than
- * answering data, which is this surface's one refusal path (`dispatch` turns
- * the throw into `{ok: false, reason}`): a stub that answered an empty document
- * would draw an empty screen instead of saying why. */
-function newOperationStub(): ConsoleHandler {
-  return async () => {
-    throw new Error(NEW_OPERATIONS_UNBUILT)
-  }
+  // **The spread is what keeps every one of them gated.** They are rows of this
+  // same table, so they pass through `reducedModeHandlers` and `lapseHandlers`
+  // exactly as the launch and the settings write do: a console whose compat is
+  // reduced registers no `spend.stream` and no `budget.stream` handler at all,
+  // and a lapsed installation meets the gate on `setup.apply`, `models.add` and
+  // `image.add` before the handler -- and so before any child -- is reached.
+  //
+  // The surface stays as closed as it was when these rows were stubs named one
+  // by one: `registerConsoleHandlers` still refuses to build a table with a
+  // handler missing, and `test/unit/ops-contract.test.ts` holds this table's row
+  // set to the surface's own names, so a name dropped from
+  // `NEW_OPERATION_HANDLER_NAMES` stops the console rather than being answered
+  // by nothing.
+  ...newOperations.rows,
 }
 
 /**
@@ -1289,6 +1311,14 @@ async function main(): Promise<void> {
     entryUrl: CONFIRM_ENTRY_URL,
     session: session.defaultSession,
   })
+  // **The window the console improvements' flows ask as well** (I-OPS): the
+  // wizard, the models write and the image write all open this same window
+  // (D1115: one modal, and now five questions), and `newOperations` reads it
+  // through this name at message time. Set here, before the picker and before
+  // `lifecycle.start`, for the launcher's own reason: those two are the paths
+  // that put the surface on `ipcMain`, so a row a renderer can reach finds this
+  // window rather than the declining default.
+  confirmWindow = confirmer
   launchRunner = createLaunchRunner({
     lookUp: launchLookUp,
     stillRecorded: launchStillRecorded,
@@ -1373,6 +1403,12 @@ async function main(): Promise<void> {
     // The picker awaits this inside its own serial chain (review S6), so a
     // second choose cannot start until the window this one asked for is up.
     onChosen: (chosen) => {
+      // An Add project request the console could not carry out -- a refused
+      // installation is a refusal window and no dashboard, so nothing ever read
+      // the request -- is dropped by the next real choice: the operator asked
+      // for the wizard on the console that was up, and this is a different
+      // console (SW3c).
+      addProject.clear()
       // Rule 11's "re-chosen": a launch names its own installation rather than
       // the active one, so the installation being chosen again is the window
       // that must close. Before `lifecycle.choose`, so the cancel is decided
@@ -1384,8 +1420,40 @@ async function main(): Promise<void> {
       launchRunner.cancelFor(chosen.project)
       settingsEditRunner.cancelFor(chosen.project)
       settingsEditorRunner.cancelFor(chosen.project)
+      // The console improvements' three window subjects (I-OPS) -- the wizard's
+      // plan, the models write's and the image write's: each is keyed by the
+      // project it affects, so re-choosing an installation closes whichever of
+      // them that project has open rather than letting a plan made for one
+      // installation be applied while another is active.
+      newOperations.cancelFor(chosen.project)
       resolvedBinaries.set(chosen.project, chosen.resolvedBinaryPath)
       return lifecycle.choose(chosen.compatibility).catch(reportAndQuit)
+    },
+    // The picker window's Add project door (SW3c, R4). It opens no child and
+    // writes no record: the wizard is the **dashboard's** screen, so what this
+    // hands over is a window. The flag goes up before `choose`, because the boot
+    // that reads it is the one `choose` is about to cause -- a remade window
+    // reads `installation.current` once, and that read is the door's whole
+    // delivery. The same call a re-choice makes, with the answer the console
+    // already holds: nothing about which installation is active changes, and the
+    // operator is put back on the console with the wizard in its main area.
+    onAddProject: () => {
+      // **A console with no dashboard refuses, and holds nothing.** Neither a
+      // handshake still in flight (`current` is null: `storedCompatibility`
+      // would throw, and the throw would come after the flag went up) nor a
+      // refused one has a dashboard for the wizard to be drawn in -- the refusal
+      // window registers no `installation.current` read at all, so a flag set
+      // here would be spent by whatever reads next, and the row would answer
+      // `ok` for a door that opened nothing, repeatably.
+      const refusal = addProjectRefusal(current)
+      if (refusal !== undefined) return refusal
+      // A request already waiting for the window it asked for is not asked a
+      // second time: a second `choose` remakes the window the first one opened,
+      // and which of the two boots spends the flag is a race the operator would
+      // see as a console that flashed and came up on Live.
+      if (!addProject.please()) return undefined
+      void lifecycle.choose(storedCompatibility()).catch(reportAndQuit)
+      return undefined
     },
     // A removal that took the active installation drops the bound source (Task
     // 3.4c; the seam 3.4b left for it). Without this the surface would keep
@@ -1407,6 +1475,11 @@ async function main(): Promise<void> {
       launchRunner.cancelFor(project)
       settingsEditRunner.cancelFor(project)
       settingsEditorRunner.cancelFor(project)
+      // Rule 11's "removed", the console improvements' half (I-OPS): a record a
+      // removal took away closes whatever of the wizard's, the models write's
+      // and the image write's windows that project had open -- active row or
+      // not, exactly as the two runners above.
+      newOperations.cancelFor(project)
     },
     // The crash reporter's checkbox, on the platforms the owner's ruling of
     // 2026-10-30 gives it (`darwin` and `linux`) and not on Windows. It is the

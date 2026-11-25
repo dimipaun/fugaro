@@ -62,14 +62,20 @@ handle of a thing it did not mint.
 `TicketRequest` names the ingredients of the claims and never the claim set: `slug`, `run`,
 `account` (the job account the launch will run as), `launcher` (the self-asserted `rb`, R11),
 `branch` (`fb`), `pull_requests` (`fpr`), `context_repos` (`fcr`), `max_runtime_seconds` and, for
-the orchestrator alone, `attempt`. The service derives the expiry, refuses a runtime beyond its
-configured maximum rather than clamping it, refuses an `account` that is not this repository's
-job's account, and judges each context repository for the view action and against the policy's
-allow-list before the list is signed (R4, R16, F31).
+the orchestrator alone, `attempt` or `resumes` — one of the two and never both. The service
+derives the expiry, refuses a runtime beyond its configured maximum rather than clamping it,
+refuses an `account` that is not this repository's job's account, and judges each context
+repository for the view action and against the policy's allow-list before the list is signed
+(R4, R16, F31).
 
-`ClaimRequest` carries the ticket and the nonce and nothing else: the uid, the claims and the
-account are the record's, and the caller is the job's own Google ID token, of which nothing but
-the account is read.
+`ClaimRequest` carries the ticket and the nonce — and, where the job is on Batch, one field more —
+and nothing else: the uid, the claims and the account are the record's, and the caller is the
+job's own Google ID token, of which nothing but the account is read. **The extra field is BR4 of
+[batch-run-identity](../batch-run-identity/README.md)** (its R1): `attestation`, the run's own VM
+identity token in the metadata server's full format, which the service serves the identity to a
+job's own VM by. It is empty for a Cloud Run launch, whose job's token already names the one
+execution, and a service of the release behind refuses the field it does not know rather than
+serving an identity on the job's token alone.
 
 ## The claim's nonce (R2)
 
@@ -101,6 +107,30 @@ cannot both be looked up. The issuer looks the reference up on the orchestrator'
 serves only a recorded, unstarted attempt; no other class may name one, and an orchestrator's ask
 that names none is refused.
 
+## The resume reference (D3189)
+
+An orchestrator's ask may carry `Resumes` instead of `Attempt`: the id of the paused run it
+continues — the same reference a resumed run's task names (`runstore.PauseMemberResumes`), so that
+the ask and the task that run is launched with call the paused run the same thing. It is the
+orchestrator's own, exactly as `Attempt` is, and an ask names one of the two and never both: a run
+either re-issues an attempt of the orchestrator's own record or continues a pause the credentials
+service recorded.
+
+The two are looked up in different places, and that is the whole of the case D3189 adds to D3136.
+An attempt is judged against the orchestrator's own state node — written over IAM by the database
+admins, so a launcher with a modified CLI cannot write it. A resume is judged against **the
+service's own record of the pauses it wrote**: the node at `runstore.PauseNodePath(slug, run)`,
+under the `paused` subtree of the database, which the service alone writes (R19). A run's own
+word about a pause it suspended is the record in its own bucket (`pause.json`), which is a hostile
+agent's (R23) — a resume derived from that one would be a resume any agent could ask for (F52) —
+so the issuer never reads it. The record cannot carry the resume either: the run that continues a
+paused one is a new run of the chain, so no intent of that node names it.
+
+What this route does not judge is the grant's own rules — that the node's resume time has passed,
+that it carries no cancellation, that the paused run really ended `paused`. Those are the slip's,
+where a resume's launcher is judged (contract-pause, "Resuming"). What the route answers is the
+one question it is the door for: is this ask one this service's own record carries at all?
+
 ## The refusal codes
 
 The codes are this contract's own, in the shape the service's other routes already write.
@@ -110,7 +140,7 @@ The codes are this contract's own, in the shape the service's other routes alrea
 | `not_served` | the identity half is not configured: the routes are mounted, no signer is (I1) |
 | `caller_not_admitted` | a verified caller the route does not admit: off the roster, a job account at the ticket, a non-operator at the probe |
 | `no_launch_scope` | the caller is admitted and this repository is not one it may launch (LM23) |
-| `identity_refused` | the ask itself: an account that is not the record's job account, a run on another caller's record, a ticket already claimed or beside an outcome, a runtime beyond the maximum, an unknown or expired ticket, a nonce that is not the claim's own, an orchestrator's attempt the record does not carry (LM1, LM2, LM24) |
+| `identity_refused` | the ask itself: an account that is not the record's job account, a run on another caller's record, a ticket already claimed or beside an outcome, a runtime beyond the maximum, an unknown or expired ticket, a nonce that is not the claim's own, an orchestrator's attempt the record does not carry, an orchestrator's resume this service recorded no pause for (LM1, LM2, LM24, D3189) |
 
 `identity_refused` is one code because the CLI's own branch is the same for all of them — fail
 with the reason and the fix — and because a code a caller may act on differently would have to be

@@ -190,10 +190,13 @@ const (
 	// holds names rather than a value. It is the second purpose whose caller is
 	// not a run (callerWithoutJobPurpose).
 	//
-	// A grant that GRANTS writes no line: StatusOK requires a credential
-	// (checked), and a grant issues none — it writes a record. What records a
-	// grant is the service's own line naming the slip it wrote, which is also
-	// where the launcher and the run it named are read back.
+	// A grant that GRANTS issues no credential — it writes a record — so a
+	// StatusOK line of this purpose names none (credentiallessPurpose) and the
+	// act is recordable as an audit line: the workspace's own grant writes one
+	// (WC4, R3), and the installation's own grant route, which this plan leaves
+	// exactly as it was (A3), still writes none. On either route the service's
+	// own line names the slip it wrote and the run the launcher asked for, which
+	// is where an operator reads those back.
 	PurposeSlipGrant = "slip_grant"
 	// PurposeSlipClaim is a run's claim of its slip (DS1.3, D1941): the run's
 	// first call, which presents the identity and the job account the slip binds
@@ -540,12 +543,14 @@ func callerWithoutJobPurpose(purpose string) bool {
 }
 
 // credentiallessPurpose reports whether a purpose's line names no credential at
-// all: the mobile four, whose acts are a person's session rather than a use of
-// one. The service verifies an assertion the identity project signed, reads and
-// writes the installation's own records and issues a token of its own, and
-// nothing on that path reads a bundle entry or presents a secret to another
-// system — so there is no name for the line to carry, and a credential on one
-// would be an entry this service never read.
+// all. Two families are. The mobile four, whose acts are a person's session
+// rather than a use of one: the service verifies an assertion the identity
+// project signed, reads and writes the installation's own records and issues a
+// token of its own, and nothing on that path reads a bundle entry or presents a
+// secret to another system. And a slip GRANT (PurposeSlipGrant), whose act is
+// the launcher's ask and not a use either: it issues no credential and reads no
+// bundle entry — it writes a record — so a name on its line would be an entry
+// this service never read. WC4's grant line is this family's first writer.
 //
 // The line is the narrowest in the file for the same reason: the act holds no
 // run identity and is not a job of this installation, so it names neither a run
@@ -557,12 +562,12 @@ func callerWithoutJobPurpose(purpose string) bool {
 // It is NOT credentialWithoutTier, which is the opposite shape and is
 // deliberately kept apart from it: that one's purposes DO name a credential and
 // have no tier to pair with it, while a credentialless purpose names neither
-// half. So the both-or-neither rule below holds the mobile line's two empty
-// fields unchanged, and only the OK line's own requirement has to know about
-// this set.
+// half. So the both-or-neither rule below holds these lines' two empty fields
+// unchanged, and only the OK line's own requirement has to know about this set.
 func credentiallessPurpose(purpose string) bool {
 	switch purpose {
-	case PurposeMobilePair, PurposeMobileRefresh, PurposeMobileRestore, PurposeMobileRevoke:
+	case PurposeMobilePair, PurposeMobileRefresh, PurposeMobileRestore, PurposeMobileRevoke,
+		PurposeSlipGrant:
 		return true
 	}
 	return false
@@ -610,26 +615,40 @@ const StatusOK = "ok"
 // call itself was refused (exhausted_until, unverified_run_identity,
 // unverified_job_identity, state_unavailable, request_refused,
 // no_candidate_credentials, issue_gone, no_read_consumer,
-// provider_not_served, provider_not_allowed).
+// provider_not_served, provider_not_allowed, workflow_secret_not_allowed,
+// workflow_secret_unmarked, workflow_secrets_off).
 func ValidStatus(status string) bool {
 	return status == StatusOK || ValidReason(status) || validErrorType(status)
 }
 
 // validErrorType reports whether s is one of the refusal body's error types
 // (wire.go, provider_wire.go). It is the reader's half of a closed set the
-// writer already owns — all ten of them, the request-shape refusal included:
-// the answer path records that refusal like the rest (server.go), so this set is
-// the wire's own vocabulary and not a subset of what this service happens to
-// answer today.
+// writer already owns — all fourteen of them, the request-shape refusal
+// included: the answer path records that refusal like the rest (server.go), so
+// this set is the wire's own vocabulary and not a subset of what this service
+// happens to answer today.
 //
 // The provider route's two are here for that reason and not because a path
 // answers them today: a set that stopped at the eight would leave a refusal of
 // either — a routed call the published policy does not allow, and one no bundle
 // entry serves (KS4, R11) — with NO line at all, which is the one state the
 // audit contract does not have.
+//
+// C1's three are the same case one step further out: version 2's route does not
+// exist yet, but the codes it will refuse with and this vocabulary are one
+// contract, and a code a route answers while the line cannot record it would be
+// a verified refusal written down nowhere — the state the paragraph above is
+// about, arrived at silently.
 func validErrorType(s string) bool {
 	switch s {
 	case ErrorExhaustedUntil, ErrorUnverifiedRunIdentity, ErrorUnverifiedJobIdentity, ErrorStateUnavailable, ErrorRequestRefused, ErrorNoCandidateCredentials, ErrorIssueGone, ErrorNoReadConsumer, ErrorProviderNotServed, ErrorProviderNotAllowed:
+		return true
+	case ErrorSlipOwnerRemoved:
+		// D3146's, answered on a call under a workspace slip whose owner the
+		// roster no longer lists: a run halted by it is explained by this
+		// line or by none.
+		return true
+	case ErrorWorkflowSecretNotAllowed, ErrorWorkflowSecretUnmarked, ErrorWorkflowSecretsOff:
 		return true
 	}
 	return false
@@ -1052,20 +1071,22 @@ func (a *Auditor) checked(ev AuditEvent) (AuditEvent, auditRefusal) {
 	// sign's, a mint's, a model call's — is unchanged, and the run identity's
 	// own rule (a Run with no Repository is refused above) is untouched.
 	//
-	// A mobile act is the second and narrower exception, and it is about the
-	// CREDENTIAL rather than about the who: it is a caller's act like a
-	// verifier's (so the run and the job are not demanded of it), and it is one
-	// that touches no credential at all (credentiallessPurpose), so its line
-	// names none. Every other purpose's OK line still has to say which
-	// credential it used, and a mobile line that named one would have been
-	// refused above, before this branch was reached.
+	// A credentialless act — a mobile one, or the workspace's own grant — is the
+	// second and narrower exception, and it is about the CREDENTIAL rather than
+	// about the who: it is a caller's act like a verifier's (so the run and the
+	// job are not demanded of it), and it is one that touches no credential at
+	// all (credentiallessPurpose), so its line names none. Every other purpose's
+	// OK line still has to say which credential it used, and a credentialless
+	// line that named one would have been refused above, before this branch was
+	// reached.
 	//
-	// The credential is the ONE thing a mobile line gives up: the caller is not,
-	// because it is the whole of what such a line says about whose act it
-	// records. A run's who is its run identity and a repository's is its
-	// repository, but a phone is neither, so a mobile line with no caller would
-	// record that a session was paired, refreshed, restored or revoked and
-	// nothing at all about whose.
+	// The credential is the ONE thing such a line gives up: the caller is not,
+	// because it is the whole of what the line says about whose act it records.
+	// A run's who is its run identity and a repository's is its repository, but a
+	// phone is neither and a grant's launcher holds no run identity yet, so such
+	// a line with no caller would record that a session was paired, refreshed,
+	// restored or revoked, or that a slip was granted, and nothing at all about
+	// whose.
 	if ev.Status == StatusOK {
 		person := callerWithoutJobPurpose(ev.Purpose)
 		switch {

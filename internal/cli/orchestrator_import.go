@@ -18,6 +18,9 @@ import (
 // orchestratorImportOptions are `fugaro orchestrator import`'s flags.
 type orchestratorImportOptions struct {
 	cloudOptions
+	// name is --name: which of the project's orchestrators the document is
+	// imported into (D3206, D3207). Empty is the project's own.
+	name string
 	file string
 	plan string
 	json bool
@@ -52,11 +55,14 @@ func newOrchestratorImportCmd() *cobra.Command {
 			"session are the person's own word, given at a real terminal over the spec\n" +
 			"they read (fugaro orchestrator patch). So no dump approves work and no dump\n" +
 			"closes a decision of the person's — not even one the dump raises and closes\n" +
-			"itself — and every work item the dump declares arrives unapproved.",
+			"itself — and every work item the dump declares arrives unapproved.\n\n" +
+			"--name imports into one of the project's named orchestrators instead of the\n" +
+			"project's own: `--name night` writes `<project>~night`'s plan and state nodes.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runOrchestratorImport(cmd, &o) },
 	}
 	f := cmd.Flags()
+	addOrchestratorNameFlag(cmd, &o.name)
 	f.StringVarP(&o.file, "file", "f", "", "the session dump to import, or - to read it from stdin")
 	f.StringVar(&o.plan, "plan", "", "the plan to import, as its folder under docs/ (docs/<plan>): reads its implementation-plan.graph.json into the plan's node")
 	f.BoolVar(&o.json, "json", false, "print machine-readable output")
@@ -228,15 +234,13 @@ func runOrchestratorPlanImport(cmd *cobra.Command, o *orchestratorImportOptions)
 	if err := requireOwnBudgetDB(ctx, lc, db, "nothing was written"); err != nil {
 		return err
 	}
-	agentID, err := orchestratorID(lc)
+	id, err := orchestratorIDFor(lc, o.name)
 	if err != nil {
 		return err
 	}
-	node, err := orchestrator.NewNode(orchestrator.NodeOptions{
-		DB: db, AgentID: agentID, Role: orchestrator.RoleOrchestrator, Shard: orchestrator.PlanShard(name),
-	})
+	node, err := orchestratorNodeShard(db, id, orchestrator.PlanShard(name))
 	if err != nil {
-		return userErr("%v: nothing was written", err)
+		return err
 	}
 	s, etag, err := node.Load(ctx)
 	if err != nil {
@@ -255,7 +259,7 @@ func runOrchestratorPlanImport(cmd *cobra.Command, o *orchestratorImportOptions)
 		next, err = orchestrator.Apply(s, p, orchestrator.Actor{Class: orchestrator.Session, Name: "import", Now: now})
 		if err != nil {
 			if errors.Is(err, orchestrator.ErrStaleRev) {
-				return userErr("%v: read the node again with fugaro orchestrator state and run this import once more", err)
+				return userErr("%v: read the node again with %s and run this import once more", err, orchestratorStateCommand(o.name))
 			}
 			return userErr("%v: nothing was written", err)
 		}
@@ -270,16 +274,16 @@ func runOrchestratorPlanImport(cmd *cobra.Command, o *orchestratorImportOptions)
 	w := cmd.OutOrStdout()
 	if o.json {
 		return writeJSON(w, orchestratorPlanImportDoc{
-			Version: orchestratorOutputVersion, Kind: "plan_import", ID: lc.Name,
+			Version: orchestratorOutputVersion, Kind: "plan_import", ID: id,
 			Plan: name, Commit: commit, Rev: next.Rev, Ops: len(p.Ops), Items: items,
 		})
 	}
 	if len(p.Ops) == 0 {
 		fmt.Fprintf(w, "nothing to write: %s's node already carries the graph's %d %s at commit %s (orchestrator %s is at rev %d)\n",
-			safetext.Field(name), len(ids), plural(len(ids), "task", "tasks"), safetext.Field(commit), safetext.Field(lc.Name), next.Rev)
+			safetext.Field(name), len(ids), plural(len(ids), "task", "tasks"), safetext.Field(commit), safetext.Field(id), next.Rev)
 	} else {
 		fmt.Fprintf(w, "imported %d %s into %s's node as a session: orchestrator %s is at rev %d\n",
-			len(p.Ops), plural(len(p.Ops), "op", "ops"), safetext.Field(name), safetext.Field(lc.Name), next.Rev)
+			len(p.Ops), plural(len(p.Ops), "op", "ops"), safetext.Field(name), safetext.Field(id), next.Rev)
 	}
 	if unapproved > 0 {
 		fmt.Fprintf(w, "%d of the plan's %d %s unapproved: approving them is your own word at a real terminal, and --json prints the {id, digest} list an approval takes\n",
@@ -326,18 +330,18 @@ func runOrchestratorDumpImport(cmd *cobra.Command, o *orchestratorImportOptions)
 	if err != nil {
 		return userErr("the dump is not a document this release reads: %v", err)
 	}
-	lc, node, db, err := openOrchestrator(ctx, o.cloudOptions)
+	t, err := openOrchestrator(ctx, o.cloudOptions, o.name)
 	if err != nil {
 		return err
 	}
-	if err := requireOwnBudgetDB(ctx, lc, db, "nothing was written"); err != nil {
+	if err := requireOwnBudgetDB(ctx, t.lc, t.db, "nothing was written"); err != nil {
 		return err
 	}
-	s, etag, err := node.Load(ctx)
+	s, etag, err := t.node.Load(ctx)
 	if err != nil {
-		return dbErr(lc, err, false)
+		return dbErr(t.lc, err, false)
 	}
-	now, ok := db.ServerNow()
+	now, ok := t.db.ServerNow()
 	if !ok {
 		return userErr("the database answered without its own clock, and every stamp this import writes comes from it (D1230)")
 	}
@@ -357,32 +361,32 @@ func runOrchestratorDumpImport(cmd *cobra.Command, o *orchestratorImportOptions)
 	if _, err := orchestrator.Apply(s, p, orchestrator.Actor{Class: orchestrator.Session, Now: now}); errors.Is(err, orchestrator.ErrActorNotAllowed) {
 		return userErr("nothing was written: a dump is a session's own record and lands nothing a session may not land — approving a work item, setting the goal and closing a decision that waits on anyone but a session are the person's own word at a real terminal over the spec they read (fugaro orchestrator patch): %v", err)
 	}
-	name, err := authenticatedUser(ctx, lc)
+	name, err := authenticatedUser(ctx, t.lc)
 	if err != nil {
 		return userErr("the dump lands as the person whose migration it is, and this run could not read who its credentials belong to: %v", err)
 	}
 	next, err := orchestrator.Apply(s, p, orchestrator.Actor{Class: orchestrator.Person, Name: name, Now: now})
 	if err != nil {
 		if errors.Is(err, orchestrator.ErrStaleRev) {
-			return userErr("%v: the dump carries the revision it was built from, and it has to be the node's — read it with fugaro orchestrator state and write the dump again from the revision it prints", err)
+			return userErr("%v: the dump carries the revision it was built from, and it has to be the node's — read it with %s and write the dump again from the revision it prints", err, orchestratorStateCommand(o.name))
 		}
 		return userErr("%v: nothing was written", err)
 	}
-	if err := node.Save(ctx, next, etag); err != nil {
+	if err := t.node.Save(ctx, next, etag); err != nil {
 		if errors.Is(err, orchestrator.ErrStateMoved) {
-			return userErr("the state node moved since this run read it (rev %d), so the dump was not written: read the state again with fugaro orchestrator state and write the dump from the revision it prints", s.Rev)
+			return userErr("the state node moved since this run read it (rev %d), so the dump was not written: read the state again with %s and write the dump from the revision it prints", s.Rev, orchestratorStateCommand(o.name))
 		}
-		return dbErr(lc, err, true)
+		return dbErr(t.lc, err, true)
 	}
 	w := cmd.OutOrStdout()
 	if o.json {
 		return writeJSON(w, orchestratorPatchDoc{
-			Version: orchestratorOutputVersion, Kind: "patch", ID: lc.Name,
+			Version: orchestratorOutputVersion, Kind: "patch", ID: t.id,
 			Rev: next.Rev, Actor: string(orchestrator.Person), Ops: len(p.Ops),
 		})
 	}
 	fmt.Fprintf(w, "imported %d %s as a %s: orchestrator %s is at rev %d\n",
-		len(p.Ops), plural(len(p.Ops), "op", "ops"), orchestrator.Person, safetext.Field(lc.Name), next.Rev)
+		len(p.Ops), plural(len(p.Ops), "op", "ops"), orchestrator.Person, safetext.Field(t.id), next.Rev)
 	if n := importedUnapproved(next, p); n > 0 {
 		fmt.Fprintf(w, "%d work %s the dump declares arrived unapproved: approving one is your own word at a real terminal (fugaro orchestrator patch)\n",
 			n, plural(n, "item", "items"))

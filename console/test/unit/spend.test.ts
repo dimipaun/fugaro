@@ -17,11 +17,11 @@
 //   2. **a partial day is hollow** -- `(partial)` is the CLI's own word
 //      (`ee/report/render.go`'s table appends it to the row key) and the
 //      design draws a day that is not final yet as a hollow bar;
-//   3. **the person breakdown is off by default** (design D15). The rows are in
-//      the document; the screen draws none of them until it is asked to, and it
-//      says why. When it is asked, a person is drawn through `sanitize.ts`'s
-//      `person` class, so an address is the console's marker and never the
-//      address;
+//   3. **the person breakdown is on by default** (D3214, amending design D15).
+//      The screen draws the rows the document holds and says that the switch is
+//      this session's and not remembered. Turned off, it draws none of them and
+//      says why. Either way a person is drawn through `sanitize.ts`'s `person`
+//      class, so an identity is drawn as the run recorded it;
 //   4. **a day the history does not hold is a gap, not a zero.** `report` reads
 //      a window and the days before it are pruned, so the console enumerates
 //      the range itself and a missing day becomes a point that breaks the line.
@@ -1192,12 +1192,30 @@ describe('a day the history does not hold', () => {
 })
 
 // ---------------------------------------------------------------------------
-// The person breakdown, off by default.
+// The person breakdown, on by default (D3214, amending D15).
 // ---------------------------------------------------------------------------
 
 describe('the person breakdown', () => {
-  it('is off by default: the rows are in the document and the screen draws none of them', () => {
+  it('is on by default: the rows are in the document and the screen draws them', () => {
     const model = buildSpendModel(PERSON_REPORT, BUDGET)
+    expect(model.persons).toEqual({ enabled: true, withheld: false })
+    expect(drawnRows(model).map((row) => row.key)).toEqual(['ada@example.com', 'unknown'])
+    // No note in the model's own list: the rows are drawn, so there is nothing
+    // to explain away. The switch beside them is where a default says what it
+    // is -- a view that is on without saying so is a view the operator will try
+    // to turn off and not find.
+    expect(model.notes).toEqual([])
+    const entry = model.switches.find((one) => one.dimension === 'person')
+    expect(entry).toMatchObject({ enabled: true, current: true, note: null })
+    // The line under the switch is the drawing's, not the model's: it says the
+    // breakdown is on by default and that the switch is this session's alone.
+    const text = drawn(renderSpend(factory, model, 'light'))
+    expect(text).toContain('on by default')
+    expect(text).not.toContain('person breakdown is off')
+  })
+
+  it('is off when the knob is turned off: the rows are in the document and the screen draws none of them', () => {
+    const model = buildSpendModel(PERSON_REPORT, BUDGET, { persons: false })
     expect(model.persons).toEqual({ enabled: false, withheld: true })
     expect(drawnRows(model)).toEqual([])
     // No figure at all, on the one axis the chart would have drawn: a scale of
@@ -1218,7 +1236,7 @@ describe('the person breakdown', () => {
   })
 
   it('draws no person and no address while it is off', () => {
-    const tree = renderSpend(factory, buildSpendModel(PERSON_REPORT, BUDGET), 'light')
+    const tree = renderSpend(factory, buildSpendModel(PERSON_REPORT, BUDGET, { persons: false }), 'light')
     const text = drawn(tree)
     expect(text).toContain('person breakdown is off')
     for (const row of PERSON_ROWS) expect(text).not.toContain(row.key)
@@ -1433,7 +1451,8 @@ describe('the by-mode breakdown', () => {
 // ---------------------------------------------------------------------------
 
 /** peopleOf is one model's by-person view, asserted to be there: the panel
- * exists exactly when the operator's knob is on (design D15). */
+ * exists exactly when the operator's knob is on, which is the default (D3214,
+ * amending design D15). */
 function peopleOf(model: SpendModel): SpendPeople {
   const people = model.people
   if (people === null) throw new Error('this model carries no by-person view')
@@ -1446,11 +1465,11 @@ describe('the by-person view', () => {
     // by-person read that happens whatever the knob says. With the knob off
     // there is no panel at all -- not an empty one -- because there was no read
     // to draw from and nothing the operator asked to see.
-    const off = buildSpendModel(PERSON_REPORT, BUDGET)
+    const off = buildSpendModel(PERSON_REPORT, BUDGET, { persons: false })
     expect(off.people).toBeNull()
     expect(all(renderSpend(factory, off, 'light'), 'spend-people')).toEqual([])
     // The document being handed in does not change that: the knob decides.
-    const handed = buildSpendModel(PERSON_REPORT, BUDGET, { people: statsDocument() })
+    const handed = buildSpendModel(PERSON_REPORT, BUDGET, { persons: false, people: statsDocument() })
     expect(handed.people).toBeNull()
   })
 

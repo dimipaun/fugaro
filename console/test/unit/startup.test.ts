@@ -962,6 +962,26 @@ describe('the entry point is wired to the handshake', () => {
     expect(indexSource).not.toMatch(/let startup\b/)
   })
 
+  it('refuses the picker’s Add project door on a console that is refused, or has read nothing', () => {
+    // The rule is `addProjectRefusal` (`src/main/picker.ts`, tested in
+    // `installations-ipc.test.ts`); what only the entry point can get wrong is
+    // the answer it hands it. `current` is the handshake's own, read at the
+    // click rather than captured when the picker was wired -- a captured answer
+    // would refuse the door for the rest of the run after one refusal. A door
+    // that answered `ok` without asking would hold a request no window reads: a
+    // refused console has no dashboard, and a handshake in flight has none yet.
+    expect(indexSource).toContain('addProjectRefusal(current)')
+    // And the request it raises is spent by the read that delivers it. The
+    // mechanism is `createAddProjectRequest`'s (tested in
+    // `installations-ipc.test.ts`); what only this file can hold is that the
+    // entry point wires it where the boot reads -- the door records, the boot's
+    // `installation.current` read takes -- so a later boot opens nothing.
+    expect(bodyOf('function installationState('), 'the boot’s read does not spend the request').toContain(
+      'addProject.take()',
+    )
+    expect(indexSource, 'the door records no request').toContain('addProject.please()')
+  })
+
   it('stops the child the console started before the process quits', () => {
     // The one long-lived child this app has is the Live screen's `fugaro watch`,
     // started through the source bound to the active installation. Nothing else
@@ -1097,22 +1117,29 @@ describe('the entry point puts the surface on ipcMain, and only when it may', ()
     const onDecided = bodyOf('function onDecided(')
     expect(onDecided).toContain('registerHandlers()')
     expect(onDecided.indexOf("'refused'")).toBeLessThan(onDecided.indexOf('registerHandlers()'))
+    // The nine arrive through **one spread of `handlers.ts`'s table** (I-OPS):
+    // they were stubs named one by one here, and they are now the real rows, so
+    // what keeps this claim true is that the key is not in `gated` at all --
+    // every one of them is a row of the table the spread carries, and a row of
+    // `gated` is what the two gates below wrap. `ops-contract.test.ts` is the
+    // file that holds that table's row set to the surface's own names, and its
+    // cases read the table this import resolves to.
     const gated = bodyOf('const gated: ConsoleHandlers = {')
-    for (const name of [
-      'runs.stream',
-      'spend.stream',
-      'budget.stream',
-      'whoami',
-      'image.catalog.ls',
-      'recipes.ls',
-      'setup.plan',
-      'setup.apply',
-      'settings.editor.open',
-    ]) {
-      // The key is quoted where it is not a bare identifier (`whoami` is the
-      // one of the nine a JavaScript identifier can spell).
-      expect(gated, name).toMatch(new RegExp(`'?${name.replace('.', '\\.')}'?:`))
-    }
+    expect(gated).toContain('...newOperations.rows')
+    // The table's own prose names several of the nine (`setup.apply` is the one
+    // a lapsed installation meets the gate on), so the negative is taken over
+    // the table's **keys**: the comment lines go, and what is left is the
+    // entries.
+    const entries = gated
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('//'))
+      .join('\n')
+    expect(entries).not.toMatch(/'?(runs\.stream|spend\.stream|budget\.stream|whoami|image\.catalog\.ls|recipes\.ls|setup\.plan|setup\.apply|settings\.editor\.open)'?:/)
+    // ...and the spread is the one place those rows are built, from the one
+    // call to the handler table: a second `newOperationHandlers(` would be a
+    // second table the contract test does not read.
+    expect(indexSource.match(/newOperationHandlers\(/g) ?? []).toHaveLength(1)
+    expect(indexSource).toMatch(/const newOperations = newOperationHandlers\(/)
   })
 
   it('joins in the one handler `source.ts` leaves out, which is the half it names', () => {

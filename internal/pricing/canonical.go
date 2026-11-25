@@ -23,11 +23,17 @@ package pricing
 //
 // A model has a third spelling, and CS3 (docs/model-credentials-routing/
 // implementation-plan.md) adds it here: Vertex's own, beside the route's ID.
-// It is the same kind of fact — data, per model, checked in — and it lives in
+// It is the same kind of fact — data, per model, checked in — and it lives with
 // this map for the same reason, because the chain walk (CS1) has to know how to
 // write a model on the source that will serve it, and one map answering "how is
 // this model written there" is what keeps the walk, the checks (RT3) and the
 // Vertex translation (CS4) from disagreeing about the id a live call carries.
+//
+// The column has since grown a second table rather than a second answer: a
+// non-Claude model on Vertex — a Gemini one (GV3) — has no route ID and no
+// Unmapped reason, so it gets no row of claudeRoutes, and vertex_gemini.go
+// holds its spelling beside its price instead. vertexIDFor is still the one
+// reader of the column, and it reads both tables.
 
 // claudeRoute is one row of the map: the canonical Claude ID (the ID a pin
 // carries, claude-sonnet-5-5), the route's own ID (what the route entry
@@ -152,18 +158,27 @@ func UnmappedReason(canonical string) (string, bool) {
 	return "", false
 }
 
-// vertexIDFor answers Vertex's own spelling of a canonical Claude ID: the row's
-// Vertex member, and whether the map carries a row for the model at all. The
-// second half is the fail-closed direction — a model with no row has no Vertex
-// spelling, and a caller that took the canonical ID anyway would send a call to
-// a model nobody checked Vertex for (D3175).
+// vertexIDFor answers Vertex's own spelling of a canonical model ID, and
+// whether Vertex may be sent the model at all. It is the one reader of both
+// halves of the spelling: a Claude row's Vertex member, and — for a model the
+// Claude map does not carry, which is every Gemini model — the Vertex Gemini
+// catalog (vertex_gemini.go, GV3), so a caller cannot get a Vertex spelling out
+// of one half that the other contradicts.
+//
+// The split is a question of which table answers, never of which is consulted
+// first as a preference: a model the Claude map carries is a Claude model and
+// its row is the answer, and one the Claude map does not carry falls to the
+// Gemini catalog, which has no row for a Claude model. The second half of the
+// answer is the fail-closed direction in both — a model neither table carries
+// has no Vertex spelling, and a caller that took the canonical ID anyway would
+// send a call to a model nobody checked Vertex for (D3175).
 func vertexIDFor(canonical string) (string, bool) {
 	for _, r := range claudeRoutes {
 		if r.Canonical == canonical {
 			return r.Vertex, r.Vertex != ""
 		}
 	}
-	return "", false
+	return vertexGeminiID(canonical)
 }
 
 // spellingFor is the real translation behind SpellingFor (spelling_stub.go
@@ -181,12 +196,26 @@ func vertexIDFor(canonical string) (string, bool) {
 //     all. Whether the source reaches that model is a different question, and
 //     not this map's: a project's Anthropic key and a pool's accounts serve
 //     whatever the account serves, which validation asks (RT3's reach rule).
-//   - provider, vertex: the source writes the model its own way and only the
-//     map knows how — a provider's route ID (RouteIDFor), Vertex's own spelling
-//     (vertexIDFor). A model the map does not spell for that kind is answered
-//     ("", false), and a caller must not fall back to the ID the agent asked
-//     with: that is a call sent to a model nobody measured on that source,
-//     which is exactly the guess this map exists to remove.
+//   - provider: the source writes the model its own way, and there are two
+//     cases of it. A Claude model is written as the route's own ID, which only
+//     this map has (RouteIDFor): a Claude model ID it carries without one, or
+//     does not carry at all, is answered ("", false), because the ID a pin
+//     carries is the API's own and not the route's, and a route ID invented
+//     here would be a call to a model nobody measured (D8, D3175). Everything
+//     else is a vendor's own model under a provider route
+//     ("deepseek/deepseek-v4", spec.md's own `deepseek-*` → OpenRouter key),
+//     which has no canonical/route duality to translate: the route's own ID for
+//     it IS its name, so the answer is the model as written and nothing is
+//     derived. Whether the route serves it is the provider entry's own claim,
+//     which the caller asks (config.ModelProvider.Matches, RT3's reach rule),
+//     and never a spelling this map would have had to measure. A name that is
+//     not a model ID at all — an alias, a variant suffix — is answered
+//     ("", false) like any other model this map does not spell.
+//   - vertex: the source writes the model its own way too, and the map has the
+//     spelling for both halves of its column (vertexIDFor). A model neither
+//     table carries is answered ("", false), and a caller must not fall back to
+//     the ID the agent asked with: that is a call sent to a model nobody
+//     checked Vertex for, which is exactly the guess this map exists to remove.
 //
 // The kinds are internal/routing's Kind values, as strings because
 // internal/routing reads SpellingFor and a routing.Kind parameter would make
@@ -202,7 +231,26 @@ func spellingFor(kind, model string) (string, bool) {
 	case "anthropic", "pool", "launcher-pool":
 		return model, true
 	case "provider":
-		return RouteIDFor(model, "")
+		if id, ok := RouteIDFor(model, ""); ok {
+			return id, true
+		}
+		// A Claude model ID this build has no measured route for is not spelled
+		// as itself: what a pin carries is the API's own ID, not the route's,
+		// and sending it to a provider key is the guess the map exists to remove
+		// (the three measured rows above, D8; UnmappedReason says which models
+		// this refuses and why). A name that is not a model ID at all is not
+		// spelled either: an alias is not a model, and a variant ("...:free") is
+		// another route and another price.
+		if modelIDRE.MatchString(model) || IsAlias(model) {
+			return "", false
+		}
+		// Everything else is a vendor's own model under a provider route
+		// ("deepseek/deepseek-v4"): there is no canonical ID and route ID to
+		// translate between, because the route's own ID for it is its name. So
+		// the answer is the model as written and nothing is derived; whether the
+		// route serves it is the provider entry's claim, which the caller asks
+		// (config.ModelProvider.Matches, RT3's reach rule).
+		return model, true
 	case "vertex":
 		return vertexIDFor(model)
 	}

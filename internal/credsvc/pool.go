@@ -76,25 +76,54 @@ const craftNodeKeyPrefix = "crafts"
 // the call declared, the switch or the path that would let it serve — and the
 // caller's error branch has no other case it could be confused with.
 //
-// Two walks refuse with it, and they are the two that decide a call's candidate
-// list from a document rather than from the bundle: the project's crafts
+// Three walks refuse with it, and each is a call whose candidate list a
+// document decided rather than the bundle: the project's crafts
 // (poolOffering), which leave a call nothing when every access of theirs serves
-// nothing, and the repository's own recorded auth (narrowToRepoAuth, B2.1),
-// which serves a repository only what its own configuration names and refuses
-// a call whose declaration disagrees with that record. Neither answers an empty
-// list, which the selector would turn into a sentence about the bundle and send
-// an operator looking in the wrong document.
+// nothing; the repository's own recorded auth (narrowToRepoAuth, B2.1), which
+// serves a repository only what its own configuration names and refuses a call
+// whose declaration disagrees with that record; and the personal half
+// (personal_workspace.go's reader, WC5), which refuses a call under a slip that
+// names a person's token the member's switch is off for — or whose switch could
+// not be read — rather than moving it to the shared entries (R11). None of them
+// answers an empty list, which the selector would turn into a sentence about the
+// bundle and send an operator looking in the wrong document.
 //
-// The sentence names credentials, pools and accounts by NAME and never by
-// value, the way every other refusal on this path does: it is built from the
-// published node, which is the document an operator wrote, from the record the
-// repository's own update wrote, and from the names of the bundle's entries,
-// which is all this service ever says about them (F27, C1.13). The auth and the
+// The sentences the document walks build name credentials, pools and accounts
+// by NAME and never by value, the way every other refusal on this path does: it
+// is built from the published node, which is the document an operator wrote,
+// from the record the repository's own update wrote, and from the names of the
+// bundle's entries, which is all this service ever says about them (F27,
+// C1.13). The personal half's two name no credential at all — a class and the
+// command that fixes it (personal_workspace.go). The auth and the
 // account a call DECLARED are the caller's own text, so they reach this
 // sentence only through the closed set of agent auths and the shape an account
 // name has (ValidAuthMode, ValidAuthAccount): what is printed is a value this
 // contract already admitted, never an arbitrary string.
-type poolRefusal struct{ message string }
+type poolRefusal struct {
+	message string
+	// class is the wire error this refusal is answered as (server.go's cascade
+	// step). Empty is ErrorStateUnavailable, the class of a refusal about the
+	// CALL or about a document — the auth a call declared against the record,
+	// the crafts' own gaps, the personal half's switch — whose cause a run's
+	// halt cannot be told apart from a state that could not be read.
+	//
+	// ErrorNoCandidateCredentials is set by the walks that narrowed a candidate
+	// LIST to nothing (the repository's own recorded auth): there the state WAS
+	// read, and what it says is that this call has no candidate at all. That is
+	// the answer the class exists for (wire.go's own words), and the tried list
+	// beside it is what names the credentials that were considered — the
+	// owner's installation of 2026-11-14 read a state_unavailable instead and
+	// was sent to the database while the answer was in the bundle and the
+	// policy.
+	class string
+	// tried is what such a walk considered and why each was left out, filled by
+	// the caller that holds both halves of the list (candidates, cascade.go). It
+	// is bounded by the contract's own rules before it is written
+	// (boundedTried): a body the writer would refuse whole is answered as
+	// state_unavailable, which is the mis-diagnosis the class above exists to
+	// end.
+	tried []Tried
+}
 
 func (e *poolRefusal) Error() string { return e.message }
 

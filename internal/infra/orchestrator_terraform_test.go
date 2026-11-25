@@ -28,7 +28,10 @@ import (
 //     account is granted nothing under a role the table does not have (the
 //     never-list's eleventh rule, held here as the plan's own fact rather than
 //     as a comment), and the run's one confirmation does not refuse the
-//     installation for having asked for it.
+//     installation for having asked for it. "Nothing else" is the row set the
+//     test builds below, and its one addition since the table was written is
+//     J6's signing grant on the consumer key — the cost of §4.2's "it signs its
+//     replies through J6's KMS signer", priced with the task.
 //
 // Both plan the same fixture the golden plan is a plan of
 // (internal/infra/testdata/installation-budget-job.tfvars.json), so "before
@@ -205,8 +208,19 @@ func TestOrchestratorGrantsAreTheDesignsTableRows(t *testing.T) {
 		serviceAddr = "module.installation.google_cloud_run_v2_service.orchestrator[0]"
 		invokerAddr = "module.installation.google_cloud_run_v2_service_iam_member.orchestrator_invoker[0]"
 		tickAddr    = "module.installation.google_cloud_scheduler_job.orchestrator_tick[0]"
+		// The consumer's signing grant (mobile-identity-pairing plan task J6;
+		// O17), which is the one row of the opt-in that is not a row of section
+		// 4.3's original table: the account signs its mailbox replies and
+		// heartbeats with the installation's consumer key instead of a MAC, so
+		// the row is what §4.2's "it signs its replies through J6's KMS signer"
+		// costs. It is here rather than beside the key because section 4.3's
+		// table is orchestrator.tf's alone, and the key, its ring and the role
+		// it grants are mailbox_key.tf's
+		// (internal/infra/mailbox_key_test.go holds that row's key, role and
+		// member; this test holds that the account gains no OTHER row for it).
+		signAddr = "module.installation.google_kms_crypto_key_iam_member.orchestrator_mailbox_signer[0]"
 	)
-	want := []string{accountAddr, secretAddr, accessAddr, launcherRow, writeRow, readRow, minterRow, serviceAddr, invokerAddr, tickAddr}
+	want := []string{accountAddr, secretAddr, accessAddr, launcherRow, writeRow, readRow, minterRow, serviceAddr, invokerAddr, tickAddr, signAddr}
 	for key := range spec.ProjectJobs {
 		want = append(want, `google_cloud_run_v2_job_iam_member.orchestrator_runner["`+key+`"]`)
 	}
@@ -350,6 +364,20 @@ func TestOrchestratorGrantsAreTheDesignsTableRows(t *testing.T) {
 		for _, never := range []string{"roles/firebasedatabase.viewer", "roles/datastore.viewer", "roles/serviceusage.serviceUsageConsumer", "roles/owner", "roles/editor"} {
 			if strings.Contains(rc.json(), never) && strings.Contains(rc.json(), OrchestratorAccountID) {
 				t.Errorf("%s grants %s to %s: those are the roles membership of var.launchers would hand the account, and the launcher list's database read bypasses the Realtime Database rules and reaches every mailbox of the installation (section 6 rule 11)", rc.Address, never, OrchestratorAccountID)
+			}
+		}
+	}
+
+	// The tick is written from the service's deterministic URL, and the cover
+	// holds it by the service's name (tf.orchestratorServiceName), so the name
+	// the module renders is the one the installation's block carries. A value
+	// the plan cannot read yet is the project number's own read at apply.
+	if ht, _ := on[tickAddr].After["http_target"].([]any); len(ht) == 1 {
+		m, _ := ht[0].(map[string]any)
+		if uri, ok := m["uri"].(string); ok {
+			prefix := "https://" + OrchestratorServiceName + "-"
+			if !strings.HasPrefix(uri, prefix) || !strings.HasSuffix(uri, ".run.app/tick") || strings.Contains(uri, ".a.run.app") {
+				t.Errorf("%s: uri is %q, want %s<project number>.<region>.run.app/tick — the form the managed gate's cover reads, not Cloud Run's own .uri", tickAddr, uri, prefix)
 			}
 		}
 	}
@@ -538,4 +566,38 @@ func missing(got, want []string) []string {
 func str(v any) string {
 	s, _ := v.(string)
 	return s
+}
+
+// TestOrchestratorOperatorsMayActAsTheDaemonsAccount is the grant that lets the
+// daemon run on an operator's machine: with the block on, each operator holds
+// roles/iam.serviceAccountTokenCreator on fugaro-orch (and on that account
+// alone), and with it off nobody does. It is the plan-level half of
+// iam.serviceAccountTokenCreator's one new site (orchestrator.tf).
+func TestOrchestratorOperatorsMayActAsTheDaemonsAccount(t *testing.T) {
+	lc := credentialsLC(t)
+	spec, err := Installation(lc, InstallOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.Operators = []string{"user:ops@example.com"}
+	const prefix = "module.installation.google_service_account_iam_member.fugaro_orchestrator_token_creator"
+
+	_, off := installationPlan(t, spec)
+	for addr := range off {
+		if strings.HasPrefix(addr, prefix) {
+			t.Errorf("%s is in the plan of an installation with no orchestrator block", addr)
+		}
+	}
+
+	_, on := installationPlanWith(t, spec, map[string]any{"orchestrator": orchestratorBlock(t, spec, credentialsFP)})
+	row, ok := on[prefix+`["user:ops@example.com"]`]
+	if !ok {
+		t.Fatalf("the plan with the orchestrator on grants the operator no token creation on the daemon's account")
+	}
+	account := "projects/" + spec.Project + "/serviceAccounts/" + OrchestratorAccountID + "@" + spec.Project + ".iam.gserviceaccount.com"
+	for key, want := range map[string]string{"role": "roles/iam.serviceAccountTokenCreator", "member": "user:ops@example.com", "service_account_id": account} {
+		if got := str(row.After[key]); got != want {
+			t.Errorf("%s is %q, want %q", key, got, want)
+		}
+	}
 }

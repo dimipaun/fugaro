@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # Tests for scripts/live-checks/check196.sh, with fake `gcloud` and `fugaro` on
 # PATH: NOTHING here reaches a cloud, a project or the network. The fake gcloud
-# answers the four reads the check makes — the project's recent builds, the
-# installation's Cloud Run jobs and one execution, the service's own log lines
-# and the service's own IAM policy — out of a small project built from the mode
-# it is given, and it records every argument it is handed, so the tests can
-# assert that the check asked for the sandbox installation's project and nothing
-# else, that a row it could not measure is never read as a pass, and that
-# nothing secret-shaped ever reaches the block.
+# answers the reads the check makes — the INSTALLATION'S REGION'S recent builds
+# (a global `builds list` returns nothing, so a check that dropped --region
+# measures no build at all), the installation's Cloud Run jobs and one execution,
+# the service's own log lines and the service's own IAM policy — out of a small
+# project built from the mode it is given, and the fake fugaro answers the
+# published policy node the check reads for its image_map. Both record every
+# argument they are handed, so the tests can assert that the check asked for the
+# sandbox installation's project and nothing else, that a repository's builds are
+# the ones the catalog entry its image_map names gives, that a row it could not
+# measure is never read as a pass, and that nothing secret-shaped ever reaches
+# the block.
 #
 # Usage: bash scripts/live-checks/check196_test.sh
 set -euo pipefail
@@ -73,6 +77,29 @@ doctor)
   *) echo "project: fugaro (GCP fugaro-dev, us-east5)" ;;
   esac
   ;;
+project)
+  # `fugaro project policy show --json --project <name>`: the published policy
+  # node, which the check reads for its image_map (D1906) — the map's PUBLISHED
+  # half, since this machine's project config wins where it states one. The
+  # scenario is FAKE_FUGARO_MODE, so a test can pair a published map with the
+  # builds the gcloud fake serves; the default map is the one the default
+  # project's builds carry, because a map naming an entry no build carries
+  # describes a project that cannot exist.
+  case "$*" in
+  *"policy show"*) ;;
+  *) exit 1 ;;
+  esac
+  case "${FAKE_FUGARO_MODE:-ok}" in
+  map-unreadable)
+    echo "error: the published policy could not be read (no such object)" >&2
+    exit 1
+    ;;
+  map-no-repo) printf '{"policy":{"image_map":{"acme/bb-sandbox":"sandbox-bb"}}}\n' ;;
+  map-empty) printf '{"policy":{}}\n' ;;
+  map-source-elsewhere) printf '{"policy":{"image_map":{"acme/sandbox":"shared-web","acme/bb-sandbox":"sandbox-bb"}}}\n' ;;
+  *) printf '{"policy":{"image_map":{"acme/sandbox":"sandbox-web","acme/bb-sandbox":"sandbox-bb"}}}\n' ;;
+  esac
+  ;;
 *) exit 1 ;;
 esac
 FUGARO_EOF
@@ -111,6 +138,15 @@ SVC_URL = "https://fugaro-credentials-fake-ue.a.run.app"
 # The variable the check job's own mount of the git credential lands in
 # (config.ReservedSecrets, read off the provider's git secret).
 GIT_ENV = {"github": "FUGARO_GITHUB_APP_PRIVATE_KEY", "bitbucket": "FUGARO_BITBUCKET_TOKEN"}
+# A CATALOG build is not a repository's build at all: it runs as the
+# installation's ONE project-wide build identity (gcp.BuildIdentityAccountID,
+# B6/D2301), and it clones with the provider git credential its own request
+# mounts as availableSecrets, under the env names internal/backend/gcp/build.go
+# gives (`credentialSecretEnv`, a BUILD's names and not a job's).
+BUILD_IDENTITY = "fugaro-build-identity@fugaro-dev.iam.gserviceaccount.com"
+MINT_ENV = {"github": "GITHUB_APP_KEY", "bitbucket": "GIT_TOKEN"}
+CATALOG_ENTRY = {"github": "sandbox-web", "bitbucket": "sandbox-bb"}
+CATALOG_IMAGE = "us-east5-docker.pkg.dev/fugaro-dev/fugaro-shared-images/catalog-%s"
 
 
 def flag(name, default=""):
@@ -124,11 +160,12 @@ def flag(name, default=""):
 # subcommand this check calls is listed with the flags it may pass, so a
 # misspelled or invented flag cannot hide in any call.
 ALLOWED = {
-    ("builds", "list"): ("--project", "--limit", "--format"),
+    ("builds", "list"): ("--project", "--region", "--limit", "--format"),
     ("run", "jobs", "list"): ("--project", "--region", "--format"),
     ("run", "jobs", "executions", "list"): ("--project", "--region", "--job", "--limit", "--format"),
     ("logging", "read"): ("--project", "--freshness", "--limit", "--format"),
     ("run", "services", "get-iam-policy"): ("--project", "--region", "--format"),
+    ("run", "services", "describe"): ("--project", "--region", "--format"),
 }
 positionals = [a for a in args if not a.startswith("-")]
 sub = None
@@ -176,28 +213,61 @@ def slug(provider):
 
 
 def build(repo, provider):
-    """The derived-image build of one repository, as `gcloud builds list
-    --format=json` reports it: its substitutions, the account it ran as (a
-    RESOURCE NAME, the shape the API uses), and the Secret Manager containers
-    its request mounts -- none of them after the flip, which is the state the
-    --after-flip mode reads."""
-    subm = {"_REPO_URL": clone_url(repo, provider), "_WORKFLOW": "image",
-            "_SECRET_ENVS": "GITHUB_TOKEN", "_SLUG": slug(provider)}
+    """The CATALOG-ENTRY build of one repository, as it really is since D1900
+    (repository-level derived images are disabled) and since IS8 (D3330): the
+    image the repository's image_map names, submitted by `fugaro image build
+    <entry>` or by `fugaro apply`'s owed catalog step, run as the installation's
+    build identity, carrying NO secret at all -- the request names no
+    availableSecrets and no step names a secretEnv, because the credential step
+    fetches the git credential of the entry it bakes from the credentials
+    service, whose address `_CREDENTIALS_SERVICE_URL` always names (a submission
+    refuses an empty one) -- and naming the entry (`_ENTRY`), the repositories
+    that entry serves (`_CATALOG_REPOS`: the entry's SOURCE repository, which is
+    the served repository only where the entry is sourced from it) and the
+    checkout it bakes (`_REPO_URL`). No `_SLUG` and no `_WORKFLOW`: a catalog
+    request carries neither."""
+    entry = CATALOG_ENTRY[provider]
+    source_repo, source_provider = repo, provider
+    if mode == "map-source-elsewhere" and provider == "github":
+        # The served repository is a GitHub one and the entry its image_map names
+        # is SOURCED from a Bitbucket repository: the build's own `_REPO_URL` is
+        # that repository's clone URL, so a match on `_REPO_URL` finds nothing
+        # and only the entry the map names can select this build.
+        entry = "shared-web"
+        source_repo, source_provider = BB_REPO, "bitbucket"
+    if mode == "map-local" and provider == "github":
+        # This machine's project config states a map (local-web) and the
+        # published policy node states another (sandbox-web): the build carries
+        # the LOCAL one, so a check that read the published map alone would find
+        # no build at all.
+        entry = "local-web"
+    subm = {"_REPO_URL": clone_url(source_repo, source_provider), "_IMAGE": CATALOG_IMAGE % entry,
+            "_CATALOG_TAG": "9f2c" + provider, "_ENTRY": entry, "_CATALOG_REPOS": source_repo,
+            "_WORKFLOW": "", "_SECRET_ENVS": "", "_CREDENTIALS_SERVICE_URL": SVC_URL}
     b = {"id": "b-" + repo.split("/")[-1], "status": "SUCCESS",
          "startTime": "2026-11-20T10:00:00Z", "finishTime": "2026-11-20T10:05:00Z",
-         "serviceAccount": "projects/fugaro-dev/serviceAccounts/" + account(provider),
+         "serviceAccount": "projects/fugaro-dev/serviceAccounts/" + BUILD_IDENTITY,
          "substitutions": subm,
-         "steps": [{"name": "gcr.io/cloud-builders/docker"}]}
-    if mode != "build-no-url":
-        subm["_CREDENTIALS_SERVICE_URL"] = SVC_URL
-    mounts = 0 if FLIP else 1
-    if mode == "flip-build-mounts" and provider == "github":
-        mounts = 1
-    if mounts:
+         "steps": [{"name": "gcr.io/cloud-builders/docker"},
+                   {"name": "gcr.io/cloud-builders/gcloud", "id": "credential",
+                    "env": ["PROVIDER=" + source_provider, "ENTRY=" + entry,
+                            "CATALOG_REPOS=" + source_repo,
+                            "FUGARO_CREDENTIALS_SERVICE_URL=" + SVC_URL, "BUILD_ID=$BUILD_ID"],
+                    "args": ["-c", "exec fugaro image git-credential --entry \"$$ENTRY\" --repos \"$$CATALOG_REPOS\""]}]}
+    if mode == "catalog-build-no-credential" and provider == "github":
+        # No secret AND no address: the one shape that holds no credential at all
+        # and could only fail.
+        subm["_CREDENTIALS_SERVICE_URL"] = ""
+    if mode == "catalog-build-stale-mount" and provider == "github":
+        # The shape before IS8 (D3330): the request mounted the provider git
+        # credential and named no service. It is a build the build identity has
+        # no accessor for any more, so the row must not read it as this
+        # installation's.
+        subm["_CREDENTIALS_SERVICE_URL"] = ""
         b["availableSecrets"] = {"secretManager": [
-            {"versionName": "projects/fugaro-dev/secrets/%s/versions/latest" % slug(provider),
-             "env": "GITHUB_TOKEN"}]}
-        b["steps"][0]["secretEnv"] = ["GITHUB_TOKEN"]
+            {"versionName": "projects/fugaro-dev/secrets/%s/versions/latest" % slug(source_provider),
+             "env": MINT_ENV[source_provider]}]}
+        b["steps"][0]["secretEnv"] = [MINT_ENV[source_provider]]
     if mode in ("build-failed", "flip-build-failed") and provider == "github":
         b["status"] = "FAILURE"
     if mode == "build-other-account" and provider == "github":
@@ -205,7 +275,27 @@ def build(repo, provider):
     return b
 
 
+def derived_build(repo, provider):
+    """A repository-level DERIVED build: the shape this check read until
+    2026-11-24, and one nothing builds any more (D1900). It must never be read
+    as the repository's image build: its `_IMAGE` names the repository and the
+    workflow, not a catalog entry, so it is not the catalog entry the
+    repository's image_map names and this check cannot measure it."""
+    return {"id": "old-" + repo.split("/")[-1], "status": "SUCCESS",
+            "startTime": "2026-11-19T10:00:00Z", "finishTime": "2026-11-19T10:05:00Z",
+            "serviceAccount": "projects/fugaro-dev/serviceAccounts/" + account(provider),
+            "substitutions": {"_REPO_URL": clone_url(repo, provider), "_WORKFLOW": "image",
+                              "_SECRET_ENVS": "GITHUB_TOKEN", "_SLUG": slug(provider),
+                              "_IMAGE": "us-east5-docker.pkg.dev/fugaro-dev/fugaro-registry/img-%s" % slug(provider),
+                              "_CREDENTIALS_SERVICE_URL": SVC_URL},
+            "steps": [{"name": "gcr.io/cloud-builders/docker"}]}
+
+
 def builds():
+    if mode == "no-builds":
+        return []
+    if mode == "derived-only":
+        return [derived_build(GH_REPO, "github"), derived_build(BB_REPO, "bitbucket")]
     out = []
     if mode != "no-gh-build":
         out.append(build(GH_REPO, "github"))
@@ -222,7 +312,7 @@ def job(repo, provider):
     it serves mounts nothing and is handed the address instead. The two never
     appear together — the address is written in the same breath as the mount's
     removal — so the default shapes are those two and nothing else."""
-    env = [{"name": "FUGARO_REMOTE", "value": clone_url(repo, provider)}]
+    env = [] if mode == "check-job-label-only" else [{"name": "FUGARO_REMOTE", "value": clone_url(repo, provider)}]
     mounts, url = (0, True) if FLIP else (1, False)
     if mode == "flip-job-mounts" and provider == "github":
         mounts = 1
@@ -255,11 +345,27 @@ def jobs():
     return out
 
 
+def service():
+    """The credentials service ITSELF, as `gcloud run services describe` reports
+    it: the row is read off the service and off no build, so an installation
+    whose project holds no catalog build at all still measures it."""
+    if mode == "service-missing":
+        return None
+    doc = {"metadata": {"name": "fugaro-credentials"},
+           "spec": {"template": {"spec": {"containers": [{"name": "svc"}]}}}}
+    if mode != "service-no-url":
+        doc["status"] = {"url": SVC_URL}
+    return doc
+
+
 def audit_line(provider):
     cred = "github-app-key" if provider == "github" else "bitbucket-token--ci"
     if mode == "audit-wrong-credential" and provider == "github":
         cred = "bitbucket-token"
-    caller = account(provider)
+    # A line under this repository's slug can only have been written by the
+    # identity the service verified (G20): with the repository's image now a
+    # catalog entry's, that identity is the installation's build identity.
+    caller = BUILD_IDENTITY
     if mode == "audit-other-caller" and provider == "github":
         caller = "somebody-else@fugaro-dev.iam.gserviceaccount.com"
     return {"jsonPayload": {"msg": "credsvc: audit", "status": "ok", "credential": cred,
@@ -277,7 +383,14 @@ def service_policy():
 if sub == ("builds", "list"):
     if mode == "builds-list-fails":
         die("cloudbuild.builds.list was refused: the session has expired")
-    emit(builds())
+    if REGION != "us-east5":
+        # The builds this check reads are the INSTALLATION'S REGION'S, and a
+        # listing with no --region reads the GLOBAL region, which holds none of
+        # them: the defect of 2026-11-24, and the reason every row of every test
+        # below fails the moment the check drops --region.
+        emit([])
+    else:
+        emit(builds())
 elif sub == ("run", "jobs", "list"):
     if mode == "jobs-list-fails":
         die("run.jobs.list was refused: the session has expired")
@@ -291,22 +404,31 @@ elif sub == ("run", "jobs", "executions", "list"):
 elif sub == ("logging", "read"):
     if mode == "log-fails":
         die("logging.logEntries.list was refused: the session has expired")
-    if mode == "log-missing":
-        emit([])
-    elif mode == "audit-refused":
+    if mode == "audit-refused":
         # A refusal, with a credential-shaped sentence in it: the block must
         # carry the service's own words redacted, never the token.
         emit([{"jsonPayload": {"msg": "credsvc: audit event refused", "field": "repository",
                                "reason": "Authorization: Bearer FAKE-SERVICE-LOG-TOKEN",
                                "purpose": "build"}}])
-    elif BB_SLUG in " ".join(positionals):
-        emit([audit_line("bitbucket")])
+    elif mode in ("audit-other-caller", "audit-wrong-credential"):
+        emit([audit_line("bitbucket" if BB_SLUG in " ".join(positionals) else "github")])
     else:
-        emit([audit_line("github")])
+        # The default project's builds are CATALOG entries' and are answered by
+        # the service's ENTRY route, whose lines name no repository (IS8/D3330),
+        # so the service wrote no line of purpose `build` for either repository:
+        # that is the shape the served row reads as INFO.
+        emit([])
 elif sub == ("run", "services", "get-iam-policy"):
     if mode == "svc-iam-fails":
         die("run.services.getIamPolicy was refused")
     emit(service_policy())
+elif sub == ("run", "services", "describe"):
+    if mode == "service-list-fails":
+        die("run.services.get was refused: the session has expired")
+    doc = service()
+    if doc is None:
+        die("NOT_FOUND: service fugaro-credentials was not found in region us-east5")
+    emit(doc)
 GCLOUD_EOF
   chmod +x "$1/bin/gcloud"
 }
@@ -349,6 +471,23 @@ prepare() { # dir
   write_fake_gcloud "$1"
 }
 
+# write_local_project_config DIR — this machine's own project config for the
+# installation, whose `image_map` block is the map's LOCAL half and wins over the
+# published node's where it states one (localcfg's ImageMapEffective, D1906). The
+# path is the one localcfg's selector reads, under the HOME the harness gives the
+# check. Its map DISAGREES with the fake fugaro's published one on purpose, so a
+# check that read the published map alone would find no build at all.
+write_local_project_config() { # dir
+  mkdir -p "$1/home/.config/fugaro/projects"
+  cat >"$1/home/.config/fugaro/projects/fugaro.yaml" <<'CFG_EOF'
+project: fugaro
+gcp_project: fugaro-dev
+image_map:
+  acme/sandbox: local-web
+  acme/bb-sandbox: sandbox-bb
+CFG_EOF
+}
+
 # --------------------------------------------------------------- the tests
 # --dry-run is the mode the checklist has the owner try FIRST, on a machine that
 # may have no credentials at all: it must print the plan and call NOTHING.
@@ -370,25 +509,200 @@ test_dry_run() {
   if [ -d "$scratch" ]; then fail "dry run: the scratch directory survived"; fi
 }
 
+# The project this check reads now is one whose builds are CATALOG ENTRIES': the
+# repository's own derived image is disabled (D1900), so the image each sandbox
+# repository builds is the entry its image_map names, submitted as the project's
+# build identity, carrying no secret at all (IS8/D3330). Every row of the switch
+# mode is measured, and the whole run ends 0.
 test_happy_path() {
   local dir=$work/ok
   prepare "$dir"
   run196 "$dir" ok
   expect_status "$status" 0 "happy path: the verdict"
+  expect_contains "$out" "FACT service: PASS" "happy path: the service itself"
   expect_contains "$out" "FACT build-github: PASS" "happy path: the GitHub build"
   expect_contains "$out" "FACT build-bitbucket: PASS" "happy path: the Bitbucket build"
-  expect_contains "$out" "FACT mounts-github: PASS" "happy path: the pre-flip mounts"
-  expect_contains "$out" "FACT served-github: PASS" "happy path: the service's own line"
-  expect_contains "$out" "FACT served-bitbucket: PASS" "happy path: the Bitbucket line"
+  # The build row says WHICH catalog entry the image is and which account it ran
+  # as -- the two facts that tell a catalog build from a repository's own.
+  expect_contains "$out" "CATALOG ENTRY sandbox-web" "happy path: the entry is named"
+  expect_contains "$out" "CATALOG ENTRY sandbox-bb" "happy path: the Bitbucket entry"
+  expect_contains "$out" "ran as fugaro-build-identity@fugaro-dev.iam.gserviceaccount.com" "happy path: the build identity"
+  expect_contains "$out" "FACT mounts-github: PASS" "happy path: the credential shape"
+  # The good shape is the post-IS8 one: no availableSecrets and no secretEnv
+  # entry, beside the service's address — the mount went with the build
+  # identity's accessor on it.
+  expect_contains "$out" "carries 0 availableSecrets and 0 secretEnv entries and names the credentials service" "happy path: the IS8 shape"
+  expect_absent "$out" "fed to the build step as" "happy path: no mounted credential is claimed"
+  # A catalog build asks the service's ENTRY route, which names no repository, so
+  # the service wrote it no `build` line under this repository's slug: the row
+  # reads that as INFO and says which shape it is.
+  expect_contains "$out" "FACT served-github: INFO" "happy path: the service's own lines"
+  expect_contains "$out" "FACT served-bitbucket: INFO" "happy path: the Bitbucket lines"
+  expect_contains "$out" "catalog build asks the service's ENTRY route" "happy path: the reason"
   expect_contains "$out" "FACT check-github: PASS" "happy path: the daily check"
   expect_contains "$out" "FACT check-bitbucket: PASS" "happy path: the Bitbucket daily check"
   expect_contains "$out" "FACT boundary: PASS" "happy path: the front door"
   expect_contains "$out" "FACT scratch-removed: PASS" "happy path: cleanup"
   expect_absent "$out" "FAIL" "happy path: no row failed"
-  # The Bitbucket line names a token of the family, not the legacy spelling: the
-  # reading takes the family, so a typed token is not read as a wrong one.
-  expect_contains "$out" "bitbucket-token--ci" "happy path: the token family"
   if [ -d "$scratch" ]; then fail "happy path: the scratch directory survived"; fi
+}
+
+# The three project shapes the catalog path has to survive. (1) The project's
+# only builds are catalog-entry builds: every build row is measured (asserted
+# above). (2) The project holds no build at all. (3) The project's builds are
+# the DERIVED ones nothing builds any more. The service row is measured in all
+# three, because it is read off the service and off no build.
+test_a_project_with_no_build_at_all() {
+  local dir=$work/nobuilds
+  prepare "$dir"
+  run196 "$dir" no-builds
+  expect_status "$status" 2 "no builds: the verdict"
+  expect_contains "$out" "FACT service: PASS" "no builds: the service is still measured"
+  expect_contains "$out" "FACT build-github: FAIL — no CATALOG-ENTRY build of acme/sandbox" "no builds: the row"
+  expect_contains "$out" "FACT mounts-github: FAIL" "no builds: the mount row is not a pass"
+  # The remedy names a command that works: 'fugaro image refresh' is refused
+  # (repo-level images are disabled), so the row must not send the owner there,
+  # and it names the entry the repository's image_map gives.
+  expect_contains "$out" "fugaro image build sandbox-web" "no builds: the remedy"
+  expect_absent "$out" "Submit one with 'fugaro image refresh'" "no builds: the refused command is not the remedy"
+  # The daily check is found by the repository itself, so it is measured too.
+  expect_contains "$out" "FACT check-github: PASS" "no builds: the daily check"
+}
+
+test_a_project_whose_builds_are_derived_only() {
+  # The shape this check read until 2026-11-24: builds that carry a `_SLUG` and
+  # a service address and belong to a repository-level image no installation
+  # builds any more. They are not the catalog entry the image_map names, so the
+  # build rows are unmeasured rather than read as this repository's image.
+  local dir=$work/derived
+  prepare "$dir"
+  run196 "$dir" derived-only
+  expect_status "$status" 2 "derived only: the verdict"
+  expect_contains "$out" "FACT build-github: FAIL — no CATALOG-ENTRY build of acme/sandbox" "derived only: the row"
+  expect_contains "$out" "FACT service: PASS" "derived only: the service is still measured"
+  expect_contains "$out" "fugaro image build sandbox-web" "derived only: the remedy names the entry the map gives"
+}
+
+# A repository's builds are the newest whose `_IMAGE` names the CATALOG ENTRY its
+# image_map gives, and the build's own `_REPO_URL` is the ENTRY's source
+# repository — not the served repository when one entry serves several. Here a
+# GitHub repository is mapped to an entry sourced from a BITBUCKET repository:
+# only the map can select this build, and the row names the source repository it
+# was baked from.
+test_a_build_is_found_through_the_map_when_the_source_repository_differs() {
+  local dir=$work/mapsource
+  prepare "$dir"
+  run_env=(FAKE_FUGARO_MODE=map-source-elsewhere)
+  run196 "$dir" map-source-elsewhere
+  expect_status "$status" 0 "map source: the verdict"
+  expect_contains "$out" "FACT build-github: PASS" "map source: the row"
+  expect_contains "$out" "CATALOG ENTRY shared-web" "map source: the entry the map names"
+  expect_contains "$out" "found by the catalog entry shared-web its image_map names" "map source: how it was found"
+  expect_contains "$out" "bitbucket.org/acme/bb-sandbox.git" "map source: the entry's source repository"
+  # The credential shape is the post-IS8 one for this build too: no mount and the
+  # service's address, whose entry route is where the credential step fetches the
+  # git credential of the entry's SOURCE repository — the Bitbucket one here, so
+  # a row that expected the served repository's GITHUB_APP_KEY mount would fail a
+  # correct installation.
+  expect_contains "$out" "FACT mounts-github: PASS" "map source: the credential shape"
+  expect_contains "$out" "carries 0 availableSecrets and 0 secretEnv entries and names the credentials service" "map source: the IS8 shape"
+  expect_absent "$out" "FAIL" "map source: no row failed"
+}
+
+# A repository the map does not mention keeps the `_REPO_URL` match this check
+# read before the map existed, and the row says that is how it was found.
+test_a_repository_the_map_does_not_name_keeps_the_repourl_match() {
+  local dir=$work/mapnorepo
+  prepare "$dir"
+  run_env=(FAKE_FUGARO_MODE=map-no-repo)
+  run196 "$dir" ok
+  expect_status "$status" 0 "not in the map: the verdict"
+  expect_contains "$out" "FACT build-github: PASS" "not in the map: the row"
+  expect_contains "$out" "found by the builds whose _REPO_URL is its own clone URL" "not in the map: how it was found"
+  expect_contains "$out" "does not name an entry for acme/sandbox" "not in the map: the reason"
+  expect_contains "$out" "FACT build-bitbucket: PASS" "not in the map: the mapped repository"
+}
+
+# And a repository the map does not name AND that has no build: the remedy is the
+# two commands that map it and build the entry, never an entry the project never
+# chose.
+test_a_repository_the_map_does_not_name_and_has_no_build_says_how_to_map_it() {
+  local dir=$work/mapnoreponobuild
+  prepare "$dir"
+  run_env=(FAKE_FUGARO_MODE=map-no-repo)
+  run196 "$dir" no-gh-build
+  expect_status "$status" 2 "not in the map, no build: the verdict"
+  expect_contains "$out" "FACT build-github: FAIL — no CATALOG-ENTRY build of acme/sandbox" "not in the map, no build: the row"
+  expect_contains "$out" "fugaro image map set acme/sandbox <entry>" "not in the map, no build: the remedy maps it first"
+  expect_contains "$out" "fugaro image build <entry>" "not in the map, no build: the remedy builds the entry"
+}
+
+# The local project config's image_map is the map's LOCAL half and wins over the
+# published node's where it states one (localcfg's ImageMapEffective, D1906): the
+# two disagree here and the build carries the local answer, so a check that read
+# the published map alone would find no build at all.
+test_the_local_project_configs_map_wins_over_the_published_one() {
+  local dir=$work/maplocal
+  prepare "$dir"
+  write_local_project_config "$dir"
+  run196 "$dir" map-local
+  expect_status "$status" 0 "local map: the verdict"
+  expect_contains "$out" "FACT build-github: PASS" "local map: the row"
+  expect_contains "$out" "CATALOG ENTRY local-web" "local map: the entry the local config names"
+}
+
+# A published policy that cannot be read is not a failure of this check: the
+# local half answers alone, a repository it does not name keeps the `_REPO_URL`
+# match, and the row names the read that failed rather than hiding it.
+test_a_published_map_that_cannot_be_read_still_measures_the_builds() {
+  local dir=$work/mapunreadable
+  prepare "$dir"
+  run_env=(FAKE_FUGARO_MODE=map-unreadable)
+  run196 "$dir" ok
+  expect_status "$status" 0 "unreadable map: the verdict"
+  expect_contains "$out" "FACT build-github: PASS" "unreadable map: the row"
+  expect_contains "$out" "fugaro project policy show --json failed with" "unreadable map: the read that failed is named"
+}
+
+# And the builds are read from the INSTALLATION'S REGION: the fake answers a
+# global `builds list` with nothing, so a check that dropped --region would
+# measure no build at all — every build row of every test above would fail.
+test_the_builds_list_names_the_installation_region() {
+  local dir=$work/region
+  prepare "$dir"
+  run196 "$dir" ok
+  expect_status "$status" 0 "region: the verdict"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "builds list --project=fugaro-dev --region=us-east5" "region: the listing names the installation's region"
+}
+
+test_a_service_that_cannot_be_read_is_unmeasured() {
+  local dir=$work/svcmissing
+  prepare "$dir"
+  run196 "$dir" service-missing
+  expect_status "$status" 2 "missing service: the verdict"
+  expect_contains "$out" "FACT service: FAIL" "missing service: the row"
+  expect_contains "$out" "credentials service" "missing service: the reason"
+}
+
+test_a_service_with_no_url_is_a_failure() {
+  local dir=$work/svcnourl
+  prepare "$dir"
+  run196 "$dir" service-no-url
+  expect_status "$status" 1 "service with no url: the verdict"
+  expect_contains "$out" "FACT service: FAIL" "service with no url: the row"
+  expect_contains "$out" "no URL" "service with no url: the reason"
+}
+
+test_the_check_job_is_found_by_its_label() {
+  # The repository's slug is read off the `fugaro_repo` label the installation
+  # writes, because a catalog build carries no `_SLUG` substitution to read one
+  # out of: a job whose containers name no FUGARO_REMOTE is still found.
+  local dir=$work/joblabel
+  prepare "$dir"
+  run196 "$dir" check-job-label-only
+  expect_status "$status" 0 "job by label: the verdict"
+  expect_contains "$out" "FACT check-github: PASS" "job by label: the row"
+  expect_contains "$out" "slug acme-sandbox-0123456789abcdef" "job by label: the slug"
 }
 
 test_a_guard_refuses_a_missing_knob() {
@@ -466,12 +780,13 @@ test_a_repository_with_no_build_is_unmeasured() {
   prepare "$dir"
   run196 "$dir" no-bb-build
   expect_status "$status" 2 "no build: the verdict"
-  expect_contains "$out" "FACT build-bitbucket: FAIL — no build of acme/bb-sandbox" "no build: the row"
+  expect_contains "$out" "FACT build-bitbucket: FAIL — no CATALOG-ENTRY build of acme/bb-sandbox" "no build: the row"
+  expect_contains "$out" "FACT mounts-bitbucket: FAIL" "no build: the mount row"
   expect_contains "$out" "FACT served-bitbucket: FAIL" "no build: the served row"
-  expect_contains "$out" "FACT check-bitbucket: FAIL" "no build: the check row"
-  # And the GitHub half is still read: one repository's silence does not stop
-  # the other's rows.
+  # And the GitHub half is still read, and so is the Bitbucket daily check: the
+  # check job is found by the repository itself and not through a build.
   expect_contains "$out" "FACT build-github: PASS" "no build: the other repository"
+  expect_contains "$out" "FACT check-bitbucket: PASS" "no build: the daily check is still read"
 }
 
 test_a_build_that_failed_is_a_failure() {
@@ -483,14 +798,32 @@ test_a_build_that_failed_is_a_failure() {
   expect_contains "$out" "ended FAILURE" "failed build: the status is named"
 }
 
-test_a_build_that_names_no_service_is_a_failure() {
-  local dir=$work/nourl
+# A catalog build's request names no secret of its own (IS8/D3330), so it takes
+# its credential from the credentials service — whose address its request always
+# names, because a submission refuses an empty one. A request with neither the
+# mount nor the address holds no credential at all and could only fail. That is
+# the shape the row calls a failure.
+test_a_catalog_build_with_no_credential_is_a_failure() {
+  local dir=$work/nocred
   prepare "$dir"
-  run196 "$dir" build-no-url
-  expect_status "$status" 1 "no service address: the verdict"
-  expect_contains "$out" "FACT service: FAIL" "no service address: the row"
-  expect_contains "$out" "FACT build-github: FAIL" "no service address: the build row"
-  expect_contains "$out" "FACT mounts-github: FAIL" "no service address: the mount row is not read as a pass"
+  run196 "$dir" catalog-build-no-credential
+  expect_status "$status" 1 "no credential: the verdict"
+  expect_contains "$out" "FACT mounts-github: FAIL" "no credential: the row"
+  expect_contains "$out" "holds no credential of any kind" "no credential: the reason"
+  expect_contains "$out" "fugaro image build sandbox-web" "no credential: the remedy names the entry"
+}
+
+# A build that still mounts the provider credential is one from before IS8: its
+# accessor is gone, so it is a failure too, and the row names the mount rather
+# than repeating the no-credential text.
+test_a_catalog_build_that_still_mounts_is_a_failure() {
+  local dir=$work/stalemount
+  prepare "$dir"
+  run196 "$dir" catalog-build-stale-mount
+  expect_status "$status" 1 "stale mount: the verdict"
+  expect_contains "$out" "FACT mounts-github: FAIL" "stale mount: the row"
+  expect_contains "$out" "still carries 1 availableSecrets entry(ies) and 1 secretEnv entry(ies)" "stale mount: the reason"
+  expect_contains "$out" "fugaro image build sandbox-web" "stale mount: the remedy names the entry"
 }
 
 test_a_build_that_ran_as_another_account_is_a_failure() {
@@ -499,7 +832,7 @@ test_a_build_that_ran_as_another_account_is_a_failure() {
   run196 "$dir" build-other-account
   expect_status "$status" 1 "another account: the verdict"
   expect_contains "$out" "FACT build-github: FAIL" "another account: the row"
-  expect_contains "$out" "not as a build account of fugaro-dev" "another account: the reason"
+  expect_contains "$out" "not as the installation's build identity" "another account: the reason"
 }
 
 test_a_log_read_that_fails_is_unmeasured() {
@@ -511,13 +844,17 @@ test_a_log_read_that_fails_is_unmeasured() {
   expect_contains "$out" "could not be read" "unreadable log: the reason"
 }
 
-test_a_missing_audit_line_is_a_failure() {
-  local dir=$work/nolog
+# A CATALOG build asks the service for nothing, so the service writes it no
+# line: the row says so and names it as the shape this installation plans rather
+# than failing a correct installation (the same run is the happy path above).
+test_a_catalog_build_with_no_service_line_reads_info() {
+  local dir=$work/noline
   prepare "$dir"
-  run196 "$dir" log-missing
-  expect_status "$status" 1 "missing line: the verdict"
-  expect_contains "$out" "FACT served-github: FAIL" "missing line: the row"
-  expect_contains "$out" "wrote no 'credsvc: audit' line" "missing line: the reason"
+  run196 "$dir" ok
+  expect_status "$status" 0 "no line: the verdict"
+  expect_contains "$out" "FACT served-github: INFO" "no line: the row"
+  expect_contains "$out" "wrote no 'credsvc: audit' line" "no line: the reason"
+  expect_absent "$out" "FACT served-github: FAIL" "no line: not a failure"
 }
 
 test_an_audit_line_for_another_caller_is_a_failure() {
@@ -549,13 +886,34 @@ test_a_refusal_line_is_reported_redacted() {
   expect_contains "$out" "<redacted>" "refusal: it is redacted instead"
 }
 
-test_a_missing_check_job_is_unmeasured() {
+# A repository the installation deploys no check job for is not a failure: a
+# repository-level image check is disabled with the repository-level images
+# (D1900, internal/infra's IS2), so the installation emits none for a repository
+# that has none, and the row reads that shape as INFO rather than as a row that
+# could not be measured — the same absence the flip mode's noaccessor row reads.
+#
+# The served row is the other half of that shape, and it is the one row the
+# missing job costs: a catalog build carries no `_SLUG` substitution, the job's
+# `fugaro_repo` label is where this repository's slug would have been read from,
+# and with neither there is nothing to look the service's own lines up by. The
+# row reads as one that could not be measured — never as an absence the check
+# measured, and never with a slug the reader invented (a `None` taken for a value
+# would filter Cloud Logging on a repository that cannot exist, and hand the
+# owner a command that matches nothing). The repository that does have a job,
+# with a catalog build of its own, is read and reads INFO.
+test_a_missing_check_job_reads_info() {
   local dir=$work/nojob
   prepare "$dir"
   run196 "$dir" no-check-job
-  expect_status "$status" 2 "no check job: the verdict"
-  expect_contains "$out" "FACT check-github: FAIL — this installation deploys no daily check job" "no check job: the row"
+  expect_status "$status" 2 "no check job: the served row could not be measured"
+  expect_contains "$out" "FACT check-github: INFO" "no check job: the row"
+  expect_contains "$out" "D1900" "no check job: the ruling the row reads"
+  expect_absent "$out" "FACT check-github: FAIL" "no check job: not a failure"
   expect_contains "$out" "FACT check-bitbucket: PASS" "no check job: the other repository"
+  expect_contains "$out" "FACT served-github: FAIL" "no check job: the service's lines cannot be looked up"
+  expect_contains "$out" "the repository's slug could not be read" "no check job: the reason the row gives"
+  expect_absent "$out" "repository=None" "no check job: no lookup on a repository named None"
+  expect_contains "$out" "FACT served-bitbucket: INFO" "no check job: the repository that has one is still read"
 }
 
 # Before the flip the check job keeps its own mount and carries NO service
@@ -639,9 +997,14 @@ test_the_flip_happy_path() {
   run_args=(--after-flip)
   run196 "$dir" flip
   expect_status "$status" 0 "flip: the verdict"
-  expect_contains "$out" "FACT noavailable-github: PASS" "flip: no availableSecrets"
+  # The flip does not reach a catalog entry's build: that build carried no secret
+  # before it and carries none after, taking its credential from the service's
+  # entry route, so the row says the shape it reads is the entry build's own and
+  # not the flip's doing.
+  expect_contains "$out" "FACT noavailable-github: PASS" "flip: the build's credential shape"
+  expect_contains "$out" "the shape of every catalog build and not something the flip reaches" "flip: the reason"
   expect_contains "$out" "FACT build-flip-github: PASS" "flip: the build still succeeds"
-  expect_contains "$out" "FACT served-github-flip: PASS" "flip: the service's own line"
+  expect_contains "$out" "FACT served-github-flip: INFO" "flip: the service's own line"
   expect_contains "$out" "FACT noaccessor-github: PASS" "flip: the check job's mounts are gone"
   expect_contains "$out" "FACT noavailable-bitbucket: PASS" "flip: the Bitbucket half"
   expect_absent "$out" "FAIL" "flip: no row failed"
@@ -650,14 +1013,30 @@ test_the_flip_happy_path() {
   expect_absent "$out" "FACT mounts-github" "flip: no switch-mode row"
 }
 
-test_the_flip_with_a_mount_left_is_a_failure() {
-  local dir=$work/flipmount
+# A catalog build whose request names neither a secret nor the service's address
+# holds no credential at all, and no submitter of this installation writes such a
+# request: the row calls it a failure and names the entry to submit again.
+test_the_flip_with_a_build_that_holds_no_credential_is_a_failure() {
+  local dir=$work/flipnocred
   prepare "$dir"
   run_args=(--after-flip)
-  run196 "$dir" flip-build-mounts
-  expect_status "$status" 1 "flip with a mount: the verdict"
-  expect_contains "$out" "FACT noavailable-github: FAIL" "flip with a mount: the row"
-  expect_contains "$out" "still carries 1 availableSecrets" "flip with a mount: the reason"
+  run196 "$dir" catalog-build-no-credential
+  expect_status "$status" 1 "flip with no build credential: the verdict"
+  expect_contains "$out" "FACT noavailable-github: FAIL" "flip with no build credential: the row"
+  expect_contains "$out" "has no credential at all" "flip with no build credential: the reason"
+  expect_contains "$out" "fugaro image build sandbox-web" "flip with no build credential: the remedy names the entry"
+}
+
+# A build that still mounts the provider credential is a pre-IS8 one: the row
+# says so and points at the class list, which is what the flip changes.
+test_the_flip_with_a_build_that_still_mounts_is_a_failure() {
+  local dir=$work/flipstalemount
+  prepare "$dir"
+  run_args=(--after-flip)
+  run196 "$dir" catalog-build-stale-mount
+  expect_status "$status" 1 "flip with a stale mount: the verdict"
+  expect_contains "$out" "FACT noavailable-github: FAIL" "flip with a stale mount: the row"
+  expect_contains "$out" "Check the class list (config.BuildServedSecretClasses)" "flip with a stale mount: the reason"
 }
 
 test_the_flip_with_the_check_job_mount_left_is_a_failure() {
@@ -762,6 +1141,17 @@ t() {
 
 t test_dry_run
 t test_happy_path
+t test_a_project_with_no_build_at_all
+t test_a_project_whose_builds_are_derived_only
+t test_a_build_is_found_through_the_map_when_the_source_repository_differs
+t test_a_repository_the_map_does_not_name_keeps_the_repourl_match
+t test_a_repository_the_map_does_not_name_and_has_no_build_says_how_to_map_it
+t test_the_local_project_configs_map_wins_over_the_published_one
+t test_a_published_map_that_cannot_be_read_still_measures_the_builds
+t test_the_builds_list_names_the_installation_region
+t test_a_service_that_cannot_be_read_is_unmeasured
+t test_a_service_with_no_url_is_a_failure
+t test_the_check_job_is_found_by_its_label
 t test_a_guard_refuses_a_missing_knob
 t test_a_guard_refuses_belong
 t test_a_guard_refuses_one_repository_twice
@@ -771,14 +1161,15 @@ t test_a_development_version_is_a_failure
 t test_xtrace_is_refused
 t test_a_repository_with_no_build_is_unmeasured
 t test_a_build_that_failed_is_a_failure
-t test_a_build_that_names_no_service_is_a_failure
+t test_a_catalog_build_with_no_credential_is_a_failure
+t test_a_catalog_build_that_still_mounts_is_a_failure
 t test_a_build_that_ran_as_another_account_is_a_failure
 t test_a_log_read_that_fails_is_unmeasured
-t test_a_missing_audit_line_is_a_failure
+t test_a_catalog_build_with_no_service_line_reads_info
 t test_an_audit_line_for_another_caller_is_a_failure
 t test_the_other_providers_credential_is_a_failure
 t test_a_refusal_line_is_reported_redacted
-t test_a_missing_check_job_is_unmeasured
+t test_a_missing_check_job_reads_info
 t test_a_check_job_that_holds_no_credential_is_a_failure
 t test_a_check_job_that_already_names_the_service_reads_info
 t test_a_check_job_that_mounts_beside_the_address_is_a_failure
@@ -787,7 +1178,8 @@ t test_a_public_service_policy_is_a_failure
 t test_a_builds_list_that_cannot_be_read_stops_the_run
 t test_a_jobs_list_that_cannot_be_read_stops_the_run
 t test_the_flip_happy_path
-t test_the_flip_with_a_mount_left_is_a_failure
+t test_the_flip_with_a_build_that_holds_no_credential_is_a_failure
+t test_the_flip_with_a_build_that_still_mounts_is_a_failure
 t test_the_flip_with_the_check_job_mount_left_is_a_failure
 t test_the_flip_with_a_check_job_that_names_no_service_is_a_failure
 t test_keep_scratch_keeps_the_directory

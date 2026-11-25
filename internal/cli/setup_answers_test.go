@@ -12,16 +12,17 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
+	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 // setup_answers_test.go pins task ST1 of docs/console-improvements/implementation-plan.md:
-// `fugaro setup --answers-file`, the wizard's five questions answered as one
+// `fugaro setup --answers-file`, the wizard's questions answered as one
 // document, so a caller with no terminal — the console's first-run wizard,
 // D2904 — drives the CLI with what it collected.
 //
-// The document is an input and never a consent: it fills the same five flags
+// The document is an input and never a consent: it fills the same flags
 // the wizard's answers fill (setup_answers.go), and every step that is a
 // person's is met exactly as a run answered at a terminal meets it.
 
@@ -68,6 +69,9 @@ func fullAnswers() string {
 func answersRun(t *testing.T, path, stdin string, o *initOptions) (*initRun, *strings.Builder) {
 	t.Helper()
 	r, out := wizardRun(t, stdin, o)
+	// The file's budget on a creating run needs the account the alert is
+	// created with, which no file answers and no fixture's state records.
+	r.o.billingAccount = "000000-000000-000000"
 	r.o.answersFile = path
 	if err := r.applySetupAnswers(); err != nil {
 		t.Fatalf("%s was refused: %v\n%s", path, err, out)
@@ -75,8 +79,8 @@ func answersRun(t *testing.T, path, stdin string, o *initOptions) (*initRun, *st
 	return r, out
 }
 
-// TestSetupAnswersFile: the document answers the wizard's five questions, and
-// the run that reads one is the run that was passed those five flags — nothing
+// TestSetupAnswersFile: the document answers the wizard's questions, and
+// the run that reads one is the run that was passed those flags — nothing
 // more (a flag given beside the file wins and is named in the plan output) and
 // nothing less (a question the file leaves out is asked as it always was).
 func TestSetupAnswersFile(t *testing.T) {
@@ -160,8 +164,7 @@ func TestSetupAnswersFile(t *testing.T) {
 		if err := r.gatherInputs(t.Context()); err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}
-		q := questionFor("--gcp-project")
-		if !strings.Contains(out.String(), q.what) {
+		if !strings.Contains(out.String(), askedPrompt("--gcp-project")) {
 			t.Errorf("the file answers no project ID, and the wizard did not ask for one:\n%s", out)
 		}
 		if r.o.cloud.gcpProject == "" {
@@ -178,14 +181,21 @@ func TestSetupAnswersFile(t *testing.T) {
 //
 // Each member is optional, which is the schema's own word, and the pair is
 // checked as the pair the run would have: a member that is absent is answered
-// with T1's default for the check alone, so a document may answer the question
-// with one member or with two, and what a half-answered pair meets afterwards
-// is the run's own rule and not the file's (an alert needs a billing account,
-// which no member of this file answers — F6 of the plan's reconciliation).
+// with T1's default — written back, so the flags this file fills carry the
+// whole pair the schema promises rather than half of one the run's trio rule
+// would then refuse as a caller's mistake. So a document may answer the
+// question with one member or with two, and what a half-answered pair meets
+// afterwards is the run's own rule and not the file's (an alert needs a
+// billing account, which no member of this file answers — F6 of the plan's
+// reconciliation).
 func TestSetupAnswersBudgetMembers(t *testing.T) {
 	// What each member does on its own, read on the flags' own fields: the
 	// amount is --budget's, the currency --budget-currency's, and a member the
-	// document leaves out is one this file does not answer at all.
+	// document leaves out while the other is answered takes the run's default
+	// (the pair below is the one the schema describes). A document that answers
+	// neither member answers no budget question at all: the run asks it at a
+	// terminal, or takes the default where nobody can ask, exactly as it does
+	// without the file.
 	for _, tc := range []struct {
 		name     string
 		doc      string
@@ -193,8 +203,11 @@ func TestSetupAnswersBudgetMembers(t *testing.T) {
 		currency string
 	}{
 		{"the amount and the currency", answersDoc(`"rigor":"pro"`, `"budget":2500`, `"budget_currency":"EUR"`), 2500, "EUR"},
-		{"the amount alone", answersDoc(`"rigor":"pro"`, `"budget":2500`), 2500, ""},
-		{"the currency alone", answersDoc(`"rigor":"pro"`, `"budget_currency":"EUR"`), 0, "EUR"},
+		// The two half-answered pairs: the omitted member is the run's default,
+		// and it is written onto the flag beside the answered one (D2211,
+		// D2212, and the schema's own description of the two members).
+		{"the amount alone", answersDoc(`"rigor":"pro"`, `"budget":2500`), 2500, managed.DefaultBudgetCurrency},
+		{"the currency alone", answersDoc(`"rigor":"pro"`, `"budget_currency":"EUR"`), managed.DefaultBudgetAmount, "EUR"},
 		{"the defaults, written out", answersDoc(`"rigor":"pro"`, `"budget":100`, `"budget_currency":"USD"`), 100, "USD"},
 		{"neither member", answersDoc(`"rigor":"pro"`), 0, ""},
 	} {
@@ -208,6 +221,36 @@ func TestSetupAnswersBudgetMembers(t *testing.T) {
 
 	if setupAnswersVersion != 1 {
 		t.Errorf("the answers file's version is %d, want 1: the budget members are added and no member's meaning changes (R4)", setupAnswersVersion)
+	}
+
+	// The whole point of writing the omitted member back, read through the
+	// door's own rule about a budget (init.go's check — an amount, a currency
+	// and an account together): a document that answers one member beside a run
+	// that was given the account is a complete budget and not half of one
+	// refused as the caller's mistake.
+	for _, tc := range []struct {
+		name string
+		doc  string
+	}{
+		{"the amount alone", answersDoc(`"gcp_project":"`+answersGCPProject+`"`, `"region":"europe-west4"`, `"name":"aurora"`, `"rigor":"pro"`, `"budget":2500`)},
+		{"the currency alone", answersDoc(`"gcp_project":"`+answersGCPProject+`"`, `"region":"europe-west4"`, `"name":"aurora"`, `"rigor":"pro"`, `"budget_currency":"EUR"`)},
+	} {
+		t.Run("the door's own rule reads the pair written back: "+tc.name, func(t *testing.T) {
+			r, out := answersRun(t, answersFile(t, tc.doc), "", nil)
+			r.o.billingAccount = billingAcc
+			if err := r.o.check(); err != nil {
+				t.Errorf("a document answering %s beside a run given an account is refused: %v\n%s", tc.name, err, out)
+			}
+		})
+	}
+	// And the rule is still the rule: the same fields without a file behind
+	// them — the state a reader that only substituted the default inside the
+	// check leaves — are refused, so the cases above are reading the write-back
+	// and not a rule that stopped refusing.
+	half, _ := answersRun(t, answersFile(t, answersDoc(`"rigor":"pro"`)), "", nil)
+	half.o.budget, half.o.billingAccount = 2500, billingAcc
+	if err := half.o.check(); err == nil || !strings.Contains(err.Error(), "a budget needs") {
+		t.Errorf("half a pair with an account is not refused by the door's rule: %v", err)
 	}
 
 	// The pair is the marker's own rule (managed.Budget.Check, T1), so a
@@ -354,13 +397,14 @@ func TestSetupAnswersFileRefusesUnknownKey(t *testing.T) {
 
 	t.Run("the members a person's steps could be spelled with", func(t *testing.T) {
 		// Enumerated rather than assumed: the document's members are the
-		// wizard's five questions and its own version, so a key for any of the
+		// wizard's questions and its own version, so a key for any of the
 		// steps that are a person's is refused by name.
 		// `location` is not in this list: it is the wizard's place question
 		// (LP4 of docs/location-preference; R2), and the members a person's
 		// steps are spelled with are the others. `firestore_location` stays:
-		// that permanent location is confirmed by a person at the terminal and
-		// is not an answer any document carries.
+		// the database's location is no question and no confirmation at all —
+		// it follows the place question (LP10, D3090) — so a document that
+		// named it would answer something the run never asks.
 		for _, key := range []string{
 			"create_project", "link_billing", "billing_account", "firestore_location",
 			"project", "yes", "confirm", "ask", "secrets", "secret",
@@ -594,14 +638,15 @@ func TestSetupAnswersFromStdin(t *testing.T) {
 // TestSetupAnswersFileGrantsNoConsent: the file is an input and never a
 // consent. `--json` confirms no step (unconfirmedWhy, init.go), and the
 // console's own window is not one the CLI accepts (F27, O6): what the document
-// answers is the five questions, and every step that is a person's is met
+// answers is the wizard's questions, and every step that is a person's is met
 // exactly as a run answered at a terminal meets it.
 func TestSetupAnswersFileGrantsNoConsent(t *testing.T) {
 	t.Run("no answer of the file's is a permission", func(t *testing.T) {
 		// The members are the questions alone: the creation of the GCP
-		// project, the billing link, the permanent Firestore location and
-		// every secret value have no key here, and a run that read one would
-		// be a run a document confirmed something for.
+		// project, the billing link and every secret value have no key here,
+		// and neither has the Firestore database's location — it is no
+		// question at all (LP10, D3090) — so a run that read one would be a run
+		// a document confirmed something for.
 		want := []string{"version", "gcp_project", "location", "region", "name", "rigor", "budget", "budget_currency", "bake_repos"}
 		if got := setupAnswerKeys(); !slices.Equal(got, want) {
 			t.Errorf("the answers file's members are %v, want %v", got, want)
@@ -610,7 +655,7 @@ func TestSetupAnswersFileGrantsNoConsent(t *testing.T) {
 
 	t.Run("the document fills the questions and nothing else of the run", func(t *testing.T) {
 		// Read off the product rather than trusted: a whole document applied to
-		// a run changes its five question fields and not one other thing. A
+		// a run changes its question fields and not one other thing. A
 		// handler that also set --yes, or recorded a creation, or named a
 		// billing account would be a document giving a consent, and this is
 		// where that fails.

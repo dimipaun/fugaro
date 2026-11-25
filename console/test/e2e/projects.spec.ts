@@ -174,6 +174,9 @@ const MODULES: readonly string[] = Object.freeze([
   'renderer/skeleton.js',
   'renderer/screens/reading.js',
   'renderer/section.js',
+  // The streamed read the Project tab falls back through (RS5), which the screen
+  // requires.
+  'renderer/stream.js',
   'renderer/writes.js',
   'renderer/screens/policynotes.js',
   'renderer/screens/projects.js',
@@ -184,6 +187,7 @@ const MODULES: readonly string[] = Object.freeze([
   'renderer/manage/kinds/index.js',
   'renderer/manage/kinds/read.js',
   'renderer/manage/kinds/people.js',
+  'renderer/manage/kinds/pools.js',
   'renderer/manage/kinds/repos.js',
   'renderer/manage/kinds/images.js',
   'renderer/manage/kinds/recipes.js',

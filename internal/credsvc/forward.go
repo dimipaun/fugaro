@@ -110,6 +110,21 @@ type call struct {
 	// carries either. They live for the length of one call and are written
 	// nowhere.
 	scrubs []string
+	// chain is the walk this call is served by, and nil for a call served the
+	// way every call was served before the routing table existed (CS1). It is
+	// this call's own — the chain is walked from its first source at every call
+	// (R16) — and it is what forward asks instead of the selector when it is
+	// set, and what the answer carries the source of (chainAnswer).
+	chain *chainWalk
+	// stage is whether the caller sent the stage header (SentStage), read from
+	// the request BEFORE header is stripped of every X-Fugaro- member — which
+	// is the whole of what readCall keeps of it, and the whole of what the
+	// answer needs to decide whether it may carry this contract's three
+	// members (chainAnswer, R24, F57). It is a bool and not the header itself
+	// because the header, and every X-Fugaro- member with it, is what C1.10
+	// refuses to send upstream: a call that carried the stage on would hand the
+	// agent's own stage name to the model's API.
+	stage bool
 	// probed is every tier this call made a probe on (C1.12), in the order
 	// the probes were made and once per tier: what the answer carries to the
 	// run (HeaderProbe), which settles each probe by it — notional on tier A,
@@ -160,6 +175,7 @@ func readCall(r *http.Request, scrubs []string) (*call, error) {
 		// would be guessing at the caller's encoding.
 		body = bytes.ReplaceAll(body, []byte(tok), []byte(redactedValue))
 	}
+	stage := SentStage(r.Header)
 	h := r.Header.Clone()
 	for k := range h {
 		if strings.HasPrefix(http.CanonicalHeaderKey(k), headerPrefixFugaro) {
@@ -171,6 +187,7 @@ func readCall(r *http.Request, scrubs []string) (*call, error) {
 		query:     r.URL.RawQuery,
 		body:      body,
 		header:    h,
+		stage:     stage,
 		requested: strings.Contains(r.Header.Get("Accept"), "text/event-stream"),
 		scrubs:    scrubs,
 	}, nil
@@ -196,19 +213,10 @@ type answer struct {
 // Authorization is dropped by the gateway's own deny-list, the run identity by
 // the scrub below, and this contract's headers when the call was read.
 //
-// This is the call the workspace's meter brackets (WS8): a call the workspace's
-// own credentials pay for takes the room for its worst case out of the
-// workspace's month BEFORE the request goes out — a probe included, since a
-// probe is a call the workspace pays for too (C1.16) — and the answer settles
-// it on the usage the response reported (the caller's half: settleCall). A
-// reservation that cannot be taken, a model the price table cannot price and a
-// table that cannot be read all refuse the call here, with the refusal on the
-// call (cl.fail) and errMeterRefused as the error, so the caller answers the
-// workspace's own refusal rather than the upstream-unreachable one.
-//
-// A call whose scope has no meter (an installation's, every call this release
-// serves at one) is untouched by any of it: cl.meter is nil and this function
-// is what it was.
+// What every source of the chain shares — the scrub of the caller's own tokens,
+// the workspace's reservation, the transport's own failure — is sendRequest's,
+// and this function's job ends at building what that call carries: where it
+// goes and how it is authenticated.
 func (s *Server) send(ctx context.Context, cl *call, e Entry) (*answer, error) {
 	dest, err := s.destination(cl, e)
 	if err != nil {
@@ -246,6 +254,61 @@ func (s *Server) send(ctx context.Context, cl *call, e Entry) (*answer, error) {
 		// helpers return is written that way (C1.8).
 		return nil, err
 	}
+	// The model the workspace's meter prices is the one this call carries: the
+	// member of the body itself, which is the spelling this source is served
+	// with once CS3's rewrite has run. Unreadable is "", which the meter
+	// refuses on as a call it cannot price.
+	model, _ := callModel(cl.body)
+	return s.sendRequest(ctx, cl, sentRequest{
+		dest:       dest,
+		body:       cl.body,
+		header:     hdr,
+		credential: key,
+		name:       e.Name,
+		tier:       e.Tier,
+		model:      model,
+	})
+}
+
+// sentRequest is one attempt as it goes out: where it is sent, the body it
+// carries, the headers it is sent with, and the attempt's own facts — the
+// credential the answer is reported with (its value, kept out of everything
+// handed on), the name and tier a meter refusal is reported with, and the model
+// the workspace's meter prices.
+//
+// It is a value rather than a list of arguments because the sources of the chain
+// build these differently: a key's call is the caller's own path and body (send),
+// while Vertex's is translated onto another wire entirely (serveVertex, where
+// the model is in the URL path and not in the body at all, so the model the
+// meter prices cannot be read off the body it sends).
+type sentRequest struct {
+	dest       string
+	body       []byte
+	header     http.Header
+	credential string
+	name       string
+	tier       creds.Tier
+	model      string
+}
+
+// sendRequest makes one attempt: it strips every header that carries one of the
+// caller's own tokens, takes the workspace's room for the call, sends it, and
+// answers what came back.
+//
+// This is the call the workspace's meter brackets (WS8): a call the workspace's
+// own credentials pay for takes the room for its worst case out of the
+// workspace's month BEFORE the request goes out — a probe included, since a
+// probe is a call the workspace pays for too (C1.16) — and the answer settles
+// it on the usage the response reported (the caller's half: settleCall). A
+// reservation that cannot be taken, a model the price table cannot price and a
+// table that cannot be read all refuse the call here, with the refusal on the
+// call (cl.fail) and errMeterRefused as the error, so the caller answers the
+// workspace's own refusal rather than the upstream-unreachable one.
+//
+// A call whose scope has no meter (an installation's, every call this release
+// serves at one) is untouched by any of it: cl.meter is nil and the reservation
+// is not taken at all.
+func (s *Server) sendRequest(ctx context.Context, cl *call, req sentRequest) (*answer, error) {
 	// Every header that carries one of the caller's own tokens is dropped, not
 	// only the Authorization header the gateway's deny-list knows: the scrub
 	// above is over the one header, and a token in any other header of the call
@@ -254,23 +317,23 @@ func (s *Server) send(ctx context.Context, cl *call, e Entry) (*answer, error) {
 	// and it deletes the header rather than editing its value, which is the
 	// direction that cannot half-remove a token.
 	for _, tok := range cl.scrubs {
-		gateway.RedactHeaders(hdr, tok)
+		gateway.RedactHeaders(req.header, tok)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, dest, bytes.NewReader(cl.body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, req.dest, bytes.NewReader(req.body))
 	if err != nil {
 		return nil, errors.New("credsvc: the upstream request could not be built")
 	}
-	req.Header = hdr
-	req.ContentLength = int64(len(cl.body))
+	httpReq.Header = req.header
+	httpReq.ContentLength = int64(len(req.body))
 	// The room is taken here, after the request is built and validated and
 	// immediately before it goes out: a reservation for a call that was never
 	// made would hold room nothing will settle, and the reservation must not
 	// be held across a header build that can refuse the call for its own
 	// reasons.
-	if cl.meter != nil && paidCall(cl, e) && !cl.meter.take(ctx, s, cl, e) {
+	if cl.meter != nil && paidCall(cl, req.tier) && !cl.meter.take(ctx, s, cl, req) {
 		return nil, errMeterRefused
 	}
-	resp, err := s.cfg.Client.Do(req)
+	resp, err := s.cfg.Client.Do(httpReq)
 	if err != nil {
 		// The transport's own error is not carried: it quotes the URL, and a
 		// URL of this call is the upstream's, which carries no credential —
@@ -289,7 +352,7 @@ func (s *Server) send(ctx context.Context, cl *call, e Entry) (*answer, error) {
 		}
 		return nil, errors.New("credsvc: the upstream could not be reached")
 	}
-	return &answer{resp: resp, credential: key}, nil
+	return &answer{resp: resp, credential: req.credential}, nil
 }
 
 // The workspace's cap, taken where the money is spent (WS8, D1301, F10, F18,
@@ -431,8 +494,8 @@ func meterOf(ctx context.Context, s *Server) *WorkspaceMeter {
 //     quota and not the workspace's money, so a call served by one reserves
 //     nothing at all (R15, D1300). Every other tier — the project's paid
 //     Anthropic key, a provider key — is money the workspace pays.
-func paidCall(cl *call, e Entry) bool {
-	return cl.path == MessagesPath && e.Tier != creds.TierA
+func paidCall(cl *call, tier creds.Tier) bool {
+	return cl.path == MessagesPath && tier != creds.TierA
 }
 
 // withMeter attaches the workspace's meter to a call, and answers it. It
@@ -463,13 +526,19 @@ func (s *Server) withMeter(ctx context.Context, cl *call, id Identity) *callMete
 // A refusal is on the call (cl.fail) and this answers false; the error send
 // returns beside it is errMeterRefused.
 //
+// What it prices and what it bounds the call by are the attempt's own: the
+// model is the one that will be SERVED — the body's own member for a source
+// that sends the caller's body, and the model that source serves for one that
+// translates the call, as Vertex does, whose body names no model at all — and
+// the worst case is the body that goes out.
+//
 // Every failure here is a refusal and never a pass, including the ones that
 // read as internal trouble (a price table that cannot be read, a month that
 // cannot be written): a call served with no reservation is a call that can pass
 // the cap, and a cap that opens when its own database is unreadable is not a
 // cap.
-func (cm *callMeter) take(ctx context.Context, s *Server, cl *call, e Entry) bool {
-	cm.credential, cm.tier = e.Name, wireTier(e.Tier)
+func (cm *callMeter) take(ctx context.Context, s *Server, cl *call, req sentRequest) bool {
+	cm.credential, cm.tier = req.name, wireTier(req.tier)
 	if cm.member == "" || cm.run == "" {
 		// Unreachable through ServeHTTP, which verifies both before it serves
 		// anything. A refusal rather than a reservation under an empty name,
@@ -477,18 +546,17 @@ func (cm *callMeter) take(ctx context.Context, s *Server, cl *call, e Entry) boo
 		cl.fail = cm.fail("the call resolved to no workspace member, so the workspace did not take the room for it", "", nil)
 		return false
 	}
-	model, ok := callModel(cl.body)
-	if !ok {
+	if req.model == "" {
 		cl.fail = cm.fail("the call names no model this service can price, so the workspace did not take the room for it", "", nil)
 		return false
 	}
-	cm.model = model
+	cm.model = req.model
 	table, err := cm.priceTable(s)
 	if err != nil {
 		cl.fail = cm.fail("the workspace's price table could not be built, so the workspace did not pay for this call", "", nil)
 		return false
 	}
-	row, ok := table.Lookup(model)
+	row, ok := table.Lookup(req.model)
 	if !ok {
 		// A model the table cannot price is refused rather than priced at a
 		// guess: an unpriced call is a call whose cost no cap can see, and the
@@ -496,14 +564,14 @@ func (cm *callMeter) take(ctx context.Context, s *Server, cl *call, e Entry) boo
 		// both ways out. This is the check the gateway's own path makes for a
 		// provider route, made here for every tier — the workspace's money is
 		// the workspace's money whatever the credential.
-		message := "the workspace's price table has no price for " + model + ", so the workspace did not pay for this call"
-		if why := table.Refusal(model); why != "" {
+		message := "the workspace's price table has no price for " + req.model + ", so the workspace did not pay for this call"
+		if why := table.Refusal(req.model); why != "" {
 			message = "the workspace did not pay for this call: " + why
 		}
 		cl.fail = cm.fail(message, "", nil)
 		return false
 	}
-	cm.row, cm.ttl = row, meterCacheTTL(cl.body)
+	cm.row, cm.ttl = row, meterCacheTTL(req.body)
 	call, err := callID(cm.run)
 	if err != nil {
 		// The random half is what makes the id unique; without it two calls of
@@ -512,7 +580,7 @@ func (cm *callMeter) take(ctx context.Context, s *Server, cl *call, e Entry) boo
 		cl.fail = cm.fail("the workspace could not identify this call, so it did not take the room for it", "", nil)
 		return false
 	}
-	amount := row.WorstCase(meterRequest(cl.body, row))
+	amount := row.WorstCase(meterRequest(req.body, row))
 	hold, room, err := cm.meter.Reserve(ctx, cm.member, call, amount)
 	switch {
 	case errors.Is(err, budget.ErrWorkspaceCeilingReached):
@@ -1730,6 +1798,12 @@ func (s *Server) providerCall(ctx context.Context, w http.ResponseWriter, r *htt
 			err.Error(), labelRead(readUpstream, err))
 		return
 	}
+	// What the provider's answer carried is deliberately NOT recorded here: a
+	// routed call attaches a key and answers with what the provider said, and it
+	// writes no mark at all (TestARoutedCallLeavesTheRunsPlacementAlone). Check
+	// 880's record belongs to the sources whose state this service holds — the
+	// chain's — and a provider key's rate-limit headers are none of them, so the
+	// routed path writes no observation either.
 	s.answer(ctx, w, id, cl, ans, cand, nil, nil)
 }
 
@@ -1867,6 +1941,81 @@ func (u *usageLimitScanner) scan(chunk []byte) {
 
 // Found reports whether a usage-limit event was seen in the stream.
 func (u *usageLimitScanner) Found() bool { return u.seen }
+
+// rateLimitHeaderNames returns the NAMES — never the values — of the headers of
+// one answer that say anything about a rate limit, sorted so that two answers
+// carrying the same headers record the same thing.
+//
+// The rule is deliberately wider than the headers this service reads a reset
+// from (usageLimitReset): Anthropic's unified rate-limit headers are named
+// `anthropic-ratelimit-*`, an OpenRouter answer's are `x-ratelimit-*`, and a
+// plain `Retry-After` is the HTTP one, so the question "which headers of this
+// answer are about a rate limit" is answered by the name and not by a list this
+// release would have to keep up to date. What the names are FOR is U1's
+// question — whether a subscription token's answer reports a utilisation figure
+// at all (D3178) — and answering it needs no value of any of them.
+func rateLimitHeaderNames(h http.Header) []string {
+	names := make([]string, 0, len(h))
+	for k := range h {
+		ck := http.CanonicalHeaderKey(k)
+		lower := strings.ToLower(ck)
+		if lower == "retry-after" || strings.Contains(lower, "ratelimit") || strings.Contains(lower, "rate-limit") {
+			names = append(names, ck)
+		}
+	}
+	slices.Sort(names)
+	return names
+}
+
+// recordRateLimitHeaders writes the names — and only the names — of the
+// rate-limit headers one answer carried into the credential's own observation
+// node (creds/observed/<name>), where the operator's Check 880 reads them.
+//
+// A record that cannot be written is a line on the service's log and never a
+// refusal: it is an observation about an answer the run has already been given,
+// and the run is not the party that owes this service a record of it. The
+// attempt to write is made whatever the client did with the answer — the
+// answer's headers are a fact about the credential whether or not the caller
+// stayed to read the body (the streamed usage limit's mark is written the same
+// way).
+//
+// It is called only for the answers this service reads as about the CREDENTIAL —
+// the ones it serves (a 2xx), a usage limit (429) and a 401 — because a record is
+// a claim that this answer says something about this credential, and a relayed
+// 529 or 500 says nothing about it (the published pool's own rule: "an answer
+// about the request moves nothing"). The line a failed write leaves names the
+// error's CLASS and never its text, as every other line of this service's log
+// does: the text of a state-write failure can carry the node's own content, and
+// this log is not a place a credential's value may reach.
+//
+// The observation goes to a node of its own and not into the credential's mark,
+// so an answer this service serves writes no mark where it previously wrote one
+// and the mark's wire shape is untouched (creds.Observation). The write is made
+// for an answer that carried no rate-limit header at all, which is not nothing:
+// the node then says that answer was recorded, which is how Check 880 tells a
+// credential whose answers name nothing apart from one no release has recorded.
+//
+// A store that cannot record one — the state a scope answers is a
+// creds.CascadeState, and recording is a capability a store has or has not
+// (creds.ObservationStore) — leaves the answer unrecorded, and Check 880 reads
+// that source as one it cannot answer for. That is the fail-safe direction and
+// it is not a failure of the call: the record is the check's, and nothing about
+// serving the run depends on it.
+func (s *Server) recordRateLimitHeaders(ctx context.Context, sel *creds.Selector, name string, h http.Header) {
+	if sel == nil || name == "" {
+		return
+	}
+	store, ok := sel.Store.(creds.ObservationStore)
+	if !ok {
+		return
+	}
+	names := rateLimitHeaderNames(h)
+	if _, err := store.UpdateObservation(context.WithoutCancel(ctx), name, func(creds.Observation, bool) (creds.Observation, error) {
+		return creds.Observed(names), nil
+	}); err != nil {
+		s.log.Warn("credsvc: the rate-limit header names of an answer could not be recorded", "error_class", errorClass(err))
+	}
+}
 
 // usageLimitReset reads the reset a usage-limit answer named, and the zero time
 // when it named none — which is the backed-off case (C1.9's Exhaust).

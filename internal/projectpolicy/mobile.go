@@ -176,18 +176,27 @@ func DefaultMobile() *Mobile {
 // stated without taking its address.
 func boolPtr(v bool) *bool { return &v }
 
-// MobileForPublish is the block a publish writes: the node's own when it
-// carries one, and DefaultMobile() when it does not.
+// MobileForPublish is the block a publish writes: the node's own member by
+// member, each member it does not carry at the default DefaultMobile() states.
 //
 // The node is the only place these switches live — no key of any machine's
 // local config states them, and they are the project's own answers — so a
-// publish keeps the block it finds: a project whose owner turned pairing off,
-// or chose to store nothing in the identity project, keeps that decision
-// through a publish from any machine. A node that carries no block is one
-// published before this key existed, and O9's answer is that the update writes
-// the default on when it publishes — which is what makes the pairing route
-// answer after `fugaro update` and answer `mobile_disabled` before it (F40, the
-// global constraint the plan states for P3, K2 and P6).
+// publish keeps every member it finds: a project whose owner turned pairing
+// off, or chose to store nothing in the identity project, keeps that decision
+// through a publish from any machine. A member the node does not carry is
+// filled with the default a publish would write — D2796's "the node says what
+// it does", so the published block states every switch explicitly rather than
+// leaving a reader to know a default — which is also what makes the pairing
+// route answer after `fugaro update` and answer `mobile_disabled` before it
+// (F40, the global constraint the plan states for P3, K2 and P6).
+//
+// **It fills member by member and not block by block.** A node carrying a
+// partial block is exactly what a member added by a later release leaves
+// behind, and a function that returned the whole block as it found it would
+// leave the new member off that node for ever. Every member the block writes
+// explicitly is filled here, which is what makes a member added to the block a
+// one-line change and what TestProjectPolicyMobileForPublishFillsEveryMember
+// holds.
 //
 // It is one function because two callers have to agree about it: the publisher
 // writes the node with it (internal/cli's buildProjectPolicy), and the drift
@@ -195,11 +204,70 @@ func boolPtr(v bool) *bool { return &v }
 // it (policyConfigDrift) — a stage that compared the node with nil would find
 // nothing to do about a node that carries no block, and the default would never
 // reach an installation that has not published since the key existed.
+//
+// The app's crash-report switch is NOT a member of this block and is not filled
+// here: it is a top-level key beside it, with a fill of its own
+// (MobileCrashReportsForPublish), because a member added inside this block is
+// refused by every reader of the release behind (the block's comment above).
 func MobileForPublish(node *Mobile) *Mobile {
+	if node == nil {
+		return DefaultMobile()
+	}
+	defaults := DefaultMobile()
+	// A copy rather than the node itself: the caller writes the result into the
+	// document it is about to publish, and the node it read stays as it was.
+	out := *node
+	if out.Enabled == nil {
+		out.Enabled = defaults.Enabled
+	}
+	if out.Sync == nil {
+		out.Sync = defaults.Sync
+	}
+	if len(out.AcceptedProviders) == 0 {
+		out.AcceptedProviders = defaults.AcceptedProviders
+	}
+	if out.MaxAuthAge == "" {
+		out.MaxAuthAge = defaults.MaxAuthAge
+	}
+	if out.StrictNewDevice == nil {
+		out.StrictNewDevice = defaults.StrictNewDevice
+	}
+	if len(out.CostlyModes) == 0 {
+		out.CostlyModes = defaults.CostlyModes
+	}
+	if out.BiometricOnCostly == nil {
+		out.BiometricOnCostly = defaults.BiometricOnCostly
+	}
+	return &out
+}
+
+// MobileCrashReportsKey is the top-level key the app's crash-report switch
+// travels as (D731, D738), beside the mobile block and never inside it: the
+// block decodes strictly, so a key inside it would be refused by every reader
+// of the release behind (Policy.MobileCrashReports's comment).
+const MobileCrashReportsKey = "mobile_crash_reports"
+
+// DefaultMobileCrashReports is the switch a publish writes for a node that does
+// not carry the key: on (D731, D738). A crash report that arrives on its own is
+// what makes a fault the owner never hears about visible at all, so the default
+// is on and a project that does not want them writes false — the opt-out the
+// owner ruled on 2026-10-30.
+const DefaultMobileCrashReports = true
+
+// MobileCrashReportsForPublish is the switch a publish writes: the node's own
+// value when it carries one, and the default a publish writes when it does not.
+//
+// The key's own fill, and it is the whole of what carries the switch to an
+// installation that published before the key existed: the drift row
+// (policyConfigDrift) compares the node with this answer, so a node without the
+// key differs from it and `fugaro update`'s policy stage publishes the key once
+// — while a node whose owner wrote false is the value itself and drifts on
+// nothing (O13: a hand edit is the only door that value has today).
+func MobileCrashReportsForPublish(node *bool) *bool {
 	if node != nil {
 		return node
 	}
-	return DefaultMobile()
+	return boolPtr(DefaultMobileCrashReports)
 }
 
 // MobileEnabled reports whether this project's phones may pair at all.
@@ -228,6 +296,21 @@ func (p *Policy) MobileSync() bool {
 // QR by writing the member.
 func (p *Policy) MobileStrictNewDevice() bool {
 	return p != nil && p.Mobile != nil && p.Mobile.StrictNewDevice != nil && *p.Mobile.StrictNewDevice
+}
+
+// MobileCrashReportsOn reports whether this project's app may send crash
+// reports (D731, D738).
+//
+// A nil Policy, and a key that is not there, both answer false, and that is the
+// rule MobileStrictNewDevice and MobileBiometricOnCostly follow: **an absent
+// switch is off**, never this switch's default of on. The reader is the session
+// the phone holds — and a session a release behind assembled carries no
+// `crash_reports` — so answering the default here would turn collection on for a
+// phone that was told nothing, against D734's rule that nothing is sent before
+// the switch has been read. The fail-safe is therefore the same value the
+// switch's off state is, and the app never has to tell the two apart.
+func (p *Policy) MobileCrashReportsOn() bool {
+	return p != nil && p.MobileCrashReports != nil && *p.MobileCrashReports
 }
 
 // MobileBiometricOnCostly reports whether a start in a costly mode also

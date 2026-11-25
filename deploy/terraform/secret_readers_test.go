@@ -48,12 +48,13 @@ var secretReaderExceptions = []struct {
 			"deploy/terraform/gcp/modules/repo/build.tf google_secret_manager_secret_iam_member.build",
 			"deploy/terraform/gcp/modules/repo/check.tf google_cloud_run_v2_job.check",
 			// B6 moved the catalog build onto the project's build identity,
-			// and a Cloud Build build resolves `availableSecrets` as the
-			// account it runs as: the identity therefore holds one
-			// secretAccessor per repository whose catalog entries this project
-			// builds, exactly the reach the per-repository build account's row
-			// above carries, and nothing wider (never the project).
-			"deploy/terraform/gcp/modules/installation/build_identity.tf google_secret_manager_secret_iam_member.build_identity_git_secret",
+			// and the identity then held one secretAccessor per repository
+			// whose catalog entries this project builds, exactly the reach the
+			// per-repository build account's row above carries and nothing
+			// wider (never the project). IS8 took that accessor out again
+			// (D3330): a catalog entry's build mounts no secret of its own and
+			// asks the credentials service for the git credential it clones
+			// with, so the identity reads none.
 			"images/derived/cloudbuild.yaml",
 		},
 	},
@@ -240,14 +241,27 @@ var secretReaderExceptions = []struct {
 	// accounts alone. It is a row of its own rather than a key under E7 because
 	// the reader is a different account class in a different project: the
 	// installation's account reads a job's mounts and the dynamic-delivery
-	// containers besides, and this one reads the workspace's own bundle and
-	// nothing else -- its project holds no job and no repository, so there is no
-	// mount and no grammar container for it to reach, and no secret ID is an
+	// containers besides, and this one reads the workspace's own bundle and the
+	// personal token containers of the people the workspace serves, and nothing
+	// else -- its project holds no job and no repository, so there is no mount
+	// and no grammar container for it to reach, and no secret ID is an
 	// environment value of its revision (the service derives the container's
 	// name from the workspace's own name).
+	//
+	// The second key is WC2's grant (D2971, R6): the same account, one
+	// PROJECT-level accessor conditioned to the per-person prefix and to the
+	// one personal name the workspace serves, which is the only way to read a
+	// container whose name carries a person's own subject
+	// (`fugaro_u_<sub>_claude-oauth-token`, secretname.User). What bounds it is
+	// the condition, and both halves are held byte for byte by
+	// TestNoProjectLevelSecretAccessor and by internal/infra/tf's
+	// WorkspaceNotCovered.
 	{
-		id:   "E32",
-		keys: []string{"deploy/terraform/gcp/roots/workspace/main.tf google_secret_manager_secret_iam_member.workspace_bundle"},
+		id: "E32",
+		keys: []string{
+			"deploy/terraform/gcp/roots/workspace/main.tf google_secret_manager_secret_iam_member.workspace_bundle",
+			"deploy/terraform/gcp/roots/workspace/main.tf google_project_iam_member.workspace_person_token",
+		},
 	},
 	// The locations read (location-preference LP7): `fugaro update` and
 	// `fugaro setup` list the project's `fugaro=managed` containers to write

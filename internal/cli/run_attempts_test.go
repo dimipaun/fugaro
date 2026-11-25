@@ -23,8 +23,10 @@ func TestRunAttemptsLaunchesNWithOneBatch(t *testing.T) {
 	setMaxParallel(t, 5)
 	// review-only needs a job image with a build record (needsRecipeImage);
 	// without one, --recipe review-only would be refused there instead of
-	// by the mode: review check this test means to exercise.
-	writeBuildRecord(t, f, appSlug, "web", release070)
+	// by the mode: review check this test means to exercise. releaseSeal,
+	// not release070: the batch launches every attempt, so the record has to
+	// clear the seal's gate too (AB4 mints every launch).
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	out, _, err := execute(t, "run", "--repo", "acme/app", "--attempts", "3", "--json", "fix the flaky test")
 	if err != nil {
 		t.Fatal(err)

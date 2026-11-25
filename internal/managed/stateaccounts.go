@@ -165,6 +165,16 @@ var stateAssetTypes = map[string]string{
 	"google_firebase_project":                "firebase.googleapis.com/FirebaseProject",
 	"google_firebase_database_instance":      "firebasedatabase.googleapis.com/Instance",
 	"google_firestore_database":              "firestore.googleapis.com/Database",
+	// The run index's composite indexes (docs/console-fixes/contract-index.md,
+	// C-INDEX; plan task RI2), applied by the owner-run Firebase root: the
+	// state's id is "projects/<p>/databases/(default)/collectionGroups/<c>/
+	// indexes/<id>", the provider's own id of an index, so the entry accounts
+	// for it by name like the database's beside it. The asset type is the
+	// documented one for a Firestore index and NOT a live observation, with
+	// the same caveat as the compute NAT below: if it is wrong the entry
+	// matches nothing, which leaves the index foreign — the fallback
+	// direction, never a wrong account.
+	"google_firestore_index": "firestore.googleapis.com/Index",
 	// The compute module the Batch backend's own root applies
 	// (deploy/terraform/gcp/modules/compute/network.tf:58,75,84, each with
 	// project = var.project): the deny-all ingress rule on the run-class
@@ -223,6 +233,22 @@ var stateAssetTypes = map[string]string{
 	"google_logging_log_view_iam_member":     "",
 	"google_logging_project_exclusion":       "",
 	"google_billing_budget":                  "",
+	// The consumer's signing key and the ring it lives in (J6), and the one
+	// grant on it. The ring and the key are assets of the installation's own
+	// project, and their ids are the paths the listing files them under
+	// ("projects/<p>/locations/<r>/keyRings/<ring>" and .../cryptoKeys/<key>),
+	// so both are accounted for by the same "projects/" match every other
+	// path-id resource here is. The binding is a Cloud KMS IAM member — GCP
+	// keeps it inside the key it grants on, and the listing holds no asset of
+	// its own for it, which is the answer every *_iam_member above has.
+	//
+	// The key is the one resource of this tree whose loss is unrecoverable
+	// (mailbox_key.tf): a project this fallback clears is one whose listing
+	// accounted for the state, and a key the table refused to name would keep
+	// that fallback on forever rather than hide a resource nobody watched.
+	"google_kms_key_ring":              "cloudkms.googleapis.com/KeyRing",
+	"google_kms_crypto_key":            "cloudkms.googleapis.com/CryptoKey",
+	"google_kms_crypto_key_iam_member": "",
 }
 
 // stateAssetName is a state resource's name in the terms the whole-project

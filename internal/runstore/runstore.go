@@ -51,6 +51,17 @@ const (
 	StatusInfraError Status = "infra_error"
 	StatusCancelled  Status = "cancelled"
 	StatusHalted     Status = "halted" // a budget or token limit stopped the run
+	// StatusPaused is a run that suspended itself when every source its chain
+	// could reach was exhausted: it saved its session, pushed its work in
+	// progress as a checkpoint, wrote pause.json and asked the credentials
+	// service to record the pause, and a fresh run resumes it later
+	// (model-credentials-routing, D3185, R15; the shapes are pause.go's). It is
+	// a status of its own and not a reuse of an existing one: a paused run is
+	// in flight — it will be resumed — where a halted one has stopped, and a
+	// reader that could not tell the two apart would count a paused chain as
+	// lost. The execution that ends paused has ended — the container stops and
+	// the lease is released (R12) — so Terminal's own rule covers it.
+	StatusPaused Status = "paused"
 )
 
 // Statuses is the whole vocabulary, in source order. It is the one spelling of
@@ -62,7 +73,7 @@ const (
 // two places a record crosses its boundary refuse one rather than let it be
 // read as a status later: a strict reader validates against the schema, and the
 // database's rules refuse the outcome.
-var Statuses = []Status{StatusRunning, StatusSucceeded, StatusFailed, StatusUnreviewed, StatusInfraError, StatusCancelled, StatusHalted}
+var Statuses = []Status{StatusRunning, StatusSucceeded, StatusFailed, StatusUnreviewed, StatusInfraError, StatusCancelled, StatusHalted, StatusPaused}
 
 // Terminal reports whether a run carrying this status has ended. Running is the
 // one status that has not, which is what the budget database's outcome
@@ -1839,6 +1850,22 @@ type Record struct {
 	// existed, and a run that died before bootstrap — so an old reader sees
 	// the record it always saw.
 	Rigor *RigorRecord `json:"rigor,omitempty"`
+	// Plan is the plan the runner resolved for this run: one entry per step of
+	// the loop after implement, its kind and the rounds planOf resolved for it
+	// (docs/review-levels-ab-jobmax/implementation-plan.md V1.3). It is the
+	// only place a reader can find a level's cap: the resolution reads the
+	// recipe's text, the run's own configuration and the rigor mode, none of
+	// which the record keeps, so nothing else can replay it — the recipe member
+	// above names the recipe and never its steps. Written by the runner with the
+	// plan it runs, rebuilt with it when the security escalation turns level 3
+	// on, and rewritten where a raise moves the mode's own number for the senior
+	// or the adversarial step (refreshPlanRounds), so a level's cap here is the
+	// one its loop is held inside and never the one bootstrap resolved. Absent —
+	// never an empty list — for a run that built no plan (a mode: review or
+	// artifact run, which planOf is never called for) and in records from before
+	// this field existed, so a reader from before it sees the record it always
+	// saw.
+	Plan *PlanRecord `json:"plan,omitempty"`
 	// Security is the security escalation the run took: its own diff matched a
 	// row of the list in force, so the runner turned review level 3 on for it
 	// (docs/security-classification/implementation-plan.md SC6, D1507, D1509).
@@ -2299,11 +2326,13 @@ var ErrExists = errors.New("already exists")
 // ErrTooLarge means an object is larger than its read cap.
 var ErrTooLarge = errors.New("object is larger than its read cap")
 
-// ErrCorrupt means one of the run's own JSON objects is there and does not
-// decode. The object is the run's own and the run's own agent writes it, so a
-// reader that meets one is reading a run's problem rather than its own, which
-// is the distinction a caller draws between an unusable object and a read that
-// failed. It wraps the decoder's own error, which is the one that says why.
+// ErrCorrupt means one of the run's own JSON objects is there and is not one a
+// reader can use: it does not decode, or -- task.json -- it does not validate.
+// The object is the run's own and the run's own agent writes it, so a reader
+// that meets one is reading a run's problem rather than its own, which is the
+// distinction a caller draws between an unusable object and a read that failed.
+// It wraps the decoder's or the parser's own error, which is the one that says
+// why.
 var ErrCorrupt = errors.New("the run's own object does not decode")
 
 // Read caps. The job's service account, and so a run's agent, can
@@ -2545,7 +2574,16 @@ func (s *Store) ReadTask(ctx context.Context) (*task.Spec, error) {
 	if err != nil {
 		return nil, err
 	}
-	return task.Parse(data)
+	spec, err := task.Parse(data)
+	if err != nil {
+		// A task.json the parser will not take is the run's own object, the
+		// same classification launch.json and result.json carry: a reader
+		// that could not use it draws that reader's own conclusion from
+		// it rather than failing. task.Parse's error is kept in the chain,
+		// so a caller matching the decoder's own types goes on working.
+		return nil, fmt.Errorf("reading task.json: %w: %w", ErrCorrupt, err)
+	}
+	return spec, nil
 }
 
 // WriteRecord stores result.json.
@@ -2586,6 +2624,23 @@ type RecipeRecord struct {
 	Name   string `json:"name"`
 	Source string `json:"source"` // repo | project | catalog
 	SHA256 string `json:"sha256"`
+}
+
+// PlanRecord is the plan the runner resolved for a run (Record.Plan): the steps
+// of the loop after implement, in the order the runner ran them.
+type PlanRecord struct {
+	Steps []PlanStepRecord `json:"steps"`
+}
+
+// PlanStepRecord is one step of a run's plan: its kind and the rounds the plan
+// resolved for it. kind is a recipe.StepKind ("first_line", "review",
+// "adversarial", "rebase", …) — the record's own string rather than the recipe
+// package's type, because the record's format outlives the package that wrote
+// it. rounds is the cap the runner holds the step's loop inside, which is the
+// figure the Run screen draws a level's bar against.
+type PlanStepRecord struct {
+	Kind   string `json:"kind"`
+	Rounds int    `json:"rounds"`
 }
 
 // ProjectLayerRecord traces a run to the exact project layer it was given.

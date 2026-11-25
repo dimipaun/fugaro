@@ -1,0 +1,60 @@
+{
+  "project": "example-project",
+  "pools": [
+    {
+      "name": "launcher",
+      "rule": "ordered",
+      "principal": { "kind": "project", "id": "example-project" },
+      "threshold": 0.9,
+      "members": [
+        {
+          "name": "fugaro-launcher-primary",
+          "state": "available",
+          "next_reset": null,
+          "usage": { "calls": 128, "tokens": 4820000 },
+          "headroom": 0.42
+        },
+        {
+          "name": "fugaro-launcher-secondary",
+          "state": "exhausted",
+          "next_reset": "2026-11-22T18:30:00Z",
+          "usage": { "calls": 41, "tokens": 1500000 },
+          "headroom": null
+        }
+      ]
+    },
+    {
+      "name": "ana",
+      "rule": "",
+      "principal": { "kind": "person", "id": "104293871120293847" },
+      "threshold": null,
+      "members": [
+        {
+          "name": "ana-claude-max",
+          "state": "backed_off",
+          "next_reset": "2026-11-22T13:45:00Z",
+          "usage": { "calls": 3, "tokens": 90000 },
+          "headroom": 0.8
+        }
+      ]
+    },
+    {
+      "name": "ci",
+      "rule": "round-robin",
+      "principal": {
+        "kind": "service-account",
+        "id": "fugaro-ci@example-project.iam.gserviceaccount.com"
+      },
+      "threshold": 0.75,
+      "members": [
+        {
+          "name": "ci-team",
+          "state": "broken",
+          "next_reset": null,
+          "usage": null,
+          "headroom": null
+        }
+      ]
+    }
+  ]
+}
