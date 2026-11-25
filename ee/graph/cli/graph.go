@@ -90,17 +90,16 @@ type graphOptions struct {
 // It is a function the command calls, held in a package variable for the reason
 // the coordinator's own store opener is one (openCoordinatorStore): the one
 // thing that would reach a database is replaceable, so a test drives the
-// fallback without Firestore. What it answers with is the index's own reader,
-// and until I-INDEX wires the real one (RI3's `runindex.NewFirestore`) it is
-// C-INDEX's stub, which reads nothing and says the index is incomplete: a
-// repository with no stored view then draws no runs rather than a bucket
-// listing, and the scope's own state still tells a screen that the coordinator
-// has reconciled nothing. What that empty half may not do is stand unqualified:
-// the read's warnings carry the index's own completeness (coordcli.IndexRuns),
-// so a document that draws no runs because the index has folded none says so
-// rather than reporting a repository with no runs.
-var graphIndex = func(context.Context, *fcli.Cloud) (runindex.Reader, error) {
-	return runindex.NewStub(), nil
+// fallback without Firestore. What it answers with is the installation's own
+// index (Cloud.RunIndex, I-INDEX), so the fallback and the core's `runs ls`,
+// `plan status` and `runs stats` read one reader and cannot disagree about the
+// same history. A repository with no stored view then draws the runs the index
+// holds rather than a bucket listing, and the read's warnings carry the index's
+// own completeness (coordcli.IndexRuns), so a document that draws no runs
+// because the index has folded none says so rather than reporting a repository
+// with no runs.
+var graphIndex = func(ctx context.Context, env *fcli.Cloud) (runindex.Reader, error) {
+	return env.RunIndex(ctx)
 }
 
 // NewGraphCmd is the `graph` command.

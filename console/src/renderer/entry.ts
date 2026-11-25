@@ -514,10 +514,9 @@ function methodOf(fugaro: unknown, name: string): ((args: unknown) => unknown) |
 }
 
 /**
- * ReadBridge is the twenty-three reads the screens make (Task 3.4c; console L5b
- * added `statsRuns`, Bitbucket credentials T1.2 added `coordinatorStatus`,
- * GV2.3b added `planStatus`, coordinator v2 K3 added `coordinatorShow`, K5 added
- * `coordinatorIntents`, console 0.119.0 added `summaryRuns` -- the
+ * ReadBridge is the reads the screens make (Task 3.4c; console L5b
+ * added `statsRuns`, GV2.3b added `planStatus`,
+ * console 0.119.0 added `summaryRuns` -- the
  * Coordinator's jobs-free totals read -- and `listModels`, the Project tab's
  * models panel, and the settings-edit plan's C1 added `readSettings`, the same
  * tab's settings panel, and the graph plan's CG9a added `graphRead`, the Graph
@@ -550,9 +549,6 @@ export interface ReadBridge {
   summaryRuns(args: Readonly<Record<string, unknown>>): Promise<unknown>
   listModels(args: Readonly<Record<string, unknown>>): Promise<unknown>
   readSettings(args: Readonly<Record<string, unknown>>): Promise<unknown>
-  coordinatorStatus(args: Readonly<Record<string, unknown>>): Promise<unknown>
-  coordinatorShow(args: Readonly<Record<string, unknown>>): Promise<unknown>
-  coordinatorIntents(args: Readonly<Record<string, unknown>>): Promise<unknown>
   diagnoseRun(args: Readonly<Record<string, unknown>>): Promise<unknown>
   readRunLogs(args: Readonly<Record<string, unknown>>): Promise<unknown>
   runLogLink(args: Readonly<Record<string, unknown>>): Promise<unknown>
@@ -598,9 +594,6 @@ export function readBridgeFrom(fugaro: unknown): ReadBridge {
     summaryRuns: (args) => ask('summaryRuns', args),
     listModels: (args) => ask('listModels', args),
     readSettings: (args) => ask('readSettings', args),
-    coordinatorStatus: (args) => ask('coordinatorStatus', args),
-    coordinatorShow: (args) => ask('coordinatorShow', args),
-    coordinatorIntents: (args) => ask('coordinatorIntents', args),
     diagnoseRun: (args) => ask('diagnoseRun', args),
     readRunLogs: (args) => ask('readRunLogs', args),
     runLogLink: (args) => ask('runLogLink', args),
@@ -752,32 +745,6 @@ function clearSettingsOutcome(row: Element): void {
     (child) => child.getAttribute('class') !== SETTINGS_EDIT_OUTCOME_CLASS,
   )
   row.replaceChildren(...kept)
-}
-
-/**
- * LinkBridge is the one operation the Coordinator's pull request numbers use:
- * `link.openPullRequest` (K2a), which takes the triple -- provider, repository,
- * number -- and opens it in the operator's browser. It is a bridge of its own
- * rather than a member of `ReadBridge` for `LaunchBridge`'s reason: a reader
- * looking for what this console can *do* should not find it among the things it
- * can look at.
- *
- * **It is handed a triple and never a URL.** The renderer builds no destination
- * at all: main builds it from these three fields with its own alphabet and hands
- * the result to the one validated shell call, so a document's `url` field has no
- * path to a browser even when the field is a `javascript:` one.
- *
- * It is answered the way the other bridges are: a member that is missing or
- * fails to answer is `null`, and a number pressed then opens nothing -- which is
- * the same answer main gives for a triple it cannot build a URL from.
- */
-export interface LinkBridge {
-  openPullRequest(args: Readonly<Record<string, unknown>>): Promise<unknown>
-}
-
-export function linkBridgeFrom(fugaro: unknown): LinkBridge {
-  const ask = (name: string, args: Readonly<Record<string, unknown>>): Promise<unknown> => askMember(fugaro, name, args)
-  return { openPullRequest: (args) => ask('openPullRequest', args) }
 }
 
 /**
@@ -2656,35 +2623,6 @@ export const LIVE_RIGOR_TTL_MS = 15_000
  */
 export const RUNS_SINCE = '24h'
 
-/**
- * RUNS_LIST_OPERATION and RUNS_STREAM_OPERATION are the two reads the
- * Coordinator's jobs part can be making, named as the console's operations are
- * named (`src/shared/new-ops.ts`, `src/main/ipc.ts`): the whole document
- * (`runs ls --json`), and the opt-in line-delimited read of the same command
- * (`runs ls --stream --json`) that main registers as `runs.stream`.
- *
- * **A refusal names its own command**, and these two are different commands with
- * different flags: a part that drew `runs.list` over a read that was
- * `runs.stream` would be pointing the operator at a command the console did not
- * run. Which one the part wears is the last read's own `source`
- * (`readStream`) and not a property of the screen.
- */
-export const RUNS_LIST_OPERATION = 'runs.list'
-export const RUNS_STREAM_OPERATION = 'runs.stream'
-
-/**
- * COORDINATOR_SUMMARY_SINCE is the window the Coordinator's fleet strip reads
- * its runs for: seven days.
- *
- * It is the command's own default and the window `budget show`'s live counters
- * cover, so the two figures the strip draws about a period -- the window's runs
- * and the money the caps count -- are about the same one. It is one of the two
- * words the surface admits (`SUMMARY_SINCE_WINDOWS`, `src/main/ipc.ts`): a
- * window is the one thing about this read a renderer chooses, and the console's
- * own closed set is the day a screen opens on and the week.
- */
-export const COORDINATOR_SUMMARY_SINCE = '7d'
-
 /** GRAPH_BUSY is what the Graph section's mark says it is reading: the plan.
  * The mark belongs to the operator's own controls -- a stream tab, the Refresh
  * -- and neither to the poll's background cadence nor to the run list's
@@ -3066,7 +3004,6 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
     launchBridge: launchBridgeFrom(scope.fugaro),
     moveBridge: moveBridgeFrom(scope.fugaro),
     licenceBridge: licenceBridgeFrom(scope.fugaro),
-    linkBridge: linkBridgeFrom(scope.fugaro),
     rows,
     railListed: listedRows !== null,
     onboarding,
@@ -3202,10 +3139,6 @@ interface DashboardDeps {
    * console's fourth write, and the one that writes and spawns nothing -- it
    * keeps a credential the console hands to every child it spawns. */
   readonly licenceBridge: LicenceBridge
-  /** linkBridge is the Coordinator's numbers (`link.openPullRequest`, K2a): the
-   * one operation that leaves this window, and the only one handed a triple
-   * rather than a document's own field. */
-  readonly linkBridge: LinkBridge
   readonly rows: readonly RailRow[]
   /** railListed is whether `rows` is the CLI's own list answer rather than the
    * fallback for a list this console could not read (`currentRailRows`). The
@@ -3235,7 +3168,7 @@ interface DashboardDeps {
  * figures in it rather than at an empty panel that fills in later.
  */
 async function mountDashboard(deps: DashboardDeps): Promise<void> {
-  const { document, surface, gate, roles, bridge, ops, rail, railBridge, launchBridge, moveBridge, licenceBridge, linkBridge, wiring, navigator, header } =
+  const { document, surface, gate, roles, bridge, ops, rail, railBridge, launchBridge, moveBridge, licenceBridge, wiring, navigator, header } =
     deps
   const factory = surface.factory
   const theme = CONSOLE_THEME
@@ -3878,12 +3811,27 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * `fugaro diagnose RUN` reads it from the runs bucket precisely because its
    * registry entry is gone -- so a ready row that could not be opened would be
    * the one run row on this screen with nothing behind it.
+   *
+   * **A paused run's row is a door, and it carries a second one** (VS3,
+   * model-credentials-routing). The row itself opens the paused run
+   * (`live-paused-run-id`), which is what `diagnose RUN` reads out of the runs
+   * bucket like any other finished row. The run named beside it -- the one whose
+   * resume brought the chain back (`live-paused-by-id`) -- opens *that* run, and
+   * a click on it is stopped rather than left to bubble: the row's own listener
+   * would otherwise answer the same click and open the paused run under it.
+   * Both ids are checked against `known`, which is the rows the model carries
+   * plus the resumers they name -- a resumer is not a row of this screen, and a
+   * door onto it must still be an id the model can vouch for.
    */
   const wireRuns = (drawn: Drawn, model: LiveModel): void => {
     const known = new Set<string>()
     for (const repo of model.repos) for (const row of repo.runs) known.add(row.run)
     for (const row of model.orphans) known.add(row.run)
     for (const row of model.review) known.add(row.run)
+    for (const row of model.paused) {
+      known.add(row.run)
+      if (row.resumedBy !== null) known.add(row.resumedBy)
+    }
     const door = (rowClass: string, idClass: string): void => {
       for (const row of classed(drawn, rowClass)) {
         const id = classed(row, idClass)[0]?.getAttribute('data-run-id') ?? ''
@@ -3905,6 +3853,19 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     }
     door('live-run', 'live-run-id')
     door('live-review-row', 'live-review-run-id')
+    door('live-paused-row', 'live-paused-run-id')
+
+    // The paused rows' second door: the resumer cell's own click opens the run
+    // that resumed the pause, and `stopPropagation` keeps the row's listener
+    // from answering the same click with the paused run underneath it.
+    for (const cell of classed(drawn, 'live-paused-by-id')) {
+      const id = cell.getAttribute('data-run-id') ?? ''
+      if (!known.has(id)) continue
+      surface.nodeOf(cell).addEventListener('click', (event: Event) => {
+        event.stopPropagation()
+        showRun(id)
+      })
+    }
   }
 
   // ---- The graph (GV2.3b) -----------------------------------------------
@@ -7942,16 +7903,39 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     const drawn = renderRunFrame(factory, theme, run)
     replace(drawn.root)
     // The breadcrumb's `Live` crumb is the way back from a run the operator
-    // opened, and it is the whole of what this screen wires: the same
-    // `show('live')` the nav's own Live button calls, and the run id beside it
-    // is selectable text rather than a control. Nothing else on Run binds
-    // anything -- the retry is `writes.ts`'s refused button. It is bound here
-    // and not when a read lands, because the frame the click drew carries it.
+    // opened: the same `show('live')` the nav's own Live button calls, and the
+    // run id beside it is selectable text rather than a control. The one other
+    // binding on Run is `wireRunPausedBy` below, which the record's own read
+    // lands with. Nothing else binds anything -- the retry is `writes.ts`'s
+    // refused button. It is bound here and not when a read lands, because the
+    // frame the click drew carries it.
     const crumb = classed(drawn.root, 'run-crumb-live')[0]
     if (crumb !== undefined) {
       surface.nodeOf(crumb).addEventListener('click', () => {
         show('live')
       })
+    }
+
+    /**
+     * wireRunPausedBy makes the run a paused run's resume was performed by a
+     * door: the cell keeps the whole id in `data-run-id` (`run.ts`'s
+     * `putRunRef`) and a click opens that run, the way the Live screen's rows
+     * open theirs. It is bound here rather than in `showRun` because the line is
+     * drawn from the run's own record (`fillRunRecord`), which lands after the
+     * frame the click drew -- and a cell whose id the sanitizer refused carries
+     * no attribute, so it opens nothing.
+     *
+     * It was the crumb alone until VS3: a run's record named no other run, so
+     * there was nothing else on this screen to open.
+     */
+    const wireRunPausedBy = (): void => {
+      for (const cell of classed(drawn.root, 'run-paused-by-value')) {
+        const id = cell.getAttribute('data-run-id')
+        if (id === null || id === '') continue
+        surface.nodeOf(cell).addEventListener('click', () => {
+          showRun(id)
+        })
+      }
     }
 
     /** what the two reads have drawn so far, held here so `placeMain` can write
@@ -8048,6 +8032,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         return
       }
       before = fillRunRecord(factory, buildRunModel({ diagnosis: answer.data, logs: null, logLink: null }), drawn).before
+      wireRunPausedBy()
       diagnosisDrawn = true
       placeMain()
     }

@@ -533,16 +533,18 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 		// what the gate does refuse is the config that can see the policy and
 		// would deploy a job unable to read it.
 		//
-		// The note is for the installation that wants the shared budget and
-		// has no backend to hold it: one whose jobs carry a mode that is not
-		// off. An installation that leaves the budget off has chosen the
-		// per-repository path, permanently (design §5(1)), and its runs are
-		// told so by `fugaro doctor` — warning it about a model it is not
-		// adopting would be noise on every apply. The exception is the last
-		// branch below, which fires only for a job that HAS the backend in
-		// the cloud: there the local config is what changed, and the note is
-		// about damage this apply would do rather than about a model the
-		// owner has not adopted.
+		// The note is for the installation whose local config names a budget
+		// and whose job carries no backend to hold it. What it keys on is that
+		// config, not the job's FUGARO_BUDGET_MODE: AB5 writes that entry on
+		// every job (unset means observe, R3), so a note keyed on the entry
+		// would fire for every job of an installation that names no budget at
+		// all, and warning that one about a model it never configured is noise
+		// on every apply. Its fix is the refusal's own sentence, so one
+		// situation has one fix however it is reached. The exception is the
+		// branch between the two, which fires only for a job that HAS the
+		// backend in the cloud: there the local config is what changed, and the
+		// note is about damage this apply would do rather than about a model
+		// the owner has not adopted.
 		if !carriesFirebase(ws) {
 			if ex.PolicyExists {
 				reasons = append(reasons, gate{MissingFirebase, fmt.Sprintf(
@@ -560,22 +562,20 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 				// drift, and the fix is one command (L3 of the PR #379
 				// review).
 				//
-				// This note is asked before the mode one below, because the
-				// two are usually true together and this one is the one with
-				// damage to name: losing budget.rtdb_url is not the same
-				// decision as turning the budget off, so a config that has
-				// lost the address still carries the mode its owner set
-				// (budgetEnv writes it whenever it is not off), and the
-				// generic note would otherwise answer with "nothing refuses
-				// this deploy" for the very apply that is taking the backend
-				// away from the jobs.
+				// This note is asked before the generic one below, because
+				// the two are true together: a config that has lost
+				// budget.rtdb_url still names a budget, so the generic note
+				// answers for it too, and this one is the one with damage to
+				// name — the jobs that can read the policy today are the ones
+				// losing it. The generic note would answer "nothing refuses
+				// this deploy" for exactly that apply.
 				missing = append(missing, Missing{Workflow: name, Kind: MissingNote, Reason: fmt.Sprintf(
 					"workflow %s's job carries %s and %s today and this fugaro update would remove them: the local config names no budget.rtdb_url (or no budget.firebase_api_key), so the job is deployed without the backend and every run of this repository stops reading the project's policy. Restore it with 'fugaro update --firebase-project <gcp-project-id>' (which writes budget.rtdb_url and budget.firebase_api_key), then run fugaro update again",
 					name, RTDBURLEnv, FirebaseAPIKeyEnv)})
-			} else if ws.Env[BudgetModeEnv] != "" {
+			} else if spec.BudgetConfigured {
 				missing = append(missing, Missing{Workflow: name, Kind: MissingNote, Reason: fmt.Sprintf(
-					"this job's budget is on (%s=%s) but it does not carry both %s and %s, so a run of it could not read a project policy: configure the project's Firebase backend (fugaro update --firebase-project <gcp-project-id>, then fugaro update). Which of the two the local config is missing decides what happens next, and the gate above is exact about it: a config that names budget.rtdb_url sees a published policy, so the day the project publishes one this job stops being deployable until it can read it; a config that names no database address sees none, whatever the project has published — that same config is what the gate reads the node through — so nothing refuses this deploy and the job goes out unable to read a policy that may well exist. That gap is the owner's, accepted on purpose. A launch is held to what the launcher's own config can see and no stricter rule: it refuses a policy it can see and cannot honour, never a budget mode on its own",
-					BudgetModeEnv, ws.Env[BudgetModeEnv], RTDBURLEnv, FirebaseAPIKeyEnv)})
+					"the installation's local config names a budget, and this job carries neither %s nor %s, so a run of it could not read a project policy: set the project's Firebase backend (fugaro update --firebase-project <gcp-project-id>), then run fugaro update for %s. Every job of this release names its mode (%s is %s here, and a mode left unset is observe), so what brings this note is the budget the config names rather than the entry itself. Which of the two the local config is missing decides what happens next, and the gate above is exact about it: a config that names budget.rtdb_url sees a published policy, so the day the project publishes one this job stops being deployable until it can read it; a config that names no database address sees none, whatever the project has published — that same config is what the gate reads the node through — so nothing refuses this deploy and the job goes out unable to read a policy that may well exist. That gap is the owner's, accepted on purpose. A launch is held to what the launcher's own config can see and no stricter rule: it refuses a policy it can see and cannot honour, never a budget mode on its own",
+					RTDBURLEnv, FirebaseAPIKeyEnv, spec.Name, BudgetModeEnv, ws.Env[BudgetModeEnv])})
 			}
 		}
 		current, exists := ex.Jobs[name]

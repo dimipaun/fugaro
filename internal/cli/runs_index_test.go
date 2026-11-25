@@ -173,6 +173,18 @@ func lsIndex(t *testing.T, idx runindex.Reader) {
 	t.Cleanup(func() { runIndexReader = old })
 }
 
+// lsIndexOpenErr hands every listing in this test a reader that cannot be
+// opened at all: what a listing meets when the installation's index cannot be
+// reached (no credentials, a URL the config refuses), which is the other way an
+// index answers nothing and the one no reader can report itself (openRunIndex,
+// runindex_wire.go).
+func lsIndexOpenErr(t *testing.T, err error) {
+	t.Helper()
+	old := runIndexReader
+	runIndexReader = func(context.Context, *cloudEnv) (runindex.Reader, error) { return nil, err }
+	t.Cleanup(func() { runIndexReader = old })
+}
+
 // lsIndexRun seeds one run ago before the listing's own clock -- its run ID is
 // minted from that moment and the index carries that moment as the run's sort
 // key, so a test's recency is its own and not the wall clock's (recentRunID,
@@ -692,46 +704,61 @@ func TestRunsLsDefaultMakesNoListing(t *testing.T) {
 // the truth, and an index that answered nothing is the case that rule is for
 // (D3215).
 //
+// An index answers nothing two ways, and the listing treats them alike: a
+// reader that could not answer, and a client that could not be opened at all
+// (openRunIndex, runindex_wire.go).
+//
 // The document is byte for byte the one the same listing prints with no index
 // at all: the fallback is slower, never different.
 func TestRunsLsIndexUnreadableFallsBackToTheWindow(t *testing.T) {
-	f := newCloudFixture(t)
-	idx := &indexFake{err: errIndexUnreadable}
-	lsIndex(t, idx)
-	var ids []string
-	for i := range 2 {
-		ids = append(ids, lsIndexRun(t, f, idx, time.Duration(i+1)*time.Hour, runstore.StatusSucceeded, fmt.Sprintf("a1%02x", i)))
-	}
-	idx.summary = runindex.Summary{Version: runindex.Version, Complete: true, States: map[string]int64{}, Runs: 2}
+	for _, tc := range []struct {
+		name   string
+		broken func(*testing.T, *indexFake)
+	}{
+		{"a reader that could not answer", func(_ *testing.T, idx *indexFake) { idx.err = errIndexUnreadable }},
+		{"a client that could not be opened", func(t *testing.T, _ *indexFake) { lsIndexOpenErr(t, errIndexUnreadable) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			idx := &indexFake{}
+			lsIndex(t, idx)
+			tc.broken(t, idx)
+			var ids []string
+			for i := range 2 {
+				ids = append(ids, lsIndexRun(t, f, idx, time.Duration(i+1)*time.Hour, runstore.StatusSucceeded, fmt.Sprintf("a1%02x", i)))
+			}
+			idx.summary = runindex.Summary{Version: runindex.Version, Complete: true, States: map[string]int64{}, Runs: 2}
 
-	out, errOut, err := execute(t, "runs", "ls", "--json")
-	if err != nil {
-		t.Fatalf("runs ls --json: %v (%s)", err, errOut)
-	}
-	if !strings.Contains(errOut, "the run index could not be read") {
-		t.Errorf("stderr = %q, want the one line saying the index could not be read", errOut)
-	}
-	var got lsOut
-	if err := json.Unmarshal([]byte(out), &got); err != nil {
-		t.Fatalf("%v: %s", err, out)
-	}
-	if !slices.Equal(runIDs(got.Runs), ids) {
-		t.Fatalf("the fallback listed %v, want the window's %v", runIDs(got.Runs), ids)
-	}
-	if got.Totals.Runs != 2 {
-		t.Errorf("the fallback totals %d runs, want the window's 2 and not the summary's", got.Totals.Runs)
-	}
-	if strings.Contains(out, "index_complete") {
-		t.Errorf("the fallback's document carries an index fact: the listing read no index\n%s", out)
-	}
+			out, errOut, err := execute(t, "runs", "ls", "--json")
+			if err != nil {
+				t.Fatalf("runs ls --json: %v (%s)", err, errOut)
+			}
+			if !strings.Contains(errOut, "the run index could not be read") {
+				t.Errorf("stderr = %q, want the one line saying the index could not be read", errOut)
+			}
+			var got lsOut
+			if err := json.Unmarshal([]byte(out), &got); err != nil {
+				t.Fatalf("%v: %s", err, out)
+			}
+			if !slices.Equal(runIDs(got.Runs), ids) {
+				t.Fatalf("the fallback listed %v, want the window's %v", runIDs(got.Runs), ids)
+			}
+			if got.Totals.Runs != 2 {
+				t.Errorf("the fallback totals %d runs, want the window's 2 and not the summary's", got.Totals.Runs)
+			}
+			if strings.Contains(out, "index_complete") {
+				t.Errorf("the fallback's document carries an index fact: the listing read no index\n%s", out)
+			}
 
-	lsIndex(t, runindex.NewStub())
-	plain, _, err := execute(t, "runs", "ls", "--json")
-	if err != nil {
-		t.Fatalf("runs ls --json: %v", err)
-	}
-	if plain != out {
-		t.Errorf("the fallback reads:\n%s\nwant the listing with no index at all:\n%s", out, plain)
+			lsIndex(t, emptyIndexReader{})
+			plain, _, err := execute(t, "runs", "ls", "--json")
+			if err != nil {
+				t.Fatalf("runs ls --json: %v", err)
+			}
+			if plain != out {
+				t.Errorf("the fallback reads:\n%s\nwant the listing with no index at all:\n%s", out, plain)
+			}
+		})
 	}
 }
 

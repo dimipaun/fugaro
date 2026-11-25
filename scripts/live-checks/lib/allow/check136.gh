@@ -1,0 +1,3 @@
+# gh calls scripts/live-checks/check136.sh makes. See lib/strict.sh.
+cmd	pr view
+flag	--json

@@ -245,9 +245,12 @@ func TestSpecMatchesM4JobSpec(t *testing.T) {
 		t.Errorf("display name = %q; the new mark is JobSADisplayName, the M4 one only its legacy form", ws.ServiceAccount.DisplayName)
 	}
 	// The M4 fixture predates the image's origin stamp, which every workflow
-	// job now carries (empty when the catalog chose no image): compare the rest.
+	// job now carries (empty when the catalog chose no image), and the budget
+	// mode, which every job names now (AB5): compare the rest. The fixture is
+	// the M4 binary's own capture and is not regenerated for either.
 	m4Env := maps.Clone(ws.Env)
 	delete(m4Env, ImageEntryEnv)
+	delete(m4Env, BudgetModeEnv)
 	for name, c := range map[string]struct{ got, want map[string]string }{
 		"env":          {m4Env, anyMap(golden["env"].(map[string]any))},
 		"env row":      {m4Env, pairs(t, strings.TrimPrefix(rows["env"], "^;^"), ";", "")},
@@ -1417,25 +1420,24 @@ func onlyBudgetEnv(env map[string]string) map[string]string {
 	return got
 }
 
-// With the budget off the job gets no mode, but still the owner's cap and
-// price overrides: they are the ceiling a repository's committed policy is
-// clamped to (M9a.1; M9a dropped them when the mode was off). The run that
-// reads this environment is accounted for — from AB1a on a job that names no
-// mode is observe (D3009, R3), and its price table is built whatever the mode
-// is — with the owner's cap as the ceiling it runs on.
-func TestWorkflowEnvBudgetOff(t *testing.T) {
+// The owner's ceiling — the cap and the price overrides — is written from
+// whatever the local config names: it is the ceiling a repository's committed
+// policy is clamped to (M9a.1; M9a dropped it when the mode was off). The mode
+// is not part of that choice any more: every job names one, and a config with
+// no budget block names observe and carries nothing else (AB5, R3).
+func TestWorkflowEnvKeepsTheCeiling(t *testing.T) {
 	rs, err := Repo(budgetInputs(t, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, w := range rs.Workflows {
-		if got := onlyBudgetEnv(w.Env); len(got) != 0 {
-			t.Errorf("%s has %v with no budget block", w.Name, got)
+		if got := onlyBudgetEnv(w.Env); len(got) != 1 || got[BudgetModeEnv] != "observe" {
+			t.Errorf("%s has %v with no budget block, want only the mode an unset one means", w.Name, got)
 		}
 	}
 	for name, block := range map[string]string{
-		"mode off":   "budget: { mode: off, per_run_usd: 5 }\nmodel_prices: { claude-sonnet-5-5: { input_per_m: 3, output_per_m: 15 } }\n",
-		"empty mode": "budget: { per_run_usd: 5 }\nmodel_prices: { claude-sonnet-5-5: { input_per_m: 3, output_per_m: 15 } }\n",
+		"unset mode": "budget: { per_run_usd: 5 }\nmodel_prices: { claude-sonnet-5-5: { input_per_m: 3, output_per_m: 15 } }\n",
+		"observe":    "budget: { mode: observe, per_run_usd: 5 }\nmodel_prices: { claude-sonnet-5-5: { input_per_m: 3, output_per_m: 15 } }\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			rs, err := Repo(budgetInputs(t, block))
@@ -1444,8 +1446,8 @@ func TestWorkflowEnvBudgetOff(t *testing.T) {
 			}
 			for _, w := range rs.Workflows {
 				got := onlyBudgetEnv(w.Env)
-				if _, ok := got[BudgetModeEnv]; ok || got[MaxRunUSDEnv] != "5" || got[ModelPricesEnv] == "" || len(got) != 2 {
-					t.Errorf("%s env = %v: want the cap and prices, no mode", w.Name, got)
+				if got[BudgetModeEnv] != "observe" || got[MaxRunUSDEnv] != "5" || got[ModelPricesEnv] == "" || len(got) != 3 {
+					t.Errorf("%s env = %v: want the mode, the cap and the prices", w.Name, got)
 				}
 				if s, err := runner.SpendFromEnv(func(k string) (string, bool) { v, ok := w.Env[k]; return v, ok }); err != nil || !s.On() || s.Cap != 5_000_000 || s.Prices == nil {
 					t.Errorf("%s: SpendFromEnv = %+v, %v; want the run accounted for on the owner's cap", w.Name, s, err)
@@ -1551,8 +1553,8 @@ func TestWorkflowEnvOAuthGetsTokenCap(t *testing.T) {
 	}
 	for _, w := range rs.Workflows {
 		got := onlyBudgetEnv(w.Env)
-		if got[MaxRunTokensEnv] != "100" || got[AllowedModelsEnv] != "claude-sonnet-5-5" || got[BudgetModeEnv] != "" {
-			t.Errorf("%s env = %v", w.Name, got)
+		if got[MaxRunTokensEnv] != "100" || got[AllowedModelsEnv] != "claude-sonnet-5-5" || got[BudgetModeEnv] != "observe" {
+			t.Errorf("%s env = %v: the config names no mode, and an unset one is observe", w.Name, got)
 		}
 	}
 }
@@ -1627,7 +1629,7 @@ func backendEnv(env map[string]string) map[string]string {
 
 // Every workflow job gets the backend's address and its web key (R10)
 // whenever the installation has them, whatever the mode (D11, plan task 1.4
-// step 1), and the grace when the config sets one and the mode is not off.
+// step 1), and the grace when the config sets one, whatever the mode too.
 // The signer and the Firebase project's ID stay out: a job never mints.
 func TestInitRepoPassesTheBackendToEveryJob(t *testing.T) {
 	for _, mode := range []string{"observe", "enforce"} {
@@ -1698,9 +1700,9 @@ func TestInitRepoNeverDeploysTheBudgetTokenMarker(t *testing.T) {
 // installation has them, whatever the mode — the mode is policy now, and a
 // run reads its own policy with those two variables (the token exchange needs
 // the key, not only the URL). The mode itself stays the deploy-time mode:
-// it is the fallback for the absent-node case.
+// it is the fallback for the absent-node case, and every job names it (AB5).
 func TestBudgetEnvWritesRTDBURLAndAPIKeyWhenFirebaseIsConfigured(t *testing.T) {
-	for _, mode := range []string{"off", "observe", "enforce"} {
+	for _, mode := range []string{"observe", "enforce"} {
 		rs, err := Repo(budgetInputs(t, "budget:\n  mode: "+mode+"\n  per_run_usd: 5\n"+backendBlock))
 		if err != nil {
 			t.Fatal(mode, err)
@@ -1713,8 +1715,8 @@ func TestBudgetEnvWritesRTDBURLAndAPIKeyWhenFirebaseIsConfigured(t *testing.T) {
 				w.Env[FirebaseAPIKeyEnv] != "AIzaSyA0123456789abcdefghijklmnopqrstu" {
 				t.Errorf("mode %s: %s env = %v, want the backend's address and web key", mode, w.Name, backendEnv(w.Env))
 			}
-			if v, ok := w.Env[BudgetModeEnv]; ok != (mode != "off") || (ok && v != mode) {
-				t.Errorf("mode %s: %s has %s=%q: the mode stays conditional", mode, w.Name, BudgetModeEnv, v)
+			if v, ok := w.Env[BudgetModeEnv]; !ok || v != mode {
+				t.Errorf("mode %s: %s has %s=%q, want the mode the config names", mode, w.Name, BudgetModeEnv, v)
 			}
 			if _, ok := w.Env[BudgetGraceEnv]; ok {
 				t.Errorf("mode %s: %s has a grace nobody set", mode, w.Name)
@@ -1728,45 +1730,53 @@ func TestBudgetEnvWritesRTDBURLAndAPIKeyWhenFirebaseIsConfigured(t *testing.T) {
 	}
 }
 
-// With the budget off the job still learns where the database is — a policy
-// may exist and a run must be able to read it — and it names no mode. From
-// AB1a on the run that reads this environment is accounted for whatever the
-// mode says (D3009, R3): a job whose mode entry is missing is observe, so the
-// word an older config wrote no longer turns a run's accounting off, and what
-// the block names is the backend and, where it does, the cap.
-func TestBudgetEnvNamesTheBackendWhateverTheMode(t *testing.T) {
-	for name, block := range map[string]string{
-		"mode off":   "budget:\n  mode: off\n" + backendBlock + "  unreachable_grace: 90s\n",
-		"empty mode": "budget:\n  per_run_usd: 5\n" + backendBlock,
+// The mode goes to a job whether or not the backend does (AB5): a job deployed
+// without the database still names the mode its config means, and an unset mode
+// is observe — so a run of it keeps its gateway and its ledger rather than
+// falling into the mode this release removed. What the config sets beside it
+// comes along: the backend's address and web key, and the grace whenever there
+// is one, whatever the mode.
+func TestBudgetEnvNamesTheModeWhateverTheBackend(t *testing.T) {
+	for name, c := range map[string]struct {
+		block, mode, grace string
+	}{
+		"unset mode": {"budget:\n  per_run_usd: 5\n" + backendBlock, "observe", ""},
+		"a grace":    {"budget:\n  unreachable_grace: 90s\n" + backendBlock, "observe", "1m30s"},
 	} {
-		rs, err := Repo(budgetInputs(t, block))
-		if err != nil {
-			t.Fatal(name, err)
-		}
-		for _, w := range rs.Workflows {
-			if _, ok := w.Env[BudgetModeEnv]; ok {
-				t.Errorf("%s: %s carries a budget mode with the budget off: %v", name, w.Name, w.Env[BudgetModeEnv])
+		t.Run(name, func(t *testing.T) {
+			rs, err := Repo(budgetInputs(t, c.block))
+			if err != nil {
+				t.Fatal(name, err)
 			}
-			if _, ok := w.Env[BudgetGraceEnv]; ok {
-				t.Errorf("%s: %s carries a grace with the budget off", name, w.Name)
+			for _, w := range rs.Workflows {
+				if got := w.Env[BudgetModeEnv]; got != c.mode {
+					t.Errorf("%s: %s names %s = %q, want %q", name, w.Name, BudgetModeEnv, got, c.mode)
+				}
+				if got := w.Env[BudgetGraceEnv]; got != c.grace {
+					t.Errorf("%s: %s names %s = %q, want %q", name, w.Name, BudgetGraceEnv, got, c.grace)
+				}
+				if w.Env[RTDBURLEnv] == "" || w.Env[FirebaseAPIKeyEnv] == "" {
+					t.Errorf("%s: %s = %v, want the backend's address and web key", name, w.Name, backendEnv(w.Env))
+				}
+				if s, err := runner.SpendFromEnv(func(k string) (string, bool) { v, ok := w.Env[k]; return v, ok }); err != nil || !s.On() || s.Mode != c.mode {
+					t.Errorf("%s: %s: SpendFromEnv = %+v, %v; want the mode the config means", name, w.Name, s, err)
+				}
 			}
-			if w.Env[RTDBURLEnv] == "" || w.Env[FirebaseAPIKeyEnv] == "" {
-				t.Errorf("%s: %s = %v, want the backend's address and web key", name, w.Name, backendEnv(w.Env))
-			}
-			if s, err := runner.SpendFromEnv(func(k string) (string, bool) { v, ok := w.Env[k]; return v, ok }); err != nil || !s.On() {
-				t.Errorf("%s: %s: SpendFromEnv = %+v, %v; want the run accounted for", name, w.Name, s, err)
-			}
-		}
+		})
 	}
 	// An installation with no Firebase configured writes neither variable:
-	// there is no backend to point a job at.
-	rs, err := Repo(budgetInputs(t, "budget:\n  mode: off\n"))
+	// there is no backend to point a job at, and the job names its mode all
+	// the same.
+	rs, err := Repo(budgetInputs(t, "budget:\n  mode: observe\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, w := range rs.Workflows {
 		if got := backendEnv(w.Env); len(got) != 0 {
 			t.Errorf("%s has %v with no Firebase in the config", w.Name, got)
+		}
+		if w.Env[BudgetModeEnv] != "observe" {
+			t.Errorf("%s names %s=%q, want observe", w.Name, BudgetModeEnv, w.Env[BudgetModeEnv])
 		}
 	}
 }
