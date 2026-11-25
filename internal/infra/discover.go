@@ -483,6 +483,12 @@ func DiscoverInstallation(ctx context.Context, c *Clients, spec InstallationSpec
 // local config lacks the entry (project_secrets/providers/claude_accounts
 // are each operator-local) still plans the container the first operator
 // created.
+//
+// A container wearing the retirement mark (IsRetiredCopy) is adopted the same
+// way when the configuration plans its name: D3325 retires the copy of a name
+// whose value moved to the grammar, and a configuration that plans that name
+// again — an operator's own entry, or the release that dropped the derivation
+// not yet applied — is the run that keeps it.
 func (d *discovery) projectSecrets(spec InstallationSpec) error {
 	out := maps.Clone(spec.ProjectSecrets)
 	if out == nil {
@@ -498,7 +504,16 @@ func (d *discovery) projectSecrets(spec InstallationSpec) error {
 			return fmt.Errorf("reading project secret %s: %w", id, err)
 		}
 		want := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: spec.FugaroProject, gcp.LabelSecret: logical}
-		if !hasMarks(s.Labels, want) {
+		switch {
+		case hasMarks(s.Labels, want):
+		case IsRetiredCopy(s.Labels, spec.FugaroProject, logical):
+			// The copy D3325 retired, for a name this configuration plans
+			// again: the module's own labels map writes LabelSecret back on
+			// the apply, so the container is adopted rather than refused as a
+			// foreign one — a refusal here fails the whole run, and one
+			// operator's config may only ever fail its own.
+			d.im.Notes = append(d.im.Notes, "project secret "+id+" is marked retired and this configuration plans its name again; the apply restores it")
+		default:
 			d.foreign("project secret "+id, s.Labels, want)
 			continue
 		}
