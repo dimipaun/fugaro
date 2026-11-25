@@ -110,6 +110,21 @@ type call struct {
 	// carries either. They live for the length of one call and are written
 	// nowhere.
 	scrubs []string
+	// chain is the walk this call is served by, and nil for a call served the
+	// way every call was served before the routing table existed (CS1). It is
+	// this call's own — the chain is walked from its first source at every call
+	// (R16) — and it is what forward asks instead of the selector when it is
+	// set, and what the answer carries the source of (chainAnswer).
+	chain *chainWalk
+	// stage is whether the caller sent the stage header (SentStage), read from
+	// the request BEFORE header is stripped of every X-Fugaro- member — which
+	// is the whole of what readCall keeps of it, and the whole of what the
+	// answer needs to decide whether it may carry this contract's three
+	// members (chainAnswer, R24, F57). It is a bool and not the header itself
+	// because the header, and every X-Fugaro- member with it, is what C1.10
+	// refuses to send upstream: a call that carried the stage on would hand the
+	// agent's own stage name to the model's API.
+	stage bool
 	// probed is every tier this call made a probe on (C1.12), in the order
 	// the probes were made and once per tier: what the answer carries to the
 	// run (HeaderProbe), which settles each probe by it — notional on tier A,
@@ -160,6 +175,7 @@ func readCall(r *http.Request, scrubs []string) (*call, error) {
 		// would be guessing at the caller's encoding.
 		body = bytes.ReplaceAll(body, []byte(tok), []byte(redactedValue))
 	}
+	stage := SentStage(r.Header)
 	h := r.Header.Clone()
 	for k := range h {
 		if strings.HasPrefix(http.CanonicalHeaderKey(k), headerPrefixFugaro) {
@@ -171,6 +187,7 @@ func readCall(r *http.Request, scrubs []string) (*call, error) {
 		query:     r.URL.RawQuery,
 		body:      body,
 		header:    h,
+		stage:     stage,
 		requested: strings.Contains(r.Header.Get("Accept"), "text/event-stream"),
 		scrubs:    scrubs,
 	}, nil
@@ -1781,6 +1798,12 @@ func (s *Server) providerCall(ctx context.Context, w http.ResponseWriter, r *htt
 			err.Error(), labelRead(readUpstream, err))
 		return
 	}
+	// What the provider's answer carried is deliberately NOT recorded here: a
+	// routed call attaches a key and answers with what the provider said, and it
+	// writes no mark at all (TestARoutedCallLeavesTheRunsPlacementAlone). Check
+	// 880's record belongs to the sources whose state this service holds — the
+	// chain's — and a provider key's rate-limit headers are none of them, so the
+	// routed path writes no observation either.
 	s.answer(ctx, w, id, cl, ans, cand, nil, nil)
 }
 
@@ -1918,6 +1941,81 @@ func (u *usageLimitScanner) scan(chunk []byte) {
 
 // Found reports whether a usage-limit event was seen in the stream.
 func (u *usageLimitScanner) Found() bool { return u.seen }
+
+// rateLimitHeaderNames returns the NAMES — never the values — of the headers of
+// one answer that say anything about a rate limit, sorted so that two answers
+// carrying the same headers record the same thing.
+//
+// The rule is deliberately wider than the headers this service reads a reset
+// from (usageLimitReset): Anthropic's unified rate-limit headers are named
+// `anthropic-ratelimit-*`, an OpenRouter answer's are `x-ratelimit-*`, and a
+// plain `Retry-After` is the HTTP one, so the question "which headers of this
+// answer are about a rate limit" is answered by the name and not by a list this
+// release would have to keep up to date. What the names are FOR is U1's
+// question — whether a subscription token's answer reports a utilisation figure
+// at all (D3178) — and answering it needs no value of any of them.
+func rateLimitHeaderNames(h http.Header) []string {
+	names := make([]string, 0, len(h))
+	for k := range h {
+		ck := http.CanonicalHeaderKey(k)
+		lower := strings.ToLower(ck)
+		if lower == "retry-after" || strings.Contains(lower, "ratelimit") || strings.Contains(lower, "rate-limit") {
+			names = append(names, ck)
+		}
+	}
+	slices.Sort(names)
+	return names
+}
+
+// recordRateLimitHeaders writes the names — and only the names — of the
+// rate-limit headers one answer carried into the credential's own observation
+// node (creds/observed/<name>), where the operator's Check 880 reads them.
+//
+// A record that cannot be written is a line on the service's log and never a
+// refusal: it is an observation about an answer the run has already been given,
+// and the run is not the party that owes this service a record of it. The
+// attempt to write is made whatever the client did with the answer — the
+// answer's headers are a fact about the credential whether or not the caller
+// stayed to read the body (the streamed usage limit's mark is written the same
+// way).
+//
+// It is called only for the answers this service reads as about the CREDENTIAL —
+// the ones it serves (a 2xx), a usage limit (429) and a 401 — because a record is
+// a claim that this answer says something about this credential, and a relayed
+// 529 or 500 says nothing about it (the published pool's own rule: "an answer
+// about the request moves nothing"). The line a failed write leaves names the
+// error's CLASS and never its text, as every other line of this service's log
+// does: the text of a state-write failure can carry the node's own content, and
+// this log is not a place a credential's value may reach.
+//
+// The observation goes to a node of its own and not into the credential's mark,
+// so an answer this service serves writes no mark where it previously wrote one
+// and the mark's wire shape is untouched (creds.Observation). The write is made
+// for an answer that carried no rate-limit header at all, which is not nothing:
+// the node then says that answer was recorded, which is how Check 880 tells a
+// credential whose answers name nothing apart from one no release has recorded.
+//
+// A store that cannot record one — the state a scope answers is a
+// creds.CascadeState, and recording is a capability a store has or has not
+// (creds.ObservationStore) — leaves the answer unrecorded, and Check 880 reads
+// that source as one it cannot answer for. That is the fail-safe direction and
+// it is not a failure of the call: the record is the check's, and nothing about
+// serving the run depends on it.
+func (s *Server) recordRateLimitHeaders(ctx context.Context, sel *creds.Selector, name string, h http.Header) {
+	if sel == nil || name == "" {
+		return
+	}
+	store, ok := sel.Store.(creds.ObservationStore)
+	if !ok {
+		return
+	}
+	names := rateLimitHeaderNames(h)
+	if _, err := store.UpdateObservation(context.WithoutCancel(ctx), name, func(creds.Observation, bool) (creds.Observation, error) {
+		return creds.Observed(names), nil
+	}); err != nil {
+		s.log.Warn("credsvc: the rate-limit header names of an answer could not be recorded", "error_class", errorClass(err))
+	}
+}
 
 // usageLimitReset reads the reset a usage-limit answer named, and the zero time
 // when it named none — which is the backed-off case (C1.9's Exhaust).

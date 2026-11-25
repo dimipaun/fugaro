@@ -641,7 +641,16 @@ import (
 // Every row of the block has a failing form and an unmeasurable one, and every
 // case holds that the App's private key reaches neither the block, the output
 // nor the scratch directory.
-// Checks 881 and 882 are the model-credentials routing work's owner-run checks.
+// Checks 880 to 882 are the model-credentials routing work's owner-run checks.
+// 880 reads, for each source the credentials service has served, the NAMES of
+// the rate-limit headers that source's last answer carried — the node of its own
+// PL7 writes beside a credential's mark, creds/observed/<name>, so the marks
+// stay readable by a release behind — and says whether one of them is a utilisation
+// figure, which is U1 and the gate on PL8. Its fakes are a fake `gcloud` that
+// mints the access token and a fake `curl` that serves the record out of the
+// case's own file and answers no other URL, so a case says what the block
+// judges and that the check makes no model call of its own and prints no value
+// the record holds.
 // 881's fakes are a fake `fugaro` (a routing table, a budget, a pool of
 // accounts whose members the case sets a state on, a launch and a run listing)
 // and a fake `gcloud` serving the run's own record out of the runs bucket, so a
@@ -713,6 +722,25 @@ import (
 // mount, what the service served a run and its review, what an unlisted
 // repository was refused with, and that a catalog build resolves no accessor
 // for the build identity.
+// Check 820 is the location preference's owner-run first-EU-installation check.
+// Its fakes are a fake `gcloud` over the reads a first installation is judged
+// by (the project, its buckets -- counted, because the premise reads them before
+// the setup and the buckets row after it -- their locations, the Firestore
+// databases, the Artifact Registry repositories, the containers and the log
+// buckets, and one access token) a fake `curl` that answers only the two
+// Realtime Database shapes through the 0600 config file the check hands over
+// and refuses a request carrying any other header, and a fake `fugaro` whose
+// `setup`, `doctor`, `run`, `runs ls` and `budget show` the case bends -- so a
+// case says what each row reads back from a setup that converged, and that the
+// check calls `fugaro` at all only after its premise held.
+// Check 821 is the same work's owner-run update-with-a-run-in-flight check. Its
+// fakes are one fake `fugaro` whose `doctor` (before and after the converge),
+// `run`, `runs ls`, `update` and `update --plan-only` the case serves call by
+// call, so a case says that the run in flight is followed across the update and
+// its record is still whole, that a plan which would change something is the
+// finding U9 exists for, that a step left for the owner is not a refusal, and
+// that an update which asks a question is a finding -- with no gcloud and no
+// curl anywhere, because the check holds no credential.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -834,6 +862,7 @@ var liveCheckScripts = []struct {
 	{"check-720.sh", "check-720_test.sh"},
 	{"check-721.sh", "check-721_test.sh"},
 	{"check670.sh", "check670_test.sh"},
+	{"check-880-token-utilisation.sh", "check-880-token-utilisation_test.sh"},
 	{"check-881-chain-falls-through.sh", "check-881-chain-falls-through_test.sh"},
 	{"check-882-vertex-capped.sh", "check-882-vertex-capped_test.sh"},
 	{"check680.sh", "check680_test.sh"},
@@ -843,12 +872,15 @@ var liveCheckScripts = []struct {
 	{"check-890-data-layout.sh", "check-890-data-layout_test.sh"},
 	{"check-891-update-trace.sh", "check-891-update-trace_test.sh"},
 	{"check-892-iam.sh", "check-892-iam_test.sh"},
+	{"check-900-version-stamp.sh", "check-900-version-stamp_test.sh"},
 	{"check920.sh", "check920_test.sh"},
 	{"check-390.sh", "check-390_test.sh"},
 	{"check-391.sh", "check-391_test.sh"},
 	{"check-392.sh", "check-392_test.sh"},
 	{"check732.sh", "check732_test.sh"},
 	{"check733.sh", "check733_test.sh"},
+	{"check-820.sh", "check-820_test.sh"},
+	{"check-821.sh", "check-821_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent

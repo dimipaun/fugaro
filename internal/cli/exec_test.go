@@ -457,6 +457,18 @@ func TestExecOldJobEnvSaysInitRepo(t *testing.T) {
 	if _, serr := os.Stat(work); !errors.Is(serr, os.ErrNotExist) {
 		t.Errorf("the runner started (a workdir exists): %v", serr)
 	}
+	// The recovery wrote a record this execution created, so the summary goes
+	// beside it (runstore.SummaryName): `runs ls` reads the summary where it
+	// read result.json, and a summary left behind by a record the bucket has
+	// since dropped would otherwise stand in for this run.
+	sum, serr := store.ReadSummary(ctx)
+	if serr != nil {
+		t.Fatalf("the recorded failure has no summary to be listed from: %v", serr)
+	}
+	if sum.Record == nil || sum.Record.Status != rec.Status || sum.Record.Reason != rec.Reason ||
+		sum.Spec() == nil || sum.Spec().RunID != runID || sum.Spec().Repo != rec.Repo {
+		t.Errorf("summary = %+v / %+v, want the record it stands in for and the run's own task", sum.Record, sum.Spec())
+	}
 }
 
 func TestExecOldJobEnvKeepsExistingRecord(t *testing.T) {
@@ -482,6 +494,12 @@ func TestExecOldJobEnvKeepsExistingRecord(t *testing.T) {
 	}
 	if stored, err := store.ReadRecord(ctx); err != nil || stored.Stage != "implement" || stored.Status != runstore.StatusRunning || stored.Execution != first.Execution {
 		t.Fatalf("the old-env exec replaced result.json: %+v, %v", stored, err)
+	}
+	// And no summary either: this execution created no record, so it has
+	// nothing to project, and one written from the other execution's record
+	// would be an object standing in for a run this process does not own.
+	if sum, err := store.ReadSummary(ctx); !errors.Is(err, runstore.ErrNotFound) {
+		t.Errorf("the old-env exec wrote a summary of another execution's record: %+v, %v", sum, err)
 	}
 }
 

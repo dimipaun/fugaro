@@ -692,7 +692,15 @@ func runWorkspaceUserAdd(cmd *cobra.Command, open workspaceRosterOpen, o *worksp
 		return err
 	}
 	if o.admin {
-		if err := d.Authority.AddAdmin(ctx, address); err != nil {
+		// The authority's own spelling of a person is the member form the live
+		// binding is written and read in (`user:<address>`): AdminBindings
+		// answers it that way, and both mechanisms bind it that way, so the
+		// write and the read that confirms it are one value.
+		member, err := accesslib.Member(address)
+		if err != nil {
+			return userErr("%s as a live binding: %v", safetext.Field(address), err)
+		}
+		if err := d.Authority.AddAdmin(ctx, member); err != nil {
 			return fmt.Errorf("making %s a workspace admin: %w", safetext.FieldErr(err), err)
 		}
 		for _, m := range linked {
@@ -978,7 +986,11 @@ func runWorkspaceUserRm(cmd *cobra.Command, open workspaceRosterOpen, o *workspa
 		}
 	}
 	if o.admin {
-		if err := d.Authority.RemoveAdmin(ctx, address); err != nil {
+		member, err := accesslib.Member(address)
+		if err != nil {
+			return workspaceUserRmCarry(userErr("%s as a live binding: %v", safetext.Field(address), err), address, sweepErr)
+		}
+		if err := d.Authority.RemoveAdmin(ctx, member); err != nil {
 			return workspaceUserRmCarry(fmt.Errorf("removing %s's workspace admin binding: %w", safetext.Field(address), err), address, sweepErr)
 		}
 	}
