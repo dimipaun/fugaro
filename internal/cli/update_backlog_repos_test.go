@@ -114,6 +114,49 @@ func TestBacklogRepoListSanitises(t *testing.T) {
 	}
 }
 
+// TestFoldSaysWhyARepositoryWasNotFolded: a repository the fold could not read
+// and one whose folder it refused whole are said, and neither is skipped in
+// silence (spec §Guiding principles), which is the behaviour the fold this step
+// replaced already had (R21). Each gets its line for the output members (U13)
+// and the warning of the run, because the lines are recorded and not yet
+// printed: U13's own change is where the warning comes out.
+func TestFoldSaysWhyARepositoryWasNotFolded(t *testing.T) {
+	const unread = "its host listed no tree, so its default branch could not be read"
+	stray := fetchedFile{path: backlog.Dir + "/notes.md", data: []byte("what a person left here\n")}
+	files := folderOf(itemFile("20261021-01", "one", "the first thing left open", "open"), stray)
+	e, db := foldUpdateRig(t, false,
+		backlogView("acme/app", files),
+		repoView{Repo: "acme/web", Unread: unread},
+	)
+	e.foldBacklog(t.Context())
+
+	if v := db.Value(orchestratorPath(t, orchestrator.BacklogNode)); v != nil {
+		t.Errorf("a folder the fold refused whole was folded anyway: %v", v)
+	}
+	lines := reportedOf(e, "backlog")
+	if len(lines) != 2 {
+		t.Fatalf("the step reported %d lines, want one per repository it did not fold from: %+v", len(lines), lines)
+	}
+	if got := lines[0]; got.Repo != "acme/app" || got.State != initflow.RepoNeedsYou || !strings.Contains(got.Detail, "was not folded") {
+		t.Errorf("the repository whose folder was refused got %+v, want a needs-you line saying so", got)
+	}
+	if got, want := lines[1], newRepoLine("acme/web", initflow.RepoUnread, unread); got != want {
+		t.Errorf("the repository the fold could not read got %+v, want %+v", got, want)
+	}
+
+	_, folderErr := backlog.LoadFiles(files)
+	if folderErr == nil {
+		t.Fatalf("the folder of the case did not break the format, so nothing was refused")
+	}
+	want := []string{
+		"acme/app: " + backlog.Dir + " was not folded into the backlog: " + safetext.FieldErr(folderErr).Error(),
+		"acme/web: " + backlog.Dir + " was not folded into the backlog: " + unread,
+	}
+	if !slices.Equal(e.r.res.Warnings, want) {
+		t.Errorf("the run warned %q, want %q: a repository the fold left unfolded is said, and not only recorded", e.r.res.Warnings, want)
+	}
+}
+
 // TestFoldFromEveryDefaultBranch is U8's red step: the run stands in a
 // directory that is no checkout, and the items are on two repositories' default
 // branches, which the fold reads through the project's list and folds under

@@ -112,9 +112,19 @@ func (e *initEngine) foldBacklog(ctx context.Context) {
 		// holders is an id to the repositories whose folders state it.
 		holders = map[string][]string{}
 	)
+	// A repository the fold did not fold from is also warned about, beside the
+	// line it records: the lines are the output members' to print (U13), and
+	// until they do, a step that left a repository's folder unfolded without a
+	// word would be a silent skip, which is what main's fold warned about and
+	// what this step keeps (R21, spec §Guiding principles). The warning comes out
+	// when U13 prints the lines.
+	unfoldedWarn := func(repo, why string) {
+		r.warn(fmt.Sprintf("%s: %s was not folded into the backlog: %s", backlogRepoList([]string{repo}), backlog.Dir, why))
+	}
 	for _, v := range views {
 		if !v.Read() {
 			unfolded[v.Repo] = newRepoLine(v.Repo, initflow.RepoUnread, v.Unread)
+			unfoldedWarn(v.Repo, v.Unread)
 			continue
 		}
 		// The folder is read whole or not at all (backlog.LoadFiles): an item
@@ -125,6 +135,7 @@ func (e *initEngine) foldBacklog(ctx context.Context) {
 		if err != nil {
 			unfolded[v.Repo] = newRepoLine(v.Repo, initflow.RepoNeedsYou,
 				fmt.Sprintf("its %s was not folded: %s", backlog.Dir, safetext.FieldErr(err)))
+			unfoldedWarn(v.Repo, safetext.FieldErr(err).Error())
 			continue
 		}
 		open := backlogOpenItems(items)
