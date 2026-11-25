@@ -2697,89 +2697,63 @@ func TestGateDispatchesOnceWhenTheRunNeverAppears(t *testing.T) {
 	}
 }
 
-// gateJobWorkflow writes the workflow file the gate reads its own job's bound
-// out of (GITHUB_WORKFLOW_REF) and returns the two variables that name it and
-// the job. minutes of 0 writes a job with no `timeout-minutes` at all.
-func gateJobWorkflow(t *testing.T, r *releaseRepo, job string, minutes int) []string {
-	t.Helper()
-	dir := filepath.Join(r.local, ".github", "workflows")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
+// TestGateWaitsNotAtAllAsAWorkflowStep: the gate is the first step of jobs whose
+// publishing steps follow it in the same job -- release.yml's release job holds
+// 30 minutes and then builds, signs and uploads, mobile-release's holds 90 and
+// then submits to two stores -- so a wait there is a job GitHub kills partway
+// through publishing. A gate that runs as a workflow step reads the checks once
+// and fails the step with the line naming what is not green: the job is re-run
+// once CI is green (docs/release.md). The wait is the caller's own, and the
+// caller is scripts/release.sh at a terminal, outside a workflow.
+func TestGateWaitsNotAtAllAsAWorkflowStep(t *testing.T) {
+	r := newReleaseRepo(t)
+	sha := tagCommit(t, r)
+	// A full run that is over and green, with `rules` still running on it.
+	g := newGHState(t, r, greenChecks()).with("FAKE_GH_CHECK_RULES=pending")
+	ciRuns(t, g, sha+"\tci (full)\t"+sha)
+
+	start := time.Now()
+	res := runGateEnv(t, r, g, sha, "v0.12.0", "GITHUB_ACTIONS=true", "GATE_WAIT_SECONDS=")
+	if res.err == nil {
+		t.Fatalf("the gate passed with a required check still running:\n%s", res.out)
 	}
-	body := "name: release\non:\n  push:\n    tags: [\"v*\"]\njobs:\n  " + job + ":\n    runs-on: ubuntu-latest\n"
-	if minutes > 0 {
-		body += fmt.Sprintf("    timeout-minutes: %d\n", minutes)
+	if elapsed := time.Since(start); elapsed > 20*time.Second {
+		t.Errorf("the gate waited %s as a workflow step: the steps after it run in the same job", elapsed)
 	}
-	body += "    steps:\n      - run: scripts/release-gate.sh v0.12.0\n"
-	if err := os.WriteFile(filepath.Join(dir, "release.yml"), []byte(body), 0o644); err != nil {
-		t.Fatal(err)
+	if !strings.Contains(res.out, "not green: rules (pending)") {
+		t.Errorf("the step does not name the check that is not green:\n%s", res.out)
 	}
-	return []string{
-		"GITHUB_JOB=" + job,
-		"GITHUB_WORKFLOW_REF=" + repoSlug(r.bare) + "/.github/workflows/release.yml@refs/tags/v0.12.0",
+	if !strings.Contains(res.out, "re-run this job when it is green") {
+		t.Errorf("the refusal does not say what to do about a check that is still running:\n%s", res.out)
+	}
+	if !strings.Contains(res.out, "ci run: https://github.com/") {
+		t.Errorf("the refusal does not name the run's URL:\n%s", res.out)
 	}
 }
 
-// TestGateWaitNeverOutlivesTheJobItRunsIn: the two tag workflows that run the
-// gate unattended hold less than the default wait -- release.yml's release job
-// 30 minutes, images.yml's version job 5 -- so a 60-minute deadline there is a
-// sleep GitHub ends by killing the job, and the line naming the checks is never
-// printed. The gate reads its own job's `timeout-minutes` out of the workflow
-// file it runs from and waits a minute less than that at most.
-func TestGateWaitNeverOutlivesTheJobItRunsIn(t *testing.T) {
-	cases := []struct {
-		name    string
-		job     string
-		minutes int
-		env     []string
-		want    string
-	}{
-		{"the five-minute job the images gate runs in", "version", 5, nil, "would wait up to 4m"},
-		{"the thirty-minute job the release gate runs in", "release", 30, nil, "would wait up to 29m"},
-		{"a job with no bound", "release", 0, nil, "would wait up to 60m"},
-		{"a caller that asks for less than the job allows", "release", 90, []string{"RELEASE_GATE_TIMEOUT_MIN=30"}, "would wait up to 30m"},
+// TestGateWaitsOutsideAWorkflow: the wait and its deadline are a caller's own,
+// which is scripts/release.sh running the gate at a terminal: it polls, names
+// what is still running while it does, and ends on the deadline with the checks
+// that are not green and the run's URL.
+func TestGateWaitsOutsideAWorkflow(t *testing.T) {
+	r := newReleaseRepo(t)
+	sha := tagCommit(t, r)
+	g := newGHState(t, r, greenChecks()).with("FAKE_GH_CHECK_RULES=pending")
+	ciRuns(t, g, sha+"\tci (full)\t"+sha)
+
+	res := runGateEnv(t, r, g, sha, "v0.12.0", "GATE_WAIT_SECONDS=3", "GATE_POLL_SECONDS=1")
+	if res.err == nil {
+		t.Fatalf("the gate passed with a required check still running:\n%s", res.out)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			r := newReleaseRepo(t)
-			sha := tagCommit(t, r)
-			// A full run that is over and green, with `rules` still running on
-			// it: the pass reads the checks and the dry run names the wait it
-			// would take, without sleeping.
-			g := newGHState(t, r, greenChecks()).with("FAKE_GH_CHECK_RULES=pending")
-			ciRuns(t, g, sha+"\tci (full)\t"+sha)
-			env := append([]string{"GATE_DRY_RUN=1", "GATE_WAIT_SECONDS="}, gateJobWorkflow(t, r, tc.job, tc.minutes)...)
-			env = append(env, tc.env...)
-
-			res := runGateEnv(t, r, g, sha, "v0.12.0", env...)
-			res.requireSuccess(t)
-			if !strings.Contains(res.out, tc.want) {
-				t.Errorf("the dry run does not name the wait it would take (%q):\n%s", tc.want, res.out)
-			}
-		})
+	if !strings.Contains(res.out, "still waiting: check 'rules' is pending") {
+		t.Errorf("the wait does not name the check it is waiting for:\n%s", res.out)
 	}
-
-	// And the wait itself: a job whose bound leaves the gate no room prints the
-	// line the wait ends on rather than sleeping into the job's kill.
-	t.Run("a job too short to wait in ends the wait at once", func(t *testing.T) {
-		r := newReleaseRepo(t)
-		sha := tagCommit(t, r)
-		g := newGHState(t, r, greenChecks()).with("FAKE_GH_CHECK_RULES=pending")
-		ciRuns(t, g, sha+"\tci (full)\t"+sha)
-
-		start := time.Now()
-		env := append([]string{"GATE_WAIT_SECONDS="}, gateJobWorkflow(t, r, "version", 1)...)
-		res := runGateEnv(t, r, g, sha, "v0.12.0", env...)
-		if res.err == nil {
-			t.Fatalf("the gate passed with a required check still running:\n%s", res.out)
-		}
-		if elapsed := time.Since(start); elapsed > 20*time.Second {
-			t.Errorf("the gate waited %s in a one-minute job: the wait must end before the job is killed", elapsed)
-		}
-		if !strings.Contains(res.out, "0s is up, not green: rules (pending)") {
-			t.Errorf("the wait does not end naming the check that is not green:\n%s", res.out)
-		}
-	})
+	if !strings.Contains(res.out, "3s is up, not green: rules (pending)") {
+		t.Errorf("the wait does not end on its deadline naming the check that is not green:\n%s", res.out)
+	}
+	if !strings.Contains(res.out, "ci run: https://github.com/") {
+		t.Errorf("the deadline does not name the run's URL:\n%s", res.out)
+	}
 }
 
 // TestGateRefusesACommitNoRefPointsAt: a dispatch runs a workflow at a ref's

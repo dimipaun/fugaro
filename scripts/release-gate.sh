@@ -16,19 +16,22 @@
 # repository is public, and listed them with no credential at all when CS7
 # measured it, 2026-11-20), GITHUB_SHA, GITHUB_REPOSITORY.
 # Usage: scripts/release-gate.sh vX.Y.Z|mobile-vX.Y.Z
-# Optional: GATE_WAIT_SECONDS=N (default RELEASE_GATE_TIMEOUT_MIN, 60, minutes)
-# polls every GATE_POLL_SECONDS (default 30) while a check is missing, still
-# running or cancelled, so scripts/release.sh can run it right after a merge,
-# before CI has finished. A conclusive failure always fails at once, and so does
-# a full `ci` run that completed red: waiting out a run that is over only spends
-# the wait. The wait ends with the checks that are not green and the run's URL.
-# The wait never outlives the job the gate runs in: a deadline the job's own
-# `timeout-minutes` cannot serve is a sleep GitHub ends by killing the job, with
-# no line naming the checks, so the gate reads that bound out of the workflow
-# file it is running from (GITHUB_WORKFLOW_REF, GITHUB_JOB) and waits at most a
-# minute less than it (release.yml's release job holds 30 minutes, images.yml's
-# version job 5). A gate run outside a workflow, or in a job with no bound,
-# keeps the caller's wait.
+# Optional: GATE_WAIT_SECONDS=N (default 0 in a workflow, else
+# RELEASE_GATE_TIMEOUT_MIN, 60, minutes) polls every GATE_POLL_SECONDS (default
+# 30) while a check is missing, still running or cancelled, so scripts/release.sh
+# can run it right after a merge, before CI has finished. A conclusive failure
+# always fails at once, and so does a full `ci` run that completed red: waiting
+# out a run that is over only spends the wait. The wait ends with the checks that
+# are not green and the run's URL.
+# A gate that runs as a step of a workflow waits for nothing: the steps that
+# publish run after it in the same job (release.yml's release job holds 30
+# minutes and then builds, signs and uploads; mobile-release's holds 90 and then
+# submits to two stores), so a wait here is a job GitHub kills partway through
+# publishing. The checks are read once instead, and a check that is not green
+# yet fails the step with one line naming it and the run's URL -- re-run the job
+# once CI is green. The wait belongs to a caller outside a workflow, which is
+# scripts/release.sh at a terminal: GITHUB_ACTIONS tells the two apart, and a
+# step that really wants one names it in GATE_WAIT_SECONDS.
 # A commit with no `ci` run at all -- CI runs on no commit by itself -- gets one
 # dispatched on it by the gate itself (`gh workflow run ci --ref <the ref that
 # points at it> -f full=true`), once per commit, then waits for it; nothing will
@@ -126,46 +129,20 @@ if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
     exit 1
   fi
 fi
-# job_timeout_minutes FILE JOB prints the `timeout-minutes` of the job GitHub
-# names, or nothing: FILE is GITHUB_WORKFLOW_REF (owner/repo/.github/workflows/
-# ci.yml@ref), which is the workflow file this job runs from, in the workspace,
-# and JOB is GITHUB_JOB, its id -- the YAML key. Nothing is printed for a gate
-# run outside a workflow, for a file that is not there, and for a job that
-# declares no bound (GitHub's own default is six hours), which leaves the
-# caller's wait in place.
-job_timeout_minutes() {
-  [ -n "$2" ] || return 0
-  file="${1%%@*}"
-  file=${file#*/}
-  file=${file#*/}
-  [ -f "$file" ] || return 0
-  awk -v job="$2" '
-    !inj && index($0, "  " job ":") == 1 { inj = 1; next }
-    inj && /^  [^ \t]/ { exit }
-    inj && /^[ \t]+timeout-minutes:[ \t]*[0-9]+[ \t]*$/ {
-      sub(/^[ \t]+timeout-minutes:[ \t]*/, ""); sub(/[ \t]+$/, ""); print; exit
-    }' "$file"
-}
-# Wait as the caller asks, capped by the job the gate runs in and a minute short
-# of it: the gate's own exit is what the line naming the checks is printed by.
-wait_seconds=${RELEASE_GATE_TIMEOUT_MIN:-60}
-wait_seconds=$((wait_seconds * 60))
-job_minutes=$(job_timeout_minutes "${GITHUB_WORKFLOW_REF:-}" "${GITHUB_JOB:-}")
-if [ -n "$job_minutes" ]; then
-  job_bound=$((job_minutes * 60 - 60))
-  if [ "$job_bound" -lt 0 ]; then
-    job_bound=0
-  fi
-  if [ "$wait_seconds" -gt "$job_bound" ]; then
-    wait_seconds=$job_bound
-  fi
+# The wait: none at all as a workflow step (see the header), and a caller
+# outside one -- scripts/release.sh at a terminal -- waits up to
+# RELEASE_GATE_TIMEOUT_MIN minutes, 60 by default. GATE_WAIT_SECONDS, which
+# release.sh passes, is the explicit wait either way.
+if [ -n "${GITHUB_ACTIONS:-}" ]; then
+  wait_seconds=0
+else
+  wait_seconds=$(( ${RELEASE_GATE_TIMEOUT_MIN:-60} * 60 ))
 fi
 wait_seconds=${GATE_WAIT_SECONDS:-$wait_seconds}
 poll_seconds=${GATE_POLL_SECONDS:-30}
 # The wait as a message reads it: whole minutes when it is whole minutes and not
-# none, and seconds otherwise (GATE_WAIT_SECONDS is the tests' own, a wait of 45
-# seconds must not read as 0m, and a job whose bound leaves the wait nothing --
-# a one-minute job -- reads as 0s rather than as no wait at all).
+# none, seconds otherwise (GATE_WAIT_SECONDS is the tests' own, and a wait of 45
+# seconds must not read as 0m).
 if [ "$((wait_seconds % 60))" = 0 ] && [ "$wait_seconds" != 0 ]; then
   wait_label="$((wait_seconds / 60))m"
 else
@@ -509,13 +486,22 @@ while :; do
     exit 1
   fi
   # A dry run reads the checks once: what is still missing or running is what
-  # the real run would wait for, and it waits for it there rather than here.
+  # the real run would wait for, and it waits for it there rather than here --
+  # and a workflow step's real run would not wait at all, which is what it says.
   if [ -n "${GATE_DRY_RUN:-}" ]; then
-    echo "check '$pending_name' is $pending_state on $GITHUB_SHA: the real run would wait up to $wait_label"
+    if [ "$wait_seconds" = 0 ]; then
+      echo "check '$pending_name' is $pending_state on $GITHUB_SHA: the real run reads the checks once and fails the step, as this does"
+    else
+      echo "check '$pending_name' is $pending_state on $GITHUB_SHA: the real run would wait up to $wait_label"
+    fi
     exit 0
   fi
   if [ "$(date +%s)" -ge "$deadline" ]; then
-    echo "::error::required check '$pending_name' is $pending_state on $GITHUB_SHA: $wait_label is up, not green: ${not_green%, }; ci run: $(run_url "$full_run")" >&2
+    if [ "$wait_seconds" = 0 ]; then
+      echo "::error::required check '$pending_name' is $pending_state on $GITHUB_SHA: not green: ${not_green%, } (if CI is still running, re-run this job when it is green); ci run: $(run_url "$full_run")" >&2
+    else
+      echo "::error::required check '$pending_name' is $pending_state on $GITHUB_SHA: $wait_label is up, not green: ${not_green%, }; ci run: $(run_url "$full_run")" >&2
+    fi
     exit 1
   fi
   echo "still waiting: check '$pending_name' is $pending_state on $GITHUB_SHA"
