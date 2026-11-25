@@ -341,28 +341,51 @@ func (s *Summary) AsRecord() *Record {
 // WriteSummary writes one run's summary object, overwriting whatever the
 // run's previous save left: the summary is the run's own account of itself
 // and moves with its record, so unlike the pull-request index it is rewritten
-// at every stage end (D2966).
-//
-// The identity members are stamped here and never taken from the caller, so a
-// summary this function wrote always names the run whose prefix it sits under
-// and always carries SummaryVersion. A summary with no record — nothing to
-// stand in for — and one that names no time are refused before the bucket is
-// touched: a listing that read such an object back would have to fall back,
-// and an object that can only be fallen back from is not worth writing.
+// at every stage end (D2966). encodeSummary is where the identity is stamped
+// and the shape checked.
 func WriteSummary(ctx context.Context, s *Store, sum *Summary) error {
+	data, err := encodeSummary(s, sum)
+	if err != nil {
+		return err
+	}
+	return s.PutFile(ctx, SummaryName, data, "application/json")
+}
+
+// CreateSummary writes one run's summary object only if the run has none
+// (ErrExists otherwise). It is the backfill's writer (internal/cli's
+// update_summary.go): a summary is the run's own account of itself, so a step
+// of `fugaro update` creates the object an installation predating it is
+// missing and never rewrites one a run holds — the HARD RULE, and what keeps
+// the walk off a run in flight (docs/design/update-in-flight.md).
+func CreateSummary(ctx context.Context, s *Store, sum *Summary) error {
+	data, err := encodeSummary(s, sum)
+	if err != nil {
+		return err
+	}
+	return s.create(ctx, SummaryName, data, "application/json")
+}
+
+// encodeSummary is the one place a summary is stamped and encoded: the
+// identity members are the store's and never the caller's, so a summary this
+// writes always names the run whose prefix it sits under and always carries
+// SummaryVersion. A summary with no record — nothing to stand in for — and one
+// that names no time are refused before the bucket is touched: a listing that
+// read such an object back would have to fall back, and an object that can
+// only be fallen back from is not worth writing.
+func encodeSummary(s *Store, sum *Summary) ([]byte, error) {
 	if sum == nil || sum.Record == nil {
-		return errors.New("a run summary with no record summarizes nothing")
+		return nil, errors.New("a run summary with no record summarizes nothing")
 	}
 	if sum.At.IsZero() {
-		return fmt.Errorf("the summary of %s names no time", s.RunID())
+		return nil, fmt.Errorf("the summary of %s names no time", s.RunID())
 	}
 	sum.Version = SummaryVersion
 	sum.RunID, sum.Slug = s.RunID(), s.Slug()
 	data, err := json.MarshalIndent(sum, "", "  ")
 	if err != nil {
-		return fmt.Errorf("encoding the summary of %s: %w", s.RunID(), err)
+		return nil, fmt.Errorf("encoding the summary of %s: %w", s.RunID(), err)
 	}
-	return s.PutFile(ctx, SummaryName, data, "application/json")
+	return data, nil
 }
 
 // ReadSummary reads a run's summary object from the bucket: ErrNotFound when

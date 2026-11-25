@@ -53,6 +53,12 @@ func TestMarkCreatedSetsUpTheManagedStateBucket(t *testing.T) {
 		// reads the options for the amount the creation fact records.
 		o := &initOptions{managed: true, budget: 100, budgetCurrency: "USD", billingAccount: "000000-000000-000000"}
 		run := &initRun{o: o, cmd: NewRootCmd(), w: &out, gcpProject: newProj}
+		// The account the run's own variables carry the alert on, as the
+		// carried budget sets it on a converge (initRun.budgetAccount): this rig
+		// drives markCreated directly, and a run whose block carries no account
+		// is the one that creates no alert and says what adds it (T2a of
+		// docs/managed-flag-ergonomics).
+		run.budgetAccount = o.billingAccount
 		run.res.Created, run.res.Outputs = newProj, &infra.InstallationOutputs{RunsBucket: bucket}
 		e := &initEngine{r: run, c: c, lc: lc, spec: infra.InstallationSpec{Project: newProj, Region: "us-east5"}}
 		return r, e, &out

@@ -286,7 +286,11 @@ func (a *wu7Authority) AddAdmin(_ context.Context, admin string) error {
 		return a.addErr
 	}
 	a.added = append(a.added, admin)
-	a.bound = append(a.bound, "user:"+admin)
+	// The command hands the authority the member form the live binding is
+	// written in (`user:<address>`, accesslib.Member), which is what a real
+	// mechanism binds and what AdminBindings answers: the fake records it as
+	// given rather than prefixing it a second time.
+	a.bound = append(a.bound, admin)
 	return nil
 }
 
@@ -294,7 +298,7 @@ func (a *wu7Authority) RemoveAdmin(_ context.Context, admin string) error {
 	a.removed = append(a.removed, admin)
 	kept := make([]string, 0, len(a.bound))
 	for _, b := range a.bound {
-		if b != "user:"+admin {
+		if b != admin {
 			kept = append(kept, b)
 		}
 	}
@@ -929,8 +933,8 @@ func TestRmAdminRemovesBindingsAndQueuesGrants(t *testing.T) {
 	w.must("workspace", "user", "rm", "ada@example.com", "--admin", "--workspace", "workspace-alpha")
 
 	// The binding goes at once, and once.
-	if len(w.authority.removed) != 1 || w.authority.removed[0] != "ada@example.com" {
-		t.Fatalf("the bindings removed are %v, want ada@example.com once", w.authority.removed)
+	if len(w.authority.removed) != 1 || w.authority.removed[0] != "user:ada@example.com" {
+		t.Fatalf("the bindings removed are %v, want ada@example.com's own member once", w.authority.removed)
 	}
 	if len(w.authority.added) != 0 {
 		t.Errorf("the removal bound somebody: %v", w.authority.added)
@@ -1078,8 +1082,8 @@ func TestUserRmSelfAdminLeavesNoUnbackedEntry(t *testing.T) {
 			t.Errorf("the roster names %s as a workspace admin, and no live binding backs that entry", admin)
 		}
 	}
-	if len(w.authority.removed) != 1 || w.authority.removed[0] != "founder@example.com" {
-		t.Errorf("the bindings removed are %v, want the caller's own once", w.authority.removed)
+	if len(w.authority.removed) != 1 || w.authority.removed[0] != "user:founder@example.com" {
+		t.Errorf("the bindings removed are %v, want the caller's own member once", w.authority.removed)
 	}
 	if strings.Join(w.members.offboarded, "|") != "aurora founder@example.com" {
 		t.Errorf("the members offboarded are %v, want every one the workspace holds", w.members.offboarded)

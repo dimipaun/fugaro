@@ -62,8 +62,8 @@
       <h1>Installations</h1>
       <!--
         The status line, the list, the CLI's own warning lines, the onboarding
-        screen, and the machine's WSL distributions. The five containers are all
-        this document declares; every child of them is built by
+        screen, the Add project door, and the machine's WSL distributions. The
+        six containers are all this document declares; every child of them is built by
         `src/renderer/installations.ts`, so a row's text, a warning line, an
         onboarding screen and a distribution's name are values the view wrote
         rather than markup this file carries.
@@ -75,12 +75,22 @@
         form's controls come back --
         `console/test/unit/installations-view.test.ts`, "the form is gone: the
         console asks the operator for no binary and no config" -- and the surface
-        itself is pinned at seven operations in
+        itself is pinned at eight operations in
         `console/test/unit/installations-ipc.test.ts`.
       -->
       <p id="picker-status">Reading the installation list…</p>
       <section id="picker-onboarding"></section>
       <ul id="picker-list"></ul>
+      <!--
+        The Add project door (SW3c, R4): one button, drawn by the view when the
+        list has rows -- adding a project is a second one, and a console with no
+        installation at all is already showing the first-run screen behind the
+        script's own screen. The click sends `fugaro:installations/addProject`,
+        which opens the setup wizard in the dashboard window; **the wizard is not
+        drawn here**, because the five answers it collects do not fit this
+        window's surface, which is names and checkout directories.
+      -->
+      <div id="picker-new-project"></div>
       <ul id="picker-warnings"></ul>
       <!--
         This machine's WSL distributions, read by the main process from

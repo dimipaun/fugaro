@@ -265,6 +265,25 @@ func (r *stateReads) RoundRobin(ctx context.Context) (int64, error) {
 	return n, labelRead(stateWrite, err)
 }
 
+// UpdateObservation passes the observation write through to the store this
+// reader wraps, when that store records one (creds.ObservationStore, Check 880).
+//
+// The pass-through is here rather than at the call site because this wrapper is
+// what a scope answers and therefore what every selector is built over: without
+// it, no store this service holds would ever satisfy the capability, and Check
+// 880 would read an empty record on every installation. A store that does not
+// record one is not an error and not a refusal — nothing about serving a call
+// depends on the record — so an unsupported inner store writes nothing, which is
+// exactly what Check 880 reports as UNVERIFIED.
+func (r *stateReads) UpdateObservation(ctx context.Context, name string, f func(creds.Observation, bool) (creds.Observation, error)) (creds.Observation, error) {
+	store, ok := r.Store.(creds.ObservationStore)
+	if !ok {
+		return creds.Observation{}, nil
+	}
+	o, err := store.UpdateObservation(ctx, name, f)
+	return o, labelRead(stateWrite, err)
+}
+
 // logRefusal writes the one server-side line a refusal leaves.
 //
 // cause is the error the refusal was taken on, or nil for a refusal that is not
