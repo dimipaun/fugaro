@@ -395,17 +395,20 @@ func TestCatalogCheckJobRebuildsTheChangedEntryAsTheBuildIdentity(t *testing.T) 
 	}
 }
 
-// TestCatalogCheckRebuildHandsTheCredentialOnlyToADefinitionThatBakes: the
-// nightly job submits the request the manual build does, and the Baked flag it
-// composes is read from the copied definition's own bytes
-// (image_check_catalog.go) — the second of the two sites that decide whether an
-// entry's build step is handed the git credential. A rebuild of an entry whose
-// copy bakes keeps it, because the bake stage that copy carries clones with it;
-// a rebuild of one whose copy does not has it taken out. Without the flag the
-// job composed a baked entry's rebuild without the credential and the rebuild's
-// bake stage cloned with nothing, which is check 390 on the nightly path.
-func TestCatalogCheckRebuildHandsTheCredentialOnlyToADefinitionThatBakes(t *testing.T) {
-	appDir, err := imagebake.Path(mustSlug("bitbucket", "acme/app"))
+// TestCatalogCheckRebuildClonesWhatTheCopyBakes: the nightly job submits the
+// request the manual build does, and the bake it composes (Baked) is read from
+// the copied definition's own bytes (image_check_catalog.go) — the second of the
+// two submit sites, and the one check 390's failure reached: a rebuild submitted
+// with no baked checkout left the entry's build failing on the COPY the copy's
+// own stages carry. The rebuild of a definition that bakes has the clone step
+// produce the baked image; one that bakes nothing has none. Neither hands the
+// entry's build step the git credential, which reaches the clone step's build
+// alone (B8, F19).
+func TestCatalogCheckRebuildClonesWhatTheCopyBakes(t *testing.T) {
+	def, err := imagebake.Append([]byte(catalogCheckAppDef), imagebake.Plan{Baked: []imagebake.Repo{{
+		Repo: "acme/app", Slug: mustSlug("bitbucket", "acme/app"),
+		URL: "https://bitbucket.org/acme/app.git", Branch: "main",
+	}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -415,9 +418,9 @@ func TestCatalogCheckRebuildHandsTheCredentialOnlyToADefinitionThatBakes(t *test
 	moved := "sha256:" + strings.Repeat("9", 64)
 	for name, tc := range map[string]struct {
 		definition string
-		want       bool
+		bakes      bool
 	}{
-		"a definition that bakes":    {catalogCheckAppDef + "# fugaro bake: " + appDir + "\nRUN true\n", true},
+		"a definition that bakes":    {string(def), true},
 		"a definition that does not": {catalogCheckAppDef, false},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -429,8 +432,11 @@ func TestCatalogCheckRebuildHandsTheCredentialOnlyToADefinitionThatBakes(t *test
 			if got := buildPosts(f.fb); got != 1 {
 				t.Fatalf("builds submitted = %d, want the one rebuild", got)
 			}
-			if got := catalogBuildStepCredential(t, f.fb); got != tc.want {
-				t.Errorf("the rebuild's build step is handed the credential = %v, want %v", got, tc.want)
+			if catalogBuildStepCredential(t, f.fb) {
+				t.Error("the rebuild's build step is handed the git credential: every entry's build is secret-free, and the credential reaches the clone step's build alone (B8, F19)")
+			}
+			if got := strings.Contains(buildStepArgs(t, f.fb, "catalog-clone"), "--target baked"); got != tc.bakes {
+				t.Errorf("the rebuild's clone step builds a baked image = %v, want %v", got, tc.bakes)
 			}
 		})
 	}

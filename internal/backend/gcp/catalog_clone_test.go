@@ -12,7 +12,7 @@ import (
 	cloudbuild "google.golang.org/api/cloudbuild/v1"
 
 	"github.com/dimipaun/fugaro/internal/gitprov"
-	"github.com/dimipaun/fugaro/internal/gitprov/github"
+	"github.com/dimipaun/fugaro/internal/imagebake"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -138,7 +138,7 @@ func TestCloneStepIsGeneratedAndSeparateFromTheEntryBuild(t *testing.T) {
 			// (/workspace/context) is not in it, so no file an entry wrote is
 			// read by the build that holds the credential.
 			for _, want := range []string{
-				"--file " + catalogCloneDockerfile,
+				"--file " + catalogCloneDockerfilePath,
 				"--secret \"id=git-credentials,src=" + catalogCloneCredential + "\"",
 				"--tag " + catalogCloneImage,
 				`--build-arg "FUGARO_BASE=$$base"`,
@@ -178,14 +178,29 @@ func TestCloneStepIsGeneratedAndSeparateFromTheEntryBuild(t *testing.T) {
 			if !strings.Contains(df, "ARG REPO_URL=\"\"\n") || !strings.Contains(df, "ARG COMMIT=\"\"\n") {
 				t.Errorf("the generated Dockerfile does not state the clone's values as build arguments: %q", df)
 			}
-			// The step writes exactly the files this package states.
+			// The step writes exactly the files this package states: for these
+			// two definitions nothing is baked, so the script is the helpers,
+			// the one clone of the build's own repository and the revoke, and
+			// the covered set the guard reads is empty (nothing of the engine's
+			// is cloned, so the host refusal is the whole guard).
 			cs := catalogCloneScriptOf(t, st)
-			want := catalogCloneScriptText
+			// The script's credential is where BuildKit mounts the secret inside
+			// its build container, which is not the file the step's volume holds
+			// (that path is the --secret src on the docker build line).
+			want := "set -eu\nexport LC_ALL=C\nCRED=/run/secrets/git-credentials\nCOVERED=''\n" + catalogCloneScriptHelpers + catalogCloneScriptOwn
 			if tc.spec.GitProvider == gitprov.KindGitHub {
 				want += catalogCloneRevoke
 			}
 			if cs != want {
 				t.Errorf("the generated clone script is not the one this package states:\n%q\nwant\n%q", cs, want)
+			}
+			// The build is handed the checkout it tags, and nothing else: a
+			// definition that bakes nothing has no second image to tag.
+			if strings.Contains(script, "--target baked") || strings.Contains(df, "AS baked") {
+				t.Errorf("a definition that bakes nothing asks for the baked image: %q\n%s", script, df)
+			}
+			if !strings.Contains(script, "--target checkout --tag "+catalogCloneImage) {
+				t.Errorf("the clone step does not tag the checkout out of the checkout stage: %q", script)
 			}
 			// The guard that answers for a link out of the checkout exists only
 			// for an entry that names a context: with no context the build step
@@ -214,9 +229,10 @@ func TestCloneStepIsGeneratedAndSeparateFromTheEntryBuild(t *testing.T) {
 // installed from a private registry declared them in its fugaro.yaml, and an
 // entry that may mount no secret at all is B9's answer to D2311.
 //
-// A definition that bakes is the one exception, and it is the entry's own
-// author who asks for the mount: the bake stage is a RUN of that definition and
-// clones with it (Baked, TestBakedEntryBuildKeepsTheCredential).
+// A definition that bakes is no exception, and it is the reason B8 was
+// finished this way: the bake stage the copy carries is a COPY out of the
+// image the clone step tagged, so a copy that bakes needs no mount either
+// (Baked, TestBakedDefinitionClonesInTheCloneStep).
 func TestEntryBuildCarriesNoSecretAndNoIdentity(t *testing.T) {
 	for _, tc := range catalogCloneSpecs(t) {
 		t.Run(tc.name, func(t *testing.T) {
@@ -914,111 +930,307 @@ func catalogGitHubSpec(t *testing.T) CatalogBuildSpec {
 	return s
 }
 
-// TestBakedEntryBuildKeepsTheCredential is the failure check 390 found: the
-// bake stage imagebake composes into a definition is a RUN of that definition,
-// and it clones with the secret the entry's build step is handed. The request
-// took that secret — and the volume it lives in — out of the entry's build step
-// for every definition, and the clone step removed the credential file at its
-// own exit, so a definition that bakes cloned with nothing and answered
-// `could not read Username for 'https://github.com'`, a sentence naming neither
-// the credential nor the build that owed it.
-//
-// A definition that bakes keeps both, and the revoke moves with the file to the
-// step that reads it last — the entry's own build, whose template trap already
-// removes it at its exit. Every other definition is unchanged: the credential
-// reaches the clone step's build and no build of the entry's own (B8, F19,
-// D2311), and the clone step revokes and removes the file as it always has.
-func TestBakedEntryBuildKeepsTheCredential(t *testing.T) {
-	baked := catalogGitHubSpec(t)
-	baked.Baked = true
-	b, err := CatalogBuildRequest("proj-1234", baked)
+// catalogBakedSpec is the spec of a GitHub entry whose definition bakes two
+// checkouts: the entry's own repository, which is the LAST of them (imagebake
+// composes the build's own stage last) and the one the build's REPO_URL is held
+// to, and one of the entry's other repositories, which the clone step clones
+// with the URL and branch the definition names (imagebake.BakedRepos).
+func catalogBakedSpec(t *testing.T) CatalogBuildSpec {
+	t.Helper()
+	s := catalogGitHubSpec(t)
+	s.Baked = []imagebake.Repo{
+		{Repo: "acme/web", Slug: "web-2222bbbb", URL: "https://github.com/acme/web.git", Branch: "main"},
+		{Repo: "acme/app", Slug: "app-1234abcd", URL: s.RepoURL, Branch: "main"},
+	}
+	return s
+}
+
+// TestBakedDefinitionClonesInTheCloneStep is the failure check 390 found, fixed
+// the way B8 asks: the bake stage an earlier release composed was a RUN of the
+// entry's own Dockerfile, which cloned with the credential the entry's build step
+// was handed — and a credential handed to the entry's build is readable by every
+// RUN it has, which is the hole F19 closes. A definition that bakes is now the
+// same shape as every other: the clone step clones each checkout it bakes, the
+// generated stages copy them out of the image it tagged, and the entry's build
+// step is handed no credential, no volume and no revoke.
+func TestBakedDefinitionClonesInTheCloneStep(t *testing.T) {
+	s := catalogBakedSpec(t)
+	b, err := CatalogBuildRequest("proj-1234", s)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The entry's own build: no secret, no volume, no revoke, exactly like a
+	// definition that bakes nothing.
 	build := step(t, b, "build")
 	script := strings.Join(build.Args, "\n")
-	if !strings.Contains(script, catalogTemplateCredentialArg) {
-		t.Errorf("the entry's build is handed no credential, so its bake stage clones with none: %q", script)
-	}
-	if !slices.ContainsFunc(build.Volumes, func(v *cloudbuild.Volume) bool {
-		return v.Name == "fugaro-creds" && v.Path == "/creds"
-	}) {
-		t.Errorf("the entry's build mounts no volume the credential lives in: %+v", build.Volumes)
-	}
-	for _, want := range []string{"CRED=" + catalogCloneCredential, "REPO_HOST=github.com", "GITHUB_API=" + github.DefaultBaseURL} {
-		if !slices.Contains(build.Env, want) {
-			t.Errorf("the entry's build does not carry %q, which the revoke it ends with reads: %v", want, build.Env)
+	for _, banned := range []string{"id=git-credentials", "installation/token", "GITHUB_API="} {
+		if strings.Contains(script, banned) {
+			t.Errorf("the entry's own build carries %q, so a RUN of it may read the credential: %q", banned, script)
 		}
 	}
-	if !everyDollarIsDoubled(script) {
-		t.Errorf("the entry's build step holds a dollar Cloud Build would substitute: %q", script)
+	if len(build.Volumes) != 0 {
+		t.Errorf("the entry's build mounts the volume the credential lives in: %+v", build.Volumes)
 	}
-	// The file outlives the clone step for this definition, which means the
-	// clone step neither removes it nor revokes with it.
+	// The clone step: both images the entry's build copies out of, and the
+	// revoke, and it removes the credential file at its own exit.
 	clone := step(t, b, catalogCloneStepID)
-	if got := strings.Join(clone.Args, "\n"); strings.Contains(got, "trap 'rm -f "+catalogCloneCredential+"' EXIT") {
-		t.Error("the clone step removes the credential a baked definition's own build step reads")
+	cargs := strings.Join(clone.Args, "\n")
+	if !strings.Contains(cargs, "--target baked --tag "+imagebake.BakedImage) {
+		t.Errorf("the clone step does not build the image the generated stages copy out of: %q", cargs)
 	}
-	if got := catalogCloneScriptOf(t, clone); strings.Contains(got, "installation/token") {
-		t.Error("the clone step revokes a token the entry's build step is about to read")
+	if !strings.Contains(cargs, "--target checkout --tag "+catalogCloneImage) {
+		t.Errorf("the clone step does not tag the checkout: %q", cargs)
 	}
-	// The entry's build step is the last to read it, so the revoke is its, and
-	// the template's own trap is what removes the file.
-	if !strings.Contains(script, "installation/token") {
-		t.Errorf("the entry's build step ends without revoking the token it read: %q", script)
+	if !strings.Contains(cargs, "trap 'rm -f "+catalogCloneCredential+"' EXIT") {
+		t.Error("the clone step leaves the credential file behind")
 	}
-	if !strings.Contains(script, "rm -f "+catalogCloneCredential) {
-		t.Errorf("the entry's build step leaves the credential file behind: %q", script)
+	cs := catalogCloneScriptOf(t, clone)
+	if !strings.Contains(cs, "installation/token") {
+		t.Error("the clone step does not revoke the token it read")
 	}
-	// And what it runs is a revoke: the token read back out of the store file
-	// the credential step wrote, decoded by git's own reader, into the private
-	// curl config — one call to GitHub's endpoint, and the token nowhere in the
-	// step's arguments or output.
-	i := strings.Index(script, "tok=$$(")
-	if i < 0 {
-		t.Fatalf("the entry's build step carries no revoke: %q", script)
+	if got := "bitbucket.org/acme/web bitbucket.org/acme/app"; strings.Contains(cs, got) {
+		t.Errorf("the covered set is not the plan's repositories: %q", cs)
 	}
-	r := runCatalogShell(t, strings.ReplaceAll(script[i:], "$$", "$"), build.Env, "", "",
-		nil, map[string]string{"github.com": "fixture%2Ftoken-1"})
+	if !strings.Contains(cs, "COVERED='github.com/acme/web github.com/acme/app'\n") {
+		t.Errorf("the covered set is not the plan's repositories, in the order their stages run:\n%q", cs)
+	}
+	// The generated Dockerfile: the checkout stage is the build's own repository
+	// and the baked stage is every repository, one directory per slug.
+	df := catalogCloneDockerfileOf(t, clone)
+	for _, want := range []string{
+		"FROM scratch AS checkout\nCOPY --from=clone --chown=1000:1000 /out/app-1234abcd/ /\n",
+		"FROM scratch AS baked\nCOPY --from=clone --chown=1000:1000 /out/ /\n",
+	} {
+		if !strings.Contains(df, want) {
+			t.Errorf("the generated Dockerfile does not carry %q:\n%s", want, df)
+		}
+	}
+	// And the run: both checkouts are cloned into their own slug's directory —
+	// the entry's other repository at the branch the definition names for it —
+	// and the revoke ends the step.
+	r := runCatalogClone(t, clone, "printf 'a\\n' > \"$CHECKOUT/a\"\n", "",
+		map[string]string{"REPO_URL": s.RepoURL}, map[string]string{"github.com": "fixture%2Ftoken-1"})
 	if r.err != nil {
-		t.Fatalf("the entry's build step revoke failed: %v\n%s", r.err, r.out0)
+		t.Fatalf("the clone failed: %v\n%s", r.err, r.out0)
 	}
-	calls := r.calls(t, "curl")
-	if len(calls) != 1 {
-		t.Fatalf("the entry's build step made %d curl calls, want the one revoke: %v", len(calls), calls)
+	for _, dir := range []string{"web-2222bbbb", "app-1234abcd"} {
+		if _, err := os.Stat(filepath.Join(r.out, dir, "a")); err != nil {
+			t.Errorf("the clone wrote no checkout at /out/%s: %v\n%s", dir, err, r.out0)
+		}
 	}
-	if !slices.Contains(calls[0], github.DefaultBaseURL+"/installation/token") || !slices.Contains(calls[0], "DELETE") {
-		t.Errorf("the entry's build step does not revoke at GitHub's endpoint: %v", calls[0])
+	var lines []string
+	for _, call := range r.calls(t, "git") {
+		lines = append(lines, strings.Join(call, " "))
 	}
-	data, err := os.ReadFile(filepath.Join(r.dir, "log", "curl-config"))
-	if err != nil {
-		t.Fatalf("the revoke was handed no config: %v", err)
+	for _, want := range []string{
+		"clone --quiet --branch main --single-branch -- https://github.com/acme/web.git " + filepath.Join(r.out, "web-2222bbbb"),
+		"clone --quiet --depth 1 --no-checkout -- https://github.com/acme/app.git " + filepath.Join(r.out, "app-1234abcd"),
+	} {
+		if !slices.ContainsFunc(lines, func(l string) bool { return strings.Contains(l, want) }) {
+			t.Errorf("the clone never ran %q:\n%s", want, strings.Join(lines, "\n"))
+		}
 	}
-	if want := "header = \"Authorization: Bearer fixture/token-1\"\n"; string(data) != want {
-		t.Errorf("the curl config = %q, want %q", data, want)
+	if len(r.calls(t, "curl")) != 1 {
+		t.Errorf("the clone step made %d revokes, want the one: %v", len(r.calls(t, "curl")), r.calls(t, "curl"))
 	}
-	if strings.Contains(string(r.out0), "fixture") {
-		t.Fatalf("the entry's build step printed the token: %s", r.out0)
-	}
+}
 
-	// Every other definition: the credential is the clone step's alone.
-	plain := catalogGitHubSpec(t)
-	pb, err := CatalogBuildRequest("proj-1234", plain)
-	if err != nil {
-		t.Fatal(err)
+// TestBakedCloneHoldsTheBuildToTheCheckoutItComposed: the clone of the
+// build's own repository is held to the one the definition bakes. A definition
+// is rebuilt by whichever repository the nightly check assigns its entry to,
+// which is not always the checkout that composed it: without the guard that
+// rebuild would clone one repository into another's slug path, under the marker
+// and the tag the composed definition gave it, and the smoke — which reads the
+// directory out of the definition and the origin out of the job — would pass on
+// the pairing.
+//
+// What the guard has to do is what its text cannot promise: accept every
+// spelling git clones one repository from and refuse another. The build's
+// REPO_URL is not the composed one: a catalog build passes repourl.CloneURL's
+// canonical form (https://host/owner/name.git) while the definition was composed
+// from the checkout's origin, which git spells with or without ".git", with or
+// without a trailing slash, and in any case.
+func TestBakedCloneHoldsTheBuildToTheCheckoutItComposed(t *testing.T) {
+	s := catalogBuildSpec(t)
+	s.Baked = []imagebake.Repo{
+		{Repo: "acme/app", Slug: "app-1234abcd", URL: "https://Bitbucket.org/Acme/App", Branch: "main"},
 	}
-	pbuild := step(t, pb, "build")
-	if got := strings.Join(pbuild.Args, "\n"); strings.Contains(got, "id=git-credentials") {
-		t.Errorf("an entry that bakes nothing is still handed the credential: %q", got)
+	st := catalogCloneStepOf(t, s)
+	for name, tc := range map[string]struct {
+		repoURL string
+		held    bool
+	}{
+		"the canonical form the nightly check passes": {"https://bitbucket.org/acme/app.git", true},
+		"the origin it was composed from":             {"https://Bitbucket.org/Acme/App", true},
+		"a trailing slash":                            {"https://bitbucket.org/acme/app.git/", true},
+		"the origin, uppercased suffix":               {"https://Bitbucket.org/Acme/App.GIT/", true},
+		"another repository":                          {"https://bitbucket.org/acme/elsewhere.git", false},
+		"another repository, spelt like the origin":   {"https://Bitbucket.org/Acme/Elsewhere", false},
+		"another repository of another host":          {"https://github.com/acme/app.git", false},
+		"a repository whose name starts the same":     {"https://bitbucket.org/acme/app-repo.git", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := runCatalogClone(t, st, "printf 'a\\n' > \"$CHECKOUT/a\"\n", "",
+				map[string]string{"REPO_URL": tc.repoURL}, nil)
+			out := string(r.out0)
+			switch {
+			case tc.held && r.err != nil:
+				t.Fatalf("the clone refused %s, which is the repository this definition bakes: %v\n%s", tc.repoURL, r.err, out)
+			case !tc.held && r.err == nil:
+				t.Fatalf("the clone accepted %s, and the rebuild would bake it into this definition's slug path", tc.repoURL)
+			case !tc.held && !strings.Contains(out, "REPO_URL is not it"):
+				t.Fatalf("the clone refused %s without saying why:\n%s", tc.repoURL, out)
+			}
+		})
 	}
-	if len(pbuild.Volumes) != 0 {
-		t.Errorf("an entry that bakes nothing mounts the volume the credential lives in: %+v", pbuild.Volumes)
+}
+
+// TestBakedCloneRefusesASubmoduleTheCredentialDoesNotCover: the clone of a
+// definition that bakes is the build the credential is spent in, and a checkout
+// it clones is a repository whose submodules it declares itself. Every URL a
+// checkout declares is therefore read and refused when it resolves to a
+// repository the entry does not cover: the build fails, naming the repository,
+// rather than offering the credential to a fetch it was not minted for (B2,
+// spec.md's "fail with a clear message naming the repo that isn't covered").
+//
+// The declaration is read with git's own parser and what the refusal names is
+// the repository the URL resolves to, folded to host/owner/name. That fold is
+// what keeps a credential out of the build log — everything from a "?" or a "#"
+// is off the text printed, and so is the userinfo, which is dropped from the
+// host part alone — and what refuses a repository of the entry's own owner and
+// name that lives on another host, including one whose URL puts a covered
+// repository's path behind its own host's name. A checkout with no .gitmodules
+// declares nothing and the guard passes; one whose .gitmodules git cannot read
+// is not the same answer, and the guard fails rather than passing over
+// declarations it never saw.
+func TestBakedCloneRefusesASubmoduleTheCredentialDoesNotCover(t *testing.T) {
+	s := catalogBakedSpec(t) // github.com/acme/web and github.com/acme/app
+	st := catalogCloneStepOf(t, s)
+	sub := func(url string) string {
+		return "printf '[submodule \"lib\"]\\n\\tpath = lib\\n\\turl = " + url + "\\n' > \"$CHECKOUT/.gitmodules\"\n"
 	}
-	pclone := step(t, pb, catalogCloneStepID)
-	if got := strings.Join(pclone.Args, "\n"); !strings.Contains(got, "trap 'rm -f "+catalogCloneCredential+"' EXIT") {
-		t.Error("the clone step leaves the credential file for a build that mounts no secret")
+	const plain = "printf 'a\\n' > \"$CHECKOUT/a\"\n"
+	var r catalogCloneRun
+	for _, tc := range []struct {
+		name string
+		tree string
+		// named is the repository the refusal has to name, "" when the clone
+		// accepts the declaration.
+		named string
+	}{
+		{"no .gitmodules at all", plain, ""},
+		{"an empty .gitmodules", "printf '# nothing\\n' > \"$CHECKOUT/.gitmodules\"\n", ""},
+		{"a submodule the credential covers", sub("https://github.com/acme/web.git"), ""},
+		{"a submodule it covers, spelt another way", sub("https://github.com/Acme/Web/"), ""},
+		{"a submodule it does not cover", sub("https://github.com/acme/lib.git"), "github.com/acme/lib"},
+		{"a submodule of another host", sub("https://gitlab.com/acme/web.git"), "gitlab.com/acme/web"},
+		// Another host whose URL carries a covered repository's path after an "@":
+		// git contacts evil.example and the credential goes with it, so a fold that
+		// dropped everything before the last "@" of the whole URL would read this as
+		// the covered repository and fetch it.
+		{"another host with a covered path after an @", sub("https://evil.example/x@github.com/acme/app"), "evil.example/x@github.com/acme/app"},
+		// The same with the "@" behind a fragment: what git sends the credential to
+		// is still evil.example, and the fragment is off the URL before the host is
+		// read, so the fold cannot be pushed past it. The declaration is quoted
+		// because git's own config parser would otherwise cut the value at the "#"
+		// and the shell would never see one — a .gitmodules may quote it, and then
+		// this fold is the only thing between that declaration and a fetch.
+		{"another host with a covered path behind a fragment", sub(`"https://evil.example/#@github.com/acme/app"`), "evil.example"},
+		{"a relative submodule", sub("../lib"), "../lib"},
+		// A declaration that is a glob is the text the checkout declared and not
+		// the build's own files: the loop splits what it reads into words, and a
+		// word holding "*" would otherwise be expanded against the working
+		// directory and compared and printed as whatever it matched.
+		{"a declaration that is a glob", sub("*"), "*"},
+		{"a submodule in git's scp spelling", sub("git@github.com:acme/web.git"), "github.com:acme/web"},
+		{"the second of two declared", sub("https://github.com/acme/app.git") + sub("https://github.com/acme/zzz.git"), "github.com/acme/zzz"},
+		{"a URL carrying a credential, on the covered repository", sub("https://x-token:tok3n@github.com/acme/web.git"), "submodule"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r = runCatalogClone(t, st, tc.tree, "", map[string]string{"REPO_URL": s.RepoURL},
+				map[string]string{"github.com": "fixture%2Ftoken-1"})
+			out := string(r.out0)
+			if tc.named == "" {
+				if r.err != nil {
+					t.Fatalf("the clone refused a checkout whose submodules the credential covers: %v\n%s", r.err, out)
+				}
+				return
+			}
+			if r.err == nil {
+				t.Fatalf("the clone accepted %s, and the build clones a repository the credential does not cover", tc.named)
+			}
+			if !strings.Contains(out, tc.named) {
+				t.Errorf("the clone refused without naming %s, so the build log does not say which repository it could not read:\n%s", tc.named, out)
+			}
+			if strings.Contains(out, "https://") {
+				t.Errorf("the refusal echoed a URL, and a submodule URL may carry a credential:\n%s", out)
+			}
+			if strings.Contains(out, "tok3n") || strings.Contains(out, "fixture") {
+				t.Errorf("the refusal put a credential into the build log:\n%s", out)
+			}
+		})
 	}
-	if got := catalogCloneScriptOf(t, pclone); !strings.Contains(got, "installation/token") {
-		t.Error("the clone step of an entry that bakes nothing does not revoke the token it read")
+	// An unreadable .gitmodules is refused, and what is printed is git's own
+	// message: it names the file and the line and never what the line holds.
+	r = runCatalogClone(t, st, sub(`https://github.com/acme/\qweb.git`), "", map[string]string{"REPO_URL": s.RepoURL},
+		map[string]string{"github.com": "fixture%2Ftoken-1"})
+	if r.err == nil {
+		t.Errorf("the clone passed over a .gitmodules it could not read:\n%s", r.out0)
+	} else if strings.Contains(string(r.out0), "acme") {
+		t.Errorf("the refusal carries the line git could not read, which may be a URL with a credential in it:\n%s", r.out0)
+	}
+	// A URL that carries a credential is refused, and the token never reaches the
+	// build log, which is what the fold's dropping everything before the last "@"
+	// is for. An "@" inside the password is the same: the fold drops up to the
+	// LAST one, so what is left is the host and the path and not the tail of a
+	// credential.
+	for _, url := range []string{
+		"https://x-token:tok3n@github.com/acme/lib.git",
+		"https://x-token:pa@ss:tok3n@github.com/acme/lib.git",
+	} {
+		r = runCatalogClone(t, st, sub(url), "", map[string]string{"REPO_URL": s.RepoURL},
+			map[string]string{"github.com": "fixture%2Ftoken-1"})
+		if r.err == nil {
+			t.Fatalf("the clone accepted a submodule URL carrying a credential: %s", url)
+		}
+		for _, secret := range []string{"tok3n", "pa@", "fixture"} {
+			if strings.Contains(string(r.out0), secret) {
+				t.Errorf("the clone put %q, part of a credential in a submodule URL, into the build log:\n%s", secret, r.out0)
+			}
+		}
+		if !strings.Contains(string(r.out0), "github.com/acme/lib") && !strings.Contains(string(r.out0), "submodule") {
+			t.Errorf("the clone refused without naming the repository or the submodule:\n%s", r.out0)
+		}
+	}
+	// A token in a query or a fragment is not a repository's name, and it does not
+	// reach the log either.
+	for _, url := range []string{
+		"https://github.com/acme/lib.git?access_token=tok3n",
+		"https://github.com/acme/lib.git#tok3n",
+	} {
+		r = runCatalogClone(t, st, sub(url), "", map[string]string{"REPO_URL": s.RepoURL},
+			map[string]string{"github.com": "fixture%2Ftoken-1"})
+		if r.err == nil {
+			t.Fatalf("the clone accepted the uncovered repository in %q", url)
+		}
+		if strings.Contains(string(r.out0), "tok3n") {
+			t.Errorf("the clone printed the token %q carried:\n%s", url, r.out0)
+		}
+		if !strings.Contains(string(r.out0), "github.com/acme/lib") {
+			t.Errorf("the clone refused without naming the repository:\n%s", r.out0)
+		}
+	}
+	// A control character in a declaration cannot rewrite the log line it appears
+	// in: what is printed is the repository's name and nothing around it.
+	r = runCatalogClone(t, st, sub("https://github.com/acme/\x1b[31mzzz.git"), "", map[string]string{"REPO_URL": s.RepoURL},
+		map[string]string{"github.com": "fixture%2Ftoken-1"})
+	if r.err == nil {
+		t.Fatal("the clone accepted a URL carrying a control character")
+	}
+	if strings.ContainsAny(string(r.out0), "\x1b\x07") {
+		t.Errorf("the clone printed a control character from a submodule URL:\n%q", r.out0)
+	}
+	if !strings.Contains(string(r.out0), "github.com/acme/[31mzzz") {
+		t.Errorf("the clone refused without naming the repository:\n%s", r.out0)
 	}
 }

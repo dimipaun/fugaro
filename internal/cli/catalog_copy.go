@@ -140,6 +140,26 @@ func writeCatalogDockerfile(ctx context.Context, b *blobx.Bucket, open gitprov.O
 	return src, dropped, nil
 }
 
+// catalogBakedRepos is what the copy a build runs bakes, read from the copy's
+// own bytes: the repositories whose checkouts the generated stages copy out of
+// the image the clone step tags, the build's own last (imagebake.BakedRepos).
+// Both submit sites read it from the object the build will read rather than from
+// the plan the command held, because that copy is the definition the build runs.
+//
+// A copy an earlier release composed bakes with a clone inside the entry's own
+// build — its stages name no clone URL, and this release hands an entry's build
+// no git credential at all (B8, F19) — so it is refused here, naming the one
+// command that composes it again, instead of being submitted to fail in the
+// build with `could not read Username`.
+func catalogBakedRepos(def []byte, entry string) ([]imagebake.Repo, error) {
+	repos := imagebake.BakedRepos(def)
+	if _, baked := imagebake.BakedSlug(def); baked && len(repos) == 0 {
+		return nil, fmt.Errorf("the copy of the catalog entry %s was composed by an earlier release, whose clone ran inside the entry's build: run fugaro image build %s to compose it again",
+			pluginwire.Printable(entry), pluginwire.Printable(entry))
+	}
+	return repos, nil
+}
+
 // refuseMixedCatalogCopy refuses a copy that is not the one this command
 // staged: the definition read back from the bucket, the commit and the context
 // digest have to be the three values one resolution answered (src).
