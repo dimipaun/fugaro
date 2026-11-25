@@ -155,7 +155,7 @@ type exemptListing struct {
 // a run.
 var exemptListings = map[string]exemptListing{
 	"accounts ls":              {"a listing: the repository's accounts as a table, or a document under --json", true},
-	"accounts pool ls":         {"a listing: the pools and the members each one walks, printed whole", false},
+	"accounts pool ls":         {"a listing: the pools and the members each one walks, as a table or a document", true},
 	"artifacts ls":             {"a listing: what a run's record says it delivered, as a table or a document", true},
 	"backends ls":              {"a listing: the backends this fugaro knows and the one the project uses", true},
 	"backlog list":             {"a listing: the project's backlog items, which node each came from included, table or document", true},
