@@ -104,6 +104,11 @@ func init() {
 	// beside the rows, never instead of them, and only when a grouping was
 	// asked for.
 	add("runs ls", lsDoc{}, "groups")
+	// The same reference names the index's own two facts about itself, which
+	// a listing carries only when the index answered it (D3215): a reader that
+	// showed the rows of an index still building as the whole history would be
+	// showing a number the document does not support.
+	add("runs ls", lsDoc{}, "index_complete", "folded_through")
 	add("diagnose", Diagnosis{}, "row", "row.pr_url", "row.reason", "row.cost.route_by", "row.cost.reported_usd",
 		"row.base_branch",
 		"row.project_layer", "row.project_layer.sha256", "row.project_layer.generation", "row.project_layer.applied", "row.config_sha256",

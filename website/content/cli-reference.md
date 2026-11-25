@@ -8844,15 +8844,37 @@ List runs with their status, stage, cost and PR
 List runs, newest first -- created descending, then run descending --
 joining the runs bucket with what the backend knows.
 
-By default ls shows the last 7 days of the local config's repositories (every
-repository in the bucket when the config lists none). A run shows as succeeded
-only when its result.json says so; an execution that ended without finalizing
-is an infra_error.
+By default ls lists the newest 50 runs by time plus every run that is
+still going, whatever its age, read from the installation's run index rather
+than by scanning the bucket: no listing of the bucket's objects is made on
+that path, so the listing costs a handful of requests however much history
+there is. Its totals are then the index's own summary -- every run the
+installation's index carries, not the page -- which is the figure of a
+listing that covers the installation: one narrowed to some of its
+repositories (--repo, or a local config that lists them) totals the rows
+it read, as a windowed listing does. While the index is still building,
+the listing says so in one line above its table, and --json carries
+index_complete and folded_through.
+
+A run shows as succeeded only when its result.json says so; an execution that
+ended without finalizing is an infra_error.
+
+--since W bounds a window instead of a count: every run of it is listed,
+bounded by the window and not by history, and its totals are those rows'.
+--mine and --batch bound one the same way. A listing the index cannot answer
+reads the bucket's own window instead, and that window is the last
+7 days of the local config's repositories (every repository in the
+bucket when the config lists none). An index that could not be read says so
+in one note; an index that has folded nothing yet -- a fresh installation,
+before its first fold -- reads the window in silence and carries no index
+fact either way, which is the state every installation is in until then.
 
 --limit N prints the newest N rows of the listing and shortens nothing else:
-the window is still read, and the totals line, in the text listing and in
---json's totals, is the whole window's, because a page is not a total. 0,
-the default, prints every row of the window.
+the totals line, in the text listing and in --json's totals, is the listing's
+own -- the index's summary by default, and the rows of the window with --since
+-- because a page is not a total. 0, the default, prints every row of it -- a
+default listing's own page (the newest 50 plus the runs still going), or the
+whole window when --since, --mine or --batch bounds the listing instead.
 
 --after RUN-ID starts the listing after that run: the rows strictly after it
 in the listing's order, so the same argv with the last id of a page is the
@@ -8939,7 +8961,7 @@ Flags:
 | `--group-by` | string | "" | no | group the listing by one field (failure_class) |
 | `-h`, `--help` | bool | `false` | no | help for ls |
 | `--json` | bool | `false` | no | print machine-readable output |
-| `--limit` | int | `0` | no | print only the newest N rows (0, the default, is every row of the window; the totals stay the window's) |
+| `--limit` | int | `0` | no | print only the newest N rows of the listing (0, the default, is every row of it: a default listing's page, a bounded one's whole window; the totals stay the listing's) |
 | `--mine` | bool | `false` | no | only runs you requested |
 | `--pr` | int | `0` | no | only runs on this pull request (needs one repository; --since defaults to 90d) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
