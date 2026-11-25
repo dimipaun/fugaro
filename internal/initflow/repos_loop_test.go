@@ -3,6 +3,7 @@ package initflow
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -145,6 +146,104 @@ func TestRepoLinesPrintUnderTheirStageLine(t *testing.T) {
 	if repos < step {
 		t.Errorf("the per-repository lines are above the stage's own line, want them under it:\n%s", view)
 	}
+}
+
+// TestRepoLinesPrintUnderTheirStageRow: a plan-only run prints no step: the
+// rows its plan view draws at the end ARE its account (preview, finish), so a
+// reporting stage's lines go under its own row there and not where the stage
+// was recorded, which is above every row (U13, spec §Output).
+func TestRepoLinesPrintUnderTheirStageRow(t *testing.T) {
+	var log []string
+	var b bytes.Buffer
+	s := &reporting{fake: &fake{name: "secrets", log: &log}, lines: threeRepos()}
+	opts := yesOpts()
+	opts.Out = &b
+	opts.PlanOnly = true
+	opts.Report = reporterTo(&b, report.Options{})
+	opts.OnRepos = func(ls []RepoLine) { fmt.Fprintf(&b, "repos: %d\n", len(ls)) }
+	if _, err := Run(context.Background(), []Stage{s}, opts); err != nil {
+		t.Fatal(err)
+	}
+
+	view := b.String()
+	// The row is the only line the summary is printed on in a plan-only run:
+	// it is the stage's row, and in an applying run the same sentence is the
+	// stage's step line instead.
+	row, repos := -1, -1
+	for i, l := range outputLines(view) {
+		if strings.Contains(l, "3 repositories: 1 done") {
+			row = i
+		}
+		if l == "repos: 3" {
+			repos = i
+		}
+	}
+	if row < 0 || repos < 0 {
+		t.Fatalf("the view has no stage row (%d) or no per-repository lines (%d):\n%s", row, repos, view)
+	}
+	if repos < row {
+		t.Errorf("the per-repository lines are above the stage's own row, want them under it:\n%s", view)
+	}
+}
+
+// TestLoopKeepsItsOwnDetailOnItsOwnResults: three of the results a run records
+// are the loop's own sentence and not a stage's — a stage that waits for the
+// stop ahead of it, one that waits for billing, and one that failed — and the
+// summary a reporting stage's lines make is the stage's detail, not the
+// loop's. Replacing these would put a count where the account's waiting line
+// says what a stage waits for (waitTarget, flushWaits) and would drop the
+// sentence the schema promises on a failed stage (`stage.detail`,
+// setup-events.schema.json).
+func TestLoopKeepsItsOwnDetailOnItsOwnResults(t *testing.T) {
+	t.Run("a stage that waits for the one ahead of it", func(t *testing.T) {
+		var log []string
+		stopped := &fake{name: "installation", log: &log, status: Status{State: Blocked, Detail: "the installation is not finished"}}
+		s := &reporting{fake: &fake{name: "secrets", log: &log}, lines: threeRepos()}
+		var b bytes.Buffer
+		opts := yesOpts()
+		opts.Out = &b
+		opts.Report = reporterTo(&b, report.Options{})
+		opts.OnRepos = func(ls []RepoLine) { fmt.Fprintf(&b, "repos: %d\n", len(ls)) }
+		res, err := Run(context.Background(), []Stage{stopped, s}, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := res.Stages[1]
+		if got.Detail != "waits for installation" {
+			t.Errorf("the waiting stage's detail is %q, want what it waits for: the account's waiting line reads its target off this field (waitTarget)", got.Detail)
+		}
+		if got.Repos != nil {
+			t.Errorf("the waiting stage came back with %+v, want no lines: it did not run, so the lines it reported are not this run's account of it", got.Repos)
+		}
+		// The account's closing line names what the steps wait for, read off
+		// the detail above (waitTarget, flushWaits): a count in its place is
+		// the line a summary dropped there would print.
+		if !strings.Contains(b.String(), "it needs installation)") {
+			t.Errorf("the account does not name what the steps wait for:\n%s", b.String())
+		}
+		if strings.Contains(b.String(), "repos:") {
+			t.Errorf("the lines of a stage that did not run were printed:\n%s", b.String())
+		}
+	})
+
+	t.Run("a stage that failed", func(t *testing.T) {
+		var log []string
+		s := &reporting{fake: &fake{name: "secrets", log: &log, applyErr: errors.New("the API said no")}, lines: threeRepos()}
+		res, err := Run(context.Background(), []Stage{s}, yesOpts())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Failed == nil {
+			t.Fatal("the run did not fail")
+		}
+		got := res.Stages[0]
+		if got.Detail != "the API said no" {
+			t.Errorf("the failed stage's detail is %q, want the loop's own sentence: the schema promises the failure there, and the lines do not replace it", got.Detail)
+		}
+		if len(got.Repos) != len(threeRepos()) {
+			t.Errorf("the failed stage carries %+v, want the lines it reported beside the failure", got.Repos)
+		}
+	})
 }
 
 // TestLoopRedactsRepoLines: a repository name and a detail can quote a value

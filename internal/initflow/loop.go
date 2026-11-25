@@ -480,6 +480,13 @@ func (l *loop) reposOf(s Stage, r StageResult) StageResult {
 	if !ok {
 		return r
 	}
+	if waitingState(r.State) {
+		// The stage was not run in this pass — it waits for the stage before
+		// it — so the lines it reported are not this run's account of it (the
+		// preview behind a stop is where they were read), and the account
+		// prints no row of its own for them to sit under (flushWaits).
+		return r
+	}
 	lines := rep.RepoLines()
 	if len(lines) == 0 {
 		return r
@@ -489,7 +496,14 @@ func (l *loop) reposOf(s Stage, r StageResult) StageResult {
 		ln.Repo, ln.Detail = l.redact(ln.Repo), l.redact(ln.Detail)
 		r.Repos[i] = ln
 	}
-	r.Detail = repoSummary(r.Repos)
+	if r.State != Failed {
+		// A stage that reported lines says what the lines make of them, which
+		// is the same sentence from every directory. A failure is the loop's
+		// own sentence about the stage — what the schema promises on a failed
+		// stage, and what the account prints under the cross — and the lines,
+		// which the result still carries beside it, do not replace it (U13).
+		r.Detail = repoSummary(r.Repos)
+	}
 	return r
 }
 
@@ -622,7 +636,6 @@ func (l *loop) preview(ctx context.Context, stages []Stage) error {
 			// An applying run's rows are the review screen instead, and the
 			// execution pass behind them owns the account (see below).
 			l.emitStage(r)
-			l.emitRepos(r)
 		}
 	}
 	if !l.o.PlanOnly {
@@ -1044,11 +1057,10 @@ func (l *loop) record(r StageResult) {
 	}
 	l.res.Stages = append(l.res.Stages, r)
 	l.emitStage(r)
-	// The per-repository lines go under the stage's own line, which is the
-	// header they belong to, and that line is the last thing record prints
-	// (endStep): handed over here they would go above it (U13, spec §Output).
-	defer l.emitRepos(r)
 	if l.o.Report == nil || !l.executing {
+		// No step is printed here: the rows of this run are printed at the end
+		// (finish, view), and the per-repository lines go under their own row
+		// there rather than above it here (U13, spec §Output).
 		return
 	}
 	if waitingState(r.State) {
@@ -1056,6 +1068,9 @@ func (l *loop) record(r StageResult) {
 		return
 	}
 	l.endStep(r, shown)
+	// The stage's own line is drawn: its per-repository lines go under it,
+	// which is the header they belong to (U13, spec §Output).
+	l.emitRepos(r)
 }
 
 // waitingState is a stage that did not run and is not this run's to give: it
@@ -1175,6 +1190,9 @@ func (l *loop) view(rs []StageResult) {
 		}
 		for _, r := range rs {
 			fmt.Fprintln(l.o.Detail, l.row(r, r.Detail, true))
+			// The row is this pass's header for the stage, as it is in the
+			// plain view below (U13, spec §Output).
+			l.emitRepos(r)
 		}
 		return
 	}
@@ -1184,6 +1202,12 @@ func (l *loop) view(rs []StageResult) {
 	for _, r := range rs {
 		l.logRow(r)
 		fmt.Fprintln(l.o.Out, l.screenRow(r))
+		// The row is the stage's header in a run that prints rows rather than
+		// steps — a plan-only run, and one with no reporter — so its
+		// per-repository lines go under it (U13, spec §Output). A run whose
+		// reporter prints a step per stage has emitted them already (record),
+		// and emitRepos hands them over once either way.
+		l.emitRepos(r)
 	}
 }
 
