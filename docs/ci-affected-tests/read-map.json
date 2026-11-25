@@ -19414,6 +19414,7 @@
         "internal/mobilesession/**",
         "internal/orchestrator/**",
         "internal/orchestrator/adopt.go",
+        "internal/orchestrator/claim.go",
         "internal/orchestrator/decide/**",
         "internal/orchestrator/endpoint/**",
         "internal/orchestrator/fold_discovered.go",
