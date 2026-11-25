@@ -6962,34 +6962,67 @@ check_runs_json() {
 }
 
 # runs_json SHA prints the runs API's own shape for SHA, one run per line of
-# the runs state file ("<sha><TAB><title><TAB><suite>" and an optional fourth
-# field, the workflow file the run belongs to). The fourth field is what lets a
-# test put a run titled like a full ci run in the listing under another
-# workflow file: only the gate's own .path filter keeps it out. Each run is
-# numbered by its line, which is the run_number the gate orders the runs by
-# (its newest full run is the one whose checks count). Without the file every
+# the runs state file ("<sha><TAB><title><TAB><suite>" and two optional fields,
+# the workflow file the run belongs to and the run's own state). The file field
+# is what lets a test put a run titled like a full ci run in the listing under
+# another workflow file: only the gate's own .path filter keeps it out. The
+# state field -- running, failed or cancelled, success when it is not written --
+# is the run's own verdict, which the gate reads to end a wait on a run that is
+# over and red. Each run is numbered by its line, which is the run_number the
+# gate orders the runs by (its newest full run is the one whose checks count).
+# A state file that EXISTS and holds no line for SHA is a commit with no ci run
+# at all, which is what the gate dispatches one for; with no file at all every
 # commit has one full run of .github/workflows/ci.yml, whose check suite is the
-# commit itself.
+# commit itself, and that run is over and green.
 runs_json() {
   tab=$(printf '\t')
   number=0
   {
-    if [ -s "${FAKE_GH_RUNS:-}" ]; then
-      while IFS="$tab" read -r rsha title suite file; do
+    if [ -e "${FAKE_GH_RUNS:-}" ]; then
+      while IFS="$tab" read -r rsha title suite file state; do
         [ -n "$rsha" ] || continue
         number=$((number + 1))
         [ "$rsha" = "$1" ] || continue
         [ -n "$file" ] || file=.github/workflows/ci.yml
-        printf '%s\t%s\t%s\t%s\t%s\n' "$rsha" "$title" "$suite" "$file" "$number"
+        [ -n "$state" ] || state=success
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$rsha" "$title" "$suite" "$file" "$number" "$state"
       done <"$FAKE_GH_RUNS"
     else
-      printf '%s\t%s\t%s\t%s\t%s\n' "$1" 'ci (full)' "$1" .github/workflows/ci.yml 1
+      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$1" 'ci (full)' "$1" .github/workflows/ci.yml 1 success
     fi
   } | jq -Rn '
     [inputs | select(length > 0) | split("\t")
-     | {head_sha: .[0], display_title: .[1], check_suite_id: .[2], path: .[3], run_number: (.[4] | tonumber), id: 1}]
+     | {head_sha: .[0], display_title: .[1], check_suite_id: .[2], path: .[3],
+        run_number: (.[4] | tonumber), id: (.[4] | tonumber), state: .[5]}
+     | . + (if .state == "running" then {status: "in_progress", conclusion: null}
+            elif .state == "failed" then {status: "completed", conclusion: "failure"}
+            elif .state == "cancelled" then {status: "completed", conclusion: "cancelled"}
+            elif .state == "success" then {status: "completed", conclusion: "success"}
+            else error("fake gh: unknown run state \(.state)") end)
+     | . + {html_url: "https://github.com/dimipaun/fugaro/actions/runs/\(.id)"}
+     | del(.state)]
     | {workflow_runs: .}'
 }
+
+case "$1 ${2:-}" in
+  "workflow run")
+    # A dispatch, which the gate starts itself for a commit that has no ci run
+    # at all. The run it starts is appended to the runs state file -- the ref's
+    # tip, a full title, that commit's own check suite and the state a freshly
+    # dispatched run is in -- so the next read of that commit answers a run the
+    # gate can wait on, numbered last and so newest. The call is in the log (the
+    # top of this script), so a test counts the dispatches.
+    ref=""
+    prev=""
+    for a in "$@"; do
+      [ "$prev" = "--ref" ] && ref=$a
+      prev=$a
+    done
+    head=$(git -C "${FAKE_GH_ORIGIN:?}" rev-parse "refs/heads/$ref")
+    printf '%s\t%s\t%s\t%s\t%s\n' "$head" 'ci (full)' "$head" .github/workflows/ci.yml running >>"${FAKE_GH_RUNS:?}"
+    exit 0
+    ;;
+esac
 
 case "$api" in
   */check-suites/*)
