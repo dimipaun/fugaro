@@ -54,7 +54,7 @@ func TestDecodeReadsAHandWrittenCloneURLsKey(t *testing.T) {
 // member name is the whole reason for the type.
 func TestCloneURLsRoundTripThroughTheNode(t *testing.T) {
 	const url = "https://github.com/acme/app.git"
-	in := &Policy{Version: Version, Budget: Budget{Mode: "off"}, CloneURLs: CloneURLs{"github/acme/app": url}}
+	in := &Policy{Version: Version, Budget: Budget{Mode: "observe"}, CloneURLs: CloneURLs{"github/acme/app": url}}
 	raw, err := json.Marshal(in)
 	if err != nil {
 		t.Fatal(err)

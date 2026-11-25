@@ -813,6 +813,13 @@ func (r *run) routeGateway(ctx context.Context, o *gateway.Options) error {
 		// which is also every run with no record.
 		return nil
 	}
+	// The workspace's own slip is claimed here, and here only: this is where
+	// the run learns it has a kind served there, and a claim belongs to the
+	// run's bootstrap (WC8, R3, R4). It is the same call against the other
+	// service, with the id the launcher wrote for it (creds.PersonSlipEnv) and
+	// the address the record carries, and a run the workspace granted no slip
+	// asks for none.
+	r.claimWorkspaceSlip(ctx, route.Address)
 	ws, err := r.workspaceUpstream(route.Address)
 	if err != nil {
 		return fmt.Errorf("starting the gateway: %w", err)
@@ -985,9 +992,15 @@ func (r *run) readRoute(ctx context.Context) (creds.Route, error) {
 // service (F30, O4), which SECURITY.md states: the workspace's service verifies
 // the run by the token that admitted it.
 //
-// No slip and no auth declaration travel with it (R18). gateway.Workspace has
-// no field for either, so this is a property of the shape rather than of a rule
-// this function keeps.
+// What travels with it is the workspace's own slip and never the member's
+// (R4, WC8): the claim this run took at bootstrap under C1's headers, and
+// nothing else. gateway.Workspace has no field for a member's slip and none for
+// an auth declaration, so this is a property of the shape rather than of a rule
+// this function keeps (R18).
+//
+// The slip is read from the hold rather than passed in, so this function cannot
+// be called with one that disagrees with the secret the run holds: routeGateway
+// claims it just above, and a run that holds none hands over none.
 func (r *run) workspaceUpstream(address string) (*gateway.Workspace, error) {
 	if address == "" {
 		// DecodeRoute refuses a record without one, so a route that moves a
@@ -1019,14 +1032,18 @@ func (r *run) workspaceUpstream(address string) (*gateway.Workspace, error) {
 		// be a call refused one at a time instead of a run stopped once.
 		return nil, errors.New("a run routed to the workspace has no run identity, and the workspace's service verifies the run by the identity that admitted it")
 	}
-	return &gateway.Workspace{
+	ws := &gateway.Workspace{
 		Address:    address,
 		Job:        job,
 		RunIDToken: r.runIDToken,
 		IDToken: func(ctx context.Context, audience string) (string, error) {
 			return metadataIDToken(ctx, r.d.Env, audience)
 		},
-	}, nil
+	}
+	if hold := r.workspaceSlipHold(); hold != nil {
+		ws.SlipID, ws.SlipClaim = hold.id, hold.secret
+	}
+	return ws, nil
 }
 
 // execName is what a local invocation is called, for the sentences that have

@@ -137,6 +137,12 @@ type initEngine struct {
 	// gates would then never run on it. Cleared by the landing, as accessSeed is.
 	accessMark bool
 
+	// reposState is the run's per-repository state: the enrolled list every
+	// stage reads (memoized here, so one command reads the repositories once)
+	// and the lines each stage and step reported about them
+	// (update_repos.go).
+	reposState reposState
+
 	// flagFactVersion is the version the self-flag step's own read of the
 	// creation fact answered with, and 0 where that step read nothing
 	// (update_selfflag.go). The marker step asks it beside the gate's version
@@ -2363,9 +2369,14 @@ func (e *initEngine) budgetBackendOn() bool {
 // it could always take, the installation's own project — is untouched.
 // The skip is the one that reads (Check and not skip): the run index's
 // composite indexes are the Firebase root's and only its apply creates them
-// (RI2, F10), so a converged installation is still this stage's while the
-// root's state does not carry them — and while the credential may make the
-// IAM changes that root's apply makes, which is F34's own operator case.
+// (RI2, F10), and so is the workspace's read of a member's database (WS1,
+// D2988), so a converged installation is still this stage's while the root's
+// state does not carry them — and while the credential may make the IAM
+// changes that root's apply makes, which is F34's own operator case. The
+// second question is what makes a member's plain `fugaro update` the whole of
+// its step: the pin `fugaro workspace add` wrote is not in any state yet, so
+// the very next update is one this stage runs, with no flag and no second
+// command.
 //
 // firebaseSkip answers it, and everything it cannot read leaves F34's line
 // standing, because the update of a converged installation must not fail over
@@ -2382,7 +2393,7 @@ func (e *initEngine) firebaseSkip(ctx context.Context) string {
 		if err := e.setup(ctx); err != nil {
 			return known
 		}
-		wait, why := e.r.runIndexIndexesWait(ctx, e.c, e.bin, e.spec.StateBucket, cmp.Or(e.r.o.firebaseProject(), e.lc.GCPProject))
+		wait, why := e.r.firebaseRootWait(ctx, e.c, e.bin, e.spec.StateBucket, cmp.Or(e.r.o.firebaseProject(), e.lc.GCPProject), e.lc)
 		if !wait {
 			return known + why
 		}

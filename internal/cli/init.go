@@ -599,7 +599,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// this is where its answers travel. The help names the members because the
 	// file is the reader's whole contract, and it says what the file is not: an
 	// answer is not a confirmation.
-	f.StringVar(&o.answersFile, "answers-file", "", "answer the wizard's questions from one JSON document: "+strings.Join(setupAnswerKeys(), ", ")+" — the questions a first run asks (--gcp-project, --location or its precise form --region, --name, --rigor, --budget with --budget-currency, and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, the permanent Firestore location, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation")
+	f.StringVar(&o.answersFile, "answers-file", "", "answer the wizard's questions from one JSON document: "+strings.Join(setupAnswerKeys(), ", ")+" — the questions a first run asks (--gcp-project, --location or its precise form --region, --name, --rigor, --budget with --budget-currency, and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation")
 	// --events writes the same account --json prints as a stream of lines
 	// instead of one document (setup_events.go, D2904 of
 	// docs/console-improvements). The help names every kind of line, because
@@ -628,7 +628,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.StringVar(&o.alertEmail, "alert-email", "", "where failed image checks and rebuilds are reported (default: the local config's)")
 	f.BoolVar(&o.noLogIsolation, "no-log-isolation", false, "leave Fugaro job logs in _Default instead of their own log bucket")
 	f.StringVar(&o.registryCleanup, "registry-cleanup", "", "Artifact Registry cleanup: dry-run (the default), on or off")
-	f.StringVar(&o.firebase, "firebase-project", "", "turn the shared budget on: the value is the installation's own GCP project id (the default; the flag is only needed to turn the shared budget on), and any other id is refused. It is the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location: confirmed by the person at the terminal where it is a first-time question, already there on a run that re-converges an installation that has it) and the config")
+	f.StringVar(&o.firebase, "firebase-project", "", "turn the shared budget on: the value is the installation's own GCP project id (the default; the flag is only needed to turn the shared budget on), and any other id is refused. It is the flag that asks for the backend — a run without it builds none — and that backend is three applies: the database's rules and mark, the Firestore history database (the run creates it in the installation's own region where Firestore offers it, and otherwise in the place's default region, and its location is permanent: where the run creates the database it prints where, and that the location can never be changed, and creates it, asking nothing — nothing is typed, and --json, a pipe and a coding agent's session are no different; it is already there on a run that re-converges an installation that has it) and the config")
 	f.StringVar(&o.budgetMode, "budget-mode", "", "with --firebase-project: observe or enforce: the jobs' budget mode in the project config, and the project-wide mode in the database (an absent one is seeded observe)")
 	f.StringArrayVar(&o.budgetAdmins, "budget-admin", nil, "with --firebase-project: an IAM member who may change caps and kill switches besides the GCP project's owners and editors (repeatable; default: the local config's terraform.budget_admins)")
 	f.BoolVar(&o.createProject, "create-project", false, "create the GCP project --gcp-project names and add Firebase to it, as you, at your own real terminal (never with --json; nothing is typed there, being at it is what confirms the step). A first run of "+d.name+" always creates its project, so the flag only says so explicitly. An ID that already exists is refused unless an earlier run of "+d.name+" made it Fugaro's (the resume), and one that holds nothing of Fugaro's is adopted instead: "+d.name+" uses it as if it had created it. Billing is not linked unless --link-billing is also given; without it "+d.name+" prints the one gcloud command that links it, unless the run asks the billing question (no --json and no coding agent's session) and has no terminal, where it is refused there at once instead, in the sentence naming --link-billing")
@@ -717,6 +717,15 @@ type initRun struct {
 	// they always have. repLog is the log it keeps, closed when the run ends.
 	rep    *report.Reporter
 	repLog report.Sink
+	// repoDoor is whether this run is the standalone `--repo` door rather than
+	// the converge. The converge's loop prints one line per stage and its plan
+	// view is tf.Brief; the standalone door has no loop, so it prints the
+	// repository's own line itself (planBlock) and its refusal is the one a
+	// person reads rather than an agent's (guard) — both are the owner's
+	// feedback of 2026-11-24, whose `fugaro update --repo` printed two init
+	// banners, a line per refreshed resource, Terraform's whole plan and an
+	// instruction addressed to a coding agent, at the owner's own terminal.
+	repoDoor bool
 	// detail is where a run driven by another keeps its own account of itself,
 	// and it is set only there: the refresh the converge's checkout stage runs
 	// (refreshOptions.detail) writes its lines where that converge keeps its
@@ -1184,9 +1193,57 @@ func (r *initRun) lockWorkdirs(project string) (func(), error) {
 	return func() { _ = lock.Release() }, nil
 }
 
+// markTheUpdateReads makes this run's every read of a checkout's fugaro.yaml
+// the read of the file this run's own removal offer leaves behind: the word
+// that was a budget mode taken out of the bytes before anything judges them
+// (fugaroYAMLWithoutRemovedMode, AB8b, F22). The published node's own read is
+// the converge's, marked by policyMemo rather than here.
+//
+// It is marked once, at the door, and not at each read, because the readers of
+// a checkout's file along an update's way are many — the repository and
+// checkout stages, the image refresh, the image check, the image stage, the
+// job resolution — and a flag each of them has to remember is a flag one of
+// them is found without. Both entry points of the door mark it, because both
+// converge a checkout: runInit and runInitRepo (--repo). `fugaro setup` is not
+// marked, and neither is `fugaro update --check`: setting up creates an
+// installation rather than moving one, and a check writes nothing, which is
+// the difference rewriteLocalBudgetMode draws for the word's own door. Every
+// other door reads the bytes as they are and refuses a file that still says
+// the word (D3022).
+func (r *initRun) markTheUpdateReads() {
+	if r.o.doorName() != updateDoor.name {
+		return
+	}
+	r.cmd.SetContext(theUpdateLeavesTheRemoval(r.cmd.Context()))
+}
+
+// policyMemo is the converge's read of the published policy node, and the one
+// way a run that converges reaches the memo: the node is read as the policy
+// stage of this same run is about to write it (policyReadOnce.carry), because
+// that stage is what rewrites a node the release behind published — a
+// predecessor's version, or the word the budget mode's vocabulary dropped
+// (projectpolicy.Migrate, AB8a, D3025).
+//
+// Read strictly, a stage that asks the node a question — where a secret is
+// stored for the repository, what the spec's bitbucket_proxied fact is, whether
+// the project published at all (Readiness's D11 gate) — answers "no policy" over
+// the node the operator does hold, and the run stops on it: the second command
+// CLAUDE.md's HARD RULE forbids.
+//
+// Every reader of this memo inside the converge goes through here, so a launch's
+// strict read (cloudEnv.policy, read directly) and this one are never confused:
+// `git grep -n 'r\.policy\.\|&r\.policy\|&e\.r\.policy'` inside internal/cli
+// finds the converge's reads, and each one names this function.
+func (r *initRun) policyMemo() *policyReadOnce {
+	r.policy.carry = true
+	return &r.policy
+}
+
 func runInit(r *initRun) error {
 	cmd, o := r.cmd, r.o
 	defer func() { clear(r.appKeyMem) }()
+	r.markTheUpdateReads()
+
 	// The answers file, before anything is checked or asked: it fills the
 	// wizard's questions' flags, so a run that reads one is a run that was
 	// passed them (setup_answers.go).
@@ -1875,6 +1932,15 @@ func (r *initRun) stageDetail() io.Writer {
 		// with no log (G5).
 		return r.detail
 	}
+	if r.repoDoor && r.repLog != nil {
+		// The standalone --repo door is not a stage of a converge: these lines
+		// are its whole account of the checkout, and the step above them is one
+		// line among many rather than the converge's own list, so they stay on
+		// the terminal where they have always been and land in the log beside
+		// it (loggedOut). Terraform's own stream is not one of them: progress
+		// keeps that in the log alone.
+		return loggedOut(r.w, r.repLog)
+	}
 	return streamOut(r.rep, r.repLog, r.w)
 }
 
@@ -1928,6 +1994,19 @@ func (r *initRun) accountWriter() io.Writer {
 func (r *initRun) planBlock(plan *tf.Plan) {
 	if r.rep == nil || r.repLog == nil {
 		fmt.Fprint(r.w, tf.Summary(plan))
+		return
+	}
+	if r.repoDoor {
+		// The standalone --repo door has no converge loop, so the plan IS the
+		// step: one line with what the plan holds and the log the whole of it —
+		// Terraform's own account, every address and attribute path — is in
+		// (the owner's feedback of 2026-11-24). tf.Brief's plain-words view
+		// goes to the log beside Summary rather than the screen, because a
+		// refusal this door stops on prints its own short block in those words
+		// (guard), and a plan that is not refused is confirmed by the counts
+		// this line carries.
+		r.rep.Step("repository " + r.res.Repo).DoneWhole(tf.Counts(plan) + " (log: " + r.repLog.Path() + ")")
+		fmt.Fprint(r.rep.Stream(), tf.Brief(plan)+tf.Summary(plan))
 		return
 	}
 	fmt.Fprint(r.w, tf.Brief(plan))
@@ -2009,8 +2088,8 @@ func (o *initOptions) checkOnboardRepo() error {
 // goes in — its own, or a separate one. An empty `--firebase-project=` is
 // pflag's empty value, which reads as no flag at all, deliberately: a script
 // whose variable is unset names no project, and three applies against the
-// installation's own project (one of them a Firestore database with a
-// permanent location) must not be what an empty string buys.
+// installation's own project (one of them a Firestore database whose location
+// can never be changed) must not be what an empty string buys.
 //
 // Every site that resolves the id — the flag's validation here, the pairing
 // rule, the Firebase engine and the commands it prints, the review screen —
@@ -2957,10 +3036,11 @@ const (
 // of its branches, whatever it had been given.
 //
 // What is left is the run's own answer, which decides the whole answer, and
-// ownAnswer is what keeps it from widening a step: creating the project,
-// linking the billing account and the Firestore location are the person's alone
-// (D12, 2026-10-20), and only a billable first image build and replacing a
-// registry tag are covered by the answer the command was opened with.
+// ownAnswer is what keeps it from widening a step: creating the project and
+// linking the billing account are the person's alone (D12, 2026-10-20), and
+// only a billable first image build and replacing a registry tag are covered
+// by the answer the command was opened with. The Firestore database's location
+// is neither: no step confirms it (D3090 of docs/location-preference).
 //
 // The run's own answer is r.o.yes, which no flag sets any more (T11): what
 // still carries one is an internal converge a command opens on an answer the
@@ -3010,19 +3090,17 @@ func (r *initRun) askClass(what string, ownAnswer bool) (confirmed, reachable bo
 }
 
 // askTyped is askClass for a step the run's own answer never reaches: creating
-// the project, linking the billing account and the Firestore location in
-// `setup` are the person's alone (D12, 2026-10-20). A pipe, --json,
-// --non-interactive or a coding agent's session answers them no more than it
-// answers anything else.
+// the project and linking the billing account in `setup` are the person's alone
+// (D12, 2026-10-20). A pipe, --json, --non-interactive or a coding agent's
+// session answers them no more than it answers anything else.
 func (r *initRun) askTyped(what string) (confirmed, reachable bool, err error) {
 	return r.askClass(what, false)
 }
 
 // askCovered is askClass for a step D12's answer of 2026-10-20 covers in BOTH
 // front doors — a billable first image build and replacing a registry tag. The
-// door is not asked: only three things stay the person's (creating the project,
-// linking the billing account, and the Firestore location in `setup`), and
-// neither of these is one of them.
+// door is not asked: only two things stay the person's (creating the project
+// and linking the billing account), and neither of these is one of them.
 func (r *initRun) askCovered(what string) (confirmed, reachable bool, err error) {
 	return r.askClass(what, true)
 }
@@ -3109,6 +3187,11 @@ func (r *initRun) resourceManager(ctx context.Context, c *infra.Clients) error {
 // When whether the project is managed cannot be read, the refusal is neither
 // mode's advice: it says the read failed and names no way past it — never the
 // unmanaged text, whose flag is what the read exists to withhold.
+//
+// The standalone --repo door at a real terminal prints the block above
+// (guardRefusalBlock) in place of all of this, and holds every rule stated
+// here: the mode's own advice, and no flag on the managed modes' (the owner's
+// feedback of 2026-11-24, and the brief for it).
 func (r *initRun) guard(ctx context.Context, c *infra.Clients, plan *tf.Plan, allowDelete []string) error {
 	if err := infra.RefuseProjectJobDeletes(plan); err != nil {
 		return userErr("%v", err)
@@ -3120,14 +3203,23 @@ func (r *initRun) guard(ctx context.Context, c *infra.Clients, plan *tf.Plan, al
 	isManaged, readErr := r.managedProject(ctx, c)
 	switch {
 	case readErr != nil:
+		if r.refusalIsShort() {
+			return userErr("%s", r.guardRefusalBlock(plan, allowDelete, managedReadFailedTerminal, false))
+		}
 		return userErr("%s\nwhether %s is a managed project could not be read (%s), so this refusal names no way past it: say which address is refused to the person who owns the project",
 			tf.GuardWith(plan, allowDelete, ""), safetext.Field(r.projectName), safetext.Field(readErr.Error()))
 	case isManaged:
+		if r.refusalIsShort() {
+			return userErr("%s", r.guardRefusalBlock(plan, allowDelete, managedDeleteAdviceTerminal, false))
+		}
 		advice := ""
 		if len(tf.Listable(plan, allowDelete)) > 0 {
 			advice = initManagedDeleteAdvice
 		}
 		return userErr("%s", tf.GuardWith(plan, allowDelete, advice))
+	}
+	if r.refusalIsShort() {
+		return userErr("%s", r.guardRefusalBlock(plan, allowDelete, tf.AllowDeleteAdvice, true))
 	}
 	msg := err.Error()
 	for _, h := range infra.DeleteHints(plan, allowDelete) {
@@ -4116,7 +4208,7 @@ func nameFromOutputs(lc *localcfg.Config, outs infra.InstallationOutputs) (*loca
 // replaces the owner's published list, permanently, with the installation's
 // own account, and does it in the run that reports success.
 func (r *initRun) effectiveVerifiers(ctx context.Context, lc *localcfg.Config) ([]string, error) {
-	p, _, err := r.policy.read(ctx, lc)
+	p, _, err := r.policyMemo().read(ctx, lc)
 	if err != nil {
 		if !olderPolicyNode(err) {
 			return nil, fmt.Errorf("the verifier accounts this installation's document must carry could not be read: %w", policyReadErr(err))
@@ -5122,6 +5214,7 @@ func (o *initOptions) installationFlags() []string {
 func runInitRepo(r *initRun, args []string) error {
 	cmd, o := r.cmd, r.o
 	defer func() { clear(r.appKeyMem) }()
+	r.markTheUpdateReads()
 	// The answers file, as on the converge (setup_answers.go): a --repo run
 	// asks none of the wizard's questions, and the flags its answers fill are
 	// refused by name rather than dropped (installationFlags).
@@ -5148,6 +5241,20 @@ func runInitRepo(r *initRun, args []string) error {
 			return err
 		}
 	}
+	// The run's own account, opened before anything can print (CL5b): this door
+	// converges one root, and its Terraform output is the same flood the
+	// converge keeps in a log — two init banners, a line per resource
+	// refreshed, and Terraform's whole plan — which the owner met at the
+	// terminal on 2026-11-24. The reporter is the converge's, so the two doors
+	// cannot disagree about colour, about the log or about what reaches the
+	// screen (D1352); the step line for the repository and the refusal a person
+	// reads are this door's own, because there is no converge loop here to
+	// print one (planBlock, guard).
+	r.repoDoor = true
+	r.rep, r.repLog = convergeReporter(cmd, o.doorName(), r.repoRedaction)
+	if r.repLog != nil {
+		defer func() { _ = r.repLog.Close() }()
+	}
 	return r.repoEngine(cmd.Context(), repoDir(args), "", false)
 }
 
@@ -5159,6 +5266,20 @@ func repoDir(args []string) string {
 		return args[0]
 	}
 	return "."
+}
+
+// repoRedaction is what a --repo run's log is redacted with, read at each line
+// (F6): the values the process held from the start (secretsHeld), and the
+// GitHub App key this run typed — the one secret the repository door reads,
+// which the pre-check signs with and which is cleared when the run ends. The
+// converge's own list is initEngine's slots; this door has no engine, so its
+// list is the run's own and holds the same two things.
+func (r *initRun) repoRedaction() []string {
+	vals := slices.Clone(secretsHeld())
+	if len(r.appKeyMem) > 0 {
+		vals = append(vals, heldValues(r.appKeyMem)...)
+	}
+	return vals
 }
 
 // billableBuildLeft is the left-for-you for a billable first image build: the
@@ -5193,6 +5314,9 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err := o.requireCheckoutProject(ctx, dir); err != nil {
 		return err
 	}
+	// The checkout's file as this run's own removal offer leaves it: the door
+	// marked at runInit is what a reader reads it by (AB8b, F22,
+	// theUpdateLeavesTheRemoval), not anything this call site remembers.
 	root, rf, err := loadCheckoutResolved(ctx, dir, nil, layerOptions{Lenient: true})
 	if err != nil {
 		return err
@@ -5767,7 +5891,7 @@ func (r *initRun) appPreCheck(ctx context.Context, lc *localcfg.Config, spec inf
 	}
 	keyID := spec.Secrets[config.GitHubAppKeySecret]
 	if r.o.checkApp {
-		id, err := gitSecretID(ctx, lc, spec, nodePolicy(ctx, &r.policy, lc), "the GitHub App pre-check of "+spec.Name)
+		id, err := gitSecretID(ctx, lc, spec, nodePolicy(ctx, r.policyMemo(), lc), "the GitHub App pre-check of "+spec.Name)
 		if err != nil {
 			// One line, and for a drift the short form of it: oneLineCLI
 			// prints through pluginwire.Printable, which would cut the
@@ -6348,7 +6472,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	// Whether the project has published a policy decides whether the jobs
 	// must be able to read one (D11): the database is read with the
 	// operator's own credentials, which only this side holds.
-	if ex.PolicyExists, err = r.policy.exists(ctx, lc); err != nil {
+	if ex.PolicyExists, err = r.policyMemo().exists(ctx, lc); err != nil {
 		return infra.RepoSpec{}, nil, initErr(err)
 	}
 	if first {

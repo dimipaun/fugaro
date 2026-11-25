@@ -5,6 +5,8 @@ import (
 	"maps"
 	"slices"
 	"strings"
+
+	"github.com/dimipaun/fugaro/internal/policy"
 )
 
 // The stage vocabulary of the account-choice keys (docs/accounts-add/spec.md
@@ -344,14 +346,13 @@ func CheckMixBudget(auth, mode, coder, def string, stages map[string]string, rou
 }
 
 // modeName is a resolved budget mode as a person reads it: the merged layers
-// spell "no gateway" as "" (policy's own zero value) and the config's own
-// vocabulary spells it "off" (config.BudgetOff), and a sentence that printed
-// the empty string would name nothing.
+// spell a mode nobody wrote as "" (policy's own zero value), which is the
+// observe every unset mode means now, and a sentence that printed the empty
+// string would name nothing (AB2, R3, D3010). It is the vocabulary's own
+// answer, so a sentence here cannot word a mode differently from the run that
+// reads the same string.
 func modeName(mode string) string {
-	if mode == "" {
-		return BudgetOff
-	}
-	return mode
+	return policy.Mode(mode).Effective()
 }
 
 func stageAccountUnderOtherAuth(auth string, stages map[string]string, path string) []Problem {
