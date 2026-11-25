@@ -845,6 +845,79 @@ func TestBeatRestampsTheClaimsTheDaemonHolds(t *testing.T) {
 	}
 }
 
+// TestAFirstBeatAfterARestartRestampsNoClaim is the gap the beat's own reading
+// has and the safe direction it fails in: what the beat settles is the picture
+// the daemon's last cycle read off its nodes (orchestrator.Tick.Held), and a
+// daemon that has just started has read none — so its first beat re-stamps no
+// claim at all, and a claim it holds from before the restart keeps the stamp it
+// was taken at until the first cycle reads the nodes.
+//
+// One beat and one cycle is the whole of the gap, and nothing reads an item's
+// stamp to decide anything (claim.go's header); what would close it is a beat
+// that read the nodes itself, or the walk of the project's claims subtree the
+// refresh was built without — a read that grows with every claim the project
+// ever made, on every beat, for one stamp nobody decides anything by.
+//
+// Mutation: settle the claims in the beat (read the nodes there, or walk the
+// claims node) and the node below moves under a beat that has run no cycle.
+func TestAFirstBeatAfterARestartRestampsNoClaim(t *testing.T) {
+	f := newDaemonFixture(t)
+	d, _ := f.running(t, "")
+	ctx := context.Background()
+
+	// The restart: the daemon's node carries an item whose run is in flight —
+	// the case a claim outlives a clean exit for (Lease.Release) — and the claim
+	// was taken by the daemon an earlier process was, so nothing about this one
+	// has read the node yet.
+	f.setState(t, `{"schema_version":1,"rev":1,"agent_id":"aurora","role":"orchestrator",
+		"goal":"keep the work moving","work_items":[{"id":"wi-1","title":"land demo/A","repo":"acme/app",
+		"recipe":"standard","rigor_tier":"medium","brief":"Do the thing.","plan_task":"demo/A",
+		"phase":"running","run_id":"20261109-101500-abcd","attempts":1}],
+		"decisions":[],"facts":{},"archived":[],"intents":[]}`)
+	mine := orchestrator.ItemRef{Orchestrator: d.id, Item: "demo/A"}
+	if took, err := d.claims.Take(ctx, mine); err != nil || !took {
+		t.Fatalf("the take of %q: took=%v, err=%v", mine.Item, took, err)
+	}
+	if held := d.tick.Held(); len(held) != 0 {
+		t.Fatalf("a daemon that has run no cycle holds %+v, and what the beat settles is the picture its last cycle read", held)
+	}
+	before := f.db.Value(claimPathOf(t, mine))
+	leaseBefore, err := d.lease.Read(ctx)
+	if err != nil {
+		t.Fatalf("reading the lease node before the beat: %v", err)
+	}
+	later := leaseBefore.At.Add(5 * time.Second)
+	f.db.SetClock(func() time.Time { return later })
+
+	if err := d.beatAndRefresh(ctx); err != nil {
+		t.Fatalf("the daemon's first beat after its restart: %v", err)
+	}
+	if after := f.db.Value(claimPathOf(t, mine)); !reflect.DeepEqual(before, after) {
+		t.Errorf("the claim this daemon holds changed under the first beat after its restart:\nafter  %#v\nbefore %#v", after, before)
+	}
+	lease, err := d.lease.Read(ctx)
+	if err != nil {
+		t.Fatalf("reading the lease node after the beat: %v", err)
+	}
+	if !lease.At.After(leaseBefore.At) {
+		t.Errorf("the lease is stamped %s after a beat that moved the clock past %s, so nothing above is about a beat that ran", lease.At, leaseBefore.At)
+	}
+
+	// And the gap is one beat: the first cycle reads the node the claim's item is
+	// on, settles the claim it carries, and the stamp is the cycle's own clock
+	// from then on.
+	if _, err := d.tick.Step(ctx); err != nil {
+		t.Fatalf("the daemon's first cycle after its restart: %v", err)
+	}
+	if got := d.tick.Held(); len(got) != 1 || got[0].Ref != mine {
+		t.Fatalf("the first cycle's own picture is %+v, and the item its node carries is in flight", got)
+	}
+	_, at := claimNode(t, f.db, mine)
+	if want := later.UTC().Truncate(time.Second).Format(time.RFC3339); at != want {
+		t.Errorf("the claim is stamped %q after the first cycle, not the server time the cycle was made at (%s)", at, want)
+	}
+}
+
 // TestTheCycleLineSaysTheSkips: a cycle that skipped an action because another
 // orchestrator of the project holds the item says so where a person reads the
 // cycles. Without the count, the line is the same as an idle daemon's, and the
