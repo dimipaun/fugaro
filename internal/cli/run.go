@@ -6759,7 +6759,7 @@ func servicesLaunchEnv(entry config.Entry) string {
 // config's repository entry and published with the rest of it, so a teammate's
 // `fugaro run` on a machine that never ran the update reads it too,
 // internal/localcfg/shared.go) — and this repository's agent.auth, read live,
-// is one the service serves under the mode the published node carries. All of
+// is one the service serves. All of
 // them, because the URL is not a hint: the same variable is what opens the git
 // provider keyless (internal/gitprov/providers/providers.go), which reads no
 // App key at all once it is set, and what makes a Bitbucket repository a
@@ -6770,16 +6770,6 @@ func servicesLaunchEnv(entry config.Entry) string {
 // That is the answer for a repository's OWN job. A launch on a shared project
 // job is judged on its PROFILE (below), because that is the switch its mounts
 // were taken on.
-//
-// mode is the budget mode the published node carries, read by the launcher
-// (policyMode) and handed in: it is the switch's fourth condition for an
-// `api-key` or `oauth` repository alone (D2071), because the gateway the
-// service is reached through exists only in `observe` and `enforce`. A
-// repository on a project whose mode is `off` gets no address at all and keeps
-// the mounts it has. A read that found no node answers "", which is that same
-// held-off answer — the fail-closed direction — while the repository's own
-// record and tfvars remain the two answers a launch without a document
-// decides on (below).
 //
 // The config is the published shared one where this machine has no local
 // config of its own (localcfg.Select), and the URL in it is the installation's

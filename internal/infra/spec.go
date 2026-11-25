@@ -919,9 +919,9 @@ type repoCtx struct {
 	// beside it wherever a mount is dropped.
 	credentialsServiceOn bool
 	// budgetMode is the mode the published node carries, read once by resolve
-	// from Inputs.Policy: the switch's fourth condition for an `api-key` or
-	// `oauth` repository (D2071), and the fact VertexGrantForJob reads to take
-	// a job's Vertex permission away on an enforcing project. It is "" where
+	// from Inputs.Policy: the fact VertexGrantForJob reads to take a job's
+	// Vertex permission away on an enforcing project. It was also the switch's
+	// fourth condition until AB15 and is none any more (D3009). It is "" where
 	// the caller read no node.
 	budgetMode string
 	// chain is what the project's routing table decides for this repository,
