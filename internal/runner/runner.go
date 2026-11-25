@@ -3929,6 +3929,13 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	env, secrets, err := agent.BuildEnv(r.d.Env, agent.EnvSpec{
 		Auth: r.servedAuth(), Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend, FileSecrets: fileSecretEnvs,
+		// The same fact the gateway is given, under the name internal/agent
+		// reads it by (agentenv's chainServed, D3171): where the credentials
+		// service serves this run, the agent holds no credential of the job's
+		// whatever its file's auth says and its calls are the gateway's to the
+		// service; false is an unmigrated repository, whose environment is its
+		// file's (CS6, R3).
+		ChainServed: r.chainServed(),
 		// The operator's own catalog image's variables, for a job whose image
 		// the catalog chose (agentenv.go's imageEnv): nil for every other job,
 		// whatever its environment holds.

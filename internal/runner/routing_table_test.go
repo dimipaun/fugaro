@@ -159,6 +159,14 @@ func TestEveryStageGoesThroughTheChain(t *testing.T) {
 			if want := auth != config.AuthCascade; r.serviceSwitched() != want {
 				t.Errorf("serviceSwitched() = %v for a %s run, want %v", r.serviceSwitched(), auth, want)
 			}
+			// And the agent's environment reads the same fact under its own
+			// name (the EnvSpec literal in runner.go, agentenv's chainServed):
+			// a served run reaches internal/agent as the cascade's whatever its
+			// file's auth says, so the agent holds no credential of the job's
+			// (D3171).
+			if got := r.servedAuth(); !r.chainServed() || got != config.AuthCascade {
+				t.Errorf("a %s run the table serves reaches the agent as chainServed=%v auth=%q, want the cascade's environment", auth, r.chainServed(), got)
+			}
 			up, err := r.gatewayUpstream(context.Background())
 			if err != nil {
 				t.Fatalf("the upstream of a %s run the table serves: %v", auth, err)
@@ -294,6 +302,11 @@ func TestAnUnmigratedRepositoryRunsAsItsFileSays(t *testing.T) {
 			r.rec = &runstore.Record{Version: 1, RunID: r.spec.RunID, Status: runstore.StatusRunning}
 			if r.serviceModelPath() || r.serviceSwitched() {
 				t.Fatalf("an unmigrated %s run is read as one the credentials service serves", tc.auth)
+			}
+			// Its environment is its file's, too: the same fact the gateway is
+			// denied is the one the agent's environment would change on (R3).
+			if r.chainServed() || r.servedAuth() != tc.auth {
+				t.Errorf("an unmigrated %s run reaches the agent as chainServed=%v auth=%q, want its file's own", tc.auth, r.chainServed(), r.servedAuth())
 			}
 			if got, want := r.gatewayOn(), !tc.refusedPath; got != want {
 				t.Errorf("gatewayOn() = %v for an unmigrated %s run, want %v", got, tc.auth, want)
