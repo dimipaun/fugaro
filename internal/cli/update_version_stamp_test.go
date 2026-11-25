@@ -534,4 +534,3 @@ func TestStampStageSkipsAnUnadoptedDatabase(t *testing.T) {
 		t.Error("a database that is not this installation's was stamped")
 	}
 }
-
