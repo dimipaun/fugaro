@@ -713,79 +713,63 @@ func TestValidateRefusesVertexEnforceFromFile(t *testing.T) {
 	}
 }
 
-// TestValidateAcceptsVertexEnforceWhereTheTableServes is CS5 and D3174: a
-// repository a source of the project's routing table admits reaches Vertex
-// through the credentials service — which calls it on its own identity and
-// whose calls the caps hold — so its file's `auth: vertex` under enforce is not
-// refused. The table is the project config's own and is read per repository: a
-// repository no source admits keeps the refusal, in the runner's words.
+// TestTheVertexRefusalAgreesWithTheRunner is CS5's edge, and it is why this
+// release leaves the refusal in place on both sides: D3174 lifts it for a run
+// the credentials service serves, and the runner reads that off the run it
+// launched — the model path its gateway builds the upstream from
+// (vertexServedByTheService). A `vertex` file's coding run is on no such path
+// while the service serves api-key, oauth and cascade runs alone
+// (runner.ServiceSwitchedAuth), so the runner's checkBudget refuses it at
+// bootstrap (TestLegacyVertexIsStillRefusedUnderEnforce drives that check and
+// the pool refusal on the same shape). A gate lifting it here alone would
+// green-light a run that dies.
 //
-// The table is not the whole fact: a job nothing hands an address to reaches no
-// service, so the installation carries the credentials service and this
-// repository's record says ready (the pair the deploy plan reads,
-// infra.CredentialsServiceServesChains). A pool source is the case the plan's
-// own answer cannot settle — it may serve any repository there, because which
-// member serves one is walked at the call — so the gate resolves the pool
-// through its members' allow_data_to, and a launcher-pool source admits nobody
-// before a launcher designates a pool (D3176).
-func TestValidateAcceptsVertexEnforceWhereTheTableServes(t *testing.T) {
+// One fixture, both CLI gates and the runner's own answer: the fixture is
+// exactly the one that would lift the refusal — the table admits this
+// repository, the service is installed and its record is ready — so nothing
+// but the runner's missing served path keeps the three agreeing.
+//
+// CS6 ("the run's model path follows the table") moves all three together: it
+// makes the first assertion here false, and it lands this half of D3174 with
+// the runner's.
+func TestTheVertexRefusalAgreesWithTheRunner(t *testing.T) {
 	const (
 		service = "credentials_service: { url: " + credentialsServiceURL + " }\n"
 		record  = "repos:\n  acme/app: { provider: github, workflows: [app], credentials_service_ready: true }\n"
+		table   = "model_routing:\n  - match: \"claude-*\"\n    chain:\n      - { kind: vertex, admit: [acme/app] }\n"
 		budget  = "budget: { mode: enforce, per_run_usd: 5 }\n"
+		vertex  = "  auth: vertex\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }"
 	)
-	pinned := "  auth: vertex\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }"
-	for name, tc := range map[string]struct {
-		table  string
-		admits bool
-	}{
-		"a single-credential source": {
-			table:  "model_routing:\n  - match: \"claude-*\"\n    chain:\n      - { kind: vertex, admit: [acme/app] }\n",
-			admits: true,
-		},
-		"a pool through its members' allow_data_to": {
-			table: "credentials:\n  - { name: acme-personal, type: claude-oauth }\n" +
-				"claude_accounts:\n  acme-personal: { allow_data_to: [acme/app] }\n" +
-				"pools:\n  - { name: shared, owner: owner@example.com, members: [acme-personal] }\n" +
-				"model_routing:\n  - match: \"claude-*\"\n    chain:\n      - { kind: pool, pool: shared }\n",
-			admits: true,
-		},
-		"the launcher's own pool": {
-			table:  "model_routing:\n  - match: \"claude-*\"\n    chain:\n      - { kind: launcher-pool }\n",
-			admits: false,
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			path := fileWithBudget(t, budget+tc.table+service+record, "", pinned)
-			inCheckoutOf(t, "acme/app")
-			out, errOut, err := execute(t, "validate", path)
-			if tc.admits {
-				if err != nil || strings.Contains(out, vertexBudgetRefusal) {
-					t.Fatalf("a vertex file the table serves was refused: %v\n%s%s", err, out, errOut)
-				}
-			} else if ExitCode(err) != ExitUserError || !strings.Contains(out, vertexBudgetRefusal) {
-				t.Fatalf("a vertex file no source admits was accepted: exit %d: %s", ExitCode(err), out)
-			}
-		})
+	path := fileWithBudget(t, budget+table+service+record, "", vertex)
+	inCheckoutOf(t, "acme/app")
+
+	// The runner's own answer for this job, and the whole reason the gates
+	// below still refuse it: the service does not serve a `vertex` run, so the
+	// run's model path is the job's own GCP identity and checkBudget refuses it
+	// under enforce.
+	if runner.ServiceSwitchedAuth("vertex") {
+		t.Fatal("the credentials service serves `vertex` runs now: the CLI's refusal may go with it (CS6), and this is the test to change")
 	}
-	// A repository no source admits, and one on an installation whose service
-	// is off or whose record for it is not ready, keep the refusal.
-	table := "model_routing:\n  - match: \"claude-*\"\n    chain:\n      - { kind: vertex, admit: [acme/app] }\n"
-	for name, tc := range map[string]struct {
-		project string
-		repo    string
-	}{
-		"a repository no source admits": {project: budget + table + service + record, repo: "acme/other"},
-		"no credentials service":        {project: budget + table + record, repo: "acme/app"},
-		"a repository not ready":        {project: budget + table + service, repo: "acme/app"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			path := fileWithBudget(t, tc.project, "", pinned)
-			inCheckoutOf(t, tc.repo)
-			if out, _, err := execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, vertexBudgetRefusal) {
-				t.Fatalf("a vertex file the table does not serve was accepted: exit %d: %s", ExitCode(err), out)
-			}
-		})
+
+	// validate.
+	if out, _, err := execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, vertexBudgetRefusal) {
+		t.Fatalf("validate accepted a vertex file the runner refuses: exit %d: %s", ExitCode(err), out)
+	}
+	// update --repo's own gate (checkVertexBudget), on the same fixture.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, problems := config.Parse(data)
+	if len(problems) > 0 {
+		t.Fatalf("the fixture does not parse: %v", problems)
+	}
+	lc, _, err := localcfg.LoadProject(os.Getenv, "aurora")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := checkVertexBudget(lc, cfg); ExitCode(err) != ExitUserError {
+		t.Fatalf("update --repo accepted a vertex file the runner refuses: exit %d, err %v", ExitCode(err), err)
 	}
 }
 

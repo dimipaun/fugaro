@@ -5241,7 +5241,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		}
 	}
 	if !o.forget {
-		if err := checkVertexBudget(lc, cfg, repo); err != nil {
+		if err := checkVertexBudget(lc, cfg); err != nil {
 			return err
 		}
 	}
@@ -6132,47 +6132,20 @@ func (r *initRun) gateWorkflowAB(o *initOptions, repo string, lc *localcfg.Confi
 	return refuseWorkflowABSkew(repo, cfg, lc.BaseImage(config.BaseKind), w)
 }
 
-// servedByTheTable reports whether the project's routing table serves repo: a
-// source of it admits this repository by name (infra.ChainAdmits, the table's
-// own admission read for one repository, CS11's fact per repository), the
-// installation has the credentials service, and this repository's own bundle is
-// recorded on (the installed-and-ready pair infra.CredentialsServiceServesChains
-// reads).
-//
-// It is the CLI's half of D3174's one question, "is this run's Vertex the
-// credentials service's or the job's own": a repository the table serves
-// reaches Vertex through the service, on the service's own identity and capped
-// as a key's, whatever its file still says, while a repository no source admits
-// keeps its file's answer. The runner asks the same question of the path it is
-// on, the model path its gateway builds the upstream from
-// (vertexServedByTheService) — which a table-served repository reaches with
-// CS6 and CS10; here there is no job and no path yet, and the document the
-// answer comes from is this local config.
-//
-// ChainAdmits and not the plan itself (infra.ChainPlanFor): a pool answers its
-// Serves for every repository, because which member serves one is walked at the
-// call, so a gate reading that would lift the refusal over a repository the
-// table does not place — the unmigrated one the acceptance keeps refused. The
-// three negative answers are the fail-closed direction and leave both refusals
-// as they were: a repository no source's own admission names, a repository this
-// command cannot name, and an installation whose service is off or whose record
-// for this repository is not ready — a job nothing hands an address to reaches
-// no service whatever the table says.
-func servedByTheTable(lc *localcfg.Config, repo string) bool {
-	if lc == nil || lc.CredentialsService == nil || !infra.ChainAdmits(lc, repo) {
-		return false
-	}
-	r, ok := lc.RepoFor(repo)
-	return ok && r.CredentialsServiceOn()
-}
-
 // checkVertexBudget refuses a repository whose fugaro.yaml authenticates
 // the agent through Vertex AI (agent.auth: vertex) under a project budget
-// in enforce mode. observe and off are allowed, and so is a repository the
-// project's routing table serves, whose Vertex calls are the credentials
-// service's rather than the job's own GCP identity (D3174, servedByTheTable).
-func checkVertexBudget(lc *localcfg.Config, cfg *config.Config, repo string) error {
-	if cfg.Agent.Auth != "vertex" || servedByTheTable(lc, repo) {
+// in enforce mode. observe and off are allowed.
+//
+// D3174's lift of this refusal belongs to the run the credentials service
+// serves, so it comes with CS6 ("the run's model path follows the table") and
+// not with this gate: the runner answers the same question off the path the run
+// is on (vertexServedByTheService), and a `vertex` file's coding run is on no
+// such path while the service serves api-key, oauth and cascade runs alone
+// (runner.ServiceSwitchedAuth), so the runner's checkBudget refuses the run at
+// bootstrap. Lifting it here alone would green-light a run that dies —
+// TestTheVertexRefusalAgreesWithTheRunner holds the two answers together.
+func checkVertexBudget(lc *localcfg.Config, cfg *config.Config) error {
+	if cfg.Agent.Auth != "vertex" {
 		return nil
 	}
 	// The ceiling's mode and the file's, the stricter of the two, as the

@@ -16,9 +16,13 @@ package runner
 // the service's address on the job: a launch hands the address to a job whose
 // document it could not read (internal/cli's credentialsServiceLaunchEnv), so
 // a `vertex` run can carry it while its Vertex calls are still the job's own.
-// The CLI's halves of the same rule (validate, init) read the table, which a
-// run has no document for: internal/cli's tests pin those, and servedByTheTable
-// is where the fact comes from there.
+// The CLI's halves of the same rule (validate, update --repo) read the local
+// config, which a run has no document for, and this release leaves them
+// refusing: a `vertex` run never takes the service here (ServiceSwitchedAuth),
+// so a gate lifting the refusal would green-light a run this file's
+// TestLegacyVertexIsStillRefusedUnderEnforce refuses. CS6 moves both, and
+// internal/cli's TestTheVertexRefusalAgreesWithTheRunner holds the two answers
+// on one fixture.
 
 import (
 	"context"
