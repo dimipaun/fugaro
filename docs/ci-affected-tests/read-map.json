@@ -5700,6 +5700,9 @@
     },
     {
       "package": "./internal/backlog",
+      "reads": [
+        "docs/backlog/**"
+      ],
       "any": true
     },
     {
