@@ -1136,16 +1136,16 @@ func (e *cloudEnv) gitCredentialGate(ctx context.Context, slug string, spec *tas
 	}
 	switch kind {
 	case gitprov.KindGitHub:
-		return userErr("a launch of %s is refused: its runs reach Vertex AI, so this launch hands them the installation's credentials service (%s) — the one variable that opens a job's git provider with no App key of its own and makes it mint its installation tokens at the service — and the service's bundle cannot serve that repository's git credential: it holds no GitHub App private key, and a run handed the address would stop at its first git call in the container, with a provider it can neither key nor mint with. Store the App's private key in the bundle with `fugaro creds set %s < PATH-TO-THE-KEY-FILE` in your own terminal, then run `fugaro update --repo %s` in this repository's checkout so the bundle is read again and this repository's record is written, and launch the run again",
-			spec.Repo, e.lc.CredentialsService.URL, config.GitHubAppKeySecret, spec.Repo)
+		return userErr("%s: the credentials service holds no GitHub App private key. Run `fugaro creds set %s`, then `fugaro update --repo .`",
+			spec.Repo, config.GitHubAppKeySecret)
 	case gitprov.KindBitbucket:
 		if !e.proxiedRepo(ctx, slug, spec) {
 			// A node that does not broker this repository leaves it its own
 			// mounted token: the address is not what a Bitbucket run reads.
 			return nil
 		}
-		return userErr("a launch of %s is refused: its Bitbucket access is brokered (the published policy admits it with proxy: true), so its job holds no Bitbucket token and this launch hands it the installation's credentials service (%s) to forward one — and that service cannot serve this repository's git credential: its bundle holds no Bitbucket token, and the run would stop at its first git call in the container, with nothing to forward and nothing to fall back to. Store one in the bundle with `fugaro creds set %s < PATH-TO-THE-TOKEN-FILE` in your own terminal, then run `fugaro update --repo %s` in this repository's checkout so the bundle is read again and this repository's record is written, and launch the run again",
-			spec.Repo, e.lc.CredentialsService.URL, config.BitbucketSecret, spec.Repo)
+		return userErr("%s: the credentials service holds no bitbucket-token. Run `fugaro creds set %s`, then `fugaro update --repo .`",
+			spec.Repo, config.BitbucketSecret)
 	}
 	return nil
 }
