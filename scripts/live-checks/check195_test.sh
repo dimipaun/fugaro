@@ -1046,7 +1046,7 @@ test_the_generated_step_mints_a_token_and_reads_its_own_email_claim() {
   expect_contains "$(cat "$dir/logs/step-curl.calls")" "Authorization: Bearer fake-access-token" "the step: the upload carries that token, and it is not the ID token"
   expect_contains "$(cat "$dir/logs/step-upload.txt")" "CHK195 status=200 email=fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com" "the step: the body it wrote into the object is its own one line"
   # The line is the whole body: no token, no header, nothing else.
-  [ "$(wc -l <"$dir/logs/step-upload.txt")" = 1 ] || fail "the step: the object holds exactly one line, and it holds $(wc -l <"$dir/logs/step-upload.txt")"
+  [ "$(wc -l <"$dir/logs/step-upload.txt" | tr -d " ")" = 1 ] || fail "the step: the object holds exactly one line"
   expect_absent "$(cat "$dir/logs/step-upload.txt")" "Bearer" "the step: no authorization header is written into the object"
   expect_absent "$(cat "$dir/logs/step-upload.txt")" "fake-signature" "the step: no token is written into the object"
 }
