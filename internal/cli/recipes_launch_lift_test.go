@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -60,9 +61,10 @@ func publishCopy(t *testing.T, f *cloudFixture, repo, name, text string) string 
 //
 // The three paths are the ones a repository recipe can enter by: a first run
 // whose document names it (agent.recipe, read here from the ref's own file
-// because the launch stands outside every checkout), a follow-up inheriting
-// the name from the previous run's task, and a follow-up that inherits no
-// recipe at all and lands on the repository's own default.
+// because the launch stands outside every checkout, whatever the project has
+// published), a follow-up inheriting the name from the previous run's task, and
+// a follow-up that inherits no recipe at all and lands on the repository's own
+// default.
 func TestLaunchEmbedsTheCopy(t *testing.T) {
 	t.Run("a first run from outside a checkout", func(t *testing.T) {
 		f := newProjectJobFixture(t)
@@ -86,6 +88,37 @@ func TestLaunchEmbedsTheCopy(t *testing.T) {
 		want := strings.Replace(repoRecipe, "name: mine", "name: "+copied, 1)
 		if got == nil || got.Name != copied || got.Source != string(recipe.SourceProject) || got.YAML != want {
 			t.Fatalf("task recipe = %+v, want the project's copy of mine (%s) embedded: agent.recipe was read from the ref's file, so what it names has to reach the run as its copy (R7)", got, copied)
+		}
+	})
+	t.Run("a first run from outside a checkout, on a project with no profile", func(t *testing.T) {
+		f := newProjectJobFixture(t)
+		// The recipe is not the job: this project published a policy that
+		// defines no profile, so the launch decides no job from the ref's file
+		// and runs on the repository's own job — and the file still names
+		// agent.recipe, which the run has to receive as its copy (R7).
+		f.db.Set(projectpolicy.PathShared(), map[string]any{
+			"version": projectpolicy.Version, "allow_repos": []string{"github/acme/*"}})
+		// Without a profile the launch is judged on the repository's own image,
+		// which the fixture built from the node's release — below recipeCopySince,
+		// the base the copy this launch embeds needs.
+		writeBuildRecord(t, f.cloudFixture, appSlug, "web", releaseCopy)
+		projectRecipesFixture(t, f.cloudFixture, nil)
+		copied := publishCopy(t, f.cloudFixture, "acme/app", "mine", repoRecipe)
+		s := newServiceReadFixture(t)
+		s.document = strings.Replace(projectJobRepoYAML, "  auth: api-key", "  auth: api-key\n  recipe: mine", 1)
+		s.use(t, f.cloudFixture)
+		isolateCache(t)
+		testutil.IsolateGit(t)
+		t.Chdir(t.TempDir())
+
+		id := wallRunIDAt(0, "120001", "a002")
+		if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", id, "Add a feature"); err != nil {
+			t.Fatalf("a launch from outside a checkout on a project that published no profile: %v", err)
+		}
+		got := readSpec(t, f.cloudFixture, id).Recipe
+		want := strings.Replace(repoRecipe, "name: mine", "name: "+copied, 1)
+		if got == nil || got.Name != copied || got.Source != string(recipe.SourceProject) || got.YAML != want {
+			t.Fatalf("task recipe = %+v, want the project's copy of mine (%s) embedded: the recipe is read from the ref's file whether or not the document decides a job", got, copied)
 		}
 	})
 	t.Run("a follow-up inheriting the name", func(t *testing.T) {
@@ -149,6 +182,30 @@ func TestFollowUpCarriesACopyName(t *testing.T) {
 		}
 		if !strings.Contains(errOut, "keeping recipe "+copied) {
 			t.Fatalf("stderr = %q, want the line naming the copy it kept", errOut)
+		}
+	})
+	t.Run("the previous run's record, of the repository's own file", func(t *testing.T) {
+		f := newCloudFixture(t)
+		projectRecipesFixture(t, f, nil)
+		copied := publishCopy(t, f, "acme/app", "mine", repoRecipe)
+		// The record of a run that read the repository's file before the copies
+		// existed sums that file, and the copy is that file with its name: line
+		// rewritten (R14): nothing about the recipe changed, so the launch says
+		// nothing about a change.
+		seedChosenRootOnACopyImage(t, f, &runstore.RecipeRecord{
+			Name: "mine", Source: string(recipe.SourceRepo), SHA256: recipe.Sum([]byte(repoRecipe))})
+
+		_, errOut, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "x")
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := readSpec(t, f, fuID).Recipe
+		want := strings.Replace(repoRecipe, "name: mine", "name: "+copied, 1)
+		if got == nil || got.Name != copied || got.Source != string(recipe.SourceProject) || got.YAML != want {
+			t.Fatalf("follow-up recipe = %+v, want the copy %s of the repository's file the previous run ran, embedded", got, copied)
+		}
+		if strings.Contains(errOut, "has changed since run") {
+			t.Fatalf("stderr = %q, want no change reported: the only difference between the record's file and the copy is the migration's rename (R14)", errOut)
 		}
 	})
 	t.Run("--recipe names the copy", func(t *testing.T) {

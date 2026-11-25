@@ -4649,13 +4649,14 @@ func claudeAccountMembership(env *cloudEnv, repo, name string) error {
 //
 // The document is the checkout's, or — for a launch from a machine that holds
 // no checkout of the repository — the ref's own fugaro.yaml, read at the forge
-// by the ordered decision the job and the gates are decided from
-// (launchConfigWhereTheTreeGivesNone, source 3, spec.md §2). It is asked here
-// rather than read a second way so that the recipe, the job and the gates are
-// judged by one file and the launch costs one read (D901, D909): a launch that
-// decision refuses is refused by it, in its own words, and one whose project
-// published no profile is left to the runner, which reads the same key at the
-// ref exactly as it does today.
+// as the operator themselves (launchDocumentAtTheRef, source 3, spec.md §2).
+// It is asked here rather than read a second way so that the recipe, the job
+// and the gates are judged by one file and the launch costs one read (D901,
+// D909). The recipe is a question of its own, though, and is not read behind
+// the two facts that answer the job (launchConfigWhereTheTreeGivesNone): a
+// project that published no profile decides no job from the document, and its
+// ref's file still names agent.recipe, whose copy the task has to carry or the
+// runner resolves it over the catalog instead (R7, D3304).
 func chooseRecipe(ctx context.Context, env *cloudEnv, repo, ref, flag string, checkout func() *config.Config, warn io.Writer, forAttempts bool) (*task.Recipe, string, error) {
 	name, explicit := flag, flag != ""
 	root := checkoutRoot(ctx, repo)
@@ -4663,12 +4664,12 @@ func chooseRecipe(ctx context.Context, env *cloudEnv, repo, ref, flag string, ch
 	if c := checkout(); c != nil {
 		cfg = c
 	} else if name == "" && root == "" {
-		// The read's own error is not this call's refusal: the job decision
-		// asks the same question of the same memoized answer and refuses a
-		// document it cannot read in its own words, while the recipe alone
-		// falling back to default leaves the runner the same key to read at
-		// the ref, which is what a launch with no document gets today.
-		if c, err := env.launchConfigWhereTheTreeGivesNone(ctx, &task.Spec{Repo: repo, Ref: ref}); err == nil {
+		// The read's own error is not this call's refusal: where the job is
+		// decided from this document the decision refuses it in its own words a
+		// gate later, and where it is not the launcher holds nothing to read
+		// one with — so the recipe falls back to default, which is what a
+		// launch with no document gets anyway.
+		if c, err := env.launchDocumentAtTheRef(ctx, &task.Spec{Repo: repo, Ref: ref}); err == nil {
 			cfg = c
 		}
 	}

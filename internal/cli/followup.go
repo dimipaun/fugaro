@@ -1192,10 +1192,30 @@ func carryChosenRecipe(ctx context.Context, env *cloudEnv, provider, repo string
 	printRecipeNote(warn, rr, true)
 	rcp := rr.taskRecipe()
 	fmt.Fprintf(warn, "note: keeping recipe %s, which the runner chose for run %s\n", pluginwire.Printable(ch.Name), pluginwire.Printable(task.ShortRun(oneLineCLI(c.Previous.Run))))
-	if ch.SHA256 != "" && recipe.Sum(rr.Text) != ch.SHA256 {
+	if ch.SHA256 != "" && !sameRecipeAsRecorded(rr.Text, ch) {
 		fmt.Fprintf(warn, "note: recipe %s has changed since run %s\n", pluginwire.Printable(ch.Name), pluginwire.Printable(task.ShortRun(oneLineCLI(c.Previous.Run))))
 	}
 	return rcp, nil
+}
+
+// sameRecipeAsRecorded is whether text is the recipe the record sums, the
+// record's own name included.
+//
+// A record written before release A that named a repository recipe sums the
+// repository's file, and the copy that file reaches a launch as is the file
+// with its name: line rewritten (R14) — the record's name is the file's, the
+// copy's is the name CopyName derives. Summing the two as they stand would
+// report a change the migration alone made, so the copy is put back to the
+// record's name and asked again.
+func sameRecipeAsRecorded(text []byte, ch *runstore.RecipeRecord) bool {
+	if recipe.Sum(text) == ch.SHA256 {
+		return true
+	}
+	if recipe.IsCopyName(ch.Name) {
+		return false
+	}
+	file, err := recipe.Rename(text, ch.Name)
+	return err == nil && recipe.Sum(file) == ch.SHA256
 }
 
 // inheritDefaultRecipe is the default fallback of a follow-up that inherits no
