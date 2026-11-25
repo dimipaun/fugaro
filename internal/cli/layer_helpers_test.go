@@ -23,9 +23,20 @@ import (
 // repository's file may name no model at all — config.Resolve drops every key
 // config.LiftedKeys lists before the merge — so a fixture whose file wrote them
 // would resolve to a run that names no model and is refused before whatever the
-// test is about. The keys are pinnedAgent's, moved verbatim, so the values the
-// tests read are the ones they always read.
-const testProjectLayerAgent = "  agent: { auth: api-key, model: claude-sonnet-5-5, models: { background: claude-haiku-4-5 } }\n"
+// test is about. The keys are pinnedAgent's, moved, so the values the tests read
+// are the ones they always read.
+//
+// The reviewer is named beside agent.model rather than left to it: a level's
+// model is the role's own slot where it has one and agent.model below that
+// (config's levelDef), so a layer carrying agent.model alone puts level 1 and
+// level 2 on one model and every launch of such a layer is refused by D721's
+// guard — a repository whose first-line and senior review would run the same
+// model.
+const testProjectLayerAgent = "  agent: { auth: api-key, " + testProjectLayerRoles + " }\n"
+
+// testProjectLayerRoles is the role keys testProjectLayerAgent names, for a
+// test that writes an agent key of its own beside them (layerWithRoles).
+const testProjectLayerRoles = "model: claude-sonnet-5-5, models: { reviewer: claude-opus-5, background: claude-haiku-4-5 }"
 
 // testProjectLayer is aurora's project layer in the cloud fixture: profile
 // svc is recipeCheckout's workflow svc.
@@ -64,6 +75,46 @@ func layerWithDefaults(extra string) string {
 	return strings.Replace(testProjectLayer, testProjectLayerAgent, testProjectLayerAgent+extra, 1)
 }
 
+// layerWithRoles is testProjectLayer whose agent block carries extra beside the
+// keys testProjectLayerAgent writes: the layer a test that judges a lifted
+// agent key publishes. extra names keys only — auth: api-key and the three
+// roles are already there, and a second models: key would not decode.
+func layerWithRoles(extra string) string {
+	return layerWithAgent("auth: api-key, " + testProjectLayerRoles + ", " + extra)
+}
+
+// layerWithAgent is testProjectLayer whose agent block is body's own keys: the
+// layer a test publishes where the roles themselves are the point — a layer
+// naming the coder and the reviewer the same model, say. body carries auth:
+// api-key and whatever models it means.
+func layerWithAgent(body string) string {
+	return strings.Replace(testProjectLayer, testProjectLayerAgent, "  agent: { "+body+" }\n", 1)
+}
+
+// noneModelLayer is the project layer that writes a level's model as the
+// literal none, for the level named (l2, l3): agent.levels.lN.model is a lifted
+// key, so after S1 (D3237) a repository's file can no longer write the switch
+// and the layer is the only text the gate that refuses an image reading the
+// literal as a model ID is judged on.
+func noneModelLayer(level string) string {
+	return layerWithRoles("levels: { " + level + ": { model: none } }")
+}
+
+// anchorCheckoutFile gives the working directory's fugaro.yaml the
+// gcp_project: line its project layer is matched by, for a test whose launch
+// must resolve over the layer the fixture published: findLayer applies a layer
+// only to a file naming both the same project and the same GCP project.
+func anchorCheckoutFile(t *testing.T) {
+	t.Helper()
+	b, err := os.ReadFile("fugaro.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("fugaro.yaml", []byte(anchoredText(string(b))), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // isolateCache gives the test a cache directory of its own.
 func isolateCache(t *testing.T) { t.Setenv("XDG_CACHE_HOME", t.TempDir()) }
 
@@ -98,6 +149,13 @@ func layerPins(body string) string {
 func cacheLayer(t *testing.T, project, text string) {
 	t.Helper()
 	isolateCache(t)
+	cacheLayerNow(t, project, text)
+}
+
+// cacheLayerNow is cacheLayer without a cache directory of its own: for a rig
+// whose XDG_CACHE_HOME is already the test's (the doctor rig's).
+func cacheLayerNow(t *testing.T, project, text string) {
+	t.Helper()
 	gcp := gcpProjectNamed(text)
 	if err := localcfg.SaveLayerCache(os.Getenv, project, localcfg.SharedCacheEntry{
 		GCPProject: gcp,
@@ -178,7 +236,16 @@ func anchoredText(body string) string {
 // matched against, not that config.
 func attachLayer(t *testing.T, project, text string) {
 	t.Helper()
-	cacheLayer(t, project, text)
+	isolateCache(t)
+	attachLayerHere(t, project, text)
+}
+
+// attachLayerHere is attachLayer without a cache directory of its own: for a
+// rig whose XDG_CACHE_HOME is already the test's (the doctor rig's), where a
+// fresh one would take the rig's own cache out from under it.
+func attachLayerHere(t *testing.T, project, text string) {
+	t.Helper()
+	cacheLayerNow(t, project, text)
 	if path, err := localcfg.ProjectPath(os.Getenv, project); err == nil {
 		if b, err := os.ReadFile(path); err == nil {
 			cfg := strings.Replace(string(b),
@@ -307,16 +374,37 @@ func layerCheckout(t *testing.T, f *cloudFixture, repoYAML string) string {
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
-	body := anchoredText(repoYAML)
+	body := publishFilePins(t, f, repoYAML)
 	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": body, "build.sh": "true\n", "test.sh": "true\n", "package-lock.json": "{}\n"})
-	// A file that names a lifted key has it published as aurora's project layer,
-	// which is where a run reads it now (S1, D3237): the checkout resolves as it
-	// did when the key was the file's own. A test that publishes a layer of its
-	// own over this one still has the last word, and one whose file names none
-	// (minimalAnchored, pinnedMinimal) is untouched.
-	if pinsLayer(body) != "" {
-		publishedLayer(t, f, layerPins(body))
-	}
 	t.Chdir(dir)
 	return dir
+}
+
+// publishFilePinsHere publishes a repository file's own lifted keys as aurora's
+// project layer in this machine's cache — the copy a read that reaches no
+// bucket loads (modelsLayer, decision L13) — and returns the file anchored to
+// the project that layer names, which is what makes it apply. For a rig whose
+// XDG_CACHE_HOME is already the test's. A file that names no lifted key comes
+// back as it was.
+func publishFilePinsHere(t *testing.T, body string) string {
+	t.Helper()
+	if pins := pinsLayer(body); pins != "" {
+		cacheLayerNow(t, "aurora", pins)
+	}
+	return anchoredText(body)
+}
+
+// publishFilePins publishes a repository file's own lifted keys as the fixture's
+// project layer, which is where a run reads them now (S1, D3237), and returns
+// the file anchored to the project that layer names — the anchor is what makes
+// it apply. A file that names no lifted key (minimalAnchored, pinnedMinimal)
+// comes back as it was, and a test that publishes a layer of its own afterwards
+// still has the last word.
+func publishFilePins(t *testing.T, f *cloudFixture, body string) string {
+	t.Helper()
+	if pinsLayer(body) == "" {
+		return body
+	}
+	publishedLayer(t, f, layerPins(body))
+	return anchoredText(body)
 }

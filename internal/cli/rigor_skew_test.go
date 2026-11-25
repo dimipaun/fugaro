@@ -285,13 +285,15 @@ func configSkewCheckout(t *testing.T, f *cloudFixture, repoYAML string) string {
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
 	body := anchoredText(repoYAML)
 	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": body, "build.sh": "true\n", "test.sh": "true\n"})
-	// The file's lifted keys are published as aurora's project layer, the place
-	// a run reads them now (S1, D3237): a checkout that named its role models
-	// resolves as it did, and a test that publishes a layer of its own over this
-	// one still has the last word. A head that names none — plain configSkewHead
-	// — publishes nothing.
+	// The fixture layer prices the run — its agent block names the three roles
+	// (S1, D3237: a repository's file may decide no model) — and carries no
+	// other lifted key. The keys these tests write in the file are not
+	// published with it: a launch gate names the source that wrote one, and a
+	// key written in both places is named as both, where a test asserts the
+	// file's own (RepoVisionSet and its four siblings read the file as written,
+	// so the file's side of the gate is what these tests are about).
 	if pinsLayer(body) != "" {
-		publishedLayer(t, f, layerPins(body))
+		publishedLayer(t, f, testProjectLayer)
 	}
 	commitRef(t, dir, "develop")
 	t.Chdir(dir)
