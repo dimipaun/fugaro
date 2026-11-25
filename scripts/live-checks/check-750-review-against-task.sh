@@ -297,11 +297,11 @@ finish() {
   CLEANUP_RUNNING=yes
   cleanup
   local facts=$FACTS_CAPTURED
-  if [ -n "$ABORT_REASON" ] && ! printf '%s' "$facts" | grep -q '^aborted|'; then
+  if [ -n "$ABORT_REASON" ] && ! grep -q '^aborted|' <<<"$facts"; then
     facts="${facts}"$'\n'"aborted|FAIL|$ABORT_REASON"
   fi
   if [ "$REACHED_END" = no ]; then
-    if ! printf '%s' "$facts" | grep -q '^aborted|'; then
+    if ! grep -q '^aborted|' <<<"$facts"; then
       facts="${facts}"$'\n'"aborted|FAIL|the run ended before it reached its last step (exit ${status}): the rows that read 'not reached' were NOT measured, which is this script ending on an error rather than an answer about reviews reading their task"
     fi
     if [ "$status" -eq 0 ] || [ "$status" -eq 1 ] || [ "$status" -eq 3 ]; then status=2; fi
@@ -317,7 +317,7 @@ finish() {
     facts="${facts}"$'\n'"restore|$([ "$SCRATCH_REMOVED" = yes ] && echo PASS || echo FAIL)|the scratch directory $([ "$SCRATCH_REMOVED" = yes ] && echo "is gone" || echo "is STILL THERE, at $SCRATCH — remove it yourself") (the doctor's answer, the version and the usage line, the rows of every listing, the three reviews' launch results and artifacts and the project's own numbers). This check wrote nothing else anywhere, and nothing of yours on disk was opened: the review runs it launched stay, as every run does"
   fi
   if [ -z "$PRINTED" ] && [ "$REACHED_END" = yes ] && [ "$status" -eq 0 ]; then
-    if printf '%s\n' "$facts" | grep -q '|FAIL|'; then
+    if grep -q '|FAIL|' <<<"$facts"; then
       status=1
     elif [ -n "$(criteria_unmet "$facts")" ]; then
       status=3
@@ -491,7 +491,7 @@ field_of() { # field_of NAME TEXT — the value of a NAME= line the reader print
 # reader, which drops '|' outright.
 cand_field() { # cand_field INDEX FIELD TEXT
   local line
-  line=$(printf '%s\n' "$3" | grep -m1 "^c$1|" 2>/dev/null || true)
+  line=$(grep -m1 "^c$1|" <<<"$3" 2>/dev/null || true)
   [ -n "$line" ] || return 0
   case "$2" in
   2) printf '%s' "$line" | cut -d'|' -f2 ;;
@@ -835,7 +835,7 @@ step_release() {
   status=0
   run_call "$CALL_SECONDS" "$SCRATCH/reviewhelp.out" "$SCRATCH/reviewhelp.err" "$FUGARO_BIN" review --help || status=$?
   help=$(cat "$SCRATCH/reviewhelp.out" 2>/dev/null || true)
-  if printf '%s' "$help" | grep -q -- '--code-only' && printf '%s' "$help" | grep -q -- '--spec'; then feature=yes; fi
+  if grep -q -- '--code-only' <<<"$help" && grep -q -- '--spec' <<<"$help"; then feature=yes; fi
   if [ "$feature" = no ]; then
     fact release FAIL "this fugaro does not review against a task: 'fugaro review --help' names neither --code-only nor --spec, so neither the against line nor the launcher's resolution of the opening run is in this build. Check 750 needs release ${RELEASE} or later. Run 'fugaro update' at your terminal — that one command is the whole upgrade — and run this check again on the build it leaves you"
     stop "the installed fugaro carries no review-against-task: this check needs release ${RELEASE}"
@@ -1158,7 +1158,7 @@ BLOCK_KEYS=(installation belong release pr-opened bound against-run unmet code-o
 criteria_unmet() {
   local facts=$1 key line
   for key in "${BLOCK_KEYS[@]}"; do
-    line=$(printf '%s\n' "$facts" | grep -m1 "^$key|" || true)
+    line=$(grep -m1 "^$key|" <<<"$facts" || true)
     case "$line" in
     "$key|PASS|"*) ;;
     *) printf '%s\n' "$key" ;;
@@ -1184,7 +1184,7 @@ print_block() {
   printf '\nCHECK 750 RESULT\n' >&3
   for key in "${BLOCK_KEYS[@]}"; do
     local line
-    line=$(printf '%s\n' "$facts" | grep -m1 "^$key|" || true)
+    line=$(grep -m1 "^$key|" <<<"$facts" || true)
     if [ -n "$line" ]; then
       printf 'FACT %s: %s — %s\n' "$key" \
         "$(printf '%s' "$line" | cut -d'|' -f2)" \

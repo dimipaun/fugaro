@@ -181,7 +181,7 @@ Rows F31–F41 come from review round 2.
   untouched. D3347 as amended supersedes both, for `update` only. → R18.
 - **F34 (Gap).** More pointers name the flag: `anchorProblemText` (`init_fugaroyaml.go:429`, the text
   `gcpProjectProblems` returns, which `repos add` will reuse), `internal/localcfg/select.go:296`,
-  `writers_labels.go:214` and `docs/release.md:364`. Historical specs and release notes name it too
+  `writers_labels.go:214` and `docs/release.md:359`. Historical specs and release notes name it too
   and stay as written. → R14.
 - **F35 (Wrong).** `initflow` cannot import `cli`, so a `repos` member on `initflow.StageResult`
   needs a type in `initflow` and a way for the loop to read a stage's lines. → R12.
