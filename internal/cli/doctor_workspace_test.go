@@ -1,10 +1,16 @@
 package cli
 
 import (
+	"log"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
@@ -122,3 +128,113 @@ func TestDoctorFlagsASwitchTheRouteShadows(t *testing.T) {
 		t.Errorf("unread = %+v, want an unread line", unread)
 	}
 }
+
+// TestDoctorMemberChecksCarryThePersonalTokenLine: the member's line inside
+// doctor's own run (WC11, D3141, F24). TestDoctorFlagsASwitchTheRouteShadows
+// pins every state the line can report, on the facts it is built from; what it
+// cannot see is whether the run carries the line at all, nor that saying it
+// reaches neither the workspace's service nor its intake is a property of the
+// run rather than of the line's own construction.
+//
+// The address the pin names is a server that records every request it is sent,
+// so a call to the workspace from doctor is a request here and not something a
+// reader has to take on trust (F24): the two documents the line is made of are
+// this machine's own — the project's published policy, and the route derivation
+// the line beside it had already made.
+func TestDoctorMemberChecksCarryThePersonalTokenLine(t *testing.T) {
+	var dialed atomic.Int64
+	// The member's machine, with the workspace's service at an address that is
+	// a server rather than a name: nothing doctor does may reach it. The address
+	// has to be https (the pin's own rule), so the count is of whatever the
+	// server answers — a request that got as far as the handler, and a handshake
+	// it refused, which is what a caller using the wrong scheme would produce.
+	memberRun := func(t *testing.T, extraRepo string) *routeRig {
+		t.Helper()
+		srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			dialed.Add(1)
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		srv.Config.ErrorLog = log.New(countingWriter{&dialed}, "", 0)
+		t.Cleanup(srv.Close)
+		sm := gcpfake.NewSecrets(t)
+		pin := strings.Replace(routeMemberPin, routeAddress, srv.URL, 1)
+		if pin == routeMemberPin {
+			t.Fatal("routeMemberPin no longer carries the address this test replaces")
+		}
+		f := newProjectFixture(t, pin+routeCredsService)
+		rewriteConfigLine(t, "no_auth: true", "no_auth: true, secret_manager: "+sm.URL+"/")
+		if extraRepo != "" {
+			rewriteConfigLine(t, "  acme/other: { provider: bitbucket, workflows: [web] }",
+				"  acme/other: { provider: bitbucket, workflows: [web] }\n"+extraRepo)
+		}
+		return newRouteRigOn(t, f, sm)
+	}
+
+	t.Run("the switch over a route the project serves", func(t *testing.T) {
+		r := memberRun(t, "")
+		routeSeedBundle(t, r.sm, config.AnthropicSecret+": "+credsValue(t, "paid"))
+		routeSeedPolicy(t, r.f, map[string][]string{config.AnthropicKeyAccount: {"github/acme/app"}},
+			[]string{"bitbucket/acme/other", "github/acme/app"},
+			map[string]any{creds.PersonSwitchKey: true})
+		r.apply(t)
+
+		o, out := wsDoctorRun(t)
+		c, ok := doctorCheckByID(o.Checks, workspacePersonalCheckID)
+		if !ok {
+			t.Fatalf("doctor's run on a member's machine reports no %s check:\n%s", workspacePersonalCheckID, out)
+		}
+		// The switch is on in the node this run read, and acme/app's model route
+		// is this project's own — the D3141 trap, said where the line is wired
+		// in rather than only where it is built.
+		if c.OK || c.Severity != "warning" {
+			t.Errorf("%s = %+v, want the D3141 warning: the published node's switch is on and acme/app's model route is this project's own", workspacePersonalCheckID, c)
+		}
+		for _, want := range []string{"acme/app", "D3141", creds.PersonSwitchKey} {
+			if !strings.Contains(c.Problem+c.Fix, want) {
+				t.Errorf("%s does not carry %q:\nproblem: %s\nfix: %s", workspacePersonalCheckID, want, c.Problem, c.Fix)
+			}
+		}
+	})
+
+	// A repository whose route could not be derived is not a repository whose
+	// model route is the workspace's: the line is unread over a project whose
+	// repositories were only partly derived, rather than clearing the one the
+	// switch is shadowed in (D3141's trap is exactly that credentials of the
+	// project's own).
+	t.Run("a repository whose route was not derived", func(t *testing.T) {
+		r := memberRun(t, "  acme/noprov: { workflows: [web] }")
+		routeSeedBundle(t, r.sm, config.AnthropicSecret+": "+credsValue(t, "paid"))
+		routeSeedPolicy(t, r.f, map[string][]string{config.AnthropicKeyAccount: {"github/acme/app"}},
+			[]string{"bitbucket/acme/other", "github/acme/app"},
+			map[string]any{creds.PersonSwitchKey: true})
+		r.apply(t)
+
+		o, out := wsDoctorRun(t)
+		c, ok := doctorCheckByID(o.Checks, workspacePersonalCheckID)
+		if !ok {
+			t.Fatalf("doctor's run on a member's machine reports no %s check:\n%s", workspacePersonalCheckID, out)
+		}
+		// The line is read back through --json, which carries no unread field, so
+		// what a reader can tell it by is its own words.
+		if c.OK || c.Severity != "info" {
+			t.Errorf("%s = %+v, want the info line that answers nothing: one of this project's repositories has no derived route", workspacePersonalCheckID, c)
+		}
+		if !strings.Contains(c.Problem, "was not checked") {
+			t.Errorf("%s does not say whether the switch is shadowed was not checked:\n%s", workspacePersonalCheckID, c.Problem)
+		}
+		if strings.Contains(c.Problem, "every repository") {
+			t.Errorf("%s states every repository's route over one that was never derived:\n%s", workspacePersonalCheckID, c.Problem)
+		}
+	})
+
+	if n := dialed.Load(); n != 0 {
+		t.Errorf("doctor's run sent %d request(s) to the address the pin names, want none: the member's lines are this machine's own documents (F24)", n)
+	}
+}
+
+// countingWriter counts whatever is written to it: the test server logs a
+// handshake it refused here, so a dial that never reached the handler is counted
+// beside the requests that did.
+type countingWriter struct{ n *atomic.Int64 }
+
+func (w countingWriter) Write(p []byte) (int, error) { w.n.Add(1); return len(p), nil }

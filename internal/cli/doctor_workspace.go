@@ -501,14 +501,18 @@ func doctorWorkspacePinCheck(lc *localcfg.Config, rc routeConfig) doctorCheck {
 // attribute.
 //
 // It answers the route it derived for each repository beside its lines — the
-// personal check reads the model half of them (D3141) — and whether the
-// derivation could be made at all, which is false for the states below that
-// report an unread line.
+// personal check reads the model half of them (D3141) — and whether EVERY
+// repository's route was derived: a repository whose derivation answered an
+// unknown is one the personal check must not report at all, because leaving it
+// out of the map and calling the rest complete would state its route as the
+// workspace's when nobody derived it, which is the D3141 trap going unseen.
 func doctorWorkspaceRouteChecks(ctx context.Context, lc *localcfg.Config, rc routeConfig) (map[string]creds.Route, bool, []doctorCheck) {
 	id := workspaceRouteCheckID
 	if !rc.publishes() {
 		// The pin names no address, so this project publishes no route and has
-		// none to report: the pin's own line says which state that is.
+		// none to report: the pin's own line says which state that is, and the
+		// personal check has a branch of its own for it — asked before the map
+		// is read, so the empty one here is no claim about any repository.
 		return nil, true, nil
 	}
 	unreadable := func(what, fix string) (map[string]creds.Route, bool, []doctorCheck) {
@@ -593,7 +597,7 @@ func doctorWorkspaceRouteChecks(ctx context.Context, lc *localcfg.Config, rc rou
 		out = append(out, doctorCheck{ID: id, OK: true, Severity: "info",
 			Problem: "this project records no repository, so it publishes no credential route: a run of nothing is served from nowhere", Fix: "nothing to run for this"})
 	}
-	return routes, true, out
+	return routes, len(unknown) == 0, out
 }
 
 // workspaceRouteMoves is whether a derived route serves any kind from the

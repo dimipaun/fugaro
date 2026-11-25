@@ -2246,26 +2246,41 @@ func (e *initEngine) renderIntakePeople(ctx context.Context, vars []byte) ([]byt
 // REFUSES an absent one: a workspace whose roster is not written yet is a
 // workspace with no people, and an update is not the command that fails over it.
 func (e *initEngine) rosterPeople(ctx context.Context) ([]string, error) {
-	lc, db, err := budgetDBFor(ctx, e.lc)
+	roster, found, err := e.rosterOf(ctx)
 	if err != nil {
 		return nil, err
-	}
-	store, err := workspace.NewRosterStore(db, workspaceNameOf(lc))
-	if err != nil {
-		return nil, err
-	}
-	node, found, err := store.Read(ctx)
-	if err != nil {
-		return nil, dbErr(lc, err, false)
 	}
 	if !found {
 		return []string{}, nil
 	}
+	return infra.IntakePeople(roster), nil
+}
+
+// rosterOf is the workspace's roster document itself, or found false for a
+// workspace whose roster is not written yet — the state rosterPeople reads as
+// no people, and the one every caller of it has to answer for rather than
+// decode.
+func (e *initEngine) rosterOf(ctx context.Context) (*workspace.Roster, bool, error) {
+	lc, db, err := budgetDBFor(ctx, e.lc)
+	if err != nil {
+		return nil, false, err
+	}
+	store, err := workspace.NewRosterStore(db, workspaceNameOf(lc))
+	if err != nil {
+		return nil, false, err
+	}
+	node, found, err := store.Read(ctx)
+	if err != nil {
+		return nil, false, dbErr(lc, err, false)
+	}
+	if !found {
+		return nil, false, nil
+	}
 	roster, err := workspace.DecodeRoster(node.Raw)
 	if err != nil {
-		return nil, userErr("%s: %v", store.Path(), err)
+		return nil, false, userErr("%s: %v", store.Path(), err)
 	}
-	return infra.IntakePeople(roster), nil
+	return roster, true, nil
 }
 
 // newInstallationStage is stage 3: init's installation engine. With

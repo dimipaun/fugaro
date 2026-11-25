@@ -844,14 +844,22 @@ func (e *initEngine) workspaceDropsReach(ctx context.Context, db *rtdb.Client) b
 // localcfg.PersonalWorkspaceTokensEffective, so a teammate's machine whose file
 // never carried the key cannot turn it off — and only a member's machine can
 // make the edit at all, a workspace's own project being in no workspace (R12).
-// A node that is not there, a read that failed and a policy this build does not
-// read are all silence.
+// A node that is not there and a read that failed are both silence, and the
+// read is ReadCarriedForward and not Read for policyReadsLive's reason: this is
+// a question about the node and not a decision by it, and on the upgrade that
+// bumps the policy version the node every installation holds is one Read
+// refuses — which would answer "no switch" for the member whose switch this
+// very run's policy stage publishes off, and the line would name no step over a
+// publish that does reach every run of that project at the service's next call.
 func (e *initEngine) personalSwitchTurnsOff(ctx context.Context, db *rtdb.Client) bool {
 	if e.lc == nil || !workspaceMember(e.lc) || e.lc.PersonalWorkspaceTokens == nil || *e.lc.PersonalWorkspaceTokens {
 		return false
 	}
-	on, err := projectpolicy.PersonSwitchOverDB(db).PersonSwitchOn(ctx, e.lc.Name)
-	return err == nil && on
+	p, found, err := projectpolicy.ReadCarriedForward(ctx, db)
+	if err != nil || !found || p == nil {
+		return false
+	}
+	return p.PersonalWorkspaceTokensOn()
 }
 
 // rosterDropsAPerson is whether this run's workspace apply takes a person off
@@ -863,13 +871,20 @@ func (e *initEngine) personalSwitchTurnsOff(ctx context.Context, db *rtdb.Client
 //
 // What it asks is the recorded document against the roster, and not the stage's
 // own decision: the var.people this run would replace, read out of the workspace
-// root's own tfvars, against the people the roster names now. The stage is the
-// one that reads them for real, with the workdir set; the door has none, so it
-// reads the same two lists out of the same places — infra.WorkspaceWorkdir is
-// where the workspace root's document is, and the roster is the node beside it
-// (e.rosterPeople). A workdir with no document, an absent roster and a read that
-// failed are all silence, as every other read in this file answers: a run this
-// note cannot place is one it does not name.
+// root's own tfvars, against the people the roster names now. The two lists are
+// compared as the ROOT's variable holds them and not as the intake's class does
+// (e.rosterHolders): var.people is rosterHumans, every human the roster names,
+// while the intake's class drops a service account's address, one past the
+// class's byte limit and one that is not a bare member address — so a comparison
+// against the class would call a person the roster still holds dropped, on every
+// later update, for as long as that person's address stays in the document.
+//
+// The stage is the one that reads them for real, with the workdir set; the door
+// has none, so it reads the same two lists out of the same places —
+// infra.WorkspaceWorkdir is where the workspace root's document is, and the
+// roster is the node beside it (e.rosterOf). A workdir with no document, an
+// absent roster and a read that failed are all silence, as every other read in
+// this file answers: a run this note cannot place is one it does not name.
 func (e *initEngine) rosterDropsAPerson(ctx context.Context) bool {
 	lc := e.lc
 	if lc == nil || !workspaceDeclared(lc) {
@@ -887,7 +902,7 @@ func (e *initEngine) rosterDropsAPerson(ctx context.Context) bool {
 	if len(recorded) == 0 {
 		return false
 	}
-	people, err := e.rosterPeople(ctx)
+	people, err := e.rosterHolders(ctx)
 	if err != nil {
 		return false
 	}
@@ -901,6 +916,19 @@ func (e *initEngine) rosterDropsAPerson(ctx context.Context) bool {
 		}
 	}
 	return false
+}
+
+// rosterHolders is the roster's humans as the workspace root's own var.people
+// carries them (rosterHumans, workspace_create.go): the list this run's apply
+// writes, which is the list a recorded document has to be compared against. An
+// absent roster is no holders and no error, the state rosterPeople answers as
+// no people.
+func (e *initEngine) rosterHolders(ctx context.Context) ([]string, error) {
+	roster, found, err := e.rosterOf(ctx)
+	if err != nil || !found {
+		return nil, err
+	}
+	return rosterHumans(roster), nil
 }
 
 // markerConverges is whether this update rewrites the installation's creation

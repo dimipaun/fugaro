@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -1300,6 +1301,28 @@ func TestUpdateNamesTheStepsThatReachAPersonalRun(t *testing.T) {
 		}
 	})
 
+	t.Run("the switch on a node this build's strict reader refuses", func(t *testing.T) {
+		// The node every installation holds while the upgrade that bumps the
+		// version runs is one this build's strict reader refuses and the
+		// migration chain carries. Asking Read for the switch would answer "off"
+		// for a member whose switch this very run's policy stage publishes off —
+		// the line would name no step over a publish that does reach every run of
+		// that project — so the gate reads through ReadCarriedForward, as every
+		// other question about the node in this file does.
+		f := newProjectFixture(t, wsPin+"personal_workspace_tokens: false\n")
+		v := refusedOlderVersion(t)
+		f.db.Set(projectpolicy.PathShared(), json.RawMessage(fmt.Sprintf(
+			`{"version":%d,"budget":{"mode":"enforce"},"personal_workspace_tokens":true}`, v)))
+		f.db.Set(budget.PathMode, budget.ModeEnforce)
+		f.db.Set("agents", map[string]any{"proj-1234": map[string]any{"run-1": map[string]any{"repo": "github/acme/app"}}})
+		h := newMigrationRig(t, f, &initOptions{})
+		h.s.e.announceRunsInFlight(context.Background())
+
+		if out := h.out.String(); !strings.Contains(out, "personal tokens:") {
+			t.Errorf("the note does not name the member's switch published off over a node written in the version behind (R11):\n%s", out)
+		}
+	})
+
 	t.Run("a person the roster dropped", func(t *testing.T) {
 		// The roster still holds one person; the workspace root's tfvars carry
 		// two. The apply this run makes renders var.people from the roster, so
@@ -1343,6 +1366,42 @@ func TestUpdateNamesTheStepsThatReachAPersonalRun(t *testing.T) {
 		g.s.e.announceRunsInFlight(context.Background())
 		if got := strings.TrimSpace(g.out.String()); strings.Contains(got, "roster:") {
 			t.Errorf("the note names a person the roster still holds:\n%s", got)
+		}
+	})
+
+	t.Run("a person the intake's class never held", func(t *testing.T) {
+		// The root's variable and the intake's class are not the same list: the
+		// class drops a service account's address, so a roster human at one is in
+		// var.people and in no class. Comparing the recorded document against the
+		// CLASS would name that person dropped on every later update while the
+		// roster still holds them, which is the line this half refuses.
+		const robot = "runner@proj-1234.iam.gserviceaccount.com"
+		f := newProjectFixture(t, wsOwnerTable+wsOwnerCap)
+		wsSeedRecordedPeople(t, []string{robot, "stays@example.com"})
+		roster, err := workspace.EncodeRoster(&workspace.Roster{
+			Version:   workspace.RosterVersion,
+			Mechanism: workspace.MechanismSA,
+			People: []workspace.Person{
+				{Address: robot, Kind: workspace.KindHuman, External: true},
+				{Address: "stays@example.com", Kind: workspace.KindHuman, External: true},
+			},
+			Admins: []string{"stays@example.com"},
+		})
+		if err != nil {
+			t.Fatalf("encoding the roster: %v", err)
+		}
+		path, err := workspace.PathRoster(initProjectName)
+		if err != nil {
+			t.Fatalf("workspace.PathRoster: %v", err)
+		}
+		f.db.Set(path, json.RawMessage(roster))
+		f.db.Set(budget.PathMode, budget.ModeEnforce)
+		f.db.Set("agents", map[string]any{"proj-1234": map[string]any{"run-1": map[string]any{"repo": "github/acme/app"}}})
+		h := newMigrationRig(t, f, &initOptions{})
+		h.s.e.announceRunsInFlight(context.Background())
+
+		if got := strings.TrimSpace(h.out.String()); strings.Contains(got, "roster:") {
+			t.Errorf("the note names a person the roster holds because the intake's class leaves their address out:\n%s", got)
 		}
 	})
 }
