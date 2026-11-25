@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/runindex"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -519,5 +520,40 @@ func TestPRFallbackNoteNotInJSON(t *testing.T) {
 	// the run whose result.json is unreadable has always shown.
 	if !strings.Contains(errOut, "result.json is unreadable") {
 		t.Errorf("stderr = %q, want the run read by the window and warned about", errOut)
+	}
+}
+
+// TestLaunchPRReadsTheRunIndex: the launch gate reads the run index, which is
+// what lets `fugaro run --pr N` find the run that opened the pull request now
+// that the runners write no entry of their own (IR5a, D3204).
+//
+// The pull request's index in the bucket is the shape a `--pr` launch leaves
+// behind: the launcher's own entry for a follow-up started on it, and none for
+// the opener. It is non-empty, so the window fallback never fires, and the run
+// that pushed is in neither it nor the recent window -- a gate reading the
+// bucket alone refuses the launch of a pull request whose own opener is right
+// there in the index.
+//
+// Mutation caught: gating prRefs' run index read on lsFilter.indexNote, which
+// is what left the launch deciding from the bucket's index alone.
+func TestLaunchPRReadsTheRunIndex(t *testing.T) {
+	f := newCloudFixture(t)
+	idx := &indexFake{}
+	lsIndex(t, idx)
+	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+	// A follow-up of the pull request that never pushed, with the launcher's
+	// entry for it and no entry for the opener.
+	stalled := wallRunIDAt(3, "100000", "beef")
+	seedFollowUp(t, f, stalled, rootID, rootID, time.Now().Add(-72*time.Hour), runstore.StatusFailed, false)
+	seedPRIndexEntry(t, f, stalled, 7, runstore.PRIndexFollowed)
+	idx.entries = append(idx.entries, runindex.Entry{RunID: rootID, Slug: appSlug, Repo: "acme/app",
+		UpdatedAt: time.Now().UTC().Add(-72 * time.Hour), Status: runstore.StatusFailed, Workflow: "web", PR: 7})
+
+	args := []string{"run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--json", "also rename x"}
+	if _, _, err := execute(t, args...); err != nil {
+		t.Fatalf("the launch of PR 7's follow-up was refused (%v): the index names the opener %s, which the bucket's index does not hold", err, rootID)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want the follow-up started", n)
 	}
 }
