@@ -108,7 +108,7 @@ type enrolledIn struct {
 // enrolled repository's fugaro.yaml: the folder the backlog fold folds (U8).
 // U6a adds the plugin pin's .claude/settings.json, and the reader reads the
 // whole list in one pass, because the run's views answer every stage at once.
-var updateExtraPaths = []string{backlog.Dir + "/"}
+var updateExtraPaths = append(append([]string{}, repoNoticeExtra...), backlog.Dir+"/")
 
 // reposState is one run's per-repository state: the enrolled list it read,
 // and the lines every stage and step reported about it.

@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -71,7 +70,7 @@ func checkoutFiles(root string, paths []string) map[string][]byte {
 	for _, p := range paths {
 		at := filepath.Join(root, filepath.FromSlash(p))
 		if !strings.HasSuffix(p, "/") {
-			if data, err := os.ReadFile(at); err == nil {
+			if data, err := config.ReadRegular(at, config.MaxCheckoutFile); err == nil {
 				if out == nil {
 					out = map[string][]byte{}
 				}
@@ -87,7 +86,7 @@ func checkoutFiles(root string, paths []string) map[string][]byte {
 			if err != nil {
 				return nil
 			}
-			data, err := os.ReadFile(path)
+			data, err := config.ReadRegular(path, config.MaxCheckoutFile)
 			if err != nil {
 				return nil
 			}

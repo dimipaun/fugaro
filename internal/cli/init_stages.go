@@ -696,16 +696,15 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// printResult for the reason the two above are: what it printed and
 	// recorded belongs to this run's result.
 	e.raiseBudgetMode(ctx)
-	// And the checkout's own file, which is the one door of the two that is a
-	// committed file somebody reviews: the removal of the budget.mode line is
-	// offered as a diff, written with --yes or by a person at the terminal and
-	// printed otherwise, exactly as the anchor's line is (AB8b, F12, D3022). It
-	// is here rather than before the loop because the repository stage reads
-	// that file and acts only while the working tree holds the default branch's
-	// bytes (resolveRepoTarget), so an edit before it would turn this run's own
-	// repository step into "not the default branch's file". It returns no error
-	// for the reason the raise above returns none.
-	e.offerBudgetModeRemoval(ctx)
+	// And U6a's: the two dead values a release behind this one left on an
+	// enrolled repository's default branch — the plugin pin in
+	// .claude/settings.json and budget.mode: off in fugaro.yaml — each get one
+	// notice line naming the file and the exact edit (D3340). Nothing is
+	// written: the diff offer and the line's removal are gone, and the value is
+	// the repository's own change to make. It is here with the raise above
+	// because both are steps of the update door's and neither may fail an
+	// update (the HARD RULE).
+	e.noticeRepoValues(ctx)
 	// And D1543's: the creation fact a release behind left at version 3 carries
 	// the image build count this one no longer bounds a build by, and a fact is
 	// migrated where it was written (update_marker_version.go). It is after the
