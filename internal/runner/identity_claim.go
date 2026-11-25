@@ -123,23 +123,15 @@ func (r *run) claimBudgetIdentity(ctx context.Context, ticket string) (string, e
 		return "", r.bootstrapHalt(runstore.HaltBudgetUnavailable, "run",
 			"this run's claim was not made: the nonce it is made with could not be drawn from the machine's random source, so no claim was sent, and a claim with a nonce that is not random is one another caller could repeat (R2). Launch the run again (fugaro run with the same task)")
 	}
-	body, err := json.Marshal(identitywire.ClaimRequest{Ticket: ticket, Nonce: nonce})
-	if err != nil {
-		// A ClaimRequest is two strings, so this cannot fire: refused rather
-		// than sent half-built, and the reason names no value.
-		return "", r.bootstrapHalt(runstore.HaltBudgetUnavailable, "run",
-			"this run's claim was not made: the call could not be built, so no claim was sent. Launch the run again (fugaro run with the same task)")
-	}
 	cctx, cancel := context.WithTimeout(ctx, slipClaimBudget)
 	defer cancel()
-	ans, err := r.claimRetryCall(cctx, serviceURL, body)
+	ans, err := r.claimRetryCall(cctx, serviceURL, identitywire.ClaimRequest{Ticket: ticket, Nonce: nonce})
 	if err != nil {
 		// No answer at all, or none worth keeping, after the bounded retry. The
 		// error is this file's own sentence (claimPost writes one and never
 		// reads the service's answer into it), and it is redacted anyway: no
 		// line of a reason may carry the ticket.
-		return "", r.bootstrapHalt(runstore.HaltBudgetUnavailable, "run",
-			"the installation's credentials service could not be reached for this run's claim, and the run has no identity without one: "+r.redact(err.Error())+". Start a new run (fugaro run with the same task)")
+		return "", r.bootstrapHalt(runstore.HaltBudgetUnavailable, "run", r.claimCallDetail(err))
 	}
 	if ans.status != http.StatusOK {
 		return "", r.bootstrapHalt(runstore.HaltBudgetUnavailable, "run", claimRefusalDetail(ans.status, ans.body))
@@ -160,6 +152,46 @@ func (r *run) claimBudgetIdentity(ctx context.Context, ticket string) (string, e
 	return claim.Token, nil
 }
 
+// errNoAttestation marks the failure that is this VM's rather than the
+// service's: the claim's attestation could not be read from the metadata
+// server. It is a sentinel because the two causes behind one spent retry have
+// two sentences and two fixes -- a service that answered nothing is the
+// installation's, an unreadable VM identity is the machine's -- and the halt
+// has one error to tell them apart by.
+var errNoAttestation = errors.New("this VM's identity could not be read for the claim")
+
+// claimCallDetail is the halt's sentence for a claim that got no answer worth
+// keeping after the bounded retry. Nothing is retried past it (F23: the run
+// never proceeds without an identity), and the fix is a new run either way,
+// because this one has launched. Which of the two sentences it is decides
+// nothing about the fix and everything about the cause a person reads: the
+// service that was not there, or the VM identity this claim must carry and
+// could not read.
+func (r *run) claimCallDetail(err error) string {
+	if errors.Is(err, errNoAttestation) {
+		return "this run's claim was not made: the identity of the VM this run is on could not be read from the metadata server, and a Batch run's claim carries it (the service serves this run's identity only to a VM of the job the record names, U2), so no claim was sent. A machine whose metadata server answers nothing is not one this run can claim from: launch the run again (fugaro run with the same task), and if it stops here again the VM it lands on cannot read its own identity"
+	}
+	return "the installation's credentials service could not be reached for this run's claim, and the run has no identity without one: " + r.redact(err.Error()) + ". Start a new run (fugaro run with the same task)"
+}
+
+// addIdentityTicket registers the launch's identity ticket with the redactor,
+// at the run's first moment and long before the claim presents it. The ticket
+// travels in the job's environment (Backend.Ticket, identitywire.TicketEnv),
+// where Batch prints a job's variables itself (F3) and where Fugaro prints it
+// nowhere (R7, D3115): holding it here is what makes even a reason published
+// before the claim -- an admission halt, a config refusal, a git failure --
+// redacted of it. The claim registers it again where it is presented, which is
+// the guarantee that travels with the file that makes the call.
+//
+// The attestation needs no line here: it exists only once the claim reads it
+// from the metadata server, and the read registers it before it returns
+// (batchAttestation).
+func (r *run) addIdentityTicket() {
+	if r.d.Backend.Ticket != "" {
+		r.addSecret(r.d.Backend.Ticket)
+	}
+}
+
 // claimNonce draws the nonce the claim is made with: claimNonceBytes of
 // crypto/rand as one unpadded base64url string, so the value is one header and
 // body value and holds no byte a JSON encoder would have to escape.
@@ -172,9 +204,11 @@ func claimNonce() (string, error) {
 }
 
 // claimRetryCall makes this run's claim, retrying the attempts nothing answered
-// (spec §Resilience). The body is built once, so every attempt presents the
-// same ticket and the same nonce: a retry after an answer that was lost is the
-// same claim and not a second one (R2).
+// (spec §Resilience). The claim's two own values are drawn once and presented
+// unchanged on every attempt -- the same ticket and the same nonce, so a retry
+// after an answer that was lost is the same claim and not a second one (R2) --
+// while what a claim carries of the machine it is made from is read per attempt
+// by claimPost.
 //
 // It is the slip's retry shape with the slip's own delays and wait, because it
 // is the same kind of call to the same service with the same budget: see
@@ -182,9 +216,9 @@ func claimNonce() (string, error) {
 // differ in what they read of the answer (slipRetryable asks the status alone;
 // this one stops on any of the contract's codes) and in what a spent retry
 // means (a slip is given up, a claim halts).
-func (r *run) claimRetryCall(ctx context.Context, serviceURL string, body []byte) (slipAnswer, error) {
+func (r *run) claimRetryCall(ctx context.Context, serviceURL string, claim identitywire.ClaimRequest) (slipAnswer, error) {
 	for attempt := 0; ; attempt++ {
-		ans, err := r.claimPost(ctx, serviceURL, body)
+		ans, err := r.claimPost(ctx, serviceURL, claim)
 		if !claimRetryable(ans.status, ans.body, err) || attempt >= len(slipRetryDelays) {
 			return ans, err
 		}
@@ -219,20 +253,38 @@ func claimRetryable(status int, answer []byte, err error) bool {
 }
 
 // claimPost makes one POST of this run's claim and reads the answer back, with
-// the one identity the route decides a claim by: the job's own Google ID token,
-// which the service admits at Cloud Run IAM and verifies as the account the
-// record names (R4). The run's Firebase identity is deliberately not sent and
-// does not exist yet: the claim is what creates it, and the route is answered
-// ahead of the shared request parse for exactly that reason (C1).
+// the two identities the route decides a claim by: the job's own Google ID
+// token, which the service admits at Cloud Run IAM and verifies as the account
+// the record names (R4), and -- where this run's job is on Batch -- the VM's
+// own identity token in the metadata server's full format, which is what says
+// the claim is made from a VM of the job the record names (BR4, R1, U2). The
+// run's Firebase identity is deliberately not sent and does not exist yet: the
+// claim is what creates it, and the route is answered ahead of the shared
+// request parse for exactly that reason (C1).
+//
+// Both tokens are read here, per attempt, and neither is cached: they are
+// credentials the platform is issuing now, and a retry that follows the
+// metadata server's own cold start presents the ones it has by then. The
+// body's two other values are the caller's and are the same on every attempt
+// (R2).
 //
 // The answer is bounded and the client never follows a redirect, and neither
-// value is read into an error: the ticket's own call is the one place it is on
+// token is read into an error: the ticket's own call is the one place it is on
 // any wire but the service's, and a failure here is this run's sentence and not
 // the service's text.
-func (r *run) claimPost(ctx context.Context, serviceURL string, body []byte) (slipAnswer, error) {
+func (r *run) claimPost(ctx context.Context, serviceURL string, claim identitywire.ClaimRequest) (slipAnswer, error) {
 	token, err := metadataIDToken(ctx, r.d.Env, serviceURL)
 	if err != nil {
 		return slipAnswer{}, err
+	}
+	if claim.Attestation, err = r.batchAttestation(ctx, serviceURL); err != nil {
+		return slipAnswer{}, err
+	}
+	body, err := json.Marshal(claim)
+	if err != nil {
+		// A ClaimRequest is three strings, so this cannot fire: refused rather
+		// than sent half-built, and the reason names no value.
+		return slipAnswer{}, errors.New("the claim call's request could not be built")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(serviceURL, "/")+identitywire.ClaimPath, bytes.NewReader(body))
 	if err != nil {

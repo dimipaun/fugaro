@@ -34,9 +34,7 @@ package cli
 // (D2805).
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -719,17 +717,13 @@ func (a *workspaceProjectAdd) writeMirror(ctx context.Context, roster *workspace
 // reader -- spells the document here, and this is where a reader of one finds
 // its version.
 func workspaceMirrorDocument(people []workspace.Person) ([]byte, error) {
-	doc := workspaceMirrorDoc{Version: workspaceMirrorVersion, Members: make([]workspace.MirrorEntry, 0, len(people))}
+	entries := make([]workspace.MirrorEntry, 0, len(people))
 	for _, p := range people {
-		entry := workspace.MirrorEntry{Address: p.Address, Kind: p.Kind, External: p.External}
-		if err := entry.Validate(); err != nil {
-			return nil, userErr("the member list this add would mirror: %v", err)
-		}
-		doc.Members = append(doc.Members, entry)
+		entries = append(entries, workspace.MirrorEntry{Address: p.Address, Kind: p.Kind, External: p.External})
 	}
-	raw, err := json.Marshal(doc)
+	raw, err := EncodeMemberMirror(entries)
 	if err != nil {
-		return nil, userErr("rendering the member list this add would mirror: %v", err)
+		return nil, userErr("the member list this add would mirror: %v", err)
 	}
 	return raw, nil
 }
@@ -778,24 +772,7 @@ func workspaceProjectMirrorEntries(doc workspace.MemberDoc) ([]workspace.MirrorE
 	if !doc.Found {
 		return nil, nil
 	}
-	dec := json.NewDecoder(bytes.NewReader(doc.Raw))
-	dec.DisallowUnknownFields()
-	var m workspaceMirrorDoc
-	if err := dec.Decode(&m); err != nil {
-		return nil, err
-	}
-	if _, err := dec.Token(); err != io.EOF {
-		return nil, errors.New("the document carries more than one JSON value")
-	}
-	if m.Version != workspaceMirrorVersion {
-		return nil, fmt.Errorf("version: %d is not the version this command writes (%d)", m.Version, workspaceMirrorVersion)
-	}
-	for i, entry := range m.Members {
-		if err := entry.Validate(); err != nil {
-			return nil, fmt.Errorf("members[%d]: %w", i, err)
-		}
-	}
-	return m.Members, nil
+	return DecodeMemberMirror(doc.Raw)
 }
 
 // workspaceProjectAddForeignPeople is R2's "another workspace" as it can be read
