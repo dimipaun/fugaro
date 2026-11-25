@@ -210,6 +210,94 @@ func TestDiagnoseShowsThePauseAndItsResume(t *testing.T) {
 	})
 }
 
+// TestDiagnoseStopsTheResumerScanAtItsBound is the scan's own edge: a diagnose
+// of a paused run asks a bounded number of the repository's runs — the ones
+// nearest the pause's resume instant — and what it does at the bound is fixed
+// here.
+//
+// The read holds one run and no listing, so the resumer comes from a scan it
+// makes itself (resumersOf). That scan is bounded by pauseResumerScan because a
+// paused run's node is never deleted and its instant is never bumped: a window
+// that ran on to the repository's newest run would grow with every run minted
+// after the pause, at one task read per run, on the read the console's Run
+// screen makes when a person opens a paused run.
+//
+// The first case is the bound: pauseResumerScan runs minted inside the minute
+// before the instant fill it, and a resumer one launch later — near enough that
+// an unbounded scan would find it — is not named, with the one line that says
+// the read stopped there. The second is what the bound must not cost: a resumer
+// beside the instant is still named when the repository minted hundreds of runs
+// after the pause, which are the runs an unbounded window would have read.
+func TestDiagnoseStopsTheResumerScanAtItsBound(t *testing.T) {
+	t.Run("the runs nearest the instant fill the bound", func(t *testing.T) {
+		f := newCloudFixture(t)
+		now := time.Now().UTC()
+		resume := now.Add(-30 * time.Minute).Truncate(time.Second)
+		suspended := wallRunID(t, 2*time.Hour, "7d3e")
+		pausedRun(t, f, suspended, "", 0, now.Add(-2*time.Hour))
+		pausedNode(t, f, suspended, suspended, resume, false)
+		for i := 0; i < pauseResumerScan; i++ {
+			seedRun(t, f, wallRunID(t, 30*time.Minute+time.Duration(i+1)*time.Second, fmt.Sprintf("%04x", i)), "", "", false)
+		}
+		// Five minutes after the instant, and behind every run above it.
+		resumer := wallRunID(t, 25*time.Minute, "9f10")
+		seedResumer(t, f, resumer, suspended, now.Add(-25*time.Minute))
+
+		out, errOut, err := execute(t, "diagnose", "--json", suspended)
+		if err != nil {
+			t.Fatalf("diagnose: %v (%s)", err, errOut)
+		}
+		var d Diagnosis
+		if err := json.Unmarshal([]byte(out), &d); err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
+		if d.Row.ResumedBy != "" {
+			t.Errorf("resumed_by = %q, want none: the %d runs nearest the resume instant fill the read's bound and %s is past it",
+				d.Row.ResumedBy, pauseResumerScan, resumer)
+		}
+		if want := fmt.Sprintf("the %d runs nearest its resume instant name no resume of it", pauseResumerScan); !strings.Contains(errOut, want) {
+			t.Errorf("the read stopped at its bound and did not say so, want %q:\n%s", want, errOut)
+		}
+	})
+
+	t.Run("runs minted after the pause cost the bound nothing", func(t *testing.T) {
+		f := newCloudFixture(t)
+		now := time.Now().UTC()
+		resume := now.Add(-30 * time.Minute).Truncate(time.Second)
+		suspended := wallRunID(t, 2*time.Hour, "7d3e")
+		pausedRun(t, f, suspended, "", 0, now.Add(-2*time.Hour))
+		pausedNode(t, f, suspended, suspended, resume, false)
+		for i := 0; i < 10; i++ {
+			seedRun(t, f, wallRunID(t, 30*time.Minute+time.Duration(i+1)*time.Second, fmt.Sprintf("%04x", i)), "", "", false)
+		}
+		// A minute after the instant, which is where a launch the service
+		// granted lands.
+		resumer := wallRunID(t, 29*time.Minute, "9f10")
+		seedResumer(t, f, resumer, suspended, now.Add(-29*time.Minute))
+		// Three bounds' worth minted in the minutes since, none of them a
+		// resume of anything.
+		for i := 0; i < 3*pauseResumerScan; i++ {
+			seedRun(t, f, wallRunID(t, time.Duration(i)*time.Second, fmt.Sprintf("%04x", 0x100+i)), "", "", false)
+		}
+
+		out, errOut, err := execute(t, "diagnose", "--json", suspended)
+		if err != nil {
+			t.Fatalf("diagnose: %v (%s)", err, errOut)
+		}
+		var d Diagnosis
+		if err := json.Unmarshal([]byte(out), &d); err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
+		if d.Row.ResumedBy != resumer {
+			t.Errorf("resumed_by = %q, want %q: the resumer is beside the pause's own instant whatever the repository minted afterwards",
+				d.Row.ResumedBy, resumer)
+		}
+		if strings.Contains(errOut, "name no resume of it") {
+			t.Errorf("the scan stopped at its bound with the resumer inside it:\n%s", errOut)
+		}
+	})
+}
+
 // TestDiagnosePrintsStagesAndTolerated: the run's per-stage record (the model
 // calls, sub-agent calls and model spend of each stage, governance T1.1-T1.3)
 // and the findings the run's rigor mode let through (T3.4) are both on the
