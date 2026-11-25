@@ -192,10 +192,11 @@ func TestLaunchRefusesAnUnmigratedFolderRecipe(t *testing.T) {
 		t.Fatal("a task.json was written for a refused launch")
 	}
 
-	// The same launch with the migration record: the project's recipe.
+	// The same launch with the migration record: the project's recipe, which is
+	// a copy name the image has to know (releaseLift, recipeCopySince).
 	f = newCloudFixture(t)
 	projectRecipesFixture(t, f, map[string]string{name: text})
-	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
+	writeBuildRecord(t, f, appSlug, "web", releaseLift)
 	appCopyCheckout(t, map[string]string{".fugaro/recipes/" + name + ".yaml": repoTeam})
 	writeBucketFile(t, f, lift.RecordPath(appSlug), `{"version":1}`)
 	if _, _, err := execute(t, "run", "--run-id", "20261007-100000-abcd", "--recipe", name, "A task"); err != nil {
@@ -205,7 +206,9 @@ func TestLaunchRefusesAnUnmigratedFolderRecipe(t *testing.T) {
 		t.Fatalf("task recipe = %+v", got)
 	}
 
-	// A repository whose default branch holds no such file, no record either.
+	// A repository whose default branch holds no such file, no record either:
+	// the project's own recipe of that name is what it gets, no copy, so the
+	// seal's image is enough.
 	f = newCloudFixture(t)
 	projectRecipesFixture(t, f, map[string]string{name: text})
 	writeBuildRecord(t, f, appSlug, "web", releaseSeal)

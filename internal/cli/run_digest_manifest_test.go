@@ -18,8 +18,11 @@ import (
 // digestLaunchImage is the base image a launch with --recipe run-digest
 // needs: the digest step is 0.13.0's (digestSince), so an older build record
 // is refused at launch — after the manifest is listed, which comes first,
-// but before any execution starts.
-const digestLaunchImage = "ghcr.io/dimipaun/fugaro-base:0.13.0"
+// but before any execution starts. The arms of this file launch acme/app's
+// own report recipe, which the launch resolves as the project's copy of it
+// (D3303): that copy's name is release A's, so the fixture's image is at
+// release A (recipeCopySince) and not at the digest step's own release.
+const digestLaunchImage = "ghcr.io/dimipaun/fugaro-base:" + recipeCopySince
 
 // digestOldImage is the newest release that predates the digest step: a
 // report launch against a job image built from it is refused (digestSince).

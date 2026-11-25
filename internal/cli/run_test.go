@@ -999,12 +999,13 @@ func TestAnArtifactLaunchRefusesACapSetThatCannotFitMemory(t *testing.T) {
 	testutil.IsolateGit(t)
 	f.run.AddJob(gcp.JobName(mustSlug("github", "acme/other"), "svc"), "2", "4Gi")
 	// A job image whose runner knows mode: artifact (artifactsSince, below the
-	// seal) and the sealed budget token (releaseSeal): a spec carrying the mode
-	// is refused outright by an older one, so the launch would be refused by
-	// that gate before it reached the memory arithmetic this test is about, and
-	// every launch of this installation mints and is judged by the seal's gate
-	// (AB4, F7).
-	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseSeal)
+	// seal) and the sealed budget token (releaseLift, past both the seal and
+	// the copy name's gate): every launch of this installation mints and is
+	// judged by the seal's gate (AB4, F7), and the recipe below is the
+	// project's copy of acme/other's own, so an image below either gate would
+	// refuse this launch before it reached the memory arithmetic the test is
+	// about.
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseLift)
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
