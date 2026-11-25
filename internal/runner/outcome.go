@@ -27,6 +27,19 @@ func latestVerifiedTest(records []verify.Record, sha string) *verify.Record {
 // exists for the final commit.
 const ReasonNoVerifiedTest = "no verified test run on the final commit"
 
+// ReasonNoHandBack is Decide's reason when the level the run resolved owes the
+// agent's own hand-back file and the agent wrote none (LV5.1). The file is
+// pr.md on a first run and followup.md on a follow-up, which is handBack's own
+// lookup; the sentence names neither, because which one a run owes is a fact
+// about the run rather than about this refusal.
+const ReasonNoHandBack = "the agent wrote no hand-back file"
+
+// ReasonHandBackSection is Decide's reason when a section the level's promise
+// stands on is empty — a heading the file does not carry at all, or one with
+// nothing under it (LV5.1). The format takes the section's name, so the
+// sentence says which of them the agent owed and did not write.
+const ReasonHandBackSection = "the hand-back's %s section is empty"
+
 // Kind is which of the three endings Decide's answer is, as one word beside
 // the reason and the class: what the record's status is written from (D995).
 // It is an enum of its own rather than a reading of the reason, because the
@@ -41,7 +54,8 @@ const (
 	// KindBlocked is every run Decide refuses readiness for a cause of its
 	// own: tests failing on the final commit, a verify record that is not
 	// there, findings the mode does not tolerate, a fix no round read, a
-	// question the run is waiting on the owner for. The record's status for it
+	// question the run is waiting on the owner for, a hand-back the level's
+	// promise is missing. The record's status for it
 	// is the failure one, which is what `failed` means: a policy decision the
 	// runner made correctly.
 	KindBlocked Kind = "blocked"
@@ -135,12 +149,22 @@ func unreviewedDecision(reason string) Decision {
 // the sentence back to work one out (design §4.2). A run Decide makes ready
 // carries no class, the way a succeeded record carries none.
 //
+// hb is the agent's own hand-back and fromAgent whether the agent wrote the
+// file it comes from at all (handBack, LV4.2's parse). Readiness asks it only
+// where a level resolved and that level's row carries a section the agent
+// writes (LV5.1): the file must be there, and the sections the level's promise
+// stands on must have something under them, while the lists beside them may be
+// empty — a list with nothing on it is honest. It is asked last, at the answers
+// that would otherwise be yes, so a run refused for a cause of its own still
+// reports that cause; the check proves the agent wrote a non-empty heading and
+// nothing about what the heading says, which is the reviewer's to judge.
+//
 // The answer is one value, and its Kind is what finalize's status switch reads
 // instead of the sentence (Decision, D995): this is the only site that knows
 // whether the run was refused for a cause of its own or for the absence of a
 // verdict, and that difference is the difference between `failed` and the label
 // a run no review answered carries.
-func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSummary, pol FindingsPolicy, owner *runstore.OwnerDecisions) Decision {
+func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSummary, pol FindingsPolicy, owner *runstore.OwnerDecisions, hb HandBack, fromAgent bool) Decision {
 	latest := latestVerifiedTest(records, finalSHA)
 	switch {
 	case latest == nil:
@@ -201,11 +225,11 @@ func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSumma
 			// staying a draft, and the reason names the half of the stop
 			// rule that ended the rounds — the record's own two words
 			// (runstore.StopRoundsSpent, StopTimeThreshold).
-			return readyDecision(fmt.Sprintf("review round %d left %s, accepted at %s (%s)",
-				last.Round, Plural(pol.through(), "finding"), pol.Mode, pol.AtStop))
+			return pol.ready(fmt.Sprintf("review round %d left %s, accepted at %s (%s)",
+				last.Round, Plural(pol.through(), "finding"), pol.Mode, pol.AtStop), hb, fromAgent)
 		}
 		if pol.tolerates(last) && !pol.raisedAfterReview() {
-			return readyDecision(fmt.Sprintf("review round %d left %s, tolerated at %s", last.Round, Plural(pol.through(), "finding"), pol.Mode))
+			return pol.ready(fmt.Sprintf("review round %d left %s, tolerated at %s", last.Round, Plural(pol.through(), "finding"), pol.Mode), hb, fromAgent)
 		}
 		if pol.Raised != nil {
 			return blockedDecision(pol.raiseReason(last), failure.ReviewNotConverged)
@@ -220,7 +244,81 @@ func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSumma
 		// Decide is reading, not one held back beside it.
 		return blockedDecision(heldBackReason(*pol.HeldBack), failure.ReviewNotConverged)
 	}
-	return readyDecision("")
+	return pol.ready("", hb, fromAgent)
+}
+
+// ready is Decide's yes with the hand-back rule applied: a run whose level
+// owes the agent's own account and does not have it is not ready however clean
+// its rounds were (LV5.1). It is the three answers that would otherwise be yes
+// that ask it, and no other, so a run refused for a cause of its own reports
+// that cause rather than this one.
+func (pol FindingsPolicy) ready(reason string, hb HandBack, fromAgent bool) Decision {
+	if dec, refused := handBackRefusal(pol.Mode, hb, fromAgent); refused {
+		return dec
+	}
+	return readyDecision(reason)
+}
+
+// handBackRefusal is the hand-back half of readiness (LV5.1): what the level
+// the run resolved promised the reader (rigor.HandBackOf's row) and what the
+// agent's own file handed back. It answers the Decision the run carries when
+// the promise is unmet, and ok is false when the run may be ready for all this
+// rule can see.
+//
+// Which sections a level carries is the table's row and not a list here — the
+// plan's "the check reads it rather than a second list" — so a level that grew
+// a section grows this check with it. Two levels owe nothing and pass: POC,
+// whose row carries only the line the runner writes itself (LD5), and a level
+// that never resolved, which is a run built by hand rather than one whose
+// resolver failed — D19 resolves the default for a real run, so readiness is
+// not the place to invent a level for a record that has none.
+//
+// The sections the level's promise stands on are the row's own: a level that
+// owes a proof, a revert plan or a morning note owes the entries under it,
+// while the two lists beside them may be empty, because a list with nothing on
+// it is an honest answer and the level's promise is the list itself (LV5.1).
+func handBackRefusal(level rigor.Rigor, hb HandBack, fromAgent bool) (Decision, bool) {
+	if !rigor.Known(level) {
+		return Decision{}, false
+	}
+	row := rigor.HandBackOf(level)
+	// The five sections the agent writes, with the ones the level's promise
+	// stands on marked: the level owes the file where its row carries any of
+	// them, and owes entries under the marked ones alone.
+	written := []struct {
+		name     string
+		carried  bool
+		required bool
+		section  HandBackSection
+	}{
+		{handBackDeferred, row.Deferred, false, hb.Deferred},
+		{handBackOpenRisks, row.OpenRisks, false, hb.OpenRisks},
+		{handBackVerification, row.Verification, true, hb.Verification},
+		{handBackRevertPlan, row.RevertPlan, true, hb.RevertPlan},
+		{handBackMorningNote, row.MorningNote, true, hb.MorningNote},
+	}
+	owed := false
+	for _, s := range written {
+		if s.carried {
+			owed = true
+			break
+		}
+	}
+	if !owed {
+		return Decision{}, false
+	}
+	if !fromAgent {
+		// The runner fell back to the body it builds from the task text: no
+		// file of the agent's own is behind this run, so the headings a task
+		// happens to carry satisfy nothing (reconciliation §3b item 13).
+		return blockedDecision(ReasonNoHandBack, failure.Unclassified), true
+	}
+	for _, s := range written {
+		if s.carried && s.required && len(s.section.Entries) == 0 {
+			return blockedDecision(fmt.Sprintf(ReasonHandBackSection, s.name), failure.Unclassified), true
+		}
+	}
+	return Decision{}, false
 }
 
 // heldBackReason is Decide's reason for a run whose deciding level shipped and
@@ -532,7 +630,11 @@ func (r *run) levelRound(l policy.Level, round int) (seniorRound, bool) {
 // internal/rigor, and Decide is the only code that reads it.
 type FindingsPolicy struct {
 	// Mode is the mode the run resolved (D22's fold). A tolerated round's
-	// reason names it, so the record says which mode let the findings through.
+	// reason names it, so the record says which mode let the findings through,
+	// and readiness reads it as the level whose hand-back the run owes (LV5.1),
+	// so findingsPolicy sets it for every run rather than only for the runs
+	// whose mode tolerates a finding — a level that tolerates nothing still
+	// owes the reader what its promise names.
 	Mode rigor.Rigor
 	// Round is the review round the split was made from. Decide checks it
 	// against the summary it was given, so a split from another round is a
@@ -797,6 +899,13 @@ func (r *run) findingsPolicy() FindingsPolicy {
 	// never from the recorded verdict word: a round a judge deferred whole
 	// records `changes` and is a round the mode does not block on (F21).
 	pol := findingsPolicyOf(r.rigorCfg, r.spec.Repo, r.reachedRigor(), r.lastSenior.Round, scoresOf(r.lastSenior.Findings), r.stopAt).withDeferred(r.lastSenior.Deferred)
+	// The level the run resolved, whatever its row tolerates: findingsPolicyOf
+	// writes Mode only where the mode let a finding through, and readiness owes
+	// the hand-back of every level (LV5.1), so the gap is filled here rather
+	// than by a second reading of the record at the call site. It is the same
+	// value findingsPolicyOf was given, so a tolerated round's reason and the
+	// run's own level can never disagree.
+	pol.Mode = r.reachedRigor()
 	pol.Raised = r.rigorRaise
 	pol.HeldBack = r.heldBackLevel()
 	pol.StopBlocking = r.stopBlockingLevels()
