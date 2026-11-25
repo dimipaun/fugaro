@@ -66,6 +66,16 @@ func publishAfterWrite(ctx context.Context, cmd *cobra.Command, change afterWrit
 		// write was made from.
 		return afterWriteNotLive(change)
 	}
+	// D1541's fence: this hook is where a semantic command's publish reaches the
+	// project's own state (its policy node, and the layer the node is read
+	// through), and it opens its clients through the init engine rather than
+	// through the two seams the fence is free at, so it asks for itself. The
+	// refusal comes before the run is built, so nothing is published and no
+	// stage of the update runs; a command the fence does not apply to is
+	// answered without a read, as it is at every other seam.
+	if err := requireManaged(ctx, cmd, lc); err != nil {
+		return err
+	}
 	// The run's own door is the command that called: it names the run on every
 	// line it prints and it is the command the audit record files (the door's
 	// own reason is accountsAddRunStages'), and it is deliberately not `fugaro

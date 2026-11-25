@@ -503,3 +503,42 @@ func TestAfterWriteStagesFollowTheRegistryRow(t *testing.T) {
 		}
 	})
 }
+
+// TestWritePublishRefusesUnmanaged is D1541's fence on this file (T7c): the
+// after-write hook is where a semantic command's write reaches the project's
+// own state — the policy node, and the layer file the node is read through — so
+// a command the fence applies to is refused before the run is built, and nothing
+// is published and no stage of the update runs.
+//
+// The hook opens its clients through the init engine rather than through the two
+// seams the fence is free at (openCloud, openCloudFor), so it asks for itself,
+// and it asks about the command that called (publishAfterWrite's own cmd): the
+// selection and the door are that command's, and so is the answer. The command
+// here is the one fenced command that really reaches this hook —
+// `fugaro secrets set NAME --expires` writes `secret_expires` into the machine's
+// own config, whose own layers declare the policy stage (settings.KeySteps, AP5)
+// — so the pair of key and command is the one a person's line makes, and the
+// refusal is the one that line meets.
+//
+// The world is the hook's own fixture, whose project carries no mark: the node
+// stays at the version it was published at, which is the assertion that nothing
+// was published, and `fugaro apply`'s sentence is nowhere, because no step was
+// left owed for it to run.
+func TestWritePublishRefusesUnmanaged(t *testing.T) {
+	fugaroAtItsOwnName(t)
+	_, db := afterWriteFixture(t)
+	cmd, out := afterWriteCmd(t, "secrets", "set")
+	change := afterWriteChange{Key: "secret_expires", Store: secretsSettingsStore("secret_expires")}
+	if names := afterWriteStages(change); len(names) == 0 {
+		t.Fatalf("a write of %s in %s owes no stage, so this test would be about a hook that returned before its fence", change.Key, change.Store)
+	}
+
+	err := publishAfterWrite(t.Context(), cmd, change)
+	checkFenceRefusal(t, err, "secrets set")
+	if v := nodeVersionOn(t, db); v != 3 {
+		t.Errorf("the node is version %d after a refused run, want the 3 the fixture published: the hook published a project that is not managed", v)
+	}
+	if said := out.String(); strings.Contains(said, "is not live yet") {
+		t.Errorf("the refused run said the change is saved and owes steps, so it filed a record for `fugaro apply`:\n%s", said)
+	}
+}

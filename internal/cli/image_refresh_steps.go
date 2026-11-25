@@ -35,6 +35,21 @@ type refreshTarget struct {
 // over); preflight's customBaseRefusal stops the run earlier for the same
 // reason, so this is belt and suspenders, not the only guard.
 func (r *initRun) refreshBase(ctx context.Context, e *initEngine, kinds []string) error {
+	// D1541's fence, at the head of this command's first step: a refresh pins,
+	// rebuilds and re-points the project's own images, so an installation that
+	// is not managed is refused here, before the base step or anything after it
+	// changes a thing. The command opens its clients through newInitClients
+	// rather than through the two seams the fence is free at (openCloud,
+	// openCloudFor), so it asks for itself; the call is keyed on the running
+	// command (r.cmd), which is what leaves a refresh another command drives —
+	// `fugaro update`'s checkout stage — to that command's own stop (T3).
+	//
+	// refusedAsIs, because a fence's refusal is the whole of what the owner
+	// reads: the stop message's "stopped at step 2 (base)" tail would account
+	// for a run that never started.
+	if err := requireManaged(ctx, r.cmd, e.lc); err != nil {
+		return &refusedAsIs{err}
+	}
 	s := newImagesStage(e)
 	s.only = kinds
 	e.images = s
