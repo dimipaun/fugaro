@@ -233,6 +233,22 @@ var stateAssetTypes = map[string]string{
 	"google_logging_log_view_iam_member":     "",
 	"google_logging_project_exclusion":       "",
 	"google_billing_budget":                  "",
+	// The consumer's signing key and the ring it lives in (J6), and the one
+	// grant on it. The ring and the key are assets of the installation's own
+	// project, and their ids are the paths the listing files them under
+	// ("projects/<p>/locations/<r>/keyRings/<ring>" and .../cryptoKeys/<key>),
+	// so both are accounted for by the same "projects/" match every other
+	// path-id resource here is. The binding is a Cloud KMS IAM member — GCP
+	// keeps it inside the key it grants on, and the listing holds no asset of
+	// its own for it, which is the answer every *_iam_member above has.
+	//
+	// The key is the one resource of this tree whose loss is unrecoverable
+	// (mailbox_key.tf): a project this fallback clears is one whose listing
+	// accounted for the state, and a key the table refused to name would keep
+	// that fallback on forever rather than hide a resource nobody watched.
+	"google_kms_key_ring":              "cloudkms.googleapis.com/KeyRing",
+	"google_kms_crypto_key":            "cloudkms.googleapis.com/CryptoKey",
+	"google_kms_crypto_key_iam_member": "",
 }
 
 // stateAssetName is a state resource's name in the terms the whole-project

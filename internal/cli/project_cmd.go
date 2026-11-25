@@ -1102,7 +1102,7 @@ func refuseAProfileMountingTheBitbucketCredential(lc *localcfg.Config) error {
 // entry came from.
 func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.Policy, removeRouting bool, identities map[string]string) (*projectpolicy.Policy, bool, error) {
 	if lc.Budget == nil || lc.Budget.Mode == "" {
-		return nil, false, userErr("this project's config sets no budget.mode, and a published policy's budget block must name one (off, observe or enforce): the mode decides whether the caps bite, and a block that leaves it out would take it from each job's environment, which nobody reading the policy can see; set budget: { mode: ... } in %s, or leave the policy unpublished", lc.Name)
+		return nil, false, userErr("this project's config sets no budget.mode, and a published policy's budget block must name one (observe or enforce): the mode decides whether the caps bite, and a block that leaves it out would take it from each job's environment, which nobody reading the policy can see; set budget: { mode: ... } in %s, or leave the policy unpublished", lc.Name)
 	}
 	// A policy that carries profiles must define the one every workflow that
 	// names none runs on (projectpolicy.validProfiles applies the same rule to

@@ -190,10 +190,12 @@ func strs(v any) []string {
 	return out
 }
 
-// Each of the three applies, the database and its location has its own plan
-// and its own banner: a person at the terminal reads five separate
-// confirmations and every step goes on, with nothing typed (T7). Where nobody
-// can confirm it, the first step is left and nothing after it happens.
+// Each of the three applies and the database has its own plan and its own
+// banner: a person at the terminal reads four separate confirmations and every
+// step goes on, with nothing typed (T7). The Firestore database's location is
+// not one of them (LP10, D3090): the step that creates it prints where and
+// creates it, and the run reads no line for it. Where nobody can confirm the
+// first step, it is left and nothing after it happens.
 func TestInitFirebaseThreeAppliesConfirmedSeparately(t *testing.T) {
 	r := newFBRig(t)
 	r.historyImage()
@@ -205,8 +207,8 @@ func TestInitFirebaseThreeAppliesConfirmedSeparately(t *testing.T) {
 	if got, want := r.applies(t), []string{"installation", "firebase", "installation"}; !slices.Equal(got, want) {
 		t.Fatalf("applies in %v, want %v", got, want)
 	}
-	if n := strings.Count(out, "⚠ CONFIRM"); n != 5 {
-		t.Errorf("%d confirmations, want 5 (three applies, the database and its location):\n%s", n, out)
+	if n := strings.Count(out, "⚠ CONFIRM"); n != 4 {
+		t.Errorf("%d confirmations, want 4 (three applies and the database):\n%s", n, out)
 	}
 	for _, want := range []string{"to the Firebase project proj-1234", "(the history job and its sweep schedule)", "writes the database as listed"} {
 		if !strings.Contains(out, want) {
@@ -736,14 +738,28 @@ func TestBudgetModeSeedsRTDB(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mode(r) != "observe" || r.localConfig(t).BudgetMode() != localcfg.BudgetOff {
-		t.Errorf("mode %v, local %s", mode(r), r.localConfig(t).BudgetMode())
+	// The local config is left alone: it writes no mode, and an installation
+	// that writes none resolves observe (AB2, D3010, localcfg.BudgetMode).
+	// Until D3009 this row read that empty mode as the off it was taken for,
+	// and the flag's absence left the jobs' backend off — which is the state
+	// the sentence asserted below used to describe.
+	lc := r.localConfig(t)
+	local := ""
+	if lc.Budget != nil {
+		local = lc.Budget.Mode
+	}
+	if mode(r) != "observe" || local != "" {
+		t.Errorf("mode %v, local budget.mode %q: setup without the flag writes no mode", mode(r), local)
 	}
 	if s := modeSet(r); s != nil {
 		t.Errorf("%s = %v: the seed of an absent mode is nobody's choice, and a node here would make `fugaro update` leave it observing for ever", budget.PathModeSet, s)
 	}
-	if !strings.Contains(out, "budget.mode is off") {
-		t.Errorf("no word that jobs don't use the backend yet:\n%s", out)
+	// And nothing says the jobs do not use the backend yet: that sentence named
+	// a local mode that is off, and no installation is in that state any more —
+	// an absent mode is observe, and the word itself is not a mode
+	// (init_firebase.go's own condition is AB7's and I1's to drop).
+	if strings.Contains(out, "budget.mode is off") {
+		t.Errorf("setup named a budget mode this release does not have:\n%s", out)
 	}
 	// ... and a mode set since is kept by a run without the flag.
 	r.db.Set("config/mode", "enforce")
@@ -1231,13 +1247,20 @@ func TestPrintVarsSaysAnExistingInstanceKeepsItsOwn(t *testing.T) {
 // policy with these two (the token exchange needs the key, not only the URL);
 // a job deployed with the mode off and nothing to read the policy with would
 // run on the environment ceiling with the policy unenforced. What the mode
-// still decides is FUGARO_BUDGET_MODE and the grace, which are the fallback
-// for an installation that has published no policy at all.
+// decides is the value of FUGARO_BUDGET_MODE, which every job names (AB5):
+// observe for a config that writes the word off or nothing at all, enforce for
+// one that writes enforce. The grace rides along whenever the config sets one.
 func TestInitRepoPassesRTDBEnv(t *testing.T) {
-	for mode, want := range map[string]map[string]bool{
-		"observe": {"FUGARO_RTDB_URL": true, "FUGARO_FIREBASE_API_KEY": true, "FUGARO_BUDGET_GRACE": true, "FUGARO_BUDGET_MODE": true},
-		"off":     {"FUGARO_RTDB_URL": true, "FUGARO_FIREBASE_API_KEY": true, "FUGARO_BUDGET_GRACE": false, "FUGARO_BUDGET_MODE": false},
+	// A name mapped to "" only has to be there; a name mapped to a value is
+	// read as the pair the tfvars carry.
+	for _, c := range []struct {
+		mode string
+		want map[string]string
+	}{
+		{"observe", map[string]string{"FUGARO_RTDB_URL": "", "FUGARO_FIREBASE_API_KEY": "", "FUGARO_BUDGET_GRACE": "2m0s", "FUGARO_BUDGET_MODE": "observe"}},
+		{"off", map[string]string{"FUGARO_RTDB_URL": "", "FUGARO_FIREBASE_API_KEY": "", "FUGARO_BUDGET_GRACE": "2m0s", "FUGARO_BUDGET_MODE": "observe"}},
 	} {
+		mode, want := c.mode, c.want
 		isolateProjects(t, t.TempDir())
 		path := writeProject(t, "aurora", "proj-1234")
 		data, err := os.ReadFile(path)
@@ -1256,9 +1279,13 @@ func TestInitRepoPassesRTDBEnv(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for key, wantKey := range want {
-			if got := strings.Contains(out, key); got != wantKey {
-				t.Errorf("mode %s: %s in the job's env = %v, want %v", mode, key, got, wantKey)
+		for key, val := range want {
+			pair := `"` + key + `": "` + val + `"`
+			if val == "" {
+				pair = `"` + key + `":`
+			}
+			if !strings.Contains(out, pair) {
+				t.Errorf("mode %s: the job's env does not carry %s", mode, pair)
 			}
 		}
 		for _, secretish := range []string{fpSigner, "aurora-fp\"", "token_signer"} {
@@ -1771,7 +1798,9 @@ func TestOldFirebaseFlagIsGone(t *testing.T) {
 // root's engine for a credential that may not make the project's IAM changes
 // (this rig's, which holds none). What keeps an unset script variable from
 // buying a Firestore database in a permanent location is that arm's own
-// probes and the confirmation it needs, not the flag's absence.
+// probes and the confirmation the firebase stage itself takes — the location
+// is no confirmation of its own (LP10, D3090), and it is the stage's own that
+// is left where nobody is at the terminal — not the flag's absence.
 func TestTheFirebaseProjectDefaultNamesTheIdAndNotTheStage(t *testing.T) {
 	// The value is the id, whatever it names: the installation's own project
 	// spelled out, or a separate one (the advanced case).

@@ -2190,7 +2190,7 @@ func (e *initEngine) writeDefaultCatalogEntry(ctx context.Context) {
 	// this run reads one (init.go's effectiveVerifiers): it is the node this
 	// same run migrates in place, so it is a state `fugaro update` has to
 	// converge through and not a fact about the project's catalog.
-	p, _, err := r.policy.read(ctx, e.lc)
+	p, _, err := r.policyMemo().read(ctx, e.lc)
 	if err != nil && !olderPolicyNode(err) {
 		e.withholdDefaultCatalogEntry(
 			fmt.Sprintf("no default catalog entry written: the project's policy could not be read; a later %s retries", selfCommand()+" update"),

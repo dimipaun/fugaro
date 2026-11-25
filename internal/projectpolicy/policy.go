@@ -3222,10 +3222,19 @@ func validBudget(raw json.RawMessage, b Budget) error {
 		// alone would take the mode from the job environment, which nobody
 		// reading the policy can see, so enforcement would depend on a deploy
 		// (H1). Leaving the block out is how a policy says it sets no budget.
-		return errors.New("mode must be off, observe or enforce: a policy that sets no budget key leaves the budget block out")
+		return errors.New("mode must be observe or enforce: a policy that sets no budget key leaves the budget block out")
+	}
+	// The word that was a budget mode until this release is refused with the
+	// one text every door refuses it with, so a node an older CLI published
+	// says the same thing here as it does at the publish door and in a
+	// repository's file (AB2, D3009, D3022, policy.ModeOffRefusal). The
+	// migration reads it out of the node's own bytes before this reader is
+	// asked anything, which is what lets `fugaro update` rewrite it (F22).
+	if policy.Mode(b.Mode).Removed() {
+		return errors.New(policy.ModeOffRefusal)
 	}
 	if !policy.ValidMode(b.Mode) {
-		return fmt.Errorf("mode %q must be off, observe or enforce", b.Mode)
+		return fmt.Errorf("mode %q must be observe or enforce; leave the block out to set no budget at all", b.Mode)
 	}
 	if m, err := pricing.FromUSD(b.PerRunUSD); err != nil {
 		return fmt.Errorf("per_run_usd %v: it must be a number from 0 to %d US dollars", b.PerRunUSD, pricing.MaxUSD)

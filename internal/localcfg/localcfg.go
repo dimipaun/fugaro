@@ -1454,7 +1454,7 @@ const (
 
 // Budget is the project's per-run model spend guard.
 type Budget struct {
-	Mode      string  `yaml:"mode"`        // off | observe | enforce; "" is off
+	Mode      string  `yaml:"mode"`        // observe | enforce; "" is observe, and the word that was a mode loads only for the update that rewrites it
 	PerRunUSD float64 `yaml:"per_run_usd"` // enforce: 0 < x <= 100000; observe: >= 0
 	// MaxRunTokens is the ceiling on a run's total tokens; 0 is none. A
 	// repository's fugaro.yaml may only lower it.
@@ -1713,11 +1713,19 @@ func (c *Config) UpdateCheckEnabled() bool {
 	return *c.UpdateCheck
 }
 
-// BudgetMode is the budget's mode: "off" when there is no budget block or
-// its mode is empty.
+// BudgetMode is the budget's mode as this installation resolved it: observe
+// when there is no budget block or its mode is empty, the mode it writes
+// otherwise (AB2, R3, D3010).
+//
+// The word that was a mode until this release is answered as written and never
+// landed on observe here: `fugaro update` reads the file's own bytes for the
+// rewrite that removes it, and this answer is what the update's listing looks
+// at to say so (localcfg's RemovedBudgetMode, F22). Its readers are the ones
+// that need a mode to act on — the launcher, `fugaro doctor`, the job's
+// environment — and none of them is a door that accepts text a person wrote.
 func (c *Config) BudgetMode() string {
 	if c.Budget == nil || c.Budget.Mode == "" {
-		return BudgetOff
+		return BudgetObserve
 	}
 	return c.Budget.Mode
 }
@@ -1781,7 +1789,7 @@ func (c *Config) validateBudget(bad func(string, ...any)) {
 		// config that says it still loads for the update that rewrites it
 		// (F22; load_removed_mode.go).
 		if b.Mode != "" && !acceptedBudgetMode(b.Mode) {
-			bad("budget.mode %q must be off, observe or enforce", b.Mode)
+			bad("budget.mode %q must be observe or enforce; leave the key out for observe", b.Mode)
 		}
 		if b.MaxRunTokens < 0 {
 			bad("budget.max_run_tokens %d: it must not be negative (0 is none)", b.MaxRunTokens)
