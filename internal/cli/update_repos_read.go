@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"maps"
 	"os"
 	"slices"
@@ -10,6 +11,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/backlog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
+	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -76,6 +79,15 @@ const (
 	// mint's longer one: a repository's reason is one line a stage prints, and
 	// the fix has to survive in it.
 	enrolledNoService = "no credentials service is published for this project: run `fugaro update` at the installation's checkout to publish one"
+
+	// enrolledMintRefusal and enrolledIdentityRefusal are what a read the
+	// installation's credentials service would not make reads (R1). They are
+	// this read's own sentences and not the house's (reviewReadMintRefusal),
+	// which is written for a top-level error line: that one is longer than the
+	// runes a repository's reason is printed in, and its fix is the whole point
+	// of the line.
+	enrolledMintRefusal     = "the installation's credentials service would not mint this read: ask the owner to add you to the installation's people and run `fugaro update`"
+	enrolledIdentityRefusal = "your own Google ID token could not be minted for the installation's credentials service: run `gcloud auth login` and try again"
 )
 
 // enrolledAdmits is the published policy's allow-list, and the seam a test
@@ -290,9 +302,102 @@ func enrolledProvider(env *cloudEnv) gitprov.Opener {
 		if err != nil {
 			return nil, nil, err
 		}
-		return p, nil, nil
+		return enrolledReadThrough(p), nil, nil
 	}
 }
+
+// enrolledReadThrough is p as this read uses it: the same provider, with a
+// failure the installation's credentials service would not mint turned into
+// this read's own short reason (enrolledReadRefusal).
+//
+// A mint's refusal comes out of whichever read needed the token first and not
+// out of the opener -- the token is minted lazily, on the forge's first call --
+// so the translation has to be on the reads internal/repofiles makes. A
+// provider that cannot make one of them is returned as it came, which is what
+// leaves the reader's own "cannot read a file out of a repository" answer for
+// it.
+func enrolledReadThrough(p gitprov.Provider) gitprov.Provider {
+	contents, ok := p.(gitprov.ContentsReader)
+	if !ok {
+		return p
+	}
+	tree, ok := p.(gitprov.TreeReader)
+	if !ok {
+		return p
+	}
+	commits, ok := p.(gitprov.CommitReader)
+	if !ok {
+		return p
+	}
+	return enrolledReads{Provider: p, contents: contents, tree: tree, commits: commits}
+}
+
+// enrolledReads is one repository read through the read mint.
+type enrolledReads struct {
+	gitprov.Provider
+	contents gitprov.ContentsReader
+	tree     gitprov.TreeReader
+	commits  gitprov.CommitReader
+}
+
+func (r enrolledReads) Repository(ctx context.Context) (gitprov.RepoInfo, error) {
+	info, err := r.Provider.Repository(ctx)
+	return info, enrolledReadRefusal(err)
+}
+
+func (r enrolledReads) Contents(ctx context.Context, path, ref string) ([]byte, error) {
+	data, err := r.contents.Contents(ctx, path, ref)
+	return data, enrolledReadRefusal(err)
+}
+
+func (r enrolledReads) Tree(ctx context.Context, path, ref string, limit gitprov.TreeLimit) ([]gitprov.TreeFile, error) {
+	files, err := r.tree.Tree(ctx, path, ref, limit)
+	return files, enrolledReadRefusal(err)
+}
+
+func (r enrolledReads) Commit(ctx context.Context, ref string) (string, error) {
+	sha, err := r.commits.Commit(ctx, ref)
+	return sha, enrolledReadRefusal(err)
+}
+
+// enrolledReadRefusal is one read's failure as this read reports it: a read the
+// installation's credentials service would not mint is answered with the short
+// sentence that names its fix, and every other failure keeps the provider's own
+// sentence, which is short enough to carry one (a 404, a rate limit).
+//
+// The class is the house's (reviewReadMintRefusal, D3343): the read mint's own
+// refusal, and the caller's identity it verifies. That converter's sentence is
+// written for a top-level error line and is longer than a repository's reason is
+// printed in, so it decides WHICH reason this is and this read writes it; the
+// failure the service itself answered stays beneath the short line (Unwrap), so
+// a caller that logs the whole error still has the service's own words.
+//
+// The two fixes are different people's: a mint the service refused is the
+// owner's to unblock (its people are the installation's operators), and an
+// identity that could not be minted is the reader's own gcloud login.
+func enrolledReadRefusal(err error) error {
+	if err == nil {
+		return nil
+	}
+	if reviewReadMintRefusal(err, enrolledReadWhat) == nil {
+		return err
+	}
+	line := enrolledMintRefusal
+	if errors.Is(err, github.ErrServiceReadIdentity) || errors.Is(err, bitbucket.ErrServiceReadIdentity) {
+		line = enrolledIdentityRefusal
+	}
+	return &enrolledReadError{line: line, err: err}
+}
+
+// enrolledReadError is a translated refusal: the short line a repository's
+// reason carries, with the failure the read itself got still beneath it.
+type enrolledReadError struct {
+	line string
+	err  error
+}
+
+func (e *enrolledReadError) Error() string { return e.line }
+func (e *enrolledReadError) Unwrap() error { return e.err }
 
 // borrowedAppID is env with appID recorded for repo, the way the read mint's
 // own lookup reads it (serviceReadProvider, localRepo). It is a copy: the

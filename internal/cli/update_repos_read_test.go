@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -189,10 +190,10 @@ func TestEnrolledReposMissingOrInvalidIsUnread(t *testing.T) {
 }
 
 // TestEnrolledReposNameTheFix: every reason a repository gets names what to do
-// about it (R1, spec §Reading a default branch). The three an admin meets
-// first: an installation that publishes no credentials service (R22), a GitHub
-// repository no App ID can be read for anywhere (F43), and a mint the service
-// refuses.
+// about it (R1, spec §Reading a default branch). The four an admin meets first:
+// an installation that publishes no credentials service (R22), a GitHub
+// repository no App ID can be read for anywhere (F43), a mint the service
+// refuses, and an identity the reader's own gcloud login could not mint.
 func TestEnrolledReposNameTheFix(t *testing.T) {
 	t.Run("no credentials service", func(t *testing.T) {
 		lc := enrolledLC(map[string]localcfg.Repo{
@@ -238,11 +239,46 @@ func TestEnrolledReposNameTheFix(t *testing.T) {
 		stubEnrolledRead(t, nil, enrolledProvider)
 		views, _ := readEnrolledRepos(context.Background(), enrolledIn{LC: lc})
 		reason := onlyView(t, views).Unread
-		if !strings.Contains(reason, "credentials service") {
-			t.Errorf("the reason %q does not name the service that refused the mint", reason)
+		// The reason is the short sentence and not the service's chain, which is
+		// several times longer than a repository's reason is printed in: what a
+		// person has to act on is the fix, and a truncated line carries none.
+		for _, want := range []string{"credentials service", "the installation's people", "fugaro update"} {
+			if !strings.Contains(reason, want) {
+				t.Errorf("the reason %q does not name %q", reason, want)
+			}
+		}
+		if strings.Contains(reason, "truncated") {
+			t.Errorf("the reason %q is cut, and a reason a stage prints has to carry its fix whole", reason)
 		}
 		if mint.calls() == 0 {
 			t.Error("the read never asked the installation's credentials service for a token")
+		}
+	})
+
+	t.Run("no gcloud login", func(t *testing.T) {
+		mint := startReadMintStandIn(t)
+		lc := enrolledLC(map[string]localcfg.Repo{
+			"acme/app": {Provider: gitprov.KindGitHub, GitHubAppID: reviewHeadAppID},
+		})
+		lc.CredentialsService = &localcfg.CredentialsService{URL: mint.url}
+		prev := serviceReadIdentity
+		serviceReadIdentity = func(context.Context, string, string) (string, error) {
+			return "", errors.New("the gcloud command that mints one is not on PATH")
+		}
+		t.Cleanup(func() { serviceReadIdentity = prev })
+		stubEnrolledRead(t, nil, enrolledProvider)
+		views, _ := readEnrolledRepos(context.Background(), enrolledIn{LC: lc})
+		reason := onlyView(t, views).Unread
+		// The caller's own identity is the reader's own fix, and the sentence
+		// carrying it is the reader's short one: the identity mint's own chain
+		// names the login only past the runes a reason is printed in.
+		for _, want := range []string{"Google ID token could not be minted", "gcloud auth login"} {
+			if !strings.Contains(reason, want) {
+				t.Errorf("the reason %q does not name %q", reason, want)
+			}
+		}
+		if strings.Contains(reason, "truncated") {
+			t.Errorf("the reason %q is cut, and a reason a stage prints has to carry its fix whole", reason)
 		}
 	})
 }
