@@ -254,7 +254,7 @@ func TestResumedAdoptionIsMarkedManaged(t *testing.T) {
 	}
 	if b, ok := markerAt(t, r.gcs, bucket); !ok {
 		t.Errorf("no %s in gs://%s after the run that resumed the adoption (err %v):\n%s", managed.MarkerObject, bucket, err, out)
-	} else if want := `{"version":1,"gcp_project":"` + newProj + `"}`; b != want {
+	} else if want := defaultCreationFact(newProj); b != want {
 		t.Errorf("gs://%s/%s = %s, want %s", bucket, managed.MarkerObject, b, want)
 	}
 	if got := r.crm.Labels(newProj)[managed.ProjectLabelKey]; got != managed.ProjectLabelValue {

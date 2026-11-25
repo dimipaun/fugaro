@@ -1579,20 +1579,24 @@ func statusCell(r runview.Row) string {
 // always has at least one of the two, since the node names the instant it was
 // written with.
 func pauseCell(r runview.Row) string {
-	if r.Status != string(runstore.StatusPaused) {
-		return "-"
+	// The question is asked by an equality with the word it is about — is this
+	// run paused? — rather than by negating it: a status read is always an
+	// equality with the value being asked about, so a status a later release
+	// adds is never swept into an answer it does not belong to (the rule
+	// TestRunsListsReadTheStatusWord holds this file's reads to).
+	if r.Status == string(runstore.StatusPaused) {
+		var parts []string
+		if r.ResumeAt != nil {
+			parts = append(parts, r.ResumeAt.UTC().Format(time.RFC3339))
+		}
+		if r.ResumedBy != "" {
+			parts = append(parts, "by "+task.ShortRun(r.ResumedBy))
+		}
+		if len(parts) > 0 {
+			return cellOneLine(strings.Join(parts, " "))
+		}
 	}
-	var parts []string
-	if r.ResumeAt != nil {
-		parts = append(parts, r.ResumeAt.UTC().Format(time.RFC3339))
-	}
-	if r.ResumedBy != "" {
-		parts = append(parts, "by "+task.ShortRun(r.ResumedBy))
-	}
-	if len(parts) == 0 {
-		return "-"
-	}
-	return cellOneLine(strings.Join(parts, " "))
+	return "-"
 }
 
 // count of paths the record holds, and "N/M" when the record was truncated at

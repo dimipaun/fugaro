@@ -23,15 +23,18 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
+	"github.com/dimipaun/fugaro/internal/routing"
 )
 
 // fakeProbes is the database's conditional write as the probe's lease uses it:
@@ -907,7 +910,7 @@ func TestNoProbeOnThePaidKeyUnderOAuthOnly(t *testing.T) {
 	if !strings.Contains(auth, fakeCred(t, "default")) {
 		t.Error("the probe did not carry the shared credential the policy admits")
 	}
-	if m, ok := s.state.mark(paidName); !ok || m != paid {
+	if m, ok := s.state.mark(paidName); !ok || !reflect.DeepEqual(m, paid) {
 		t.Errorf("the paid key's mark is %+v, want it untouched (%+v)", m, paid)
 	}
 	line, ok := probeLine(t, auditLog)
@@ -916,6 +919,49 @@ func TestNoProbeOnThePaidKeyUnderOAuthOnly(t *testing.T) {
 	}
 	if got := line["credential"]; got != "default" {
 		t.Errorf("the audit line names %q, want the shared credential that was probed", got)
+	}
+}
+
+// TestAChainClearsABackedOffSourceByTheProbe is the chain's half of the same
+// rule, and the mirror of TestNoProbeOnThePaidKeyUnderOAuthOnly: a project that
+// publishes a routing table whose entry names the repository's own key has that
+// key SERVED by the walk whatever the policy's tier gate says (R4, D3170 — the
+// chain replaces the fixed tier order), so a probe must be able to ask about it
+// too. A probe is the only thing that clears a backed-off mark (creds.free,
+// Mark.NeedsProbe): a member the policy's gate kept out of the probe's list would
+// leave this call with nothing servable and nothing that could ever clear it —
+// the walk serves no other source, the mark never clears, and every call of the
+// step is answered the same wait, which is a chain no run comes back from.
+func TestAChainClearsABackedOffSourceByTheProbe(t *testing.T) {
+	src := chainKey()
+	s, auditLog := probeSvc(t, func(sv *svc, cfg *Config) {
+		sv.src.docs = [][]byte{chainBundleDoc(t)}
+		installTable(t, routing.Table{{Match: testModel, Chain: []routing.Source{src}}})
+	})
+	name := repoEntryKeyFor(t, "github", testRepoPath, config.AnthropicKeyAccount)
+	s.backedOff(name, s.now.Add(-time.Minute), creds.DefaultBackoffInitial)
+	s.up.Script = []anthropicfake.Reply{
+		anthropicfake.MessageOK(testModel, testUsage),
+		anthropicfake.MessageOK(testModel, testUsage),
+	}
+
+	resp, body := s.call(t, callBody("real-work"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the call answered %d %s, want it served by the chain's own source once the probe cleared it",
+			resp.StatusCode, body)
+	}
+	seen := s.up.Seen()
+	if len(seen) != 2 {
+		t.Fatalf("the upstream saw %d requests, want a probe and the run's call", len(seen))
+	}
+	if got := seen[0].Header.Get("x-api-key"); !strings.Contains(got, fakeCred(t, "repo-key")) {
+		t.Error("the probe did not carry the credential the chain serves the call with")
+	}
+	if after, ok := s.state.mark(name); ok && after.State == creds.StateBackedOff {
+		t.Errorf("the credential is still backed off (%+v) after a probe that worked, want the mark cleared", after)
+	}
+	if _, ok := probeLine(t, auditLog); !ok {
+		t.Fatal("a probe wrote no audit line")
 	}
 }
 
@@ -1084,7 +1130,7 @@ func TestNoProbeOnAnUnreadableMark(t *testing.T) {
 		t.Errorf("the upstream saw %d requests for a mark this release does not read", got)
 	}
 	noProbeLine(t, auditLog, "a probe of a mark this release does not read")
-	if m, _ := s.state.mark("default"); m != unknown {
+	if m, _ := s.state.mark("default"); !reflect.DeepEqual(m, unknown) {
 		t.Errorf("the mark is %+v, want the node this release does not read left alone (%+v)", m, unknown)
 	}
 }
@@ -1105,7 +1151,7 @@ func TestProbeFailsClosedWhenItCannotBeAudited(t *testing.T) {
 	if resp.StatusCode != StatusExhaustedUntil {
 		t.Fatalf("the call answered %d %s, want the typed wait", resp.StatusCode, body)
 	}
-	if m, _ := s.state.mark("default"); m != before {
+	if m, _ := s.state.mark("default"); !reflect.DeepEqual(m, before) {
 		t.Errorf("the mark is %+v, want it untouched: the probe's result could not be audited (%+v)", m, before)
 	}
 	if !strings.Contains(s.logs.String(), "could not be audited") {
@@ -1373,7 +1419,7 @@ func TestProbeCallIsBuiltByTheService(t *testing.T) {
 		header: http.Header{"Anthropic-Beta": []string{"run-set-this"}},
 		scrubs: []string{"run-identity-token", "job-id-token"},
 	}
-	got, ok := probeCall(cl)
+	got, ok := probeCall(cl, creds.Credential{})
 	if !ok {
 		t.Fatal("a Messages call with a model in it built no probe")
 	}
@@ -1391,10 +1437,10 @@ func TestProbeCallIsBuiltByTheService(t *testing.T) {
 	}
 	// A body with no model, and a path this service does not serve: no probe,
 	// and so no answer that is not the run's.
-	if _, ok := probeCall(&call{path: MessagesPath, body: []byte(`{"max_tokens":1}`)}); ok {
+	if _, ok := probeCall(&call{path: MessagesPath, body: []byte(`{"max_tokens":1}`)}, creds.Credential{}); ok {
 		t.Error("a call with no model built a probe")
 	}
-	if _, ok := probeCall(&call{path: "/v1/complete", body: []byte(callBody("x"))}); ok {
+	if _, ok := probeCall(&call{path: "/v1/complete", body: []byte(callBody("x"))}, creds.Credential{}); ok {
 		t.Error("a call on a path this service does not serve built a probe")
 	}
 }

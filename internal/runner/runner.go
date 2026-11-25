@@ -909,6 +909,13 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 				return
 			case cerr != nil && err == nil:
 				err = fmt.Errorf("writing run record: %w", cerr)
+			default:
+				// The failure record this execution just created is the run's
+				// own, so its summary goes beside it: a listing reads the
+				// summary where it read result.json, and a summary a deleted
+				// record left behind would otherwise stand in for this one
+				// (saveSummary).
+				r.saveSummary(ctx, r.rec)
 			}
 			rec = r.rec
 			err = r.redactErr(err)
@@ -931,6 +938,7 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 	}()
 
 	r.addSealKey()
+	r.addIdentityTicket()
 	r.addMountedSecrets()
 	r.registerModelCredentials()
 	if onNewRun != nil {

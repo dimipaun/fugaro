@@ -1042,17 +1042,21 @@ export async function validateInstallation(
 
 /**
  * InstallationOperationName is the picker window's whole surface, and it is
- * seven channels: the list, one click that opens an installation, the checkout
+ * eight channels: the list, one click that opens an installation, the checkout
  * an installation is used from, the removal of the console's own record, the one
- * directory Explorer opens, the website link the onboarding screens offer, and
- * the WSL distributions this machine has (Part G, T-G3).
+ * directory Explorer opens, the website link the onboarding screens offer, the
+ * WSL distributions this machine has (Part G, T-G3), and the one door that opens
+ * the setup wizard (SW3c, R4).
  *
  * The add-an-installation form is **gone** (owner's ruling of 2026-10-20): there
  * is no `add`, no `pickBinary`, no `pickConfig` and no `pickCheckout`, because
  * the console asks the operator for no binary and no config. What is left is a
  * list the CLI printed, one button per row, the two onboarding screens and the
  * machine's own distributions -- so a renderer cannot name a path this process
- * did not itself obtain, and the distro row names nothing at all.
+ * did not itself obtain, and the distro row names nothing at all. `addProject`
+ * names nothing either and **spawns nothing**: it asks the entry point to bring
+ * the dashboard window up on the wizard SW3b draws, and the setup run behind it
+ * is SW3a's, started by the window that shows the plan.
  */
 export type InstallationOperationName =
   | 'list'
@@ -1062,6 +1066,7 @@ export type InstallationOperationName =
   | 'reveal'
   | 'openExternal'
   | 'distros'
+  | 'addProject'
 
 /**
  * InstallationArgumentKind is the closed set of shapes one argument may take.
@@ -1144,6 +1149,12 @@ export const INSTALLATION_OPERATIONS: readonly InstallationOperation[] = Object.
   // the table is one frozen list a preload mirrors: a surface that changed shape
   // with the machine would be a surface two platforms do not share.
   { name: 'distros', method: 'distros', args: [] },
+  // No arguments at all, and no child either: the wizard is the dashboard's own
+  // screen (SW3b), so this row hands the request to the entry point -- it asks
+  // for a window rather than for a process, and the setup run is started later
+  // by the window that shows the plan (SW3a). A renderer that sends anything at
+  // all with it has sent a key no row declares.
+  { name: 'addProject', method: 'addProject', args: [] },
 ] satisfies readonly InstallationOperation[]).map(
   (row): InstallationOperation => Object.freeze({ ...row, args: Object.freeze(row.args.map((arg) => Object.freeze(arg))) }),
 ))
@@ -1285,6 +1296,11 @@ export type ActiveInstallation =
       readonly sentence: string
       readonly refusal?: string
       readonly path?: string
+      /** The picker's Add project request rides this arm too (SW3c): the first
+       * run is a console with unread rows and no installation chosen, and the
+       * dashboard draws the wizard there exactly as the rail's own door does.
+       * See the `chosen: true` arm for the member's whole rule. */
+      readonly addProject?: boolean
     }
   | {
       readonly chosen: true
@@ -1299,6 +1315,16 @@ export type ActiveInstallation =
       readonly distro?: string
       readonly cliVersion: string | null
       readonly mode: InstallationMode
+      /** `addProject` is present exactly once, on the answer the dashboard reads
+       * after the picker window's Add project door was used (SW3c, R4): it says
+       * that the operator asked for another installation, and the dashboard
+       * opens the wizard on it. It is **not a stored fact** -- the picker's door
+       * is a window request rather than a process, so main holds it as a flag
+       * this read consumes, and every answer after that one carries nothing.
+       * The dashboard reads `installation.current` once, at boot, which is why
+       * a one-shot member is enough; a member that stayed true would re-open
+       * the wizard on every reload. */
+      readonly addProject?: boolean
     }
 
 /**

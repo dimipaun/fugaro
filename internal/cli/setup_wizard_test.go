@@ -814,27 +814,31 @@ func TestSetupBudgetQuestionNoTerminalTakesDefault(t *testing.T) {
 }
 
 // TestSetupBudgetQuestionNoAccountIsNotCarried: a budget is an alert on a
-// billing account, so a run that links none carries none — the amount the
-// question just answered (or the default nobody was asked for) is dropped, with
-// one line saying so and naming the flags that add the alert later, rather than
-// written into the installation's variables as a budget Terraform refuses (its
-// validation needs a billing account) or created against an account nobody
-// chose.
+// billing account, so a run that links none carries no budget block into the
+// installation's variables, which the module's own validation refuses without
+// an account. The amount the question just answered (or the default nobody was
+// asked for) is not dropped with it: it stays on the run's own fields, where
+// the creation fact and the one command that adds the alert read it (T2a of
+// docs/managed-flag-ergonomics; init.go's budgetFigures and markCreated), and
+// the line printed here names the flags that command is spelled with.
 //
 // It is the wizard's own guard and not the run-level rule D2216 asks for: the
 // run that records the amount in the creation fact and prints the one command
 // that adds the alert is T2a's (docs/managed-flag-ergonomics, and the
 // dependency this task's plan line does not declare). What is here is the
-// smaller thing: an answer this phase collected never breaks the invariant the
-// door's own check enforces for the flags (init.go: a budget needs the amount,
-// the currency and the account together).
+// smaller thing: what this phase answered is kept out of the installation's
+// block unless the run has the account the alert would sit on.
 func TestSetupBudgetQuestionNoAccountIsNotCarried(t *testing.T) {
 	r, out := wizardRun(t, "\n", &initOptions{name: initProjectName, cloud: cloudOptions{gcpProject: initProject, region: defaultRegion}, rigor: string(rigor.Pro), bakeRepos: true, bakeReposChanged: true})
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if r.o.budget != 0 || r.o.budgetCurrency != "" {
-		t.Errorf("a run that links no account carries a budget (%d %s): the installation would be applied with an alert on an account nobody chose", r.o.budget, r.o.budgetCurrency)
+	if r.o.budget != managed.DefaultBudgetAmount || r.o.budgetCurrency != managed.DefaultBudgetCurrency {
+		t.Errorf("a run that links no account went on with %d %s, want the default %d %s: the creation fact records the budget of every creating run (T2a)",
+			r.o.budget, r.o.budgetCurrency, managed.DefaultBudgetAmount, managed.DefaultBudgetCurrency)
+	}
+	if got := r.o.creationBudgetAccount(); got != "" {
+		t.Errorf("the run composes the installation's budget block on the account %q, and it links none: the module's own validation refuses a block without one", got)
 	}
 	line := out.String()
 	if !strings.Contains(line, budgetQuestion.askedLine()+" [") {

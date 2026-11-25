@@ -156,7 +156,7 @@ credential at all** (`console/src/main/spawn.ts:1-8`).
 decision, not a reuse. → **Q2**.
 
 **#5 — Offboarding a person is manual and incomplete, so a "no extra permission model" v1 would have no way to remove a departed developer. — Gap.**
-`README.md:201` still carries the unchecked roadmap item *"One-command offboarding of a
+`README.md:208` still carries the unchecked roadmap item *"One-command offboarding of a
 repository"*, and no page states an offboarding remedy any more: the runbook that carried one,
 `docs/gcp-setup.md`, is the short setup page now. Removing a **person** means editing the
 launcher/operator lists and re-running `init` with `--allow-delete`, or a hand-run

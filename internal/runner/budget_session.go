@@ -514,7 +514,10 @@ func strayTokenNoBackend() error {
 // environment names no live mode — a launch the launcher minted nothing for,
 // which opens no session and runs on the environment ceiling exactly as it did
 // before AB1a (budgetClient's markless arm; AB4 is what makes every launch
-// mint). Everything else it can meet is a refusal.
+// mint). That arm is a Cloud Run launch's alone: a Batch task that reached here
+// with nothing a launcher left would already have been refused at the policy
+// read, because on Batch a launcher that minted nothing launched nothing
+// (budgetClient, BR1, R18). Everything else it can meet is a refusal.
 // It is reached only after admissionCheck has admitted this run — bootstrap
 // calls the check before the lock and before this, and nothing else calls
 // either — so the slug the session is keyed by (r.d.Store.Slug, through the
