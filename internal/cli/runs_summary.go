@@ -61,7 +61,8 @@ const summaryStateOther = "other"
 // consumer reads one without a nil check.
 var summaryStates = []string{
 	string(runstore.StatusSucceeded), string(runstore.StatusFailed), string(runstore.StatusHalted),
-	string(runstore.StatusCancelled), string(runstore.StatusInfraError), summaryStateOther,
+	string(runstore.StatusCancelled), string(runstore.StatusInfraError), string(runstore.StatusPaused),
+	summaryStateOther,
 }
 
 // summaryOptions are the command's flags.
@@ -168,7 +169,7 @@ func newRunsSummaryCmd() *cobra.Command {
 			"--json prints {v, project, since, until, repositories[], totals, days_unknown,\n" +
 			"notes}; repositories and totals carry {slug, repo, runs, states{}, spent_micros,\n" +
 			"notional_micros, compute_micros, compute_runs}, and states carries all of\n" +
-			"succeeded, failed, halted, cancelled, infra_error and other.",
+			"succeeded, failed, halted, cancelled, infra_error, paused and other.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runRunsSummary(cmd, &o) },
 	}

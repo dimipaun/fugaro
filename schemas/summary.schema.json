@@ -116,6 +116,7 @@
         "halted",
         "cancelled",
         "infra_error",
+        "paused",
         "other"
       ],
       "properties": {
@@ -139,10 +140,15 @@
           "type": "integer",
           "minimum": 0
         },
+        "paused": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Runs that suspended themselves and are to be resumed by their chain: a run that paused is neither a failure nor a success, and it is counted here rather than in other. It is terminal for its own execution, so its outcome node carries the word; the run that resumes it is another run, counted on the day it ends (contract-pause, R15)."
+        },
         "other": {
           "type": "integer",
           "minimum": 0,
-          "description": "Every run whose outcome node or history document names a status outside this vocabulary: a status another release wrote is visible here rather than dropped or given a key of its own. All six keys are always present, zero included, so a consumer reads a count without a nil check."
+          "description": "Every run whose outcome node or history document names a status outside this vocabulary: a status another release wrote is visible here rather than dropped or given a key of its own. All seven keys are always present, zero included, so a consumer reads a count without a nil check."
         }
       }
     },

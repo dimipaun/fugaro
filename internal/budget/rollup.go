@@ -21,8 +21,11 @@ const UnknownPerson = "unknown"
 const maxPersonBytes = 200
 
 // The outcome statuses a DayRecord counts; any other status counts as
-// "other" so a hostile or new status is visible, never dropped.
-var outcomeKeys = []string{"succeeded", "failed", "halted", "cancelled", "infra_error", "other"}
+// "other" so a hostile or new status is visible, never dropped. A paused run
+// is one of them (model-credentials-routing PR11): it is neither a failure nor
+// a success, and it is not "other" either — the chain resumes it, so a reader
+// of the day's figures must be able to see how many runs suspended.
+var outcomeKeys = []string{"succeeded", "failed", "halted", "cancelled", "infra_error", "paused", "other"}
 
 // slugSafe is what a slug must match to be part of a document ID.
 var slugSafe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,200}$`)

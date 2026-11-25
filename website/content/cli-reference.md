@@ -9434,7 +9434,7 @@ days before it. The whole history is not a window, so --since 0 is refused.
 --json prints {v, project, since, until, repositories[], totals, days_unknown,
 notes}; repositories and totals carry {slug, repo, runs, states{}, spent_micros,
 notional_micros, compute_micros, compute_runs}, and states carries all of
-succeeded, failed, halted, cancelled, infra_error and other.
+succeeded, failed, halted, cancelled, infra_error, paused and other.
 
 Usage: `fugaro runs summary`
 
