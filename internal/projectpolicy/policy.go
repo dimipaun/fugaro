@@ -105,6 +105,7 @@ package projectpolicy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -119,6 +120,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/repourl"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -443,6 +445,45 @@ type Policy struct {
 	// before this member existed.
 	ReviewAgainstTask *bool `json:"review_against_task,omitempty"`
 
+	// PersonalWorkspaceTokens is R9's switch for the personal half of a
+	// workspace's credentials (docs/workspace-credentials/, WC6, D2972): the
+	// one place a member's admin says that the workspace's service may serve
+	// its people the Claude token each of them stored at the workspace, ahead
+	// of the shared entries the run is admitted to. true turns the personal
+	// half on, false turns it off, and an absent member is OFF — the state
+	// every member is in today, which is what D2972 means by "off by default".
+	//
+	// It belongs to this node for Triage's reason and one of its own: the
+	// switch decides whether a person's own subscription is drawn on instead
+	// of the workspace's shared (and paid) ones, so a launcher must not be able
+	// to move it, and the shared file and the task are both launcher-written
+	// (docs/bucket-iam/spec.md §10 L1, L2). The workspace's service is the only
+	// enforcer and reads the key from the member's PUBLISHED policy and from
+	// nothing on the member's disk (U8, settled by C1 of the same plan), which
+	// is what makes the node its home rather than a plain local-config field.
+	//
+	// It is a pointer because true and false are two statements a reader must
+	// tell apart from silence, and because a project that sets neither publishes
+	// no member: the node of such a project stays byte for byte what it was
+	// before this member existed. Its key is
+	// creds.PersonSwitchKey ("personal_workspace_tokens") and it moves no
+	// policy version (R9): the decode tolerates it — an older reader lists it in
+	// UnknownKeys, reads every other member exactly as before and, in the runner
+	// of the release behind, warns once and keeps enforcing what it does
+	// understand (internal/runner/projectpolicy.go).
+	//
+	// **The decode is not the whole of the skew.** The readers that decide
+	// something by the node refuse one carrying a key they do not know rather
+	// than acting on part of it: the CLI's launch gate
+	// (internal/cli/launch_budget.go, projectPolicyRead), the publish and the
+	// migration stage each refuse such a node and name the upgrade. So the
+	// moment the member's `fugaro update` publishes this member, an older CLI in
+	// that project loses launches on it until it is upgraded — `brew upgrade`
+	// and `fugaro update` — which is the skew the `bitbucket_tokens` key set had
+	// (docs/releases/v0.25.0.md) and the reason the member's own CLI must be
+	// upgraded before the publish that carries the switch.
+	PersonalWorkspaceTokens *bool `json:"personal_workspace_tokens,omitempty"`
+
 	// VerifierAccounts are the identities that may ask the credentials
 	// service's verify route whether a verdict's signature is that service's
 	// (C3.9g3, D1068, D1075): the coordinator's own account once it exists,
@@ -760,6 +801,15 @@ var knownTopLevelKeys = map[string]bool{
 	"reports_commit":      true,
 	"triage":              true,
 	"review_against_task": true,
+	// The member's personal-workspace-tokens switch (R9, D2972): a top-level
+	// key and not a member of a block, for the reason the two above are — a
+	// reader of the release behind lists it in UnknownKeys and reads every other
+	// member, which is what R9 asks of it (an older reader decodes past it and
+	// the version does not move). The readers that DECIDE by the node refuse one
+	// carrying it and name the upgrade, and the member's own CLI must be
+	// upgraded before the publish that carries the switch into it: the doc on
+	// Policy.PersonalWorkspaceTokens states the whole of the skew.
+	"personal_workspace_tokens": true,
 	// The daemon's own two (R1 of docs/orchestrator-graph-estimates): the
 	// switch that hands orchestration back (D2701, D2739) and the project's
 	// issue adapter (D2733). Both are top-level keys and not members of a
@@ -1755,6 +1805,16 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 			return nil, true, fmt.Errorf("projectpolicy: review_against_task: %w", err)
 		}
 	}
+	// The member's switch for the personal half of a workspace's credentials is
+	// read the same way and for the same reason: a bool or nothing at all,
+	// because the value decides whether the workspace's service serves a person
+	// their own token — a `"true"` the reader dropped would be a member
+	// publishing a switch the enforcer reads as off, with nobody told.
+	if wraw, ok := doc["personal_workspace_tokens"]; ok && !IsNull(wraw) {
+		if err := json.Unmarshal(wraw, &p.PersonalWorkspaceTokens); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: personal_workspace_tokens: %w", err)
+		}
+	}
 	// The daemon's switch and the project's issue adapter are read on their own:
 	// no member of either is judged against another block, and both are held to
 	// their own rules — a bool that is a bool (encoding/json refuses every other
@@ -2050,6 +2110,74 @@ func (p *Policy) BakesRepos() bool { return p == nil || p.BakeRepos == nil || *p
 // launched at all. The zero policy, and a nil one, are on.
 func (p *Policy) OrchestratorOn() bool {
 	return p == nil || p.OrchestratorEnabled == nil || *p.OrchestratorEnabled
+}
+
+// PersonalWorkspaceTokensOn reports whether this policy turns the personal half
+// of a workspace's credentials on (R9, D2972). Absent is OFF, which is the
+// default D2972 chose — so the answer is a method and not the field, because the
+// member is a pointer and a reader that tested it would read a project that
+// never answered as one that turned the personal half on, the direction that
+// would serve a person's own subscription on a member that never asked for it.
+// The zero policy, and a nil one, are off.
+func (p *Policy) PersonalWorkspaceTokensOn() bool {
+	return p != nil && p.PersonalWorkspaceTokens != nil && *p.PersonalWorkspaceTokens
+}
+
+// PersonSwitchReader is R9's switch as the two sides of the personal half read
+// it: the workspace's service, which is the only enforcer and serves many
+// members, and, on the member's own machine, the launcher and `fugaro doctor`,
+// which decide with it whether a launch asks for a grant at all (WC7, WC11).
+//
+// **It is C1's `creds.PersonSwitchReader` built out** (docs/workspace-credentials/
+// contract-person.md), and it lives here rather than in internal/creds for the
+// cycle the contract's own file states: internal/creds imports this package, so
+// the interface it declares and the reader that satisfies it cannot be in the
+// same package. The method signature is the whole of the agreement — this type
+// carries no import of internal/creds and satisfies the interface structurally —
+// and the conformance is pinned where both packages can be named
+// (internal/cli/person_switch_conformance_test.go), which is not this package's
+// own test: creds' boundary test keeps the credential state out of every
+// directory but its allow-list, and this package is a run-side one.
+//
+// **Read answers one member project's published policy**, and it is a function
+// because the two callers reach the node differently: a member's own machine
+// reads its one project's node (projectpolicy.Read over its own database) and
+// the workspace's service resolves the node of the member its caller's verified
+// project names (WC5's scope). A read that fails is an error and never off
+// (contract-person.md): WC5 refuses a call whose member's policy could not be
+// read rather than serving the shared entries as if the switch were off, and
+// WC7 starts the run without the personal token and says why (D3147). A member
+// project with no policy at all — found false — is the absent key's own state
+// and reads as off.
+type PersonSwitchReader struct {
+	Read func(ctx context.Context, project string) (*Policy, bool, error)
+}
+
+// PersonSwitchOn reports whether the member project's published policy names
+// PersonSwitchKey with a true value. Absent is off (R9), and a policy that
+// could not be read is an error and never a false.
+func (r PersonSwitchReader) PersonSwitchOn(ctx context.Context, project string) (bool, error) {
+	p, found, err := r.Read(ctx, project)
+	if err != nil {
+		return false, err
+	}
+	if !found {
+		return false, nil
+	}
+	return p.PersonalWorkspaceTokensOn(), nil
+}
+
+// PersonSwitchOverDB is the PersonSwitchReader a member's own machine uses: it
+// reads the one project's node through db, which is the member's own database
+// (projectpolicy.Read). The project argument it is handed names that project for
+// a caller's own record; the database is already the member's, so the read does
+// not choose by it.
+func PersonSwitchOverDB(db *rtdb.Client) PersonSwitchReader {
+	return PersonSwitchReader{
+		Read: func(ctx context.Context, _ string) (*Policy, bool, error) {
+			return Read(ctx, db)
+		},
+	}
 }
 
 // ImageMap is the image_map block of a policy: the catalog entry each of the
@@ -3094,10 +3222,19 @@ func validBudget(raw json.RawMessage, b Budget) error {
 		// alone would take the mode from the job environment, which nobody
 		// reading the policy can see, so enforcement would depend on a deploy
 		// (H1). Leaving the block out is how a policy says it sets no budget.
-		return errors.New("mode must be off, observe or enforce: a policy that sets no budget key leaves the budget block out")
+		return errors.New("mode must be observe or enforce: a policy that sets no budget key leaves the budget block out")
+	}
+	// The word that was a budget mode until this release is refused with the
+	// one text every door refuses it with, so a node an older CLI published
+	// says the same thing here as it does at the publish door and in a
+	// repository's file (AB2, D3009, D3022, policy.ModeOffRefusal). The
+	// migration reads it out of the node's own bytes before this reader is
+	// asked anything, which is what lets `fugaro update` rewrite it (F22).
+	if policy.Mode(b.Mode).Removed() {
+		return errors.New(policy.ModeOffRefusal)
 	}
 	if !policy.ValidMode(b.Mode) {
-		return fmt.Errorf("mode %q must be off, observe or enforce", b.Mode)
+		return fmt.Errorf("mode %q must be observe or enforce; leave the block out to set no budget at all", b.Mode)
 	}
 	if m, err := pricing.FromUSD(b.PerRunUSD); err != nil {
 		return fmt.Errorf("per_run_usd %v: it must be a number from 0 to %d US dollars", b.PerRunUSD, pricing.MaxUSD)

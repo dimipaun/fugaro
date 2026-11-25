@@ -375,6 +375,17 @@ func firstPublishNodeOnlyMembers(lc *localcfg.Config) []string {
 	if lc.ReviewAgainstTaskEffective(nil) != nil {
 		out = append(out, "the review-against-task switch")
 	}
+	// The member's switch for the personal half of a workspace's credentials
+	// joins them (R9 of docs/workspace-credentials/, WC6, D2972): the
+	// workspace's service — the only enforcer — reads the member's PUBLISHED
+	// policy and never anything on the member's disk, so a member that set the
+	// switch on their own machine and whose project never published a node has
+	// left their own act in a file no service reads. The node's own text writes
+	// it beside the review-against-task switch (init_policy_publish.go's
+	// publish), so it is listed here beside it.
+	if lc.PersonalWorkspaceTokensEffective(nil) != nil {
+		out = append(out, "the personal-workspace-tokens switch")
+	}
 	// The pools' subscription switch joins them (F22, D1636): it is read off
 	// the node and nowhere else — a run asks the published policy whether it
 	// may spread a project across subscriptions at all — so a project whose
@@ -2179,7 +2190,7 @@ func (e *initEngine) writeDefaultCatalogEntry(ctx context.Context) {
 	// this run reads one (init.go's effectiveVerifiers): it is the node this
 	// same run migrates in place, so it is a state `fugaro update` has to
 	// converge through and not a fact about the project's catalog.
-	p, _, err := r.policy.read(ctx, e.lc)
+	p, _, err := r.policyMemo().read(ctx, e.lc)
 	if err != nil && !olderPolicyNode(err) {
 		e.withholdDefaultCatalogEntry(
 			fmt.Sprintf("no default catalog entry written: the project's policy could not be read; a later %s retries", selfCommand()+" update"),

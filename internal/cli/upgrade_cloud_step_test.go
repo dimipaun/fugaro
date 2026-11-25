@@ -131,15 +131,17 @@ func jobConfigCopyJobName(t *testing.T, workflow string) string {
 }
 
 // jobConfigCopyBaseline is a deployed job's env when it was last deployed
-// from exactly today's local config and fugaro.yaml: only the GitHub App ID
-// (upgradeRigWithGitHubAppID's rig sets no budget, providers or model_prices
-// by default). The GitHub App ID is compared like every other local-config
-// field now (review follow-up, PR #324), so every job-config-copy test below
-// starts here and adds only the one field it means to test, rather than
-// risk an incidental "added FUGARO_GITHUB_APP_ID" diff it never meant to
-// exercise.
+// from exactly today's local config and fugaro.yaml: the GitHub App ID and
+// the budget mode (upgradeRigWithGitHubAppID's rig sets no budget, providers
+// or model_prices by default). The GitHub App ID is compared like every other
+// local-config field now (review follow-up, PR #324), and the mode is one
+// whatever the config holds (AB5: every job names it, and a config with no
+// budget block names observe), so every job-config-copy test below starts
+// here and adds only the one field it means to test, rather than risk an
+// incidental "added FUGARO_GITHUB_APP_ID" or "added FUGARO_BUDGET_MODE" diff
+// it never meant to exercise.
 func jobConfigCopyBaseline() map[string]string {
-	return map[string]string{"FUGARO_GITHUB_APP_ID": "12345"}
+	return map[string]string{"FUGARO_GITHUB_APP_ID": "12345", infra.BudgetModeEnv: "observe"}
 }
 
 // setJobConfigCopyEnv creates (or replaces) the fake job jobConfigCopyNote
@@ -465,7 +467,7 @@ func TestUpgradeCloudReportsStaleBudgetConfigCopy(t *testing.T) {
 	r := upgradeRigWithGitHubAppID(t)
 	r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5 }\n")
 	stubCurrentRefresh(t, r)
-	setJobConfigCopyEnv(t, r, "api", nil) // no budget on the job's copy
+	setJobConfigCopyEnv(t, r, "api", nil) // the job's copy names observe and no cap
 	fakeSteps(t, "", nil)
 	fakeTerminal(t)
 	out, _, err := runCloudStep(t)

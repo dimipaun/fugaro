@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/coordpath"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -1598,9 +1599,12 @@ func TestDoctorReadsTheJobModeANodeWithoutABudgetKeeps(t *testing.T) {
 // The mode is not what decided that, and it is what the check may no longer
 // take for the answer: it asks the reach of an api-key credential
 // (routingReachOf), and an api-key run has a gateway in every mode now (AB1b,
-// D3009), so a node whose mode is off and one that sets no mode at all are one
-// answer — the resolution is the runs', the routed cost behind it is the
-// repository's — and the two states below are asserted to be that one line.
+// D3009), so a node that says observe and one that says enforce are one answer —
+// the resolution is the runs', the routed cost behind it is the repository's —
+// and the two states below are asserted to be that one line. The word that was
+// a mode until this release is not a third state to compare with: a node that
+// says it is refused by its own decoder, block and all (AB2, AB8a), so nothing
+// reads a mode out of it.
 // The clause the finding added is still reached where no run takes the switch
 // for a reason that outlives the mode (a via: cascade switch and a run that did
 // not ask for the cascade: routingInertWhy's own arm), and the note validate
@@ -1610,12 +1614,12 @@ func TestDoctorResolvesASwitchEveryAPIKeyRunTakes(t *testing.T) {
 	// the resolved arm, which is the one that was never reach-aware.
 	rows := doctorRunRoutes(`["acme/app"]`, "  acme/app:\n    provider: github\n")
 	const resolved = "acme/app: claude-sonnet-5-5 -> openrouter, sent as anthropic/claude-sonnet-5.5"
-	off := doctorPolicy(doctorSwitchTo(config.RouteOpenRouter))
-	off.Budget.Mode = "off"
+	observe := doctorPolicy(doctorSwitchTo(config.RouteOpenRouter))
+	observe.Budget.Mode = policy.ModeObserve
 	// The mode is the node's where it sets one and the job's own ceiling where
 	// it does not (doctorNodeMode: this machine enforces), which is the contrast
 	// the check used to draw and cannot any more.
-	for _, p := range []*projectpolicy.Policy{off, doctorPolicy(doctorSwitchTo(config.RouteOpenRouter))} {
+	for _, p := range []*projectpolicy.Policy{observe, doctorPolicy(doctorSwitchTo(config.RouteOpenRouter))} {
 		doctorPolicyRig(t, p, rows)
 		res := doctorChecksByID(t)["routing-resolution"]
 		if !strings.Contains(res.Problem, resolved) {

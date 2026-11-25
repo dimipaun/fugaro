@@ -15,11 +15,15 @@ import (
 	"github.com/dimipaun/fugaro/internal/identitywire"
 )
 
-// batchRunEnv is a job environment of a run on Cloud Batch: the launcher
-// writes FUGARO_BACKEND on every job it creates, and a Batch job says
-// cloud-batch (internal/backend/batch's jobVariables).
+// batchRunEnv is a job environment of a run on Cloud Batch: the pair Batch
+// injects into every task, BATCH_TASK_INDEX and BATCH_TASK_COUNT, which is what
+// says a process is one of Batch's tasks (backend.DetectPlatform, the predicate
+// batchAttestation reads), beside FUGARO_BACKEND, which the launcher writes
+// into every job it creates and a Batch job says cloud-batch in
+// (internal/backend/batch's jobVariables).
 func batchRunEnv(metadataHost string) []string {
 	return []string{
+		"BATCH_TASK_INDEX=0", "BATCH_TASK_COUNT=1",
 		backend.BackendEnv + "=" + backend.CloudBatch,
 		metadataHostEnv + "=" + metadataHost,
 	}
@@ -115,29 +119,11 @@ func TestABatchRunAttestsItsOwnVM(t *testing.T) {
 	})
 }
 
-// TestTheAttestationIsNeverPrinted: the attestation is this VM's own
-// credential, so every reason the run publishes from the moment it is read is
-// redacted of it (BR4, R7).
-func TestTheAttestationIsNeverPrinted(t *testing.T) {
-	const tok = "eyJhbGciOiJSUzI1NiJ9.a-vm-identity-token-in-full-format.sig"
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(tok))
-	}))
-	defer srv.Close()
-
-	r := &run{d: Deps{Env: batchRunEnv(strings.TrimPrefix(srv.URL, "http://"))}}
-	got, err := r.batchAttestation(context.Background(), "https://creds-service-abc-ew.a.run.app")
-	if err != nil {
-		t.Fatalf("attesting this VM: %v", err)
-	}
-	line := "the claim was refused: " + got + " is not a VM of this job"
-	if printed := r.redact(line); strings.Contains(printed, got) {
-		t.Errorf("a reason the run publishes carries the attestation: %q", printed)
-	}
-	if printed := r.redact(line); !strings.Contains(printed, "[REDACTED]") {
-		t.Errorf("the attestation was not redacted but dropped whole: %q", printed)
-	}
-}
+// The attestation's own leak check is not here: it is the runner_test half's
+// TestTheAttestationIsNeverPrinted (batch_claim_test.go), which reads what a
+// whole run publishes around a claim that really carried the value -- the
+// record, the halt's detail and the run's log lines -- rather than what one
+// call to the redactor makes of a line this test wrote.
 
 // TestTheTicketNeverReachesTheSession: the ticket arrives in the job's
 // environment — a Batch launch sets it as a job variable — and the run's own

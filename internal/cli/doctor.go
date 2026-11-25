@@ -90,6 +90,18 @@ type doctorCheck struct {
 	// and every ID keeps its meaning), only the one question a check answers
 	// about itself that the ID alone cannot.
 	unread bool
+	// updateFix marks a Batch check whose state only `fugaro update` puts
+	// right: the compute root it applies is what creates the grant or the
+	// account the check reads (R14 of
+	// docs/batch-run-identity/implementation-plan.md). It is the one question
+	// `fugaro backends use cloud-batch` asks before refusing a selection — a
+	// check in this state is not a reason to refuse the selection, because
+	// selecting is what the update then converges — and BR18 is its reader.
+	// Unexported and absent from --json for the reason ownFix and unread are:
+	// it is not a class, only the one question an ID alone cannot answer
+	// (batch-link-grant's missing-permission arm carries it, its unreadable
+	// arms do not — a read that failed is not the root's work).
+	updateFix bool
 	// ownFix marks a check in an update class whose own state `fugaro update`
 	// does NOT put right, so the default view prints the check's own fix (its
 	// first sentence, worded as the command that does the work) instead of the

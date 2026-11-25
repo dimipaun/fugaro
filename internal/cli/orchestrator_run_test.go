@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gateway"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -731,6 +732,215 @@ func TestWaitBeatsTheLeaseWhileTheIntervalRuns(t *testing.T) {
 		t.Errorf("the lease was stamped %s before a %s wait and %s after it, so the claim went the whole interval without a beat and a daemon waiting longer than its own lease would have it taken",
 			before.At, d.interval, after.At)
 	}
+}
+
+// claimNode is one claim node as the database carries it: which orchestrator
+// holds it and the server time it was last written at, in the spelling the fake
+// stores.
+func claimNode(t *testing.T, db *gcpfake.RTDB, ref orchestrator.ItemRef) (string, string) {
+	t.Helper()
+	path, err := orchestrator.ClaimPath(ref)
+	if err != nil {
+		t.Fatalf("building the claim path of %q: %v", ref.Item, err)
+	}
+	v := db.Value(path)
+	doc, ok := v.(map[string]any)
+	if !ok {
+		t.Fatalf("the claim node at %s is %#v, not a document", path, v)
+	}
+	holder, _ := doc["holder"].(string)
+	at, _ := doc["at"].(string)
+	return holder, at
+}
+
+// TestBeatRestampsTheClaimsTheDaemonHolds: the beat writes this daemon's own
+// claims beside the lease it holds (beatAndRefresh), and writes nothing else.
+//
+// The claim node records the server time its holder last confirmed an item was
+// still its own, so a daemon that beat only its lease would leave that stamp on
+// the day the item was taken — and a claim another orchestrator holds is never
+// written: a claim is released by its item finishing and by nothing else (the
+// owner's ruling of 2026-11-23), so a beat that re-stamped a rival's node would
+// be taking an item whose run is still going.
+//
+// What the beat re-stamps is the picture the daemon's own cycle read off its
+// nodes (orchestrator.Tick.Held) and never a walk of the project's claims node:
+// a plan task's claim stands for good once the task is finished (claim.go's
+// header), so that node is a growing record of every claim the project ever made
+// and a beat that walked it would read one node more for each of them, for ever.
+// The cycle below is what puts the item in that picture, which is also the only
+// way a claim of this daemon's can exist: a claim is taken inside a cycle.
+func TestBeatRestampsTheClaimsTheDaemonHolds(t *testing.T) {
+	f := newDaemonFixture(t)
+	d, _ := f.running(t, "")
+	ctx := context.Background()
+
+	// The item the claim is taken on, as the daemon's own node carries it: a
+	// plan task approved and started, so the cycle's reading names it (and
+	// nothing else) as work this daemon holds.
+	f.setState(t, `{"schema_version":1,"rev":1,"agent_id":"aurora","role":"orchestrator",
+		"goal":"keep the work moving","work_items":[{"id":"wi-1","title":"land demo/A","repo":"acme/app",
+		"recipe":"standard","rigor_tier":"medium","brief":"Do the thing.","plan_task":"demo/A",
+		"phase":"running","run_id":"20261109-101500-abcd","attempts":1}],
+		"decisions":[],"facts":{},"archived":[],"intents":[]}`)
+	if _, err := d.tick.Step(ctx); err != nil {
+		t.Fatalf("the cycle that reads the node: %v", err)
+	}
+
+	mine := orchestrator.ItemRef{Orchestrator: d.id, Item: "demo/A"}
+	other := orchestrator.ItemRef{Orchestrator: "aurora~night", Item: "demo/B"}
+	rival, err := orchestrator.NewClaim(d.db, other.Orchestrator, d.db.ServerNow)
+	if err != nil {
+		t.Fatalf("building the other orchestrator's claims: %v", err)
+	}
+	for _, c := range []struct {
+		claims *orchestrator.Claim
+		ref    orchestrator.ItemRef
+	}{{d.claims, mine}, {rival, other}} {
+		if c.claims == nil {
+			t.Fatal("the daemon has no claims to beat: running it built no guard")
+		}
+		if took, err := c.claims.Take(ctx, c.ref); err != nil || !took {
+			t.Fatalf("the take of %q: took=%v, err=%v", c.ref.Item, took, err)
+		}
+	}
+	held := d.tick.Held()
+	if len(held) != 1 || held[0].Ref != mine {
+		t.Fatalf("the daemon's own picture of what it holds is %+v, and the beat re-stamps what the cycle read off this daemon's nodes", held)
+	}
+	holder, takenAt := claimNode(t, f.db, mine)
+	if holder != d.id {
+		t.Fatalf("the claim names %q after the take, not this daemon (%q)", holder, d.id)
+	}
+	otherBefore := f.db.Value(claimPathOf(t, other))
+
+	// The clock moves on, and the beat is the only thing that writes: the stamp
+	// this daemon's claim carries afterwards is the server's time at the beat.
+	stampAt, err := time.Parse(time.RFC3339, takenAt)
+	if err != nil {
+		t.Fatalf("the claim's own stamp %q: %v", takenAt, err)
+	}
+	later := stampAt.Add(5 * time.Second)
+	f.db.SetClock(func() time.Time { return later })
+
+	if err := d.beatAndRefresh(ctx); err != nil {
+		t.Fatalf("the daemon's beat: %v", err)
+	}
+	holder, at := claimNode(t, f.db, mine)
+	if holder != d.id {
+		t.Errorf("the claim names %q after the beat, not this daemon (%q)", holder, d.id)
+	}
+	if want := later.UTC().Truncate(time.Second).Format(time.RFC3339); at != want {
+		t.Errorf("the claim is stamped %q after the beat, not the server time the beat was made at (%s)", at, want)
+	}
+	if after := f.db.Value(claimPathOf(t, other)); !reflect.DeepEqual(otherBefore, after) {
+		t.Errorf("the other orchestrator's claim changed under a beat:\nafter  %#v\nbefore %#v", after, otherBefore)
+	}
+	lease, err := d.lease.Read(ctx)
+	if err != nil {
+		t.Fatalf("reading the lease node after the beat: %v", err)
+	}
+	if want := later.UTC().Truncate(time.Second); !lease.At.Equal(want) {
+		t.Errorf("the lease is stamped %s after the beat, not the server time the beat was made at (%s)", lease.At, want)
+	}
+}
+
+// TestAFirstBeatAfterARestartRestampsNoClaim is the gap the beat's own reading
+// has and the safe direction it fails in: what the beat settles is the picture
+// the daemon's last cycle read off its nodes (orchestrator.Tick.Held), and a
+// daemon that has just started has read none — so its first beat re-stamps no
+// claim at all, and a claim it holds from before the restart keeps the stamp it
+// was taken at until the first cycle reads the nodes.
+//
+// One beat and one cycle is the whole of the gap, and nothing reads an item's
+// stamp to decide anything (claim.go's header); what would close it is a beat
+// that read the nodes itself, or the walk of the project's claims subtree the
+// refresh was built without — a read that grows with every claim the project
+// ever made, on every beat, for one stamp nobody decides anything by.
+//
+// Mutation: settle the claims in the beat (read the nodes there, or walk the
+// claims node) and the node below moves under a beat that has run no cycle.
+func TestAFirstBeatAfterARestartRestampsNoClaim(t *testing.T) {
+	f := newDaemonFixture(t)
+	d, _ := f.running(t, "")
+	ctx := context.Background()
+
+	// The restart: the daemon's node carries an item whose run is in flight —
+	// the case a claim outlives a clean exit for (Lease.Release) — and the claim
+	// was taken by the daemon an earlier process was, so nothing about this one
+	// has read the node yet.
+	f.setState(t, `{"schema_version":1,"rev":1,"agent_id":"aurora","role":"orchestrator",
+		"goal":"keep the work moving","work_items":[{"id":"wi-1","title":"land demo/A","repo":"acme/app",
+		"recipe":"standard","rigor_tier":"medium","brief":"Do the thing.","plan_task":"demo/A",
+		"phase":"running","run_id":"20261109-101500-abcd","attempts":1}],
+		"decisions":[],"facts":{},"archived":[],"intents":[]}`)
+	mine := orchestrator.ItemRef{Orchestrator: d.id, Item: "demo/A"}
+	if took, err := d.claims.Take(ctx, mine); err != nil || !took {
+		t.Fatalf("the take of %q: took=%v, err=%v", mine.Item, took, err)
+	}
+	if held := d.tick.Held(); len(held) != 0 {
+		t.Fatalf("a daemon that has run no cycle holds %+v, and what the beat settles is the picture its last cycle read", held)
+	}
+	before := f.db.Value(claimPathOf(t, mine))
+	leaseBefore, err := d.lease.Read(ctx)
+	if err != nil {
+		t.Fatalf("reading the lease node before the beat: %v", err)
+	}
+	later := leaseBefore.At.Add(5 * time.Second)
+	f.db.SetClock(func() time.Time { return later })
+
+	if err := d.beatAndRefresh(ctx); err != nil {
+		t.Fatalf("the daemon's first beat after its restart: %v", err)
+	}
+	if after := f.db.Value(claimPathOf(t, mine)); !reflect.DeepEqual(before, after) {
+		t.Errorf("the claim this daemon holds changed under the first beat after its restart:\nafter  %#v\nbefore %#v", after, before)
+	}
+	lease, err := d.lease.Read(ctx)
+	if err != nil {
+		t.Fatalf("reading the lease node after the beat: %v", err)
+	}
+	if !lease.At.After(leaseBefore.At) {
+		t.Errorf("the lease is stamped %s after a beat that moved the clock past %s, so nothing above is about a beat that ran", lease.At, leaseBefore.At)
+	}
+
+	// And the gap is one beat: the first cycle reads the node the claim's item is
+	// on, settles the claim it carries, and the stamp is the cycle's own clock
+	// from then on.
+	if _, err := d.tick.Step(ctx); err != nil {
+		t.Fatalf("the daemon's first cycle after its restart: %v", err)
+	}
+	if got := d.tick.Held(); len(got) != 1 || got[0].Ref != mine {
+		t.Fatalf("the first cycle's own picture is %+v, and the item its node carries is in flight", got)
+	}
+	_, at := claimNode(t, f.db, mine)
+	if want := later.UTC().Truncate(time.Second).Format(time.RFC3339); at != want {
+		t.Errorf("the claim is stamped %q after the first cycle, not the server time the cycle was made at (%s)", at, want)
+	}
+}
+
+// TestTheCycleLineSaysTheSkips: a cycle that skipped an action because another
+// orchestrator of the project holds the item says so where a person reads the
+// cycles. Without the count, the line is the same as an idle daemon's, and the
+// one person who needs to know why this daemon is doing nothing while the
+// project's other orchestrator works is the one reading it (Skipped, D3209).
+func TestTheCycleLineSaysTheSkips(t *testing.T) {
+	var out strings.Builder
+	d := &orchestratorDaemon{id: "fugaro~night", out: &out, warn: &out}
+	d.report(orchestrator.Report{Outcome: orchestrator.CycleInFlight, Skipped: 2}, nil)
+	if said := out.String(); !strings.Contains(said, "in-flight") || !strings.Contains(said, "2 skipped") {
+		t.Errorf("the cycle line is %q, and a cycle that skipped two items another orchestrator holds says so", said)
+	}
+}
+
+// claimPathOf is one claim node's path, through the package's own builder: a
+// path a test spelled itself could name a node the package never writes.
+func claimPathOf(t *testing.T, ref orchestrator.ItemRef) string {
+	t.Helper()
+	path, err := orchestrator.ClaimPath(ref)
+	if err != nil {
+		t.Fatalf("building the claim path of %q: %v", ref.Item, err)
+	}
+	return path
 }
 
 // TestRunRefusesAnIntervalLongerThanTheLease: the flag is bounded by the claim

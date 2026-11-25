@@ -28,7 +28,10 @@ import (
 //     account is granted nothing under a role the table does not have (the
 //     never-list's eleventh rule, held here as the plan's own fact rather than
 //     as a comment), and the run's one confirmation does not refuse the
-//     installation for having asked for it.
+//     installation for having asked for it. "Nothing else" is the row set the
+//     test builds below, and its one addition since the table was written is
+//     J6's signing grant on the consumer key — the cost of §4.2's "it signs its
+//     replies through J6's KMS signer", priced with the task.
 //
 // Both plan the same fixture the golden plan is a plan of
 // (internal/infra/testdata/installation-budget-job.tfvars.json), so "before
@@ -205,8 +208,19 @@ func TestOrchestratorGrantsAreTheDesignsTableRows(t *testing.T) {
 		serviceAddr = "module.installation.google_cloud_run_v2_service.orchestrator[0]"
 		invokerAddr = "module.installation.google_cloud_run_v2_service_iam_member.orchestrator_invoker[0]"
 		tickAddr    = "module.installation.google_cloud_scheduler_job.orchestrator_tick[0]"
+		// The consumer's signing grant (mobile-identity-pairing plan task J6;
+		// O17), which is the one row of the opt-in that is not a row of section
+		// 4.3's original table: the account signs its mailbox replies and
+		// heartbeats with the installation's consumer key instead of a MAC, so
+		// the row is what §4.2's "it signs its replies through J6's KMS signer"
+		// costs. It is here rather than beside the key because section 4.3's
+		// table is orchestrator.tf's alone, and the key, its ring and the role
+		// it grants are mailbox_key.tf's
+		// (internal/infra/mailbox_key_test.go holds that row's key, role and
+		// member; this test holds that the account gains no OTHER row for it).
+		signAddr = "module.installation.google_kms_crypto_key_iam_member.orchestrator_mailbox_signer[0]"
 	)
-	want := []string{accountAddr, secretAddr, accessAddr, launcherRow, writeRow, readRow, minterRow, serviceAddr, invokerAddr, tickAddr}
+	want := []string{accountAddr, secretAddr, accessAddr, launcherRow, writeRow, readRow, minterRow, serviceAddr, invokerAddr, tickAddr, signAddr}
 	for key := range spec.ProjectJobs {
 		want = append(want, `google_cloud_run_v2_job_iam_member.orchestrator_runner["`+key+`"]`)
 	}
