@@ -553,20 +553,13 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	if err != nil {
 		return failed(remote(err))
 	}
-	// Billing is read with the credentials' own quota project, not the
-	// installation's: the same rule as init's billing reads.
-	billingSvc, err := billing.NewService(ctx, doctorAPIOptsQuota(lc, lc.Endpoints.CloudBilling, false)...)
+	billingSvc, err := billing.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.CloudBilling)...)
 	if err != nil {
 		return failed(remote(err))
 	}
 	sameProjectFirebase := lc.Budget == nil || lc.Budget.FirebaseProject == "" || lc.Budget.FirebaseProject == lc.GCPProject
 	for _, c := range preflight.Billing(ctx, billingSvc, crmSvc, lc.GCPProject) {
 		dc := fromPreflight(c)
-		if c.ID == "billing-api" && !lc.Endpoints.NoAuth && infra.CredentialsQuotaProject(ctx) == "" {
-			// Credentials with no quota project: say so, and never suggest the
-			// project being checked.
-			dc.Problem, dc.Fix = infra.NoQuotaProjectProblem(lc.GCPProject), "gcloud auth application-default set-quota-project <your-project>"
-		}
 		o.Checks = append(o.Checks, dc)
 	}
 	for _, c := range preflight.IAMPolicy(ctx, crmSvc, lc.GCPProject, sameProjectFirebase) {
