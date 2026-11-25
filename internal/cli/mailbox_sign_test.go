@@ -201,3 +201,40 @@ func TestMailboxDeletedDeviceNodeEndsAcceptance(t *testing.T) {
 		t.Fatalf("notes = %v, want one naming the device node", second.notes)
 	}
 }
+
+// TestMailboxTheKeychainItemDoesNotOutliveTheDeviceNodesScheme is the state the
+// two ways of naming a pairing meet in: a uid the project config names *and*
+// holds a device node with a public key, with the item readable. The node's
+// scheme is the one that governs, so the MAC the readable key would make is a
+// downgrade here too — and the pairing's gate is the signature gate and not the
+// MAC gate the readable key builds. **Without this state** a change that let the
+// MAC gate survive beside a public key (the gate built whenever a key is
+// readable, and the fence that replaces it asking for `pairing.gate == nil`)
+// would be caught by nothing: the node test above names no item at all, and a
+// MAC the node refuses because its sender is a different pairing is a test about
+// the sender rather than about the scheme.
+func TestMailboxTheKeychainItemDoesNotOutliveTheDeviceNodesScheme(t *testing.T) {
+	f := newMailboxFixture(t, "mailbox:\n  keychain_item:\n    \""+mailboxDeviceUID+"\": \"fugaro-mailbox-aurora-a1\"\n")
+	device := mailboxSignatureDevice('a')
+	mailboxSeedSignatureDeviceNode(f, mailboxDeviceUID, device.Public().(ed25519.PublicKey))
+
+	c := f.consumer(t, "boot-both-test")
+	pairing := mailboxPairingFor(t, c, mailboxDeviceUID)
+	if pairing.revoked || pairing.gate == nil {
+		t.Fatalf("the pairing both named and held is served as %+v, want a gate and no revocation", pairing)
+	}
+
+	now := mailboxNowMs()
+	// The node's own signature is what this pairing's gate verifies.
+	if _, refusal := pairing.gate.Verify(mailboxDeviceRecord(t, "msg-1", now, device)); refusal != nil {
+		t.Fatalf("the gate refused the device's own signature (%s at %q)", refusal.Code, refusal.Field)
+	}
+	// The MAC this machine's own key would make, with the node's own sender so
+	// that nothing but the scheme can be what refuses it.
+	macd := f.signed(t, "msg-1", map[string]any{"sender": mailboxDeviceUID}, now, mailboxKeyMaterial)
+	if _, refusal := pairing.gate.Verify(macd); refusal == nil {
+		t.Fatal("the gate accepted a MAC-tagged message at a pairing whose node holds a public key: the keychain item outlived the node's scheme")
+	} else if refusal.Code != mailbox.CodeBadMAC || refusal.Field != "mac" {
+		t.Fatalf("refused %s, want %s at %q", refusal, &mailbox.Refusal{Code: mailbox.CodeBadMAC, Field: "mac"}, "mac")
+	}
+}
