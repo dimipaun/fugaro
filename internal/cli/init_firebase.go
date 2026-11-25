@@ -274,19 +274,20 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	if r.o.firebase == "" {
 		// RI2: a converged installation is still this stage's while the Firebase
 		// root's state does not carry the run index's composite indexes, which
-		// nothing but this stage's apply creates (F10) — that is the one case
-		// the stage's check lets through with the database recorded
+		// nothing but this stage's apply creates (F10) — and while it does not
+		// carry the workspace's read the pin names (WS1, D2988). Those are the
+		// cases the stage's check lets through with the database recorded
 		// (init_stages.go's firebaseSkip, and this call is the same question
 		// asked again at the arm it decides). There is nothing to adopt or
 		// create then, because the database is this machine's, so the arm below
 		// is left out and the flag's own flow runs: the same discovery, the same
 		// apply of the root, the same database steps.
-		indexesMissing := false
+		rootOwed := false
 		if lc.Budget != nil && lc.Budget.RTDBURL != "" {
-			indexesMissing, _ = r.runIndexIndexesWait(ctx, c, bin, spec.StateBucket, fp)
+			rootOwed, _ = r.firebaseRootWait(ctx, c, bin, spec.StateBucket, fp, lc)
 		}
 		done := false
-		if !indexesMissing {
+		if !rootOwed {
 			var err error
 			done, err = r.noFlagBudgetDatabase(ctx, c, t, wd, bin, lc, spec, path, old, fp)
 			if err != nil {
@@ -686,36 +687,78 @@ func runIndexIndexesMissing(managed map[string]bool) []string {
 	return missing
 }
 
-// runIndexIndexesWait is RI2's question at the plain update's own door, and the
-// reason it is answered no. The eleven composite indexes are the Firebase
-// root's and only an apply of that root creates them (F10), so a converged
-// installation — F34's skip, and its caller has already read that this machine's
-// config records the database — owes that apply while its root's state is
-// readable, does not manage all of them (runIndexIndexesMissing: a row a later
-// release added is a row such an installation has not been given yet), and this
-// credential may make the project's IAM changes.
+// workspaceReadMissing reports whether the Firebase root's state leaves out the
+// workspace's read of this project's database (WS1, D2988): the binding, and
+// the one-permission custom role it carries, that the root declares for the
+// workspace service account a member's own pin names
+// (modules/firebase/workspace_access.tf). It is asked only of a config that
+// pins one: an installation in no workspace passes "", the root's count is 0
+// and the question is never asked of it, so nothing else's update moves.
+//
+// The pin is what makes the state's answer stale, and it is stale the moment a
+// member joins: `fugaro workspace add` writes the pin, and no root has been
+// applied with it since. The state is then the whole of the read — a state that
+// carries the binding is one an update has already given it, whatever accidental
+// state the project's IAM is in — which is what keeps a converged member's
+// update converging.
+func workspaceReadMissing(managed map[string]bool, lc *localcfg.Config) bool {
+	if lc == nil || lc.WorkspacePin.ServiceAccount == "" {
+		return false
+	}
+	for a := range managed {
+		if strings.HasPrefix(a, "module.firebase.google_project_iam_member.workspace_read") {
+			return false
+		}
+	}
+	return true
+}
+
+// firebaseRootWait is RI2's and WS1's question at the plain update's own door,
+// and the reason it is answered no. Two things are the Firebase root's and only
+// an apply of that root makes them: the eleven composite indexes the run
+// index's reads are served by (F10, RI2), and the workspace's read of a member's
+// database (WS1, D2988). So a converged installation — F34's skip, and its
+// caller has already read that this machine's config records the database —
+// owes that apply while its root's state is readable, leaves out either of them
+// (runIndexIndexesMissing: a row a later release added is a row such an
+// installation has not been given yet; workspaceReadMissing: the pin a member
+// wrote when it joined), and this credential may make the project's IAM changes.
 //
 // The last of those is F34's own reason for the skip, and it is the run
 // that skip was written for: an operator's update, whose credential may not
 // make the project's IAM changes an apply of that root makes, would fail there
 // instead of converging. So such a run keeps the skip — with the reason, which
-// firebaseSkip prints as its line — and a project owner's update creates the
-// indexes.
+// firebaseSkip prints as its line — and a project owner's update creates what is
+// missing. A member's own update is a project owner's for this purpose: the
+// binding is handed to its database by the member's owner at their terminal,
+// which is the same credential the pin was written with.
 //
 // Every way it can fail answers no, and every such run is left exactly as it
 // was: an update that cannot read the state, or cannot ask about the
-// credential, does not fail over it — the indexes it does not create are created
-// by the update that can.
-func (r *initRun) runIndexIndexesWait(ctx context.Context, c *infra.Clients, bin, stateBucket, fp string) (wait bool, why string) {
+// credential, does not fail over it — what it does not create is created by the
+// update that can. A pin whose state could not be read is one such run, and the
+// direction is not a preference: the read that failed is also the only thing
+// that could tell the root what it must not plan away, and a root handed a state
+// nobody saw plans the resources that are already there away.
+func (r *initRun) firebaseRootWait(ctx context.Context, c *infra.Clients, bin, stateBucket, fp string, lc *localcfg.Config) (wait bool, why string) {
 	managed, ok := r.firebaseIndexesInState(ctx, c, bin, stateBucket, fp)
 	if !ok {
-		return false, " (the Firebase root's state could not be read, so the run index's composite indexes wait for the update that can)"
+		return false, " (the Firebase root's state could not be read, so the run index's composite indexes and the workspace's read wait for the update that can)"
 	}
-	if len(runIndexIndexesMissing(managed)) == 0 {
-		return false, " (and the state already carries the run index's composite indexes)"
+	indexes := len(runIndexIndexesMissing(managed)) > 0
+	read := workspaceReadMissing(managed, lc)
+	if !indexes && !read {
+		return false, " (and the state already carries the run index's composite indexes and the workspace's read)"
 	}
 	if may, err := infra.CanMakeIAMChanges(ctx, c, fp); err != nil || !may {
-		return false, " (and the run index's composite indexes wait for an update that may make project " + fp + "'s IAM changes, which an apply of the Firebase root does)"
+		what := "the run index's composite indexes"
+		switch {
+		case read && !indexes:
+			what = "the workspace's read of this project's database"
+		case read && indexes:
+			what = "the run index's composite indexes and the workspace's read of this project's database"
+		}
+		return false, " (and " + what + " wait for an update that may make project " + fp + "'s IAM changes, which an apply of the Firebase root does)"
 	}
 	return true, ""
 }
