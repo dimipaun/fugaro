@@ -72,6 +72,7 @@ The local config <tmp> changes:
   +         credentials_service_ready: false
   +         provider_keys_served: false
   +         stage_account_served: false
+  +         git_credentials_served: false
   -   acme/sandbox: { provider: bitbucket, base_branch: master, workflows: [web] }
   - base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.4.0}
 backed up the old local config to <tmp>
