@@ -32,17 +32,19 @@
 #
 # A value that moved is accepted only where the update named the change, and the
 # rule is the shape the update's own lines have: one line per repository, led by
-# the repository (`acme/app: coder claude-x -> claude-y (the project's)`), so
-# that line names a change when what follows the leading `owner/name:` carries
-# what changed — the key as `fugaro settings` spells it or a suffix of it with
-# two or more segments, the word the update uses for the role, craft, level or
-# grade the key is about (`coder`, `craft coder`, `level l2`, `strong`), `a/b`,
-# a recipe's own path or name, or one of the two values verbatim. The repository
-# is matched only where it leads the line and every token as a whole word, so
-# `dimipaun/fugaro` is not named by a line about `dimipaun/fugaro-console`, an
-# `ab.rate` change is not named by the word `stable`, and a line about one
-# recipe names nothing about another. Anything else is a value that moved with
-# nothing naming it, and this check fails on it.
+# the repository, and the change's label right after it (`acme/app: coder
+# claude-x -> claude-y (the project's)`). The label is the word internal/lift
+# writes there — modelLabels for a model port (`model`, `coder`, `craft coder`,
+# `level l2`), the key's own name for `ab.rate`, `rigor.default` and
+# `rigor.areas`, a recipe's file or name — and it is what decides: a value the
+# line carries only confirms a line the label has already matched, and the
+# repository only counts where it leads the line. So a line about one change
+# never names another: `level l3 none -> claude-opus-5-5` names no move of
+# `agent.model`, a `craft coder` line names none of `agent.models.coder`, and
+# `dimipaun/fugaro` is not named by a line about `dimipaun/fugaro-console`. A
+# key no planner prints a line for — L13's two grades, until that planner lands
+# — cannot be named at all. Anything else is a value that moved with nothing
+# naming it, and this check fails on it.
 #
 # Usage:      bash scripts/live-checks/check-911-lift-compare.sh <project> <snapshot> [--dry-run]
 #
@@ -385,68 +387,88 @@ def pair_at(recs, keyword, key_i, val_i):
             if kw == keyword and len(f) > max(key_i, val_i)}
 
 # ---- what a line of the update's plan can name a change by ----------------
+#
+# The update prints one line per repository per change, led by the repository
+# and labelled with the change: `acme/app: coder claude-x -> claude-y (the
+# project's)`. The label is what internal/lift writes right there — modelLabels
+# for a model port, the key's own name for ab and rigor, the file a recipe is
+# read at for a recipe — and it is the only thing that decides. Anything looser
+# lets a line about one change excuse another: a value's own text is no way in,
+# so `level l3 none -> claude-opus-5-5` cannot name a move of `agent.model`, and
+# a `craft coder` line cannot name `agent.models.coder`.
 
-def key_tokens(key):
+def key_labels(key):
+    """The label the update writes after `owner/name: ` for this key, or () where
+    no planner prints a line for it — L13's two grades, until that planner
+    lands, are then a value nothing can name."""
     parts = [p for p in key.split(".") if p]
-    toks = {key}
-    for i in range(1, len(parts)):
-        if len(parts) - i >= 2:
-            toks.add(".".join(parts[i:]))
-    if key.startswith("agent.models.") and len(parts) > 2:
-        # The update's line calls a role by its own name ("coder").
-        toks.add(parts[2])
-    elif key.startswith("agent.crafts.") and len(parts) > 2:
-        # A craft is "craft coder" and never the bare name: "review" alone
-        # stands inside "senior-review" and would name the wrong craft.
-        toks.add("craft " + parts[2])
-    elif key.startswith("agent.levels.") and len(parts) > 2:
-        toks.add("level " + parts[2])
-    elif key.startswith("model_grades.") and len(parts) > 1:
-        # The grade's own word ("strong"), never the class words "grades" or
-        # "model grade": those stand in any line about any grade.
-        toks.add(parts[1])
-    elif key == "ab.rate":
-        toks.add("a/b")
-    return tuple(t.lower() for t in toks if t)
+    if key == "agent.model":
+        return ("model",)
+    if key.startswith("agent.models.") and len(parts) == 3:
+        return (parts[2],)
+    if key.startswith("agent.crafts.") and key.endswith(".model") and len(parts) == 4:
+        return ("craft " + parts[2],)
+    if key.startswith("agent.levels.") and key.endswith(".model") and len(parts) == 4:
+        return ("level " + parts[2],)
+    if key in ("ab.rate", "rigor.default", "rigor.areas"):
+        return (key,)
+    return ()
 
-def recipe_tokens(name, path):
-    # Never the word "recipe" on its own: it stands in a line about any recipe,
-    # so it would excuse a change to one by a line about another. The path the
-    # snapshot records is the repository-relative one 910 reads the text at,
-    # which is the path the update prints.
-    toks = {name}
-    if path:
-        toks.add(path)
-        toks.add(path.rsplit("/", 1)[-1])
-    return tuple(t.lower() for t in toks if t)
-
-def value_tokens(*values):
-    return tuple(v.strip().lower() for v in values if v and v.strip() and v.strip() != ABSENT and len(v.strip()) >= 4)
+def recipe_labels(name, path):
+    """The label a recipe's own line carries: the file it is read at, or its
+    name (internal/lift prints the path, and names the recipe in it)."""
+    out = []
+    for v in (path, path.rsplit("/", 1)[-1] if path else "", name):
+        if v and v.lower() not in [o.lower() for o in out]:
+            out.append(v)
+    return tuple(out)
 
 def leads_with(line, canon):
-    """Whether this line is the repository's: every line the update prints for
-    one is led by it, `owner/name: what changed`."""
-    return re.match(r"^\s*" + re.escape(canon) + r"\s*:", line, re.IGNORECASE) is not None
+    """The text this line writes after the repository that leads it, or None.
 
-def word_in(low, token):
-    """Whether the token stands in the line as a word of its own.
+    Every line the update prints for a repository is led by it, `owner/name:
+    what changed`, so no line for `dimipaun/fugaro-console` is a line for
+    `dimipaun/fugaro`."""
+    m = re.match(r"^\s*" + re.escape(canon) + r"\s*:\s*(.*)$", line, re.IGNORECASE)
+    return m.group(1) if m else None
 
-    A substring test is what lets a token excuse a change it says nothing
-    about: the name `fugaro` sits inside `fugaro-console`, and a two-letter
-    token inside `stable`, `table` or `enabled`.
-    """
-    return re.search(r"(?<![0-9a-z_])" + re.escape(token) + r"(?![0-9a-z_])", low) is not None
+def labelled(rest, labels):
+    """Whether the line's label is one of these: what the update writes first,
+    as a whole word — `craft coder` is not the label `coder`."""
+    low = rest.lower()
+    return any(low == lab.lower() or low.startswith(lab.lower() + " ") for lab in labels)
 
-def named_by(plan, canon, tokens):
-    """The plan line that names this change, or ""."""
-    toks = tuple(t.lower() for t in tokens if t)
+def mentioned(rest, token):
+    """Whether the token stands in the text as a token of its own.
+
+    Its own characters count as part of it, so a value that is the start of
+    another is not it: `0` does not stand in `0.5`, and `fugaro` does not stand
+    in `fugaro-console`."""
+    return re.search(r"(?<![0-9a-z_./-])" + re.escape(token.lower()) + r"(?![0-9a-z_./-])", rest.lower()) is not None
+
+def named_by(plan, canon, labels, confirm=(), by_name=False):
+    """The plan line that names this change, or "".
+
+    The label decides, and a value the line carries is no second way in: where
+    the change has two values, at least one of them has to be in a line its
+    label already matched. `by_name` is the recipe's own shape — a line led by
+    a file (`.fugaro/recipes/default.yaml is published as ...`) names a recipe
+    whose label is elsewhere, so a line that starts with a path may name the
+    recipe it mentions."""
     for line in plan:
-        if not leads_with(line, canon):
+        rest = leads_with(line, canon)
+        if rest is None:
             continue
-        low = line.lower()
-        if any(word_in(low, t) for t in toks):
+        if labelled(rest, labels) and (not confirm or any(mentioned(rest, v) for v in confirm)):
+            return flat(line)
+        if by_name and "/" in rest.split(" ")[0] and any(mentioned(rest, lab) for lab in labels):
             return flat(line)
     return ""
+
+def confirm_values(*values):
+    """The two values of a change, as the text a line would carry to confirm it.
+    A value neither read carries confirms nothing."""
+    return tuple(v.strip() for v in values if v and v.strip() and v.strip() != ABSENT)
 
 # ------------------------------------------------------------- the comparison
 
@@ -468,21 +490,25 @@ def mode_check(args):
 def keep(idx, shared):
     return {k: v for k, v in idx.items() if k[0] in shared}
 
-def moved(before, after, plan, unit, tokens_of):
-    """(same, named, unnamed, examples) over one family of values."""
-    same, renamed, unnamed, examples = 0, 0, 0, []
+def moved(before, after, plan, unit, spec_of):
+    """(same, named, unnamed, examples) over one family of values.
+
+    spec_of answers, for one change, the labels a line has to carry, the values
+    that confirm it, and whether a path-led line may name it by name."""
+    same, named, unnamed, examples = 0, 0, 0, []
     for key in sorted(set(before) | set(after)):
         b, a = before.get(key, ABSENT), after.get(key, ABSENT)
         if b == a:
             same += 1
             continue
-        if named_by(plan, key[0], tokens_of(key) + value_tokens(b, a)):
-            renamed += 1
+        labels, confirm, by_name = spec_of(key, b, a)
+        if named_by(plan, key[0], labels, confirm, by_name):
+            named += 1
             continue
         unnamed += 1
         if len(examples) < 3:
             examples.append("%s %s (%s -> %s)" % (key[0], key[-1], flat(b), flat(a)))
-    return same, renamed, unnamed, examples
+    return same, named, unnamed, examples
 
 def rows_of(kind, label, same, renamed, unnamed, examples, total):
     if unnamed:
@@ -545,10 +571,11 @@ def compare(args):
     else:
         rows.append(("binary", "PASS", "the values were read again by the release-A binary (%s -> %s), so what this compares is what the migration left, not what the pre-L8 binary said twice" % (bbin or "unnamed", abin)))
 
-    raw = moved(braw, araw, plan, "raw", lambda k: key_tokens(k[1]))
-    res = moved({k: v[0] for k, v in bres.items()}, {k: v[0] for k, v in ares.items()}, plan, "resolved", lambda k: key_tokens(k[1]))
-    files = moved(bfile, afile, plan, "recipe-file", lambda k: recipe_tokens("", k[1]))
-    sums = moved(brec, arec, plan, "recipe", lambda k: recipe_tokens(k[1], ""))
+    raw = moved(braw, araw, plan, "raw", lambda k, b, a: (key_labels(k[1]), (), False))
+    res = moved({k: v[0] for k, v in bres.items()}, {k: v[0] for k, v in ares.items()}, plan, "resolved",
+                lambda k, b, a: (key_labels(k[1]), confirm_values(b, a), False))
+    files = moved(bfile, afile, plan, "recipe-file", lambda k, b, a: (recipe_labels("", k[1]), (), False))
+    sums = moved(brec, arec, plan, "recipe", lambda k, b, a: (recipe_labels(k[1], ""), (), True))
     changed = raw[1] + raw[2] + res[1] + res[2] + files[1] + files[2] + sums[1] + sums[2]
     unnamed = raw[2] + res[2] + files[2] + sums[2]
 

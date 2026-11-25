@@ -481,7 +481,9 @@ test_a_recipe_the_update_renamed_is_named() {
   case_dir recipe_named
   before_snapshot
   show_json "$answers/show-after-app-default.json" "2222222222222222222222222222222222222222222222222222222222222222"
-  printf 'acme/app: recipe default now resolves the project\x27s copy\n' \
+  # The line internal/lift's recipe planner prints, verbatim: the file the
+  # recipe is read at, then the name it is published under.
+  printf 'acme/app: .fugaro/recipes/default.yaml is published as the project recipe default\n' \
     >"$answers/plan.out"
   printf 'before' >"$answers/phase"
   run910_raw fugaro --plan "$snapfile"
@@ -492,12 +494,70 @@ test_a_recipe_the_update_renamed_is_named() {
   expect_contains "$out" "the update's plan names each of the 1 that moved" "the row counts what the plan named"
 }
 
+test_a_level_line_does_not_name_the_model() {
+  case_dir level_line_model
+  before_snapshot
+  settings_set "$answers/settings-after-acme-app.json" "agent.model" "claude-opus-5-5"
+  # A line for one port says nothing about another: `level l3` is not `model`,
+  # and the value it carries is no way in — a value is what confirms a line the
+  # label has matched, never what matches it.
+  printf 'acme/app: level l3 none -> claude-opus-5-5 (the project\x27s)\n' \
+    >"$answers/plan.out"
+  printf 'before' >"$answers/phase"
+  run910_raw fugaro --plan "$snapfile"
+  printf 'after' >"$answers/phase"
+  run911
+  expect_status "$status" 1 "a line for the level"
+  expect_row "$out" resolved FAIL "a line for the level"
+  expect_contains "$out" "acme/app agent.model (claude-sonnet-5 -> claude-opus-5-5)" \
+    "the row names the value that moved"
+  expect_contains "$out" "NOTHING naming it" "the row says the line did not name it"
+}
+
+test_a_craft_line_does_not_name_the_role_model() {
+  case_dir craft_line_role
+  before_snapshot
+  settings_set "$answers/settings-after-acme-app.json" "agent.models.coder" "claude-haiku-4-5"
+  # `craft coder` carries the word `coder` and is no line for the role's own
+  # model: the label is what the update writes after the repository, whole.
+  printf 'acme/app: craft coder claude-x -> claude-y (the project\x27s)\n' \
+    >"$answers/plan.out"
+  printf 'before' >"$answers/phase"
+  run910_raw fugaro --plan "$snapfile"
+  printf 'after' >"$answers/phase"
+  run911
+  expect_status "$status" 1 "a line for the craft"
+  expect_row "$out" resolved FAIL "a line for the craft"
+  expect_contains "$out" "acme/app agent.models.coder (deepseek/deepseek-v4.1-flash -> claude-haiku-4-5)" \
+    "the row names the value that moved"
+  expect_contains "$out" "NOTHING naming it" "the row says the line did not name it"
+}
+
+test_a_line_for_the_same_port_with_other_values_does_not_name_it() {
+  case_dir same_port_other_values
+  before_snapshot
+  settings_set "$answers/settings-after-acme-app.json" "agent.model" "claude-opus-5-5"
+  # The label is this port's, and the values are another change's: the line
+  # names the change it states, which is not this one.
+  printf 'acme/app: model claude-a -> claude-b (the project\x27s)\n' \
+    >"$answers/plan.out"
+  printf 'before' >"$answers/phase"
+  run910_raw fugaro --plan "$snapfile"
+  printf 'after' >"$answers/phase"
+  run911
+  expect_status "$status" 1 "a line for the port with other values"
+  expect_row "$out" resolved FAIL "a line for the port with other values"
+  expect_contains "$out" "acme/app agent.model (claude-sonnet-5 -> claude-opus-5-5)" \
+    "the row names the value that moved"
+  expect_contains "$out" "NOTHING naming it" "the row says the line did not name it"
+}
+
 test_a_line_about_another_grade_does_not_name_this_one() {
   case_dir other_grade
   before_snapshot
   settings_set "$answers/settings-after-acme-app.json" "model_grades.strong.model" "claude-haiku-4-5"
-  # A line about grades carries the words "model grade" whichever grade it is
-  # about: only the grade's own name names this grade.
+  # No planner prints a line for L13's grades yet, so nothing names a grade that
+  # moved: a grade-shaped line is no line the update writes.
   printf 'acme/app: model grade strongest claude-x -> claude-y (the project\x27s)\n' \
     >"$answers/plan.out"
   printf 'before' >"$answers/phase"
@@ -734,6 +794,9 @@ t test_a_line_for_a_repository_whose_name_starts_with_this_one_does_not_name_it
 t test_a_raw_file_rewritten_at_the_ref_is_compared_too
 t test_a_recipe_whose_text_changed_is_compared_too
 t test_a_recipe_the_update_renamed_is_named
+t test_a_level_line_does_not_name_the_model
+t test_a_craft_line_does_not_name_the_role_model
+t test_a_line_for_the_same_port_with_other_values_does_not_name_it
 t test_a_line_about_another_grade_does_not_name_this_one
 t test_a_line_about_another_recipe_does_not_name_this_one
 t test_a_repository_the_second_read_no_longer_lists_is_unverified
