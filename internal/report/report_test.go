@@ -611,6 +611,48 @@ func TestShortLeavesAShortReasonAlone(t *testing.T) {
 	}
 }
 
+// TestDoneWholeKeepsADetailTheCutWouldBeTheLossOf: the brief account cuts a
+// step's reason to one clause, and a step whose reason is its result rather
+// than a reason for it — a plan's counts and where the whole of that plan is
+// kept — ends with DoneWhole and reaches the screen whole. The log holds it
+// either way, and a run that is not brief is the same line under both.
+func TestDoneWholeKeepsADetailTheCutWouldBeTheLossOf(t *testing.T) {
+	// One clause boundary (the first comma) inside shortMax, and the detail's
+	// whole point after it: the rest of the counts and the log's path.
+	const detail = "6 to create, 2 to update, 5 to delete (log: /tmp/xdg_state_home/fugaro/logs/update-20261124025710-1234.log)"
+	if got := Short(detail); got != "6 to create…" {
+		t.Fatalf("the cut takes %q of this detail, so it is not the counterexample this test is", got)
+	}
+	for _, o := range []struct {
+		name  string
+		brief bool
+		want  string
+	}{
+		{"the brief account", true, detail},
+		{"every other command's", false, detail},
+	} {
+		t.Run(o.name, func(t *testing.T) {
+			var out bytes.Buffer
+			sink := &fakeSink{path: "/tmp/x.log"}
+			r := New(Options{Out: &out, Getenv: noEnv, Sink: sink, Brief: o.brief})
+			r.Step("repository acme/sandbox").DoneWhole(detail)
+			if got := out.String(); got != "✔ repository acme/sandbox "+o.want+"\n" {
+				t.Errorf("the step line is %q, want the detail whole", got)
+			}
+			if log := sink.String(); log != "✔ repository acme/sandbox "+detail+"\n" {
+				t.Errorf("the log holds %q, want the whole detail", log)
+			}
+		})
+	}
+	// Done keeps the cut: DoneWhole is one step's choice and not the account's.
+	var out bytes.Buffer
+	r := New(Options{Out: &out, Getenv: noEnv, Sink: &fakeSink{path: "/tmp/x.log"}, Brief: true})
+	r.Step("repository acme/sandbox").Done(detail)
+	if got := out.String(); got == "✔ repository acme/sandbox "+detail+"\n" {
+		t.Errorf("Done printed a detail the brief account cuts: %q", got)
+	}
+}
+
 // TestWaitsIsOneDimLineCountingTheSteps: a run that stopped at a step leaves
 // every step behind it saying the same thing, and the account says it once —
 // how many steps never ran, and what they wait for — while the summary still

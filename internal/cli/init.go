@@ -599,7 +599,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// this is where its answers travel. The help names the members because the
 	// file is the reader's whole contract, and it says what the file is not: an
 	// answer is not a confirmation.
-	f.StringVar(&o.answersFile, "answers-file", "", "answer the wizard's questions from one JSON document: "+strings.Join(setupAnswerKeys(), ", ")+" — the questions a first run asks (--gcp-project, --location or its precise form --region, --name, --rigor, --budget with --budget-currency, and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, the permanent Firestore location, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation")
+	f.StringVar(&o.answersFile, "answers-file", "", "answer the wizard's questions from one JSON document: "+strings.Join(setupAnswerKeys(), ", ")+" — the questions a first run asks (--gcp-project, --location or its precise form --region, --name, --rigor, --budget with --budget-currency, and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation")
 	// --events writes the same account --json prints as a stream of lines
 	// instead of one document (setup_events.go, D2904 of
 	// docs/console-improvements). The help names every kind of line, because
@@ -628,7 +628,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.StringVar(&o.alertEmail, "alert-email", "", "where failed image checks and rebuilds are reported (default: the local config's)")
 	f.BoolVar(&o.noLogIsolation, "no-log-isolation", false, "leave Fugaro job logs in _Default instead of their own log bucket")
 	f.StringVar(&o.registryCleanup, "registry-cleanup", "", "Artifact Registry cleanup: dry-run (the default), on or off")
-	f.StringVar(&o.firebase, "firebase-project", "", "turn the shared budget on: the value is the installation's own GCP project id (the default; the flag is only needed to turn the shared budget on), and any other id is refused. It is the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location: confirmed by the person at the terminal where it is a first-time question, already there on a run that re-converges an installation that has it) and the config")
+	f.StringVar(&o.firebase, "firebase-project", "", "turn the shared budget on: the value is the installation's own GCP project id (the default; the flag is only needed to turn the shared budget on), and any other id is refused. It is the flag that asks for the backend — a run without it builds none — and that backend is three applies: the database's rules and mark, the Firestore history database (the run creates it in the installation's own region where Firestore offers it, and otherwise in the place's default region, and its location is permanent: where the run creates the database it prints where, and that the location can never be changed, and creates it, asking nothing — nothing is typed, and --json, a pipe and a coding agent's session are no different; it is already there on a run that re-converges an installation that has it) and the config")
 	f.StringVar(&o.budgetMode, "budget-mode", "", "with --firebase-project: observe or enforce: the jobs' budget mode in the project config, and the project-wide mode in the database (an absent one is seeded observe)")
 	f.StringArrayVar(&o.budgetAdmins, "budget-admin", nil, "with --firebase-project: an IAM member who may change caps and kill switches besides the GCP project's owners and editors (repeatable; default: the local config's terraform.budget_admins)")
 	f.BoolVar(&o.createProject, "create-project", false, "create the GCP project --gcp-project names and add Firebase to it, as you, at your own real terminal (never with --json; nothing is typed there, being at it is what confirms the step). A first run of "+d.name+" always creates its project, so the flag only says so explicitly. An ID that already exists is refused unless an earlier run of "+d.name+" made it Fugaro's (the resume), and one that holds nothing of Fugaro's is adopted instead: "+d.name+" uses it as if it had created it. Billing is not linked unless --link-billing is also given; without it "+d.name+" prints the one gcloud command that links it, unless the run asks the billing question (no --json and no coding agent's session) and has no terminal, where it is refused there at once instead, in the sentence naming --link-billing")
@@ -717,6 +717,15 @@ type initRun struct {
 	// they always have. repLog is the log it keeps, closed when the run ends.
 	rep    *report.Reporter
 	repLog report.Sink
+	// repoDoor is whether this run is the standalone `--repo` door rather than
+	// the converge. The converge's loop prints one line per stage and its plan
+	// view is tf.Brief; the standalone door has no loop, so it prints the
+	// repository's own line itself (planBlock) and its refusal is the one a
+	// person reads rather than an agent's (guard) — both are the owner's
+	// feedback of 2026-11-24, whose `fugaro update --repo` printed two init
+	// banners, a line per refreshed resource, Terraform's whole plan and an
+	// instruction addressed to a coding agent, at the owner's own terminal.
+	repoDoor bool
 	// detail is where a run driven by another keeps its own account of itself,
 	// and it is set only there: the refresh the converge's checkout stage runs
 	// (refreshOptions.detail) writes its lines where that converge keeps its
@@ -1635,19 +1644,35 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	// The number is what makes the marker about this project and not about a
 	// bucket of the same name in someone else's project (managed.WriteMarker
 	// checks the bucket against it).
-	// The amount a managed creation was required to choose, and nothing else:
-	// --managed is the one flag that says this creation is managed, and its
-	// own check refuses a run that passed it without the trio
-	// (init_project.go), so a non-nil budget here is one this run was given
-	// and the installation's Terraform budget carries the same figures. No
+	// The amount EVERY creating run records, and nothing else (T2a of
+	// docs/managed-flag-ergonomics, D2212): --managed was what used to say a
+	// creation carried a budget, and the record is now the fact of the run
+	// rather than of the flag — it is what a later run and the carry read the
+	// alert by (R5, R7), and a creation that recorded none leaves an alert
+	// with nothing to keep it by. The figures are the run's own where it has
+	// any and the defaults where it does not (budgetFigures); the
+	// installation's own block carries the same ones, unless the run linked no
+	// account, and then it carries none at all (installOptionsCarrying). No
 	// bound on the billable image builds is passed and none is asked for: the
-	// count is gone from the marker (D1543), so the object is the amount and
-	// nothing else, and a creation that is not managed passes nil and writes
-	// the object it always wrote, byte for byte (Task 4.2: the change reaches
-	// nobody else).
-	var budget *managed.Budget
-	if r.o.managed {
-		budget = &managed.Budget{Amount: r.o.budget, Currency: r.o.budgetCurrency}
+	// count is gone from the marker (D1543).
+	amount, currency := r.o.budgetFigures()
+	budget := &managed.Budget{Amount: amount, Currency: currency}
+	// The one command that adds the alert where this run created none: a
+	// budget is an alert on a billing account (D2216), and a creating run that
+	// linked none has an amount and a currency but no account to put them on.
+	// The amount is recorded above either way, so the command is the whole of
+	// what is left for the owner — and it is said here as well as at the
+	// wizard's own line, because the runs that reach here asked nothing (a
+	// project that is already there keeps the budget its own, askBudget) or
+	// nobody could answer them. A run that paused at billing and answered the
+	// question at its resume prints both (settleBudget): the same amount, once
+	// as what the installation's variables do not carry and once as what adds
+	// the alert.
+	// r.budgetAccount is the account this run's variables carry the alert on,
+	// so its absence is exactly the alert's absence: the review reads the same
+	// field to admit the plan's budget resource.
+	if r.budgetAccount == "" {
+		r.warn(fmt.Sprintf("no billing account is linked, so no alert was created: add it with `fugaro update --budget %d --budget-currency %s --billing-account <id>`", amount, currency))
 	}
 	number, err := infra.ProjectNumber(ctx, e.c, created)
 	if err == nil {
@@ -1859,6 +1884,15 @@ func (r *initRun) stageDetail() io.Writer {
 		// with no log (G5).
 		return r.detail
 	}
+	if r.repoDoor && r.repLog != nil {
+		// The standalone --repo door is not a stage of a converge: these lines
+		// are its whole account of the checkout, and the step above them is one
+		// line among many rather than the converge's own list, so they stay on
+		// the terminal where they have always been and land in the log beside
+		// it (loggedOut). Terraform's own stream is not one of them: progress
+		// keeps that in the log alone.
+		return loggedOut(r.w, r.repLog)
+	}
 	return streamOut(r.rep, r.repLog, r.w)
 }
 
@@ -1912,6 +1946,19 @@ func (r *initRun) accountWriter() io.Writer {
 func (r *initRun) planBlock(plan *tf.Plan) {
 	if r.rep == nil || r.repLog == nil {
 		fmt.Fprint(r.w, tf.Summary(plan))
+		return
+	}
+	if r.repoDoor {
+		// The standalone --repo door has no converge loop, so the plan IS the
+		// step: one line with what the plan holds and the log the whole of it —
+		// Terraform's own account, every address and attribute path — is in
+		// (the owner's feedback of 2026-11-24). tf.Brief's plain-words view
+		// goes to the log beside Summary rather than the screen, because a
+		// refusal this door stops on prints its own short block in those words
+		// (guard), and a plan that is not refused is confirmed by the counts
+		// this line carries.
+		r.rep.Step("repository " + r.res.Repo).DoneWhole(tf.Counts(plan) + " (log: " + r.repLog.Path() + ")")
+		fmt.Fprint(r.rep.Stream(), tf.Brief(plan)+tf.Summary(plan))
 		return
 	}
 	fmt.Fprint(r.w, tf.Brief(plan))
@@ -1993,8 +2040,8 @@ func (o *initOptions) checkOnboardRepo() error {
 // goes in — its own, or a separate one. An empty `--firebase-project=` is
 // pflag's empty value, which reads as no flag at all, deliberately: a script
 // whose variable is unset names no project, and three applies against the
-// installation's own project (one of them a Firestore database with a
-// permanent location) must not be what an empty string buys.
+// installation's own project (one of them a Firestore database whose location
+// can never be changed) must not be what an empty string buys.
 //
 // Every site that resolves the id — the flag's validation here, the pairing
 // rule, the Firebase engine and the commands it prints, the review screen —
@@ -2160,6 +2207,13 @@ func (o *initOptions) check() error {
 			return userErr("--image-source: %v", err)
 		}
 	}
+	// The account a creating run's budget alert is on is the one the run links
+	// (takeLinkedBudgetAccount), where --create-project says this run creates.
+	// A first run of fugaro setup creates without the flag, and its creation is
+	// settled in the wizard's settleCreation, which takes the account there.
+	if o.createProject {
+		o.takeLinkedBudgetAccount()
+	}
 	// The creation's own flags are checked here only where --create-project
 	// says this run creates: whether a run without it creates (a first run of
 	// fugaro setup does) is known once its project config was looked for, and
@@ -2221,6 +2275,60 @@ func (o *initOptions) check() error {
 // account out of, and --forget is the rollback, which carries nothing forward
 // at all.
 func (o *initOptions) carriesBudget() bool { return !o.printVars && !o.forget }
+
+// budgetFigures is the amount and the currency a creating run's budget is
+// created with and recorded by: what --budget and --budget-currency settled (or
+// the wizard's question, or the answers file), and the defaults where nobody
+// chose one (T2a of docs/managed-flag-ergonomics, D2211, D2212). An amount and
+// its currency arrive together or not at all — the door's trio check is what
+// says so — which is why there is one branch and not two. The readers are the
+// installation's own budget block (installOptionsCarrying) and the creation
+// fact (markCreated): a creating run has figures even where it creates no
+// alert, so that a later run's carry can keep one alive (R5, R7).
+func (o *initOptions) budgetFigures() (int64, string) {
+	if o.budget > 0 {
+		return o.budget, o.budgetCurrency
+	}
+	return managed.DefaultBudgetAmount, managed.DefaultBudgetCurrency
+}
+
+// takeLinkedBudgetAccount points a creating run's budget at the account it
+// links (D2216 of docs/managed-flag-ergonomics): --billing-account where the
+// caller gave one, --link-billing otherwise, so a caller names the account once
+// instead of twice. It lands on the flag's own field only where the run also
+// named the amount, because that is what the checks read: the door's trio check
+// is the caller's flags and nothing else (R2, so a default never trips it), and
+// checkCreateProject refuses an explicit amount with no account — a run that
+// named no amount leaves the field empty, its figures being the defaults
+// (budgetFigures) and the link where they are created (creationBudgetAccount).
+//
+// The callers are the two places a run's creation is settled, and there are two
+// because a first run of fugaro setup creates without --create-project: the
+// door, for a run that names the creation (check), and the wizard's
+// settleCreation, for the creation it settles there. Both come before the
+// checkCreateProject that refuses an amount with no account to put an alert on.
+func (o *initOptions) takeLinkedBudgetAccount() {
+	if o.budget > 0 && o.billingAccount == "" {
+		o.billingAccount = o.linkBilling
+	}
+}
+
+// creationBudgetAccount is the account a creating run's budget alert is on
+// (D2216 of docs/managed-flag-ergonomics), which is the one the run links:
+// --billing-account where it was given, --link-billing where it was not, and
+// the wizard's own pick by way of the first of the two (billing_prompt,
+// settleBudget). "" is a creating run that links none: it creates no alert —
+// the module refuses a budget with no account — and the amount it has is
+// recorded in the creation fact with the one command that adds the alert
+// (markCreated, budgetFigures). The flag's own field first is not a
+// preference between the two: a run that named both named the account its
+// alert is on, and the link is what the run does to the project.
+func (o *initOptions) creationBudgetAccount() string {
+	if o.billingAccount != "" {
+		return o.billingAccount
+	}
+	return o.linkBilling
+}
 
 // setProject records lc's project: its GCP ID for the Google calls, its
 // name for the account and the confirmations.
@@ -2376,8 +2484,24 @@ func installOptionsCarrying(o *initOptions, lc *localcfg.Config, carried []strin
 	// The coordinator is the owner's opt-in and nothing else's: this run's
 	// --coordinator, or a local config that recorded an earlier one.
 	opts.Coordinator = o.coordinator || lc.Terraform.Coordinator
-	if o.budget > 0 {
-		opts.Budget = &infra.Budget{BillingAccount: o.billingAccount, Amount: o.budget, CurrencyCode: o.budgetCurrency}
+	// The installation's budget block: the one place the run's figures become a
+	// resource. A creating run has figures even where it was told none (T2a of
+	// docs/managed-flag-ergonomics, D2212) — and it composes the block only
+	// where it has an account to put the alert on, because a block with an
+	// empty account is one the module's own validation refuses and one the
+	// carry reads as an amount that must be completed. A run with no account
+	// records the amount in the creation fact and says what adds the alert
+	// (markCreated, D2216). Every other run is unchanged: the flags' own
+	// figures, or none, and a --budget with no --billing-account is completed
+	// from the installation's state (explicitBudgetAccount, R7).
+	switch {
+	case !o.createProject:
+		if o.budget > 0 {
+			opts.Budget = &infra.Budget{BillingAccount: o.billingAccount, Amount: o.budget, CurrencyCode: o.budgetCurrency}
+		}
+	case o.creationBudgetAccount() != "":
+		amount, currency := o.budgetFigures()
+		opts.Budget = &infra.Budget{BillingAccount: o.creationBudgetAccount(), Amount: amount, CurrencyCode: currency}
 	}
 	opts.ReportsPaused, opts.CatalogCheckPaused = jobsPaused(lc)
 	spec, err := infra.Installation(lc, opts)
@@ -2864,10 +2988,11 @@ const (
 // of its branches, whatever it had been given.
 //
 // What is left is the run's own answer, which decides the whole answer, and
-// ownAnswer is what keeps it from widening a step: creating the project,
-// linking the billing account and the Firestore location are the person's alone
-// (D12, 2026-10-20), and only a billable first image build and replacing a
-// registry tag are covered by the answer the command was opened with.
+// ownAnswer is what keeps it from widening a step: creating the project and
+// linking the billing account are the person's alone (D12, 2026-10-20), and
+// only a billable first image build and replacing a registry tag are covered
+// by the answer the command was opened with. The Firestore database's location
+// is neither: no step confirms it (D3090 of docs/location-preference).
 //
 // The run's own answer is r.o.yes, which no flag sets any more (T11): what
 // still carries one is an internal converge a command opens on an answer the
@@ -2917,19 +3042,17 @@ func (r *initRun) askClass(what string, ownAnswer bool) (confirmed, reachable bo
 }
 
 // askTyped is askClass for a step the run's own answer never reaches: creating
-// the project, linking the billing account and the Firestore location in
-// `setup` are the person's alone (D12, 2026-10-20). A pipe, --json,
-// --non-interactive or a coding agent's session answers them no more than it
-// answers anything else.
+// the project and linking the billing account in `setup` are the person's alone
+// (D12, 2026-10-20). A pipe, --json, --non-interactive or a coding agent's
+// session answers them no more than it answers anything else.
 func (r *initRun) askTyped(what string) (confirmed, reachable bool, err error) {
 	return r.askClass(what, false)
 }
 
 // askCovered is askClass for a step D12's answer of 2026-10-20 covers in BOTH
 // front doors — a billable first image build and replacing a registry tag. The
-// door is not asked: only three things stay the person's (creating the project,
-// linking the billing account, and the Firestore location in `setup`), and
-// neither of these is one of them.
+// door is not asked: only two things stay the person's (creating the project
+// and linking the billing account), and neither of these is one of them.
 func (r *initRun) askCovered(what string) (confirmed, reachable bool, err error) {
 	return r.askClass(what, true)
 }
@@ -3016,6 +3139,11 @@ func (r *initRun) resourceManager(ctx context.Context, c *infra.Clients) error {
 // When whether the project is managed cannot be read, the refusal is neither
 // mode's advice: it says the read failed and names no way past it — never the
 // unmanaged text, whose flag is what the read exists to withhold.
+//
+// The standalone --repo door at a real terminal prints the block above
+// (guardRefusalBlock) in place of all of this, and holds every rule stated
+// here: the mode's own advice, and no flag on the managed modes' (the owner's
+// feedback of 2026-11-24, and the brief for it).
 func (r *initRun) guard(ctx context.Context, c *infra.Clients, plan *tf.Plan, allowDelete []string) error {
 	if err := infra.RefuseProjectJobDeletes(plan); err != nil {
 		return userErr("%v", err)
@@ -3027,14 +3155,23 @@ func (r *initRun) guard(ctx context.Context, c *infra.Clients, plan *tf.Plan, al
 	isManaged, readErr := r.managedProject(ctx, c)
 	switch {
 	case readErr != nil:
+		if r.refusalIsShort() {
+			return userErr("%s", r.guardRefusalBlock(plan, allowDelete, managedReadFailedTerminal, false))
+		}
 		return userErr("%s\nwhether %s is a managed project could not be read (%s), so this refusal names no way past it: say which address is refused to the person who owns the project",
 			tf.GuardWith(plan, allowDelete, ""), safetext.Field(r.projectName), safetext.Field(readErr.Error()))
 	case isManaged:
+		if r.refusalIsShort() {
+			return userErr("%s", r.guardRefusalBlock(plan, allowDelete, managedDeleteAdviceTerminal, false))
+		}
 		advice := ""
 		if len(tf.Listable(plan, allowDelete)) > 0 {
 			advice = initManagedDeleteAdvice
 		}
 		return userErr("%s", tf.GuardWith(plan, allowDelete, advice))
+	}
+	if r.refusalIsShort() {
+		return userErr("%s", r.guardRefusalBlock(plan, allowDelete, tf.AllowDeleteAdvice, true))
 	}
 	msg := err.Error()
 	for _, h := range infra.DeleteHints(plan, allowDelete) {
@@ -5055,6 +5192,20 @@ func runInitRepo(r *initRun, args []string) error {
 			return err
 		}
 	}
+	// The run's own account, opened before anything can print (CL5b): this door
+	// converges one root, and its Terraform output is the same flood the
+	// converge keeps in a log — two init banners, a line per resource
+	// refreshed, and Terraform's whole plan — which the owner met at the
+	// terminal on 2026-11-24. The reporter is the converge's, so the two doors
+	// cannot disagree about colour, about the log or about what reaches the
+	// screen (D1352); the step line for the repository and the refusal a person
+	// reads are this door's own, because there is no converge loop here to
+	// print one (planBlock, guard).
+	r.repoDoor = true
+	r.rep, r.repLog = convergeReporter(cmd, o.doorName(), r.repoRedaction)
+	if r.repLog != nil {
+		defer func() { _ = r.repLog.Close() }()
+	}
 	return r.repoEngine(cmd.Context(), repoDir(args), "", false)
 }
 
@@ -5066,6 +5217,20 @@ func repoDir(args []string) string {
 		return args[0]
 	}
 	return "."
+}
+
+// repoRedaction is what a --repo run's log is redacted with, read at each line
+// (F6): the values the process held from the start (secretsHeld), and the
+// GitHub App key this run typed — the one secret the repository door reads,
+// which the pre-check signs with and which is cleared when the run ends. The
+// converge's own list is initEngine's slots; this door has no engine, so its
+// list is the run's own and holds the same two things.
+func (r *initRun) repoRedaction() []string {
+	vals := slices.Clone(secretsHeld())
+	if len(r.appKeyMem) > 0 {
+		vals = append(vals, heldValues(r.appKeyMem)...)
+	}
+	return vals
 }
 
 // billableBuildLeft is the left-for-you for a billable first image build: the

@@ -137,6 +137,12 @@ type initEngine struct {
 	// gates would then never run on it. Cleared by the landing, as accessSeed is.
 	accessMark bool
 
+	// reposState is the run's per-repository state: the enrolled list every
+	// stage reads (memoized here, so one command reads the repositories once)
+	// and the lines each stage and step reported about them
+	// (update_repos.go).
+	reposState reposState
+
 	// flagFactVersion is the version the self-flag step's own read of the
 	// creation fact answered with, and 0 where that step read nothing
 	// (update_selfflag.go). The marker step asks it beside the gate's version
@@ -730,6 +736,13 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// both are derived from what the installation holds and neither fails an
 	// update (the HARD RULE).
 	e.backfillPRIndex(ctx)
+	// And D2966's: the run summaries the runs before this release have none of,
+	// created in place so `runs ls` reads two objects a row instead of three
+	// (update_summary.go). It is here for the reason above — the converge
+	// applied everything it had, so the runs it walks are the ones this run
+	// leaves behind — and it returns no error either: a summary is a derived
+	// hint, and failing an upgrade over one is what the HARD RULE forbids.
+	e.backfillRunSummary(ctx)
 	// And D2716's: the checkout's docs/backlog/ folder, folded into the
 	// project's standing backlog once (update_backlog.go). It is here for the
 	// reason the four above are — the converge has applied everything it had, so

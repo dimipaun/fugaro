@@ -295,6 +295,16 @@ func (s *Server) identityClaim(ctx context.Context, w http.ResponseWriter, r *ht
 			"the ticket is not one this service issued for a run: no issuance record is at the path it names, so the run it belongs to was never launched here")
 		return
 	}
+	// D3114's rule, asked on the record and before anything else of the
+	// installation is read (CheckClaimAttestation, C1): a record that names a
+	// job is a Batch launch, and a claim on it that carries no attestation — or
+	// carries something that is no identity token at all — is refused here. A
+	// record that names no job is a Cloud Run run's, and its claim passes
+	// unchanged.
+	if err := CheckClaimAttestation(rec, req.Attestation); err != nil {
+		s.refuseIdentityCall(ctx, w, run, slug, StatusRequestRefused, identitywire.RefusalIdentityRefused, claimNoAttestation)
+		return
+	}
 	now := s.now()
 	// The ticket's own life, before every other check of the record and before
 	// the fence: R2 says the same-nonce answer holds only for the ticket's own
@@ -338,6 +348,14 @@ func (s *Server) identityClaim(ctx context.Context, w http.ResponseWriter, r *ht
 			"the record's claims are not this run's: the uid this service signs is derived from the record's path, and the claims on it name another run")
 		return
 	}
+	// The VM question, which is the whole of "this VM is this job's" (C1's
+	// VMIdentity, BR3): it is asked after every check of the record — a claim
+	// that is not this run's is refused without a read of the platform — and
+	// before the fence, so a claim refused here has burned no ticket.
+	if denial := s.checkClaimVM(ctx, rec, req.Attestation); denial != nil {
+		s.refuseIdentityCall(ctx, w, run, slug, denial.status, denial.code, denial.message)
+		return
+	}
 	claim := identitywire.Claim{Account: account, At: now, NonceHash: identitywire.Digest(req.Nonce)}
 	claimed, err := s.cfg.Identity.Store.Claim(ctx, slug, run, claim)
 	if err != nil {
@@ -375,13 +393,18 @@ func (s *Server) identityClaim(ctx context.Context, w http.ResponseWriter, r *ht
 	// The record the fence returned is therefore held to the checks the read was,
 	// field by field: the ticket the caller presented is still the record's, the
 	// caller is still the account the launch named, the ticket is inside its life,
-	// and the claims still name this run — the uid this service signs is derived
-	// from the record's path (R3). Without the first three, a record re-issued
-	// under the claim (a new ticket, a new account, a later launch) would be
-	// signed for the killed ticket that asked for it, which is R5's hole with the
-	// store's own writer as the cause. A record that fails any of them is refused
-	// the way the store's own two decisions above are: it is not the record this
-	// claim read, so the run has to be launched again.
+	// the claims still name this run — the uid this service signs is derived
+	// from the record's path (R3) — and the job it names, with the id the
+	// registration wrote, is still the one the attestation was checked against
+	// (R1, D3114): a re-ask under the claim may replace the job with another's,
+	// or with none, and a record signed from one the VM was never held to would
+	// be R18's omission arrived at through the store's own writer. Without the
+	// first three, a record re-issued under the claim (a new ticket, a new
+	// account, a later launch) would be signed for the killed ticket that asked
+	// for it, which is R5's hole with the store's own writer as the cause. A
+	// record that fails any of them is refused the way the store's own two
+	// decisions above are: it is not the record this claim read, so the run has
+	// to be launched again.
 	//
 	// The fence was taken by then, so the ticket it claimed is spent and the run
 	// relaunches rather than retrying. Refusing this BEFORE the fence is what
@@ -390,9 +413,10 @@ func (s *Server) identityClaim(ctx context.Context, w http.ResponseWriter, r *ht
 	if claimed.TicketHash != identitywire.Digest(req.Ticket) ||
 		!sameAccount(account, claimed.ExpectedAccount) ||
 		!now.Before(ticketExpiry(claimed)) ||
-		claimed.Claims.Slug != slug || claimed.Claims.Run != run {
+		claimed.Claims.Slug != slug || claimed.Claims.Run != run ||
+		claimed.Job != rec.Job || claimed.JobID != rec.JobID {
 		s.refuseIdentityCall(ctx, w, run, slug, StatusUnverified, identitywire.RefusalIdentityRefused,
-			"the run's issuance record is not the one this claim read: it was replaced under the claim, so the ticket, the account it expects or the claims it holds are not the ones this claim was checked against, and the run must be launched again")
+			"the run's issuance record is not the one this claim read: it was replaced under the claim, so the ticket, the account it expects, the claims it holds or the job it names are not the ones this claim was checked against, and the run must be launched again")
 		return
 	}
 	signer, err := identitySignerFor(ctx, s.cfg.Identity.Signer)

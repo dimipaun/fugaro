@@ -17,7 +17,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/place"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -395,7 +394,7 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 			fmt.Fprintf(r.w, "Firestore step of the Firebase project %s: not planned, it cannot be read yet (%v)\n", fp, err)
 		}
 	} else if r.o.planOnly {
-		fmt.Fprintf(r.w, "Firestore step of the Firebase project %s (only after you confirm, never in --plan-only):\n", fp)
+		fmt.Fprintf(r.w, "Firestore step of the Firebase project %s (applied by the run that applies, never in --plan-only):\n", fp)
 		for _, l := range lines {
 			fmt.Fprintf(r.w, "  %s\n", l)
 		}
@@ -606,10 +605,10 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 		r.warn("budget.mode is off in the project config, so jobs don't use the backend yet: fugaro update --firebase-project " + fp + " --budget-mode observe turns it on (then fugaro update --repo for each repository)")
 	}
 	// D3027: the budget database and the local config that records it are
-	// written, and only now is the run history reached. A location left for a
-	// person therefore holds back the Firestore database and nothing else: the
-	// installation has its budget database, this machine records it, and what
-	// waits is the database the history job writes into.
+	// written, and only now is the run history reached. Nothing here waits on
+	// a person: deployFirestore prints the line saying where the database goes
+	// and creates it there with nothing asked, in every session this stage may
+	// run in (D3090).
 	return r.deployFirestore(ctx, fsStep)
 }
 
@@ -1020,13 +1019,13 @@ func (r *initRun) adoptBudgetDatabase(ctx context.Context, c *infra.Clients, t *
 // confirmation. confirmed reports that a confirmation was given, which also
 // covers the local config's diff.
 //
-// The budget database is written BEFORE the Firestore location's note is
-// reached (D3027): the two are different databases, the note is about the
-// run history's (its location is permanent and only a person answers for it),
-// and a location left for someone used to hold back the budget database the
-// installation needs to launch anything at all. This function therefore stops
-// at the budget database: the caller writes the local config that records it
-// and only then reaches the run history (deployFirestore).
+// The budget database is written BEFORE the Firestore database is reached
+// (D3027): the two are different databases, and the run history's location is
+// permanent and is printed rather than asked for (locationLine, D3090), so
+// nothing holds the budget database the installation needs to launch anything
+// at all. This function therefore stops at the budget database: the caller
+// writes the local config that records it and only then reaches the run
+// history (deployFirestore).
 func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, idp *idpStep, fs *infra.FirestoreStep, fsLines []string) (confirmed bool, err error) {
 	acts, warnings, err := db.Plan(ctx)
 	if err != nil {
@@ -1056,7 +1055,7 @@ func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, i
 		what = "writes the database as listed and " + infra.IdentityPlatformStep + ", as you (project owner, editor or budget admin), and then the local config"
 	}
 	if fs.CreatesDatabase() {
-		what += fmt.Sprintf("; this does NOT create the Firestore database: its creation in %s, whose location is permanent and can never be changed, is asked next, separately (its own confirmation, with nothing typed)", fs.Location)
+		what += fmt.Sprintf("; this does NOT create the Firestore database: the run creates it after the local config, in %s, printing where and creating it with nothing asked (its location is permanent)", fs.Location)
 	}
 	if err := r.confirmDatabase(what); err != nil {
 		return false, err
@@ -1085,9 +1084,9 @@ func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, i
 // The gate is what answers here and not the run's review: the review is not
 // asked on a managed project at all (runCovers' gateStandsIn arm), so a step
 // that waited for it would wait for a confirmation nobody is shown. What is
-// left to a person is the Firestore location, whose own confirmation is not
-// this function's and stays where it is: it is permanent, and D1026 admits no
-// plan gate's answer for a step like that.
+// left to a person beyond this step is nothing of the Firestore database's: its
+// location is permanent, and D3090 prints the line and creates it rather than
+// asking anyone for it (locationLine).
 func (r *initRun) confirmDatabase(what string) error {
 	if r.gateStandsIn() {
 		fmt.Fprintf(r.w, "  %s\n", r.gateProceeded())
@@ -1096,65 +1095,39 @@ func (r *initRun) confirmDatabase(what string) error {
 	return r.confirmOrdinary(what, "the database was not written", r.firebaseReason())
 }
 
-// confirmLocation is the Firestore database's own confirmation: its location
-// is permanent, so the note below is the whole of what a person reads before
-// it is created. The location is typed nowhere (T7, docs/no-prompt-policy):
-// what answers for the step is confirmNow — --ask's own question, or the person
-// at their own terminal, who reads the note and is asked nothing.
-// --non-interactive, --json, a pipe and a coding agent still confirm it never,
-// and the door is still D12's answer of 2026-10-20 (stepConfirmation): `setup`
-// asks the location as a first-time question and an answer a run carries never
-// reaches it, while `update` meets it as a step of a stage it owns, so a run
-// opened on an answer the person already gave is covered there. Where nothing
-// can confirm it the step is the user's, with the one-line route.
+// locationLine is the whole of what a person reads about the Firestore
+// database's location: where it is created, and that a database's location can
+// never be changed. No step confirms it (D3090): the line is printed and the
+// database is created, in every session this stage may run in — a person's
+// terminal, --json, a pipe and a coding agent's session alike.
 //
-// It is reached by deployFirestore and not by deployDatabase, and that is
-// D3027: what the run leaves for a person is the run history's database alone,
-// with the budget database already written and already recorded in the local
-// config. loc is where the database goes, which is the step's own location —
+// What keeps an agent out of a write is unchanged and is not this stage's: the
+// refusal of cloud writes in an agent's session (D3028) and the managed gate.
+// loc is where the database goes, which is the step's own location —
 // place.For's answer for the installation's region (D3085) — and never the
 // region itself: the two are different settings, and the location is the one
 // that is permanent.
-func (r *initRun) confirmLocation(loc string) error {
-	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s): the Firestore database is created in %s, and a database's location can NEVER be changed.\n", r.projectName, loc)
-	switch r.stepConfirmation(r.o.door == updateDoor.name) {
-	case stepLeave:
-		lf := promptLeft(initflow.Firebase, "run the command below: it prints the note about the Firestore database's permanent location and then creates the database, asking you nothing", r.o.doorName(), "--firebase-project", quoteWord(cmp.Or(r.o.firebaseProject(), r.gcpProject)))
-		return &initflow.NeedsYouError{Left: lf}
-	case stepByYes:
-		fmt.Fprintln(r.w, "  confirmed by this run's own answer")
-		return nil
-	}
-	ok, err := r.confirmNow("create the Firestore database in " + loc + ", a location that can never be changed?")
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return userErr("not confirmed (the Firestore database's location was not confirmed); the Firestore database was not created (nothing was written)")
-	}
-	r.noteIDETerminal()
-	return nil
+func (r *initRun) locationLine(loc string) {
+	fmt.Fprintf(r.w, "the Firestore database is created in %s, and a database's location can NEVER be changed.\n", loc)
 }
 
 // deployFirestore is the run history's own database, and it is the LAST step of
 // the stage — after the budget database has been written and the local config
 // that records it has been written too (D3027). The two are different
-// databases, and a location left for a person used to hold back the budget
-// database the installation needs to launch anything at all; now what a
-// pending location leaves is the run history and nothing else.
+// databases, and the run history is what waits on the local config that
+// records the budget database the installation needs to launch anything at
+// all.
 //
-// The location's own confirmation comes first where there is no database at
-// all (its location is permanent), and only then is anything written: the
-// deny-all rules, the mark and — where the database was just created — the
-// read-back that proves it is there.
+// The line saying where the database goes comes first where there is no
+// database at all (its location is permanent), and only then is anything
+// written: the deny-all rules, the mark and — where the database was just
+// created — the read-back that proves it is there.
 func (r *initRun) deployFirestore(ctx context.Context, fs *infra.FirestoreStep) error {
 	if !fs.Pending() {
 		return nil
 	}
 	if fs.CreatesDatabase() {
-		if err := r.confirmLocation(fs.Location); err != nil {
-			return err
-		}
+		r.locationLine(fs.Location)
 	}
 	if err := fs.Apply(ctx); err != nil {
 		return initErr(err)
