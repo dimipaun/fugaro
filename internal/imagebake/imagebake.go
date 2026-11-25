@@ -426,9 +426,11 @@ func Path(slug string) (string, error) {
 // which is the state the failure this guard answers was in — a mount that
 // arrived empty and a git that answered `could not read Username for
 // 'https://github.com'`, a sentence naming neither the credential nor the build
-// that owed it.
-const credentialGuard = " && { [ -s /run/secrets/git-credentials ] \\\n" +
-	"      || { echo \"the git credential is missing or empty: a definition that bakes is built with the credential the catalog build hands its build step\" >&2; exit 1; }; } \\\n"
+// that owed it. It is a command of its own and no `&&` of it: a stage whose
+// first command it is (OtherStage, which pins no commit) would otherwise begin
+// the shell with `&&`, which no shell parses.
+const credentialGuard = "{ [ -s /run/secrets/git-credentials ] \\\n" +
+	"      || { echo \"the git credential is missing or empty: a definition that bakes is built with the credential the catalog build hands its build step\" >&2; exit 1; }; }"
 
 // Stage is the Dockerfile stage a build appends to bake r: the marker, the
 // three build arguments the catalog build already passes, and one RUN that
@@ -480,7 +482,7 @@ func Stage(r Repo, covered []Repo) (string, error) {
 	b.WriteString("ARG REPO_URL\nARG BASE_BRANCH\nARG FUGARO_COMMIT=\"\"\n")
 	fmt.Fprintf(&b, "RUN --mount=type=secret,id=git-credentials,uid=1000,required=true \\\n"+
 		"    case \"$FUGARO_COMMIT\" in *[!0-9a-f]*) echo \"FUGARO_COMMIT is not a commit ID\" >&2; exit 1 ;; esac \\\n"+
-		credentialGuard+
+		" && "+credentialGuard+" \\\n"+
 		" && %s \\\n"+
 		" && install -d -m 0755 %s \\\n"+
 		" && GIT_TERMINAL_PROMPT=0 git -c credential.helper= \\\n"+
@@ -540,7 +542,7 @@ func OtherStage(r Repo, covered []Repo) (string, error) {
 		r.Repo, r.Branch)
 	b.WriteString("# build ran. The repository this build runs for is baked by the last stage of this definition.\n")
 	fmt.Fprintf(&b, "RUN --mount=type=secret,id=git-credentials,uid=1000,required=true \\\n"+
-		credentialGuard+
+		credentialGuard+" \\\n"+
 		" && install -d -m 0755 %s \\\n"+
 		" && GIT_TERMINAL_PROMPT=0 git -c credential.helper= \\\n"+
 		"      -c credential.helper='store --file=/run/secrets/git-credentials' \\\n"+

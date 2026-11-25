@@ -720,6 +720,69 @@ func TestOtherStageSpellsTheURLAndBranch(t *testing.T) {
 	}
 }
 
+// TestOtherStageRefusesACredentialThatIsNotThere: the guard is a command of
+// its own, and in the other repository's stage it is the first one — a stage
+// whose shell began with "&&" would be refused by /bin/sh before it ran
+// anything, which the text of the stage cannot show. So this runs it, and what
+// it fails on is the credential and not the join.
+func TestOtherStageRefusesACredentialThatIsNotThere(t *testing.T) {
+	covered := []Repo{repoSpec("acme/app", "app-1234abcd"), repoSpec("acme/web", "web-2222bbbb")}
+	stage, err := OtherStage(covered[1], covered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	for name, body := range map[string]string{
+		"git":               "#!/bin/sh\nexit 0\n",
+		"install":           "#!/bin/sh\nexit 0\n",
+		"finalize-checkout": "#!/bin/sh\nexit 0\n",
+	} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	shell := strings.ReplaceAll(stageShell(t, stage), stageFinalize, filepath.Join(bin, "finalize-checkout"))
+	run := func(t *testing.T, creds string) (string, error) {
+		t.Helper()
+		pointed := strings.ReplaceAll(shell, stageCredential, creds)
+		if pointed == shell {
+			t.Fatalf("the stage names no credential at %s:\n%s", stageCredential, stage)
+		}
+		cmd := exec.Command("sh", "-c", pointed)
+		cmd.Dir = t.TempDir()
+		cmd.Env = []string{"PATH=" + bin + ":" + os.Getenv("PATH"), "HOME=" + t.TempDir()}
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+	creds := filepath.Join(t.TempDir(), "git-credentials")
+	if err := os.WriteFile(creds, []byte("https://x-access-token:tok3n@github.com\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The control runs first: with a credential the build wrote, the whole
+	// stage runs, so what fails below is the credential and not the join.
+	if out, err := run(t, creds); err != nil {
+		t.Fatalf("the other repository's stage failed with a credential the build wrote: %v\n%s", err, out)
+	}
+	empty := filepath.Join(t.TempDir(), "git-credentials")
+	if err := os.WriteFile(empty, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, missing := range map[string]string{
+		"a mount that arrived empty":        filepath.Join(t.TempDir(), "git-credentials"),
+		"a credential file with no content": empty,
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, err := run(t, missing)
+			if err == nil {
+				t.Fatalf("the other repository's stage cloned with %s:\n%s", name, out)
+			}
+			if !strings.Contains(out, "the git credential is missing or empty") {
+				t.Errorf("the stage does not name the credential it refused to clone without:\n%s", out)
+			}
+		})
+	}
+}
+
 // TestRepoURLGuardHoldsTheRepositoryNotTheSpelling: the guard is shell, and
 // what it has to do is what the text of it cannot promise — accept every
 // spelling git clones one repository from and refuse another repository. The
