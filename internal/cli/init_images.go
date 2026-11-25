@@ -237,13 +237,18 @@ func (s *imagesStage) allow() []string {
 	return mirror.DefaultSources
 }
 
-// kinds are the base kinds to mirror: --base's, the workflows' of the
-// checkout init runs in (best effort: no checkout, or no valid fugaro.yaml,
-// adds none), and base when the project's own image catalog has an entry this
-// installation builds. That last one is what makes `fugaro image add <entry>`
-// a state the next `fugaro update` converges on its own (#1843): every catalog
-// build is built FROM base_images.base, nothing else names that kind, and the
-// catalog lives in the project config rather than in any checkout.
+// kinds are the base kinds to mirror: --base's, the union of the workflows of
+// every repository this run read (R9), and base when the project's own image
+// catalog has an entry this installation builds. That last one is what makes
+// `fugaro image add <entry>` a state the next `fugaro update` converges on its
+// own (#1843): every catalog build is built FROM base_images.base, nothing else
+// names that kind, and the catalog lives in the project config rather than in
+// any checkout.
+//
+// The workflows are every read repository's and not the checkout's: the kinds
+// are the project's, so the same union comes back from any directory (C1), and
+// a repository the reader could not read adds none — a stage never plans from a
+// repository it did not read (R13).
 //
 // An entry this installation builds is CatalogHasBuildEntries' question and
 // not CatalogBuilds': the check job is deployed for a catalog of prebuilt
@@ -261,11 +266,12 @@ func (s *imagesStage) kinds(ctx context.Context) []string {
 	for _, k := range s.e.r.o.baseKinds {
 		set[k] = true
 	}
-	if _, cfg, err := loadCheckoutConfigAt(ctx, "."); err == nil && cfg != nil {
-		// loadCheckoutConfigAt only returns a cfg that validated (validate.go
-		// checks w.Base against config.Bases), so every w.BaseKind() here is
-		// already a member of config.Bases.
-		for _, w := range cfg.Workflows {
+	views, _ := s.e.repos(ctx)
+	for _, v := range views {
+		if !v.Read() {
+			continue
+		}
+		for _, w := range v.Cfg.Workflows {
 			set[w.BaseKind()] = true
 		}
 	}
@@ -542,7 +548,7 @@ func (s *imagesStage) Check(ctx context.Context) (initflow.Status, error) {
 		// failed update and never a clean "No changes" (the layer stage's
 		// rule): the stage may not say the catalog images are current when it
 		// could not tell.
-		notes = append(notes, catalogPlanDetail(set))
+		notes = append(notes, s.catalogPlanDetail(ctx, set))
 	}
 	switch {
 	case len(items) == 0 && len(notes) > 0 && !set.any():
@@ -559,7 +565,7 @@ func (s *imagesStage) Check(ctx context.Context) (initflow.Status, error) {
 		parts = append(parts, "pins this release's base images by digest and copies the release images your registry lacks")
 	}
 	if set.any() {
-		parts = append(parts, catalogPlanDetail(set))
+		parts = append(parts, s.catalogPlanDetail(ctx, set))
 	}
 	return initflow.Status{State: initflow.Todo, Detail: strings.Join(parts, "; ")}, nil
 }
@@ -771,10 +777,10 @@ func (s *imagesStage) Plan(ctx context.Context, env initflow.Env) (initflow.Plan
 	m, items, err := s.prepare(ctx)
 	if err != nil || m == nil {
 		if set.any() {
-			return initflow.Plan{Detail: catalogPlanDetail(set)}, err
+			return initflow.Plan{Detail: s.catalogPlanDetail(ctx, set)}, err
 		}
 		if set.unread != "" {
-			return initflow.Plan{NothingToDo: true, Detail: "No changes: " + catalogPlanDetail(set)}, err
+			return initflow.Plan{NothingToDo: true, Detail: "No changes: " + s.catalogPlanDetail(ctx, set)}, err
 		}
 		return initflow.Plan{NothingToDo: true}, err
 	}
@@ -787,12 +793,12 @@ func (s *imagesStage) Plan(ctx context.Context, env initflow.Env) (initflow.Plan
 	base := pins(pl)
 	if n == 0 && len(base) == 0 && !set.any() {
 		if set.unread != "" {
-			return initflow.Plan{NothingToDo: true, Detail: "No changes: " + catalogPlanDetail(set)}, nil
+			return initflow.Plan{NothingToDo: true, Detail: "No changes: " + s.catalogPlanDetail(ctx, set)}, nil
 		}
 		return initflow.Plan{NothingToDo: true, Detail: "No changes"}, nil
 	}
 	detail := changeDetail(n, bytes, len(base))
-	if extra := catalogPlanDetail(set); extra != "" {
+	if extra := s.catalogPlanDetail(ctx, set); extra != "" {
 		if detail != "" {
 			detail += "; "
 		}
@@ -841,7 +847,7 @@ func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 		return initflow.Outcome{}, err
 	}
 	if m == nil {
-		return s.catalogOutcome(set, initflow.Outcome{Detail: "No changes"}), nil
+		return s.catalogOutcome(ctx, set, initflow.Outcome{Detail: "No changes"}), nil
 	}
 	pl, err := s.read(ctx, m, items)
 	if err != nil {
@@ -901,9 +907,9 @@ func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 		return initflow.Outcome{}, err
 	}
 	if !changed && len(base) == 0 {
-		return s.catalogOutcome(set, initflow.Outcome{Detail: "No changes"}), nil
+		return s.catalogOutcome(ctx, set, initflow.Outcome{Detail: "No changes"}), nil
 	}
-	return s.catalogOutcome(set, initflow.Outcome{Changed: true, Detail: applyDetail(changed, len(base))}), nil
+	return s.catalogOutcome(ctx, set, initflow.Outcome{Changed: true, Detail: applyDetail(changed, len(base))}), nil
 }
 
 // confirmText is the stage's own confirmation: what it copies (and how big,

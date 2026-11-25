@@ -2153,13 +2153,14 @@ const defaultCatalogEntryName = "base"
 // job whose repository names no image, so a project that keeps a per-repository
 // job for any reason would meet the deployer's refusal for a bare `checkout:
 // baked` workflow (internal/infra's unbuiltOnBaked, D1191) — and a repository
-// keeps one whenever no profile admits it, whenever this run holds no checkout
-// of it (RepoSpec.Shared is a mark no root reads yet, M7), or, for the checkout
-// this run does hold, whenever its own workflows are such a workflow: the three
-// states defaultCatalogEntryRefusal reads, and the reason a repository admitted
-// to a profile is still read here. The other states are the project's own: a
-// catalog this machine's config does not hold is not one to write into, and an
-// entry the config already has under this name is the operator's.
+// keeps one whenever no profile admits it (RepoSpec.Shared is a mark no root
+// reads yet, M7), whenever this run read no fugaro.yaml of it, or whenever one
+// of the workflows it did read is such a workflow: the three states
+// defaultCatalogEntryRefusal reads, over every repository the project lists
+// rather than the checkout's own alone (C1, R9). The other states are the
+// project's own: a catalog this machine's config does not hold is not one to
+// write into, and an entry the config already has under this name is the
+// operator's.
 //
 // Every line it prints is one line — what happened, and whether anything is
 // left for the operator — and the reason whole is in the run's log
@@ -2224,7 +2225,7 @@ func (e *initEngine) writeDefaultCatalogEntry(ctx context.Context) {
 				entry.Name, selfCommand()+" update"))
 		return
 	}
-	if line, why := e.defaultCatalogEntryRefusal(cat, e.lc.ImageMapEffective(publishedMap), entry, p); why != "" {
+	if line, why := e.defaultCatalogEntryRefusal(ctx, cat, e.lc.ImageMapEffective(publishedMap), entry, p); why != "" {
 		e.withholdDefaultCatalogEntry(line, why)
 		return
 	}
@@ -2356,21 +2357,19 @@ func catalogEntries(cat *config.Catalog) []config.Entry {
 // for the whole list: the entry is the project's, and half a project on it is a
 // project whose next update refuses.
 //
-// The second is every repository this run holds no checkout of, which is the
-// same refusal one step earlier and the reason the two are separate: a
-// repository admitted to a profile still deploys the per-repository job of its
-// own root (RepoSpec.Shared is a mark no root reads yet, M7), and the entry is
-// that job's image too — so a bare `checkout: baked` workflow of a repository
-// this machine does not hold is refused by the deployer at its own repository
-// stage, in a run this one cannot warn. Nothing about that file is readable
-// from here (a checkout's workflows live in its own fugaro.yaml, and this
-// machine holds one checkout), so the entry waits until the project lists no
-// repository but this checkout's — the state in which the per-repository jobs
-// the entry could be the image of are the ones this run reads.
+// The second is every repository this run could not read, which is the same
+// refusal one step earlier and the reason the two are separate: a repository
+// admitted to a profile still deploys the per-repository job of its own root
+// (RepoSpec.Shared is a mark no root reads yet, M7), and the entry is that
+// job's image too — so a bare `checkout: baked` workflow of a repository this
+// run read no fugaro.yaml of is refused by the deployer at its own repository
+// stage, in a run this one cannot warn. What a stage must not do is guess at
+// one (R13), so the entry waits until every repository the project lists was
+// read — the state in which the per-repository jobs the entry could be the
+// image of are the ones this run reads.
 //
-// The third is the checkout's own workflows, which are the ones this run
-// really builds (the repository stage and the images stage run for this
-// checkout alone): the entry is asked of the one resolver here, so that a
+// The third is the workflows of every repository this run read, which are the
+// ones it really builds: the entry is asked of the one resolver here, so that a
 // workflow that pins an entry, needs tags, or writes an image of its own — the
 // three ways a job keeps an image that is not the default — is not read as one
 // that would take it. What is left is the workflow the entry would be handed to
@@ -2379,91 +2378,56 @@ func catalogEntries(cat *config.Catalog) []config.Entry {
 // written, and a workflow's image_name, its needs and the project's image_map
 // are read only against a catalog, so a job that runs the base image today can
 // be refused the moment the entry lands.
-func (e *initEngine) defaultCatalogEntryRefusal(cat *config.Catalog, imageMap map[string]string, entry config.Entry, node *projectpolicy.Policy) (line, why string) {
+func (e *initEngine) defaultCatalogEntryRefusal(ctx context.Context, cat *config.Catalog, imageMap map[string]string, entry config.Entry, node *projectpolicy.Policy) (line, why string) {
 	if repos := unadmittedRepos(e.lc, node); len(repos) > 0 {
 		return withheldLine("no default catalog entry written: this project does not admit ", repos, "; nothing to do"),
 			fmt.Sprintf("this project does not admit %s — a repository is admitted when the project's published allow_repos names it and a profile of its provider admits it — and a repository it does not admit runs on the per-repository job its own root deploys, so the entry would be the image of that job: a checkout: baked workflow of it that writes no image of its own is refused there (unbuiltOnBaked, D1191)",
 				strings.Join(repos, ", "))
 	}
-	cfg, slug := e.checkoutWorkflows()
-	if repos := unvouchedRepos(e.lc, e.heldCanonical()); len(repos) > 0 {
-		return withheldLine("no default catalog entry written: this machine holds no checkout of ", repos, "; nothing to do"),
-			fmt.Sprintf("this project's config lists %s: a repository this run holds no checkout of keeps the per-repository job its own root deploys, whose image is this project's catalog default — where a checkout: baked workflow that writes no image of its own is refused (unbuiltOnBaked, D1191), and this run cannot read those workflows from here",
+	views, _ := e.repos(ctx)
+	if repos := unreadRepos(e.lc, views); len(repos) > 0 {
+		// The head's length is part of the bound: the line a person reads is
+		// this one with the reporter's own label in front of it, and the names
+		// it cuts are the run's log's business (withheldLineMax).
+		return withheldLine("no default catalog entry written: this run read no fugaro.yaml of ", repos, "; nothing to do"),
+			fmt.Sprintf("this run read no fugaro.yaml of %s: a repository it could not read keeps the per-repository job its own root deploys, whose image is this project's catalog default — where a checkout: baked workflow that writes no image of its own is refused (unbuiltOnBaked, D1191) — and a stage never plans from a repository it did not read (R13)",
 				strings.Join(repos, ", "))
 	}
-	if cfg == nil {
-		return "", ""
-	}
 	asked := config.Catalog{Entries: append(catalogEntries(cat), entry)}
-	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
-		req := catalog.ImageRequest{ImageMap: imageMap, Canonical: slug, Workflow: cfg.Workflows[name], Backend: catalog.Backend(e.lc.Backend())}
-		// The workflow's image is asked of the resolver twice, with the catalog
-		// this project has (nil for a project with none) and with the one the
-		// entry would give it, because the entry is what makes a catalog exist at
-		// all and the resolver reads a workflow's image_name, its needs and the
-		// project's image_map only against one: a pin naming an entry this project
-		// does not have is inert today and a refusal the moment the entry is
-		// written, so the write is held back by it rather than turning a job that
-		// runs the base image into one the deployer refuses.
-		req.Catalog = cat
-		if _, err := catalog.JobImage(req); err != nil {
-			// A workflow whose image is already unresolvable is not what holds the
-			// write back: the entry did not break it, and a project refused for it
-			// would never get a default entry at all.
-			continue
+	for _, v := range views {
+		for _, name := range slices.Sorted(maps.Keys(v.Cfg.Workflows)) {
+			req := catalog.ImageRequest{ImageMap: imageMap, Canonical: v.Repo, Workflow: v.Cfg.Workflows[name], Backend: catalog.Backend(e.lc.Backend())}
+			// The workflow's image is asked of the resolver twice, with the catalog
+			// this project has (nil for a project with none) and with the one the
+			// entry would give it, because the entry is what makes a catalog exist at
+			// all and the resolver reads a workflow's image_name, its needs and the
+			// project's image_map only against one: a pin naming an entry this project
+			// does not have is inert today and a refusal the moment the entry is
+			// written, so the write is held back by it rather than turning a job that
+			// runs the base image into one the deployer refuses.
+			req.Catalog = cat
+			if _, err := catalog.JobImage(req); err != nil {
+				// A workflow whose image is already unresolvable is not what holds the
+				// write back: the entry did not break it, and a project refused for it
+				// would never get a default entry at all.
+				continue
+			}
+			req.Catalog = &asked
+			sel, err := catalog.JobImage(req)
+			if err != nil {
+				return fmt.Sprintf("no default catalog entry written: workflow %s of %s would stop resolving; fix the image it names", name, v.Repo),
+					fmt.Sprintf("workflow %s of %s would stop resolving once this project has a catalog: %v — a workflow's image_name, its needs and the project's image_map are read only against one, and the entry is what makes one exist, so a job that runs the base image today would be refused the moment the entry is written",
+						name, v.Repo, err)
+			}
+			if sel.Source != catalog.SourceCatalog || sel.Entry.Name != entry.Name {
+				continue
+			}
+			return fmt.Sprintf("no default catalog entry written: workflow %s of %s writes no image of its own; give it a dockerfile", name, v.Repo),
+				fmt.Sprintf("workflow %s of %s writes no image of its own, so the entry would be the image of a job that cannot run it and the deployer would refuse it (unbuiltOnBaked, D1191)",
+					name, v.Repo)
 		}
-		req.Catalog = &asked
-		sel, err := catalog.JobImage(req)
-		if err != nil {
-			return fmt.Sprintf("no default catalog entry written: workflow %s of %s would stop resolving; fix the image it names", name, slug),
-				fmt.Sprintf("workflow %s of %s would stop resolving once this project has a catalog: %v — a workflow's image_name, its needs and the project's image_map are read only against one, and the entry is what makes one exist, so a job that runs the base image today would be refused the moment the entry is written",
-					name, slug, err)
-		}
-		if sel.Source != catalog.SourceCatalog || sel.Entry.Name != entry.Name {
-			continue
-		}
-		return fmt.Sprintf("no default catalog entry written: workflow %s of %s writes no image of its own; give it a dockerfile", name, slug),
-			fmt.Sprintf("workflow %s of %s writes no image of its own, so the entry would be the image of a job that cannot run it and the deployer would refuse it (unbuiltOnBaked, D1191)",
-				name, slug)
 	}
 	return "", ""
-}
-
-// checkoutWorkflows is the checkout's own fugaro.yaml and the repository it is
-// about, nil when this run holds no checkout (a converge from a machine that
-// does not hold the repository, which has no workflow to read). The repository
-// is the checkout's own name (owner/name), which is the form the image
-// selection is asked about; heldCanonical is the form the project's lists
-// spell.
-func (e *initEngine) checkoutWorkflows() (*config.Config, string) {
-	if e.repo == nil || e.repo.tg == nil {
-		return nil, ""
-	}
-	return e.repo.tg.cfg, e.repo.tg.repo
-}
-
-// heldCanonical is the checkout's repository as this project's allow-lists
-// spell it ("github/acme/app"), "" when this run holds no checkout or nothing
-// here names the repository's provider: the name unvouchedRepos compares the
-// project's repositories against.
-//
-// The provider is the config's own for the checkout's entry, canonicalized
-// exactly as usedProviders canonicalizes the list that comparison walks, so
-// that the two spellings cannot disagree about one repository.
-func (e *initEngine) heldCanonical() string {
-	if e.repo == nil || e.repo.tg == nil {
-		return ""
-	}
-	key := repoConfigKey(e.lc, e.repo.tg.repo)
-	r, ok := e.lc.Repos[key]
-	if !ok || r.Provider == "" {
-		return ""
-	}
-	c, err := projectpolicy.Canonical(r.Provider, key)
-	if err != nil {
-		return ""
-	}
-	return c
 }
 
 // unadmittedRepos is the repositories this project's config lists that no
@@ -2489,22 +2453,35 @@ func unadmittedRepos(lc *localcfg.Config, node *projectpolicy.Policy) []string {
 	return out
 }
 
-// unvouchedRepos is the repositories this project's config lists that are not
-// the checkout this run holds — held is that repository as the project's lists
-// spell it — in the order the config names them: the ones whose own root this
-// run does not read, and which therefore keep the per-repository job that root
-// deploys — a repository the entry would be the image of just as much as one
-// the project does not admit, and whose workflows nothing here can read.
+// unreadRepos is the repositories this project's config lists that this run
+// read no workflows of, in the order the config names them, spelled the way its
+// lists spell one ("github/acme/app"): the ones the reader answered with a view
+// that says why, and the ones it answered with no view at all. A repository
+// this run could not read keeps the per-repository job its own root deploys —
+// a job the project's catalog default is the image of just as much as an
+// unadmitted repository's — and its workflows are not this run's to read, so
+// nothing here writes the entry on a guess at them (R13).
 //
-// A held of "" is a run with no checkout, or one whose repository this config
-// does not name: it vouches for no repository, so every one the config lists is
-// unvouched.
-func unvouchedRepos(lc *localcfg.Config, held string) []string {
+// A repository the config lists with no provider is no repository this run
+// reads, so it is not one the write waits for either (usedProviders is the same
+// list the rest of this file walks).
+func unreadRepos(lc *localcfg.Config, views []repoView) []string {
+	read := map[string]bool{}
+	for _, v := range views {
+		if !v.Read() {
+			continue
+		}
+		if p := repoProviderOf(lc, v.Repo); p != "" {
+			if c, err := projectpolicy.Canonical(p, v.Repo); err == nil {
+				read[c] = true
+			}
+		}
+	}
 	_, used := usedProviders(lc)
 	var out []string
 	for _, name := range config.Providers {
 		for _, canonical := range used[name] {
-			if canonical != held {
+			if !read[canonical] {
 				out = append(out, canonical)
 			}
 		}
