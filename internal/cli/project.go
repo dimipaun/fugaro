@@ -306,22 +306,6 @@ var consoleReadPaths = map[string]bool{
 	// all** -- so the resolver this list goes through has nothing to add to it
 	// beyond `--project`. It writes nothing, the remembered checkouts included.
 	"fugaro graph": true,
-	// The project view (Bitbucket credentials T1.2): `--from-store` reads the
-	// caller's own database node and no host credential, and the command
-	// writes nothing -- but it is a cloud read like the rest, so it goes
-	// through the resolver every cloud command does and has to be here.
-	"fugaro coordinator status": true,
-	// The pull request read (coordinator v2 C3, D816): one pull request as the
-	// host has it, through the coordinator's own read-only installation token.
-	// It resolves the repository's checkout the way the view does -- to tell
-	// the repository's provider -- and writes nothing, the remembered checkouts
-	// included.
-	"fugaro coordinator show": true,
-	// The declarations read (coordinator v2 C4, D827): it resolves the checkout
-	// the way the stored view does -- to tell each repository's provider -- and
-	// writes nothing, the remembered checkouts included. It asks nothing else
-	// of the machine: the read is the caller's own database node.
-	"fugaro coordinator intents": true,
 	// The orchestrator map (the console-fixes plan's CG7a; C-ORCH's document,
 	// D3221): the project's active orchestrators, their connections and the
 	// coordinator's heartbeat, assembled from the caller's own database -- the
