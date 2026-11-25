@@ -120,13 +120,18 @@ const (
 //     direction and never a launched arm.
 //   - table is the project's routing table, published (RT4) and read by this
 //     installation's launcher. It is what the repository's access used to
-//     answer: a project that publishes one has its models reached by the chain
-//     of the entry that matches them, so the challenger's own chain is the
-//     question and cfg.Agent's auth says nothing about it. A project that
-//     publishes none is on the release-1 bridge, and the credential checks
-//     below are its answer. It is the same split the run's own gate makes
-//     (internal/cli's chainRoutingGate) and the same one a plan reads for
-//     whether a repository is the service's at all (infra.ChainPlanFor).
+//     answer where it serves the repository: there the models are reached by
+//     the chain of the entry that matches them, so the challenger's own chain
+//     is the question and cfg.Agent's auth says nothing about it. Where it
+//     serves nothing — a project that publishes no table, and one whose every
+//     source is admitted to another repository — the repository is on the
+//     release-1 bridge (R25) and the credential checks below are its answer.
+//     Which of the two it is is infra.ChainServes' answer, and it is the same
+//     split the run's own gate makes (internal/cli's chainRoutingGate, through
+//     ChainPlanFor(...).Serves) and the one a repository root's plan reads.
+//     Judging by the table wherever one is published would be a different
+//     split, and it is not this one (a repository MG1 cannot place loses no
+//     arm for a run it is served).
 //   - serviceHeldKey is whether the credentials service holds this
 //     installation's GitHub App key, so that the job opens its provider
 //     keyless (internal/gitprov/providers.FromEnv) and mints no read-only
@@ -234,14 +239,24 @@ func refuseModel(cfg config.Config, model, repo string, table routing.Table, eff
 	if pricing.IsAlias(model) {
 		return ReasonVariant
 	}
-	// A project that publishes a table reaches its models by that table and by
+	// A repository the table serves reaches its models by that table and by
 	// nothing else (R1, R2): the entry that matches this model is its answer,
 	// and a model no entry matches is one this launch may not use however the
 	// repository's own access reads (R22). Reading the access here instead
 	// would admit an arm the run's own gate refuses (chainRoutingGate) under a
 	// credential nothing carries any more (D3170) — the pair slot and the job
 	// execution this whole function exists to save.
-	if len(table) > 0 {
+	//
+	// Where the table serves this repository is the plan's own question
+	// (infra.ChainServes, the walk chainRoutingGate makes through
+	// ChainPlanFor), and the answer is not "a project that publishes a table":
+	// a repository no source of it admits — the state MG1's migration leaves a
+	// repository it cannot place — runs on the release-1 bridge exactly as it
+	// did (R25, D3196), so its challengers are judged by the credential and
+	// gateway checks below and not refused as unrouted. Judging by the table
+	// alone would refuse every arm of such a repository for a run that
+	// proceeds.
+	if infra.ChainServes(table, repo) {
 		if chainServes(table, model, repo) {
 			return ""
 		}
@@ -261,7 +276,10 @@ func refuseModel(cfg config.Config, model, repo string, table routing.Table, eff
 // repository is admitted to (D3182). Both halves are asked because both refuse
 // the call: a model no entry matches has no source to walk (R22), and a chain
 // whose every source is admitted to another repository is one the run cannot
-// send this repository's code on.
+// send this repository's code on. Its caller has asked the table-level question
+// first (infra.ChainServes): what is left here is this model's own entry, and a
+// chain that admits nobody is this repository's refusal only where the table
+// really governs its runs.
 //
 // The walk is the plan's own (infra.ChainSourceServes), and it is shared rather
 // than restated here: whether a source admits a repository is one rule with two

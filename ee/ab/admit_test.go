@@ -378,9 +378,10 @@ func TestAdmitAgreesWithTheProviderPolicy(t *testing.T) {
 // sources of its chain that admit this repository are the answer, and the
 // repository's own access is not read at all (D3170, R1). A model no entry
 // matches, or one whose winning entry admits this repository nowhere, is
-// refused — never reached by whatever credential is around (R22) — and the
-// table that is not there is the release-1 bridge, where the access decides as
-// it always has.
+// refused — never reached by whatever credential is around (R22) — and a table
+// that does not serve this repository at all (absent, or serving only other
+// repositories: infra.ChainServes) is the release-1 bridge, where the access
+// decides as it always has.
 func TestAdmitReadsTheChain(t *testing.T) {
 	table := routing.Table{{
 		Match: "deepseek/*",
@@ -407,13 +408,26 @@ func TestAdmitReadsTheChain(t *testing.T) {
 	if model, ok, why := Admit(admitConfig(), admitLayer(admitChallenger), admitRepo, unmatched, admitPolicy(), admitProviders(), admitPrices(), false); ok || model != "" || why != ReasonUnrouted {
 		t.Errorf("a model no entry matches: Admit = %q %v %q, want no model and %q", model, ok, why, ReasonUnrouted)
 	}
-	// The winning entry's chain names only another repository (D3182).
+	// A table whose every source is admitted to another repository does not
+	// govern this repository's runs (infra.ChainServes): MG1's migration leaves
+	// a repository it cannot place on the release-1 bridge (R25, D3196), the
+	// run proceeds on its own access, and the challenger is judged by the
+	// checks the run itself makes rather than refused as unrouted for a table
+	// that is not in force here.
 	closed := routing.Table{{
 		Match: "deepseek/*",
 		Chain: []routing.Source{{Kind: routing.KindProvider, Provider: "openrouter", Admit: []string{admitOtherRepo}}},
 	}}
-	if model, ok, why := Admit(admitConfig(), admitLayer(admitChallenger), admitRepo, closed, admitPolicy(), admitProviders(), admitPrices(), false); ok || model != "" || why != ReasonUnrouted {
-		t.Errorf("a chain admitted to another repository: Admit = %q %v %q, want no model and %q", model, ok, why, ReasonUnrouted)
+	if model, ok, why := Admit(admitConfig(), admitLayer(admitChallenger), admitRepo, closed, admitPolicy(), admitProviders(), admitPrices(), false); !ok || model != admitChallenger || why != "" {
+		t.Errorf("a table that serves only another repository is not in force here: Admit = %q %v %q, want %q", model, ok, why, admitChallenger)
+	}
+	// And the answer is the access's and not the table's: under a credential
+	// that cannot carry a provider's call, the refusal is that one, which is
+	// the reason a run of this repository really would give.
+	bridgeCfg := admitConfig()
+	bridgeCfg.Agent.Auth = "oauth"
+	if model, ok, why := Admit(bridgeCfg, admitLayer(admitChallenger), admitRepo, closed, admitPolicy(), admitProviders(), admitPrices(), false); ok || model != "" || why != ReasonNeedsAPIKey {
+		t.Errorf("a table that serves only another repository leaves the access to answer: Admit = %q %v %q, want no model and %q", model, ok, why, ReasonNeedsAPIKey)
 	}
 	// The most specific entry wins (D3172), so it is the exact entry's chain
 	// that answers and not the prefix's: the two disagree about the repository,

@@ -67,7 +67,7 @@
         },
         "chain": {
           "type": "array",
-          "description": "Where this craft's calls go out: the sources of the entry the project's routing table resolves `model` to, in the order the project wrote them, first usable one wins. Each item is a source spelled the way `fugaro routing ls` spells one and `fugaro routing set` takes it -- `launcher-pool`, `anthropic`, `vertex`, `pool:<name>`, `provider:<name>`, with `@<model>` appended on a source that serves another model than the one asked for. Always written, empty included, so a consumer reads it without a nil check: empty with no `chain_problem` is a craft that names no model, which the role slot below it serves (F17). A source names a credential and never carries its value (spec §1 of docs/model-credentials-routing).",
+          "description": "Where this craft's calls go out: the sources of the entry the project's routing table resolves `model` to, in the order the project wrote them, first usable one wins. Each item is a source spelled the way `fugaro routing ls` spells one and `fugaro routing set` takes it -- `launcher-pool`, `anthropic`, `vertex`, `pool:<name>`, `provider:<name>`, with `@<model>` appended on a source that serves another model than the one asked for. Always written, empty included, so a consumer reads it without a nil check: empty with no `chain_problem` is a craft that names no model, which the role slot below it serves (F17), and every row of a project that publishes no routing table, whose calls go out the release-1 way (D3170). A source names a credential and never carries its value (spec §1 of docs/model-credentials-routing).",
           "items": {
             "type": "string",
             "minLength": 1
@@ -76,7 +76,7 @@
         "chain_problem": {
           "type": "string",
           "minLength": 1,
-          "description": "Why `model` resolves to no chain, in one sentence: no entry of the table matches it, two entries claim it with one pattern, or the entry that wins names no source. It names the fix where one applies (`fugaro routing set <model> <source>...`). Absent when `chain` is not empty, and for a craft that names no model."
+          "description": "Why `model` resolves to no chain, in one sentence: no entry of the table matches it, two entries claim it with one pattern, or the entry that wins names no source. It names the fix where one applies (`fugaro routing set <model> <source>...`). Absent when `chain` is not empty, for a craft that names no model, and where the project publishes no routing table, which has no entry to match."
         },
         "model_servable": {
           "type": "boolean",

@@ -30,14 +30,6 @@ import (
 // the pool inert while the project's subscription-spread switch is off
 // (D1622), which is one of the four things a row has to be able to say.
 //
-// The table is the project's own answer about where each model goes, and it is
-// one RT3 accepts whatever budget the arms below write: the Claude entry puts
-// the launcher's own credentials before the project's pool (D3176) and names no
-// paid source at all, because a paid source after a pool is R17's refusal
-// without an enforcing budget — which is what `validate` reports a table for
-// (RT6) and what these arms are not about. The arms that answer the budget
-// append their own block to this config, so this one may not write one.
-//
 // The model_prices block is the owner's own answer for the two Opus IDs the
 // crafts pin, and the shape every installation of one is in now: a craft's model
 // is judged by its price wherever a run has a gateway, whatever the budget mode
@@ -65,6 +57,21 @@ providers:
     auth: bearer
     secret: openrouter-api-key
     models: [deepseek/*]
+`
+
+// craftRoutingTable is the routing table the craft fixtures append beside
+// craftLocalExtra: the project's own answer about where each model goes, and
+// one RT3 accepts whatever budget the arms below write. The Claude entry puts
+// the launcher's own credentials before the project's pool (D3176) and names no
+// paid source at all, because a paid source after a pool is R17's refusal
+// without an enforcing budget — which is what `validate` reports a table for
+// (RT6) and what these arms are not about. The arms that answer the budget
+// append their own block to this config, so this one may not write one.
+//
+// It is a block of its own rather than a line of the const above because the
+// bridge is a state of its own: a project that publishes no table at all
+// (D3170), which craftFixtureBridge is the fixture for.
+const craftRoutingTable = `
 model_routing:
   - match: deepseek/*
     chain:
@@ -142,6 +149,23 @@ func craftFixture(t *testing.T) string {
 // world whose config says so.
 func craftFixtureWith(t *testing.T, extra string) string {
 	t.Helper()
+	return craftFixtureBody(t, craftLocalExtra+craftRoutingTable+extra)
+}
+
+// craftFixtureBridge is the same world with no routing table at all: the state
+// every installation that has not migrated is in (D3170, R25), where the crafts
+// are reached the release-1 way and the table is not the document that answers
+// for their calls. Everything else — the credentials, the pool, the crafts and
+// their accesses — is the fixture above's.
+func craftFixtureBridge(t *testing.T) string {
+	t.Helper()
+	return craftFixtureBody(t, craftLocalExtra)
+}
+
+// craftFixtureBody is the world both fixtures build, from the text appended to
+// the installation's own config.
+func craftFixtureBody(t *testing.T, body string) string {
+	t.Helper()
 	orig, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -152,7 +176,7 @@ func craftFixtureWith(t *testing.T, extra string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, append(base, []byte(craftLocalExtra+extra)...), 0o600); err != nil {
+	if err := os.WriteFile(path, append(base, []byte(body)...), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("FUGARO_CONFIG", path)
@@ -255,6 +279,58 @@ func TestCraftLsTheThreeLayers(t *testing.T) {
 	}
 	if errOut != "" && strings.Contains(errOut, "fugaro: problem:") {
 		t.Errorf("every access names a credential or a pool a layer holds, so the read has nothing to warn about: %q", errOut)
+	}
+}
+
+// TestCraftLsOnTheBridgeShowsNoChainProblem is the read on a project that
+// publishes no routing table: its calls go out the release-1 way, on the access
+// its crafts resolve to (D3170, R25), so there is no entry to match and nothing
+// is missing — every row carries an empty chain and no problem, and the row's
+// verdict stays the model's own.
+//
+// It is the state every installation is in until `fugaro update` writes a table
+// (MG1's migration), so the answer matters more than the table's own: a read
+// that asked the empty table anyway would report every craft of every unmigrated
+// project as unserved, in the launch gate's words, for a refusal no launch makes
+// — the gate asks whether the table serves the repository before it judges a
+// model by it (chainRoutingGate, infra.ChainPlanFor).
+func TestCraftLsOnTheBridgeShowsNoChainProblem(t *testing.T) {
+	craftFixtureBridge(t)
+	out, errOut, err := execute(t, "craft", "ls")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if strings.Contains(out, "no entry") || strings.Contains(out, "no:") {
+		t.Errorf("a project that publishes no table has no entry to miss, so no row is refused:\n%s", out)
+	}
+	for _, row := range craftRows() {
+		line := craftLine(t, out, row.Craft)
+		if !strings.Contains(line, "yes") {
+			t.Errorf("the %s row is not served on a bridge project: %q", row.Craft, line)
+		}
+	}
+	if errOut != "" && strings.Contains(errOut, "fugaro: problem:") {
+		t.Errorf("the fixture's accesses all resolve, so the read has nothing to warn about: %q", errOut)
+	}
+
+	jsOut, _, err := execute(t, "craft", "ls", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, jsOut)
+	}
+	var doc craftLsDoc
+	if err := json.Unmarshal([]byte(jsOut), &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range doc.Crafts {
+		if len(row.Chain) != 0 || row.ChainProblem != "" {
+			t.Errorf("the %s row resolves to %v / %q, and a project that publishes no table routes nothing by one", row.Craft, row.Chain, row.ChainProblem)
+		}
+		if row.Model != "" && !row.Servable {
+			t.Errorf("the %s row is not servable on a bridge project: %s", row.Craft, row.ModelProblem)
+		}
+	}
+	if strings.Contains(jsOut, "chain_problem") {
+		t.Errorf("the document carries a chain_problem member on a project with no table:\n%s", jsOut)
 	}
 }
 

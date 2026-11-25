@@ -57,7 +57,8 @@ the security review and the merge judge.
 Each craft runs a model, and the chain the project's routing table resolves that
 model to is where its calls go out: the sources of the entry that matches it, in
 order, first usable one wins. A model no entry matches has no chain and no run
-can call it.
+can call it. A project that publishes no routing table is served the release-1
+way, so its crafts have no chain to show.
 
 A craft's model inherits separately from the chain: the first-line review and
 the merge judge follow the coder, and the security review follows the senior
@@ -136,14 +137,16 @@ type craftLsRow struct {
 	// project's routing table resolves Model to, in the order the project wrote
 	// them, first usable one wins, each spelled the way `fugaro routing ls`
 	// spells a source (RT5). It is written on every row, empty included, so a
-	// consumer reads one without a nil check.
+	// consumer reads one without a nil check. A project that publishes no table
+	// routes its calls the release-1 way (D3170, R25), so every row of one has
+	// an empty chain and no ChainProblem.
 	Chain []string `json:"chain"`
 	// ChainProblem is why Model resolves to no chain, in one sentence: no entry
 	// of the table matches it, two entries claim it with one pattern
 	// (routing.Resolve's two refusals, RT1), or the entry that wins names no
-	// source. Absent when Chain is not empty, and for a craft that names no
-	// model -- which is served by the role slot below it and has no chain to
-	// miss (F17).
+	// source. Absent when Chain is not empty, for a craft that names no model
+	// -- which is served by the role slot below it and has no chain to miss
+	// (F17) -- and for every row of a project that publishes no table.
 	ChainProblem string `json:"chain_problem,omitempty"`
 	// Servable is whether a run can serve Model: the project's allow-list
 	// admits it, a route claims it and a price row covers it -- MC15's verdict
@@ -445,8 +448,18 @@ func (s craftLsServe) modelProblem(craft, model string) string {
 // ls` about which entry serves a model — and its sentence about why none does
 // is the fix a reader needs. A craft that names no model has no chain and no
 // problem: it runs the model of the slot it follows (F17).
+//
+// A project that publishes no table has no chain and no problem either: its
+// calls go out the release-1 way, on the access its crafts resolve to (D3170,
+// R25), and the table is not the document that answers for them. Every reader
+// of the table in this release asks this question the same way (`validate`'s
+// modelRoutingProblems, the launch's chainRoutingGate, doctor's read), and
+// asking it here as well is what keeps `craft ls` from reporting every craft of
+// every installation that has not migrated as unserved — the sentence
+// routingWinner gives a model no entry matches is the launch gate's refusal,
+// written for a run the table really governs.
 func craftLsChain(table routing.Table, model string) (chain []string, problem string) {
-	if model == "" {
+	if model == "" || len(table) == 0 {
 		return []string{}, ""
 	}
 	entry, why := routingWinner(table, model)
