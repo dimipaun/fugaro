@@ -5531,6 +5531,7 @@
     {
       "package": "./internal/backend/gcp",
       "reads": [
+        "*",
         "cmd/fugaro/**",
         "deploy/terraform/**",
         "deploy/terraform/gcp/modules/workflow/variables.tf",
@@ -5566,6 +5567,7 @@
         "internal/backend/**",
         "internal/backend/backendtest/**",
         "internal/backend/batch/**",
+        "internal/backend/gcp/*",
         "internal/backend/gcp/**",
         "internal/backend/gcp/*.go",
         "internal/backend/gcp/names.go",
@@ -19675,6 +19677,7 @@
         ".*",
         "cmd/fugaro/**",
         "deploy/terraform/**",
+        "docs/model-credentials-routing/**",
         "docs/plans/*",
         "docs/release-streams.yaml",
         "ee/ab/**",
