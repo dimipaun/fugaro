@@ -2312,6 +2312,35 @@ type Repo struct {
 	// repository's record naming a stage account at all and the deployed
 	// service being at or after the release that serves one.
 	StageAccountServed *bool `yaml:"stage_account_served,omitempty"`
+	// GitCredentialsServed records whether the installation's credentials
+	// service can serve this repository's GIT credential as the owner's own
+	// `fugaro update --repo` read the bundle: the GitHub App's private key, or
+	// the Bitbucket token the proxy forwards. The writer is the same
+	// recordCredentialsServiceReady, over the same one reading of the bundle.
+	//
+	// It is a fact of its own because its reader asks a question the switch
+	// does not: a repository handed the service's address opens its git
+	// provider KEYLESS (internal/gitprov/providers/providers.go reads no App
+	// key once the address is set) and takes its installation tokens from the
+	// service, so a bundle holding no App key stops such a run at bootstrap.
+	// For a `vertex` repository the address is handed without the switch's own
+	// vouch (infra.CredentialsServiceServes is false for that auth by
+	// construction, IS9/D3326), so this fact is the whole of what the launch
+	// can judge that case by — and it refuses the launch there rather than
+	// letting the run stop at the service's door (internal/cli's
+	// gitCredentialRefusal).
+	//
+	// It is deliberately NOT multiplied by the switch, which is the one place
+	// it differs from the two facts above: those are planned into a job the
+	// switch admits (ProviderKeysServed's own comment), while this one is read
+	// on the one path the switch does not admit at all — a vertex repository's
+	// launch, whose root was applied with the address and nothing dropped.
+	//
+	// It is a POINTER on the same terms as the three fields above it, and a
+	// nil one is not a vouch: no machine has judged this repository, and the
+	// launch reads that as "not served" — the direction that stops a run at
+	// the launch, where the fix is printed, rather than at a door inside it.
+	GitCredentialsServed *bool `yaml:"git_credentials_served,omitempty"`
 }
 
 // CredentialsServiceOn is the record as every reader of the switch judges it:
@@ -2341,6 +2370,13 @@ func (r Repo) ProviderKeysServedOn() bool {
 // same terms as ProviderKeysServedOn above.
 func (r Repo) StageAccountServedOn() bool {
 	return r.StageAccountServed != nil && *r.StageAccountServed
+}
+
+// GitCredentialsServedOn is the git-credential fact as its reader judges it, on
+// the same terms as ProviderKeysServedOn above: a nil record (no machine judged
+// it) and a recorded false are the same answer.
+func (r Repo) GitCredentialsServedOn() bool {
+	return r.GitCredentialsServed != nil && *r.GitCredentialsServed
 }
 
 // RecordSwitch is the record a run writes for one repository entry: a pointer

@@ -435,23 +435,29 @@ func CredentialsServiceServes(installed, ready bool, auth, mode string) bool {
 //
 // The two come apart for exactly one repository, and that is the whole of what
 // this function exists for: a `vertex` one. A vertex repository's runs read no
-// credential of the service's for their models — the model calls go out on the
-// job's own Google credentials through Vertex AI, and the git credential and
-// the provider key keep their mounts in its job — so the address cannot move
-// its model path (internal/runner's serviceSwitched, which admits `api-key` and
-// `oauth` alone, F17) and the block carries no drop with it: model_secrets_served
-// stays `none` for it (ModelSecretsServed), and the module's own drop is gated
-// on the serves fact this function's second answer travels beside
+// MODEL credential of the service's — the model calls go out on the job's own
+// Google credentials through Vertex AI — so the address cannot move its model
+// path (internal/runner's serviceSwitched, which admits `api-key` and `oauth`
+// alone, F17) and the block carries no drop with it: model_secrets_served stays
+// `none` for it (ModelSecretsServed), and the module's own drop is gated on the
+// serves fact this function's second answer travels beside
 // (RepoInstallation.CredentialsServiceServes). What the address IS for is the
 // workflow secrets its runner fetches from the service at bootstrap
 // (internal/runner's fetchWorkflowSecrets, D3326).
 //
-// The one path of a vertex repository's own that the address does move is the
-// Bitbucket proxy: internal/cli's proxiedRepo and internal/runner's
+// Its GIT credential the address does move, and that is the owner's ruling of
+// 2026-11-24: the variable is the one every git path reads, so a job handed it
+// opens its provider with no App key of its own and mints its installation
+// tokens here (internal/gitprov/providers). A `vertex` repository gets the
+// address without the switch's vouch, so the state where its bundle cannot
+// serve that credential is the one to catch: the launch refuses it with the fix
+// named (internal/cli's gitCredentialGate), and no root takes a mount away on
+// this arm, so nothing is stranded by the refusal. The same is true of the
+// Bitbucket proxy — internal/cli's proxiedRepo and internal/runner's
 // proxiedBitbucket both read the address off the execution rather than this
 // function's second answer, so the Bitbucket repository whose published node
-// admits it with `proxy: true` is a proxied launch from here on — its git
-// traffic through the service, with the token its job keeps mounted beside it.
+// admits it with `proxy: true` is a proxied launch from here on, its git
+// traffic through the service and its job holding no token of its own (B1.13).
 // An installation whose node proxies none of its vertex repositories is
 // untouched, and which repositories a node proxies is the operator's own
 // publication.

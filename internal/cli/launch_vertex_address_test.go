@@ -19,14 +19,17 @@ var vertexLaunchYAML = strings.Replace(oauthLaunchYAML, "auth: oauth", "auth: ve
 // TestLaunchPutsAddressForVertexRepo is IS9's launch half (D3326 as amended by
 // F17): a `vertex` repository of an installation whose credentials service is
 // deployed is handed the service's address, and its runs fetch their workflow
-// secrets through it — the one thing the address is for on this auth, because a
-// vertex run reads no model credential of the service's and no git credential
-// of its either (its model calls go out on the job's own Google credentials and
-// its git traffic on the credential its job keeps mounted), so its model path
-// does not move when the address is set. The one path the address does move is
-// a proxied Bitbucket node's — proxiedRepo reads the address, not the serves
-// answer — which is a decision reported with this change and not one this
-// launch takes.
+// secrets through it — the model path is the one that does not move, because a
+// vertex run reads no model credential of the service's and its model calls go
+// out on the job's own Google credentials. Its GIT credential the one address
+// does move, and that is the owner's ruling of 2026-11-24: the address is the
+// variable that opens a job's git provider keyless (providers.FromEnv, F29) and
+// makes it mint at the service, so a vertex repository whose bundle cannot serve
+// the credential its forge needs is REFUSED at the launch (gitCredentialGate,
+// launch_vertex_gitcred_test.go) rather than handed an address its run cannot
+// use. The one path the address does move is a proxied Bitbucket node's —
+// proxiedRepo reads the address, not the serves answer — which is a decision
+// reported with this change and not one this launch takes.
 //
 // It is handed on the installation's own block alone, and NOT on the
 // repository's record: localcfg.Repo.CredentialsServiceReady is documented as

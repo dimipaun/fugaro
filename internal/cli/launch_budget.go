@@ -1023,6 +1023,133 @@ func (e *cloudEnv) switchedVaultSecrets(ctx context.Context, spec *task.Spec) bo
 	return err == nil && len(wf.Secrets) > 0
 }
 
+// gitCredentialGate refuses a launch that would hand a `vertex` repository's run
+// the credentials service's address while the service cannot serve that
+// repository's git credential (the owner's ruling of 2026-11-24 on the IS9
+// follow-up: ONE address variable, and a `vertex` repository's git credentials
+// come from the service like every other secret).
+//
+// It is the third of the launch's credential gates and the only one that
+// refuses rather than judges a job image, because what it stands in for is not
+// a runner that is too old but a credential that is not there: the address is
+// the ONE variable every git path reads
+// (internal/gitprov/providers/providers.go), so a job told it opens its git
+// provider with no App key of its own and mints every installation token at the
+// service — and a `vertex` repository is told it without the switch's vouch
+// (infra.CredentialsServiceAddress's vertex arm, IS9/D3326), so nothing else on
+// this path has judged whether the service can answer that mint. A bundle with
+// no App key stops such a run at bootstrap, inside the container, where the
+// operator sees a git command fail rather than the one thing that is wrong.
+//
+// What it reads is localcfg.Repo.GitCredentialsServed, the fact the repository's
+// own `fugaro update --repo` wrote from its one reading of the bundle
+// (recordCredentialsServiceReady), and it is deliberately not the switch: for a
+// vertex repository the switch is false by construction (IS9's own record), and
+// the bundle is a secret no launcher may open (init_credentials.go's fence).
+// A nil record is read as "not served", the direction that stops the launch
+// where the fix is printed.
+//
+// TWO STATES ARE NOT REFUSED, and neither is refused by luck:
+//
+//   - A launch whose run is handed no address at all. A repository's own job is
+//     asked of credentialsServiceLaunchEnv and not of a copy of its clauses,
+//     exactly as proxiedRepo and switchedServiceAuth ask it, so the gate cannot
+//     refuse a job the launch does not tell — every state it answers nil for
+//     (no service, no URL, a mode that is off) is left alone. A launch on a
+//     SHARED project job is asked the same way and with the job's own profile,
+//     and that arm withholds the address from an auth the service does not
+//     serve: a vertex repository's shared GitHub job keeps the App key its
+//     profile leaves mounted and reads it, so nothing about it moves
+//     (projectjobs.go's own arm, and the project-job tests that pin it). What
+//     IS judged on a shared job is the two shapes whose job is deployed WITH
+//     the address rather than told per launch (internal/infra): a shared
+//     Bitbucket coding job, which holds no token of its own and is given the
+//     address wherever the installation carries the service, and every review
+//     run's job — a shared profile's review-only variant and the
+//     installation's implicit review-only job alike — whose container mounts
+//     nothing at all (O1) and is given the address for that reason.
+//   - A launch whose repository's git credential is served from a WORKSPACE's
+//     service. A project that is a workspace member whose pin names an address
+//     publishes a route record for every repository (internal/cli's route stage),
+//     and its forge kinds move to the workspace exactly where this project's own
+//     bundle cannot serve them (routeFacts.kindHolder) — so a member whose bundle
+//     holds no App key is a designed state whose run mints at the workspace's
+//     service, and refusing it would refuse a launch that works. A member cannot
+//     read the workspace's bundle (F38), so whether THAT service holds the key is
+//     the workspace's own answer, asked where the mint is made.
+//
+// The Bitbucket half is judged the same way and on the node's own answer for the
+// repository (proxiedRepo): an addressed Bitbucket job holds no token at all
+// only where the published node admits it with proxy: true, and where it does
+// not, the run opens its provider with the token its job holds and the address
+// moves nothing (G9).
+func (e *cloudEnv) gitCredentialGate(ctx context.Context, slug string, spec *task.Spec) error {
+	if e.lc == nil || e.lc.CredentialsService == nil {
+		return nil
+	}
+	auth, deployed := e.repoServiceAuth(ctx, spec, io.Discard)
+	local, _ := e.lc.RepoFor(spec.Repo)
+	// The two arms of "this repository's runs reach Vertex": the auth its own
+	// document reads live, which is the address function's vertex arm, and the
+	// record localcfg.Repo.Vertex, which is what stands in for that document on
+	// a launch from outside a checkout (the desktop console's own). Every other
+	// auth is one the address reaches only with the switch's vouch, and the
+	// record it is judged on is written from the same reading of the same
+	// bundle, so the two cannot disagree.
+	if auth != authVertex && !(auth == "" && local.Vertex) {
+		return nil
+	}
+	if local.GitCredentialsServedOn() {
+		return nil
+	}
+	kind, _ := runner.ProviderForSlug(slug, spec.Repo)
+	// The job this launch runs on, decided by the function the launch itself
+	// decides it with (project_job.go's launchProjectJobFor), because a shared
+	// project job is told the address on its PROFILE's switch and not on this
+	// repository's: judging the repository alone would refuse a launch whose run
+	// is handed no address and whose provider is opened with the App key its job
+	// keeps. Same call, same reading and the same reasons as the launch's own
+	// --context gate (contextReposRefusal).
+	job, err := e.launchProjectJobFor(ctx, slug, spec)
+	if err != nil {
+		return err
+	}
+	jobProfile := ""
+	if job != nil && spec.Mode != recipe.ModeReview {
+		jobProfile = job.Profile
+	}
+	if len(credentialsServiceLaunchEnv(e.lc, jobProfile, spec.Repo, auth, e.policyMode(ctx), deployed, false)) == 0 {
+		// Two job shapes are told by their own deployment rather than by an
+		// entry this launch writes (internal/infra's projectjobs.go): a shared
+		// Bitbucket coding job holds no token of its own and is deployed with
+		// the address, and every review job's container mounts nothing at all
+		// and carries it for that reason (reviewVariant, and the implicit
+		// review-only job). Nothing else is judged here.
+		review := spec.Mode == recipe.ModeReview
+		sharedBitbucket := job != nil && kind == gitprov.KindBitbucket
+		if !review && !sharedBitbucket {
+			return nil
+		}
+	}
+	if routeConfigOf(e.lc).publishes() {
+		return nil
+	}
+	switch kind {
+	case gitprov.KindGitHub:
+		return userErr("a launch of %s is refused: its runs reach Vertex AI, so this launch hands them the installation's credentials service (%s) — the one variable that opens a job's git provider with no App key of its own and makes it mint its installation tokens at the service — and the service's bundle cannot serve that repository's git credential: it holds no GitHub App private key, and a run handed the address would stop at its first git call in the container, with a provider it can neither key nor mint with. Store the App's private key in the bundle with `fugaro creds set %s < PATH-TO-THE-KEY-FILE` in your own terminal, then run `fugaro update --repo %s` in this repository's checkout so the bundle is read again and this repository's record is written, and launch the run again",
+			spec.Repo, e.lc.CredentialsService.URL, config.GitHubAppKeySecret, spec.Repo)
+	case gitprov.KindBitbucket:
+		if !e.proxiedRepo(ctx, slug, spec) {
+			// A node that does not broker this repository leaves it its own
+			// mounted token: the address is not what a Bitbucket run reads.
+			return nil
+		}
+		return userErr("a launch of %s is refused: its Bitbucket access is brokered (the published policy admits it with proxy: true), so its job holds no Bitbucket token and this launch hands it the installation's credentials service (%s) to forward one — and that service cannot serve this repository's git credential: its bundle holds no Bitbucket token, and the run would stop at its first git call in the container, with nothing to forward and nothing to fall back to. Store one in the bundle with `fugaro creds set %s < PATH-TO-THE-TOKEN-FILE` in your own terminal, then run `fugaro update --repo %s` in this repository's checkout so the bundle is read again and this repository's record is written, and launch the run again",
+			spec.Repo, e.lc.CredentialsService.URL, config.BitbucketSecret, spec.Repo)
+	}
+	return nil
+}
+
 // nodeBrokersBitbucket is the published node's own answer to whether this
 // repository's Bitbucket access is brokered: the installation carries the
 // credentials service, the repository is a Bitbucket one, and the node admits

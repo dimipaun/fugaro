@@ -376,8 +376,18 @@ const (
 // the `models` family's, since the layer file is what `fugaro config publish`
 // carries and not the generic path, whose allowlist reaches no key of that
 // family — so the rows without a generic writer move by the one.
+//
+// IS9 of docs/secrets-brokering/image-secrets/ is the last mover after it, by one
+// row and by none: a repository entry in the local project config gains
+// `repos.git_credentials_served` (internal/localcfg/localcfg.go), the fact
+// `fugaro update --repo` writes from its own reading of the credentials bundle,
+// which a launch reads back to judge whether a `vertex` repository's runs can
+// take their git credential from the service (owner ruling of 2026-11-24). The
+// file is the machine's own and not the repository's fugaro.yaml, and no name in
+// the allowlist and no prefix of it reaches the key, so the rows without a
+// generic writer move by the one.
 const (
-	cfmRegistryRows   = 541
+	cfmRegistryRows   = 542
 	cfmAllowlistNamed = 121
 )
 

@@ -708,7 +708,7 @@ func withoutUnwrittenRecord(local, published any) any {
 		return published
 	}
 	out := maps.Clone(pe)
-	for _, key := range []string{"credentials_service_ready", "provider_keys_served", "stage_account_served"} {
+	for _, key := range []string{"credentials_service_ready", "provider_keys_served", "stage_account_served", "git_credentials_served"} {
 		if _, ok := le[key]; ok {
 			continue
 		}

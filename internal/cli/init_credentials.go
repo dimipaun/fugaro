@@ -468,6 +468,32 @@ func credentialsProviderEntries(lc *localcfg.Config, pol *projectpolicy.Policy, 
 	return true
 }
 
+// credentialsGitCredential is whether the service's bundle holds the git
+// credential this repository's provider needs: the GitHub App's private key,
+// which a run's installation tokens are minted from (F29), or the Bitbucket
+// token the proxy puts on the wire (B1.7; the legacy entry or one of the typed
+// family, D2350 — the same two answers bundleHoldsBitbucketToken reads).
+//
+// It is read off the bundle reading this run already made (readCredentialsBundle,
+// which sets both facts and memoizes the document), and it is the fact
+// localcfg.Repo.GitCredentialsServed carries: the launch's `vertex` path has no
+// switch record to judge the address with, so this reading travels to the
+// machine that launches instead.
+//
+// A provider of another kind, and one this config cannot name, answer false: a
+// run of a provider whose credential this service does not serve is one its job
+// still mounts, and the launch that hands it the address is the case the refusal
+// is about.
+func credentialsGitCredential(r *initRun, provider string) bool {
+	switch provider {
+	case gitprov.KindGitHub:
+		return r.credsAppKey
+	case gitprov.KindBitbucket:
+		return r.credsBitbucket || r.credsBitbucketTyped
+	}
+	return false
+}
+
 // credentialsStageAccount is R12's second fact for this repository: the mixed
 // variant's second account is selected by the service like any named account,
 // so the runner holds no token for it (R9, F44; KS10 reads this one where the
@@ -849,6 +875,13 @@ func (r *initRun) recordCredentialsServiceReady(ctx context.Context, lc *localcf
 	// them while its job still mounts the key that works.
 	entry.ProviderKeysServed = localcfg.RecordSwitch(serves && credentialsProviderEntries(lc, pol, r.credsRepoCredentials, repo, provider))
 	entry.StageAccountServed = localcfg.RecordSwitch(serves && credentialsStageAccount(lc, cfg, repo))
+	// Whether the service can serve this repository's GIT credential, and it
+	// is deliberately NOT multiplied by the switch (localcfg.Repo.GitCredentialsServed):
+	// this fact is read on the one path the switch does not admit — a `vertex`
+	// repository's launch, whose root was applied with the service's address
+	// and nothing dropped — so hanging it off `serves` would leave the one
+	// reader without an answer exactly where it needs one.
+	entry.GitCredentialsServed = localcfg.RecordSwitch(credentialsGitCredential(r, provider))
 	if lc.Repos == nil {
 		lc.Repos = map[string]localcfg.Repo{}
 	}

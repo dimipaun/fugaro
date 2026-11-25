@@ -1283,6 +1283,15 @@ const proxiedPolicyOtherRepo = `{"version":9,"allow_repos":["bitbucket/workspace
 // ordinary token (G9).
 func addProxiedRepo(t *testing.T, f *launchBudgetFixture, base, block string, switchOn bool) {
 	t.Helper()
+	addProxiedRepoEntry(t, f, base, block, switchOn, "")
+}
+
+// addProxiedRepoEntry is addProxiedRepo with the repository entry spelled by
+// the caller: fields is appended to it after the switch, for the records a test
+// needs the entry to carry (localcfg.Repo.Vertex, and the git-credential
+// reading the launch's own gate reads back).
+func addProxiedRepoEntry(t *testing.T, f *launchBudgetFixture, base, block string, switchOn bool, fields string) {
+	t.Helper()
 	path := os.Getenv("FUGARO_CONFIG")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -1296,6 +1305,7 @@ func addProxiedRepo(t *testing.T, f *launchBudgetFixture, base, block string, sw
 	if switchOn {
 		entry += ", credentials_service_ready: true"
 	}
+	entry += fields
 	updated := strings.Replace(string(data), anchor, anchor+entry+" }\n", 1)
 	updated += block
 	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {

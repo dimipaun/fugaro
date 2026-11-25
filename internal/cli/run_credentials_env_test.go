@@ -26,21 +26,9 @@ const launchCredsURL = "https://fugaro-credentials-abcde-uc.a.run.app"
 // the service on — where the block and the live agent.auth are read where the
 // launch is. The fixture's repos block names acme/app with no record, which is
 // what a machine that never ran the update holds.
-func markRepoCredentialsServiceReady(t *testing.T, f *cloudFixture) {
+func markRepoCredentialsServiceReady(t *testing.T, _ *cloudFixture) {
 	t.Helper()
-	path := os.Getenv("FUGARO_CONFIG")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	const repo = "  acme/app: { provider: github, base_branch: main, workflows: [web]"
-	if !strings.Contains(string(data), repo) {
-		t.Fatalf("the fixture's local config no longer holds %q:\n%s", repo, data)
-	}
-	ready := strings.Replace(string(data), repo, repo+", credentials_service_ready: true", 1)
-	if err := os.WriteFile(path, []byte(ready), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	markRepoEntryFields(t, ", credentials_service_ready: true")
 }
 
 // oauthLaunchYAML is cascadeLaunchYAML's shape for a repository the service

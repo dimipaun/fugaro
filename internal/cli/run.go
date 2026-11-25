@@ -2639,6 +2639,15 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	if err := env.vaultGate(ctx, slug, spec, kind, clone, warn); err != nil {
 		return config.Inputs{}, err
 	}
+	// The git credential's gate, and the third of the three: a `vertex`
+	// repository's run is handed the service's address for its workflow
+	// secrets, and that one variable is also what opens its git provider
+	// keyless — so a bundle that cannot serve the credential its forge needs
+	// stops such a run at bootstrap, and the launch refuses it here instead,
+	// before the claim and the task like every gate beside it.
+	if err := env.gitCredentialGate(ctx, slug, spec); err != nil {
+		return config.Inputs{}, err
+	}
 	if err := checkMaxParallel(ctx, env); err != nil {
 		return config.Inputs{}, err
 	}
@@ -6773,12 +6782,15 @@ func servicesLaunchEnv(entry config.Entry) string {
 // (D3326): the answer is infra.CredentialsServiceAddress's, which is the
 // switch for every other auth and the installation's own block for a vertex
 // one, so a vertex job is handed the service its runner fetches workflow
-// secrets from — and nothing of its moves, because a vertex run reads no
-// credential of the service's (F17, the arm below). The two sides of that
-// answer are one function on purpose: the root's tfvars and this launch read
-// it, so a job is never told about a service its account holds no
-// roles/run.invoker on, and never left to fetch from one its root granted it
-// but no launch named.
+// secrets from — and, since the owner's ruling of 2026-11-24, its git
+// credential with them: the address is the one variable that opens the git
+// provider keyless, and a vertex repository's App key is the service's like
+// every other secret. The one state that leaves — a bundle that cannot serve
+// that key — is refused at the launch with the fix named (gitCredentialGate),
+// beside this answer rather than inside it. The two sides of the answer are one
+// function on purpose: the root's tfvars and this launch read it, so a job is
+// never told about a service its account holds no roles/run.invoker on, and
+// never left to fetch from one its root granted it but no launch named.
 //
 // The gate that judges whether a run is a proxied one asks this same function
 // — a job it writes the variable onto is a proxied run's job and no other's
@@ -6845,15 +6857,24 @@ func credentialsServiceLaunchEnv(lc *localcfg.Config, sharedProfile, repo, auth,
 	// where its root granted it a call (D135).
 	//
 	// A VERTEX repository is the one arm the address reaches without the
-	// switch: its runs read no credential of the service's — its model calls
-	// go out on the job's own Google credentials and its git traffic on the
-	// App key its job still mounts — so the address cannot move either path
-	// (F17), and what it is for is the workflow secrets its runner fetches
-	// from the service at bootstrap (D3326). It is handed whenever the
-	// installation HAS the service and not only on a record's vouch, because
-	// the record describes the model switch and is false for a vertex
-	// repository by construction; the root's own tfvars say the same thing,
-	// so the two sides cannot disagree.
+	// switch: its runs read no MODEL credential of the service's — its model
+	// calls go out on the job's own Google credentials (F17) — so the record
+	// below is the wrong question for it, and what the address is for is the
+	// workflow secrets its runner fetches from the service at bootstrap
+	// (D3326). It is handed whenever the installation HAS the service and not
+	// only on a record's vouch, because the record describes the model switch
+	// and is false for a vertex repository by construction; the root's own
+	// tfvars say the same thing, so the two sides cannot disagree.
+	//
+	// Its GIT credential comes from the service too, on the owner's ruling of
+	// 2026-11-24: the address is the one variable that opens the provider
+	// keyless, so a vertex repository's installation tokens are minted there
+	// like every other repository's. What that makes this function's answer
+	// insufficient for is judged beside it and not here — a bundle that cannot
+	// serve the forge credential is a launch REFUSED with the fix named
+	// (gitCredentialGate), never an address withheld, because the root that
+	// wrote the address has already dropped the workflow secret mounts this
+	// run needs it for.
 	address := infra.CredentialsServiceAddress(installed, local.CredentialsServiceOn(), auth, mode)
 	if auth == "" && local.Vertex {
 		// The auth this launcher could not read, read off the repository's own

@@ -1608,6 +1608,13 @@ var localRows = []Row{
 	// well as on, so a row here for the same reason the switch has one.
 	loc("repos.*.provider_keys_served", "false: no update has found this repository's bundle holding an entry for every provider credential its config names, or the deployed service is not at the release that serves one, or the project publishes no allow-list", "project", docSetup),
 	loc("repos.*.stage_account_served", "false: no update has found a stage account this repository mixes with a provider key, or the deployed service is not at the release that serves one", "project", docSetup),
+	// Whether the bundle can serve this repository's GIT credential — the
+	// GitHub App's private key, or the Bitbucket token the proxy forwards.
+	// Machine-written like the three above it, and a row here for the same
+	// reason: the launch reads it to refuse a `vertex` repository whose runs
+	// would otherwise stop at the service's door, and every key a config file
+	// can hold is one a settings read has to be able to name.
+	loc("repos.*.git_credentials_served", "false: no update has read this repository's bundle as holding the git credential its provider needs — a GitHub repository whose bundle holds no App key, or a Bitbucket repository whose bundle holds no token", "project", docSetup),
 
 	// The workspace keys (docs/workspaces/spec.md §2, §5, §6), all seventeen of
 	// them local-only: the pin is the member's own trust and the member table
