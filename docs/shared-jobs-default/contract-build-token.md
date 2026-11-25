@@ -56,7 +56,7 @@ wider.
   section, `url.<service>/v1/bitbucket/proxy/.insteadOf = https://bitbucket.org/`, and only after checking that the
   URL is exactly this installation's credentials service with that prefix, that the paired repositories are
   exactly the ones the request named, and that it has not ended. The clone step reads the ID token with the
-  service's own address as the audience, appends `http.<proxy>.extraHeader = Authorization: Bearer <token>` to
+  service's own address as the audience, appends `http.<proxy>.extraHeader = Authorization: Bearer <token>` and `X-Fugaro-Build: <build id>` to
   that file, and hands it to the clone build as the one file secret; its git reads no credential store. Any
   point it cannot check — another host or path, a service that is not https, a token that is not one clean value —
   fails the build.

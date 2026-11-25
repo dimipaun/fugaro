@@ -1272,7 +1272,7 @@ func TestCatalogBuildHasACheckoutStepForAContextEntry(t *testing.T) {
 		"DOCKER_BUILDKIT=1", "FUGARO_BASE=${_FUGARO_BASE}", "REPO_URL=${_REPO_URL}",
 		"COMMIT=" + s.ContextCommit, "REPO_HOST=bitbucket.org", "GITHUB_API=https://api.github.com",
 		"CONTEXT_DIR=${_CONTEXT_DIR}", "BUILD_CWD=" + buildStepCwd(step(t, b, "build")),
-		"CREDENTIALS_SERVICE_URL=${_CREDENTIALS_SERVICE_URL}",
+		"CREDENTIALS_SERVICE_URL=${_CREDENTIALS_SERVICE_URL}", "BUILD_ID=$BUILD_ID",
 	}) {
 		t.Fatalf("the clone step's env = %v", env)
 	}
@@ -1575,7 +1575,7 @@ func runCatalogCloneGuard(t *testing.T, st *cloudbuild.BuildStep, ws, tree, cont
 	env := []string{"PATH=" + bin + ":" + os.Getenv("PATH"), "WORKSPACE=" + ws, "TREE=" + tree}
 	for _, kv := range st.Env {
 		kv = strings.ReplaceAll(strings.ReplaceAll(kv, "${_CONTEXT_DIR}", context), "/workspace", ws)
-		env = append(env, strings.ReplaceAll(kv, "${_CREDENTIALS_SERVICE_URL}", catalogGrantService))
+		env = append(env, strings.ReplaceAll(strings.ReplaceAll(kv, "${_CREDENTIALS_SERVICE_URL}", catalogGrantService), "$BUILD_ID", "3a67fac5-e201-46ce-88e3-6437cf2e0e11"))
 		if strings.HasPrefix(kv, "CREDENTIALS_SERVICE_URL=") {
 			// A Bitbucket build's step reads the grant its credential step
 			// wrote and the build identity's token from the metadata server.
