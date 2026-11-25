@@ -80,6 +80,9 @@ func TestPackSplitsScriptsIntoLiveAndNonlive(t *testing.T) {
 		{Name: "scripts-live-0", Pkg: packScriptsPkg, Index: 0, Of: packScriptsLiveLegs, Only: "live"},
 		{Name: "scripts-live-1", Pkg: packScriptsPkg, Index: 1, Of: packScriptsLiveLegs, Only: "live"},
 		{Name: "scripts-live-2", Pkg: packScriptsPkg, Index: 2, Of: packScriptsLiveLegs, Only: "live"},
+		{Name: "scripts-live-3", Pkg: packScriptsPkg, Index: 3, Of: packScriptsLiveLegs, Only: "live"},
+		{Name: "scripts-live-4", Pkg: packScriptsPkg, Index: 4, Of: packScriptsLiveLegs, Only: "live"},
+		{Name: "scripts-live-5", Pkg: packScriptsPkg, Index: 5, Of: packScriptsLiveLegs, Only: "live"},
 	}
 	if !slices.Equal(legs, want) {
 		t.Fatalf("Pack = %+v, want %+v", legs, want)
