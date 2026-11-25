@@ -167,9 +167,15 @@ func craftFixtureBridge(t *testing.T) string {
 // (D3182), so no entry of it governs a run of this repository — which is the
 // second way a project is on the release-1 bridge, beside publishing no table at
 // all (O7, R25, D3196).
+//
+// Its pattern matches no model any craft of the fixture world names, which is
+// what makes the two arms that read it hold a reading that judged the table
+// anyway: every craft's model would then be one no entry matches, so the read
+// would report every row unrouted (R22) — a refusal no launch makes, and the
+// failure these arms are here to catch.
 const craftRoutingTableElsewhere = `
 model_routing:
-  - match: claude-*
+  - match: gemini/*
     chain:
       - {kind: anthropic, admit: [other/repo]}
 `

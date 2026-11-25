@@ -50,8 +50,10 @@ func TestValidateReportsRoutingProblems(t *testing.T) {
 func TestValidateIgnoresATableThatServesAnotherRepo(t *testing.T) {
 	craftFixtureElsewhere(t)
 	// The file is the pinned one its sibling tests use, which the release-1
-	// rules serve whole: the coder's model is the fixture's DeepSeek one, which
-	// no entry of the elsewhere table matches.
+	// rules serve whole. No model its crafts resolve to — the fixture's DeepSeek
+	// one, claude-opus-4-1 or claude-sonnet-5-5 — is matched by the elsewhere
+	// table either, so a reading that judged this file by that table would
+	// report every one of them unrouted (R22) and the arm would fail.
 	testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": validateCraftPinnedYAML})
 	out, errOut, err := execute(t, "validate", "--offline", "fugaro.yaml")
 	if ExitCode(err) != ExitOK {
