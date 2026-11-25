@@ -65,14 +65,24 @@ const vmIdentityFixture = "fixture-vm-identity-token-in-full-format-not-a-creden
 //     which is what a Batch VM's metadata server serves.
 func onBatch(t *testing.T, b *bk) {
 	t.Helper()
-	meta := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	onBatchMeta(t, b, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("format") == "full" {
 			_, _ = io.WriteString(w, vmIdentityFixture)
 			return
 		}
 		_, _ = io.WriteString(w, beatIDToken)
-	}))
-	t.Cleanup(meta.Close)
+	})
+}
+
+// onBatchMeta is onBatch with the metadata stand-in's own answer: a test that
+// needs the VM identity read to fail -- the attestation arm of claimCallDetail
+// -- answers the full-format read with a refusal and the job's own ID token
+// read as usual, which is the state of a run on a VM whose metadata server will
+// not serve its identity.
+func onBatchMeta(t *testing.T, b *bk, meta http.HandlerFunc) {
+	t.Helper()
+	srv := httptest.NewServer(meta)
+	t.Cleanup(srv.Close)
 	b.deps.Local = false
 	b.deps.Project = "aurora"
 	b.deps.Execution = "projects/aurora-fp/locations/europe-west1/jobs/" + batch.JobID(repoSlug, "app", runID)
@@ -81,7 +91,7 @@ func onBatch(t *testing.T, b *bk) {
 		backend.BackendEnv+"="+backend.CloudBatch,
 		backend.DeployedJobEnv+"="+gcp.JobName(repoSlug, gcp.WorkflowVariant("app", "")),
 		"BATCH_TASK_INDEX=0", "BATCH_TASK_COUNT=1",
-		runner.MetadataHostEnv+"="+strings.TrimPrefix(meta.URL, "http://"))
+		runner.MetadataHostEnv+"="+strings.TrimPrefix(srv.URL, "http://"))
 }
 
 // TestRunWithNoTicketStops: a Batch task carries the identity ticket its
@@ -393,6 +403,132 @@ func TestTheTicketIsRegisteredBeforeBootstrap(t *testing.T) {
 	if !slices.Contains(atStart, ticketFixture) {
 		t.Fatalf("the run started with a ticket in its environment that the redactor did not know: %v", atStart)
 	}
+}
+
+// TestTheBatchClaimPathIsPinned is the mutation-pinning test BR4's review left
+// open: the claim path of a Batch run is one sequence -- this VM's attestation
+// is read and sent, the launcher's ticket is presented, the service's answer is
+// stored as the run's identity, and a refusal or an unreadable VM identity
+// stops the run -- and each step is pinned here, so a change that quietly
+// breaks one is a failing test and not a run that spends with no identity.
+//
+// Each subtest names the mutation it fails on, run and restored:
+//
+//   - the attestation is not sent (batchAttestation returns ""): the claim's
+//     body carries no attestation, and the first subtest fails on it;
+//   - the ticket is read from the wrong place (the identitywire.TicketEnv
+//     lookup in BackendFromEnv renamed): the job carries a ticket the runner
+//     does not read, so the run stops at the no-ticket refusal and the first
+//     subtest fails on the run it never got;
+//   - a refused claim is treated as success (the ans.status != StatusOK arm of
+//     claimBudgetIdentity dropped): the second subtest's run goes on with no
+//     identity, and fails on the halt and the sentence it never wrote;
+//   - the claim's result is not stored on the run (budgetClient's c.custom =
+//     custom dropped): the session opens on no token, and the first subtest
+//     fails on the bootstrap refusal the run ends with;
+//   - the VM identity cannot be read (the errNoAttestation arm of
+//     claimCallDetail disabled): the third subtest fails on the sentence it
+//     gets -- the unreachable service's, not this VM's -- and that arm, the
+//     finding this test was deferred for, is pinned by it.
+func TestTheBatchClaimPathIsPinned(t *testing.T) {
+	t.Run("the attestation is sent and the run lives on the claim", func(t *testing.T) {
+		b := newCascade(t, cascadeConfig(t), &cascadeService{})
+		onBatch(t, b)
+		claimed(t, b)
+		// The ticket the run presents is the one its job's environment
+		// carries: the Backend is built the way a job's is (BackendFromEnv),
+		// so a runner that looked for it anywhere else -- another variable,
+		// the sealed object's marker -- has none to present.
+		be, err := runner.BackendFromEnv(envOf(map[string]string{
+			identitywire.TicketEnv:   ticketFixture,
+			runner.RTDBURLEnv:        "http://127.0.0.1:9000",
+			runner.FirebaseAPIKeyEnv: "AIzaSyFakeWebApiKeyForTests000000000",
+		}), true)
+		if err != nil {
+			t.Fatalf("a job environment carrying a ticket did not parse: %v", err)
+		}
+		b.deps.Backend.Ticket = be.Ticket
+		answerClaim(t, b, func(int, http.Header, []byte) anthropicfake.Reply {
+			return claimAnswer(t, b.mintToken(repoSlug, runID, time.Now()))
+		})
+
+		rec, err := b.run(t, implement("feature"), review("ship", 0))
+		if err != nil || rec == nil || rec.Status != runstore.StatusSucceeded {
+			t.Fatalf("a Batch run that claims its identity must finish on it: rec = %+v, err = %v", rec, err)
+		}
+		calls := claimCalls(t, b.fake)
+		if len(calls) != 1 {
+			t.Fatalf("the service was asked to claim %d times, want the run's one", len(calls))
+		}
+		claim := claimOf(t, calls[0])
+		if claim.Attestation != vmIdentityFixture {
+			t.Errorf("the claim's attestation is %q, want this VM's identity token in full format: a Batch claim that sends none is not this run's", claim.Attestation)
+		}
+		if claim.Ticket != ticketFixture {
+			t.Errorf("the claim presents the ticket %q, want the one the job's environment carries", claim.Ticket)
+		}
+	})
+
+	t.Run("a refused claim stops the run", func(t *testing.T) {
+		b := newCascade(t, cascadeConfig(t), &cascadeService{})
+		onBatch(t, b)
+		claimed(t, b)
+		body, err := json.Marshal(credsvc.WireError{Error: identitywire.RefusalIdentityRefused, Message: "the ticket was already claimed"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		answerClaim(t, b, func(int, http.Header, []byte) anthropicfake.Reply {
+			return anthropicfake.Reply{Status: http.StatusConflict, Header: jsonHeader(), Body: string(body)}
+		})
+
+		rec, err := b.run(t, implement("feature"), review("ship", 0))
+		if err != nil {
+			t.Fatalf("a halt is an outcome and not an error: %v", err)
+		}
+		if rec == nil || rec.Status != runstore.StatusHalted || rec.Halt == nil || rec.Halt.Reason != runstore.HaltBudgetUnavailable {
+			t.Fatalf("a refused claim must halt the run, not be read as an identity: %+v", rec)
+		}
+		if !strings.Contains(rec.Halt.Detail, "already claimed") {
+			t.Errorf("the halt's detail does not say the claim was refused: %q", rec.Halt.Detail)
+		}
+		if len(b.agent.calls) != 0 {
+			t.Errorf("%d stages ran on a run whose claim was refused", len(b.agent.calls))
+		}
+	})
+
+	t.Run("a VM identity that cannot be read stops the run", func(t *testing.T) {
+		b := newCascade(t, cascadeConfig(t), &cascadeService{})
+		onBatchMeta(t, b, func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get("format") == "full" {
+				http.Error(w, "no identity for you", http.StatusForbidden)
+				return
+			}
+			_, _ = io.WriteString(w, beatIDToken)
+		})
+		claimed(t, b)
+		answerClaim(t, b, func(int, http.Header, []byte) anthropicfake.Reply {
+			return claimAnswer(t, b.mintToken(repoSlug, runID, time.Now()))
+		})
+
+		rec, err := b.run(t, implement("feature"), review("ship", 0))
+		if err != nil {
+			t.Fatalf("a halt is an outcome and not an error: %v", err)
+		}
+		if rec == nil || rec.Status != runstore.StatusHalted || rec.Halt == nil {
+			t.Fatalf("a run whose VM identity cannot be read must halt: %+v", rec)
+		}
+		for _, want := range []string{"identity of the VM this run is on could not be read", "fugaro run"} {
+			if !strings.Contains(rec.Halt.Detail, want) {
+				t.Errorf("the halt's detail does not name %q: %q", want, rec.Halt.Detail)
+			}
+		}
+		if strings.Contains(rec.Halt.Detail, "could not be reached") {
+			t.Errorf("a VM identity that could not be read got the unreachable service's sentence: %q", rec.Halt.Detail)
+		}
+		if got := len(claimCalls(t, b.fake)); got != 0 {
+			t.Errorf("the service saw %d claim calls, want none: the claim is never sent without this VM's identity", got)
+		}
+	})
 }
 
 // claimOf reads one claim call's body as the route's own request. A body that

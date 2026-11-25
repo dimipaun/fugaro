@@ -771,9 +771,19 @@ func validateCascadeFollowup(a Agent, f Followup) []Problem {
 // CheckCascadeGateway refuses a cascade workflow whose budget leaves the
 // gateway off. A cascade run has no credential of its own — the gateway is
 // what carries its calls to the credentials service and accounts for them
-// (D143) — so the mode has to be observe or enforce, and a mode that is off
-// (or unset, which the runner reads the same way) is refused, naming the mode
-// it found.
+// (D143) — so the mode has to be one this release accounts under, and a mode
+// that is not is refused, naming what it read.
+//
+// An unset mode is not one of those any more (AB2, D3010): a mode left unwritten
+// is observe, and observe carries a cascade run's calls exactly as enforce does
+// (runner.GatewayOn answers true for a cascade run in every mode, AB1b), which
+// is why the empty string passes here and no longer earns the sentence it did
+// while an absent mode and off were the same to the runner. The word that was a
+// mode until this release is refused where a document is read — the decoders of
+// a repository's file and of the policy node, both asking policy.ValidMode — and
+// the node's migration is the only reader that tolerates it (AB8a), so a word
+// reaching this rule is a word some caller read around the doors: refused rather
+// than left to a job whose first call would halt.
 //
 // mode is the run's *effective* budget mode (policy.Merge over the project's
 // ceiling and the file), not the file's own, and that is why this rule is a
@@ -791,15 +801,12 @@ func validateCascadeFollowup(a Agent, f Followup) []Problem {
 // before the claim is taken and before anything is written, rather than
 // letting the job fail on it.
 func CheckCascadeGateway(a Agent, mode string) []Problem {
-	if a.Auth != AuthCascade || mode == policy.ModeObserve || mode == policy.ModeEnforce {
+	if a.Auth != AuthCascade || mode == "" || policy.ValidMode(mode) {
 		return nil
 	}
-	found := fmt.Sprintf("budget.mode is %s", mode)
-	switch mode {
-	case "":
-		found = "budget.mode is not set (an absent mode and off are the same to the runner)"
-	case policy.ModeOff:
-		found = "budget.mode is off"
+	found := fmt.Sprintf("budget.mode is %q", mode)
+	if policy.Mode(mode).Removed() {
+		found = "budget.mode: " + policy.ModeOffRefusal
 	}
 	return []Problem{{Path: "agent.auth", Message: fmt.Sprintf(
 		"%s needs the budget gateway: %s, and the gateway is what carries a cascade run's calls and accounts for them (a cascade run has no credential of its own). Set budget.mode to %s or %s — in the project config, or in fugaro.yaml",
@@ -1047,8 +1054,23 @@ func validateBudget(b *Budget) []Problem {
 	add := func(path, format string, args ...any) {
 		ps = append(ps, Problem{Path: path, Message: fmt.Sprintf(format, args...)})
 	}
+	// The word that was a budget mode is refused at once, with the one text
+	// every door refuses it with (D3022, policy.ModeOffRefusal): a repository
+	// committed it, so the file has to be fixed before its runs start, and the
+	// sentence says what to write instead. An unset mode is not refused — it
+	// is the observe every layer reads it as (R3, D3010) — and any other word
+	// is refused as the mode it is not.
+	//
+	// The one reader that does not stop here is the update that offers the
+	// line's removal: it reads the bytes as the file its own offer leaves
+	// behind, before this validation is asked anything at all
+	// (fugaroYAMLWithoutRemovedMode, AB8b, F22).
 	if b.Mode != "" && !policy.ValidMode(b.Mode) {
-		add("budget.mode", "%q must be off, observe or enforce", b.Mode)
+		if policy.Mode(b.Mode).Removed() {
+			ps = append(ps, Problem{Path: "budget.mode", Message: policy.ModeOffRefusal})
+		} else {
+			add("budget.mode", "%q must be observe or enforce; leave the key out for observe", b.Mode)
+		}
 	}
 	if m, err := pricing.FromUSD(b.PerRunUSD); err != nil {
 		add("budget.per_run_usd", "%v: it must be a number from 0 to %d US dollars", b.PerRunUSD, pricing.MaxUSD)

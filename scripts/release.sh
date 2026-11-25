@@ -96,7 +96,9 @@
 # when that commit has none (`gh workflow run ci`, with `-f full=true` and `-f
 # live_scripts=always` when main's own ci.yml declares those inputs, R12): CI
 # starts on no commit by itself, and the release gate reads the checks of a full
-# run. A dispatch runs a workflow at its ref's tip, so when main has moved past the
+# run. The gate dispatches that run itself for a commit with no `ci` run at all,
+# and refuses at once -- naming the command -- for a commit no ref it knows points
+# at (scripts/release-gate.sh). A dispatch runs a workflow at its ref's tip, so when main has moved past the
 # merge the run lands elsewhere and the release is refused, naming the commit and a
 # command that puts a full run on it.
 #
@@ -1357,7 +1359,14 @@ fi
 # ordinary path (a just-merged PR); --at's commit, whose green checks are the
 # premise of the flag and which the gate refuses outright when it carries no
 # full ci run of its own, naming the command that puts one there -- up to
-# --timeout-minutes; a failed check fails at once.
+# --timeout-minutes; a failed check fails at once. A commit with no ci run at
+# all -- main's tip has one only when a release or the nightly dispatched it --
+# gets one dispatched by the gate itself, which is the difference between a wait
+# that can end and a --dry-run that sat until its timeout.
+#
+# The dry run reads the checks once and dispatches nothing (GATE_DRY_RUN): it
+# cannot put a run on main to verify, and a precondition it cannot verify is
+# reported as the line the real run would take rather than waited out.
 gate_sha=$local_main
 if [ -n "$at" ]; then
   gate_sha=$at_sha
@@ -1365,7 +1374,11 @@ if [ -n "$at" ]; then
 else
   echo "checking that main's checks are green at $local_main (waiting up to ${timeout_minutes}m for any still running)..."
 fi
-GITHUB_SHA="$gate_sha" GITHUB_REPOSITORY="$repo" GATE_WAIT_SECONDS="$timeout_seconds" GATE_POLL_SECONDS="$poll_seconds" scripts/release-gate.sh "$tag"
+if [ "$dry_run" = 1 ]; then
+  GITHUB_SHA="$gate_sha" GITHUB_REPOSITORY="$repo" GATE_DRY_RUN=1 GATE_WAIT_SECONDS="$timeout_seconds" GATE_POLL_SECONDS="$poll_seconds" scripts/release-gate.sh "$tag"
+else
+  GITHUB_SHA="$gate_sha" GITHUB_REPOSITORY="$repo" GATE_WAIT_SECONDS="$timeout_seconds" GATE_POLL_SECONDS="$poll_seconds" scripts/release-gate.sh "$tag"
+fi
 
 # plugin_budget_check applies the version bump to a scratch worktree of the
 # tree being released and runs the plugin tests there. The bump rewrites two

@@ -571,6 +571,17 @@ var jsonCases = map[string]jsonCase{
 			return []string{"run", "--repo", "acme/app", "--run-id", "20260927-100000-abcd", "Add a feature"}
 		},
 	},
+	"routing ls": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			f := jsonCloud(t)
+			// The block is written so the document carries the table as well
+			// as the model rows: an empty one would leave the entry and chain
+			// branches of the schema unchecked by this pin.
+			f.appendConfig(t, "model_routing:\n  - match: \"claude-*\"\n    chain:\n      - {kind: anthropic}\n")
+			return []string{"routing", "ls"}
+		},
+	},
 	"runs digest": {
 		reads: true,
 		run: func(t *testing.T) []string {

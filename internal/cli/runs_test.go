@@ -71,9 +71,9 @@ func TestLsFiltersAndTotals(t *testing.T) {
 	f := newCloudFixture(t)
 	f.run.Project, f.run.Region = "proj-1234", "us-east5" // where the fixture's backend lists
 	today := time.Now().UTC().Format("20060102")
-	e1 := seedRun(t, f, today+"-090000-aaaa", "b1", "someone@example.com", true)
-	seedRun(t, f, today+"-091000-bbbb", "b1", "other@example.com", true)
-	seedRun(t, f, today+"-092000-cccc", "b2", "someone@example.com", false)
+	e1 := seedRun(t, f, today+"-000001-aaaa", "b1", "someone@example.com", true)
+	seedRun(t, f, today+"-000002-bbbb", "b1", "other@example.com", true)
+	seedRun(t, f, today+"-000003-cccc", "b2", "someone@example.com", false)
 	seedRun(t, f, "20200101-000000-dddd", "b1", "someone@example.com", false) // outside --since // runid-guard:allow
 	f.run.SetState(e1, backend.StateRunning)
 
@@ -150,7 +150,7 @@ func lsJSON(t *testing.T, args ...string) (lsOut, string) {
 func TestLsFollowsTheRecordsExecution(t *testing.T) {
 	f := newCloudFixture(t)
 	f.run.Project, f.run.Region = "proj-1234", "us-east5"
-	id := time.Now().UTC().Format("20060102") + "-090000-aaaa"
+	id := time.Now().UTC().Format("20060102") + "-000001-aaaa"
 	dup := seedRun(t, f, id, "", "someone@example.com", true)
 	owner := startRunExecution(f, gcp.JobName(appSlug, "web"), appSlug, id)
 	f.run.SetState(dup, backend.StateSucceeded)
@@ -172,7 +172,7 @@ func TestLsFollowsTheRecordsExecution(t *testing.T) {
 // not a failure of the listing: one bad run must not hide the others.
 func TestLsUnparseableExecutionWarns(t *testing.T) {
 	f := newCloudFixture(t)
-	id := time.Now().UTC().Format("20060102") + "-090000-aaaa"
+	id := time.Now().UTC().Format("20060102") + "-000001-aaaa"
 	seedRun(t, f, id, "", "someone@example.com", false)
 	ctx := context.Background()
 	b, _ := blob.OpenBucket(ctx, f.bucket)
@@ -324,7 +324,7 @@ func wantOverrideRatio(t *testing.T, list, override float64) {
 
 func TestLsUsesPriceOverride(t *testing.T) {
 	f := newCloudFixture(t)
-	seedFinishedRun(t, f, time.Now().UTC().Format("20060102")+"-090000-aaaa")
+	seedFinishedRun(t, f, time.Now().UTC().Format("20060102")+"-000001-aaaa")
 	compute := func() float64 {
 		out, _, err := execute(t, "runs", "ls", "--json")
 		if err != nil {
@@ -1911,6 +1911,10 @@ type lsWidthDriver struct {
 	reached   bool
 	width     chan struct{}
 	widthOnce sync.Once
+	// lists counts the listings this driver was walked with. What a listing
+	// costs a window is the objects it walks, so a read that is told which
+	// runs to read (the run index's) walks none, and this is what says so.
+	lists int
 }
 
 // errNoObject is the driver's missing object, reported as gcerrors.NotFound:
@@ -1939,6 +1943,13 @@ func (d *lsWidthDriver) keysRead() []string {
 	return slices.Clone(d.readKeys)
 }
 
+// listingCount is how many listings the driver was walked with.
+func (d *lsWidthDriver) listingCount() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.lists
+}
+
 // Attributes answers the existence probes a listing makes on an object it does
 // not open (runstore's cancel marker, asked for a run that never launched): the
 // driver holds bodies and no metadata, so an object it holds answers with its
@@ -1958,6 +1969,7 @@ func (d *lsWidthDriver) Attributes(_ context.Context, key string) (*driver.Attri
 // prefix, one per run, so ls sees the runs the test seeded.
 func (d *lsWidthDriver) ListPaged(_ context.Context, opts *driver.ListOptions) (*driver.ListPage, error) {
 	d.mu.Lock()
+	d.lists++
 	keys := make([]string, 0, len(d.objects))
 	for k := range d.objects {
 		keys = append(keys, k)
@@ -2821,6 +2833,7 @@ var terminalStatusNames = []string{
 	"runstore.StatusSucceeded", "runstore.StatusFailed",
 	"runstore.StatusUnreviewed", "runstore.StatusInfraError",
 	"runstore.StatusCancelled", "runstore.StatusHalted",
+	"runstore.StatusPaused",
 }
 
 // TestRunsListsReadTheStatusWord guards the two list surfaces that read a

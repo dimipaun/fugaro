@@ -38,7 +38,7 @@ by, with `data-*` where the class is shared and the attribute is what says which
 | `repos` | `live-repo` |
 | `runs` | `live-runs` |
 | `drift` | not drawn — the CLI's own price-drift alarm (R6, F30); the console's decoder does not read the key at all, so no screen can |
-| `finished` | not drawn — decoded but never read: the review inbox is fed by `ready[]` alone, and the rest of `finished[]` is a history this pane deliberately is not |
+| `finished` | `live-paused` — read for the runs a pause suspended (model-credentials-routing plan **VS3**): the section draws those rows, and no other row of `finished[]`; the review inbox is still fed by `ready[]` alone, and the rest of `finished[]` is a history this pane deliberately is not |
 | `ready` | `live-review` |
 | `queued_note` | `live-note` |
 | `connection.state` | `live-connection` (and its `data-state`) |
@@ -115,24 +115,24 @@ by, with `data-*` where the class is shared and the attribute is what says which
 | `drift[].table_hi_usd` | not drawn — `drift[]` is not decoded |
 | `drift[].factor` | not drawn — `drift[]` is not decoded |
 | `drift[].direction` | not drawn — `drift[]` is not decoded |
-| `finished[].run` | not drawn — `finished[]` is not read; a ready run's door is `live-review-run-id` |
-| `finished[].slug` | not drawn — `finished[]` is not read |
-| `finished[].repo` | not drawn — `finished[]` is not read; a ready run's repository is `live-review-repo` |
-| `finished[].title` | not drawn — `finished[]` is not read; a ready run's title is `live-review-run-title` |
-| `finished[].status` | not drawn — decoded and never read: whether a finished run is ready is the CLI's own conclusion, arrived as `ready[]` |
-| `finished[].outcome` | not drawn — decoded and never read, for the reason `finished[].status` gives |
-| `finished[].failed` | not drawn — decoded and never read |
-| `finished[].pr_url` | not drawn — `finished[]` is not read; a ready run's pull request is `live-review-url` |
-| `finished[].pr_number` | not drawn — `finished[]` is not read; a ready run's number is `live-review-number` |
-| `finished[].age_seconds` | not drawn — `finished[]` is not read; a ready run's age is `live-review-age` |
+| `finished[].run` | `live-paused-run-id` (with `data-run-id`, the row's door) — a ready run's door is `live-review-run-id` |
+| `finished[].slug` | not drawn — the paused row draws the repository's name (`finished[].repo`) and never its slug |
+| `finished[].repo` | `live-paused-repo` — a ready run's repository is `live-review-repo` |
+| `finished[].title` | `live-paused-run-title` — a ready run's title is `live-review-run-title` |
+| `finished[].status` | `live-paused-state` — it **selects** the paused rows (`paused`) as well as drawing the word; a finished run that is not paused has no row on this screen, and whether one is *ready* is still the CLI's own conclusion, arrived as `ready[]` |
+| `finished[].outcome` | not drawn — decoded and never read: a paused row draws the pause, not the outcome the run ended with |
+| `finished[].failed` | not drawn — decoded and never read, for the reason `finished[].outcome` gives |
+| `finished[].pr_url` | not drawn — a paused row draws no pull request; a ready run's is `live-review-url` |
+| `finished[].pr_number` | not drawn — the number a reader sees on this pane is a ready run's (`live-review-number`) |
+| `finished[].age_seconds` | not drawn — a paused row draws no age; a ready run's is `live-review-age` |
 | `finished[].job` | not drawn — the decoder (`FinishedView`) does not read the key |
 | `finished[].profile` | not drawn — the decoder does not read the key |
 | `finished[].provider` | not drawn — the decoder does not read the key |
 | `finished[].account` | not drawn — the decoder does not read the key |
 | `finished[].launched_by` | not drawn — the decoder does not read the key |
 | `finished[].plan_task` | not drawn — the decoder does not read the key |
-| `finished[].resume_at` | not drawn — the decoder does not read the key |
-| `finished[].resumed_by` | not drawn — the decoder does not read the key |
+| `finished[].resume_at` | `live-paused-resume-at` (or the `n/a` mark and its reason in `title`, when the row carries none) |
+| `finished[].resumed_by` | `live-paused-by-id` (with `data-run-id`, the door onto the run that resumed the pause; the `n/a` mark and no attribute when the row carries none) |
 | `ready[].run` | `live-review-run-id` (with `data-run-id`) |
 | `ready[].slug` | not drawn — the row keeps the repository's display name (`ready[].repo`) and not the slug |
 | `ready[].repo` | `live-review-repo` |
@@ -160,13 +160,15 @@ candidate for a task by amendment rather than something this table lets pass.
 
 1. **Not decoded at all** — the CLI writes it and the console never reads the key: the whole of
    `drift[]`; `total.runs` and `total.run_hours`; `runs[]`'s `mode`, `from`, `source`, `job`,
-   `profile`, `provider`, `account`, `plan_task`, `credential` and `waiting_until`; `finished[]` and
-   `ready[]`'s `job`, `profile`, `provider`, `account`, `launched_by`, `plan_task`, `resume_at` and
-   `resumed_by`. A screen that wants one of these needs the decoder first.
+   `profile`, `provider`, `account`, `plan_task`, `credential` and `waiting_until`; and `ready[]`'s
+   `job`, `profile`, `provider`, `account`, `launched_by`, `plan_task`, `resume_at` and `resumed_by`.
+   A screen that wants one of these needs the decoder first. (A **paused** row's `resume_at` and
+   `resumed_by` are no longer in this kind: VS3's section is why the decoder reads them on
+   `finished[]` at all — `ready[]`'s stay unread, since a ready run is not a pause.)
 2. **Decoded and never drawn** — the console reads it and no cell shows it: `runs[]`'s `verify`,
    `recipe`, `workflow`, `requested_by`, `halted`, `repo` and `pr_number`; `repos[].spent_usd` and
-   `repos[].leased_usd`; `total.burn.fast`; and, on both finished lists, `slug`, `status`, `outcome`
-   and `failed`.
+   `repos[].leased_usd`; `total.burn.fast`; `finished[]`'s `slug`, `outcome` and `failed`; and
+   `ready[]`'s `slug`, `status`, `outcome` and `failed`.
 3. **Drawn only through another field** — the value is not a cell of its own: `now` (the histories'
    stamps), `runs[].notional` (the `~$` on the spent reading), and `total.burn.known` /
    `repos[].burn.known` (the choice between a reading and `n/a`).

@@ -109,16 +109,15 @@ type WorkspaceCredentials struct {
 	// tolerated so a node a newer Fugaro wrote does not brick an older reader
 	// (P8).
 	//
-	// **Nothing refuses them yet, and that is stated rather than implied.**
-	// This node has no writer in the tree: WorkspaceCredentialsNode is the
-	// encoder and it holds the value to Validate alone, which never looks at
-	// this list, so a caller that decoded a node and re-encoded it would drop
-	// these keys silently. The workspace's own record has the same field AND a
-	// call site that refuses (internal/cli/update_workspace.go's stage, and the
-	// policy node's migration, refuse a rewrite that would drop keys the binary
-	// cannot read) — the list is what such a writer has to read, and the publish
-	// path this node gets is where that refusal belongs, because dropping a key
-	// nobody modelled and tolerating it look the same in the node afterwards.
+	// The list is what a writer has to read, and the node has one:
+	// WorkspaceCredentialsNode is the encoder and it holds the value to
+	// Validate alone, which never looks at this list, so a caller that decoded
+	// a node and re-encoded it would drop these keys silently. The publish stage
+	// refuses that instead — internal/cli/update_workspace.go reads this list
+	// off the decoded node and refuses the rewrite, naming the keys and
+	// `fugaro update`, because dropping a key nobody modelled and tolerating it
+	// look the same in the node afterwards. (The workspace's own record and the
+	// policy node's migration refuse a rewrite the same way.)
 	UnknownKeys []string
 }
 
