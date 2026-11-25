@@ -1,0 +1,17 @@
+{
+  "expo": {
+    "name": "Fugaro Spike 733",
+    "slug": "fugaro-spike-733",
+    "version": "0.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "scheme": "fugarospike733",
+    "plugins": [
+      "expo-secure-store"
+    ],
+    "ios": {
+      "supportsTablet": false
+    },
+    "extra": {}
+  }
+}

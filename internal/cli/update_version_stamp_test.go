@@ -318,6 +318,35 @@ func TestStampStageRefusesAMalformedStamp(t *testing.T) {
 	}
 }
 
+// TestStampStageFailsOpenOnANodeItCannotRead: the other half of the read
+// failure rule (spec, "Read failures fail open", D3264). A database this run
+// cannot reach at all is a fence this run cannot read, and the run goes on with
+// one line — the stamp is a fence and not a boundary, and the one command that
+// brings the installation forward must not stop on a database blip. The node is
+// left exactly where it is, and the step is one the next update owes.
+func TestStampStageFailsOpenOnANodeItCannotRead(t *testing.T) {
+	r, db := stampRig(t)
+	publishedSeam(t, true)
+	db.RefusePath("required_cli", 503, "UNAVAILABLE", "", "down")
+	e := stampEngine(t, r, &initOptions{door: updateDoor.name, yes: true})
+	st, err := checkStamp(t, e)
+	if err != nil {
+		t.Fatalf("a node that could not be read failed the run: %v", err)
+	}
+	if st.State != initflow.Skipped || !st.Undone {
+		t.Fatalf("Check = %+v, want skipped and owed: the stamp is a step the next update has to finish", st)
+	}
+	if !strings.Contains(st.Detail, "could not be read") {
+		t.Errorf("the line does not say the node could not be read: %q", st.Detail)
+	}
+	if strings.Contains(st.Detail, "503") || strings.Contains(st.Detail, "http") {
+		t.Errorf("the line carries the database's own error, which belongs in the run's log: %q", st.Detail)
+	}
+	if got := stampNodeWrites(db); got != 0 {
+		t.Errorf("the node was written %d times though this run could not read it", got)
+	}
+}
+
 // TestFailedPolicyStageLeavesTheStampUnchanged: the stamp stage sits behind the
 // policy one in the run's order, and a run that stops at the policy stage never
 // reaches it — an installation whose published node could not be moved is not
@@ -506,29 +535,3 @@ func TestStampStageSkipsAnUnadoptedDatabase(t *testing.T) {
 	}
 }
 
-// TestStampStageFailsOpenWhenTheReadFails: a node the run cannot read is not a
-// failure of the one command that brings the installation forward (spec, "Read
-// failures fail open"; D3264). The door's own guard makes the same read and
-// warns on stderr; the stage says the same thing in its own line, leaves the
-// node exactly where it is, and reports the raise as still owed, so the next
-// update takes it. A malformed node is the one read that refuses, and the test
-// beside this one pins that.
-func TestStampStageFailsOpenWhenTheReadFails(t *testing.T) {
-	r, db := stampRig(t)
-	publishedSeam(t, true)
-	db.RefusePath("required_cli", 503, "UNAVAILABLE", "", "down")
-	e := stampEngine(t, r, &initOptions{door: updateDoor.name, yes: true})
-	st, err := checkStamp(t, e)
-	if err != nil {
-		t.Fatalf("a node that could not be read failed the stage: %v", err)
-	}
-	if st.State != initflow.Skipped || !st.Undone {
-		t.Fatalf("Check = %+v, want skipped and owed: the stamp is still a step this installation owes", st)
-	}
-	if !strings.Contains(st.Detail, "could not be read") {
-		t.Errorf("the skip does not say the node could not be read: %q", st.Detail)
-	}
-	if db.Value(versionstamp.Path) != nil {
-		t.Error("a node this run could not read was written")
-	}
-}

@@ -35,16 +35,14 @@ func TestSecurityMdStatesTheModelAndItsLimits(t *testing.T) {
 		"followup.trusted",
 		"docs/design/v1.md",
 		"docs/bucket-iam/spec.md",
-		// The budget posture the document now carries (the always-a-budget
-		// plan's AB13 rewrote the section): the gateway is always on, so what a
-		// project with no `budget:` block gets is the mode `observe`, and the
-		// one run with no gateway -- and so no routing check -- is an `oauth`
-		// run the credentials service does not serve.
-		"with no `budget:` block the mode is `observe`",
+		// The gap the release now ships, where the document used to say the
+		// budget mode defaults to off (always-a-budget, F17): the real key
+		// stays out of the agent's environment in every mode.
+		"With no `budget:` block the mode is `observe`, so the caps record rather than stop.",
 		"Vertex has no dollar cap, in any mode.",
 		"roles/storage.objectAdmin",
 		"it can read the token from the runner's `/proc`",
-		"The one run without a gateway",
+		"The one run without a gateway — an `oauth` run the credentials service does not serve — has no routing check at all",
 		// The shared-image key's limit, which the design's C6 text repeats: the
 		// integrity rules keep two repositories from sharing an image built
 		// from two different artifacts, and they are not a boundary between

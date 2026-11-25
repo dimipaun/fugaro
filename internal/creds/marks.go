@@ -33,15 +33,21 @@ const (
 // a node that says available, and one whose mark was cleared are the same
 // credential, and no reader has to tell them apart.
 //
-// The four fields are the whole history a selection needs, and keeping it to
-// four is deliberate. Since is when the credential last entered the state it is
-// in — for an exhaustion, when the exhaustion happened — and it is what
+// The four fields a selection reads are the whole history it needs, and keeping
+// it to four is deliberate. Since is when the credential last entered the state
+// it is in — for an exhaustion, when the exhaustion happened — and it is what
 // "least recently exhausted" orders by (D154) and what D142's window is
 // measured from; it does not move when a probe fails (the credential was not
 // exhausted again, it is the same exhaustion still being held) and it does move
 // on a fresh exhaustion. Until is when the hold lapses. Backoff is the wait in
 // force for a backed-off mark, so a failed probe doubles *it* rather than
 // starting over.
+//
+// It is exactly these four on the wire, and a member beside them would be read
+// by no selection while it stopped every release behind this one: the marks are
+// decoded strictly, so a reader that does not model a member refuses the whole
+// node it is in (readNameTree, decodeStrict). What a credential's last answer
+// reported is therefore recorded in a node of its own (Observation), not here.
 type Mark struct {
 	State   State         `json:"state,omitempty"`
 	Until   time.Time     `json:"until,omitempty"`

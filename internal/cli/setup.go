@@ -929,6 +929,15 @@ func (r *initRun) settleCreation(firstRun bool) error {
 	if o.setupCreates(firstRun) {
 		o.createProject = true
 	}
+	// A creating run's alert is on the account the run links, and this is where
+	// a creation no flag named is settled (takeLinkedBudgetAccount): the door
+	// took the account already where --create-project was explicit, and
+	// checkCreateProject below is what refuses the amount with no account
+	// otherwise — before the project stage, so a run that never had one is told
+	// rather than refused once the project exists.
+	if o.createProject {
+		o.takeLinkedBudgetAccount()
+	}
 	return o.checkCreateProject()
 }
 
