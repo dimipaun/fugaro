@@ -119,11 +119,12 @@ func (r *initRun) retireProjectCopies(ctx context.Context, c *infra.Clients, lc 
 			continue
 		}
 		seen++
-		if !infra.HasMarks(info.Labels, projectCopyMarks(lc.Name, cp.Name)) {
+		alreadyRetired := info.Labels[gcp.LabelRetired] == cp.Name
+		if !alreadyRetired && !infra.HasMarks(info.Labels, projectCopyMarks(lc.Name, cp.Name)) {
 			r.warn(fmt.Sprintf("workflow secret %s: %s is not this installation's project copy (it carries %s), so it was left alone", cp.Name, cp.ID, projectCopyMarks(lc.Name, cp.Name)))
 			continue
 		}
-		if info.Labels[gcp.LabelRetired] != cp.Name {
+		if !alreadyRetired {
 			labels := maps.Clone(info.Labels)
 			delete(labels, gcp.LabelSecret)
 			labels[gcp.LabelRetired] = cp.Name
@@ -134,7 +135,10 @@ func (r *initRun) retireProjectCopies(ctx context.Context, c *infra.Clients, lc 
 			marked++
 		}
 		// Marked, so the state removal below is safe, whatever happens to the
-		// container now.
+		// container now. A copy an EARLIER update already marked is still ours
+		// to delete — it was kept alive then because a job mounted it, or
+		// because the delete failed — which is what makes the delete converge
+		// over the updates an in-flight run spans (G4).
 		retired = append(retired, cp)
 		if why != "" || mounted[cp.ID] {
 			kept++
@@ -147,7 +151,7 @@ func (r *initRun) retireProjectCopies(ctx context.Context, c *infra.Clients, lc 
 		deleted++
 	}
 	if seen > 0 {
-		fmt.Fprintf(r.w, "retired workflow-secret copies: %d marked, %d deleted (%d still mounted by a deployed job)\n", marked, deleted, kept)
+		fmt.Fprintf(r.w, "retired workflow-secret copies: %d marked, %d deleted (%d left alive)\n", marked, deleted, kept)
 	}
 	return retired
 }

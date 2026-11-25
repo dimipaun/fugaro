@@ -1224,7 +1224,7 @@ func jobsReadFailed(ctx context.Context, err error, spec InstallationSpec, job s
 	if job != "" {
 		call = "gcloud run jobs describe " + job + " --project " + spec.Project + " --region " + spec.Region
 	}
-	return fmt.Sprintf("retired workflow-secret copies were marked retired but not deleted: the installation's Cloud Run jobs could not be read (%v). Check by hand with: %s",
+	return fmt.Sprintf("workflow-secret copies were marked retired but not deleted: the Cloud Run jobs could not be read (%v); check with: %s",
 		err, call)
 }
 
