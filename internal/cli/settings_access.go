@@ -58,10 +58,9 @@ import (
 // too.
 // And the writers outside this task that reach the same single write path,
 // `applySettingsEdit`, without asking are the ones whose keys live in the same
-// three files: `fugaro rigor set` (the project layer file, and — since its M3
-// `--layer repo` write — a repository's own fugaro.yaml, which is the surface
-// `fugaro workflow add|rm` reaches ungated beside it); `fugaro workflow
-// add|rm` (a repository's fugaro.yaml); and, in this machine's own project
+// three files: `fugaro rigor set` (the project layer file, which is the one
+// layer its keys have since R15); `fugaro workflow add|rm` (a repository's
+// fugaro.yaml); and, in this machine's own project
 // config, `project repos set`, `project routing set`, `project profile
 // set|add|rm`, `models add|rm`, `rigor floor`, `accounts …`, `secrets …`,
 // `workspace` and `project clone-url`. `fugaro models use` is not one of them:

@@ -28,6 +28,15 @@
 # leave the working tree dirty, which is what a verify run refuses to mark a pull
 # request ready on.
 /reports/
+# What a CI shard writes into the tree root while it runs `go test`
+# (.github/workflows/ci.yml): the traced run's read trace, and the JSON stream
+# `tee` copies the test output to. Both are the run's own output and in no
+# commit — and internal/ciselect indexes the untracked files a checkout holds,
+# so an unignored one here makes the committed read map a fact about the machine
+# the scan ran on: a root strace.log answers the `*.log` glob a test names, and
+# TestReadMapNamesEveryLiteralPath then reads a path no other checkout has.
+/strace.log
+/test.json
 # A local terraform init or test run in a Terraform root. Set TF_DATA_DIR
 # outside the tree instead: go:embed doesn't read .gitignore, and a
 # .terraform/ under deploy/terraform would put provider binaries in the fugaro

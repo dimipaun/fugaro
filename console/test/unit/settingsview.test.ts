@@ -29,7 +29,11 @@
 //     drawer's, and a sensitive one is never drawn at all (D1111), so nothing
 //     of it may reach the window through a member the contract does not name;
 //   - a view that **showed a different argv from the one built** fails "shows
-//     the argv the builder produced".
+//     the argv the builder produced";
+//   - a view that **invented the file a `repo`-layer edit writes, or read it
+//     from anywhere but the argv** fails "names the file a `repo`-layer edit
+//     writes" (RC80, L12): the target line the window draws is the argv's own
+//     `--repo` word, so the window and the spawn cannot name two files.
 
 import { describe, expect, it } from 'vitest'
 
@@ -106,6 +110,7 @@ const VIEW_MEMBERS: readonly string[] = Object.freeze([
   'oldValue',
   'newValue',
   'layer',
+  'target',
   'wins',
   'sentence',
   'widening',
@@ -114,6 +119,25 @@ const VIEW_MEMBERS: readonly string[] = Object.freeze([
   'defaultButton',
   'tick',
   'confirmNeedsTick',
+])
+
+/** REPO_ARGV is the same write aimed at a **repository's** `fugaro.yaml`
+ * (RC80, L12): `--layer repo` names the document's kind and `--repo
+ * <directory>` names which checkout it is -- the one word of this argv that is
+ * the installation's own directory rather than a fact of the edit. */
+const REPO_ARGV: readonly string[] = Object.freeze([
+  'fugaro',
+  'settings',
+  'set',
+  'budget.per_run_usd',
+  '--layer',
+  'repo',
+  '--repo',
+  '/Users/owner/src/checkout',
+  '--',
+  '12',
+  '--project',
+  'example-project',
 ])
 
 /** inputs is a complete set of view inputs: the dry run and the row above. */
@@ -142,6 +166,7 @@ describe('the settings edit view', () => {
     expect(view.oldValue).toBe('8')
     expect(view.newValue).toBe('12')
     expect(view.layer).toBe('project')
+    expect(view.target).toBe('')
     expect(view.wins).toBe('project')
     expect(view.sentence).toBe('')
     expect(view.widening).toBe(false)
@@ -174,6 +199,31 @@ describe('the settings edit view', () => {
     expect(shadowed.sentence).toBe(SETTINGS_SHADOWED_SENTENCE)
     // The sentence is not a refusal: the edit proceeds and the argv is drawn.
     expect(shadowed.argv).toEqual(ARGV)
+  })
+
+  it('names the file a `repo`-layer edit writes, read out of the argv it is about to spawn', () => {
+    // RC80 (L12): a `--layer repo` argv says *a checkout's `fugaro.yaml`* and
+    // not *which checkout*, and the window the operator confirmed showed no name
+    // for the file -- so the window draws one, read out of the argv's own
+    // `--repo` word rather than from a second value that could disagree with the
+    // write (D1105).
+    const repo = { argv: REPO_ARGV, row: { ...ROW, targetLayer: 'repo' } }
+    expect(viewOf(repo).target).toBe('writes fugaro.yaml in /Users/owner/src/checkout')
+    // Every other layer names no repository, so the line is absent -- and the
+    // word is absent from the argv too, which is why one place decides both.
+    expect(viewOf().target).toBe('')
+    expect(ARGV).not.toContain('--repo')
+    // The scan stops at the terminator: everything behind `--` is the setting's
+    // own value, so a value spelled `--repo` is a value and not this flag.
+    expect(
+      viewOf({ argv: ['fugaro', 'settings', 'set', 'k', '--layer', 'repo', '--', '--repo', '/tmp/elsewhere'] }).target,
+    ).toBe('')
+    // A `repo`-layer plan whose argv carries no `--repo` at all -- which
+    // `argvFor` refuses before an argv exists -- invents no name here either.
+    expect(
+      viewOf({ argv: ['fugaro', 'settings', 'set', 'k', '--layer', 'repo'], row: { ...ROW, targetLayer: 'repo' } })
+        .target,
+    ).toBe('')
   })
 
   it('shapes a widening as two answers: Cancel is the default and Confirm waits for the tick', () => {
