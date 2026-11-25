@@ -150,7 +150,7 @@ func personGrantOverService(ctx context.Context, serviceURL string, req creds.Pe
 	if len(data) > maxSlipAnswerBytes {
 		return creds.PersonGrant{}, errors.New("the workspace's answer to the grant call is larger than a grant's")
 	}
-	ans, err := creds.ParsePersonGrant(data)
+	grant, err := creds.ParsePersonGrant(data)
 	if err != nil {
 		// The strict decode is what keeps the rest of the answer out of this
 		// process: a body carrying a claim secret is refused here rather than
@@ -158,7 +158,7 @@ func personGrantOverService(ctx context.Context, serviceURL string, req creds.Pe
 		// is answered by the claim route alone, to the run the slip names.
 		return creds.PersonGrant{}, errors.New("the workspace's answer to the grant call is not a grant's")
 	}
-	return ans, nil
+	return grant, nil
 }
 
 // runPersonalEnv asks the workspace's service for the grant this run draws on,
@@ -219,14 +219,20 @@ func runPersonalEnv(ctx context.Context, env *cloudEnv, spec *task.Spec, slug, a
 		// launch is the ordinary state of this machine, not a fault of it.
 		return nil
 	}
-	sctx, cancel := context.WithTimeout(ctx, slipGrantTimeout)
-	defer cancel()
-	ans, err := personGrant(sctx, route.Address, creds.PersonGrantRequest{
+	// The request is built in its own statement, as runSlipEnv's is, so that the
+	// name the answer is read under is bound by no expression of internal/creds:
+	// this launcher names the grant's two fields and holds no store of the slip
+	// half, which is the boundary that keeps a slip out of everything but the
+	// service (internal/creds' TestBoundaryAllowsSlipsOnlyViaService).
+	req := creds.PersonGrantRequest{
 		Slug:    slug,
 		Run:     spec.RunID,
 		Account: account,
 		Name:    creds.PersonTokenName,
-	})
+	}
+	sctx, cancel := context.WithTimeout(ctx, slipGrantTimeout)
+	defer cancel()
+	ans, err := personGrant(sctx, route.Address, req)
 	switch {
 	case errors.Is(err, creds.ErrPersonGrantRefused):
 		personalWithout(where, "the workspace refused its grant")
