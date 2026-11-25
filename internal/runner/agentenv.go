@@ -120,13 +120,17 @@ func (r *run) imageEnv(declared, held []string) map[string]string {
 }
 
 // chainServed is C1's fact for this run — gateway.ChainServed — as the pieces
-// that must decide before the gateway's own options exist read it: the agent's
-// environment (agent.EnvSpec.ChainServed) and the account rules that go where it
-// is true (accountWalkApplies, resolveMixedStages). It is this run's model path
-// (serviceModelPath), the predicate gatewayUpstream builds the service's
-// upstream from, so a reader of this fact and the gateway cannot disagree about
-// whether the credentials service serves this run's calls (CS6 spells the same
-// fact for the gateway itself).
+// that must decide before the gateway's own options exist read it: the account
+// rules that go where it is true (accountWalkApplies, resolveMixedStages) and,
+// through the auth the runner passes them, the agent's environment. It is this
+// run's model path (serviceModelPath), the predicate gatewayUpstream builds the
+// service's upstream from, so a reader of this fact and the gateway cannot
+// disagree about whether the credentials service serves this run's calls.
+//
+// The agent's environment reads it as the run's own auth spelling today
+// (servedAuth answers cascade where this is true), and reads it as
+// agent.EnvSpec.ChainServed once CS6 passes it in the EnvSpec literal — the
+// same task that gives the gateway itself the fact (one file, runner.go).
 func (r *run) chainServed() bool { return r.serviceModelPath() }
 
 // resolveMixedStages answers the run's stage accounts: the stages of the one

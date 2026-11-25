@@ -86,6 +86,12 @@ type EnvSpec struct {
 	// service's to attach and never the agent's to hold. False is the release-1
 	// environment of a repository the table does not serve: Auth's own arm, the
 	// token where the gateway does not serve the run (X1 deletes that branch).
+	//
+	// The runner sets it in the same task that gives the gateway the fact (CS6,
+	// one file, runner.go): until then a served run reaches here with Auth
+	// already spelled cascade (the runner's servedAuth), which builds the same
+	// environment, and this field is the name the fact is passed under rather
+	// than a second path.
 	ChainServed bool
 	// Docker is whether this run's workflow asked for `docker: true`
 	// (design compute-backend.md §4.2): the one fact that lets DOCKER_HOST

@@ -14,9 +14,12 @@ package agent
 //     oauth arm's refusal of a gateway.
 //
 // The fact is the option's own name (C1) rather than a runner path: nothing in
-// this package knows how a run reached its model path (the plan's ordering edge
-// CS7 → CS6 is joined by the contract), and CS6 is what spells the same fact for
-// the gateway itself.
+// this package knows how a run reached its model path. The runner passes it in
+// the EnvSpec literal in the task that gives the gateway itself the same fact
+// (CS6 — one file, runner.go, which the plan's shared-files table reserves for
+// CS6 and PR2); until then a served run reaches BuildEnv with Auth already
+// spelled cascade (the runner's servedAuth), which builds the environment this
+// file pins.
 
 import (
 	"slices"
