@@ -627,14 +627,17 @@ func TestProviderReviewerSkipsTheFirstLine(t *testing.T) {
 }
 
 // Provider models are real dollars and observe never refuses a call, so a
-// provider model is refused at bootstrap in observe (and off) mode, naming the
-// rule and the command to change the mode; enforce runs, and a Claude-only run
+// provider model is refused at bootstrap in every mode but enforce — the same
+// one sentence whether the run's job names observe, names nothing at all (an
+// unset mode is observe, R3) or still carries the word the vocabulary dropped,
+// which is read as observe and is no state of its own (AB2, D3009): naming the
+// rule and the command to change the mode. enforce runs, and a Claude-only run
 // is fine in observe.
 func TestProviderModelNeedsEnforce(t *testing.T) {
 	g := providerRun(t, providerPinned(t), "observe", "", nil, "acme/app")
 	refusedBeforeAnyCall(t, g, "budget.mode enforce", "fugaro budget set --global --mode enforce", "deepseek/deepseek-v4-flash")
 	g = providerRun(t, providerPinned(t), "off", "", nil, "acme/app")
-	refusedBeforeAnyCall(t, g, "budget gateway", "budget.mode to enforce")
+	refusedBeforeAnyCall(t, g, "budget.mode enforce", "fugaro budget set --global --mode enforce", "deepseek/deepseek-v4-flash")
 	use := pricing.Usage{Input: 1000, Output: 500}
 	g = providerRun(t, providerPinned(t), "enforce", "5", []anthropicfake.Reply{anthropicfake.Compat{}.MessageOK(deepseek, use)}, "acme/app")
 	var status int
@@ -763,13 +766,6 @@ func TestBackgroundDefaultsToCoder(t *testing.T) {
 	if rec, err := g.run(t); err == nil || !strings.Contains(rec.Reason, "agent.models.background") {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
-}
-
-// TestProviderModelNeedsTheGateway: without a budget there is no gateway, and
-// a call on a provider model would go to Anthropic: refused, before any call.
-func TestProviderModelNeedsTheGateway(t *testing.T) {
-	g := providerRun(t, providerPinned(t), "off", "", nil, "acme/app")
-	refusedBeforeAnyCall(t, g, "gateway", "budget.mode")
 }
 
 // TestMissingProviderKeyIsInfraError: the key is not mounted, so the run does

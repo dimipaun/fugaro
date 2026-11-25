@@ -21,18 +21,6 @@ import (
 // to every side at once — which is what this test is for: it fails at the
 // contract, before a reader of another release meets the shape it cannot read.
 func TestPauseShapesAreStable(t *testing.T) {
-	t.Run("status", func(t *testing.T) {
-		if StatusPaused != "paused" {
-			t.Errorf("StatusPaused is %q, want %q: the word is the plan's and every reader of a status spells it that way", StatusPaused, "paused")
-		}
-		// The execution that ends paused has ended: the runner releases its
-		// lease and exits (R12). The word is a fifth status and not a reuse of
-		// running, so Terminal's rule already holds for it.
-		if !StatusPaused.Terminal() {
-			t.Error("StatusPaused is not terminal: a paused execution has ended")
-		}
-	})
-
 	t.Run("record", func(t *testing.T) {
 		s := newStore(t)
 		p := PauseRecord{
@@ -263,6 +251,54 @@ func TestPauseShapesAreStable(t *testing.T) {
 			t.Errorf("PauseVersion is %d, want 1: a reader of another version ends with a named outcome", PauseVersion)
 		}
 	})
+}
+
+// TestPausedIsAStatus is PR1 of docs/model-credentials-routing: `paused` is a
+// status of the run vocabulary (D3185, R15), and the four things that makes
+// true are each held here.
+//
+//   - the word is `paused`. It is the plan's and the contract's spelling
+//     (contract-pause.md, "The status word"), and a reader that spells it
+//     differently — a schema enum, the rules' outcome validator, a view — draws
+//     a status no run writes.
+//   - it is in Statuses. That slice is the one spelling of the set: the result
+//     schema's enum, internal/budget's outcome vocabulary and internal/digest's
+//     closed set are read from it, so a word this package can write and
+//     Statuses lacks is a record those readers render as something else.
+//   - it is terminal. The execution that ends paused has ended — the runner
+//     releases its lease and the container stops (R12) — so a reader asking
+//     Terminal gets the same answer it gets for every other ending, and the
+//     budget's outcome vocabulary (which filters on it) carries the word.
+//   - no existing word moved. `paused` is a fifth status and not a reuse: a
+//     reader that could not tell a paused run from a halted one would count a
+//     chain that will be resumed as one that was lost. The seven words this
+//     package carried before it are pinned here unchanged, so a later edit that
+//     retypes one of them fails at this test rather than in a reader.
+//
+// Mutation (run, restored): drop StatusPaused from Statuses, or from the
+// constants runstore.go declares (TestRunstoreStatusesAreTheWireVocabulary
+// names the side that has it), or give it a word another status already
+// carries.
+func TestPausedIsAStatus(t *testing.T) {
+	if StatusPaused != "paused" {
+		t.Errorf("StatusPaused is %q, want %q: the word is the plan's and every reader of a status spells it that way", StatusPaused, "paused")
+	}
+	if !slices.Contains(Statuses, StatusPaused) {
+		t.Errorf("runstore.Statuses = %v, which does not name StatusPaused: the schema, the outcome vocabulary and the digest read the set from it, so the word never reaches them", Statuses)
+	}
+	if !StatusPaused.Terminal() {
+		t.Error("StatusPaused is not terminal: a paused execution has ended — its container stops and its lease is released")
+	}
+	// The vocabulary this release inherited, spelled out: a word that changed
+	// its meaning is the one move a wire format does not allow (CLAUDE.md), and
+	// a paused run is in flight where a halted one has stopped.
+	before := []Status{StatusRunning, StatusSucceeded, StatusFailed, StatusUnreviewed, StatusInfraError, StatusCancelled, StatusHalted}
+	if !slices.Equal(Statuses[:len(before)], before) {
+		t.Errorf("the statuses this release inherited = %v, want %v: an existing word changed meaning or moved, and a reader of another release reads it as what it used to be", Statuses[:min(len(before), len(Statuses))], before)
+	}
+	if slices.Contains(before, StatusPaused) {
+		t.Error("StatusPaused is one of the words the vocabulary already carried: a pause is not a halt, and a reader that cannot tell them apart counts a chain that will be resumed as one that was lost")
+	}
 }
 
 // pinMembers asserts that a stored shape carries exactly these members, sorted:
