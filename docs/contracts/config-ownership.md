@@ -197,7 +197,7 @@ type.
 | binaries | **K2** | `binaries.*`, over binary-allow-rule's carrier |
 | `models use` | **M1** | `agent.model`, `agent.recipe`, `agent.models.*`, `agent.levels.*.*`, and the `layer.defaults.agent.*` and `layer.claude_models` spellings |
 | providers and prices | **M2** | `providers.*.*`, `model_prices.*.*` |
-| `rigor set` | **M3** | repo `rigor.default`, `rigor.areas`, and the layer's `layer.defaults.rigor.*` |
+| `rigor set` | **M3**, **RG3** | the layer's `layer.defaults.rigor.default` and `layer.defaults.rigor.areas.*.{name,match,level}`; `--repo` writes the layer's `defaults.rigor.repos.<owner/name>` and a rule's members through the rows those layer entries own. A repository's own `rigor.default` and `rigor.areas` are labelled, not registered: R15 refuses `--layer repo` for both |
 | security paths | **M4** | repo `security.patterns`, `layer.security.*` |
 | the labelled rows | **L1** | every row no command writes, with a label and its reason |
 

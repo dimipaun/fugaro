@@ -1863,7 +1863,13 @@ design. **Amended 2026-11-21:** **all four are written now** — the register ca
 a `## Check N` section for 340, 341, 342 and 343 alike, written by the task that registers each check
 under the register's own rule — and one of them has answered: **Check 340 PASSED on 2026-11-13**, so
 its `list-prefix` string (`runs/` and `reports/`) is recorded for R12's builder. 341, 342 and 343
-remain **NOT RUN**, and each of their sections says so and what is not written yet with it.
+remain **NOT RUN**, and each of their sections says so. **Amended 2026-11-24:** each of the three
+ships as ONE owner-run script under `scripts/live-checks/` with a hermetic test beside it —
+`check341.sh`, `check342.sh` and `check343.sh`, their tests `check341_test.sh`, `check342_test.sh`
+and `check343_test.sh` (run by `go test ./scripts`) — each with a `--preflight` that reads every
+precondition, prints the blockers one per line with the fix, and writes and launches nothing, so the
+register's row names one command rather than a step list. The same task gave Check 136, the
+task-governance plan's own, its script.
 
 **Check 340 — the prefix-limited listing grant (R12's, and it gates R12).** The owner proves that the
 job's read grant lists the FOUR prefixes the reports job lists — `runs/<slug>/`, `reports/<slug>/`,
@@ -1890,13 +1896,19 @@ landed: one report per repository under `reports/`, the project aggregate beside
 `reports/` objects still there after the run records' own 90 days — which is the 18-month rule
 (E3) doing what it is for. It also settles the question R10 is blocked on (Open item 5): **whether
 `fugaro runs digest` can write to `reports/` at all**, since E4 makes the job its only writer.
-Owner-run, **NOT RUN**.
+Owner-run as ONE command, `bash scripts/live-checks/check341.sh` (its own test
+`scripts/live-checks/check341_test.sh`), which turns the job on, waits for the firing, reads the
+job's own assignment document, the bucket IAM binding that makes this job `reports/`'s only writer
+and both lifecycle rules, and puts the setting back on a stop as well as on a pass. **NOT RUN.**
 
 **Check 342 — the failures report reproduces a window a person built by hand.** The owner takes a
 window they already know the causes of — the design's own seven-day table is one — and checks that
 `fugaro runs ls --group-by failure_class` and the Failures table in the period's report agree with
 it, including the runs whose class the legacy reader read from `reason` (FC5). It is the one check
-that says whether the vocabulary means what the design says it means. Owner-run, **NOT RUN**.
+that says whether the vocabulary means what the design says it means. Owner-run as ONE command,
+`bash scripts/live-checks/check342.sh` (its own test `scripts/live-checks/check342_test.sh`) — two
+reads and the comparison, with FC5 recorded as a class no read can tell apart rather than as one the
+check measured. **NOT RUN.**
 
 **Check 343 — the opt-in commit into the designated repository (R9's).** The owner names
 `reports_commit` in the owner's local project config (`repo`, and `dir` if the reports do not go to
@@ -1907,11 +1919,13 @@ with the starting person's own launcher account (D2754) and reads what comes bac
 it opens carries one file per stored report under `<dir>/<slug>/<YYYY>/<key>.md`, the project
 aggregate at `<dir>/<YYYY>/<key>.md` beside them, and the index regenerated over the whole folder;
 a second run with nothing new in the store ends without a pull request; and a file the folder holds
-and the store does not is still there, named in the run's record. **No script is written** — the
-check is one command and the run's own pull request, which is what makes it the register's first
-owner-run check in this area that needs none: unlike 340, it creates no account, writes no IAM and
-needs no teardown, because the read is the launcher's existing bucket-wide `objectViewer` and the
-write is the ordinary push path. Owner-run, **NOT RUN**.
+and the store does not is still there, named in the run's record. **The script is
+`scripts/live-checks/check343.sh`** (its own test `scripts/live-checks/check343_test.sh`), whose one
+command makes the check's two launches — three when the base branch already holds the store's
+reports, the one the second-run criterion is read on — and the last of them only when `--stray
+<path>` names the folder-only file. Unlike 340 it creates no account, writes no IAM and needs no teardown, because the read is the
+launcher's existing bucket-wide `objectViewer` and the write is the ordinary push path. Owner-run,
+**NOT RUN**.
 
 ### P9. What is deliberately not in this part
 

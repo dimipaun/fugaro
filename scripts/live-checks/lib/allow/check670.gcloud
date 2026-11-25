@@ -1,0 +1,6 @@
+# gcloud calls scripts/live-checks/check670.sh makes. See lib/strict.sh.
+cmd	artifacts docker images list
+cmd	secrets describe
+cmd	secrets versions list
+flag	--filter
+cmd	storage ls

@@ -65,20 +65,23 @@ const (
 	whyKept = "a repository may still set it, approved by D3237"
 
 	// The retired keys' sentences (R3 of
-	// docs/credentials-belong-to-models/reconciliation.md): what a person is
-	// told where a document still writes one. Each says what replaced the key
+	// docs/credentials-belong-to-models/reconciliation.md, reworded by MG5 of
+	// docs/model-credentials-routing/implementation-plan.md, F46): what a
+	// person is told where a document still writes one. Each says what replaced
+	// the key — the project's routing table and pools, never a craft's access —
 	// and what `fugaro update` does with it, and names the folder once.
-	whyRetiredAuth = "a repository has no auth mode any more: a stage goes out on the credential or pool its" +
-		" craft's access names, and the project names that — `fugaro update` migrates this key and offers its" +
-		" removal, see docs/credentials-belong-to-models"
-	whyRetiredAccount = "a Claude account is a credential the project declares now, and a craft's access names the one" +
-		" that craft runs on — `fugaro update` migrates this key and offers its removal, see" +
-		" docs/credentials-belong-to-models"
-	whyRetiredCraftAccess = "a repository's file no longer chooses a credential or pool: the project names each" +
-		" craft's access — `fugaro update` moves this key there and offers its removal, see" +
-		" docs/credentials-belong-to-models"
-	whyRetiredGradeAccess = "a grade's access is the project's own — `fugaro update` moves this key into the project's" +
-		" config and offers its removal, see docs/credentials-belong-to-models"
+	whyRetiredAuth = "a repository has no auth mode any more: the project's routing table and pools say" +
+		" which credential reaches which model — `fugaro update` migrates this key into them and offers its" +
+		" removal, see docs/model-credentials-routing"
+	whyRetiredAccount = "a Claude account is a source the project's routing table names now, and its pools say" +
+		" which one serves which model — `fugaro update` migrates this key into them and offers its removal, see" +
+		" docs/model-credentials-routing"
+	whyRetiredCraftAccess = "a repository's file no longer chooses a credential or pool: the project's routing" +
+		" table and pools say which source serves each model — `fugaro update` moves this key there and offers" +
+		" its removal, see docs/model-credentials-routing"
+	whyRetiredGradeAccess = "a grade's source is the project's own now: the project's routing table and pools say" +
+		" how the grade's model is reached — `fugaro update` moves this key into the project's config and offers" +
+		" its removal, see docs/model-credentials-routing"
 )
 
 // keptWhy is a row's own reason with whyKept's citation after it, so a shared
