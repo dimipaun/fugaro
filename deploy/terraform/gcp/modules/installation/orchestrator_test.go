@@ -66,6 +66,14 @@ var orchestratorResources = []struct{ typ, name string }{
 	// an operator's machine needs to mint its ID token (the one use of
 	// var.operators this file admits).
 	{"google_service_account_iam_member", "fugaro_orchestrator_token_creator"},
+	// The consumer's one signing grant (mobile-identity-pairing plan task J6;
+	// O17), and the reason it is HERE rather than beside the key it is on: this
+	// file is the table's, and TestOrchestratorIsNeverALauncher refuses the
+	// account's address as a member in any other file. The key, its ring and
+	// the role it grants are mailbox_key.tf's; this row binds that account to
+	// that role on that one key, which is O17's "the mailbox consumer's account
+	// only" (§4.2-§4.3's "it signs its replies through J6's KMS signer").
+	{"google_kms_crypto_key_iam_member", "orchestrator_mailbox_signer"},
 }
 
 // tfBlock returns the body of the resource block for typ and name, or "" when

@@ -438,7 +438,10 @@ func TestUpdateBackfillIdempotent(t *testing.T) {
 		}
 	}
 	for key := range after {
-		if _, ok := before[key]; !ok && key != appearedKey {
+		// The run that appeared gets both its index entry and its summary: the
+		// summary backfill of the same update (update_summary.go) writes what is
+		// missing for it exactly as the index step does.
+		if _, ok := before[key]; !ok && key != appearedKey && !strings.HasSuffix(key, "/"+runstore.SummaryName) {
 			t.Errorf("the second update wrote %s, want only the entry of the run that appeared (%s)", key, appearedKey)
 		}
 	}
@@ -518,9 +521,16 @@ func TestUpdateBackfillLeavesRunInFlight(t *testing.T) {
 	ids := plantPRIndexRuns(t, r)
 	b := prIndexBucket(t, r)
 	held := []string{ids.root, ids.fu, ids.other, ids.plain, ids.review, ids.running}
+	// The summaries the backfill of the same update writes (update_summary.go)
+	// are left out of both readings: this test is about the index step's own
+	// reach, and a summary is a derived object no step rewrites once it is
+	// there — TestUpdateSummaryLeavesRunInFlight holds that half.
 	before := map[string][]byte{}
 	for _, id := range held {
 		for key, data := range runsTree(t, b, "runs/"+appSlug+"/"+id+"/") {
+			if strings.HasSuffix(key, "/"+runstore.SummaryName) {
+				continue
+			}
 			before[key] = data
 		}
 	}
@@ -550,6 +560,9 @@ func TestUpdateBackfillLeavesRunInFlight(t *testing.T) {
 	after := map[string][]byte{}
 	for _, id := range held {
 		for key, data := range runsTree(t, b, "runs/"+appSlug+"/"+id+"/") {
+			if strings.HasSuffix(key, "/"+runstore.SummaryName) {
+				continue
+			}
 			after[key] = data
 		}
 	}

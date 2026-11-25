@@ -182,6 +182,104 @@ export const REVEAL_FAILED = 'the console could not open the installation’s di
  */
 export const DISTROS_NOT_WINDOWS = 'this machine is not Windows, so it has no WSL distributions to list'
 
+/**
+ * ADD_PROJECT_UNWIRED is what the Add project row answers when the entry point
+ * gave the picker no door to hand the request to (SW3c). The window it asks for
+ * is the dashboard's, and this module neither opens windows nor knows one
+ * exists, so an `ok` here would be a click that closed nothing and opened
+ * nothing -- the one answer this row must not give.
+ */
+export const ADD_PROJECT_UNWIRED = 'this console cannot open the setup wizard'
+
+/**
+ * ADD_PROJECT_NOT_READY is what the row answers when the console has not read a
+ * `fugaro` yet -- the startup handshake is still in flight, and the window the
+ * row would ask for reads an answer that does not exist. The request is put off
+ * rather than held: a flag set now would be spent by whichever window reads
+ * first, which is not the window the operator asked for.
+ */
+export const ADD_PROJECT_NOT_READY = 'this console is still reading its fugaro: try again in a moment'
+
+/**
+ * ADD_PROJECT_REFUSED is what the row answers on a console driving a `fugaro` it
+ * may not (SW3c). A refused console is the refusal window and no dashboard at
+ * all -- it registers no read for the request to ride -- so the door refuses in
+ * a sentence, and the operator's way on is the row that chooses another
+ * installation.
+ */
+export const ADD_PROJECT_REFUSED = 'this console cannot drive the fugaro it is on: choose an installation it can'
+
+/**
+ * addProjectRefusal is the decision behind `onAddProject`: the sentence the Add
+ * project row refuses with, or `undefined` when the request is one the console
+ * can carry out.
+ *
+ * It is a function here rather than three lines in the entry point because the
+ * entry point cannot be imported by a test and this is the row's rule, not the
+ * startup's: what it is handed is the handshake's answer as the console holds it
+ * (`current` in `src/main/index.ts`), and `null` is that answer not existing yet.
+ * A console with no dashboard -- a read still in flight, or a `fugaro` this
+ * console may not drive -- has nowhere to draw the wizard, so the door says so
+ * instead of raising a flag no window ever reads.
+ */
+export function addProjectRefusal(compatibility: CliCompatibility | null): string | undefined {
+  if (compatibility === null) return ADD_PROJECT_NOT_READY
+  if (compatibility.mode === 'refused') return ADD_PROJECT_REFUSED
+  return undefined
+}
+
+/**
+ * AddProjectRequest is the picker's Add project door as main holds it (SW3c,
+ * R4): the console's state for one request, between the click and the read that
+ * delivers it. Three rules make it one object with a test of its own rather than
+ * a boolean in the entry point, which cannot be imported by a test:
+ *
+ *   - **it is one-shot.** The dashboard reads `installation.current` once, at
+ *     boot, and that read is the door's whole delivery, so the read *spends* the
+ *     request. One that outlived it would open the wizard on every later boot --
+ *     a reload, a second window -- which no test of the row itself would notice;
+ *
+ *   - **a request already waiting is not recorded twice.** A second click while
+ *     the window is coming would remake the window the first one opened and race
+ *     the two boots;
+ *
+ *   - **and it can be dropped.** A choice of another installation is a different
+ *     console, so a request that console could never carry out -- a refused one
+ *     has no dashboard -- goes with it.
+ *
+ * Nothing is being remembered here: the operator asked for a screen, not for an
+ * installation, which is why this is not a field of the store.
+ */
+export interface AddProjectRequest {
+  /** please records a request, and answers whether it was recorded: `false` is
+   * a request already waiting for the window it asked for. */
+  please(): boolean
+  /** take reads the request and spends it: `true` exactly once per `please()`. */
+  take(): boolean
+  /** clear drops a request that will never be carried out. */
+  clear(): void
+}
+
+/** createAddProjectRequest returns the one-shot flag above, empty. */
+export function createAddProjectRequest(): AddProjectRequest {
+  let waiting = false
+  return {
+    please: () => {
+      if (waiting) return false
+      waiting = true
+      return true
+    },
+    take: () => {
+      const asked = waiting
+      waiting = false
+      return asked
+    },
+    clear: () => {
+      waiting = false
+    },
+  }
+}
+
 /** UpdateMenuOptions is the off switch as the menu sees it: the value the
  * checkbox draws, and the two things the items do with it. Plain values and
  * callbacks rather than the store itself, so that the template stays a plain
@@ -313,6 +411,27 @@ export interface InstallationPickerDeps {
      * 2026-10-20). */
     readonly resolvedBinaryPath: string
   }) => Promise<void> | void
+  /**
+   * onAddProject is the Add project row's seam (SW3c, R4): the picker states
+   * that the operator asked for a new project and hands the request over, and
+   * the entry point does the rest -- remake the dashboard window on the wizard
+   * SW3b draws. The window is the dashboard's to open and this module knows
+   * nothing about it, which is why the seam exists rather than a call from here.
+   *
+   * **This window stays open**, exactly as it does through a choose: the
+   * dashboard's window comes up over it and the operator closes the picker when
+   * they are done with it. Nothing here closes it -- `close()` below is the
+   * entry point's seam and not a control this row has.
+   *
+   * **The seam answers, and a sentence it returns is a refusal.** The entry
+   * point is the only one that knows whether the console has a dashboard to draw
+   * the wizard in -- one still reading its `fugaro`, and a refused one, have
+   * none (`ADD_PROJECT_NOT_READY`, `ADD_PROJECT_REFUSED`) -- and it decides
+   * *before* the request is held, so a refusal sets no flag and leaves nothing
+   * behind for a later window to spend. `undefined` is the ordinary answer: the
+   * request is handed over, and the window it asked for is coming.
+   */
+  readonly onAddProject?: () => string | undefined
   /** onRemoved is the same seam for a removal that took the active installation
    * away: the console has none, and its dashboard must say so. */
   readonly onRemoved?: (id: string) => void
@@ -1291,6 +1410,24 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
         if (!opened) return { ok: false, reason: OPEN_EXTERNAL_FAILED }
         return { ok: true, data: { opened: GETTING_STARTED_URL } }
       }
+      case 'addProject':
+        // The one row that opens a **window** this process does not own rather
+        // than a child: the setup wizard is a screen of the dashboard (SW3b), so
+        // the request goes to the entry point, which brings that window up on
+        // it. Nothing is spawned here and nothing is read: the setup run is
+        // SW3a's, started later by the window that shows the plan, and its
+        // answers never travel over this surface (the picker's schema is names
+        // and checkout directories, which is not a shape five answers fit in).
+        //
+        // A picker whose entry point wired no door refuses: the operator asked
+        // for a wizard, and an `ok` here would close the window on nothing. So
+        // does an entry point that answers a sentence -- a console with no
+        // dashboard to draw the wizard in, which is the same defect one step
+        // further in: the request would be held for a window that never reads it.
+        if (deps.onAddProject === undefined) return { ok: false, reason: ADD_PROJECT_UNWIRED }
+        const refusal = deps.onAddProject()
+        if (refusal !== undefined) return { ok: false, reason: refusal }
+        return { ok: true, data: null }
       case 'distros':
         // The one row whose subject is not this console's record of anything:
         // the distributions this machine has, asked of `wsl.exe` by the module
@@ -1478,6 +1615,7 @@ export function installInstallationPicker(options: {
   readonly spawnLog?: SpawnLogWriter
   readonly fs?: InstallationFs
   readonly onChosen?: InstallationPickerDeps['onChosen']
+  readonly onAddProject?: InstallationPickerDeps['onAddProject']
   readonly onRemoved?: InstallationPickerDeps['onRemoved']
   readonly onRecordRemoved?: InstallationPickerDeps['onRecordRemoved']
   readonly updateMenu?: UpdateMenuOptions | undefined
@@ -1543,6 +1681,7 @@ export function installInstallationPicker(options: {
     ...(options.spawnLog === undefined ? {} : { spawnLog: options.spawnLog }),
     ...(options.fs === undefined ? {} : { fs: options.fs }),
     ...(options.onChosen === undefined ? {} : { onChosen: options.onChosen }),
+    ...(options.onAddProject === undefined ? {} : { onAddProject: options.onAddProject }),
     ...(options.onRemoved === undefined ? {} : { onRemoved: options.onRemoved }),
     ...(options.onRecordRemoved === undefined ? {} : { onRecordRemoved: options.onRecordRemoved }),
     ...(options.updateMenu === undefined ? {} : { updateMenu: options.updateMenu }),

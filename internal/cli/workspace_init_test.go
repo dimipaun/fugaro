@@ -39,6 +39,11 @@ const wu24TestName = "aurora"
 // wu24TestCaller is the address the credentials belong to in every test.
 const wu24TestCaller = "ada@example.com"
 
+// wu24TestMember is that person as a live binding names them: `user:<address>`,
+// the spelling both mechanisms hand to SetIamPolicy and the one D2823's gate
+// reads back. The roster keeps the bare address beside it.
+const wu24TestMember = "user:" + wu24TestCaller
+
 // wu24FakeStore is C1's Store as these tests use it: one roster node that is
 // absent or present, a read that answers the revision a write is made under, a
 // write that records both, and a shared log of the order the two writes of an
@@ -343,8 +348,8 @@ func TestWorkspaceInitPlacesTheWorkspaceProject(t *testing.T) {
 	if got := r.folders.calls[0].parent; got != "organizations/5678" {
 		t.Errorf("the folder was created under %q, and the organization the search answered is %q: a folder under anything else is one this credential was not shown as able to create in (D2803)", got, "organizations/5678")
 	}
-	if got := r.folders.calls[0].owner; got != wu24TestCaller {
-		t.Errorf("the folder's owner is %q, and the caller is %q: the member who runs `init` is the workspace's first admin, and an owner binding for anybody else is one nobody's roster records", got, wu24TestCaller)
+	if got := r.folders.calls[0].owner; got != wu24TestMember {
+		t.Errorf("the folder's owner is %q, and the caller is %q: the member who runs `init` is the workspace's first admin, and the binding names them the way a policy does — %q — because a bare address is one Google refuses", got, wu24TestCaller, wu24TestMember)
 	}
 	if r.folders.placed != wu24TestName {
 		t.Errorf("the workspace's own project placed in the folder is %q, and it is %q: R8 puts the roster node and the workspace's audit trail in the workspace's own project, which is the project the workspace is named after (A1, D1290)", r.folders.placed, wu24TestName)
@@ -376,8 +381,8 @@ func TestWorkspaceInitRecordsSAWithoutOrg(t *testing.T) {
 	if len(r.folders.calls) != 0 {
 		t.Errorf("workspace init created %v with no organization to create it under", r.folders.calls)
 	}
-	if got := r.liveBindings(); len(got) != 1 || got[0] != wu24TestCaller {
-		t.Errorf("the run made %v live for the caller, and the SA mechanism's admin binding is the caller's token creator on the workspace IAM account (and R8's owner grant on the workspace's own project, which the authority makes in the same call)", got)
+	if got := r.liveBindings(); len(got) != 1 || got[0] != wu24TestMember {
+		t.Errorf("the run made %v live for the caller, and the SA mechanism's admin binding is the caller's token creator on the workspace IAM account, named %q (and R8's owner grant on the workspace's own project, which the authority makes in the same call)", got, wu24TestMember)
 	}
 }
 
@@ -410,8 +415,8 @@ func TestWorkspaceInitWritesTheFirstAdmin(t *testing.T) {
 			}
 			// The entry is a claim about a live binding, and the binding is the
 			// mechanism's own (D2823).
-			if got := r.liveBindings(); len(got) != 1 || got[0] != wu24TestCaller {
-				t.Errorf("the run made %v live for %q, and an admin entry is trusted only beside the binding the mechanism gives an admin: %s", got, wu24TestCaller, tc.mechanism)
+			if got := r.liveBindings(); len(got) != 1 || got[0] != wu24TestMember {
+				t.Errorf("the run made %v live for %q, and an admin entry is trusted only beside the binding the mechanism gives an admin, which names the person as %q: %s", got, wu24TestCaller, wu24TestMember, tc.mechanism)
 			}
 		})
 	}
