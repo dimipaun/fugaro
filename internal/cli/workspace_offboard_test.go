@@ -20,7 +20,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -417,12 +416,12 @@ func TestOffboardMemberWaitsForTheAdminList(t *testing.T) {
 // TestOffboardMemberAudits: the act is created in the MEMBER's own trail, once
 // and create-only (D2811) — a project admin holds no write on the workspace's
 // project, which is where the workspace's own trail lives (F11, D2813) — and
-// the entry says what happened: the act, the instant, who did it, which member
-// it was on and which person it was about.
+// the entry is C1's own event, which is the document that trail holds and the
+// shape every reader of it reads back (contract.md, "The audit event").
 //
 // Its name is a key of that node and not the person's address: a Realtime
-// Database key carries no dot, and every address does. Two entries that
-// recorded the same thing would be one entry, which is what create-only means.
+// Database key carries no dot, and every address does, so the id is minted for
+// the event rather than built from what it is about (C1's NewAuditEventID).
 func TestOffboardMemberAudits(t *testing.T) {
 	o, ops, _ := wu9Rig(t)
 
@@ -445,44 +444,29 @@ func TestOffboardMemberAudits(t *testing.T) {
 	if strings.Contains(entry.id, wu9Person) {
 		t.Errorf("the entry's name %q carries the person's address: an address has a dot, so a name built from it is one the node refuses or one that has to be escaped", entry.id)
 	}
-	if again := offboardAuditID(wu9Member, "user:"+wu9Person, wu9At); again != entry.id {
-		t.Errorf("the same act at the same instant is named %q and then %q: the name is a function of what the entry records", again, entry.id)
-	}
-
-	var ev struct {
-		Event         string `json:"event"`
-		At            string `json:"at"`
-		Actor         string `json:"actor"`
-		Member        string `json:"member"`
-		Firebase      string `json:"firebase"`
-		Person        string `json:"person"`
-		GrantsDropped int    `json:"grants_dropped"`
-	}
-	if err := json.Unmarshal(entry.event, &ev); err != nil {
-		t.Fatalf("the entry is not one JSON object: %v (%s)", err, entry.event)
-	}
-	if ev.Event != "offboarded" {
-		t.Errorf("the entry names the act %q, want %q", ev.Event, "offboarded")
-	}
-	if ev.Actor != "user:"+wu9Admin {
-		t.Errorf("the entry names the actor %q, want the caller the roster admitted (%q)", ev.Actor, "user:"+wu9Admin)
-	}
-	if ev.Member != wu9Member.Project || ev.Firebase != wu9Member.Firebase {
-		t.Errorf("the entry names the member as %q/%q, want both of its projects (%q/%q): they are one project only sometimes (F2, R10)",
-			ev.Member, ev.Firebase, wu9Member.Project, wu9Member.Firebase)
-	}
-	if ev.Person != "user:"+wu9Person {
-		t.Errorf("the entry names the person %q, want them in the roster's own spelling (%q)", ev.Person, "user:"+wu9Person)
-	}
-	if ev.GrantsDropped != 2 {
-		t.Errorf("the entry says %d grants were dropped, want the person's two", ev.GrantsDropped)
-	}
-	at, err := time.Parse(time.RFC3339Nano, ev.At)
+	// The entry is the event the member's trail holds, read back with the
+	// reader that trail's readers use.
+	ev, err := workspace.DecodeAuditEvent(entry.event)
 	if err != nil {
-		t.Fatalf("the entry's instant %q does not parse: %v", ev.At, err)
+		t.Fatalf("the entry is not an event this program reads back: %v\n%s", err, entry.event)
 	}
-	if !at.Equal(wu9At) {
-		t.Errorf("the entry is stamped %s, want %s", at, wu9At)
+	if ev.ID != entry.id {
+		t.Errorf("the entry is created under %q and its own id is %q: the id is the trail's key", entry.id, ev.ID)
+	}
+	if ev.Action != workspace.ActionUserOffboard {
+		t.Errorf("the entry names the act %q, want %q", ev.Action, workspace.ActionUserOffboard)
+	}
+	if ev.Actor != wu9Admin {
+		t.Errorf("the entry names the actor %q, want the caller the roster admitted (%q)", ev.Actor, wu9Admin)
+	}
+	if ev.Project != wu9Member.Project {
+		t.Errorf("the entry names the member %q, want the project it was on (%q)", ev.Project, wu9Member.Project)
+	}
+	if ev.Subject != wu9Person {
+		t.Errorf("the entry names the person %q, want them as the address the trail spells (%q)", ev.Subject, wu9Person)
+	}
+	if !ev.Time.Equal(wu9At) {
+		t.Errorf("the entry is stamped %s, want %s", ev.Time, wu9At)
 	}
 }
 

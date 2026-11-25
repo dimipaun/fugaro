@@ -312,15 +312,29 @@ func refuseOldJobEnv(ctx context.Context, cmd *cobra.Command, o execOptions, pla
 	store := runstore.Open(bucket.Bucket, slug, runID)
 	rec := &runstore.Record{Version: 1, RunID: runID, Status: runstore.StatusInfraError, Stage: "bootstrap",
 		Outcome: runstore.OutcomeNone, Reason: reason, StartedAt: now().UTC()}
-	if spec, err := store.ReadTask(ctx); err == nil {
+	spec, terr := store.ReadTask(ctx)
+	if terr == nil {
 		rec.Repo, rec.Workflow = spec.Repo, spec.Workflow
+	} else {
+		spec = nil
 	}
 	finished := rec.StartedAt
 	rec.FinishedAt = &finished
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
-	if err := store.CreateRecord(wctx, rec); err != nil && !errors.Is(err, runstore.ErrExists) {
-		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro exec: could not record the failure: %v\n", err)
+	if err := store.CreateRecord(wctx, rec); err != nil {
+		if !errors.Is(err, runstore.ErrExists) {
+			fmt.Fprintf(cmd.ErrOrStderr(), "fugaro exec: could not record the failure: %v\n", err)
+		}
+		return fail
+	}
+	// The record this execution just created is the run's own, so its summary
+	// goes beside it: `runs ls` reads the summary where it read result.json,
+	// and a summary a deleted record left behind would otherwise stand in for
+	// this one. Best-effort, like the runner's own summary writes — a summary
+	// that fails costs a listing its speedup and never the record.
+	if err := runstore.WriteSummary(wctx, store, runstore.NewSummary(rec, spec, now().UTC())); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro exec: could not write the run summary: %v\n", err)
 	}
 	return fail
 }
