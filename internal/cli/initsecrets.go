@@ -363,6 +363,32 @@ func (s *secretsStage) listTargets() []*secretTarget {
 	return nil
 }
 
+// singleCheckout is whether this run takes a value the way `fugaro update`
+// always has: the list it read is one repository, that repository is the
+// checkout the run was started in and one the stage can work on, and a person
+// is at this terminal to answer. The door's own line means something only
+// where this holds -- a `fugaro update` that asks for nothing is a step that
+// leaves itself -- and the store decision is the checkout door's own
+// (D2313, D3347).
+//
+// C1's stand-in answers the update door with the checkout the run was started
+// in, so this is every `update` in a checkout and nothing else (R21). It is a
+// stopgap in one direction only: once I1 connects the real reader the list is
+// the project's enrolled repositories, and a list of many is left with the
+// command that stores each name -- asking there is `--ask`'s, which is U3b's
+// (R18).
+func (s *secretsStage) singleCheckout(ctx context.Context, f *os.File) bool {
+	if len(s.list) != 1 || !s.tg.read() || !s.canPrompt() || f == nil {
+		return false
+	}
+	oi, ok := readOrigin(ctx, ".")
+	if !ok || !sameRepo(oi.Repo, s.tg.repo) || oi.Host != providerHosts[s.tg.provider] {
+		return false
+	}
+	s.origin = oi
+	return true
+}
+
 // resolve finds the repositories the stage works on and what their jobs mount.
 //
 // The update door reads the project's every enrolled repository through
@@ -1019,6 +1045,15 @@ func (s *secretsStage) checkList(ctx context.Context) (initflow.Status, error) {
 	}
 	s.reportList(lines)
 	switch {
+	case len(needs) > 0 && s.singleCheckout(ctx, s.terminal()):
+		// The list's one repository is this checkout and a person is at the
+		// terminal, so the value is taken at the prompt, as `fugaro update`
+		// has always taken it (R21). A needs-you here is a check the loop does
+		// not apply, and the value would never be taken -- the door's own line
+		// would leave the run asking itself. What is missing is said by the
+		// lines above, one per repository; this is the same sentence the
+		// checkout door's check gives for its prompt.
+		return initflow.Status{State: initflow.Todo, Detail: strings.Join(needs, "; ") + "; asks for each at a hidden prompt"}, nil
 	case len(needs) > 0:
 		lf := s.Left()
 		return initflow.Status{State: initflow.NeedsYou, Detail: strings.Join(needs, "; "), Left: &lf}, nil
@@ -1262,12 +1297,13 @@ func (s *secretsStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 	if err := s.e.newMachineGuard(initflow.Secrets); err != nil {
 		return initflow.Outcome{}, err
 	}
-	if s.list != nil {
-		// The update door asks for no value here: a name it cannot read or
-		// store is left with the command that does (D3347), and --ask's value
-		// entry is U3b's. Apply therefore re-reads the list and answers the
-		// loop with it -- nothing to do where every name is stored, and the
-		// lines otherwise.
+	f := s.terminal()
+	if s.list != nil && !s.singleCheckout(ctx, f) {
+		// The update door asks for no value for a list: a name it cannot read
+		// or store is left with the command that does (D3347), and --ask's
+		// value entry is U3b's. Apply therefore re-reads the list and answers
+		// the loop with it -- nothing to do where every name is stored, and
+		// the lines otherwise.
 		st, err := s.checkList(ctx)
 		if err != nil {
 			return initflow.Outcome{}, err
@@ -1277,7 +1313,6 @@ func (s *secretsStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 		}
 		return initflow.Outcome{}, &initflow.NeedsYouError{Left: s.Left()}
 	}
-	f := s.terminal()
 	if s.skip != "" || s.tg == nil || !env.Interactive || !s.canPrompt() || f == nil {
 		return initflow.Outcome{}, &initflow.NeedsYouError{Left: s.Left()}
 	}
