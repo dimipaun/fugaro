@@ -26102,7 +26102,8 @@ stored report's Failures table — and the classes the window could not account 
 ([reconciliation.md](periodic-reviews/reconciliation.md) §7.3) — and, as with 341 and 342, the plan
 names the number and leaves the row and this section to the task that implements the check. **The script is `scripts/live-checks/check343.sh`**, with its own test
 `scripts/live-checks/check343_test.sh` (run by `go test ./scripts`), and the one command is `bash
-scripts/live-checks/check343.sh`: `--stray <path>` names step 5's folder-only file, and without it
+scripts/live-checks/check343.sh`: `--stray <path>` names step 5's folder-only file — a report of the
+mirror's shape under the designated folder, the only names a run names (step 5) — and without it
 the check records step 5 as not run, while `--preflight` reads every
 precondition and prints the blockers before anything is launched. Unlike Check 340 it creates no
 account, writes no IAM and needs no teardown: the read is the launcher's existing bucket-wide
@@ -26153,7 +26154,12 @@ designated repository, so **never point the installation at a project whose name
    first run's own answer, a launch handed every report that opened no pull request at all.
 5. Leave a file in the folder the store does not hold, run
    `fugaro run --recipe commit-reports --commit-reports "commit the stored reports"` once more, and
-   check the file is still there and named in the run's own record.
+   check the file is still there and named in the run's own record: `fugaro logs <run>` prints the
+   message the run left about it, the file's path among them. Only the names the mirror's own read
+   of the folder finds are named at all — a report of the shape `<dir>/<slug>/<YYYY>/<key>.md`, or
+   `<dir>/<YYYY>/<key>.md` for the project's aggregate — so `--stray` has to name one of those; any
+   other file the folder holds (the index, a name you moved in) is no report of the mirror and no
+   run names it.
 
 **Expected.** Step 2 opens one pull request carrying exactly the store's reports and the index over
 the whole folder; step 4 ends with no new pull request, which is a run over a base branch that

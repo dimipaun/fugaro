@@ -15,8 +15,11 @@
 # Usage:      bash scripts/live-checks/check343.sh [--stray <path>] [--preflight]
 #             bash scripts/live-checks/check343.sh --help
 #             --stray <path>   a file the folder holds and the store does not, committed and pushed
-#                              on the base branch (the check's last run: see step 5 below). Without
-#                              it the check records step 5 as not run.
+#                              on the base branch (the check's last run: see step 5 below). It has to
+#                              be a report of the mirror's shape under the designated folder, which
+#                              is every name the run names at all: <dir>/<slug>/<YYYY>/<key>.md for a
+#                              repository's report, <dir>/<YYYY>/<key>.md for the project's aggregate.
+#                              Without it the check records step 5 as not run.
 #             --preflight      reads every precondition and prints the blockers; launches nothing.
 # Needs:      bash, mktemp, python3, git, gcloud (the store's listing, with your
 #             own launcher account: the read is the launcher's existing
@@ -281,12 +284,15 @@ PY
 }
 
 # ------------------------------------------------------------------- the reads
-read_store() {
-  : >"${SCRATCH}/store.txt"
-  "$GCLOUD" storage ls --recursive --project "$GCP_PROJECT" "gs://${BUCKET}/reports/" >"${SCRATCH}/store.out" 2>"${SCRATCH}/store.err" || {
-    fact store UNVERIFIED "the store's listing did not answer (gcloud storage ls --recursive gs://${BUCKET}/reports/): $(head -c 300 "${SCRATCH}/store.err")"
-    return 0
-  }
+# store_list -- the store's listing into store.out, and a non-zero exit for a
+# listing that did not answer. The preflight and the check read it the same way.
+store_list() {
+  "$GCLOUD" storage ls --recursive --project "$GCP_PROJECT" "gs://${BUCKET}/reports/" >"${SCRATCH}/store.out" 2>"${SCRATCH}/store.err"
+}
+
+# store_reports -- the reports the listing names, sorted into store.txt, and
+# their count: the one read of what a commit run has to hand in.
+store_reports() {
   python3 - "${SCRATCH}/store.out" >"${SCRATCH}/store.txt" <<'PY'
 import sys
 for line in open(sys.argv[1], encoding="utf-8"):
@@ -298,17 +304,39 @@ for line in open(sys.argv[1], encoding="utf-8"):
             print(rel)
 PY
   LC_ALL=C sort -o "${SCRATCH}/store.txt" "${SCRATCH}/store.txt"
+  wc -l <"${SCRATCH}/store.txt" | tr -d ' '
+}
+
+read_store() {
+  store_list || {
+    fact store UNVERIFIED "the store's listing did not answer (gcloud storage ls --recursive gs://${BUCKET}/reports/): $(head -c 300 "${SCRATCH}/store.err")"
+    return 0
+  }
   local n
-  n=$(wc -l <"${SCRATCH}/store.txt" | tr -d ' ')
+  n=$(store_reports)
   [ "$n" != 0 ] ||
     stop "the store holds no stored report, so a commit run has nothing to hand in: run the reports job first (Check 341) and let it write one"
   fact store PASS "the store holds $n stored report(s) under reports/"
 }
 
+# base_branch -- the branch a launch clones: this checkout's origin/HEAD, its
+# upstream, else the remote's own HEAD. A read only, with no fetch in it, so a
+# preflight can make it without writing a ref.
+base_branch() {
+  local base
+  base=$("$GIT" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || true)
+  [ -n "$base" ] || base=$("$GIT" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null | sed 's|^origin/||' || true)
+  [ -n "$base" ] || base=$("$GIT" ls-remote --symref origin HEAD 2>/dev/null |
+    python3 -c 'import re,sys
+for line in sys.stdin:
+    m=re.match(r"ref:\s+refs/heads/(\S+)\s+HEAD", line)
+    if m: print(m.group(1)); break' || true)
+  printf '%s' "$base"
+}
+
 read_base() {
   "$GIT" fetch --no-tags origin >/dev/null 2>&1 || stop "git fetch origin did not answer, so the base branch the run clones cannot be read: fix the checkout's origin"
-  BASE=$("$GIT" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || true)
-  [ -n "$BASE" ] || BASE=$("$GIT" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null | sed 's|^origin/||' || true)
+  BASE=$(base_branch)
   [ -n "$BASE" ] || stop "this checkout names no base branch (no origin/HEAD and no upstream), and the run commits onto a fresh clone of the ref it was launched on: fix the checkout's origin"
   "$GIT" rev-parse --verify --quiet "origin/${BASE}" >/dev/null && say "base branch origin/${BASE}"
   "$GIT" ls-tree -r --name-only "origin/${BASE}" -- "$DIR" >"${SCRATCH}/base.txt" 2>/dev/null ||
@@ -483,6 +511,33 @@ step_nothing_new() {
   fi
 }
 
+# stray_names_a_report -- whether $STRAY is a name the run's own read of the
+# folder can name at all: a report of the mirror's shape under $DIR. The step
+# walks the designated folder and reads every file in it through
+# digest.ParseMirrorPath, so <dir>/<slug>/<YYYY>/<key>.md (a repository's
+# report, the slug a storage slug) and <dir>/<YYYY>/<key>.md (the project's
+# aggregate, the year directory the key's own year) are the only names it has
+# to name; anything else the folder holds -- the index, a name a person moved
+# in -- is no row of the mirror and is never named.
+stray_names_a_report() {
+  python3 - "$STRAY" "$DIR" <<'PY'
+import re,sys
+path,dir=sys.argv[1],sys.argv[2].rstrip("/")
+if not path.startswith(dir+"/"):
+    print("outside"); raise SystemExit
+rel=path[len(dir)+1:]
+parts=rel.split("/")
+slug=r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?-[0-9a-f]{16}$"
+report=r"^(\d{4})/(\d{4}(-\d{2}-\d{2}|-W\d{2}|-\d{2})?)\.md$"
+if len(parts)==3 and re.match(slug,parts[0]):
+    rel="/".join(parts[1:])
+elif len(parts)!=2:
+    print("shape"); raise SystemExit
+m=re.match(report,rel)
+print("ok" if m and m.group(1)==m.group(2)[:4] else "shape")
+PY
+}
+
 # Step 5: a file the folder holds and the store does not. It has to be committed
 # and pushed, because the run commits onto a fresh clone of the base branch and
 # sees only what the branch holds.
@@ -492,6 +547,20 @@ step_stray() {
     return 0
   fi
   [ -n "$DIR" ] || return 0
+  # The run names the reports its own read of the folder finds, and nothing
+  # else the folder holds: a --stray outside that set is a file no run can
+  # name, so the step is not the reading this criterion is about.
+  case "$(stray_names_a_report)" in
+  ok) ;;
+  outside)
+    fact stray FAIL "$STRAY is not under $DIR, the folder the run commits into: a run reads that folder and nothing beside it, so a file outside it is never a file of the mirror. Leave the file under $DIR"
+    return 0
+    ;;
+  *)
+    fact stray FAIL "$STRAY is not a report of the mirror's shape under $DIR, and those names are the only ones a run names: name the file <slug>/<YYYY>/<key>.md (a repository's report) or <YYYY>/<key>.md (the project's aggregate) under $DIR, and the run names it"
+    return 0
+    ;;
+  esac
   "$GIT" rev-parse --verify --quiet "origin/${BASE}:${STRAY}" >/dev/null || {
     fact stray FAIL "$STRAY is not on origin/${BASE}: the run commits onto a fresh clone of that branch, so a file only this working tree holds is a file it cannot see"
     return 0
@@ -574,9 +643,21 @@ step_preflight() {
 u=re.sub(r"\.git$","",sys.stdin.read().strip()).rstrip("/")
 parts=re.split(r"[/:]",u)
 print(parts[-2]+"/"+parts[-1] if len(parts)>=2 and parts[-2] and parts[-1] else "")')
+    case "$REPO" in
+    *belong* | *edgeweb* | *edgeserver*)
+      preflight_block repo "the checkout is $REPO, and Check 343 never runs against belong, EdgeWeb or EdgeServer" "run the check in the designated repository's checkout, never a repository of belong, EdgeWeb or EdgeServer"
+      ;;
+    esac
     preflight_note repo "the checkout is $REPO"
   else
     preflight_block repo "this directory is not a checkout of a repository" "cd into the designated repository's checkout and run the check again"
+  fi
+  local base
+  base=$(base_branch)
+  if [ -n "$base" ]; then
+    preflight_note base "the base branch a launch clones is origin/$base"
+  else
+    preflight_block base "this checkout names no base branch (no origin/HEAD, no upstream and no remote HEAD), and a run commits onto a fresh clone of the ref it is launched on" "$GIT remote set-head origin -a in the designated repository's checkout"
   fi
   policy=$("$FUGARO" project policy show --json 2>/dev/null) || policy='{}'
   read -r designated dir < <(printf '%s' "$policy" | python3 -c '
@@ -592,10 +673,16 @@ print("%s %s" % (rc.get("repo",""), rc.get("dir","")))' 2>/dev/null) || true
   else
     preflight_note designation "reports_commit names $designated, folder ${dir:-docs/fugaro-reviews-mirror}"
   fi
-  if ! "$GCLOUD" storage ls --recursive --project "$GCP_PROJECT" "gs://${BUCKET}/reports/" >/dev/null 2>&1; then
-    preflight_block store "the store's listing did not answer (gcloud storage ls --recursive gs://${BUCKET}/reports/)" "$GCLOUD auth login, then $GCLOUD storage ls --recursive gs://${BUCKET}/reports/"
+  local n
+  if store_list; then
+    n=$(store_reports)
+    if [ "$n" = 0 ]; then
+      preflight_block store "the store holds no stored report under reports/, and the check stops at its first read: a commit run has nothing to hand in" "run the reports job first (Check 341) and let it write one, then $GCLOUD storage ls --recursive gs://${BUCKET}/reports/"
+    else
+      preflight_note store "the store holds $n stored report(s) under reports/, read with your launcher's own account"
+    fi
   else
-    preflight_note store "the store lists, and the read is your launcher's own"
+    preflight_block store "the store's listing did not answer (gcloud storage ls --recursive gs://${BUCKET}/reports/)" "$GCLOUD auth login, then $GCLOUD storage ls --recursive gs://${BUCKET}/reports/"
   fi
 }
 

@@ -403,6 +403,15 @@ test_refuses_without_the_t33_confirmation() {
   expect_absent "$(calls)" "fugaro run --recipe" "nothing was launched"
 }
 
+test_preflight_blocks_on_a_repository_of_belong() {
+  reset_state
+  echo "git@github.com:belong/sandbox.git" >"$state/origin"
+  run_check --preflight
+  expect_status "$status" 1 "a checkout of belong is a blocker"
+  expect_contains "$err" "BLOCKED repository" "the blocker is printed"
+  expect_absent "$(calls)" "fugaro run --recipe" "nothing was launched"
+}
+
 test_preflight_blocks_without_the_t33_confirmation() {
   reset_state
   EXTRA_ENV=(CHECK136_AFTER_T33=)
@@ -452,6 +461,7 @@ t test_a_recipe_shadowed_by_a_repository_fails
 t test_the_fake_refuses_a_flag_the_cli_does_not_have
 t test_preflight_blocks_on_another_installation_and_writes_nothing
 t test_refuses_without_the_t33_confirmation
+t test_preflight_blocks_on_a_repository_of_belong
 t test_preflight_blocks_without_the_t33_confirmation
 t test_preflight_passes_and_launches_nothing
 

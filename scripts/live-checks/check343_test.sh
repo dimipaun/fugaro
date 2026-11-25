@@ -129,7 +129,11 @@ printf 'git %s\n' "$*" >>"${FAKE343_STATE:?}/calls"
 case "${1:-}" in
 remote) cat "$FAKE343_STATE/origin" ;;
 fetch) exit 0 ;;
-symbolic-ref) echo "origin/main" ;;
+symbolic-ref)
+  # The base branch the checkout names: absent state is the ordinary checkout,
+  # and an empty file is a checkout whose origin/HEAD is unset.
+  if [ -f "$FAKE343_STATE/basebranch" ]; then cat "$FAKE343_STATE/basebranch"; else echo "origin/main"; fi
+  ;;
 rev-parse)
   last=${!#}
   case "$last" in
@@ -192,8 +196,11 @@ EOF
   pr_doc 41 "$DIR/2026/2026-W46.md added" "$DIR/README.md modified"
   pr_doc 42 "$DIR/README.md modified"
   : >"$state/empty.diff"
+  # What `fugaro logs` prints: `HH:MM:SS SEVERITY [tag] message`, the runner's
+  # own JSON entry projected to its message -- so the name the run leaves about
+  # a file it did not touch is in the message, where this reader can reach it.
   cat >"$state/logs.txt" <<EOF
-the report folder holds reports this run was not handed; they are left alone, because the store only adds and overwrites and a run never takes a report away paths=$STRAY
+12:00:00 WARNING [implement] the report folder holds reports this run was not handed; they are left alone, because the store only adds and overwrites and a run never takes a report away: $STRAY
 EOF
 }
 
@@ -485,6 +492,22 @@ test_fails_when_the_run_does_not_name_the_stray_file() {
   expect_contains "$out" "does not name" "and says so"
 }
 
+test_fails_when_the_stray_file_is_not_a_report_of_the_mirror() {
+  reset_state
+  run_check --stray "$DIR/notes.md"
+  expect_status "$status" 1 "a name the mirror has no row for is not a name the run has to name"
+  expect_contains "$out" "FACT stray: FAIL" "the row fails"
+  expect_contains "$out" "not a report of the mirror's shape" "and says which names count"
+}
+
+test_fails_when_the_stray_file_is_outside_the_designated_folder() {
+  reset_state
+  run_check --stray "docs/elsewhere/2026/2026-11-21.md"
+  expect_status "$status" 1 "the run reads the designated folder and nothing beside it"
+  expect_contains "$out" "FACT stray: FAIL" "the row fails"
+  expect_contains "$out" "is not under docs/fugaro-reviews-mirror" "and names the folder it reads"
+}
+
 test_records_step_five_as_not_run_without_a_stray_file() {
   reset_state
   run_check
@@ -513,6 +536,34 @@ test_the_gcloud_fake_refuses_a_flag_its_allow_list_does_not_name() {
   set -e
   expect_status "$status" 1 "the strict fake refuses a flag the check does not make"
   expect_contains "$out" "unknown flag: --nope" "and says which"
+}
+
+test_preflight_blocks_on_an_empty_store() {
+  reset_state
+  : >"$state/store.out"
+  run_check --preflight
+  expect_status "$status" 1 "the preflight refuses the read the check would stop on"
+  expect_contains "$err" "BLOCKED store" "the empty store is a blocker"
+  expect_contains "$err" "no stored report" "and says why"
+  expect_absent "$(calls)" "fugaro run " "nothing was launched"
+}
+
+test_preflight_blocks_on_a_checkout_with_no_base_branch() {
+  reset_state
+  : >"$state/basebranch"
+  run_check --preflight
+  expect_status "$status" 1 "a checkout that names no base branch is a blocker"
+  expect_contains "$err" "BLOCKED base" "and is named"
+  expect_contains "$err" "git remote set-head origin -a" "with the fix, filled in"
+}
+
+test_preflight_blocks_on_a_repository_of_belong() {
+  reset_state
+  echo "git@github.com:belong/reports-mirror.git" >"$state/origin"
+  run_check --preflight
+  expect_status "$status" 1 "a repository of belong is a blocker"
+  expect_contains "$err" "BLOCKED repo" "and is named"
+  expect_absent "$(calls)" "fugaro run " "nothing was launched"
 }
 
 test_preflight_blocks_on_a_missing_designation_and_launches_nothing() {
@@ -569,9 +620,14 @@ t test_fails_when_the_stray_file_is_not_on_the_base_branch
 t test_fails_when_the_run_deletes_the_stray_file
 t test_is_unverified_when_the_run_log_does_not_answer
 t test_fails_when_the_run_does_not_name_the_stray_file
+t test_fails_when_the_stray_file_is_not_a_report_of_the_mirror
+t test_fails_when_the_stray_file_is_outside_the_designated_folder
 t test_records_step_five_as_not_run_without_a_stray_file
 t test_the_fake_refuses_a_flag_the_cli_does_not_have
 t test_the_gcloud_fake_refuses_a_flag_its_allow_list_does_not_name
+t test_preflight_blocks_on_an_empty_store
+t test_preflight_blocks_on_a_checkout_with_no_base_branch
+t test_preflight_blocks_on_a_repository_of_belong
 t test_preflight_blocks_on_a_missing_designation_and_launches_nothing
 t test_preflight_passes_and_launches_nothing
 

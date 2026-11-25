@@ -394,13 +394,28 @@ step_preflight() {
   esac
   [ "$name" = "$INSTALLATION" ] || preflight_block installation "the installation is ${name:-nothing}, and this check runs on $INSTALLATION only" "$FUGARO doctor on the installation $INSTALLATION (GCP $GCP_PROJECT)"
   [ "$project" = "$GCP_PROJECT" ] || preflight_block gcp-project "the GCP project is ${project:-nothing}, and this check runs in $GCP_PROJECT only" "$FUGARO doctor on the installation $INSTALLATION (GCP $GCP_PROJECT)"
-  if [ -n "$REPO" ]; then
-    preflight_note repo "--repo $REPO"
-  elif git remote get-url origin >/dev/null 2>&1; then
-    preflight_note repo "the checkout's origin is $(git remote get-url origin)"
-  else
-    preflight_block repo "this directory is not a checkout and no --repo was given" "pass --repo <owner/name>, or run this in the repository's checkout"
+  local repo=$REPO origin=""
+  if [ -z "$repo" ] && git remote get-url origin >/dev/null 2>&1; then
+    origin=$(git remote get-url origin)
+    repo=$(printf '%s' "$origin" | python3 -c 'import sys,re
+u=re.sub(r"\.git$","",sys.stdin.read().strip()).rstrip("/")
+parts=re.split(r"[/:]",u)
+print(parts[-2]+"/"+parts[-1] if len(parts)>=2 and parts[-2] and parts[-1] else "")')
   fi
+  case "$repo" in
+  *belong* | *edgeweb* | *edgeserver*)
+    preflight_block repo "the repository is $repo, and Check 342 never runs against belong, EdgeWeb or EdgeServer" "pass --repo <owner/name> for the sandbox repository, never one of belong, EdgeWeb or EdgeServer"
+    ;;
+  *)
+    if [ -n "$REPO" ]; then
+      preflight_note repo "--repo $REPO"
+    elif [ -n "$repo" ]; then
+      preflight_note repo "the checkout's origin is $origin"
+    else
+      preflight_block repo "this directory is not a checkout and no --repo was given" "pass --repo <owner/name>, or run this in the repository's checkout"
+    fi
+    ;;
+  esac
   local key=$KEY
   [ -n "$key" ] || key=$(python3 -c 'import datetime; print((datetime.datetime.now(datetime.timezone.utc).date()-datetime.timedelta(days=1)).isoformat())')
   if ! "$FUGARO" runs digest --stored "$key" --repo "${REPO:-owner/name}" >/dev/null 2>&1; then

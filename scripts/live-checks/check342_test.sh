@@ -287,6 +287,14 @@ test_preflight_blocks_without_a_stored_report_and_writes_nothing() {
   expect_absent "$(calls)" "fugaro runs ls" "the listing was not read"
 }
 
+test_preflight_blocks_on_a_repository_of_belong() {
+  reset_state
+  run_check --preflight --repo belong/sandbox
+  expect_status "$status" 1 "a repository of belong is a blocker"
+  expect_contains "$err" "BLOCKED repo" "the blocker is printed"
+  expect_absent "$(calls)" "fugaro runs ls" "the listing was not read"
+}
+
 test_preflight_passes_and_reads_nothing_beyond_the_preconditions() {
   reset_state
   run_check --preflight
@@ -332,6 +340,7 @@ t test_the_legacy_row_counts_the_classed_runs
 t test_the_fake_refuses_a_flag_the_cli_does_not_have
 t test_the_fake_accepts_the_reads_the_check_makes
 t test_preflight_blocks_without_a_stored_report_and_writes_nothing
+t test_preflight_blocks_on_a_repository_of_belong
 t test_preflight_passes_and_reads_nothing_beyond_the_preconditions
 t test_preflight_refuses_an_agent_session
 

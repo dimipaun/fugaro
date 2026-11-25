@@ -494,7 +494,7 @@ step_restore() {
 # --preflight reads every precondition the check reads and prints all blockers
 # at once, with the fix; it launches nothing, writes nothing and creates nothing.
 step_preflight() {
-  local doc name project out
+  local doc name project out url repo slug
   doc=$(doctor_identity) || {
     preflight_block doctor "fugaro doctor --json did not answer, so the installation cannot be read" "$FUGARO doctor --json"
     return 0
@@ -509,7 +509,18 @@ step_preflight() {
   [ "$name" = "$INSTALLATION" ] || preflight_block installation "the installation is ${name:-nothing}, and this check runs on $INSTALLATION only" "fugaro doctor on the installation $INSTALLATION (GCP $GCP_PROJECT)"
   [ "$project" = "$GCP_PROJECT" ] || preflight_block gcp-project "the GCP project is ${project:-nothing}, and this check runs in $GCP_PROJECT only" "fugaro doctor on the installation $INSTALLATION (GCP $GCP_PROJECT)"
   if git remote get-url origin >/dev/null 2>&1; then
-    preflight_note repository "$(git remote get-url origin) is the checkout's origin"
+    url=$(git remote get-url origin)
+    repo=$(printf '%s' "$url" | python3 -c 'import sys,re
+u=re.sub(r"\.git$","",sys.stdin.read().strip()).rstrip("/")
+parts=re.split(r"[/:]",u)
+print(parts[-2]+"/"+parts[-1] if len(parts)>=2 and parts[-2] and parts[-1] else "")')
+    slug=$(printf '%s' "$repo" | tr '/' '-')
+    case "$repo$slug" in
+    *belong* | *edgeweb* | *edgeserver*)
+      preflight_block repository "the checkout is $url, and Check 136 never runs against belong, EdgeWeb or EdgeServer" "run the check in the sandbox repository's checkout, never a checkout of belong, EdgeWeb or EdgeServer"
+      ;;
+    esac
+    preflight_note repository "$url is the checkout's origin"
   else
     preflight_block repository "this directory is not a checkout of a repository" "run this check in the sandbox repository's checkout"
   fi
