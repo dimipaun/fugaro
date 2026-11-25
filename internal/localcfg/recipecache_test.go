@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/recipe"
 )
 
 func TestRecipeCache(t *testing.T) {
@@ -50,6 +52,53 @@ func TestRecipeCache(t *testing.T) {
 	}
 	if err := DropRecipeCache(getenv, "aurora", "team"); err != nil {
 		t.Fatalf("dropping a missing entry: %v", err)
+	}
+}
+
+// TestEveryNameCheckAcceptsACopy covers this package's half of R19: the cache
+// stores and reads back a project's copy of a recipe, and refuses any other
+// dotted name, so a copy name can never become a path out of the cache
+// directory. The rule is one rule over three checks — internal/recipe's parser
+// (with the schema) and the task's spec test their halves under the same name
+// — so the full table of names they agree about lives with the parser's.
+func TestEveryNameCheckAcceptsACopy(t *testing.T) {
+	dir := t.TempDir()
+	getenv := func(k string) string {
+		if k == "XDG_CACHE_HOME" {
+			return dir
+		}
+		return ""
+	}
+	e := SharedCacheEntry{GCPProject: "proj-1234", Bucket: "b", CheckedAt: time.Now(), YAML: "version: 1\n"}
+	maxCopy := recipe.CopyName(strings.Repeat("n", 40), "github", "acme/"+strings.Repeat("m", 60))
+	for _, name := range []string{
+		recipe.CopyName("review", "github", "acme/app-web"),
+		maxCopy,
+	} {
+		if err := SaveRecipeCache(getenv, "aurora", name, e); err != nil {
+			t.Errorf("%q: %v", name, err)
+			continue
+		}
+		if _, ok := LoadRecipeCache(getenv, "aurora", name); !ok {
+			t.Errorf("%q did not round-trip", name)
+		}
+	}
+	for _, name := range []string{
+		"review.acme-app-web",
+		"review.acme-app-web-1234567",
+		"review..acme-app-web-12345678",
+		"Review.acme-app-web-12345678",
+		maxCopy + "m",
+	} {
+		if err := SaveRecipeCache(getenv, "aurora", name, e); err == nil {
+			t.Errorf("%q was written", name)
+		}
+		if err := DropRecipeCache(getenv, "aurora", name); err == nil {
+			t.Errorf("%q was dropped", name)
+		}
+		if _, ok := LoadRecipeCache(getenv, "aurora", name); ok {
+			t.Errorf("%q hit", name)
+		}
 	}
 }
 

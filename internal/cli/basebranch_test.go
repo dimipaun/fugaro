@@ -16,6 +16,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
+// release0121 is a job image whose runner reads a task's base_branch
+// (baseBranchSince), the field TestBaseBranchOnAFollowUp is about.
+const release0121 = "ghcr.io/dimipaun/fugaro-base:0.12.1"
+
 // baseBranchCheckout makes the working directory a checkout of repo with the
 // given fugaro.yaml, and gives origin the remote-tracking refs of main,
 // develop and master. A branch of "" leaves HEAD detached: that is the
@@ -56,9 +60,14 @@ const noBaseBranchYAML = "version: 1\nproject: aurora\ngit: { provider: github }
 // publishBaseBranch writes the policy node a launcher reads the project's
 // default base branch from, with the rules marker that makes the node visible
 // to it (projectpolicy.Read).
+//
+// The node carries no budget block: it is published for its base branch, the
+// installation's own config is where the budget lives here, and a block would
+// have to name a mode this release has (off is not one any more, D3009 — such a
+// node is refused by its own reader, AB8a).
 func publishBaseBranch(t *testing.T, db *gcpfake.RTDB, branch string) {
 	t.Helper()
-	node := map[string]any{"version": projectpolicy.Version, "allow_repos": []string{"github/acme/other"}, "budget": map[string]any{"mode": "off"}}
+	node := map[string]any{"version": projectpolicy.Version, "allow_repos": []string{"github/acme/other"}}
 	if branch != "" {
 		node["base_branch"] = branch
 	}
@@ -429,6 +438,12 @@ func appendProjectConfig(t *testing.T, path, yaml string) {
 // the file this follow-up reads sets nothing.
 func TestBaseBranchOnAFollowUp(t *testing.T) {
 	f := newCloudFixture(t)
+	// The field is carried only for a job image whose runner reads it
+	// (baseBranchSince, 0.12.1): an older one has baseBranchSkew drop the
+	// field before the task is written, and the follow-up would be gated on
+	// the title it inherits before that. One image past both is what this
+	// test is about — the base the run it continues recorded.
+	writeBuildRecord(t, f, appSlug, "web", release0160)
 	root := firstRunSpec(rootID)
 	root.Ref, root.BaseBranch = "master", "master"
 	seedSpec(t, f, root, false)

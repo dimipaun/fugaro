@@ -50,6 +50,11 @@ var RetirableTypes = map[string]string{
 	"google_cloud_run_v2_service_iam_member":         "a grant on a service: the binding holds nothing",
 	"google_artifact_registry_repository_iam_member": "a grant on a registry: the images live in the registry, and the binding holds nothing",
 	"google_logging_log_view_iam_member":             "a grant on a log view: the binding holds nothing",
+	// The signing key's grant (J6): a binding between the consumer's account
+	// and a role, on the key whose own decision is below — and removing it is
+	// the reach an installation that stops consuming the mailbox gives up, not
+	// a loss.
+	"google_kms_crypto_key_iam_member": "a grant on a signing key: the binding holds nothing of its own",
 
 	// The identities and the jobs. A removed workflow variant's account, job
 	// and schedule are the case the issue names.
@@ -83,6 +88,7 @@ var RetainedTypes = map[string]string{
 	"google_project_service":                 "enabling an API is the installation's, and disabling one is not one repository's to do",
 	"google_project_iam_custom_role":         "a custom role is shared by the installation's principals and by its other repositories",
 	"google_firebase_project":                "the project's Firebase, not one repository's",
+	"google_firestore_index":                 "the run index's composite indexes serve every repository's listings at once, and one repository's retirement is not the place to take a read the whole installation makes",
 	"google_logging_project_sink":            "the installation's log routing",
 	"google_logging_project_exclusion":       "the installation's log exclusions",
 	"google_logging_log_view":                "the installation's log views",
@@ -95,6 +101,14 @@ var RetainedTypes = map[string]string{
 
 	// Neither data nor derived.
 	"google_apikeys_key": "a key is a credential: losing it breaks whoever holds it, and that is a person's decision",
+
+	// The consumer's signing key and the ring it lives in (J6). The key is
+	// both data-bearing (D1551) and the installation's: destroying it ends
+	// every paired phone's verification of what this installation signs, with
+	// no error anywhere in the installation, and the key's own module carries
+	// prevent_destroy for that reason.
+	"google_kms_crypto_key": "the consumer's signing key: destroying it ends every paired phone's verification, silently",
+	"google_kms_key_ring":   "the installation's signing key ring: it holds the key above, which is not one repository's to lose",
 }
 
 // RetirableType is this file's decision for one module resource type:

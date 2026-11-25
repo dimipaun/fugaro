@@ -114,7 +114,7 @@ func (e *initEngine) defaultMembers(ctx context.Context) error {
 	member := "user:" + email
 	o.operators, o.admins = []string{member}, []string{member}
 	o.operatorsChanged, o.adminsChanged = true, true
-	spec, err := installSpec(o, e.lc, r.warn)
+	spec, err := installSpec(o, e.lc, r.withheld)
 	if err != nil {
 		return err
 	}

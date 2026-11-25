@@ -437,7 +437,18 @@ resource "google_cloud_run_v2_service_iam_member" "credentials" {
   member   = google_service_account.job.member
 }
 
-# Only a workflow whose agent authenticates through Vertex AI.
+# The release-1 Vertex grant, and the one grant of this file CS11 plans from
+# more than the repository's own file: var.workflow.vertex is the repository
+# REACHING Vertex (its `agent.auth: vertex`, or a chain of the project's routing
+# table that may serve it naming Vertex) AND the project's budget mode allowing
+# a job the permission (infra.VertexGrantForJob) — so a job's account is planned
+# no aiplatform permission at all on an enforcing project, where a `vertex` run
+# is refused at bootstrap and no run in flight can be holding it, and keeps it
+# on an `observe` project until release 2 (X8). The chain-serving model call is
+# the credentials service's from now on (D3174) and its reach is the one
+# permission of its own custom role (modules/installation/credentials.tf);
+# roles/aiplatform.user is what a job holds while a chain's model still goes out
+# as the job, which is the path X8 retires.
 resource "google_project_iam_member" "vertex" {
   count = var.workflow.vertex ? 1 : 0
 

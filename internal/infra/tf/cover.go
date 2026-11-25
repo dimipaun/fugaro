@@ -46,11 +46,15 @@ var allowedTypes = map[string]bool{
 	// confirmation covers can carry them. What the compute stage does run
 	// over its own plan is GrantsNotCovered: the grant rules below, the
 	// launchers' Batch Job Editor condition among them.
-	"google_compute_firewall":                 true,
-	"google_compute_router":                   true,
-	"google_compute_router_nat":               true,
-	"google_firebase_database_instance":       true,
-	"google_firebase_project":                 true,
+	"google_compute_firewall":           true,
+	"google_compute_router":             true,
+	"google_compute_router_nat":         true,
+	"google_firebase_database_instance": true,
+	"google_firebase_project":           true,
+	// The run index's composite indexes (RI2, contract-index.md): the plan is
+	// the owner-run Firebase root's, because no job may change an index.
+	"google_firestore_index": true,
+	"google_kms_crypto_key":  true, "google_kms_crypto_key_iam_member": true, "google_kms_key_ring": true, // the consumer's signing key's three types (plan task J6; O17), on one line: docs/coordinator/reconciliation.md cites grantRules at cover.go:154 and that dated document stays unedited
 	"google_logging_log_view":                 true,
 	"google_logging_log_view_iam_member":      true,
 	"google_logging_project_bucket_config":    true,
@@ -269,6 +273,14 @@ var grantRules = map[string]map[string]who{
 		// the one project-level binding the task adds). Granting it to a job
 		// account or to a person is not a grant the installation makes.
 		customKey + CredentialsDatabaseRole: toCredentials | toMobile,
+		// The service's Vertex role (CS11, D3174): the installation project's
+		// own role, holding aiplatform.endpoints.predict and nothing else,
+		// bound to the service's own account in credentials.tf and to nothing
+		// else. A chain whose models are served on Vertex calls it as this
+		// service, so the reach has to be this account's and no job's; the
+		// jobs' own roles/aiplatform.user is the release-1 path CS11 keeps
+		// only under budget.mode: observe (X8 retires it).
+		customKey + CredentialsVertexRole: toCredentials,
 		// The dynamic-delivery class (D1931, DS2.2). fugaroIntakeSecrets is
 		// create, version-add and delete of the grammar's containers, held by
 		// the intake's own account and by nothing else, and only under the
@@ -610,6 +622,27 @@ var grantRules = map[string]map[string]who{
 	"google_logging_log_view_iam_member": {
 		"roles/logging.viewAccessor": toPeople,
 	},
+	"google_kms_crypto_key_iam_member": {
+		// The consumer's signing key (mobile-identity-pairing plan task J6;
+		// O17): the ONE grant of this class in the tree, and it is the mailbox
+		// consumer's account on the installation's one key with the role that
+		// holds cloudkms.cryptoKeyVersions.useToSign alone (MailboxSignerRole).
+		// The bit is toOrchestrator and not toAccounts because the consumer IS
+		// the resident orchestrator (P5.1; the design's §4.3 row the
+		// reconciliation pins as "signs its replies through J6's KMS signer"),
+		// and the account is a kind of its own for the reason
+		// OrchestratorAccountID gives: as one of FugaroAccounts every
+		// toAccounts row would have accepted it.
+		//
+		// The row decides the principal KIND and the role and nothing else, so
+		// it is not the whole of O17's "and no other": a plan that pointed this
+		// account's signing at another key of the project — or this key's
+		// signing at another account — would be covered by the bit alone, which
+		// is why the cell is narrowed further by mailboxSignerGrant. That reads
+		// the target key, the role's project and the absence of a condition,
+		// and refuses anything but this installation's one key.
+		customKey + MailboxSignerRole: toOrchestrator,
+	},
 }
 
 // allowedRoles are the predefined roles any row of grantRules names.
@@ -715,17 +748,26 @@ const ViewerRole = "fugaroViewer"
 
 // CredentialsAccountID is the credentials service's fixed service account ID
 // (internal/infra/tfvars.go's CredentialsAccountID, which
-// var.credentials_service.account_id carries) and CredentialsDatabaseRole the
-// custom role credentials.tf creates for it in the run's Firebase project.
+// var.credentials_service.account_id carries), CredentialsDatabaseRole the
+// custom role credentials.tf creates for it in the run's Firebase project, and
+// CredentialsVertexRole the second it creates for it in the installation's own
+// project where the installation names Vertex (CS11).
 //
 // The account is deliberately NOT among FugaroAccounts, for the deployer
-// account's reason and the ledger finding above: it holds its own role and the
+// account's reason and the ledger finding above: it holds its own roles and the
 // bundle's accessor, and nothing a job holds, so every row that would otherwise
 // accept it is refused (toCredentials). TestCoverNamesAreTheCodes and
 // TestCredentialsAccountIsItsOwnPrincipalKind read both halves.
+//
+// The Vertex role is a role of its own rather than a permission of the
+// database's — the two live in different projects and are read by different
+// callers — and it exists only where the installation names Vertex (D3174: the
+// service calls Vertex on its own installation identity, so a chain whose
+// models are served there needs this account to hold endpoints.predict).
 const (
 	CredentialsAccountID    = "fugaro-credentials"
 	CredentialsDatabaseRole = "fugaroCredentialsDatabase"
+	CredentialsVertexRole   = "fugaroCredentialsVertex"
 )
 
 // CoordinatorAccountID is the coordinator's writer account (internal/infra's
@@ -1047,6 +1089,46 @@ const DeviceSignerAccountID = "fugaro-device-signer"
 // holds the module's literal to this one.
 const MobileServiceName = "fugaro-mobile"
 
+// MailboxSignerRole is the consumer's signing role (mobile-identity-pairing
+// plan task J6; O17): the custom role mailbox_key.tf creates in the
+// installation's project, holding cloudkms.cryptoKeyVersions.useToSign alone
+// and nothing else — no verify, no metadata read, none of the instance's
+// lifecycle. It is a role of its own rather than a predefined one for the
+// reason ee/keyservice/terraform/keyring's signer role gives: the nearest
+// predefined role (roles/cloudkms.signerVerifier) carries the verify half and
+// the reads beside the signing one, and the mailbox consumer signs and does
+// nothing else with this key.
+//
+// The ID is a literal in the module and here, like the Cloud Asset reader's
+// and the history role's, and not a names.role_ids entry: nothing outside
+// installation/mailbox_key.tf names it, the pin in this package is by the same
+// literal (RolePermissions, and TestRolePinsAreTheModules holds the module's
+// list to it), and the ID in internal/mailbox's own constant is held to this
+// one by internal/infra's TestMailboxKeyNamesAreTheGoSpellings.
+const MailboxSignerRole = "fugaroMailboxSigner"
+
+// MailboxKeyRingName and MailboxCryptoKeyName are the key ring and the key
+// the installation's consumer signs with (mobile-identity-pairing plan task
+// J6; O17), both literals of mailbox_key.tf. They are named here because the
+// plan's signing reach is expressed over them: mailboxSignerGrant accepts the
+// consumer's account on exactly one crypto key, and the key it names is
+// projects/<this installation>/locations/<region>/keyRings/<ring>/cryptoKeys/
+// <key>. A plan that moved the grant to another key of the project — a second
+// key an operator created, or a key of another installation in the same
+// project — is refused rather than covered.
+//
+// internal/mailbox's ConsumerKeyRingName and ConsumerCryptoKeyName are the
+// same two words on the signer's side (KMSSigner holds a key version's NAME
+// and nothing else), and internal/infra's TestMailboxKeyNamesAreTheGoSpellings
+// holds the module's literals, the mailbox constants and these to each other:
+// a key whose Go spelling drifted would be a signer pointed at a key the
+// installation does not have, and the update that published its public half
+// would publish the wrong one.
+const (
+	MailboxKeyRingName   = "fugaro-mailbox"
+	MailboxCryptoKeyName = "fugaro-mailbox-consumer"
+)
+
 // IntakeSecretsRole and SecretListerRole are the dynamic class's two custom
 // roles (intake.tf, D1931, DS2.2). They are two and not one because an IAM
 // binding's condition cannot be lifted for a single permission of its role:
@@ -1079,7 +1161,7 @@ const (
 // reason (toBuildIdentity): its reach is the credentials service's invoker bit
 // and nothing a job of any repository holds.
 var (
-	FugaroRoles    = []string{"fugaroLauncher", ViewerRole, "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, CatalogLeaseRole, WorkspaceReadRole, IntakeSecretsRole, SecretListerRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole, MCPStateReadRole, LicenceRenewalRole}
+	FugaroRoles    = []string{"fugaroLauncher", ViewerRole, "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, CredentialsVertexRole, CatalogLeaseRole, WorkspaceReadRole, IntakeSecretsRole, SecretListerRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole, MCPStateReadRole, LicenceRenewalRole, MailboxSignerRole}
 	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload"}
 )
 
@@ -1751,6 +1833,15 @@ var RolePermissions = map[string][]string{
 	// installation's database. credentials.tf lists both permissions with their
 	// reasons; TestCredentialsDatabaseRoleIsTheTwoDataPermissions is the pin.
 	CredentialsDatabaseRole: {"firebasedatabase.instances.get", "firebasedatabase.instances.update"},
+	// The service's Vertex role (CS11, D3174): the one permission a :rawPredict
+	// on one of the installation project's Claude endpoints needs, and nothing
+	// else. roles/aiplatform.user — the release-1 grant a job holds under
+	// budget.mode: observe — carries endpoints.predict plus the platform's
+	// reads, model deployments, tuning and pipelines, which is exactly the
+	// surface a chain-serving credential holder must not have.
+	// deploy/terraform's TestTheServiceVertexRoleIsItsOwn is the pin that reads
+	// this entry against the module.
+	CredentialsVertexRole: {"aiplatform.endpoints.predict"},
 	// The catalog check job's database role (D1554): the two permissions
 	// catalogcheck.tf lists, and the same two the credentials role above pins.
 	// They are a second entry and not a shared one on purpose — the two
@@ -1793,6 +1884,19 @@ var RolePermissions = map[string][]string{
 	// MCPStateReadPermissions, and TestRolePinsAreTheModules holds both to the
 	// module.
 	MCPStateReadRole: {"firebasedatabase.instances.get"},
+	// The consumer's signing role (mailbox_key.tf, plan task J6; O17): the ONE
+	// permission Cloud KMS offers for making a signature with an asymmetric key
+	// version — cloudkms.cryptoKeyVersions.useToSign — and nothing beside it.
+	// The verify half (useToVerify) is deliberately not here: the phone holds
+	// the public half and verifies for itself, so the installation's own
+	// account has nothing to verify with, and a role that carried it would be a
+	// permission granted for a call nobody makes. The metadata reads
+	// (cryptoKeys.get, cryptoKeyVersions.get/list) are not here either: the
+	// update that publishes the public half reads the key's own attributes with
+	// the owner's credentials (internal/infra), not with this account.
+	// TestRolePinsAreTheModules holds this list to the module's own, so a later
+	// revision that widened the signer's reach would widen both in one change.
+	MailboxSignerRole: {"cloudkms.cryptoKeyVersions.useToSign"},
 	// The renewal job's four calls on the installation's renewal container
 	// (licence.tf, plan K4.2, the plan amendment of 2026-11-14). A custom role
 	// rather than a predefined one, and the comment on LicenceRenewalRole says
@@ -2065,13 +2169,14 @@ var (
 // in the same binary — deploy/terraform is embedded — so the order is the
 // cover's and not a release's).
 //
-// FUGARO_SHARED_JOB_ACCOUNTS is on it now (B5.1): the service reads it as an
-// optional value (internal/cli's envSharedJobAccounts), and the module that
-// renders it from the shared jobs an installation deploys is the deployment
-// side's own step — which is why the name is here, on the allow-list ahead of
-// its module, rather than nowhere. Until that step every installation renders
-// the entry nowhere, the service starts with an empty shared set and the class
-// is refused whole: the fail-closed state B5.1 leaves production in. Before it,
+// It is EMPTY now, and FUGARO_SHARED_JOB_ACCOUNTS is the name that left it
+// last: the service reads it as an optional value (internal/cli's
+// envSharedJobAccounts) and the module that renders it from the shared jobs an
+// installation deploys is installation/credentials.tf, which sets it from
+// var.credentials_service.shared_job_accounts on the same switch every other
+// entry of that container is on (B5.1). It is kept as a function with a body
+// that can hold a name rather than deleted, because the next name the service
+// reads ahead of the module that renders it belongs here. Before it,
 // FUGARO_LAUNCHER_ACCOUNTS (the launcher class's list, D1938, F25) left this
 // list in the change that made installation/credentials.tf render it (DS2.2),
 // and FUGARO_REVIEW_JOB_ACCOUNTS left it the same way before that.
@@ -2093,9 +2198,7 @@ var (
 // is here and in the module's own source — so a name added ahead of its module
 // cannot be left behind once the module renders it.
 func CredentialsServiceEnvAwaitingTheModule() []string {
-	return []string{
-		"FUGARO_SHARED_JOB_ACCOUNTS",
-	}
+	return nil
 }
 
 // APITargets are the two services the Firebase web key may call, sorted;
@@ -2640,6 +2743,16 @@ func (c Cover) grant(rc ResourceChange, creates, createdSAIDs, heldSAIDs map[str
 	// left to hold is the account the row is ON.
 	if why == "" && t == "google_service_account_iam_member" && c.isCredentialsMember(str(rc.Change.After["member"])) {
 		why = c.issuerMinterGrant(rc.Change)
+	}
+	// The consumer's signing grant (mobile-identity-pairing plan task J6; O17)
+	// is the one row of that class in the tree, and its TARGET is the whole of
+	// "the mailbox consumer's account only": the bit opens the cell to the
+	// resident orchestrator with MailboxSignerRole, and mailboxSignerGrant
+	// closes it again to this installation's one key, spelled out, with no
+	// condition. A plan that pointed the account's signing at another key of
+	// the project would otherwise be covered by the row alone.
+	if why == "" && t == "google_kms_crypto_key_iam_member" {
+		why = c.mailboxSignerGrant(rc.Change)
 	}
 	if why == "" {
 		why = c.deployerGrant(t, rc.Change, dep.accounts[modulePrefix(rc)])
@@ -3385,6 +3498,79 @@ func (c Cover) mobileMinterGrant(ch Change) string {
 		}
 	}
 	return fmt.Sprintf("grants fugaroTokenMinter on %s to the public mobile service: its one signJwt is on the devices' signer account of this run's Firebase project (%s), never on the runs' own signer and never on a job account — signJwt signs any claim set for any uid, so the account it is on IS the identity this public service may mint (P5, O1, O8)", id, DeviceSignerAccountID+"@<one of this run's projects>.iam.gserviceaccount.com")
+}
+
+// mailboxSignerGrant is voiceProviderKeyGrant's shape one row over, and it is
+// the function that makes O17's "with signing granted to the mailbox consumer's
+// account only" a property of a plan rather than of the module's text: the
+// consumer's one grant is on THIS installation's one key, in this
+// installation's own project, under no condition, and on nothing else.
+//
+// Why the key is the check that matters here. The row already says the
+// consumer's account may hold the signer's role, and the role is the whole of
+// what that account may do with a key: make a signature with it. It does not
+// say which role of which project — roleKey resolves a custom role by its ID in
+// any project of this run — so the grant is held to this installation's own
+// role as well. What the row cannot say at all is WHICH key, and the difference
+// matters more than it looks — a
+// grant on another key of the same project is a signature the phones of this
+// installation do not verify (they pinned the public half of this key, O16),
+// made with material no step of this tree published or can revoke, and a grant
+// on a key an operator created by hand is a second consumer identity the
+// update's own review screen never showed. So the cell is closed here to the
+// name mailbox_key.tf composes: projects/<the installation>/locations/<region>/
+// keyRings/fugaro-mailbox/cryptoKeys/fugaro-mailbox-consumer.
+//
+// The key has to be SPELLED OUT, and the reason is the ordering one
+// orchestrator.tf's launcher row gives: a provider-computed name reaches a
+// plan as UNKNOWN — the module writes the literal for exactly that reason, and
+// depends_on is what orders the binding behind the key the literal names — so
+// an unknown target is a plan that did not take it from the module's own text
+// and is refused. The project is this run's installation project
+// (Cover.installationProject) rather than any project of Projects: O17 puts the
+// key in the installation's project, and a grant in the Firebase project beside
+// it would be a key the installation root does not create.
+func (c Cover) mailboxSignerGrant(ch Change) string {
+	project := c.installationProject()
+	if project == "" {
+		return "grants the consumer's signing role in no project of this run"
+	}
+	// The role's OWN project, which roleKey does not decide: that lookup admits
+	// a custom role of any project of this run (Cover.Projects — the
+	// installation's own and a verified Firebase project beside it), so a plan
+	// could bind an identically named role of the Firebase project to this
+	// account on this installation's key. The name is not the role: the other
+	// project's is a different role with that project's own permission list,
+	// and O17's row is the role the installation root creates.
+	if got, want := str(ch.After["role"]), "projects/"+project+"/roles/"+MailboxSignerRole; got != want {
+		return fmt.Sprintf("grants %s, and the installation's own signer role is %s: a role of the same ID in another project of this run is another project's rule with its own permission list, and the row O17 names is the one the installation creates", got, want)
+	}
+	if unknown(ch, "crypto_key_id") {
+		return fmt.Sprintf("grants the consumer's signing role on a key that is not known: the design's row is the installation's one consumer key (%s), written out in mailbox_key.tf, and a plan that computes the key is one whose key nobody can name", mailboxCryptoKeyPath(project, c.Region))
+	}
+	want := mailboxCryptoKeyPath(project, c.Region)
+	if got := str(ch.After["crypto_key_id"]); got != want {
+		return fmt.Sprintf("grants the consumer's signing role on %s, and the installation's consumer key is %s: a signature made under another key verifies nowhere in this installation — every paired phone pinned the public half of this one (O16) — so a second key is a second consumer identity, which no module writes", got, want)
+	}
+	conds, why := grantConditions(ch, "a key grant")
+	switch {
+	case why != "":
+		return why
+	case len(conds) != 0:
+		return "grants the consumer's signing role under a condition, which the module never sets: Cloud KMS expresses no useful condition here (the account's single permission is already the whole of what it may do with the key), so one would fence nothing and hide the key the grant is on from the review screen"
+	}
+	return ""
+}
+
+// mailboxCryptoKeyPath is the resource name of the installation's consumer
+// signing key, composed the way mailbox_key.tf's own literal is: the key ring
+// and the key are the module's two names (MailboxKeyRingName,
+// MailboxCryptoKeyName) and the project and location are the installation's.
+// internal/mailbox's ConsumerCryptoKeyPath is the same composition on the
+// signer's side, and internal/infra's TestMailboxKeyNamesAreTheGoSpellings
+// holds the two to the module's literals.
+func mailboxCryptoKeyPath(project, region string) string {
+	return "projects/" + project + "/locations/" + region + "/keyRings/" + MailboxKeyRingName + "/cryptoKeys/" + MailboxCryptoKeyName
 }
 
 // issuerMinterGrant is orchestratorMinterGrant's rule for the credentials
@@ -5588,6 +5774,17 @@ var dataBearingTypes = map[string]bool{
 	"google_storage_bucket_object": true,
 	// A key's own value is the credential an API call carries.
 	"google_apikeys_key": true,
+	// The consumer's signing key (mobile-identity-pairing plan task J6; O17):
+	// the one resource of this tree whose loss is not repairable, and D1551's
+	// question is whether a delete or a replace destroys data its objects hold.
+	// It does. What the key holds is the private half every paired phone's
+	// pinned public key corresponds to: destroy or replace it and every phone
+	// verifies nothing the installation signs again — silently, at the phone,
+	// with no error anywhere in the installation — until each one is paired
+	// again. That is why the module carries prevent_destroy beside this entry
+	// (deploy/terraform's TestPreventDestroy) and why the classification is
+	// data-bearing rather than a type nobody decided.
+	"google_kms_crypto_key": true,
 }
 
 // nonDataBearingTypes is the other half of D1551's classification: every entry
@@ -5609,17 +5806,30 @@ var nonDataBearingTypes = map[string]bool{
 	"google_compute_router":                          true,
 	"google_compute_router_nat":                      true,
 	"google_firebase_project":                        true,
-	"google_logging_log_view_iam_member":             true,
-	"google_logging_project_exclusion":               true,
-	"google_logging_project_sink":                    true,
-	"google_monitoring_alert_policy":                 true,
-	"google_monitoring_notification_channel":         true,
-	"google_project_iam_custom_role":                 true,
-	"google_project_iam_member":                      true,
-	"google_project_service":                         true,
-	"google_secret_manager_secret_iam_member":        true,
-	"google_service_account_iam_member":              true,
-	"google_storage_bucket_iam_member":               true,
+	// An index holds no documents: the runs it orders live in the collection,
+	// and deleting the index loses an answer, never a row.
+	"google_firestore_index": true,
+	// The key's ring and the grant on the key (plan task J6): a ring holds no
+	// material of its own — the key inside it does, and it is the data-bearing
+	// entry above — and a grant holds none. Removing the ring while the key is
+	// in it is not something Terraform plans anyway (Cloud KMS refuses a ring
+	// that is not empty), and removing the grant revokes the signing reach
+	// rather than destroying anything, which is the state an installation that
+	// turns the resident orchestrator off is left in: the key and its published
+	// public half stand, and nothing signs with them.
+	"google_kms_crypto_key_iam_member":        true,
+	"google_kms_key_ring":                     true,
+	"google_logging_log_view_iam_member":      true,
+	"google_logging_project_exclusion":        true,
+	"google_logging_project_sink":             true,
+	"google_monitoring_alert_policy":          true,
+	"google_monitoring_notification_channel":  true,
+	"google_project_iam_custom_role":          true,
+	"google_project_iam_member":               true,
+	"google_project_service":                  true,
+	"google_secret_manager_secret_iam_member": true,
+	"google_service_account_iam_member":       true,
+	"google_storage_bucket_iam_member":        true,
 }
 
 // DataBearingType classifies a resource type for D1551: whether its objects

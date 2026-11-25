@@ -78,6 +78,19 @@ import (
 // (askNamesTheItemsRepo). Reading the two as one string would refuse every
 // honest ask.
 //
+// THE ONE CASE THE CLASS IS SERVED ON SOMETHING ELSE (D3189). A resume is not an
+// attempt of this record: the run that continues a paused one is a new run of the
+// chain, so no intent of this node names it, and a paused run a person launched
+// has no intent of this node at all. The evidence is therefore this service's own
+// record of the pause it wrote — the node under runstore.PauseNodeRoot, written by
+// this service and by nobody else (R19) — and the ask names it as `resumes` where
+// a re-issue names `attempt`. That is the whole of the widening: the class is
+// served a resume only for a pause THIS SERVICE recorded, and never for one whose
+// only word is the record the paused run's own container left in its bucket, which
+// is a hostile agent's (R23, F52). The grant's own rules — the resume time, the
+// cancellation, whether the run really ended `paused` — are the slip's and not
+// this check's (contract-pause, "Resuming").
+//
 // WHAT THIS FILE DOES NOT DO. No committer is read and no scope is judged for
 // this class (D3136): the check never asks the roles-and-scopes resolver about an
 // orchestrator, and it hands every OTHER class to the check it was built with
@@ -109,6 +122,42 @@ type OrchestratorRecord interface {
 	State(ctx context.Context) (orchestrator.State, error)
 }
 
+// PausedNodes is this service's own record of the pauses it wrote (D3189, R19):
+// the node at runstore.PauseNodePath(slug, run), under the database subtree
+// runstore.PauseNodeRoot, which this service alone writes and every launcher of
+// the project may read.
+//
+// WHY THE RESUME IS SERVED ON THIS AND NOT ON A WIDER READ OF THE RECORD. A
+// resume continues a paused run, and the run that continues it is a new run of
+// the chain: the orchestrator's own state node carries no attempt of it, and a
+// paused run a person launched has no intent of that record at all
+// (orchestrator's ReissuableAttempt and its note). So the evidence is the
+// service's own record instead, and that is what makes the widening safe: the
+// database's root is closed to a run's token, so a job cannot write the node —
+// what a job writes about its own pause is the record in its bucket, which is a
+// hostile agent's word (R23), and a resume derived from that one would be a
+// resume any agent could ask for (F52).
+//
+// It is an interface and not the node itself for the reason OrchestratorRecord
+// is: the reader is I1's to build over the database the service already holds,
+// and a check that reached for a transport of its own would be a second place
+// the service's account is used. An error that is not ErrNoPause is the
+// SERVICE's own failure and never a verdict about the caller (R16's ScopeFault
+// rule).
+type PausedNodes interface {
+	// Paused answers whether this service holds a pause it recorded for one run
+	// of one repository, and ErrNoPause when it holds none. A node this release
+	// cannot read is ErrNoPause as well: a pause the issuer cannot read is not
+	// one it serves a resume of, and the ask is refused rather than guessed at
+	// (a pause spans a fugaro update, F36).
+	Paused(ctx context.Context, slug, run string) error
+}
+
+// ErrNoPause is what a PausedNodes reader answers for a run this service
+// recorded no pause for: the ask is refused as one the record does not carry,
+// and never as the service's own failure (R16's ScopeFault rule).
+var ErrNoPause = errors.New("credsvc: this service holds no pause of its own for that run")
+
 // ErrOrchestratedAsk is the refusal of an ask in the orchestrator's class that
 // the orchestrator's own record does not carry as one its gate would start: a
 // run id the record never recorded, an attempt that is not the one that run id
@@ -116,7 +165,7 @@ type OrchestratorRecord interface {
 // finished (done or cancelled) or edited since the attempt was committed, an
 // approval a person has replaced since, an attempt that has ended, an attempt
 // of another repository, or an ask that names a context repository at all
-// (D3136).
+// (D3136) — and, since D3189, a resume of a pause this service did not record.
 //
 // It is one value because the route's answer is one: every one of those is the
 // contract's `identity_refused`, and a caller branches on the code and not on
@@ -174,14 +223,22 @@ func (e *OrchestratedFault) Unwrap() error { return e.ScopeFault }
 // record is the orchestrator's own record, and it is required for the same
 // reason read the other way: a check that read none would admit every ask the
 // class makes, which is the state this task ends.
-func NewOrchestratedScope(next ScopeCheck, record OrchestratorRecord) (ScopeCheck, error) {
+//
+// pauses is this service's own record of the pauses it wrote (D3189), and it is
+// required for that same reason a third time: a check that read none would serve
+// a resume on the ask's own word about a run it says it suspended — which is
+// exactly the case the class was NOT widened by (F52).
+func NewOrchestratedScope(next ScopeCheck, record OrchestratorRecord, pauses PausedNodes) (ScopeCheck, error) {
 	if next == nil {
 		return nil, errors.New("credsvc: the orchestrator's check needs the check for every other class, and one that judged no scope would admit a caller the resolver refuses")
 	}
 	if record == nil {
 		return nil, errors.New("credsvc: the orchestrator's check needs the orchestrator's own record, and a check that read none would admit every ask the class makes")
 	}
-	return orchestratedScope{next: next, record: record}, nil
+	if pauses == nil {
+		return nil, errors.New("credsvc: the orchestrator's check needs this service's own record of the pauses it wrote, and a check that read none would serve a resume on the ask's own word (D3189)")
+	}
+	return orchestratedScope{next: next, record: record, pauses: pauses}, nil
 }
 
 // orchestratedScope is the check itself: the orchestrator's class judged here,
@@ -189,6 +246,7 @@ func NewOrchestratedScope(next ScopeCheck, record OrchestratorRecord) (ScopeChec
 type orchestratedScope struct {
 	next   ScopeCheck
 	record OrchestratorRecord
+	pauses PausedNodes
 }
 
 var _ ScopeCheck = orchestratedScope{}
@@ -214,6 +272,17 @@ func (c orchestratedScope) checkOrchestrated(ctx context.Context, caller Identit
 		// the class may be issued is an attempt of its own record and nothing
 		// beside it (D3136).
 		return fmt.Errorf("%w: the ask names %d context repositories, and the orchestrator's class is issued none", ErrOrchestratedAsk, len(ask.ContextRepos))
+	}
+	if ask.Attempt != "" && ask.Resumes != "" {
+		// An ask names one or the other and never both. The two are judged
+		// against different records (the orchestrator's own node, and this
+		// service's record of the pauses it wrote), and a reference that named
+		// both would be judged against whichever arm ran — the weaker of the
+		// two, if the other arm were the one it should have met.
+		return fmt.Errorf("%w: the ask names an attempt and a resume, and a run re-issues an attempt of the orchestrator's own record or continues a pause this service wrote, never both", ErrOrchestratedAsk)
+	}
+	if ask.Resumes != "" {
+		return c.checkResume(ctx, caller, ask)
 	}
 	if !ask.Attempt.Valid() {
 		// An ask that names no attempt — or one the orchestrator's own spelling
@@ -254,6 +323,33 @@ func (c orchestratedScope) checkOrchestrated(ctx context.Context, caller Identit
 		// REPOSITORY the ask names (D3136), so an ask that points one item's
 		// attempt at another repository's run is refused.
 		return fmt.Errorf("%w: the attempt %q is the record's for %q, and the ask's slug %q is not that repository's", ErrOrchestratedAsk, safetext.OneLine(attempt), safetext.OneLine(item.Repo), safetext.OneLine(ask.Slug))
+	}
+	return nil
+}
+
+// checkResume is the orchestrator's arm for a resume (D3189): the one case the
+// class is served on something other than an attempt of its own record, and the
+// whole of the evidence is the node this service itself wrote.
+//
+// What it does NOT judge is the grant's own rules — that the node's resume time
+// has passed, that it carries no cancellation, that the paused run really ended
+// `paused` (contract-pause, "Resuming"). Those are the slip's, which is where a
+// resume's launcher is judged (LM23's resolver), and a second copy of them here
+// is where the two would come apart. What this arm answers is the one question
+// this route is the door for: is this ask one this service's own record carries
+// at all?
+func (c orchestratedScope) checkResume(ctx context.Context, caller IdentityCaller, ask identitywire.TicketRequest) error {
+	if err := c.pauses.Paused(ctx, ask.Slug, ask.Resumes); err != nil {
+		if errors.Is(err, ErrNoPause) {
+			return fmt.Errorf("%w: the ask resumes the run %q, and this service recorded no pause of its own for it (D3189)", ErrOrchestratedAsk, safetext.OneLine(ask.Resumes))
+		}
+		// The record could not be read, which is this service's own failure and
+		// not a refusal of the caller — the same answer and the same line as the
+		// orchestrator's record failing to read above (OrchestratedFault).
+		return &OrchestratedFault{
+			ScopeFault: &ScopeFault{What: "this service's own record of the pauses it wrote", Err: err},
+			Caller:     caller,
+		}
 	}
 	return nil
 }

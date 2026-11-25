@@ -3958,10 +3958,10 @@ func TestFilledServiceServedAuthsDropsTheAnthropicMountsOnly(t *testing.T) {
 		if !slices.Contains(config.ServiceServedAuths, auth) {
 			t.Fatalf("config.ServiceServedAuths is %v and does not carry %q: B2.7's flip is what makes a switched %s repository give up its two Claude mounts (D2072, G17)", config.ServiceServedAuths, auth, auth)
 		}
-		if got := ModelSecretsServed(true, auth); got != config.ModelSecretServedAnthropic {
+		if got := ModelSecretsServed(ChainPlan{}, true, auth); got != config.ModelSecretServedAnthropic {
 			t.Errorf("ModelSecretsServed(serving, %q) = %q, want %q: a switched repository of an auth in the flip list reaches the service for the Anthropic key and the OAuth token, so those two mounts go (D2072)", auth, got, config.ModelSecretServedAnthropic)
 		}
-		if got := ModelSecretsServed(false, auth); got != config.ModelSecretServedNone {
+		if got := ModelSecretsServed(ChainPlan{}, false, auth); got != config.ModelSecretServedNone {
 			t.Errorf("ModelSecretsServed(held off, %q) = %q, want %q: a repository the switch holds off keeps every mount, whatever the flip list says", auth, got, config.ModelSecretServedNone)
 		}
 	}
@@ -4031,7 +4031,7 @@ func TestFilledServiceServedAuthsKeepsProviderKeys(t *testing.T) {
 	}
 	// The provider's key is not a credential of the service's, at any auth: a
 	// vertex repository's calls are the project's own GCP service.
-	if got := ModelSecretsServed(true, "vertex"); got != config.ModelSecretServedNone {
+	if got := ModelSecretsServed(ChainPlan{}, true, "vertex"); got != config.ModelSecretServedNone {
 		t.Errorf("ModelSecretsServed(serving, vertex) = %q, want %q: a Vertex workflow's calls are not a credential this service holds", got, config.ModelSecretServedNone)
 	}
 }
@@ -4532,10 +4532,10 @@ func TestFilledBuildListDropsTheCheckMounts(t *testing.T) {
 // D1634). A mixed stage account's own variant job is the arm's one exception,
 // its Claude OAuth mount being the STAGE's credential rather than the run's.
 func TestCascadeStillDropsItsMounts(t *testing.T) {
-	if got := ModelSecretsServed(true, config.AuthCascade); got != config.ModelSecretServedAll {
+	if got := ModelSecretsServed(ChainPlan{}, true, config.AuthCascade); got != config.ModelSecretServedAll {
 		t.Errorf("ModelSecretsServed(serving, cascade) = %q, want %q: the cascade's runner reads every model credential from the service, so its job keeps none (D143)", got, config.ModelSecretServedAll)
 	}
-	if got := ModelSecretsServed(false, config.AuthCascade); got != config.ModelSecretServedNone {
+	if got := ModelSecretsServed(ChainPlan{}, false, config.AuthCascade); got != config.ModelSecretServedNone {
 		t.Errorf("ModelSecretsServed(held off, cascade) = %q, want %q: a cascade repository the switch holds off keeps exactly what it had", got, config.ModelSecretServedNone)
 	}
 	rs := repoRootServed(t, repoRootCascadeAgent, repoRootLC, config.BudgetEnforce)

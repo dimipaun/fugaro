@@ -41,6 +41,12 @@ import (
 // bucket, writes the index, and gives up the lease when a pass ends, so an
 // upgrade reaches an installation whose runs are going exactly as it reaches
 // one that is idle (the HARD RULE, docs/design/update-in-flight.md).
+// reindexNotMarked is what a converge says when it could not mark the
+// installation's run index: what happened, and the one command that marks it by
+// hand. The error goes in the verbs rather than in the sentence, so the line
+// stays one line whatever the platform answered.
+const reindexNotMarked = "the run index was not marked for a rebuild (%s): `fugaro runs reindex` marks it by hand"
+
 func (e *initEngine) reindexRunIndex(ctx context.Context) {
 	r, o := e.r, e.r.o
 	// The door first, as in backfillPRIndex: this is the upgrade's step, and
@@ -72,7 +78,7 @@ func (e *initEngine) reindexRunIndex(ctx context.Context) {
 	}
 	db, err := newBudgetClient(ctx, e.lc.Budget.RTDBURL, e.lc.Endpoints.NoAuth)
 	if err != nil {
-		r.warn(fmt.Sprintf("the run index was not marked for a rebuild: the budget database could not be opened (%s). `fugaro runs ls` reads the index as it stands until an update marks it", safetext.FieldErr(err)))
+		r.warn(fmt.Sprintf("the run index was not marked for a rebuild: the budget database could not be opened (%s)", safetext.FieldErr(err)))
 		return
 	}
 	// The one ownership question every writer into that database asks
@@ -84,7 +90,7 @@ func (e *initEngine) reindexRunIndex(ctx context.Context) {
 	}
 	fs, err := newReportFirestore(ctx, e.lc)
 	if err != nil {
-		r.warn(fmt.Sprintf("the run index was not marked for a rebuild: %s. `fugaro runs ls` reads the index as it stands until an update marks it", safetext.FieldErr(err)))
+		r.warn(fmt.Sprintf(reindexNotMarked, safetext.FieldErr(err)))
 		return
 	}
 	// The first reindex and not a reindex on every upgrade (RI5): an
@@ -94,7 +100,7 @@ func (e *initEngine) reindexRunIndex(ctx context.Context) {
 	// is the command that asks for one by hand.
 	owed, err := runindex.WalkOwed(ctx, db, fs)
 	if err != nil {
-		r.warn(fmt.Sprintf("the run index was not marked for a rebuild: %s. `fugaro runs ls` reads the index as it stands until an update marks it, or `fugaro runs reindex` marks it by hand", safetext.FieldErr(err)))
+		r.warn(fmt.Sprintf(reindexNotMarked, safetext.FieldErr(err)))
 		return
 	}
 	if !owed {
@@ -102,17 +108,17 @@ func (e *initEngine) reindexRunIndex(ctx context.Context) {
 	}
 	live, err := runindex.ResetReindex(ctx, db, fs, reindexHolder(ctx, e.lc), time.Now().UTC())
 	if err != nil {
-		r.warn(fmt.Sprintf("the run index was not marked for a rebuild: %s. `fugaro runs ls` reads the index as it stands until an update marks it, or `fugaro runs reindex` marks it by hand", safetext.FieldErr(err)))
+		r.warn(fmt.Sprintf(reindexNotMarked, safetext.FieldErr(err)))
 		return
 	}
 	if live {
-		fmt.Fprintln(r.w, "run index: a reindex is already walking, so nothing was started; `fugaro runs ls` is short until it reaches the end of history. No run was waited for and none is touched.")
+		fmt.Fprintln(r.w, "run index: a reindex is already walking, so nothing was started and no run was waited for")
 		return
 	}
 	exec, err := startHistoryReindex(ctx, e.lc)
 	if err != nil {
-		r.warn(fmt.Sprintf("the run index was marked for a rebuild, but no reindex execution was started (%s). The walk is owed all the same: the next sweep of the history job carries it, and `fugaro runs reindex` asks for it by hand", safetext.FieldErr(err)))
+		r.warn(fmt.Sprintf("no reindex execution was started (%s): the walk stands, and the history job's next sweep carries it", safetext.FieldErr(err)))
 		return
 	}
-	fmt.Fprintf(r.w, "run index: marked incomplete and reindexing now as %s, so `fugaro runs ls` is short until the walk reaches the end of history. It resumes from its own cursor until then, and no run was waited for: an update reaches an installation whose runs are going exactly as it reaches an idle one.\n", oneLine(exec))
+	fmt.Fprintf(r.w, "run index: marked incomplete and reindexing now%s, so `fugaro runs ls` is short. No run was waited for.\n", reindexExecClause(exec))
 }

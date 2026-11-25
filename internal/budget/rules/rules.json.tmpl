@@ -267,6 +267,8 @@
           "credential": { ".validate": "STR && RBOK" },
           "mode": { ".validate": "STR && RBOK" },
           "from": { ".validate": "STR && RBOK" },
+          "source": { ".validate": "STR && RBOK" },
+          "fallback": { ".validate": "newData.isBoolean() && RBOK" },
           "waiting_until": { ".validate": "TIMESTAMP && RBOK" },
           "requestedBy": { ".validate": "STR && RBOK" },
           "$other": { ".validate": false }
@@ -280,7 +282,7 @@
             ".read": "USER",
             ".write": "RUN && DAYOK && !data.exists()",
             ".validate": "newData.hasChildren(['status', 'requestedBy'])",
-            "status": { ".validate": "newData.isString() && (newData.val() == 'succeeded' || newData.val() == 'failed' || newData.val() == 'unreviewed' || newData.val() == 'halted' || newData.val() == 'cancelled' || newData.val() == 'infra_error' || newData.val() == 'none') && RBOK" },
+            "status": { ".validate": "newData.isString() && (newData.val() == 'succeeded' || newData.val() == 'failed' || newData.val() == 'unreviewed' || newData.val() == 'halted' || newData.val() == 'cancelled' || newData.val() == 'infra_error' || newData.val() == 'paused' || newData.val() == 'none') && RBOK" },
             "requestedBy": { ".validate": "STR && RBOK" },
             "$other": { ".validate": false }
           }
@@ -292,12 +294,13 @@
         "inbox": {
           "$msg": {
             ".write": "MAILBOX && newData.exists() && !data.exists()",
-            ".validate": "newData.hasChildren(['id', 'sender', 'text', 'at', 'mac']) && $msg.length <= {{.MaxKeyLength}} && KINDREQ",
+            ".validate": "newData.hasChildren(['id', 'sender', 'text', 'at']) && TAGOK && $msg.length <= {{.MaxKeyLength}} && KINDREQ",
             "id": { ".validate": "newData.isString() && newData.val().length <= {{.MaxKeyLength}} && newData.val() == $msg" },
             "sender": { ".validate": "STR && newData.val() == $mb" },
             "text": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxTextLength}}" },
             "at": { ".validate": "TIMESTAMP" },
             "mac": { ".validate": "MACOK" },
+            "sig": { ".validate": "SIGOK" },
             "agent": { ".validate": "AGENTID" },
             "kind": { ".validate": "newData.isString() && (newData.val() == 'message' || newData.val() == 'prompt' || newData.val() == 'answer' || newData.val() == 'action' || newData.val() == 'registration' || newData.val() == 'stop')" },
             "options": {
@@ -306,9 +309,10 @@
             },
             "reply_to": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxKeyLength}} && (PARENTKIND == 'answer' || PARENTKIND == 'action')" },
             "action": {
-              ".validate": "PARENTKIND == 'action' && newData.hasChildren(['id', 'verb', 'target', 'confirmation']) && (newData.child('verb').val() == 'merge' ? newData.child('head_sha').exists() : true)",
+              ".validate": "PARENTKIND == 'action' && newData.hasChildren(['id', 'verb', 'target']) && (newData.child('verb').val() == 'launch' ? newData.child('mode').exists() : (newData.hasChildren(['confirmation']) && (newData.child('verb').val() == 'merge' ? newData.child('head_sha').exists() : true)))",
               "id": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxKeyLength}}" },
-              "verb": { ".validate": "newData.isString() && (newData.val() == 'cancel' || newData.val() == 'merge' || newData.val() == 'confirm')" },
+              "verb": { ".validate": "newData.isString() && (newData.val() == 'cancel' || newData.val() == 'merge' || newData.val() == 'confirm' || newData.val() == 'launch')" },
+              "mode": { ".validate": "newData.parent().child('verb').val() == 'launch' && MODEOK" },
               "target": {
                 ".validate": "TARGETOK",
                 "run": { ".validate": "RUNTARGET" },
@@ -325,10 +329,10 @@
               },
               "$other": { ".validate": false }
             },
-            "token": { ".validate": "PARENTKIND == 'registration' && TOKENOK && PARENTMACOK" },
-            "platform": { ".validate": "PARENTKIND == 'registration' && PLATFORMOK && PARENTMACOK" },
+            "token": { ".validate": "PARENTKIND == 'registration' && TOKENOK && (PARENTMACOK || PARENTSIGOK)" },
+            "platform": { ".validate": "PARENTKIND == 'registration' && PLATFORMOK && (PARENTMACOK || PARENTSIGOK)" },
             "prefs": {
-              ".validate": "PARENTKIND == 'registration' && newData.hasChildren(['kill_switch', 'cap_reached', 'consumer_offline', 'cap_near', 'prompt']) && PARENTMACOK",
+              ".validate": "PARENTKIND == 'registration' && newData.hasChildren(['kill_switch', 'cap_reached', 'consumer_offline', 'cap_near', 'prompt']) && (PARENTMACOK || PARENTSIGOK)",
               "kill_switch": { ".validate": "newData.isBoolean()" },
               "cap_reached": { ".validate": "newData.isBoolean()" },
               "consumer_offline": { ".validate": "newData.isBoolean()" },
@@ -350,12 +354,13 @@
           ".read": "MAILBOX",
           "$msg": {
             ".write": "CONSUMER && newData.exists() && !data.exists()",
-            ".validate": "newData.hasChildren(['id', 'sender', 'text', 'at', 'mac']) && $msg.length <= {{.MaxKeyLength}} && KINDREQ",
+            ".validate": "newData.hasChildren(['id', 'sender', 'text', 'at']) && TAGOK && $msg.length <= {{.MaxKeyLength}} && KINDREQ",
             "id": { ".validate": "newData.isString() && newData.val().length <= {{.MaxKeyLength}} && newData.val() == $msg" },
             "sender": { ".validate": "STR && newData.val() == $mb" },
             "text": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxTextLength}}" },
             "at": { ".validate": "TIMESTAMP" },
             "mac": { ".validate": "MACOK" },
+            "sig": { ".validate": "SIGOK" },
             "agent": { ".validate": "AGENTID" },
             "kind": { ".validate": "newData.isString() && (newData.val() == 'message' || newData.val() == 'prompt' || newData.val() == 'answer' || newData.val() == 'action' || newData.val() == 'registration' || newData.val() == 'stop')" },
             "options": {
@@ -364,9 +369,10 @@
             },
             "reply_to": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxKeyLength}} && (PARENTKIND == 'answer' || PARENTKIND == 'action')" },
             "action": {
-              ".validate": "PARENTKIND == 'action' && newData.hasChildren(['id', 'verb', 'target', 'confirmation']) && (newData.child('verb').val() == 'merge' ? newData.child('head_sha').exists() : true)",
+              ".validate": "PARENTKIND == 'action' && newData.hasChildren(['id', 'verb', 'target']) && (newData.child('verb').val() == 'launch' ? newData.child('mode').exists() : (newData.hasChildren(['confirmation']) && (newData.child('verb').val() == 'merge' ? newData.child('head_sha').exists() : true)))",
               "id": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxKeyLength}}" },
-              "verb": { ".validate": "newData.isString() && (newData.val() == 'cancel' || newData.val() == 'merge' || newData.val() == 'confirm')" },
+              "verb": { ".validate": "newData.isString() && (newData.val() == 'cancel' || newData.val() == 'merge' || newData.val() == 'confirm' || newData.val() == 'launch')" },
+              "mode": { ".validate": "newData.parent().child('verb').val() == 'launch' && MODEOK" },
               "target": {
                 ".validate": "TARGETOK",
                 "run": { ".validate": "RUNTARGET" },
@@ -383,10 +389,10 @@
               },
               "$other": { ".validate": false }
             },
-            "token": { ".validate": "PARENTKIND == 'registration' && TOKENOK && PARENTMACOK" },
-            "platform": { ".validate": "PARENTKIND == 'registration' && PLATFORMOK && PARENTMACOK" },
+            "token": { ".validate": "PARENTKIND == 'registration' && TOKENOK && (PARENTMACOK || PARENTSIGOK)" },
+            "platform": { ".validate": "PARENTKIND == 'registration' && PLATFORMOK && (PARENTMACOK || PARENTSIGOK)" },
             "prefs": {
-              ".validate": "PARENTKIND == 'registration' && newData.hasChildren(['kill_switch', 'cap_reached', 'consumer_offline', 'cap_near', 'prompt']) && PARENTMACOK",
+              ".validate": "PARENTKIND == 'registration' && newData.hasChildren(['kill_switch', 'cap_reached', 'consumer_offline', 'cap_near', 'prompt']) && (PARENTMACOK || PARENTSIGOK)",
               "kill_switch": { ".validate": "newData.isBoolean()" },
               "cap_reached": { ".validate": "newData.isBoolean()" },
               "consumer_offline": { ".validate": "newData.isBoolean()" },
@@ -411,10 +417,11 @@
         "heartbeat": {
           ".read": "MAILBOX",
           ".write": "CONSUMER && newData.exists()",
-          ".validate": "newData.hasChildren(['at', 'boot', 'mac'])",
+          ".validate": "newData.hasChildren(['at', 'boot']) && TAGOK",
           "at": { ".validate": "TIMESTAMP" },
           "boot": { ".validate": "BOOTOK" },
           "mac": { ".validate": "MACOK" },
+          "sig": { ".validate": "SIGOK" },
           "agents": {
             ".validate": "newData.hasChildren()",
             "$i": {

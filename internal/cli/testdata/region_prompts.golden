@@ -1,5 +1,4 @@
 == the place question: fugaro setup's own, asked once (the region question in a person's words, LP4)
-the place the installation lives in (US, EU, or a region typed in full) [us]
-Type the place the installation lives in (US, EU, or a region typed in full):
-== the Firestore location: the database's own, permanent, and nothing is typed for it
-⚠ CONFIRM (project aurora): the Firestore database is created in us-east5, and a database's location can NEVER be changed.
+Location: US, EU or a region [us]:
+== the Firestore location: the database's own, permanent, printed and created with nothing asked (LP10)
+the Firestore database is created in us-east5, and a database's location can NEVER be changed.

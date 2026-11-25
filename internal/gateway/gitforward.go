@@ -33,7 +33,9 @@ package gateway
 //     (Workspace). The two are one call with two targets and not two paths:
 //     the identity written on a forward is the identity of the service it goes
 //     to, so a forward to the workspace's carries no slip and no declaration
-//     (R18) because a gateway.Workspace has no field for either.
+//     (R18) — the identity a forwarder holds is built from the three values a
+//     forward writes and from nothing else, so the workspace's own slip, which
+//     the run holds for the model path (WC8), is structurally absent here.
 //   - It decides nothing. The method, the escaped path and the query travel as
 //     the caller spelled them, and the path is the ESCAPED one on purpose: the
 //     service's classification is the only reading of a path in this design,
@@ -122,10 +124,12 @@ type GitForwardOptions struct {
 	// It is WS11's second upstream, and what a call to it carries is what that
 	// upstream carries: the job's Google identity minted for its address, the
 	// run's own token and the job's name, and no slip and no declaration —
-	// there is no field on it for either (R18). A forwarder built with one
-	// holds the two services as the run was handed them, and the route's
-	// answer is the one it uses: a run whose forge credential is served from
-	// the workspace never sends that traffic to the project's service.
+	// those three values are the whole of what StartGitForward builds an
+	// identity from, so the workspace's own slip (R18, and WC8's for the model
+	// path) has no way into a forwarder. A forwarder built with one holds the
+	// two services as the run was handed them, and the route's answer is the
+	// one it uses: a run whose forge credential is served from the workspace
+	// never sends that traffic to the project's service.
 	Workspace *Workspace
 	// Log is where a forward that could not be made is reported. nil discards.
 	Log *slog.Logger
@@ -203,10 +207,18 @@ func StartGitForward(ctx context.Context, o GitForwardOptions) (*GitForward, err
 	if o.Workspace != nil {
 		// The route's answer, read the one way this package reads a call to a
 		// workspace's service (Workspace.upstream): the record's address, the
-		// job's identity minted for it and the run's own token, and no slip
-		// and no declaration to carry (R18).
+		// job's identity minted for it and the run's own token. The identity
+		// is built from those three values rather than from the upstream
+		// whole, so a forwarder never holds the workspace's slip the run may
+		// be carrying for the model path (WC8): what this listener writes is
+		// the three, and R18 is structural here rather than a rule (G5).
 		up := o.Workspace.upstream()
-		f.service, f.identity = strings.TrimSuffix(up.BaseURL, "/"), *up.Service
+		f.service = strings.TrimSuffix(up.BaseURL, "/")
+		f.identity = Service{
+			Job:        up.Service.Job,
+			RunIDToken: up.Service.RunIDToken,
+			IDToken:    up.Service.IDToken,
+		}
 	}
 	if f.log == nil {
 		f.log = slog.New(slog.NewTextHandler(io.Discard, nil))

@@ -53,6 +53,42 @@ package rules
 // release does about it is read `credsRules` *beside* `policyRules` in its own
 // doctor (C1.21), so a current binary can tell "older deploy" from "newer
 // deploy" and say which way the redeploy should go.
+//
+// The routing table's two children do not move this generation either
+// (model-credentials-routing CS9). `source` and `fallback` join the registry
+// entry as optional children of the node a run already writes, written only by
+// a run the project's table serves — the shape of the credentials children
+// above, and the same reason not to bump: a bump refuses `fugaro update
+// --firebase-project` its deploy on every installation whose owner has not run
+// it yet, over two members the dashboard shows and nothing decides by. What
+// differs from the cascade's children is what a run does under a document that
+// predates them: it drops the two and keeps its registry
+// (Session.dropRefusedChildren), as it does for the recipe and the rigor mode,
+// rather than halting named — a live row without a source is legible, while a
+// run whose credential is unrecorded is one nobody can account for. The
+// convergence is the deploy's own document comparison (internal/infra's
+// SameJSON): the document this binary generates differs from the one an
+// installation at the previous version holds, so `fugaro update
+// --firebase-project` redeploys it and the marker, already at 1, is rewritten
+// as the same value. No run is asked to finish and no gate refuses: the run in
+// flight writes its entry without the two until that deploy lands.
+//
+// The run status `paused` does not move this generation either
+// (model-credentials-routing PR1). The outcome's status validator gains the
+// word a run that suspended itself ends with (D3185, R15), and that is a
+// widening of one validator and not a new reach: the node and its `.write` are
+// the ones a run already writes through, so the rules admit one more value
+// where nothing a client may reach has changed. A bump would refuse
+// `fugaro update --firebase-project` its deploy on every installation whose
+// owner has not run it yet, over a word nothing decides by, and a gate reading
+// the marker would refuse a cascade launch over it too — for a run that
+// suspends itself, which a cascade run is. What a run meets under a document
+// that predates the word is the source children's own shape one step milder:
+// the outcome write is refused and logged (Session.Finish's best effort), the
+// run still ends `paused` and its record — a bucket object no rule binds —
+// still says so, and the figure the dashboard is missing arrives with the
+// deploy. The convergence is the same document comparison, and the marker
+// stays at 1.
 
 // PathCredsRulesMarker is the credentials family's generation marker,
 // `config/limits/credsRules`.

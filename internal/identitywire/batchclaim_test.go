@@ -44,7 +44,7 @@ func TestTheTicketNamesAJobAndTheClaimCarriesAnAttestation(t *testing.T) {
 	}{
 		{"TicketRequest", identitywire.TicketRequest{}, []string{
 			"slug", "run", "account", "launcher", "branch", "pull_requests",
-			"context_repos", "max_runtime_seconds", "attempt", "job",
+			"context_repos", "max_runtime_seconds", "attempt", "resumes", "job",
 		}},
 		{"ClaimRequest", identitywire.ClaimRequest{}, []string{"ticket", "nonce", "attestation"}},
 		{"Record", identitywire.Record{}, []string{

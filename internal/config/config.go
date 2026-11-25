@@ -398,7 +398,7 @@ const (
 // out sets no policy. The model prices are not settable here (a repository
 // that could set prices could set them to zero).
 type Budget struct {
-	Mode      string  `yaml:"mode"`        // off | observe | enforce; "" sets none
+	Mode      string  `yaml:"mode"`        // observe | enforce; "" sets none, which the run reads as observe
 	PerRunUSD float64 `yaml:"per_run_usd"` // 0 sets none; enforce needs a cap only after the merge
 	// AllowedModels bounds the models the run may choose, explicit IDs
 	// only; nil sets none, and an empty list is invalid.
@@ -1256,10 +1256,22 @@ type CacheEntry struct {
 	Paths []string `yaml:"paths"`
 }
 
-// Secret maps a logical secret name to the environment variable it is exposed as.
+// Secret maps a logical secret name to the environment variable it is exposed
+// as, and says whether the value should reach the run as a file rather than as
+// the variable's own content (D3327).
+//
+// File is the repository's declaration that the value is one a tool insists on
+// reading from a path (a credential file rather than an environment variable).
+// The variable named by Env is set all the same and receives the path the value
+// was written to, which is why a file secret names its Env exactly as an
+// ordinary one does. It changes nothing about what the run may reach: a file is
+// treated as the environment secret it stands in for — present for a coding
+// run's stages, never written in an independent review run, removed at run end
+// (F19, G3; the writing half is IS2's, internal/runner).
 type Secret struct {
 	Name string `yaml:"name"`
 	Env  string `yaml:"env"`
+	File bool   `yaml:"file"`
 }
 
 // AnthropicSecret is the logical secret that holds the Anthropic API key. It

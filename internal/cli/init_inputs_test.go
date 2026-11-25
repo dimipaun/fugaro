@@ -7,6 +7,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -113,7 +114,7 @@ func TestProjectIDDefaultIsFugaroName(t *testing.T) {
 	if got := r.o.cloud.gcpProject; got != "fugaro-aurora" {
 		t.Errorf("Enter took %q, want the new project fugaro-aurora\n%s", got, out.String())
 	}
-	if !strings.Contains(out.String(), questionFor("--gcp-project").what+" [fugaro-aurora]") {
+	if !strings.Contains(out.String(), questionFor("--gcp-project").label+" [fugaro-aurora]") {
 		t.Errorf("the question does not suggest fugaro-aurora:\n%s", out.String())
 	}
 
@@ -511,10 +512,11 @@ func TestFirstRunAsksWithSuggestions(t *testing.T) {
 // on the line is io.EOF), and this is the question's own rule about it.
 func TestPromptChoiceEndedInputIsNoAnswer(t *testing.T) {
 	fakeTerminal(t)
-	spec := valueSpec{what: "the GCP project ID"}
+	spec := valueSpec{what: "the GCP project ID", flag: "--gcp-project"}
+	ask := wizardAsk{label: "GCP project ID", def: "fugaro-aurora"}
 	var out strings.Builder
 	r := &initRun{o: &initOptions{}, w: &out, in: bufio.NewReader(strings.NewReader("")), cmd: NewRootCmd()}
-	v, err := r.promptChoice(spec, "fugaro-aurora", "", "", func(string) error { return nil })
+	v, err := r.askValue(ask, spec, func(string) error { return nil })
 	var na *noAnswerError
 	if !errors.As(err, &na) {
 		t.Fatalf("an ended input: err = %v, want noAnswer", err)
@@ -533,7 +535,7 @@ func TestPromptChoiceEndedInputIsNoAnswer(t *testing.T) {
 	// suggestion rather than the run taking it for them.
 	out.Reset()
 	r = &initRun{o: &initOptions{}, w: &out, in: bufio.NewReader(strings.NewReader("\n")), cmd: NewRootCmd()}
-	if v, err = r.promptChoice(spec, "fugaro-aurora", "", "", func(string) error { return nil }); err != nil || v != "fugaro-aurora" {
+	if v, err = r.askValue(ask, spec, func(string) error { return nil }); err != nil || v != "fugaro-aurora" {
 		t.Fatalf("an empty line: %v, %q, want the suggestion", err, v)
 	}
 }
@@ -609,7 +611,7 @@ func TestPromptsSkippedWhenConfigExists(t *testing.T) {
 		t.Fatalf("err %v, read %v", err, spy.read)
 	}
 	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--plan-only")
-	if err != nil || strings.Contains(out, "first run") || strings.Contains(out, questionFor("--region").what+" [") {
+	if err != nil || strings.Contains(out, "first run") || strings.Contains(out, regionPrompt) {
 		t.Fatalf("err %v\n%s", err, out)
 	}
 }
@@ -705,7 +707,7 @@ func TestFirstRunSuggestsTheInstallationsName(t *testing.T) {
 	// The name is the installation's, so the name question is not asked at all
 	// (the ID's suggestion is the directory's name prefixed — fugaro-my-app —
 	// which is a suggestion for a project to create, not this run's name).
-	if r.o.name != "team-x" || r.o.createProject || !strings.Contains(out.String(), "writing it from the installation, and applying nothing") || strings.Contains(out.String(), questionFor("--name").what) {
+	if r.o.name != "team-x" || r.o.createProject || !strings.Contains(out.String(), "writing it from the installation, and applying nothing") || strings.Contains(out.String(), askedPrompt("--name")) {
 		t.Errorf("name %q, create %v:\n%s", r.o.name, r.o.createProject, out.String())
 	}
 	if len(asked) != 1 || asked[0] != "proj-1234 us-east5" {
@@ -793,7 +795,7 @@ func TestRegionDefaultIsUsEast5(t *testing.T) {
 	if !strings.Contains(out.String(), "["+string(place.US)+"]") {
 		t.Errorf("the question does not show the US place as its suggestion:\n%s", out)
 	}
-	if n := strings.Count(out.String(), "Type "+questionFor("--location").what+": "); n != 1 {
+	if n := strings.Count(out.String(), askedPrompt("--location")); n != 1 {
 		t.Errorf("the wizard asked the place %d times, want once:\n%s", n, out)
 	}
 	r, out = first("Not A Region\n" + defaultRegion + "\n\n\n")
@@ -810,11 +812,11 @@ func TestRegionDefaultIsUsEast5(t *testing.T) {
 // separate things (reconciliation C1). The first is the place question
 // `fugaro setup` asks once, with its suggestion, and the region it settles is
 // the installation's own — a later run may not move it (LP8, D3088); the
-// second is permanent too, and a person at the terminal reads its note and is
-// asked nothing for it (T7, docs/no-prompt-policy). Both are pinned here in one
-// golden, so the two cannot converge: an edit that made the wizard ask for the
-// database's location, or gave the database's own note the region question's
-// entry line, moves this file.
+// second is permanent too, and the line saying where is printed with nothing
+// asked and no note (LP10, D3090; O2). Both are pinned here in one golden, so
+// the two cannot converge: an edit that made the wizard ask for the database's
+// location, or gave the database's own line the region question's entry line,
+// moves this file.
 func TestRegionQuestionIsNotTheFirestoreQuestion(t *testing.T) {
 	// The wizard's first run chdirs into a temporary directory, so the
 	// golden's path is taken first — the same reason init_retire_test.go takes
@@ -830,19 +832,20 @@ func TestRegionQuestionIsNotTheFirestoreQuestion(t *testing.T) {
 	if regionRun.o.cloud.region != defaultRegion {
 		t.Fatalf("Enter took the region %q, want the question's own default %q\n%s", regionRun.o.cloud.region, defaultRegion, out)
 	}
-	region := promptLine(t, out.String(), questionFor("--location").what)
+	region := promptLine(t, out.String(), questionFor("--location").label, askedPrompt("--budget"))
 
-	// The database's own note, as the Firebase step prints it: the harness
+	// The database's own line, as the Firebase step prints it: the harness
 	// init_confirm_test.go uses, at a terminal, with nothing typed for it.
 	c := condition{name: "a terminal", opts: initOptions{door: setupDoor.name}, terminal: true}
-	location, _, locationOut := c.run(t, "")
-	if err := location.confirmLocation(fsLocation("us-east5")); err != nil {
-		t.Fatalf("%v\n%s", err, locationOut)
+	location, spy, locationOut := c.run(t, "")
+	location.locationLine(fsLocation("us-east5"))
+	if spy.read {
+		t.Fatalf("the database's location was read:\n%s", locationOut)
 	}
 
 	var b strings.Builder
 	b.WriteString("== the place question: fugaro setup's own, asked once (the region question in a person's words, LP4)\n" + region + "\n")
-	b.WriteString("== the Firestore location: the database's own, permanent, and nothing is typed for it\n" + trimTrailingSpaces(locationOut.String()))
+	b.WriteString("== the Firestore location: the database's own, permanent, printed and created with nothing asked (LP10)\n" + trimTrailingSpaces(locationOut.String()))
 
 	path := filepath.Join(wd, "testdata", "region_prompts.golden")
 	if *updateRegionGolden {
@@ -900,7 +903,7 @@ func TestSetupAsksThePlace(t *testing.T) {
 	}
 	placeAsked := func(t *testing.T, out string) {
 		t.Helper()
-		if strings.Contains(out, questionFor("--location").what) {
+		if strings.Contains(out, askedPrompt("--location")) {
 			t.Errorf("the place was answered, and the wizard asked it anyway:\n%s", out)
 		}
 	}
@@ -916,7 +919,7 @@ func TestSetupAsksThePlace(t *testing.T) {
 		if !strings.Contains(out.String(), "["+string(place.US)+"]") {
 			t.Errorf("the place question's suggestion is not US:\n%s", out)
 		}
-		if n := strings.Count(out.String(), "Type "+questionFor("--location").what+": "); n != 1 {
+		if n := strings.Count(out.String(), askedPrompt("--location")); n != 1 {
 			t.Errorf("the place was asked %d times, want once:\n%s", n, out)
 		}
 	})
@@ -1196,7 +1199,7 @@ func TestALocationThatCreatesNothingIsRefused(t *testing.T) {
 		noInstallation(t)
 		out, errOut, err := executeStdin(t, "", "update", "--location", "eu")
 		refusal(t, err, out+errOut)
-		if asked := out + errOut; strings.Contains(asked, questionFor("--region").what) {
+		if asked := out + errOut; strings.Contains(asked, regionPrompt) {
 			t.Errorf("the run asked its own question on the way to refusing the flag:\n%s", asked)
 		}
 	})
@@ -1232,12 +1235,14 @@ func TestALocationThatCreatesNothingIsRefused(t *testing.T) {
 }
 
 // TestSetupPrintsWhereEachThingGoes is R7: before anything is created the run
-// says where each thing it creates will go — one line per row of the mapping,
-// in the mapping's own words (place.For), with every fallback's reason printed
-// under the line it belongs to — and there is nothing to answer in it.
+// says where each thing it creates will go — one row per location, the things
+// that share a place named together on it, the place in its own column and a
+// fallback's reason as the parenthetical beside it — and there is nothing to
+// answer in it. The rows follow the mapping's own words (place.For), so the
+// same facts are on the screen as before the grouping, in fewer lines.
 //
 // A region in neither place (D3081) is not refused and is not silent either:
-// everything it falls back to is on a line above, and the run says in one line
+// everything it falls back to is on a row above, and the run says in one line
 // that the region carries no promise.
 func TestSetupPrintsWhereEachThingGoes(t *testing.T) {
 	// A first run whose answers all came from flags: the block is the only
@@ -1266,53 +1271,141 @@ func TestSetupPrintsWhereEachThingGoes(t *testing.T) {
 		t.Run(region, func(t *testing.T) {
 			got := printed(t, region)
 			m := place.For(region)
-			if !strings.Contains(got, "the installation's own region: "+m.Region+" ") {
-				t.Errorf("the region itself is not the first line of the block:\n%s", got)
-			}
-			// The region line names only what follows the region itself, and
-			// the scheduler is not one of them: gcp.SchedulerRegion answers
-			// us-east4 for us-east5, the US default, so naming it there would
-			// be a fallback described as the region (F3).
-			line, _, _ := strings.Cut(strings.TrimPrefix(
-				got[strings.Index(got, whereEachThingGoesIntro)+len(whereEachThingGoesIntro):], "\n"), "\n")
-			if strings.Contains(line, "scheduler") {
-				t.Errorf("the region line claims the scheduler, whose region is not this one:\n%s", line)
-			}
-			// One line per row, and the reason — where there is one — under
-			// that line rather than in it: a reader has to be able to tell
-			// what is where from what is why.
+			rows := locationBlock(t, got)
+			// The mapping as the block has to read it: every thing the
+			// installation creates, in the order the block names them, each
+			// gathered onto the row of the place it goes to. The three that
+			// follow the installation's own region come first, and the four
+			// place.For answers after them.
+			here := place.Location{Where: m.Region}
+			want := []expectedLocationRow{{whats: []string{"jobs", "registry", "runs bucket"}, where: m.Region, reason: here.Reason}}
 			for _, row := range []struct {
 				what string
 				loc  place.Location
 			}{
-				{"the run history (Firestore)", m.Firestore},
-				{"the budget's database (the Realtime Database)", m.RealtimeDatabase},
-				{"the secret containers", m.Secrets},
-				{"the run log bucket", m.LogBucket},
+				{"Firestore", m.Firestore},
+				{"secrets", m.Secrets},
+				{"budget database", m.RealtimeDatabase},
+				{"run logs", m.LogBucket},
 			} {
-				line := "  " + row.what + ": " + row.loc.Where
-				if !strings.Contains(got, line) {
-					t.Errorf("%q is not a line of the block:\n%s", line, got)
-				}
-				if row.loc.Reason != "" {
-					if !strings.Contains(got, line+"\n    "+row.loc.Reason) {
-						t.Errorf("%s's fallback reason is not under its own line:\n%s", row.what, got)
+				if n := len(want); n > 0 && want[n-1].where == row.loc.Where {
+					want[n-1].whats = append(want[n-1].whats, row.what)
+					if want[n-1].reason == "" {
+						want[n-1].reason = row.loc.Reason
 					}
-				} else if !strings.Contains(got, line+"\n") {
-					t.Errorf("%s falls nowhere and its line does not end there:\n%s", row.what, got)
+					continue
 				}
+				want = append(want, expectedLocationRow{whats: []string{row.what}, where: row.loc.Where, reason: row.loc.Reason})
+			}
+			if len(rows) != len(want) {
+				t.Fatalf("%d row(s) for %d location(s):\n%s", len(rows), len(want), got)
+			}
+			var starts []int
+			for i, row := range rows {
+				if wantRow := strings.Join(want[i].whats, ", "); row.whats != wantRow {
+					t.Errorf("row %d names %q, want %q:\n%s", i, row.whats, wantRow, got)
+				}
+				if row.where != want[i].where {
+					t.Errorf("%s goes to %q, want %q:\n%s", row.whats, row.where, want[i].where, got)
+				}
+				if row.reason != want[i].reason {
+					t.Errorf("%s's reason is %q, want %q:\n%s", row.whats, row.reason, want[i].reason, got)
+				}
+				// The reason is the parenthetical at the end of its own row and
+				// never a line under it: a reader has to be able to tell what is
+				// where from what is why on one line.
+				switch {
+				case want[i].reason == "" && row.rest != "":
+					t.Errorf("%s's row carries %q, and this place falls nowhere: %q", row.whats, row.rest, row.raw)
+				case want[i].reason != "" && row.rest != "("+want[i].reason+")":
+					t.Errorf("%s's row ends in %q, want its reason as one parenthetical %q: %q", row.whats, row.rest, "("+want[i].reason+")", row.raw)
+				}
+				starts = append(starts, row.at)
+			}
+			// The locations are a column: every row's place starts where the
+			// first row's does, so the reasons after them do too.
+			for i, at := range starts {
+				if at != starts[0] {
+					t.Errorf("row %d's place starts at column %d, row 0's at %d:\n%s", i, at, starts[0], got)
+				}
+			}
+			// The scheduler is not one of the things that follow the region:
+			// its own region is gcp.SchedulerRegion's answer, which for the US
+			// default is us-east4 rather than us-east5 (F3), and naming it in a
+			// row that is the region's own would be a fallback described as the
+			// region.
+			if strings.Contains(got[strings.Index(got, whereEachThingGoesIntro):], "scheduler") {
+				t.Errorf("the block claims the scheduler, whose region is not the region's:\n%s", got)
 			}
 			carries := m.Place == place.None
 			if carries != strings.Contains(got, "carries no promise") {
 				t.Errorf("a region in %s does not say whether it carries a promise:\n%s", m.Place, got)
 			}
-			// Nothing is asked about it: the block is a reading, and the run
-			// writes no question in it.
-			if i := strings.Index(got, whereEachThingGoesIntro); i >= 0 && strings.Contains(got[i:], "Type ") {
-				t.Errorf("the run asked a question about the placement:\n%s", got[i:])
+			// Nothing is asked about it: the block is a reading, and none of
+			// its rows is a question.
+			for _, row := range rows {
+				if strings.Contains(row.raw, "[") || strings.HasSuffix(strings.TrimSpace(row.raw), ":") {
+					t.Errorf("the run asked a question about the placement: %q", row.raw)
+				}
 			}
 		})
 	}
+}
+
+// expectedLocationRow is one row of the mapping as the test expects the
+// block to draw it: the things gathered on it, the place and its reason.
+type expectedLocationRow struct {
+	whats  []string
+	where  string
+	reason string
+}
+
+// locationBlockRow is one row of the mapping as the test reads it back: the
+// things gathered on it, the place in its own column, the reason in the
+// parenthetical at its end, and where in the raw line the place starts.
+type locationBlockRow struct {
+	raw    string
+	whats  string
+	where  string
+	reason string
+	rest   string
+	at     int
+}
+
+// locationRowRE is one row of the block: what goes where, two or more spaces,
+// and the place.
+var locationRowRE = regexp.MustCompile(`^(\S.*?)\s{2,}(\S+)$`)
+
+// locationBlock reads the rows of the block back out of a run's output: the
+// lines under the heading up to the first one that is not a row. A row is the
+// things, two or more spaces, the place — and, where it has one, two or more
+// spaces and the reason in brackets.
+func locationBlock(t *testing.T, out string) []locationBlockRow {
+	t.Helper()
+	rest := out[strings.Index(out, whereEachThingGoesIntro)+len(whereEachThingGoesIntro):]
+	var rows []locationBlockRow
+	for _, line := range strings.Split(strings.TrimPrefix(rest, "\n"), "\n") {
+		if !strings.HasPrefix(line, "  ") {
+			break
+		}
+		row := locationBlockRow{raw: line}
+		body := strings.TrimPrefix(line, "  ")
+		if i := strings.Index(body, "("); i >= 0 {
+			row.rest = strings.TrimRight(body[i:], " ")
+			row.reason = strings.TrimSuffix(strings.TrimPrefix(row.rest, "("), ")")
+			body = strings.TrimRight(body[:i], " ")
+		}
+		m := locationRowRE.FindStringSubmatch(body)
+		if m == nil {
+			// The line about a region that carries no promise, or the next
+			// block: the rows ended.
+			break
+		}
+		row.whats, row.where = m[1], m[2]
+		row.at = len(body) - len(m[2])
+		rows = append(rows, row)
+	}
+	return rows
 }
 
 // promptLine is the question itself: the line the wizard prints above the entry
@@ -1320,18 +1413,47 @@ func TestSetupPrintsWhereEachThingGoes(t *testing.T) {
 // "Type …: " under it, up to the colon it stops at. The run goes on writing on
 // that same line (the billing note, here), and a golden holds the question
 // rather than what follows it.
-func promptLine(t *testing.T, out, label string) string {
+// regionPrompt is the region question's own prompt. It is `fugaro update`'s
+// line rather than a row of setupQuestions — the setup door asks the place
+// instead (LP4) — so its label is the one wizard_stage.go writes at the
+// prompt, spelled here.
+const regionPrompt = "Region: "
+
+// askedPrompt is the start of the line a question's prompt prints: the row's
+// label and, where the row has one, what it says about the answer after it
+// (Style.Ask). The suggestion — what Enter takes — is drawn after this, right
+// before the colon the answer is typed at, so this is the part of the line that
+// says which question is being asked.
+//
+// It is what a check that a question was, or was not, asked reads. The row's
+// `what` is the question in a sentence and belongs to the refusals a run with
+// no terminal prints, so an output never carries it: a question is one line,
+// asked once, and its line is built from the row's own label.
+func askedPrompt(flag string) string {
+	q := questionFor(flag)
+	if q.hint == "" {
+		return q.label
+	}
+	return q.label + ": " + q.hint
+}
+
+// promptLine is one question's own line as the terminal shows it: what out
+// holds from label up to until, which is the next thing the run says after the
+// answer's colon, without the spaces a prompt leaves there. The question is one
+// line, suggestion included — "Location: US, EU or a region [us]:" — and the
+// answers of a scripted run are not echoed, so the questions run into one
+// another in the captured output and until is what ends this one.
+func promptLine(t *testing.T, out, label, until string) string {
 	t.Helper()
 	i := strings.Index(out, label)
 	if i < 0 {
 		t.Fatalf("no prompt %q in:\n%s", label, out)
 	}
 	rest := out[i:]
-	j := strings.Index(rest, ": ")
-	if j < 0 {
-		t.Fatalf("the prompt %q does not end at a colon in:\n%s", label, out)
+	if j := strings.Index(rest, until); j >= 0 {
+		rest = rest[:j]
 	}
-	return rest[:j+1]
+	return strings.TrimRight(rest, " ")
 }
 
 // trimTrailingSpaces is out without the spaces a prompt writes after its colon

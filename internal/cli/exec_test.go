@@ -457,6 +457,18 @@ func TestExecOldJobEnvSaysInitRepo(t *testing.T) {
 	if _, serr := os.Stat(work); !errors.Is(serr, os.ErrNotExist) {
 		t.Errorf("the runner started (a workdir exists): %v", serr)
 	}
+	// The recovery wrote a record this execution created, so the summary goes
+	// beside it (runstore.SummaryName): `runs ls` reads the summary where it
+	// read result.json, and a summary left behind by a record the bucket has
+	// since dropped would otherwise stand in for this run.
+	sum, serr := store.ReadSummary(ctx)
+	if serr != nil {
+		t.Fatalf("the recorded failure has no summary to be listed from: %v", serr)
+	}
+	if sum.Record == nil || sum.Record.Status != rec.Status || sum.Record.Reason != rec.Reason ||
+		sum.Spec() == nil || sum.Spec().RunID != runID || sum.Spec().Repo != rec.Repo {
+		t.Errorf("summary = %+v / %+v, want the record it stands in for and the run's own task", sum.Record, sum.Spec())
+	}
 }
 
 func TestExecOldJobEnvKeepsExistingRecord(t *testing.T) {
@@ -482,6 +494,12 @@ func TestExecOldJobEnvKeepsExistingRecord(t *testing.T) {
 	}
 	if stored, err := store.ReadRecord(ctx); err != nil || stored.Stage != "implement" || stored.Status != runstore.StatusRunning || stored.Execution != first.Execution {
 		t.Fatalf("the old-env exec replaced result.json: %+v, %v", stored, err)
+	}
+	// And no summary either: this execution created no record, so it has
+	// nothing to project, and one written from the other execution's record
+	// would be an object standing in for a run this process does not own.
+	if sum, err := store.ReadSummary(ctx); !errors.Is(err, runstore.ErrNotFound) {
+		t.Errorf("the old-env exec wrote a summary of another execution's record: %+v, %v", sum, err)
 	}
 }
 
@@ -664,41 +682,32 @@ func TestExecGatewayUpstreamLoopbackOnly(t *testing.T) {
 			t.Errorf("%s: err = %v (exit %d)", bad, err, ExitCode(err))
 		}
 	}
-	if err := checkTestHooks(execOptions{gatewayUpstream: "http://127.0.0.1:8080"}, runner.Spend{}, nil, ""); err != nil {
+	if err := checkTestHooks(execOptions{gatewayUpstream: "http://127.0.0.1:8080"}); err != nil {
 		t.Errorf("a loopback upstream was refused: %v", err)
 	}
 }
 
 // The managed settings path moves only with a loopback upstream: a job with
-// the real upstream writes the real path. The mode used to be the second way
-// in — an off ceiling, or an off mode in the file, let the path move — and
-// from AB1a every run's budget is on whatever its job or its file says
-// (D3009, R3), so the modes that used to buy the real path are refused with
-// the rest.
+// the real upstream writes the real path. The budget mode is no argument of
+// this check any more (AB3, D3009, R3): it used to be the second way in — an
+// off ceiling, or an off mode in the checkout's own file, let the path move —
+// and there is always a budget now, so the real upstream is refused whatever
+// any layer says. That the mode cannot buy the real path is the same fact the
+// command-level case below covers, from the variable instead of the flag.
 func TestExecManagedSettingsFlag(t *testing.T) {
-	on := runner.Spend{Mode: "observe"}
-	off := runner.Spend{Mode: "off"}
 	lo := "http://127.0.0.1:8080"
 	cases := []struct {
-		name     string
-		o        execOptions
-		spend    runner.Spend
-		spendErr error
-		fileMode string
-		refused  bool
+		name    string
+		o       execOptions
+		refused bool
 	}{
-		{"committed enforce under an off ceiling", execOptions{managedSettings: "/tmp/m.json"}, off, nil, "enforce", true},
-		{"committed observe, no ceiling", execOptions{managedSettings: "/tmp/m.json"}, runner.Spend{}, nil, "observe", true},
-		{"committed off", execOptions{managedSettings: "/tmp/m.json"}, off, nil, "off", true},
-		{"budget on, real upstream", execOptions{managedSettings: "/tmp/m.json"}, on, nil, "", true},
-		{"budget on, real upstream, even a real URL", execOptions{managedSettings: "/tmp/m.json", gatewayUpstream: "https://api.anthropic.com"}, on, nil, "", true},
-		{"malformed budget counts as on", execOptions{managedSettings: "/tmp/m.json"}, runner.Spend{}, errors.New("bad"), "", true},
-		{"budget on, loopback upstream", execOptions{managedSettings: "/tmp/m.json", gatewayUpstream: lo}, on, nil, "", false},
-		{"budget off", execOptions{managedSettings: "/tmp/m.json"}, off, nil, "", true},
-		{"unset", execOptions{}, on, nil, "", false},
+		{"real upstream", execOptions{managedSettings: "/tmp/m.json"}, true},
+		{"real upstream, even a real URL", execOptions{managedSettings: "/tmp/m.json", gatewayUpstream: "https://api.anthropic.com"}, true},
+		{"loopback upstream", execOptions{managedSettings: "/tmp/m.json", gatewayUpstream: lo}, false},
+		{"unset", execOptions{}, false},
 	}
 	for _, c := range cases {
-		err := checkTestHooks(c.o, c.spend, c.spendErr, c.fileMode)
+		err := checkTestHooks(c.o)
 		if c.refused != (err != nil) || (err != nil && ExitCode(err) != ExitUserError) {
 			t.Errorf("%s: err = %v", c.name, err)
 		}
@@ -819,11 +828,11 @@ func TestExecLocalRunStopsAtAWritableManagedSettingsFileItDidNotWrite(t *testing
 // The budget backend's Firebase Auth URL moves only to a loopback address.
 func TestExecIdentityURLFlag(t *testing.T) {
 	for _, bad := range []string{"https://identitytoolkit.googleapis.com", "http://example.invalid:80", "http://127.0.0.1:8080/x", "http://localhost:80"} {
-		if err := checkTestHooks(execOptions{identityURL: bad}, runner.Spend{}, nil, ""); err == nil || ExitCode(err) != ExitUserError {
+		if err := checkTestHooks(execOptions{identityURL: bad}); err == nil || ExitCode(err) != ExitUserError {
 			t.Errorf("%s: err = %v", bad, err)
 		}
 	}
-	if err := checkTestHooks(execOptions{identityURL: "http://127.0.0.1:9099"}, runner.Spend{}, nil, ""); err != nil {
+	if err := checkTestHooks(execOptions{identityURL: "http://127.0.0.1:9099"}); err != nil {
 		t.Errorf("a loopback URL was refused: %v", err)
 	}
 }

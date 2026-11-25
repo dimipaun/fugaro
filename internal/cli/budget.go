@@ -27,6 +27,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -472,7 +473,7 @@ type showRepo struct {
 	Slug         string   `json:"slug"`
 	Repo         string   `json:"repo,omitempty"`
 	DailyCapUSD  *float64 `json:"daily_cap_usd"`
-	CapSource    string   `json:"daily_cap_source"` // repo, default or none
+	CapSource    string   `json:"daily_cap_source"` // repo, default, global or none
 	PerRunCapUSD *float64 `json:"per_run_cap_usd"`
 	// PerRunCapSource is where the effective per-run cap comes from: repo,
 	// default, global, or none when no per-run cap is set anywhere.
@@ -487,15 +488,44 @@ type showRepo struct {
 	Running         []showRun      `json:"running"`
 }
 
+// dailyCapSource names the scope whose daily cap binds a repository: its own
+// node, counted as its ceiling where that is smaller (A3), else the default.
+// The global cap bounds a node only through that ceiling, so a node above it is
+// named for the global and not for itself. "none" is no daily cap anywhere.
+func dailyCapSource(c budget.Caps) string {
+	if c.Repo != nil && c.Repo.DailyMicros != nil {
+		if ceil := c.RepoCeiling().DailyMicros; ceil != nil && *ceil < *c.Repo.DailyMicros {
+			if c.Global != nil && c.Global.DailyMicros != nil {
+				return "global"
+			}
+			return "default"
+		}
+		return "repo"
+	}
+	if c.Defaults != nil && c.Defaults.RepoDailyMicros != nil {
+		return "default"
+	}
+	return "none"
+}
+
 // perRunCapSource names the scope whose per-run cap binds a repository: the
 // smaller of the repository's side (its own node, else the default) and the
 // global one, which is the fallback where the repository's side is unset
-// (D6). "none" is no per-run cap anywhere: a run in enforce halts (no_cap).
+// (D6). A repository's own node counts as its ceiling where that is smaller
+// (A3), so a node above the ceiling is named for the scope the ceiling came
+// from and not for itself. "none" is no per-run cap anywhere: a run in enforce
+// halts (no_cap).
 func perRunCapSource(c budget.Caps) string {
 	repo, repoOK := c.RepoPerRun()
 	global, globalOK := c.GlobalPerRun()
 	if repoOK && (!globalOK || repo <= global) {
 		if c.Repo != nil && c.Repo.PerRunMicros != nil {
+			if ceil := c.RepoCeiling().PerRunMicros; ceil != nil && *ceil < *c.Repo.PerRunMicros {
+				if globalOK {
+					return "global"
+				}
+				return "default"
+			}
 			return "repo"
 		}
 		return "default"
@@ -724,10 +754,7 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 		}
 		if v, ok := rc.RepoDaily(); ok {
 			rs.DailyCapUSD = usdPtr(&v)
-			rs.CapSource = "default"
-			if rc.Repo != nil && rc.Repo.DailyMicros != nil {
-				rs.CapSource = "repo"
-			}
+			rs.CapSource = dailyCapSource(rc)
 		}
 		// The per-run cap is the effective one: the repository's own or the
 		// default, and the global one where that side is unset (D6), so the
@@ -961,12 +988,18 @@ func runningEndings(runs []showRun) map[task.Ref]string {
 }
 
 func printShow(w io.Writer, d *budgetShowDoc, showCompute bool) {
-	mode := d.Mode
-	if mode == "" {
+	// The mode a run acts on is C1's reading of the stored word (D3009): a
+	// database still saying off acts as observe, and this line says what the
+	// runs do rather than print a word that is not a mode any more. --json keeps
+	// the stored value, which is the database's and never changes meaning.
+	mode := policy.Mode(d.Mode).Effective()
+	if d.Mode == "" {
 		mode = "not set (acts as observe)"
+	} else if policy.Mode(d.Mode).Removed() {
+		mode += " (the database says off, which is not a budget mode any more)"
 	}
 	fmt.Fprintf(w, "mode: %s\n", mode)
-	if d.Mode == budget.ModeEnforce {
+	if policy.Mode(d.Mode).Effective() == policy.ModeEnforce {
 		fmt.Fprintln(w, "  caps are enforced")
 	} else {
 		fmt.Fprintln(w, "  caps are advisory; kill switches and the reserve limit apply")
@@ -1153,6 +1186,14 @@ func parsePlan(cmd *cobra.Command, o *budgetSetOptions) (*setPlan, error) {
 		return nil, err
 	}
 	if fl.Changed("mode") {
+		// The word that was a mode is refused with the vocabulary's own text
+		// (AB3, D3009), the way every other door of this release refuses it: the
+		// flag says where it was written and policy.ModeOffRefusal says the rest,
+		// so this refusal and the file's, the node's and the publish's cannot
+		// drift (docs/always-a-budget/contract-mode.md).
+		if policy.Mode(o.mode).Removed() {
+			return nil, userErr("--mode: %s", policy.ModeOffRefusal)
+		}
 		if o.mode != budget.ModeObserve && o.mode != budget.ModeEnforce {
 			return nil, userErr("--mode %q: use observe or enforce", o.mode)
 		}
@@ -1265,10 +1306,61 @@ func editMicroNode(e *nodeEdit, old map[string]json.RawMessage, fields []microFi
 	return final, nil
 }
 
+// repoCapCeiling is the largest cap a repository's own node may hold, read off
+// the database (spec §5.6): each dimension is the project's global cap when it
+// is set and the default repository cap otherwise, and a dimension with neither
+// is nil, which leaves the node standing. This is budget.Caps.RepoCeiling over
+// the two nodes, and the two must agree: a node written above the ceiling is
+// read as the ceiling (plan task RC1), so a write above it would land and mean
+// nothing.
+func repoCapCeiling(ctx context.Context, db *rtdb.Client) (budget.RepoCeiling, error) {
+	var g budget.GlobalCaps
+	if _, err := db.Get(ctx, budget.PathCapsGlobal, &g); err != nil {
+		return budget.RepoCeiling{}, remote(err)
+	}
+	def := &budget.DefaultCaps{}
+	if _, err := db.Get(ctx, budget.PathCapsDefaults, def); err != nil {
+		return budget.RepoCeiling{}, remote(err)
+	}
+	return budget.Caps{Global: &g, Defaults: def}.RepoCeiling(), nil
+}
+
+// refuseAboveRepoCeiling refuses a repository figure above its ceiling, naming
+// the ceiling and the command that raises it. It is a refusal of the figure and
+// not of who is writing it, so it comes before the raise fence: the owner's own
+// command that fence hands back would meet this same ceiling, and a refusal
+// whose fix cannot be run is worse than none.
+func refuseAboveRepoCeiling(ctx context.Context, db *rtdb.Client, p *setPlan) error {
+	ceil, err := repoCapCeiling(ctx, db)
+	if err != nil {
+		return err
+	}
+	for _, f := range []struct {
+		name, flag string
+		set, ceil  *budget.Micros
+	}{
+		{"daily", "--daily", p.daily, ceil.DailyMicros},
+		{"per-run", "--per-run", p.perRun, ceil.PerRunMicros},
+	} {
+		if f.set == nil || f.ceil == nil || *f.set <= *f.ceil {
+			continue
+		}
+		return userErr("caps of %s: the %s cap %s is above the ceiling %s; raise the ceiling with fugaro budget set --global %s <usd>",
+			p.repo, f.name, money(*f.set), money(*f.ceil), f.flag)
+	}
+	return nil
+}
+
 // buildEdits reads the nodes plan touches and works out their changes.
 func buildEdits(ctx context.Context, db *rtdb.Client, p *setPlan, slug string) ([]*nodeEdit, error) {
 	read := func(path string, out any) (string, bool, error) { return db.GetETag(ctx, path, out) }
 	var edits []*nodeEdit
+
+	if p.scope == "repo" && (p.daily != nil || p.perRun != nil) {
+		if err := refuseAboveRepoCeiling(ctx, db, p); err != nil {
+			return nil, err
+		}
+	}
 
 	if p.mode == budget.ModeEnforce {
 		// As init does: enforce needs the project-wide caps, and the two

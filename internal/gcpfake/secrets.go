@@ -22,11 +22,12 @@ import (
 // version.
 // It has no access call unless a test allows it (AllowAccess): the CLI reads a
 // value back only where the work cannot be done without it — the GitHub App
-// pre-check and a catalog build's copy of a repository-sourced entry, which
-// read the App's key or the project's bitbucket-token, and the credentials
-// service's bundle document, which `fugaro creds` and `fugaro doctor
-// --check-bitbucket-token` read — so any other client that tries fails the
-// test.
+// pre-check, a catalog build's copy of a repository-sourced entry and
+// `fugaro update`'s migration of what a repository declares, which all three
+// read the App's key or the project's bitbucket-token to read a repository
+// through its provider, and the credentials service's bundle document, which
+// `fugaro creds` and `fugaro doctor --check-bitbucket-token` read — so any
+// other client that tries fails the test.
 //
 // Deleted and Destroyed record the two destructive calls, so a test can
 // assert that a run never made one: a retirement leaves a secret and its

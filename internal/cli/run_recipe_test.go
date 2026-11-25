@@ -28,7 +28,7 @@ const release070 = "ghcr.io/dimipaun/fugaro-base:0.7.0"
 
 func TestRunRecipeFlagEmbedsCatalog(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", release070)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	out, errOut, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", "solo", "--json", "Add a feature")
 	if err != nil {
 		t.Fatal(err)
@@ -61,6 +61,11 @@ func TestRunWithoutCheckoutLetsTheRunnerChoose(t *testing.T) {
 // explicit --recipe default is carried (and the image checked).
 func TestRunExplicitDefaultWithoutCheckoutEmbeds(t *testing.T) {
 	f := newCloudFixture(t)
+	// Take away the fixture's own record: a carried default must still be
+	// image-checked, and the fixture's record would hide the missing one.
+	if err := removeBuildRecord(f); err != nil {
+		t.Fatal(err)
+	}
 	wantRefused(t, f, "has no build record", "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", "default", "x")
 	// release0160, not release050: the carried default holds the adversarial
 	// step, which needs a runner that acts on it (adversarialSince).
@@ -81,7 +86,7 @@ func TestRunRecipeRefusedOnOldImage(t *testing.T) {
 
 func TestRunUnknownRecipeFailsBeforeCloudWork(t *testing.T) {
 	f := newCloudFixture(t)
-	wantRefused(t, f, "recipe nope is not in .fugaro/recipes", "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", "nope", "x")
+	wantRefused(t, f, "recipe nope is not in project aurora", "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", "nope", "x")
 	if _, err := os.Stat(filepath.Join(f.dir, "runs", "runs", appSlug, "20261007-100000-abcd", "task.json")); err == nil {
 		t.Fatal("a task.json was written for a refused recipe")
 	}
@@ -113,7 +118,7 @@ func TestRunRefusesReviewModeWithoutPR(t *testing.T) {
 // test fails with "cannot be launched yet", and no execution starts.
 func TestRunAllowsCheckStepRecipe(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", release070)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	for i, name := range []string{"test-and-fix", "lint-fix"} {
 		runID := "2026100" + string(rune('7'+i)) + "-100000-abcd"
 		_, errOut, err := execute(t, "run", "--repo", "acme/app", "--run-id", runID, "--recipe", name, "x")
@@ -165,7 +170,7 @@ func TestRunAgentRecipeTriggersImageCheck(t *testing.T) {
 	recipeCheckout(t, f, "  recipe: solo\n", nil)
 	wantRefused(t, f, "has no build record", "run", "--run-id", "20261007-100000-abcd", "A task")
 	other := mustSlug("github", "acme/other")
-	writeBuildRecord(t, f, other, "svc", release070)
+	writeBuildRecord(t, f, other, "svc", releaseSeal)
 	_, errOut, err := execute(t, "run", "--run-id", "20261007-100000-abcd", "A task")
 	if err != nil || !strings.Contains(errOut, "recipe: solo (catalog)") {
 		t.Fatalf("err = %v, stderr %q", err, errOut)
@@ -208,7 +213,7 @@ func TestRunRecipeImageNamesTheImplicitBaseKind(t *testing.T) {
 // refused "has no build record".
 func TestRunClonedWorkflowWithRecipeLaunchesWithNoBuildRecord(t *testing.T) {
 	f := newCloudFixture(t)
-	f.appendConfig(t, "base_images: {base: ghcr.io/dimipaun/fugaro-base:0.7.5}\n")
+	f.appendConfig(t, "base_images: {base: "+releaseSeal+"}\n")
 	testutil.IsolateGit(t)
 	other := mustSlug("github", "acme/other")
 	f.run.AddJob(gcp.JobName(other, "svc"), "2", "4Gi")
@@ -263,11 +268,17 @@ func TestRunClonedWorkflowRefusedBelowCloneSince(t *testing.T) {
 	}
 }
 
+// A repository's own recipe is the project's copy of it (D3303): the launch
+// resolves the copy from the store, and the task carries the copy's own name
+// and text rather than the folder's file, which is never read.
 func TestRunRepoRecipeFromCheckout(t *testing.T) {
 	f := newCloudFixture(t)
-	recipeCheckout(t, f, "", map[string]string{".fugaro/recipes/mine.yaml": "version: 1\nname: mine\nsteps:\n  - review: { max_rounds: 1 }\n"})
+	recipeCheckout(t, f, "", map[string]string{".fugaro/recipes/mine.yaml": "version: 1\nname: mine\nsteps:\n  - review: { max_rounds: 4 }\n"})
 	other := mustSlug("github", "acme/other")
-	writeBuildRecord(t, f, other, "svc", release050)
+	writeBuildRecord(t, f, other, "svc", releaseSeal)
+	copy := recipe.CopyName("mine", "github", "acme/other")
+	text := "version: 1\nname: " + copy + "\nsteps:\n  - review: { max_rounds: 1 }\n"
+	projectRecipesFixture(t, f, map[string]string{copy: text})
 	if _, _, err := execute(t, "run", "--run-id", "20261007-100000-abcd", "--recipe", "mine", "A task"); err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +288,8 @@ func TestRunRepoRecipeFromCheckout(t *testing.T) {
 	}
 	defer b.Close()
 	spec, err := runstore.Open(b, other, "20261007-100000-abcd").ReadTask(t.Context())
-	if err != nil || spec.Recipe == nil || *spec.Recipe != (task.Recipe{Name: "mine", Source: "repo"}) {
+	want := task.Recipe{Name: copy, Source: "project", SHA256: recipe.Sum([]byte(text)), YAML: text}
+	if err != nil || spec.Recipe == nil || *spec.Recipe != want {
 		t.Fatalf("task = %+v, %v", spec, err)
 	}
 }
@@ -287,7 +299,7 @@ func TestRunRepoRecipeFromCheckout(t *testing.T) {
 func TestRunPRKeepsEmbeddedRecipeAfterProjectDelete(t *testing.T) {
 	f := newCloudFixture(t)
 	projectRecipesFixture(t, f, nil) // default bucket name; no team recipe published any more
-	writeBuildRecord(t, f, appSlug, "web", release085)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	team := "version: 1\nname: team\nsteps:\n  - review: {}\n"
 	root := firstRunSpec(rootID)
 	root.Recipe = &task.Recipe{Name: "team", Source: "project", SHA256: recipe.Sum([]byte(team)), YAML: team}
@@ -349,7 +361,7 @@ func TestRunPRRefusesInheritedReviewMode(t *testing.T) {
 
 func TestRunPRRecipeFlagWins(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", release085)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	root := firstRunSpec(rootID)
 	root.Recipe = &task.Recipe{Name: "mine", Source: "repo"}
 	seedSpec(t, f, root, false)
@@ -376,7 +388,7 @@ func TestRunRetryTakesNoRecipe(t *testing.T) {
 // stderr, escaped like other bucket-derived text.
 func TestRunPrintsRecipeNote(t *testing.T) {
 	f := newCloudFixture(t) // its runs bucket is not the default name: the note applies
-	writeBuildRecord(t, f, appSlug, "web", release070)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", "solo", "x")
 	if err != nil {
 		t.Fatal(err)
@@ -438,6 +450,7 @@ func TestRunCheckoutDefaultCarriesNoRecipe(t *testing.T) {
 	for _, args := range [][]string{{}, {"--recipe", "default"}} {
 		f := newCloudFixture(t)
 		recipeCheckout(t, f, "", nil)
+		writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseSeal)
 		out, errOut, err := execute(t, append(append([]string{"run", "--run-id", "20261007-100000-abcd", "--json"}, args...), "A task")...)
 		if err != nil {
 			t.Fatal(err)
@@ -490,9 +503,9 @@ func TestRunPlainWithDefaultNamedBucket(t *testing.T) {
 // the catalog, not for every launch.
 func TestRunNoteOnlyForExplicitNonDefault(t *testing.T) {
 	f := newCloudFixture(t) // custom runs bucket
-	writeBuildRecord(t, f, appSlug, "web", release050)
-	// The implicit default carries no recipe, so a 0.5.0 image is not in its
-	// way; the explicit one below is carried and holds the adversarial step,
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
+	// The implicit default carries no recipe, so a seal-release image is not in
+	// its way; the explicit one below is carried and holds the adversarial step,
 	// which is why the record moves to release0160 first.
 	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "x")
 	if err != nil || strings.Contains(errOut, "note:") {
@@ -511,8 +524,10 @@ func TestRunNoteOnlyForExplicitNonDefault(t *testing.T) {
 
 func TestRunRepoRecipeRefusedOnOldImage(t *testing.T) {
 	f := newCloudFixture(t)
-	recipeCheckout(t, f, "", map[string]string{".fugaro/recipes/mine.yaml": "version: 1\nname: mine\nsteps:\n  - review: { max_rounds: 1 }\n"})
+	recipeCheckout(t, f, "", nil)
 	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:0.4.1")
+	copy := recipe.CopyName("mine", "github", "acme/other")
+	projectRecipesFixture(t, f, map[string]string{copy: "version: 1\nname: " + copy + "\nsteps:\n  - review: {}\n"})
 	_, _, err := execute(t, "run", "--run-id", "20261007-100000-abcd", "--recipe", "mine", "A task")
 	if err == nil || !strings.Contains(err.Error(), "release 0.4.1") {
 		t.Fatalf("err = %v", err)
@@ -553,7 +568,7 @@ func TestRunPRInheritedBadRecipeFailsBeforeLaunch(t *testing.T) {
 // A repeated --run-id with another --recipe is a different task.
 func TestRunPRRepeatRunIDWithAnotherRecipe(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", release085)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
 	args := []string{"run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID}
 	if _, _, err := execute(t, append(args, "--recipe", "solo")...); err != nil {
@@ -572,7 +587,7 @@ func TestRunPRRepeatRunIDWithAnotherRecipe(t *testing.T) {
 // chose) and whose record says chosen; nil chosen leaves the record without.
 func seedChosenRoot(t *testing.T, f *cloudFixture, chosen *runstore.RecipeRecord) {
 	t.Helper()
-	writeBuildRecord(t, f, appSlug, "web", release085)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	seedSpec(t, f, firstRunSpec(rootID), false)
 	rec := prRecord(rootID, "", 7, 1)
 	rec.StartedAt = time.Now().Add(-72 * time.Hour)

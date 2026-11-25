@@ -1,6 +1,6 @@
 # Workspaces: the reconciliation
 
-**Status as of 2026-11-10: in progress, 6/10 merged; see [docs/status.md](../status.md) for the current table.**
+**Status as of 2026-11-24: built — this design is implemented, and the last of it landed through the [workspace-service](../workspace-service/implementation-plan.md) plan that finishes the credentials service; see [docs/status.md](../status.md) for the current table.**
 
 Each claim of [spec.md](spec.md) §0 — the owner's spec as this run recorded it — against the code at
 `origin/main` `c2ca0aee`, merged into this branch and read on 2026-11-04; the first reading was taken
@@ -496,9 +496,10 @@ options with **the recommended one first**, the cost of the alternative, and **t
 
 **Every one is answered, and every one as recommended.** So no decision here carries a *not the
 recommendation* marker — there is no deviation to record. **An answered decision is still not an
-approval:** no task is approved, the owner approves each task by name, and
-[spec.md](spec.md) §8's independent SECURITY review — which **the coordinator runs** — gates the
-merge.
+approval:** no task is approved by being written down, the owner approves each task by name — and
+the ten tasks of this design's plan were approved by name afterwards and each is merged — so
+[spec.md](spec.md) §8's independent SECURITY review, which **the coordinator runs**, is what gated
+the merge.
 
 **D1290 — Where the workspace's identity lives.** A workspace needs one identity provider its members
 accept. Which Firebase is it?
@@ -916,10 +917,20 @@ holds its own and the workspace holds one too (§7's **V5**).
 **Two gaps the implementation of W6 reported, and the owner answered both on 2026-11-10, each as
 recommended** — the recommendation being this folder's own reading of each, written where the gap is
 stated ([implementation-plan.md](implementation-plan.md) W1 and W6, [spec.md](spec.md) §5 and §8).
-Neither is a decision the design was missing, and neither is closed here: each is a value the
-per-member table does not carry, and the answer to both is that **W6 ships the shape and states the
-gap, and the task that first gives that table a writer takes the value**. Neither answer takes a
-number: **D1306–D1309 stay reserved and unused** (§5).
+Neither was a decision the design was missing: each is a value the per-member table did not carry, and
+the answer to both was that **W6 ships the shape and states the gap, and the task that first gives
+that table a writer takes the value**. Neither answer takes a number: **D1306–D1309 stay reserved and
+unused** (§5).
+
+**Both are now closed, on 2026-11-24**, and what closed them is the follow-up plan that finishes the
+credentials service: WS3 and WS4 of
+[workspace-service](../workspace-service/implementation-plan.md) give the per-member table its writer
+— the workspace owner's `fugaro update` publishes `workspace_credentials/<name>` from the member table
+and the shared list — WS2 holds the run's verified repository to the calling job account's own list,
+and the region lands with the writer as O4's answer said it would. The two answers below stand as the
+record of what the owner decided on 2026-11-10; what the release carries is the value rather than the
+gap, so [implementation-plan.md](implementation-plan.md) W1 and W6 and [spec.md](spec.md) §5 and §8
+state what is now true.
 
 **O3 — Whether the run's repository is held to the calling job account (review finding N1).** The
 pool asks the repository's own admission child and the member's two canonical `allow_repos` legs, all
@@ -951,13 +962,17 @@ member's `database_region` (`internal/projectpolicy/workspace_credentials.go`:24
 derives that member's database host from it (`workspaceDatabase`, `internal/credsvc/workspace.go`),
 because a Firebase project adopted with a **regional** database is named
 `<firebase_project>-default-rtdb.<region>.firebasedatabase.app` and not the legacy default host. No
-command records the value: the four values `workspace member add` writes for this table are the
+command then recorded the value: the four values `workspace member add` writes for this table are the
 member's job accounts, its Firebase project, its `fp` and its exchange URL, with `--repo` beside them
 naming a repository the member contributes
 (`internal/cli/workspace.go`:422-429, `--repo` at `:480`),
-`localcfg.WorkspaceMember` has no field for a region (`internal/localcfg/localcfg.go`:541-567), and
-**the node itself has no writer anywhere in the tree** — its own comment says so
-(`internal/projectpolicy/workspace_credentials.go`:113).
+`localcfg.WorkspaceMember` had no field for a region (`internal/localcfg/localcfg.go`:1023), and
+**the node itself had no writer anywhere in the tree** — its own comment said so
+(`internal/projectpolicy/workspace_credentials.go`, the `UnknownKeys` field) — and the verb has
+taken `--database-region`
+and the field, with the write it feeds, since
+[workspace-service](../workspace-service/implementation-plan.md) WS3 and WS4 (the section's own
+opening records the closure).
 
 - **(A, recommended) The task that gives the node its writer.** The region is one value beside the
   others that writer publishes, and the derivation this release ships is what keeps a member on a

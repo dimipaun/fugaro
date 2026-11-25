@@ -106,16 +106,22 @@ type Outcome struct {
 type Reporter struct {
 	o     Options
 	human io.Writer
-	// profile is the colour profile every style is rendered with. The
-	// reporter decides it and forces it into termenv, which would otherwise
-	// colour a pipe when the environment asks (T4(a)); see style.go.
-	profile termenv.Profile
+	// Style is the colour every line is drawn with: the profile the reporter
+	// decided, which style.go's helpers render through. It is a field rather
+	// than a decision made at each print so that one run draws in one syntax
+	// (T4(a), D1355), and so that a caller with no reporter yet — the wizard's
+	// questions — draws in that same one.
+	Style
 
 	mu         sync.Mutex
 	start      time.Time
 	steps      int
 	state      State
 	summarised bool
+	// rerunProgram and rerunStep are what a stopped run's closing line resumes
+	// with (RerunFrom): empty for a run that is not a converge.
+	rerunProgram string
+	rerunStep    string
 	// spin is whether the step in flight is drawn on the terminal's own line.
 	// The rest is the state of that line, guarded by mu.
 	spin      bool
@@ -144,22 +150,16 @@ func New(o Options) *Reporter {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	r := &Reporter{o: o, human: o.Out, start: o.Now()}
+	r := &Reporter{o: o, human: o.Out, Style: NewStyle(o), start: o.Now()}
 	if o.JSON {
 		// stdout is the document. The human lines still have a home, which is
 		// where the run's own writer already goes under --json.
 		r.human = o.Err
 	}
 	// Colour is on only where every rule allows it: a terminal, colour not
-	// turned off, markers not kept to ASCII, and no --json (G4).
-	colour := !o.JSON && !o.ASCII && !NoColor(o.NoColor, o.Getenv) && o.IsTerminal(o.Out)
-	if colour {
-		// ANSI: the sixteen colours, which every terminal draws and which the
-		// legacy Windows console draws once virtual terminal processing is on.
-		r.profile = termenv.ANSI
-	} else {
-		r.profile = termenv.Ascii
-	}
+	// turned off, markers not kept to ASCII, and no --json (G4) — the one
+	// decision NewStyle makes, read back here as "is there a colour at all".
+	colour := !r.Style.plain()
 	// The line in flight follows the colour decision exactly — one rule for
 	// what may be drawn — and is not drawn under --verbose, where the run's
 	// own stream owns the terminal.
@@ -209,8 +209,9 @@ func (r *Reporter) Summary() Outcome {
 	r.spinName, r.spinPaused = "", false
 	o := Outcome{State: r.state, Steps: r.steps, Elapsed: r.o.Now().Sub(r.start)}
 	if !r.summarised && o.Steps > 0 {
-		r.logLine(summaryLine(o) + "\n")
-		fmt.Fprintln(r.human, summaryLine(o))
+		line := r.closingLine(o)
+		r.logLine(line + "\n")
+		fmt.Fprintln(r.human, line)
 	}
 	r.summarised = true
 	return o
@@ -287,26 +288,98 @@ type Step struct {
 
 // Done ends the step with a tick. detail says what changed, when there is
 // anything to say: a stage that did nothing and one that changed something
-// are both a tick.
+// are both a tick. Under Brief the screen carries its first clause and the log
+// the whole of it (end); DoneWhole is the same result for a detail that is not
+// a reason.
 func (s *Step) Done(detail string) {
-	s.end(glyphDone, colourDone, Done, " ", detail, nil)
+	s.end(glyphDone, colourDone, Done, " ", detail, nil, cutReason)
+}
+
+// DoneWhole ends the step with a tick and a detail the screen keeps whole:
+// Done's result for a step whose detail is the answer itself rather than a
+// reason for it — a plan's counts, and where the run's whole account of that
+// plan is kept. The brief account's cut is for a reason read while a run goes
+// past, and the detail this ends with is what that reader is reading: cutting
+// it would take away the count and the path and leave the one step line saying
+// less than nothing.
+func (s *Step) DoneWhole(detail string) {
+	s.end(glyphDone, colourDone, Done, " ", detail, nil, keepWhole)
 }
 
 // Skipped ends the step without a tick: the work was not needed, and reason
 // is why. A skipped step is neither a failure nor a step the user owes.
 func (s *Step) Skipped(reason string) {
-	s.end(glyphSkipped, colourSkipped, Done, " ", reason, nil)
+	s.end(glyphSkipped, colourSkipped, Done, " ", reason, nil, cutReason)
 }
 
-// Failed ends the step with a cross and prints the error, the last lines of
-// context behind it, the log's path and the command that explains the run. The
-// context is on the screen rather than only in the log because a coding agent's
-// session often has a read-only home and cannot open the log at all (G8).
+// reasonView is what end puts on the screen for a step's reason under the
+// brief account: its first clause, or the whole of it. Failed does not go
+// through end at all — a failure prints its message whole, for the reason its
+// own comment gives — so this belongs to Done, Skipped, Left and Refused, and
+// DoneWhole is the one that turns the cut off.
+type reasonView bool
+
+const (
+	cutReason reasonView = true
+	keepWhole reasonView = false
+)
+
+// Failed ends the step with a cross and prints what went wrong, the whole of
+// it: the error's own message, the last lines of context behind it, the log's
+// path and the command that explains the run. The context is on the screen
+// rather than only in the log because a coding agent's session often has a
+// read-only home and cannot open the log at all (G8).
+//
+// The message is not cut to one line the way an ordinary step's reason is
+// (Short): the step that stopped the run is the one thing its reader has to
+// read in full, and a trailing "…" there sends them to a log for the sentence
+// that told them what to do.
 func (s *Step) Failed(err error, context []string) {
-	lines := append([]string(nil), context...)
-	s.r.appendLogLine(&lines)
-	s.r.appendDiagnoseLine(&lines)
-	s.end(glyphFailed, colourFailed, Failed, ": ", err.Error(), lines)
+	r := s.r
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !s.begin(Failed) {
+		return
+	}
+	var msg []string
+	if err != nil {
+		msg = append(msg, splitLines(err.Error())...)
+	}
+	msg = append(msg, context...)
+	// A stage's message can open with a blank line, which is layout rather than
+	// anything to read: the label goes on the first line that says something,
+	// and the rest of the message is printed whole under it either way.
+	for len(msg) > 0 && strings.TrimSpace(msg[0]) == "" {
+		msg = msg[1:]
+	}
+	body := msg
+	r.appendLogLine(&body)
+	r.appendDiagnoseLine(&body)
+	r.logLine(glyphFailed.text(r.o.ASCII) + " " + s.name + "\n")
+	fmt.Fprintln(r.human, r.painted(glyphFailed.text(r.o.ASCII), colourFailed)+" "+s.name)
+	if len(body) == 0 {
+		return
+	}
+	// The label goes on the message's first line, at the step line's own
+	// column; everything after it — the rest of the message, the context, the
+	// log and the diagnose command — lines up two spaces in.
+	if len(msg) == 0 {
+		r.under(body)
+		return
+	}
+	r.logLine("Error: " + body[0] + "\n")
+	fmt.Fprintln(r.human, r.Error(body[0]))
+	r.under(body[1:])
+}
+
+// splitLines is a message as the lines it is printed on: one line for a
+// message that has none, and no trailing empty line for one that ends in a
+// newline.
+func splitLines(msg string) []string {
+	if msg == "" {
+		return nil
+	}
+	return strings.Split(strings.TrimSuffix(msg, "\n"), "\n")
 }
 
 // Left ends the step with its own marker: the work needs the user before the
@@ -315,7 +388,7 @@ func (s *Step) Failed(err error, context []string) {
 func (s *Step) Left(text string) {
 	var lines []string
 	s.r.appendLogLine(&lines)
-	s.end(glyphLeft, colourLeft, Left, ": ", text, lines)
+	s.end(glyphLeft, colourLeft, Left, ": ", text, lines, cutReason)
 }
 
 // Refused ends the step with a cross and the log's path, and it is Left all
@@ -327,7 +400,7 @@ func (s *Step) Left(text string) {
 func (s *Step) Refused(text string) {
 	var lines []string
 	s.r.appendLogLine(&lines)
-	s.end(glyphFailed, colourFailed, Left, ": ", text, lines)
+	s.end(glyphFailed, colourFailed, Left, ": ", text, lines, cutReason)
 }
 
 // Abandon ends the step without a line and without counting it: the run never
@@ -353,26 +426,21 @@ func (s *Step) Abandon() {
 // is left with. Under Brief the reason is shortened to its first clause on
 // the screen and kept whole in the log — the log is what a person goes to for
 // the rest, and its path is under a failure and under a step left for the
-// user (D1352) — so `under` and the log line stay exactly as they were.
-func (s *Step) end(g glyph, c termenv.ANSIColor, state State, sep, reason string, under []string) {
+// user (D1352) — so `under` and the log line stay exactly as they were. view
+// is whether that cut applies at all, and it is what DoneWhole turns off for
+// a detail the cut would be the loss of.
+func (s *Step) end(g glyph, c termenv.ANSIColor, state State, sep, reason string, under []string, view reasonView) {
 	r := s.r
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if s.ended {
+	if !s.begin(state) {
 		return
-	}
-	s.ended = true
-	r.stopSpinner()
-	r.spinName, r.spinPaused = "", false
-	r.steps++
-	if state > r.state {
-		r.state = state
 	}
 	tail := ""
 	human := ""
 	if reason != "" {
 		tail, human = sep+reason, sep+reason
-		if r.o.Brief {
+		if r.o.Brief && view == cutReason {
 			human = sep + Short(reason)
 		}
 	}
@@ -384,9 +452,35 @@ func (s *Step) end(g glyph, c termenv.ANSIColor, state State, sep, reason string
 	r.logLine(g.text(r.o.ASCII) + " " + s.name + tail + "\n")
 	line := r.painted(g.text(r.o.ASCII), c) + " " + s.name + human
 	fmt.Fprintln(r.human, line)
-	for _, l := range under {
-		r.logLine("    " + l + "\n")
-		fmt.Fprintf(r.human, "    %s\n", l)
+	r.under(under)
+}
+
+// begin takes the step's result: it clears the line in flight, counts the step
+// and records what the result means for the run. It answers false for a step
+// that already ended, so the caller prints nothing the second time. The lock
+// is the caller's, held on the way in and released on the way out.
+func (s *Step) begin(state State) bool {
+	r := s.r
+	if s.ended {
+		return false
+	}
+	s.ended = true
+	r.stopSpinner()
+	r.spinName, r.spinPaused = "", false
+	r.steps++
+	if state > r.state {
+		r.state = state
+	}
+	return true
+}
+
+// under prints the lines below a step's own line: two spaces in, on the screen
+// and in the log alike, so the block under a step reads as one thing. Called
+// with the lock held.
+func (r *Reporter) under(lines []string) {
+	for _, l := range lines {
+		r.logLine("  " + l + "\n")
+		fmt.Fprintf(r.human, "  %s\n", l)
 	}
 }
 
@@ -431,16 +525,17 @@ func Short(reason string) string {
 	return strings.TrimRight(string(runes[:cut]), " ,;—-") + "…"
 }
 
-// Waits prints one line for a run of stages that wait: the whole run of them,
-// because a run that stopped at a stage leaves every stage behind it saying
-// the same thing, and eleven lines saying it eleven times is not a view of
-// anything (the owner's feedback of 2026-11-09). The summary still counts the
-// stages rather than the lines, so the account's "N steps" is what it was.
+// Waits prints one dim line for the steps a stop left unrun: how many there
+// are and what they wait for, because a run that stopped at a step leaves
+// every step behind it saying the same thing, and eleven lines naming them is
+// not a view of anything (the owner's feedback of 2026-11-09). The count is
+// the whole of what a reader needs there; which ones they are is what the
+// rerun that resumes at the stop will walk through. The summary counts the
+// steps rather than the lines, so the account's "N steps" is what it was.
 //
-// names are the stages, in the run's canonical order; target is what they
-// wait for, in the words the loop's own detail used. At most three names are
-// printed and the rest are counted, so the line stays one line however many
-// stages are behind the stop.
+// names are the steps, in the run's canonical order and only read for their
+// number; target is what they wait for, in the words the loop's own detail
+// used.
 func (r *Reporter) Waits(names []string, target string) {
 	if len(names) == 0 {
 		return
@@ -450,28 +545,19 @@ func (r *Reporter) Waits(names []string, target string) {
 	r.stopSpinner()
 	r.spinName, r.spinPaused = "", false
 	r.steps += len(names)
-	text := waitText(names, target)
-	r.logLine(glyphWaiting.text(r.o.ASCII) + " " + text + "\n")
-	fmt.Fprintln(r.human, r.painted(glyphWaiting.text(r.o.ASCII), colourSkipped)+" "+text)
+	text := waitText(len(names), target)
+	r.logLine(glyphSkipped.text(r.o.ASCII) + " " + text + "\n")
+	fmt.Fprintln(r.human, r.painted(glyphSkipped.text(r.o.ASCII), colourSkipped)+" "+text)
 }
 
-// waitText is the one waiting line: the stages, and what they wait for. The
-// verb agrees with the subject, because one stage behind a stop is as common
-// a line as eleven.
-func waitText(names []string, target string) string {
-	shown, rest := names, 0
-	if len(shown) > 3 {
-		shown, rest = shown[:3], len(shown)-3
+// waitText is the one waiting line: the count, and what they wait for. The
+// pronoun agrees with the count, because one step behind a stop is as common a
+// line as eleven.
+func waitText(n int, target string) string {
+	if n == 1 {
+		return "1 step not run (it needs " + target + ")"
 	}
-	list := strings.Join(shown, ", ")
-	verb := " wait for "
-	if len(names) == 1 {
-		verb = " waits for "
-	}
-	if rest > 0 {
-		list += fmt.Sprintf(" and %d more", rest)
-	}
-	return list + verb + target
+	return fmt.Sprintf("%d steps not run (they need %s)", n, target)
 }
 
 // logLine keeps one of the run's own lines — a step's result, the lines under
@@ -520,13 +606,14 @@ func (r *Reporter) appendLogLine(lines *[]string) {
 		return
 	}
 	if p := r.o.Sink.Path(); p != "" {
-		*lines = append(*lines, "full output: "+p)
+		*lines = append(*lines, "Log:  "+p)
 	}
 }
 
-// diagnoseLine is the sentence a failure prints about the command that
-// explains it, up to the run ID the sentence ends with (T-DG9).
-const diagnoseLine = "Something went wrong. Run: fugaro troubleshoot "
+// diagnoseLine is the labelled line a failure prints about the command that
+// explains it, up to the run ID the line ends with (T-DG9). The label is the
+// same width as the log's above it, so the two paths start at one column.
+const diagnoseLine = "Help: fugaro troubleshoot "
 
 // appendDiagnoseLine adds that line under a failure, with the log's own name as
 // its run ID: the stem of the file the path beside it points at, which is what
@@ -550,13 +637,39 @@ func summaryLine(o Outcome) string {
 	if o.Steps == 1 {
 		steps = "1 step"
 	}
-	elapsed := fmt.Sprintf("%.1fs", o.Elapsed.Seconds())
 	switch o.State {
 	case Failed:
-		return fmt.Sprintf("Failed in %s, %s", elapsed, steps)
+		return fmt.Sprintf("Failed in %s, %s", elapsedOf(o), steps)
 	case Left:
-		return fmt.Sprintf("Left for you in %s, %s", elapsed, steps)
+		return fmt.Sprintf("Left for you in %s, %s", elapsedOf(o), steps)
 	default:
-		return fmt.Sprintf("Done in %s, %s", elapsed, steps)
+		return fmt.Sprintf("Done in %s, %s", elapsedOf(o), steps)
 	}
+}
+
+func elapsedOf(o Outcome) string { return fmt.Sprintf("%.1fs", o.Elapsed.Seconds()) }
+
+// RerunFrom is the step the closing line sends a stopped run back to: the
+// program to type again, and the step the run stopped at, which is where it
+// picks up (G6). The converge sets it before Summary, and a run that is not
+// stopped never reads it.
+func (r *Reporter) RerunFrom(program, step string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.rerunProgram, r.rerunStep = program, step
+}
+
+// closingLine is what a run says last: summaryLine, and for a run that stopped
+// the one thing the closing line is there for — the command that resumes it
+// where it stopped. The step count is left out of that line because the steps
+// of a stopped run are mostly the ones it never reached, and "Failed in 2.2s,
+// 19 steps" reads as if it had done nineteen of them.
+func (r *Reporter) closingLine(o Outcome) string {
+	if o.State == Failed && r.rerunProgram != "" && r.rerunStep != "" {
+		return fmt.Sprintf("Failed in %s. Rerun %s to resume at %s.", elapsedOf(o), r.rerunProgram, r.rerunStep)
+	}
+	return summaryLine(o)
 }

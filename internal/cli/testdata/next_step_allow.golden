@@ -112,6 +112,7 @@ init_retire.go	then rerun fugaro update
 init_review.go	run by fugaro update
 init_stages.go	run fugaro update
 issue_mine.go	run fugaro update
+launch_budget.go	run cannot use. Nothing is launched: run fugaro update
 launch_budget.go	run fugaro update
 launch_budget.go	then run fugaro update
 launch_budget.go	then the job image from it with fugaro image build
@@ -144,6 +145,7 @@ project_repos_set.go	run would ever read this selection: fugaro update
 project_repos_set.go	then holds and fugaro project policy publish
 project_repos_set.go	then holds, and fugaro project policy publish
 project_routing.go	run through fugaro update
+recipes_resolve.go	then run fugaro update
 recipes_skew.go	Run fugaro image build
 recipes_skew.go	Run fugaro update
 recipes_skew.go	run at bootstrap on a key it does not know. Run fugaro update
@@ -186,6 +188,8 @@ skillwarn.go	run fugaro update
 tell.go	Run fugaro update
 update.go	next fugaro update
 update_access.go	next fugaro update
+update_access.go	now need a grant in the node (fugaro update
+update_access.go	runs migration was not written, so the next fugaro update
 update_budget_mode.go	next fugaro update
 update_check.go	run fugaro update
 update_marker_version.go	next fugaro update

@@ -140,11 +140,40 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 	})
 
 	c := &prChain{Runs: rows}
+	// The pause node of a run that ended paused, for the one word the rows
+	// cannot carry: a cancellation is written on the credentials service's node
+	// (D3197) and nowhere the runs bucket holds, so a chain whose pause was
+	// cancelled is one this follow-up may continue, and a chain whose pause
+	// stands is not (F64). It is read only for a row that says paused, so a
+	// pull request whose runs never suspended opens no database at all.
+	pauses := pauseFactsFor(ctx, env, func(format string, a ...any) { fmt.Fprintf(warn, format, a...) })
 	var runs []runview.Row // the launched runs
 	for _, r := range rows {
 		switch r.Status {
 		case runview.StatusError:
 			return nil, userErr("run %s on PR #%d can't be read (%s), so the PR's state is unknown; see fugaro diagnose %s", task.ShortRun(oneLine(r.Run)), pr, oneLine(r.Reason), task.ShortRun(oneLine(r.Run)))
+		case string(runstore.StatusPaused):
+			f, paused := pauseInFlight(r, pauses)
+			if !paused {
+				// A cancelled pause is a chain that is over: the run is the
+				// finished run its record says it is, and the reading below
+				// treats it as one.
+				break
+			}
+			// A suspended chain is in flight exactly as a running one is: the
+			// orchestrator resumes it at its own instant, and a follow-up
+			// launched now would be the second run of the chain between the
+			// pause and its resume (F64). So the refusal is the running one's
+			// shape, and the resume instant is the whole of what it adds --
+			// pause.max_pause bounds it (six hours by default, R15), so the
+			// wait it asks for is a bounded one. It names no cancel: a pause is
+			// cancelled by the launcher through the service's own route (PR10,
+			// D3197), not by anything this CLI takes today.
+			until := ""
+			if !f.resumeAt.IsZero() {
+				until = " until " + f.resumeAt.Format(time.RFC3339)
+			}
+			return nil, userErr("run %s on PR #%d is paused%s; wait for it to be resumed (fugaro runs ls --pr %d --repo %s)", task.ShortRun(oneLine(r.Run)), pr, until, pr, repo)
 		case runview.StatusLaunching, runview.StatusPending, string(runstore.StatusRunning):
 			return nil, userErr("run %s on PR #%d is still %s; wait for it to finish (fugaro runs ls --pr %d --repo %s) or cancel it", task.ShortRun(oneLine(r.Run)), pr, r.Status, pr, repo)
 		case runview.StatusUnlaunched:
@@ -928,7 +957,7 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 		if c.PrevReport {
 			return nil, refuseReportFollowUp(rcp.Name)
 		}
-		if err := refuseFollowUpRepoRecipe(ctx, repo, rcp.Name); err != nil {
+		if err := refuseFollowUpRepoRecipe(ctx, env, repo, rcp.Name); err != nil {
 			return nil, err
 		}
 	}
@@ -1100,7 +1129,7 @@ func carryChosenRecipe(ctx context.Context, env *cloudEnv, repo string, c *prCha
 	var rcp *task.Recipe
 	changed := false
 	if ch.Source == string(recipe.SourceRepo) {
-		if err := refuseFollowUpRepoRecipe(ctx, repo, ch.Name); err != nil {
+		if err := refuseFollowUpRepoRecipe(ctx, env, repo, ch.Name); err != nil {
 			return nil, err
 		}
 		rcp = &task.Recipe{Name: ch.Name, Source: ch.Source}

@@ -129,7 +129,7 @@
       "additionalProperties": false,
       "description": "The repository's cost and model policy. The runner reads it from the default branch and merges it with the project's ceiling; it can only tighten. Model prices are not settable here. A null block, mode, cap or list is the same as leaving it out.",
       "properties": {
-        "mode": { "enum": ["off", "observe", "enforce", "", null], "description": "The strictest mode of the layers wins: enforce, then observe, then off." },
+        "mode": { "enum": ["observe", "enforce", "", null], "description": "The strictest mode of the layers wins: enforce, then observe, and a mode left out or written as \"\" or null is observe. off is not a budget mode any more: there is always a budget, and a mode left unset is observe; write observe or enforce." },
         "per_run_usd": {
           "type": ["number", "null"],
           "maximum": 100000,
@@ -550,6 +550,10 @@
                   ]
                 },
                 "description": "Must not be a variable Fugaro sets or one that changes how the runner, git, a shell, the build or a runtime behaves (config.ReservedEnvPrefixes and config.ReservedEnvNames)."
+              },
+              "file": {
+                "type": "boolean",
+                "description": "Expose the value as a file: the runner writes it under a tmpfs directory and this entry's env receives the path (D3327). The variable is still required, because it is where the path lands."
               }
             }
           }

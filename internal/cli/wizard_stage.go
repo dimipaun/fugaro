@@ -248,9 +248,14 @@ func (s *wizardStage) ask(ctx context.Context) error {
 	if !s.creating {
 		// The config a first run wrote when it paused at billing, this run's to
 		// finish: it creates, so it is the run the questions about a new project
-		// are asked on, and the one it still owes is the rigor answer — the
-		// paused run asked it and stopped before the layer stage, which is the
-		// only writer of it (wizardResumesCreation).
+		// are asked on, and the ones it still owes are the answers the paused run
+		// could not carry anywhere — the rigor answer, which the paused run gave
+		// before it stopped and which only the layer stage writes, and the budget
+		// answer, which no config member holds either and which a resumed
+		// creation records like any other creating run (R8 of
+		// docs/managed-flag-ergonomics; askBudget). The bake answer is not among
+		// them: the paused run wrote it into the config itself
+		// (carryBakeAnswer), which is why it needs no question here.
 		if r.wizardResumesCreation(ctx) {
 			if len(s.missing) > 0 && !r.canAsk() {
 				s.stop(initflow.LeftCommand, wizardFlagsLeft(s.missing))
@@ -259,7 +264,19 @@ func (s *wizardStage) ask(ctx context.Context) error {
 			if err := r.settleCreation(true); err != nil {
 				return s.answer(err)
 			}
-			return s.answer(s.askRigor())
+			if err := s.askRigor(); err != nil {
+				return s.answer(err)
+			}
+			if err := s.askBudget(); err != nil {
+				return s.answer(err)
+			}
+			// settleBudget follows the question here for the reason it follows it
+			// on a first run: a budget is an alert on a billing account, and this
+			// run links none (the pause is past), so an amount with no account is
+			// dropped with the one line that says what adds it rather than
+			// reaching the installation's Terraform, whose own rule refuses a
+			// budget without an account.
+			return s.answer(s.settleBudget())
 		}
 		// A project config is selected: this run's inputs are already settled
 		// and nothing is asked. Nothing is created either.
@@ -290,15 +307,16 @@ func (s *wizardStage) ask(ctx context.Context) error {
 		s.stop(initflow.LeftCommand, wizardFlagsLeft(s.missing))
 		return nil
 	}
-	// The banner goes with any question this run is about to ask.
-	if len(s.missing) > 0 {
-		fmt.Fprintln(r.w, "fugaro setup: this is the first run here; each answer has a suggestion, press Enter to accept it.")
-	}
+	// The run's own header goes with the questions it is about to ask: what
+	// this run is doing, and the installation it is about. A run that asks
+	// nothing gets the same line from its converge, and printRunHeader is what
+	// says it at most once either way.
+	r.printRunHeader(o.name, s.name)
 	if o.cloud.gcpProject == "" {
 		q := questionFor("--gcp-project")
 		def, alt, why := projectIDSuggestions(ctx, s.name, s.fromCheckout, o.door == updateDoor.name)
 		s.a.asked = append(s.a.asked, q.label)
-		v, err := r.promptChoice(valueSpec{what: q.what, flag: q.flag}, def, alt, why, func(v string) error {
+		v, err := r.askValue(wizardAsk{label: q.askedLine(), def: def, alt: alt, why: why}, valueSpec{what: q.what, flag: q.flag}, func(v string) error {
 			if !infra.ValidProjectID(v) {
 				return errors.New("a project ID is 6 to 30 of a-z, 0-9 and '-', starting with a letter")
 			}
@@ -320,7 +338,7 @@ func (s *wizardStage) ask(ctx context.Context) error {
 		if o.setupCreates(true) {
 			q := questionFor("--location")
 			s.a.asked = append(s.a.asked, q.label)
-			v, err := r.prompt(valueSpec{what: q.what, flag: q.flag}, string(place.US), func(v string) error {
+			v, err := r.askValue(wizardAsk{label: q.label, hint: q.hint, def: string(place.US)}, valueSpec{what: q.what, flag: q.flag}, func(v string) error {
 				_, _, verr := placeAnswer(v)
 				return verr
 			})
@@ -344,9 +362,13 @@ func (s *wizardStage) ask(ctx context.Context) error {
 				o.location = string(p)
 			}
 		} else {
-			q := questionFor("--region")
-			s.a.asked = append(s.a.asked, q.label)
-			v, err := r.prompt(valueSpec{what: q.what, flag: q.flag}, defaultRegion, func(v string) error {
+			// This door asks for the region itself, and the row above is the
+			// place's: same question, and the run that asks this one creates
+			// nothing, so it is its own line rather than a second row of the
+			// table (the table is what a run that creates is held to).
+			const what = "the GCP region"
+			s.a.asked = append(s.a.asked, "Region")
+			v, err := r.askValue(wizardAsk{label: "Region", def: defaultRegion}, valueSpec{what: what + ", such as " + defaultRegion, flag: "--region"}, func(v string) error {
 				if !regionRE.MatchString(v) {
 					return errors.New("a region looks like us-east5 or europe-west4")
 				}
@@ -389,19 +411,19 @@ func (s *wizardStage) ask(ctx context.Context) error {
 	}
 	if s.name == "" && !o.configOnly {
 		q := questionFor("--name")
-		def, label := suggestName(ctx), q.what+" (permanent"
+		def, hint := suggestName(ctx), "permanent"
 		switch _, _, ok := originOwner(ctx); {
 		case s.fromCheckout != "":
 			// No default: the file may be a clone's, so the name is typed.
-			def, label = "", label+"; this checkout's fugaro.yaml says "+pluginwire.Printable(s.fromCheckout)+", but a cloned repository's file can say anything: type the name you want"
+			def = ""
+			hint += "; this checkout's fugaro.yaml says " + pluginwire.Printable(s.fromCheckout) + ", but a cloned repository's file can say anything: type the name you want"
 		case ok:
-			label += "; suggested from the origin's owner"
+			hint += ", and suggested from the origin's owner"
 		case def != "":
-			label += "; suggested from this directory's name"
+			hint += ", and suggested from this directory's name"
 		}
-		label += ")"
-		s.a.asked = append(s.a.asked, label)
-		v, err := r.prompt(valueSpec{what: label, flag: q.flag}, def, func(v string) error {
+		s.a.asked = append(s.a.asked, q.label)
+		v, err := r.askValue(wizardAsk{label: q.label, hint: hint, def: def}, valueSpec{what: q.what + " (permanent)", flag: q.flag}, func(v string) error {
 			if !config.ProjectNameRE.MatchString(v) {
 				return errors.New("a project name is 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit")
 			}
@@ -476,24 +498,24 @@ const budgetNoAccount = "no billing account is linked, so this run creates no bu
 // settleBudget is what the phase does with the budget its question answered,
 // once the billing question has answered too: a budget is an alert on a
 // billing account, so the account the run links is the one the alert is on
-// (D2216) — and a run that links none carries no budget at all, because the
+// (D2216) — and a run that links none creates no alert at all, because the
 // alternative is an installation the Terraform validation refuses (its budget
 // object needs a billing account ID,
 // deploy/terraform/gcp/modules/installation/variables.tf) or an alert on an
 // account nobody chose.
 //
-// T2a of docs/managed-flag-ergonomics owns this rule at the run's own door
-// (D2216's other half: the amount recorded in the creation fact, and the one
-// command that adds the alert printed). This is the smaller thing the phase
-// owes the answer it collected: the door's own check has already run by the
-// time these questions are asked (init.go's trio check runs before the
-// wizard), so an answer collected here never meets it, and the invariant it
-// states — a budget takes an amount, a currency and an account together — is
-// kept here for the answer instead of refused later by a cloud step.
+// The figures the answer left on the run's own fields stay there: they are the
+// budget the creation fact records and the amount the one command that adds the
+// alert is printed with (T2a of docs/managed-flag-ergonomics; init.go's
+// budgetFigures, markCreated). No block reaches Terraform without an account
+// either way — installOptionsCarrying composes one only where the run has one —
+// so clearing the figures here would not have spared the installation anything,
+// and it would have lost the amount the owner answered.
 //
-// It says nothing where nobody can answer this run (canAsk: --json,
-// --print-vars, --yes, --non-interactive, a pipe): a run nobody answers writes
-// nothing, and the line is a transcript's.
+// The line below is a transcript's, so it is said only where somebody answers
+// this run (canAsk: --json, --print-vars, --yes, --non-interactive, a pipe): a
+// run nobody answers writes nothing, and the amount it went on with is in its
+// own result either way.
 func (s *wizardStage) settleBudget() error {
 	r, o := s.r, s.r.o
 	if o.budget <= 0 && o.budgetCurrency == "" {
@@ -505,65 +527,120 @@ func (s *wizardStage) settleBudget() error {
 	if o.billingAccount != "" {
 		return nil
 	}
-	// A run nobody answers asks nothing and writes nothing (T7,
-	// docs/no-prompt-policy), and a run whose stdout is a document (--json,
-	// --print-vars) is one of those here: the line below is a transcript's, and
-	// the fact is in the run's own result either way. The amount a person
-	// answered on a run that paused at billing is the one case this leaves
-	// silent, and it is the door's to say (D2216, T2a).
 	if r.canAsk() {
 		fmt.Fprintf(r.w, budgetNoAccount+"\n", o.budget)
 	}
-	o.budget, o.budgetCurrency = 0, ""
 	return nil
 }
 
-// whereEachThingGoesIntro is the line above the mapping: what the block is,
-// and the one thing a reader has to know about it — there is nothing to answer
-// here, because the placement is the region answer they have already given
-// (R7).
-const whereEachThingGoesIntro = "where each thing goes (the region above decides it; the fallbacks are stated under their own line, and there is nothing to answer here):"
+// whereEachThingGoesIntro is the heading of the mapping: what the block is,
+// one section among the run's own (report.Style.Header).
+const whereEachThingGoesIntro = "Locations"
+
+// locationRow is one thing the installation creates and where it goes, and
+// locationRows is the mapping's rows as this block reads it: the things that
+// follow the installation's own region first (the compute, the registry and the
+// runs bucket, whose location is the region itself), then the four the mapping
+// answers separately (place.For).
+func locationRows(m place.Mapping) []locationRow {
+	here := place.Location{Where: m.Region}
+	return []locationRow{
+		{"jobs", here},
+		{"registry", here},
+		{"runs bucket", here},
+		{"Firestore", m.Firestore},
+		{"secrets", m.Secrets},
+		{"budget database", m.RealtimeDatabase},
+		{"run logs", m.LogBucket},
+	}
+}
+
+type locationRow struct {
+	what string
+	loc  place.Location
+}
+
+// locationLine is one row of the block once its things are gathered: what goes
+// to one location, that location, and a fallback's reason.
+type locationLine struct {
+	whats  string
+	where  string
+	reason string
+}
 
 // printWhereEachThingGoes is R7: where each thing the installation creates
-// will go, one line per row of the mapping, with every fallback's reason under
-// the line it belongs to — before anything is created, and asking nothing.
+// will go, before anything is created, and asking nothing.
 //
-// It says the region itself for the things that follow it (the compute, the
-// registry, the buckets and the builds), the run history's Firestore database,
-// the budget's Realtime Database, the secret containers and the run log
-// bucket, in the mapping's own words (place.For), so a fallback cannot be
-// described here as anything other than what it is. A region in neither place
-// (London, Zürich, anything but us-* and europe-*) is said to carry no promise,
-// which is what D3081 promises it: nothing is refused, and everything it falls
-// back to is on a line above.
+// It is one row per location and not one per thing (the owner's layout of
+// 2026-11-22): the things that share a place are named together on one line
+// with the place beside them, and a fallback's reason is the short
+// parenthetical its own row carries (place.Location.Reason) — a block that said
+// "us-east5" five times over seven lines is the shape of the output this
+// replaces. The things follow the mapping (locationRows), so a fallback cannot
+// be described here as anything other than what it is, and a region in neither
+// place (London, Zürich, anything but us-* and europe-*) says after the rows
+// that it carries no promise, which is what D3081 promises it: nothing is
+// refused, and everything it falls back to is on a row above.
 //
 // The scheduler is not one of the things that follow the region, and so is not
 // named among them: its own region is gcp.SchedulerRegion's answer, which for
 // the US default is us-east4 rather than us-east5 (F3), and R7's mapping has no
 // row for it to be read from. Saying nothing about it is better than saying
-// where it goes in a line that is the region's own.
+// where it goes in a row that is the region's own.
 func (r *initRun) printWhereEachThingGoes() {
 	m := place.For(r.o.cloud.region)
-	fmt.Fprintf(r.w, "%s%s\n", r.o.programPrefix(), whereEachThingGoesIntro)
-	fmt.Fprintf(r.w, "  the installation's own region: %s (the jobs, the image registry and the runs bucket)\n", m.Region)
-	rows := []struct {
-		what string
-		loc  place.Location
-	}{
-		{"the run history (Firestore)", m.Firestore},
-		{"the budget's database (the Realtime Database)", m.RealtimeDatabase},
-		{"the secret containers", m.Secrets},
-		{"the run log bucket", m.LogBucket},
-	}
+	rows := locationRows(m)
+	var lines []locationLine
 	for _, row := range rows {
-		fmt.Fprintf(r.w, "  %s: %s\n", row.what, row.loc.Where)
-		if row.loc.Reason != "" {
-			fmt.Fprintf(r.w, "    %s\n", row.loc.Reason)
+		// A thing joins the line before it where it goes where that line's
+		// things go, and opens a line of its own otherwise. The rows are not
+		// sorted by location, so this gathers what is adjacent and leaves the
+		// mapping's own order alone: the first thing of a place decides where
+		// the line for that place sits.
+		if n := len(lines); n > 0 && lines[n-1].where == row.loc.Where {
+			lines[n-1].whats += ", " + row.what
+			continue
 		}
+		lines = append(lines, locationLine{whats: row.what, where: row.loc.Where})
+	}
+	for i, line := range lines {
+		lines[i].reason = reasonFor(rows, line.where)
+	}
+	whatPad, wherePad := padWidths(lines)
+	fmt.Fprintln(r.w, r.qs.Header(whereEachThingGoesIntro))
+	for _, line := range lines {
+		if line.reason == "" {
+			fmt.Fprintf(r.w, "  %-*s  %s\n", whatPad, line.whats, line.where)
+			continue
+		}
+		fmt.Fprintf(r.w, "  %-*s  %-*s  (%s)\n", whatPad, line.whats, wherePad, line.where, line.reason)
 	}
 	if m.Place == place.None {
-		fmt.Fprintf(r.w, "  %s is in neither US nor EU: it carries no promise, so every fallback above is stated rather than assumed\n", m.Region)
+		fmt.Fprintf(r.w, "  %s\n", r.qs.Dim(m.Region+" is in neither US nor EU: it carries no promise, so every fallback above is stated rather than assumed"))
 	}
+}
+
+// padWidths is the two column widths of the block: the longest list of things,
+// and the longest location, so the locations sit in a column and the reasons
+// after them in another.
+func padWidths(lines []locationLine) (whats, where int) {
+	for _, line := range lines {
+		whats = max(whats, len(line.whats))
+		where = max(where, len(line.where))
+	}
+	return whats, where
+}
+
+// reasonFor is the reason the things that go to where carry: the first of them
+// with one. A line states a place once and never twice, so two things that
+// share a location share the reason for it.
+func reasonFor(rows []locationRow, where string) string {
+	for _, row := range rows {
+		if row.loc.Where == where && row.loc.Reason != "" {
+			return row.loc.Reason
+		}
+	}
+	return ""
 }
 
 // wizardOptions is the input phase's run: the run's own conditions — nobody is
