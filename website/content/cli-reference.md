@@ -59,7 +59,7 @@ Subcommands:
 - `fugaro plan` -- Read a plan's graph artifact
 - `fugaro project` -- The project's policy, its allow-list and the repositories enrolled
 - `fugaro reaper` -- Sweep the Batch jobs and VMs a run has leaked
-- `fugaro recipes` -- List, show, validate and publish recipes, the task loop a run follows after implement
+- `fugaro recipes` -- List, show, validate, publish and remove recipes, the task loop a run follows after implement
 - `fugaro report` -- Report what the project spent, by day, week, month, year, repository, model, person or mode
 - `fugaro restore` -- Rebuild a managed project from zero, into a new GCP project ID, and print what is not restored
 - `fugaro review` -- Review a pull request in a job of its own, on a named account
@@ -1903,21 +1903,22 @@ result.json that is missing or unreadable, and a record with no
 per-stage cost at all (one from before the runner kept it, or
 stages that all cost nothing).
 
-The recipe resolves as it does for a run: the repository's
-.fugaro/recipes, the project's published recipes, then the catalog. The
-knobs come from the checkout's fugaro.yaml; without a checkout of the
-repository here, agent.max_budget_usd is unknown and only
-budget.per_run_usd bounds the figure, so with neither the preview says it
-is unbounded.
+The recipe resolves as it does for a run: the project's copy of the
+repository's own recipe, the project's published recipes, then the
+catalog. The checkout's .fugaro/recipes/ is not read. The knobs come
+from the checkout's fugaro.yaml; without a checkout of the repository
+here, agent.max_budget_usd is unknown and only budget.per_run_usd
+bounds the figure, so with neither the preview says it is unbounded.
 
 It reads the database's caps and today's counters (the Viewer role), and
 the repository's runs (the runs bucket, for the typical line). A recipe
-that is not in the checkout also reads the project's recipes from the
-runs bucket, as recipes ls does, which a plain project Viewer cannot
-read (the converge removes that access): not reading it costs the project layer,
-and the ceiling with it. The typical line's own read of the bucket is
-the one that costs the line and nothing else: a bucket it cannot read
-leaves the ceiling standing. It writes nothing.
+name the project store could hold also reads the project's recipes from
+the runs bucket, as recipes ls does, which a plain project Viewer cannot
+read (the converge removes that access): a name that is no recipe name
+is refused before the bucket is opened, and nothing else on this path
+reaches it. The typical line's own read of the bucket is the one that
+costs the line and nothing else: a bucket it cannot read leaves the
+ceiling standing. It writes nothing.
 
 Usage: `fugaro budget preview --recipe NAME --runs N [--repo R] [--mode MODE]`
 
@@ -7858,11 +7859,13 @@ This command has no subcommands.
 
 ## `fugaro recipes`
 
-List, show, validate and publish recipes, the task loop a run follows after implement
+List, show, validate, publish and remove recipes, the task loop a run follows after implement
 
-A recipe is found by name in .fugaro/recipes/NAME.yaml in the repository, then in the
-project's fugaro/recipes/NAME.yaml in the runs bucket, then in the catalog
-(ab-judge, commit-reports, default, escalate, lint-fix, merge-judge, pick, premium, rebase, review-only, run-digest, solo, standard, test-and-fix, troubleshoot). See docs/recipes.md.
+A recipe is found by name in the project's fugaro/recipes/NAME.yaml in the runs
+bucket, then in the catalog (ab-judge, commit-reports, default, escalate, lint-fix, merge-judge, pick, premium, rebase, review-only, run-digest, solo, standard, test-and-fix, troubleshoot). A
+repository's own recipe is the project's copy of it, fugaro/recipes/NAME.<repo>-<8 hex>.yaml,
+which fugaro update publishes; .fugaro/recipes/ in a checkout is not read.
+See docs/recipes.md.
 
 Usage: `fugaro recipes`
 
@@ -7874,14 +7877,15 @@ Flags:
 
 Subcommands:
 
-- `fugaro recipes ls` -- List the recipes of this checkout, the project and the catalog, and which one wins for each name
+- `fugaro recipes ls` -- List the project's recipes and the catalog, and which one wins for each name
 - `fugaro recipes publish` -- Publish a recipe to the project, for every repository of it (fugaro/recipes/NAME.yaml in the runs bucket)
+- `fugaro recipes rm` -- Remove one of the project's recipes (fugaro/recipes/NAME.yaml in the runs bucket)
 - `fugaro recipes show` -- Show the recipe a run would get for NAME, and the layer it comes from
 - `fugaro recipes validate` -- Check a recipe file (no cloud access)
 
 ## `fugaro recipes ls`
 
-List the recipes of this checkout, the project and the catalog, and which one wins for each name
+List the project's recipes and the catalog, and which one wins for each name
 
 Usage: `fugaro recipes ls`
 
@@ -7914,6 +7918,26 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for publish |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro recipes rm`
+
+Remove one of the project's recipes (fugaro/recipes/NAME.yaml in the runs bucket)
+
+Usage: `fugaro recipes rm NAME`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for rm |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
