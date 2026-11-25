@@ -124,9 +124,16 @@ type Options struct {
 	// nothing at all: what is handed out is what the run already records
 	// for --json, and no hook here is a step, a confirmation or a word the
 	// run would not otherwise take.
+	// OnRepos is the per-repository lines a settled stage reported (C1's
+	// RepoLine), handed over where the run's own account is built: a caller
+	// prints them under the stage's header, in the order it keeps for a person
+	// reading it. The loop calls it once per stage — the pass the run keeps,
+	// never the review screen an applying run throws away — and never reorders
+	// what it is handed.
 	OnStep  func(stage string)
 	OnStage func(StageResult)
 	OnLeft  func(Left)
+	OnRepos func([]RepoLine)
 }
 
 // StageResult is one stage's line in the result.
@@ -145,6 +152,14 @@ type StageResult struct {
 	// reader of the document. Written only when it is true, so a run with no
 	// such stage reports what it always did.
 	Undone bool `json:"undone,omitempty"`
+	// Repos are the lines the stage reported about the repositories it read,
+	// in canonical order (a stage that implements RepoReporter: C1, U13), and
+	// Detail above is the summary built from them rather than the stage's own
+	// reason — a reason that named the run's working directory would be a
+	// different line from every directory, and the stream is the same one from
+	// all of them. Absent for a stage that reports none, which is a stage that
+	// does no per-repository work at all.
+	Repos []RepoLine `json:"repos,omitempty"`
 }
 
 // Failure is the stage a run stopped at, in one line each.
@@ -152,6 +167,22 @@ type Failure struct {
 	Stage string `json:"stage"`
 	Error string `json:"error"`
 	Fix   string `json:"fix"`
+}
+
+// Notice is one line a run reports outside its stages: the step that said it
+// (the fold, the notices, a step after the stage loop), the repository or the
+// admit pattern it is about, how it was left, and one line a person reads. It
+// is a stage's RepoLine with the step's own name on it, because a step after
+// the loop has no stage to report under (C1, R12, R19).
+//
+// The loop does not make these: the CLI fills them where the step reports its
+// lines (reportRepos), and what carries them out is the document's `notices`
+// member and the stream's `notice` event.
+type Notice struct {
+	Step   string    `json:"step"`
+	Repo   string    `json:"repo,omitempty"`
+	State  RepoState `json:"state,omitempty"`
+	Detail string    `json:"detail,omitempty"`
 }
 
 // Result is what a run reports, as the human view and as data.
@@ -164,6 +195,10 @@ type Result struct {
 	Left       []Left        `json:"left_for_you"`
 	Failed     *Failure      `json:"failed,omitempty"`
 	Note       string        `json:"note,omitempty"`
+	// Notices are the lines the run reported outside its stages: the steps
+	// after the stage loop and the admit patterns the reader could not list
+	// (R12, R19). Absent for a run that reported none.
+	Notices []Notice `json:"notices,omitempty"`
 
 	// Cause is the failed stage's own error, for a caller that keeps its
 	// exit code and type.
@@ -289,6 +324,12 @@ type loop struct {
 	// whole of it — the generic fix the record carries (Failure.Fix) is that
 	// same sentence and not a second one to print beside it.
 	stageFix string
+	// settling is the stage whose result the loop is recording: the lines a
+	// stage reported about the repositories it read are read off it where its
+	// result is made (reposOf), and every result is made through record or
+	// through the helpers that call it, which carry the stage's name alone.
+	// Both passes set it as they reach a stage.
+	settling Stage
 }
 
 // defaultProgram is what the run's lines name when the caller names no
@@ -408,6 +449,81 @@ func (l *loop) emitLeft(lf Left) {
 	l.o.OnLeft(lf)
 }
 
+// emitRepos hands a settled stage's per-repository lines to the caller's
+// OnRepos, under the rule emitStage and emitLeft carry: they belong to the
+// run's own account, so a stage that reported them during its Check — the
+// check runs in both passes — has them printed once, in the pass the run
+// keeps, and the review screen an applying run throws away prints none.
+//
+// The lines are the caller's to read and never to reorder: they are the same
+// slice the result carries, which is in canonical order whatever order a
+// person's own output puts them in (spec §Output).
+func (l *loop) emitRepos(r StageResult) {
+	if l.o.OnRepos == nil || len(r.Repos) == 0 || !(l.executing || l.o.PlanOnly) {
+		return
+	}
+	l.o.OnRepos(r.Repos)
+}
+
+// reposOf is a settled stage's result with the lines it reported about the
+// repositories it read (RepoReporter, C1): the lines themselves, and the
+// summary built from them as the stage's own detail — what a reader of the
+// document and of the feed gets is then the same from every directory, which
+// the stage's own reason, naming the run's working directory, would not be.
+//
+// The lines are redacted like every other line that reaches the document or
+// the screen (F6), and a stage that reported none — one that does no
+// per-repository work, which is every stage until the per-repository tasks
+// land — is the result as it stands.
+func (l *loop) reposOf(s Stage, r StageResult) StageResult {
+	rep, ok := s.(RepoReporter)
+	if !ok {
+		return r
+	}
+	lines := rep.RepoLines()
+	if len(lines) == 0 {
+		return r
+	}
+	r.Repos = make([]RepoLine, len(lines))
+	for i, ln := range lines {
+		ln.Repo, ln.Detail = l.redact(ln.Repo), l.redact(ln.Detail)
+		r.Repos[i] = ln
+	}
+	r.Detail = repoSummary(r.Repos)
+	return r
+}
+
+// repoSummary is what a stage that reported lines says about itself: how many
+// repositories it read and how it left each of them, in the order of the four
+// states — "3 repositories: 1 done, 1 needs you, 1 unread". It is the stage's
+// detail in the document and in the feed, and it is built from the lines
+// alone, so the same run says the same sentence wherever it is run from.
+func repoSummary(lines []RepoLine) string {
+	states := []RepoState{RepoDone, RepoNeedsYou, RepoUnread, RepoSkipped}
+	counts := make([]int, len(states))
+	for _, ln := range lines {
+		i := slices.Index(states, ln.State)
+		if i < 0 {
+			// A state the contract does not have is the stage's own, and it is
+			// counted as the last one rather than dropped: the numbers still
+			// add up to the lines the stage reported.
+			i = len(states) - 1
+		}
+		counts[i]++
+	}
+	parts := make([]string, 0, len(states))
+	for i, st := range states {
+		if counts[i] > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", counts[i], st))
+		}
+	}
+	noun := "repositories"
+	if len(lines) == 1 {
+		noun = "repository"
+	}
+	return fmt.Sprintf("%d %s: %s", len(lines), noun, strings.Join(parts, ", "))
+}
+
 // preview checks every stage (read-only) and, in a plan-only run, plans the
 // first one with something to do. A stage that waits for one with something
 // to do is shown as will-do with the stage it waits for, and the wait is
@@ -421,6 +537,7 @@ func (l *loop) preview(ctx context.Context, stages []Stage) error {
 	var stops []stop   // the stops the stages after them wait for, and those they run past
 	for _, s := range stages {
 		name := s.Name()
+		l.settling = s
 		if l.cancelled(ctx, name) {
 			return nil
 		}
@@ -496,6 +613,7 @@ func (l *loop) preview(ctx context.Context, stages []Stage) error {
 				}
 			}
 		}
+		r = l.reposOf(s, r)
 		l.res.Stages = append(l.res.Stages, r)
 		if l.o.PlanOnly {
 			// A plan-only run's preview IS the run: it applies nothing, so
@@ -504,6 +622,7 @@ func (l *loop) preview(ctx context.Context, stages []Stage) error {
 			// An applying run's rows are the review screen instead, and the
 			// execution pass behind them owns the account (see below).
 			l.emitStage(r)
+			l.emitRepos(r)
 		}
 	}
 	if !l.o.PlanOnly {
@@ -634,6 +753,7 @@ func (l *loop) converge(ctx context.Context, stages []Stage) error {
 	paused := ""     // the stage that paused for billing: what needs billing waits for it
 	for _, s := range stages {
 		name := s.Name()
+		l.settling = s
 		l.ranPast = nil
 		if b := blocker(name, stops); b != nil {
 			l.record(StageResult{Name: name, State: Blocked, Detail: "waits for " + b.name})
@@ -907,6 +1027,7 @@ func (l *loop) needsYou(stage, detail string, lf Left) {
 // the run in the middle of an apply. A run with no reporter records exactly
 // what it recorded before, and the plan view's rows are not a run at all.
 func (l *loop) record(r StageResult) {
+	r = l.reposOf(l.settling, r)
 	shown := r.Detail
 	if l.ranPast != nil && !waitingState(r.State) {
 		// The stage ran although the run was stopped: the result says so
@@ -923,6 +1044,7 @@ func (l *loop) record(r StageResult) {
 	}
 	l.res.Stages = append(l.res.Stages, r)
 	l.emitStage(r)
+	l.emitRepos(r)
 	if l.o.Report == nil || !l.executing {
 		return
 	}
