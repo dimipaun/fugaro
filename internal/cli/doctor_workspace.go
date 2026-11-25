@@ -83,6 +83,11 @@ const (
 	// each of its repositories, and — as its warning state — a route the
 	// bundle, the policy and the pin no longer derive (R4).
 	workspaceRouteCheckID = "workspace-route"
+	// workspacePersonalCheckID is the member's switch for the personal half of
+	// the workspace's credentials (R9), and — as its warning state — a switch
+	// that is on where the model route is this project's, which shadows it
+	// (D3141, WC11).
+	workspacePersonalCheckID = "workspace-personal-token"
 )
 
 // doctorWorkspaceChecks is WS14's whole contribution to one doctor run, on
@@ -352,12 +357,94 @@ func workspacePoolKind(s projectpolicy.WorkspaceShared) string {
 	return " (" + safetext.Field(s.Kind) + ")"
 }
 
-// doctorWorkspaceMemberChecks is the member's machine's two lines: the address
-// its pin names (R3) and the credential route each of its repositories
-// publishes (R4).
+// doctorWorkspaceMemberChecks is the member's machine's three lines: the address
+// its pin names (R3), the credential route each of its repositories publishes
+// (R4), and — WC11, R9 — whether the personal half's switch is on and whether
+// that route shadows it (D3141).
 func doctorWorkspaceMemberChecks(ctx context.Context, lc *localcfg.Config) []doctorCheck {
 	rc := routeConfigOf(lc)
-	return append([]doctorCheck{doctorWorkspacePinCheck(lc, rc)}, doctorWorkspaceRouteChecks(ctx, lc, rc)...)
+	routes, derived, checks := doctorWorkspaceRouteChecks(ctx, lc, rc)
+	out := append([]doctorCheck{doctorWorkspacePinCheck(lc, rc)}, checks...)
+	return append(out, doctorWorkspacePersonalCheck(ctx, lc, rc, routes, derived)...)
+}
+
+// doctorWorkspacePersonalCheck reports the member's switch for the personal half
+// of the workspace's credentials (R9, D2972, WC11), and flags the state D3141
+// makes a trap: a switch that is on where the model route is this project's, so
+// no run of it is ever served a person's own token.
+//
+// **It calls neither the workspace's service nor its intake** (F24): what it
+// reads is this machine's own two documents — the switch out of this project's
+// published policy, through the reader the launcher and the service share
+// (projectpolicy.PersonSwitchOverDB), and the model route out of the derivation
+// the route line above already made. A person's identity is therefore sent
+// nowhere, and doctor can be run at a member's terminal without reaching the
+// workspace at all.
+//
+// A switch that cannot be read answers nothing, and the line is unread rather
+// than a measurement of off: the node may be half-published, and off is a state
+// D2972 gives its own meaning (R9: absent is off, a policy that could not be
+// read is an error).
+func doctorWorkspacePersonalCheck(ctx context.Context, lc *localcfg.Config, rc routeConfig, routes map[string]creds.Route, derived bool) []doctorCheck {
+	id := workspacePersonalCheckID
+	_, db, err := budgetDBFor(ctx, lc)
+	if err != nil {
+		return []doctorCheck{{ID: id, Severity: "info", unread: true,
+			Problem: "the switch for the personal half of this project's workspace credentials could not be read: the project's database (" + oneLineCLI(err.Error()) + ") was not reachable, so this project's published policy was not read",
+			Fix:     "rerun doctor with the Realtime Database reachable"}}
+	}
+	on, err := projectpolicy.PersonSwitchOverDB(db).PersonSwitchOn(ctx, lc.Name)
+	if err != nil {
+		return []doctorCheck{{ID: id, Severity: "info", unread: true,
+			Problem: "the switch for the personal half of this project's workspace credentials could not be read: this project's published policy at " + projectpolicy.PathShared() + " is not one this Fugaro reads (" + oneLineCLI(err.Error()) + ")",
+			Fix:     "republish it with `" + selfCommand() + " project policy publish`, or fix what the reason names, and rerun doctor"}}
+	}
+	return []doctorCheck{workspacePersonalLine(lc, on, rc, routes, derived)}
+}
+
+// workspacePersonalLine is the switch's line itself, from the facts it is about:
+// whether the switch is on, the route each of this project's repositories
+// derives, and whether that derivation could be made at all. It is a function of
+// the facts and not of a read, so the states below are stated without a database
+// (doctor_workspace_test.go, TestDoctorFlagsASwitchTheRouteShadows).
+func workspacePersonalLine(lc *localcfg.Config, on bool, rc routeConfig, routes map[string]creds.Route, derived bool) doctorCheck {
+	id := workspacePersonalCheckID
+	project := routeProject(lc)
+	where := fmt.Sprintf("%s is a member of workspace %s", project, safetext.Field(lc.Workspace))
+	if !on {
+		return doctorCheck{ID: id, OK: true, Severity: "info",
+			Problem: where + " and the switch " + creds.PersonSwitchKey + " is off: no run of it is offered a person's own token, and every call it makes is served the workspace's shared entries (R9, D2972)",
+			Fix:     "nothing to run for this: turn it on with `" + selfCommand() + " settings set " + creds.PersonSwitchKey + " true`, then run `" + selfCommand() + " update` to publish it"}
+	}
+	if !derived {
+		return doctorCheck{ID: id, Severity: "info", unread: true,
+			Problem: where + " and the switch " + creds.PersonSwitchKey + " is on, and the credential route this project derives could not be read: whether the model route takes a personal token away from it was not checked (D3141)",
+			Fix:     "fix what the route line beside this one names, and rerun doctor"}
+	}
+	if !rc.publishes() {
+		return doctorCheck{ID: id, Severity: "warning",
+			Problem: where + " and the switch " + creds.PersonSwitchKey + " is on, and its pin names no workspace service address: its model route is this project's own, so no run of it is served a personal token and the switch reaches nothing (D3141)",
+			Fix:     "name the address with `" + selfCommand() + " workspace add --service-address <url>` and run `" + selfCommand() + " update`, or turn the switch off"}
+	}
+	var shadowed []string
+	for _, repo := range slices.Sorted(maps.Keys(routes)) {
+		if routes[repo].Holder(creds.KindModel) == creds.HolderProject {
+			shadowed = append(shadowed, safetext.Field(repo))
+		}
+	}
+	if len(routes) == 0 {
+		return doctorCheck{ID: id, OK: true, Severity: "info",
+			Problem: where + " and the switch " + creds.PersonSwitchKey + " is on, and this project records no repository: it has no model route for the switch to serve (D3141)",
+			Fix:     "nothing to run for this"}
+	}
+	if len(shadowed) == 0 {
+		return doctorCheck{ID: id, OK: true, Severity: "info",
+			Problem: where + " and the switch " + creds.PersonSwitchKey + " is on, and the model route of every repository of " + project + " is the workspace's: a person who stored a token at the workspace is served it by their runs here (R9, D3141)",
+			Fix:     "nothing to run for this: the switch is on and the route serves the workspace"}
+	}
+	return doctorCheck{ID: id, Severity: "warning",
+		Problem: fmt.Sprintf("%s and the switch %s is on, and %d of its repositories take their model credential from this project's own copy (%s): a personal token is served only where the model route is the workspace, so the switch is shadowed there until that credential is removed (D3141, WC11)", where, creds.PersonSwitchKey, len(shadowed), strings.Join(shadowed, ", ")),
+		Fix:     "remove the credential that serves them (`" + selfCommand() + " creds rm <name>`), or turn the switch off: while a repository's model route is this project's, no personal token is served in it"}
 }
 
 // doctorWorkspacePinCheck reports the pin's own half of the membership: the
@@ -412,15 +499,20 @@ func doctorWorkspacePinCheck(lc *localcfg.Config, rc routeConfig) doctorCheck {
 // as not read rather than as a finding, which is routePublication.rowFor's own
 // answer and the publishing stage's own rule about the leaves it cannot
 // attribute.
-func doctorWorkspaceRouteChecks(ctx context.Context, lc *localcfg.Config, rc routeConfig) []doctorCheck {
+//
+// It answers the route it derived for each repository beside its lines — the
+// personal check reads the model half of them (D3141) — and whether the
+// derivation could be made at all, which is false for the states below that
+// report an unread line.
+func doctorWorkspaceRouteChecks(ctx context.Context, lc *localcfg.Config, rc routeConfig) (map[string]creds.Route, bool, []doctorCheck) {
 	id := workspaceRouteCheckID
 	if !rc.publishes() {
 		// The pin names no address, so this project publishes no route and has
 		// none to report: the pin's own line says which state that is.
-		return nil
+		return nil, true, nil
 	}
-	unreadable := func(what, fix string) []doctorCheck {
-		return []doctorCheck{{ID: id, Severity: "info", unread: true,
+	unreadable := func(what, fix string) (map[string]creds.Route, bool, []doctorCheck) {
+		return nil, false, []doctorCheck{{ID: id, Severity: "info", unread: true,
 			Problem: fmt.Sprintf("the pin names the workspace's service at %s, and %s could not be read: the credential route this project publishes for its repositories could not be checked", pluginwire.Printable(rc.address), what),
 			Fix:     fix}}
 	}
@@ -440,11 +532,15 @@ func doctorWorkspaceRouteChecks(ctx context.Context, lc *localcfg.Config, rc rou
 		report  []string
 		stale   []string
 		unknown []string
+		routes  = map[string]creds.Route{}
 	)
 	for _, repo := range slices.Sorted(maps.Keys(lc.Repos)) {
 		row, unk, err := p.rowFor(repo, lc.Repos[repo], facts)
 		if err != nil {
 			return unreadable("the route for "+safetext.Field(repo)+" ("+oneLineCLI(err.Error())+")", "fix what the reason names and rerun doctor")
+		}
+		if unk == nil {
+			routes[repo] = row.route
 		}
 		if unk != nil {
 			unknown = append(unknown, safetext.Field(unk.repo)+" ("+unk.why+")")
@@ -497,7 +593,7 @@ func doctorWorkspaceRouteChecks(ctx context.Context, lc *localcfg.Config, rc rou
 		out = append(out, doctorCheck{ID: id, OK: true, Severity: "info",
 			Problem: "this project records no repository, so it publishes no credential route: a run of nothing is served from nowhere", Fix: "nothing to run for this"})
 	}
-	return out
+	return routes, true, out
 }
 
 // workspaceRouteMoves is whether a derived route serves any kind from the
