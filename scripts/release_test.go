@@ -850,6 +850,28 @@ func TestDryRunCreatesNothing(t *testing.T) {
 	}
 }
 
+// TestDryRunDispatchesNothingOnACommitWithNoCIRun: the dry run reads the checks
+// once and changes nothing, so the gate it runs gets GATE_DRY_RUN. On main's tip
+// with no `ci` run -- the ordinary state of main, since CI runs on dispatch only
+// -- the real run dispatches one and waits for it; the dry run says that is what
+// it would do and dispatches nothing, which is what the 42 minutes of
+// 2026-11-24's dry run were spent waiting for.
+func TestDryRunDispatchesNothingOnACommitWithNoCIRun(t *testing.T) {
+	r := newReleaseRepo(t)
+	g := newGHState(t, r, greenChecks())
+	ciRuns(t, g)
+
+	res := runRelease(t, r, g, "", "0.12.0", "--dry-run")
+	res.requireSuccess(t)
+	want := "no ci run on " + mainTip(t, r) + ": the real run would dispatch one (gh workflow run ci --ref main -f full=true)"
+	if !strings.Contains(res.out, want) {
+		t.Errorf("the dry run does not say what the real run would do:\n%s", res.out)
+	}
+	if lines := workflowRunLines(t, g); len(lines) != 0 {
+		t.Errorf("the dry run dispatched %v, want none: it cannot put a run on main to verify", lines)
+	}
+}
+
 // writePluginTestStub writes the stand-in for `go test ./plugin/` that
 // TestDryRunChecksThePluginBudgetOnABumpedTree puts in
 // RELEASE_SH_PLUGIN_TEST_CMD. It runs inside the scratch worktree release.sh
@@ -2623,6 +2645,59 @@ func TestGateCountsAFullRunsChecks(t *testing.T) {
 
 	red := newGHState(t, r, greenChecks()).with("FAKE_GH_CHECK_TEST=failed")
 	runGate(t, r, red, sha, "v0.12.0").requireFailureContaining(t, "required check 'test' is failed")
+}
+
+// TestGateDispatchesARunNobodyStarted: a commit with no `ci` run at all is a
+// commit nothing will ever turn green on -- CI starts on no commit by itself --
+// so the gate puts a full run on it itself, once, and waits for it. This is the
+// wait the 2026-11-24 dry run spent 42 minutes in: it polled `sleep 30` for the
+// test, terraform and rules checks of main's tip, which had no `ci` run, until
+// the gate's timeout. A commit this gate cannot dispatch on still refuses at
+// once, with the command (TestGateRefusesACommitNoRefPointsAt).
+func TestGateDispatchesARunNobodyStarted(t *testing.T) {
+	r := newReleaseRepo(t)
+	sha := tagCommit(t, r)
+	g := newGHState(t, r, greenChecks())
+	ciRuns(t, g)
+
+	res := runGateEnv(t, r, g, sha, "v0.12.0", "GATE_WAIT_SECONDS=30", "GATE_POLL_SECONDS=1")
+	res.requireSuccess(t)
+	if want := "no ci run on " + sha + ": dispatched one (gh workflow run ci --ref main -f full=true), waiting for it"; !strings.Contains(res.out, want) {
+		t.Errorf("the gate does not say it dispatched a run on main's tip, and with which command:\n%s", res.out)
+	}
+	if lines := workflowRunLines(t, g); len(lines) != 1 {
+		t.Errorf("the gate dispatched %v, want exactly one run", lines)
+	}
+}
+
+// TestGateRefusesACommitNoRefPointsAt: a dispatch runs a workflow at a ref's
+// tip, so a commit no ref this gate knows points at cannot get a run from it --
+// an --at release reads a commit that is no longer main's tip. The gate invents
+// no ref and dispatches nothing: it refuses at once and names the command that
+// would put a run there.
+func TestGateRefusesACommitNoRefPointsAt(t *testing.T) {
+	r := newReleaseRepo(t)
+	behind := tagCommit(t, r)
+	// Something else lands on main, so `behind` is on main but is not its tip.
+	testutil.Git(t, r.local, "commit", "--quiet", "--allow-empty", "-m", "something else")
+	testutil.Git(t, r.local, "push", "--quiet", "origin", "HEAD:refs/heads/main")
+
+	g := newGHState(t, r, greenChecks())
+	ciRuns(t, g)
+	start := time.Now()
+	res := runGateEnv(t, r, g, behind, "v0.12.0", "GATE_WAIT_SECONDS=45", "GATE_POLL_SECONDS=1")
+	if res.err == nil {
+		t.Fatalf("the gate passed on a commit with no ci run and no ref at it:\n%s", res.out)
+	}
+	if elapsed := time.Since(start); elapsed > 20*time.Second {
+		t.Errorf("the gate waited %s on a commit no run can reach: it must refuse at once", elapsed)
+	}
+	if lines := workflowRunLines(t, g); len(lines) != 0 {
+		t.Errorf("the gate dispatched %v, want none: no ref this gate knows points at %s", lines, behind)
+	}
+	if want := "gh workflow run ci --ref <a ref pointing at " + behind + "> -f full=true"; !strings.Contains(res.out, want) {
+		t.Errorf("the refusal does not name the command that puts a run on the commit:\n%s", res.out)
+	}
 }
 
 // TestGateIgnoresASelectedRun: a `ci (selected)` run does not vouch for a tag.

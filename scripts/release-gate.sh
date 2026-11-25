@@ -202,10 +202,12 @@ commit_check_state() {
 # the title is what says whether the run was full (R1). The run number is what
 # orders them -- a re-dispatch is a newer run -- and the status and conclusion
 # are what say a run is over and red, which is a wait that cannot end any other
-# way.
+# way. A conclusion the API has not answered yet is written "-": a read splits
+# these fields on tabs, and tab is IFS whitespace, so an empty field collapses
+# and hands the fields after it to the wrong variables.
 ci_run_rows() {
   retry_read gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$1&per_page=100" \
-    --jq '.workflow_runs[] | select(.path == ".github/workflows/ci.yml") | [.run_number, .check_suite_id, .display_title, .status, .conclusion, .html_url] | @tsv'
+    --jq '.workflow_runs[] | select(.path == ".github/workflows/ci.yml") | [.run_number, .check_suite_id, .display_title, .status, (.conclusion // "-"), .html_url] | @tsv'
 }
 
 # run_url RUN_ROW prints the URL of a row ci_run_rows produced, and the
@@ -257,12 +259,13 @@ full_run_suite() {
 
 # run_red ROW succeeds when the run the row describes is over and did not
 # succeed: the run's own conclusion is its verdict, and a cancelled run -- a
-# superseded one -- is not a failure, exactly as it is not for a check. Fields
-# the API did not answer are not a verdict either.
+# superseded one -- is not a failure, exactly as it is not for a check. A
+# conclusion the API did not answer is not a verdict either, neither the empty
+# field an older answer gives nor the "-" ci_run_rows writes in its place.
 run_red() {
   [ "$(printf '%s' "$1" | cut -f4)" = completed ] || return 1
   case "$(printf '%s' "$1" | cut -f5)" in
-    "" | success | cancelled) return 1 ;;
+    "" | "-" | success | cancelled) return 1 ;;
     *) return 0 ;;
   esac
 }
