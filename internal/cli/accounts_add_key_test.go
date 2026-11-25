@@ -1368,7 +1368,13 @@ func providerKeyRig(t *testing.T, local string) *addRig {
 // deployed service runs is the one read, whatever this tree's version is.
 func providerKeyRigAt(t *testing.T, local, rel string) *addRig {
 	t.Helper()
-	r := newAddRigWith(t, local)
+	return providerKeyRigMarks(t, local, rel, true)
+}
+
+// providerKeyRigMarks is the provider-key world with the marks chosen.
+func providerKeyRigMarks(t *testing.T, local, rel string, managed bool) *addRig {
+	t.Helper()
+	r := newAddRigMarks(t, local, managed)
 	skew := newRunServiceSkew(t)
 	if rel != "" {
 		skew.deployedService(credentialsImage(rel), credentialsImage(rel))
@@ -1652,6 +1658,7 @@ func TestAnOlderServiceIsNotWrittenANamedEntry(t *testing.T) {
 	})
 	t.Run("accounts add", func(t *testing.T) {
 		r := providerKeyRigAt(t, providerKeyLocal, older)
+		ownerAtTheTerminal(t)
 		bundleID := bundleFixtureFor(t, r.sm, "aurora", nil)
 		value := addToken()
 		out, errOut, err := executeStdin(t, value+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a", "--type", "openrouter")
@@ -1707,6 +1714,13 @@ func assertOlderServiceRefusal(t *testing.T, err error, shown, value string, sm 
 // (providerKeyOwnerOnly, in the same order and with the same markers): a coding
 // agent's session, a run's own process and the GODEBUG http2debug leak. The
 // sentences are the file's own and say why the document is the one they guard.
+//
+// `accounts add` is the writer whose own door answers first: the gate refuses a
+// session the document that carries a repository beyond this checkout (D868) or
+// a credential entry (D1628) before the provider key is reached, and an
+// unmanaged project at the fence before that (D2217) — so the guard is reached
+// there by the caller the gate admits, and the other two writers carry the
+// marker cases.
 func TestOnlyAProjectOwnerWritesAProviderKey(t *testing.T) {
 	for _, tc := range []struct {
 		what  string
@@ -1723,8 +1737,15 @@ func TestOnlyAProjectOwnerWritesAProviderKey(t *testing.T) {
 		},
 		{
 			what: "accounts add",
+			// The owner at their own terminal: this door's gate admits nobody
+			// else (accounts_managed.go), and the project is managed, because on
+			// one that is not the fence stands in front of the gate and the write
+			// both (D2217) — a world whose refusal is the fence's is
+			// TestFencedCommandRefusesUnmanaged's, not this guard's. What the
+			// caller then meets is the one write the three writers share.
 			older: func(t *testing.T) (*gcpfake.Secrets, string) {
-				r := providerKeyRig(t, providerKeyLocal)
+				r := providerKeyRigAt(t, providerKeyLocal, "")
+				ownerAtTheTerminal(t)
 				return r.sm, bundleFixtureFor(t, r.sm, "aurora", nil)
 			},
 			args: []string{"accounts", "add", "team-a", "--repos", "owner/repo-a", "--type", "openrouter"},
@@ -1789,7 +1810,18 @@ func TestOnlyAProjectOwnerWritesAProviderKey(t *testing.T) {
 				if err == nil || ExitCode(err) != ExitUserError {
 					t.Fatalf("a coding agent's session = %v, want a refusal:\n%s\n%s", err, out.String(), errOut.String())
 				}
-				for _, want := range []string{"(CLAUDECODE is set)", "own terminal"} {
+				// What a session reads for `accounts add --type` is the accounts
+				// door's own gate rather than the shared guard: the document this
+				// row's command would write carries a repository beyond this
+				// checkout (D868) and a credential entry (D1628), and the gate
+				// refuses a session both of those before the provider key is
+				// reached. The guard's own marker check is asserted through the
+				// other two writers, which reach it.
+				want := []string{"(CLAUDECODE is set)", "own terminal"}
+				if tc.what == "accounts add" {
+					want = []string{"beyond this checkout", "Name only this checkout's repository"}
+				}
+				for _, want := range want {
 					if !strings.Contains(err.Error(), want) {
 						t.Errorf("the refusal does not say %q: %v", want, err)
 					}
