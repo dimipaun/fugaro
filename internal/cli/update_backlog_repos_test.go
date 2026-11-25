@@ -139,28 +139,56 @@ func TestFoldFromEveryDefaultBranch(t *testing.T) {
 	}
 }
 
-// TestFoldRefusesASharedId: two repositories whose items share an id get one
-// line naming both, and neither item is folded (R5) — the node is the
-// project's own, so one id is one work item whoever filed it. D26's collision
-// is the case the ids exist for: two branches each filed 20261021-01, and both
-// merged.
+// TestFoldRefusesASharedId: an id stated twice gets one line naming both, and
+// neither item is folded (R5) — the node is the project's own, so one id is one
+// work item whoever filed it. D26's collision is the case the ids exist for:
+// two branches each filed 20261021-01, and both merged. The second case is the
+// same collision one update later — a fold from a checkout left the id filed
+// under the repository it read, and the second repository's file arrives while
+// the first is gone — and it is refused the same way, because filing it under
+// the second name as well would leave the node holding two items of one id.
 func TestFoldRefusesASharedId(t *testing.T) {
-	e, db := foldUpdateRig(t, false,
-		backlogView("acme/app", folderOf(itemFile("20261021-01", "one", "filed here first", "open"))),
-		backlogView("acme/lib", folderOf(itemFile("20261021-01", "one-elsewhere", "the same id filed on another branch", "open"))),
-	)
-	e.foldBacklog(t.Context())
+	t.Run("two folders state one id", func(t *testing.T) {
+		e, db := foldUpdateRig(t, false,
+			backlogView("acme/app", folderOf(itemFile("20261021-01", "one", "filed here first", "open"))),
+			backlogView("acme/lib", folderOf(itemFile("20261021-01", "one-elsewhere", "the same id filed on another branch", "open"))),
+		)
+		e.foldBacklog(t.Context())
 
-	if v := db.Value(orchestratorPath(t, orchestrator.BacklogNode)); v != nil {
-		t.Errorf("an id two repositories state was folded anyway: the node holds %v (R5)", v)
-	}
-	want := backlog.Dir + ": id 20261021-01 is in acme/app, acme/lib, so neither item was folded until one file is renamed (D26)"
-	if !slices.Contains(e.r.res.Warnings, want) {
-		t.Errorf("the run did not warn that one id is in two repositories, and the fix:\n%q", e.r.res.Warnings)
-	}
-	if out := e.r.w.(*syncBuf).String(); strings.Contains(out, "into the standing backlog") {
-		t.Errorf("the run printed the folded line over two items it refused:\n%s", out)
-	}
+		if v := db.Value(orchestratorPath(t, orchestrator.BacklogNode)); v != nil {
+			t.Errorf("an id two repositories state was folded anyway: the node holds %v (R5)", v)
+		}
+		want := backlog.Dir + ": id 20261021-01 is in acme/app, acme/lib, so neither item was folded until one file is renamed (D26)"
+		if !slices.Contains(e.r.res.Warnings, want) {
+			t.Errorf("the run did not warn that one id is in two repositories, and the fix:\n%q", e.r.res.Warnings)
+		}
+		if out := e.r.w.(*syncBuf).String(); strings.Contains(out, "into the standing backlog") {
+			t.Errorf("the run printed the folded line over two items it refused:\n%s", out)
+		}
+	})
+
+	t.Run("the node already files the id under another repository", func(t *testing.T) {
+		e, db := foldUpdateRig(t, false,
+			backlogView("acme/lib", folderOf(itemFile("20261021-01", "one", "the same id filed here", "open"))),
+		)
+		// The node as an earlier fold left it: the id filed from acme/app's
+		// checkout, under the repository that file was read from.
+		seedBacklogNode(t, db, orchestrator.Actor{Class: orchestrator.Daemon, Name: "daemon", Now: orchestratorTestNow},
+			workItemUpsert("20261021-01", "the item acme/app already filed"))
+		e.foldBacklog(t.Context())
+
+		want := backlog.Dir + ": id 20261021-01 is in acme/lib, acme/repo, so neither item was folded until one file is renamed (D26)"
+		if !slices.Contains(e.r.res.Warnings, want) {
+			t.Errorf("the node already files one id under another repository and the run said nothing about it, so the file it read is lost with no line (R5):\n%q", e.r.res.Warnings)
+		}
+		byID := storedBacklogItems(t, db)
+		if len(byID) != 1 || byID["20261021-01"].Repo != "acme/repo" {
+			t.Errorf("the fold wrote a second item of one id instead of refusing it: %+v", byID)
+		}
+		if out := e.r.w.(*syncBuf).String(); strings.Contains(out, "into the standing backlog") {
+			t.Errorf("the run printed the folded line over an item it refused:\n%s", out)
+		}
+	})
 }
 
 // TestFoldRepositoryIsTheSource: an item's repository is the repository its
@@ -247,6 +275,28 @@ func TestFoldPlanOnlyCounts(t *testing.T) {
 		}
 		if got := reportedOf(e, "backlog"); !slices.Equal(got, want) {
 			t.Errorf("the step reported %+v, want %+v: a repository whose every item the node already holds has nothing to report", got, want)
+		}
+	})
+
+	t.Run("an id the node files under another repository is not counted", func(t *testing.T) {
+		e, db := foldUpdateRig(t, true,
+			backlogView("acme/lib", folderOf(itemFile("20261021-01", "one", "the same id filed here", "open"))),
+		)
+		seedBacklogNode(t, db, orchestrator.Actor{Class: orchestrator.Daemon, Name: "daemon", Now: orchestratorTestNow},
+			workItemUpsert("20261021-01", "the item acme/app already filed"))
+		e.foldBacklog(t.Context())
+
+		out := e.r.w.(*syncBuf).String()
+		if strings.Contains(out, "would fold") {
+			t.Errorf("a plan-only run counts an id the write refuses as a shared id, so it claims work the update behind it would not do:\n%s", out)
+		}
+		want := backlog.Dir + ": id 20261021-01 is in acme/lib, acme/repo, so neither item was folded until one file is renamed (D26)"
+		if !slices.Contains(e.r.res.Warnings, want) {
+			t.Errorf("a plan-only run said nothing about the id the node files under another repository:\n%q", e.r.res.Warnings)
+		}
+		byID := storedBacklogItems(t, db)
+		if len(byID) != 1 || byID["20261021-01"].Repo != "acme/repo" {
+			t.Errorf("a plan-only run wrote the backlog node: %+v", byID)
 		}
 	})
 }

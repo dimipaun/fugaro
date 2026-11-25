@@ -241,19 +241,27 @@ func (e *initEngine) foldBacklog(ctx context.Context) {
 		r.warn(fmt.Sprintf("%s was not folded into the backlog: %s", backlog.Dir, safetext.FieldErr(err)))
 		return
 	}
+	// The node as it stands, read once and written by nothing here: an id the
+	// node already files under ANOTHER repository is the collision the folders
+	// state among themselves, one update later — an item folded earlier from a
+	// checkout, or from a repository whose file has since been deleted — so it is
+	// refused with the same line and neither item is folded (R5). Filing it under
+	// the source as well would leave the node holding two items of one id, and the
+	// one that already runs would lose the repository this file was read from.
+	s, _, err := node.Load(ctx)
+	if err != nil {
+		r.warn(fmt.Sprintf("%s was not folded into the backlog: %s", backlog.Dir, safetext.FieldErr(dbErr(e.lc, err, false))))
+		return
+	}
+	items = backlogNotFiledElsewhere(r.warn, s, items, itemRepo)
 	// Under --plan-only the reads happen and the write does not: the count it
 	// would fold is what the step is here to say (spec §Interactions). It is the
 	// count the real update would WRITE and not the number of open files, which
 	// is the number the node decides (backlogUpsert's skip, D2716): a plan-only
 	// run over folders a fold has already filed says nothing, exactly as the
-	// update behind it would write nothing. The node is read once and no write
-	// follows it.
+	// update behind it would write nothing. The node read above is the whole of
+	// what this branch reads, and no write follows it.
 	if o.planOnly {
-		s, _, err := node.Load(ctx)
-		if err != nil {
-			r.warn(fmt.Sprintf("%s was not folded into the backlog: %s", backlog.Dir, safetext.FieldErr(dbErr(e.lc, err, false))))
-			return
-		}
 		would := map[string]int{}
 		for _, it := range backlogUnknownItems(s, items) {
 			would[itemRepo[it.ID]]++
@@ -325,6 +333,48 @@ func backlogOpenItems(items []backlog.Item) []backlog.Item {
 		}
 	}
 	return out
+}
+
+// backlogNotFiledElsewhere is a fold's items minus the ones the node already
+// files under another repository, each with the line the folders' own collision
+// gets: one id is one work item whoever filed it, so a fold that wrote this one
+// too would leave the node holding two items of one id, and the repository the
+// file was read from would be the one lost (R5). The id the node holds under the
+// SAME repository is not a collision — it is the skip that keeps a fold from
+// filing an item twice (D2716) — and the archive is left out of the comparison
+// because an archived entry carries no repository at all: an id the node has
+// finished and let age out of its work list is therefore compared with nothing
+// and folded again with no line, a hole that is a gap rather than a decision
+// this step takes (the comment above foldBacklog states what closing it needs).
+func backlogNotFiledElsewhere(warn func(string), s orchestrator.State, items []backlogItem, itemRepo map[string]string) []backlogItem {
+	var out []backlogItem
+	for _, it := range items {
+		repo := itemRepo[it.ID]
+		other := backlogRepoOf(s, it.ID, repo)
+		if other == "" {
+			out = append(out, it)
+			continue
+		}
+		a, b := repo, other
+		if repoSortKey(a) > repoSortKey(b) {
+			a, b = b, a
+		}
+		warn(fmt.Sprintf("%s: id %s is in %s, %s, so neither item was folded until one file is renamed (D26)",
+			backlog.Dir, it.ID, a, b))
+	}
+	return out
+}
+
+// backlogRepoOf is the repository the node already files an id under, when that
+// is not the repository the file was read from. "" is the ordinary answer: the
+// node holds no item of that id, or holds it under this same repository.
+func backlogRepoOf(s orchestrator.State, id, repo string) string {
+	for _, w := range s.WorkItems {
+		if w.ID == id && repoSortKey(w.Repo) != repoSortKey(repo) {
+			return w.Repo
+		}
+	}
+	return ""
 }
 
 // backlogUnknownItems is the items of a fold the node does not already hold,
