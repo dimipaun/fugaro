@@ -1193,9 +1193,57 @@ func (r *initRun) lockWorkdirs(project string) (func(), error) {
 	return func() { _ = lock.Release() }, nil
 }
 
+// markTheUpdateReads makes this run's every read of a checkout's fugaro.yaml
+// the read of the file this run's own removal offer leaves behind: the word
+// that was a budget mode taken out of the bytes before anything judges them
+// (fugaroYAMLWithoutRemovedMode, AB8b, F22). The published node's own read is
+// the converge's, marked by policyMemo rather than here.
+//
+// It is marked once, at the door, and not at each read, because the readers of
+// a checkout's file along an update's way are many — the repository and
+// checkout stages, the image refresh, the image check, the image stage, the
+// job resolution — and a flag each of them has to remember is a flag one of
+// them is found without. Both entry points of the door mark it, because both
+// converge a checkout: runInit and runInitRepo (--repo). `fugaro setup` is not
+// marked, and neither is `fugaro update --check`: setting up creates an
+// installation rather than moving one, and a check writes nothing, which is
+// the difference rewriteLocalBudgetMode draws for the word's own door. Every
+// other door reads the bytes as they are and refuses a file that still says
+// the word (D3022).
+func (r *initRun) markTheUpdateReads() {
+	if r.o.doorName() != updateDoor.name {
+		return
+	}
+	r.cmd.SetContext(theUpdateLeavesTheRemoval(r.cmd.Context()))
+}
+
+// policyMemo is the converge's read of the published policy node, and the one
+// way a run that converges reaches the memo: the node is read as the policy
+// stage of this same run is about to write it (policyReadOnce.carry), because
+// that stage is what rewrites a node the release behind published — a
+// predecessor's version, or the word the budget mode's vocabulary dropped
+// (projectpolicy.Migrate, AB8a, D3025).
+//
+// Read strictly, a stage that asks the node a question — where a secret is
+// stored for the repository, what the spec's bitbucket_proxied fact is, whether
+// the project published at all (Readiness's D11 gate) — answers "no policy" over
+// the node the operator does hold, and the run stops on it: the second command
+// CLAUDE.md's HARD RULE forbids.
+//
+// Every reader of this memo inside the converge goes through here, so a launch's
+// strict read (cloudEnv.policy, read directly) and this one are never confused:
+// `git grep -n 'r\.policy\.\|&r\.policy\|&e\.r\.policy'` inside internal/cli
+// finds the converge's reads, and each one names this function.
+func (r *initRun) policyMemo() *policyReadOnce {
+	r.policy.carry = true
+	return &r.policy
+}
+
 func runInit(r *initRun) error {
 	cmd, o := r.cmd, r.o
 	defer func() { clear(r.appKeyMem) }()
+	r.markTheUpdateReads()
+
 	// The answers file, before anything is checked or asked: it fills the
 	// wizard's questions' flags, so a run that reads one is a run that was
 	// passed them (setup_answers.go).
@@ -4160,7 +4208,7 @@ func nameFromOutputs(lc *localcfg.Config, outs infra.InstallationOutputs) (*loca
 // replaces the owner's published list, permanently, with the installation's
 // own account, and does it in the run that reports success.
 func (r *initRun) effectiveVerifiers(ctx context.Context, lc *localcfg.Config) ([]string, error) {
-	p, _, err := r.policy.read(ctx, lc)
+	p, _, err := r.policyMemo().read(ctx, lc)
 	if err != nil {
 		if !olderPolicyNode(err) {
 			return nil, fmt.Errorf("the verifier accounts this installation's document must carry could not be read: %w", policyReadErr(err))
@@ -5166,6 +5214,7 @@ func (o *initOptions) installationFlags() []string {
 func runInitRepo(r *initRun, args []string) error {
 	cmd, o := r.cmd, r.o
 	defer func() { clear(r.appKeyMem) }()
+	r.markTheUpdateReads()
 	// The answers file, as on the converge (setup_answers.go): a --repo run
 	// asks none of the wizard's questions, and the flags its answers fill are
 	// refused by name rather than dropped (installationFlags).
@@ -5265,6 +5314,9 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err := o.requireCheckoutProject(ctx, dir); err != nil {
 		return err
 	}
+	// The checkout's file as this run's own removal offer leaves it: the door
+	// marked at runInit is what a reader reads it by (AB8b, F22,
+	// theUpdateLeavesTheRemoval), not anything this call site remembers.
 	root, rf, err := loadCheckoutResolved(ctx, dir, nil, layerOptions{Lenient: true})
 	if err != nil {
 		return err
@@ -5839,7 +5891,7 @@ func (r *initRun) appPreCheck(ctx context.Context, lc *localcfg.Config, spec inf
 	}
 	keyID := spec.Secrets[config.GitHubAppKeySecret]
 	if r.o.checkApp {
-		id, err := gitSecretID(ctx, lc, spec, nodePolicy(ctx, &r.policy, lc), "the GitHub App pre-check of "+spec.Name)
+		id, err := gitSecretID(ctx, lc, spec, nodePolicy(ctx, r.policyMemo(), lc), "the GitHub App pre-check of "+spec.Name)
 		if err != nil {
 			// One line, and for a drift the short form of it: oneLineCLI
 			// prints through pluginwire.Printable, which would cut the
@@ -6207,6 +6259,15 @@ func (r *initRun) gateWorkflowAB(o *initOptions, repo string, lc *localcfg.Confi
 // checkVertexBudget refuses a repository whose fugaro.yaml authenticates
 // the agent through Vertex AI (agent.auth: vertex) under a project budget
 // in enforce mode. observe and off are allowed.
+//
+// D3174's lift of this refusal belongs to the run the credentials service
+// serves, so it comes with CS6 ("the run's model path follows the table") and
+// not with this gate: the runner answers the same question off the path the run
+// is on (vertexServedByTheService), and a `vertex` file's coding run is on no
+// such path while the service serves api-key, oauth and cascade runs alone
+// (runner.ServiceSwitchedAuth), so the runner's checkBudget refuses the run at
+// bootstrap. Lifting it here alone would green-light a run that dies —
+// TestTheVertexRefusalAgreesWithTheRunner holds the two answers together.
 func checkVertexBudget(lc *localcfg.Config, cfg *config.Config) error {
 	if cfg.Agent.Auth != "vertex" {
 		return nil
@@ -6411,7 +6472,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	// Whether the project has published a policy decides whether the jobs
 	// must be able to read one (D11): the database is read with the
 	// operator's own credentials, which only this side holds.
-	if ex.PolicyExists, err = r.policy.exists(ctx, lc); err != nil {
+	if ex.PolicyExists, err = r.policyMemo().exists(ctx, lc); err != nil {
 		return infra.RepoSpec{}, nil, initErr(err)
 	}
 	if first {

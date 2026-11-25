@@ -505,6 +505,78 @@ func TestAClaimSkipLeavesTheCycleItsRoom(t *testing.T) {
 	}
 }
 
+// TestAClaimSkipLeavesTheCycleItsCrossReferenceRoom is the two readings a
+// cycle plans under, together: the claim another orchestrator holds on one of
+// its items (D3209) and the cross reference another item of it makes into an
+// orchestrator beside it (D3208). planNode is handed both, and a cycle that
+// lost either half would hold one item for a reason that is not there — the
+// held item spends the allowance the daemon's own work needs, or the item whose
+// dependency is done waits for ever.
+//
+// The allowance is exactly the item the rival holds, so a cycle that kept the
+// skip's slot starts nothing; the item behind it depends on a reference into
+// another orchestrator, which the cycle reads and finds done, so a plan that
+// lost that reading holds it as waiting. Both are what this cycle's one run
+// needs, and it is started in the same cycle the skip was made in.
+//
+// Mutation (run, restored): hand the plan a nil cross reading — `planNode(...,
+// nil, c.held)`, the D3208 half of the merge dropped — and the item below is
+// never planned, because its dependency resolves to nothing and holds it; hand
+// it a nil held map, `planNode(..., c.cross, nil)`, and carry plans the
+// rival's item on every pass and never reaches the daemon's own, which is the
+// ending claimKey's own comment rests on: the plan and the cycle agree on what
+// another orchestrator holds, so each pass leaves one more item out.
+func TestAClaimSkipLeavesTheCycleItsCrossReferenceRoom(t *testing.T) {
+	ctx := context.Background()
+	now := o6Now()
+	approvedAt := now.Add(-time.Minute)
+	const runID = "20261107-120000-aaaa"
+
+	theirs := cg4Task("wi-1", "demo/A", approvedAt)
+	mine := workItemOf("wi-2")
+	mine.PlanTask = "demo/B"
+	// The dependency is written before the approval, so the digest covers the
+	// item the person read.
+	mine.DependsOn = []string{otherID + "/wi-9"}
+	mine = o6ApprovedBy(mine, approvedAt)
+
+	far := stateWithAQueuedItem(t, now)
+	dependency := workItemOf("wi-9")
+	dependency.Phase = orchestrator.PhaseDone
+	far.AgentID = otherID
+	far.WorkItems = []orchestrator.WorkItem{dependency}
+	reader := &crossReader{shards: map[string][]orchestrator.State{otherID: {far}}}
+
+	f := gcpfake.NewRTDB(t)
+	o := cg4OrchestratorWith(t, f, cg4First, "demo", now, runID,
+		withCaps(func(c *orchestrator.Caps) { c.MaxPerCycle = 1 }), theirs, mine)
+	o.tick.Cross = reader
+
+	rival := cg4Claim(t, rtdbClient(t, f), cg4Rival, clockAt(now))
+	if took, err := rival.Take(ctx, orchestrator.ClaimRef(cg4Rival, theirs)); err != nil || !took {
+		t.Fatalf("the rival's take of %q: took=%v, err=%v", theirs.PlanTask, took, err)
+	}
+
+	rep := o.step()
+	if rep.Skipped != 1 || rep.Carried != 1 {
+		t.Fatalf("the cycle skipped %d action(s) and carried %d, and its allowance of one is the item a rival holds, so the item behind it is this cycle's own work", rep.Skipped, rep.Carried)
+	}
+	if got := o.launcher.asked; len(got) != 1 || got[0] != runID {
+		t.Errorf("the cycle asked its launcher to start %v, want the one run for %q", got, mine.ID)
+	}
+	if len(reader.asked) != 1 || reader.asked[0] != otherID {
+		t.Errorf("the cycle read %v, and the only orchestrator its items name is %s", reader.asked, otherID)
+	}
+
+	s := o.planState()
+	if w, ok := s.Item(mine.ID); !ok || w.Phase != orchestrator.PhaseRunning {
+		t.Errorf("the item whose reference is done reads back as %+v, and the cycle started it", w)
+	}
+	if w, ok := s.Item(theirs.ID); !ok || w.Phase != orchestrator.PhaseQueued {
+		t.Errorf("the item a rival holds reads back as %+v, and an item another orchestrator holds is left where it stands", w)
+	}
+}
+
 // TestAFinishedPlanTaskIsNotTakenByARival is the second run the claim exists to
 // stop, arriving from the other side: the orchestrator that held the plan task
 // finishes it, and the rival that skipped it still carries the task approved in
@@ -922,6 +994,34 @@ func cg4PathOf(t *testing.T, ref orchestrator.ItemRef) string {
 	return path
 }
 
+// TestHeldHandsBackACopy is the accessor's own contract: what a beat settles is
+// the picture the cycle kept (Tick.mine), and a caller that rewrote the slice it
+// was handed would be rewriting the daemon's reading of what it holds — the one
+// the next beat hands out again and the one the cycle's own claims were read
+// from.
+//
+// Mutation: return t.mine and the picture below reads back as the caller
+// rewrote it.
+func TestHeldHandsBackACopy(t *testing.T) {
+	now := o6Now()
+	o := cg4OrchestratorAt(t, gcpfake.NewRTDB(t), cg4First, "demo", now, cg4PlanItem("wi-1", now.Add(-time.Minute)), "20261107-120000-aaaa")
+	if rep := o.step(); rep.Carried != 1 {
+		t.Fatalf("the cycle carried %d action(s) for the plan's one approved item", rep.Carried)
+	}
+
+	held := o.tick.Held()
+	if len(held) != 1 {
+		t.Fatalf("the daemon holds %+v after starting one item", held)
+	}
+	want := held[0]
+	held[0] = orchestrator.Held{Ref: orchestrator.ItemRef{Orchestrator: cg4First, Item: "demo/other"}, Finished: true}
+
+	again := o.tick.Held()
+	if len(again) != 1 || again[0] != want {
+		t.Errorf("the daemon's own picture is %+v after a caller rewrote what it was handed, want %+v: what Held hands back is a copy", again, want)
+	}
+}
+
 // TestClaimOnAFinishedItem is what a finished item does to the claim standing on
 // it, for the two kinds of item a claim keys differently (ClaimRef).
 //
@@ -1090,6 +1190,88 @@ func TestClaimOnAFinishedItem(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestAClaimOnATaskThePlanNoLongerCarriesStands is the case CG4 left open for a
+// decision: a plan task taken off the plan — not done and not cancelled — while
+// its claim is held, so the holder's own nodes carry neither the item nor its
+// finish and nothing settles it again.
+//
+// The claim stands with no finish on it and is left exactly as it stands, which
+// is the decision claim.go's header records: nothing the holder reads names the
+// task any more, and freeing the node would be the second run this file exists
+// to prevent — the rival below, whose own copy of the plan still carries the
+// task approved, reads a path that is not there as an item nobody has taken.
+//
+// Mutation: settle the claims of the tasks a plan no longer carries — a cycle
+// that walked the claims node rather than the items its own nodes hold, which is
+// the read the refresh was built without (claim.go's header) — and the rival's
+// cycle below takes the task and starts a run for work the plan does not have.
+func TestAClaimOnATaskThePlanNoLongerCarriesStands(t *testing.T) {
+	now := o6Now()
+	item := cg4PlanItem("wi-1", now.Add(-time.Minute))
+	const runID = "20261107-120000-aaaa"
+
+	f := gcpfake.NewRTDB(t)
+	holder := cg4OrchestratorAt(t, f, cg4First, "demo", now, item, runID)
+	if rep := holder.step(); rep.Carried != 1 {
+		t.Fatalf("the first cycle carried %d action(s) for the plan's one approved item", rep.Carried)
+	}
+	path := cg4PathOf(t, orchestrator.ClaimRef(cg4First, item))
+	before := f.Value(path)
+	if before == nil {
+		t.Fatal("the claim node is empty after the launch it was taken for")
+	}
+
+	// The task comes off the plan: the node the holder works carries it no more,
+	// and nothing writes it done or cancelled.
+	dropPlanItem(t, holder, item.ID)
+	if rep := holder.step(); rep.Carried != 0 || rep.Folded != 0 {
+		t.Fatalf("the cycle over a plan that no longer carries the task carried %d action(s) and folded %d", rep.Carried, rep.Folded)
+	}
+	if after := f.Value(path); !reflect.DeepEqual(before, after) {
+		t.Errorf("the claim node changed under a cycle whose nodes no longer carry the task:\nafter  %#v\nbefore %#v", after, before)
+	}
+	doc := nodeObject(t, f.Value(path), "the claim")
+	if got, _ := doc["holder"].(string); got != cg4First {
+		t.Errorf("the claim names %q, not the orchestration that took it", got)
+	}
+	if fin, ok := doc["finished"]; ok {
+		t.Errorf("the claim carries a finish (%#v), and a task taken off the plan is not a finished one", fin)
+	}
+
+	// The rival's own node still carries the task approved: the claim that stands
+	// is the whole of what keeps it from starting the run the plan no longer has.
+	rival := cg4OrchestratorAt(t, f, cg4Second, "demo", now, item, "20261107-120000-bbbb")
+	rep := rival.step()
+	if rep.Carried != 0 || rep.Skipped != 1 {
+		t.Errorf("the rival carried %d action(s) and skipped %d for a plan task whose claim stands (D3209)", rep.Carried, rep.Skipped)
+	}
+	if len(rival.launcher.asked) != 0 {
+		t.Errorf("the rival started %v for a plan task another orchestration holds", rival.launcher.asked)
+	}
+}
+
+// dropPlanItem takes one item off the plan's node, which is what a plan that no
+// longer declares the task leaves behind: the node the holder reads stops
+// carrying it, and nothing writes it done or cancelled.
+func dropPlanItem(t *testing.T, o *cg4Orchestrator, id string) {
+	t.Helper()
+	ctx := context.Background()
+	s, etag, err := o.plan.Load(ctx)
+	if err != nil {
+		t.Fatalf("reading the plan's node: %v", err)
+	}
+	kept := make([]orchestrator.WorkItem, 0, len(s.WorkItems))
+	for _, w := range s.WorkItems {
+		if w.ID != id {
+			kept = append(kept, w)
+		}
+	}
+	s.WorkItems = kept
+	if err := o.plan.Save(ctx, s, etag); err != nil {
+		t.Fatalf("taking %q off the plan's node: %v", id, err)
 	}
 }
 

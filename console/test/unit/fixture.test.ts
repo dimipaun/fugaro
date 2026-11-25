@@ -713,6 +713,25 @@ describe('the committed synthetic fixture', () => {
       // `run-source.test.ts` feeds this document to `buildRunModel` directly.
       'run-fallback.json',
       'run-fallback.json.license',
+      // `paused-run.json` is the ninth invented document (the
+      // model-credentials-routing plan's VS3): one `watch --json` feed whose
+      // `finished[]` carries the four rows the paused drawing turns on -- a
+      // pause a later run resumed (both `resume_at` and `resumed_by`), one
+      // still standing (`resume_at` alone), one carrying neither, and one whose
+      // `status` this build has never been taught, which must draw as unknown
+      // rather than fail. Written from `internal/watch/json.go`'s
+      // `JSONFinished` rather than recorded, for the same reason as
+      // `run-fallback.json`, and fed by `run-paused.test.ts` to
+      // `decodeSnapshot` and to `buildLiveModel` directly.
+      'paused-run.json',
+      'paused-run.json.license',
+      // `released-console-status.ts` is not a document but the pinned reader the
+      // same task's acceptance asks for: console-v0.125.0's own expression for
+      // a finished row's `status`, checked in so `run-paused.test.ts` can ask
+      // the release whether it refuses the word `paused` (it does not) before
+      // the pull request claims no `--json` format needs a version bump. It is
+      // a `.ts` file for that reason and the sweep below never reads it.
+      'released-console-status.ts',
       ...FIXTURE_CASES.map((name) => `${name}.ndjson`),
     ])
     const present = readdirSync(FIXTURE_DIRECTORY)

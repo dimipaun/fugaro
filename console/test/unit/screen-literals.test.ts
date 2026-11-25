@@ -337,6 +337,13 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
       reason:
         'the answer of the vocabulary the caller passed in (`rigorModeWord` or `rigorLayerWord`, both `shared/rigor.ts`), which is one of the console\'s own words or `null`; `null` is the branch that hands the document\'s own mode or layer to `putText` as text',
     },
+    UNKNOWN_STATUS_WORD:
+      'the console\'s own word for a run status this build has no reading for (`schema.ts`): the record\'s status is put through `runStatusOf` first, and the branch that draws this word is the one where that table answered `null` -- a word in the table is drawn as itself through `putText`, and a record carrying none at all draws nothing (model-credentials-routing VS3)',
+    'shortRun(id.text)': {
+      within: 'putRunRef',
+      reason:
+        'the ending `shortRun` answered for the run id this cell is a door to (`shared/shortid.ts`): the last four characters, or as many more as it takes to tell it apart from nothing here -- the resumer is a value inside a line, so the ending is the id\'s own four characters and never a cut grown by the rows around it. It is drawn only for a string `sanitizeText` accepted in the `runId` class, and a refusal or a recorder\'s marker takes the `putText` branch that writes no attribute at all, so the ending is a cut of a string the console would draw whole',
+    },
   },
   'coordinator.ts': {
     word: {
@@ -888,7 +895,12 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
     theme: { within: 'renderRunFrame', reason: 'a `RunTheme`, the closed theme tuple' },
     '`the document carries no ${field}`':
-      'the console\'s own sentence for a field the record left out of this run, interpolating the wire path the caller passes (`row.repo`, `row.oauth_account`, `row.branch`) and nothing the document chose -- the same sentence `putReading` writes into the `title` of a reading with no number, written here because a column of the header is text rather than a reading',
+      'the console\'s own sentence for a field the record left out of this run, interpolating the wire path the caller passes (`row.repo`, `row.oauth_account`, `row.branch`, `row.resume_at`, `row.resumed_by`) and nothing the document chose -- the same sentence `putReading` writes into the `title` of a reading with no number, written here because a column of the header is text rather than a reading',
+    'id.text': {
+      within: 'putRunRef',
+      reason:
+        'the whole run id as `sanitizeText` drew it in the `runId` class -- the class `schema.ts` declares for `row.run_id` and `row.resumed_by`, and the one whose grammar is the CLI\'s own run-ID shape. It is the door `entry.ts`\'s `showRun` opens the resuming run from, so the id a command receives is the whole one; the cell\'s drawn text is the short ending, and a refusal or a recorder\'s marker takes the `putText` branch and writes no attribute at all -- the same entry `live.ts` keeps for `putRunId` (model-credentials-routing VS3)',
+    },
     'stageShare(value, longest)': {
       within: 'stageBar',
       reason:

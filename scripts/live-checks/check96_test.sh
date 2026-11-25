@@ -413,8 +413,28 @@ case "$url" in
   body='{"message":"Resource not accessible by integration"}'
   ;;
 *accounts:delete*)
-  printf '%s\n' "$(printf '%s' "$data" | sed -n 's/.*\\"localId\\":\\"\([^\\]*\)\\".*/\1/p')" >>"$FAKE96_DIR/deleted"
-  body='{}'
+  # The uid, the attempt it is on, and the answer. FAKE96_DELETE_FAIL=once
+  # answers the first attempt for each uid 500 and the retry 200 (a deletion the
+  # check has to read the status of and take again), and =always answers every
+  # attempt 500 (the deletion the run of 2026-11-24 met and never reported). The
+  # `deleted` file is the uids a deletion was ASKED for — FAKE96_SURVIVOR
+  # answers the read-back with them, which is the project still holding them.
+  uid=$(printf '%s' "$data" | sed -n 's/.*\\"localId\\":\\"\([^\\]*\)\\".*/\1/p')
+  printf '%s\n' "$uid" >>"$FAKE96_DIR/deleted"
+  printf '%s\n' "$uid" >>"$FAKE96_DIR/delete-attempts"
+  ntries=0
+  [ -f "$FAKE96_DIR/delete-tries-$uid" ] && ntries=$(cat "$FAKE96_DIR/delete-tries-$uid")
+  ntries=$((ntries + 1))
+  printf '%s\n' "$ntries" >"$FAKE96_DIR/delete-tries-$uid"
+  case "${FAKE96_DELETE_FAIL:-no}" in
+  always) code=500 ;;
+  once) [ "$ntries" -gt 1 ] || code=500 ;;
+  esac
+  if [ "$code" = 200 ]; then
+    body='{}'
+  else
+    body='{"error":{"code":500,"message":"INTERNAL"}}'
+  fi
   ;;
 *accounts:batchGet*)
   if [ -z "$auth" ]; then
@@ -559,14 +579,18 @@ write_config() { # dir
 # write_job dir — the sandbox repository's own job. JOB_URL=no takes the service
 # URL off it, JOB_APP_KEY=no takes the App key's environment entry and mount
 # off it, JOB_PROFILE=yes makes it a shared project job, JOB_SECOND=yes gives the
-# repository a second job of its own (one per workflow, which is the shape the
-# check refuses to choose in unless `--workflow` names one), JOB_SA overrides the
-# account it runs as, and JOB_SECOND_SA the second job's own — so a case can say
-# which of the two a run read.
+# repository a second job of its own (one per workflow, which the check refuses
+# to choose in unless `--workflow` names one, or unless exactly one of the two
+# labels is not a named account's), JOB_WORKFLOW is the job's own workflow label
+# and JOB_SECOND_WORKFLOW the second job's (a named account's is the workflow
+# joined to the account, `<workflow>_<account>`), JOB_SA overrides the account it
+# runs as, and JOB_SECOND_SA the second job's own — so a case can say which of
+# the two a run read.
 write_job() { # dir
   local dir=$1
   JOB_URL="${JOB_URL-yes}" JOB_APP_KEY="${JOB_APP_KEY-yes}" JOB_PROFILE="${JOB_PROFILE:-no}" \
     JOB_SECOND="${JOB_SECOND:-no}" JOB_SECOND_SA="${JOB_SECOND_SA:-$JOBSA}" \
+    JOB_WORKFLOW="${JOB_WORKFLOW:-default}" \
     JOB_NAME="${JOB_NAME:-$JOB}" JOB_SA="${JOB_SA:-$JOBSA}" python3 - "$dir/state/job.json" "$dir/state/jobs.json" <<'PY'
 import json, os, sys
 
@@ -574,7 +598,7 @@ env = [{"name": "FUGARO_PROJECT", "value": os.environ["FAKE96_PROJ"]},
        {"name": "FUGARO_GITHUB_APP_ID", "value": os.environ["FAKE96_APPID"]}]
 container = {"env": env}
 spec = {"serviceAccountName": os.environ["JOB_SA"]}
-labels = {"fugaro_repo": os.environ["FAKE96_LABEL"], "fugaro_workflow": "default"}
+labels = {"fugaro_repo": os.environ["FAKE96_LABEL"], "fugaro_workflow": os.environ["JOB_WORKFLOW"]}
 if os.environ["JOB_URL"] == "yes":
     env.append({"name": "FUGARO_CREDENTIALS_SERVICE_URL", "value": os.environ["FAKE96_URL"]})
 if os.environ["JOB_APP_KEY"] == "yes":
@@ -596,7 +620,7 @@ describes = {os.environ["JOB_NAME"]: job}
 if os.environ.get("JOB_SECOND") == "yes":
     second = json.loads(json.dumps(job))
     second["metadata"]["name"] = os.environ["JOB_NAME"] + "-second"
-    second["metadata"]["labels"]["fugaro_workflow"] = "second"
+    second["metadata"]["labels"]["fugaro_workflow"] = os.environ.get("JOB_SECOND_WORKFLOW") or "second"
     second["spec"]["template"]["spec"]["template"]["spec"]["serviceAccountName"] = os.environ["JOB_SECOND_SA"]
     jobs.insert(0, second)
     describes[second["metadata"]["name"]] = second
@@ -655,12 +679,25 @@ JSON
 # a case that names its repository has to swap. The purpose filter is the
 # front-end row's count, and `audit-purpose-after` is what a case writes to
 # make that count move.
+#
+# The refusal's read carries the TWO lines the service really writes for a
+# refused call and not one: the audit line, whose status is a string, and the
+# diagnosis beside it (internal/credsvc's logRefusal, the line an operator greps
+# as `credsvc: refused`), whose `status` is the HTTP status as a NUMBER. A
+# fixture of one line is what let the reader's join of that status pass a test
+# suite and crash the live run of 2026-11-24.
+#
+# Both carry all ten of the audit contract's fields, empty ones included, and
+# they have to: the reader tells an audited act from any other line of the read
+# by that whole shape, so a fixture written with fewer fields is read as no
+# audited act at all.
 write_audit() { # dir
   local dir=$1 checked=${2:-$SANDBOX_SLUG} other=${3:-$OTHER_SLUG}
-  printf '[{"jsonPayload": {"run": "@RUN@", "repository": "%s", "job": "%s", "caller": "%s", "credential": "%s", "purpose": "mint", "status": "ok"}}]\n' \
+  local refusal_message="the run identity is not a run of the calling job's repository"
+  printf '[{"jsonPayload": {"run": "@RUN@", "repository": "%s", "job": "%s", "caller": "%s", "credential": "%s", "purpose": "mint", "tier": "", "status": "ok", "slip": "", "owner": ""}}]\n' \
     "$checked" "$JOB" "$JOBSA" "$APPKEY" >"$dir/state/audit-ok.tmpl"
-  printf '[{"jsonPayload": {"run": "@RUN@", "repository": "%s", "job": "%s", "caller": "%s", "credential": "%s", "purpose": "mint", "status": "unverified_run_identity"}}]\n' \
-    "$other" "$JOB" "$JOBSA" "$APPKEY" >"$dir/state/audit-refusal.tmpl"
+  printf '[{"jsonPayload": {"run": "@RUN@", "repository": "%s", "job": "%s", "caller": "%s", "credential": "%s", "purpose": "mint", "tier": "", "status": "unverified_run_identity", "slip": "", "owner": ""}},\n {"jsonPayload": {"type": "unverified_run_identity", "status": 403, "repository": "%s", "run": "@RUN@", "message": "%s", "tried": "", "read": "", "error_class": ""}}]\n' \
+    "$other" "$JOB" "$JOBSA" "$APPKEY" "$other" "$refusal_message" >"$dir/state/audit-refusal.tmpl"
   printf '[]\n' >"$dir/state/audit-purpose.json"
   : >"$dir/state/audit-purpose-after"
 }
@@ -1012,6 +1049,25 @@ test_a_repository_with_one_job_too_few_stops() {
   expect_contains "$out" "fugaro setup --repo" "no job: the command that makes one"
 }
 
+test_the_only_job_of_a_repository_is_read_whatever_its_label_says() {
+  setup_case onlyjobvariant
+  # The repository has ONE job of its own, and its workflow label names a named
+  # account's (`web_belong`): it is still the only job a run of this repository
+  # could land on, so the check reads it rather than ask which workflow a run
+  # uses — there is nothing to choose between. What keeps the owner's own
+  # account out of this check is the job's ACCOUNT, refused by name in
+  # step_job, and not a label the reader would have to interpret.
+  JOB_WORKFLOW=web_belong write_job "$dir"
+  run96
+  expect_status "$status" 0 "one job of the repository's own, its label a named account's"
+  expect_contains "$out" "FACT job: PASS — " "one job with a named account's label: the row"
+  expect_contains "$out" "$JOB, the job of the workflow web_belong" \
+    "one job with a named account's label: the job it read"
+  expect_absent "$out" "could not be named from the project's job list" \
+    "one job with a named account's label: it is not read as a job that is not there"
+  expect_absent "$out" "Re-run with --workflow" "one job with a named account's label: no question was asked"
+}
+
 test_a_repository_with_several_jobs_of_its_own_is_not_read_as_none() {
   setup_case twojobs
   # One job per workflow of the repository's fugaro.yaml. This check reads the
@@ -1031,10 +1087,41 @@ test_a_repository_with_several_jobs_of_its_own_is_not_read_as_none() {
   expect_contains "$out" "$JOB-second workflow=second" "two jobs of its own: the other one too"
   expect_contains "$out" "Re-run with --workflow <one of: default, second>" \
     "two jobs of its own: the refusal ends with the flag and every workflow found"
+  # And the refusal says what it could not do, not something false about the
+  # jobs it just listed: both of these ARE the jobs of the repository's own
+  # workflows, and the sentence used to say none of them was.
+  expect_contains "$out" "cannot tell which one a run of it lands on" \
+    "two jobs of its own: the refusal names the choice it cannot make"
   expect_absent "$out" "has NO job of its own" "two jobs of its own: it is not read as none"
   expect_absent "$out" "FACT job: PASS" "two jobs of its own: no job was read"
   expect_contains "$out" "FACT job: FAIL — not reached" "two jobs of its own: the row says it was never measured"
   expect_absent "$(cat "$dir/state/calls")" "curl " "two jobs of its own: a call before the stop"
+}
+
+test_a_repository_with_one_workflow_of_its_own_and_one_of_a_named_account() {
+  setup_case namedaccount
+  # Two workflows, one of them on a named OAuth account, and no flag. The named
+  # account is readable in the job's label alone: a named account's job wears the
+  # workflow joined to that account (gcp.WorkflowVariant, `default_belong`), and
+  # a workflow of the repository's own never carries the '_' that joins them
+  # (config.WorkflowNameRE is letters, digits and dashes). So exactly one of the
+  # two is a workflow of the repository, the job that wears it is the job a run
+  # lands on, and the check reads THAT job and says so in one line. On
+  # 2026-11-24 it stopped instead, on a question with one answer, after the
+  # owner had named the workflow by hand.
+  JOB_SECOND=yes JOB_SECOND_SA="$SECOND_SA" JOB_SECOND_WORKFLOW=default_belong write_job "$dir"
+  run96
+  expect_status "$status" 0 "a repository with one named-account workflow"
+  expect_block_keys "$out" "a repository with one named-account workflow"
+  expect_contains "$out" "FACT job: PASS — " "a repository with one named-account workflow: the row"
+  expect_contains "$out" "$JOB, the job of the workflow default" "a repository with one named-account workflow: the plain workflow's job is the one read"
+  expect_contains "$out" "the only one of its workflows that is not a named account's" \
+    "a repository with one named-account workflow: the row says why that job"
+  expect_contains "$(cat "$dir/err")" "reading the job of the workflow default" \
+    "a repository with one named-account workflow: the one line it says about the pick"
+  expect_absent "$(cat "$dir/state/calls")" "run jobs describe $JOB-second" \
+    "a repository with one named-account workflow: the named account's job was described"
+  expect_absent "$out" "Re-run with --workflow" "a repository with one named-account workflow: the stop that asks"
 }
 
 test_the_workflow_flag_selects_that_workflows_job() {
@@ -1235,9 +1322,11 @@ test_a_job_that_has_no_service_url_while_the_config_records_one_is_a_fail() {
 test_the_switch_written_True_is_the_switch_on() {
   setup_case switchtrue
   JOB_URL=no write_job "$dir"
-  sed -i 's/^        credentials_service_ready: true$/        credentials_service_ready: True/' "$dir/state/fugaro.yaml"
+  # perl and not sed: BSD sed's -i takes the next word as a backup suffix, so a
+  # bare `sed -i` ends the whole suite on a Mac rather than this test.
+  perl -pi -e 's/^        credentials_service_ready: true$/        credentials_service_ready: True/' "$dir/state/fugaro.yaml"
   if ! grep -q 'credentials_service_ready: True' "$dir/state/fugaro.yaml"; then
-    fail "the switch written True: the fixture is not the one this case is about (the sed found no lower-case true to rewrite)"
+    fail "the switch written True: the fixture is not the one this case is about (the rewrite found no lower-case true to rewrite)"
   fi
   run96
   expect_status "$status" 1 "the switch written True"
@@ -1250,7 +1339,7 @@ test_the_switch_written_True_is_the_switch_on() {
 test_a_switch_that_is_not_a_boolean_stops_the_read() {
   setup_case switchnotbool
   JOB_URL=no write_job "$dir"
-  sed -i 's/^        credentials_service_ready: true$/        credentials_service_ready: maybe/' "$dir/state/fugaro.yaml"
+  perl -pi -e 's/^        credentials_service_ready: true$/        credentials_service_ready: maybe/' "$dir/state/fugaro.yaml"
   run96
   expect_status "$status" 2 "a switch that is not a boolean"
   expect_contains "$out" "is not a boolean" "a switch that is not a boolean: the reader says why"
@@ -1267,7 +1356,7 @@ test_a_switch_that_is_not_a_boolean_stops_the_read() {
 test_a_repos_entry_written_on_one_line_stops_the_read() {
   setup_case flowstyle
   JOB_URL=no write_job "$dir"
-  sed -i '/^repos:/,$d' "$dir/state/fugaro.yaml"
+  perl -ni -e 'print unless $drop; $drop = 1 if /^repos:/' "$dir/state/fugaro.yaml"
   printf 'repos:\n    %s: {provider: github, workflows: [default], credentials_service_ready: true}\n    %s: {provider: github, workflows: [default]}\n' \
     "$SANDBOX_REPO" "$OTHER_REPO" >>"$dir/state/fugaro.yaml"
   if ! grep -q "{provider: github" "$dir/state/fugaro.yaml"; then
@@ -1635,6 +1724,82 @@ test_a_refusal_with_no_audit_line_is_the_finding() {
   expect_contains "$out" "a 0 here would be the finding" "the unrecorded refusal: why it is a finding"
 }
 
+test_a_log_whose_status_is_a_number_does_not_stop_the_reader() {
+  setup_case numericstatus
+  # The service's log carries a NUMBER where this check reads a status, and the
+  # reader that joined it with the audit line's own status died on it: a
+  # `",".join` over a string and an integer is a TypeError, not a value, and the
+  # run of 2026-11-24 stopped there — in the pairing row's second half, after the
+  # first half had already recorded its PASS, so the block said the pairing was
+  # fine and the check reached neither the outsider nor the survivors. The row
+  # still FAILs here, because a status that is not the refusal's own IS a finding;
+  # what must not happen is the check dying without a verdict about the line.
+  printf '[{"jsonPayload": {"run": "@RUN@", "repository": "%s", "job": "%s", "caller": "%s", "credential": "%s", "purpose": "mint", "tier": "", "status": 403, "slip": "", "owner": ""}}]\n' \
+    "$OTHER_SLUG" "$JOB" "$JOBSA" "$APPKEY" >"$dir/state/audit-refusal.tmpl"
+  run96
+  expect_status "$status" 1 "a numeric status in the log"
+  expect_absent "$out" "the service's audit lines for the second run could not be read" \
+    "a numeric status in the log: the reader survived it instead of stopping the run"
+  expect_contains "$out" "FACT pairing: FAIL — " "a numeric status in the log: the row that read it"
+  expect_contains "$out" "status 403" "a numeric status in the log: the status is read as the text it is"
+  expect_block_keys "$out" "a numeric status in the log: the block is whole"
+}
+
+test_the_diagnosis_beside_a_refusal_is_not_an_audited_act() {
+  setup_case diagnosisline
+  # A refused call's read carries two lines and one of them is not an audited
+  # act, so the pairing row has to read the audit line and not the pair: counted
+  # as two, a refusal that IS recorded reads as a service that wrote two acts.
+  # With only the diagnosis line in the read — the shape a reader that took what
+  # it was handed would count as one line — the row is the FAIL it exists for,
+  # "a refusal this service made and left unrecorded", and never a crash.
+  python3 - "$dir/state/audit-refusal.tmpl" <<'PY'
+import json, sys
+lines = json.load(open(sys.argv[1], encoding="utf-8"))
+json.dump([lines[1]], open(sys.argv[1], "w", encoding="utf-8"))
+PY
+  run96
+  expect_status "$status" 1 "a refusal whose audit line is missing"
+  expect_absent "$out" "the service's audit lines for the second run could not be read" \
+    "a refusal whose audit line is missing: the diagnosis line did not stop the reader"
+  expect_contains "$out" "FACT pairing: FAIL — " "a refusal whose audit line is missing: the row"
+  # The COUNT is the assertion, and it is the one thing that tells the two
+  # readers apart: a reader that counted every line the run id appears on reads
+  # this document as 1 — the diagnosis line, which is not an audited act — and
+  # the sentence below would then be about the wrong refusal.
+  expect_contains "$out" "the pairing refusal's audit line is not the route's: 0 line(s)" \
+    "a refusal whose audit line is missing: the row counts the diagnosis line as no act at all"
+  expect_contains "$out" "a 0 here would be the finding" "a refusal whose audit line is missing: why it is a finding"
+}
+
+test_the_warn_line_beside_a_mint_is_not_an_audited_act() {
+  setup_case mintwarnline
+  # internal/credsvc's github.go writes a warn line when GitHub itself refuses
+  # the mint, carrying the purpose, the credential, the repository, the run and
+  # -- when GitHub answered -- the status as a NUMBER, and no caller. It is not
+  # an audited act, and a read told apart by any single field counts it as one:
+  # the row then names a second act for a run in which one at most happened.
+  python3 - "$dir/state/audit-refusal.tmpl" <<'PY2'
+import json, sys
+lines = json.load(open(sys.argv[1], encoding="utf-8"))
+audit = lines[0]["jsonPayload"]
+warn = {"jsonPayload": {"run": audit["run"], "repository": audit["repository"],
+                        "purpose": "mint", "credential": "github-app-key",
+                        "status": 401}}
+json.dump([lines[0], warn, lines[1]], open(sys.argv[1], "w", encoding="utf-8"))
+PY2
+  run96
+  expect_status "$status" 0 "a warn line beside the mint's audit line"
+  # The block prints ONE row per key, and the two halves of the pairing claim
+  # write two: the second half is in the block only when it FAILED, so what this
+  # case reads is the absence of its finding. Counted, the warn line makes the
+  # read two lines where the row needs one, and the row is then the FAIL that
+  # names an act which never happened.
+  expect_absent "$out" "is not the route's" \
+    "a warn line beside the mint's audit line: the row counts the audited act and not the warn line"
+  expect_absent "$out" "2 line(s)" "a warn line beside the mint's audit line: no second act is named"
+}
+
 test_a_mint_that_answered_and_left_no_line_is_a_fail() {
   setup_case noauditmint
   printf '[]\n' >"$dir/state/audit-ok.tmpl"
@@ -1705,6 +1870,77 @@ test_a_user_that_survived_the_deletions_is_a_fail() {
   expect_contains "$out" "FACT restore: PASS — " "a surviving user: the deletions did happen"
 }
 
+test_a_deletion_that_failed_is_taken_again() {
+  setup_case deleteretry
+  # Identity Toolkit answers a deletion with a status, and this check used to
+  # throw that answer away: a deletion answered 500 read exactly like one
+  # answered 200. It reads the status now and takes the deletion again once, so
+  # a 500 the second try clears leaves nothing behind — and the run of
+  # 2026-11-24, whose two deletions did not answer 200 at all, is the shape the
+  # retry exists for.
+  RUN96_ENV=(FAKE96_DELETE_FAIL=once)
+  run96
+  expect_status "$status" 0 "a deletion that failed once"
+  expect_contains "$out" "FACT survivors: PASS — " "a deletion that failed once: the row"
+  # Two users, two attempts each: the retry happened, and only the second answer
+  # was a 200.
+  local attempts
+  attempts=$(grep -c . "$dir/state/delete-attempts" || true)
+  [ "$attempts" = 4 ] \
+    || fail "a deletion that failed once: the check made $attempts deletion attempts for two users, so the answer it read was not taken again"
+  expect_contains "$(cat "$dir/err")" "deleted the run identity user r~$SANDBOX_SLUG~" \
+    "a deletion that failed once: the user the retry deleted"
+}
+
+test_a_deletion_that_keeps_failing_is_said_with_its_uid() {
+  setup_case deletefailed
+  # The other half: a deletion that answers 500 twice is not a deletion, and the
+  # run has to say so with the uid rather than report the count it meant to
+  # reach. The user is still in the project, so the read-back — which is the
+  # row's own assertion — finds it.
+  RUN96_ENV=(FAKE96_DELETE_FAIL=always FAKE96_SURVIVOR=yes)
+  run96
+  expect_status "$status" 1 "a deletion that keeps failing"
+  # The uid and the verdict are two needles and not one: the verdict follows the
+  # uid in the line ("… r~<slug>~<run> NOT deleted (status 500, twice)"), so a
+  # needle that glued one to the other would match nothing at all.
+  expect_contains "$(cat "$dir/err")" "NOT deleted" \
+    "a deletion that keeps failing: the line that says so"
+  expect_contains "$(cat "$dir/err")" "r~$SANDBOX_SLUG~" \
+    "a deletion that keeps failing: the line names the user"
+  expect_contains "$(cat "$dir/err")" "500" "a deletion that keeps failing: the status it answered"
+  expect_contains "$out" "FACT survivors: FAIL — " "a deletion that keeps failing: the read-back finds the user"
+  expect_contains "$out" "0 of 2 deletions answered 200" "a deletion that keeps failing: the restore line counts what really answered"
+}
+
+test_a_run_that_stops_before_its_last_step_deletes_its_users() {
+  setup_case abortedusers
+  # The run of 2026-11-24 stopped in the middle of the check — the reader died on
+  # the service's log — and the Firebase Auth users it had already made were left
+  # in the project, which the `restore` row then reported as "the project's own
+  # user list was NOT read back". Deleting them is the exit trap's own work now,
+  # so every exit path cleans up and not only the last step. The exchange's
+  # answer is lost here, which stops the run where that crash did.
+  RUN96_ENV=(FAKE96_EXCHANGE_LOST=yes)
+  run96
+  expect_status "$status" 2 "a run that stopped before its last step"
+  # The deletion URL travels in the `--config -` stdin and not in curl's argv, so
+  # the calls log (argv only) cannot show it: what says the trap deleted is the
+  # fake's own record of the uids it was asked to delete, and the count of the
+  # attempts — exactly one, the trap's, the last step never having run.
+  expect_contains "$(cat "$dir/state/deleted")" "r~$SANDBOX_SLUG~" \
+    "a run that stopped before its last step: the uid deleted"
+  attempts=$(grep -c . "$dir/state/delete-attempts" || true)
+  [ "$attempts" = 1 ] \
+    || fail "a run that stopped before its last step: the trap made $attempts deletion attempts for the one uid this run created"
+  expect_contains "$(cat "$dir/err")" "deleted the run identity user r~$SANDBOX_SLUG~" \
+    "a run that stopped before its last step: the line that says so"
+  expect_contains "$out" "FACT survivors: FAIL — not reached" \
+    "a run that stopped before its last step: the row it never measured"
+  expect_contains "$out" "1 of 1 deletions answered 200" \
+    "a run that stopped before its last step: the restore line counts the trap's deletion"
+}
+
 test_a_user_list_that_cannot_be_read_back_stops_the_run() {
   setup_case unreadable
   # The last step reads the project's user list back and its assertion is the
@@ -1754,6 +1990,10 @@ test_a_user_list_whose_second_page_holds_the_survivors_is_read_through() {
   restore_line=$(printf '%s\n' "$out" | sed -n 's/^FACT restore: //p')
   expect_absent "$restore_line" "read back holding none of their uids" "a survivor on the second page: the restore line a run with survivors must not print"
   expect_contains "$restore_line" "still holds 2 of the uids this check may have created" "a survivor on the second page: the restore line"
+  # Every one of the row's three facts about the users counts the deletions that
+  # answered 200, this one included: a survivor row that named the uids without
+  # the count left the one number a person reads it for unsaid.
+  expect_contains "$restore_line" "deletions answered 200" "a survivor on the second page: the restore line counts the deletions that went through"
 }
 
 test_an_exchange_whose_answer_was_lost_names_its_user() {
@@ -1871,7 +2111,9 @@ t test_a_repository_that_is_not_one_with_state_is_refused
 t test_a_config_that_is_not_fugaro_dev_stops
 t test_another_installation_on_fugaro_dev_stops
 t test_a_repository_with_one_job_too_few_stops
+t test_the_only_job_of_a_repository_is_read_whatever_its_label_says
 t test_a_repository_with_several_jobs_of_its_own_is_not_read_as_none
+t test_a_repository_with_one_workflow_of_its_own_and_one_of_a_named_account
 t test_the_workflow_flag_selects_that_workflows_job
 t test_an_unknown_workflow_is_refused_with_the_workflows_found
 t test_a_workflow_of_the_belong_account_is_refused
@@ -1909,11 +2151,17 @@ t test_a_mint_that_answers_other_than_200_is_a_fail
 t test_a_mint_that_answers_200_with_no_token_stops
 t test_a_pairing_that_is_answered_is_the_finding
 t test_a_refusal_with_no_audit_line_is_the_finding
+t test_a_log_whose_status_is_a_number_does_not_stop_the_reader
+t test_the_diagnosis_beside_a_refusal_is_not_an_audited_act
+t test_the_warn_line_beside_a_mint_is_not_an_audited_act
 t test_a_mint_that_answered_and_left_no_line_is_a_fail
 t test_a_log_that_has_not_caught_up_is_read_again
 t test_a_log_line_that_never_arrives_still_fails_the_row
 t test_an_outsider_that_is_answered_is_the_finding
 t test_a_user_that_survived_the_deletions_is_a_fail
+t test_a_deletion_that_failed_is_taken_again
+t test_a_deletion_that_keeps_failing_is_said_with_its_uid
+t test_a_run_that_stops_before_its_last_step_deletes_its_users
 t test_a_user_list_that_cannot_be_read_back_stops_the_run
 t test_a_read_back_without_a_token_is_not_a_pass
 t test_a_user_list_whose_second_page_holds_the_survivors_is_read_through

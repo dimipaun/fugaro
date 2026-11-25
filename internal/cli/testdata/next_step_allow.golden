@@ -30,6 +30,7 @@ accounts_allow.go	next: fugaro update
 accounts_craft.go	fugaro update --repo . writes it
 accounts_rm.go	run fugaro update
 apply.go	Run fugaro update
+catalog_copy.go	run fugaro image build
 config_publish.go	run fugaro config publish
 config_publish.go	run fugaro image refresh
 config_publish.go	run fugaro update

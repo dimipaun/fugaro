@@ -26,6 +26,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/identitywire"
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rtdb"
@@ -86,6 +87,27 @@ type cloudEnv struct {
 	// and the review spec), and the operator needs the line once, not once per
 	// call.
 	stageAccountNote bool
+	// issuerAttempt is the orchestrator attempt this launch re-issues, which is
+	// what an ask of the installation's credentials service names (D3136). It
+	// is set by the one launcher that re-issues an attempt — the resident
+	// service's (orchestrator_launcher.go) — and empty on every other path,
+	// where the contract wants no reference at all.
+	issuerAttempt identitywire.AttemptID
+	// identity mints the ID token this launch presents to the installation's
+	// credentials service (launch_identity.go), where it is not the launcher's
+	// own: a resident service presents the token of the account it runs as,
+	// read from the metadata server. nil on every other path, which presents
+	// the launcher's own (launchIdentity).
+	identity func(ctx context.Context, serviceURL string) (string, error)
+	// launchService is the installation's published record of its credentials
+	// service, put here by the one launcher whose own config does not carry it:
+	// a resident service composes a config of the deployment's own facts and
+	// nothing else (orchestrator_serve.go's base), so the block, and the
+	// repository records the switch's second condition reads, come out of the
+	// shared document the installation publishes (orchestrator_launcher.go's
+	// residentService, and launch_identity.go's serviceConfig, the one place
+	// they are read). nil on every other path, whose config is its own.
+	launchService *localcfg.Config
 }
 
 // openRecordBucket opens the bucket build records are read from. Tests
@@ -232,7 +254,17 @@ func openCloud(ctx context.Context, o cloudOptions) (*cloudEnv, error) {
 
 // openCloudFor connects to the backend and the runs bucket of an already
 // selected project config.
+//
+// D1541's fence is applied here, before any client exists: the command the
+// root's pre-run filed in ctx (managed_require.go) is asked whether it may
+// write to a project that is not managed, and a fenced one is refused with
+// nothing opened. A command that reaches its cloud clients another way asks the
+// same question itself (requireManaged); one whose clients are opened here gets
+// the fence by construction, and cannot forget it.
 func openCloudFor(ctx context.Context, lc *localcfg.Config) (*cloudEnv, error) {
+	if err := requireManaged(ctx, managedCommandFrom(ctx), lc); err != nil {
+		return nil, err
+	}
 	opts := gcp.Options{GCPProject: lc.GCPProject, Region: lc.Region, LogView: lc.LogView, Endpoints: gcp.Endpoints{
 		Run: lc.Endpoints.Run, Logging: lc.Endpoints.Logging, SecretManager: lc.Endpoints.SecretManager,
 		CloudBuild: lc.Endpoints.CloudBuild, NoAuth: lc.Endpoints.NoAuth}}
@@ -373,7 +405,18 @@ func openBudgetDB(ctx context.Context, o cloudOptions) (*localcfg.Config, *rtdb.
 }
 
 // budgetDBFor is openBudgetDB's second half, for a config already selected.
+//
+// D1541's fence is applied here as it is in openCloudFor, and for the same
+// reason: the budget database is the project's own store — its caps, its
+// counters, its kill switch, its orchestrator and its pairing record — so a
+// command that writes into it and is not managed-refused must not reach a
+// client at all. An exempt command is answered without a read
+// (requireManaged), which is what makes this safe to ask at a seam the
+// read-only commands open too.
 func budgetDBFor(ctx context.Context, lc *localcfg.Config) (*localcfg.Config, *rtdb.Client, error) {
+	if err := requireManaged(ctx, managedCommandFrom(ctx), lc); err != nil {
+		return nil, nil, err
+	}
 	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
 		return nil, nil, userErr("project %s has no Firebase budget backend (budget.rtdb_url is not set in its project config): an operator runs fugaro update --firebase-project %s --name %s", lc.Name, firebaseProjectIDWord(lc.GCPProject), lc.Name)
 	}

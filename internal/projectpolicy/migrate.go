@@ -395,12 +395,22 @@ func migrateRemovedMode(raw json.RawMessage) (out json.RawMessage, ch Change, ch
 // binary, or one below the chain's first step, comes back with the refusal
 // Decode made: those are not this reader's to reinterpret, and a migration that
 // has no step for a version reports its own refusal rather than inventing one.
-// A node already at Version is not migrated at all — Migrate returns it byte
-// for byte and nothing here re-encodes it.
+// A node already at Version is not walked across anything — the steps for older
+// versions do not run and nothing here re-encodes what they would have left.
+//
+// What a node AT Version is carried for, since AB2, is the one step that runs
+// at a version rather than across two: a node that says the word the budget
+// mode's vocabulary dropped. That step left no bump behind (D3025), so the node
+// the release behind published states this release's version and says the word,
+// and a carry that fired only on *VersionError would hand every reader along the
+// update's way a refusal for the node the same run is about to rewrite — the
+// second command the HARD RULE forbids. Migrate answers for the word itself, and
+// for a node it has no step for it returns the bytes untouched and this function
+// returns Decode's refusal, so the reach of the carry is the migration's own
+// answer and not a second list kept here.
 func DecodeCarriedForward(raw []byte) (*Policy, bool, error) {
 	pol, found, err := Decode(raw)
-	var ve *VersionError
-	if err == nil || !errors.As(err, &ve) || ve.Found >= ve.Understood {
+	if err == nil {
 		return pol, found, err
 	}
 	migrated, _, merr := Migrate(raw)

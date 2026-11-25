@@ -236,6 +236,17 @@ func applyConfigStamp(path string) string {
 // whatever was queued meanwhile, of which only the entries still identical to
 // the ones read are cleared (apply.ClearUnchanged).
 func applyRunSteps(cmd *cobra.Command, lc *localcfg.Config, path string, o applyOptions) error {
+	// D1541's fence, called here because this door reaches no cloud client of
+	// its own: it starts the init engine straight away, so the run that would
+	// write into the project is the one that has to refuse it. It stands before
+	// the record is read, not after, so an unmanaged project is refused whether
+	// or not something happens to be owed — what this command is for is running
+	// steps that write, and the record is a hint about which ones rather than
+	// the reason it may act. `fugaro apply --status`, the read, returns in
+	// runApply before this and is not fenced.
+	if err := requireManaged(cmd.Context(), cmd, lc); err != nil {
+		return err
+	}
 	io := &initOptions{door: applyName, yes: true, nonInteractive: true, asJSON: o.asJSON}
 	r := newInitRun(cmd, io)
 	r.setProject(lc)
@@ -359,10 +370,12 @@ func applyRunRecord(cmd *cobra.Command, r *initRun, run *stepRun, lc *localcfg.C
 	for _, n := range stageNames {
 		if slices.Contains(unanswered, n) {
 			// A name this door registers no stage under — the services slot,
-			// the Batch backend's compute, the project stage, or a name that is
-			// no stage at all. It stays owed rather than being dropped: a run
-			// that quietly did fewer steps than it was asked for is the one
-			// thing neither the record nor this command may do.
+			// the Batch backend's compute on an installation that has not opted
+			// in (where it has, the stage is registered: updatesComputeRoot),
+			// the project stage, or a name that is no stage at all. It stays
+			// owed rather than being dropped: a run that quietly did fewer
+			// steps than it was asked for is the one thing neither the record
+			// nor this command may do.
 			kept = append(kept, n)
 			continue
 		}

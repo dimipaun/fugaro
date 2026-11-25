@@ -469,7 +469,7 @@ run196() { # dir mode — the script's own arguments are in run_args, extra env 
   # one again (a variable given as an argument wins over `env -u`).
   env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_REMOTE \
     -u CURSOR_AGENT -u AI_AGENT \
-    PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
+    PATH="$dir/bin:$PATH" HOME="$dir/home" XDG_CONFIG_HOME="$dir/home/.config" TMPDIR="$dir/tmp" \
     LIVE_CHECK_LIB="$LIVE_CHECK_LIB" \
     FAKE_LOG_DIR="$dir/logs" FAKE_GCLOUD_MODE="$mode" \
     CHECK196_REPO=acme/sandbox CHECK196_BITBUCKET=acme/bb-sandbox \

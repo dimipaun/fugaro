@@ -377,8 +377,8 @@ const (
 // carries and not the generic path, whose allowlist reaches no key of that
 // family — so the rows without a generic writer move by the one.
 const (
-	cfmRegistryRows   = 541
-	cfmAllowlistNamed = 121
+	cfmRegistryRows   = 542
+	cfmAllowlistNamed = 122
 )
 
 func TestDocsConfigManagementIsWritten(t *testing.T) {
