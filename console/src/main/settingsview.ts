@@ -38,6 +38,7 @@ import type {
   SettingsEntryMeta,
   SettingsEntryView,
 } from '../shared/settingsentry'
+import { REPO_FLAG, TERMINATOR_WORD } from './spawn'
 
 export type {
   SettingsEntryControl,
@@ -106,6 +107,35 @@ export const SETTINGS_SHADOWED_SENTENCE =
  * (D1101, D1109). A narrowing has no tick, and its `tick` member is empty. */
 export const SETTINGS_TICK_LABEL = 'I understand this raises a limit'
 
+/** SETTINGS_TARGET_WORD is the beginning of the window's target line, the one
+ * line a **repository-layer** edit draws and every other edit does not: the
+ * directory whose `fugaro.yaml` the write lands in. A `--layer repo` line on its
+ * own names *a repository's* file and not *which* (RC80, L12), and the argv's
+ * `--repo` is the only place the answer is stated, so the line is read back out
+ * of it (`settingsTargetLine`) rather than from a second value that could
+ * disagree. */
+export const SETTINGS_TARGET_WORD = 'writes fugaro.yaml in '
+
+/** settingsTargetLine is the window's target line for the argv it is about to
+ * spawn: `writes fugaro.yaml in <directory>` for a repository-layer edit, and
+ * `''` for every edit that names no repository -- which is every other layer.
+ *
+ * It reads the plan rather than a fact beside it (D1105): the value is the word
+ * after `--repo` in the argv the window shows and the source is handed, so the
+ * line and the spawn cannot differ. The scan stops at the `--` terminator,
+ * because everything behind it is the setting's own value and a value spelled
+ * `--repo` is not this flag.
+ */
+export function settingsTargetLine(argv: readonly string[]): string {
+  const terminator = argv.indexOf(TERMINATOR_WORD)
+  const end = terminator === -1 ? argv.length : terminator
+  for (let at = 0; at + 1 < end; at += 1) {
+    const value = argv[at + 1]
+    if (argv[at] === REPO_FLAG && value !== undefined) return `${SETTINGS_TARGET_WORD}${value}`
+  }
+  return ''
+}
+
 /** SettingsViewButton is which of the window's two buttons is the default: the
  * one Escape, Enter and the close box agree with. A narrowing's is `confirm`;
  * a widening's is `cancel`, so a stray double-click cannot raise a limit
@@ -154,12 +184,19 @@ export interface SettingsViewInputs {
  * not the layer that wins, and `''` otherwise -- "present only when they
  * differ", as D1113 words it, so the window draws one line or none rather than
  * deciding for itself whether to.
+ *
+ * `target` is the same shape for the other conditional line: the file a
+ * repository-layer edit writes, named, and `''` for the two layers no directory
+ * names. It is the one member here that is **read out of the argv** rather than
+ * out of the dry run's document, because the target *is* the argv's `--repo`
+ * word and a second source for it could disagree with the write.
  */
 export interface SettingsView {
   readonly key: string
   readonly oldValue: string
   readonly newValue: string
   readonly layer: string
+  readonly target: string
   readonly wins: string
   readonly sentence: string
   readonly widening: boolean
@@ -313,6 +350,7 @@ export function settingsView(inputs: SettingsViewInputs): SettingsViewRead {
       oldValue,
       newValue: dry.new,
       layer: row.targetLayer,
+      target: settingsTargetLine(inputs.argv),
       wins: row.wins,
       sentence: shadowed ? SETTINGS_SHADOWED_SENTENCE : '',
       widening: dry.widening,
