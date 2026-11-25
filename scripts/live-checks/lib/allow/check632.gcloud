@@ -1,0 +1,2 @@
+# gcloud calls scripts/live-checks/check632.sh makes. See lib/strict.sh.
+cmd	storage cat

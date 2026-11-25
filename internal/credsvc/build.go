@@ -79,6 +79,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/gitprov/httpjson"
 	"github.com/dimipaun/fugaro/internal/repourl"
+	"github.com/dimipaun/fugaro/internal/secretname"
 )
 
 // The refusals of this route. They are sentinels so a test and a reader can tell
@@ -398,7 +399,30 @@ func (s *Server) buildSecretValues(ctx context.Context, w http.ResponseWriter, r
 	}
 	out := make([]BuildSecretValue, 0, len(req.Secrets))
 	for i, container := range containers {
-		value, found, err := source.Source.Value(ctx, container)
+		reader := source.Source
+		if name, grammar := grammarName(container); grammar {
+			// A container in the grammar is a PROJECT one — the shape
+			// `fugaro secrets shared set` writes and the intake marks — and it
+			// is served through the same fence the version-2 workflow-secrets
+			// route serves one through (F13, D3328, D3333, G2): the owner's
+			// record must admit this repository to the name, and the container
+			// must carry the marker. A row outside the grammar is the project
+			// copy `update` writes under D2313, which is this route's own
+			// record and needs no fence of its own.
+			//
+			// `config.RepoSecretsOff` is deliberately NOT read here: it is the
+			// door version 2 is refused behind (G9), and this route's container
+			// is the one the record itself named — refusing it would take a
+			// build's secret away over a state the operator's own `update`
+			// controls.
+			fenced, ref := s.projectSecretReadable(ctx, name, container, row.Repo)
+			if ref != nil {
+				s.refuseProjectSecretBuild(ctx, w, row, purpose, credential, ref)
+				return nil, false
+			}
+			reader = fenced
+		}
+		value, found, err := reader.Value(ctx, container)
 		if err != nil {
 			s.refuseBuildCredentialsCause(ctx, w, row, purpose, credential, StatusUnavailable, ErrorStateUnavailable, buildCredentialsUnreadableValue, err)
 			return nil, false
@@ -412,6 +436,19 @@ func (s *Server) buildSecretValues(ctx context.Context, w http.ResponseWriter, r
 		out = append(out, BuildSecretValue{Env: req.Secrets[i], Value: value})
 	}
 	return out, true
+}
+
+// grammarName reads a container ID back to the workflow-secret name it holds,
+// and whether it is in the project grammar at all. A container outside the two
+// prefixes is the project copy `update` derives under D2313 — or a repository's
+// own copy, on an installation whose door is open — and neither is served
+// through the project fence.
+func grammarName(container string) (string, bool) {
+	n, err := secretname.Parse(container)
+	if err != nil {
+		return "", false
+	}
+	return n.Name, true
 }
 
 // buildGitCredential reads the git credential the provider's answer names
@@ -562,4 +599,18 @@ func (s *Server) refuseBuildCredentials(ctx context.Context, w http.ResponseWrit
 func (s *Server) refuseBuildCredentialsCause(ctx context.Context, w http.ResponseWriter, row RepoBuildAccount, purpose, credential string, status int, typ, message string, cause error) {
 	s.log.Error("credsvc: a build-credentials call was refused", "purpose", purpose, "repository", row.Slug, "error", cause)
 	s.refuseBuildCredentials(ctx, w, row, purpose, credential, status, typ, message)
+}
+
+// refuseProjectSecretBuild answers one refusal of the project fence (F13): the
+// same status, code and sentence the version-2 workflow-secrets route answers
+// with — a caller reads one vocabulary whether it is a run's job or a
+// repository's build — recorded on this route's own line, whose credential is
+// the provider's git credential rather than a container name. The cause, when
+// there is one, goes to the operator's log and never to the caller.
+func (s *Server) refuseProjectSecretBuild(ctx context.Context, w http.ResponseWriter, row RepoBuildAccount, purpose, credential string, ref *projectSecretRefusal) {
+	if ref.cause != nil {
+		s.refuseBuildCredentialsCause(ctx, w, row, purpose, credential, ref.status, ref.code, ref.message, ref.cause)
+		return
+	}
+	s.refuseBuildCredentials(ctx, w, row, purpose, credential, ref.status, ref.code, ref.message)
 }

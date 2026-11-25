@@ -10,7 +10,7 @@
 # run identity for repository X cannot mint for Y. The three claims of the
 # plan's row 79, read on a real installation.
 #
-# Usage:      bash scripts/live-checks/check96.sh [--dry-run] [--workflow <name>] [<owner/name>]
+# Usage:      bash scripts/live-checks/check96.sh [--dry-run] [--preflight] [--workflow <name>] [<owner/name>]
 #             The repository is the SANDBOX one. It is the one to name, and it
 #             may be left out only where the installation's own state is
 #             unambiguous: with exactly one repository holding state that one is
@@ -35,6 +35,12 @@
 #             --dry-run runs the guards and every read, prints the plan of the
 #             only things that write — the calls to the mint endpoint and the
 #             two Firebase Auth user deletions — and runs none of them.
+#             --preflight makes the check's own READS and evaluates every
+#             precondition before anything is written or launched (the
+#             installation, its own config, the sandbox repository out of the
+#             installation's state, the service and the job), prints every
+#             blocker at once with the command that clears it, writes nothing and
+#             launches nothing, and exits non-zero when anything blocks.
 # Needs:      bash, mktemp, python3, gcloud, curl and fugaro on PATH. Nothing is
 #             installed and nothing is fetched; a missing tool stops the run
 #             with one line naming it.
@@ -122,6 +128,12 @@ say() { printf '%s: %s\n' "$PROG" "$*" >&2; }
 owner() { printf '%s: %s\n' "$PROG" "$*" >&4; }
 ABORT_REASON=""
 DRY_RUN=${CHECK96_DRY_RUN:-}
+# --preflight (the flag, or CHECK96_PREFLIGHT) reads every precondition and
+# prints the blockers rather than running the check; PREFLIGHT_MODE is set in
+# main once the arguments are read, and finish's early return reads it.
+PREFLIGHT_CLI=""
+PREFLIGHT=${CHECK96_PREFLIGHT:-}
+PREFLIGHT_MODE=no
 # Set to yes by main once every step has run, so the exit trap can tell a
 # finished run from one that ended on an error of its own.
 REACHED_END=no
@@ -164,6 +176,13 @@ on_error() {
   exit 2
 }
 
+# The shared `--preflight` driver (scripts/live-checks/lib/preflight.sh).
+live_check_lib_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib
+LIVE_CHECK_LIB=${LIVE_CHECK_LIB:-$live_check_lib_dir}
+# shellcheck source=lib/preflight.sh
+. "$LIVE_CHECK_LIB/preflight.sh"
+PREFLIGHT_TOOL=check96
+
 # ---------------------------------------------------------------- requirements
 need() {
   command -v "$1" >/dev/null 2>&1 || die "Check 96 needs '$1' on PATH and it is not there${2:+ ($2)}"
@@ -188,6 +207,10 @@ PRINTED=""
 # BY the exchange, so a lost answer is a user that exists and that no uid
 # recorded after the answer would ever name.
 UIDS_CREATED=()
+# The uids a deletion has already been attempted for, so the exit trap does not
+# delete — or reach for an access token to delete — a user the last step already
+# answered for. A uid goes in BEFORE the attempt, like the record above.
+UIDS_TRIED=()
 # The service accounts this run bound the operator to as token creator, so the
 # exit trap removes exactly those and no binding the operator already held. A
 # removal that failed is kept with its command, because a standing grant on a job
@@ -221,6 +244,12 @@ scratch_up() {
 # answer away with the subshell.
 cleanup() {
   FACTS_CAPTURED=$(cat "$FACTS_FILE" 2>/dev/null || true)
+  # The users FIRST, and before the scratch directory: the deletion needs the
+  # scratch directory for nothing but its error file, and a run that stopped
+  # anywhere — an interrupted one, a guard, the crash of 2026-11-24 — reaches
+  # this trap with its users still in the project. Deleting them here is what
+  # makes every exit path clean up rather than only the last step.
+  delete_users
   revoke_impersonation
   remove_scratch
 }
@@ -348,7 +377,7 @@ restore_detail() {
     users="the run identity users were deleted ($DELETED_N of ${#UIDS_CREATED[@]} answered 200) and the project's own user list was read back holding none of their uids"
   else
     left=${UIDS_CREATED[*]}
-    users="the project's own user list was read back and still holds $SURVIVORS_READ of the uids this check may have created ($left): this is the call that deletes each of them — $delete_call"
+    users="the project's own user list was read back and still holds $SURVIVORS_READ of the uids this check may have created ($DELETED_N of ${#UIDS_CREATED[@]} deletions answered 200): the uids are $left, and this is the call that deletes each of them — $delete_call"
   fi
   local grants
   if [ "${#GRANTS_LEFT[@]}" -gt 0 ]; then
@@ -364,6 +393,12 @@ restore_detail() {
 finish() {
   local status=$?
   trap - EXIT ERR
+  if [ "$PREFLIGHT_MODE" = yes ]; then
+    # A preflight wrote nothing and launched nothing: it prints its own lines
+    # and no RESULT block.
+    remove_scratch
+    exit "$status"
+  fi
   cleanup
   local facts=$FACTS_CAPTURED
   if [ -n "$ABORT_REASON" ] && ! printf '%s' "$facts" | grep -q '^aborted|'; then
@@ -510,6 +545,353 @@ config_path() {
   return 1
 }
 
+# ---------------------------------------------------------------- preflight
+# step_preflight: --preflight. Every read the check makes before its first write
+# or launch — the installation out of `fugaro doctor --json`, its own config,
+# the sandbox repository out of the installation's state, the service out of
+# `gcloud run services list` and the job out of `gcloud run jobs list` — with
+# every precondition evaluated and its blockers printed at once, nothing written
+# and nothing launched. It must be safe on a machine with no credentials: a read
+# that fails is a blocker, not an error.
+step_preflight() {
+  # The live reads a preflight makes are the owner's, not a coding agent's, so
+  # the same refusal the check itself would make is made here.
+  preflight_agent_session
+  PF_REGION=""
+  pf_installation
+  # The service and the job are addressed in $P/$REGION, so neither can be read
+  # without the region doctor should have named.
+  [ -n "$PF_REGION" ] || return 0
+  pf_service
+  [ -n "${SLUG:-}" ] || return 0
+  pf_job
+}
+
+# pf_installation: the installation out of `fugaro doctor --json` (its name,
+# project and region, held to fugaro-dev and the fugaro installation), and the
+# config file in force it then reads.
+pf_installation() {
+  local doctor_status=0 answer
+  say "preflight: reading the installation: fugaro doctor --json"
+  run_capture "$SCRATCH/pf-doctor.json" fugaro doctor --json || doctor_status=$?
+  if [ "$doctor_status" != 0 ] && [ "$doctor_status" != 1 ]; then
+    preflight_block installation \
+      "fugaro doctor --json did not answer, so the installation this check runs against cannot be read" \
+      "fugaro doctor --json"
+    return 0
+  fi
+  answer=$(reader doctor <"$SCRATCH/pf-doctor.json") || {
+    preflight_block installation \
+      "fugaro doctor --json did not print the document this check reads (is this fugaro too old to print --json?)" \
+      "fugaro doctor --json"
+    return 0
+  }
+  NAME=$(field_of name "$answer")
+  PROJECT=$(field_of project "$answer")
+  REGION=$(field_of region "$answer")
+  [ -n "$REGION" ] || preflight_block installation \
+    "fugaro doctor --json named no region, so this check cannot address the service or the job" \
+    "fugaro doctor --json"
+  [ -n "$REGION" ] && PF_REGION=yes
+  case "$NAME" in
+  belong | belong-*)
+    stop "the config in force describes the installation '$NAME', which is the owner's own one: Check 96 mints GitHub installation tokens and creates Firebase users, and it is a sandbox check on the '$NAME_WANTED' installation"
+    ;;
+  esac
+  if [ "$PROJECT" != "$P" ] || [ "$NAME" != "$NAME_WANTED" ]; then
+    preflight_block installation \
+      "the config in force describes the ${NAME:-unknown} installation on ${PROJECT:-unknown}, and Check 96 runs on the $NAME_WANTED installation of $P only (never belong)" \
+      "$(pf_config_fix)"
+    return 0
+  fi
+  preflight_note installation \
+    "the installation is $NAME (GCP project $PROJECT, region $REGION), read from fugaro doctor --json"
+  pf_repository
+  pf_config
+}
+
+# pf_repository: the sandbox repository and the second the pairing case needs,
+# out of `fugaro budget show --all --json`, named by you or derived where the
+# installation's own state holds exactly one.
+pf_repository() {
+  local answer
+  say "preflight: reading the sandbox repository: fugaro budget show --all --json"
+  if ! run_capture "$SCRATCH/pf-budget.json" fugaro budget show --all --json; then
+    preflight_block repository \
+      "fugaro budget show --all --json did not answer, so the sandbox repository cannot be read" \
+      "fugaro budget show --all --json"
+    return 0
+  fi
+  answer=$(reader budget "$REPO_ARG" <"$SCRATCH/pf-budget.json" 2>"$SCRATCH/pf-budget.err") || {
+    preflight_block repository \
+      "the sandbox repository could not be named: $(sed -n '1,3p' "$SCRATCH/pf-budget.err" | sed 's/^error=//' | tr '\n' ' ')" \
+      "$(pf_repository_fix)"
+    return 0
+  }
+  FPROJ=$(field_of project "$answer")
+  REPO=$(field_of repo "$answer")
+  SLUG=$(field_of slug "$answer")
+  OTHER_REPO=$(field_of other_repo "$answer")
+  OTHER_SLUG=$(field_of other_slug "$answer")
+  REPO_COUNT=$(field_of repos "$answer")
+  REPO_CHOSEN=$(field_of chosen "$answer")
+  case "$REPO" in
+  *belong* | *edge-devel-dimi* | *edgeappinc*)
+    stop "$REPO names an installation this check never touches (never belong, edge-devel-dimi or edgeappinc)"
+    ;;
+  esac
+  # The third claim needs a Y, so a state with one repository stops here rather
+  # than read the pairing's own caller as this check's missing half.
+  [ -n "$OTHER_SLUG" ] || stop "the installation has one repository with state, and the pairing case needs a second one: Check 96's third claim is that a run identity for repository X cannot mint for Y, and there is no Y here"
+  [ -n "$REPO" ] || preflight_block repository \
+    "the sandbox repository could not be named from this installation's own state" \
+    "fugaro budget show --all --json"
+  [ -n "$FPROJ" ] || preflight_block repository \
+    "fugaro budget show --all --json named no Fugaro project, so the run identity's fp claim cannot be minted for it" \
+    "fugaro budget show --all --json"
+  [ -z "$REPO" ] || [ -z "$FPROJ" ] || preflight_note repository \
+    "the sandbox repository is $REPO (slug $SLUG), $([ "$REPO_CHOSEN" = named ] && printf 'the one you named' || printf 'DERIVED as the only repository this installation has state for'), and the pairing case's second repository is $OTHER_REPO (slug $OTHER_SLUG)"
+}
+
+# pf_config: the installation's own file — its Firebase project, the token
+# signer, the restricted web API key and the credentials service it records.
+pf_config() {
+  local cfgans
+  say "preflight: reading the installation's own config"
+  if ! config_path "$NAME" >"$SCRATCH/pf-cfg.path"; then
+    preflight_block config \
+      "no project config for '$NAME' was found where this check looks (\$FUGARO_CONFIG, then \$XDG_CONFIG_HOME/fugaro/projects/$NAME.yaml and \$HOME/.config/fugaro/projects/$NAME.yaml)" \
+      "fugaro update"
+    return 0
+  fi
+  CFG=$(cat "$SCRATCH/pf-cfg.path")
+  FB=$(yaml_scalar "$CFG" firebase_project)
+  SIGNER=$(yaml_scalar "$CFG" token_signer)
+  FIREKEY=$(yaml_scalar "$CFG" firebase_api_key)
+  if [ -z "$FB" ] || [ -z "$SIGNER" ] || [ -z "$FIREKEY" ]; then
+    preflight_block config \
+      "$CFG carries no budget.firebase_project, token_signer or firebase_api_key, so this check cannot address the installation's Firebase project or mint a run identity" \
+      "fugaro update"
+    return 0
+  fi
+  case "$SIGNER" in
+  *@"$FB".iam.gserviceaccount.com) ;;
+  *)
+    preflight_block config \
+      "$CFG's token signer ($SIGNER) is not an account of its own Firebase project ($FB), so the custom token would be exchanged at another project's Identity Toolkit" \
+      "fugaro update"
+    return 0
+    ;;
+  esac
+  cfgans=$(reader config "$CFG" "${REPO:-}" 2>"$SCRATCH/pf-cfg.err") || {
+    preflight_block config \
+      "$CFG is not the document this check reads: $(sed -n '1,3p' "$SCRATCH/pf-cfg.err" | sed 's/^error=//' | tr '\n' ' ')" \
+      "fugaro update"
+    return 0
+  }
+  CFG_URL=$(field_of service_url "$cfgans")
+  CFG_READY=$(field_of repo_ready "$cfgans")
+  preflight_note config \
+    "the config in force ($CFG) carries the Firebase project $FB and a token signer of that project and a restricted web API key (present, never printed), and $([ -n "$CFG_URL" ] && printf 'records the credentials service at %s' "$CFG_URL" || printf 'records NO credentials service (credentials_service.url is absent)')"
+}
+
+# pf_service: the credentials service by its own label, and the two facts the
+# mint needs (its URL and the Fugaro project its container names).
+pf_service() {
+  local answer
+  say "preflight: reading the service: gcloud run services list in $P/$REGION"
+  if ! run_capture "$SCRATCH/pf-services.json" gcloud run services list --platform=managed \
+    --project "$P" --region "$REGION" --filter='metadata.labels.fugaro_role=credentials' --format=json; then
+    preflight_block service \
+      "gcloud run services list did not answer for $P/$REGION, so the credentials service cannot be read (an account that may read Cloud Run there is needed)" \
+      "gcloud run services list --project $P --region $REGION --filter=metadata.labels.fugaro_role=credentials --format=json"
+    return 0
+  fi
+  answer=$(reader service <"$SCRATCH/pf-services.json") || {
+    preflight_block service \
+      "no single credentials service is deployed in $P/$REGION (the service carries the label fugaro_role=credentials)" \
+      "fugaro update"
+    return 0
+  }
+  SVC=$(field_of service "$answer")
+  if ! run_capture "$SCRATCH/pf-service.json" gcloud run services describe "$SVC" --project "$P" --region "$REGION" --format=json; then
+    preflight_block service "gcloud run services describe did not answer for $SVC" \
+      "gcloud run services describe $SVC --project $P --region $REGION --format=json"
+    return 0
+  fi
+  answer=$(reader svc <"$SCRATCH/pf-service.json") || {
+    preflight_block service "the credentials service's own document is not the shape this check reads" \
+      "gcloud run services describe $SVC --project $P --region $REGION --format=json"
+    return 0
+  }
+  SVCURL=$(field_of url "$answer")
+  SVC_FPROJ=$(field_of fproj "$answer")
+  SVCSA=$(field_of sa "$answer")
+  SVC_SHARED=$(field_of shared "$answer")
+  if [ -z "$SVCURL" ] || [ -z "$SVCSA" ]; then
+    preflight_block service \
+      "$SVC has no URL or runs as no service account, so it is not serving and every caller's token would be minted for an audience no revision answers to" \
+      "fugaro update"
+    return 0
+  fi
+  if [ -n "$FPROJ" ] && [ "$SVC_FPROJ" != "$FPROJ" ]; then
+    preflight_block service \
+      "the service's container names FUGARO_PROJECT=$SVC_FPROJ and the installation's own state names the Fugaro project $FPROJ, so the run identity's fp claim and the service it is presented to are two different projects" \
+      "fugaro update"
+    return 0
+  fi
+  if [ -n "$CFG_URL" ] && [ "$CFG_URL" != "$SVCURL" ]; then
+    preflight_block service \
+      "the config in force records the credentials service at $CFG_URL and the deployed service answers at $SVCURL, so a launch would hand its jobs an address that is not this service" \
+      "fugaro update"
+    return 0
+  fi
+  preflight_note service "the credentials service is $SVC, deployed in $P/$REGION, serving at $SVCURL as $SVCSA"
+}
+
+# pf_job: the repository's job out of `gcloud run jobs list`, narrowed to one
+# workflow's job by `--workflow`, and the job account and App ID the mint needs.
+pf_job() {
+  local answer found wfs
+  LABEL=$(reader label "$SLUG") || {
+    preflight_block job "the repository's own label could not be derived from its slug ${SLUG:-?}" \
+      "bash scripts/live-checks/check96.sh --preflight ${REPO:-}"
+    return 0
+  }
+  say "preflight: reading the job: gcloud run jobs list in $P/$REGION"
+  if ! run_capture "$SCRATCH/pf-jobs.json" gcloud run jobs list --project "$P" --region "$REGION" \
+    --filter="metadata.labels.fugaro_repo=$LABEL" --format=json; then
+    preflight_block job \
+      "gcloud run jobs list did not answer for $P/$REGION, so the repository's job cannot be read (an account that may read Cloud Run there is needed)" \
+      "gcloud run jobs list --project $P --region $REGION --filter=metadata.labels.fugaro_repo=$LABEL --format=json"
+    return 0
+  fi
+  if [ -n "${WORKFLOW_ARG:-}" ]; then
+    answer=$(reader jobs "$WORKFLOW_ARG" <"$SCRATCH/pf-jobs.json" 2>"$SCRATCH/pf-jobs.err") || {
+      # The reader prints the labels it did find before it refuses the name, so
+      # the fix can name one of them.
+      wfs=$(field_of workflows "$(reader jobs <"$SCRATCH/pf-jobs.json" 2>/dev/null || true)")
+      preflight_block job \
+        "--workflow $WORKFLOW_ARG does not name a workflow of $REPO: $(sed -n '1,3p' "$SCRATCH/pf-jobs.err" | sed 's/^error=//' | tr '\n' ' ')" \
+        "$(pf_workflow_fix "$REPO" "$wfs")"
+      return 0
+    }
+  else
+    answer=$(reader jobs <"$SCRATCH/pf-jobs.json") || {
+      preflight_block job "the project's job list is not the document this check reads (gcloud run jobs list --format=json)" \
+        "gcloud run jobs list --project $P --region $REGION --filter=metadata.labels.fugaro_repo=$LABEL --format=json"
+      return 0
+    }
+  fi
+  found=$(field_of found "$answer")
+  wfs=$(field_of workflows "$answer")
+  case "$found" in
+  "" | *[!0-9]*)
+    preflight_block job \
+      "the project's job list did not say how many jobs the sandbox repository has, so this check cannot tell whether $REPO has a job of its own" \
+      "gcloud run jobs list --project $P --region $REGION --filter=metadata.labels.fugaro_repo=$LABEL --format=json"
+    return 0
+    ;;
+  0)
+    if ! run_capture "$SCRATCH/pf-projectjobs.json" gcloud run jobs list --project "$P" --region "$REGION" \
+      --filter="metadata.labels.fugaro_profile:*" --format=json; then
+      preflight_block job \
+        "gcloud run jobs list did not answer for $P/$REGION, so the shared project job cannot be read" \
+        "gcloud run jobs list --project $P --region $REGION --filter=metadata.labels.fugaro_profile=* --format=json"
+      return 0
+    fi
+    answer=$(reader projectjob <"$SCRATCH/pf-projectjobs.json") || {
+      preflight_block job \
+        "$REPO ($REPO_COUNT of this installation's repositories have state) has no job of its own in $P/$REGION and this installation has no single shared project job either: a repository's jobs carry fugaro_repo=$LABEL and a shared project job carries fugaro_profile" \
+        "fugaro setup --repo $REPO"
+      return 0
+    }
+    ;;
+  1) ;;
+  *)
+    [ -n "${WORKFLOW_ARG:-}" ] || {
+      preflight_block job \
+        "$REPO has $found jobs of its own in $P/$REGION, one per workflow of its fugaro.yaml, and this check reads the job a run lands on" \
+        "$(pf_workflow_fix "$REPO" "$wfs")"
+      return 0
+    }
+    ;;
+  esac
+  JOB=$(field_of job "$answer")
+  JOB_KIND=$(field_of kind "$answer")
+  JOB_WORKFLOW=$(field_of workflow "$answer")
+  [ -n "$JOB" ] || {
+    preflight_block job "the sandbox repository's job could not be named from the project's job list" \
+      "gcloud run jobs list --project $P --region $REGION --filter=metadata.labels.fugaro_repo=$LABEL --format=json"
+    return 0
+  }
+  if ! run_capture "$SCRATCH/pf-job.json" gcloud run jobs describe "$JOB" --project "$P" --region "$REGION" --format=json; then
+    preflight_block job "gcloud run jobs describe did not answer for $JOB" \
+      "gcloud run jobs describe $JOB --project $P --region $REGION --format=json"
+    return 0
+  fi
+  answer=$(reader job <"$SCRATCH/pf-job.json") || {
+    preflight_block job "the job's own document is not the shape this check reads" \
+      "gcloud run jobs describe $JOB --project $P --region $REGION --format=json"
+    return 0
+  }
+  JOBSA=$(field_of sa "$answer")
+  APPID=$(field_of appid "$answer")
+  case "$JOBSA" in
+  *belong*)
+    stop "the job $JOB runs as $JOBSA, an account of the owner's own 'belong' installation: Check 96 is a sandbox check that never judges a belong job's account, its environment or its mint"
+    ;;
+  esac
+  [ -n "$JOBSA" ] || preflight_block job \
+    "the job $JOB names no service account, so there is no job account to impersonate" \
+    "fugaro update --repo"
+  [ -n "$APPID" ] || preflight_block job \
+    "the job $JOB carries no FUGARO_GITHUB_APP_ID, so this check cannot make a mint call the service would admit" \
+    "fugaro update --repo"
+  [ -z "$JOBSA" ] || [ -z "$APPID" ] || preflight_note job \
+    "the job is $JOB in $P/$REGION, running as $JOBSA and carrying FUGARO_GITHUB_APP_ID=$APPID"
+}
+
+# pf_config_fix: the command that puts the sandbox installation's own config in
+# force, when this machine has one. A machine whose config names another
+# installation has to apply the sandbox one first.
+pf_config_fix() {
+  local base path
+  for base in "${XDG_CONFIG_HOME:-}" "$HOME/.config" "$HOME/Library/Application Support"; do
+    [ -n "$base" ] || continue
+    path="$base/fugaro/projects/$NAME_WANTED.yaml"
+    if [ -r "$path" ] && [ "$path" != "${FUGARO_CONFIG:-}" ]; then
+      printf 'FUGARO_CONFIG=%s bash scripts/live-checks/check96.sh --preflight' "$path"
+      return 0
+    fi
+  done
+  printf 'fugaro update'
+}
+
+# pf_repository_fix: naming the repository the derivation could not make, taken
+# from the candidates the reader refused to pick between.
+pf_repository_fix() {
+  local cands first
+  cands=$(sed -n 's/.*one of //p' "$SCRATCH/pf-budget.err" 2>/dev/null | head -n1)
+  first=${cands%%,*}
+  if [ -n "$first" ]; then
+    printf 'bash scripts/live-checks/check96.sh --preflight %s' "$first"
+  else
+    printf 'fugaro budget show --all --json'
+  fi
+}
+
+# pf_workflow_fix: the flag that names one of the repository's workflows, taken
+# from the labels the job list carries.
+pf_workflow_fix() { # pf_workflow_fix REPO WORKFLOWS
+  local first=${2%%,*}
+  if [ -n "$first" ]; then
+    printf 'bash scripts/live-checks/check96.sh --preflight --workflow %s %s' "$first" "$1"
+  else
+    printf 'fugaro setup --repo %s' "$1"
+  fi
+}
+
 # ------------------------------------------------------------------ the steps
 # step_installation reads the installation's own facts and holds the project to
 # fugaro-dev. Nothing here is typed by hand: the project, the region, the
@@ -647,16 +1029,18 @@ step_service() {
 # (one per workflow in its fugaro.yaml); the installation's support jobs carry
 # `fugaro_role` instead, so they are not the job a run lands on. Where the
 # repository has several of its own, the one read is the job the workflow named
-# with `--workflow` wears as its `fugaro_workflow` label; with several and no
-# flag this check is not told which workflow a run uses and stops rather than
-# read one of them (see the `*)` branch below).
+# with `--workflow` wears as its `fugaro_workflow` label, else the job of the one
+# workflow that is not a named account's (`<workflow>_<account>`, which is what
+# the reader derives and says in one line); with several workflows that are all
+# the repository's own and no flag, this check is not told which one a run uses
+# and stops rather than read one of them (see the `*)` branch below).
 step_job() {
   LABEL=$(reader label "$SLUG") || stop "the repository's own label could not be derived from its slug"
   if ! run_capture "$SCRATCH/jobs.json" gcloud run jobs list --project "$P" --region "$REGION" \
     --filter="metadata.labels.fugaro_repo=$LABEL" --format=json; then
     stop "gcloud run jobs list did not answer for $P/$REGION: the check needs an account that may read Cloud Run there"
   fi
-  local answer found wfs
+  local answer found wfs chosen derived=no
   if [ -n "${WORKFLOW_ARG:-}" ]; then
     # Told which workflow, the reader picks the one job that wears its label and
     # refuses a name no job of the repository carries — in one line, naming the
@@ -671,6 +1055,7 @@ step_job() {
   fi
   found=$(field_of found "$answer")
   wfs=$(field_of workflows "$answer")
+  chosen=$(field_of chosen "$answer")
   case "$found" in
   "" | *[!0-9]*) stop "the project's job list did not say how many jobs the sandbox repository has, so this check cannot tell whether $REPO has a job of its own" ;;
   0)
@@ -693,14 +1078,30 @@ step_job() {
     # -- and this check reads the job a run lands on. Which workflow a run uses
     # is a question the launch itself refuses to answer without being told
     # (internal/cli/run.go's resolveWorkflow: --workflow, else a config with
-    # exactly one), and this check is not told either, so it stops rather than
-    # read one job and report its account, its environment and its mint as the
-    # repository's. Reading the shared project job here instead is what this
-    # branch used to do, and it judged a repository with two jobs as a repository
-    # with none. A workflow named with --workflow is the one thing that lifts
-    # this: the reader then picked the job that wears its label, and it stopped
+    # exactly one), and with two workflows of the repository's own this check is
+    # not told either, so it stops rather than read one job and report its
+    # account, its environment and its mint as the repository's. Reading the
+    # shared project job here instead is what this branch used to do, and it
+    # judged a repository with two jobs as a repository with none. A workflow
+    # named with --workflow is the one thing that lifts this: the reader then
+    # picked the job that wears its label -- `chosen=named` -- and it stopped
     # the run itself if no job of the repository wears it.
-    [ -n "${WORKFLOW_ARG:-}" ] || stop "the sandbox repository $REPO has $found jobs of its own in $P/$REGION, one per workflow of its fugaro.yaml ($(printf '%s\n' "$answer" | sed -n 's/^own=//p' | tr '\n' ' ')), and this check reads the job a run lands on: a run on a repository with several workflows is told which one with --workflow (internal/cli/run.go's resolveWorkflow) and this check is not told, so it stops rather than read one of them and report its account, its environment and its mint as the repository's. Re-run with --workflow <one of: $wfs>"
+    #
+    # The one answer left to derive is the NAMED ACCOUNTS: a job of a named
+    # OAuth account wears the workflow joined to that account as its label
+    # (gcp.WorkflowVariant, `web_belong`), and a workflow of the repository's own
+    # never carries the '_' that joins them (config.WorkflowNameRE). So when the
+    # reader found exactly one label spelled without one, that is the workflow a
+    # run lands on and the job wearing it is the one read -- said here in one
+    # line, because a pick this check makes on the owner's behalf is a pick the
+    # block has to name.
+    if [ -z "$chosen" ]; then
+      stop "the sandbox repository $REPO has $found jobs of its own in $P/$REGION, and this check cannot tell which one a run of it lands on: $(printf '%s\n' "$answer" | sed -n 's/^own=//p' | tr '\n' ' '). Re-run with --workflow <one of: $wfs>"
+    fi
+    if [ "$chosen" = derived ]; then
+      derived=yes
+      say "$REPO has $found jobs of its own; reading the job of the workflow $(field_of workflow "$answer"), the only one of its workflows that is not a named account's"
+    fi
     ;;
   esac
   JOB=$(field_of job "$answer")
@@ -739,6 +1140,7 @@ step_job() {
     # would read as a judgement of the repository rather than of that job.
     local wfsaid="the repository's only one"
     if [ -n "${WORKFLOW_ARG:-}" ]; then wfsaid="the one you named"; fi
+    if [ "$derived" = yes ]; then wfsaid="the only one of its workflows that is not a named account's"; fi
     namesaid="$namesaid, the job of the workflow $JOB_WORKFLOW (its fugaro_workflow label, $wfsaid)"
   fi
   fact job PASS "$namesaid, $kindsaid: it runs as $JOBSA and carries FUGARO_GITHUB_APP_ID=$APPID"
@@ -1236,24 +1638,77 @@ step_outsider() {
   fi
 }
 
+# delete_user_call TOKEN UID — one deletion of one Firebase Auth user, as the
+# owner and with the project's own Identity Toolkit API. It answers the HTTP
+# status on stdout and nothing else, and the status is the point: the call used
+# to be posted and its answer thrown away, so a deletion that answered 403 or
+# 500 read exactly like one that answered 200 — which is how the run of
+# 2026-11-24 left two users in the project and reported it as "0 of 2 deletions
+# answered 200" beside a user list nobody had read back. The token travels in a
+# curl config read from stdin, so it is in no argv.
+delete_user_call() { # delete_user_call TOKEN UID
+  local at=$1 uid=$2 code
+  code=$(printf 'url = "%s"\nheader = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\ndata = "{\\"localId\\":\\"%s\\"}"\n' \
+    "https://identitytoolkit.googleapis.com/v1/projects/$FB/accounts:delete" "$at" "$uid" |
+    curl -sS --config - -o /dev/null -w '%{http_code}' 2>"$SCRATCH/delete.err") || code=""
+  printf '%s' "$code"
+}
+
+# delete_users [TOKEN] — every user this check created that no deletion has been
+# attempted for yet. It is called from the last step AND from the exit trap, so
+# a run that stops before that step — a guard, an interrupt, a step that stopped
+# the run — deletes its users too instead of leaving them for the owner to find.
+# Each is deleted twice at most: Identity Toolkit answers a deletion with a
+# status, a first answer that is not 200 is retried once, and one that still
+# fails is said in one line with the uid rather than counted as done. A token is
+# fetched here only when there is something to delete with it, and never a
+# second time in the same run: the trap's call finds every uid already tried.
+delete_users() { # delete_users [TOKEN]
+  local at=${1:-} uid code attempt
+  local left=()
+  for uid in ${UIDS_CREATED[@]+"${UIDS_CREATED[@]}"}; do
+    case " ${UIDS_TRIED[*]-} " in
+    *" $uid "*) ;;
+    *) left+=("$uid") ;;
+    esac
+  done
+  [ "${#left[@]}" -gt 0 ] || return 0
+  if [ -z "$at" ]; then
+    at=$(gcloud auth print-access-token 2>"$SCRATCH/at.err") || at=""
+    if [ -z "$at" ]; then
+      say "no access token: ${left[*]} not deleted; see the restore line"
+      return 0
+    fi
+  fi
+  for uid in "${left[@]}"; do
+    UIDS_TRIED+=("$uid")
+    attempt=0
+    while :; do
+      attempt=$((attempt + 1))
+      code=$(delete_user_call "$at" "$uid")
+      [ "$code" = 200 ] && break
+      [ "$attempt" -ge 2 ] && break
+    done
+    if [ "$code" = 200 ]; then
+      DELETED_N=$((DELETED_N + 1))
+      say "deleted the run identity user $uid: status 200"
+    else
+      say "$uid NOT deleted (status ${code:-none}, twice): see the restore line"
+    fi
+  done
+  return 0
+}
+
 # step_survivors is the final assertion: the identities this check minted are
 # Firebase Auth users (r~<slug>~<run>, one per exchange) and they are deleted the
 # way they were created — as the owner, with the project's own API — and the
 # user list is read back. The access token is passed in a curl config read from
 # stdin, so it is never in argv either.
 step_survivors() {
-  local at uid deleted=0 code
+  local at
   at=$(gcloud auth print-access-token 2>"$SCRATCH/at.err") || stop "no access token for the project's own Identity Toolkit API: the two users this check created cannot be deleted"
   [ -n "$at" ] || stop "gcloud answered no access token"
-  for uid in ${UIDS_CREATED[@]+"${UIDS_CREATED[@]}"}; do
-    code=$(printf 'url = "https://identitytoolkit.googleapis.com/v1/projects/%s/accounts:delete"\nheader = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\ndata = "{\\"localId\\":\\"%s\\"}"\n' \
-      "$FB" "$at" "$uid" | curl -sS --config - -o /dev/null -w '%{http_code}') || code="curl-failed"
-    if [ "$code" = 200 ]; then
-      deleted=$((deleted + 1))
-      DELETED_N=$deleted
-    fi
-    say "deleted the run identity user $uid: status $code"
-  done
+  delete_users "$at"
   # A second access token for the read-back, read the same way and checked the
   # same way as the first one: a token fetched inside the pipeline below (a
   # command substitution whose status the pipeline discards) would go out as an
@@ -1298,9 +1753,9 @@ step_survivors() {
   at=""
   SURVIVORS_READ=$left
   if [ "$left" = 0 ]; then
-    fact survivors PASS "the two run identity users this check exchanged were deleted ($deleted of ${#UIDS_CREATED[@]} answered 200) and the project's own user list was read back — every page of it, on a 200 — holding 0 of their uids: nothing this check created survives it"
+    fact survivors PASS "the two run identity users this check exchanged were deleted ($DELETED_N of ${#UIDS_CREATED[@]} answered 200) and the project's own user list was read back — every page of it, on a 200 — holding 0 of their uids: nothing this check created survives it"
   else
-    fact survivors FAIL "the project's user list still holds $left of the uids this check created ($deleted of ${#UIDS_CREATED[@]} deletions answered 200): the read-back IS the assertion, and a survivor is a failure this check reports rather than leaves"
+    fact survivors FAIL "the project's user list still holds $left of the uids this check created ($DELETED_N of ${#UIDS_CREATED[@]} deletions answered 200): the read-back IS the assertion, and a survivor is a failure this check reports rather than leaves"
   fi
 }
 
@@ -1446,7 +1901,7 @@ print_block() { # print_block FACTS STATUS — always on the owner's own stdout
 }
 
 # ----------------------------------------------------------------------- main
-USAGE="check96.sh [--dry-run] [--workflow <name>] [<owner/name>]"
+USAGE="check96.sh [--dry-run] [--preflight] [--workflow <name>] [<owner/name>]"
 
 parse_args() {
   REPO_ARG=""
@@ -1454,6 +1909,7 @@ parse_args() {
   while [ $# -gt 0 ]; do
     case "$1" in
     --dry-run) DRY_RUN=1 ;;
+    --preflight) PREFLIGHT_CLI=1 ;;
     --workflow)
       [ $# -ge 2 ] || die "--workflow needs the workflow's name. usage: $USAGE"
       [ -z "$WORKFLOW_ARG" ] || die "only one --workflow may be named. usage: $USAGE"
@@ -1496,11 +1952,17 @@ print_plan() {
 main() {
   need_tools
   parse_args "$@"
+  PREFLIGHT=${CHECK96_PREFLIGHT:-$PREFLIGHT_CLI}
+  [ -z "$PREFLIGHT" ] || PREFLIGHT_MODE=yes
   guard_repository
   guard_workflow
   scratch_up
   write_files
   guard_xtrace
+  if [ -n "$PREFLIGHT" ]; then
+    step_preflight
+    preflight_report
+  fi
   step_installation
   step_service
   step_job
@@ -1627,7 +2089,7 @@ def cmd_budget(want):
             fail("this installation has no repository with state")
         if len(with_state) > 1:
             fail("this installation has %d repositories with state and none was named, so this check cannot tell which one is the sandbox: name it, one of %s"
-                 % (len(with_state), ", ".join(sorted(r.get("repo") or "" for r in with_state))))
+                 % (len(with_state), ", ".join(sorted(str(r.get("repo") or "") for r in with_state))))
         mine = with_state[:1]
         chosen = "derived"
     others = [r for r in with_state if r.get("repo") != mine[0].get("repo")]
@@ -1766,7 +2228,20 @@ def cmd_jobs(want=""):
     A name no job of the repository wears is a refusal and not a read that could
     not be made -- the labels it did find are listed, because that list is the
     fix -- and a name more than one job wears is refused too: which of two jobs
-    a mint is read against is not a question to guess at."""
+    a mint is read against is not a question to guess at.
+
+    With no WANT and several jobs, the one thing this can still tell is a NAMED
+    ACCOUNT's job from the repository's own: a job of a named OAuth account wears
+    the workflow joined to that account as its label (gcp.WorkflowVariant:
+    `go_belong` is the workflow `go` on the account `belong`), and no workflow
+    name can carry the '_' that joins them (config.WorkflowNameRE is letters,
+    digits and dashes). So when exactly one of the workflows these jobs wear is
+    spelled without one, that is a workflow of the repository itself and the job
+    that wears it is the one reported, as `chosen=derived`; the run of
+    2026-11-24 had `web` and `web_belong` and stopped on a question with one
+    answer. Two plain workflows, or none, is still a question this check will
+    not answer by picking one, and `chosen` is then absent and the caller
+    stops."""
     found = []
     for job in load():
         labels = (job.get("metadata") or {}).get("labels") or {}
@@ -1777,14 +2252,14 @@ def cmd_jobs(want=""):
         labels = (job.get("metadata") or {}).get("labels") or {}
         print("own=%s workflow=%s" % ((job.get("metadata") or {}).get("name") or "",
                                       labels.get("fugaro_workflow") or ""))
-    workflows = sorted({(j.get("metadata") or {}).get("labels", {}).get("fugaro_workflow") or ""
+    workflows = sorted({str((j.get("metadata") or {}).get("labels", {}).get("fugaro_workflow") or "")
                         for j in found} - {""})
     print("workflows=%s" % ", ".join(workflows))
 
     def workflow_of(job):
         return (job.get("metadata") or {}).get("labels", {}).get("fugaro_workflow") or ""
 
-    chosen = None
+    chosen, how = None, ""
     if want:
         mine = [j for j in found if workflow_of(j) == want]
         if not mine:
@@ -1793,14 +2268,23 @@ def cmd_jobs(want=""):
         if len(mine) > 1:
             fail("%s is the fugaro_workflow label of %d of this repository's jobs, so this check cannot tell which one a run of it lands on"
                  % (want, len(mine)))
-        chosen = mine[0]
+        chosen, how = mine[0], "named"
     elif len(found) == 1:
-        chosen = found[0]
+        # One job of the repository's own, whatever its workflow label says --
+        # including a label that names a named account's (the only job a run of
+        # this repository could land on): there is nothing to choose between.
+        chosen, how = found[0], "only"
+    else:
+        plain = sorted(w for w in workflows if "_" not in w)
+        mine = [j for j in found if workflow_of(j) == plain[0]] if len(plain) == 1 else []
+        if len(mine) == 1:
+            chosen, how = mine[0], "derived"
     if chosen is not None:
         labels = (chosen.get("metadata") or {}).get("labels") or {}
         print("job=%s" % ((chosen.get("metadata") or {}).get("name") or ""))
         print("kind=%s" % ("project" if labels.get("fugaro_profile") else "repository"))
         print("workflow=%s" % (labels.get("fugaro_workflow") or ""))
+        print("chosen=%s" % how)
 
 
 def cmd_projectjob():
@@ -1831,10 +2315,10 @@ def cmd_job():
     containers = spec.get("containers") or [{}]
     container = containers[0]
     env = env_of(container)
-    names = sorted(n for n in env if n)
-    mounts = sorted({v.get("name") for v in spec.get("volumes") or [] if v.get("name")}
-                    | {m.get("name") for m in container.get("volumeMounts") or [] if m.get("name")})
-    refs = sorted({(e.get("valueSource") or {}).get("secretKeyRef", {}).get("secret") or ""
+    names = sorted(str(n) for n in env if n)
+    mounts = sorted({str(v.get("name")) for v in spec.get("volumes") or [] if v.get("name")}
+                    | {str(m.get("name")) for m in container.get("volumeMounts") or [] if m.get("name")})
+    refs = sorted({str((e.get("valueSource") or {}).get("secretKeyRef", {}).get("secret") or "")
                    for e in container.get("env") or []} - {""})
     appkey = "FUGARO_GITHUB_APP_PRIVATE_KEY"
     print("sa=%s" % (spec.get("serviceAccountName") or ""))
@@ -1914,19 +2398,19 @@ def cmd_policy(jobsa, svcsa):
     bindings = doc.get("bindings") or []
     roles, members, job_member, cond = [], 0, "no", "no"
     for b in bindings:
-        roles.append(b.get("role") or "")
+        roles.append(str(b.get("role") or ""))
         if b.get("condition"):
             cond = "yes"
         for m in b.get("members") or []:
             members += 1
-            if jobsa and m.endswith(":" + jobsa):
+            if jobsa and str(m).endswith(":" + jobsa):
                 job_member = "yes"
     print("bindings=%d" % len(bindings))
     print("role=%s" % ",".join(sorted(roles)))
     print("members=%d" % members)
     print("job_member=%s" % job_member)
     print("svc_member=%s" % ("yes" if any(
-        m.endswith(":" + svcsa)
+        str(m).endswith(":" + svcsa)
         for b in bindings for m in (b.get("members") or [])) else "no"))
     print("cond=%s" % cond)
 
@@ -2009,19 +2493,43 @@ def cmd_repos():
 
 
 def cmd_audit():
-    """One run's audit lines: how many, their statuses, and the first line's
+    """One run's AUDIT lines: how many, their statuses, and the first line's
     fields. The raw text is scanned for the token prefix and only the COUNT
-    leaves this function."""
+    leaves this function.
+
+    The read is filtered by the run id alone (the caller's filter), and the
+    service writes a SECOND line for a run whose call it refused: the diagnosis
+    it puts beside the audit line (internal/credsvc's logRefusal, the line an
+    operator greps as `credsvc: refused`, written wherever the shared refusal
+    path is -- the mint, the sign, the pairing, the proxy). It carries the run,
+    the repository and the HTTP status as a NUMBER. Counting it as an audited
+    act would read one refusal as two, and joining its status with the audit
+    line's -- a string -- is what stopped this check on 2026-11-24 with
+    `join`'s TypeError.
+
+    The line is told apart from every other line by the audit contract's own
+    shape and not by their messages: the audit line writes EVERY field of its
+    event, empty ones included (so a line is one shape and a reader does not
+    have to tell "not known" from "not there"), while a line written beside it
+    carries the few fields its author had and no more. All ten are required
+    here. One field is not the contract: internal/credsvc's github.go writes a
+    warn line when GitHub refuses the mint, carrying purpose, credential,
+    repository, run and -- when GitHub answered -- the status as a NUMBER, so
+    a filter of `purpose` alone counted that warn line as a second audited act
+    and this row then named an act that never happened."""
     raw = sys.stdin.read()
-    lines = json.loads(raw) if raw.strip() else []
+    entries = json.loads(raw) if raw.strip() else []
+    contract = ("run", "repository", "job", "caller", "credential", "purpose",
+                "tier", "status", "slip", "owner")
+    audit = [p for p in (e.get("jsonPayload") or {} for e in entries)
+             if all(k in p for k in contract)]
     fields = {}
     statuses = []
-    for entry in lines:
-        payload = entry.get("jsonPayload") or {}
-        statuses.append(payload.get("status") or "")
+    for payload in audit:
+        statuses.append(str(payload.get("status") or ""))
         for k in ("run", "repository", "job", "caller", "credential", "purpose", "tier", "status"):
             fields.setdefault(k, payload.get(k) or "")
-    print("lines=%d" % len(lines))
+    print("lines=%d" % len(audit))
     print("statuses=%s" % ",".join(statuses))
     for k, v in fields.items():
         print("%s=%s" % (k, v))

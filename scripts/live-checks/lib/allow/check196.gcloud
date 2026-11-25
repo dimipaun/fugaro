@@ -1,0 +1,13 @@
+# gcloud calls scripts/live-checks/check196.sh makes. See lib/strict.sh.
+cmd	builds list
+flag	--limit
+cmd	run jobs list
+cmd	run jobs executions list
+flag	--job
+flag	--limit
+cmd	run services describe
+cmd	run services get-iam-policy
+cmd	logging read
+flag	--freshness
+flag	--limit
+flag	--region

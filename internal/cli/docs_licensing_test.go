@@ -19,10 +19,11 @@ import (
 	"testing"
 )
 
-// rootLicenceSHA256 is `LICENSE`'s SHA-256 as it stood at e924481cd, the commit
-// the licensing reconciliation was written against, and the hash every task of
-// that work has to leave alone (O2).
-const rootLicenceSHA256 = "93ad9237c1340274471654c42fc6e2a72be2cc68b915401ab22f1b98dff6ef99"
+// rootLicenceSHA256 is `LICENSE`'s SHA-256. Every task of the licensing work
+// leaves the file at its value at e924481cd (O2); the one edit the plan allows,
+// and the one made here, is the copyright line once counsel named the licensing
+// entity (S8.3, T18). Nothing else in the file moves with it.
+const rootLicenceSHA256 = "685cd8060693382317ad933516aa8251223b3980a7c9e805a3b8f3fbf8ce3144"
 
 // rootLicenceFirstLine is the line GitHub's licence detector reads a licence's
 // name from, and the line the website's licenceIdentifier() reads the same fact
@@ -41,16 +42,17 @@ const docsTrademarkHeading = "### Trademarks"
 // built on. GitHub classifies a repository's licence from the text of the file
 // it finds, so `LICENSE` is not edited by any task of this work: the statement
 // that `ee/` is excluded and reserved goes in `LICENSING.md` beside it, and
-// this file stays byte for byte what it was (O2, D301 as amended).
+// this file stays byte for byte what it was (O2, D301 as amended) -- but for the
+// copyright line, whose one edit the plan allows and S8.3 made.
 func TestDocsLicensingRootLicenceUnchanged(t *testing.T) {
 	// Read with CRLF folded to LF: git checks a Windows clone out with CRLF
 	// endings, and a checkout's line endings are not a licensing decision.
 	licence := strings.ReplaceAll(readDoc(t, "LICENSE"), "\r\n", "\n")
 	sum := sha256.Sum256([]byte(licence))
 	if got := hex.EncodeToString(sum[:]); got != rootLicenceSHA256 {
-		t.Errorf(`LICENSE hashes to %s, want %s -- its hash at e924481cd, the commit the licensing reconciliation was written against.
+		t.Errorf(`LICENSE hashes to %s, want %s -- its hash since the copyright line named the licensing entity (S8.3, T18), and at e924481cd before it.
 
-No licensing task edits LICENSE (O2). The reason is the detector, not tidiness: a scope statement inside this file makes GitHub answer "other" instead of MIT for the whole repository, which is the reading the owner's O2 answer took the alternative to avoid, and the reading the website's licenceIdentifier() depends on. If the file really must change -- counsel naming an entity for the copyright line is the one case the plan allows -- the change and this hash move together in one commit, on the owner's explicit go.`, got, rootLicenceSHA256)
+No licensing task edits LICENSE (O2). The reason is the detector, not tidiness: a scope statement inside this file makes GitHub answer "other" instead of MIT for the whole repository, which is the reading the owner's O2 answer took the alternative to avoid, and the reading the website's licenceIdentifier() depends on. The copyright line is the one edit the plan allows -- counsel naming an entity for it -- and that edit and this hash move together in one commit, on the owner's explicit go.`, got, rootLicenceSHA256)
 	}
 	if first, _, _ := strings.Cut(licence, "\n"); first != rootLicenceFirstLine {
 		t.Errorf("LICENSE's first line is %q, want %q: the first line is the licence's name to GitHub's detector and to the website's licenceIdentifier(), so a preamble above it renames the repository's licence", first, rootLicenceFirstLine)

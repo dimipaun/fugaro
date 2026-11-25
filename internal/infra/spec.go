@@ -25,6 +25,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/repourl"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -60,8 +61,8 @@ const (
 	// restricted web API key (not a secret) that signs a run's token in go to
 	// every job whenever the installation has them, whatever the mode (D11,
 	// plan task 1.4 step 1); how long the backend may be unreachable before
-	// the run halts is set only when the config sets one, and only when the
-	// mode is not off.
+	// the run halts is set whenever the config sets one, whatever the mode
+	// (AB5: every job names the mode too, and the grace goes with it).
 	RTDBURLEnv        = runner.RTDBURLEnv
 	FirebaseAPIKeyEnv = runner.FirebaseAPIKeyEnv
 	BudgetGraceEnv    = runner.BudgetGraceEnv
@@ -787,6 +788,16 @@ type RepoSpec struct {
 	// admitted to; an empty Policy is the different answer "read, and the
 	// project published no profile", and it marks nothing either.
 	Shared bool `json:"-"`
+
+	// BudgetConfigured is whether the project's local config names a budget
+	// block. It is Readiness's key for the note about a job that carries no
+	// Firebase backend, and it is the config's fact rather than the job's
+	// FUGARO_BUDGET_MODE because AB5 writes that entry on every job: unset
+	// means observe (R3), so the entry says nothing about whether an
+	// installation configured a budget at all, and a note keyed on it would
+	// fire for every job of an installation that never did. It changes no
+	// Terraform input.
+	BudgetConfigured bool `json:"-"`
 
 	// ModelSecretsServed is which model secrets the credentials service serves
 	// to this repository's jobs (config.ModelSecretServedAll, ...Anthropic,
@@ -2055,10 +2066,10 @@ func redactionEnvs(secretEnv map[string]string) string {
 // budgetEnv adds the project's budget to a workflow job's env: the token
 // cap and the allow-list, the cap when there is one and the price overrides
 // when there are any, whatever the mode (they are the owner's ceiling, which
-// a repository's committed policy is clamped to), the mode itself when it is
-// not off, and the backend's address and web key whenever the installation
-// has them (D11: a run reads the project's policy with them). The check job
-// calls no model and gets none of it.
+// a repository's committed policy is clamped to), the mode itself, which every
+// job names (AB5, R3), and the backend's address and web key whenever the
+// installation has them (D11: a run reads the project's policy with them). The
+// check job calls no model and gets none of it.
 func budgetEnv(lc *localcfg.Config, env map[string]string) error {
 	if b := lc.Budget; b != nil {
 		if b.MaxRunTokens > 0 {
@@ -2098,23 +2109,22 @@ func budgetEnv(lc *localcfg.Config, env map[string]string) error {
 			env[FirebaseAPIKeyEnv] = b.FirebaseAPIKey
 		}
 	}
-	// The mode stays the deploy-time mode: it is the fallback for the case
-	// where no policy exists (P3), and the grace only matters to a session.
+	// Every job names its mode, whatever the local config holds (AB5, F13,
+	// R6). The entry used to be written only when the mode was not off, and a
+	// runner in an older image reads a missing entry as off, so a job of this
+	// release that named none would run as off — a mode that no longer
+	// exists. The mode written is C1's Effective answer, which is what the
+	// string means from now on: an unset mode is observe, a word nobody wrote
+	// is observe, and enforce stays enforce.
 	//
-	// The mode written is the one the config *says*, so a config that writes
-	// none leaves the job without an entry, as does the word that was a mode
-	// until this release — the shape the release behind gave every job of every
-	// installation. The local config answers observe for a mode it does not
-	// write now (AB2, D3010, localcfg.BudgetMode), and taking that answer here
-	// would put a mode entry on every job of every installation that exists,
-	// which is AB5's move to make, on purpose and with the readiness note that
-	// goes with it ("budgetEnv writes FUGARO_BUDGET_MODE and the grace for every
-	// job, observe when unset", F13). AB5 drops this read.
-	if b := lc.Budget; b != nil && b.Mode != "" && b.Mode != localcfg.BudgetOff {
-		env[BudgetModeEnv] = b.Mode
-		if b.Grace > 0 {
-			env[BudgetGraceEnv] = b.Grace.String()
-		}
+	// It stays the deploy-time mode: it is the fallback for the case where no
+	// policy exists (P3), and the grace only matters to a session.
+	env[BudgetModeEnv] = policy.Mode(lc.BudgetMode()).Effective()
+	// The grace goes to the job only when the config sets one: its zero is
+	// "leave it out" (the session's own default), and a job carrying 0s would
+	// be refused by the reader that takes it.
+	if b := lc.Budget; b != nil && b.Grace > 0 {
+		env[BudgetGraceEnv] = b.Grace.String()
 	}
 	return nil
 }
@@ -2161,8 +2171,12 @@ func Repo(in Inputs) (RepoSpec, error) {
 			CredentialsService:         repoCredentialsService(c.inst.CredentialsService, c.credentialsServiceOn),
 			CatalogCheckServiceAccount: c.inst.CatalogCheckServiceAccount,
 		},
-		BitbucketProxied:     c.bitbucketProxied,
-		Shared:               c.sharedRepo(),
+		BitbucketProxied: c.bitbucketProxied,
+		Shared:           c.sharedRepo(),
+		// lc is the project's own local config, so this is the installation's
+		// answer: the budget block it names, whatever the repositories merged
+		// over it.
+		BudgetConfigured:     lc.Budget != nil,
 		DefaultAccountUnused: !lc.RunsOnDefaultClaudeAccount(),
 		// The same answer workflow() dropped the mounts with, read from the
 		// same two facts, so the module's accessor drop and this spec's mount
