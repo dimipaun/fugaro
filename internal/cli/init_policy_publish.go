@@ -788,14 +788,15 @@ func policyNodeForPublish(ctx context.Context, lc *localcfg.Config, old *project
 // written no key at all — its pools stay inert and its calls are served as they
 // are today, which is the state an installation that has not migrated is in.
 //
-// The pools are `craft_pools` — the very pools this publish writes into the
-// node — with the three members `craft_pools` may not carry (rule, principal,
-// threshold) taken from the config's own pool where it states one and from the
-// node's own member where it does not. The membership is the published one by
-// construction, so the two blocks cannot come to describe different projects: a
-// pool left out of craft_pools (an ownerless one this machine's config states)
-// is left out here, which is what keeps the service from resolving a source to
-// a pool no run may be served from.
+// Each pool is the `craft_pools` entry this publish writes — the very pool the
+// node carries in the old shape — with the three members `craft_pools` may not
+// carry (rule, principal, threshold) taken from the config's own pool where it
+// states one and from the node's own `model_routing` member where it does not.
+// Nothing else is read back off the node: the entry itself is the published one,
+// so an edit to a pool's members, its owner or its allowed users moves the two
+// blocks together. A pool left out of craft_pools (an ownerless one this
+// machine's config states) is left out here, which is what keeps the service
+// from resolving a source to a pool no run may be served from.
 func modelRoutingForPublish(lc *localcfg.Config, old *projectpolicy.Policy, pools []config.Pool) *projectpolicy.ModelRouting {
 	var out projectpolicy.ModelRouting
 	node := make(map[string]config.Pool)
@@ -816,14 +817,16 @@ func modelRoutingForPublish(lc *localcfg.Config, old *projectpolicy.Policy, pool
 		stated[c.Name] = c
 	}
 	for _, q := range pools {
-		pub, held := node[q.Name]
-		if !held {
-			pub = q
+		pub := q
+		// The three members come off the node only where the config states none
+		// of its own: craft_pools may not carry them, so the node's member of
+		// that name is the only copy of what the migration wrote — and never a
+		// zero written over a member this machine's file says nothing about,
+		// which would be the migration's principal dropped by a config that
+		// merely predates it.
+		if held, ok := node[q.Name]; ok {
+			pub.Rule, pub.Principal, pub.Threshold = held.Rule, held.Principal, held.Threshold
 		}
-		// Each of the three is the config's where it writes one, the node's
-		// otherwise — never a zero written over a member this machine's file
-		// says nothing about, which would be the migration's principal dropped
-		// by a config that merely predates it.
 		if c, ok := stated[q.Name]; ok {
 			if c.Rule != "" {
 				pub.Rule = c.Rule

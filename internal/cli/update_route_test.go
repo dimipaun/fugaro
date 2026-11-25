@@ -792,3 +792,56 @@ func TestUpdateRefusesANodeCarryingAMemberItDoesNotModel(t *testing.T) {
 		t.Errorf("the node moved under a refusal:\nbefore %s\nafter  %s", before, after)
 	}
 }
+
+// TestUpdateMovesBothPoolBlocksTogether: one publish writes a pool twice — the
+// entry `craft_pools` carries, which every release behind this one decodes, and
+// the same pool in the key's own list (RT4), which is what the credentials
+// service resolves a source of kind pool against. An edit to a pool's members,
+// its owner or its allowed users is one edit to one project, so both entries
+// move with it and neither is left as the copy the node held before.
+func TestUpdateMovesBothPoolBlocksTogether(t *testing.T) {
+	f := newProjectFixture(t, routeTableConfig)
+	f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
+	// The node an installation at the previous release holds: the one this
+	// release publishes, written by the explicit door, so the only difference
+	// this test introduces is the operator's edit to the pool.
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	setConfig(t, f, func(s string) string {
+		out := strings.Replace(s,
+			"  - { name: acme-main, type: anthropic }\n",
+			"  - { name: acme-main, type: anthropic }\n  - { name: acme-second, type: anthropic }\n", 1)
+		return strings.Replace(out,
+			"    members: [acme-main]\n    owner: owner@example.com\n",
+			"    members: [acme-main, acme-second]\n    owner: new@example.com\n    allowed_users: [mate@example.com]\n", 1)
+	})
+
+	h := newMigrationRig(t, f, &initOptions{})
+	if out, err := h.apply(t, true); err != nil {
+		t.Fatalf("the update refused the publish: %v\n%s", err, out)
+	}
+
+	p := publishedPolicy(t, f)
+	if len(p.ModelRouting.Pools) != 1 || len(p.CraftPools) != 1 {
+		t.Fatalf("the node carries %d pool(s) in model_routing and %d in craft_pools, want the config's one in both",
+			len(p.ModelRouting.Pools), len(p.CraftPools))
+	}
+	key, old := p.ModelRouting.Pools[0], p.CraftPools[0]
+	if !slices.Equal(key.Members, []string{"acme-main", "acme-second"}) {
+		t.Errorf("the key's pool members = %v, want the config's edit: the service resolves a pool source against this list", key.Members)
+	}
+	if key.Owner != "new@example.com" || !slices.Equal(key.AllowedUsers, []string{"mate@example.com"}) {
+		t.Errorf("the key's pool = owner %q, allowed users %v, want the config's edit", key.Owner, key.AllowedUsers)
+	}
+	// The two blocks describe one pool: a publish that wrote them differently
+	// would leave the service serving a member the craft block no longer names.
+	if !slices.Equal(key.Members, old.Members) || key.Owner != old.Owner || !slices.Equal(key.AllowedUsers, old.AllowedUsers) {
+		t.Errorf("the two blocks disagree about the pool:\nmodel_routing %+v\ncraft_pools   %+v", key, old)
+	}
+	// And the three members craft_pools may not carry survive the edit, taken
+	// from the config where it states them.
+	if key.Rule != config.PoolRuleOrdered || key.Principal == nil || key.Principal.ID != "aurora" {
+		t.Errorf("the pool in its new shape lost the members craft_pools cannot carry: %+v", key)
+	}
+}
