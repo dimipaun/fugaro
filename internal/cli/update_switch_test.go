@@ -68,36 +68,37 @@ func TestTheSwitchTurnsOnForACascadeRepositoryWithAReadyBundle(t *testing.T) {
 	}
 }
 
-// TestTheSwitchStaysOffForANonCascadeRepositoryWhereTheBudgetIsOff: an
-// `api-key` or `oauth` repository is served from this release on, and the
-// switch's fourth condition is the one this test is about (D2071): the service
-// is reached through the gateway that holds the model credential, and the
-// gateway exists only where the project's published budget mode is `observe` or
-// `enforce`. A project whose mode is `off`, and one that has published no node
-// at all, therefore hand such a repository no address — and with the block
-// present, the record set and the bundle ready, the mode is the whole of what
-// holds it off.
+// TestTheSwitchRecordIsUnchangedForObserveAndEnforce is AB15's acceptance at
+// the launch: a repository whose block, record and bundle all say yes was on
+// the switch in `observe` and in `enforce` before this change and is on it in
+// every mode after, so the answer the mode used to be half of is now the auth's
+// and the bundle's alone.
 //
-// Nothing is lost by that: the mounts follow the same answer, so a repository
-// the mode holds off plans `model_secrets_served = none` and keeps every mount
-// it had (D2072, G17), and a run held off the service runs on exactly the
-// credential it has always run on.
-// The positive — the same two auths, on a node that is `observe` or `enforce` —
-// is TestLaunchEnvCarriesTheURLForASwitchedAPIKeyRepository.
-func TestTheSwitchStaysOffForANonCascadeRepositoryWhereTheBudgetIsOff(t *testing.T) {
-	for name, tc := range map[string]struct {
+// The row it replaces held the other way: an `api-key` or `oauth` repository on
+// a project whose node said `off`, or on one that had published none, was held
+// off because the service is reached through the gateway and the gateway
+// existed in the two live modes alone (D2071). Every run has a gateway now, and
+// the mode is no condition of the switch (D3009) — which is what makes the two
+// rows below one row: the same document, the same record and the same bundle,
+// four modes, one answer (F15).
+func TestTheSwitchRecordIsUnchangedForObserveAndEnforce(t *testing.T) {
+	want := envCredentialsServiceURL + "=" + launchCredsURL
+	for _, tc := range []struct {
+		name      string
 		yaml      string
 		mode      string
 		published bool
 	}{
-		"an api-key repository on a project whose budget is off":    {apiKeyLaunchYAML, config.BudgetOff, true},
-		"an oauth repository on a project that published no policy": {oauthLaunchYAML, "", false},
+		{name: "an oauth repository on a node that says observe", yaml: oauthLaunchYAML, mode: config.BudgetObserve, published: true},
+		{name: "an oauth repository on a node that says enforce", yaml: oauthLaunchYAML, mode: config.BudgetEnforce, published: true},
+		{name: "an api-key repository on a node that says observe", yaml: apiKeyLaunchYAML, mode: config.BudgetObserve, published: true},
+		{name: "an api-key repository on a node that says enforce", yaml: apiKeyLaunchYAML, mode: config.BudgetEnforce, published: true},
+		{name: "an api-key repository on a node that says the word", yaml: apiKeyLaunchYAML, mode: config.BudgetOff, published: true},
+		{name: "an oauth repository on a project that published no policy", yaml: oauthLaunchYAML, published: false},
 	} {
-		plain, secret := launchWithCredentialsServiceMode(t, tc.yaml, launchCredsURL, true, tc.mode, tc.published)
-		for _, kv := range append(append([]string{}, plain...), secret...) {
-			if strings.HasPrefix(kv, envCredentialsServiceURL+"=") {
-				t.Errorf("%s: the launch carried %q, and the record, the block and the bundle all say yes: the address is reached through the gateway, which a project on `off` (or with no published node) does not run — and it is what opens the git provider keyless, for a mint that gateway is not there to serve", name, kv)
-			}
+		plain, _ := launchWithCredentialsServiceMode(t, tc.yaml, launchCredsURL, true, tc.mode, tc.published)
+		if len(plain) != 1 || plain[0] != want {
+			t.Errorf("%s: the launch's plain Env = %v, want exactly [%s]: with the block deployed, the repository's record kept and the bundle ready, the auth is the whole of what the switch asks beside them — the mode it used to ask is read nowhere (AB15, D3009)", tc.name, plain, want)
 		}
 	}
 }
