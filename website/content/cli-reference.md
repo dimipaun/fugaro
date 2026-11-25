@@ -1278,9 +1278,12 @@ cp) or unset its agent marker and run this command itself. The refusal below is 
 an agent that uses the program, not a boundary against one that goes around it
 (SECURITY.md records the wider Owner/Editor bypass).
 
-On a project that is not managed, this writes an object nothing reads: the
-check below is that the bucket is the project's own runs bucket, which every
-installation has, not that the project is Fugaro-managed.
+On a project that is not managed, printing the list is admitted — it is a read,
+and it is how you read what is approved — and writing it is refused, naming
+fugaro managed flag: the list is a leaf of the policy the project publishes,
+so the mark that command writes is what makes a project one whose deletes this
+program approves. The bucket check stands either way: the list lives in the
+project's own runs bucket and no other.
 
 The list is read fail-closed: an absent object, an empty one, one naming
 another project, one written by an older Fugaro (its addresses carry no

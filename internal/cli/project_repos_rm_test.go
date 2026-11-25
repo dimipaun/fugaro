@@ -191,6 +191,18 @@ func rmRigFor(t *testing.T, local string, gone rmGone) *rmRig {
 	return r
 }
 
+// rmRigUnmanaged is the same installation with neither mark on its project: the
+// ordinary project D2217's fence refuses the removal in
+// (TestProjectReposRmRefusesUnmanaged). It stops short of the six stores for
+// the reason the fence is where it is — a refused removal reaches none of them,
+// and a fixture that seeded them would suggest it did.
+func rmRigUnmanaged(t *testing.T) *rmRig {
+	t.Helper()
+	r := &rmRig{addRig: newAddRigMarks(t, rmRigLocal, false), slugA: rmSlug(t, rmRepoA), slugB: rmSlug(t, rmRepoB)}
+	r.labelA, r.labelB = rmLabel(t, rmRepoA), rmLabel(t, rmRepoB)
+	return r
+}
+
 // seed fills the six stores for rmRepoA and the ones that must survive for
 // rmRepoB.
 func (r *rmRig) seed(t *testing.T, gone rmGone) {
@@ -307,6 +319,31 @@ var rmKeptPhrases = []string{
 	"the run history in the runs bucket",
 	"every pull request a run opened",
 	"the remote branch",
+}
+
+// TestProjectReposRmRefusesUnmanaged: D2217's fence on this command (T7b). A
+// removal takes a repository's allow-list entry, its admission node, its
+// `repos:` and `image_map:` entries and its Cloud Run jobs out of the project,
+// so a project that is not managed is refused before the published node is read
+// and before anything is written — at the budget database the command opens
+// first, which is the fence, in the one sentence it writes.
+func TestProjectReposRmRefusesUnmanaged(t *testing.T) {
+	r := rmRigUnmanaged(t)
+	before := readFileString(t, r.cfg)
+	node := nodeOf(t, r.db)
+
+	out, _, err := execute(t, "project", "repos", "rm", rmEntryA)
+	if err == nil {
+		t.Fatalf("the repository of a project that is not managed was un-enrolled:\n%s", out)
+	}
+	checkFenceRefusal(t, err, "project repos rm")
+	if after := readFileString(t, r.cfg); after != before {
+		t.Errorf("a refused removal changed the file:\n%s", after)
+	}
+	if after := nodeOf(t, r.db); after != node {
+		t.Errorf("a refused removal wrote the project's published node:\nbefore %s\nafter  %s", node, after)
+	}
+	noWriteAcrossFakes(t, r.initRig)
 }
 
 // TestReposRmRemovesTheSixAndNamesTheSixItLeaves is the red step of RE4

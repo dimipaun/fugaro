@@ -896,6 +896,34 @@ func TestPolicyPublishReadsTheGateBeforeAnyWrite(t *testing.T) {
 	}
 }
 
+// TestProjectPolicyRefusesUnmanaged: the same refusal at the owner's own
+// terminal (T7b, D2217). The published node is what every run of the project is
+// admitted by, so a project that is not managed is refused before the node is
+// read and before anything is written — at the budget database this command
+// opens first, which is the fence — and nothing of it is recorded. What refuses
+// is the project and not the session: TestPolicyPublishUnmanagedProject
+// KeepsTheAgentRefusal below is the same world in a coding agent's session.
+func TestProjectPolicyRefusesUnmanaged(t *testing.T) {
+	f := newUnmanagedPolicyFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
+	before := nodeOf(t, f.db)
+
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatalf("the policy of a project that is not managed was published:\n%s", out)
+	}
+	checkFenceRefusal(t, err, "project policy publish")
+	if got := ExitCode(err); got != ExitUserError {
+		t.Errorf("exit %d, want %d", got, ExitUserError)
+	}
+	if after := nodeOf(t, f.db); after != before {
+		t.Errorf("the refused publish wrote something:\nbefore %s\nafter  %s", before, after)
+	}
+	if got := f.audits(t); len(got) != 0 {
+		t.Errorf("an unmanaged project left %d audit records, want none (D1025)", len(got))
+	}
+}
+
 // The other side of the same boundary: a project that is NOT managed is
 // refused by D2217's fence, before anything is read or written, in the same
 // sentence a person at their own terminal reads there — the marks are what make
