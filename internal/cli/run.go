@@ -818,14 +818,14 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 				}
 			}
 			o.repo = repo
-			// Checked before resolveRecipe (review finding E, the same
-			// ordering newSpec/prSpec already enforce internally):
-			// resolveRecipe can read a project or catalog recipe from the
-			// bucket, a network call a disallowed --token should never
-			// trigger. reviewSpec repeats this same check once a review
-			// recipe is confirmed below (it is pure and local, so doing it
-			// twice costs nothing); this call is what stops the read
-			// itself from ever running for a refused account.
+			// Checked before the read below (review finding E, the same
+			// ordering newSpec/prSpec already enforce internally): resolving
+			// the name can read a project or catalog recipe from the bucket,
+			// a network call a disallowed --token should never trigger.
+			// reviewSpec repeats this same check once a review recipe is
+			// confirmed below (it is pure and local, so doing it twice costs
+			// nothing); this call is what stops the read itself from ever
+			// running for a refused account.
 			// The ref is not known yet here (--pr's follow-up path takes it
 			// from the previous run): the account is resolved from the flag
 			// and the checkout's own value, and reviewSpec resolves it again
@@ -833,7 +833,14 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 			if _, err := claudeAccountFor(ctx, env, repo, o.token, "", o.ref, checkoutOf(ctx, repo)(), nameWritten); err != nil {
 				return err
 			}
-			rr, rerr := resolveRecipe(ctx, env, checkoutRoot(ctx, repo), o.recipe, time.Now(), false)
+			// The launch's own way (resolveLaunchRecipe), as every other
+			// recipe a launch runs: the store's copy of the name first, then
+			// the catalog, and the checkout's .fugaro/recipes/ on no path
+			// (D3237). Reading the folder here, which is what this did, wrote
+			// a task naming a repository recipe, which the release-A runner
+			// refuses at bootstrap (D3304) after the run was paid for.
+			provider := env.repoProvider(repo, checkoutOf(ctx, repo)())
+			rr, rerr := resolveLaunchRecipe(ctx, env, provider, repo, o.recipe, time.Now())
 			switch {
 			case rerr == nil && rr.Recipe.Mode == recipe.ModeReview:
 				if cmd.Flags().Changed("review-run") {

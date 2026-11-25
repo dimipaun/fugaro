@@ -337,6 +337,68 @@ func TestNoTaskCarriesARepoRecipe(t *testing.T) {
 	}
 }
 
+// repoReviewRecipe is a repository's own .fugaro/recipes/review-only.yaml: the
+// catalog recipe under the catalog's own name with a line of the repository's
+// own, which is the file the two review-mode launches read out of the checkout
+// before this — a task naming a repository recipe, which the release-A runner
+// refuses at bootstrap (D3304) after the run was paid for.
+const repoReviewRecipe = "version: 1\nname: review-only\nmode: review\nsteps:\n  - review: { max_rounds: 1 }\n# kept by the repository\n"
+
+// TestReviewLaunchCarriesNoRepoRecipe is R7 on the two review-mode paths, the
+// ones TestNoTaskCarriesARepoRecipe's launches cannot reach: `fugaro review --pr
+// N` (review.go) and `fugaro run --recipe <mode: review> --pr N` (run.go's
+// review branch) both resolved the name over the checkout's .fugaro/recipes/
+// first, so a repository keeping a review recipe of its own got a task naming
+// it. No launch reads that folder any more (D3237): the name resolves over the
+// project store and the catalog, and the task carries what it answered.
+func TestReviewLaunchCarriesNoRepoRecipe(t *testing.T) {
+	catalog, ok := recipe.CatalogText(reviewOnlyRecipe)
+	if !ok {
+		t.Fatalf("the catalog holds no recipe %s", reviewOnlyRecipe)
+	}
+	t.Run("fugaro review", func(t *testing.T) {
+		f := newReviewFixture(t)
+		dir := projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
+		testutil.WriteFiles(t, dir, map[string]string{recipe.RepoPath(reviewOnlyRecipe): repoReviewRecipe})
+
+		if _, _, err := reviewCLI(t, "--pr", "7", "--token", "acme-personal"); err != nil {
+			t.Fatalf("a review from a checkout keeping its own %s.yaml: %v", reviewOnlyRecipe, err)
+		}
+		slug, id, err := parseRunRef(storedRunRef(t, f.cloudFixture))
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantEmbeddedRecipe(t, reviewTaskSpec(t, f.cloudFixture, slug, id).Recipe, catalog)
+	})
+	t.Run("fugaro run --recipe", func(t *testing.T) {
+		f := newCloudFixture(t)
+		recipeCheckout(t, f, "", map[string]string{recipe.RepoPath(reviewOnlyRecipe): repoReviewRecipe})
+		writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:"+reviewSpecSince)
+
+		id := wallRunIDAt(0, "120002", "a003")
+		if _, _, err := execute(t, "run", "--recipe", reviewOnlyRecipe, "--pr", "7", "--run-id", id); err != nil {
+			t.Fatalf("a review by name from a checkout keeping its own %s.yaml: %v", reviewOnlyRecipe, err)
+		}
+		wantEmbeddedRecipe(t, readSpecOf(t, f, mustSlug("github", "acme/other"), id).Recipe, catalog)
+	})
+}
+
+// wantEmbeddedRecipe wants rcp to be text, the recipe a launch resolved by
+// name, and never the repository's own file: a task naming a repository recipe
+// is the shape the release-A runner refuses at bootstrap (D3304), and the
+// launcher writes none of it (R7).
+func wantEmbeddedRecipe(t *testing.T, rcp *task.Recipe, text []byte) {
+	t.Helper()
+	switch {
+	case rcp == nil:
+		t.Fatalf("the launch's task carries no recipe, though it resolved one by name")
+	case rcp.Source == string(recipe.SourceRepo):
+		t.Fatalf("task recipe = %+v: no launch reads the checkout's %s (D3237), so none may name it", rcp, recipe.RepoDir)
+	case rcp.YAML != string(text):
+		t.Fatalf("task recipe YAML = %q, want the %s the name resolves to:\n%s", rcp.YAML, rcp.Name, text)
+	}
+}
+
 // TestLaunchPrintsTheCleanupLines is the launch's half of the cleanup diff
 // (D3296): a checkout that still holds .fugaro/recipes/ while the project
 // store holds what it says is offered the removal, in the same notes channel
