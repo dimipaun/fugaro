@@ -281,7 +281,7 @@ func TestRunRepoRecipeFromCheckout(t *testing.T) {
 	copied := publishCopy(t, f, "acme/other", "mine", repoRecipe)
 	recipeCheckout(t, f, "", map[string]string{recipe.RepoPath("mine"): repoRecipe})
 	other := mustSlug("github", "acme/other")
-	writeBuildRecord(t, f, other, "svc", releaseSeal)
+	writeBuildRecord(t, f, other, "svc", releaseCopy)
 	if _, _, err := execute(t, "run", "--run-id", "20261007-100000-abcd", "--recipe", "mine", "A task"); err != nil {
 		t.Fatal(err)
 	}
@@ -636,7 +636,7 @@ func TestRunPRKeepsChosenRepoRecipeByName(t *testing.T) {
 	f := newCloudFixture(t)
 	projectRecipesFixture(t, f, nil)
 	copied := publishCopy(t, f, "acme/app", "mine", repoRecipe)
-	seedChosenRoot(t, f, &runstore.RecipeRecord{Name: "mine", Source: "repo", SHA256: strings.Repeat("a", 64)})
+	seedChosenRootOnACopyImage(t, f, &runstore.RecipeRecord{Name: "mine", Source: "repo", SHA256: strings.Repeat("a", 64)})
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "x"); err != nil {
 		t.Fatal(err)
 	}

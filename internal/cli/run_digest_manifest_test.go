@@ -464,6 +464,9 @@ func TestDigestRetryRefused(t *testing.T) {
 // the folder is read by nothing (D3237).
 func TestDigestManifestRepoRecipe(t *testing.T) {
 	f := digestFixture(t)
+	// The digest gate passes on the fixture's own image, but the copy this
+	// launch embeds is refused below releaseCopy (recipeCopySince).
+	writeBuildRecord(t, f, appSlug, "web", releaseCopy)
 	mine := []string{manifestRunID(time.Now().Add(-time.Hour))}
 	seedManifestRun(t, f, "acme/app", appSlug, mine[0])
 	copied := reportRecipeStored(t, f)
@@ -543,6 +546,10 @@ func TestDigestManifestOnlyForReportRuns(t *testing.T) {
 // this fails on the execution count and on the stored task.
 func TestDigestEmptyListingRefused(t *testing.T) {
 	f := digestFixture(t)
+	// The launch that must go through at the end carries the copy the store
+	// holds of the repository's own report recipe, which the release-A gate
+	// refuses below releaseCopy; the fixture's own image is below it.
+	writeBuildRecord(t, f, appSlug, "web", releaseCopy)
 	refuse := func(t *testing.T, name, id string) {
 		t.Helper()
 		_, _, err := execute(t, "run", "--repo", "acme/app", "--recipe", name, "--run-id", id, "Periodic run review")

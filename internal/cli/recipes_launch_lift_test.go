@@ -16,6 +16,23 @@ import (
 // repoRecipe is a repository's own recipe under a name no catalog holds.
 const repoRecipe = "version: 1\nname: mine\nsteps:\n  - review: { max_rounds: 1 }\n"
 
+// releaseCopy is the first job image whose runner parses a project recipe's
+// copy name (recipeCopySince, the release-A gate's first trigger). Every task
+// this file's launches write carries a copy — that is what a repository's own
+// recipe reaches a run as (D3303, R7) — so a fixture whose launch must reach
+// its own subject, rather than be refused on the image, writes this base
+// rather than the releaseSeal the package's other fixtures use.
+const releaseCopy = "ghcr.io/dimipaun/fugaro-base:" + recipeCopySince
+
+// seedChosenRootOnACopyImage is seedChosenRoot for a follow-up whose task will
+// carry a copy: the record seedChosenRoot writes names releaseSeal, and the
+// release-A gate would refuse the copy before the follow-up's own subject.
+func seedChosenRootOnACopyImage(t *testing.T, f *cloudFixture, chosen *runstore.RecipeRecord) {
+	t.Helper()
+	seedChosenRoot(t, f, chosen)
+	writeBuildRecord(t, f, appSlug, "web", releaseCopy)
+}
+
 // publishCopy writes a repository's own recipe as the project's copy of it and
 // answers the copy name (D3302): the name recipe.CopyName derives for the
 // repository, and the text with its name: line rewritten, which is what the
@@ -49,6 +66,9 @@ func publishCopy(t *testing.T, f *cloudFixture, repo, name, text string) string 
 func TestLaunchEmbedsTheCopy(t *testing.T) {
 	t.Run("a first run from outside a checkout", func(t *testing.T) {
 		f := newProjectJobFixture(t)
+		// The copy this launch embeds needs the release A base: the fixture's
+		// own is the node's release (nodeRelease), below recipeCopySince.
+		rewriteConfig(t, "fugaro-base:"+nodeRelease, "fugaro-base:"+recipeCopySince)
 		projectRecipesFixture(t, f.cloudFixture, nil)
 		copied := publishCopy(t, f.cloudFixture, "acme/app", "mine", repoRecipe)
 		s := newServiceReadFixture(t)
@@ -72,7 +92,7 @@ func TestLaunchEmbedsTheCopy(t *testing.T) {
 		f := newCloudFixture(t)
 		projectRecipesFixture(t, f, nil)
 		copied := publishCopy(t, f, "acme/app", "mine", repoRecipe)
-		writeBuildRecord(t, f, appSlug, "web", releaseSeal)
+		writeBuildRecord(t, f, appSlug, "web", releaseCopy)
 		root := firstRunSpec(rootID)
 		root.Recipe = &task.Recipe{Name: "mine", Source: string(recipe.SourceRepo)}
 		seedSpec(t, f, root, false)
@@ -94,7 +114,7 @@ func TestLaunchEmbedsTheCopy(t *testing.T) {
 		projectRecipesFixture(t, f, nil)
 		def := "version: 1\nname: default\nsteps:\n  - review: { max_rounds: 1 }\n"
 		copied := publishCopy(t, f, "acme/app", "default", def)
-		seedChosenRoot(t, f, nil)
+		seedChosenRootOnACopyImage(t, f, nil)
 
 		if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "x"); err != nil {
 			t.Fatal(err)
@@ -116,7 +136,7 @@ func TestFollowUpCarriesACopyName(t *testing.T) {
 		f := newCloudFixture(t)
 		projectRecipesFixture(t, f, nil)
 		copied := publishCopy(t, f, "acme/app", "mine", repoRecipe)
-		seedChosenRoot(t, f, &runstore.RecipeRecord{Name: copied, Source: string(recipe.SourceProject), SHA256: strings.Repeat("a", 64)})
+		seedChosenRootOnACopyImage(t, f, &runstore.RecipeRecord{Name: copied, Source: string(recipe.SourceProject), SHA256: strings.Repeat("a", 64)})
 
 		_, errOut, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "x")
 		if err != nil {
@@ -135,7 +155,7 @@ func TestFollowUpCarriesACopyName(t *testing.T) {
 		f := newCloudFixture(t)
 		projectRecipesFixture(t, f, nil)
 		copied := publishCopy(t, f, "acme/app", "mine", repoRecipe)
-		writeBuildRecord(t, f, appSlug, "web", releaseSeal)
+		writeBuildRecord(t, f, appSlug, "web", releaseCopy)
 		root := firstRunSpec(rootID)
 		seedSpec(t, f, root, false)
 		rec := prRecord(rootID, "", 7, 1)
@@ -185,7 +205,7 @@ func TestNoTaskCarriesARepoRecipe(t *testing.T) {
 				projectRecipesFixture(t, f, nil)
 				publishCopy(t, f, "acme/other", "mine", repoRecipe)
 				recipeCheckout(t, f, "  recipe: mine\n", map[string]string{recipe.RepoPath("mine"): repoRecipe})
-				writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseSeal)
+				writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseCopy)
 				id := wallRunIDAt(0, "120000", "b002")
 				if _, _, err := execute(t, "run", "--run-id", id, "A task"); err != nil {
 					t.Fatal(err)
@@ -199,7 +219,7 @@ func TestNoTaskCarriesARepoRecipe(t *testing.T) {
 				f := newCloudFixture(t)
 				projectRecipesFixture(t, f, nil)
 				publishCopy(t, f, "acme/app", "mine", repoRecipe)
-				writeBuildRecord(t, f, appSlug, "web", releaseSeal)
+				writeBuildRecord(t, f, appSlug, "web", releaseCopy)
 				root := firstRunSpec(rootID)
 				root.Recipe = &task.Recipe{Name: "mine", Source: string(recipe.SourceRepo)}
 				seedSpec(t, f, root, false)
@@ -218,7 +238,7 @@ func TestNoTaskCarriesARepoRecipe(t *testing.T) {
 				f := newCloudFixture(t)
 				projectRecipesFixture(t, f, nil)
 				publishCopy(t, f, "acme/app", "mine", repoRecipe)
-				seedChosenRoot(t, f, &runstore.RecipeRecord{Name: "mine", Source: string(recipe.SourceRepo)})
+				seedChosenRootOnACopyImage(t, f, &runstore.RecipeRecord{Name: "mine", Source: string(recipe.SourceRepo)})
 				if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "x"); err != nil {
 					t.Fatal(err)
 				}
@@ -231,7 +251,7 @@ func TestNoTaskCarriesARepoRecipe(t *testing.T) {
 				f := newCloudFixture(t)
 				projectRecipesFixture(t, f, nil)
 				publishCopy(t, f, "acme/app", "default", "version: 1\nname: default\nsteps:\n  - review: { max_rounds: 1 }\n")
-				seedChosenRoot(t, f, nil)
+				seedChosenRootOnACopyImage(t, f, nil)
 				if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "x"); err != nil {
 					t.Fatal(err)
 				}
