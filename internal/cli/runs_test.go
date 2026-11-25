@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -38,6 +39,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -2030,6 +2032,33 @@ func (d *lsWidthDriver) NewRangeReader(_ context.Context, key string, offset, le
 	return &lsWidthReader{Reader: bytes.NewReader(body), size: int64(len(body))}, nil
 }
 
+// NewTypedWriter takes a write into the driver's map: the tests that seed a
+// summary after the fixture was installed write through lsDriverPut, and one
+// that runs a writer of the tree's own (the summary backfill) needs the write
+// path too. A create is answered by Attributes first, so an object the driver
+// already holds makes the write fail the way the bucket's does.
+func (d *lsWidthDriver) NewTypedWriter(_ context.Context, key, contentType string, _ *driver.WriterOptions) (driver.Writer, error) {
+	return &lsDriverWriter{d: d, key: key, contentType: contentType}, nil
+}
+
+// lsDriverWriter collects one object's bytes and puts them where a later read
+// of the driver finds them.
+type lsDriverWriter struct {
+	d           *lsWidthDriver
+	key         string
+	contentType string
+	buf         bytes.Buffer
+}
+
+func (w *lsDriverWriter) Write(p []byte) (int, error) { return w.buf.Write(p) }
+
+func (w *lsDriverWriter) Close() error {
+	w.d.mu.Lock()
+	defer w.d.mu.Unlock()
+	w.d.objects[w.key] = w.buf.Bytes()
+	return nil
+}
+
 // lsWidthReader serves one object's bytes.
 type lsWidthReader struct {
 	*bytes.Reader
@@ -3008,5 +3037,443 @@ func TestRunRetryIsTheSameChain(t *testing.T) {
 	}
 	if o := got.Overrides; o.MaxUSD == nil || *o.MaxUSD != stored {
 		t.Fatalf("overrides = %+v, want the %v dollars the stored task already carried", o, stored)
+	}
+}
+
+// lsSummaryFixture writes one finished run into b the way a launcher and the
+// run's own job write one: task.json, launch.json and result.json, plus --
+// when wanted -- the summary.json the job writes beside its record, whose bytes
+// the caller gets back to forge one of its own. Every field a row is built from
+// is set to something no zero value would give it, so two rows compared field
+// for field are a difference when the summary dropped, renamed or retyped one
+// of them.
+//
+// Neither object names an execution, as prFixture's finished runs do not, so
+// the listing joins no backend at all: the two readings of this fixture differ
+// in which objects the row was built from and in nothing else.
+func lsSummaryFixture(t *testing.T, b *blobx.Bucket, id string, wanted bool) (*task.Spec, *runstore.Record, []byte) {
+	t.Helper()
+	ctx := context.Background()
+	at := time.Date(2026, 10, 18, 9, 0, 0, 0, time.UTC)
+	root := "20261017-090000-0000"
+	deadline, statusAt, built := at.Add(2*time.Hour), at.Add(30*time.Minute), at.Add(-24*time.Hour)
+	cost := runstore.NewCost(1.25, 0.5, runstore.BasisAPIList)
+	spec := &task.Spec{Version: 1, RunID: id, Repo: "acme/app", Ref: "main", Workflow: "web",
+		Task: "the run's prompt, which no row shows", Title: "the run's title",
+		OAuthToken: "work", Recipe: &task.Recipe{Name: "ship", Source: "repo"},
+		Batch: "nightly", RequestedBy: "someone@example.com",
+		Branch: "fugaro/" + root, PR: 42, PreviousRun: root,
+		FollowUpOf: &task.FollowUpOf{Run: root, Keys: []string{"k1"}, Importance: "important"},
+		Debt:       true}
+	rec := &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web",
+		Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady,
+		Reason: "the run's own reason", FailureClass: failure.Class("forbidden"),
+		Branch: "fugaro/" + root, BaseBranch: "main",
+		HeadSHA: strings.Repeat("a", 40), PushedHead: strings.Repeat("b", 40),
+		PR:            &runstore.PRRef{Number: 42, URL: "https://github.com/acme/app/pull/42", StatusAt: &statusAt},
+		DraftFallback: true, StartedAt: at, Deadline: &deadline,
+		FollowUp:     &runstore.FollowUp{PR: 42, PreviousRun: root, Comments: 2, Session: "fresh"},
+		OAuthAccount: "someone@example.com", Recipe: &runstore.RecipeRecord{Name: "ship", Source: "repo"},
+		ProjectLayer: &runstore.ProjectLayerRecord{SHA256: strings.Repeat("d", 64), Generation: 7, Applied: true},
+		ConfigSHA256: strings.Repeat("e", 64),
+		Image:        &runstore.ImageInfo{BuiltAt: &built, BakedCommit: strings.Repeat("f", 40)},
+		ChangedFiles: &runstore.ChangedFiles{Paths: []string{"a.go", "b.go"}, Total: 2},
+		Rigor:        &runstore.RigorRecord{Mode: rigor.Pro, Level: rigor.Pro, From: rigor.FromRepo, At: runstore.RigorAtBootstrap},
+		OwnerDecisions: &runstore.OwnerDecisions{
+			Decisions: []runstore.OwnerDecision{{File: "a.go", Summary: "yours to settle"}}, Total: 1},
+		Artifacts: []runstore.ArtifactFile{{Name: "plan.md", Bytes: 120, SHA256: strings.Repeat("1", 64), ContentType: "text/markdown"}},
+		CostUSD:   1.25, Cost: &cost}
+	s := runstore.Open(b.Bucket, appSlug, id)
+	if err := s.CreateTask(ctx, spec); err != nil {
+		t.Fatal(err)
+	}
+	launch := &runstore.Launch{Version: 1, RunID: id, Backend: "cloud-run", Job: gcp.JobName(appSlug, "web"),
+		LogURL: "https://example.test/logs", LaunchedBy: "someone@example.com",
+		LaunchedAt: at, PlanTask: "runs-ls-speed/RL4"}
+	if err := s.WriteLaunch(ctx, launch); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	if !wanted {
+		return spec, rec, nil
+	}
+	if err := runstore.WriteSummary(ctx, s, runstore.NewSummary(rec, spec, at.Add(time.Hour))); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := s.ReadFile(ctx, runstore.SummaryName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return spec, rec, raw
+}
+
+// lsRunReads is the names of run id's own objects among keys: what a listing
+// read of that run, with the objects of the other runs in the bucket and the
+// fixture's own marker left out.
+func lsRunReads(keys []string, id string) []string {
+	prefix := "runs/" + appSlug + "/" + id + "/"
+	var names []string
+	for _, k := range keys {
+		if name, ok := strings.CutPrefix(k, prefix); ok {
+			names = append(names, name)
+		}
+	}
+	return slices.Sorted(slices.Values(names))
+}
+
+// lsRunObjectKey is the key of one of run id's objects in the listing bucket.
+func lsRunObjectKey(id, name string) string {
+	return "runs/" + appSlug + "/" + id + "/" + name
+}
+
+// lsDriverPut writes one object into the driver the listing under test reads,
+// key and all, as a launcher or a run's own job account would: the tests here
+// write a forged summary after the fixture was installed.
+func lsDriverPut(d *lsWidthDriver, key string, body []byte) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.objects[key] = body
+}
+
+// TestSummaryEqualsRecords: the row a listing prints for a run is the same row
+// whichever objects it was built from -- the run's own summary beside
+// launch.json, or its task.json and result.json -- field for field, and the
+// summary reading reaches two objects where the run's own reach three. This is
+// what catches a summary that dropped a field the row shows, or typed one
+// differently: a spot check of one field would pass while the row is wrong
+// somewhere else, and the row is the console's own document.
+//
+// Mutations caught: a summary that does not carry a field a row reads (the two
+// rows differ, member and all), and a reading that opens the run's three
+// objects anyway (which is the speedup this object exists for, and what the
+// counts below measure).
+func TestSummaryEqualsRecords(t *testing.T) {
+	f := newCloudFixture(t)
+	b := blobx.Wrap(memblob.OpenBucket(nil))
+	const id = "20261018-090000-aaaa"
+	lsSummaryFixture(t, b, id, true)
+	d := lsLimitInstall(t, f, b)
+
+	before := len(d.keysRead())
+	summarized, _ := lsJSON(t, "--since", "0")
+	fromSummary := lsRunReads(d.keysRead()[before:], id)
+	before = len(d.keysRead())
+	objects, _ := lsJSON(t, "--since", "0", "--no-cache")
+	fromObjects := lsRunReads(d.keysRead()[before:], id)
+
+	if len(summarized.Runs) != 1 || len(objects.Runs) != 1 {
+		t.Fatalf("ls listed %d runs from the summary and %d from the objects, want the bucket's one", len(summarized.Runs), len(objects.Runs))
+	}
+	// The listing without the summary is the row as it has always been: the
+	// fields below are spot checks so that the equality further down is not
+	// two rows agreeing on nothing.
+	if r := objects.Runs[0]; r.Title != "the run's title" || r.RequestedBy != "someone@example.com" || r.Batch != "nightly" ||
+		r.LaunchedBy != "someone@example.com" || r.PlanTask != "runs-ls-speed/RL4" || r.PR != 42 || r.RecordPR != 42 ||
+		r.PushedHead == "" || r.ChangedFiles == nil || r.ChangedFiles.Total != 2 || r.ArtifactCount != 1 ||
+		r.OwnerDecisions == nil || r.OwnerDecisions.Total != 1 || r.Rigor == nil || r.Cost.TotalUSD <= 0 {
+		t.Fatalf("the row from the run's own objects = %+v, want the fixture's fields: the equality below compares two rows, and this one is the control", r)
+	}
+	if !reflect.DeepEqual(summarized.Runs[0], objects.Runs[0]) {
+		t.Errorf("the run's row read from its summary:\n%+v\ndiffers from the row read from its task.json and result.json:\n%+v", summarized.Runs[0], objects.Runs[0])
+	}
+	if !reflect.DeepEqual(summarized.Totals, objects.Totals) {
+		t.Errorf("the totals from the summary = %+v, from the objects = %+v: the document is the same either way", summarized.Totals, objects.Totals)
+	}
+
+	// Two objects where the run's own are three: the summary stands in for the
+	// task and the record, and never for launch.json, which a launcher wrote.
+	if want := []string{"launch.json", runstore.SummaryName}; !slices.Equal(fromSummary, want) {
+		t.Errorf("the listing read %v of the run, want %v: the summary stands in for the task and the record", fromSummary, want)
+	}
+	if want := []string{"launch.json", "result.json", "task.json"}; !slices.Equal(fromObjects, want) {
+		t.Errorf("the --no-cache listing read %v of the run, want the run's own %v", fromObjects, want)
+	}
+}
+
+// TestSummaryAbsentFallsBack: a run written before this object existed has none
+// -- and so has a run whose summary a reader cannot vouch for -- and it lists
+// exactly as a run that has one does. The fallback is not a degraded row: it is
+// the same row, read from the three objects, with no warning about the summary
+// that was not there, because its absence is a fact about the run and not a
+// fault of it.
+//
+// Mutation caught: a summary reading that treats a run without one as an error
+// (a warning, an error row) or as anything other than the run's own three
+// objects.
+func TestSummaryAbsentFallsBack(t *testing.T) {
+	f := newCloudFixture(t)
+	b := blobx.Wrap(memblob.OpenBucket(nil))
+	const (
+		with    = "20261018-090000-aaaa"
+		without = "20261018-091000-bbbb"
+	)
+	lsSummaryFixture(t, b, with, true)
+	lsSummaryFixture(t, b, without, false)
+	d := lsLimitInstall(t, f, b)
+
+	before := len(d.keysRead())
+	got, errOut := lsJSON(t, "--since", "0")
+	if len(got.Runs) != 2 {
+		t.Fatalf("ls listed %d runs, want the bucket's two", len(got.Runs))
+	}
+	rows := map[string]runview.Row{}
+	for _, r := range got.Runs {
+		rows[r.RunID] = r
+	}
+	a, z := rows[with], rows[without]
+	// The run id is the row's own identity and the created time comes from
+	// that id: the two runs of this fixture are the same run but for those.
+	a.RunID, a.Run, a.Created = z.RunID, z.Run, z.Created
+	if !reflect.DeepEqual(a, z) {
+		t.Errorf("the row of a run with no summary:\n%+v\ndiffers from the row of one with:\n%+v", z, a)
+	}
+	if len(got.Warnings) != 0 || strings.Contains(errOut, runstore.SummaryName) {
+		t.Errorf("the listing warned about a run with no %s: %v (%q): a summary is a shortcut, and a run without one is not a fault", runstore.SummaryName, got.Warnings, errOut)
+	}
+	// The run with no summary was read from its three objects, like every run
+	// before this object existed: the read of the summary itself found nothing
+	// there, and the record and the task came from the run's own objects.
+	if want := []string{"launch.json", "result.json", runstore.SummaryName, "task.json"}; !slices.Equal(lsRunReads(d.keysRead()[before:], without), want) {
+		t.Errorf("the listing read %v of the run with no summary, want the run's own three beside the %s it has none of %v",
+			lsRunReads(d.keysRead()[before:], without), runstore.SummaryName, want)
+	}
+}
+
+// TestSummaryCannotOverrideLaunch: the launch-time fields a row shows -- who
+// launched the run, its log URL, the plan task -- are launch.json's, which a
+// launcher wrote, and a summary may never speak for them. The run's own job
+// account writes its summary, so the two halves of this are the two ways it
+// could try: a summary of the shape this tree writes is read beside launch.json
+// and its own record never reaches those fields, and a summary that carries one
+// of them as a member of its own is refused whole, so the run is read from its
+// three objects instead.
+//
+// Mutation caught: a summary that gains a launch-time member -- reading one
+// into the row would let a run's job account, which is not trusted, name
+// whoever it liked as the run's launcher, or point its log URL anywhere.
+func TestSummaryCannotOverrideLaunch(t *testing.T) {
+	f := newCloudFixture(t)
+	b := blobx.Wrap(memblob.OpenBucket(nil))
+	const id = "20261018-090000-cccc"
+	_, _, raw := lsSummaryFixture(t, b, id, true)
+	d := lsLimitInstall(t, f, b)
+
+	wantLog, wantBy, wantPlan := "https://example.test/logs", "someone@example.com", "runs-ls-speed/RL4"
+	launchFields := func(t *testing.T, row runview.Row) {
+		t.Helper()
+		if row.LogURL != wantLog || row.LaunchedBy != wantBy || row.PlanTask != wantPlan {
+			t.Errorf("the row's launch fields are (%q, %q, %q), want launch.json's (%q, %q, %q)",
+				row.LogURL, row.LaunchedBy, row.PlanTask, wantLog, wantBy, wantPlan)
+		}
+	}
+	read := func(t *testing.T) (runview.Row, []string) {
+		t.Helper()
+		before := len(d.keysRead())
+		got, _ := lsJSON(t, "--since", "0")
+		if len(got.Runs) != 1 {
+			t.Fatalf("ls listed %d runs, want the bucket's one", len(got.Runs))
+		}
+		return got.Runs[0], lsRunReads(d.keysRead()[before:], id)
+	}
+
+	// The summary this tree writes: read beside launch.json, which is where
+	// the row's launch fields come from even though the rest of the row is the
+	// summary's (the two objects below prove the summary was the row's source).
+	row, reads := read(t)
+	launchFields(t, row)
+	if want := []string{"launch.json", runstore.SummaryName}; !slices.Equal(reads, want) {
+		t.Fatalf("the listing read %v of the run, want %v: this half of the test needs a row built from the summary", reads, want)
+	}
+
+	// Every one of these is launch.json's own member, put at the top level and
+	// inside the summary's own task and record blocks: a reader that took any
+	// of them would be reading a launch field off the run's own account of
+	// itself.
+	for _, tc := range []struct {
+		name  string
+		where string
+		value any
+	}{
+		{"launched_by", "", "impostor@example.com"},
+		{"log_url", "", "https://example.test/impostor"},
+		{"plan_task", "", "impostor/plan"},
+		{"launched_by", "task", "impostor@example.com"},
+		{"plan_task", "record", "impostor/plan"},
+	} {
+		where := tc.where
+		if where == "" {
+			where = "the summary's own document"
+		}
+		t.Run(tc.name+"/"+where, func(t *testing.T) {
+			doc := map[string]any{}
+			if err := json.Unmarshal(raw, &doc); err != nil {
+				t.Fatal(err)
+			}
+			block := doc
+			if tc.where != "" {
+				inner, ok := doc[tc.where].(map[string]any)
+				if !ok {
+					t.Fatalf("the summary carries no %s block to forge: %v", tc.where, slices.Sorted(maps.Keys(doc)))
+				}
+				block = inner
+			}
+			block[tc.name] = tc.value
+			forged, err := json.Marshal(doc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lsDriverPut(d, lsRunObjectKey(id, runstore.SummaryName), forged)
+
+			row, reads := read(t)
+			launchFields(t, row)
+			if want := []string{"launch.json", "result.json", runstore.SummaryName, "task.json"}; !slices.Equal(reads, want) {
+				t.Errorf("the forged summary was read as the run's row (read %v, want the run's own objects beside the summary it refused %v): a summary carrying a launch field must be refused whole",
+					reads, want)
+			}
+		})
+	}
+}
+
+// TestSummaryGoneAtTheReReadIsTheRunsRecord: a listing re-reads the record
+// once the run's execution has ended, so the row is as new as the execution.
+// For a row built from the summary that re-read goes back to the summary --
+// which is the row's own source -- and the cases left are a summary that has
+// gone since and one it can no longer vouch for: the run's result.json then
+// answers, because the alternative (a nil record, which is how a listing shows
+// a run whose record the backend lost) would be a row nothing wrote. The
+// summary is written beside the record and moves with it, so a summary that
+// goes or turns unusable on its own is a bucket a person, a lifecycle rule or
+// a failed rewrite left behind -- not a run that has no record.
+//
+// The second case is the invariant the first read keeps (readSummaryVia): a
+// summary the reader cannot vouch for is a fallback and never an error, so a
+// re-read that meets one may not fail the listing it was meant to speed up.
+//
+// Mutations caught: a re-read that reads result.json for a row built from the
+// summary (the summary's own freshness is then lost, which is the row the other
+// read of this pins), a re-read that gives up when the summary is gone (the row
+// reads as a lost run), and a re-read that returns the summary's own refusal
+// (the whole listing fails over a shortcut).
+func TestSummaryGoneAtTheReReadIsTheRunsRecord(t *testing.T) {
+	ctx := context.Background()
+	const id = "20261019-090000-bbbb"
+	for name, breakIt := range map[string]func(t *testing.T, b *blobx.Bucket, key string){
+		"gone": func(t *testing.T, b *blobx.Bucket, key string) {
+			if err := b.Bucket.Delete(ctx, key); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"unusable": func(t *testing.T, b *blobx.Bucket, key string) {
+			// What a newer writer's summary looks like to this reader, which
+			// is the one refusal a job-written object can make on its own: the
+			// object is there and this reader cannot vouch for it.
+			if err := b.WriteAll(ctx, key, []byte(`{"version":2,"run_id":"`+id+`","slug":"`+appSlug+`","at":"2026-10-19T09:00:00Z","record":{"status":"running","stage":"writeback","started_at":"2026-10-19T09:00:00Z","cost_usd":0}}`), nil); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			b := blobx.Wrap(memblob.OpenBucket(nil))
+			t.Cleanup(func() { b.Close() })
+			exec := startRunExecution(f, gcp.JobName(appSlug, "web"), appSlug, id)
+			spec := &task.Spec{Version: 1, RunID: id, Repo: "acme/app", Ref: "main", Workflow: "web",
+				Task: "the run's prompt", Title: "the run's title"}
+			rec := &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web",
+				Status: runstore.StatusRunning, Stage: "implement", Execution: exec, StartedAt: time.Now().UTC()}
+			s := runstore.Open(b.Bucket, appSlug, id)
+			if err := s.WriteRecord(ctx, rec); err != nil {
+				t.Fatal(err)
+			}
+			if err := runstore.WriteSummary(ctx, s, runstore.NewSummary(rec, spec, time.Now().UTC())); err != nil {
+				t.Fatal(err)
+			}
+			sum, err := s.ReadSummary(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The execution ends between the listing's two reads of the run,
+			// and the summary is broken before the second: the re-read has
+			// nothing left to go back to.
+			f.run.SetState(exec, backend.StateSucceeded)
+			breakIt(t, b, s.Prefix()+runstore.SummaryName)
+
+			r := &runObjects{
+				in:         runview.Input{Slug: appSlug, RunID: id, Task: spec, Record: sum.AsRecord()},
+				store:      s,
+				execution:  exec,
+				summarized: true,
+			}
+			if err := followExecution(ctx, envOn(t, f, b), r, nil, false, func(string, ...any) {}); err != nil {
+				t.Fatalf("followExecution: %v", err)
+			}
+			if r.in.Record == nil || r.in.Record.Status != runstore.StatusRunning || r.in.Record.Stage != "implement" {
+				t.Fatalf("the record after a summary that was %s at the re-read = %+v, want the run's own result.json (running, implement): a nil record is a row of a run the backend lost", name, r.in.Record)
+			}
+		})
+	}
+}
+
+// TestAStaleSummaryAtTheReReadIsTheRunsRecord: the summary write is
+// best-effort and follows the record write (runner.save), so a run that ends
+// between the two leaves a summary that is there, decodes, and is behind --
+// one describing a run still going, beside a result.json that carries the
+// ending. The re-read may not take it: a listing that did would show a run
+// that succeeded as infra_error, "execution ended without finalizing
+// (succeeded)" (runview's no-final-record row), and every later listing would
+// draw that same wrong row. The run's own result.json is the object the
+// summary stands in for, so it answers instead.
+//
+// Mutations caught: a re-read that trusts any summary it can decode (the row
+// is the stale running one, not the run), and a re-read that gives up on a
+// summary it decoded (the row reads as a run nothing wrote).
+func TestAStaleSummaryAtTheReReadIsTheRunsRecord(t *testing.T) {
+	ctx := context.Background()
+	const id = "20261019-090000-cccc"
+	f := newCloudFixture(t)
+	b := blobx.Wrap(memblob.OpenBucket(nil))
+	t.Cleanup(func() { b.Close() })
+	exec := startRunExecution(f, gcp.JobName(appSlug, "web"), appSlug, id)
+	spec := &task.Spec{Version: 1, RunID: id, Repo: "acme/app", Ref: "main", Workflow: "web",
+		Task: "the run's prompt", Title: "the run's title"}
+	s := runstore.Open(b.Bucket, appSlug, id)
+	going := &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web",
+		Status: runstore.StatusRunning, Stage: "implement", Execution: exec, StartedAt: time.Now().UTC()}
+	if err := s.WriteRecord(ctx, going); err != nil {
+		t.Fatal(err)
+	}
+	if err := runstore.WriteSummary(ctx, s, runstore.NewSummary(going, spec, time.Now().UTC())); err != nil {
+		t.Fatal(err)
+	}
+	// The run ends in between: the finalize writes result.json, and the
+	// summary write beside it never lands, so the bucket holds the ending and
+	// a summary of a run going.
+	done := *going
+	done.Status, done.Stage = runstore.StatusSucceeded, "finalize"
+	if err := s.WriteRecord(ctx, &done); err != nil {
+		t.Fatal(err)
+	}
+	sum, err := s.ReadSummary(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Record.Status != runstore.StatusRunning {
+		t.Fatalf("the fixture's summary says %q, not the stale running one this test is about", sum.Record.Status)
+	}
+	f.run.SetState(exec, backend.StateSucceeded)
+
+	r := &runObjects{
+		in:         runview.Input{Slug: appSlug, RunID: id, Task: spec, Record: sum.AsRecord()},
+		store:      s,
+		execution:  exec,
+		summarized: true,
+	}
+	if err := followExecution(ctx, envOn(t, f, b), r, nil, false, func(string, ...any) {}); err != nil {
+		t.Fatalf("followExecution: %v", err)
+	}
+	if r.in.Record == nil || r.in.Record.Status != runstore.StatusSucceeded || r.in.Record.Stage != "finalize" {
+		t.Fatalf("the record after a stale summary at the re-read = %+v, want the run's own result.json (succeeded, finalize)", r.in.Record)
 	}
 }

@@ -242,3 +242,164 @@ func TestCascadeNoCandidatesAtTheListBound(t *testing.T) {
 		t.Errorf("the upstream saw %d calls, want none", n)
 	}
 }
+
+// TestCascadeNoCandidatesOnTheRecordedAuthNamesTheHalf: the second way a
+// repository whose record is not the cascade reaches a call with nothing to
+// select from, and the one the owner's installation of 2026-11-24 hit — the
+// record says oauth and names an account, and the list the admission left holds
+// nothing of that account's. The two states it can be are different fixes: an
+// entry the bundle does not hold is the installation's, and one the admission
+// dropped is the repository's own policy's. The refusal used to answer both
+// with one sentence and the state_unavailable class, which is what sent the
+// owner to the database while the answer was in the bundle.
+func TestCascadeNoCandidatesOnTheRecordedAuthNamesTheHalf(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// docs is the bundle: the account's own token, or the default
+		// account's where the installation never entered it.
+		docs string
+		// child is the repository's own node: the leg of O4's admission this
+		// case removes the account by.
+		child string
+		// want is the half the refusal has to name, and not the other, and
+		// dropped is the credential the bundle held and the walk left out.
+		want, dropped string
+	}{
+		{
+			name:    "the bundle holds the account and the admission does not name it",
+			docs:    config.ClaudeOAuthTokenPrefix + ownerAccount + ": " + fakeCred(t, ownerAccount) + "\n",
+			child:   testChildDoc(config.DefaultClaudeAccount),
+			want:    "the repository's own admission does not name it",
+			dropped: ownerAccount,
+		},
+		{
+			name:    "the bundle holds no credential for the account",
+			docs:    config.ClaudeOAuthToken + ": " + fakeCred(t, config.DefaultClaudeAccount) + "\n",
+			child:   testChildDoc(ownerAccount),
+			want:    "holds no credential for that account",
+			dropped: config.DefaultClaudeAccount,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newSvcWith(t, func(s *svc, _ *Config) {
+				s.src.docs = [][]byte{[]byte(tc.docs)}
+				s.policy.shared = decodeTestPolicy(t, testPolicyDocAccounts("auto", ownerAccounts(testRepo)))
+				s.policy.admissions[s.slug] = decodeTestChild(t, tc.child)
+				s.state.setRepoAuth(s.slug, creds.RepoAuth{
+					Version: creds.RepoAuthVersion, Auth: config.AuthOAuth, Accounts: []string{ownerAccount},
+				})
+			})
+
+			resp, body := s.call(t, callBody("oauth-empty"), declaredCall(config.AuthOAuth, ownerAccount))
+			if resp.StatusCode != StatusUnavailable {
+				t.Fatalf("the refusal answered %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
+			}
+			e := refusal(t, resp.StatusCode, body)
+			if e.Error != ErrorNoCandidateCredentials {
+				t.Errorf("the refusal is %q, want %q: the state was read, and the answer is in the bundle and the policy",
+					e.Error, ErrorNoCandidateCredentials)
+			}
+			if !strings.Contains(e.Message, tc.want) {
+				t.Errorf("the refusal does not name the half it is: %q", e.Message)
+			}
+			if other := "holds no credential for that account"; tc.want != other && strings.Contains(e.Message, other) {
+				t.Errorf("the refusal names the bundle for a call the admission refused: %q", e.Message)
+			}
+			// What was considered, and the one filter that removed it: the
+			// run's own answer, which is also what its halt is diagnosed from.
+			if len(e.Tried) != 1 || e.Tried[0].Name != tc.dropped ||
+				e.Tried[0].Tier != TierA || e.Tried[0].Reason != ReasonNotAdmitted {
+				t.Errorf("the refusal's tried list is %+v, want one entry naming %q, tier A, %q",
+					e.Tried, tc.dropped, ReasonNotAdmitted)
+			}
+			// The security property this refusal is the other side of: nothing
+			// of the call reaches the upstream, and no value reaches a line.
+			if got := resp.Header.Get(HeaderCredential); got != "" {
+				t.Errorf("a refused call carries the credential header %q", got)
+			}
+			if n := s.up.Count(); n != 0 {
+				t.Errorf("the upstream saw %d calls, want none", n)
+			}
+			for _, v := range []string{fakeCred(t, ownerAccount), fakeCred(t, config.DefaultClaudeAccount)} {
+				if strings.Contains(s.audit.String(), v) || strings.Contains(s.logs.String(), v) || strings.Contains(string(body), v) {
+					t.Fatal("a credential's value reached the audit line, the log or the refusal body")
+				}
+			}
+			// The operator's own line, which is what a halt like this one is
+			// diagnosed from: the class, the sentence and the same list.
+			log := s.logs.String()
+			for _, want := range []string{
+				"type=" + ErrorNoCandidateCredentials,
+				"tried=\"" + tc.dropped + " (" + ReasonNotAdmitted + ")\"",
+			} {
+				if !strings.Contains(log, want) {
+					t.Errorf("the refusal line does not carry %q: %s", want, log)
+				}
+			}
+			// One audited act per refusal (C1.13), with the refusal's own type
+			// as its status — the class the operator greps for.
+			lines := parseAuditLines(t, s.audit.String())
+			if len(lines) != 1 {
+				t.Fatalf("the refusal wrote %d audit lines, want exactly one: %s", len(lines), s.audit.String())
+			}
+			checkAuditShape(t, lines[0])
+			if got := lines[0]["status"]; got != ErrorNoCandidateCredentials {
+				t.Errorf("the audit line's status is %v, want %q", got, ErrorNoCandidateCredentials)
+			}
+		})
+	}
+}
+
+// TestCascadeNoCandidatesOnTheRecordedAuthAtTheListBound: the same refusal at
+// the largest list the contract carries. Both halves of it are bounded there —
+// the count by maxTriedEntries, the names by the bundle's own bound — and a
+// list over either is a body the writer refuses whole and answers as
+// state_unavailable, the mis-diagnosis this class exists to end. A credential
+// the admission dropped is reported by both walks (the admission's own skips
+// and the record's narrowing), and the list names it once.
+func TestCascadeNoCandidatesOnTheRecordedAuthAtTheListBound(t *testing.T) {
+	names := make([]string, 0, maxTriedEntries)
+	var doc strings.Builder
+	for i := 0; i < maxTriedEntries; i++ {
+		name := fmt.Sprintf("acct-%02d", i)
+		names = append(names, name)
+		doc.WriteString(config.ClaudeOAuthTokenPrefix + name + ": " + fakeCred(t, name) + "\n")
+	}
+	s := newSvcWith(t, func(s *svc, _ *Config) {
+		s.src.docs = [][]byte{[]byte(doc.String())}
+		s.policy.shared = decodeTestPolicy(t, testPolicyDocAccounts("auto", ownerAccounts(testRepo)))
+		s.policy.admissions[s.slug] = decodeTestChild(t, testChildDoc(config.DefaultClaudeAccount))
+		s.state.setRepoAuth(s.slug, creds.RepoAuth{
+			Version: creds.RepoAuthVersion, Auth: config.AuthOAuth, Accounts: []string{names[0]},
+		})
+	})
+
+	resp, body := s.call(t, callBody("oauth-full-list"), declaredCall(config.AuthOAuth, names[0]))
+	if resp.StatusCode != StatusUnavailable {
+		t.Fatalf("the refusal answered %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
+	}
+	e := refusal(t, resp.StatusCode, body)
+	if e.Error != ErrorNoCandidateCredentials {
+		t.Fatalf("the refusal is %q, want %q: a list at the contract's own bound must not fall back to it",
+			e.Error, ErrorNoCandidateCredentials)
+	}
+	if len(e.Tried) != maxTriedEntries {
+		t.Fatalf("the refused call carries a tried list of %d, want all %d of them", len(e.Tried), maxTriedEntries)
+	}
+	seen := make(map[string]bool, len(e.Tried))
+	for _, tr := range e.Tried {
+		if tr.Tier != TierA || tr.Reason != ReasonNotAdmitted {
+			t.Errorf("tried %+v is not a tier-A credential the admission dropped", tr)
+		}
+		if seen[tr.Name] {
+			t.Errorf("the tried list names %q twice", tr.Name)
+		}
+		seen[tr.Name] = true
+	}
+	if len(seen) != maxTriedEntries {
+		t.Errorf("the tried list names %d distinct credentials, want %d", len(seen), maxTriedEntries)
+	}
+	if n := s.up.Count(); n != 0 {
+		t.Errorf("the upstream saw %d calls, want none", n)
+	}
+}

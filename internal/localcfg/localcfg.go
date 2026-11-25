@@ -1232,6 +1232,30 @@ func (c *Config) ResolveAccount(name string) (account, alias string) {
 	return config.ResolveAccountAlias(c.ClaudeAccountAliases, name)
 }
 
+// RunsOnDefaultClaudeAccount reports whether any run of this project holds the
+// unsuffixed default Claude account: its default_claude_account key names that
+// account or names nothing, or one of its stage keys does. An installation
+// whose runs are all on a named account answers false, and the bare
+// claude-oauth-token is then a token no run of it holds — the name the secrets
+// stage must not ask for, and the one Readiness must not hold a job back for.
+// Which account a run holds is this key's and the stage keys' answer and
+// nothing else's: neither a repository's file nor the project layer may name
+// one (DefaultClaudeAccount's comment), so the answer is total here.
+func (c *Config) RunsOnDefaultClaudeAccount() bool {
+	if c == nil {
+		return true
+	}
+	if name, _ := c.ResolveAccount(c.DefaultClaudeAccount); name == "" || name == config.DefaultClaudeAccount {
+		return true
+	}
+	for _, choice := range c.ClaudeAccountStages {
+		if name, _ := c.ResolveAccount(choice.ClaudeAccount); name == "" || name == config.DefaultClaudeAccount {
+			return true
+		}
+	}
+	return false
+}
+
 // Mailbox is the mailbox block: what the mailbox consumer needs from the
 // operator's own machine, one entry per pairing.
 type Mailbox struct {

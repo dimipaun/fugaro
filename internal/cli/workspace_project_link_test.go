@@ -3,11 +3,9 @@ package cli
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -59,7 +57,16 @@ func wu18Home(t *testing.T, project, extra string) {
 	}
 	t.Setenv("FUGARO_CONFIG", path)
 	settingsBucketAt(t)
+	// The entry the command files names the actor, and the actor is the
+	// credential's own address (F21) — never the config's `user:` key, which
+	// this fixture does not write at all.
+	oldUser := authenticatedUser
+	t.Cleanup(func() { authenticatedUser = oldUser })
+	authenticatedUser = func(context.Context, *localcfg.Config) (string, error) { return wu18Owner, nil }
 }
+
+// wu18Owner is the address the member owner's own credential belongs to.
+const wu18Owner = "owner@example.com"
 
 // wu18Box is one run of a command under test: its two streams, kept so a fake
 // can read what the command had printed when it was called — which is how a
@@ -340,27 +347,26 @@ func TestLinkReportsThePolicyDifference(t *testing.T) {
 	if len(members.other) != 0 {
 		t.Errorf("link reached the member beyond the audit entry: %v (the mirror is the workspace owner's `project add`)", members.other)
 	}
+	// The entry is C1's own event, which is the shape the member's trail holds
+	// and the shape its readers read it back with (contract.md, "The audit
+	// event"): an entry in any other shape is one `status` and the drift check
+	// refuse, so it is filed through the same reader they use.
 	id, event := members.audits[0].id, members.audits[0].event
-	if !strings.Contains(id, "project.link") {
-		t.Errorf("the audit entry's id is %q, want one that names the act", id)
+	filed, err := workspace.DecodeAuditEvent(event)
+	if err != nil {
+		t.Fatalf("the audit entry link filed is not an event this program reads back: %v\n%s", err, event)
 	}
-	if !json.Valid(event) || !bytes.Contains(event, []byte("project.link")) {
-		t.Errorf("the audit entry is not a JSON object naming the act: %s", event)
+	if filed.ID != id {
+		t.Errorf("the entry is filed under %q and its own id is %q: the id is the trail's key", id, filed.ID)
 	}
-	var fields map[string]any
-	if err := json.Unmarshal(event, &fields); err != nil {
-		t.Fatalf("the audit entry does not decode: %v", err)
+	if filed.Action != workspace.ActionProjectLink {
+		t.Errorf("the audit entry's action is %q, want %q", filed.Action, workspace.ActionProjectLink)
 	}
-	for _, key := range []string{"event", "workspace", "project", "at"} {
-		if _, ok := fields[key]; !ok {
-			t.Errorf("the audit entry carries no %q: %v", key, fields)
-		}
+	if filed.Actor != wu18Owner {
+		t.Errorf("the audit entry's actor is %q, want the credential's own address %q", filed.Actor, wu18Owner)
 	}
-	if at, _ := fields["at"].(string); at == "" {
-		t.Errorf("the audit entry carries no moment: %v", fields)
-	}
-	if _, err := time.Parse(time.RFC3339Nano, fields["at"].(string)); err != nil {
-		t.Errorf("the audit entry's moment %q is not a time: %v", fields["at"], err)
+	if filed.Project != "aurora-gcp" {
+		t.Errorf("the audit entry's project is %q, want the member the change was about (aurora-gcp)", filed.Project)
 	}
 }
 
@@ -410,8 +416,8 @@ func TestUnlinkDropsOnlyTheAuthority(t *testing.T) {
 	if len(members.audits) != 1 {
 		t.Fatalf("unlink filed %d member audit entries, want exactly one", len(members.audits))
 	}
-	if !strings.Contains(string(members.audits[0].event), "project.unlink") {
-		t.Errorf("the audit entry does not name the act: %s", members.audits[0].event)
+	if filed, err := workspace.DecodeAuditEvent(members.audits[0].event); err != nil || filed.Action != workspace.ActionProjectUnlink {
+		t.Errorf("the audit entry is not an event naming %q that this program reads back (err %v): %s", workspace.ActionProjectUnlink, err, members.audits[0].event)
 	}
 	out := box.stdout()
 	if !strings.Contains(out, "fugaro workspace project rm aurora") {
