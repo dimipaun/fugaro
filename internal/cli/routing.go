@@ -294,6 +294,19 @@ func routingModels(cmd *cobra.Command, lc *localcfg.Config) ([]routingModel, err
 	// Read after the layers are assembled: files.agent stays the checkout's own
 	// block, which craftLsLayers reads the repo layer's crafts from.
 	agents := []config.Agent{files.agent}
+	resolved := false
+	if files.repo {
+		if cfg, _, ps := config.Resolve(files.data, files.layer); len(ps) == 0 {
+			agents, resolved = []config.Agent{cfg.Agent}, true
+		}
+	}
+	if !resolved && files.layer != nil {
+		agent, err := modelsUseLayerAgent(files.layer)
+		if err != nil {
+			return nil, err
+		}
+		agents = append(agents, agent)
+	}
 
 	var out []routingModel
 	add := func(model, craftName string) {
