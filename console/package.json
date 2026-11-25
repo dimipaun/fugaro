@@ -1,7 +1,7 @@
 {
   "name": "fugaro-console",
   "private": true,
-  "version": "0.126.0",
+  "version": "0.127.0",
   "license": "SEE LICENSE IN LICENSE.md",
   "description": "The Fugaro desktop console: the Electron application under console/, never published to npm and never importable by the Go module. Every specifier here is an EXACT version (desktop-console plan Task 1.0, design section 5.2), enforced by test/unit/pinning.test.ts; Electron in particular is pinned on purpose and bumped on purpose, with the toolchain task, exactly as internal/budget/rules/emulator/package.json pins firebase-tools. `engines.node` is the one field that is not an exact version: it is a range with a floor and the next major as its ceiling, so a newer patch of the line this toolchain was tested on installs while another major does not -- the same rule pinning.test.ts enforces there.",
   "homepage": "https://fugaro.dev",
