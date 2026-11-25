@@ -46,8 +46,16 @@
 # words of the update's own note only.
 #
 # Usage:      bash scripts/live-checks/check632.sh --sandbox <a sandbox repository checkout> [--project <name>]
+#             bash scripts/live-checks/check632.sh --sandbox <path> --preflight
 #             bash scripts/live-checks/check632.sh --sandbox <path> --dry-run
 #             bash scripts/live-checks/check632.sh --help
+#             --preflight makes the check's own READS and evaluates every
+#             precondition before anything is written or launched (the
+#             installation, whether it is behind this CLI and what it held
+#             before the update — the node, the coder craft, the pools and the
+#             credentials), prints every blocker at once with the command that
+#             clears it, writes nothing and launches nothing, and exits non-zero
+#             when anything blocks.
 # Needs:      bash, mktemp, date, python3, awk, sed, grep, gcloud (authenticated
 #             as YOU, able to read the runs bucket) and fugaro (the installed
 #             release, an admin of the project: `fugaro update` reaches the
@@ -72,7 +80,7 @@
 #             1: a criterion did not hold, or a guard stopped the run. 2: the
 #             check could not measure.
 #
-# Knobs (all CHECK632_*): DRY_RUN, KEEP_SCRATCH, SANDBOX, PROJECT, TASK and
+# Knobs (all CHECK632_*): DRY_RUN, PREFLIGHT, KEEP_SCRATCH, SANDBOX, PROJECT, TASK and
 # RECIPE (what the run is launched with), REGION (us-east5), LOG_VIEW (the view
 # a log read would name; no measurement here reads a log), RUN_TIMEOUT_SECONDS
 # (3600), POLL_SECONDS (15), CLI_TIMEOUT_SECONDS (180), DOCTOR_TIMEOUT_SECONDS
@@ -118,6 +126,13 @@ on_error() {
   say "an internal error ended this check at line $line"
   exit 2
 }
+
+# The shared `--preflight` driver (scripts/live-checks/lib/preflight.sh).
+live_check_lib_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib
+LIVE_CHECK_LIB=${LIVE_CHECK_LIB:-$live_check_lib_dir}
+# shellcheck source=lib/preflight.sh
+. "$LIVE_CHECK_LIB/preflight.sh"
+PREFLIGHT_TOOL=check632
 
 need_tools() {
   command -v bash >/dev/null 2>&1 || die "Check 632 needs bash"
@@ -465,6 +480,112 @@ version_row() {
   local v
   v=$(fugaro version 2>/dev/null | head -n 1 || true)
   fact "fugaro-version" PASS "${v:-fugaro version printed nothing} (the release whose update this check measures)"
+}
+
+# ---------------------------------------------------------------- preflight
+# step_preflight: --preflight. The reads the check makes before it launches a run
+# or runs the update — the installation, whether it is behind this CLI, and what
+# it held before the update (the node, the coder craft, the pools and the
+# credentials) — with every precondition evaluated and nothing written: no run
+# launched, no update run, no read of a credential value.
+step_preflight() {
+  if [ ! -d "$SANDBOX" ]; then
+    die "--sandbox is not a directory: $SANDBOX (pass the checkout of a repository of the sandbox project)"
+  fi
+  if [ ! -f "$SANDBOX/fugaro.yaml" ]; then
+    die "--sandbox carries no fugaro.yaml: $SANDBOX is not a Fugaro repository's checkout, and both the run and the update are made from it"
+  fi
+  local named
+  named=$(sed -n 's/^project:[[:space:]]*//p' "$SANDBOX/fugaro.yaml" | head -n 1)
+  PROJECT_ARG=${PROJECT_ARG:-$named}
+  if [ -z "$PROJECT_ARG" ]; then
+    preflight_block installation \
+      "$SANDBOX/fugaro.yaml names no project and no --project was given, and both the run and the update are made from the installation it names" \
+      "cd $SANDBOX && fugaro config show --json"
+  fi
+
+  say "preflight: reading the installation: fugaro doctor --project ${PROJECT_ARG} --all, in ${SANDBOX}"
+  if [ -z "$PROJECT_ARG" ]; then
+    preflight_block installation \
+      "fugaro doctor --project needs the installation's own name, which neither the checkout nor --project names" \
+      "cd $SANDBOX && fugaro config show --json"
+  else
+    run_fresh "$DOCTOR_TIMEOUT" pf-doctor "$SANDBOX" "$FUGARO_BIN" doctor --project "$PROJECT_ARG" --all
+    local line
+    line=$(grep -m1 '^project: ' "$SCRATCH/pf-doctor.out" 2>/dev/null || true)
+    local gcp=""
+    if [ -n "$line" ]; then
+      gcp=$(printf '%s' "$line" | sed -n 's/^.*(GCP \([^,]*\),.*/\1/p')
+    fi
+    case "${gcp:-$PROJECT_ARG}" in
+    *belong*) stop "the checkout at $SANDBOX belongs to ${gcp:-$PROJECT_ARG}: this check is never run there" ;;
+    esac
+    INSTALLATION=${PROJECT_ARG}
+    if [ "$BOUNDED_TIMED_OUT" = yes ] || [ -z "$line" ]; then
+      preflight_block installation \
+        "fugaro doctor --project ${PROJECT_ARG} --all does not answer for $SANDBOX (exit ${BOUNDED_STATUS}), so the installation this check launches a run in and updates cannot be read" \
+        "cd $SANDBOX && fugaro doctor --project $PROJECT_ARG --all"
+    else
+      PROJECT=$(printf '%s' "$line" | sed -n 's/^project: \([^ ]*\) .*/\1/p')
+      preflight_note installation "the installation is ${PROJECT:-$PROJECT_ARG} (GCP ${gcp:-unknown}), read from fugaro doctor --project ${PROJECT_ARG} --all in ${SANDBOX}"
+    fi
+  fi
+
+  if [ -n "$PROJECT_ARG" ]; then
+    say "preflight: reading whether the installation is behind this CLI: fugaro doctor --project ${PROJECT_ARG} --json, in ${SANDBOX}"
+    run_fresh "$DOCTOR_TIMEOUT" pf-doctorjson "$SANDBOX" "$FUGARO_BIN" doctor --project "$PROJECT_ARG" --json
+    if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ] ||
+      ! read_json doctorjson "$SCRATCH/pf-doctorjson.out" "$SCRATCH/pf-doctorjson.txt"; then
+      preflight_block version-before \
+        "fugaro doctor --json does not answer in ${SANDBOX} (exit ${BOUNDED_STATUS}), and the check whose fix names 'fugaro update' is the acceptance's premise" \
+        "cd $SANDBOX && fugaro doctor --project $PROJECT_ARG --json"
+    else
+      local release ids
+      release=$(field "$SCRATCH/pf-doctorjson.txt" release_tag)
+      ids=$(awk -F'\t' '$1 == "check" && $6 ~ /fugaro update/ { printf "%s(%s) ", $2, $3 }' "$SCRATCH/pf-doctorjson.txt")
+      if [ -z "$ids" ]; then
+        preflight_note version-before "fugaro doctor --json names no check whose fix is 'fugaro update' (release ${release:-unknown}), so this installation is not reported behind this CLI and the update has nothing to converge"
+      else
+        preflight_note version-before "the installation is behind this CLI (release ${release:-unknown}): the check(s) whose fix is 'fugaro update' are ${ids}"
+      fi
+    fi
+  fi
+
+  say "preflight: reading what the installation held before the update (policy node, coder craft, pools, credentials), in ${SANDBOX}"
+  local node_ok=no crafts_ok=no pools_ok=no creds_ok=no
+  run_fresh "$CLI_TIMEOUT" pf-node "$SANDBOX" "$FUGARO_BIN" project policy show --json
+  if [ "$BOUNDED_TIMED_OUT" != yes ] && [ "$BOUNDED_STATUS" = 0 ] &&
+    read_json node "$SCRATCH/pf-node.out" "$SCRATCH/pf-node.txt"; then node_ok=yes; fi
+  run_fresh "$CLI_TIMEOUT" pf-crafts "$SANDBOX" "$FUGARO_BIN" craft ls --json
+  if [ "$BOUNDED_TIMED_OUT" != yes ] && [ "$BOUNDED_STATUS" = 0 ] &&
+    read_json crafts "$SCRATCH/pf-crafts.out" "$SCRATCH/pf-crafts.txt"; then crafts_ok=yes; fi
+  run_fresh "$CLI_TIMEOUT" pf-pools "$SANDBOX" "$FUGARO_BIN" accounts pool ls
+  if [ "$BOUNDED_TIMED_OUT" != yes ] && [ "$BOUNDED_STATUS" = 0 ]; then pools_ok=yes; fi
+  run_fresh "$CLI_TIMEOUT" pf-creds "$SANDBOX" "$FUGARO_BIN" accounts ls --json
+  if [ "$BOUNDED_TIMED_OUT" != yes ] && [ "$BOUNDED_STATUS" = 0 ] &&
+    read_json creds "$SCRATCH/pf-creds.out" "$SCRATCH/pf-creds.txt"; then creds_ok=yes; fi
+  [ "$node_ok" = yes ] ||
+    preflight_block before \
+      "fugaro project policy show --json does not answer in ${SANDBOX}, and the node's version before the update is half of the publish convergence" \
+      "cd $SANDBOX && fugaro project policy show --json"
+  [ "$crafts_ok" = yes ] ||
+    preflight_block before \
+      "fugaro craft ls --json does not answer in ${SANDBOX}, and the coder craft's model before the update is half of the model convergence" \
+      "cd $SANDBOX && fugaro craft ls --json"
+  [ "$pools_ok" = yes ] ||
+    preflight_block before \
+      "fugaro accounts pool ls does not answer in ${SANDBOX}, and the pools before the update are half of the crossing convergence" \
+      "cd $SANDBOX && fugaro accounts pool ls"
+  [ "$creds_ok" = yes ] ||
+    preflight_block before \
+      "fugaro accounts ls --json does not answer in ${SANDBOX}, and the credentials before the update are half of the key convergence" \
+      "cd $SANDBOX && fugaro accounts ls --json"
+  if [ "$node_ok" = yes ] && [ "$crafts_ok" = yes ] && [ "$pools_ok" = yes ] && [ "$creds_ok" = yes ]; then
+    local ver cm
+    ver=$(field "$SCRATCH/pf-node.txt" version)
+    cm=$(table_field "$SCRATCH/pf-crafts.txt" craft coder 3)
+    preflight_note before "before the update, ${INSTALLATION:-the installation} held: the policy node at version ${ver:-unknown}, the coder craft runs ${cm:-no declared model}, and $(field "$SCRATCH/pf-creds.txt" count) credential(s) — every figure a read, and no credential value read"
+  fi
 }
 
 # ---------------------------------------------------------------- the steps
@@ -1068,6 +1189,12 @@ finish() {
   local status=$?
   trap - EXIT
   trap - ERR
+  if [ "$PREFLIGHT_MODE" = yes ]; then
+    # A preflight wrote nothing and launched nothing: it prints its own lines
+    # and no RESULT block.
+    remove_scratch
+    exit "$status"
+  fi
   CLEANUP_RUNNING=yes
   cleanup
   local facts=$FACTS_CAPTURED
@@ -1153,6 +1280,7 @@ on_signal() {
 
 # ---------------------------------------------------------------------- inputs
 DRY_RUN_CLI=""
+PREFLIGHT_CLI=""
 SANDBOX_CLI=""
 PROJECT_CLI=""
 TASK_CLI=""
@@ -1182,6 +1310,10 @@ while [ $# -gt 0 ]; do
     RECIPE_CLI=$2
     shift 2
     ;;
+  --preflight)
+    PREFLIGHT_CLI=1
+    shift
+    ;;
   --dry-run)
     DRY_RUN_CLI=1
     shift
@@ -1210,6 +1342,9 @@ PROJECT=$PROJECT_ARG
 TASK=${CHECK632_TASK:-${TASK_CLI:-"Reply with the single word ok and change nothing in the repository."}}
 RECIPE=${CHECK632_RECIPE:-${RECIPE_CLI:-}}
 DRY_RUN=${CHECK632_DRY_RUN:-$DRY_RUN_CLI}
+PREFLIGHT=${CHECK632_PREFLIGHT:-$PREFLIGHT_CLI}
+PREFLIGHT_MODE=no
+[ -z "$PREFLIGHT" ] || PREFLIGHT_MODE=yes
 KEEP_SCRATCH=${CHECK632_KEEP_SCRATCH:-}
 REGION=${CHECK632_REGION:-us-east5}
 LOG_VIEW=${CHECK632_LOG_VIEW:-}
@@ -1234,6 +1369,10 @@ main() {
   if [ -n "$DRY_RUN" ]; then
     plan
     return 0
+  fi
+  if [ -n "$PREFLIGHT" ]; then
+    step_preflight
+    preflight_report
   fi
   step_installation
   step_version_before

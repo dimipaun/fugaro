@@ -86,7 +86,7 @@ func TestRunRecipeRefusedOnOldImage(t *testing.T) {
 
 func TestRunUnknownRecipeFailsBeforeCloudWork(t *testing.T) {
 	f := newCloudFixture(t)
-	wantRefused(t, f, "recipe nope is not in .fugaro/recipes", "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", "nope", "x")
+	wantRefused(t, f, "recipe nope is not in project aurora", "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", "nope", "x")
 	if _, err := os.Stat(filepath.Join(f.dir, "runs", "runs", appSlug, "20261007-100000-abcd", "task.json")); err == nil {
 		t.Fatal("a task.json was written for a refused recipe")
 	}
@@ -268,11 +268,17 @@ func TestRunClonedWorkflowRefusedBelowCloneSince(t *testing.T) {
 	}
 }
 
+// A repository's own recipe is the project's copy of it (D3303): the launch
+// resolves the copy from the store, and the task carries the copy's own name
+// and text rather than the folder's file, which is never read.
 func TestRunRepoRecipeFromCheckout(t *testing.T) {
 	f := newCloudFixture(t)
-	recipeCheckout(t, f, "", map[string]string{".fugaro/recipes/mine.yaml": "version: 1\nname: mine\nsteps:\n  - review: { max_rounds: 1 }\n"})
+	recipeCheckout(t, f, "", map[string]string{".fugaro/recipes/mine.yaml": "version: 1\nname: mine\nsteps:\n  - review: { max_rounds: 4 }\n"})
 	other := mustSlug("github", "acme/other")
-	writeBuildRecord(t, f, other, "svc", releaseSeal)
+	writeBuildRecord(t, f, other, "svc", releaseL8)
+	copy := recipe.CopyName("mine", "github", "acme/other")
+	text := "version: 1\nname: " + copy + "\nsteps:\n  - review: { max_rounds: 1 }\n"
+	projectRecipesFixture(t, f, map[string]string{copy: text})
 	if _, _, err := execute(t, "run", "--run-id", "20261007-100000-abcd", "--recipe", "mine", "A task"); err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +288,8 @@ func TestRunRepoRecipeFromCheckout(t *testing.T) {
 	}
 	defer b.Close()
 	spec, err := runstore.Open(b, other, "20261007-100000-abcd").ReadTask(t.Context())
-	if err != nil || spec.Recipe == nil || *spec.Recipe != (task.Recipe{Name: "mine", Source: "repo"}) {
+	want := task.Recipe{Name: copy, Source: "project", SHA256: recipe.Sum([]byte(text)), YAML: text}
+	if err != nil || spec.Recipe == nil || *spec.Recipe != want {
 		t.Fatalf("task = %+v, %v", spec, err)
 	}
 }
@@ -517,8 +524,10 @@ func TestRunNoteOnlyForExplicitNonDefault(t *testing.T) {
 
 func TestRunRepoRecipeRefusedOnOldImage(t *testing.T) {
 	f := newCloudFixture(t)
-	recipeCheckout(t, f, "", map[string]string{".fugaro/recipes/mine.yaml": "version: 1\nname: mine\nsteps:\n  - review: { max_rounds: 1 }\n"})
+	recipeCheckout(t, f, "", nil)
 	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:0.4.1")
+	copy := recipe.CopyName("mine", "github", "acme/other")
+	projectRecipesFixture(t, f, map[string]string{copy: "version: 1\nname: " + copy + "\nsteps:\n  - review: {}\n"})
 	_, _, err := execute(t, "run", "--run-id", "20261007-100000-abcd", "--recipe", "mine", "A task")
 	if err == nil || !strings.Contains(err.Error(), "release 0.4.1") {
 		t.Fatalf("err = %v", err)

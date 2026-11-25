@@ -331,6 +331,22 @@ type cliResult struct {
 	code           int
 }
 
+// logOf is the text of the update log a summary names: Terraform's plan, with
+// the attribute paths it highlights, goes to that file and only a step line
+// reaches the terminal.
+func (r cliResult) logOf(t *testing.T) string {
+	t.Helper()
+	m := regexp.MustCompile(`\(log: ([^)]+)\)`).FindAllStringSubmatch(r.stdout, -1)
+	if len(m) == 0 {
+		t.Fatalf("the summary names no log:\n%s", r.stdout)
+	}
+	b, err := os.ReadFile(m[len(m)-1][1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
 func (c cliResult) String() string {
 	return "exit " + fmt.Sprint(c.code) + "\nstdout:\n" + c.stdout + "\nstderr:\n" + c.stderr
 }
@@ -763,7 +779,7 @@ func TestUpdateBuildsThenDeploys(t *testing.T) {
 	if n := count(r.calls(t), "repo apply"); n != 2 {
 		t.Errorf("applies = %d, want 2: %q", n, r.calls(t))
 	}
-	if !strings.Contains(res.stdout, "⚠ update module.repo.google_cloud_scheduler_job.check[0]") {
+	if !strings.Contains(res.logOf(t), "⚠ update module.repo.google_cloud_scheduler_job.check[0]") {
 		t.Errorf("the second summary doesn't highlight the unpaused schedule:\n%s", res)
 	}
 	if strings.Contains(res.stdout, "fugaro secrets set") {
@@ -909,7 +925,7 @@ func TestUpdateAdoptedSwitchesImageAfterBuild(t *testing.T) {
 	if got := dig(v, "repo", "check", "paused"); got != false {
 		t.Errorf("second plan: paused = %v, want false", got)
 	}
-	if !strings.Contains(res.stdout, "template.template.containers[0].image") {
+	if !strings.Contains(res.logOf(t), "template.template.containers[0].image") {
 		t.Errorf("the second summary doesn't highlight the image change:\n%s", res)
 	}
 	if n := count(r.calls(t), "repo apply"); n != 2 {

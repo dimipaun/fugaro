@@ -293,6 +293,9 @@ type run struct {
 	stampHooks  string
 	runnerHooks string
 	stampAuthor *gitops.Person
+	// secretFiles is the directory the run's own file secrets were written in
+	// (secretfile.go's secretFileRoot), empty for a run that declares none.
+	secretFiles string
 	// secMu guards secrets: the budget session registers a refreshed ID
 	// token from its own goroutine.
 	secMu sync.RWMutex
@@ -402,7 +405,16 @@ type run struct {
 	// D1934); nil for a run that holds none, which is every run of an
 	// installation the launcher was granted no slip for. slipMu guards it,
 	// because the beat's own goroutine runs while the run goes on.
-	slip   *slipHold
+	slip *slipHold
+	// wsSlip is the workspace's own slip, claimed at bootstrap from the id the
+	// launcher was granted (creds.PersonSlipEnv, WC8) and presented to the
+	// workspace's service alone (R4). It is a second hold rather than the same
+	// one because the two slips have two grantors and two claim secrets, and
+	// they travel under two pairs of headers exactly so that no call can carry
+	// the wrong one; nil for a run the workspace granted no slip, which is
+	// every run of a member whose launcher holds no personal token. slipMu
+	// guards it with slip above.
+	wsSlip *slipHold
 	slipMu sync.Mutex
 	// credRoute is the run's read of its own credential route record — read
 	// once for the whole run (gateway.go's credentialRoute) and asked at least
@@ -619,6 +631,12 @@ type run struct {
 	// is in the diff (D993); it is empty for a run that added none, which is
 	// every run whose task was not an asset.
 	binariesAdmitted []string
+	// promote is the run's promote pass (fugaro run --promote, LV7.1),
+	// resolved once from the checkout at the first brief (promoteRun) and read
+	// again at finalize, where the branch's own items answer what the run did
+	// with the area's debt: nil for every run whose task carries no promote
+	// block, which is every run that is not raising an area's level.
+	promote *promotePass
 	// rigorCfg is the run's rigor configuration *as the base branch has it*
 	// (docs/rigor-modes D25), read once at bootstrap and reused at every
 	// later moment (rigor.go); rigorRev is the revision it was read from, ""
@@ -847,6 +865,9 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		// in a temporary directory every run writes to, and a directory left
 		// behind is /tmp filling up with hooks of finished runs.
 		r.removeStampHooks()
+		// The values this run exposed as files go with it (G3): the directory
+		// holds credentials and nothing of a finished run is left to read them.
+		r.removeSecretFiles()
 		rctx, cancelRelease := context.WithTimeout(context.WithoutCancel(ctx), releaseDeferredTimeout)
 		r.releaseLock(rctx)
 		cancelRelease()
@@ -900,6 +921,13 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 				return
 			case cerr != nil && err == nil:
 				err = fmt.Errorf("writing run record: %w", cerr)
+			default:
+				// The failure record this execution just created is the run's
+				// own, so its summary goes beside it: a listing reads the
+				// summary where it read result.json, and a summary a deleted
+				// record left behind would otherwise stand in for this one
+				// (saveSummary).
+				r.saveSummary(ctx, r.rec)
 			}
 			rec = r.rec
 			err = r.redactErr(err)
@@ -3778,11 +3806,21 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// is the one exception, and stays reachable by a trusted author's own
 	// prompt injection: that is the residual risk the design accepts.
 	declared := r.declaredSecrets(wf)
-	var secretEnvs []string
+	var secretEnvs, fileSecretEnvs []string
 	if !r.review {
 		secretEnvs = make([]string, len(declared))
 		for i, s := range declared {
 			secretEnvs[i] = s.Env
+		}
+		// The entries exposed as a file are the ones whose variable holds the
+		// path their value was written to rather than the value itself
+		// (secretfile.go, D3327): the agent's own environment carries the path
+		// and the redactor already holds the value, so agent.BuildEnv must not
+		// take the path for a second secret to register.
+		for _, s := range declared {
+			if s.File {
+				fileSecretEnvs = append(fileSecretEnvs, s.Env)
+			}
 		}
 	} else {
 		// Keeping secretEnvs empty stops agent.BuildEnv from putting these
@@ -3890,7 +3928,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 		}
 	}
 	env, secrets, err := agent.BuildEnv(r.d.Env, agent.EnvSpec{
-		Auth: r.servedAuth(), Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend,
+		Auth: r.servedAuth(), Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend, FileSecrets: fileSecretEnvs,
 		// The operator's own catalog image's variables, for a job whose image
 		// the catalog chose (agentenv.go's imageEnv): nil for every other job,
 		// whatever its environment holds.
@@ -4181,6 +4219,12 @@ func (r *run) systemPromptData() PromptData {
 		NoImageReads: r.denyBinaryReads("implement")}
 	if r.follow != nil {
 		pd.FollowUp = followup.SystemPromptLines(r.promptData())
+	}
+	// The promote brief (LV7.1), resolved here and once: it reads the
+	// checkout's own backlog items, and the same list is what the finalize
+	// reading judges the branch against (promoteRun).
+	if p := r.promoteRun(); p != nil {
+		pd.Promote = p.brief
 	}
 	return pd
 }
@@ -6818,6 +6862,12 @@ func (r *run) finalize(ctx context.Context) error {
 	// value a later slice's rules act on is the one the run's whole diff
 	// answered (rigor.go).
 	r.finalizeRigor()
+	// A promote run's own reading of its branch (LV7.1, D31): the area's items
+	// as the run's first brief found them against the folder the run's own
+	// commits left. It writes nothing — the agent closed what it paid down, in
+	// its own commits — and the pull request's status section reports what it
+	// read (promotePart, promote.go).
+	r.readPromote(ctx)
 	// Nothing is written after the commit the suite ran on. The run used to
 	// file the findings it left open as backlog items here, which committed
 	// after that suite run and was not verified: a test that pins a fact

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -71,15 +72,18 @@ func commitReportsSpec(reports ...task.InputFile) *task.Spec {
 // commitReportsPolicy is the policy node a commit run reads: version 10, with
 // the project designating repo for its reports into dir (the layout's own
 // folder when dir is ""), or designating nothing at all when repo is empty.
+// Its budget mode is observe because every node a run reads must name one of the
+// two live ones now: a node that still says the word the vocabulary dropped is
+// refused at bootstrap (AB2, D3009), and these tests are about the designation.
 func commitReportsPolicy(repo, dir string) string {
 	if repo == "" {
-		return `{"version":10,"budget":{"mode":"off"}}`
+		return `{"version":10,"budget":{"mode":"observe"}}`
 	}
 	block := fmt.Sprintf(`{"repo":%q`, repo)
 	if dir != "" {
 		block += fmt.Sprintf(`,"dir":%q`, dir)
 	}
-	return `{"version":10,"budget":{"mode":"off"},"reports_commit":` + block + `}}`
+	return `{"version":10,"budget":{"mode":"observe"},"reports_commit":` + block + `}}`
 }
 
 // commitReportsObject writes one stored report into the run's own prefix, where
@@ -209,6 +213,28 @@ func (l *commitReportsLog) String() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.b.String()
+}
+
+// logMessages are the entries the run's own JSON logger wrote, as the product's
+// own log reader prints them: `fugaro logs` projects an entry's message and its
+// stage/stream tags and no attribute, so a name that only an attribute carries
+// is a name no reader of the run's record sees.
+func logMessages(t *testing.T, logs *commitReportsLog) []string {
+	t.Helper()
+	var out []string
+	for _, line := range strings.Split(logs.String(), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var e struct {
+			Message string `json:"message"`
+		}
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Fatalf("the logger wrote a line that is not one entry (%v): %s", err, line)
+		}
+		out = append(out, e.Message)
+	}
+	return out
 }
 
 // TestCommitReportsWritesEachRepositorysReportUnderItsSlug: the step writes
@@ -357,7 +383,7 @@ func TestCommitReportsLeavesAFileTheStoreDoesNotHold(t *testing.T) {
 	rel := projectpolicy.DefaultReportsCommitDir + "/" + repoSlug + "/" + kept
 	advanceBranch(t, b.remote, "main", map[string]string{rel: keptBy})
 	var logs commitReportsLog
-	b.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	b.deps.Log = runner.NewLogger(&logs)
 
 	rec, err := b.run(t, review("ship", 0))
 	if err != nil || rec.Status != runstore.StatusSucceeded {
@@ -374,8 +400,9 @@ func TestCommitReportsLeavesAFileTheStoreDoesNotHold(t *testing.T) {
 	if !strings.Contains(body, "]("+repoSlug+"/"+kept+")") {
 		t.Errorf("the index does not list the report the folder already held:\n%s", body)
 	}
-	if !strings.Contains(logs.String(), rel) {
-		t.Errorf("the run's record does not name the file it left alone (%s):\n%s", rel, logs.String())
+	named := slices.ContainsFunc(logMessages(t, &logs), func(m string) bool { return strings.Contains(m, rel) })
+	if !named {
+		t.Errorf("the run's record does not name the file it left alone (%s) in the message `fugaro logs` prints:\n%s", rel, logs.String())
 	}
 }
 

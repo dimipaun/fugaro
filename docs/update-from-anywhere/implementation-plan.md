@@ -431,7 +431,7 @@ launches by plan edges holds it by hand.
 
 ### U9d: the live documents' pointers, and the test that none remains
 - Acceptance:
-  - `README.md:120`, `docs/how-to/teammates.md:13`, `docs/release.md:364` and
+  - `README.md:120`, `docs/how-to/teammates.md:13`, `docs/release.md:359` and
     `.claude/skills/new-release/SKILL.md:79` name `fugaro project repos add`. The skill's line also
     loses its pin sentence ("offered its removal as a diff"), which becomes the notice.
   - `TestDocsNoAnchorFlagNamed` greps the tree for `update --anchor` and `setup --anchor` and finds

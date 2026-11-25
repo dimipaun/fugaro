@@ -186,7 +186,17 @@ type Tick struct {
 // settles, and nothing else. It is empty until a cycle has run, which is also
 // the first moment a claim of this daemon's can exist — a claim is taken inside
 // a cycle (launch.go).
-func (t *Tick) Held() []Held { return t.mine }
+//
+// **A daemon that has not run a cycle yet settles nothing**, so its first beat
+// after a restart re-stamps no claim: a claim it took before the restart keeps
+// the stamp it was written with until the first cycle reads the nodes, which is
+// one beat and one cycle and the safe direction whatever the gap — nothing reads
+// an item's stamp to decide anything (claim.go's header), and the walk of the
+// claims node that would close the gap is the read the refresh exists without.
+//
+// What comes back is a copy: the caller settles the claims it names and never
+// edits the reading the cycle kept, which the next beat hands out again.
+func (t *Tick) Held() []Held { return slices.Clone(t.mine) }
 
 // Report is what one cycle did, for the loop's log and for the tests.
 type Report struct {

@@ -81,8 +81,8 @@ func tfRan(t *testing.T, r *initRig, root, sub string) []tfCall {
 
 // noStepLeftBehind fails on a run that stopped for anything but a step left for
 // the person: `fugaro update` closes such a run with "fugaro update is not
-// finished", and the Firestore location's note is one of those steps (D3027 —
-// the database is written before it, which is what these two tests are about).
+// finished" (D3027 — the budget database is written before the run history's
+// own, which is what these two tests are about).
 func noStepLeftBehind(t *testing.T, err error) {
 	t.Helper()
 	if err != nil && !strings.Contains(err.Error(), "step(s) left for you") {
@@ -567,6 +567,91 @@ func TestAConvergedInstallationMissingOneIndexRunsTheStage(t *testing.T) {
 	}
 }
 
+// memberPin is the config of a project that joined a workspace, exactly as
+// `fugaro workspace add` writes it: the membership key and the four values the
+// pin is refused without (localcfg.validateWorkspace). The pin names no
+// service address, so the run publishes no credential route and the stage this
+// test is about is the only one that has something to do.
+const memberPin = "workspace: workspace-alpha\n" +
+	"workspace_pin:\n" +
+	"  firebase_project: workspace-alpha-1234\n" +
+	"  issuer: https://securetoken.google.com/workspace-alpha-1234\n" +
+	"  assertion_key: marker-assertion-key\n" +
+	"  service_account: fugaro-workspace@workspace-alpha-1234.iam.gserviceaccount.com\n"
+
+// memberServiceAccount is the account memberPin names: the one the root binds
+// the read to.
+const memberServiceAccount = "fugaro-workspace@workspace-alpha-1234.iam.gserviceaccount.com"
+
+// TestAPlainUpdateBindsAWorkspaceMembersRead is D2988 at the door the operator
+// note names: a member's own step is a plain `fugaro update`, with no flag and
+// no second command. The member's config records its database (F34) and the
+// Firebase root's state carries the run index's composite indexes, so RI2 has
+// nothing to ask for — and the state carries no binding for the workspace
+// service account the pin names, because the pin was written by `fugaro
+// workspace add` and no root has been applied with it since. The skip is
+// answered no on the second question and the apply that follows is the one
+// that creates the binding (modules/firebase/workspace_access.tf), with the
+// pin's account in its vars.
+//
+// Red before the check asked it: the member's plain update was skipped with
+// "the project config already records the budget database", the root was never
+// applied, and the workspace's service could not read that member's ledger —
+// only `fugaro update --firebase-project`, which the owner's ruling of
+// 2026-11-24 removed from the member's step, reached the root.
+func TestAPlainUpdateBindsAWorkspaceMembersRead(t *testing.T) {
+	r := alwaysRig(t)
+	convergedFirebase(t, r)
+	mayCreate(t, r)
+	r.appendConfig(t, memberPin)
+	r.fbPlan(t, nil, nil, runIndexAddresses())
+	// The plan the apply is made from is the root's answer for that state: the
+	// binding the state does not carry, planned as a create.
+	r.script["plan@firebase"] = map[string]any{"exit": 2, "stdout": planJSON(t, planChange{
+		"address": "module.firebase.google_project_iam_member.workspace_read[0]", "type": "google_project_iam_member",
+		"change": map[string]any{"actions": []string{"create"}, "before": nil, "after": map[string]any{}}})}
+	r.save(t)
+	fakeTerminal(t)
+
+	out, err := updateRun(t, r.initRig, "update")
+	if err != nil {
+		t.Fatalf("a member's plain update did not converge: %v\n%s", err, out)
+	}
+	if got := r.applies(t); !slices.Contains(got, "firebase") {
+		t.Fatalf("the Firebase root was applied in none of %v, so the workspace's read of this member's database was never bound and its workspace-served runs fail (D2988)\n%s", got, out)
+	}
+	if v := r.fbVars(t)["workspace_service_account"]; v != memberServiceAccount {
+		t.Errorf("the Firebase root is applied with workspace_service_account = %v, want the account this member's own pin names (%s): the binding is the pin's account and nothing the workspace publishes (W7)", v, memberServiceAccount)
+	}
+}
+
+// TestAConvergedMemberWithTheBindingSkipsTheStage is F34 kept for a member: one
+// update later the root's state carries the binding the run above created, so
+// the member's update has nothing left in that root — RI2's indexes are there
+// and D2988's read is there — and the skip the installation has had since AB7
+// stands. Without it every member's update would apply the Firebase root for
+// ever, which is the confirmation the skip exists to save.
+func TestAConvergedMemberWithTheBindingSkipsTheStage(t *testing.T) {
+	r := alwaysRig(t)
+	convergedFirebase(t, r)
+	mayCreate(t, r)
+	r.appendConfig(t, memberPin)
+	r.fbPlan(t, nil, nil, append(runIndexAddresses(), "module.firebase.google_project_iam_member.workspace_read[0]"))
+	fakeTerminal(t)
+
+	out, err := updateRun(t, r.initRig, "update")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	l := stepLineOf(reportLines(out), initflow.Firebase)
+	if !strings.HasPrefix(l, markSkipped+" "+initflow.Firebase) || !strings.Contains(l, "already records the budget database") {
+		t.Errorf("the Firebase stage is %q, want the skip that says the state carries what the root declares\n%s", l, out)
+	}
+	if got := r.applies(t); slices.Contains(got, "firebase") {
+		t.Errorf("the Firebase root was applied for a member whose state carries the binding: %v", got)
+	}
+}
+
 // TestWithNothingToAnswerTheStageIsSkippedWithItsLine is F4 and R2: a run
 // whose ordinary confirmation nothing would answer creates no database. It is
 // the one line, and the run carries on — the stages behind the Firebase stage
@@ -609,10 +694,13 @@ func TestWithNothingToAnswerTheStageIsSkippedWithItsLine(t *testing.T) {
 	}
 }
 
-// TestTheBudgetDatabaseIsWrittenBeforeTheLocationNote is D3027: the budget
-// database and the local config that records it come first, and a Firestore
-// location left for a person holds back the run history and nothing else.
-func TestTheBudgetDatabaseIsWrittenBeforeTheLocationNote(t *testing.T) {
+// TestTheBudgetDatabaseIsWrittenBeforeTheFirestoreDatabase is D3027: the budget
+// database and the local config that records it come first, and the run
+// history's own database — the only one whose location is permanent — is
+// created after them. No step confirms that location any more (LP10, D3090;
+// O2): the line saying where is printed and the database is created, in this
+// coding agent's session as anywhere else.
+func TestTheBudgetDatabaseIsWrittenBeforeTheFirestoreDatabase(t *testing.T) {
 	r := alwaysRig(t)
 	mayCreate(t, r)
 	noDatabaseYet(t, r)
@@ -629,16 +717,22 @@ func TestTheBudgetDatabaseIsWrittenBeforeTheLocationNote(t *testing.T) {
 	if b := r.localConfig(t).Budget; b == nil || b.RTDBURL != r.db.URL {
 		t.Errorf("the local config records budget %+v, want the database this run made", b)
 	}
-	if loc, _ := r.fs.Database(); loc != "" {
-		t.Errorf("the Firestore database was created in %s, and this run left its location for a person", loc)
+	loc := fsLocation(defaultRegion)
+	if got, _ := r.fs.Database(); got != loc {
+		t.Errorf("the Firestore database is in %q, want %s, created with nothing asked:\n%s", got, loc, out)
 	}
-	written, note := strings.Index(out, "wrote the database"), strings.Index(out, "⚠ CONFIRM (project ")
+	for _, l := range strings.Split(out, "\n") {
+		if strings.Contains(l, "⚠ CONFIRM") && strings.Contains(l, "Firestore") {
+			t.Errorf("the database's location is still a note of its own:\n%s", l)
+		}
+	}
+	line, written := strings.Index(out, "the Firestore database is created in "+loc), strings.Index(out, "wrote the database")
 	switch {
 	case written < 0:
 		t.Errorf("no line says the budget database was written:\n%s", out)
-	case note < 0:
-		t.Errorf("the Firestore location's note is not in the run at all, so the order this test is about was never reached:\n%s", out)
-	case written > note:
-		t.Errorf("the location's note comes before the budget database's write:\n%s", out)
+	case line < 0:
+		t.Errorf("no line says where the Firestore database is created:\n%s", out)
+	case written > line:
+		t.Errorf("the Firestore database's line comes before the budget database's write:\n%s", out)
 	}
 }

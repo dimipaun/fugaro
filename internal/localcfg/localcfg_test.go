@@ -785,22 +785,33 @@ func TestRecordBucketURL(t *testing.T) {
 	}
 }
 
-func TestBudgetDefaultsOff(t *testing.T) {
+// TestUnsetModeIsObserve: the installation's own config answers observe for a
+// mode it does not write, whether it writes no budget block at all or writes
+// one without a mode (AB2, R3, D3010). Unset used to mean off here, which is
+// the reading this release ends: an installation with no mode has a gateway
+// and a budget, and it refuses nothing (spec §2, §7).
+//
+// The word that was a mode until this release is the one exception, and it is
+// the migration's: such a file still loads for `fugaro update` to rewrite it,
+// and this answer echoes it as written rather than landing on observe, so the
+// update's listing can name what it will remove (F22, AB8b). No reader but
+// that listing and the rewrite itself asks this answer for it.
+func TestUnsetModeIsObserve(t *testing.T) {
 	c, err := Parse([]byte(sample))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.BudgetMode() != "off" || c.Budget != nil {
+	if c.BudgetMode() != BudgetObserve || c.Budget != nil {
 		t.Fatalf("no block: mode %q, budget %+v", c.BudgetMode(), c.Budget)
 	}
 	if o, err := c.Overrides(); err != nil || len(o) != 0 {
 		t.Fatalf("overrides = %v, %v", o, err)
 	}
 	c, err = Parse([]byte(sample + "budget: { per_run_usd: 5 }\n"))
-	if err != nil || c.BudgetMode() != "off" {
+	if err != nil || c.BudgetMode() != BudgetObserve {
 		t.Fatalf("empty mode: %q, %v", c.BudgetMode(), err)
 	}
-	for _, mode := range []string{"off", "observe", "enforce"} {
+	for _, mode := range []string{"observe", "enforce"} {
 		c, err := Parse([]byte(sample + "budget: { mode: " + mode + ", per_run_usd: 5 }\n"))
 		if err != nil || c.BudgetMode() != mode || c.Budget.PerRunUSD != 5 {
 			t.Fatalf("%s: %q, %v", mode, c.BudgetMode(), err)
@@ -809,6 +820,18 @@ func TestBudgetDefaultsOff(t *testing.T) {
 	// observe accounts only without a cap.
 	if _, err := Parse([]byte(sample + "budget: { mode: observe }\n")); err != nil {
 		t.Fatalf("observe without a cap: %v", err)
+	}
+	// The word is answered as written, and only so that the update can rewrite
+	// it: it is not the mode the readers act on.
+	c, err = Parse([]byte(sample + "budget: { mode: off, per_run_usd: 5 }\n"))
+	if err != nil {
+		t.Fatalf("a config that says the word no longer loads, so nothing could rewrite it (F22): %v", err)
+	}
+	if c.BudgetMode() != "off" {
+		t.Fatalf("mode %q, want the word as written", c.BudgetMode())
+	}
+	if got := policy.Mode(c.BudgetMode()).Effective(); got != BudgetObserve {
+		t.Errorf("the word resolves to %q, want %q: there is no off to act on", got, BudgetObserve)
 	}
 }
 
@@ -854,7 +877,7 @@ func TestBudgetValidation(t *testing.T) {
 		"infinite cap":          {"budget: { mode: enforce, per_run_usd: .inf }\n", "per_run_usd"},
 		"cap rounds to nothing": {"budget: { mode: enforce, per_run_usd: 0.0000001 }\n", "rounds to nothing"},
 		"cap over 100000":       {"budget: { mode: enforce, per_run_usd: 100000.01 }\n", "per_run_usd"},
-		"unknown field":         {"budget: { mode: off, per_run: 5 }\n", "per_run"},
+		"unknown field":         {"budget: { mode: observe, per_run: 5 }\n", "per_run"},
 		"price without rates":   {"model_prices: { claude-sonnet-5-5: { cache_read: 0.1 } }\n", "input_per_m"},
 		"negative price":        {"model_prices: { claude-sonnet-5-5: { input_per_m: -1, output_per_m: 10 } }\n", "claude-sonnet-5-5"},
 		"negative image rate":   {"model_prices: { claude-sonnet-5-5: { input_per_m: 1, output_per_m: 10, image_tokens: -1 } }\n", "image_tokens"},
@@ -1264,8 +1287,9 @@ func TestBudgetTokensAndModelsValidation(t *testing.T) {
 	if err != nil || c.Budget.MaxRunTokens != 500000 || len(c.Budget.AllowedModels) != 2 {
 		t.Fatalf("valid: %+v, %v", c.Budget, err)
 	}
-	// The two keys hold with the dollar budget off.
-	if c.BudgetMode() != BudgetOff {
+	// The two keys hold with the block's mode left out, which the answer reads
+	// as observe (AB2, D3010).
+	if c.BudgetMode() != BudgetObserve {
 		t.Errorf("mode = %q", c.BudgetMode())
 	}
 }

@@ -137,6 +137,12 @@ type initEngine struct {
 	// gates would then never run on it. Cleared by the landing, as accessSeed is.
 	accessMark bool
 
+	// reposState is the run's per-repository state: the enrolled list every
+	// stage reads (memoized here, so one command reads the repositories once)
+	// and the lines each stage and step reported about them
+	// (update_repos.go).
+	reposState reposState
+
 	// flagFactVersion is the version the self-flag step's own read of the
 	// creation fact answered with, and 0 where that step read nothing
 	// (update_selfflag.go). The marker step asks it beside the gate's version
@@ -281,8 +287,10 @@ func (e *initEngine) options() initflow.Options {
 //
 // Both front doors run this one list, and the door only removes: `update` is
 // everything `setup` registers, minus the project stage's creation path (a
-// project it never creates) and minus the Batch backend's (the stage is
-// behind --provision-batch, which update refuses). So update's stages are
+// project it never creates) and minus the Batch backend's --provision-batch
+// registration, which update refuses; where the installation's opt-in fact
+// says it is on Batch, update registers the same stage without the flag
+// instead (R2, D3110, see below). So update's stages are
 // preflight, installation, Firebase, images, installation a second time,
 // secrets, plugin, the repository of the checkout it is run in (W5.1), the
 // deployed security rules generation, the published policy node itself
@@ -416,12 +424,20 @@ func initStages(e *initEngine) []initflow.Stage {
 	} else {
 		stages = append(stages, newOrchestratorUnitStage(e))
 	}
-	// The Batch backend's provisioning is the owner's step and nothing else
-	// reaches it: the stage is registered only under its own flag, so an
-	// installation reaches it by asking for it and never as part of an update
-	// (design compute-backend §8.1 tasks 6 and 9).
+	// The Batch backend's provisioning. `setup` reaches the root by asking for
+	// it: the first provisioning is registered under its own flag and is the
+	// owner's step, never part of an update (design compute-backend §8.1 tasks
+	// 6 and 9). `fugaro update` reaches the SAME root by the installation's own
+	// fact instead (R2, D3110): where the block's opt-in says this installation
+	// is on Batch, every operator's update
+	// converges the root -- tightened like the installation's other roots -- and
+	// a machine whose credential is not an operator's, or one whose root was
+	// never provisioned, skips the moment with one line. Which machine is
+	// updating, and what its own `backend:` says, decide nothing (F32).
 	if e.r.o.provisionBatch {
 		stages = append(stages, newComputeStage(e))
+	} else if e.updatesComputeRoot() {
+		stages = append(stages, newUpdateComputeStage(e))
 	}
 	// The project stage, which is the one stage that may create the GCP
 	// project. `setup` registers it on every first run: a first run makes its
@@ -707,6 +723,15 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// this run leaves behind — and it returns no error either: the list is a derived
 	// object, and failing an upgrade over one is what the HARD RULE forbids.
 	e.writeAdminList(ctx)
+	// And D3325's: every workflow secret's project copy moves into the
+	// `fugaro_p_` grammar the intake writes and the credentials service serves,
+	// as the operator (update_workflowsecrets.go's copyWorkflowSecretsToGrammar).
+	// It is here for the reason the eight around it are — the converge has
+	// applied everything it had, so the project-wide containers it reads are the
+	// ones this run leaves behind — and it returns no error either: a name that
+	// was not copied keeps its mount and its copy, and the next update copies it
+	// (the HARD RULE, G4).
+	e.copyWorkflowSecretsToGrammar(ctx)
 	// And D3087's: where the installation's located things are, read from the
 	// cloud and written down in this machine's own config (LP14 of
 	// docs/location-preference/, docs/location-preference/record.md). It is
@@ -730,6 +755,13 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// both are derived from what the installation holds and neither fails an
 	// update (the HARD RULE).
 	e.backfillPRIndex(ctx)
+	// And D2966's: the run summaries the runs before this release have none of,
+	// created in place so `runs ls` reads two objects a row instead of three
+	// (update_summary.go). It is here for the reason above — the converge
+	// applied everything it had, so the runs it walks are the ones this run
+	// leaves behind — and it returns no error either: a summary is a derived
+	// hint, and failing an upgrade over one is what the HARD RULE forbids.
+	e.backfillRunSummary(ctx)
 	// And D2716's: the checkout's docs/backlog/ folder, folded into the
 	// project's standing backlog once (update_backlog.go). It is here for the
 	// reason the four above are — the converge has applied everything it had, so
@@ -2356,9 +2388,14 @@ func (e *initEngine) budgetBackendOn() bool {
 // it could always take, the installation's own project — is untouched.
 // The skip is the one that reads (Check and not skip): the run index's
 // composite indexes are the Firebase root's and only its apply creates them
-// (RI2, F10), so a converged installation is still this stage's while the
-// root's state does not carry them — and while the credential may make the
-// IAM changes that root's apply makes, which is F34's own operator case.
+// (RI2, F10), and so is the workspace's read of a member's database (WS1,
+// D2988), so a converged installation is still this stage's while the root's
+// state does not carry them — and while the credential may make the IAM
+// changes that root's apply makes, which is F34's own operator case. The
+// second question is what makes a member's plain `fugaro update` the whole of
+// its step: the pin `fugaro workspace add` wrote is not in any state yet, so
+// the very next update is one this stage runs, with no flag and no second
+// command.
 //
 // firebaseSkip answers it, and everything it cannot read leaves F34's line
 // standing, because the update of a converged installation must not fail over
@@ -2375,7 +2412,7 @@ func (e *initEngine) firebaseSkip(ctx context.Context) string {
 		if err := e.setup(ctx); err != nil {
 			return known
 		}
-		wait, why := e.r.runIndexIndexesWait(ctx, e.c, e.bin, e.spec.StateBucket, cmp.Or(e.r.o.firebaseProject(), e.lc.GCPProject))
+		wait, why := e.r.firebaseRootWait(ctx, e.c, e.bin, e.spec.StateBucket, cmp.Or(e.r.o.firebaseProject(), e.lc.GCPProject), e.lc)
 		if !wait {
 			return known + why
 		}

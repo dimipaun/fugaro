@@ -669,6 +669,8 @@ states, and withholds it in the reduced mode with the rest of the Spend view.
 | `runs` | `[]runview.Row` | no | `[]` when none |
 | `totals` | `runview.Totals` | no | below |
 | `groups` | `[]object` | **yes** | **only under `runs ls --group-by failure_class`** (`internal/cli/runs_group.go`): the window's failures grouped, one object per class of the closed vocabulary of `docs/failure-classes/design.md` §3 that some run of the window ended in, beside the `runs` array rather than instead of it. Each group carries `class` (one of the nineteen names), `runs` (how many of the window's runs ended in it), `share` (that count's share **of the window's runs**, never of the spend — D1465) and `spend_usd` (what those runs cost). The order is the vocabulary's own (`failure.Classes()`), so two readers of one window read the same block. **`omitempty` is what keeps the phone's degraded feed alive**: the degraded watch document embeds this shape and the app refuses a key it does not know, so a block printed by a listing that never grouped would break the degraded screen (`internal/cli/watch.go`) |
+| `index_complete` | bool | **yes** | the run index's own answer about whether a walk has ever reached the end of history (D3215): **`false` until one has**, which is what makes a listing that reads the index honest about a short list — a reader that showed the rows of an unfinished index as the whole history would be showing a number the index does not support. **Present only on a listing whose rows came from the index** and absent on every listing the window answered (a flag the index does not serve, and every release that still reads the index's stub), because a listing that read no index has nothing to say about one; the document then reads exactly as it did before the field existed. `omitempty` is what keeps that safe: the degraded watch document embeds this shape and the app refuses a key it does not know, so a field a listing did not read must not reach the document it writes — the `groups` rule above |
+| `folded_through` | time.Time | **yes** | RFC 3339: **the moment the index is folded through** — how fresh the listing's rows are, since the index answers from what it has folded and a run minted after that moment is not in it yet. Carried with `index_complete` under the rule above: present exactly when the rows came from the index, absent otherwise, and **absent even there when the index has folded nothing** (it has no moment to name) |
 | `warnings` | `[]string` | no | the lines a human listing prints before its table |
 
 `runview.Row` (`internal/runview/runview.go`) is the run shape behind
@@ -881,6 +883,74 @@ a page costs what the window costs — and therefore `totals.runs`, the counts b
 and every dollar figure in it stay the window's however small the page is. A reader
 that divided one of those figures by the rows it drew would print a number this
 document does not carry, which is the one wrong answer the two flags could produce.
+
+**The default listing reads the run index, and it is no longer a window.** With none of
+`--since`, `--mine`, `--batch`, `--state`, `--debt`, `--group-by`, `--pr` and `--watch`
+(the flags whose reads stay the bucket's, each for its own reason — `internal/cli/runs.go`
+`indexListing`), `runs ls` asks the installation's run index for **the newest 50 runs by
+the index's own sort key, whatever their age, plus every run that has not ended** (D3203):
+a run still going is in the listing however far back it started, and 100× the history
+costs the same handful of requests. **The bucket is not listed on this path at all** —
+the index has said which runs to read, so no flat listing of a repository's objects is
+made, which is what the read exists to avoid. The row shape is unchanged: every run named
+is read and rendered exactly as the window's runs are. **The runs that have not ended lead
+the page**, ahead of the newest-50 rows: the page's last row is the cursor `--after` takes
+the next page from, and it has to be a row inside the newest-50 page, or an old active run
+printed last would hand on a cursor two hundred days old and the runs between the two
+would never be listed. An old active run can therefore be printed again by a later page —
+the active runs lead, and the index's order reaches their sort key again; the alternative,
+a run no page lists, is the one outcome the cursor must not have.
+
+**`totals` on this path is the summary document's**, not the page's, **when the listing
+covers the installation**: `runs ls` reads the index's own summary
+(`internal/runindex`), which counts every run the installation's index carries, and
+prints that as `totals` (D3203, D818). It is the same shape `runview.Totals` always was —
+the figure is a total of the installation rather than of the page drawn, which is the rule
+the paragraph above states and this path keeps. **A listing narrowed to some of the
+installation's repositories** — `--repo`, or a local config that lists them — **totals its
+own rows instead**, as a windowed listing does: the summary counts every repository's runs
+and spend, so a listing of one repository's rows beside the installation's figure would
+report money the reader did not ask for. **So does a listing the access gate has
+narrowed**: the gate drops the rows of repositories the credential holds no role in
+(D1586's read half), and a figure it has changed is recomputed from the rows it left, or a
+viewer of one repository would be shown the installation's spend.
+
+**`--since` still bounds a window, and the bound is the window's and not history's.** A
+listing given `--since` (or `--mine`, or `--batch`) is read whole from the index — every
+run of it the index carries, however far back the window reaches and however many runs
+that is — and `totals` is the sum of those rows, which is what the flags have always
+meant. **The console's own `--since 24h` reads are unchanged by any of this**: they are
+bounded listings and read exactly what they read before.
+
+**`--after=RUN-ID` stays a run id, and the index resolves it.** The cursor is not an
+opaque index token: it is a run id, which is what the console's allow-list checks and
+what a page's last row hands on. `runs ls` resolves that run's sort key from its own
+document in the index — or, **when the index has not folded that run yet, from the
+overlay**, which is where a run the index knows only as an id lives — and starts after
+it, in the index's order. An id neither holds stays the command's refusal.
+
+**`--pr=N` reads the index too** (D3204): the runs of a pull request the index has folded
+come from it, and the pull request's own index in the bucket and the other sources below
+go on covering the runs the run index does not have (`internal/cli/runs_pr.go`).
+
+**A listing the index cannot answer reads the window.** An index that has folded nothing
+and finished no walk — a fresh installation, and the stub every release before the index
+is wired answers with — is answered the way every listing was answered before the index
+existed, and **says nothing**: the window it reads is the listing, not a fallback from
+one, so there is no note to print and neither of the two fields below reaches the
+document (which is why the document is byte for byte the one this command printed before
+the index existed). **A reader that failed is the one case with a line**, on stderr, in
+one note: a listing that could not ask the index has something to say and reads the window
+beside it. Nothing silently short is ever printed: the two fields below are how a reader
+knows the difference.
+
+**`index_complete` and `folded_through` are on this document** — the index's own two
+facts about itself — and **the text listing says one line above its table while the index
+is still building** (`index_complete: false`): *the run index is still building: this
+listing is not the whole history yet*, with the moment it is folded through where it has
+one. The line is a note and not a warning: it is not in `warnings`, and it is not in the
+degraded feed's body (the fields are absent there, since the feed's listing is the
+window's).
 ### `fugaro runs ls --stream --json` — the listing as it arrives (the console improvements plan's RS1, the console's `runs.stream`)
 
 **Command:** the same `internal/cli/runs.go` `newLsCmd` / `runLs`, with
@@ -894,11 +964,19 @@ D2906, R8). `--stream` is accepted only with `--json`.
 carries **one element of this document's `runs` array, unchanged, in the
 document's own order** (created descending, then the run descending) under the
 line's `row` key; `end` is the last line of a feed that ran to completion, with
-`count` — how many `row` lines went before it — and the same `version`; `error`
-is a feed that failed after its first row, carrying the sentence the command
-would have printed, in one line. **A feed with no `end` line is an interrupted
-read**, which is why the count is carried: an empty window and a truncated read
-are otherwise the same bytes. `schemas/runs-stream.schema.json` is the authority
+`count` — how many `row` lines went before it — and the same `version`, plus the
+index's own two facts where the page came from the run index: **`index_complete`
+and `folded_through`, the same members and the same meaning as the document's
+(§5)**, absent exactly when they are absent there, which is the shape a consumer
+drawing rows as they arrive needs to tell a page of an index that is still
+building from the whole history — the feed is the shape most able to print a
+silently short list, since it never holds the document to check against. They
+are why the feed's version is **2** (a feed of version 1 carries neither); the
+`row` line is unchanged by that version, member for member; `error` is a feed
+that failed after its first row, carrying the sentence the command would have
+printed, in one line. **A feed with no `end` line is an interrupted read**,
+which is why the count is carried: an empty window and a truncated read are
+otherwise the same bytes. `schemas/runs-stream.schema.json` is the authority
 for the line — it is the schema of ONE line and not of the feed, and no object
 in it is closed, because members are added within a version and a consumer that
 refused one it does not know would refuse a newer CLI's feed — and
@@ -2939,12 +3017,19 @@ further: the row is **dropped whole**, so not even the key is drawn.
 write** (the settings-edit plan's C3, design §5.1 rule 12, SECURITY-SENSITIVE
 because a new write always is). `settings.edit` drives the pair on the argv
 §5.1's write row spells and nothing else of the group: the dry run's is
-`settings set|unset KEY --layer <L> --dry-run --json --project <name> [--config
-<path>] [-- <VALUE>]`, and the confirmed write is the same line with the phase
-words taken out — the write carries no flag at all, because the CLI asks no
-confirmation any more and the console's child has no terminal to answer one with
-(no-prompt policy, T11), and what the dry run's classification decides is the
-console's own window's shape and not the argv (§6.20). **Neither `--layer` nor a
+`settings set|unset KEY --layer <L> [--repo <directory>] --dry-run --json
+--project <name> [--config <path>] [-- <VALUE>]`, and the confirmed write is the
+same line with the phase words taken out — the write carries no flag at all,
+because the CLI asks no confirmation any more and the console's child has no
+terminal to answer one with (no-prompt policy, T11), and what the dry run's
+classification decides is the console's own window's shape and not the argv
+(§6.20). **`--repo` is the `repo` layer's alone and carries the installation's
+own directory** (the repo-coupling audit's L12, RC80): a `repo`-layer row writes
+one checkout's `fugaro.yaml`, and with no `--repo` the CLI resolves it from the
+child's working directory, so the file written would be a fact neither the argv
+nor the window named. A `local` or `project` edit carries no such word, and the
+directory is the console's own in every case rather than a renderer's. **Neither
+`--layer` nor a
 phase word is a renderer's**: the layer is this read's own `target_layer`, held
 in the console's main process, and the one phase spelling is that process's own
 — so no payload of a renderer's can name a layer the CLI did not offer, which is
@@ -2952,11 +3037,11 @@ the whole of D1105.
 
 **The group's other words stay off this surface.** `settings get` reads a single
 key this screen does not need (the row set is the whole document); the group's
-positional keys and globs, its `--repo`, `--all-repos`, `--layer`, `--grep`,
+positional keys and globs, its `--all-repos`, `--layer`, `--grep`,
 `--changed`, `--why` and `--offline` flags are not words of either row, because
 they narrow the table by a rule no screen control sets; and `--add`/`--remove`
 is a form no control can choose, since this document carries no member saying a
-key is list-shaped. **A refusal is not a document**: the CLI exits non-zero with
+key is list-shaped. **`--repo` is the write row's word and not the read's**: the read passes `--json` and the two project flags alone. **A refusal is not a document**: the CLI exits non-zero with
 its own sentence and prints none of these, so a consumer branches on the exit
 and draws that sentence verbatim — the console does, and **no write is ever
 retried silently** (D1112): the write's own compare-and-swap refuses an edit
@@ -3386,7 +3471,7 @@ The document:
 | `sources` | array | never | never | one entry per scope the document covers, below. `[]` is a fact — the document covers nothing — and never a null: an empty list is written as an array (`MarshalJSON`), and a `null` read back is the empty list it means |
 | `releases` | array | never | never | the project's release boxes, below, as the roadmap record holds them (GV4.1). **They belong to the project and not to a scope** — the record is project-level (D2111) — so a box is drawn whichever scope a task it holds came from, and the list is written once however many scopes the document covers. `[]` is the ordinary case for a project that has never written one, and there is no `null`: a `null` read back is the empty list it means |
 | `nodes` | array | never | never | the graph's nodes, below. `[]` is a fact — the scope has nothing to draw — and the scope's own state sits beside it in `sources`, so a screen tells "empty" from "down" (H3) |
-| `edges` | array | never | never | the relations between nodes, by `key`, below. **The coordinator's stored view has no edges, so a document drawn from it alone carries `[]`** (F17); the two sources that fill it are the orchestrator scopes' `depends_on` (CG5) and the roadmap record's own cross-plan dependencies (D2112, GV4.1) |
+| `edges` | array | never | never | the relations between nodes, by `key`, below. **The coordinator's stored view has no edges, so a document drawn from it alone carries `[]`** (F17); the two sources that fill it are the orchestrator scopes' `depends_on` (CG5) and the roadmap record's own cross-plan dependencies (D2112, GV4.1). **An edge may join two orchestrators** (F17, C-ORCH): `from` and `to` are node keys rather than a scope's own pair, so one named orchestrator's item waiting on another named orchestrator's is an edge between the two, and a document asked for one scope may carry an edge whose other end is not in it (D3208) |
 | `warnings` | array | never | never | what the read could not do, as sentences fit to print; `[]` is the ordinary case. Sanitised with `safetext.Field` like every other string here |
 
 one entry of `sources`:
@@ -3479,8 +3564,8 @@ one entry of `edges`:
 
 | Key | Type | Absent | Null | Notes |
 | --- | --- | --- | --- | --- |
-| `from` | string | never | never | the `key` of the node the relation starts at |
-| `to` | string | never | never | the `key` of the node it ends at |
+| `from` | string | never | never | the `key` of the node the relation starts at. **It may belong to another orchestrator than `to` does** (F17): a dependency is a relation between two items, and the two items are not required to be the same orchestrator's, so a scope's document carries an edge whose far end is out of scope |
+| `to` | string | never | never | the `key` of the node it ends at, on `from`'s own rule — the two keys are node keys and never a pair (F17) |
 | `kind` | string | never | never | the source's own word for the relation (`depends_on` is the word both sources that draw one use: the orchestrator state's own, F14, and the roadmap record's cross-plan dependency, D2112, which is the same relation from the same direction — the needing task to what it needs); the document defines no vocabulary of its own. **An edge is always within one source**, since a key carries its source: the record's edges are all `coordinator:` keys, and a key that names no node in the same document is drawn as nothing rather than as a node of its own — a record edge to a dangling task is not that case, because the dangling id is a node of its own (`dangling`, above), which is the whole point of D2115 |
 
 **`graph --watch --json`: whole snapshots, one per change.** The stream prints
@@ -4227,10 +4312,9 @@ memory, so no file exists for another process of the same user to change between
 main's validation and the CLI's read, and no word of the argv is a path. A flag
 given beside the file wins over it, and the run says which. **The file answers
 questions and confirms nothing**: the steps that need a person — creating the GCP
-project, linking its billing, the permanent Firestore location, every secret
-value — have no member in it, so a `--json` run with a whole answers file applies
-only what needs no confirmation (`unconfirmedWhy`, `internal/cli/init.go`; F27,
-O6).
+project, linking its billing, every secret value — have no member in it, so a
+`--json` run with a whole answers file applies only what needs no confirmation
+(`unconfirmedWhy`, `internal/cli/init.go`; F27, O6).
 
 **`--plan-only` reads and creates nothing.** The plan document is one object; a
 run with `--plan-only` is the console's `setup.plan` (design §5.1 rule 5), and
@@ -4392,6 +4476,92 @@ deliberate click and no tick. `fugaro image add` is otherwise the never table's,
 as a command and as a word of `image`.
 
 
+### 6.35 `fugaro orchestrator map --json` — the project's active orchestrators, their connections and the coordinator's heartbeat (C-ORCH; the console's `orchestrator.map`, D3221)
+
+**Command:** `ee/orchestrator/cli/map.go` `NewMapCmd` / `runMap`, registered
+through `RegisterSubcommand` as a subcommand of the core's `orchestrator`
+family rather than as a command of its own (`ee/register/orchestrator.go`) — a
+**paid command** like the graph's, because its overlap edges are the
+coordinator's own stored collisions.
+**Document:** `internal/orchestrator/mapdoc.go` `MapDoc`, `MapNode`, `MapEdge`
+and `MapHealth` (`MapDocVersion`, `1` today), one object, assembled by
+`ee/orchestrator/mapbuild.go` `BuildMap` and written through
+`orchestrator.EncodeMapDoc` — the encoder is what the console's decoder is held
+against, so what this command publishes is what this release reads back.
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `version` | int | never | never | the document's own shape version, `1` today (`orchestrator.MapDocVersion`). A field never changes meaning under it: a new one is additive, and a removed or retyped one is a new version |
+| `project` | string | never | never | the project whose orchestrators these are. Every node belongs to it — one map is one project — and it is a project name (`config.ProjectNameRE`) |
+| `generated_at` | string | never | never | RFC 3339; when the document was assembled, on the reader's clock. It is a **clock and not an as-of**: how old one node is, is `nodes[].lease_age_seconds` |
+| `nodes` | array | never | never | the active orchestrators, below. `[]` is a fact — no orchestrator of this project is being driven — and never a `null`: an absent or null list is refused, not read as empty |
+| `edges` | array | never | never | the connections between two of those nodes, below, by node `id`. `[]` is the ordinary case, and never a `null` |
+| `health` | object | never | never | the coordinator's own state, below. A project whose sweep is off carries a health with `sweep: false` rather than no health |
+
+one entry of `nodes`:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `id` | string | never | never | the orchestrator's id, and a node of **this** document's project: an id of another project, a duplicate id and a `name` that disagrees with the id's own half are each refused (`orchestrator.ParseOrchestratorID`) |
+| `name` | string | never | never | the id's name half, `""` for the project's default orchestrator — a screen draws the project's own name for that one. It is **not** sanitised and never may be: a rewritten name is another orchestrator |
+| `driver` | string | never | never | the principal the driver node names — a person's account or a service account's address — and `""` when the node is absent or unreadable. **Untrusted display text**, sanitised with `safetext.Field` |
+| `active_tasks` | number | never | never | how many of the orchestrator's items are still being worked, counted over its shards, and never negative |
+| `running_jobs` | number | never | never | how many runs it has going, counted the same way, and never negative |
+| `lease_age_seconds` | number | never | **yes** | how long ago the holder last beat, in seconds. **Null when the lease carries no readable stamp**, which is "the age is unknown" and never `0` — and the figure is measured against the database's own clock, not this machine's (D1230) |
+
+one entry of `edges`:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `from` | string | never | never | an orchestrator `id` of this document's own `nodes`, and the one that waits for a dependency |
+| `to` | string | never | never | an orchestrator `id` of this document's own `nodes`, and the one waited on. An edge naming an orchestrator the document does not draw, or joining one to itself, is refused |
+| `kind` | string | never | never | `dependency` or `overlap` (`orchestrator.MapEdgeDependency`, `MapEdgeOverlap`). A dependency is one orchestrator's item waiting on another's (D3208); an overlap is two orchestrators on the same work — the collision the coordinator stored, or a pull request two of them have runs on (D3211, D3222) |
+| `reason` | string | never | never | what the edge is, in words, for an overlap, and `""` for a dependency, which the two ids already say. **Untrusted display text**, sanitised with `safetext.Field` |
+
+the `health` object:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `sweep` | bool | never | never | whether the coordinator's sweep is on for this project |
+| `started_at` | string | never | **yes** | RFC 3339; when the last sweep started, and null when there is no heartbeat to read |
+| `ok_at` | string | never | **yes** | RFC 3339; when a sweep last finished reading everything, null on the same rule |
+| `at` | string | never | **yes** | RFC 3339; the server time the heartbeat was written, null on the same rule |
+| `note` | string | never | never | why the health is what it is, `""` when there is nothing to say. **Untrusted display text**, sanitised with `safetext.Field` |
+
+**Nothing historical is on it.** A node is on the map because a credential is
+driving it now; an orchestrator nobody drives is **not a node with empty
+figures but no node at all**, and neither is an edge to it. A reader therefore
+tells "this project drives one orchestrator" from "this project has driven
+nothing", and the two are not the same fact.
+
+**Sweep off is a state and not an absence of overlaps.** With the coordinator's
+sweep off there is no heartbeat and no stored collision to read, so the health
+says `sweep: false` and `note` is
+`orchestrator.MapSweepOffNote`'s own sentence: the map then carries the nodes
+and their dependencies alone, and the absence of an overlap edge means
+**nobody has looked, never that nothing overlaps** (F23). When `sweep` is
+false the three times are null, and a health that says the sweep is off and
+carries a heartbeat is refused.
+
+**A refused read is the other case, and it is terminal.** A project with no
+database, or a read the database refused, is an error with a non-zero exit and
+**no document at all** — exit 1 for a project with no database and exit 2 for a
+failure of one (`ee/orchestrator/cli/map.go`). Nothing is drawn from a partial
+answer, so a screen shows the refusal's sentence rather than a map with nodes
+quietly missing.
+
+**It is the Coordinator tab's read, and it takes no argument at all.** The
+console spawns exactly `orchestrator map --json --project <name> [--config
+<path>]` (design §5.1 rule 6): the map is already one project's whole active
+set, so no word of the argv is caller-influenced, and neither `--repo` nor a
+scope is a word this command has. **Its child asks nothing of the host** — the
+nodes, their leases, the claims and the heartbeat are read from the caller's own
+database node (`roles/firebasedatabase.viewer`), and the coordinator's stored
+views go through the same client — so no provider is opened and no host is
+reached. The console's read sits behind a CLI version floor
+(`ORCHESTRATOR_MAP_CLI_FLOOR`, `console/src/shared/version.ts`) because no
+release carries the command yet.
+
 ## 7. The CLI gaps, settled against the code
 
 The console ships **without any of these** and must work, visibly degraded
@@ -4456,7 +4626,7 @@ and **not** off this document or the design:
 | `coordinator status` | yes (`newCoordinatorStatusCmd`, §6.13) — with `--from-store` it is the one read here that asks nothing of the host (the stored view, through the caller's own credentials), and it is a cloud read all the same: the view lives in the project's database, so it carries `--project` and `--config` like the rest |
 | `coordinator show` | yes (`newCoordinatorShowCmd`, §6.15) — the pull request read (coordinator v2 C3, D816): `--repo` and `--pr` are its own two arguments, both required, and it carries `--project` and `--config` like the rest because it resolves the repository's provider the way the project view does. **The second row here whose child mints a credential of the host's** — the first is `run`'s below, whose child is a run and mints the write-capable token it pushes and opens the pull request with; this row's is the person read set's own read-only installation token (contents, pull requests and metadata, all read), revoked when the command is done — so its argv is the whole of what a renderer may influence about it |
 | `coordinator intents` | yes (`newCoordinatorIntentsCmd`, §6.16) — the declarations read (coordinator v2 C4, D827): it has **no argument of its own** (`--all` and `--json` are the console row's fixed words), and it carries `--project` and `--config` like the rest because it resolves the local config the way the project view does. **The one row here whose child asks nothing of the host at all**: the declarations are the caller's own database node, read through the same credentials §6.13's stored read uses, so there is no App key, no installation token and no provider anywhere in it |
-| `settings set\|unset` | yes (`newSettingsCmd`, §6.20) — **the second row here that writes** (the settings-edit plan's C3, design §5.1 rule 12): the dry run and the confirmed write are the same command with the same aiming pair, and the layer written is §6.19's `target_layer` rather than a flag a renderer chose. The write carries `--no-apply` (the composite-commands plan's AP8, D1572), so the change is saved and its follow-up steps are owed rather than run — and it carries it only at or above the floor that registers the word (`NO_APPLY_CLI_FLOOR`, 0.26.0, where that plan's AP5 and AP6 ship it, §6.20), so a CLI older than that gets no word |
+| `settings set\|unset` | yes (`newSettingsCmd`, §6.20) — **the second row here that writes** (the settings-edit plan's C3, design §5.1 rule 12): the dry run and the confirmed write are the same command with the same aiming pair, and the layer written is §6.19's `target_layer` rather than a flag a renderer chose. A `repo`-layer edit carries `--repo <directory>` as well — the installation's own directory, in both phases (the repo-coupling audit's L12, RC80) — and no other layer carries it. The write carries `--no-apply` (the composite-commands plan's AP8, D1572), so the change is saved and its follow-up steps are owed rather than run — and it carries it only at or above the floor that registers the word (`NO_APPLY_CLI_FLOOR`, 0.26.0, where that plan's AP5 and AP6 ship it, §6.20), so a CLI older than that gets no word |
 | `user ls` | yes (`newUserLsCmd`, §6.29) — the Members view's roster read (the roles-and-scopes plan's RS7, roles.md D691(b)), and with `--me` the caller's own role, which reads no roster at all. Both forms carry the aiming pair, and the five words of the group that change a roster are the never table's |
 | `image ls` | yes (`newImageLsCmd`, §6.30) — the project's image catalog, and with `--shared` the installation's shared-image lock. **It is offline** and writes nothing, and the group's writers — `image add`, `image rm`, `image promote`, `image build`, `image refresh` — are the never table's as commands and as words of `image`, **save the add §6.34 documents, whose two operations that same rule grants the console by name** — so this read is not quite the group's whole reach any more, and the write's own two rows are the other half of it |
 | `recipes ls` | yes (`newRecipesLsCmd`, §6.31) — the recipes in force, one winner per name. **It is offline** and writes nothing, and `recipes publish` and `recipes validate` are the never table's as words of `recipes` (`publish` as a command too) |
@@ -4516,7 +4686,11 @@ table against the live constructors.
    `link.openPullRequest` took it to twenty-five and writes nothing, and C4c's
    `coordinator.intents` took it to twenty-six and writes nothing — **the
    counts in this parenthesis are the history up to that commit, and rule 5's
-   fifty-two is today's**), and no other argv that writes is reachable
+   fifty-three is today's**: the console-fixes plan's I-ORCH took four back
+   (2026-11-25) — `coordinator.status`, `coordinator.show`,
+   `coordinator.intents` and `link.openPullRequest`, none of which any screen
+   reaches — so the surface shrank from fifty-seven to fifty-three and this
+   history names two operations that are no longer on it), and no other argv that writes is reachable
    from a renderer. Two further commands this file
    describes are writes, and **neither is in the console's set**: `fugaro cancel
    RUN --json` (§6.3), which is on the design's "never" table and which no v1

@@ -295,6 +295,19 @@ WC5, WC14.
   `fugaro update` publishes it as one top-level key of the policy; absent reads as off; an older
   reader decodes past it; the policy's version does not move; the real `PersonSwitchReader` reads
   it from a member's published policy.
+- Consequence of the publish, recorded here because the acceptance above states only the decode's
+  half: the readers that decide something by the node — the CLI's launch gate
+  (`internal/cli/launch_budget.go`), the publish and the migration stage — refuse a node carrying a
+  key they do not know and name the upgrade, so a project that publishes the switch loses launches
+  from an unupgraded CLI until it moves. The member's CLI is therefore upgraded before the
+  `fugaro update` that publishes it; the key moves no version, so the upgrade is the whole fix. The
+  skew is recorded where release notes expect it — the next release's `### Known limits`
+  (`docs/releases/v0.29.0.md`), which WC13 owns with the rest of the notes.
+- Contract change raised: **R-person-wire** (C1, §7) — for the carrier's shape alone, and not the
+  home. C1's "The switch (R9, U8)" said WC6 does not touch `internal/localcfg/localcfg.go` while the
+  `triage` shape it asks for *is* a field of that file, so WC6 amends that sentence in the contract
+  and raises the change there, under §7's own name for it and with §7's reaches (WC4, WC5, WC7, WC8,
+  WC11 — none of them sees the key, its home, the reader or the enforcer move).
 - Files: `internal/projectpolicy/policy.go`, `internal/projectpolicy/policy_test.go`,
   `internal/settings/registry.go`, `schemas/settings.schema.json`,
   `internal/cli/init_policy_publish.go`; `internal/localcfg/localcfg.go` if C1 places the

@@ -313,3 +313,35 @@ func sameJSON(a, b json.RawMessage) bool {
 	}
 	return reflect.DeepEqual(x, y)
 }
+
+// TestAChainRaiseLeavesTheSummaryProjectionUnchanged is the budget chain's
+// raise (internal/cli/budget_chain.go, runChainRaise): it appends a ChainRaise
+// to the root run's record and rewrites result.json, and writes no summary
+// beside it -- that command is a launcher's, and a summary is the run's own
+// job's object. What makes a stale summary harmless there is that a chain
+// raise is not a projected member (SummaryRecord): the summary the run left
+// still carries the record's own value for every field a row is built from, so
+// a listing reads the raised run's row the same from the summary as from the
+// rewritten record. The day the projection carries ChainRaises, a raised run's
+// row would fall back, and this is the test that would fail.
+func TestAChainRaiseLeavesTheSummaryProjectionUnchanged(t *testing.T) {
+	rec, spec := summaryFixture()
+	at := time.Date(2026, 11, 19, 13, 0, 0, 0, time.UTC)
+	before := NewSummary(rec, spec, at)
+
+	rec.ChainRaises = append(rec.ChainRaises, ChainRaise{
+		By: "someone@example.com", At: at, Reason: "the chain spent its limit",
+		Limits: []ChainRaiseLimit{{Dimension: USD, From: 5_000_000, To: 10_000_000}},
+	})
+	after := NewSummary(rec, spec, at)
+
+	// The fixture's record does carry the raise, so the equality below is not
+	// two projections agreeing on nothing.
+	if members := jsonMembers(t, rec); members["chain_raises"] == nil {
+		t.Fatalf("the record carries no chain_raises member, so this test would pass over a raise that moved nothing")
+	}
+	if !reflect.DeepEqual(before.Record, after.Record) {
+		t.Errorf("a chain raise moved a projected member:\n  before %+v\n  after  %+v\nwant no difference: a row built from the summary must be the record's own",
+			before.Record, after.Record)
+	}
+}
