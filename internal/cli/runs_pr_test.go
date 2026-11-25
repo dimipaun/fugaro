@@ -155,10 +155,9 @@ func seedFinishedReview(t *testing.T, f *cloudFixture, id string, pr int) {
 // recent window and it is not going, so the index is the one thing that can
 // tell a --pr listing it exists -- and its row is a row the scan prints, since
 // the artifact stage writes the pull request into the review's record (onPR).
-// The entry is seeded rather than written by the runner, which is the writer's
-// own test (internal/runner's TestReviewWritesThePullRequestIndexEntry) — the
-// walk that writes the same entry for an installation behind is
-// TestBackfillIndexEqualsScan's.
+// The entry is seeded rather than written by the runner, whose writers stopped
+// with D3204 (IR5a, IR5b); the objects an installation holds are what the
+// listing reads.
 //
 // The scan is the same listing with the index emptied: the runs are all there,
 // which is what the installation this sped up looks like. The clock is pinned
@@ -236,58 +235,6 @@ func TestPRIndexLiveReviewOlderThanTheRecentWindow(t *testing.T) {
 	}
 	if read := d.keysRead(); !slices.Contains(read, "runs/"+appSlug+"/"+review+"/task.json") {
 		t.Errorf("the review going on pull request 7 was not read (%v): the runs of the live set are read beside the index's and the window's", read)
-	}
-}
-
-// TestBackfillIndexEqualsScan: the index `fugaro update` writes is read by
-// `runs ls --pr N` and gives the rows the scan gives, field for field — with
-// every entry written by the walk and none seeded by hand, which is the
-// difference between this test and TestPRIndexEqualsScan's.
-//
-// The finished review is the row that matters: it is 25 days old and it is not
-// going, so neither the recent window nor the live set can name it, and its row
-// is a row the scan prints, the number the artifact stage wrote into its record
-// being what puts it on the pull request (runs.go's onPR). The walk reads the
-// same two objects the row reader reads and writes it as `reviewed`; a walk
-// that left review runs out would leave the index listing less than the scan
-// does (D2964).
-//
-// Mutation caught: prIndexOfRun answering 0 for every review run — the index
-// then lists four rows where the scan lists five.
-func TestBackfillIndexEqualsScan(t *testing.T) {
-	defer func(old func() time.Time) { lsNow = old }(lsNow)
-	at := time.Now().UTC()
-	lsNow = func() time.Time { return at }
-	f := newCloudFixture(t)
-	w := seedPRRuns(t, f)
-	review := runIDAt(25, "120000", "1234")
-	seedFinishedReview(t, f, review, 7)
-
-	b := openPRIndexBucket(t, f)
-	if n, err := backfillPRIndexIn(context.Background(), b, at, nil); err != nil || n != 5 {
-		t.Fatalf("the backfill wrote %d entries (%v), want the five runs whose records name a pull request, the review among them", n, err)
-	}
-
-	indexed, errOut := lsJSON(t, "--pr", "7")
-	if strings.Contains(errOut, "pull-request index") {
-		t.Errorf("stderr = %q, want no fallback note: the walk wrote the index", errOut)
-	}
-	if want := []string{w.fu2, w.fu1, review, w.root}; !slices.Equal(runIDs(indexed.Runs), want) {
-		t.Fatalf("ls --pr 7 = %v, want %v: the index the walk wrote lists the review's row, as the scan prints it", runIDs(indexed.Runs), want)
-	}
-
-	// The same listing with the index emptied: the scan, which is what the
-	// index has to agree with.
-	dropPRIndex(t, f, 7)
-	scan, scanErr := lsJSON(t, "--pr", "7")
-	if !strings.Contains(scanErr, "no pull-request index") {
-		t.Errorf("stderr = %q, want the one line saying the listing fell back to the window", scanErr)
-	}
-	if jsonRows(t, indexed.Runs) != jsonRows(t, scan.Runs) {
-		t.Errorf("the index reads %s, the scan %s", jsonRows(t, indexed.Runs), jsonRows(t, scan.Runs))
-	}
-	if a, b := jsonDoc(t, indexed.Totals), jsonDoc(t, scan.Totals); a != b {
-		t.Errorf("the index totals %s, the scan %s", a, b)
 	}
 }
 
