@@ -8,21 +8,20 @@ package runner
 //     service's own identity and capped as a key's (D3174): neither
 //     VertexBudgetRefusal nor the refusal of a pool with a Vertex member fires
 //     for it.
-//   - TestLegacyVertexIsStillRefusedUnderEnforce — an unmigrated repository
-//     whose file still says `auth: vertex` runs on the job's own GCP identity
-//     whatever its job carries, so both refusals stand.
+//   - TestLegacyVertexIsStillRefusedUnderEnforce — a repository the table does
+//     not serve, whose file still says `auth: vertex`, runs on the job's own GCP
+//     identity, so both refusals stand.
 //
 // The fact both turn on is the run's model path (serviceModelPath) and never
-// the service's address on the job: a launch hands the address to a job whose
-// document it could not read (internal/cli's credentialsServiceLaunchEnv), so
-// a `vertex` run can carry it while its Vertex calls are still the job's own.
-// The CLI's halves of the same rule (validate, update --repo) read the local
-// config, which a run has no document for, and this release leaves them
-// refusing: a `vertex` run never takes the service here (ServiceSwitchedAuth),
-// so a gate lifting the refusal would green-light a run this file's
-// TestLegacyVertexIsStillRefusedUnderEnforce refuses. CS6 moves both, and
-// internal/cli's TestTheVertexRefusalAgreesWithTheRunner holds the two answers
-// on one fixture.
+// the auth alone: the launch's address on the job is what says the table serves
+// this repository (B2.2/D2072), and CS6 put `vertex` in that set (D3174), so a
+// `vertex` run carrying the address is served while one without it is not.
+// What is left refusing is the CLI's half of the same rule (validate,
+// update --repo, `fugaro init`'s budget check), which reads the local config
+// rather than a run: it still refuses a `vertex` file outright, so a migrated
+// vertex repository cannot be launched at all. That half is reported as a
+// follow-up in the PR of this task rather than moved here, and internal/cli's
+// TestTheVertexRefusalAgreesWithTheRunner holds the two answers on one fixture.
 
 import (
 	"context"
@@ -106,39 +105,28 @@ func TestVertexInAChainIsAcceptedUnderEnforce(t *testing.T) {
 // serve it — so nothing caps its Vertex calls and the refusal stands, at
 // bootstrap and for a pool that lists the credential.
 //
-// Its job carrying the service's address does not change that, and this is the
-// test of it: a launch hands the address to a job whose document it could not
-// read, judged on the repository's record or the deploy root's tfvars, and a
-// `vertex` run in that job still authenticates to Vertex itself
-// (gatewayUpstream's vertex arm). Keyed on the address, the two refusals would
-// stand down over exactly the uncapped path they exist for.
+// The job's address is what separates the two: without it the launch served
+// this repository nothing, and a `vertex` run authenticates to Vertex itself
+// (gatewayUpstream's vertex arm), so the two refusals stand over exactly the
+// uncapped path they exist for. With it the run is the service's, which is the
+// path TestEveryStageGoesThroughTheChain (CS6) pins instead.
 func TestLegacyVertexIsStillRefusedUnderEnforce(t *testing.T) {
 	ctx := context.Background()
-	for _, tc := range []struct {
-		name string
-		env  []string
-	}{
-		{"a job with no address", nil},
-		{"a job carrying the address anyway", vertexServiceEnv()},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			r, _ := poolRun(t, poolSpec{auth: "vertex", model: poolDirectModel, env: tc.env})
-			if r.vertexServedByTheService() {
-				t.Fatal("a vertex run whose model path is the job's own identity is read as served by the service")
-			}
-			r.spend = enforceSpend()
-			if err := r.checkBudget(ctx); !vertexRefused(err) {
-				t.Fatalf("an unmigrated vertex run was not refused under enforce: %v", err)
-			}
-			// The pool's half: the built-in credential in a pool of the same
-			// run, whose Vertex calls are the job's own.
-			r, _ = poolRun(t, poolSpec{auth: "vertex", access: "with-vertex", pools: []config.Pool{vertexPool()},
-				creds: poolCreds("acct-one"), model: poolDirectModel, env: tc.env})
-			r.spend = enforceSpend()
-			got := r.vertexPoolRefusal(ctx)
-			if !strings.Contains(got, VertexBudgetRefusal) || !strings.Contains(got, "with-vertex") || !strings.Contains(got, "vertex") {
-				t.Fatalf("a pool listing the built-in vertex was not refused for an unmigrated run: %q", got)
-			}
-		})
+	r, _ := poolRun(t, poolSpec{auth: "vertex", model: poolDirectModel})
+	if r.serviceModelPath() || r.vertexServedByTheService() {
+		t.Fatal("a vertex run whose job carries no service address is read as served by the service")
+	}
+	r.spend = enforceSpend()
+	if err := r.checkBudget(ctx); !vertexRefused(err) {
+		t.Fatalf("an unmigrated vertex run was not refused under enforce: %v", err)
+	}
+	// The pool's half: the built-in credential in a pool of the same run, whose
+	// Vertex calls are the job's own.
+	r, _ = poolRun(t, poolSpec{auth: "vertex", access: "with-vertex", pools: []config.Pool{vertexPool()},
+		creds: poolCreds("acct-one"), model: poolDirectModel})
+	r.spend = enforceSpend()
+	got := r.vertexPoolRefusal(ctx)
+	if !strings.Contains(got, VertexBudgetRefusal) || !strings.Contains(got, "with-vertex") || !strings.Contains(got, "vertex") {
+		t.Fatalf("a pool listing the built-in vertex was not refused for an unmigrated run: %q", got)
 	}
 }

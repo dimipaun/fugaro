@@ -717,25 +717,25 @@ func TestValidateRefusesVertexEnforceFromFile(t *testing.T) {
 	}
 }
 
-// TestTheVertexRefusalAgreesWithTheRunner is CS5's edge, and it is why this
-// release leaves the refusal in place on both sides: D3174 lifts it for a run
-// the credentials service serves, and the runner reads that off the run it
-// launched — the model path its gateway builds the upstream from
-// (vertexServedByTheService). A `vertex` file's coding run is on no such path
-// while the service serves api-key, oauth and cascade runs alone
-// (runner.ServiceSwitchedAuth), so the runner's checkBudget refuses it at
-// bootstrap (TestLegacyVertexIsStillRefusedUnderEnforce drives that check and
-// the pool refusal on the same shape). A gate lifting it here alone would
-// green-light a run that dies.
+// TestTheVertexRefusalAgreesWithTheRunner is the record of the half CS6 did
+// not move. D3174 lifts the refusal for a run the credentials service serves,
+// and CS6 made a `vertex` run whose job carries the service's address one of
+// them (runner.ServiceSwitchedAuth admits it): its model path is the service's,
+// so checkBudget no longer refuses it and neither does the pool refusal
+// (TestEveryStageGoesThroughTheChain drives that path; CS5's
+// TestVertexInAChainIsAcceptedUnderEnforce the pool).
 //
-// One fixture, both CLI gates and the runner's own answer: the fixture is
-// exactly the one that would lift the refusal — the table admits this
-// repository, the service is installed and its record is ready — so nothing
-// but the runner's missing served path keeps the three agreeing.
+// The CLI's two gates are not moved with it: validate and update --repo's
+// checkVertexBudget read the local config, refuse a `vertex` file outright, and
+// a migrated vertex repository therefore cannot be launched at all. That is the
+// remaining half of D3174, reported as a follow-up in CS6's pull request rather
+// than moved here — validate.go belongs to RT6 and init.go's checkVertexBudget
+// to X6 in the plan's ownership table, and no CLI file is in CS6's.
 //
-// CS6 ("the run's model path follows the table") moves all three together: it
-// makes the first assertion here false, and it lands this half of D3174 with
-// the runner's.
+// One fixture, both CLI gates and the runner's answer: the fixture is exactly
+// the one whose refusal the runner has lifted — the table admits this
+// repository, the service is installed and its record is ready — so nothing but
+// the CLI's own gate keeps the two disagreeing.
 func TestTheVertexRefusalAgreesWithTheRunner(t *testing.T) {
 	const (
 		service = "credentials_service: { url: " + credentialsServiceURL + " }\n"
@@ -747,17 +747,17 @@ func TestTheVertexRefusalAgreesWithTheRunner(t *testing.T) {
 	path := fileWithBudget(t, budget+table+service+record, "", vertex)
 	inCheckoutOf(t, "acme/app")
 
-	// The runner's own answer for this job, and the whole reason the gates
-	// below still refuse it: the service does not serve a `vertex` run, so the
-	// run's model path is the job's own GCP identity and checkBudget refuses it
-	// under enforce.
-	if runner.ServiceSwitchedAuth("vertex") {
-		t.Fatal("the credentials service serves `vertex` runs now: the CLI's refusal may go with it (CS6), and this is the test to change")
+	// The runner's own answer for this job, which is the disagreement this test
+	// now pins: the service serves a `vertex` run whose job carries its address,
+	// so this fixture's run is the service's and the runner's refusals stand
+	// down for it.
+	if !runner.ServiceSwitchedAuth("vertex") {
+		t.Fatal("the credentials service no longer serves `vertex` runs: the CLI's refusal below has nothing left to disagree with (CS6 enlarged this set)")
 	}
 
 	// validate.
 	if out, _, err := execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, vertexBudgetRefusal) {
-		t.Fatalf("validate accepted a vertex file the runner refuses: exit %d: %s", ExitCode(err), out)
+		t.Fatalf("validate accepted a vertex file the runner serves now: exit %d: %s", ExitCode(err), out)
 	}
 	// update --repo's own gate (checkVertexBudget), on the same fixture.
 	data, err := os.ReadFile(path)
@@ -773,7 +773,7 @@ func TestTheVertexRefusalAgreesWithTheRunner(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := checkVertexBudget(lc, cfg); ExitCode(err) != ExitUserError {
-		t.Fatalf("update --repo accepted a vertex file the runner refuses: exit %d, err %v", ExitCode(err), err)
+		t.Fatalf("update --repo accepted a vertex file the runner serves now: exit %d, err %v", ExitCode(err), err)
 	}
 }
 
