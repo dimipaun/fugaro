@@ -477,11 +477,11 @@ cleanup() {
 }
 
 verdict() { # verdict <facts>
-  if printf '%s\n' "$1" | grep -q '^aborted|'; then
+  if grep -q '^aborted|' <<<"$1"; then
     printf 'INCOMPLETE'
-  elif printf '%s\n' "$1" | grep -q '|FAIL|'; then
+  elif grep -q '|FAIL|' <<<"$1"; then
     printf 'FAIL'
-  elif printf '%s\n' "$1" | grep -q '|UNVERIFIED|'; then
+  elif grep -q '|UNVERIFIED|' <<<"$1"; then
     printf 'INCOMPLETE'
   else
     printf 'PASS'
@@ -505,10 +505,10 @@ finish() {
   local facts
   facts=$(cat "$FACTS" 2>/dev/null || true)
   cleanup
-  if [ -n "$ABORT" ] && ! printf '%s\n' "$facts" | grep -q '^aborted|'; then
+  if [ -n "$ABORT" ] && ! grep -q '^aborted|' <<<"$facts"; then
     facts="${facts}"$'\n'"aborted|FAIL|$ABORT"
   fi
-  if [ "$REACHED_END" = no ] && ! printf '%s\n' "$facts" | grep -q '^aborted|'; then
+  if [ "$REACHED_END" = no ] && ! grep -q '^aborted|' <<<"$facts"; then
     facts="${facts}"$'\n'"aborted|FAIL|the run ended before its last step (exit ${status}): the rows that were not reached were NOT measured, which is this script ending on an error rather than an answer about the migration"
     if [ "$status" -eq 0 ] || [ "$status" -eq 1 ]; then status=2; fi
   fi
@@ -782,14 +782,15 @@ PY
 # the file it is about; a wait that ran out returns 0 with whatever was read,
 # which the caller reports rather than this turning into an answer.
 audit_read() { # audit_read <run-id> <out> [pattern]
-  local rid=$1 out=$2 pattern=${3:-} waited=0 rc=0 filter
+  local rid=$1 out=$2 pattern=${3:-} waited=0 rc=0 filter lines
   filter='resource.type="cloud_run_revision" resource.labels.service_name="'"$SERVICE"'" jsonPayload.run="'"$rid"'"'
   while :; do
     rc=0
     gcloud logging read "$filter" --project="$GCP_PROJECT" --freshness="${CHECK810_LOG_AGE:-90m}" \
       --limit="${CHECK810_LOG_LIMIT:-200}" --order=asc --format=json >"$out" 2>"$SCRATCH/log.err" || rc=$?
-    if [ "$rc" -eq 0 ] && log_lines "$out" | grep -q .; then
-      if [ -z "$pattern" ] || log_lines "$out" | grep -q -- "$pattern"; then return 0; fi
+    lines=$(log_lines "$out" 2>/dev/null || true)
+    if [ "$rc" -eq 0 ] && [ -n "$lines" ]; then
+      if [ -z "$pattern" ] || grep -q -- "$pattern" <<<"$lines"; then return 0; fi
     fi
     if [ "$waited" -ge "${CHECK810_LOG_WAIT_SECONDS:-120}" ]; then
       if [ "$rc" -ne 0 ]; then

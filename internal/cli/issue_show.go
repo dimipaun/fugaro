@@ -55,7 +55,10 @@ func runIssueShow(cmd *cobra.Command, ref string, asJSON bool) error {
 		return err
 	}
 	agent := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))
-	sh := openIssueShared(ctx, agent)
+	sh, err := openIssueShared(ctx, agent)
+	if err != nil {
+		return err
+	}
 	defer sh.Close()
 	if sh.installation != "" {
 		store.Installation = sh.installation

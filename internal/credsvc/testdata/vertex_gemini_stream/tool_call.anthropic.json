@@ -1,0 +1,23 @@
+{
+  "id": "msg_aToolCall",
+  "type": "message",
+  "role": "assistant",
+  "model": "google/gemini-3-flash",
+  "content": [
+    { "type": "text", "text": "I'll read the notes." },
+    {
+      "type": "tool_use",
+      "id": "toolu_vrtx_thought_c2lnbmF0dXJlLWJ5dGVzLWZvci10aGUtY2FsbA",
+      "name": "read_file",
+      "input": { "path": "notes.md" }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 1200,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "output_tokens": 304
+  }
+}

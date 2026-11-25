@@ -104,9 +104,10 @@ func beatWindow(intervals int, inner step) step {
 // verifies the call by (F30, O4).
 //
 // The cadence is read as a count over a known window rather than as a gap
-// between two requests: the fixture's interval is 30 ms, so 4 intervals of run
-// are a handful of beats, and a beat that ticked once per stage, or one that
-// spun, is outside the band either way.
+// between two requests: the fixture's interval is 30 ms, and a beat that ticked
+// once per stage, or one that spun, is outside the band either way. The window
+// is the run's own life, measured rather than assumed — a whole run is what the
+// harness drives, and how long that takes is the machine's answer.
 func TestARoutedRunBeatsTheWorkspace(t *testing.T) {
 	wsFake, wsSrv := workspaceService(t)
 	b := admissionRun(t, "github", "acme/app", "observe", "", routePolicy, out4k())
@@ -118,7 +119,9 @@ func TestARoutedRunBeatsTheWorkspace(t *testing.T) {
 	}))
 
 	var st []int
+	start := time.Now()
 	rec, err := b.run(t, beatWindow(4, calling(&st, implement("feature"), call{sonnet, 4000})), review("ship", 0))
+	lived := time.Since(start)
 	if err != nil || rec.Status != runstore.StatusSucceeded {
 		t.Fatalf("the run routed to the record's address stopped: rec = %+v, err = %v", rec, err)
 	}
@@ -127,10 +130,13 @@ func TestARoutedRunBeatsTheWorkspace(t *testing.T) {
 	}
 	seen := beats(wsFake)
 	if len(seen) < 2 {
-		t.Fatalf("the workspace's service received %d keep-warm requests over 4 of the run's intervals, want more than one: a run that routed a kind there keeps it warm for as long as it lives (R14, D2985)", len(seen))
+		t.Fatalf("the workspace's service received %d keep-warm requests over %v of run, want more than one: a run that routed a kind there keeps it warm for as long as it lives (R14, D2985)", len(seen), lived)
 	}
-	if len(seen) > 4*4 {
-		t.Errorf("the workspace's service received %d keep-warm requests in 4 intervals: the beat is faster than the run's own interval (bkHeartbeatEvery)", len(seen))
+	// The beat starts when the run reads its route record and ends with the
+	// run, so its window is inside the run's life: one tick an interval is the
+	// most it could have made, plus the one in flight when the run ended.
+	if most := int(lived/bkHeartbeatEvery) + 2; len(seen) > most {
+		t.Errorf("the workspace's service received %d keep-warm requests in %v, want no more than one per %v: the beat is faster than the run's own interval", len(seen), lived, bkHeartbeatEvery)
 	}
 	for i, r := range seen {
 		if r.Method != http.MethodPost {

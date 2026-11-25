@@ -159,11 +159,15 @@ export type JSONObject = Readonly<Record<string, unknown>>
 /** FUGARO_BINARY_NAME is the one executable this task spawns. */
 export const FUGARO_BINARY_NAME = 'fugaro'
 
-/** PROJECT_FLAG, CONFIG_FLAG and DIR_FLAG are the three argv values this module
- * adds on top of the operation's own flags. */
+/** PROJECT_FLAG, CONFIG_FLAG, DIR_FLAG and REPO_FLAG are the four argv values
+ * this module adds on top of the operation's own flags. `REPO_FLAG` is the odd
+ * one of the four: it is a declared argument on the rows that read a repository
+ * (`live.watch`, `budget.show`, `runs.list`), and on `settings.edit` it is a
+ * main-process value like the other three -- see the row's `repoFlag`. */
 export const PROJECT_FLAG = '--project'
 export const CONFIG_FLAG = '--config'
 export const DIR_FLAG = '--dir'
+export const REPO_FLAG = '--repo'
 
 /**
  * PlatformRoute is which *kind* of answer a platform's row is. It exists so a
@@ -498,7 +502,6 @@ export const SPAWN_FLAGS: readonly string[] = Object.freeze([
   '--mine',
   '--pr',
   '--project-wide',
-  '--from-store',
   // The graph stream's own mode word (the graph plan's CG9b), and the graph
   // watch's argv is its only user: it is a fixed word of that row's command path
   // (`graph --watch --json`) rather than a declared flag, so nothing a renderer
@@ -824,10 +827,6 @@ export const SPAWN_KIND_FOR: Record<ArgumentKind, SpawnArgumentKind> = Object.fr
   pullRequest: 'pullRequest',
   flag: 'boolean',
   link: 'value',
-  // `gitProvider` is the one kind whose operation spawns nothing
-  // (`link.openPullRequest`, K2a): the mapping is total over Task 1.2's kinds,
-  // and `value` is what a bare word would reach an argv as if one ever did.
-  gitProvider: 'value',
   installationName: 'value',
   installationCheckout: 'value',
   // The graph read's scope (CG9a): one word behind `--source`, held to the
@@ -875,12 +874,12 @@ export const SPAWN_KIND_FOR: Record<ArgumentKind, SpawnArgumentKind> = Object.fr
   imageDockerfile: 'equalsValue',
   imageTags: 'equalsList',
   imageDescription: 'equalsText',
-  // `licenceKey` is the second kind whose operation spawns nothing
-  // (`licence.read`/`licence.save`, S2.7, carry `command: null`), for
-  // `gitProvider`'s reason: the mapping is total over ipc.ts's kinds, and
-  // `value` is what a bare word would reach an argv as if one ever did -- which
-  // is the one thing a licence key must never do (S2.1's hand-off: the key
-  // travels in a child's environment and in no argv).
+  // `licenceKey` is the kind whose operation spawns nothing
+  // (`licence.read`/`licence.save`, S2.7, carry `command: null`): the mapping is
+  // total over ipc.ts's kinds, and `value` is what a bare word would reach an
+  // argv as if one ever did -- which is the one thing a licence key must never
+  // do (S2.1's hand-off: the key travels in a child's environment and in no
+  // argv).
   licenceKey: 'value',
 })
 
@@ -947,6 +946,18 @@ export interface SpawnCommand {
    * from `argvFor`'s own `settingsEdit`, never from `args`.
    */
   readonly layerFlag?: string
+  /**
+   * `repoFlag` is the flag a **repository-layer** settings edit names its
+   * checkout with, and it too is present on exactly one row (`settings.edit`).
+   * The flag is a column, for `layerFlag`'s reason and one more: the edit's
+   * cwd is the installation's directory, so `--layer repo` without `--repo`
+   * writes the config file of *whatever checkout that directory happens to
+   * be in* (`settingsRepoFile`, `internal/cli/settings_set.go`) -- a file the
+   * operator was shown no name for. The value is `context.directory`, the
+   * installation's own directory and never a renderer's, and the word is
+   * emitted only when the layer being written is `repo` (`SETTINGS_REPO_LAYER`).
+   */
+  readonly repoFlag?: string
   /**
    * `expectFlag` is the flag the move's **compare-and-set** is emitted under,
    * and it too is present on exactly one row (`roadmap.move`). It is a column
@@ -1470,10 +1481,10 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
   {
     // **The settings write, and the console's second write** (the settings-edit
     // plan's C3, D1103, D1104, D1105, D1107). Its argv has two spellings, and
-    // both are the same five pieces in the same order:
+    // both are the same pieces in the same order:
     //
-    //   settings set|unset KEY --layer <L> <phase> --project <name>
-    //     [--config <path>] [-- <VALUE>]
+    //   settings set|unset KEY --layer <L> [--repo <directory>] <phase>
+    //     --project <name> [--config <path>] [-- <VALUE>]
     //
     // **`set` or `unset` is a declared argument and not a word of this row**,
     // because the subcommand is the edit's own first fact and a row's words are
@@ -1488,6 +1499,22 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     // computes the layer here rather than taking an enum from a renderer). The
     // layer is the read's `target_layer` -- the CLI's answer about where this
     // key may be written -- so no payload of a renderer's can choose one.
+    //
+    // **`--repo <directory>` is emitted for a `repo`-layer edit alone**, from
+    // the row's `repoFlag` column and from `context.directory` -- the
+    // installation's own directory, held to `isSafeInstallationValue` like the
+    // project name and the config path beside it. The CLI's `--repo` takes
+    // `owner/name` **or a path inside its checkout** (`repoArg`,
+    // `internal/cli/repo_arg.go`), so naming the directory is naming the
+    // checkout the write lands in: without it the child's cwd decides, and the
+    // file changed is whichever checkout that directory
+    // happens to be in -- a name the window could not have shown (RC80). A
+    // `repo`-layer plan with no directory at all (the WSL route before Part D
+    // translates one) is refused rather than spawned: an edit whose target
+    // cannot be named is an edit nobody can confirm. The line the confirmation
+    // window draws for it is read back out of this same argv
+    // (`settingsTargetLine`, `src/main/settingsview.ts`), so the window and the
+    // spawn cannot disagree about the target.
     //
     // **`<phase>` is the main process's too, and it is one of three spellings**
     // (`SETTINGS_EDIT_PHASE_WORDS`): the dry run's `--dry-run --json`, and then
@@ -1517,6 +1544,7 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     words: ['settings'],
     takesProject: true,
     layerFlag: '--layer',
+    repoFlag: '--repo',
     args: [
       { key: 'op', flag: null, kind: 'settingOp' },
       { key: 'key', flag: null, kind: 'value' },
@@ -1554,83 +1582,11 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     dirFlag: false,
   },
   {
-    // The project view (Bitbucket credentials T1.2, D364): every repository of
-    // the installation, from the view the coordinator's sweep last stored. The
-    // two flags are fixed words rather than declared arguments -- the screen has
-    // no control that turns either off -- so `args` is empty and `argvFor` emits
-    // exactly the three words below plus `--project`/`--config` (rule 3; the
-    // command carries the cloud group's two, and it is a read of a project, so
-    // it is not on `COMMANDS_WITHOUT_PROJECT`).
-    //
-    // `--repo` and `--since` are deliberately absent: the read is about the
-    // project's whole repository set, and the stored view carries no time for a
-    // window to filter (`src/main/ipc.ts`'s comment on the operation says both
-    // at length). `--from-store` is on `SPAWN_FLAGS` and on no never-row: it is
-    // the read that touches no credential, and it is the whole point of this
-    // row that the console may make it.
-    operation: 'coordinator.status',
-    words: ['coordinator', 'status', '--from-store', '--all', '--json'],
-    takesProject: true,
-    args: [],
-    dirFlag: false,
-  },
-  {
-    // The pull request read (coordinator v2 C3, D816): `coordinator show --repo
-    // <owner/name> --pr <n> --json`, one pull request as the host has it, the
-    // description included. The two arguments are the operation's own and both
-    // required (`src/main/ipc.ts`): the repository as the CLI's canonical
-    // `owner/name` and the number as the digits `IntVar --pr` reads, which is
-    // what the `pullRequest` kind is for.
-    //
-    // **This is the second row whose child mints a credential of the host's**:
-    // `run.launch` is the first, and its child is a run whose token can write.
-    // This one's is the person read set's own read-only GitHub App installation
-    // token (contents, pull requests and metadata, all read) -- so what the
-    // table lets this argv carry is the whole security question, and the answer
-    // is the two arguments and nothing else: no `--token`, no `--host`, no
-    // `--url`, no `--dir` and no positional word. `--json` is the only flag the
-    // row fixes, and every other word it could emit is refused by
-    // `assertArgvFlags` unless it is on `SPAWN_FLAGS` and off `NEVER_REACHABLE`.
-    // It takes `--project`/`--config` like every other read (rule 3): the CLI
-    // resolves the repository's provider the way the project view does.
-    operation: 'coordinator.show',
-    words: ['coordinator', 'show', '--json'],
-    takesProject: true,
-    args: [
-      { key: 'repo', flag: '--repo', kind: 'value' },
-      { key: 'pr', flag: '--pr', kind: 'pullRequest' },
-    ],
-    dirFlag: false,
-  },
-  {
-    // The declarations read (coordinator v2 C4, D827): `coordinator intents --all
-    // --json`, what the fleet's writers have stored, newest first. It is
-    // `coordinator status`'s shape rather than `coordinator show`'s -- `words`
-    // carries the whole argv and `args` is empty -- and that is the security
-    // answer here: there is no field a renderer could fill, so no word of the
-    // argv is caller-influenced at all.
-    //
-    // `--all` is a fixed word and not a control. The stored view is the caller's
-    // own database node (`declared_by` included) and the command wraps it
-    // project-wide itself; there is no argument that narrows it to one
-    // repository, and `--repo`/`--since` -- which the CLI does have -- are on no
-    // row here. It takes `--project`/`--config` like every other read (rule 3),
-    // because the command resolves the local config the way the project view
-    // does, and it writes nothing: no credential of the host's is minted, no
-    // provider is opened and nothing is sent anywhere.
-    operation: 'coordinator.intents',
-    words: ['coordinator', 'intents', '--all', '--json'],
-    takesProject: true,
-    args: [],
-    dirFlag: false,
-  },
-  {
     // The orchestrator map (the console-fixes plan's CG7a; C-ORCH's document,
     // D3221): `fugaro orchestrator map --json`, the project's active
     // orchestrators, their connections and the coordinator's heartbeat, which is
-    // what the Coordinator tab draws. It is `coordinator status`'s shape rather
-    // than `coordinator show`'s -- `words` carries the whole argv and `args` is
-    // empty -- and that is the security answer here too: there is no field a
+    // what the Coordinator tab draws. `words` carries the whole argv and `args`
+    // is empty, and that is the security answer here: there is no field a
     // renderer could fill, so no word of the argv is caller-influenced at all.
     //
     // **The command is registered from `ee/`** (`ee/orchestrator/cli/map.go`) and
@@ -2199,6 +2155,13 @@ export const SETTINGS_EDIT_PHASE_WORD_GATES: Readonly<Record<string, SettingsEdi
   [NO_APPLY_PHASE_WORD]: 'noApply',
 })
 
+/** SETTINGS_REPO_LAYER is the one of the three whose document is a
+ * **repository's** own config file rather than a file of the project or of the
+ * machine, and it is the one `argvFor` names a directory for (`repoFlag`) and
+ * the one the window's target line is about (`settingsTargetLine`). It is
+ * spelled once because those two, and the list below, must agree. */
+export const SETTINGS_REPO_LAYER = 'repo'
+
 /** SETTINGS_EDIT_LAYERS is the whole of the layer vocabulary
  * (`settingsWriteLayers`, `internal/cli/settings_set.go:41`): the three
  * documents one edit can land in. It is the console's own copy because the
@@ -2206,7 +2169,11 @@ export const SETTINGS_EDIT_PHASE_WORD_GATES: Readonly<Record<string, SettingsEdi
  * business in one -- the read's `target_layer` is held to this set before the
  * dry run is spawned, so a document that named a fourth word is a refusal
  * rather than an argv the CLI would have to refuse. */
-export const SETTINGS_EDIT_LAYERS: readonly string[] = Object.freeze(['local', 'project', 'repo'])
+export const SETTINGS_EDIT_LAYERS: readonly string[] = Object.freeze([
+  'local',
+  'project',
+  SETTINGS_REPO_LAYER,
+])
 
 /** TERMINATOR_WORD is the `--` an argv uses to say "everything after this is a
  * value": one row emits it (`settings.edit`, in front of its new value), and
@@ -2796,6 +2763,19 @@ export function argvFor(
       refused(`${operation} would write the ${edit.layer} layer, which is not one of the three documents an edit lands in`)
     }
     argv.push(row.layerFlag, edit.layer)
+    // **Which repository, for the one layer that writes one.** The layer word
+    // alone says *a repository's config file* and not *which*: without the pair
+    // below, the CLI falls back to the checkout in the child's own directory
+    // (`settingsRepoFile`), and the file changed is that directory's -- a file
+    // the operator was shown no name for. The pair is emitted here, right after
+    // the layer and before the phase, and the window reads its target line back
+    // out of this argv (`settingsTargetLine`), so the two cannot disagree.
+    if (edit.layer === SETTINGS_REPO_LAYER) {
+      const directory = context.directory
+      if (directory === undefined) refused('a repository-layer edit needs the installation’s directory')
+      if (!isSafeInstallationValue(directory)) refused('the installation’s directory is not a value this console will pass')
+      argv.push(REPO_FLAG, directory)
+    }
     const words = SETTINGS_EDIT_PHASE_WORDS[edit.phase]
     if (words === undefined) {
       refused(`${operation} was given a phase that is neither a dry run nor a write`)
@@ -3349,6 +3329,22 @@ export function assertSpawnSurface(rows: readonly SpawnCommand[]): void {
       }
       if (!SPAWN_FLAGS.includes(row.layerFlag)) {
         refused(`${row.operation} would emit ${row.layerFlag}, which is not a flag this console may spawn`)
+      }
+    }
+    // The repository column, held the same way as the layer beside it: it names
+    // the checkout a repository-layer edit writes into, so it belongs to the
+    // settings write's row alone, and it is only ever emitted paired with a
+    // layer. A row that carried one without the other would write a file no
+    // window could name.
+    if (row.repoFlag !== undefined) {
+      if (row.operation !== SETTINGS_EDIT_OPERATION) {
+        refused(`${row.operation} carries a repository flag: only the settings write's own row has one`)
+      }
+      if (row.layerFlag === undefined) {
+        refused(`${row.operation} would emit ${row.repoFlag}, which names a layer's document and not a layer`)
+      }
+      if (!SPAWN_FLAGS.includes(row.repoFlag)) {
+        refused(`${row.operation} would emit ${row.repoFlag}, which is not a flag this console may spawn`)
       }
     }
     // The move's two kinds and its compare-and-set column, held the same way:

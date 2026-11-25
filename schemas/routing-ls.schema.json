@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/routing-ls.schema.json",
+  "title": "Fugaro routing ls",
+  "description": "The document `fugaro routing ls --json` prints: the selected project's routing table — the `model_routing:` block of the installation's own config — and, for every model a run of the project can be served on, the entry that answers it and why that entry won. The read is offline: it reaches no bucket, no database and no host, and what it says about the cloud is what the local files already say. Members are only ever added within a version (D784), so a renamed or re-meant member is a new member under a new name and the old one is kept, and removing or retyping one bumps version. No object here is closed for that reason: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's document, which D784 promises to keep readable under the same version.",
+  "type": "object",
+  "required": [
+    "version",
+    "entries",
+    "models"
+  ],
+  "properties": {
+    "version": {
+      "const": 1,
+      "$comment": "routingLsDocVersion in internal/cli/routing.go."
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The selected project's name. Absent when no project config was selected, which leaves entries and models empty."
+    },
+    "entries": {
+      "type": "array",
+      "description": "The table, in the order the project wrote it. Empty is a project that has published no table, where every model a run can call is refused (R1, R22).",
+      "items": {
+        "$ref": "#/$defs/entry"
+      }
+    },
+    "models": {
+      "type": "array",
+      "description": "One row per model a run of this project can be served on, in the order the crafts resolve: the five crafts' resolved models, the four models agent.models pins, and each review level's agent.levels.<level>.model. The agent those pins and levels are read from is the one a run resolves — this checkout's fugaro.yaml over the project layer's defaults.agent — so a model the layer names and no repository does is a row here too. The rungs decided per launch — a task's own grade, a --model override — are not here, because no file names them.",
+      "items": {
+        "$ref": "#/$defs/model"
+      }
+    }
+  },
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "required": [
+        "match",
+        "chain",
+        "sources"
+      ],
+      "properties": {
+        "match": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The model or pattern this entry answers: an exact ID, or a prefix ending in *. The most specific match wins (D3172)."
+        },
+        "chain": {
+          "type": "array",
+          "description": "The entry's sources, first usable one wins, each spelled the way `fugaro routing set` takes them, so what this document prints is what that command accepts. A source's `admit` list is not part of the spelling: `fugaro routing set` writes none, and a reader that needs the list reads it in `sources`.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "sources": {
+          "type": "array",
+          "description": "The same chain in the table's own members, so a reader that has to tell a pool from a provider reads them apart rather than parsing the spelling above.",
+          "items": {
+            "$ref": "#/$defs/source"
+          }
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "source",
+        "kind"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "This source spelled the way `fugaro routing set` takes it: the kind, the name the kind carries, and @MODEL after either for a written downgrade."
+        },
+        "kind": {
+          "enum": [
+            "launcher-pool",
+            "pool",
+            "anthropic",
+            "provider",
+            "vertex"
+          ],
+          "description": "routing.Kinds, the closed set of credential sources. A sixth kind is a change to internal/routing/table.go and to every reader's switch."
+        },
+        "pool": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The project's pool name, on a source of kind pool and on no other."
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The provider entry's name, on a source of kind provider and on no other."
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The model this source serves when the call asked for another one — a written downgrade, which spec.md requires to be explicit. Absent means the model the call asked for."
+        },
+        "admit": {
+          "type": "array",
+          "description": "The repositories this source may serve (D3182), on the kinds that are a single credential of the project. An empty or absent list admits nobody: the fail-closed direction. A pool carries no list here — its admission is its members' own.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "model": {
+      "type": "object",
+      "required": [
+        "model",
+        "crafts",
+        "why"
+      ],
+      "properties": {
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "crafts": {
+          "type": "array",
+          "description": "The crafts that run this model, in config.CraftNames' order. Empty for a model only a pin or a review level names.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "entry": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The match of the entry that wins for this model (routing.Resolve). Absent when no entry matches, which is a run that cannot start; `why` says so."
+        },
+        "why": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Why that entry won: the only entry that matches, the longest of several patterns, an exact ID over the patterns that also match, or — with no entry at all — why none did."
+        }
+      }
+    }
+  }
+}

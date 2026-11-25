@@ -31,6 +31,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
 )
 
@@ -55,6 +56,15 @@ const (
 	testOtherRepoContainer     = "borealis-implement-deploy"
 )
 
+// The project-shared side of the fixture (IS1): the logical name a version-2
+// call asks for, and the container the grammar builds from it. They are the
+// same name and container a `fugaro secrets shared set` writes, and the record
+// below is the one the owner's `secrets allow` leaves.
+const (
+	testSharedName      = "deploy-token"
+	testSharedContainer = "fugaro_p_deploy-token"
+)
+
 // fakeWorkflowRecords is the record reader the fixture serves: a map of slug to
 // record, so a test can leave a repository unrecorded or make the read fail
 // with no database at all.
@@ -73,6 +83,38 @@ func (f *fakeWorkflowRecords) Read(_ context.Context, slug string) (creds.Workfl
 	}
 	rec, ok := f.recs[slug]
 	return rec, ok, nil
+}
+
+// fakeProjectRecords is the project record (IS3's codec) the fixture serves: one
+// document for the installation, and a read counter rather than a list of names,
+// because the record is one node and not one per repository.
+type fakeProjectRecords struct {
+	rec   creds.ProjectSecrets
+	found bool
+	err   error
+	// reads is how many times the record was asked for: a refusal made before
+	// the record is reached reads none, and one made by the allow-list reads
+	// exactly one.
+	reads int
+}
+
+func (f *fakeProjectRecords) Read(context.Context) (creds.ProjectSecrets, bool, error) {
+	f.reads++
+	if f.err != nil {
+		return creds.ProjectSecrets{}, false, f.err
+	}
+	return f.rec, f.found, nil
+}
+
+// projectRecord is the record `fugaro secrets allow` leaves for the fixture's
+// one name: the fixture's own repository admitted, by the spelling the local
+// block's `allow_data_to` uses (owner/name, and never the provider-qualified
+// canonical form the verified job account carries).
+func projectRecord(repos ...string) creds.ProjectSecrets {
+	return creds.ProjectSecrets{
+		Version: creds.ProjectSecretsVersion,
+		Secrets: map[string]creds.ProjectSecretRule{testSharedName: {Repos: repos}},
+	}
 }
 
 // workflowRecord is the record `fugaro update` writes for one repository (B3.1,
@@ -96,6 +138,12 @@ func workflowRecord() creds.WorkflowSecrets {
 type workflowReads struct {
 	records *fakeWorkflowRecords
 	dyn     *dynReader
+	// projects is the project record a version-2 call is admitted by (IS1), and
+	// sharedValue is what the project's own container holds. The two are on this
+	// type rather than on a fixture of their own because the version-1 and
+	// version-2 halves of the route read through the same three readers.
+	projects    *fakeProjectRecords
+	sharedValue string
 	// value and otherValue are what the containers hold. They are built at run
 	// time (fakeCred) so this file holds no secret-shaped literal, and they
 	// differ so that "served its own workflow's value" is one comparison and
@@ -108,17 +156,26 @@ type workflowReads struct {
 // the fixture's repository and a second one are both recorded, and the second
 // repository's `implement` workflow names a container of its own — so "another
 // repository's job is served its own record" is a distinguishable answer.
+//
+// The project side is seeded the way `fugaro secrets shared set` and `secrets
+// allow` leave an installation: one name, its value in the grammar's own
+// container, that container MARKED (F18, G2), and the fixture's repository
+// admitted to the name.
 func newWorkflowReads(t *testing.T) *workflowReads {
 	t.Helper()
 	r := &workflowReads{
-		records:    &fakeWorkflowRecords{},
-		dyn:        &dynReader{values: map[string]string{}},
-		value:      fakeCred(t, "workflow-secret"),
-		otherValue: fakeCred(t, "other-workflow-secret"),
+		records:     &fakeWorkflowRecords{},
+		dyn:         &dynReader{values: map[string]string{}, marked: map[string]bool{}},
+		projects:    &fakeProjectRecords{rec: projectRecord(testRepoPath), found: true},
+		value:       fakeCred(t, "workflow-secret"),
+		otherValue:  fakeCred(t, "other-workflow-secret"),
+		sharedValue: fakeCred(t, "shared-workflow-secret"),
 	}
 	r.dyn.values[testWorkflowContainer] = r.value
 	r.dyn.values[testOtherWorkflowContainer] = r.otherValue
 	r.dyn.values[testOtherRepoContainer] = r.otherValue
+	r.dyn.values[testSharedContainer] = r.sharedValue
+	r.dyn.marked[testSharedContainer] = true
 	other := workflowRecord()
 	other.Workflows[testWorkflow] = []creds.WorkflowSecret{{Env: testWorkflowEnv, ID: testOtherRepoContainer}}
 	r.records.recs = map[string]creds.WorkflowSecrets{
@@ -133,6 +190,7 @@ func newWorkflowReads(t *testing.T) *workflowReads {
 // what they are missing is exactly this.
 func (r *workflowReads) wire(_ *svc, cfg *Config) {
 	cfg.WorkflowSecrets = r.records
+	cfg.ProjectSecrets = r.projects
 	cfg.Bundles = &BundleLoader{Source: r.dyn}
 }
 
@@ -195,13 +253,37 @@ func newWorkflowSvc(t *testing.T, extra ...func(*svc, *Config)) *workflowFixture
 // service's own answers and no field of the call.
 func workflowBody(env string) string { return `{"env":"` + env + `"}` }
 
+// workflowBodyV2 is the other version's body (D3324): the logical secret's name
+// and the version that says which shape this is, and no variable at all.
+func workflowBodyV2(name string) string { return `{"name":"` + name + `","version":2}` }
+
+// openTheDoor opens the installation's repository-secrets door for one test and
+// puts it back (G9, F24): `config.RepoSecretsOff` false is D2313 reversed, the
+// state a repository's own copies are in force in, and it is the state version 2
+// is REFUSED in — a project copy would shadow a repository's own value. The
+// served path is the door SHUT, which is the state every installation is in
+// until the flip, so a test of that path calls nothing here.
+func openTheDoor(t *testing.T) {
+	t.Helper()
+	prev := config.RepoSecretsOff
+	config.RepoSecretsOff = false
+	t.Cleanup(func() { config.RepoSecretsOff = prev })
+}
+
 // fetchWorkflowSecrets sends one workflow-secrets call as the given identities
 // and reads the answer whole. It is a function rather than a method so a
 // fixture of another class — whose auth and pairing are its own — can make the
 // call too.
 func fetchWorkflowSecrets(t *testing.T, s *svc, env, runTok, jobTok, job string) (*http.Response, []byte) {
 	t.Helper()
-	resp := s.postTokens(t, WorkflowSecretsPath, workflowBody(env), runTok, jobTok, job)
+	return fetchWorkflowSecretsBody(t, s, workflowBody(env), runTok, jobTok, job)
+}
+
+// fetchWorkflowSecretsBody is the same call with the body given rather than
+// built, which is what the version-2 tests need.
+func fetchWorkflowSecretsBody(t *testing.T, s *svc, body, runTok, jobTok, job string) (*http.Response, []byte) {
+	t.Helper()
+	resp := s.postTokens(t, WorkflowSecretsPath, body, runTok, jobTok, job)
 	defer resp.Body.Close()
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -214,6 +296,13 @@ func fetchWorkflowSecrets(t *testing.T, s *svc, env, runTok, jobTok, job string)
 func (f *workflowFixture) fetch(t *testing.T, env string) (*http.Response, []byte) {
 	t.Helper()
 	return fetchWorkflowSecrets(t, f.svc, env, f.runToken(), f.jobToken(), f.job)
+}
+
+// fetchV2 is one version-2 call as the fixture's own job: it names a logical
+// secret and no variable (D3324).
+func (f *workflowFixture) fetchV2(t *testing.T, name string) (*http.Response, []byte) {
+	t.Helper()
+	return fetchWorkflowSecretsBody(t, f.svc, workflowBodyV2(name), f.runToken(), f.jobToken(), f.job)
 }
 
 // fetchAs is fetch with the job token given rather than minted, for the calls
@@ -322,10 +411,39 @@ func assertNoValue(t *testing.T, s *svc, reads *workflowReads, answer []byte) {
 		where["the refusal"] = string(answer)
 	}
 	for where, text := range where {
-		if strings.Contains(text, reads.value) || strings.Contains(text, reads.otherValue) {
-			t.Errorf("%s carries a workflow secret's value", where)
+		for _, value := range []string{reads.value, reads.otherValue, reads.sharedValue} {
+			if strings.Contains(text, value) {
+				t.Errorf("%s carries a workflow secret's value", where)
+			}
 		}
 	}
+}
+
+// assertRefusedV2 is assertRefused for a version-2 call: the typed refusal, the
+// status it is answered with, no container and no marker read at all — a refused
+// caller is served no value and is not told what any container holds — and the
+// audit lines the point of the call allows.
+func assertRefusedV2(t *testing.T, who string, resp *http.Response, body []byte, s *svc, reads *workflowReads, wantStatus int, wantLines int, wantType string) {
+	t.Helper()
+	if resp.StatusCode == http.StatusOK {
+		t.Fatalf("%s was served a workflow secret: %s", who, body)
+	}
+	if e := refusal(t, resp.StatusCode, body); e.Error != wantType {
+		t.Errorf("%s was refused %q, want %q", who, e.Error, wantType)
+	}
+	if resp.StatusCode != wantStatus {
+		t.Errorf("%s was answered HTTP %d, want %d", who, resp.StatusCode, wantStatus)
+	}
+	if len(reads.dyn.reads) != 0 {
+		t.Errorf("%s caused a container's VALUE to be read (%v); a refused caller is served none", who, reads.dyn.reads)
+	}
+	if len(reads.dyn.markerReads) != 0 {
+		t.Errorf("%s caused a container's marker to be read (%v); the refusal was made before the container", who, reads.dyn.markerReads)
+	}
+	if got := auditCount(t, s.audit); got != wantLines {
+		t.Errorf("%s wrote %d audit lines, want %d", who, got, wantLines)
+	}
+	assertNoValue(t, s, reads, body)
 }
 
 // ---------------------------------------------------------------------------
@@ -854,5 +972,318 @@ func TestWorkflowSecretsNoReaderRefusesEvenForARecordedRepository(t *testing.T) 
 
 	if _, found, err := (RTDBWorkflowSecrets{}).Read(context.Background(), testSlug(t, testRepoPath)); err == nil || found {
 		t.Errorf("RTDBWorkflowSecrets with no database answered found=%t err=%v, want a failed read", found, err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Version 2 (IS1, D3324, D3328, D3333)
+// ---------------------------------------------------------------------------
+
+// TestWorkflowSecretsV2ServesAListedRepository is IS1's red step. Before the
+// version-2 branch, a call naming a logical secret reached the version-1 route,
+// which looked the EMPTY variable it carries up in the repository's record and
+// refused it (request_refused) — the answer this test saw first.
+//
+// What the answer must be is version 2 whole: the value out of the project's own
+// `fugaro_p_<name>` container, admitted by the owner's record and by the
+// container's marker, written no-store, and recorded as exactly one line naming
+// that container and no value (G18).
+func TestWorkflowSecretsV2ServesAListedRepository(t *testing.T) {
+	f := newWorkflowSvc(t)
+	resp, body := f.fetchV2(t, testSharedName)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("a listed repository was answered %d, want the project secret: %s", resp.StatusCode, body)
+	}
+	if got := resp.Header.Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store: a cached workflow secret is a credential this service did not serve to the next caller", got)
+	}
+	ans := workflowAnswer(t, body)
+	if ans.Name != testSharedName || ans.Value != f.sharedValue {
+		t.Errorf("the answer is %+v, want the name the call named and the project container's value", ans)
+	}
+	if ans.Env != "" {
+		t.Errorf("a version-2 answer carries the variable %q, and it carries none: the call named no variable", ans.Env)
+	}
+	// The container the NAME built, read once, and the marker read once for it.
+	if want := []string{testSharedContainer}; !slices.Equal(f.dyn.reads, want) {
+		t.Errorf("the service read the containers %v, want exactly %v", f.dyn.reads, want)
+	}
+	if want := []string{testSharedContainer}; !slices.Equal(f.dyn.markerReads, want) {
+		t.Errorf("the service read the markers of %v, want exactly %v: the container the name builds is the one the marker is asked about", f.dyn.markerReads, want)
+	}
+	// The record is the fence, and it is read once: a second read would be a
+	// second decision, and the two could disagree.
+	if f.projects.reads != 1 {
+		t.Errorf("the project record was read %d times, want once", f.projects.reads)
+	}
+	line := f.onlyAuditLine(t)
+	if got := auditField(line, "purpose"); got != PurposeWorkflowSecret {
+		t.Errorf("the line's purpose = %q, want %q", got, PurposeWorkflowSecret)
+	}
+	if got := auditField(line, "credential"); got != testSharedContainer {
+		t.Errorf("the line's credential = %q, want the container the value was read from, %q", got, testSharedContainer)
+	}
+	if got := auditField(line, "status"); got != StatusOK {
+		t.Errorf("the line's status = %q, want %q", got, StatusOK)
+	}
+	if got := auditField(line, "run"); got != f.run {
+		t.Errorf("the line's run = %q, want %q", got, f.run)
+	}
+	if got := auditField(line, "repository"); got != f.slug {
+		t.Errorf("the line's repository = %q, want %q", got, f.slug)
+	}
+	assertNoValue(t, f.svc, f.workflowReads, nil)
+}
+
+// TestWorkflowSecretsV2RefusesAnUnlistedRepository is D3328's fence: the record
+// holds the name and does not admit this repository to it, so the call is
+// refused with the code the runner reads to print the fix — and the refusal is
+// made BEFORE any container is touched, so a repository that may not fetch a
+// secret learns nothing about it.
+//
+// The repository is checked in the spelling the record's patterns use: the
+// verified job account carries the canonical provider/owner/name, and the
+// owner/name the local block's `allow_data_to` writes is what must match. The
+// second case is the same record read by a job of the OTHER repository, which is
+// what makes "the caller's own repository decides" a fact rather than a claim.
+func TestWorkflowSecretsV2RefusesAnUnlistedRepository(t *testing.T) {
+	t.Run("the record lists another repository", func(t *testing.T) {
+		f := newWorkflowSvc(t)
+		f.projects.rec = projectRecord(testOtherRepoPath)
+		resp, body := f.fetchV2(t, testSharedName)
+		assertRefusedV2(t, "a repository the record does not admit", resp, body, f.svc, f.workflowReads, StatusUnverified, 1, ErrorWorkflowSecretNotAllowed)
+		if f.projects.reads != 1 {
+			t.Errorf("the project record was read %d times, want once: the allow-list is what refused", f.projects.reads)
+		}
+		if e := refusal(t, resp.StatusCode, body); !strings.Contains(e.Message, "fugaro secrets allow") {
+			t.Errorf("the refusal does not name the fix a person runs: %q", e.Message)
+		}
+	})
+	t.Run("the record names no such secret", func(t *testing.T) {
+		f := newWorkflowSvc(t)
+		resp, body := f.fetchV2(t, "not-a-listed-name")
+		assertRefusedV2(t, "a name the record does not hold", resp, body, f.svc, f.workflowReads, StatusUnverified, 1, ErrorWorkflowSecretNotAllowed)
+	})
+	t.Run("there is no record at all", func(t *testing.T) {
+		f := newWorkflowSvc(t)
+		f.projects.found = false
+		resp, body := f.fetchV2(t, testSharedName)
+		// An absent record admits nobody: it is never read as "every name is
+		// allowed" (G19).
+		assertRefusedV2(t, "an installation with no project record", resp, body, f.svc, f.workflowReads, StatusUnverified, 1, ErrorWorkflowSecretNotAllowed)
+	})
+	t.Run("the record could not be read", func(t *testing.T) {
+		f := newWorkflowSvc(t)
+		f.projects.err = errors.New("the record could not be read")
+		resp, body := f.fetchV2(t, testSharedName)
+		assertRefusedV2(t, "an unreadable project record", resp, body, f.svc, f.workflowReads, StatusUnavailable, 1, ErrorStateUnavailable)
+	})
+	t.Run("the service has no record reader", func(t *testing.T) {
+		f := newWorkflowSvc(t, func(_ *svc, cfg *Config) { cfg.ProjectSecrets = nil })
+		resp, body := f.fetchV2(t, testSharedName)
+		assertRefusedV2(t, "a service with no project record reader", resp, body, f.svc, f.workflowReads, StatusUnavailable, 1, ErrorStateUnavailable)
+	})
+	t.Run("the caller's own repository is the one checked", func(t *testing.T) {
+		f := newWorkflowSvc(t)
+		f.projects.rec = projectRecord(testRepoPath)
+		// The other repository's job account presents ITS own run identity, so
+		// the pairing binds it: the record admits the fixture's repository and
+		// not this one, and the call is refused on that alone.
+		resp, body := fetchWorkflowSecretsBody(t, f.svc, workflowBodyV2(testSharedName), f.runTokenOf(testSlug(t, testOtherRepoPath)), f.otherJobToken(), f.job)
+		assertRefusedV2(t, "another repository's job", resp, body, f.svc, f.workflowReads, StatusUnverified, 1, ErrorWorkflowSecretNotAllowed)
+	})
+}
+
+// TestWorkflowSecretsV2RefusesAnUnmarkedContainer is G2's half of the fence
+// (F18): the record admits the repository and the container is there, but it
+// carries no workflow-secret marker, so it is the project's own credential of
+// that name rather than a workflow secret's and this route does not serve it.
+//
+// The container's VALUE is never read, which is the point of the order: the
+// marker is asked for first, so a name that resolves to a model credential's
+// container is refused without that credential ever entering this process.
+func TestWorkflowSecretsV2RefusesAnUnmarkedContainer(t *testing.T) {
+	f := newWorkflowSvc(t)
+	delete(f.dyn.marked, testSharedContainer)
+	resp, body := f.fetchV2(t, testSharedName)
+	if resp.StatusCode != StatusUnavailable {
+		t.Fatalf("an unmarked container answered %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
+	}
+	if e := refusal(t, resp.StatusCode, body); e.Error != ErrorWorkflowSecretUnmarked {
+		t.Errorf("the refusal is %q, want %q", e.Error, ErrorWorkflowSecretUnmarked)
+	}
+	if len(f.dyn.reads) != 0 {
+		t.Errorf("the service read the value of %v; the marker is asked for FIRST, so a container that is not a workflow secret's is never read", f.dyn.reads)
+	}
+	if want := []string{testSharedContainer}; !slices.Equal(f.dyn.markerReads, want) {
+		t.Errorf("the service asked about the markers of %v, want exactly %v", f.dyn.markerReads, want)
+	}
+	if got := auditCount(t, f.audit); got != 1 {
+		t.Errorf("the refusal wrote %d audit lines, want 1", got)
+	}
+	assertNoValue(t, f.svc, f.workflowReads, body)
+}
+
+// TestWorkflowSecretsV2RefusesAnUnreadableMarker: a marker read that FAILED is
+// not "the container is unmarked". The two have two fixes — one is the
+// installation's state and the other is the container's — and a service that
+// answered the second for the first would send an operator to rewrite a
+// container that is already right. Both are refusals, and neither reads a value.
+func TestWorkflowSecretsV2RefusesAnUnreadableMarker(t *testing.T) {
+	f := newWorkflowSvc(t)
+	f.dyn.markerErr = errors.New("the container's labels could not be listed")
+	resp, body := f.fetchV2(t, testSharedName)
+	if resp.StatusCode != StatusUnavailable {
+		t.Fatalf("an unreadable marker answered %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
+	}
+	if e := refusal(t, resp.StatusCode, body); e.Error != ErrorStateUnavailable {
+		t.Errorf("the refusal is %q, want %q: a marker that could not be read is the installation's state, not the container's shape", e.Error, ErrorStateUnavailable)
+	}
+	if len(f.dyn.reads) != 0 {
+		t.Errorf("the service read the value of %v; nothing is served from a container it could not classify", f.dyn.reads)
+	}
+	assertNoValue(t, f.svc, f.workflowReads, body)
+}
+
+// TestWorkflowSecretsV2RefusesEachOtherClass is G5 and F21: D3333 makes the
+// repository the unit of access, so every caller class that is not a
+// per-repository coding job is refused on version 2 exactly as it is on
+// version 1 — a review job, a shared project job, a build identity, the
+// installation's coordinator, a launcher and a person.
+//
+// Each is refused before the fence is reached, which is why none of them reads
+// the project record, a container or a marker: the class is the route's first
+// gate and nothing below it runs.
+func TestWorkflowSecretsV2RefusesEachOtherClass(t *testing.T) {
+	// The launcher and the person are refused before the identity is verified,
+	// so they write NO line: a line states the identity the service verified.
+	t.Run("a launcher", func(t *testing.T) {
+		f := newWorkflowSvc(t)
+		resp, body := f.callPerson(t, WorkflowSecretsPath, workflowBodyV2(testSharedName), f.launcherToken())
+		assertRefusedV2(t, "a launcher", resp, body, f.svc, f.workflowReads, StatusUnverified, 0, ErrorUnverifiedRunIdentity)
+	})
+	t.Run("a person", func(t *testing.T) {
+		f := newWorkflowSvc(t)
+		resp, body := f.callPerson(t, WorkflowSecretsPath, workflowBodyV2(testSharedName), f.personToken(testPersonAccount))
+		assertRefusedV2(t, "a person", resp, body, f.svc, f.workflowReads, StatusUnverified, 0, ErrorUnverifiedRunIdentity)
+	})
+	t.Run("a shared project job", func(t *testing.T) {
+		reads := newWorkflowReads(t)
+		shared := newSharedCodingSvc(t, reads.wire)
+		resp, body := fetchWorkflowSecretsBody(t, shared, workflowBodyV2(testSharedName), shared.sharedRunToken(), shared.sharedJobToken(), shared.job)
+		assertRefusedV2(t, "a shared project job", resp, body, shared, reads, StatusUnverified, 1, ErrorUnverifiedRunIdentity)
+	})
+	t.Run("a review job", func(t *testing.T) {
+		reads := newWorkflowReads(t)
+		review := newReviewSvcSpelled(t, testReviewSA, testReviewSA, reads.wire)
+		resp, body := fetchWorkflowSecretsBody(t, review, workflowBodyV2(testSharedName), review.reviewRunToken(), review.reviewJobToken(), review.job)
+		assertRefusedV2(t, "a review job", resp, body, review, reads, StatusUnverified, 1, ErrorUnverifiedRunIdentity)
+	})
+	t.Run("a build identity", func(t *testing.T) {
+		b := newBuildCredsSvc(t)
+		mine := b.rows[testRepoPath]
+		resp, body := fetchWorkflowSecretsBody(t, b.svc, workflowBodyV2(testSharedName), b.runToken(), b.token(mine), b.job)
+		assertRefusedV2(t, "a repository's build", resp, body, b.svc, b.reads, StatusUnverified, 0, ErrorUnverifiedJobIdentity)
+	})
+	t.Run("the coordinator", func(t *testing.T) {
+		s, _ := coordinatorSvc(t, testCoordinatorAccount)
+		reads := newWorkflowReads(t)
+		resp, body := fetchWorkflowSecretsBody(t, s, workflowBodyV2(testSharedName), s.runToken(), s.personToken(testCoordinatorAccount), s.job)
+		assertRefusedV2(t, "the coordinator", resp, body, s, reads, StatusUnverified, 0, ErrorUnverifiedJobIdentity)
+	})
+}
+
+// TestWorkflowSecretsV2RefusedWhileRepoSecretsOn is G9 and F24: version 2 is
+// refused while `config.RepoSecretsOff` is false, because a repository's own
+// copies are still in force and a project copy would shadow them. The refusal is
+// the installation's state and not the caller's call — unavailable, and no
+// record, container or marker is read for it.
+//
+// The door this test opens is the one every installation has SHUT until the
+// flip: the whole version-2 suite beside this one runs on the default (door
+// shut, version 2 served), so inverting the gate fails there and fails here.
+func TestWorkflowSecretsV2RefusedWhileRepoSecretsOn(t *testing.T) {
+	f := newWorkflowSvc(t)
+	openTheDoor(t)
+	if config.RepoSecretsOff {
+		t.Fatalf("config.RepoSecretsOff is true after opening the door: this test cannot see the state it is about")
+	}
+	resp, body := f.fetchV2(t, testSharedName)
+	assertRefusedV2(t, "version 2 while repository secrets are in force", resp, body, f.svc, f.workflowReads, StatusUnavailable, 1, ErrorWorkflowSecretsOff)
+	if f.projects.reads != 0 {
+		t.Errorf("the project record was read %d times before the flip; the door is the first thing version 2 reads", f.projects.reads)
+	}
+}
+
+// TestWorkflowSecretsV2RefusesAPlatformCredentialName is the other half of
+// secretname.Project (R7): a name the grammar refuses is a refused REQUEST and
+// not a lookup, so no container is built from it and no record is read. The
+// model credential names are deliberately NOT refused (F29) — they are what R6
+// rotates through the intake — so the name here is a platform credential kind's,
+// which the grammar refuses so that a project secret can never shadow it.
+func TestWorkflowSecretsV2RefusesAPlatformCredentialName(t *testing.T) {
+	f := newWorkflowSvc(t)
+	resp, body := f.fetchV2(t, config.BitbucketSecret)
+	assertRefusedV2(t, "a platform credential's name", resp, body, f.svc, f.workflowReads, StatusRequestRefused, 1, ErrorRequestRefused)
+	if f.projects.reads != 0 {
+		t.Errorf("the project record was read %d times for a name the grammar refuses", f.projects.reads)
+	}
+}
+
+// TestWorkflowSecretsAuditNamesOneContainer is G18's shape read over the
+// version-2 route: every call of it writes exactly one line, the line names the
+// ONE container the value came from (or was to come from), and no line and no
+// refusal carries a value.
+//
+// The refusals are the four the fence can answer with, and the served call is
+// the one that hands a value over — the case where a second line, or a line
+// naming something else, would matter most.
+func TestWorkflowSecretsAuditNamesOneContainer(t *testing.T) {
+	calls := []struct {
+		name string
+		call func(t *testing.T, f *workflowFixture)
+	}{
+		{"the served call", func(t *testing.T, f *workflowFixture) {
+			resp, body := f.fetchV2(t, testSharedName)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("the call was refused: %s", body)
+			}
+		}},
+		{"a repository the record does not admit", func(t *testing.T, f *workflowFixture) {
+			f.projects.rec = projectRecord(testOtherRepoPath)
+			_, _ = f.fetchV2(t, testSharedName)
+		}},
+		{"a container with no marker", func(t *testing.T, f *workflowFixture) {
+			delete(f.dyn.marked, testSharedContainer)
+			_, _ = f.fetchV2(t, testSharedName)
+		}},
+		{"a record that could not be read", func(t *testing.T, f *workflowFixture) {
+			f.projects.err = errors.New("the record could not be read")
+			_, _ = f.fetchV2(t, testSharedName)
+		}},
+		{"a name the grammar refuses", func(t *testing.T, f *workflowFixture) {
+			_, _ = f.fetchV2(t, config.BitbucketSecret)
+		}},
+	}
+	for _, tc := range calls {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newWorkflowSvc(t)
+			tc.call(t, f)
+			line := f.onlyAuditLine(t)
+			if got := auditField(line, "purpose"); got != PurposeWorkflowSecret {
+				t.Errorf("the line's purpose = %q, want %q: every act of this route is this route's", got, PurposeWorkflowSecret)
+			}
+			// The line names ONE container and nothing else of the record: a
+			// line that named two would be an act this service did not perform,
+			// and one that named the name rather than the container would not
+			// say where a value came from.
+			if got := auditField(line, "credential"); got != "" && got != testSharedContainer {
+				t.Errorf("the line's credential = %q, want the container %q or none", got, testSharedContainer)
+			}
+			if got := auditField(line, "tier"); got != "" {
+				t.Errorf("the line's tier = %q, want none: a workflow secret was selected at no tier", got)
+			}
+			assertNoValue(t, f.svc, f.workflowReads, nil)
+		})
 	}
 }

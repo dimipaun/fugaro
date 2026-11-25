@@ -571,6 +571,17 @@ var jsonCases = map[string]jsonCase{
 			return []string{"run", "--repo", "acme/app", "--run-id", "20260927-100000-abcd", "Add a feature"}
 		},
 	},
+	"routing ls": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			f := jsonCloud(t)
+			// The block is written so the document carries the table as well
+			// as the model rows: an empty one would leave the entry and chain
+			// branches of the schema unchecked by this pin.
+			f.appendConfig(t, "model_routing:\n  - match: \"claude-*\"\n    chain:\n      - {kind: anthropic}\n")
+			return []string{"routing", "ls"}
+		},
+	},
 	"runs digest": {
 		reads: true,
 		run: func(t *testing.T) []string {
@@ -834,7 +845,7 @@ const consoleReadEE = "the command is the Subscription Edition's, and this packa
 const consoleReadEESubcommand = "the command is the Subscription Edition's, registered under the core tree's own `orchestrator` family (RegisterSubcommand, ee/orchestrator/cli), so this package's core build holds no stub for it and no run of the name exists here"
 
 // consoleReadExempt are the console reads this package has no run of, with the
-// reason each has none: the Subscription Edition's five and its one such
+// reason each has none: the Subscription Edition's two and its one such
 // subcommand, and nothing else --
 // `watch` is the one other read the pin cannot run, and its reason is the one
 // its jsonCases entry already carries, so that one table stays the only place a
@@ -843,11 +854,8 @@ const consoleReadEESubcommand = "the command is the Subscription Edition's, regi
 // and fails on a read that is in none of the three, on an entry here that is
 // not a console read, and on exemptions that became most of the list.
 var consoleReadExempt = map[string]string{
-	"fugaro coordinator intents": consoleReadEE,
-	"fugaro coordinator show":    consoleReadEE,
-	"fugaro coordinator status":  consoleReadEE,
-	"fugaro graph":               consoleReadEE,
-	"fugaro report":              consoleReadEE,
+	"fugaro graph":  consoleReadEE,
+	"fugaro report": consoleReadEE,
 	// The console-fixes plan's CG7a: the Coordinator tab's map read, the one
 	// entry here that is a subcommand of a family the released tree builds
 	// rather than a paid name at the root.

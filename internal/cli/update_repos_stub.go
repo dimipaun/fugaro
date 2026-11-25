@@ -49,14 +49,17 @@ var enrolledReposImpl = func(ctx context.Context, in enrolledIn) ([]repoView, []
 		v.Cfg = db.cfg
 	}
 	if v.Unread != "" {
-		// The reason is repository-controlled text (a parse's own sentence
-		// about the file it read), and a stage may print it without
-		// newRepoLine -- in a notice, or in doctor's row -- so it is made
-		// safe and bounded here, as repoView promises.
-		v.Unread = pluginwire.Printable(oneLine(v.Unread))
+		v.Unread = unreadReason(v.Unread)
 	}
 	return []repoView{v}, nil
 }
+
+// unreadReason is the reason a view that could not be read carries, as
+// repoView promises it: one printable line, bounded. The reason is
+// repository-controlled text (a parse's own sentence about the file it read),
+// and a stage may print it without newRepoLine -- in a notice, or in doctor's
+// row -- so it goes through newRepoLine's own two passes here.
+func unreadReason(s string) string { return pluginwire.Printable(oneLine(s)) }
 
 // repoProviderOf is the git provider this machine's config records for a
 // repository, "" when it lists none.

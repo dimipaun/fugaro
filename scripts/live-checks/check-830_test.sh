@@ -903,7 +903,7 @@ write_default_case() { # write_default_case DIR [bend...]
 # expect_no_unreached: a row printed as "not reached" is a row this run did NOT
 # measure, and the rows a case is not about still have to have been reached.
 expect_no_unreached() { # what
-  if printf '%s\n' "$out" | grep -q 'not reached (the run stopped before this step)'; then
+  if grep -q 'not reached (the run stopped before this step)' <<<"$out"; then
     fail "$1: a row was not reached: $(printf '%s\n' "$out" | grep -m2 'not reached' | tr '\n' ' ')"
   fi
 }
@@ -912,7 +912,7 @@ expect_no_unreached() { # what
 expect_last_line() { # want what
   local l
   l=$(last_line)
-  [ "$l" = "$1" ] || fail "$3: the block's last line is '$l'; expected '$1'"
+  [ "$l" = "$1" ] || fail "$2: the block's last line is '$l'; expected '$1'"
 }
 count_calls() { grep -c -F -- "$1" "$dir/state/gcloud.calls" 2>/dev/null || true; }
 line_of_call() { grep -n -F -m1 -- "$1" "$dir/state/gcloud.calls" 2>/dev/null | cut -d: -f1 || true; }
@@ -1125,9 +1125,9 @@ test_a_handmade_vm_that_can_carry_the_metadata_field_fails_the_row() {
   # that it was: its metadata carries the key the link rests on.
   local last_create
   last_create=$(grep -F -- "compute instances create ${handmade}" "$dir/state/gcloud.calls" | tail -n 1)
-  printf '%s' "$last_create" | grep -q -- "--metadata=[^ ]*batch-job-uid=${uid_a}" \
+  grep -q -- "--metadata=[^ ]*batch-job-uid=${uid_a}" <<<"$last_create" \
     || fail "a hand-made VM that can carry the metadata field: the second attempt did not carry the metadata set, so the field was never written: $last_create"
-  printf '%s' "$last_create" | grep -q -- "--metadata=[^ ]*job_uid=${uid_a}" \
+  grep -q -- "--metadata=[^ ]*job_uid=${uid_a}" <<<"$last_create" \
     || fail "a hand-made VM that can carry the metadata field: the second attempt left a metadata key out of the set it wrote: $last_create"
 }
 
