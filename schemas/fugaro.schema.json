@@ -56,7 +56,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "auth": { "enum": ["vertex", "api-key", "oauth", "cascade"], "description": "Where the run's model calls are authenticated. cascade asks for the project's credentials cascade (docs/credentials-service): it is refused with followup.allow_public, needs budget.mode observe or enforce, and is enabled only by the project policy's routing.claude: {via: cascade}, which only the operator can set. Fugaro before 0.10.0 refuses the value." },
+        "auth": { "enum": ["vertex", "api-key", "oauth", "cascade"], "description": "Retired: this release still reads it and a later one rejects it — the project's routing table and pools say which credential reaches which model (docs/model-credentials-routing/spec.md), and `fugaro update` migrates it and offers its removal. Where the run's model calls are authenticated. cascade asks for the project's credentials cascade (docs/credentials-service): it is refused with followup.allow_public, needs budget.mode observe or enforce, and is enabled only by the project policy's routing.claude: {via: cascade}, which only the operator can set. Fugaro before 0.10.0 refuses the value." },
         "model": { "$ref": "#/$defs/modelName" },
         "models": {
           "type": "object",
@@ -116,7 +116,7 @@
           "pattern": "^[a-z](?:[a-z0-9]|-[a-z0-9]){0,30}$",
           "maxLength": 31,
           "not": { "enum": ["default", "bitbucket-token"] },
-          "description": "The named Claude account (claude_accounts in the local config) this workflow's agent.auth: oauth uses; absent means the repository's default account, the existing claude-oauth-token secret (docs/named-oauth-tokens/spec.md). fugaro run --token NAME overrides it per run. The local config's claude_accounts.<name>.allow_data_to must list this repository, checked at launch, not by this schema. Fugaro before 0.6.5 refuses this key. The not clause refuses two names: \"default\" (the empty value already means it) and bitbucket-token, the one name the credentials bundle reserves for the platform's own git credential (config.ReservedClaudeAccountName, refused by config.Validate in the same words)."
+          "description": "Retired: this release still reads it and a later one rejects it — a Claude account is a source the project's routing table names now (docs/model-credentials-routing/spec.md), and `fugaro update` migrates it into the pools and offers its removal. The named Claude account (claude_accounts in the local config) this workflow's agent.auth: oauth uses; absent means the repository's default account, the existing claude-oauth-token secret (docs/named-oauth-tokens/spec.md). fugaro run --token NAME overrides it per run. The local config's claude_accounts.<name>.allow_data_to must list this repository, checked at launch, not by this schema. Fugaro before 0.6.5 refuses this key. The not clause refuses two names: \"default\" (the empty value already means it) and bitbucket-token, the one name the credentials bundle reserves for the platform's own git credential (config.ReservedClaudeAccountName, refused by config.Validate in the same words)."
         },
         "compression": { "enum": [""], "description": "The context-compression proxy this workflow's model calls route through (docs/headroom-compression/spec.md). The key is reserved and refused: the only value this schema admits is \"\" (off, the default), and the real value is admitted by the same change that implements the proxy. A repository that sets it is refused with \"not yet implemented\", not as an unknown key." },
         "max_budget_usd": { "type": "number", "minimum": 0 },
@@ -631,7 +631,7 @@
       "description": "One craft: the model its calls use and the credential or pool they go out on (docs/model-crafts/spec.md §3). The two halves are set independently, so a security review may change only its model and keep the senior review's access.",
       "properties": {
         "model": { "$ref": "#/$defs/modelName", "description": "the model this craft's calls use" },
-        "access": { "$ref": "#/$defs/credentialName", "description": "the credential or pool its calls go out on, by name; the secret is a Secret Manager entry under that name and never appears in a config" }
+        "access": { "$ref": "#/$defs/credentialName", "description": "Retired: this release still reads it and a later one rejects it — the project's routing table and pools say which source serves each model (docs/model-credentials-routing/spec.md), and `fugaro update` moves it there and offers its removal. The credential or pool its calls go out on, by name; the secret is a Secret Manager entry under that name and never appears in a config" }
       }
     },
     "credentialName": {

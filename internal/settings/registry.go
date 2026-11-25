@@ -96,6 +96,17 @@ type Row struct {
 	// key, so the row carries its own. Empty is a key whose write is the
 	// ordinary one.
 	TypedWhy string
+	// RetiredWhy is the sentence saying the key is retired: named and still
+	// honoured by this release, and rejected by the next one (D3063, R3 of
+	// docs/credentials-belong-to-models/reconciliation.md). Empty is a live
+	// key. A `fugaro.yaml` key and a project layer's own take it from
+	// config.ScopeRow.RetiredWhy rather than restating it (yamlRow, buildRows),
+	// so the registry and the config's table cannot drift; the installation's
+	// own keys — the local config's `routing.claude.via` and
+	// `subscription_spread`, the policy's `credentials.fallback` and
+	// `credentials.wait_threshold` — carry the sentence here (MG5 of
+	// docs/model-credentials-routing/implementation-plan.md).
+	RetiredWhy string
 }
 
 // rows is the table. It is assembled once, at package initialization, because
@@ -183,7 +194,11 @@ var yamlMeta = map[string]Row{
 	},
 	"git.pr.early_draft": {Default: value("true", "")},
 	"git.pr.checkpoints": {Default: unset("inherit")},
-	"agent.auth":         {Default: value(config.DefaultAgentAuth, "config.DefaultAgentAuth"), Doc: "docs/credentials-service.md"},
+	// agent.auth is retired and its document is the routing table's (F23 of
+	// docs/credentials-belong-to-models/reconciliation.md: the row named
+	// `docs/credentials-service.md`, which is no file — the folder is
+	// `docs/credentials-service/` — and what replaced the key is the table).
+	"agent.auth":         {Default: value(config.DefaultAgentAuth, "config.DefaultAgentAuth"), Doc: docRouting},
 	"agent.model":        {Owner: "models", Default: unset("Fugaro's own model choice"), Doc: "docs/multi-model.md"},
 	"agent.models.coder": {Owner: "models", Default: unset("agent.model"), Doc: "docs/multi-model.md"},
 	"agent.models.reviewer": {
@@ -473,6 +488,16 @@ func buildRows() []Row {
 		if out[i].Owner == "settings set" && blockAmong(out, out[i].Key) {
 			out[i].Owner = ownerBlockToken
 		}
+		// A layer's spelling of a retired key is retired with it: the layer's
+		// `layer.defaults.agent.auth` is the same key config.Scopes marks
+		// retired in a project layer, and the sentence a person reads is that
+		// row's rather than a second copy (RetiredKeyNotes reports it at the
+		// path `defaults.agent.auth`).
+		if strings.HasPrefix(out[i].Key, "layer.defaults.") {
+			if s, ok := config.ScopeOf(strings.TrimPrefix(out[i].Key, "layer.defaults.")); ok && s.Retired&config.InProject != 0 {
+				out[i].RetiredWhy = s.RetiredWhy
+			}
+		}
 	}
 	// Each document's rows are written in its own order, so the three groups
 	// are sorted here rather than in a reader: the table, `--changed` and the
@@ -497,6 +522,7 @@ func yamlRow(s config.ScopeRow) Row {
 	r := yamlMeta[s.Key]
 	r.Key = s.Key
 	r.Layers = scopeLayers(s.In)
+	r.RetiredWhy = s.RetiredWhy
 	if sharedWithLocal[s.Key] {
 		r.Layers = append(r.Layers, LayerLocal, LayerShared)
 	}
@@ -720,6 +746,15 @@ func loc(key, def, owner, doc string) Row {
 func locTighten(key, def, owner, doc string) Row {
 	r := loc(key, def, owner, doc)
 	r.Merge = Tighten
+	return r
+}
+
+// retiredLoc is loc for a key this release still reads and no longer honours:
+// the local config's `routing.claude.via`, which the project's routing table
+// replaces (D3173), is the one such key of the local file's.
+func retiredLoc(key, def, owner, doc, why string) Row {
+	r := loc(key, def, owner, doc)
+	r.RetiredWhy = why
 	return r
 }
 
@@ -1101,7 +1136,15 @@ var localRows = []Row{
 	loc("providers.*.models", "none", "models", docModels),
 	loc("providers.*.allow_data_to", "nobody", "models", docModels),
 
-	loc("routing.claude.via", "direct: the model is called at its own provider", "models", docModels),
+	// The routing table replaces `via` (D3173, RT2): the entry a person writes
+	// in the table says which source reaches which model, and `via` is the key
+	// the migration reads it out of. A provider's `models` stays as what the
+	// provider can serve, and `routing.claude.models` beside it is not this
+	// row's business.
+	retiredLoc("routing.claude.via", "direct: the model is called at its own provider", "models", docModels,
+		"the project's routing table replaces it: a chain names the sources a model is reached through, and"+
+			" `fugaro update` writes the Claude entry from this value and offers its removal, see"+
+			" docs/model-credentials-routing/spec.md"),
 	loc("routing.claude.models", "none", "models", docModels),
 	loc("claude_accounts.*.allow_data_to", "nobody", "accounts", docModels),
 	// The account choice: which account a run uses, and whether Fugaro may
@@ -1188,14 +1231,20 @@ var localRows = []Row{
 	// spreading a project over subscriptions is a decision about the terms the
 	// subscriptions are held under. It is a literal rather than a locLocal call
 	// because it carries TypedWhy, which no helper sets.
+	//
+	// It is retired (D3177, R5): which subscriptions a run may spread over is a
+	// pool's own rule now, so the switch decides nothing and release 2 rejects
+	// it. It is still honoured here — the typed gate above all — because this
+	// release reads it.
 	{
-		Key:      "subscription_spread",
-		Layers:   []string{LayerLocal},
-		Merge:    Replace,
-		Default:  unset("false: a run spreads across one subscription at a time"),
-		Owner:    "settings set",
-		Doc:      docCrafts,
-		TypedWhy: "this lets a run spread a project across two or more Claude OAuth subscriptions, which is the owner's own decision about the terms the subscriptions are held under",
+		Key:        "subscription_spread",
+		Layers:     []string{LayerLocal},
+		Merge:      Replace,
+		Default:    unset("false: a run spreads across one subscription at a time"),
+		Owner:      "settings set",
+		Doc:        docCrafts,
+		TypedWhy:   "this lets a run spread a project across two or more Claude OAuth subscriptions, which is the owner's own decision about the terms the subscriptions are held under",
+		RetiredWhy: "the project's pools replace it: which subscriptions a run may spread over is the pool's own rule, and `fugaro update` offers its removal, see docs/model-credentials-routing/spec.md",
 	},
 	locLocal("crafts.coder.model", "required: the coder implements, so a run needs its model", "models", docCrafts),
 	locLocal("crafts.coder.access", "required: the coder's calls go out on a credential or a pool", "accounts", docCrafts),
@@ -1760,8 +1809,17 @@ var cloudRows = []Row{
 // be turned off, which is why replacing this block's policy is the widening
 // its own family's write fences (D142).
 var policyRows = []Row{
-	{Key: "credentials.fallback", Layers: []string{LayerPolicy}, Merge: Replace, Default: unset("oauth-only: a run does not fail over to the paid tier (projectpolicy.FallbackOAuthOnly), and the one value that spends the project's money is written by an operator"), Owner: "accounts", Doc: docCredentialsCascade},
-	{Key: "credentials.wait_threshold", Layers: []string{LayerPolicy}, Merge: Replace, Default: unset("15m: how long a run waits for an exhausted credential's reset before failing over (projectpolicy.DefaultWaitThreshold)"), Owner: "accounts", Doc: docCredentialsCascade},
+	// The first two are retired (R4 of
+	// docs/model-credentials-routing/reconciliation.md): a chain's own order
+	// replaces the fixed tier order, so `fugaro update` writes a key into the
+	// chain where `fallback: auto` was set and leaves it out for `oauth-only`,
+	// and a run moves to the next source at once rather than waiting for a
+	// reset. Release 2 rejects both; this release still reads them, which is
+	// why the rows keep their owner and their default.
+	{Key: "credentials.fallback", Layers: []string{LayerPolicy}, Merge: Replace, Default: unset("oauth-only: a run does not fail over to the paid tier (projectpolicy.FallbackOAuthOnly), and the one value that spends the project's money is written by an operator"), Owner: "accounts", Doc: docCredentialsCascade,
+		RetiredWhy: "the chain's own order replaces it: `fugaro update` puts the key in the chain where `fallback: auto` was set and leaves it out for `oauth-only`, then offers its removal, see docs/model-credentials-routing/spec.md"},
+	{Key: "credentials.wait_threshold", Layers: []string{LayerPolicy}, Merge: Replace, Default: unset("15m: how long a run waits for an exhausted credential's reset before failing over (projectpolicy.DefaultWaitThreshold)"), Owner: "accounts", Doc: docCredentialsCascade,
+		RetiredWhy: "the chain's own order replaces it: a run moves to the next source at once rather than waiting for a reset, and `fugaro update` offers its removal, see docs/model-credentials-routing/spec.md"},
 	{Key: "credentials.backoff.initial", Layers: []string{LayerPolicy}, Merge: Replace, Default: unset("15m: the first wait of a credential backed off with no reset time (projectpolicy.DefaultBackoffInitial)"), Owner: "accounts", Doc: docCredentialsCascade},
 	{Key: "credentials.backoff.cap", Layers: []string{LayerPolicy}, Merge: Replace, Default: unset("5h: the longest wait the doubling reaches (projectpolicy.DefaultBackoffCap)"), Owner: "accounts", Doc: docCredentialsCascade},
 	{Key: "credentials.stop_after_exhaustion_per_window", Layers: []string{LayerPolicy}, Merge: Replace, Default: unset("true: a credential exhausted within its window stops the runs that need it (projectpolicy.Credentials.StopsAfterExhaustion)"), Owner: "accounts", Doc: docCredentialsCascade},

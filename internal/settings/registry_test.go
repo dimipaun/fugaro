@@ -158,6 +158,75 @@ func TestRegistryCoversEveryConfigField(t *testing.T) {
 	if len(missing) > 0 {
 		t.Fatalf("no registry row for %d key(s):\n  %s", len(missing), strings.Join(missing, "\n  "))
 	}
+	// The retirement half of the same coverage (MG5 of
+	// docs/model-credentials-routing/implementation-plan.md): a key
+	// config.Scopes marks retired is named retired here too, with that row's
+	// own sentence, and a key the config does not retire carries none. The
+	// layer's spelling of a retired key is retired with the key it is —
+	// `layer.defaults.agent.auth` is `agent.auth` in a project layer, which is
+	// the document config.RetiredKeyNotes reports it in.
+	for _, s := range config.Scopes {
+		r, ok := Lookup(s.Key)
+		if !ok {
+			continue // the loop above has already named the key
+		}
+		if s.Retired != 0 {
+			if r.RetiredWhy != s.RetiredWhy {
+				t.Errorf("%s: the registry says %q, and config.Scopes retires it with %q", s.Key, r.RetiredWhy, s.RetiredWhy)
+			}
+		} else if r.RetiredWhy != "" {
+			t.Errorf("%s: the registry retires it (%q), and config.Scopes does not", s.Key, r.RetiredWhy)
+		}
+		if s.Retired&config.InProject == 0 {
+			continue
+		}
+		lr, ok := Lookup("layer.defaults." + s.Key)
+		if !ok {
+			t.Errorf("layer.defaults.%s: config.Scopes retires %s in a project layer and the layer has no row", s.Key, s.Key)
+			continue
+		}
+		if lr.RetiredWhy != s.RetiredWhy {
+			t.Errorf("layer.defaults.%s: the registry says %q, and config.Scopes retires it with %q", s.Key, lr.RetiredWhy, s.RetiredWhy)
+		}
+	}
+}
+
+// TestRegistryRetiresTheInstallationKeys is MG5's other half: the keys of the
+// installation's own files — the local config's `routing.claude.via` and
+// `subscription_spread`, the policy's `credentials.fallback` and
+// `credentials.wait_threshold` — are retired too, and no config.Scopes row
+// carries them (they are the installation's, not a repository's or a layer's),
+// so the coverage test above cannot pin them. Each sentence says what replaced
+// the key and names the document that states it, and the schema's own half is
+// TestSettingsSchema.
+func TestRegistryRetiresTheInstallationKeys(t *testing.T) {
+	for _, tc := range []struct {
+		key   string
+		words []string
+	}{
+		{"routing.claude.via", []string{"routing table"}},
+		{"credentials.fallback", []string{"chain"}},
+		{"credentials.wait_threshold", []string{"chain"}},
+		{"subscription_spread", []string{"pool"}},
+	} {
+		r, ok := Lookup(tc.key)
+		if !ok {
+			t.Errorf("%s: no registry row", tc.key)
+			continue
+		}
+		if strings.TrimSpace(r.RetiredWhy) == "" {
+			t.Errorf("%s: the row is not marked retired, and release 2 rejects the key", tc.key)
+			continue
+		}
+		for _, want := range tc.words {
+			if !strings.Contains(r.RetiredWhy, want) {
+				t.Errorf("%s: the sentence does not say what replaced it (no %q): %q", tc.key, want, r.RetiredWhy)
+			}
+		}
+		if !strings.Contains(r.RetiredWhy, "docs/model-credentials-routing") {
+			t.Errorf("%s: the sentence names no document: %q", tc.key, r.RetiredWhy)
+		}
+	}
 }
 
 func TestRegistryFugaroYAMLKeysMatchConfigScopes(t *testing.T) {
