@@ -403,7 +403,7 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	}
 	var opener gitprov.Opener
 	if builds {
-		_, opener, err = openCatalogProvider(providerEnv, func(w string) {
+		opener, err = openRepoProvider(openCatalogProvider, providerEnv, catalogDockerfileRead, func(w string) {
 			fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", w)
 		})
 		if err != nil {

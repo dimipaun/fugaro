@@ -432,7 +432,7 @@ func followUpsProvider(ctx context.Context, env *cloudEnv, repo, kind string, wa
 	if err != nil {
 		return nil, err
 	}
-	_, open, err := openFollowUpsProvider(provEnv, func(w string) {
+	open, err := openRepoProvider(openFollowUpsProvider, provEnv, followUpsParentRead, func(w string) {
 		fmt.Fprintf(warn, "fugaro: warning: %s\n", w)
 	})
 	if err != nil {

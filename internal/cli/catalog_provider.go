@@ -7,10 +7,12 @@ import (
 	"io"
 	"os"
 	"slices"
+	"strings"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -129,6 +131,26 @@ func tokenReadHint(cause error) string {
 	}
 }
 
+// catalogServiceURL is the installation's credentials service for repository
+// repo, and "" where this machine's reads of it hold their own credential: the
+// address the installation publishes (configuredCredentialsServiceURL), for a
+// repository whose root was applied with the service on
+// (appliedBuildMountsServed -- the record buildServiceURL judges a
+// per-workflow build by, and the same two facts this command's build is
+// submitted with, image_build_catalog's serviceURL).
+//
+// githubProviderEnv hands it to providers.FromEnv as EnvCredentialsServiceURL,
+// which is what opens the github provider keyless (C2.2, D145): the read needs
+// no key of this machine's, so it is not refused in a coding agent's session.
+// A repository the service does not serve answers "" and keeps the key path
+// exactly as it was.
+func catalogServiceURL(lc *localcfg.Config, repo string) string {
+	if !appliedBuildMountsServed(lc, repo) {
+		return ""
+	}
+	return configuredCredentialsServiceURL(lc)
+}
+
 // catalogProviderEnv is the environment a catalog build hands OpenProvider for
 // the copy it makes of an entry's Dockerfile (issue #1701): the process
 // environment, with the credential the repository's provider needs added to it
@@ -158,9 +180,10 @@ func tokenReadHint(cause error) string {
 // Only an entry whose source is a Dockerfile in a repository opens a provider
 // (an inline definition is copied with no repository read at all), so a build
 // whose entries are all inline takes the environment as it stands and reads no
-// secret. Neither does a GitHub build in an installation whose credentials
-// service is on: the key the service holds is the one the provider uses, so no
-// key of this command's is read and no notice about reading one is printed.
+// secret. Neither does a GitHub build whose installation serves this
+// repository: the key the service holds is the one the provider uses, so no key
+// of this command's is read and no notice about reading one is printed
+// (githubProviderEnv's own arm).
 func catalogProviderEnv(ctx context.Context, w io.Writer, lc *localcfg.Config, rs infra.RepoSpec, entries []config.Entry, getenv func(string) string, stdinTerminal bool, node *projectpolicy.Policy) ([]string, string, error) {
 	env := os.Environ()
 	if !slices.ContainsFunc(entries, func(e config.Entry) bool {
@@ -227,6 +250,16 @@ func githubProviderEnv(ctx context.Context, w io.Writer, lc *localcfg.Config, rs
 	if getenv(providers.EnvCredentialsServiceURL) != "" {
 		return env, "", nil
 	}
+	// The same arm for an installation whose own service serves this
+	// repository, and the reason an agent's session can build a catalog entry
+	// at all: this shell holds no EnvCredentialsServiceURL, and the address is
+	// the installation's own record of it (catalogServiceURL). No key is read,
+	// none is announced, and nothing is refused here — the value the provider
+	// mints with is the service's, and the opener installs that mint
+	// (openRepoProvider) because a keyless provider has no source of its own.
+	if url := catalogServiceURL(lc, rs.Name); url != "" {
+		return append(env, providers.EnvCredentialsServiceURL+"="+url), "", nil
+	}
 	if err := refuseKeyReadAt(getenv, stdinTerminal, who, "the GitHub App's private key"); err != nil {
 		return nil, "", err
 	}
@@ -280,4 +313,70 @@ func bitbucketProviderEnv(ctx context.Context, w io.Writer, lc *localcfg.Config,
 	env = append(env, providers.EnvBitbucketToken+"="+string(token))
 	clear(token)
 	return env, "", nil
+}
+
+// catalogDockerfileRead is the work the credentials service's read mint is made
+// for where the read is a repository's Dockerfile and the command has no
+// sentence of its own (serviceReadProvider's `what`): `fugaro image build`
+// copies it, and `fugaro update`'s catalog guard and its lift read it alike.
+const catalogDockerfileRead = "reading a catalog entry's Dockerfile"
+
+// openRepoProvider opens the provider the environment repoProviderEnv built
+// names, installing the installation's credentials service as the source of its
+// installation tokens when that environment carries the service's address
+// (githubProviderEnv puts it there for a repository the service serves).
+//
+// A keyless github provider refuses every token until a source is installed
+// (providers.FromEnv, C2.2, D145): in a job the runner installs the service's
+// mint, and outside one it is this call's -- the service's READ mint for the one
+// repository, made as the person who asked (github.ServiceReadTokens, the route
+// `fugaro followups` and `fugaro review verify` read through). Without it the
+// environment would open a provider that can mint nothing, and every read of
+// this command's would fail at its first call with a sentence about an install
+// rather than about the credential.
+//
+// open is the caller's own seam (openCatalogProvider, openFollowUpsProvider),
+// what names the work the mint is made for, and warn receives the adapter's
+// warnings, as it does for the openers themselves.
+func openRepoProvider(open func([]string, func(string)) (string, gitprov.Opener, error), provEnv []string, what string, warn func(string)) (gitprov.Opener, error) {
+	_, o, err := open(provEnv, warn)
+	if err != nil {
+		return nil, err
+	}
+	url := envLookup(provEnv, providers.EnvCredentialsServiceURL)
+	if url == "" {
+		return o, nil
+	}
+	// The App ID is the environment's own, which githubProviderEnv appended
+	// from the repository's spec: it is the number the mint's JWT is signed as
+	// and not a secret, and the one the provider was constructed with.
+	appID := envLookup(provEnv, providers.EnvGitHubAppID)
+	identity := func(ctx context.Context) (string, error) { return serviceReadIdentity(ctx, url, what) }
+	return func(ctx context.Context, kind, repo string) (gitprov.Provider, []string, error) {
+		p, secrets, err := o(ctx, kind, repo)
+		if err != nil {
+			return nil, nil, err
+		}
+		setter, ok := p.(gitprov.ServiceTokenSetter)
+		if !ok {
+			// The Bitbucket adapter takes its tokens as a construction
+			// argument and implements no install, and its environment arm
+			// reads the project's own token as it always has.
+			return p, secrets, nil
+		}
+		setter.UseServiceTokens((&github.ServiceReadTokens{URL: url, IDToken: identity}).Repo(repo, appID))
+		return p, secrets, nil
+	}, nil
+}
+
+// envLookup is the value name holds in env (KEY=VALUE pairs), "" when it is not
+// there: the last entry wins, as exec resolves one.
+func envLookup(env []string, name string) string {
+	v := ""
+	for _, kv := range env {
+		if k, val, ok := strings.Cut(kv, "="); ok && k == name {
+			v = val
+		}
+	}
+	return v
 }

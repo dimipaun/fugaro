@@ -14,6 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
+	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -39,6 +40,12 @@ const catalogAppKeyPlaceholder = "not-a-real-key"
 // that the value reaches the provider's environment and nowhere else: a test
 // that leaks it has to be readable as a leak.
 const catalogTokenPlaceholder = "catalog-token-placeholder"
+
+// catalogServiceURLPlaceholder is the address the served fixtures' local config
+// publishes for its credentials service. An .invalid name, as every stand-in
+// address in this tree is: nothing reaches it, and where a test needs the mint
+// answered a loopback stand-in replaces it.
+const catalogServiceURLPlaceholder = "https://creds.example.invalid"
 
 // catalogProviderEnvRig is the state catalogProviderEnv is called with: the
 // spec of a GitHub repository, whose App ID the local config supplied and
@@ -70,6 +77,22 @@ func catalogProviderEnvBitbucketRig(t *testing.T) (*localcfg.Config, infra.RepoS
 	rs.Slug = mustSlug(gitprov.KindBitbucket, "acme/app")
 	rs.GitHubAppID = ""
 	rs.BuildServiceAccountEmail = "fugaro-build-" + rs.Slug + "@proj-1234.iam.gserviceaccount.com"
+	return lc, rs, entries
+}
+
+// catalogProviderEnvServedRig is catalogProviderEnvRig for an installation whose
+// credentials service serves acme/app: the address the installation publishes,
+// and the record of that root's apply saying the service serves it
+// (appliedBuildMountsServed). It is the state the pre-tag rehearsal runs in on a
+// machine whose installation has the service on, which is the state an agent's
+// session has to build in.
+func catalogProviderEnvServedRig(t *testing.T) (*localcfg.Config, infra.RepoSpec, []config.Entry) {
+	t.Helper()
+	lc, rs, entries := catalogProviderEnvRig(t)
+	lc.CredentialsService = &localcfg.CredentialsService{URL: catalogServiceURLPlaceholder}
+	entry := lc.Repos["acme/app"]
+	entry.CredentialsServiceReady = localcfg.RecordSwitch(true)
+	lc.Repos["acme/app"] = entry
 	return lc, rs, entries
 }
 
@@ -399,6 +422,100 @@ func TestCatalogProviderEnv(t *testing.T) {
 			t.Errorf("a read that does not happen was announced to a build that never reads a key: %q", notice.String())
 		}
 	})
+
+	// The installation's OWN credentials service serves this repository: the
+	// address is the installation's record of it and not a variable of this
+	// shell (catalogServiceURL), and it goes into the environment as
+	// FUGARO_CREDENTIALS_SERVICE_URL, which is what opens the provider keyless
+	// (providers.FromEnv). Nothing of this machine's is read and nothing is
+	// announced -- and an agent's session is not refused, which is the whole
+	// point: the pre-tag rehearsal builds a catalog entry in a session that
+	// holds no App key, and the service's mint is what its read is made with.
+	t.Run("the installation's service serves this repository", func(t *testing.T) {
+		catalogClearProviderEnv(t)
+		lc, rs, entries := catalogProviderEnvServedRig(t)
+		resolves, reads := catalogStubKeyRead(t, nil, errors.New("Secret Manager must not be read"))
+		t.Setenv("CLAUDECODE", "1")
+		var notice bytes.Buffer
+		env, _, err := catalogProviderEnv(t.Context(), &notice, lc, rs, entries, os.Getenv, true, nil)
+		if err != nil {
+			t.Fatalf("a served repository's read is not refused in a coding agent's session: %v", err)
+		}
+		if got := envValue(env, providers.EnvCredentialsServiceURL); got != catalogServiceURLPlaceholder {
+			t.Errorf("%s = %q, want the address the installation publishes", providers.EnvCredentialsServiceURL, got)
+		}
+		if got := envValue(env, providers.EnvGitHubAppID); got != catalogBuildAppID {
+			t.Errorf("%s = %q, want the repository's own App ID even when the service serves it", providers.EnvGitHubAppID, got)
+		}
+		if _, ok := envHas(env, providers.EnvGitHubAppKey); ok {
+			t.Errorf("%s was set although the keyless provider reads no key", providers.EnvGitHubAppKey)
+		}
+		if *resolves != 0 || *reads != 0 {
+			t.Errorf("the key was read from Secret Manager (%d resolutions, %d reads) although the service holds it", *resolves, *reads)
+		}
+		if notice.Len() != 0 {
+			t.Errorf("a read that does not happen was announced: %q", notice.String())
+		}
+	})
+
+	// The three shapes a repository the service does NOT serve comes in, and the
+	// reason today's key path is exactly as it was for every one of them: an
+	// installation that publishes no address, a root that applied with the
+	// switch off, and a repository this config holds no record for. None of them
+	// puts the address in the environment, so each reads the key with the
+	// person's own credentials, announces it in the one sentence it has always
+	// used, and is refused in a session with the sentence it has always used.
+	t.Run("a repository the service does not serve keeps the key path", func(t *testing.T) {
+		for _, tc := range []struct {
+			name  string
+			creds *localcfg.CredentialsService
+			ready *bool
+		}{
+			{name: "an installation that publishes no address", ready: localcfg.RecordSwitch(true)},
+			{name: "a root that applied with the service off", creds: &localcfg.CredentialsService{URL: catalogServiceURLPlaceholder}, ready: localcfg.RecordSwitch(false)},
+			{name: "a repository this config holds no record for", creds: &localcfg.CredentialsService{URL: catalogServiceURLPlaceholder}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				catalogClearProviderEnv(t)
+				lc, rs, entries := catalogProviderEnvRig(t)
+				lc.CredentialsService = tc.creds
+				if tc.ready != nil {
+					entry := lc.Repos["acme/app"]
+					entry.CredentialsServiceReady = tc.ready
+					lc.Repos["acme/app"] = entry
+				}
+				key := appKey(t)
+				resolves, reads := catalogStubKeyRead(t, key, nil)
+				var notice bytes.Buffer
+				env, _, err := catalogProviderEnv(t.Context(), &notice, lc, rs, entries, os.Getenv, true, nil)
+				if err != nil {
+					t.Fatalf("%v", err)
+				}
+				if _, ok := envHas(env, providers.EnvCredentialsServiceURL); ok {
+					t.Errorf("%s was set for a repository the service does not serve", providers.EnvCredentialsServiceURL)
+				}
+				if *resolves != 1 || *reads != 1 {
+					t.Fatalf("the secret was resolved %d times and read %d times, want one of each", *resolves, *reads)
+				}
+				if got := envValue(env, providers.EnvGitHubAppKey); got != string(key) {
+					t.Errorf("the environment does not carry the key the repository's %s secret holds", config.GitHubAppKeySecret)
+				}
+				if !strings.Contains(notice.String(), appKeyReadNotice) {
+					t.Errorf("the notice is not the sentence it has always been: %q", notice.String())
+				}
+				// The same configuration under a marker: the refusal fires before
+				// the secret is resolved, and it is the sentence it has always been.
+				t.Setenv("CLAUDECODE", "1")
+				env, _, err = catalogProviderEnv(t.Context(), &bytes.Buffer{}, lc, rs, entries, os.Getenv, true, nil)
+				if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "refused in a coding agent's session") {
+					t.Fatalf("exit %d, err %v: an unserved repository's read is refused under a marker", ExitCode(err), err)
+				}
+				if env != nil || *reads != 1 || *resolves != 1 {
+					t.Errorf("a refused read answered an environment or read again (%d resolutions, %d reads)", *resolves, *reads)
+				}
+			})
+		}
+	})
 }
 
 // TestCatalogProviderEnvBitbucket: the environment a catalog build hands
@@ -714,5 +831,76 @@ func TestImageBuildCatalogBitbucketWithoutAToken(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the failure does not name %s: %v", want, err)
 		}
+	}
+}
+
+// catalogServiceRecordingProvider is the provider a served catalog build's
+// opener hands back: a fake whose only work here is to record the token source
+// openRepoProvider installs on it. The install is the real
+// gitprov.ServiceTokenSetter's (github.Provider's), and a fake is what keeps
+// this test off the network while still showing WHICH source was installed.
+type catalogServiceRecordingProvider struct {
+	*fake.Provider
+	src gitprov.TokenSource
+}
+
+func (p *catalogServiceRecordingProvider) UseServiceTokens(src gitprov.TokenSource) { p.src = src }
+
+// TestCatalogProviderServedRepositoryMintsThroughTheService is the served
+// repository's read end to end: the environment carries the installation's
+// address, and the opener installs the service's READ mint on the provider it
+// opens, for the ONE repository and the project's own App, made as the person
+// who asked (serviceReadIdentity).
+//
+// The install is the half an environment alone cannot be: providers.FromEnv
+// opens the github provider keyless with no source of its own, so a read that
+// installed nothing would fail at its first call with a sentence about an
+// install rather than about a credential. The App key is neither read nor
+// announced, and an agent's session is not refused.
+func TestCatalogProviderServedRepositoryMintsThroughTheService(t *testing.T) {
+	catalogClearProviderEnv(t)
+	mint := startReadMintStandIn(t)
+	setReviewReadIdentity(t)
+	lc, rs, entries := catalogProviderEnvServedRig(t)
+	lc.CredentialsService = &localcfg.CredentialsService{URL: mint.url}
+	resolves, reads := catalogStubKeyRead(t, nil, errors.New("Secret Manager must not be read"))
+	t.Setenv("CLAUDECODE", "1")
+	var notice bytes.Buffer
+	provEnv, _, err := catalogProviderEnv(t.Context(), &notice, lc, rs, entries, os.Getenv, true, nil)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	rec := &catalogServiceRecordingProvider{Provider: &fake.Provider{Repo: "acme/app"}}
+	open := func([]string, func(string)) (string, gitprov.Opener, error) {
+		return gitprov.KindGitHub, func(context.Context, string, string) (gitprov.Provider, []string, error) {
+			return rec, nil, nil
+		}, nil
+	}
+	opener, err := openRepoProvider(open, provEnv, catalogDockerfileRead, nil)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	if _, _, err := opener(t.Context(), gitprov.KindGitHub, "acme/app"); err != nil {
+		t.Fatalf("%v", err)
+	}
+	src, ok := rec.src.(*github.ServiceReadTokens)
+	if !ok {
+		t.Fatalf("the source installed is %T, want the credentials service's read mint (github.ServiceReadTokens)", rec.src)
+	}
+	if src.URL != mint.url || src.Repository != "acme/app" || src.AppID != catalogBuildAppID {
+		t.Errorf("the mint is for %q as App %q at %q, want acme/app as App %s at the installation's service", src.Repository, src.AppID, src.URL, catalogBuildAppID)
+	}
+	tok, _, err := src.Token(t.Context(), 0)
+	if err != nil {
+		t.Fatalf("minting through the installation's service: %v", err)
+	}
+	if tok != mint.token {
+		t.Error("the read token is not the one the installation's service minted")
+	}
+	if mint.calls() != 1 {
+		t.Errorf("the service was asked %d times, want exactly one mint", mint.calls())
+	}
+	if *resolves != 0 || *reads != 0 || notice.Len() != 0 {
+		t.Errorf("the App key was read (%d resolutions, %d reads) or announced (%q) on a read the service makes", *resolves, *reads, notice.String())
 	}
 }
