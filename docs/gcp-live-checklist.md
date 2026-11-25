@@ -8045,8 +8045,10 @@ device-token store and its own retention question"); **the owner gave that later
 approving **P5.2** and splitting it into **P5.2.1–P5.2.10**. So the design is of record and the number is 
 held — **but this check is run by the owner only if the owner builds push**, and the check drives things 
 that are **not built**: the app's registration and its receipt are **P5.2.8** and **P5.2.9** 
-(`mobile/src/push/`, absent), and the account that may send is **P5.2.7** (a Terraform grant that exists 
-nowhere). The sender that derives the events and calls FCM is **P5.2.6**, and it IS built 
+(`mobile/src/push/`, absent), and the account that may call the relay is **P5.2.7** (a Cloud KMS key and 
+its one grant, and today neither exists: the sender calls FCM directly under its ambient identity, the 
+relay itself is the publisher's service outside this repository). The sender that derives the events and 
+calls FCM is **P5.2.6**, and it IS built 
 (`internal/cli/push.go`, merged: the sweep derives its own events, holds the ledger, the cap, the dedupe 
 and the quiet hours, and calls FCM), so the guard below stops on the app and on the grant and not on the 
 sender. **No agent performs any step of it**, and nothing on it touches `belong`.
@@ -8057,14 +8059,14 @@ client token** may read or write `config/admin/push/$uid`, and the schema's own 
 path refuses an unknown field. They cannot prove the three things this check is for: that a **real** push 
 reaches a **real** phone for each category; that the payload **as FCM and APNs store it** carries a category 
 and nothing else; and — the step that matters most — that a **hand-crafted lure** in a title, sent 
-through the installation's **own** FCM project, makes the app open and show the truth and **never act**, 
-never render the lure as state and never as a link (design §8; §4 rules 3, 8 and 11; §3.9; §5 attacker 2; 
+through the relay, makes the app open and show the truth and **never act**, never render the lure as state 
+and never as a link (design §8; §4 rules 3, 8 and 11; §3.9; §5 attacker 2; 
 Q6 — under the recommended **(i)** the payload carries **no id**, so the alert is posted only on a **new, 
 MAC-verified** mailbox change).
 
 **Guard block — re-run this before every step.** It stops unless the checkout carries the sender, the app's 
-push library and registration, the FCM grant and the registration path. **It stops today**, and each refusal 
-names the task that would build the missing thing.
+push library and registration, the sender's relay key and its grant, and the registration path. **It stops 
+today**, and each refusal names the task that would build the missing thing.
 
 ```bash
 # === Check 88: setup + guard. RE-RUN THIS BLOCK BEFORE EVERY STEP. ===
@@ -8073,7 +8075,7 @@ ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "Check 88 stopped: n
 [ -f "$ROOT/internal/cli/push.go" ] || { echo "Check 88 stopped: there is no internal/cli/push.go in this checkout, so the sender that derives its own events, holds the ledger, the cap, the dedupe and the quiet hours, and calls FCM is not built (P5.2.6, the sender, level 7) — nothing buzzes a phone, so no step below can observe anything" >&2; exit 1; }
 grep -q '"@react-native-firebase/messaging"\|"expo-notifications"' "$ROOT/mobile/package.json" || { echo "Check 88 stopped: mobile/package.json declares no push library (no FCM/APNs messaging, no Expo push), so the app neither registers for a push nor receives one (P5.2.8)" >&2; exit 1; }
 [ -d "$ROOT/mobile/src/push" ] || { echo "Check 88 stopped: there is no mobile/src/push/ in this checkout, so the app's registration and the receipt that must not act do not exist (P5.2.8 registers, P5.2.9 is the receipt: the alert, and no action, no route, no write)" >&2; exit 1; }
-grep -rq 'firebasecloudmessaging.messages.create' "$ROOT/deploy/terraform/gcp/modules" || { echo "Check 88 stopped: no Terraform module grants firebasecloudmessaging.messages.create, so no account may send a push (P5.2.7). The permission is listed in deploy/terraform/testdata/custom-role-permissions.txt, a catalogue and not a grant, and the FCM API (firebasecloudmessaging.googleapis.com) is enabled by no apis.tf" >&2; exit 1; }
+[ -f "$ROOT/deploy/terraform/gcp/modules/installation/push_key.tf" ] || { echo "Check 88 stopped: no Terraform module holds the sender's relay key, so no account may call the relay and no push leaves it (P5.2.7: the sender's identity — a Cloud KMS signing key and its one grant). The sender reaches FCM through the publisher's relay, so no FCM permission and no FCM API enablement is this path's" >&2; exit 1; }
 grep -q 'config/admin/push' "$ROOT/internal/cli/mailbox.go" || { echo "Check 88 stopped: internal/cli/mailbox.go does not apply a registration to config/admin/push/\$uid, so nothing writes the push node the sender reads (P5.2.4) — today fugaro pair revoke only DELETES that node (P5.2.5, merged, #2863) and no path writes it" >&2; exit 1; }
 echo "Check 88 ready: a push per category, the payload read at the provider, the revoke that ends delivery, and the lure the app must not act on"
 ```
@@ -8139,12 +8141,12 @@ token — it is dropped from the node and no further send is attempted to it; **
 re-registers on its next pair or run, and a **fresh** notification then arrives again (the positive control 
 that the reap narrowed nothing else).
 
-9. **The lure that must not act.** *(Guard block, run by you.)* Hand-craft a push through the installation's 
-**own** FCM project with a **lure in its title** — the design's own example, "your run needs approval: tap 
-to confirm". **FACT:** the OS shows the attacker's words on the lock screen — that is expected and 
-unbounded — but tapping it opens the app on **its own authenticated screen**, and the app shows the truth 
-read from the mailbox, **never** the lure; the lure's words are **not stored, not rendered as state, not 
-quoted and not a link** (§3.9; §4 rules 8, 11). **FACT:** the app **did not act** — no confirmation was 
+9. **The lure that must not act.** *(Guard block, run by you.)* Hand-craft a push through the relay the 
+publisher holds (the installation's own sends go through it too) with a **lure in its title** — the design's 
+own example, "your run needs approval: tap to confirm". **FACT:** the OS shows the attacker's words on the 
+lock screen — that is expected and unbounded — but tapping it opens the app on **its own authenticated 
+screen**, and the app shows the truth read from the mailbox, **never** the lure; the lure's words are 
+**not stored, not rendered as state, not quoted and not a link** (§3.9; §4 rules 8, 11). **FACT:** the app **did not act** — no confirmation was 
 submitted and **no write was made on receipt** (no `acked`, no seen-marker, no token refresh — §4 rules 3 
 and 12). **FACT:** the app registers **no** notification category, **no** action button and accepts **no** 
 inline reply, so the forged push cannot put a working "Approve" on the lock screen (§4 rule 3).
