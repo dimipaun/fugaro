@@ -30,10 +30,14 @@
 //
 // # What is stored
 //
-// Five small nodes, all under creds/:
+// Six small nodes, all under creds/:
 //
 //   - creds/marks/<name> — one credential's Mark (available, exhausted until T,
 //     backed off, broken);
+//   - creds/observed/<name> — one credential's Observation: the names of the
+//     rate-limit headers ITS last answer carried, and never one of their values.
+//     It is a subtree of its own rather than a member of Mark because the marks
+//     are read strictly by every release (Observation);
 //   - creds/tokens/<name> — one Bitbucket token's TokenStatus, in a subtree of
 //     its own so that a reader of the marks never reads a token as an account;
 //   - creds/current/<slug>/<run> — the credential a run is on, which is D154's

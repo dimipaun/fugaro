@@ -210,8 +210,18 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 	if found {
 		record = &rec
 	}
-	out, dropped, err := narrowToRepoAuth(out, record, id.Slug, id.AuthMode, id.AuthAccount)
+	out, dropped, err := narrowToRepoAuth(out, cands, record, id.Slug, id.AuthMode, id.AuthAccount)
 	if err != nil {
+		// The refusal names what this walk considered and why each was left
+		// out, and it is filled here because only this caller holds both halves
+		// of that list: the admission's own skips and the ones the record's
+		// narrowing answered with its error (narrowToRepoAuth). A walk whose
+		// refusal is about the call or about a document carries no list at all,
+		// and the field stays empty for it.
+		var refusal *poolRefusal
+		if errors.As(err, &refusal) && refusal.class == ErrorNoCandidateCredentials {
+			refusal.tried = boundedTried(skipped, dropped)
+		}
 		return nil, creds.StrategyFailover, "", nil, err
 	}
 	// R7's candidate goes in FRONT, and it goes in here rather than through any
@@ -473,7 +483,14 @@ const (
 // That is not a hole: the record still has to name the account, so a call that
 // declares none is served the default account only where its repository's own
 // configuration names that account.
-func narrowToRepoAuth(cands []creds.Credential, rec *creds.RepoAuth, slug, mode, account string) ([]creds.Credential, []Tried, error) {
+//
+// offered is the list this narrowing is handed BEFORE the admission filtered it
+// (candidates' own list, which the admission is applied to on the way here). It
+// is the one thing that tells the oauth arm's two empty answers apart — an
+// account the bundle holds and the repository's admission dropped, and one the
+// bundle holds nothing for — and the two are different fixes, in the bundle and
+// in the repository's own policy. Nothing else in this walk reads it.
+func narrowToRepoAuth(cands, offered []creds.Credential, rec *creds.RepoAuth, slug, mode, account string) ([]creds.Credential, []Tried, error) {
 	cands, own := ownRepositorysEntries(cands, slug)
 	cands, preferred := ownKeyBeforeTheProjects(cands, slug)
 	settled := append(own, preferred...)
@@ -496,7 +513,15 @@ func narrowToRepoAuth(cands []creds.Credential, rec *creds.RepoAuth, slug, mode,
 			return c.Tier == creds.TierC || (c.Tier == creds.TierA && c.Name == account)
 		})
 		if len(out) == 0 {
-			return nil, dropped, &poolRefusal{message: fmt.Sprintf("this repository's recorded auth is oauth and its record names the account %q, and no credential this call may be served by is that account's: the account is not in this service's bundle, or the repository is not admitted to it (docs/secrets-brokering, D2070)", account)}
+			// The two states this refusal used to answer with one sentence are
+			// told apart here, because an operator's next move is different for
+			// each: an entry the bundle does not hold is the installation's
+			// (the account's own token, entered once under its name), and one
+			// the admission dropped is the repository's own policy's.
+			if heldAccount(offered, account) {
+				return nil, dropped, &poolRefusal{class: ErrorNoCandidateCredentials, message: fmt.Sprintf("this repository's recorded auth is oauth and its record names the account %q, and this service's bundle holds that account's credential while the repository's own admission does not name it (docs/secrets-brokering, D2070)", account)}
+			}
+			return nil, dropped, &poolRefusal{class: ErrorNoCandidateCredentials, message: fmt.Sprintf("this repository's recorded auth is oauth and its record names the account %q, and this service's bundle holds no credential for that account (docs/secrets-brokering, D2070)", account)}
 		}
 		return out, append(settled, dropped...), nil
 	case authModeAPIKey:
@@ -504,7 +529,7 @@ func narrowToRepoAuth(cands []creds.Credential, rec *creds.RepoAuth, slug, mode,
 			return c.Tier == creds.TierB || c.Tier == creds.TierC
 		})
 		if len(out) == 0 {
-			return nil, dropped, &poolRefusal{message: "this repository's recorded auth is api-key, and this service's bundle holds no paid key to serve it by (docs/secrets-brokering, D2070)"}
+			return nil, dropped, &poolRefusal{class: ErrorNoCandidateCredentials, message: "this repository's recorded auth is api-key, and this service's bundle holds no paid key to serve it by (docs/secrets-brokering, D2070)"}
 		}
 		return out, append(settled, dropped...), nil
 	}
@@ -566,6 +591,47 @@ func declaredAuthText(mode string) string {
 		return "declares no auth"
 	}
 	return fmt.Sprintf("declares the auth %q", mode)
+}
+
+// heldAccount is whether the list offered to a narrowing — the one before the
+// admission filtered it — holds an account's own tier-A credential. The oauth
+// arm asks it of the two states its empty answer can be, and it is the whole of
+// what tells "this service's bundle holds this account" from "it does not".
+func heldAccount(offered []creds.Credential, account string) bool {
+	for _, c := range offered {
+		if c.Tier == creds.TierA && c.Name == account {
+			return true
+		}
+	}
+	return false
+}
+
+// boundedTried is the tried list a refusal may carry: the entries of every list
+// a walk narrowed, each name, tier and reason once, cut to the contract's own
+// bound. One credential can be reported twice — the admission drops it and the
+// record's own narrowing does — and the two entries say the same thing, so the
+// list is a set of what was considered.
+//
+// Both halves are what the writer holds a refusal body to (validateTriedList),
+// and a body it refuses is answered as state_unavailable — the mis-diagnosis
+// the no_candidate_credentials class exists to end — so the bound is kept here
+// rather than left to the writer's own fallback.
+func boundedTried(lists ...[]Tried) []Tried {
+	out := make([]Tried, 0, maxTriedEntries)
+	seen := make(map[Tried]bool)
+	for _, list := range lists {
+		for _, tr := range list {
+			if seen[tr] {
+				continue
+			}
+			seen[tr] = true
+			if len(out) == maxTriedEntries {
+				return out
+			}
+			out = append(out, tr)
+		}
+	}
+	return out
 }
 
 // keepCandidates splits a list by one rule, reporting what it dropped as the
@@ -1043,6 +1109,29 @@ func (s *Server) refuseCall(ctx context.Context, w http.ResponseWriter, id Ident
 	s.refuseCallCause(ctx, w, id, purpose, credential, tier, status, typ, message, nil)
 }
 
+// refuseCandidates answers a call this service's own documents leave no
+// candidate for: the class is no_candidate_credentials and not
+// state_unavailable, whose sentence sends an operator to the database, and the
+// tried list is what the run's halt and the operator's line name the credentials
+// that were considered from (wire.go's own words for the class, and the owner's
+// installation of 2026-11-14 is why it exists). It is the answer the selector's
+// own empty list gets (refuseSelection), written here for the walks that refuse
+// before the selector is reached.
+//
+// It writes exactly one audit line and one operator line, as every refusal of a
+// verified caller does, and the body carries the same list the line does.
+func (s *Server) refuseCandidates(ctx context.Context, w http.ResponseWriter, id Identity, purpose, message string, tried []Tried) {
+	if err := s.auditCall(ctx, id, purpose, "", "", ErrorNoCandidateCredentials); err != nil {
+		s.log.Error("credsvc: a refused call could not be audited", "error", err)
+	}
+	s.logRefusal(ctx, id, ErrorNoCandidateCredentials, StatusUnavailable, message, nil, tried)
+	WriteWireError(w, StatusUnavailable, WireError{
+		Error:   ErrorNoCandidateCredentials,
+		Message: message,
+		Tried:   tried,
+	})
+}
+
 // refuseCallCause is refuseCall for a refusal whose cause this code knows: the
 // error the refusal was taken on, carrying the label of the read that failed
 // (labelRead) when one did. The refusal itself is unchanged — the same audited
@@ -1175,6 +1264,14 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 			return
 		}
 
+		// What this source's answer carried is recorded in the arms below — the
+		// three this service reads as about the CREDENTIAL — as the names of its
+		// rate-limit headers and never a value (U1, Check 880). This arm writes
+		// nothing for itself, and the record is written where the credential is
+		// judged because an answer about the REQUEST says nothing about it: a
+		// relayed 529 or 500 says nothing about the credential (the published
+		// pool's own rule, "an answer about the request moves nothing"), so it
+		// leaves the mark alone and the observation with it.
 		switch status := ans.resp.StatusCode; {
 		case unauthorizedStatus(status):
 			// D139: a 401 marks the credential broken, and only an operator
@@ -1191,6 +1288,11 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 			// that cannot be written is the refusal the run gets — the
 			// credential's mark is not written, because the call is over either
 			// way and an unrecorded cost is the thing an operator has to act on.
+			// A 401 is an answer about the credential, so what it carried is
+			// recorded (U1, Check 880). The observation is a node of its own
+			// and the hold below is the mark's, so the order between them
+			// decides nothing.
+			s.recordRateLimitHeaders(ctx, sel, c.Name, ans.resp.Header)
 			ans.resp.Body.Close()
 			if fail := s.settleCall(ctx, cl, unchargedUsage()); fail != nil {
 				s.refuseMeter(ctx, w, id, PurposeForward, fail)
@@ -1209,6 +1311,10 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 		case usageLimitStatus(status):
 			// A usage limit. Nothing has been streamed, so the call may be
 			// retried — on another credential, never on this one.
+			// The answer Check 880 is really read after: a usage limit's names
+			// are the record's whole point (U1, D3178), and a later answer of
+			// this credential replaces them, so the node holds the LAST one's.
+			s.recordRateLimitHeaders(ctx, sel, c.Name, ans.resp.Header)
 			reset := usageLimitReset(ans.resp.Header, s.now())
 			// The attempt's reservation is settled as the 401 arm's is, and for
 			// the same reason: the retry that may follow is a SECOND call with a
@@ -1238,6 +1344,16 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 		// 400 for a request Anthropic refused, an overloaded_error, a 500. The
 		// service retries none of them — a retry is for a credential that
 		// cannot serve the call, and none of these says that.
+		// A serve is an answer about the credential: what it carried is
+		// recorded here and only here of this arm's statuses (U1, Check 880).
+		// The subscription token's own answer is exactly this one — the figure
+		// U1 asks about is what a provider reports while serving — so a 2xx is
+		// recorded and the relayed 4xx and 5xx beside it are not: this service
+		// retries none of them, because none of them says a credential cannot
+		// serve the call, and a record would be a claim that it did.
+		if code := ans.resp.StatusCode; code >= 200 && code < 300 {
+			s.recordRateLimitHeaders(ctx, sel, c.Name, ans.resp.Header)
+		}
 		var sw *Switch
 		if len(sent) > 0 && c.Name != started {
 			sw = &Switch{From: started, To: c.Name, Reason: reason}

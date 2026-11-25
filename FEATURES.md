@@ -6,7 +6,7 @@ Fugaro runs each task you hand it as its own throwaway job in your cloud project
 
 A ✓ under Community, Team or Enterprise means the feature is included there, and a dash means it is not.
 
-as_of: v0.28.0
+as_of: v0.29.0
 
 | Feature | What it does | Status | Community | Team | Enterprise |
 | --- | --- | --- | --- | --- | --- |
@@ -20,8 +20,8 @@ as_of: v0.28.0
 | A model that did not write the code reviews it | Every run is reviewed by a model other than the one that wrote the code, and a triage step decides which findings hold the merge and which do not. | Available | ✓ | ✓ | ✓ |
 | Reviews check the change against the task | A review is given the task the pull request was written for, so it can say that part of the task is unmet or that the change differs from it, and a review of a pull request no run produced can be given a task by hand. | Available | ✓ | ✓ | ✓ |
 | Review a pull request on its own, at a chosen depth | A pull request can be reviewed by a separate review job, with the review depth chosen for the project and a second model offered as the reviewer. | Coming soon | ✓ | ✓ | ✓ |
-| Choose the model and the account behind every stage | Each stage of a run can use a different model and a different account, with named accounts, aliases that can be repointed, and a vision model that reads pictures for a coder that cannot. | Coming soon | ✓ | ✓ | ✓ |
-| Change any setting with a command | Every setting at every level — local, repository and project — is read and changed by a command, so no configuration file is edited by hand. | Coming soon | ✓ | ✓ | ✓ |
+| Choose the model and the account behind every stage | Each stage of a run can use a different model and a different account, with named accounts, aliases that can be repointed, and a vision model that reads pictures for a coder that cannot. | Available | ✓ | ✓ | ✓ |
+| Change any setting with a command | Every setting at every level — local, repository and project — is read and changed by a command, so no configuration file is edited by hand. | Available | ✓ | ✓ | ✓ |
 | One write path behind every setting | A setting is changed through one write path, whichever command owns the field, so a field with invariants or a publish step is written only by the command that understands it. A generic write to a field another command owns is refused, naming the command to use. | Available | ✓ | ✓ | ✓ |
 | Choose how thorough a run is | A project picks a rigor mode, from a quick proof of concept to a change that must not break anything, and every stage of a run follows it. | Coming soon | ✓ | ✓ | ✓ |
 | Nothing stops to ask you a question | No command prompts, and none waits on a closed input: a step that needs a decision takes a flag, a budget cap or a refusal that prints the fix. | Available | ✓ | ✓ | ✓ |
@@ -59,7 +59,7 @@ as_of: v0.28.0
 ```json
 {
   "version": 1,
-  "as_of": "v0.28.0",
+  "as_of": "v0.29.0",
   "rows": [
     {
       "id": "run-a-task",
@@ -175,7 +175,7 @@ as_of: v0.28.0
       "id": "model-access",
       "name": "Choose the model and the account behind every stage",
       "explanation": "Each stage of a run can use a different model and a different account, with named accounts, aliases that can be repointed, and a vision model that reads pictures for a coder that cannot.",
-      "status": "coming-soon",
+      "status": "available",
       "plans": {
         "community": true,
         "team": true,
@@ -186,7 +186,7 @@ as_of: v0.28.0
       "id": "settings-and-config",
       "name": "Change any setting with a command",
       "explanation": "Every setting at every level — local, repository and project — is read and changed by a command, so no configuration file is edited by hand.",
-      "status": "coming-soon",
+      "status": "available",
       "plans": {
         "community": true,
         "team": true,
