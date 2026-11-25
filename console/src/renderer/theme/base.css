@@ -677,6 +677,23 @@ button.console-rail-add:hover {
   color: var(--text);
 }
 
+/* The foot's second door (SW3c): drawn only when the rail has a row, so it is
+ * sized and toned like the add row above it rather than given a rule of its own
+ * -- the two are the same line of the same foot, and one of them alone on a
+ * machine with no installation would be a second control for one state. */
+button.console-rail-add-project {
+  display: block;
+  width: 100%;
+  min-height: 40px;
+  padding: var(--space-2xs) var(--space-md);
+  color: var(--text-2);
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+button.console-rail-add-project:hover {
+  color: var(--text);
+}
+
 p.console-rail-empty {
   padding: var(--space-xs) var(--space-md);
   color: var(--text-2);
@@ -824,6 +841,41 @@ code.installation-onboarding-command {
   border: var(--rule-width) solid var(--border);
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
+}
+
+/* ---- Add project (the console-improvements plan, task SW3c) ----------------
+ *
+ * The same wizard, for a console that already has an installation: one heading
+ * of its own, one sentence, and Cancel. No `--warn` rule and no accent: nothing
+ * is wrong here, and the screen is a second door onto the first-run flow rather
+ * than an alarm about the installation already on the rail. */
+section.installation-add-project {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+  color: var(--text);
+}
+
+h1.installation-add-project-title {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: var(--weight-semibold);
+}
+
+p.installation-add-project-lead {
+  margin: 0;
+  font-size: var(--font-size-base);
+  line-height: var(--leading-normal);
+}
+
+button.installation-add-project-cancel {
+  min-height: var(--row-height);
+  padding: var(--space-2xs) var(--space-sm);
+  border: var(--rule-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text);
 }
 
 /* ---- The first-run wizard (the console-improvements plan, task SW3b) --------

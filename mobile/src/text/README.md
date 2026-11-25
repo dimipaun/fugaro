@@ -244,3 +244,58 @@ carries `conversation` beside the text view's `conversation` prop. Nothing here
 writes anything anywhere: the transcript holds what a view or the client
 produced, and a refused line is a refusal, not an append.
 
+## Long paste, and detail to the screen
+
+X2 (mobile identity and pairing plan; the spec's "Long text input" and "Detail
+goes to the screen"). Two halves of the same text interface, one file each.
+
+**The draft outlives the view.** `composer.js` holds the one string the owner
+has typed or pasted and not sent, and it is a store rather than a `useState`
+because a phone rebuilds a view for reasons that have nothing to do with the
+draft: a switch to the voice view and back, a rotation. A draft held in the
+view's own state is a draft the rebuild loses. The wiring is two props:
+
+```js
+const composer = createComposer();
+
+TextScreen({ draft: composer.text(), onChangeText: composer.change });
+```
+
+**No cap, on purpose.** The plan's default is *"long paste 100000 characters
+without loss"*; `LONG_PASTE_CHARS` names that figure as the size the tests drive
+and the bar the module is held to, **not** as a limit. A limit is the very loss
+the sentence is about: a paste silently shortened, or refused with "too long",
+is the one thing the composer exists to prevent. The store trims nothing,
+normalises nothing and re-encodes nothing, and a value that is not a string is
+refused with the draft kept, so a caller's mistake cannot wipe what somebody
+pasted. `clear()` is the caller's call **after** a send the client accepted --
+the composer cannot see a send and must not guess one happened. It writes
+nothing: the send is `src/mailbox`'s client (D113) and this module holds no
+client, no store and no path.
+
+**A reply too dense to follow by ear goes to the screen.** `detail.js` is the
+spec's *"the agent says it has put the details on screen and shows them in the
+text view"*. Two shapes are dense and they are the two the spec names -- a
+**list of ids** (run ids like `20260926-221530-a1b2`, pull-request ids like
+`#1234`) and a **table** (the pipe table an agent writes, rule row and all) --
+and everything else is read out. The rule is deliberately narrow, and the
+reason is which way a mistake costs: a reply wrongly called dense is *hidden*
+from an owner who is listening, so a list counts only when it is nothing but
+ids, and a table only when its rule row is really there.
+
+```js
+// one speaker on the client, chosen once: the client is built once, so the
+// mode switch changes nothing about the port.
+createMailboxClient({ ..., speaker: detailOnScreen({ transcript, speaker: pipelineSpeaker }) });
+```
+
+`detailOnScreen` is a drop-in for `transcriptSpeaker`: an ordinary reply is
+spoken and recorded exactly as that port does, and a dense one is spoken as
+`DETAIL_SPEECH` ("The details are on screen.") with the detail appended to the
+transcript -- the agent's line, through the outbox, which is the list the text
+view already draws. Two lines, in the order it happened: the agent announced,
+then showed. A reply the speaker could not speak shows nothing (the client
+leaves it unacked and the next poll says it again, so a table appended here
+would be the same table twice), and the app's own refusal sentence (S6.3) is
+not a reply and is not classified.
+
