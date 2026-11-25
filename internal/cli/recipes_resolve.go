@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/lift"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/recipe"
@@ -132,37 +132,40 @@ func refuseReportFollowUp(name string) error {
 // that INHERITS a repository recipe by name — the previous task's
 // task.Recipe{Name, Source: repo}, and the chosen recipe carryChosenRecipe
 // keeps the same way — which carries no text for the refusals above to
-// read. The file is read from the working directory's checkout when there is
-// one; a name that checkout does not have, or a file it cannot parse, is
-// left alone, because the runner reads the name at THIS task's base
-// (readRepoRecipe, internal/runner/recipe.go) and refuses a bad, artifact or
-// report one there itself. The report mismatch is refused here without the
-// file too: a launcher with no copy of it still knows whether the previous
-// run's task carried a manifest, and so whether the recipe this follow-up
-// inherits is a report recipe (newFollowUpSpec, prChain.PrevReport). Nothing
-// but the checkout is consulted: the previous run ran a repository recipe,
-// and a same-named project or catalog recipe is not the one it ran.
-func refuseFollowUpRepoRecipe(ctx context.Context, repo, name string) error {
-	root := checkoutRoot(ctx, repo)
-	if root == "" {
+// read. What it judges is the project's COPY of that name (D3303): the
+// checkout's .fugaro/recipes/ is not read, and the recipe the previous run
+// ran is the copy, so a same-named project or catalog recipe is not the one
+// this follow-up inherits. A copy the project does not hold, or one that
+// does not parse, is left alone, because the runner reads the name at THIS
+// task's base (readRepoRecipe, internal/runner/recipe.go) and refuses a bad,
+// artifact or report one there itself. The report mismatch is refused here
+// without the copy too: a launcher with no copy of it still knows whether
+// the previous run's task carried a manifest, and so whether the recipe this
+// follow-up inherits is a report recipe (newFollowUpSpec, prChain.PrevReport).
+func refuseFollowUpRepoRecipe(ctx context.Context, env *cloudEnv, repo, name string) error {
+	if env.bucket == nil {
 		return nil
 	}
-	data, found, err := recipe.ReadRepoFile(root, name)
-	if err != nil || !found {
+	copy := recipe.CopyName(name, repoProviderFor(ctx, env, repo), repo)
+	if copy == "" {
 		return nil
 	}
-	where := filepath.Join(root, filepath.FromSlash(recipe.RepoPath(name)))
-	rcp, err := parseRecipeAt(data, name, where)
+	data, _, err := fetchProjectRecipe(ctx, env, time.Now(), copy, false)
+	if err != nil || data == nil {
+		return nil
+	}
+	where := "gs://fugaro-runs-" + env.lc.GCPProject + "/" + recipe.ObjectKey(copy)
+	rcp, err := parseRecipeAt(data, copy, where)
 	if err != nil {
 		return nil
 	}
-	if err := refuseFollowUpReviewMode(rcp, name); err != nil {
+	if err := refuseFollowUpReviewMode(rcp, copy); err != nil {
 		return err
 	}
-	if err := refuseFollowUpArtifactMode(rcp, name); err != nil {
+	if err := refuseFollowUpArtifactMode(rcp, copy); err != nil {
 		return err
 	}
-	return refuseFollowUpReportMode(rcp, name)
+	return refuseFollowUpReportMode(rcp, copy)
 }
 
 // projectRecipesNote is why lc's project recipes are not read, or "": as
@@ -205,41 +208,45 @@ func fetchProjectRecipe(ctx context.Context, env *cloudEnv, now time.Time, name 
 	return nil, "", bucketErrFor("gs://"+bucket, "reading "+key, "the project recipe "+name, err)
 }
 
-// resolveRecipe finds name in the repository checkout at root ("" for none),
-// the project's runs bucket, and the catalog, in that order (docs/design/
-// recipes.md §5). Anything malformed is an error naming where it is.
+// resolveRecipe finds name for the repository whose checkout is at root ("" for
+// none): the project's copy of the repository's own recipe, then the project's
+// name itself, then the catalog, in that order (D3303, docs/recipes.md §6). The
+// checkout's .fugaro/recipes/ is never read: a repository's own recipe is the
+// project's copy of it, which fugaro update publishes, and a repository that
+// still holds the file and was never migrated is refused before anything is
+// written (D3308, refuseUnmigratedFolderRecipe). Anything malformed is an error
+// naming where it is.
 func resolveRecipe(ctx context.Context, env *cloudEnv, root, name string, now time.Time, refresh bool) (*resolvedRecipe, error) {
-	if !recipe.NameRE.MatchString(name) {
-		return nil, userErr("%q is not a recipe name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit", pluginwire.Printable(name))
+	if !recipe.IsNameOrCopy(name) {
+		return nil, userErr("%q is not a recipe name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit, or the name of the project's copy of one (that name, a dot, the repository's slug and 8 hex)", pluginwire.Printable(name))
 	}
-	if root != "" {
-		data, found, err := recipe.ReadRepoFile(root, name)
-		if err != nil {
-			return nil, userErr("%v", err)
-		}
-		if found {
-			where := filepath.Join(root, filepath.FromSlash(recipe.RepoPath(name)))
-			rcp, err := parseRecipeAt(data, name, where)
+	repo, provider := recipeLookupKeys(ctx, env, root)
+	order := recipe.LookupOrder(name, provider, repo)
+	note := projectRecipesNote(env.lc)
+	if note == "" {
+		if len(order) > 1 {
+			// The repository has a copy of this name: that copy is the recipe
+			// a run of the repository gets (D3303). When the store does not
+			// hold it, the migration that publishes it may never have run over
+			// this repository, which the default branch still holding the file
+			// is what says (D3308).
+			rr, err := projectRecipeNamed(ctx, env, order[0], now, refresh)
 			if err != nil {
 				return nil, err
 			}
-			return &resolvedRecipe{Name: name, Source: recipe.SourceRepo, Text: data, Recipe: rcp, Where: where}, nil
+			if rr != nil {
+				return rr, nil
+			}
+			if err := refuseUnmigratedFolderRecipe(ctx, env, repo, provider, root, name); err != nil {
+				return nil, err
+			}
 		}
-	}
-	note := projectRecipesNote(env.lc)
-	if note == "" {
-		data, n, err := fetchProjectRecipe(ctx, env, now, name, refresh)
+		rr, err := projectRecipeNamed(ctx, env, name, now, refresh)
 		if err != nil {
 			return nil, err
 		}
-		if data != nil {
-			where := "gs://fugaro-runs-" + env.lc.GCPProject + "/" + recipe.ObjectKey(name)
-			rcp, err := parseRecipeAt(data, name, where)
-			if err != nil {
-				_ = localcfg.DropRecipeCache(os.Getenv, env.lc.Name, name)
-				return nil, err
-			}
-			return &resolvedRecipe{Name: name, Source: recipe.SourceProject, Text: data, Recipe: rcp, Where: where, Note: n}, nil
+		if rr != nil {
+			return rr, nil
 		}
 	}
 	if to, ok := recipe.Renamed[name]; ok {
@@ -252,10 +259,118 @@ func resolveRecipe(ctx context.Context, env *cloudEnv, root, name string, now ti
 		}
 		return &resolvedRecipe{Name: name, Source: recipe.SourceCatalog, Text: text, Recipe: rcp, Where: "the catalog", Note: note}, nil
 	}
-	msg := fmt.Sprintf("recipe %s is not in %s, not in project %s (fugaro recipes ls) and not in the catalog (%s)",
-		name, recipe.RepoDir, env.lc.Name, strings.Join(recipe.CatalogNames(), ", "))
+	msg := fmt.Sprintf("recipe %s is not in project %s (fugaro recipes ls) and not in the catalog (%s)",
+		name, env.lc.Name, strings.Join(recipe.CatalogNames(), ", "))
 	if note != "" {
 		msg += "; note: " + note
 	}
 	return nil, userErr("%s", msg)
+}
+
+// projectRecipeNamed reads name from the project store through the cache, nil
+// when the project holds no such recipe: the read, the parse and the cache drop
+// each place a project recipe can be found makes.
+func projectRecipeNamed(ctx context.Context, env *cloudEnv, name string, now time.Time, refresh bool) (*resolvedRecipe, error) {
+	data, note, err := fetchProjectRecipe(ctx, env, now, name, refresh)
+	if err != nil {
+		return nil, err
+	}
+	if data == nil {
+		return nil, nil
+	}
+	where := "gs://fugaro-runs-" + env.lc.GCPProject + "/" + recipe.ObjectKey(name)
+	rcp, err := parseRecipeAt(data, name, where)
+	if err != nil {
+		_ = localcfg.DropRecipeCache(os.Getenv, env.lc.Name, name)
+		return nil, err
+	}
+	return &resolvedRecipe{Name: name, Source: recipe.SourceProject, Text: data, Recipe: rcp, Where: where, Note: note}, nil
+}
+
+// recipeLookupKeys is the repository the checkout at root is, and its git
+// provider kind: the two the resolution's lookup order is keyed by (D3303).
+// Both are "" when there is no checkout, or its origin names no repository this
+// installation knows — and then the order is the name alone, which is where it
+// resolved before the copies existed.
+func recipeLookupKeys(ctx context.Context, env *cloudEnv, root string) (repo, provider string) {
+	if root == "" {
+		return "", ""
+	}
+	oi, ok := readOrigin(ctx, root)
+	if !ok {
+		return "", ""
+	}
+	return oi.Repo, repoProviderFor(ctx, env, oi.Repo)
+}
+
+// repoProviderFor is repo's git provider kind, read the way repoSlug reads it:
+// the local config's entry for the repository first, the checkout's own
+// fugaro.yaml when that entry names none. The copy name is keyed by it, so a
+// lookup order built from another provider would miss the copy update
+// published.
+func repoProviderFor(ctx context.Context, env *cloudEnv, repo string) string {
+	if p := env.localRepoProvider(repo); p != "" {
+		return p
+	}
+	if cfg := checkoutConfig(ctx, repo); cfg != nil {
+		return cfg.Git.Provider
+	}
+	return ""
+}
+
+// liftRecordMaxBytes bounds the migration record's read: the record is a small
+// JSON document, and one over this is not one update wrote.
+const liftRecordMaxBytes = 1 << 20
+
+// refuseUnmigratedFolderRecipe refuses a resolution of name for repo when the
+// repository's default branch still holds .fugaro/recipes/<name>.yaml and no
+// migration record says fugaro update ran over the repository (D3308): the
+// launcher resolves the name from the project store or the catalog, so the run
+// would silently run another recipe than the repository's own file — the one
+// case where a run changes under a repository update could not list (O6). The
+// refusal names the repository, the recipe and the fix, and asks nothing.
+//
+// It is spec §5.5's release-A half: before the first release-A update, every
+// repository that still holds its folder is refused with this fix, which is the
+// one documented upgrade step. A repository with a record launches as before,
+// and so does one whose default branch holds no such file — every launch from
+// outside a checkout included, where there is no default branch to read.
+func refuseUnmigratedFolderRecipe(ctx context.Context, env *cloudEnv, repo, provider, root, name string) error {
+	if repo == "" || provider == "" || root == "" || env.bucket == nil {
+		return nil
+	}
+	if !repoRecipeOnDefaultBranch(ctx, root, name) {
+		return nil
+	}
+	slug, err := task.Slug(provider, repo)
+	if err != nil {
+		return nil
+	}
+	if _, _, err := env.bucket.ReadMaxStrict(ctx, lift.RecordPath(slug), liftRecordMaxBytes); err == nil {
+		return nil
+	} else if !errors.Is(err, blobx.ErrNotExist) {
+		// The record cannot be read at all: the launch's own resolution meets
+		// the same bucket, and refusing here would report the wrong failure.
+		return nil
+	}
+	shown := pluginwire.Printable(repo)
+	return userErr("recipe %s is still %s's own file: its default branch holds %s, and %s has no migration record, so this launch would run the project's or the catalog's recipe of that name instead; list %s in the project, then run fugaro update in your own terminal to publish the repository's recipes as the project's copies",
+		name, shown, recipe.RepoPath(name), shown, shown)
+}
+
+// repoRecipeOnDefaultBranch reports whether the checkout at root's default
+// branch holds .fugaro/recipes/<name>.yaml. It is the read S5's release-A gate
+// makes too (R16), and the one D3308 needs: update migrates a repository's
+// recipes from its default branch, so that is where the file that would have
+// become the project's copy still stands. No default branch ref, or no such
+// file there, answers false.
+func repoRecipeOnDefaultBranch(ctx context.Context, root, name string) bool {
+	ref := defaultBranchRef(ctx, root)
+	if ref == "" {
+		return false
+	}
+	if _, err := gitRead(ctx, root, "rev-parse", "--verify", "--quiet", "--end-of-options", "refs/remotes/"+ref+":"+recipe.RepoPath(name)); err != nil {
+		return false
+	}
+	return true
 }

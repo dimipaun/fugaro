@@ -495,6 +495,7 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 		seed:    closedStdinRoutingSeed,
 	},
 	"fugaro recipes publish":  {args: []string{"slug"}},
+	"fugaro recipes rm":       {args: []string{"slug"}},
 	"fugaro recipes show":     {args: []string{"slug"}},
 	"fugaro recipes validate": {args: []string{"slug"}},
 	"fugaro restore":          {args: []string{"proj-2", "root"}},

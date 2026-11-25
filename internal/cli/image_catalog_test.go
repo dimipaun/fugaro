@@ -380,12 +380,17 @@ func publishedMapNodesFixture(t *testing.T, imap projectpolicy.ImageMap) (*cloud
 	f := catalogFixture(t)
 	db := gcpfake.NewRTDB(t)
 	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	// The node is published for its image map, so its budget block is the one
+	// every published block has to carry: a block that names no mode is refused
+	// by the node's own reader (projectpolicy.validBudget). observe is the mode
+	// that asks the run for nothing, and the installation's own config is where
+	// this machine's budget lives — off is not a mode this release has (D3009).
 	db.Set(projectpolicy.PathShared(), &projectpolicy.Policy{
 		Version:  projectpolicy.Version,
-		Budget:   projectpolicy.Budget{Mode: "off"},
+		Budget:   projectpolicy.Budget{Mode: "observe"},
 		ImageMap: imap,
 	})
-	f.appendConfig(t, "budget: { mode: off, rtdb_url: "+db.URL+" }\n")
+	f.appendConfig(t, "budget: { mode: observe, rtdb_url: "+db.URL+" }\n")
 	return f, db
 }
 

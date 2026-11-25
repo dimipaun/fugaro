@@ -106,7 +106,10 @@ func runIssueDismiss(cmd *cobra.Command, ref string) error {
 	// has, so a reference that is not a number is answered here or not at all,
 	// with nothing opened to ask.
 	if _, numbered := issueNumber(ref); numbered {
-		sh := openIssueShared(ctx, "")
+		sh, fenceErr := openIssueShared(ctx, "")
+		if fenceErr != nil {
+			return fenceErr
+		}
 		defer sh.Close()
 		if sh.installation != "" {
 			store.Installation = sh.installation

@@ -1362,7 +1362,16 @@ func TestManagedInitRefusalAtEveryCallSite(t *testing.T) {
 		outside := "module.repo.google_storage_bucket_iam_member.job"
 		r := newRetireRig(t, retireOpts{protection: true, outside: outside})
 		_, _, err := executeStdin(t, "aurora\naurora\n", "setup", "--repo", "--retire", "--no-build")
-		managedRefusal(t, err, outside, true)
+		// This call site alone runs with a terminal (newRetireRig), and the
+		// person at it reads the door's short block rather than Guard's text
+		// (init_refusal.go, the owner's feedback of 2026-11-24): the same
+		// address, the same count, and the managed sentence written for a
+		// reader who is not a session — which is why advice is false here and
+		// true at every call site whose reader is an agent or a script. The
+		// rules this row has always asserted still hold of the block: it names
+		// no flag, no "hint: " line and no agent marker (noFlagName and the
+		// list below).
+		managedRefusal(t, err, outside, false)
 		if applies := r.applies(t); len(applies) != 0 {
 			t.Errorf("the refused plan was applied: %v", applies)
 		}

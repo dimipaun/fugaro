@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 
@@ -188,7 +189,7 @@ func capsText(caps budget.GlobalCaps, defaults budget.DefaultCaps) string {
 
 // nodeBudgetMode is the budget mode the published node's own bytes write, ""
 // where no node was read: a project that has published none, a database this
-// machine cannot reach, or a node this reader refuses.
+// machine cannot reach, or a node whose bytes name no mode.
 //
 // It is the NODE's mode and not this machine's local config's, because the
 // node's is the mode the apply reads — internal/infra builds a repository
@@ -201,15 +202,46 @@ func capsText(caps budget.GlobalCaps, defaults budget.DefaultCaps) string {
 // reading is taken before the policy stage — a memo primed here would hand
 // every later reader of the run the node from before the stage that rewrites
 // it.
+//
+// It reads the mode out of the node's own bytes and before any reader judges
+// them, the way the migration reads the word it rewrites does (projectpolicy's
+// migrateRemovedMode, AB8a): from AB2 on the node's decoder refuses a node that
+// says the word that was a budget mode (D3022), and that node is the one this
+// line exists for — the policy stage of this same run rewrites it to observe
+// (budgetModeAfterMigration), and what that rewrite does to this repository's
+// job is what the listing is owed (F26). A read through the decoder would
+// answer "" for exactly the node this line is about.
 func (e *initEngine) nodeBudgetMode(ctx context.Context) string {
 	if e.lc == nil {
 		return ""
 	}
-	p, found, err := projectPolicyRead(ctx, e.lc)
+	_, db, err := budgetDBFor(ctx, e.lc)
+	if err != nil {
+		return ""
+	}
+	_, found, raw, err := readPolicyNode(ctx, db, e.lc)
 	if err != nil || !found {
 		return ""
 	}
-	return policyBudgetMode(p)
+	return nodeModeInBytes(raw)
+}
+
+// nodeModeInBytes is the mode a node's own bytes write, "" where they write
+// none or are not a document this reader can take one out of. The decode is
+// deliberately untyped: it reads one member of a document whose every other
+// member belongs to the strict reader, and a node this cannot read is a node
+// the listing says nothing about rather than a run it stops (CLAUDE.md's HARD
+// RULE: an update is not stopped by a note).
+func nodeModeInBytes(raw []byte) string {
+	var node struct {
+		Budget struct {
+			Mode string `json:"mode"`
+		} `json:"budget"`
+	}
+	if err := json.Unmarshal(raw, &node); err != nil {
+		return ""
+	}
+	return node.Budget.Mode
 }
 
 // budgetModeAfterMigration is the mode the policy stage of this same run leaves

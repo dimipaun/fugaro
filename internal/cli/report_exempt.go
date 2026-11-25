@@ -293,6 +293,7 @@ var exemptAnswers = map[string]string{
 	"project repos rm":           "removes one repository from the policy's allow-list, and prints what it dropped",
 	"project sync":               "offers the installed repositories the allow-list does not admit, printing its own account by hand",
 	"recipes publish":            "publishes one recipe to the project, printing its own account of the write by hand",
+	"recipes rm":                 "removes one recipe from the project, printing its own account of the write by hand",
 	"report":                     "a paid name this build carries no code for: the stub refuses and prints one line",
 	"rigor floor set":            "writes the project layer's rigor floor, and prints the row it wrote",
 	"rigor floor unset":          "removes the project layer's rigor floor, and prints what it dropped",
