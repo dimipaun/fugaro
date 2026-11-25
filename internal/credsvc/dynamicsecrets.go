@@ -86,6 +86,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/secretname"
@@ -195,6 +197,87 @@ func markedContainer(ctx context.Context, src PerSecretSource, secretID string) 
 		return false, fmt.Errorf("%w: this service has no reader for the workflow-secret marker", ErrPerSecretUnreadable)
 	}
 	return m.Marked(ctx, secretID)
+}
+
+// markerTTL is how long one container's marker answer is held. The marker is a
+// label the intake writes when it creates the container and nothing rewrites
+// afterwards, so the window is short only because a cached answer is a stale
+// answer: a container marked a moment ago is served a moment later.
+const markerTTL = 30 * time.Second
+
+// markerCache holds the marker answer for containers this service has already
+// asked about, so that the per-call resolution does not make a LIST for every
+// forwarded model request. It is this service's own memory, like the slip cache
+// and for a stronger reason: Secret Manager's list is its LOW-quota read (the
+// rollup a per-secret read is not), so a container asked about on every call of
+// every run would spend a project's quota on an answer that has not changed.
+//
+// A FAILED read is never held: the cache answers only what the source answered,
+// and the failure class stays the caller's refusal.
+type markerCache struct {
+	mu      sync.Mutex
+	entries map[string]markerEntry
+}
+
+// markerEntry is one answer and the instant it was read.
+type markerEntry struct {
+	marked bool
+	at     time.Time
+}
+
+func newMarkerCache() *markerCache { return &markerCache{entries: map[string]markerEntry{}} }
+
+// get answers the answer held for a container, if one is held and its window has
+// not passed at now. An entry past its window is dropped where it is found rather
+// than by a sweeper, the way the slip cache drops one.
+func (c *markerCache) get(secretID string, now time.Time) (bool, bool) {
+	if c == nil {
+		return false, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[secretID]
+	if !ok {
+		return false, false
+	}
+	if !now.Before(e.at.Add(markerTTL)) {
+		delete(c.entries, secretID)
+		return false, false
+	}
+	return e.marked, true
+}
+
+// put holds one answer for its window.
+func (c *markerCache) put(secretID string, marked bool, now time.Time) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries[secretID] = markerEntry{marked: marked, at: now}
+}
+
+// markedContainerCached is markedContainer through the service's own memory: one
+// LIST per container per markerTTL, and the same answers and failures besides.
+func markedContainerCached(ctx context.Context, cache *markerCache, now func() time.Time, src PerSecretSource, secretID string) (bool, error) {
+	at := time.Now()
+	if now != nil {
+		at = now()
+	}
+	if marked, ok := cache.get(secretID, at); ok {
+		return marked, nil
+	}
+	marked, err := markedContainer(ctx, src, secretID)
+	if err != nil {
+		return false, err
+	}
+	cache.put(secretID, marked, at)
+	return marked, nil
+}
+
+// marked is the service's own marker read, through the cache it holds.
+func (s *Server) marked(ctx context.Context, src PerSecretSource, secretID string) (bool, error) {
+	return markedContainerCached(ctx, s.markers, s.now, src, secretID)
 }
 
 // PerSecretSource reads one per-secret container. It is an interface so a test
@@ -318,6 +401,18 @@ type DynamicSecrets struct {
 	// Source reads one container. nil is a reader that reads none, and read
 	// answers every candidate with no per-secret reading — see perSecrets.
 	Source PerSecretSource
+	// Markers is the service's marker cache (markerCache): the answer for a
+	// container this process has already asked about, so a candidate read on
+	// every call of every run does not make a LIST every time. nil reads the
+	// marker every time, which is a fixture's shape and not the deployment's.
+	Markers *markerCache
+	// Now is the service's clock, for the cache's window. nil is time.Now.
+	Now func() time.Time
+}
+
+// marked is the marker read this half makes, through the cache.
+func (d *DynamicSecrets) marked(ctx context.Context, secretID string) (bool, error) {
+	return markedContainerCached(ctx, d.Markers, d.Now, d.Source, secretID)
 }
 
 // read answers the per-secret half of R6's order for one selected candidate:
@@ -380,12 +475,22 @@ func (d *DynamicSecrets) read(ctx context.Context, c creds.Credential) (Entry, b
 	// this process for a call that is refused. A marker that could not be read
 	// is the failure class, because a container this service cannot classify is
 	// one it must not serve.
-	marked, err := markedContainer(ctx, d.Source, c.Name)
-	if err != nil {
-		return Entry{}, false, "", err
-	}
-	if marked {
-		return Entry{}, false, "", ErrWorkflowSecretContainer
+	//
+	// Only a PROJECT container is asked about: the marker is written on the
+	// shared prefix alone — the intake refuses `workflow_secret: true` on a
+	// per-user name before it writes (handlers.go's checkMarker and its
+	// refusal), so a `fugaro_u_` container cannot carry it — and a marker read
+	// is a LIST, its own low-quota call, which a personal-token or rotated-key
+	// candidate must not spend on every forwarded model request for an answer
+	// that cannot be yes.
+	if parsed.Shared() {
+		marked, err := d.marked(ctx, c.Name)
+		if err != nil {
+			return Entry{}, false, "", err
+		}
+		if marked {
+			return Entry{}, false, "", ErrWorkflowSecretContainer
+		}
 	}
 	value, found, err := d.Source.Value(ctx, c.Name)
 	if err != nil {
@@ -430,12 +535,12 @@ func (s *Server) perSecrets() *DynamicSecrets {
 		// A source that reads containers itself (a test's): asked first,
 		// because the one type that does both is a fixture's and not the
 		// deployment's.
-		return &DynamicSecrets{Source: src}
+		return &DynamicSecrets{Source: src, Markers: s.markers, Now: s.now}
 	case SecretManagerSource:
 		if src.Service == nil || src.Project == "" {
 			return nil
 		}
-		return &DynamicSecrets{Source: SecretManagerPerSecrets{Project: src.Project, Service: src.Service}}
+		return &DynamicSecrets{Source: SecretManagerPerSecrets{Project: src.Project, Service: src.Service}, Markers: s.markers, Now: s.now}
 	}
 	return nil
 }

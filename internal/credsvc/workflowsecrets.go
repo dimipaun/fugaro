@@ -380,7 +380,7 @@ func (s *Server) projectSecretReadable(ctx context.Context, name, container, rep
 		// which of the two states the installation is in (G18).
 		return nil, &projectSecretRefusal{StatusUnverified, ErrorWorkflowSecretNotAllowed, workflowSecretNotAllowed, nil}
 	}
-	marked, err := markedContainer(ctx, source.Source, container)
+	marked, err := s.marked(ctx, source.Source, container)
 	if err != nil {
 		// A marker read that FAILED is the state class and not the unmarked
 		// refusal: the container may well be marked, and telling the caller to

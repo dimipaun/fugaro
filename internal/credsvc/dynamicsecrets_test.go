@@ -756,3 +756,85 @@ func TestCascadeReadRefusesAMarkedContainer(t *testing.T) {
 		t.Errorf("the refusal wrote %d audit lines, want 1", got)
 	}
 }
+
+// TestPerSecretMarkerIsAskedOfProjectsOnly is G2's cost on the grammar's two
+// halves: the marker is written on the shared prefix alone — the intake refuses
+// a workflow-secret write on a per-user name before it makes the container — so
+// a `fugaro_u_` candidate is not asked about one. It matters because the ask is
+// a Secret Manager LIST, the low-quota read, and the resolution runs it on
+// every forwarded model request: a personal-token or rotated-key candidate that
+// paid a list per call would spend a project's quota on an answer that cannot be
+// yes, and a list that failed would refuse the call (fail-closed).
+//
+// The value is still served, which is the other half of the claim: skipping the
+// ask is not skipping the candidate.
+func TestPerSecretMarkerIsAskedOfProjectsOnly(t *testing.T) {
+	t.Run("a personal container is served without a marker read", func(t *testing.T) {
+		s := newPerSecretSvc(t)
+		name := mustUserName(t, testLauncherSub, testAccount)
+		rotated := fakeCred(t, "rotated")
+		s.dyn.values[name] = rotated
+
+		rec, _ := s.serve(t, creds.Credential{Name: name, Tier: creds.TierA})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("the answer is %d, want the upstream's 200: %s", rec.Code, rec.Body)
+		}
+		if got, want := authOf(t, s), "Bearer "+rotated; got != want {
+			t.Errorf("the call carried %q, want the container's %q", got, want)
+		}
+		if len(s.dyn.markerReads) != 0 {
+			t.Errorf("the service asked about the marker of %v; the marker is the shared prefix's, and a per-user container cannot carry it (F18, G2)", s.dyn.markerReads)
+		}
+	})
+
+	t.Run("a personal candidate with no container reads no marker either", func(t *testing.T) {
+		s := newPerSecretSvc(t)
+		name := mustUserName(t, testLauncherSub, testAccount)
+
+		rec, _ := s.serve(t, creds.Credential{Name: name, Tier: creds.TierA})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("the answer is %d, want the upstream's 200: %s", rec.Code, rec.Body)
+		}
+		if len(s.dyn.markerReads) != 0 {
+			t.Errorf("the service asked about the marker of %v for a candidate whose container is not the shared prefix's", s.dyn.markerReads)
+		}
+	})
+}
+
+// TestPerSecretMarkerReadsAreBounded is the quota half of the same rule: the
+// marker answer is held for a short window, so N calls of one run — and the
+// calls of every run of a repository, in one instance — make ONE list and not
+// N. The window is what keeps a stale answer from outliving a container the
+// intake has just marked: the clock the fixture drives moves the service's own,
+// so this is the window's edge and not a coincidence of timing.
+func TestPerSecretMarkerReadsAreBounded(t *testing.T) {
+	s := newPerSecretSvc(t)
+	shared, err := secretname.Project(testSharedName)
+	if err != nil {
+		t.Fatalf("the grammar refuses the fixture's project name: %v", err)
+	}
+	rotated := fakeCred(t, "rotated-project")
+	s.dyn.values[shared] = rotated
+	for i := 0; i < 6; i++ {
+		s.up.Script = append(s.up.Script, anthropicfake.MessageOK(testModel, testUsage))
+	}
+
+	for i := 0; i < 5; i++ {
+		rec, _ := s.serve(t, creds.Credential{Name: shared, Tier: creds.TierA})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("call %d was answered %d, want the upstream's 200: %s", i+1, rec.Code, rec.Body)
+		}
+	}
+	if want := []string{shared}; !slices.Equal(s.dyn.markerReads, want) {
+		t.Errorf("five calls made the marker reads %v, want exactly %v: the answer is held for the window", s.dyn.markerReads, want)
+	}
+
+	s.now = s.now.Add(markerTTL)
+	rec, _ := s.serve(t, creds.Credential{Name: shared, Tier: creds.TierA})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the call after the window was answered %d, want the upstream's 200: %s", rec.Code, rec.Body)
+	}
+	if want := []string{shared, shared}; !slices.Equal(s.dyn.markerReads, want) {
+		t.Errorf("the marker reads after the window = %v, want %v: an answer past its window is asked for again", s.dyn.markerReads, want)
+	}
+}
