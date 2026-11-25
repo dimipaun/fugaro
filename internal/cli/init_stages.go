@@ -730,6 +730,13 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// both are derived from what the installation holds and neither fails an
 	// update (the HARD RULE).
 	e.backfillPRIndex(ctx)
+	// And D2966's: the run summaries the runs before this release have none of,
+	// created in place so `runs ls` reads two objects a row instead of three
+	// (update_summary.go). It is here for the reason above — the converge
+	// applied everything it had, so the runs it walks are the ones this run
+	// leaves behind — and it returns no error either: a summary is a derived
+	// hint, and failing an upgrade over one is what the HARD RULE forbids.
+	e.backfillRunSummary(ctx)
 	// And D2716's: the checkout's docs/backlog/ folder, folded into the
 	// project's standing backlog once (update_backlog.go). It is here for the
 	// reason the four above are — the converge has applied everything it had, so
@@ -748,6 +755,15 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// derived object, the mark it leaves is what every later sweep continues on
 	// its own, and failing an upgrade over one is what the HARD RULE forbids.
 	e.reindexRunIndex(ctx)
+	// And the owner's rule of 2026-11-24's: every repository this config lists
+	// has its deployed jobs checked against what its workflows resolve to now,
+	// and moved where they differ (update_jobimages.go). It is here for the
+	// reason the seven above are — the converge has applied everything it had,
+	// so the map and the catalog it reads are the ones this run leaves behind —
+	// and it returns no error either: a repository nobody could read, a job the
+	// API refuses to move, is a line and a step the next update takes again,
+	// never a failed upgrade (the HARD RULE).
+	e.reconcileRepoJobs(ctx)
 	// And T-RU5's, the sixth and last: what this release fixes about the
 	// project's filed issues, which is a step of the run and not of the door
 	// (update_resolved.go) because --json's document carries it and is printed

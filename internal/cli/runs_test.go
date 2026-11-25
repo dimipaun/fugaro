@@ -2032,6 +2032,33 @@ func (d *lsWidthDriver) NewRangeReader(_ context.Context, key string, offset, le
 	return &lsWidthReader{Reader: bytes.NewReader(body), size: int64(len(body))}, nil
 }
 
+// NewTypedWriter takes a write into the driver's map: the tests that seed a
+// summary after the fixture was installed write through lsDriverPut, and one
+// that runs a writer of the tree's own (the summary backfill) needs the write
+// path too. A create is answered by Attributes first, so an object the driver
+// already holds makes the write fail the way the bucket's does.
+func (d *lsWidthDriver) NewTypedWriter(_ context.Context, key, contentType string, _ *driver.WriterOptions) (driver.Writer, error) {
+	return &lsDriverWriter{d: d, key: key, contentType: contentType}, nil
+}
+
+// lsDriverWriter collects one object's bytes and puts them where a later read
+// of the driver finds them.
+type lsDriverWriter struct {
+	d           *lsWidthDriver
+	key         string
+	contentType string
+	buf         bytes.Buffer
+}
+
+func (w *lsDriverWriter) Write(p []byte) (int, error) { return w.buf.Write(p) }
+
+func (w *lsDriverWriter) Close() error {
+	w.d.mu.Lock()
+	defer w.d.mu.Unlock()
+	w.d.objects[w.key] = w.buf.Bytes()
+	return nil
+}
+
 // lsWidthReader serves one object's bytes.
 type lsWidthReader struct {
 	*bytes.Reader
