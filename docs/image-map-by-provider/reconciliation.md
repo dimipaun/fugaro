@@ -71,7 +71,76 @@ This document is checked against `origin/main` at `3dfc5cb8f`, on 2026-11-25. It
   touched. The credentials service reads it only for build tokens. `update`'s own builds run in
   `Images`, before `Policy`, and are made against the node as it stood.
 - **F11 (Exists).** A flag or help change regenerates `website/content/cli-reference.md`
-  (`go run ./ee/clidoc`), and `docs_website_cliref_test.go` pins it.
+  (`go run ./ee/clidoc`). `TestCliReferenceNamesEveryCommandAndFlag` and
+  `TestCliReferenceInventsNothing` (`docs_website_cliref_test.go`) pin it.
+- **F12 (Gap, review round 1).** More writers and readers, beyond F5:
+  - **`project repos add`** writes `image_map[owner/name]`, with no provider
+    (`project_enroll_converge.go`, `enrolImageMap`).
+  - **The bake composer** (`internal/imagebake`, `Decide` and `entryRepos`) reads
+    `Request.Map[owner/name]`.
+  - **The shared config's refusal** is also in `internal/cli/sharedcfg.go` (`sharedForbidden`, and
+    its non-zero check), not only in `localcfg/shared.go`.
+  - **A second reader in doctor:** `doctor_layer.go` (the offline arm).
+  - **User-facing fix text** in `infra/readiness.go` names `image_map`.
+  - **Stale comments:** `backend/gcp/catalog.go` cites `config.ValidImageMap`, which does not
+    exist, and `projectpolicy/issuesync.go` names the map.
+
+  Each lands in a task.
+- **F13 (Wrong, review round 1).** L5's reader cannot supply a provider. `repofiles.Read` answers a
+  repository with no known provider as unread (`reader.go`), so R1's step 3 is the checkout's
+  `git.provider` (`repoProvider`), not a default-branch read.
+- **F14 (Gap, review round 1).** D3375's keys can name a repository that is not served at that
+  provider: `bitbucket/acme/app` when `acme/app` is only at GitHub. If such a key sits on an entry,
+  `buildEntryRepos` answers that whole entry with a 503, and `imagebake.entryRepos` refuses "a
+  repository the project does not admit". Today a mapped name with no repository poisons nothing.
+  R9 keeps D3375's intent.
+- **F15 (Wrong, review round 1).** `projectpolicy.Canonical` checks a provider's *shape*
+  (`task.ValidProvider`), not that it is a provider Fugaro serves. An old nested key such as
+  `acme/team/app` would pass as provider `acme`. `canonicalRepoArg` has the same gap, and it refuses
+  `owner/name` when the local provider is empty. R10 closes both.
+- **F16 (Gap, review round 1).** The old member must not come back. A per-key fallback to
+  `image_map` would let one written by a CLI from before L1 revive the collision. R2 is per member.
+- **F17 (Gap, review round 1).** These are the known gaps:
+  - **A CLI from before L1, with no local map, reading a migrated node** sees no map. It picks the
+    catalog's default entry instead of the mapped one: a wrong image, not a refusal. This is the
+    gap the owner accepted for CLIs from before L1 (L1's Q2, D3374).
+  - **A CLI from before L1, reading a migrated local config,** fails to load it: `localcfg` decodes
+    strictly. That is loud.
+  - **The old credentials service** refuses every build token between `Policy` and
+    `CredentialsService`, and for as long as an `update` stopped between them. The project's
+    scheduled catalog rebuilds are among them. The next `update` ends it. This is the cost of D3376,
+    stated in O3.
+- **F18 (Rule, review round 1).** `repo_images` sits beside the "repo-level images" vocabulary of
+  D1900 (`repoImagesOff`, `internal/cli/image.go`), which means a repository's own image rows. R11
+  keeps the two apart.
+- **F19 (Gap, review round 1).** Existing tests and goldens fixture the old member:
+  - `update_converge_test.go`, `update_jobimages_test.go`, `catalog_bake_e2e_test.go`,
+    `init_policy_publish_test.go`, `init_policy_migrate_test.go`,
+    `project_enroll_converge_test.go`, `image_refresh_test.go`, `sharedcfg_test.go` and
+    `skills_test.go`;
+  - the goldens `writer_gaps.golden` and `next_step_allow.golden`;
+  - `plugin/images_skill_test.go`.
+
+  Live checks read it too: `check-500.sh` and `check-581.sh` read the survey's
+  `setup.image_map`, and `check196.sh` reads the node's. So do `SECURITY.md` and the website's
+  security page. Each lands in the task that changes the code it pins.
+- **F20 (Gap, review round 1).** Other plans write some of the same files:
+  - L5:
+    - U5 writes `init_policy_migrate.go`.
+    - U9a writes `project_enroll_converge.go`.
+    - U7b writes `gcp-live-checklist.md`.
+    - U3b, U9b and U10 write `cli-reference.md`.
+    - I1 writes `update_in_flight_test.go`.
+  - L8:
+    - PR2 and XB2 write `run.go`.
+    - XB3 and AB1 write `registry.go` and `settings.schema.json`.
+    - S0, XB1 and D1 write `project-layer.md`.
+    - D2 writes `setup/SKILL.md`.
+    - CK2 and CK3 write `gcp-live-checklist.md`.
+    - S4 and RG3 write `cli-reference.md`.
+    - I2 writes `update_in_flight_test.go` and `update_converge_test.go`.
+
+  The plan's launch notes order L11's tasks after the ones they share a file with.
 
 ## Decisions
 
@@ -86,25 +155,26 @@ were raised here and answered the same day.
 | D3373 | Q4: a name at two providers | **Both keys, same entry.** As recommended |
 | D3374 | Q5: when it ships | **One release after L1**, as L8. As recommended |
 | D3375 | An enrolled name whose provider `update` cannot find (no local provider, no admit naming it, default branch unread) | **Every provider** (`github` and `bitbucket`): today's behaviour exactly. As recommended |
-| D3376 | The old `image_map` member when `Policy` writes `repo_images` | **Removed in the same write.** An old reader sees no map and refuses loudly. As recommended |
+| D3376 | The old `image_map` member when `Policy` writes `repo_images` | **Removed in the same write.** As recommended. Review round 1 found that the old credentials service's refusal can outlast "seconds" (F17), and that a CLI from before L1 picks the default entry rather than refusing. Both are stated in F17, and O3 asks the owner to confirm |
 | D3377 | A catalog entry's `Source.Repo` (F9) | **A follow-up, not L11.** As recommended |
 
 ## Resolutions
 
-- **R1.** **Provider resolution in the migration**, in order:
+- **R1.** **Provider resolution in the migration**, in order. Amended after review round 1 (F13).
   1. the local config's entry (`localcfg.Repo.Provider`);
   2. the providers of the published admits naming the name;
-  3. the repository's default-branch `fugaro.yaml` `git.provider`, through L5's reader;
+  3. the checkout's `git.provider`, when this machine has a checkout (`repoProvider`);
   4. D3375 (every provider).
 
   A name that is none of these, so not enrolled at all, is dropped with one line, as the spec says.
-- **R2.** **The temporary read of the old member** (D3372). `catalog.ImageRequest` carries both maps:
-  the lookup tries `repo_images` under `projectpolicy.Canonical(Provider, repo)`, then the old map
-  under the bare name.
-  - `localcfg`'s keep rule is per member: a local `repo_images` beats the node's. When neither file
-    has `repo_images`, the old member is read.
-  - A file holding both members reads `repo_images` and ignores `image_map`, and doctor names it.
-  - Removing that read is a follow-up one release later (O1), as L5 does with its fold.
+- **R2.** **The temporary read of the old member** (D3372). It is per member, never per key (F16).
+  - Any `repo_images` wins over any `image_map`: the local config's `repo_images` first, then the
+    node's. `image_map`, local first, is read only when neither place has `repo_images`.
+  - `catalog.ImageRequest` carries `RepoImages` and `LegacyMap`, and the effective reader fills
+    exactly one of them. A legacy map is looked up by bare name, as today.
+  - A file that holds both members reads `repo_images` and ignores `image_map`. Doctor names it,
+    and the next `update` removes it.
+  - Removing the legacy read is a follow-up one release later (O1), as L5 does with its fold.
 - **R3.** **No policy version bump.** Bumping `projectpolicy.Version` would make an older credentials
   service refuse every node it reads, and it re-reads the node on each model call, so runs in flight
   would stop (the HARD RULE). Removing an `omitempty` member is a state older readers already handle
@@ -115,9 +185,28 @@ were raised here and answered the same day.
 - **R5.** **`project policy show --json`** prints `repo_images` in the readable spelling (the
   `showPolicy` shadow), and `image_map` while the node still has it.
 - **R6.** **`fugaro image map set`** keeps its name: it is a verb, not the member. It writes
-  `repo_images` in the local config. Its argument is read by `canonicalRepoArg`'s rule.
-- **R7.** **The shared config** refuses `repo_images` for `image_map`'s reason (`localcfg/shared.go`).
+  `repo_images` in the local config. Amended after review round 1 (F15):
+  - an argument of three or more segments whose first is a provider Fugaro serves is taken as
+    `provider/owner/name`;
+  - anything else is resolved by `repoArg`, as today, and its provider by `repoProvider`;
+  - an unknown provider is refused, naming the `provider/owner/name` form.
+- **R7.** **The shared config** refuses `repo_images` for `image_map`'s reason, in both places
+  (`localcfg/shared.go` and `internal/cli/sharedcfg.go`, F12).
 - **R8.** **`project repos rm`** removes the repository's `repo_images` key under its provider.
+  **`project repos add`** writes one there (F12).
+- **R9.** **A key this installation does not serve at its provider is skipped, never refused**
+  (F14). That applies wherever keys are enumerated: the build token's entry set (S1), the bake's
+  `entryRepos` and `catalogcheck`'s rebuild account. Such a key reaches no job, as a mapped name
+  with no repository reaches none today. A *request* that names a repository at the wrong provider
+  is still refused by name.
+- **R10.** **`ValidRepoImages` holds the provider to `config.Providers`**, not only to its shape
+  (F15). So an old nested key such as `acme/team/app` is refused, and spec acceptance 5 holds.
+- **R11.** **Code and messages say "the repository-to-image map (`repo_images`)"**, never "repo
+  images", so it stays apart from D1900's repo-level image rows (F18). The Go type is `RepoImages`
+  in `projectpolicy`, and no identifier in `internal/cli` reuses the `repoImages` stem of D1900's
+  helpers.
+- **R12.** **A test or golden that fixtures the old member moves with the code it pins** (F19): in
+  the same task, never in a later clean-up.
 
 ## Open tensions
 
@@ -128,6 +217,11 @@ None.
 - **O1.** A follow-up one release after L11: remove R2's read of the old member.
 - **O2.** A follow-up spec for `Source.Repo` (D3377). L3 moves the catalog's records and may carry
   it.
+- **O3.** The cost of D3376 (F17): the old credentials service refuses build tokens from `Policy`
+  until `CredentialsService`, longer if an `update` stops between them, and that includes the
+  scheduled catalog rebuilds. The owner chose D3376 being told only "for the seconds until its own
+  redeploy". A request to confirm it, now that the longer case is stated. The alternative is to
+  remove `image_map` in a step after `CredentialsService`.
 
 ## UNVERIFIED
 
@@ -137,3 +231,6 @@ None.
   without a listed name leaves R1 to step 3 or 4.
 - **V2.** That no console or mobile code reads `image_map`. `git grep` finds none in `console/`,
   `mobile/` or `shared/`. Check 940 confirms it on a live installation.
+- **V3.** Whether project `fugaro` holds a Bitbucket repository for Check 940's third step. The
+  known Bitbucket sandbox is the workspace `dimi_bmb`. The owner settles this when running the
+  check; the script skips that step, with a line, when the project has no Bitbucket repository.

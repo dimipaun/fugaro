@@ -16,16 +16,50 @@
      "internal/projectpolicy/repoimages.go",
      "internal/projectpolicy/repoimages_test.go",
      "internal/projectpolicy/policy.go",
-     "internal/localcfg/localcfg.go",
-     "internal/localcfg/shared.go",
+     "internal/projectpolicy/issuesync.go",
      "internal/catalog/select.go",
+     "internal/catalog/select_test.go",
      "docs/image-map-by-provider/contract.md"
     ]
    }
   },
   {
-   "id": "U1",
-   "title": "update moves image_map to repo_images, by provider",
+   "id": "T0b",
+   "title": "repo_images in the local config, and the effective reader",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/localcfg/localcfg.go",
+     "internal/localcfg/localcfg_test.go",
+     "internal/localcfg/shared.go",
+     "internal/cli/sharedcfg.go",
+     "internal/cli/sharedcfg_test.go",
+     "internal/cli/testdata/writer_gaps.golden"
+    ]
+   }
+  },
+  {
+   "id": "U1a",
+   "title": "the migration from image_map to repo_images",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/repo_images_migrate.go",
+     "internal/cli/repo_images_migrate_test.go"
+    ]
+   }
+  },
+  {
+   "id": "U1b",
+   "title": "the Policy stage publishes repo_images and removes image_map",
    "run": null,
    "version": null,
    "tier": "large",
@@ -33,10 +67,12 @@
    "footprint": {
     "prediction": true,
     "paths": [
-     "internal/cli/repo_images_migrate.go",
-     "internal/cli/repo_images_migrate_test.go",
+     "internal/cli/init_policy_migrate.go",
+     "internal/cli/init_policy_migrate_test.go",
+     "internal/cli/init_policy_publish.go",
+     "internal/cli/init_policy_publish_test.go",
      "internal/cli/project_cmd.go",
-     "internal/cli/init_policy_publish.go"
+     "internal/cli/update_converge_test.go"
     ]
    }
   },
@@ -53,15 +89,32 @@
      "internal/cli/run.go",
      "internal/infra/spec.go",
      "internal/infra/catalogcheck.go",
-     "internal/cli/init_policy_migrate.go",
-     "internal/cli/run_test.go",
-     "internal/infra/catalogcheck_test.go"
+     "internal/infra/readiness.go",
+     "internal/infra/catalogcheck_test.go",
+     "internal/cli/update_jobimages_test.go"
     ]
    }
   },
   {
    "id": "R2a",
-   "title": "the image commands read by provider",
+   "title": "the image catalog commands read by provider",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/image_catalog.go",
+     "internal/cli/image_bake_note.go",
+     "internal/cli/image_catalog_test.go",
+     "internal/cli/image_refresh_test.go"
+    ]
+   }
+  },
+  {
+   "id": "R2c",
+   "title": "the catalog build and the bake read by provider",
    "run": null,
    "version": null,
    "tier": "medium",
@@ -69,10 +122,12 @@
    "footprint": {
     "prediction": true,
     "paths": [
-     "internal/cli/image_catalog.go",
      "internal/cli/image_build_catalog.go",
-     "internal/cli/image_bake_note.go",
-     "internal/cli/image_catalog_test.go"
+     "internal/cli/image_build_catalog_test.go",
+     "internal/imagebake/imagebake.go",
+     "internal/imagebake/imagebake_test.go",
+     "internal/cli/catalog_bake_e2e_test.go",
+     "internal/backend/gcp/catalog.go"
     ]
    }
   },
@@ -87,8 +142,11 @@
     "prediction": true,
     "paths": [
      "internal/cli/image_survey.go",
+     "internal/cli/image_survey_test.go",
      "schemas/image-survey.schema.json",
-     "internal/cli/image_survey_test.go"
+     "internal/cli/skills_test.go",
+     "scripts/live-checks/check-500.sh",
+     "scripts/live-checks/check-581.sh"
     ]
    }
   },
@@ -103,9 +161,10 @@
     "prediction": true,
     "paths": [
      "internal/cli/doctor_layer.go",
+     "internal/cli/doctor_layer_test.go",
      "internal/cli/repos_view.go",
-     "internal/cli/project_repos_rm.go",
      "internal/cli/repos_view_test.go",
+     "internal/cli/project_repos_rm.go",
      "internal/cli/project_repos_rm_test.go"
     ]
    }
@@ -139,13 +198,29 @@
      "internal/cli/image_map_test.go",
      "internal/settings/registry.go",
      "schemas/settings.schema.json",
-     "website/content/cli-reference.md"
+     "website/content/cli-reference.md",
+     "internal/cli/testdata/next_step_allow.golden"
     ]
    }
   },
   {
-   "id": "D1",
-   "title": "the skills and documents name repo_images",
+   "id": "S3",
+   "title": "repos add writes repo_images",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/project_enroll_converge.go",
+     "internal/cli/project_enroll_converge_test.go"
+    ]
+   }
+  },
+  {
+   "id": "D1a",
+   "title": "the skills name repo_images",
    "run": null,
    "version": null,
    "tier": "small",
@@ -155,9 +230,25 @@
     "paths": [
      "plugin/skills/images/SKILL.md",
      "plugin/skills/setup/SKILL.md",
+     "plugin/images_skill_test.go"
+    ]
+   }
+  },
+  {
+   "id": "D1b",
+   "title": "the documents and security pages name repo_images",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
      "docs/project-layer.md",
      "docs/gcp-live-checklist.md",
-     "docs/how-to/offboarding.md"
+     "docs/how-to/offboarding.md",
+     "SECURITY.md",
+     "website/content/security.md"
     ]
    }
   },
@@ -172,7 +263,10 @@
     "prediction": true,
     "paths": [
      "scripts/live-checks/check940.sh",
-     "scripts/live-checks/check940_test.sh"
+     "scripts/live-checks/check940_test.sh",
+     "scripts/live_checks_test.go",
+     "scripts/live-checks/check196.sh",
+     "docs/secrets-brokering/check196-steps.md"
     ]
    }
   },
@@ -186,60 +280,87 @@
    "footprint": {
     "prediction": true,
     "paths": [
-     "internal/cli/repo_images_e2e_test.go"
+     "internal/cli/repo_images_e2e_test.go",
+     "internal/cli/update_in_flight_test.go",
+     "internal/catalog/select.go"
     ]
    }
   }
  ],
  "edges": [
   {
-   "task": "U1",
+   "task": "T0b",
    "needs": "T0",
-   "reason": "kept: compiles against T0's type and request fields"
-  },
-  {
-   "task": "R1",
-   "needs": "T0",
-   "reason": "kept: compiles against T0's type and request fields"
-  },
-  {
-   "task": "R2a",
-   "needs": "T0",
-   "reason": "kept: compiles against T0's type and request fields"
-  },
-  {
-   "task": "R2b",
-   "needs": "T0",
-   "reason": "kept: compiles against T0's type and request fields"
-  },
-  {
-   "task": "R3",
-   "needs": "T0",
-   "reason": "kept: compiles against T0's type and request fields"
+   "reason": "kept: localcfg validates with T0's ValidRepoImages (localcfg imports projectpolicy)"
   },
   {
    "task": "S1",
    "needs": "T0",
-   "reason": "kept: compiles against T0's type and request fields"
+   "reason": "kept: compiles against the node's RepoImages member"
+  },
+  {
+   "task": "U1a",
+   "needs": "T0b",
+   "reason": "kept: compiles against the local member and the effective reader"
+  },
+  {
+   "task": "R1",
+   "needs": "T0b",
+   "reason": "kept: compiles against the local member and the effective reader"
+  },
+  {
+   "task": "R2a",
+   "needs": "T0b",
+   "reason": "kept: compiles against the local member and the effective reader"
+  },
+  {
+   "task": "R2b",
+   "needs": "T0b",
+   "reason": "kept: compiles against the local member and the effective reader"
+  },
+  {
+   "task": "R2c",
+   "needs": "T0b",
+   "reason": "kept: compiles against the local member and the effective reader"
+  },
+  {
+   "task": "R3",
+   "needs": "T0b",
+   "reason": "kept: compiles against the local member and the effective reader"
   },
   {
    "task": "S2",
-   "needs": "T0",
-   "reason": "kept: compiles against T0's type and request fields"
+   "needs": "T0b",
+   "reason": "kept: compiles against the local member and the effective reader"
   },
   {
-   "task": "D1",
-   "needs": "T0",
-   "reason": "kept: compiles against T0's type and request fields"
+   "task": "S3",
+   "needs": "T0b",
+   "reason": "kept: compiles against the local member and the effective reader"
   },
   {
-   "task": "K1",
-   "needs": "T0",
-   "reason": "kept: compiles against T0's type and request fields"
+   "task": "U1b",
+   "needs": "U1a",
+   "reason": "kept, behaviour: the Policy stage calls the migration"
+  },
+  {
+   "task": "D1a",
+   "needs": "R2b",
+   "reason": "kept: the skills lint fails if a skill names setup.repo_images before the field exists"
+  },
+  {
+   "task": "D1a",
+   "needs": "S2",
+   "reason": "kept: the skills name the command as its help now reads"
+  },
+  {
+   "task": "D1b",
+   "needs": "S2",
+   "reason": "kept: the documents name the command as its help now reads"
   },
   {
    "task": "X1",
-   "needs": "U1",
+   "needs": "U1b",
    "reason": "kept, behaviour: X1 exercises it end to end"
   },
   {
@@ -254,7 +375,17 @@
   },
   {
    "task": "X1",
+   "needs": "R2c",
+   "reason": "kept, behaviour: X1 exercises it end to end"
+  },
+  {
+   "task": "X1",
    "needs": "R3",
+   "reason": "kept, behaviour: X1 exercises it end to end"
+  },
+  {
+   "task": "X1",
+   "needs": "S3",
    "reason": "kept, behaviour: X1 exercises it end to end"
   }
  ],

@@ -13,8 +13,8 @@ member, `repo_images`, and `fugaro update` moves the old map once.
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The spec as approved. No typo was fixed |
-| [reconciliation.md](reconciliation.md) | Assumptions A1–A4, findings F1–F11, decisions D3370–D3377 with the owner's answers (D3372 amended after review and confirmed), resolutions R1–R8, open items O1–O2, UNVERIFIED V1–V2. **Where it disagrees with the spec, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Eleven tasks in three levels (T0; U1, R1, R2a, R2b, R3, S1, S2, D1, K1; X1), the shared files, the edges kept, and the owner's Check 940. Nothing in it is approved |
+| [reconciliation.md](reconciliation.md) | Assumptions A1–A4, findings F1–F20 (F12–F20 from review round 1), decisions D3370–D3377 with the owner's answers (D3372 amended after review and confirmed; O3 asks to confirm D3376's stated cost), resolutions R1–R12, open items O1–O3, UNVERIFIED V1–V3. **Where it disagrees with the spec, it wins** |
+| [implementation-plan.md](implementation-plan.md) | Sixteen tasks in five levels (T0, K1; T0b, S1; U1a, R1, R2a, R2b, R2c, R3, S2, S3; U1b, D1a, D1b; X1), the shared files, the edges kept, and the owner's Check 940. Nothing in it is approved |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph, as `fugaro plan graph` reads it |
 
 **The owner's answers, all as recommended:**
@@ -38,4 +38,5 @@ Both blocks were checked free on `main` at `3dfc5cb8f` and in every open pull re
 **What waits on something external:**
 - the owner's go for each task;
 - L1's release, before L11's (D3374);
-- Check 940, which the owner runs after the release that carries U1.
+- Check 940, which the owner runs after the release that carries U1b;
+- O3: the owner's confirmation of D3376's cost.
