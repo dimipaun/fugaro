@@ -262,11 +262,11 @@ finish() {
   cleanup
   [ -n "$HELP" ] && exit 0
   local facts=$FACTS_CAPTURED
-  if [ -n "$ABORT_REASON" ] && ! printf '%s' "$facts" | grep -q '^aborted|'; then
+  if [ -n "$ABORT_REASON" ] && ! grep -q '^aborted|' <<<"$facts"; then
     facts="${facts}"$'\n'"aborted|FAIL|$ABORT_REASON"
   fi
   if [ "$REACHED_END" = no ]; then
-    if ! printf '%s' "$facts" | grep -q '^aborted|'; then
+    if ! grep -q '^aborted|' <<<"$facts"; then
       facts="${facts}"$'\n'"aborted|FAIL|the run ended before it reached its last step (exit ${status}): the rows that read 'not reached' were NOT measured, which is this script ending on an error rather than an answer about the link"
     fi
     if [ "$status" -eq 0 ] || [ "$status" -eq 1 ]; then status=2; fi
@@ -1506,7 +1506,7 @@ print_plan() {
 BLOCK_KEYS=(xtrace owner tree belong probe-submitted probe-ran vm-a u1-link u1-forge u1-handmade u2-token u3-marker u8-name restore)
 
 verdict_of() {
-  if printf '%s\n' "$1" | grep -qE '^[a-z0-9-]+\|FAIL\|'; then
+  if grep -qE '^[a-z0-9-]+\|FAIL\|' <<<"$1"; then
     printf 'FAIL\n'
   else
     printf 'PASS\n'
@@ -1522,8 +1522,8 @@ print_block() {
     # A key's FAIL is what the block's own last line is read from, so a key that
     # recorded a FAIL beside anything else is printed as that FAIL: the first
     # fact of a key wins only where it is not hiding a FAIL behind it.
-    line=$(printf '%s\n' "$facts" | grep -m1 "^$key|FAIL|" || true)
-    [ -n "$line" ] || line=$(printf '%s\n' "$facts" | grep -m1 "^$key|" || true)
+    line=$(grep -m1 "^$key|FAIL|" <<<"$facts" || true)
+    [ -n "$line" ] || line=$(grep -m1 "^$key|" <<<"$facts" || true)
     if [ -n "$line" ]; then
       printf 'FACT %s: %s — %s\n' "$key" \
         "$(printf '%s' "$line" | cut -d'|' -f2)" \
