@@ -1306,10 +1306,61 @@ func editMicroNode(e *nodeEdit, old map[string]json.RawMessage, fields []microFi
 	return final, nil
 }
 
+// repoCapCeiling is the largest cap a repository's own node may hold, read off
+// the database (spec §5.6): each dimension is the project's global cap when it
+// is set and the default repository cap otherwise, and a dimension with neither
+// is nil, which leaves the node standing. This is budget.Caps.RepoCeiling over
+// the two nodes, and the two must agree: a node written above the ceiling is
+// read as the ceiling (plan task RC1), so a write above it would land and mean
+// nothing.
+func repoCapCeiling(ctx context.Context, db *rtdb.Client) (budget.RepoCeiling, error) {
+	var g budget.GlobalCaps
+	if _, err := db.Get(ctx, budget.PathCapsGlobal, &g); err != nil {
+		return budget.RepoCeiling{}, remote(err)
+	}
+	def := &budget.DefaultCaps{}
+	if _, err := db.Get(ctx, budget.PathCapsDefaults, def); err != nil {
+		return budget.RepoCeiling{}, remote(err)
+	}
+	return budget.Caps{Global: &g, Defaults: def}.RepoCeiling(), nil
+}
+
+// refuseAboveRepoCeiling refuses a repository figure above its ceiling, naming
+// the ceiling and the command that raises it. It is a refusal of the figure and
+// not of who is writing it, so it comes before the raise fence: the owner's own
+// command that fence hands back would meet this same ceiling, and a refusal
+// whose fix cannot be run is worse than none.
+func refuseAboveRepoCeiling(ctx context.Context, db *rtdb.Client, p *setPlan) error {
+	ceil, err := repoCapCeiling(ctx, db)
+	if err != nil {
+		return err
+	}
+	for _, f := range []struct {
+		name, flag string
+		set, ceil  *budget.Micros
+	}{
+		{"daily", "--daily", p.daily, ceil.DailyMicros},
+		{"per-run", "--per-run", p.perRun, ceil.PerRunMicros},
+	} {
+		if f.set == nil || f.ceil == nil || *f.set <= *f.ceil {
+			continue
+		}
+		return userErr("caps of %s: the %s cap %s is above the ceiling %s; raise the ceiling with fugaro budget set --global %s <usd>",
+			p.repo, f.name, money(*f.set), money(*f.ceil), f.flag)
+	}
+	return nil
+}
+
 // buildEdits reads the nodes plan touches and works out their changes.
 func buildEdits(ctx context.Context, db *rtdb.Client, p *setPlan, slug string) ([]*nodeEdit, error) {
 	read := func(path string, out any) (string, bool, error) { return db.GetETag(ctx, path, out) }
 	var edits []*nodeEdit
+
+	if p.scope == "repo" && (p.daily != nil || p.perRun != nil) {
+		if err := refuseAboveRepoCeiling(ctx, db, p); err != nil {
+			return nil, err
+		}
+	}
 
 	if p.mode == budget.ModeEnforce {
 		// As init does: enforce needs the project-wide caps, and the two
