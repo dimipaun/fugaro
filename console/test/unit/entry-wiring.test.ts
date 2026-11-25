@@ -99,7 +99,6 @@ import {
   SWITCHER_MENU_CLASS,
   SWITCHER_NAME_CLASS,
   SWITCHER_VERSION_CLASS,
-  COORDINATOR_SUMMARY_SINCE,
   GRAPH_BUSY,
   GRAPH_SCOPE_BUSY,
   RUNS_SINCE,
@@ -339,7 +338,7 @@ afterEach(() => {
 const CONSOLE_ROOT = join(__dirname, '..', '..')
 
 /**
- * READ_METHODS is the twenty-two reads `entry.ts` may reach for (`ReadBridge`'s own
+ * READ_METHODS is the nineteen reads `entry.ts` may reach for (`ReadBridge`'s own
  * list less `summaryRuns`, which `queueBridge` answers with its own recorder),
  * by the name the preload exposes. Every one of them is on the fake bridge
  * below, and every one records its call -- so "this read was never made" is a
@@ -370,9 +369,6 @@ const READ_METHODS = [
   'statsRuns',
   'listModels',
   'readSettings',
-  'coordinatorStatus',
-  'coordinatorShow',
-  'coordinatorIntents',
   'diagnoseRun',
   'readRunLogs',
   'runLogLink',
@@ -4471,7 +4467,6 @@ function everyReadHeld(): FakeBridge {
     runReport: () => holding().reply(),
     listRuns: () => holding().reply(),
     listModels: () => holding().reply(),
-    coordinatorStatus: () => holding().reply(),
   })
 }
 

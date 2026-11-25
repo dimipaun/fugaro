@@ -314,12 +314,17 @@ var liveRoots = []string{
 // flattened separator, not a promise about the source.
 var initNameRE = regexp.MustCompile(`fugaro init|init --[a-z]`)
 
-// otherInitRE is the other command in this tree that writes `init --<flag>`,
-// and the reason initNameRE can be as wide as it is. It is `fugaro config
+// otherInitRE is what this tree's other commands write `init --<flag>`, and
+// the reason initNameRE can be as wide as it is. The first is `fugaro config
 // init`, the live subcommand that writes the minimal `fugaro.yaml`
 // (internal/cli/config_cmd.go), whose own flags -- `--profile`, `--base-branch`
 // -- are spellings of the retired verb's pattern, so a flag list of the retired
-// command's own would swallow this one.
+// command's own would swallow this one. The second is `fugaro workspace init`,
+// another live subcommand (internal/cli/workspace_cmd.go), reached through
+// scripts/live-checks/lib/fugaro-surface.tsv: that table is generated from the
+// CLI's own command tree and carries one `flag <path> --help` line per command
+// path, so a path ending in the word is a spelling of the pattern by accident
+// rather than a mention of the retired verb.
 //
 // A file that mentions it *beside* a real mention must not be read as clean,
 // so the exclusion is not a second pattern that exempts the file: the match is
@@ -334,7 +339,7 @@ var initNameRE = regexp.MustCompile(`fugaro init|init --[a-z]`)
 // one does, the census fails on that file and the answer is one of the two
 // this file hands every unexpected mention -- rename it, or add the command
 // here with its reason.
-var otherInitRE = regexp.MustCompile(`config init`)
+var otherInitRE = regexp.MustCompile(`config init|workspace init`)
 
 // censusRoot is the repository root as this package's tests reach it.
 const censusRoot = "../.."
