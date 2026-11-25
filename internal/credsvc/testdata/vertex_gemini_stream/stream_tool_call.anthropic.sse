@@ -14,7 +14,7 @@ event: content_block_start
 data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_vrtx_thought_dmVydGV4LWdlbWluaS0zLXRob3VnaHQtc2lnbmF0dXJlLTAwMDE","name":"read_file","input":{}}}
 
 event: content_block_delta
-data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"encoding\":\"utf-8\",\"limit\":20,\"path\":\"a.txt\"}"}}
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"a.txt\"}"}}
 
 event: content_block_stop
 data: {"type":"content_block_stop","index":1}
@@ -23,7 +23,7 @@ event: content_block_start
 data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_vrtx_2","name":"list_dir","input":{}}}
 
 event: content_block_delta
-data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{ \"path\": \".\" }"}}
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\".\"}"}}
 
 event: content_block_stop
 data: {"type":"content_block_stop","index":2}

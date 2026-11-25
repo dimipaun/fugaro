@@ -15,7 +15,7 @@
           "role": "model",
           "parts": [
             {
-              "functionCall": { "name": "read_file", "args": { "path": "a.txt" } },
+              "functionCall": { "name": "read_file", "args": {"path":"a.txt"} },
               "thoughtSignature": "dmVydGV4LWdlbWluaS0zLXRob3VnaHQtc2lnbmF0dXJlLTAwMDE="
             }
           ]
@@ -29,7 +29,7 @@
       {
         "content": {
           "role": "model",
-          "parts": [{ "functionCall": { "name": "read_file", "args": { "limit": 20 } } }]
+          "parts": [{ "functionCall": { "name": "list_dir", "args": {"path":"."} } }]
         },
         "index": 0
       }
@@ -38,13 +38,7 @@
   {
     "candidates": [
       {
-        "content": {
-          "role": "model",
-          "parts": [
-            { "functionCall": { "name": "read_file", "args": { "encoding": "utf-8" } } },
-            { "functionCall": { "name": "list_dir", "args": { "path": "." } } }
-          ]
-        },
+        "content": { "role": "model", "parts": [] },
         "finishReason": "STOP",
         "index": 0
       }

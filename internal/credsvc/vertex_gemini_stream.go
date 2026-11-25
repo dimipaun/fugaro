@@ -489,12 +489,6 @@ type vertexGeminiSaid struct {
 	finish  string
 	usage   vertexGeminiCounts
 	blocked string
-
-	// lastCallChunk is the chunk the last piece came from, which is what tells
-	// a streamed function call's continuation (a later chunk carrying the same
-	// function's name and more of its arguments) from a second call to the same
-	// function inside one chunk. Only the first merges.
-	lastCallChunk int
 }
 
 // vertexGeminiSaid accumulates the chunks of one answer, and it is where every
@@ -502,9 +496,9 @@ type vertexGeminiSaid struct {
 // ends here, with the path it sits at, and nothing of the answer reaches the
 // agent.
 func vertexGeminiAccumulate(chunks []json.RawMessage) (*vertexGeminiSaid, error) {
-	said := &vertexGeminiSaid{id: vertexGeminiMessageID, lastCallChunk: -1}
-	for i, raw := range chunks {
-		if err := vertexGeminiChunk(raw, i, said); err != nil {
+	said := &vertexGeminiSaid{id: vertexGeminiMessageID}
+	for _, raw := range chunks {
+		if err := vertexGeminiChunk(raw, said); err != nil {
 			return nil, err
 		}
 	}
@@ -517,7 +511,7 @@ func vertexGeminiAccumulate(chunks []json.RawMessage) (*vertexGeminiSaid, error)
 // rule this file follows is about what the AGENT reads, and a harness reading a
 // Messages answer reads nothing of Vertex's own metadata. What is refused is a
 // member whose loss or wrong reading would change the answer the agent acts on.
-func vertexGeminiChunk(raw []byte, chunk int, said *vertexGeminiSaid) error {
+func vertexGeminiChunk(raw []byte, said *vertexGeminiSaid) error {
 	members, err := geminiObject(raw, "answer")
 	if err != nil {
 		return err
@@ -525,7 +519,7 @@ func vertexGeminiChunk(raw []byte, chunk int, said *vertexGeminiSaid) error {
 	for _, m := range members {
 		switch m.Key {
 		case "candidates":
-			if err := vertexGeminiCandidates(m.Value, chunk, said); err != nil {
+			if err := vertexGeminiCandidates(m.Value, said); err != nil {
 				return err
 			}
 		case "usageMetadata":
@@ -550,7 +544,7 @@ func vertexGeminiChunk(raw []byte, chunk int, said *vertexGeminiSaid) error {
 // candidateCount — so a second one carrying content is refused rather than
 // dropped: the Messages answer has one content list, and picking one of two
 // answers for the agent would be choosing which model output it reads.
-func vertexGeminiCandidates(raw []byte, chunk int, said *vertexGeminiSaid) error {
+func vertexGeminiCandidates(raw []byte, said *vertexGeminiSaid) error {
 	items, err := geminiArray(raw, "candidates")
 	if err != nil {
 		return err
@@ -567,7 +561,7 @@ func vertexGeminiCandidates(raw []byte, chunk int, said *vertexGeminiSaid) error
 				if i != 0 {
 					return untranslatableAnswer(where+".content", "this answer carries more than one candidate, and the Messages answer the agent reads has one content list")
 				}
-				if err := vertexGeminiCandidateContent(m.Value, where+".content", chunk, said); err != nil {
+				if err := vertexGeminiCandidateContent(m.Value, where+".content", said); err != nil {
 					return err
 				}
 			case "finishReason":
@@ -614,7 +608,7 @@ func vertexGeminiPromptFeedback(raw []byte, said *vertexGeminiSaid) error {
 
 // vertexGeminiContent reads one candidate's content: the model's turn, whose
 // parts are the answer itself.
-func vertexGeminiCandidateContent(raw []byte, where string, chunk int, said *vertexGeminiSaid) error {
+func vertexGeminiCandidateContent(raw []byte, where string, said *vertexGeminiSaid) error {
 	members, err := geminiObject(raw, where)
 	if err != nil {
 		return err
@@ -637,14 +631,14 @@ func vertexGeminiCandidateContent(raw []byte, where string, chunk int, said *ver
 		// with no text): it says nothing the other members do not.
 		return nil
 	}
-	return vertexGeminiAnswerParts(parts, where+".parts", chunk, said)
+	return vertexGeminiAnswerParts(parts, where+".parts", said)
 }
 
-// vertexGeminiParts reads one content's parts, in order, as the pieces of the
-// answer. The three part kinds a Gemini model answers with are the three this
-// translation carries: text, a function call, and a function call's thought
-// signature. Anything else ends the call.
-func vertexGeminiAnswerParts(raw []byte, where string, chunk int, said *vertexGeminiSaid) error {
+// vertexGeminiAnswerParts reads one content's parts, in order, as the pieces
+// of the answer. The three part kinds a Gemini model answers with are the three
+// this translation carries: text, a function call, and a function call's
+// thought signature. Anything else ends the call.
+func vertexGeminiAnswerParts(raw []byte, where string, said *vertexGeminiSaid) error {
 	items, err := geminiArray(raw, where)
 	if err != nil {
 		return err
@@ -689,7 +683,7 @@ func vertexGeminiAnswerParts(raw []byte, where string, chunk int, said *vertexGe
 		}
 		switch {
 		case call != nil:
-			if err := vertexGeminiCallPiece(call, signature, at, chunk, said); err != nil {
+			if err := vertexGeminiCallPiece(call, signature, at, said); err != nil {
 				return err
 			}
 		case text != nil && !thought:
@@ -733,38 +727,21 @@ func vertexGeminiTextPiece(text string, said *vertexGeminiSaid) {
 	said.pieces = append(said.pieces, vertexGeminiPiece{text: text})
 }
 
-// vertexGeminiCallPiece appends one function call, or continues the call the
-// previous chunk left open.
+// vertexGeminiCallPiece appends one function call as its own piece, and so its
+// own tool_use block.
 //
-// Vertex streams a call's arguments: a later chunk carries the same function's
-// name with more of its arguments, and Google's own clients accumulate the two.
-// The rule here is the same and it is narrow — a call whose name is the one the
-// PREVIOUS CHUNK ended with is that call, and the two arguments objects are
-// merged key by key; anything else is a second call, which is what a model
-// answering several calls at once writes inside one chunk.
-func vertexGeminiCallPiece(raw []byte, signature, at string, chunk int, said *vertexGeminiSaid) error {
+// One functionCall part is one whole call: GV1 asks Vertex for no streamed
+// arguments (no partialArgs/willContinue, the one request shape that makes
+// Vertex answer a call in pieces), so a part's args are the call's own
+// arguments, complete. Two calls to the same function are therefore two calls
+// whichever chunks they arrive in, and a later chunk carrying the same name is
+// never the call before it continued — merging them would answer the harness
+// one call where the model made two, and the first call's arguments would be
+// gone with no error to show it.
+func vertexGeminiCallPiece(raw []byte, signature, at string, said *vertexGeminiSaid) error {
 	call, err := vertexGeminiFunctionCall(raw, signature, at)
 	if err != nil {
 		return err
-	}
-	if n := len(said.pieces); n > 0 && said.pieces[n-1].call != nil &&
-		said.lastCallChunk < chunk && said.pieces[n-1].call.name == call.name {
-		open := said.pieces[n-1].call
-		merged, err := vertexGeminiMergeArgs(open.args, call.args, at)
-		if err != nil {
-			return err
-		}
-		open.args = merged
-		if call.signature != "" {
-			open.signature = call.signature
-			id, err := vertexGeminiCallID(open, at)
-			if err != nil {
-				return err
-			}
-			open.id = id
-		}
-		said.lastCallChunk = chunk
-		return nil
 	}
 	said.calls++
 	call.ordinal = said.calls
@@ -774,7 +751,6 @@ func vertexGeminiCallPiece(raw []byte, signature, at string, chunk int, said *ve
 	}
 	call.id = id
 	said.pieces = append(said.pieces, vertexGeminiPiece{call: call})
-	said.lastCallChunk = chunk
 	return nil
 }
 
@@ -808,24 +784,6 @@ func vertexGeminiFunctionCall(raw []byte, signature, where string) (*vertexGemin
 		return nil, untranslatableAnswer(where+".functionCall.name", "Vertex names a function call by the function's name and this call carries none")
 	}
 	return call, nil
-}
-
-// vertexGeminiMergeArgs merges the arguments of a call continued across two
-// chunks: the later chunk's members are the call's own, written after the ones
-// the earlier chunk carried.
-func vertexGeminiMergeArgs(into, extra json.RawMessage, where string) (json.RawMessage, error) {
-	var a, b map[string]any
-	if json.Unmarshal(into, &a) != nil || json.Unmarshal(extra, &b) != nil {
-		return nil, untranslatableAnswer(where+".functionCall.args", "a streamed call's arguments are JSON objects and one of these is not")
-	}
-	for k, v := range b {
-		a[k] = v
-	}
-	merged, err := json.Marshal(a)
-	if err != nil {
-		return nil, untranslatableAnswer(where+".functionCall.args", "a streamed call's arguments could not be written back")
-	}
-	return merged, nil
 }
 
 // vertexGeminiCallID is the Messages tool_use block's `id` for one call, and it

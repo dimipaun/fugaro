@@ -276,16 +276,17 @@ func TestGeminiAnswerTranslation(t *testing.T) {
 // and never a stream half of whose answer the agent has already read.
 //
 // `stream_text` is one text answer spread over three chunks, which must reach
-// the agent as ONE text block; `stream_tool_call` is a function call split
-// across chunks, which must reach it as one tool_use whose arguments are the
-// merge of the pieces, beside a second call answered in the same chunk (two
-// calls to two functions, so the merge rule is pinned as the narrow one it is).
+// the agent as ONE text block; `stream_tool_call` is a text block and two
+// function calls (one carrying a thought signature, one not), each of them
+// whole inside its own chunk; `stream_same_call` is two calls to the SAME
+// function in consecutive chunks, which must reach the agent as two tool_use
+// blocks with distinct IDs.
 //
-// Mutation (run, restore): emit one text block per chunk, merge any later call
-// whatever its name and position, or write the events as they are accumulated
-// rather than after the last chunk, and a case here is red.
+// Mutation (run, restore): emit one text block per chunk, merge a later call
+// into the one before it, or write the events as they are accumulated rather
+// than after the last chunk, and a case here is red.
 func TestGeminiStreamTranslation(t *testing.T) {
-	for _, name := range []string{"stream_text", "stream_tool_call"} {
+	for _, name := range []string{"stream_text", "stream_tool_call", "stream_same_call"} {
 		t.Run(name, func(t *testing.T) {
 			got, err := vertexGeminiStream(geminiAnswerSide(t, name, "google.json"), geminiAnswerModel)
 			if err != nil {
@@ -298,6 +299,46 @@ func TestGeminiStreamTranslation(t *testing.T) {
 			}
 		})
 	}
+
+	// Two calls to the same function are two calls, in consecutive chunks as
+	// much as inside one: GV1 asks Vertex for no streamed arguments (no
+	// partialArgs/willContinue, the one request shape that makes Vertex answer a
+	// call in pieces), so a functionCall part is one whole call and a later
+	// chunk carrying the same name is a second one, never the first continued.
+	// One block where the model made two would hand the harness a call it never
+	// replays, and the first call's arguments would be gone with nothing to show
+	// it: no error, no line, just an action the run never takes.
+	t.Run("two calls to the same function are two blocks", func(t *testing.T) {
+		got, err := vertexGeminiStream(geminiAnswerSide(t, "stream_same_call", "google.json"), geminiAnswerModel)
+		if err != nil {
+			t.Fatalf("the stream was refused: %v", err)
+		}
+		var blocks []map[string]any
+		for _, ev := range geminiEvents(t, got) {
+			if ev.Name != "content_block_start" {
+				continue
+			}
+			doc, ok := ev.Data.(map[string]any)
+			if !ok {
+				continue
+			}
+			block, _ := doc["content_block"].(map[string]any)
+			if block["type"] == "tool_use" {
+				blocks = append(blocks, block)
+			}
+		}
+		if len(blocks) != 2 {
+			t.Fatalf("the stream carries %d tool_use blocks, want 2: the model called the same function twice, and one block is one call the harness never replays", len(blocks))
+		}
+		for i, block := range blocks {
+			if block["name"] != "read_file" {
+				t.Errorf("block %d is named %v, want read_file on both: the merge this test is about is keyed on the function's name", i, block["name"])
+			}
+		}
+		if blocks[0]["id"] == blocks[1]["id"] {
+			t.Errorf("the two blocks share the ID %v: two blocks sharing one ID leave the tool_result the harness sends back answering both", blocks[0]["id"])
+		}
+	})
 
 	// What the agent's own reader switches on is the media type and the shape
 	// of the events, and both are this service's: Vertex answered a JSON array
