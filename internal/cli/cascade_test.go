@@ -555,7 +555,8 @@ func TestValidateRefusesCascadeWithBudgetOff(t *testing.T) {
 	// the refusal this test is about is the gateway's, and a policy that
 	// publishes no allow-list would add this file's own refusal to the report.
 	publishPolicy(t, f, cascadePolicyAllowList("off"))
-	path := pinnedFile(t, strings.Replace(cascadeCLI, "workflows:", "budget: { mode: off }\nworkflows:", 1))
+	body := strings.Replace(cascadeCLI, "workflows:", "budget: { mode: off }\nworkflows:", 1)
+	path := pinnedFile(t, body)
 	out, _, err := execute(t, "validate", path)
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit = %d, want %d (out %q, err %v)", ExitCode(err), ExitUserError, out, err)
@@ -575,6 +576,10 @@ func TestValidateRefusesCascadeWithBudgetOff(t *testing.T) {
 	// valid. A check reading the file's own mode would refuse it.
 	observing := newLaunchBudget(t, "observe")
 	publishPolicy(t, observing, cascadePolicyAllowList("observe"))
+	// The file is qualified against this world too: its models are the project
+	// layer's since S1 (D3237), and the layer a fixture publishes is this
+	// installation's own (its config, its runs bucket, its cache).
+	path = pinnedFile(t, body)
 	out, errOut, err := execute(t, "validate", path)
 	if err != nil {
 		t.Fatalf("a cascade file whose installation observes was refused: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)

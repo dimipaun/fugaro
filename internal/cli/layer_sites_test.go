@@ -80,9 +80,15 @@ func TestValidateOfflineWarnsForAFullFile(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer)
+	// The layer is the one this machine read last (L13): a model is a lifted
+	// key since S1 (D3237), so a full file — one that names every key a file
+	// still decides, workflows and git provider included — takes the model it
+	// runs from the layer like every other file, and --offline resolves it from
+	// the cached copy rather than reading the bucket.
+	cacheLayer(t, "aurora", testProjectLayer)
 	layerCheckout(t, f, pinnedMinimal+"git: { provider: github }\nworkflows:\n  svc: { commands: { build: sh build.sh, test: sh test.sh } }\n")
 	out, errOut, err := execute(t, "validate", "--offline")
-	if err != nil || !strings.Contains(out, "is valid") || !strings.Contains(errOut, "project layer") || !strings.Contains(errOut, "was not checked") {
+	if err != nil || !strings.Contains(out, "is valid") || !strings.Contains(errOut, "using the cached project layer") {
 		t.Fatalf("out %q, stderr %q, err %v", out, errOut, err)
 	}
 }

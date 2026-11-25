@@ -673,14 +673,16 @@ func TestValidateWithoutProjectConfigChecksShapeOnly(t *testing.T) {
 	// used to expect is the pins rule's own subject, and
 	// TestValidateLevelsSameModel covers it where a layer prices the run.
 	body := strings.Replace(cliMinimalYAML, "workflows:", "agent: { auth: api-key, model: sonnet }\nbudget: { mode: enforce, per_run_usd: 20, allowed_models: [claude-haiku-4-5] }\nworkflows:", 1)
-	out, errOut, err := execute(t, "validate", writeConfig(t, body))
+	// Written as it is, never qualified: a file whose keys became a project
+	// layer's is a world with a layer, and this test's is the one without.
+	out, errOut, err := execute(t, "validate", writeRawConfig(t, body))
 	want := "warning: workflows.app: no mise.toml, .tool-versions or image.tools: the image installs no language runtime (docs/base-image.md)\n"
 	if err != nil || errOut != want {
 		t.Fatalf("no project config, nothing to simulate: %v %q %q", err, out, errOut)
 	}
 	// The shape is still checked.
 	bad := strings.Replace(cliMinimalYAML, "workflows:", "budget: { mode: loud }\nworkflows:", 1)
-	if out, _, err = execute(t, "validate", writeConfig(t, bad)); ExitCode(err) != ExitUserError || !strings.Contains(out, "budget.mode") {
+	if out, _, err = execute(t, "validate", writeRawConfig(t, bad)); ExitCode(err) != ExitUserError || !strings.Contains(out, "budget.mode") {
 		t.Fatalf("exit %d: %s", ExitCode(err), out)
 	}
 }
@@ -723,13 +725,28 @@ func TestValidateNotOnDefaultBranchSaysSo(t *testing.T) {
 		t.Fatalf("on the default branch: %v %q", err, errOut)
 	}
 	testutil.Git(t, root, "checkout", "-q", "-b", "feature")
+	// The warnings about the project layer are the fixture's own, and not what
+	// this test counts: the file's models are the layer's since S1 (D3237), so
+	// this world publishes one, and every validate over it says which layer it
+	// resolved. What is left is the warning the test is about.
+	aside := func(ps []config.Problem) []config.Problem {
+		out := make([]config.Problem, 0, len(ps))
+		for _, p := range ps {
+			if p.Path != "project layer" {
+				out = append(out, p)
+			}
+		}
+		return out
+	}
 	// A file with no budget or token key has no policy to bound: no branch
 	// note. The one warning present (no mise config) is unrelated to it.
 	out, errOut, err := execute(t, "validate", "--json", file)
 	var noPolicy validateOutput
-	if err != nil || strings.Contains(errOut, "default branch") || json.Unmarshal([]byte(out), &noPolicy) != nil ||
-		len(noPolicy.Warnings) != 1 || noPolicy.Warnings[0].Path != "workflows.app" {
+	if err != nil || strings.Contains(errOut, "default branch") || json.Unmarshal([]byte(out), &noPolicy) != nil {
 		t.Fatalf("no policy keys: %v out %q stderr %q", err, out, errOut)
+	}
+	if rest := aside(noPolicy.Warnings); len(rest) != 1 || rest[0].Path != "workflows.app" {
+		t.Fatalf("no policy keys: warnings %+v, want the mise one alone", noPolicy.Warnings)
 	}
 	withBudget := strings.Replace(pinned, "workflows:", "budget: { per_run_usd: 1 }\nworkflows:", 1)
 	if err := os.WriteFile(file, []byte(withBudget), 0o644); err != nil {
@@ -744,7 +761,10 @@ func TestValidateNotOnDefaultBranchSaysSo(t *testing.T) {
 	// no-mise-config one every cliMinimalYAML-based fixture here gets).
 	out, _, err = execute(t, "validate", "--json", file)
 	var got validateOutput
-	if err != nil || json.Unmarshal([]byte(out), &got) != nil || len(got.Warnings) != 2 || got.Warnings[1].Path != "branch" {
+	if err != nil || json.Unmarshal([]byte(out), &got) != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+	if rest := aside(got.Warnings); len(rest) != 2 || rest[1].Path != "branch" {
 		t.Fatalf("%v %s", err, out)
 	}
 	// A detached HEAD (a CI checkout) is not a branch: no note.
@@ -2588,7 +2608,12 @@ func TestValidateJudgesProvidersOnlyWithAMatchingLocalConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	matching := writeConfig(t, strings.Replace(string(body), "project: aurora", "project: borealis", 1))
+	// The other project's config is the file's own project and its own GCP
+	// project too (borealis is proj-9999): a file anchored to this installation
+	// would resolve against no layer at all, which is the arm below, not the
+	// control.
+	other := strings.Replace(string(body), "project: aurora", "project: borealis", 1)
+	matching := writeConfig(t, strings.Replace(other, "gcp_project: "+testutil.PinsGCPProject, "gcp_project: proj-9999", 1))
 	if out, _, err := execute(t, "validate", matching); ExitCode(err) != ExitUserError || !strings.Contains(out, "no provider serves it") {
 		t.Fatalf("control (a local config of the file's own project): exit %d, out %q", ExitCode(err), out)
 	}
@@ -3071,22 +3096,39 @@ func TestValidateLevelsSameModel(t *testing.T) {
 }
 
 // TestValidateLevelsRefusalIsSanitised: the resolver's refusal names the model
-// the file wrote, and no other validate check echoes that value, so this path
-// is the one that would carry a terminal escape from a hand-written model id
-// to the operator's screen. The launch path cleans it (ErrorText); validate
+// the run will take, and no other validate check echoes that value, so this
+// path is the one that would carry a terminal escape from a hand-written model
+// id to the operator's screen. The launch path cleans it (ErrorText); validate
 // prints the problem itself, so the problem's text is cleaned where it is built.
 //
+// The resolver is called with the configuration directly rather than through a
+// file: a model id is a lifted key since S1 (D3237), so the value can only reach
+// a run from the project layer — and a layer refuses a control or invisible
+// character outright (config's layerProblems), so no fixture can carry one to
+// this message. The value a run takes is what the sanitiser is for, whichever
+// document wrote it.
+//
 // Mutation (drop oneLine from the two messages in reviewLevelProblems): this
-// test fails, finding the escape byte in validate's output.
+// test fails, finding the escape byte in the problem's text.
 func TestValidateLevelsRefusalIsSanitised(t *testing.T) {
-	path := pinnedFile(t, strings.Replace(cliMinimalYAML, "workflows:",
-		"agent: { auth: api-key, first_line_review: on, models: { coder: \"a\\u001b[31mb\", reviewer: \"a\\u001b[31mb\" } }\nworkflows:", 1))
-	out, _, err := execute(t, "validate", path)
-	if ExitCode(err) != ExitUserError || !strings.Contains(out, "l2.model and l1.model are both") {
-		t.Fatalf("out = %q, err = %v", out, err)
+	const esc = "a\x1b[31mb"
+	cfg := &config.Config{Project: "aurora"}
+	cfg.Agent.Auth = "api-key"
+	cfg.Agent.FirstLineReview = "on"
+	cfg.Agent.Models = config.ModelRoles{Coder: esc, Reviewer: esc}
+	ps, _ := reviewLevelProblems("", cfg, nil, nil, nil, nil)
+	var found bool
+	for _, p := range ps {
+		if !strings.Contains(p.Message, "l2.model and l1.model are both") {
+			continue
+		}
+		found = true
+		if strings.ContainsRune(p.Message, 0x1b) {
+			t.Errorf("the problem text carries an escape byte: %q", p.Message)
+		}
 	}
-	if strings.ContainsRune(out, 0x1b) {
-		t.Errorf("validate printed an escape byte: %q", out)
+	if !found {
+		t.Fatalf("the resolver did not refuse one model for both levels: %+v", ps)
 	}
 }
 

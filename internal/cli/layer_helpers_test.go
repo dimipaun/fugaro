@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -92,18 +93,33 @@ func layerPins(body string) string {
 // cacheLayer is the copy of a project layer this machine holds after it read
 // one (localcfg.SaveLayerCache): the fallback findLayer reaches for when the
 // bucket cannot be reached (decision L13), and the only copy a command run
-// --offline reads.
+// --offline reads. The GCP project and the bucket are the layer's own, which is
+// what findLayer matches a cache entry on.
 func cacheLayer(t *testing.T, project, text string) {
 	t.Helper()
 	isolateCache(t)
+	gcp := gcpProjectNamed(text)
 	if err := localcfg.SaveLayerCache(os.Getenv, project, localcfg.SharedCacheEntry{
-		GCPProject: testutil.PinsGCPProject,
-		Bucket:     "fugaro-runs-" + testutil.PinsGCPProject,
+		GCPProject: gcp,
+		Bucket:     "fugaro-runs-" + gcp,
 		CheckedAt:  time.Now(),
 		YAML:       text,
 	}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// gcpProjectNamed is the gcp_project: line of a project layer's text: the GCP
+// project the layer and the cache entry keyed to it are matched on.
+func gcpProjectNamed(text string) string {
+	for _, l := range strings.Split(text, "\n") {
+		if v, ok := strings.CutPrefix(l, "gcp_project:"); ok {
+			if v = strings.TrimSpace(v); v != "" {
+				return v
+			}
+		}
+	}
+	return testutil.PinsGCPProject
 }
 
 // projectNamed is the project: line of a repository document: the project whose
@@ -166,23 +182,87 @@ func attachLayer(t *testing.T, project, text string) {
 	if path, err := localcfg.ProjectPath(os.Getenv, project); err == nil {
 		if b, err := os.ReadFile(path); err == nil {
 			cfg := strings.Replace(string(b),
-				"runs_bucket: unused-bucket", "runs_bucket: fugaro-runs-"+testutil.PinsGCPProject, 1)
+				"runs_bucket: unused-bucket", "runs_bucket: fugaro-runs-"+gcpProjectNamed(text), 1)
 			if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
 				t.Fatal(err)
 			}
 		}
 	}
-	dir := t.TempDir()
+	bucketFor := layerBucket(t)
+	for _, url := range []string{"gs://fugaro-runs-" + gcpProjectNamed(text), layerBucketURL(t, project)} {
+		if url == "" {
+			continue
+		}
+		p := filepath.Join(bucketFor(url), filepath.FromSlash(config.LayerKey))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// layerBucket serves the test its own buckets through layerBucketOpener: one
+// directory per URL, under a root the whole test shares. A test that attaches a
+// layer for two projects — the file's own, then another's — reads each one's
+// object; one directory for both would serve the last attachment to every
+// reader, whatever project it belongs to.
+func layerBucket(t *testing.T) func(url string) string {
+	t.Helper()
+	if any, ok := layerBuckets.Load(t.Name()); ok {
+		return any.(func(string) string)
+	}
+	root := t.TempDir()
 	old := layerBucketOpener
-	layerBucketOpener = func(ctx context.Context, _ string) (*blobx.Bucket, error) { return blobx.Open(ctx, "file://"+dir) }
-	t.Cleanup(func() { layerBucketOpener = old })
-	p := filepath.Join(dir, filepath.FromSlash(config.LayerKey))
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		t.Fatal(err)
+	sync := func(ctx context.Context, url string) (*blobx.Bucket, error) {
+		dir := filepath.Join(root, urlKey(url))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, err
+		}
+		return blobx.Open(ctx, "file://"+dir)
 	}
-	if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
-		t.Fatal(err)
+	dirFor := func(url string) string { return filepath.Join(root, urlKey(url)) }
+	layerBuckets.Store(t.Name(), dirFor)
+	layerBucketOpener = sync
+	t.Cleanup(func() {
+		layerBucketOpener = old
+		layerBuckets.Delete(t.Name())
+	})
+	return dirFor
+}
+
+// layerBuckets is layerBucket's per-test bucket roots, by test name. Every
+// layerBucketOpener replacement in one test serves the same root, so the two
+// exports are the same helper and the second attachment does not shadow the
+// first.
+var layerBuckets sync.Map
+
+// urlKey is url as a directory name.
+func urlKey(url string) string {
+	return strings.NewReplacer("/", "_", ":", "_").Replace(url)
+}
+
+// layerBucketURL is the URL the selected project config's own bucket resolves
+// to, "" when there is no such config or it names no bucket: findLayer reads a
+// layer over a matching installation at this URL rather than at the default
+// gs:// one (decision L9).
+func layerBucketURL(t *testing.T, project string) string {
+	t.Helper()
+	path, err := localcfg.ProjectPath(os.Getenv, project)
+	if err != nil {
+		return ""
 	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	for _, l := range strings.Split(string(b), "\n") {
+		if v, ok := strings.CutPrefix(l, "bucket_url:"); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 // noProjectLayerBucket points layerBucketOpener at an empty file:// bucket

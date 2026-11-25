@@ -48,12 +48,13 @@ workflows:
 // that is not in the file they have is being sent to the wrong file.
 //
 // The allow-list is the problem this test uses because it is one rule that
-// reaches both layers: the project layer file's first-line review model is left
-// out of it while the file's own senior review model is on it, and the file's
-// security review model is left out too, so the two paths come out of one run.
+// reaches the layers a run resolves over, and the document that wrote the model
+// is the project layer's since S1 (D3237): a repository file's own crafts are
+// dropped before the merge, so the file in hand is no longer the document a
+// craft model is judged at — this test's second half is exactly that.
 func TestValidateNamesACraftModelProblemAtItsOwnPath(t *testing.T) {
-	// The two models this world names with no row in the shipped table carry
-	// an owner's price, because the price rule reaches them: every run has a
+	// The models this world names with no row in the shipped table carry an
+	// owner's price, because the price rule reaches them: every run has a
 	// gateway now (AB1b, D3009), so `validate` prices the crafts' models in
 	// every mode, and "no price" would otherwise be a problem this test's
 	// fixture contributed rather than the allow-list rule it is about.
@@ -63,26 +64,21 @@ func TestValidateNamesACraftModelProblemAtItsOwnPath(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("validate accepted craft models no allow-list holds: exit %d\n%s%s", ExitCode(err), out, errOut)
 	}
-	for _, want := range []struct{ path, message string }{
-		// The project layer file wrote the first-line review's model, and its
-		// key is `defaults.agent.crafts.<craft>.model` -- a document the reader
-		// has, but not the one this command was handed.
-		{"defaults.agent.crafts.review.model", "`claude-sonnet-5-5` is not an allowed model"},
-		// The file in hand wrote the security review's model, at the key its own
-		// document spells.
-		{"agent.crafts.security-review.model", "`claude-opus-4-1` is not an allowed model"},
-	} {
-		if line := problemLine(out, want.path); !strings.Contains(line, want.message) {
-			t.Errorf("validate did not report %s at the key that wrote it:\nwant %q in a line\ngot  %q\nall:\n%s", want.path, want.message, line, out)
-		}
+	// The project layer file wrote the first-line review's model, and its key is
+	// `defaults.agent.crafts.<craft>.model` -- a document the reader has, but not
+	// the one this command was handed.
+	if line := problemLine(out, "defaults.agent.crafts.review.model"); !strings.Contains(line, "`claude-sonnet-5-5` is not an allowed model") {
+		t.Errorf("validate did not report the layer's model at the key that wrote it:\nwant %q in a line\ngot  %q\nall:\n%s", "`claude-sonnet-5-5` is not an allowed model", line, out)
 	}
-	// The senior review's model is on the list, and the crafts that name no
-	// model of their own — the coder's follower and the security review — are
-	// not refused for a model they did not write (F17): a problem at their keys
-	// would send a reader to a line that changes nothing.
-	for _, path := range []string{"agent.crafts.senior-review.model", "crafts.senior-review.model"} {
+	// The file in hand wrote craft models of its own, and they are not the
+	// run's: `agent.crafts` is a lifted key, so the file that wrote the
+	// security review's model off the list is not refused at that key — the
+	// line a reader would be sent to changes nothing about this run. The
+	// crafts that name no model of their own are not refused at theirs either
+	// (F17), for the same reason.
+	for _, path := range []string{"agent.crafts.review.model", "agent.crafts.security-review.model", "agent.crafts.senior-review.model", "crafts.senior-review.model"} {
 		if line := problemLine(out, path); line != "" {
-			t.Errorf("the senior review's model is on the allow-list and was reported anyway: %q", line)
+			t.Errorf("validate judged a craft model at %s, which no run of this file reads: %q\n%s", path, line, out)
 		}
 	}
 }
@@ -111,6 +107,12 @@ func TestValidateNamesACraftModelProblemAtItsOwnPath(t *testing.T) {
 // is not repeated here: the installation config carries one model_prices block.
 func TestValidateIgnoresTheCraftsNoRunReads(t *testing.T) {
 	craftFixtureWith(t, "budget: { allowed_models: [\"claude-opus-4-1\", \"claude-sonnet-5-5\"] }\n")
+	// The file's own pins are the layer's since S1 (D3237): a run of this file
+	// is priced by the layer, and a file whose models the drop left nowhere
+	// would be refused for naming none before the crafts are read at all. The
+	// layer keeps its own craft — the first-line review's model — and takes the
+	// file's pins, which is what a published project answer to this file is.
+	writeCraftLayer(t, testutil.MergePins(craftProjectLayer, pinsLayer(validateCraftPinnedYAML)))
 	testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": validateCraftPinnedYAML})
 	out, errOut, err := execute(t, "validate", "--offline", "fugaro.yaml")
 	if ExitCode(err) != ExitOK {
