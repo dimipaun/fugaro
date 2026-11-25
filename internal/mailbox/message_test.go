@@ -384,6 +384,19 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 		}
 		return record
 	}
+	// signed is the same message under O6's scheme: the `mac` replaced by a
+	// device signature, so a row can break the second tag exactly as it breaks
+	// the first. It is not `message` with an extra field — a record carrying
+	// both tags is a refusal of its own, which the table pins too.
+	signed := func(over Record) Record {
+		record := message(Record{})
+		delete(record, "mac")
+		record["sig"] = strings.Repeat("A", SigChars)
+		for key, value := range over {
+			record[key] = value
+		}
+		return record
+	}
 	heartbeat := func(over Record) Record {
 		record := Record{
 			"at": number("1700000000000"), "boot": "boot-01",
@@ -443,6 +456,12 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 			"an answer names the prompt it answers"},
 		{"an empty mac", message(Record{"mac": ""}), false, CodeEmptyString, "mac",
 			"an empty tag is not a tag, and it is not the same as an absent one"},
+		{"an empty sig", signed(Record{"sig": ""}), false, CodeEmptyString, "sig",
+			"the second tag is read the same way as the first"},
+		{"a sig that is not one", signed(Record{"sig": strings.Repeat("A", SigChars-1)}), false, CodeBadSig, "sig",
+			"a device signature is 86 characters of unpadded base64url and nothing else"},
+		{"a record carrying both tags", message(Record{"sig": strings.Repeat("A", SigChars)}), false, CodeBadTag, "sig",
+			"one record has one scheme, and a reader that took both would be choosing"},
 		{"an empty action id", cancelled(map[string]any{"id": ""}), false, CodeEmptyString, "action.id",
 			"the action id is what the confirmation names"},
 		{"an empty confirmation id", cancelled(map[string]any{
@@ -1737,10 +1756,10 @@ func TestEveryRefusalCodeMatchesTheModule(t *testing.T) {
 	for _, m := range jsRefusal.FindAllStringSubmatch(block[1], -1) {
 		declared[m[1]] = m[2]
 	}
-	if len(declared) != 21 {
+	if len(declared) != 23 {
 		t.Errorf("the module declares %d refusal codes: a new one is a code to bind, not to ignore", len(declared))
 	}
-	if len(Codes) != 21 {
+	if len(Codes) != 23 {
 		t.Errorf("this package speaks %d codes, the module declares %d", len(Codes), len(declared))
 	}
 	want := make([]string, 0, len(declared))
@@ -1780,6 +1799,19 @@ func acceptedAndSerialisable(t *testing.T, record Record) {
 func plainMessage(t *testing.T) Record {
 	t.Helper()
 	return vectorCase(t, "plain message")
+}
+
+// signedMessage is the vector file's plain message under O6's scheme: the same
+// fields with a device signature where the MAC was. It exists so that the
+// covered-set tests exercise the second tag too — a field the schema grows must
+// be a decision about both schemes, and `sig` itself is outside the covered
+// bytes for the reason `mac` is: a tag cannot cover itself.
+func signedMessage(t *testing.T) Record {
+	t.Helper()
+	record := plainMessage(t)
+	delete(record, "mac")
+	record["sig"] = strings.Repeat("A", SigChars)
+	return record
 }
 
 // vectorCase is one case's record as the file carries it, decoded by the
@@ -1844,7 +1876,7 @@ func TestBoundsMatchTheSharedModule(t *testing.T) {
 		"OPTIONS_MAX": OptionsMax, "OPTION_MAX": OptionMax, "TARGET_MAX": TargetMax,
 		"SHA_MIN": SHAMin, "SHA_MAX": SHAMax, "MAC_MAX": MACMax, "BOOT_MAX": BootMax,
 		"TOKEN_MAX": TokenMax, "ZONE_MAX": ZoneMax, "MINUTE_MAX": MinuteMax,
-		"MODE_MAX": ModeMax,
+		"MODE_MAX": ModeMax, "SIG_CHARS": SigChars,
 	} {
 		got, ok := declared[name]
 		if !ok {
@@ -1855,8 +1887,8 @@ func TestBoundsMatchTheSharedModule(t *testing.T) {
 			t.Errorf("%s is %d in this package and %d in the module: the two ends disagree about a bound", name, want, got)
 		}
 	}
-	if len(declared) != 17 {
-		t.Errorf("the module declares %d numeric bounds and this test knows 17: a new one is a bound to bind, not to ignore", len(declared))
+	if len(declared) != 18 {
+		t.Errorf("the module declares %d numeric bounds and this test knows 18: a new one is a bound to bind, not to ignore", len(declared))
 	}
 
 	vocabulary := map[string][]string{
