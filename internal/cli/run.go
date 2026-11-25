@@ -6685,7 +6685,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		// the same one: the two are served by two services and are not
 		// interchangeable (creds.PersonSlipEnv).
 		if !env.noPersonalToken {
-			lspec.Env = append(lspec.Env, runPersonalEnv(hctx, env, spec, slug, slipAccount)...)
+			lspec.Env = append(lspec.Env, runPersonalEnv(hctx, env, spec, slug, account)...)
 		}
 	}
 	// The services the job's own catalog entry declares, on EVERY launch and
