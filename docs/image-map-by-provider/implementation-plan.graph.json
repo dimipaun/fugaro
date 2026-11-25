@@ -1,0 +1,263 @@
+{
+ "schema_version": 3,
+ "plan": "docs/image-map-by-provider/implementation-plan.md",
+ "stream": "cli",
+ "nodes": [
+  {
+   "id": "T0",
+   "title": "the repo_images member, its type and the lookup by provider",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/projectpolicy/repoimages.go",
+     "internal/projectpolicy/repoimages_test.go",
+     "internal/projectpolicy/policy.go",
+     "internal/localcfg/localcfg.go",
+     "internal/localcfg/shared.go",
+     "internal/catalog/select.go",
+     "docs/image-map-by-provider/contract.md"
+    ]
+   }
+  },
+  {
+   "id": "U1",
+   "title": "update moves image_map to repo_images, by provider",
+   "run": null,
+   "version": null,
+   "tier": "large",
+   "size": 3,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/repo_images_migrate.go",
+     "internal/cli/repo_images_migrate_test.go",
+     "internal/cli/project_cmd.go",
+     "internal/cli/init_policy_publish.go"
+    ]
+   }
+  },
+  {
+   "id": "R1",
+   "title": "launch and update's job images read by provider",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/run.go",
+     "internal/infra/spec.go",
+     "internal/infra/catalogcheck.go",
+     "internal/cli/init_policy_migrate.go",
+     "internal/cli/run_test.go",
+     "internal/infra/catalogcheck_test.go"
+    ]
+   }
+  },
+  {
+   "id": "R2a",
+   "title": "the image commands read by provider",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/image_catalog.go",
+     "internal/cli/image_build_catalog.go",
+     "internal/cli/image_bake_note.go",
+     "internal/cli/image_catalog_test.go"
+    ]
+   }
+  },
+  {
+   "id": "R2b",
+   "title": "image survey --json version 2 prints repo_images",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/image_survey.go",
+     "schemas/image-survey.schema.json",
+     "internal/cli/image_survey_test.go"
+    ]
+   }
+  },
+  {
+   "id": "R3",
+   "title": "doctor, repos view and repos rm by provider",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/doctor_layer.go",
+     "internal/cli/repos_view.go",
+     "internal/cli/project_repos_rm.go",
+     "internal/cli/repos_view_test.go",
+     "internal/cli/project_repos_rm_test.go"
+    ]
+   }
+  },
+  {
+   "id": "S1",
+   "title": "the build token covers the request's provider only",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/credsvc/buildtoken.go",
+     "internal/credsvc/buildtoken_test.go"
+    ]
+   }
+  },
+  {
+   "id": "S2",
+   "title": "image map set writes repo_images",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/image_map.go",
+     "internal/cli/image_map_test.go",
+     "internal/settings/registry.go",
+     "schemas/settings.schema.json",
+     "website/content/cli-reference.md"
+    ]
+   }
+  },
+  {
+   "id": "D1",
+   "title": "the skills and documents name repo_images",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "plugin/skills/images/SKILL.md",
+     "plugin/skills/setup/SKILL.md",
+     "docs/project-layer.md",
+     "docs/gcp-live-checklist.md",
+     "docs/how-to/offboarding.md"
+    ]
+   }
+  },
+  {
+   "id": "K1",
+   "title": "Check 940 as a script",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "scripts/live-checks/check940.sh",
+     "scripts/live-checks/check940_test.sh"
+    ]
+   }
+  },
+  {
+   "id": "X1",
+   "title": "repo_images end to end, and the converge from the release before",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/repo_images_e2e_test.go"
+    ]
+   }
+  }
+ ],
+ "edges": [
+  {
+   "task": "U1",
+   "needs": "T0",
+   "reason": "kept: compiles against T0's type and request fields"
+  },
+  {
+   "task": "R1",
+   "needs": "T0",
+   "reason": "kept: compiles against T0's type and request fields"
+  },
+  {
+   "task": "R2a",
+   "needs": "T0",
+   "reason": "kept: compiles against T0's type and request fields"
+  },
+  {
+   "task": "R2b",
+   "needs": "T0",
+   "reason": "kept: compiles against T0's type and request fields"
+  },
+  {
+   "task": "R3",
+   "needs": "T0",
+   "reason": "kept: compiles against T0's type and request fields"
+  },
+  {
+   "task": "S1",
+   "needs": "T0",
+   "reason": "kept: compiles against T0's type and request fields"
+  },
+  {
+   "task": "S2",
+   "needs": "T0",
+   "reason": "kept: compiles against T0's type and request fields"
+  },
+  {
+   "task": "D1",
+   "needs": "T0",
+   "reason": "kept: compiles against T0's type and request fields"
+  },
+  {
+   "task": "K1",
+   "needs": "T0",
+   "reason": "kept: compiles against T0's type and request fields"
+  },
+  {
+   "task": "X1",
+   "needs": "U1",
+   "reason": "kept, behaviour: X1 exercises it end to end"
+  },
+  {
+   "task": "X1",
+   "needs": "R1",
+   "reason": "kept, behaviour: X1 exercises it end to end"
+  },
+  {
+   "task": "X1",
+   "needs": "R2a",
+   "reason": "kept, behaviour: X1 exercises it end to end"
+  },
+  {
+   "task": "X1",
+   "needs": "R3",
+   "reason": "kept, behaviour: X1 exercises it end to end"
+  }
+ ],
+ "decoupling": [],
+ "contract_changes": []
+}
