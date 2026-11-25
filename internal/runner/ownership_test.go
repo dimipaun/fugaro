@@ -80,6 +80,17 @@ func TestFailureBeforeTheFirstRecordIsStillRecorded(t *testing.T) {
 	if stored.Status != runstore.StatusInfraError || stored.Execution != exec2 || stored.RunID != runID {
 		t.Fatalf("record = %+v, want an infra_error of %s naming %s", stored, runID, exec2)
 	}
+	// The summary goes beside the record this execution created: without it a
+	// listing of a run that failed before its first stage would fall back --
+	// and, where a deleted record left an older summary behind, would show the
+	// row of a run this record replaced.
+	sum, err := h.store.ReadSummary(context.Background())
+	if err != nil {
+		t.Fatalf("the recorded failure has no summary to be listed from: %v", err)
+	}
+	if sum.Record == nil || sum.Record.Status != stored.Status || sum.Record.Reason != stored.Reason {
+		t.Fatalf("summary = %+v, want the record it stands in for (%+v)", sum.Record, stored)
+	}
 }
 
 // TestDuplicateExecutionCreateErrorWritesNothing: the first record's

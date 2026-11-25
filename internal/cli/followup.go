@@ -957,7 +957,7 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 		if c.PrevReport {
 			return nil, refuseReportFollowUp(rcp.Name)
 		}
-		if err := refuseFollowUpRepoRecipe(ctx, repo, rcp.Name); err != nil {
+		if err := refuseFollowUpRepoRecipe(ctx, env, repo, rcp.Name); err != nil {
 			return nil, err
 		}
 	}
@@ -1129,7 +1129,7 @@ func carryChosenRecipe(ctx context.Context, env *cloudEnv, repo string, c *prCha
 	var rcp *task.Recipe
 	changed := false
 	if ch.Source == string(recipe.SourceRepo) {
-		if err := refuseFollowUpRepoRecipe(ctx, repo, ch.Name); err != nil {
+		if err := refuseFollowUpRepoRecipe(ctx, env, repo, ch.Name); err != nil {
 			return nil, err
 		}
 		rcp = &task.Recipe{Name: ch.Name, Source: ch.Source}
