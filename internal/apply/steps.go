@@ -221,6 +221,20 @@ var settingSteps = []struct {
 	// check that finds nothing to write, which is the cheap direction of a
 	// declaration that cannot be made finer.
 	{"providers.", false, []string{initflow.Policy, initflow.CredentialsCopy}},
+	// The opt-in fact (R2, D3110): the one field of the `batch:` block that says
+	// whether this installation's compute root is applied, and what makes the
+	// write live is that root being applied — which `fugaro update` does, and
+	// the stage is a step of the table for that reason. The operator's own
+	// command writes and publishes the fact and names the update as the step
+	// after it (BR18); what a machine's `fugaro apply` makes of the entry is the
+	// same step, run where a person is at the terminal.
+	//
+	// The policy stage is restated beside it because a row of this table
+	// REPLACES what the registry declares for the key it answers and never adds
+	// to it: the fact's own row is the local config's (`loc`, both `local` and
+	// `shared`), so the publish is that row's own answer, and dropping it here
+	// would save an opt-in that never reaches the node again (R15).
+	{"batch.opt_in", true, []string{initflow.Policy, initflow.Compute}},
 	// The pin's ADDRESS is the one key of the member's half that owes a step:
 	// it is what the member's own credential-route record is keyed on — the
 	// address a run of its repositories takes the workspace's service from
