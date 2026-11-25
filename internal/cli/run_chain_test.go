@@ -18,6 +18,12 @@ import (
 // cannot spell. It is a repository the credentials service does not serve (an
 // api-key one, the fixture's own policy), so nothing but the table's own gate
 // is asked about it.
+//
+// agent.model is a lifted key (R1, D3237): a repository's file still writes it
+// and this release still reads it, and a job image older than release A —
+// l8Since, which is where it stops being honoured — is what L8's own gate
+// refuses (l8LiftedKeyLaunch). The arm below therefore moves the fixture's base
+// image to l8Since, so the refusal it reads is the table's and not that one's.
 const chainLaunchYAML = `version: 1
 project: aurora
 git:
@@ -153,6 +159,10 @@ func TestRunRefusesAnUnroutedModel(t *testing.T) {
 
 	t.Run("the run's own model is unrouted", func(t *testing.T) {
 		f := newProjectJobFixtureMode(t, "enforce")
+		// The fixture's base image is the release the policy node needs, which
+		// is older than the one a repository's own agent.model needs (L8): the
+		// gate this arm reads is the table's, so the image moves first.
+		f.rewriteConfig(t, "fugaro-base/fugaro-base:"+nodeRelease, "fugaro-base/fugaro-base:"+l8Since)
 		f.appendConfig(t, chainUnroutedYAML)
 		projectJobCheckoutYAML(t, chainLaunchYAML)
 		_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", runID, "Add a feature")
