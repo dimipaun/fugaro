@@ -395,6 +395,47 @@ func TestCatalogCheckJobRebuildsTheChangedEntryAsTheBuildIdentity(t *testing.T) 
 	}
 }
 
+// TestCatalogCheckRebuildHandsTheCredentialOnlyToADefinitionThatBakes: the
+// nightly job submits the request the manual build does, and the Baked flag it
+// composes is read from the copied definition's own bytes
+// (image_check_catalog.go) — the second of the two sites that decide whether an
+// entry's build step is handed the git credential. A rebuild of an entry whose
+// copy bakes keeps it, because the bake stage that copy carries clones with it;
+// a rebuild of one whose copy does not has it taken out. Without the flag the
+// job composed a baked entry's rebuild without the credential and the rebuild's
+// bake stage cloned with nothing, which is check 390 on the nightly path.
+func TestCatalogCheckRebuildHandsTheCredentialOnlyToADefinitionThatBakes(t *testing.T) {
+	appDir, err := imagebake.Path(mustSlug("bitbucket", "acme/app"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The record's base is not the base the registry serves (checkBaseDigest), so
+	// the job decides a rebuild either way: the marker is the only difference
+	// between the two rows.
+	moved := "sha256:" + strings.Repeat("9", 64)
+	for name, tc := range map[string]struct {
+		definition string
+		want       bool
+	}{
+		"a definition that bakes":    {catalogCheckAppDef + "# fugaro bake: " + appDir + "\nRUN true\n", true},
+		"a definition that does not": {catalogCheckAppDef, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("tools")))
+			f.seed(t, "tools", "acme/app", tc.definition, moved)
+			if _, err := runCatalogCheck(t); err != nil {
+				t.Fatal(err)
+			}
+			if got := buildPosts(f.fb); got != 1 {
+				t.Fatalf("builds submitted = %d, want the one rebuild", got)
+			}
+			if got := catalogBuildStepCredential(t, f.fb); got != tc.want {
+				t.Errorf("the rebuild's build step is handed the credential = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestCatalogCheckJobBuildsNothingFromAnUnreadableRecord: a record that cannot
 // be read is not a record that is not there. It holds the definition the image
 // was built from and the commit a rebuild is pinned to, so nothing is

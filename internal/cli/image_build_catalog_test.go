@@ -1135,6 +1135,83 @@ func TestCatalogBuildBakesTheMappedReposCheckout(t *testing.T) {
 	}
 }
 
+// catalogBuildCredentialArg is the git credential the derived template hands its
+// build step, as the submitted request spells it: gcp's
+// catalogTemplateCredentialArg, whose text that package's own test pins
+// (TestBakedEntryBuildKeepsTheCredential). This is the request's bytes and not
+// the constant, because a CLI test reads what was posted — the two have to be
+// read together, and a request that dropped this line clones with an empty mount,
+// which is check 390.
+const catalogBuildCredentialArg = `--secret "id=git-credentials,src=/creds/git-credentials"`
+
+// catalogBuildStepCredential is whether the last submitted build's own build
+// step is handed the git credential: the argument above and the fugaro-creds
+// volume at /creds that holds the file it names. The two go together — the
+// argument names a file only that volume puts in the step — so a request that
+// carries one and not the other fails here rather than passing as a half.
+func catalogBuildStepCredential(t *testing.T, fb *gcpfake.Build) bool {
+	t.Helper()
+	step := catalogBuildStep(t, fb, "build")
+	if step == nil {
+		t.Fatalf("the last request has no build step: %v", catalogBuildStepIDs(t, fb))
+	}
+	// The step's args read as one script, not as JSON: the argument is quoted,
+	// and the marshaled form would escape the quotes this looks for.
+	script := ""
+	args, _ := step["args"].([]any)
+	for _, raw := range args {
+		s, _ := raw.(string)
+		script += s + "\n"
+	}
+	held := strings.Contains(script, catalogBuildCredentialArg)
+	vols, _ := step["volumes"].([]any)
+	mounts := false
+	for _, raw := range vols {
+		v, _ := raw.(map[string]any)
+		if v["name"] == "fugaro-creds" && v["path"] == "/creds" {
+			mounts = true
+		}
+	}
+	if held != mounts {
+		t.Errorf("the build step's credential argument is there = %v and its fugaro-creds volume = %v: the argument names a file only that volume holds: %q", held, mounts, script)
+	}
+	return held
+}
+
+// TestCatalogBuildHandsTheCredentialOnlyToADefinitionThatBakes: what the CLI
+// reads out of the copy's own bytes (gcp.CatalogBuildSpec.Baked) decides whether
+// the request keeps the git credential on the entry's build step. A definition
+// that bakes keeps the argument and the fugaro-creds volume, because the bake
+// stage the copy carries is a RUN of that definition and clones with them; every
+// other definition has both taken out, and the credential reaches the clone
+// step's build and no build of the entry's own (B8, B9, F19, D2311).
+//
+// The gcp half of this wiring is TestBakedEntryBuildKeepsTheCredential; this is
+// the CLI half, and it is the one check 390 needed: a submission that never read
+// Baked off the copy composed a baked entry's build without the credential, and
+// that build's bake stage answered `could not read Username for
+// 'https://github.com'` with a `required=false` mount that had arrived empty.
+func TestCatalogBuildHandsTheCredentialOnlyToADefinitionThatBakes(t *testing.T) {
+	fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
+	if _, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1"); err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	if catalogBuildStepCredential(t, fb) {
+		t.Error("the entry's own build is handed the git credential: this definition bakes nothing, so the credential reaches the clone step's build and no build of the entry's (B9, D2311)")
+	}
+
+	// The project's map puts this build's own repository on the entry with the
+	// switch on, so the copy carries a bake stage and the entry's build step is
+	// the last of the build to read the credential.
+	f.appendConfig(t, "image_map:\n  acme/app: tools\nbake_repos: true\n")
+	if _, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1"); err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	if !catalogBuildStepCredential(t, fb) {
+		t.Error("the entry's build is handed no git credential: the bake stage this copy carries clones with one, and without it the build answers 'could not read Username for https://github.com'")
+	}
+}
+
 // TestCatalogBuildBakesNothingWithoutTheMap: a checkout that the project's map
 // does not put on this entry — every installation before this release, and one
 // whose operator answered the switch no — is byte for byte what it was: no
