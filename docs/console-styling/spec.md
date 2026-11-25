@@ -291,8 +291,9 @@ The default screen: one glance at what is spending money now. Regions in tree or
 header → total block → `div.live-repos` of `section.live-repo`, each with a meters row (a
 cap bar and the two sparklines, `5 min` and `1 h`), a kill banner and a `div.live-runs` holding a
 `table.live-table` of `tr.live-run` → an optional
-`div.live-orphans` → **`section.live-review`**, the review inbox (v2 plan Task V2.7.1,
-design F26). **The header is the title row**: `header.live-header` is one wrapping row whose
+`div.live-orphans` → an optional **`section.live-paused`**, the runs a pause suspended
+(model-credentials-routing plan **VS3**, contract-pause R15) → **`section.live-review`**, the
+review inbox (v2 plan Task V2.7.1, design F26). **The header is the title row**: `header.live-header` is one wrapping row whose
 cells share a baseline — `h1.live-project` (the project's name, at the heading size),
 then the connection as `span.live-connection-dot` beside the cell that carries its word
 (`span.live-connection`, with `span.live-connection-age` and an optional
@@ -305,9 +306,9 @@ the lost ones, and the neutral `--decor` for a state this build does not know), 
 word beside it is always the state the CLI reported, so no state is carried by colour
 alone (§3.5). **The stale banner and the last-read line are the header's last children, not
 siblings after the repositories**: `header()` appends them itself, inside the `header` it
-builds, and `renderLive` appends exactly five things to the
-root — the header, the total, `div.live-repos`, the optional `div.live-orphans` and
-`section.live-review`.
+builds, and `renderLive` appends exactly six things to the
+root — the header, the total, `div.live-repos`, the optional `div.live-orphans`, the optional
+`section.live-paused` and `section.live-review`.
 A rule that puts the banner below the repos list is a rule that selects it in a place it
 never occupies. **The orphan box holds the same `table.live-table` as a repository panel
 does**: `runTable` draws the table and no box around it, so each caller draws the box that
@@ -396,6 +397,7 @@ signal that would earn it (a note for the not-yet-read state) is not in this doc
 | Repository | `live-repos`, `live-repo` (a `section` with an accessible name — "Project runs"), `live-repo-head`, `live-repo-label`, `live-repo-name`, `live-repo-figures`, `live-repo-figure`, `live-repo-figure-label`, `live-repo-sep`, `live-repo-counted`, `live-repo-cap`, `live-repo-notional`, `live-repo-percent`, `live-repo-meters`, `live-halt` (a `button`, drawn disabled), `live-burn-rate`, `live-meter` (one sparkline and its window word: two per repository), `live-meter-word`, `live-burn`, `live-burn-bar`, `live-hour` (the console's own hour), `live-hour-bar`, `live-burn-unit`, `live-runs`, `live-orphans` |
 | Run row | `live-table` (the `table` itself), `live-table-head` (one `th` per column), `live-run` (a `tr`), `live-run-id`, `live-run-title`, `live-run-mode`, `live-pipeline`, `live-pipeline-segments`, `live-pipeline-segment` (one `li` per segment, keyed by `data-mark`), `live-run-when`, `live-run-dot`, `live-run-word`, `live-run-stage`, `live-run-round`, `live-run-state`, `live-run-coder`, `live-run-models`, `live-run-auth`, `live-run-spend`, `live-run-age`, `live-run-by` (the `td` of the launcher's column, the one `watch` prints), `live-run-started-by` (a `span` drawing the launcher in the CLI's own short form, and none at all when the record carries none), `live-run-status`, `live-run-chip` (the state's own word), `live-run-pip` (the lost chip's decorative mark), `live-run-flag` (one per flag **except** a flag whose name is the chip's own word — the health `lost` and the bucket `queued` — which joins the chip's `title` instead, §2.9), `live-run-contradiction`, `live-reap` (a `button`, drawn disabled and only on a lost run) |
 | Condition classes on a row | `live-run-queued`, `live-run-stuck`, `live-run-lost`, `live-run-done` |
+| Paused runs (**VS3**, model-credentials-routing) | `live-paused` (the `section`, drawn only when the feed carries a `finished[]` row whose status is `paused`), `live-paused-list`, `live-paused-row` (a `li`; its whole id is on `live-paused-run-id`, so the row is a door), `live-paused-state` (the word `PAUSED`), `live-paused-repo`, `live-paused-run-title`, `live-paused-resume`, `live-paused-resume-word` (`expected resume`), `live-paused-resume-at` (the instant, or the `n/a` mark with its reason in `title`), `live-paused-by`, `live-paused-by-word` (`resumed by`), `live-paused-by-id` (the resuming run's ending, with `data-run-id` — the second door of the row — or the `n/a` mark and **no attribute** when nobody resumed it) |
 | Review inbox | `live-review`, `live-review-icon` (the decorative mark, an `svg` whose two shapes are `live-review-icon-box` and `live-review-icon-check`), `live-review-title` (the CLI's one line, `Ready for your review (N)`, drawn as **one text run** — `reviewSection` writes the words, the parentheses and the count together, so no rule can space them apart), `live-review-list`, `live-review-row`, `live-review-repo`, `live-review-number`, `live-review-url`, `live-review-run-title`, `live-review-age`, `live-review-run-id`, `live-review-empty`, `live-review-note`, `live-review-capped`, `live-review-dropped` (the count of rows the cap left out), `live-review-of`, `live-review-total` |
 | Kill banner | `live-kill`, `live-kill-word`, `live-kill-by`, `live-kill-at`, `live-kill-reason` |
 | Stale / recency | `live-stale`, `live-stale-word`, `live-stale-silence`, `live-stale-threshold`, `live-stale-at`, `live-since`, `live-since-word`, `live-since-at`, `live-since-age` |
@@ -961,7 +963,8 @@ row that used to repeat it went with the run list.
 
 ### 2.6 Run detail — `console/src/renderer/screens/run.ts`
 
-Reached from a `live-run` row. The header, its status strip and its halt banner sit above
+Reached from a `live-run` row. The header, its status strip — with the paused line a paused
+run draws under it (model-credentials-routing plan **VS3**) — and its halt banner sit above
 the two columns: the main column (stages → spend by stage → tolerated by the mode →
 review levels → diagnosis → logs → replay) beside the aside (ledger → pull request), with
 the warnings after both. Two steps drew it — 3a the header, at a glance at the run, the timeline and
@@ -972,6 +975,7 @@ the log window, 3b the ledger, the pull request and the replay scrubber.
 | Breadcrumb | `run-crumb`, `run-crumb-live`, `run-crumb-sep`, `run-crumb-repo`, `run-crumb-run` |
 | Header | `run-header`, `run-head`, `run-id`, `run-retry`, `run-meta`, `run-meta-field`, `run-meta-label`, `run-meta-value`, `run-meta-absent`, `run-repo`, `run-workflow`, `run-recipe`, `run-branch`, `run-account`, `run-requested-by`, `run-started-by`, `run-rigor`, `run-rigor-word`, `run-rigor-mode`, `run-rigor-from-word`, `run-rigor-from`, `run-rigor-area`, `run-rigor-area-name`, `run-rigor-area-mode` |
 | Status strip | `run-strip`, `run-strip-cell`, `run-strip-label`, `run-strip-value`, `run-status`, `run-outcome`, `run-stage`, `run-flags`, `run-settled`, `run-flags-state`, `run-stale`, `run-follow-up` |
+| Paused line (**VS3**, model-credentials-routing) | `run-paused` (drawn only when the record's status is `paused`), `run-paused-word` (`PAUSED`), `run-paused-at`, `run-paused-at-word` (`expected resume`), `run-paused-at-value` (the instant, or the `n/a` mark with its reason in `title`), `run-paused-by`, `run-paused-by-word` (`resumed by`), `run-paused-by-value` (the resuming run's ending, with `data-run-id` — the cell's door — or the `n/a` mark and **no attribute** when nobody resumed it) |
 | Halt banner | `run-halt`, `run-halt-word`, `run-halt-reason`, `run-halt-where`, `run-halt-scope-word`, `run-halt-scope`, `run-halt-sep`, `run-halt-at-word`, `run-halt-at`, `run-halt-detail` |
 | Layout | `run-layout`, `run-main`, `run-aside` |
 | Ledger | `run-ledger`, `run-ledger-hero`, `run-ledger-word`, `run-ledger-total-value`, `run-ledger-bar`, `run-ledger-rail`, `run-ledger-billed`, `run-ledger-estimate`, `run-ledger-legend`, `run-ledger-key`, `run-ledger-swatch`, `run-ledger-swatch-billed`, `run-ledger-swatch-estimate`, `run-ledger-key-word`, `run-ledger-model-value`, `run-ledger-compute-value`, `run-ledger-notional`, `run-ledger-notional-value`, `run-number`, `run-panel-title` |
@@ -988,11 +992,15 @@ the log window, 3b the ledger, the pull request and the replay scrubber.
 | Warnings | `run-warning` |
 
 `data-*`: `data-theme`, `data-tone` on the status strip's `span.run-outcome`
-(`success`/`failure`, written by the screen and never by a reader of the row), and
-`data-href` on a log link (written by `putLink`, never the navigating attribute).
+(`success`/`failure`, written by the screen and never by a reader of the row), `data-href` on
+a log link (written by `putLink`, never the navigating attribute), and `data-run-id` on the
+paused line's `span.run-paused-by-value` — **another** run's whole id, which is what the cell
+opens (VS3); the run this screen is about never carries one.
 
 States: terminal / still running / settled / stale draft / follow-up (header flags, as
-text); halted (`div.run-halt`, the word `HALTED`); the outcome's tone (`span.run-outcome`
+text); halted (`div.run-halt`, the word `HALTED`); paused (`div.run-paused`, the word
+`PAUSED` with the instant the resume is due and the run that performed it — §2.3's paused
+section draws the same run on Live); the outcome's tone (`span.run-outcome`
 with `data-tone`: `success` for the three outcomes of a run that delivered what it
 promised -- `ready`, `reviewed`, `artifacts` -- and `failure` for `draft`, which runstore's
 own `StatusFailed` calls a draft PR; the word is drawn either way and the tone only ever
