@@ -48,12 +48,22 @@ const (
 )
 
 // The resource types the table declares. A resource type is the subject a
-// command acts on and not the command: `fugaro image add` and `fugaro image rm`
-// both change the catalog and owe the same steps.
+// command acts on and not the command.
 const (
 	// ResourceImage is the project's image catalog (internal/cli/
-	// image_catalog.go).
+	// image_catalog.go) as `fugaro image add` leaves it: an entry written into
+	// it, whose image has to be built before anything can pin or publish it.
 	ResourceImage = "image"
+	// ResourceImageRemoval is that same catalog with an entry taken out of it
+	// (`fugaro image rm`), which is a different subject from an entry written
+	// into it and not the same change read twice: a removal builds nothing.
+	// The entry's image is built, pushed and left in the registry, the catalog
+	// the removal leaves is the one the remaining entries make up, and the
+	// build of a catalog image is billable and leased from the run's budget
+	// (F2, D1543) — so a removal that owed it would rebuild every entry of the
+	// catalog, and fail the whole removal on the first entry whose build fails,
+	// over a change that never touched it (check 390).
+	ResourceImageRemoval = "image-removal"
 	// ResourceRepo is a repository of the project (internal/cli/
 	// project_enroll.go): onboarding one is what the repository stage's own
 	// plan is made from.
@@ -81,16 +91,25 @@ type Change struct {
 	Key string `json:"key"`
 }
 
-// catalogSteps is what a catalog entry owes (F2): the build that makes the
-// image exist, the repository stage, whose redeploy pins the digest that build
-// produced, and the policy stage, which publishes `image_catalog` into the node
-// every run of the project is admitted by. Both the image resource type and
-// every `image_catalog.*` key owe it, which is why it is written once.
+// catalogSteps is what a catalog entry written into the catalog owes (F2): the
+// build that makes the image exist, the repository stage, whose redeploy pins
+// the digest that build produced, and the policy stage, which publishes
+// `image_catalog` into the node every run of the project is admitted by. Both
+// the image resource type and every `image_catalog.*` key owe it, which is why
+// it is written once.
 var catalogSteps = []string{CatalogBuild, initflow.Repository, initflow.Policy}
+
+// removalSteps is what an entry taken out of the catalog owes: the two stages
+// that make the removal live and no build. The repository stage redeploys the
+// checkout's own jobs without the entry (D1574) and the policy stage publishes
+// the catalog the removal leaves, which is the whole of what a removal changes
+// — see ResourceImageRemoval for why the build is not one of them.
+var removalSteps = []string{initflow.Repository, initflow.Policy}
 
 // resourceSteps is the resource-type half of the table.
 var resourceSteps = map[string][]string{
-	ResourceImage: catalogSteps,
+	ResourceImage:        catalogSteps,
+	ResourceImageRemoval: removalSteps,
 	// ResourceRepo is a repository of the project (internal/cli/
 	// project_enroll.go): onboarding one is what the repository stage's own
 	// plan is made from, and the three stages are the ones the enrolment's own
@@ -202,6 +221,20 @@ var settingSteps = []struct {
 	// check that finds nothing to write, which is the cheap direction of a
 	// declaration that cannot be made finer.
 	{"providers.", false, []string{initflow.Policy, initflow.CredentialsCopy}},
+	// The opt-in fact (R2, D3110): the one field of the `batch:` block that says
+	// whether this installation's compute root is applied, and what makes the
+	// write live is that root being applied — which `fugaro update` does, and
+	// the stage is a step of the table for that reason. The operator's own
+	// command writes and publishes the fact and names the update as the step
+	// after it (BR18); what a machine's `fugaro apply` makes of the entry is the
+	// same step, run where a person is at the terminal.
+	//
+	// The policy stage is restated beside it because a row of this table
+	// REPLACES what the registry declares for the key it answers and never adds
+	// to it: the fact's own row is the local config's (`loc`, both `local` and
+	// `shared`), so the publish is that row's own answer, and dropping it here
+	// would save an opt-in that never reaches the node again (R15).
+	{"batch.opt_in", true, []string{initflow.Policy, initflow.Compute}},
 	// The pin's ADDRESS is the one key of the member's half that owes a step:
 	// it is what the member's own credential-route record is keyed on — the
 	// address a run of its repositories takes the workspace's service from

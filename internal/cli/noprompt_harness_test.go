@@ -482,17 +482,29 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro project repos rm":     {args: []string{"acme/app"}},
 	"fugaro project repos status": {args: []string{"github/acme/app"}},
 	"fugaro project routing set":  {args: []string{"claude", "--via", "direct"}},
-	"fugaro recipes publish":      {args: []string{"slug"}},
-	"fugaro recipes rm":           {args: []string{"slug"}},
-	"fugaro recipes show":         {args: []string{"slug"}},
-	"fugaro recipes validate":     {args: []string{"slug"}},
-	"fugaro restore":              {args: []string{"proj-2", "root"}},
-	"fugaro review show":          {args: []string{"run-1"}},
-	"fugaro run":                  {args: []string{"do something"}},
-	"fugaro escalation show":      {args: []string{"wi-1"}},
-	"fugaro runs show":            {args: []string{"run-1"}},
-	"fugaro secrets rm":           {args: []string{"NAME"}},
-	"fugaro secrets set":          {args: []string{"NAME"}},
+	// The table's two writes, over a world whose config carries no
+	// model_routing block: `set` appends the entry, and `rm` takes away the one
+	// its seed declares. Both are the local config's write path — the fence is
+	// applySettingsEdit's, and this world has no agent marker — so what the
+	// closed stdin has to show is that neither waits for a person to answer,
+	// and the sentence each is read by is the write's own.
+	"fugaro routing set": {args: []string{"claude-*", "anthropic"}, reaches: "set the routing entry `claude-*`"},
+	"fugaro routing rm": {
+		args:    []string{"zzz-*"},
+		reaches: "remove the routing entry `zzz-*`",
+		seed:    closedStdinRoutingSeed,
+	},
+	"fugaro recipes publish":  {args: []string{"slug"}},
+	"fugaro recipes rm":       {args: []string{"slug"}},
+	"fugaro recipes show":     {args: []string{"slug"}},
+	"fugaro recipes validate": {args: []string{"slug"}},
+	"fugaro restore":          {args: []string{"proj-2", "root"}},
+	"fugaro review show":      {args: []string{"run-1"}},
+	"fugaro run":              {args: []string{"do something"}},
+	"fugaro escalation show":  {args: []string{"wi-1"}},
+	"fugaro runs show":        {args: []string{"run-1"}},
+	"fugaro secrets rm":       {args: []string{"NAME"}},
+	"fugaro secrets set":      {args: []string{"NAME"}},
 	// The intake's two families take the same NAME as the pair above, and their
 	// bodies are reached the same way: the name is the whole of what stands
 	// between a bare run and the command's own body, which is where the
@@ -693,6 +705,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro report":                 "refuses: the edition is not in this build",
 	"fugaro review":                 "refuses from inside its body: --pr is required, and a bare run names it rather than launching a review",
 	"fugaro rigor floor show":       "reads the selected project's own config and prints the floor it carries, which is the whole of what a bare run does",
+	"fugaro routing ls":             "prints this world's project's routing table — empty, since the config writes no model_routing block — and one row per model it can be served on, which is the whole of what a bare run does",
 	"fugaro runs digest":            "prints the no-project-config refusal",
 	"fugaro runs ls":                "prints the no-project-config refusal",
 	"fugaro runs reindex":           "prints the no-project-config refusal",
@@ -986,6 +999,17 @@ func closedStdinBinariesSeed(t *testing.T, f *budgetFixture) {
 func closedStdinPoolSeed(t *testing.T, f *budgetFixture) {
 	t.Helper()
 	f.appendConfig(t, "credentials:\n  - name: team-a\n    type: claude-oauth\n  - name: team-b\n    type: claude-oauth\npools:\n  - name: claude-pool\n    members:\n      - team-a\n")
+}
+
+// closedStdinRoutingSeed gives the world the entry the routing rm takes away: a
+// removal of a pattern the table does not carry is refused before the write,
+// which would leave the fixture's sentence unproven. The pattern answers no
+// model any document of the world names, so the chain is judged as the table's
+// own entry and nothing else, and the table the removal leaves is the empty one
+// the set's fixture writes over.
+func closedStdinRoutingSeed(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	f.appendConfig(t, "model_routing:\n  - match: \"zzz-*\"\n    chain:\n      - {kind: anthropic}\n")
 }
 
 // closedStdinAccountAllowListSeed gives the world the account the deny's

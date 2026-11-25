@@ -446,12 +446,14 @@ func TestWrapUpBounded(t *testing.T) {
 			}
 			// The work a wrap-up turn does before it goes on for too long: it
 			// commits what it has, and the bound then ends the turn and the
-			// stage with it (rule 3).
+			// stage with it (rule 3). The turn's clock runs from its first
+			// statement and not from the wait below: the bound is on the whole
+			// turn, so the work is part of what it is read against.
+			start := time.Now()
 			res, err := implement("feature")(t, ctx, req)
 			if err != nil {
 				return res, err
 			}
-			start := time.Now()
 			select {
 			case <-req.Yield.Ask:
 				waited = time.Since(start)

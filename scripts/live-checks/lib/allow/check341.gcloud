@@ -1,0 +1,13 @@
+# gcloud calls scripts/live-checks/check341.sh makes. See lib/strict.sh.
+cmd	scheduler jobs describe
+cmd	run jobs describe
+cmd	run jobs get-iam-policy
+cmd	run jobs executions list
+cmd	storage ls
+cmd	storage buckets describe
+cmd	storage buckets get-iam-policy
+flag	--location
+flag	--region
+flag	--job
+flag	--limit
+flag	--recursive
