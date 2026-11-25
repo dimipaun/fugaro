@@ -270,6 +270,84 @@ func TestFirestoreReaderPages(t *testing.T) {
 		}
 	})
 
+	t.Run("the window is the run's start, not its last write", func(t *testing.T) {
+		// A run minted before the window whose own last write is inside it. The
+		// window has always meant "runs started within this long" (`runs ls
+		// --since`) and the record read windows by the run id's mint time
+		// (runstore.ListRunIDs), so this run is outside the window both reads are
+		// of -- while an index that windowed and ordered by updated_at would list
+		// it, and print rows the record read does not have.
+		f := seeded(t)
+		f.seed(Entry{RunID: "20261122-093000-f0f0", Slug: pageSlug, UpdatedAt: indexAt(10, 30), Status: runstore.StatusSucceeded})
+		if got, want := ids(f.list(Filter{Since: indexAt(10, 0)})), []string{runNewest, runTieHigh, runTieLow}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("since 10:00 = %v, want %v", got, want)
+		}
+	})
+
+	// The parity the window's key exists for: the ids a windowed page holds are
+	// the ids the bucket read the index replaces lists for the same window, in
+	// the same order. The two reads disagreeing about a straddling run was the
+	// finding; the truncation of the two sets is what it also covers.
+	t.Run("a window holds what the bucket holds", func(t *testing.T) {
+		f := seeded(t)
+		f.seed(Entry{RunID: "20261122-093000-f0f0", Slug: pageSlug, UpdatedAt: indexAt(10, 30), Status: runstore.StatusSucceeded})
+		bucket := gcpfake.NewGCS(t).Bucket(t, "runs")
+		// The runs of that one repository, as the bucket has them: the two the
+		// window keeps, the two it does not, and the straddler it does not either.
+		for _, id := range []string{runNewest, runTieLow, runMid, "20261122-093000-f0f0"} {
+			s := runstore.Open(bucket.Bucket, pageSlug, id)
+			if err := s.WriteLaunch(context.Background(), &runstore.Launch{Version: 1, RunID: id}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		since := indexAt(10, 0)
+		want, err := runstore.ListRunIDs(context.Background(), bucket.Bucket, pageSlug, since)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := ids(f.list(Filter{Slugs: []string{pageSlug}, Since: since}))
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("the index's window = %v, the bucket's = %v, want one window", got, want)
+		}
+	})
+
+	// A window is a moment and a run id names whole seconds, so the two reads
+	// meet the question at different granularities: the record read tests the mint
+	// time itself (`!t.Before(since)`) and every real window carries a fraction
+	// (`runs stats` builds it as now minus a duration). The index's floor is the
+	// window's own second rounded up, so a run minted earlier in that second is
+	// below it -- the same run the bucket read drops.
+	t.Run("a window inside a second holds what the bucket holds", func(t *testing.T) {
+		f := seeded(t)
+		bucket := gcpfake.NewGCS(t).Bucket(t, "runs")
+		for _, id := range []string{runNewest, runTieLow, runMid} {
+			s := runstore.Open(bucket.Bucket, pageSlug, id)
+			if err := s.WriteLaunch(context.Background(), &runstore.Launch{Version: 1, RunID: id}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		since := indexAt(10, 0).Add(500 * time.Millisecond)
+		want, err := runstore.ListRunIDs(context.Background(), bucket.Bucket, pageSlug, since)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(want, []string{runNewest}) {
+			t.Fatalf("the bucket's window = %v, want the runs after %s alone", want, since)
+		}
+		got := ids(f.list(Filter{Slugs: []string{pageSlug}, Since: since}))
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("the index's window = %v, the bucket's = %v, want one window", got, want)
+		}
+		// And the walk stops at the window's own second rounded up, not the second
+		// the window starts in: a walk that stopped at the truncated second reads
+		// the runs the page's own window filter then drops, and a page cut at them
+		// reports a next page over a window that holds nothing more.
+		page := f.list(Filter{Slugs: []string{pageSlug}, Since: since, Limit: 1})
+		if len(page.Entries) != 1 || page.Next != nil {
+			t.Fatalf("a page of one over a window of one = %v with Next %+v, want the one row and no next page", ids(page), page.Next)
+		}
+	})
+
 	t.Run("the summary is the document, with every state it does not carry", func(t *testing.T) {
 		sum, err := f.read.Summary(context.Background())
 		if err != nil {

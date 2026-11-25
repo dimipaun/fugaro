@@ -655,7 +655,7 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 	// installOptions for the command's own door (a refresh that is nobody's
 	// step carries nothing), and the carry of a default profile the config can
 	// no longer compose for the converge's (init_policy_migrate.go).
-	spec, err := installSpec(iopts, p.lc, r.warn)
+	spec, err := installSpec(iopts, p.lc, r.withheld)
 	if err != nil {
 		return refreshStopped(1, nil, o, err)
 	}

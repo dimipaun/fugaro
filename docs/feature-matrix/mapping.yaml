@@ -386,6 +386,14 @@ excluded:
     reason: "Not mapped yet: a plan still being worked through, whose fixes land in the console features already listed; no capability of its own to read."
   - spec: managed-flag-ergonomics
     reason: "Not mapped yet: a plan with three of twelve tasks merged, and its user-facing change is the refusal of writes to an unmanaged project, which no row describes yet."
+  - spec: repo-override-rulings
+    reason: "Not mapped yet: a plan still being worked through, whose user-facing change is the migration of a repository's own settings into the project, which no row describes yet."
+  - spec: required-version-stamp
+    reason: "Not mapped yet: a plan still being worked through, whose user-facing change is the project's oldest allowed CLI, which no row describes yet."
+  - spec: update-from-anywhere
+    reason: "Not mapped yet: a plan with its contract task in a run, so no capability to read."
+  - spec: repo-coupling-audit
+    reason: "Not mapped yet: an audit of how repositories are coupled to the installation, with no capability of its own to read."
   - spec: model-credentials-routing
     reason: "Not mapped yet: a large plan still being worked through; the model access feature takes it when its credential routing ships."
   - spec: design

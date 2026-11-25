@@ -194,7 +194,7 @@ type initOptions struct {
 	// --region.
 	location string
 
-	// answersFile is --answers-file: the wizard's five questions answered as
+	// answersFile is --answers-file: the wizard's questions answered as
 	// one document, whose members fill the fields above and nothing else
 	// (setup_answers.go, D2904 of docs/console-improvements). "-" reads it from
 	// stdin, which is what a surface with no file of its own passes.
@@ -500,11 +500,27 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 				// refused by name (refuseConvergeFlags) rather than ignored.
 				err = runUpdateCheck(cmd, o, args)
 			case o.repo:
-				err = runInitRepo(r, args)
+				// The door's own fence (T4, D3266, R8), on both of the arms
+				// that write: an installation a newer fugaro updated refuses
+				// an older binary here, before its first write, whatever mode
+				// it was asked for. --check above and --print-vars (inside the
+				// two arms' own runs) make no cloud call and are not fenced.
+				//
+				// The installation is the checkout at PATH, which is the one
+				// runInitRepo acts on and not the working directory's.
+				if err = refuseUpdateBelowTheStamp(cmd, o, stampDoor{dir: repoDir(args)}); err == nil {
+					err = runInitRepo(r, args)
+				}
 			case len(args) > 0:
 				err = userErr("a checkout path is for --repo; fugaro %s takes no argument", d.name)
 			default:
-				err = runInit(r)
+				// The converge and `setup` act on the working directory's
+				// checkout and select a project config the way loadInitConfig
+				// does: the door is starting one if there is none, and --name
+				// chooses among several.
+				if err = refuseUpdateBelowTheStamp(cmd, o, stampDoor{creating: true, name: o.name}); err == nil {
+					err = runInit(r)
+				}
 			}
 			if r.events != nil {
 				// The run asked for lines instead of the document
@@ -583,7 +599,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// this is where its answers travel. The help names the members because the
 	// file is the reader's whole contract, and it says what the file is not: an
 	// answer is not a confirmation.
-	f.StringVar(&o.answersFile, "answers-file", "", "answer the wizard's questions from one JSON document: "+strings.Join(setupAnswerKeys(), ", ")+" — the five questions a first run asks (--gcp-project, --location or its precise form --region, --name, --rigor and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation")
+	f.StringVar(&o.answersFile, "answers-file", "", "answer the wizard's questions from one JSON document: "+strings.Join(setupAnswerKeys(), ", ")+" — the questions a first run asks (--gcp-project, --location or its precise form --region, --name, --rigor, --budget with --budget-currency, and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation")
 	// --events writes the same account --json prints as a stream of lines
 	// instead of one document (setup_events.go, D2904 of
 	// docs/console-improvements). The help names every kind of line, because
@@ -613,7 +629,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.BoolVar(&o.noLogIsolation, "no-log-isolation", false, "leave Fugaro job logs in _Default instead of their own log bucket")
 	f.StringVar(&o.registryCleanup, "registry-cleanup", "", "Artifact Registry cleanup: dry-run (the default), on or off")
 	f.StringVar(&o.firebase, "firebase-project", "", "turn the shared budget on: the value is the installation's own GCP project id (the default; the flag is only needed to turn the shared budget on), and any other id is refused. It is the flag that asks for the backend — a run without it builds none — and that backend is three applies: the database's rules and mark, the Firestore history database (the run creates it in the installation's own region where Firestore offers it, and otherwise in the place's default region, and its location is permanent: where the run creates the database it prints where, and that the location can never be changed, and creates it, asking nothing — nothing is typed, and --json, a pipe and a coding agent's session are no different; it is already there on a run that re-converges an installation that has it) and the config")
-	f.StringVar(&o.budgetMode, "budget-mode", "", "with --firebase-project: off, observe or enforce: the jobs' budget mode in the project config, and for observe and enforce the project-wide mode in the database (an absent one is seeded observe)")
+	f.StringVar(&o.budgetMode, "budget-mode", "", "with --firebase-project: observe or enforce: the jobs' budget mode in the project config, and the project-wide mode in the database (an absent one is seeded observe)")
 	f.StringArrayVar(&o.budgetAdmins, "budget-admin", nil, "with --firebase-project: an IAM member who may change caps and kill switches besides the GCP project's owners and editors (repeatable; default: the local config's terraform.budget_admins)")
 	f.BoolVar(&o.createProject, "create-project", false, "create the GCP project --gcp-project names and add Firebase to it, as you, at your own real terminal (never with --json; nothing is typed there, being at it is what confirms the step). A first run of "+d.name+" always creates its project, so the flag only says so explicitly. An ID that already exists is refused unless an earlier run of "+d.name+" made it Fugaro's (the resume), and one that holds nothing of Fugaro's is adopted instead: "+d.name+" uses it as if it had created it. Billing is not linked unless --link-billing is also given; without it "+d.name+" prints the one gcloud command that links it, unless the run asks the billing question (no --json and no coding agent's session) and has no terminal, where it is refused there at once instead, in the sentence naming --link-billing")
 	f.StringVar(&o.displayName, "display-name", "", "on a first run, which creates the project: its display name (default: its ID)")
@@ -678,6 +694,16 @@ type initRun struct {
 	cmd *cobra.Command
 	o   *initOptions
 	w   io.Writer // the human-readable account: stdout, or stderr with --json
+	// qs is the colour the run's own lines are drawn with before there is a
+	// reporter to draw them: the wizard's questions are asked before the
+	// converge builds one (gatherInputs runs before the run has a config to
+	// redact a log with), and the two hands have to draw one screen
+	// (report.NewStyle).
+	qs report.Style
+	// headed says the run's own `==> Setting up …` line is out. It is printed
+	// with the first thing the run says — the first question, or the converge's
+	// first block on a run that asks nothing — and never twice.
+	headed bool
 	// in is the run's own input, which the value entry reads through
 	// (valueentry.go's readValue, which asks the command for the same reader)
 	// and which a value question left over from an earlier shape of this file
@@ -1068,6 +1094,7 @@ func newInitRun(cmd *cobra.Command, o *initOptions) *initRun {
 		r.events = newSetupEvents(cmd.OutOrStdout())
 	}
 	r.in = cmd.InOrStdin()
+	r.qs = questionStyle(cmd, cmd.OutOrStdout())
 	return r
 }
 
@@ -1262,7 +1289,7 @@ func runInit(r *initRun) error {
 		r.refreshLocalOptIn(path, publishedOptIn)
 		return r.printResult()
 	}
-	spec, err := installSpec(o, lc, r.warn)
+	spec, err := installSpec(o, lc, r.withheld)
 	if err != nil {
 		return err
 	}
@@ -2159,8 +2186,13 @@ func (o *initOptions) check() error {
 			return userErr("--firebase-project %q is not a project ID (6 to 30 of a-z, 0-9 and '-', starting with a letter)", fp)
 		case checkFirebaseProject(fp, o.cloud.gcpProject) != nil:
 			return checkFirebaseProject(fp, o.cloud.gcpProject)
-		case o.budgetMode != "" && !slices.Contains([]string{"off", "observe", "enforce"}, o.budgetMode):
-			return userErr("--budget-mode %q must be off, observe or enforce", o.budgetMode)
+		case policy.Mode(o.budgetMode).Removed():
+			// The old word is refused with the vocabulary's own text, not with a
+			// list of the words that are left: a person who wrote it is told why
+			// it is gone and what to write instead (AB3, C1, D3009).
+			return userErr("--budget-mode: %s", policy.ModeOffRefusal)
+		case o.budgetMode != "" && !slices.Contains([]string{policy.ModeObserve, policy.ModeEnforce}, o.budgetMode):
+			return userErr("--budget-mode %q must be observe or enforce", o.budgetMode)
 		}
 	}
 	// A budget is declared by --budget and --budget-currency together, and the
@@ -2505,9 +2537,25 @@ func initErr(err error) error {
 	return remote(err)
 }
 
+// warn is the run's own line about something it has to say and that is not a
+// failure: the message in the result, unchanged, and the same message on the
+// screen under the Warning label the whole CLI draws one with (report.Style).
 func (r *initRun) warn(msg string) {
 	r.res.Warnings = append(r.res.Warnings, msg)
-	fmt.Fprintln(r.w, "warning: "+msg)
+	fmt.Fprintln(r.w, r.qs.Warning(msg))
+}
+
+// withheld is a write this run did not make: one line, what happened and what
+// is left for the operator, on the screen and in the result's warnings (the
+// field a reader outside this binary consumes), and the reason whole in the
+// run's log (D1352), which is where a reader who needs the repositories, the
+// workflow or the error the line cut goes — the short view and the whole
+// reason in the log is the converge's own rule (report.Options.Brief). A run
+// whose log could not be opened keeps the reason on the screen beside the line
+// rather than swallowing it (G5).
+func (r *initRun) withheld(line, why string) {
+	r.warn(line)
+	fmt.Fprintln(r.stageDetail(), why)
 }
 
 // printWorkflowWarnings prints what the workflows' deploy-time specs carry
@@ -3662,6 +3710,16 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		// keeps judging it as it always did. The Firebase root is not given this
 		// list here: LM14 wires that root's guard at its level (F32).
 		identity := infra.IdentityAllowDelete(plan, infra.PeopleMinter(plan))
+		// The catalog build identity's per-repository secret accessors leave
+		// with IS8 (D3330): the module declares the resource nowhere any more,
+		// so the plan of an installation whose state still holds the instances
+		// deletes them, and this binary's own removal may not cost the operator
+		// a flag (the hard rule above; infra.BuildIdentityAccessorAllowDelete).
+		// It is named beside the minter rows because it is the same kind of
+		// fact — a removal this binary makes — and reaches the managed gate the
+		// same way, so a managed project's record names it rather than warning
+		// about an unannounced removal.
+		identity = append(identity, infra.BuildIdentityAccessorAllowDelete(plan)...)
 		allowed := append(append(append(slices.Clone(r.o.allowDelete), hardening...), upgrade...), identity...)
 		counts := infra.CountPlan(plan)
 		// The managed gate judges the plan BEFORE the guard and the
@@ -3866,7 +3924,7 @@ func (r *initRun) runsBucketViewers(ctx context.Context, c *infra.Clients, spec 
 		return err
 	}
 	if !ok {
-		r.warn(fmt.Sprintf("project Viewers can still read gs://%s, transcripts and caches included: the removal was not confirmed; rerun "+r.o.doorProgram()+" to remove it", spec.RunsBucket))
+		r.warn(fmt.Sprintf("project Viewers can still read gs://%s: the removal was not confirmed; rerun "+r.o.doorProgram()+" to remove it", spec.RunsBucket))
 		return nil
 	}
 	if err := infra.RemoveProjectViewers(ctx, c, spec.RunsBucket, p); err != nil {
@@ -4996,11 +5054,17 @@ func runInitRepo(r *initRun, args []string) error {
 			return err
 		}
 	}
-	dir := "."
+	return r.repoEngine(cmd.Context(), repoDir(args), "", false)
+}
+
+// repoDir is the checkout `--repo` acts on: its PATH argument, else the working
+// directory. One function so the fence and the run it fences resolve the same
+// checkout (update_stamp_guard.go).
+func repoDir(args []string) string {
 	if len(args) > 0 {
-		dir = args[0]
+		return args[0]
 	}
-	return r.repoEngine(cmd.Context(), dir, "", false)
+	return "."
 }
 
 // billableBuildLeft is the left-for-you for a billable first image build: the
@@ -5232,7 +5296,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// added on a second App — is refused by that function, and the repository
 	// stage is where every later update of such an installation would stop
 	// (installSpec).
-	inst, err := installSpec(o, lc, r.warn)
+	inst, err := installSpec(o, lc, r.withheld)
 	if err != nil {
 		return err
 	}

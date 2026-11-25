@@ -622,10 +622,10 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // Every one of them is **inert until used**: each is behind a floor
   // (`src/shared/version.ts`) that is `null` until the CLI release that carries
   // its flags, so a screen that asked anyway is refused before a child exists,
-  // and the handler in `src/main/index.ts` answers 'not available in this
-  // build' until I-OPS registers the real one. None of them has a flag a
-  // caller can choose: the mode words (`--stream`, `--me`, `--plan-only`) are
-  // fixed words of the row's command path in `src/main/spawn.ts`.
+  // and the handler `src/main/handlers.ts` puts behind each refuses in the
+  // flow's own words, naming that floor. None of them has a flag a caller can
+  // choose: the mode words (`--stream`, `--me`, `--plan-only`) are fixed words
+  // of the row's command path in `src/main/spawn.ts`.
   ['runs.stream', 'streamRuns'],
   ['spend.stream', 'streamSpend'],
   ['budget.stream', 'streamBudget'],
@@ -641,10 +641,10 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // here for AL's reason -- the rows a plan adds are one diff. Both are inert
   // until used: `MODELS_ADD_CLI_FLOOR` is `null` until the CLI release that
   // carries `--no-apply` on `models add` and the plan document (MD1), and the
-  // handlers in `src/main/index.ts` answer 'not available in this build' until
-  // the task that wires the window registers the real ones. No flag either row
-  // carries is a caller's: `--no-apply`, `--dry-run` and `--json` are fixed
-  // words of the rows' command paths (`src/main/spawn.ts`).
+  // handler behind each refuses in the write's own words, naming that floor
+  // (`src/main/handlers.ts`). No flag either row carries is a caller's:
+  // `--no-apply`, `--dry-run` and `--json` are fixed words of the rows' command
+  // paths (`src/main/spawn.ts`).
   ['models.add.plan', 'planModelsAdd'],
   ['models.add', 'addModel'],
   // **The image write** (the console improvements plan's MW2, D2903), the two
@@ -653,10 +653,10 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // here for the models write's reason -- the rows a plan adds are one diff --
   // and both are inert until used: `IMAGE_ADD_CLI_FLOOR` is `null` until the CLI
   // release that carries `--no-apply` on `image add` and the plan document (MD2),
-  // and the handlers in `src/main/index.ts` answer 'not available in this build'
-  // until the task that wires the window registers the real ones. No flag either
-  // row carries is a caller's: `--no-apply`, `--dry-run` and `--json` are fixed
-  // words of the rows' command paths (`src/main/spawn.ts`).
+  // and the handler behind each refuses in the write's own words, naming that
+  // floor (`src/main/handlers.ts`). No flag either row carries is a caller's:
+  // `--no-apply`, `--dry-run` and `--json` are fixed words of the rows' command
+  // paths (`src/main/spawn.ts`).
   ['image.add.plan', 'planImageAdd'],
   ['image.add', 'addImage'],
 ] as const) satisfies readonly (readonly [string, string])[]

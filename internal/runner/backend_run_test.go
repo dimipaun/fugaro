@@ -305,6 +305,12 @@ func TestRepoDailyCapHalts(t *testing.T) {
 
 func TestGlobalDailyCapHalts(t *testing.T) {
 	b := newBK(t, gwConfig(t, ""), "enforce", "", capScript(1)...)
+	// A repository node above the global cap is clamped to it (RC1), and the
+	// repository check runs first, so the global one is only reachable with no
+	// node of the repository's own.
+	b.db.Set(budget.PathCapsRepo(repoSlug), nil)
+	daily := budget.Micros(60_000_000)
+	b.db.Set(budget.PathCapsDefaults, budget.DefaultCaps{RepoDailyMicros: &daily})
 	micros := budget.Micros(10_000)
 	b.db.Set(budget.PathCapsGlobal+"/dailyMicros", int64(micros))
 	var st []int

@@ -1035,7 +1035,16 @@ func runWorkspaceShow(cmd *cobra.Command, name string, o *workspaceShowOptions) 
 			for _, name := range slices.Sorted(maps.Keys(shared)) {
 				sh := shared[name]
 				fmt.Fprintf(out, "  %s (%s)\n", oneLine(name), oneLine(sh.Kind))
-				fmt.Fprintf(out, "    projects: %s\n", oneLine(listOrNone(sh.Projects)))
+				// Who the entry is offered to: the members the owner named, or
+				// every member of the workspace (D2977). The two are exclusive
+				// in the file, so an entry that carries all_members prints no
+				// list: `projects: none` would read as an entry offered to
+				// nobody, which is the opposite of what the owner declared.
+				if sh.AllMembers {
+					fmt.Fprintln(out, "    offered to: every member of the workspace, the ones that join later included")
+				} else {
+					fmt.Fprintf(out, "    projects: %s\n", oneLine(listOrNone(sh.Projects)))
+				}
 				if sh.Kind != localcfg.WorkspaceSharedModel {
 					fmt.Fprintf(out, "    covers: %s\n", oneLine(listOrNone(sh.Covers)))
 				}

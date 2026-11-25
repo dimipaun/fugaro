@@ -265,11 +265,45 @@ type Caps struct {
 // Enforcing reports whether the cap comparisons apply.
 func (c Caps) Enforcing() bool { return c.Mode == ModeEnforce }
 
-// RepoDaily is the repository's day cap: its own node, else the default.
-// ok is false when neither is set.
+// RepoCeiling is the largest cap a repository's own node may hold, per
+// dimension: the project's global cap when it is set, else the default
+// repository cap (A3, spec §5.6). A nil field is a dimension with no ceiling,
+// and then the node stands. An admin's direct database write bypasses the
+// rules, so the clamp at read is what holds.
+type RepoCeiling struct {
+	DailyMicros  *Micros
+	PerRunMicros *Micros
+}
+
+// RepoCeiling is this project's ceiling for a repository's caps. Each
+// dimension falls back on its own: a global daily cap with no global per-run
+// cap leaves the per-run dimension to the default. Only a repository's own
+// node is clamped by it: the default is the owner's value and the global cap
+// bounds it beside.
+func (c Caps) RepoCeiling() RepoCeiling {
+	var ceil RepoCeiling
+	if c.Global != nil && c.Global.DailyMicros != nil {
+		ceil.DailyMicros = c.Global.DailyMicros
+	} else if c.Defaults != nil {
+		ceil.DailyMicros = c.Defaults.RepoDailyMicros
+	}
+	if c.Global != nil && c.Global.PerRunMicros != nil {
+		ceil.PerRunMicros = c.Global.PerRunMicros
+	} else if c.Defaults != nil {
+		ceil.PerRunMicros = c.Defaults.RepoPerRunMicros
+	}
+	return ceil
+}
+
+// RepoDaily is the repository's day cap: its own node, counted as RepoCeiling
+// when that is smaller, else the default. ok is false when neither is set.
 func (c Caps) RepoDaily() (Micros, bool) {
 	if c.Repo != nil && c.Repo.DailyMicros != nil {
-		return *c.Repo.DailyMicros, true
+		v := *c.Repo.DailyMicros
+		if ceil := c.RepoCeiling().DailyMicros; ceil != nil && *ceil < v {
+			v = *ceil
+		}
+		return v, true
 	}
 	if c.Defaults != nil && c.Defaults.RepoDailyMicros != nil {
 		return *c.Defaults.RepoDailyMicros, true
@@ -285,11 +319,16 @@ func (c Caps) GlobalDaily() (Micros, bool) {
 	return 0, false
 }
 
-// RepoPerRun is the repository's own per-run cap, else the default for
-// repositories without one. ok is false when neither is set.
+// RepoPerRun is the repository's own per-run cap, counted as RepoCeiling when
+// that is smaller, else the default for repositories without one. ok is false
+// when neither is set.
 func (c Caps) RepoPerRun() (Micros, bool) {
 	if c.Repo != nil && c.Repo.PerRunMicros != nil {
-		return *c.Repo.PerRunMicros, true
+		v := *c.Repo.PerRunMicros
+		if ceil := c.RepoCeiling().PerRunMicros; ceil != nil && *ceil < v {
+			v = *ceil
+		}
+		return v, true
 	}
 	if c.Defaults != nil && c.Defaults.RepoPerRunMicros != nil {
 		return *c.Defaults.RepoPerRunMicros, true
@@ -498,6 +537,33 @@ type AgentEntry struct {
 	// both and goes on without them.
 	Mode string `json:"mode,omitempty"`
 	From string `json:"from,omitempty"`
+	// Source is what the run's running stage goes out on, as the routing
+	// table's chain answered it: the kind of the source that served the stage
+	// and, when that kind names one, its name after a colon (`pool:team`,
+	// `anthropic`). It is the live half of the record's `stages[].source`
+	// (D3070, model-credentials-routing CS9): the record carries the
+	// routing.SourceName object per stage, and this entry carries the one
+	// string the live views print, so a reader that has only the registry
+	// entry — `fugaro watch` and the console's Live screen — needs no table,
+	// no credential value and no second spelling of the two.
+	//
+	// Fallback is true when that stage was served by a source that is not the
+	// first of its chain, the record's `stages[].fallback`: the pool ran dry
+	// and the run is paying on what comes after it, which is the one thing a
+	// person watching the row has to see.
+	//
+	// Neither is an authority — no policy, admission or budget rule reads
+	// them; the service's own record of the chain is where the routing is
+	// decided. A run the table does not serve writes neither, and the views
+	// print the dash for it: absent is "not recorded", never "no source", as
+	// it is for `auth`, which keeps its member and its meaning and is written
+	// as nothing for a run the table serves (D3070).
+	//
+	// Rules deployed before the two children have no key for them and refuse
+	// the whole entry with them; Start then drops both and goes on without
+	// them, as it does for the recipe and the rigor mode.
+	Source   string `json:"source,omitempty"`
+	Fallback bool   `json:"fallback,omitempty"`
 	// Credential is the name — never the value — of the credential the run's
 	// cascade is currently using (credentials-service plan, task C1.3's rules
 	// child of the same name; C1.16 and C1.19 write it). It is what `fugaro

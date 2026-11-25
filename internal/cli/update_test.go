@@ -130,6 +130,11 @@ func TestUpdateLeavesAnUnenrolledRepositoryAloneAndExitsOne(t *testing.T) {
 	// at the installation, left_for_you is empty and the --onboard-repo arm
 	// below passes without ever having a line to look at — which is how the
 	// secrets stage kept offering the flag after the other two stopped.
+	//
+	// The machine's installed plugin is this test's and not the host's: a machine
+	// whose plugin is newer than this release reads the plugin stage as nothing to
+	// do, and the step the assertions below look for is missing there.
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	r := updateRig(t)
 	dir := repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", initProjectName, ""))
 	t.Chdir(dir)

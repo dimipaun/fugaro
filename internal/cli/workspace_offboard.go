@@ -58,6 +58,12 @@
 // published (a pool's text naming the person is inert once the roster does not
 // place them).
 //
+// BESIDE THE MEMBERS' SWEEPS, ONE MORE INSTALLATION IS SWEPT. A person's token
+// is stored once, at the workspace's own project (D2960), so `workspace user rm`
+// deletes the containers they own there too (F21) -- not through this core, which
+// is one member's, but through the workspace's own intake, and after the members'
+// sweeps and whatever they answered (offboardWorkspacePerson, workspaceSweeper).
+//
 // NOTHING HERE PRINTS, and that is a decision rather than an omission: the
 // caller owns the report (WU7's `user rm`, I1's command), and the record of
 // the act is the audit entry this creates. A core that printed would print
@@ -100,6 +106,27 @@ type memberSweeper interface {
 	// one a person knows and not the roster's `user:` spelling, exactly as the
 	// single installation's sweep takes it.
 	Sweep(ctx context.Context, m workspace.MemberTarget, address string) ([]string, error)
+}
+
+// workspaceSweeper deletes the containers one person stored on the WORKSPACE's
+// own project.
+//
+// It is memberSweeper's pattern for the other installation an offboarding
+// reaches (F21): a person's token is stored once, at the workspace (D2960), so
+// `workspace user rm` deletes every container they own there beside the members'
+// sweeps, and the delete is the intake's own admin-only route (DS2.3, DS2.4) --
+// the one call offboardSweepVia makes, at the workspace's own intake instead of
+// a member's. The workspace's intake is reached at the address the workspace
+// admin's own config carries (intakeURLOf, the project the workspace is named
+// after, D2821), which is never a member's.
+//
+// The address is the person's own and the answer is the names the delete
+// removed: nothing here reads a value, and no name travels in a log, an error or
+// a header.
+type workspaceSweeper interface {
+	// Sweep deletes every container whose owner annotation is address at the
+	// workspace's own intake and answers the names it removed.
+	Sweep(ctx context.Context, address string) ([]string, error)
 }
 
 // memberOffboarder is the core itself: the seam to the member (C2), the seam
@@ -190,6 +217,36 @@ func (o *memberOffboarder) Offboard(ctx context.Context, m workspace.MemberTarge
 	return nil
 }
 
+// offboardWorkspacePerson is one person's removal from a workspace as the two
+// sweeps F21 puts in order: every member the workspace holds is swept first
+// (members.Offboard, which is this file's core, once per member), and then the
+// workspace's OWN intake is swept, whatever the members answered.
+//
+// THE WORKSPACE'S SWEEP RUNS WHATEVER THE MEMBERS ANSWERED, and that is the
+// point rather than an oversight: a person's token is stored once, at the
+// workspace (D2960), so a member whose own update is pending -- a refusal this
+// command has always reported and half-removed nobody on -- would leave the
+// person's token behind at the workspace if it gated the workspace's sweep. The
+// two answers are carried apart: the caller reports the member's refusal (the
+// FIRST one, as the loop before this change returned it) and reports the
+// workspace's own answer after the node is written, so a sweep that failed does
+// not hide a member that refused and a member that refused does not hide the
+// workspace's containers still being there.
+//
+// The member's answer is a refusal and not a stop: every member is attempted, so
+// one refusal does not leave the members after it unswept, and the first refusal
+// is the one a person reads.
+func offboardWorkspacePerson(ctx context.Context, members workspace.MemberOps, sweep workspaceSweeper, linked []workspace.MemberTarget, address string) ([]string, error, error) {
+	var memberErr error
+	for _, m := range linked {
+		if err := members.Offboard(ctx, m, address); err != nil && memberErr == nil {
+			memberErr = fmt.Errorf("offboarding %s from %s: %w", safetext.Field(address), safetext.Field(m.Project), err)
+		}
+	}
+	deleted, sweepErr := sweep.Sweep(ctx, address)
+	return deleted, memberErr, sweepErr
+}
+
 // offboardMemberGrants reads the member's grants out of the document its
 // database holds, and refuses the two states a read of it can be in without
 // granting anybody anything: a node that is not there, and bytes this release
@@ -258,7 +315,7 @@ func (o *memberOffboarder) offboardDropRoster(ctx context.Context, m workspace.M
 		if dropped == 0 {
 			return 0, nil
 		}
-		if err := offboardNoAdminLeft(m.Project, person, grants, next); err != nil {
+		if err := offboardNoAdminLeft(m.Project, person, grants, next, true); err != nil {
 			return 0, err
 		}
 		raw, err := accesslib.Encode(next)

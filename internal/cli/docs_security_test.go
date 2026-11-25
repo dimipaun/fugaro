@@ -35,11 +35,14 @@ func TestSecurityMdStatesTheModelAndItsLimits(t *testing.T) {
 		"followup.trusted",
 		"docs/design/v1.md",
 		"docs/bucket-iam/spec.md",
-		"Budget mode defaults to off.",
+		// The gap the release now ships, where the document used to say the
+		// budget mode defaults to off (always-a-budget, F17): the real key
+		// stays out of the agent's environment in every mode.
+		"With no `budget:` block the mode is `observe`, so the caps record rather than stop.",
 		"Vertex has no dollar cap, in any mode.",
 		"roles/storage.objectAdmin",
 		"it can read the token from the runner's `/proc`",
-		"With budget off there is no managed file and no routing check at all",
+		"The one run without a gateway — an `oauth` run the credentials service does not serve — has no routing check at all",
 		// The shared-image key's limit, which the design's C6 text repeats: the
 		// integrity rules keep two repositories from sharing an image built
 		// from two different artifacts, and they are not a boundary between
@@ -718,15 +721,17 @@ func TestSecurityMdNamesTheCredentialsServicesKnownLimits(t *testing.T) {
 		"every provider key the job mounts stays its own (R6, D1634)",
 		// B5.4 rewrote this limit, deliberately: B5.2 hands a switched
 		// profile's shared job the address on the same switch a repository's
-		// own job is judged with, and B5.1 pairs its account, so "not wired
-		// either" is false. What HAS not landed is the class's own table —
-		// FUGARO_SHARED_JOB_ACCOUNTS is rendered by no module, so a deployed
-		// service starts with the empty set and refuses the class whole.
-		// Stated rather than dropped: an owner who reads "wired" and finds a
-		// shared run refused at the door has to be able to find out why here.
+		// own job is judged with, B5.1 pairs its account, and B5.4's own
+		// follow-up landed the table — FUGARO_SHARED_JOB_ACCOUNTS is rendered
+		// by the installation module, so a service that installation carries
+		// after a re-apply admits the class. What is left is the installation
+		// that has not been re-applied: its service keeps the empty shared set
+		// and refuses the class whole. Stated rather than dropped: an owner who
+		// reads "wired" and finds a shared run refused at the door has to be
+		// able to find out why here.
 		"**A shared project job is wired too, and it is the last job the switch reaches**",
-		"the class's own table (`FUGARO_SHARED_JOB_ACCOUNTS`) is rendered by no module yet",
-		"a deployed service refuses the class whole",
+		"the class's own table (`FUGARO_SHARED_JOB_ACCOUNTS`) is rendered by the installation module",
+		"a service not re-applied since that release still carries an empty shared set and refuses the class whole",
 		"a repository whose root has not been re-applied with the switch on is byte for byte what it was",
 		// S3's own limit (B3.5): the fetch is wired, and the mount the flip
 		// takes away has NOT been taken away — a mounted value wins, so the

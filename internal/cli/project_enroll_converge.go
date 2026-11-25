@@ -1059,7 +1059,7 @@ func reposEnrolmentRunStages(ctx context.Context, cmd *cobra.Command, run *stepR
 	// installSpec and not installOptions: this door composes the same spec
 	// `fugaro update` does, so a config that can no longer compose the job of a
 	// default profile this installation holds must not stop it.
-	spec, err := installSpec(o, lc, r.warn)
+	spec, err := installSpec(o, lc, r.withheld)
 	if err != nil {
 		return nil, err
 	}

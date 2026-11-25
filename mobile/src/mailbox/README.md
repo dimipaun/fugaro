@@ -17,7 +17,7 @@ const client = createMailboxClient({
   store,                      // { write(path, value), read(path) } -- the database, behind a port
   connection,                 // { isOnline() } -- the SDK's own "would this be sent" flag (P6.10)
   licence,                    // { at(now) } -- the app's licence state (S6.3; optional, see "The lapse")
-  speaker,                    // { speak(text) } -- P3.4's seam (see "The audio stub" below)
+  speaker,                    // { speak(text, speech?) } -- P3.4's seam (see "The audio stub" below)
   now,                        // D117's server-anchored now, in ms
   newId,                      // a fresh message id per call
   secrets,                    // P1.3's secret list (D118)
@@ -30,6 +30,7 @@ await client.poll();                    // reads, verifies, speaks, acks, report
 client.pending();                       // the records the outbox has not answered, still retried
 client.unsent();                        // D167's unsent text: what the gate or the licence refused
 client.licenceRefusal('run it', { verb: 'launch' });   // one write's answer, and NO write
+client.sendJob(session, { verb: 'cancel', text, record }); // J4: a start or a cancel, through this path
 ```
 
 ## The write set is exactly two paths (D113)
@@ -356,6 +357,28 @@ await client.send('cancel the docs refactor', { action: actionRecord });
 * **A refusal is a sentence, from the licence's table** -- see the gate's
   refusal-shape rule above, which now names both refusers.
 
+## A job command from the phone (J4; D2787, D162, D169)
+
+`sendJob(session, request)` sends a **start** or a **cancel** and nothing else:
+
+```js
+await client.sendJob(session, { verb: 'launch', text: 'fix the flaky test' });
+await client.sendJob(session, { verb: 'cancel', text: 'Cancel run run-42.', record: actionRecord });
+```
+
+The composition is `shared/command`'s `jobWrite`, which makes a start D162's plain launch message
+(`{ verb: 'launch' }`) and a cancel D169's action record, passed through as P6.2's machine built it
+(`{ action: record }`). It is pure, so a screen can ask it what to draw; the write is here, so
+redaction, the lapse, the gate, the tag, the schema and the store stay in one place and there is
+still one write path. A refusal from `jobWrite` comes back in `send`'s own shape
+(`{ ok, code, field }`).
+
+The `session` is C2's port value and only its `role` is read: a viewer's start and cancel are
+refused before anything is minted, which is the phone hiding what its session cannot do. That is a
+display claim and not an authorisation (F14, D2791) -- the P5.1 consumer refuses a viewer
+independently with `internal/access`, and nothing a role claims here can grant what the roster has
+not.
+
 ## The limits of the gate, named
 
 **No observation is not a licence to send, and this is the review's M2.** D167's
@@ -456,10 +479,17 @@ client, so a built app speaks through P3.4's pipeline and the client never
 learns what is behind the port. The port itself stays this module's own -- the
 mailbox module keeps its `MemorySpeaker`, and merging the two into one would be
 a second way to speak. So `speaker.js` is a one-method seam of this
-task's own -- `speak(text)` returning
+task's own -- `speak(text, speech?)` returning
 `{ ok: true }`, or `{ ok: false, code, field }` with a code from
 `SPEAK_CODES` (`bad-text`, `speak-failed`) -- with `MemorySpeaker` as its
-double. (The refusal shape was written as `{ id, code }` here until the
+double. The optional `speech` is the client's word on WHAT it is saying, and it
+is provenance rather than audio: the client speaks two things over this one
+port, a reply it read out of the outbox and -- when the owner's message was not
+sent -- the refusal sentence it looked up in `gate.js` or `licence/state.js`
+(S6.3), and `REFUSAL_SPEECH` is how a port that keeps the conversation
+(`src/text/transcript.js`, X1/D2788) tells them apart without reaching into
+either table. A port that keeps no conversation ignores it, as the pipeline
+adapter and `MemorySpeaker` do. (The refusal shape was written as `{ id, code }` here until the
 review's last round; that is the shape of the client's own `unspoken` list,
 which names the message the refusal is about, not the port's.) What
 P3.6 needs from it is exactly one thing: **whether the utterance was spoken**,

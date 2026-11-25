@@ -160,6 +160,22 @@ const (
 	// landing it; the stage's position is what makes the guard's answer a
 	// state the same run has already fixed.
 	CredentialsCopy = "credentials-copy"
+	// VersionStamp is the required-CLI stamp's stage
+	// (internal/cli/update_version_stamp.go, D3260, R1): the node
+	// config/policy/required_cli, which says the oldest fugaro release that may
+	// act on the project, raised to this release once the installation has
+	// converged on it. Nothing else writes that node, and it is never lowered
+	// (D3262).
+	//
+	// It sits immediately AFTER the credentials copy, and with nothing between
+	// them that the stamp's own fence would refuse: the stage raises the node
+	// only once every other stage of the run — the policy and rules it needs
+	// among them — has converged, and the credentials copy is the last of the
+	// stages that writes a document a deployed service reads (R1). A stamp
+	// raised before one of them left an installation whose own `fugaro update`
+	// could not finish: an older binary is refused by this node, so the run
+	// holding the half-finished installation has to be this release's.
+	VersionStamp = "version-stamp"
 	// Workspace is the workspace OWNER's published record
 	// (internal/cli/update_workspace.go, D1292): `workspaces/<name>` in the
 	// workspace's own database, built from the record this installation
@@ -200,6 +216,24 @@ const (
 	// workspace registers it and skips it, so a member's project and a plain one
 	// never carry the account.
 	WorkspaceProject = "workspace-project"
+	// Lift is the L8 migration of the repositories' own values into the
+	// project (internal/cli/update_lift.go, docs/repo-override-rulings D3305,
+	// D3306): the stage runs every registered planner over the repositories
+	// update can list, prints every line of every change before any write,
+	// and writes what the planners decided — the edits into the local layer
+	// file, the recipe objects into the runs bucket, the cap nodes into the
+	// budget database — each behind the same confirmation every other
+	// writer of this door passes, and records each repository it migrated in
+	// the runs bucket once that record is due.
+	//
+	// It comes BEFORE the layer stage, and the order is the whole of the
+	// hand-off: the layer FILE is this stage's write and the published
+	// OBJECT is the layer stage's (D830/D831), so a stage that edits the
+	// file has to run before the one that publishes it, and the record of a
+	// repository whose edits the layer stage never published is not written
+	// at all (the stage forgets its read so the layer stage plans again
+	// after this one's write).
+	Lift = "lift"
 	// Layer is the published project layer and the one local layer file the
 	// owner edits (internal/cli/init_layer_stage.go, D830/D831): the stage
 	// seeds the file from the published object when it is absent, publishes
@@ -324,6 +358,16 @@ var order = []slot{
 	// the stage before this one is the run's one move of that service's image
 	// (CredentialsCopy's own comment has the window).
 	{name: CredentialsCopy, needs: []string{CredentialsService}},
+	// The required-CLI stamp is raised last of the stages that write anything
+	// a deployed reader sees (R1, D3267): it names this release as the oldest
+	// that may act on the project, so a stamp raised before the run had
+	// converged would refuse that same run's own remaining work — an older
+	// binary is what the node stops, but a run holding a half-finished
+	// installation is one the person would have to finish by hand. It needs
+	// the policy node and the rules it is read under, which are the two the
+	// stage names as its own reason for waiting (needs records why, and F2's
+	// gating is linear: these do not gate anything themselves).
+	{name: VersionStamp, needs: []string{Policy, Rules}},
 	// The workspace's own project's root, before the record it serves: what it
 	// creates is the identity the workspace's own service runs as, and the
 	// record stage publishes the node that service reads. It needs the
@@ -345,6 +389,13 @@ var order = []slot{
 	// installation's own stages for the database it writes into — the same
 	// two the workspace record needs and for the same reason.
 	{name: CredentialsRoute, needs: []string{Installation2, Policy}},
+	// The L8 migration edits the local layer file, and the layer stage is
+	// what publishes it: the two are one hand-off in one order, so the
+	// migration comes first and a repository's record is written only once
+	// that publish has landed (docs/repo-override-rulings D3305, M2). It
+	// reads the published policy's admits for the repositories it can name,
+	// so it waits for the policy stage like the two documents beside it do.
+	{name: Lift, needs: []string{Repository, Policy}},
 	// The layer is what the checkout's images are built from, so it is
 	// published before the refresh that reads it: the checkout stage's cloud
 	// step builds this checkout's images off the layer that applies, and a
@@ -941,7 +992,7 @@ func gateUnjudged(reason string) string {
 // owner's delete list, the marker) are named where they are decided, and the
 // session that reads this is the one that could go around all three.
 func AgentProceeded(marker string) string {
-	return "a coding agent's session is present (" + marker + " is set), and this step proceeds: the project is managed and the plan passed the deterministic gate, which is what replaces the confirmation here (not a person's approval, and not a flag to pass)"
+	return "a coding agent's session (" + marker + " is set) on a managed project: the gate admitted the plan, so nothing is confirmed here"
 }
 
 // GateProceeded is the sentence for the same step in the OWNER'S OWN session: a
@@ -956,7 +1007,7 @@ func AgentProceeded(marker string) string {
 // where the verdict was written instead, because an owner who wants to check
 // afterwards is not trying to get past anything.
 func GateProceeded() string {
-	return "this project is managed, and the plan passed the deterministic gate: the verdict is the confirmation here, so nothing is asked and nothing is typed (the project's own record of it is written after the step)"
+	return "this project is managed and the gate admitted the plan: it recorded the verdict, so nothing is typed here"
 }
 
 // GateOrdinary is the sentence for an ordinary step of the same run that the
@@ -969,7 +1020,7 @@ func GateProceeded() string {
 // no rule read, which is the direction every other sentence in this file
 // refuses to take.
 func GateOrdinary() string {
-	return "this project is managed, so this step takes no confirmation: the marks were read, the step is one the run announced, and what it changes is printed above (the owner's ruling of 2026-11-01)"
+	return "this project is managed and the run announced this step: the marks were read, so nothing is confirmed here"
 }
 
 // OwnerProceeded is the sentence for the same reader as GateOrdinary — the
@@ -988,7 +1039,7 @@ func GateOrdinary() string {
 // GateOrdinary speaks for a step the run announced and the gate let through,
 // this one for a step no rule judged at all.
 func OwnerProceeded() string {
-	return "this project is managed and this is the owner's own terminal: the marks were read, what this step changes is printed above, and nothing is typed for it here (the owner's ruling of 2026-11-06)"
+	return "this project is managed and this is the owner's own terminal: the marks were read, so nothing is typed here"
 }
 
 // AskRestored is the line a managed project's own terminal reads when --ask
@@ -999,7 +1050,7 @@ func OwnerProceeded() string {
 // gate refuses is still refused, before any prompt) — because the one mistake
 // this flag could be read as is "the gate is off for this run".
 func AskRestored() string {
-	return "--ask: this project is managed, and its gate's verdict would have replaced the confirmations of this run: they are asked here instead, one step at a time. The gate itself is unchanged — every document it judges is still judged, and a step it refuses is still refused before any prompt"
+	return "--ask: on this managed project the confirmations the gate replaces are asked here, and the gate is unchanged: still judged, still refused"
 }
 
 // AskUnmanaged is the one line --ask prints where the marks did not answer
@@ -1009,7 +1060,7 @@ func AskRestored() string {
 // is not an error, because the alternative a caller might reach for — refusing
 // the flag — would fail a command that behaves exactly as it always has.
 func AskUnmanaged() string {
-	return "--ask: the marks of this project did not answer \"managed\", so there is nothing for the flag to restore here: every confirmation this run gives is the one it always gives, and asking for them is not an error"
+	return "--ask: this project's marks do not answer \"managed\", so this run asks the confirmations it always asks; that is not an error"
 }
 
 // AskNoGate is the line --ask prints in a run the managed gate never covers:
@@ -1019,7 +1070,7 @@ func AskUnmanaged() string {
 // gate stands in for, so there is nothing for --ask to restore and no mark is
 // read for it.
 func AskNoGate() string {
-	return "--ask: this run applies nothing the managed gate stands in for (--plan-only, or a run whose own arguments shape the installation), so no confirmation was replaced and there is nothing for the flag to restore here"
+	return "--ask: this run applies nothing the managed gate stands in for, so no confirmation was replaced and there is nothing to restore"
 }
 
 // AskRefusal is the refusal of --ask where there is no prompt to answer it: a

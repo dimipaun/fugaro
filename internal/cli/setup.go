@@ -402,13 +402,33 @@ const setupAlreadySetUp = "this installation is already set up"
 // needs no terminal for it — and the name the refusal prints when the run
 // cannot proceed without an answer.
 //
+// what is the question in a sentence, and it is what a run that could not read
+// an answer says it had no answer for (noAnswer) and what the value entry names
+// where it reads for itself; label and hint are what the question looks like on
+// the screen — the bold label and, after it, what the question says about the
+// shape of the answer — so a prompt is one line and the two halves of it are
+// the row's (askedLine).
+//
 // missing is what a run that cannot ask is refused with when nothing else
 // answers the question.
 type wizardQuestion struct {
-	what    string // the question, in one line
+	what    string // the question, in one line, for the refusals about it
 	label   string // the label the prompt shows (a prefix, where the label is built from the run)
+	hint    string // what the prompt says about the answer after the label, or ""
 	flag    string // the flag that answers it
 	missing string // what MissingInputsError names, exactly as firstRunMissing builds it
+}
+
+// askedLine is the question as a person reads it, up to the colon their answer
+// is typed after: the label, and what the row says about the shape of the
+// answer. The suggestion Enter takes is not part of it — that is the run's, and
+// it is drawn after this (wizardAsk) — so what is here is what the table
+// decides, which is what a test can hold a prompt to.
+func (q wizardQuestion) askedLine() string {
+	if q.hint == "" {
+		return q.label
+	}
+	return q.label + ": " + q.hint
 }
 
 // setupQuestions is the wizard's question list, and TestEveryWizardQuestionHasAFlag
@@ -444,9 +464,10 @@ var setupQuestions = []wizardQuestion{
 		// region stays the one setting the installation stores (D3080). The
 		// suggestion is US, which is today's default region; the region itself
 		// is not in the row, because a place answer names one region and the
-		// mapping's own line says which (R7).
+		// mapping's own rows say which (R7).
 		what:    "the place the installation lives in (US, EU, or a region typed in full)",
-		label:   "Place (US, EU, or a region: where the installation's jobs and its data go)",
+		label:   "Location",
+		hint:    "US, EU or a region",
 		flag:    "--location",
 		missing: "--location <us|eu>",
 	},
@@ -480,7 +501,8 @@ var setupQuestions = []wizardQuestion{
 		// that cannot ask takes the same default (D2212), so demanding the flag
 		// would refuse a run whose answer is already in hand (askBudget).
 		what:    "the monthly amount of the project's budget alert, in whole units of " + managed.DefaultBudgetCurrency,
-		label:   "Monthly budget alert (an alert at a threshold, not a cap on spending)",
+		label:   "Monthly budget alert",
+		hint:    "an alert at a threshold, not a cap on spending, in whole units of " + managed.DefaultBudgetCurrency,
 		flag:    "--budget",
 		missing: "",
 	},
@@ -491,7 +513,7 @@ var setupQuestions = []wizardQuestion{
 		// suggestion the question offers — so demanding the flag would refuse a
 		// run whose answer is already in hand (askBake).
 		what:    "whether a repository the build can read is baked into the image its job runs",
-		label:   "Bake your repos into the Docker images? This makes jobs start faster.",
+		label:   "Bake repos into the images for faster job starts?",
 		flag:    "--bake-repos",
 		missing: "",
 	},
@@ -544,7 +566,7 @@ func (s *wizardStage) askBake() error {
 	q := questionFor("--bake-repos")
 	s.a.asked = append(s.a.asked, q.label)
 	var yes bool
-	if _, err := r.prompt(valueSpec{what: q.label, flag: q.flag}, "yes", func(v string) error {
+	if _, err := r.askValue(wizardAsk{label: q.label, def: "yes", show: "Y/n"}, valueSpec{what: q.what, flag: q.flag}, func(v string) error {
 		var verr error
 		yes, verr = bakeAnswer(v)
 		return verr
@@ -555,20 +577,23 @@ func (s *wizardStage) askBake() error {
 	return nil
 }
 
-// rigorQuestionLead is the line above the four modes, and the whole of what
-// tells the reader that Enter is not an answer here: every other question of
-// this wizard takes its suggestion with Enter, and this one has none
-// (askRigor).
-const rigorQuestionLead = "the project's rigor mode decides how much review every run of it gets; type one of them (this is the one question of the wizard with no suggestion, so Enter is not an answer):"
+// rigorQuestionLead is the heading above the four modes. It is the question's
+// own label followed by what the answer decides, so the table that follows
+// reads as the answer's own list rather than as a paragraph about it: the one
+// thing a person has to know — that Enter is not an answer here, unlike every
+// other question of this wizard — is said where Enter is pressed and not up
+// front (askRigor's wizardAsk.empty).
+const rigorQuestionLead = "Rigor mode, which sets how much review each run gets:"
 
-// rigorChoice is one line of the rigor question: the mode, and the wizard's own
-// sentence about what it costs. Everything else the line says is read from the
-// two tables that hold it — the review a mode runs by default
-// (rigor.DefaultLevels) and the rounds it spends (rigor.DefaultRounds) — so the
-// question cannot describe a mode as anything other than what a run of it does.
+// rigorChoice is one line of the rigor question: the mode, what review it runs
+// in short words, and the wizard's own note about what it costs. Everything
+// else the line says is read from the two tables that hold it — the review a
+// mode runs by default (rigor.DefaultLevels) and the rounds it spends
+// (rigor.DefaultRounds) — so the question cannot describe a mode as anything
+// other than what a run of it does.
 type rigorChoice struct {
 	mode rigor.Rigor
-	cost string
+	note string
 }
 
 // rigorChoices is the question's list, and `pro` first is the whole of what
@@ -577,16 +602,19 @@ type rigorChoice struct {
 // what they have. Hotfix is not in the list and is not writable: it is a
 // per-run mode (D12, D834), refused by name where it is typed or passed.
 var rigorChoices = []rigorChoice{
-	{mode: rigor.Pro, cost: "it is the built-in default, so it is what a project that says nothing already runs today"},
-	{mode: rigor.Startup, cost: "less spend, less to spend it on"},
-	{mode: rigor.POC, cost: "the cheapest mode there is"},
-	{mode: rigor.Critical, cost: "the most review, and the most money"},
+	{mode: rigor.Pro, note: "(default)"},
+	{mode: rigor.Startup, note: "less spend"},
+	{mode: rigor.POC, note: "cheapest"},
+	{mode: rigor.Critical, note: "most review"},
 }
 
-// printRigorChoices prints one line per mode, in the list's order, the way the
-// billing question prints its own list: what review the mode runs, the rounds
-// it spends by default, and what it costs.
+// printRigorChoices prints the four modes as the table the question is answered
+// from: the mode, its review and its rounds from the tables that hold them, and
+// its note — the columns padded, so the review and the note line up and a
+// person reads one down each column.
 func (r *initRun) printRigorChoices() {
+	type row struct{ mode, review, note string }
+	var rows []row
 	for _, c := range rigorChoices {
 		levels, err := rigor.DefaultLevels(c.mode)
 		if err != nil {
@@ -597,36 +625,41 @@ func (r *initRun) printRigorChoices() {
 			// described by a guess (DefaultLevels refuses to guess too).
 			continue
 		}
-		fmt.Fprintf(r.w, "  %s: %s; by default %s — %s\n",
-			c.mode, rigorReviewWords(levels), rigorRoundWords(rigor.DefaultRounds(c.mode)), c.cost)
+		rows = append(rows, row{
+			mode:   string(c.mode),
+			review: rigorReviewWords(levels) + ", " + rigorRoundWords(rigor.DefaultRounds(c.mode)),
+			note:   c.note,
+		})
+	}
+	modePad, reviewPad := 0, 0
+	for _, row := range rows {
+		modePad, reviewPad = max(modePad, len(row.mode)), max(reviewPad, len(row.review))
+	}
+	for _, row := range rows {
+		fmt.Fprintf(r.w, "  %-*s  %-*s  %s\n", modePad, row.mode, reviewPad, row.review, row.note)
 	}
 }
 
-// rigorRoundWords is a mode's loop counts in words, singular where the count is
-// one: the line is what a person deciding how much a mode costs reads, and "1
-// senior rounds" is a sentence they have to translate.
+// rigorRoundWords is a mode's loop counts as the table's own column, "3+3
+// rounds": the two counts are the first-line and the senior rounds a run of the
+// mode spends, and the one number a reader compares across the four modes is
+// how much of each it buys.
 func rigorRoundWords(r rigor.Rounds) string {
-	round := func(n int, what string) string {
-		if n == 1 {
-			return fmt.Sprintf("%d %s round", n, what)
-		}
-		return fmt.Sprintf("%d %s rounds", n, what)
-	}
-	return round(r.Inner, "first-line") + " and " + round(r.Senior, "senior")
+	return fmt.Sprintf("%d+%d rounds", r.Inner, r.Senior)
 }
 
-// rigorReviewWords is what review a mode runs, in the question's words, read
+// rigorReviewWords is what review a mode runs, in the table's short words, read
 // off the mode's own row of the level table (rigor/levels.go): level 1 is the
 // first-line review, level 2 the senior review that decides readiness, level 3
 // the adversarial pass after it.
 func rigorReviewWords(l rigor.Levels) string {
 	switch {
 	case l.L3 == rigor.LevelOn:
-		return "review level 2 and review level 3, the adversarial pass after the senior one"
+		return "senior + adversarial"
 	case l.L2 == rigor.LevelOn:
-		return "review level 2, the senior review that decides readiness, and no adversarial pass"
+		return "senior review"
 	case l.L1 == rigor.LevelOn:
-		return "review level 1 only, the first-line review, which then decides readiness"
+		return "first-line review only"
 	}
 	return "no review at all"
 }
@@ -741,7 +774,7 @@ func (s *wizardStage) askRigor() error {
 	s.a.asked = append(s.a.asked, q.label)
 	fmt.Fprintln(r.w, rigorQuestionLead)
 	r.printRigorChoices()
-	v, err := r.prompt(valueSpec{what: q.what, flag: q.flag}, "", func(v string) error {
+	v, err := r.askValue(wizardAsk{label: q.label, empty: "type one of the modes above (this is the one question with no suggestion)"}, valueSpec{what: q.what, flag: q.flag}, func(v string) error {
 		_, verr := setupRigorMode(v)
 		return verr
 	})
@@ -757,15 +790,6 @@ func (s *wizardStage) askRigor() error {
 	o.rigor = string(mode)
 	return nil
 }
-
-// budgetQuestionLead is the line above the budget question, and the whole of
-// what says what the number is for: it is a budget ALERT's threshold — the
-// point Cloud Billing warns the owner at — and never a cap on spending, because
-// what stops a run is the gateway's cost cap, a different figure in a different
-// place (internal/infra/managed/defaults.go). Every other question of this
-// wizard is about its own answer alone; a monthly figure is the one a reader
-// would otherwise take for a limit they are setting (askBudget).
-const budgetQuestionLead = "the figure below is the project's budget ALERT: the point Cloud Billing warns the owner at when the month's spend reaches it. It is an alert, and not a cap on spending — what stops a run is the gateway's cost cap, a different figure in a different place."
 
 // askBudget is the wizard's budget question (T2b of
 // docs/managed-flag-ergonomics; D2210, D2211, D2212): the monthly amount the
@@ -804,8 +828,7 @@ func (s *wizardStage) askBudget() error {
 	}
 	q := questionFor("--budget")
 	s.a.asked = append(s.a.asked, q.label)
-	fmt.Fprintln(r.w, budgetQuestionLead)
-	v, err := r.prompt(valueSpec{what: q.what, flag: q.flag}, strconv.FormatInt(managed.DefaultBudgetAmount, 10), func(v string) error {
+	v, err := r.askValue(wizardAsk{label: q.label, hint: q.hint, def: strconv.FormatInt(managed.DefaultBudgetAmount, 10)}, valueSpec{what: q.what, flag: q.flag}, func(v string) error {
 		_, verr := budgetAnswer(v)
 		return verr
 	})
@@ -984,4 +1007,49 @@ func (o *initOptions) programPrefix() string {
 		return p + ": "
 	}
 	return ""
+}
+
+// printRunHeader is the run's own heading, drawn the way every section of the
+// CLI is (report.Style.Header): what this run does, and the installation it is
+// about. It goes with the first thing the run says — the first question of a
+// first run, or the converge's first block on a run that asks nothing — and
+// never twice (initRun.headed).
+//
+// name is the installation this run knows itself by, and suggested is the
+// wizard's own first read of it, for the header a run prints before its name
+// question has been answered: --name wins, then whatever the wizard found.
+//
+// It says nothing with --json (stdout is one document) or --print-vars (stdout
+// is the variables alone), the two modes whose stdout is not a transcript; the
+// fact is in the result either way.
+func (r *initRun) printRunHeader(name, suggested string) {
+	o := r.o
+	if r.headed || o.asJSON || o.printVars {
+		return
+	}
+	r.headed = true
+	if name == "" {
+		name = suggested
+	}
+	fmt.Fprintln(r.w, r.qs.Header(o.runTitle(name)))
+}
+
+// runTitle is the header's text: the door's own verb, the installation's name
+// where this run knows one, and the GCP project it is about. A part this run
+// cannot fill in yet is left out rather than guessed: the header is printed
+// before the questions that settle it.
+func (o *initOptions) runTitle(name string) string {
+	verb := "Setting up"
+	if o.door == updateDoor.name {
+		verb = "Updating"
+	}
+	switch {
+	case name != "" && o.cloud.gcpProject != "":
+		return fmt.Sprintf("%s %s (GCP %s)", verb, name, pluginwire.Printable(o.cloud.gcpProject))
+	case name != "":
+		return verb + " " + name
+	case o.cloud.gcpProject != "":
+		return fmt.Sprintf("%s (GCP %s)", verb, pluginwire.Printable(o.cloud.gcpProject))
+	}
+	return verb
 }

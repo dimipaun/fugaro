@@ -106,9 +106,10 @@ const (
 	ConfirmEventAbort   ConfirmEventType = "abort"
 )
 
-// The verbs. `launch` is here although it is never confirmed, because D162's
-// answer is about this machine: "kick off ..." passes through rather than being
-// refused as an unknown verb or silently treated as destructive.
+// The verbs. `launch` is here because D162's answer is about this machine:
+// "kick off ..." passes through rather than being refused as an unknown verb or
+// silently treated as destructive -- and D2786 reads a start in a costly mode
+// back, which is why it is also in ConfirmPendingVerbs below.
 const (
 	ConfirmVerbCancel  = "cancel"
 	ConfirmVerbConfirm = "confirm"
@@ -121,7 +122,15 @@ const (
 var ConfirmDestructiveVerbs = []string{ConfirmVerbCancel, ConfirmVerbConfirm, ConfirmVerbMerge}
 
 // ConfirmPassThroughVerbs go straight through: D162's launch, and nothing else.
+// D2786 amends that answer for a start in a costly mode, which is read back like
+// a cancel, so a launch is the one verb whose read-back depends on the session's
+// policy rather than on the verb alone.
 var ConfirmPassThroughVerbs = []string{ConfirmVerbLaunch}
+
+// ConfirmPendingVerbs are the verbs a pending read-back may hold: the
+// destructive ones, and D2786's costly start, which is read back without being
+// destructive.
+var ConfirmPendingVerbs = []string{ConfirmVerbCancel, ConfirmVerbConfirm, ConfirmVerbMerge, ConfirmVerbLaunch}
 
 // ConfirmRefusedVerbs are every other destructive verb the ruling refuses
 // outright: the kill switch, the budget writes, the deletes. The set is closed
@@ -138,6 +147,9 @@ const (
 	ConfirmTargetRun   = "run"
 	ConfirmTargetPR    = "pr"
 	ConfirmTargetMerge = "merge"
+	// ConfirmTargetMode is what a confirmed start binds (D2786): a launch has no
+	// run id yet, so the one thing there is to read back and to bind is the mode.
+	ConfirmTargetMode = "mode"
 
 	ConfirmLedgerAction       = "action"
 	ConfirmLedgerConfirmation = "confirmation"
@@ -190,7 +202,20 @@ const (
 	ConfirmExpiredReply   = "no answer, expired"
 	// ConfirmMaxUtteranceLen is P6.1's MAX_UTTERANCE_LENGTH.
 	ConfirmMaxUtteranceLen = 4_096
+	// ConfirmMaxCostlyModes and ConfirmMaxModeLen are C2's own bounds for the
+	// session's costly-mode list and for one mode name.
+	ConfirmMaxCostlyModes = 32
+	ConfirmMaxModeLen     = 64
+	// ConfirmDefaultBiometricOnCostly is P6's `mobile.biometric_on_costly`
+	// default: off, which is also the zero value a caller leaves alone.
+	ConfirmDefaultBiometricOnCostly = false
 )
+
+// ConfirmDefaultCostlyModes is P6's `mobile.costly_modes` default, which is the
+// session policy D2786 reads when the caller names none. It is held to
+// shared/confirm/policy.js by TestConfirmConstantsMatchTheSharedModule, so the
+// two ends cannot drift about which modes a project calls costly.
+var ConfirmDefaultCostlyModes = []string{"pro", "critical"}
 
 // The confirm module's own refusal codes. They are not in Codes: that list is
 // `shared/mailbox-schema`'s and the two ends compare it as a set. The codes that
@@ -312,6 +337,9 @@ type ConfirmTarget struct {
 	Repo    string
 	PR      int64
 	HeadSHA string
+	// Mode is what a costly start binds (D2786): the mode the read-back named,
+	// and the only thing a launch's target carries.
+	Mode string
 }
 
 // ConfirmPending is one outstanding read-back: what was read back, when, and the
@@ -342,8 +370,13 @@ type ConfirmState struct {
 	TimeoutMs  int64
 	MaxPending int
 	MaxLedger  int
-	Pending    []ConfirmPending
-	Spent      []ConfirmSpent
+	// CostlyModes and BiometricOnCostly are the session's own policy values
+	// (C2's `costly_modes` and `biometric_on_costly`): they ride the state
+	// because D2786's answer is a function of them, as the timeout is.
+	CostlyModes       []string
+	BiometricOnCostly bool
+	Pending           []ConfirmPending
+	Spent             []ConfirmSpent
 }
 
 // ConfirmEvent is one utterance, as the machine reads it. HasTarget records
@@ -357,6 +390,11 @@ type ConfirmEvent struct {
 	Verb        string
 	Target      *ConfirmTarget
 	HasTarget   bool
+	// Mode is the mode a *launch* would start in, with HasMode recording whether
+	// the event carried one at all: a start that names none is a start the
+	// router did not resolve a costly mode for (D2786).
+	Mode        string
+	HasMode     bool
 	ActionID    string
 	HasActionID bool
 	// ConfirmationID is the id of the confirmation the event carries.
@@ -371,6 +409,11 @@ type ConfirmOptions struct {
 	TimeoutMs  int64
 	MaxPending int
 	MaxLedger  int
+	// CostlyModes and BiometricOnCostly are the session policy D2786 reads. A
+	// nil list means P6's default (ConfirmDefaultCostlyModes); a caller that
+	// means "no mode is costly" passes an empty, non-nil list.
+	CostlyModes       []string
+	BiometricOnCostly bool
 }
 
 // ConfirmAnswer is one step's answer: an outcome with the state it produced, or
@@ -388,11 +431,14 @@ type ConfirmAnswer struct {
 	Deadline       int64
 	ConfirmedAt    int64
 	ReadBack       string
-	Record         *ConfirmRecord
-	ActionIDs      []string
-	State          ConfirmState
-	Code           Code
-	Field          string
+	// Biometric is D2786's second demand on a costly start: the session's switch
+	// asks for the biometric re-auth (P5.1g's path) beside the phrase.
+	Biometric bool
+	Record    *ConfirmRecord
+	ActionIDs []string
+	State     ConfirmState
+	Code      Code
+	Field     string
 }
 
 // ConfirmRecord is D169's action record, field for field: the id of the action,
@@ -419,6 +465,10 @@ func (r ConfirmRecord) Value() Record {
 	target := Record{}
 	if r.Target.Kind == ConfirmTargetRun {
 		target["run"] = r.Target.RunID
+	} else if r.Target.Kind == ConfirmTargetMode {
+		// D2786's start: the record binds the mode the read-back named, and a
+		// start has no run, no repository and no head to bind.
+		target["mode"] = r.Target.Mode
 	} else {
 		target["repo"] = r.Target.Repo
 		target["pr"] = r.Target.PR
@@ -439,6 +489,15 @@ func (r ConfirmRecord) Value() Record {
 // the consumer's runner reads: `fugaro cancel RUN` takes the run id, and
 // `gh pr merge` takes the repository, the number and the head.
 func (r ConfirmRecord) Action() *Action {
+	// A start's record has no Action: this vocabulary is the two commands the
+	// CLI runs, and a launch is the orchestrator's to start (P5.1), so a record
+	// built from a costly start read-back authorises nothing here. nil rather
+	// than a half-filled Action, which is what the consumer would execute by
+	// mistake -- and there is nothing to fill it with: a launch's Action names
+	// the repository to start in, and a mode target has no repository.
+	if r.Target.Kind == ConfirmTargetMode {
+		return nil
+	}
 	a := &Action{ID: r.ID, Verb: r.Verb, Confirmation: Confirmation{ID: r.Confirmation.ID, At: r.Confirmation.At}}
 	if r.Target.Kind == ConfirmTargetRun {
 		a.Target = Target{Run: r.Target.RunID}
@@ -478,11 +537,55 @@ func ConfirmInitialState(o ConfirmOptions) (ConfirmState, *Refusal) {
 	if maxLedger < ConfirmMinMaxLedger || maxLedger > ConfirmMaxMaxLedger {
 		return ConfirmState{}, refuse(CodeConfirmInvalidMaxLedger, "maxLedger")
 	}
+	costlyModes := o.CostlyModes
+	if costlyModes == nil {
+		costlyModes = ConfirmDefaultCostlyModes
+	}
+	if refusal := confirmReadCostlyModes(costlyModes); refusal != nil {
+		return ConfirmState{}, refusal
+	}
 	return ConfirmState{
 		Phase: ConfirmPhaseIdle, Now: o.Now, TimeoutMs: timeout,
 		MaxPending: maxPending, MaxLedger: maxLedger,
+		CostlyModes: append([]string{}, costlyModes...), BiometricOnCostly: o.BiometricOnCostly,
 		Pending: []ConfirmPending{}, Spent: []ConfirmSpent{},
 	}, nil
+}
+
+// confirmIsCostlyStart answers whether a start in `mode` is the costly start
+// D2786 names: one the session's own list calls costly.
+func confirmIsCostlyStart(mode string, costlyModes []string) bool {
+	return confirmContains(costlyModes, mode)
+}
+
+// confirmReadCostlyModes reads the modes a session calls costly: a bounded list
+// of bounded single-line names, read with the same reader an id or a text gets.
+//
+// A list that names one mode twice is not refused: membership is the whole of
+// what the list means, so the second entry answers what the first did. The port
+// that builds the list from the project policy is the one that refuses a
+// duplicate (C2's checkPolicy), and this file is not the reader of a session.
+//
+// A nil list is refused rather than read as "no mode is costly": the two ends
+// have to answer a state that does not say what the session calls costly the
+// same way, and the module refuses it (`missing-field/costlyModes`) -- a state
+// that has lost the field is a defect, and the lenient reading of a defect is
+// exactly the reading that lets a costly start through with no read-back. A
+// state that *names* no costly mode is the empty list, which is read here as
+// what it says.
+func confirmReadCostlyModes(modes []string) *Refusal {
+	if modes == nil {
+		return refuse(CodeMissingField, "costlyModes")
+	}
+	if len(modes) > ConfirmMaxCostlyModes {
+		return refuse(CodeTooLong, "costlyModes")
+	}
+	for _, mode := range modes {
+		if _, refusal := confirmString(mode, "costlyModes", ConfirmMaxModeLen); refusal != nil {
+			return refusal
+		}
+	}
+	return nil
 }
 
 // ConfirmStep applies one event to one state, in the order the rules state it:
@@ -558,15 +661,41 @@ func confirmCommand(state ConfirmState, ev ConfirmEvent) ConfirmAnswer {
 		return ConfirmAnswer{Code: CodeConfirmRefusedVerb, Field: "verb"}
 	}
 
-	kinds, destructive := confirmVerbTargetKinds[verb]
-	if !destructive {
-		// A pass-through verb takes no target and no action id: a launch is not
-		// read back, so carrying either is a caller that thinks it is.
+	kinds := confirmVerbTargetKinds[verb]
+	// D162's launch is the one verb whose answer is not the verb's alone: D2786
+	// reads it back when the mode the router resolved is a costly one, and lets
+	// it through otherwise. `mode` is that verb's own field, and a target is not
+	// a field it has at all -- a start has no run id yet, so what there is to
+	// read back and to bind is the mode.
+	isStart := verb == ConfirmVerbLaunch
+	if isStart {
 		if ev.HasTarget {
 			return ConfirmAnswer{Code: CodeConfirmVerbTargetMismatch, Field: "target"}
 		}
-		if ev.HasActionID {
-			return ConfirmAnswer{Code: CodeConfirmVerbTargetMismatch, Field: "actionId"}
+	} else if ev.HasMode {
+		// A mode is the launch's field alone: a cancel that carries one is a
+		// caller that thinks a mode changes what cancelling means.
+		return ConfirmAnswer{Code: CodeConfirmVerbTargetMismatch, Field: "mode"}
+	}
+
+	// The costly start, resolved from the mode and the session's policy before
+	// anything else is spent. A mode this file cannot read is refused as the
+	// value it is, in the same place and with the same codes as any other field.
+	var resolved ConfirmTarget
+	// A destructive verb is always read back; a start is read back only when
+	// D2786 makes it costly.
+	needsReadBack := !isStart
+	biometric := false
+	if isStart {
+		if ev.HasMode {
+			mode, refusal := confirmString(ev.Mode, "mode", ConfirmMaxModeLen)
+			if refusal != nil {
+				return ConfirmAnswer{Code: refusal.Code, Field: refusal.Field}
+			}
+			if confirmIsCostlyStart(mode, state.CostlyModes) {
+				resolved = ConfirmTarget{Kind: ConfirmTargetMode, Mode: mode}
+				needsReadBack, biometric = true, state.BiometricOnCostly
+			}
 		}
 	} else if !ev.HasActionID {
 		// A destructive verb must carry the action id the confirmation will
@@ -575,8 +704,20 @@ func confirmCommand(state ConfirmState, ev ConfirmEvent) ConfirmAnswer {
 		return ConfirmAnswer{Code: CodeMissingField, Field: "actionId"}
 	}
 
-	var resolved ConfirmTarget
-	if destructive {
+	if isStart {
+		// A costly start is read back, so it carries the action id the
+		// confirmation will name; a start that names no mode, or one the session
+		// does not call costly, is not read back and carries no action id either.
+		if !needsReadBack {
+			if ev.HasActionID {
+				return ConfirmAnswer{Code: CodeConfirmVerbTargetMismatch, Field: "actionId"}
+			}
+		} else if !ev.HasActionID {
+			return ConfirmAnswer{Code: CodeMissingField, Field: "actionId"}
+		}
+	}
+
+	if !isStart {
 		resolved, refusal = confirmReadTarget(ev.Target, kinds)
 		if refusal != nil {
 			return ConfirmAnswer{Code: refusal.Code, Field: refusal.Field}
@@ -586,14 +727,17 @@ func confirmCommand(state ConfirmState, ev ConfirmEvent) ConfirmAnswer {
 	if confirmHasSpent(state, ConfirmLedgerUtterance, utteranceID) {
 		return ConfirmAnswer{Code: CodeConfirmReplayedUtterance, Field: "utteranceId"}
 	}
-	if destructive && confirmHasSpent(state, ConfirmLedgerAction, actionID) {
+	if needsReadBack && confirmHasSpent(state, ConfirmLedgerAction, actionID) {
 		// Two commands under one action id are an ambiguity about which action a
 		// confirmation authorised, so the second is refused rather than allowed
-		// to overwrite the first.
+		// to overwrite the first. It is the resolved target that makes an action
+		// id one to spend -- a costly start's mode as much as a run's id -- so a
+		// start that is read back is held to it exactly as a cancel is, and a
+		// plain start, which carries no action id at all, never reaches here.
 		return ConfirmAnswer{Code: CodeConfirmReplayedAction, Field: "actionId"}
 	}
 
-	if !destructive {
+	if !needsReadBack {
 		// D162: a launch goes straight through. Its utterance is still spent, so
 		// "one utterance, one event" holds for it too -- a pass-through
 		// authorises nothing, but its id is not a second utterance later.
@@ -631,8 +775,9 @@ func confirmCommand(state ConfirmState, ev ConfirmEvent) ConfirmAnswer {
 	return ConfirmAnswer{
 		OK: true, Outcome: ConfirmOutcomeReadBack, Phase: phase, Verb: verb,
 		ActionID: actionID, Target: resolved, At: ev.Now, Deadline: entry.Deadline,
-		ReadBack: ConfirmReadBack(verb, resolved),
-		State:    confirmBuildState(phase, ev.Now, state, pending, spent),
+		ReadBack:  ConfirmReadBack(verb, resolved),
+		Biometric: biometric,
+		State:     confirmBuildState(phase, ev.Now, state, pending, spent),
 	}
 }
 
@@ -785,6 +930,11 @@ func ConfirmReadBack(verb string, target ConfirmTarget) string {
 	}
 	var what string
 	switch {
+	case resolved.Kind == ConfirmTargetMode:
+		// D47's Rule, for a start: there is no run id yet, so what the speaker
+		// must hear again is the mode the start would run in -- the one value
+		// D2786 makes the difference about.
+		what = fmt.Sprintf("Start a run in %s mode.", resolved.Mode)
 	case resolved.Kind == ConfirmTargetMerge:
 		what = fmt.Sprintf("Merge %s#%d at head %s.", resolved.Repo, resolved.PR, resolved.HeadSHA)
 	case verb == ConfirmVerbCancel:
@@ -846,6 +996,10 @@ var confirmVerbTargetKinds = map[string][]string{
 	ConfirmVerbCancel:  {ConfirmTargetRun},
 	ConfirmVerbConfirm: {ConfirmTargetRun, ConfirmTargetPR},
 	ConfirmVerbMerge:   {ConfirmTargetMerge},
+	// A costly start's target is its mode (D2786). The table is what a pending
+	// read-back and a confirmation are read against, so a launch read back is
+	// confirmed by asserting the same mode, and nothing else.
+	ConfirmVerbLaunch: {ConfirmTargetMode},
 }
 
 func confirmVerbValues() []string {
@@ -878,8 +1032,17 @@ func confirmReadTarget(value *ConfirmTarget, kinds []string) (ConfirmTarget, *Re
 		return ConfirmTarget{}, refuse(CodeConfirmVerbTargetMismatch, "target.kind")
 	}
 	switch value.Kind {
+	case ConfirmTargetMode:
+		if value.RunID != "" || value.Repo != "" || value.PR != 0 || value.HeadSHA != "" {
+			return ConfirmTarget{}, refuse(CodeUnknownField, "target")
+		}
+		mode, refusal := confirmString(value.Mode, "target.mode", ConfirmMaxModeLen)
+		if refusal != nil {
+			return ConfirmTarget{}, refusal
+		}
+		return ConfirmTarget{Kind: ConfirmTargetMode, Mode: mode}, nil
 	case ConfirmTargetRun:
-		if value.Repo != "" || value.PR != 0 || value.HeadSHA != "" {
+		if value.Repo != "" || value.PR != 0 || value.HeadSHA != "" || value.Mode != "" {
 			return ConfirmTarget{}, refuse(CodeUnknownField, "target")
 		}
 		runID, refusal := confirmKeyID(value.RunID, "target.runId")
@@ -893,7 +1056,7 @@ func confirmReadTarget(value *ConfirmTarget, kinds []string) (ConfirmTarget, *Re
 		}
 		return ConfirmTarget{Kind: ConfirmTargetRun, RunID: runID}, nil
 	case ConfirmTargetPR, ConfirmTargetMerge:
-		if value.RunID != "" {
+		if value.RunID != "" || value.Mode != "" {
 			return ConfirmTarget{}, refuse(CodeUnknownField, "target")
 		}
 		if value.Kind == ConfirmTargetPR && value.HeadSHA != "" {
@@ -1094,12 +1257,18 @@ func confirmReadState(state *ConfirmState) *Refusal {
 	if state.MaxLedger < ConfirmMinMaxLedger || state.MaxLedger > ConfirmMaxMaxLedger {
 		return refuse(CodeConfirmInvalidMaxLedger, "maxLedger")
 	}
+	// The session's policy is read here rather than at the point it is used, so
+	// a state carrying a value this file cannot read is refused as a state and
+	// not answered around.
+	if refusal := confirmReadCostlyModes(state.CostlyModes); refusal != nil {
+		return refusal
+	}
 	if len(state.Pending) > state.MaxPending {
 		return refuse(CodeConfirmInvalidPending, "pending")
 	}
 	pending := make([]ConfirmPending, 0, len(state.Pending))
 	for _, entry := range state.Pending {
-		if !confirmContains(ConfirmDestructiveVerbs, entry.Verb) {
+		if !confirmContains(ConfirmPendingVerbs, entry.Verb) {
 			return refuse(CodeConfirmInvalidPendingEntry, "pending")
 		}
 		if _, refusal := confirmKeyID(entry.ActionID, "pending"); refusal != nil {
@@ -1178,6 +1347,7 @@ func confirmBuildState(phase ConfirmPhase, now int64, from ConfirmState, pending
 	return ConfirmState{
 		Phase: phase, Now: now, TimeoutMs: from.TimeoutMs,
 		MaxPending: from.MaxPending, MaxLedger: from.MaxLedger,
+		CostlyModes: from.CostlyModes, BiometricOnCostly: from.BiometricOnCostly,
 		Pending: append([]ConfirmPending{}, pending...), Spent: append([]ConfirmSpent{}, spent...),
 	}
 }
@@ -1261,6 +1431,11 @@ func confirmSameTarget(left, right ConfirmTarget) bool {
 	switch left.Kind {
 	case ConfirmTargetRun:
 		return left.RunID == right.RunID
+	case ConfirmTargetMode:
+		// A start's target is its mode: a confirmation asserting another mode
+		// heard a different read-back, so it authorises nothing (D2786, with
+		// D47's Rule).
+		return left.Mode == right.Mode
 	case ConfirmTargetPR:
 		return left.Repo == right.Repo && left.PR == right.PR
 	default:
@@ -1332,9 +1507,11 @@ func ConfirmValidateAction(a *Action, o ConfirmActionOptions) (*ConfirmRecord, *
 		return nil, refuse(CodeUnknownVerb, "action.verb")
 	}
 	if !confirmContains(ConfirmDestructiveVerbs, a.Verb) {
-		// A launch passes through without a record (D162) and is answered before
-		// this function is reached; a verb the ruling refuses is refused here,
-		// and a record carrying one authorises nothing.
+		// A launch is a mailbox action now (J5a, O10), but it is not this
+		// function's: this is the destructive allow-list (D128), and O10's gate
+		// -- ConfirmValidateLaunch -- is what reads a start against the
+		// session's policy. A verb the ruling refuses is refused here, and a
+		// record carrying one authorises nothing.
 		return nil, refuse(CodeConfirmRefusedVerb, "action.verb")
 	}
 	var target ConfirmTarget
@@ -1382,6 +1559,108 @@ func ConfirmValidateAction(a *Action, o ConfirmActionOptions) (*ConfirmRecord, *
 		ID: id, Verb: a.Verb, Target: resolved,
 		Confirmation: ConfirmConfirmation{ID: confirmationID, At: at},
 	}, nil
+}
+
+// ---------------------------------------------------------------------------
+// O10's gate: the typed launch a consumer refuses when it skipped the read-back
+// ---------------------------------------------------------------------------
+
+// ConfirmLaunchOptions are what the gate judges a typed launch against: the
+// modes the session calls costly, which is D2786's policy and the same list the
+// confirm machine reads (C2's `costly_modes`). A nil list means P6's default
+// (ConfirmDefaultCostlyModes), exactly as ConfirmOptions.CostlyModes does; a
+// caller that means "no mode is costly" passes an empty, non-nil list.
+type ConfirmLaunchOptions struct {
+	CostlyModes []string
+}
+
+// ConfirmValidateLaunch is O10's gate, and the whole of what the typed launch
+// adds to the consumer's checks: a start in a mode the session calls costly is
+// refused when the record carries no confirmation. A start in any other mode
+// passes through with no confirmation, which is D162's answer and stays it for
+// every mode D2786 does not name.
+//
+// **Why it is a library check, and not a case in ConfirmValidateAction.** That
+// function is the destructive allow-list (D128) and a launch runs nothing
+// there. Wiring this gate into the running consumer -- reading the session's
+// policy and starting the run the record asks for -- is the P5.1
+// orchestrator's, so the check is exported and tested here, and nothing in this
+// package calls it yet. The two functions answer each other's verbs the same
+// way, and deliberately: each refuses a verb it does not authorise as
+// `refused-verb`, so a caller that hands a record to the wrong one is refused
+// rather than answered with a record that authorises nothing.
+//
+// **What it answers.** The record the consumer may start, or the refusal that
+// stops it. A launch's record binds the mode the record named -- the same
+// target kind J3's machine binds for a costly start (ConfirmTargetMode), so a
+// caller has one shape to read whatever produced it. A costly launch's record
+// carries the confirmation the phone wrote, for the caller to spend against its
+// own memory before anything runs; a plain launch's carries none.
+//
+// **What it re-reads, and what it deliberately does not.** It re-reads the
+// shape of what it hands back -- the action id, and the confirmation's id and
+// time when the record carries one -- for the reason ConfirmValidateAction
+// re-reads its own: a record built by hand inside this binary must not leave
+// here looking spendable. What it does NOT read is the **command window**: the
+// window is measured against the consumer's clock (D173's six hours from the
+// confirmation's own time), this gate has no clock in its options, and the
+// caller that owns the clock is the one that owns the window -- the same
+// division ConfirmValidateAction draws around the phone's confirmation timeout.
+// A caller that starts a costly launch must therefore spend the confirmation
+// against its own memory AND its own window before anything runs.
+//
+// **The refusal a costly start without a confirmation gets** is `missing-field`
+// at `action.confirmation`: it is the code the schema already answers a
+// confirmation-less destructive record with, and D2786 makes a costly start's
+// confirmation a requirement of exactly that kind -- one the session policy
+// states and the schema cannot, because a schema has no session to read.
+func ConfirmValidateLaunch(a *Action, o ConfirmLaunchOptions) (*ConfirmRecord, *Refusal) {
+	if a == nil {
+		return nil, refuse(CodeMissingField, "action")
+	}
+	if a.Verb != ConfirmVerbLaunch {
+		// The gate answers one verb. A destructive record is
+		// ConfirmValidateAction's, and a caller that hands one here has asked
+		// the wrong question: refusing it is the fail-closed answer.
+		return nil, refuse(CodeConfirmRefusedVerb, "action.verb")
+	}
+	costlyModes := o.CostlyModes
+	if costlyModes == nil {
+		costlyModes = ConfirmDefaultCostlyModes
+	}
+	if refusal := confirmReadCostlyModes(costlyModes); refusal != nil {
+		// A policy this file cannot read is refused rather than read as "no mode
+		// is costly": the lenient reading of a defect is exactly the reading
+		// that lets a costly start through with no read-back.
+		return nil, refusal
+	}
+	if confirmIsCostlyStart(a.Mode, costlyModes) && !a.HasConfirmation {
+		// D2786: a costly start is read back like a cancel, so a record that
+		// carries no confirmation is one the phone never read back -- a
+		// modified client, or one that skipped the read-back. Refused rather
+		// than started.
+		return nil, refuse(CodeMissingField, "action.confirmation")
+	}
+	id, refusal := confirmKeyID(a.ID, "action.id")
+	if refusal != nil {
+		return nil, refusal
+	}
+	record := &ConfirmRecord{
+		ID: id, Verb: ConfirmVerbLaunch,
+		Target: ConfirmTarget{Kind: ConfirmTargetMode, Mode: a.Mode},
+	}
+	if a.HasConfirmation {
+		confirmationID, refusal := confirmKeyID(a.Confirmation.ID, "action.confirmation.id")
+		if refusal != nil {
+			return nil, refusal
+		}
+		at := a.Confirmation.At
+		if at < 1 || at > TimeMax {
+			return nil, refuse(CodeBadTimestamp, "action.confirmation.at")
+		}
+		record.Confirmation = ConfirmConfirmation{ID: confirmationID, At: at}
+	}
+	return record, nil
 }
 
 // ---------------------------------------------------------------------------

@@ -86,10 +86,11 @@ func workspaceShareRepositoryCredential(credential string) (string, bool) {
 }
 
 type workspaceShareOptions struct {
-	workspace string
-	projects  []string
-	covers    []string
-	yes       bool
+	workspace  string
+	projects   []string
+	allMembers bool
+	covers     []string
+	yes        bool
 	// noApply is --no-apply (D1565), as workspaceMemberAddOptions'.
 	noApply *bool
 }
@@ -97,7 +98,7 @@ type workspaceShareOptions struct {
 func newWorkspaceShareCmd() *cobra.Command {
 	var o workspaceShareOptions
 	cmd := &cobra.Command{
-		Use:   "share <credential> --workspace <name> --projects a,b",
+		Use:   "share <credential> --workspace <name> --projects a,b | --all-members",
 		Short: "Offer one of the workspace's credentials to some of its members",
 		Long: `Write one entry into the workspace owner's own shared list.
 
@@ -109,13 +110,18 @@ to state and none to get wrong. A provider key is offered as a model entry, whic
 is what a call spent through one is; a repository's own Anthropic key is refused,
 because the entry belongs to that one repository by construction.
 
---projects names the members this credential may be served to, as a comma
-separated list or repeated, and each must be a member the workspace's own table
-declares: a shared entry naming a project the table does not is an entry the
-workspace's own fugaro update refuses to publish. --covers names the
-repositories a forge credential reaches, as owner/name, and it is required for
-bitbucket and github and refused for a model credential, which a call names no
-repository for.
+Who it may be served to is one of two declarations and never both: --projects
+names the members, as a comma separated list or repeated, each a member the
+workspace's own table declares — a shared entry naming a project the table does
+not is an entry the workspace's own fugaro update refuses to publish; and
+--all-members offers it to every member of the workspace, the ones that join
+later included. An entry offered to every member is bounded by the workspace's
+own ceiling alone, so --all-members is refused while the workspace states no cap:
+set one with fugaro workspace cap set first.
+
+--covers names the repositories a forge credential reaches, as owner/name, and
+it is required for bitbucket and github and refused for a model credential,
+which a call names no repository for.
 
 An entry the list already holds is replaced whole, as a member entry is: the
 projects and the coverage it ends up with are the ones given, so re-sharing is
@@ -131,6 +137,7 @@ in the record the workspace's service reads.`,
 	f := cmd.Flags()
 	f.StringVar(&o.workspace, "workspace", "", "the workspace whose list this is (required: an entry belongs to one workspace)")
 	f.StringSliceVar(&o.projects, "projects", nil, "the member projects this credential may be served to, comma separated or repeated")
+	f.BoolVar(&o.allMembers, "all-members", false, "offer the credential to every member of the workspace, the ones that join later included (exclusive with --projects; needs the workspace's cap)")
 	f.StringArrayVar(&o.covers, "covers", nil, "a repository a forge credential reaches, as owner/name (repeatable; required for bitbucket and github)")
 	o.noApply = addNoApplyFlag(cmd)
 	return cmd
@@ -140,8 +147,15 @@ func runWorkspaceShare(cmd *cobra.Command, credential string, o *workspaceShareO
 	if o.workspace == "" {
 		return userErr("--workspace is required: a shared entry belongs to one workspace and its own project config is where it is written")
 	}
-	if len(o.projects) == 0 {
-		return userErr("--projects is required: a shared entry states the members it may be served to, and an entry that named none would be one the workspace's own update refuses to publish")
+	// Who the entry may be served to is one of two declarations and never both,
+	// which is the node's own rule (contract C3's rule 5) asked here where the
+	// person can see the flag that is wrong: an entry that named both, or
+	// neither, is one the workspace's own update refuses to publish.
+	switch {
+	case o.allMembers && len(o.projects) > 0:
+		return userErr("--all-members and --projects are exclusive: an entry offered to every member of the workspace names no project, and one offered to the members it names carries --projects and no --all-members")
+	case !o.allMembers && len(o.projects) == 0:
+		return userErr("--projects is required: a shared entry states the members it may be served to, and an entry that named none would be one the workspace's own update refuses to publish (name them with --projects a,b, or offer it to every member with --all-members)")
 	}
 	entry, name, ok := workspaceSharedKind(credential)
 	if !ok {
@@ -178,6 +192,17 @@ func runWorkspaceShare(cmd *cobra.Command, credential string, o *workspaceShareO
 				o.workspace, p, credential, o.workspace, p, o.workspace)
 		}
 	}
+	// An entry offered to every member is bounded by the workspace's ceiling
+	// alone, and the ceiling is the owner's fence over their own money (D2977):
+	// it reaches members that join after it is written, so there is nothing else
+	// bounding what they spend through it. The key is refused here, before
+	// anything is written, and the writer refuses it again on the value it would
+	// publish — the node carries no cap, so this is the one place the person is
+	// told the fix.
+	if o.allMembers && lc.WorkspaceCap == nil {
+		return userErr("workspace %s states no cap, and --all-members offers %s to every member of the workspace, the ones that join later included: an entry offered to every member is bounded by the workspace's ceiling alone, so nothing would bound what they spend through it; nothing was written — state the ceiling ('fugaro workspace cap set --workspace %s --monthly <dollars>'), then share it again",
+			o.workspace, credential, o.workspace)
+	}
 	old, err := settingsReadDocument(settingsTarget{kind: settingsDocLocal, path: path})
 	if err != nil {
 		return err
@@ -204,6 +229,16 @@ func runWorkspaceShare(cmd *cobra.Command, credential string, o *workspaceShareO
 	}
 	for _, repo := range o.covers {
 		if next, err = workspaceAddItem(path, next, []string{"workspace_shared", name, "covers"}, repo); err != nil {
+			return err
+		}
+	}
+	// The one key an entry offered to every member carries in place of the
+	// projects it does not name (contract C3's rule 5): written `true` and
+	// nothing else, so a reader never finds a false beside a list and has to
+	// read the list. An entry that ends up with neither is impossible here —
+	// the flags above are exactly one of the two.
+	if o.allMembers {
+		if next, err = workspaceSetScalar(path, next, []string{"workspace_shared", name, "all_members"}, "true"); err != nil {
 			return err
 		}
 	}
@@ -243,7 +278,11 @@ func workspaceShareWhat(o *workspaceShareOptions, credential, kind string, repla
 	if replace {
 		verb = "replace what workspace " + o.workspace + " offers as"
 	}
-	what := fmt.Sprintf("%s %s (%s) in workspace %s to %s", verb, credential, kind, o.workspace, strings.Join(o.projects, ", "))
+	who := strings.Join(o.projects, ", ")
+	if o.allMembers {
+		who = "every member of the workspace, the ones that join later included"
+	}
+	what := fmt.Sprintf("%s %s (%s) in workspace %s to %s", verb, credential, kind, o.workspace, who)
 	if len(o.covers) > 0 {
 		what += ", for the repositories " + strings.Join(o.covers, ", ")
 	}
@@ -255,6 +294,9 @@ func workspaceShareWhat(o *workspaceShareOptions, credential, kind string, repla
 
 func workspaceShareCommand(o *workspaceShareOptions, credential string) string {
 	cmd := fmt.Sprintf("fugaro workspace share %s --workspace %s", credential, o.workspace)
+	if o.allMembers {
+		cmd += " --all-members"
+	}
 	for _, p := range o.projects {
 		cmd += " --projects " + p
 	}
