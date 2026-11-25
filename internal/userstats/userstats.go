@@ -132,7 +132,9 @@ type Counts struct {
 	Halted     int `json:"halted"`
 	InfraError int `json:"infra_error"`
 	// Other is a run whose record settled as none of the four: still
-	// running, or cancelled.
+	// running, cancelled, unreviewed, or paused — a run that suspended itself
+	// to be resumed by its chain, which is neither a failure nor a success
+	// and, like those two (D996), has no counter of its own here.
 	Other int `json:"other"`
 	// NoRecord is a run with no usable result.json: not finalized yet, or
 	// the object cannot be read.
@@ -203,8 +205,11 @@ func Aggregate(runs []Run) Result {
 			row.InfraError++
 		default:
 			// No record at all is its own count; any other settled status
-			// -- running, cancelled, and unreviewed, which this view keeps
-			// here on purpose (D996: no counter of its own) -- is Other.
+			// -- running, cancelled, unreviewed and paused, which this view
+			// keeps here on purpose (D996: no counter of its own) -- is Other.
+			// A paused run is counted in no failure: it stopped its own
+			// execution to be resumed by its chain, so it is neither a failure
+			// nor a success (contract-pause, R15).
 			if r.NoRecord {
 				row.NoRecord++
 			} else {

@@ -159,6 +159,70 @@ const accountsRmDeclaredLocal = addRigLocal + `claude_accounts:
       - owner/repo-a
 `
 
+// TestAccountsRmRefusesUnmanaged: D2217's fence on this command (T7b). A
+// removal takes an account's declaration, its allow list and the secret behind
+// it out of the project, so a project that is not managed is refused before
+// the walk and before anything is written — at the access gate every
+// project-level write of this tree opens, which is the fence, and in the one
+// sentence it writes. What refuses is the project and not the session: this
+// runs at the owner's own terminal, and
+// TestAccountsRmRefusesAnAgentSession beside it is the session's own fence.
+func TestAccountsRmRefusesUnmanaged(t *testing.T) {
+	r := newManagedAddRig(t, accountsRmDeclaredLocal, addMarksNone)
+	before := readFileString(t, r.cfg)
+
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a")
+	if err == nil {
+		t.Fatalf("the account of a project that is not managed was removed:\n%s", out)
+	}
+	checkFenceRefusal(t, err, "accounts rm")
+	if after := readFileString(t, r.cfg); after != before {
+		t.Errorf("a refused removal changed the file:\n%s", after)
+	}
+	if got := r.sm.Deleted(); len(got) != 0 {
+		t.Errorf("a refused removal deleted %v", got)
+	}
+	if recs := r.audits(t); len(recs) != 0 {
+		t.Errorf("an unmanaged project filed %+v, want no record at all (D1025)", recs)
+	}
+}
+
+// The same refusal on the installation whose config names no budget database,
+// where the access gate cannot judge anything: the fence is asked by this
+// command itself (runAccountsRm), so the removal is refused in the fence's own
+// sentence, with the file and the secret exactly as they were. Left to the
+// gates, this state writes the removal, meets the fence at the delete below,
+// puts the file back and wraps a delete that failed around the fence's
+// sentence — a deletion nobody asked about, and a config written and rolled
+// back on the way.
+func TestAccountsRmRefusesUnmanagedWithoutABudgetURL(t *testing.T) {
+	r := newManagedAddRig(t, accountsRmDeclaredLocal, addMarksNone)
+	withoutABudgetURL(t, r.cfg)
+	before := readFileString(t, r.cfg)
+
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a")
+	if err == nil {
+		t.Fatalf("the account of a project that is not managed was removed:\n%s", out)
+	}
+	checkFenceRefusal(t, err, "accounts rm")
+	// And it is the fence's own sentence rather than one about a delete:
+	// without the fence here this state writes the removal, meets the fence at
+	// the delete, puts the file back and reports the delete — a sentence about
+	// the wrong thing.
+	if said := err.Error(); !strings.HasPrefix(said, managedFencedCommands["accounts rm"]+": ") {
+		t.Errorf("the refusal is not the fence's own sentence:\n%s", said)
+	}
+	if after := readFileString(t, r.cfg); after != before {
+		t.Errorf("a refused removal changed the file:\n%s", after)
+	}
+	if got := r.sm.Deleted(); len(got) != 0 {
+		t.Errorf("a refused removal deleted %v", got)
+	}
+	if recs := r.audits(t); len(recs) != 0 {
+		t.Errorf("an unmanaged project filed %+v, want no record at all (D1025)", recs)
+	}
+}
+
 // TestAccountsRmRemovesTheDefinitionAndItsAllowListEntry is G9's second red
 // step (D1172, spec §3.3): the removal takes the account's definition and the
 // `claude_accounts.NAME.allow_data_to` entry written inside it, so no allow

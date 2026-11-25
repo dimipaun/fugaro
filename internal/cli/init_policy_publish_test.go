@@ -3648,3 +3648,38 @@ func TestPublishRefusesANameThatMeansTwoThings(t *testing.T) {
 		}
 	})
 }
+
+// TestPublishAdmitsAPoolOfOneNamedAfterItsCredential: the one name a credential
+// and a pool may share (D3176, config.PoolMayTakeItsOnlyMembersName) is shared
+// by the published node too. The node the migration writes holds both blocks —
+// a pool of one for every lone account, beside the credential it walks — so a
+// publish that refused the pair would refuse the migrated installation, which is
+// the state `fugaro update` leaves behind.
+func TestPublishAdmitsAPoolOfOneNamedAfterItsCredential(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	node := f.db.Value(projectpolicy.PathShared()).(map[string]any)
+	node["craft_credentials"] = []any{map[string]any{"name": "team-a", "type": "openrouter"}}
+	node["craft_pools"] = []any{map[string]any{
+		"name": "team-a", "strategy": "failover", "members": []any{"team-a"}, "owner": "owner@example.com",
+		"allowed_users": []any{"owner@example.com"}}}
+	f.db.Set(projectpolicy.PathShared(), node)
+	rewriteProjectConfig(t, f, "credentials:\n  - { name: team-a, type: openrouter }\n")
+
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatalf("a node holding the pool of one its credential names was a failed publish: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "craft_pools team-a not published") {
+		t.Errorf("the pool of one named after its own credential was left out:\n%s", out)
+	}
+	p := publishedPolicy(t, f)
+	if want := []config.Credential{{Name: "team-a", Type: config.CredentialTypeOpenRouter}}; !slices.Equal(p.CraftCredentials, want) {
+		t.Errorf("craft_credentials = %+v, want %+v", p.CraftCredentials, want)
+	}
+	if len(p.CraftPools) != 1 || p.CraftPools[0].Name != "team-a" || !slices.Equal(p.CraftPools[0].Members, []string{"team-a"}) {
+		t.Errorf("craft_pools = %+v, want the pool of one", p.CraftPools)
+	}
+}

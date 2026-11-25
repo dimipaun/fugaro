@@ -1194,8 +1194,10 @@ func (r *initRun) lockWorkdirs(project string) (func(), error) {
 }
 
 // markTheUpdateReads makes this run's every read of a checkout's fugaro.yaml
-// the read of the file this run's own removal offer leaves behind: the word
-// that was a budget mode taken out of the bytes before anything judges them
+// the read of the file with the dead word taken out: budget.mode: off is not a
+// budget mode any more, and this run's answer to it is a notice naming the line
+// to delete rather than a write (repo_notices.go, U6a, D3340), so the bytes are
+// read through the word before anything judges them
 // (fugaroYAMLWithoutRemovedMode, AB8b, F22). The published node's own read is
 // the converge's, marked by policyMemo rather than here.
 //
@@ -3664,6 +3666,10 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	if spec, err = r.carriedBudget(ctx, c, spec); err != nil {
 		return outs, false, err
 	}
+	// The project copies D3325 retires, marked before discovery reads the
+	// project's containers: the mark is what takes a retired copy out of the
+	// union that keeps for_each from shrinking (IS13).
+	retiredCopies := r.retireProjectCopies(ctx, c, lc, spec)
 	im, err := infra.DiscoverInstallation(ctx, c, spec)
 	if err != nil {
 		return outs, false, initErr(err)
@@ -3804,6 +3810,10 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	if err := t.Init(ctx, backend); err != nil {
 		return outs, false, remote(err)
 	}
+	// The retired copies leave the state before the plan that drops their key:
+	// the module's prevent_destroy refuses that plan while the state still
+	// holds the instance (U5, IS13).
+	r.removeRetiredCopiesFromState(ctx, t, retiredCopies, spec.ProjectSecrets)
 	// What the installation already is: its name may not change, and an
 	// unnamed one is named only on request. Before any plan.
 	var prior infra.InstallationOutputs

@@ -696,16 +696,15 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// printResult for the reason the two above are: what it printed and
 	// recorded belongs to this run's result.
 	e.raiseBudgetMode(ctx)
-	// And the checkout's own file, which is the one door of the two that is a
-	// committed file somebody reviews: the removal of the budget.mode line is
-	// offered as a diff, written with --yes or by a person at the terminal and
-	// printed otherwise, exactly as the anchor's line is (AB8b, F12, D3022). It
-	// is here rather than before the loop because the repository stage reads
-	// that file and acts only while the working tree holds the default branch's
-	// bytes (resolveRepoTarget), so an edit before it would turn this run's own
-	// repository step into "not the default branch's file". It returns no error
-	// for the reason the raise above returns none.
-	e.offerBudgetModeRemoval(ctx)
+	// And U6a's: the two dead values a release behind this one left on an
+	// enrolled repository's default branch — the plugin pin in
+	// .claude/settings.json and budget.mode: off in fugaro.yaml — each get one
+	// notice line naming the file and the exact edit (D3340). Nothing is
+	// written: the diff offer and the line's removal are gone, and the value is
+	// the repository's own change to make. It is here with the raise above
+	// because both are steps of the update door's and neither may fail an
+	// update (the HARD RULE).
+	e.noticeRepoValues(ctx)
 	// And D1543's: the creation fact a release behind left at version 3 carries
 	// the image build count this one no longer bounds a build by, and a fact is
 	// migrated where it was written (update_marker_version.go). It is after the
@@ -744,17 +743,6 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// both doors — `fugaro setup` creates the installation whose record this
 	// is, and `fugaro update` is the command that keeps it true.
 	e.recordLocations(ctx)
-	// And D2965's, the seventh: the runs that opened, followed or reviewed a
-	// pull request before this release wrote an entry as it came to be on one,
-	// so `runs ls --pr N` finds them in the index instead of scanning the
-	// repository
-	// (update_prindex.go). It is here for the reason the six above are — the
-	// converge applied everything it had, so the runs it walks are the ones this
-	// run leaves behind — and it is beside writeAdminList because it is the
-	// other object of this run's that a later read of the installation takes:
-	// both are derived from what the installation holds and neither fails an
-	// update (the HARD RULE).
-	e.backfillPRIndex(ctx)
 	// And D2966's: the run summaries the runs before this release have none of,
 	// created in place so `runs ls` reads two objects a row instead of three
 	// (update_summary.go). It is here for the reason above — the converge

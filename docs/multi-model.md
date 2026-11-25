@@ -335,11 +335,13 @@ and the security review follows the senior review
 follows the coder because it runs the coder's role slot — the ladder's grade is written there — so a
 craft that took the senior review's access would be served by a pool judged against a model the judge
 does not run.
-`fugaro craft ls` prints, per craft, the model and the access it resolves to and where each came
-from — offline. A craft's access is written in the repository's own `fugaro.yaml`
+`fugaro craft ls` prints, per craft, the model it resolves to, where that came from, and the chain
+the model resolves to — the routing table's answer, empty where the table does not serve this
+repository.
+A craft's access is written in the repository's own `fugaro.yaml`
 (`agent.crafts.<craft>.access`) and **only** there: a project sets a craft's model for every
 repository of it and never its access, because the access names something the owner's own config
-holds.
+holds — and it serves the craft's calls where the routing table does not.
 
 **What a run runs, and what serves it** — the two halves the vocabulary above is about, and which
 of them decides:
