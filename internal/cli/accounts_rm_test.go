@@ -203,12 +203,15 @@ func TestAccountsRmRemovesTheDefinitionAndItsAllowListEntry(t *testing.T) {
 }
 
 // accountsRmTypedLocal is the account's typed entry already named by the rest
-// of the config: a craft served by it and a pool whose members list it. The
-// pool is the state a removal of the entry must refuse under — a member no
-// block defines is the file this config's own loader rejects, and `accounts
-// pool rm` is what drops one; the craft's access is not, because no command of
-// this release writes a crafts key, so the entry's own crafts are cleared with
-// it (craftsNaming, and the test below).
+// of the config: a craft served by it and a pool whose members list it beside a
+// second credential. The pool is the state a removal of the entry must refuse
+// under — a member no block defines is the file this config's own loader
+// rejects, and the pool keeps team-b, so the entry cannot be taken out from
+// under it; the craft's access is not refused, because no command of this
+// release writes a crafts key, so the entry's own crafts are cleared with it
+// (craftsNaming, and the test below). A pool the entry was the whole of is not
+// this fixture: that one goes with the account
+// (TestAccountsRmTakesThePoolTheEntryWasTheWholeOf).
 //
 // The declaration is the file's, so the removal is run on its own rather than
 // after an `accounts add`: that command's own publish would write this file's
@@ -226,6 +229,8 @@ claude_accounts:
 credentials:
   - name: team-a
     type: claude-oauth
+  - name: team-b
+    type: claude-oauth
 crafts:
   coder:
     model: deepseek-v4-1
@@ -234,6 +239,7 @@ pools:
   - name: paid
     members:
       - team-a
+      - team-b
 `
 
 // accountsRmTypedCraftLocal is the same entry named by a craft alone.
@@ -249,6 +255,16 @@ crafts:
   coder:
     model: deepseek-v4-1
     access: team-a
+`
+
+// accountsRmTypedPoolOfOneLocal is the same entry as the whole of a pool's
+// membership: the pool has no member left when the entry goes, so it goes with
+// it rather than being refused over (accountsRmPoolMember).
+const accountsRmTypedPoolOfOneLocal = accountsRmTypedCraftLocal + `
+pools:
+  - name: paid
+    members:
+      - team-a
 `
 
 // TestAccountsRmTakesTheTypedEntryWithTheAccount is the other end of `accounts
@@ -323,6 +339,69 @@ func TestAccountsRmRefusesWhileAPoolStillListsTheCredential(t *testing.T) {
 	}
 	if _, err := localcfg.Load(r.cfg); err != nil {
 		t.Fatalf("the config that command left is one its own next load refuses: %v", err)
+	}
+	for _, want := range []string{"accounts pool add", "accounts pool rm"} {
+		if !strings.Contains(rmErr.Error(), want) {
+			t.Errorf("the refusal names no runnable remedy %q: %v", want, rmErr)
+		}
+	}
+}
+
+// TestAccountsRmTakesThePoolTheEntryWasTheWholeOf is the other end of that
+// guard: a pool whose only member the entry was has nothing left when the entry
+// goes, so the pool goes with it — the file this config's own loader refuses is
+// a pool listing a member no block defines, and no command takes one member
+// away from a pool, so a refusal here would send the owner to a hand edit of a
+// pool this command has already emptied. The pool is recorded in
+// node_removals.pools, which is what says it was taken away rather than never
+// declared (F22, D2607), and the sentence names both.
+func TestAccountsRmTakesThePoolTheEntryWasTheWholeOf(t *testing.T) {
+	r := newAddRigWith(t, accountsRmTypedPoolOfOneLocal)
+
+	// The record is read off the bytes the removal writes and not off the file
+	// the command leaves: the follow-up publish spends it once the node no
+	// longer holds the name (clearReconciledRemovals, D2607), as
+	// TestCredentialRmWritesTheExplicitUnset's own comment says.
+	plan, next, _, err := accountsRmResolve(r.cfg, r.addLocal(t), "team-a", "", []byte(readFileString(t, r.cfg)))
+	if err != nil {
+		t.Fatalf("the removal refused the fixture it is meant to make: %v", err)
+	}
+	if !slices.Equal(plan.pools, []string{"paid"}) {
+		t.Errorf("plan.pools = %v, want the pool the entry was the whole of", plan.pools)
+	}
+	if what := accountsRmWhat(plan); !strings.Contains(what, "remove pools.paid (the entry was every member)") {
+		t.Errorf("the sentence does not name the pool it removes: %s", what)
+	}
+	lc, err := localcfg.Parse(next)
+	if err != nil {
+		t.Fatalf("the bytes this removal writes do not read back: %v", err)
+	}
+	if _, ok := accountsPoolOf(lc, "paid"); ok {
+		t.Errorf("pools.paid is still declared in the bytes this removal writes: %+v", lc.Pools)
+	}
+	if lc.NodeRemovals == nil || !slices.Contains(lc.NodeRemovals.Pools, "paid") {
+		t.Errorf("the removal of pools.paid was not recorded in node_removals.pools: %+v", lc.NodeRemovals)
+	}
+	if lc.NodeRemovals == nil || !slices.Contains(lc.NodeRemovals.CraftCredentials, "team-a") {
+		t.Errorf("the removal of the typed entry was not recorded: %+v", lc.NodeRemovals)
+	}
+
+	// And the command itself runs it: the pool is gone from the file it leaves,
+	// which is one this config's own reader loads — a pool left listing a member
+	// no block defines is exactly the file it refuses.
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a")
+	if err != nil {
+		t.Fatalf("accounts rm of a pool's last member: %v\n%s", err, out)
+	}
+	lc, err = localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatalf("the config this command wrote does not load: %v", err)
+	}
+	if _, ok := accountsPoolOf(lc, "paid"); ok {
+		t.Errorf("pools.paid is still in the config this command wrote: %+v", lc.Pools)
+	}
+	if _, ok := lc.ClaudeAccounts["team-a"]; ok {
+		t.Errorf("claude_accounts.team-a is still declared")
 	}
 }
 
@@ -2398,8 +2477,16 @@ const accountsRmKeyPoolLocal = addRigLocal + `providers:
     secret: team-a-api-key
     models: ["deepseek/*"]
     allow_data_to: [owner/repo-a]
+  team-b:
+    kind: anthropic-compat
+    base_url: https://openrouter.example/api/v1
+    auth: bearer
+    secret: team-b-api-key
+    models: ["claude/*"]
+    allow_data_to: [owner/repo-a]
 credentials:
   - { name: team-a, type: openrouter }
+  - { name: team-b, type: openrouter }
 claude_accounts:
   team-a:
     allow_data_to:
@@ -2408,6 +2495,7 @@ pools:
   - name: paid
     members:
       - team-a
+      - team-b
 `
 
 // accountsRmKeyCraftLocal is the same entry a craft's access names and no pool
