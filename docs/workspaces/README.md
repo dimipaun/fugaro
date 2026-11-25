@@ -82,6 +82,13 @@ trusting any finding above it.
   other three rules of §9 stand, the credential rule above stands, and what the authority puts in
   reach of each actor is stated at its real size in
   [../workspace-projects-users/threat-model.md](../workspace-projects-users/threat-model.md).
+  **The addendum's own folder is
+  [../workspace-projects-users/README.md](../workspace-projects-users/README.md)**: it carries the
+  index, the plan of its tasks, and the two contracts the commands are written against. The
+  commands are its own — `fugaro workspace project add|ls|rm|status|reconcile|link|unlink|save`,
+  `fugaro workspace user add|rm|ls|grant|revoke` and `fugaro workspace domains add|rm|ls` — and
+  the ones that widen a member are the member owner's own opt-in at
+  `fugaro workspace project link` (D2819).
 
 ## What it is
 

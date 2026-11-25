@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log/slog"
+	"net/http"
 	"slices"
 	"strings"
 	"testing"
@@ -21,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/versionstamp"
 )
 
 // update_in_flight_test.go is the owner's requirement of 2026-11-09: `fugaro
@@ -43,6 +46,15 @@ const (
 	inFlightSigner = "fugaro-token-signer@init-project.iam.gserviceaccount.com"
 	inFlightAPIKey = "AIzaSyFakeWebApiKeyForTheUpdateTest000"
 	inFlightOwner  = "owner@example.invalid"
+	// pausedRunID is the run of the same repository that suspended itself across
+	// the update: the paused chain the count's line names (PR6). resumedRunID is
+	// the run that continues it after the update.
+	pausedRunID   = "20261109-042900-1a2b"
+	resumedRunID  = "20261109-050000-7c3d"
+	pausedSession = "3f1a0c92-5e4b-4a7d-9c2e-1b8f0d6a4e21"
+	// A full commit id (gitops.ValidCommitSHA): the checkpoint a suspend pushes
+	// and a resume checks out.
+	pausedCheckpoint = "0123456789abcdef0123456789abcdef01234567"
 )
 
 // TestUpdateLeavesARunInFlightRunning: an installation one release behind,
@@ -51,6 +63,14 @@ const (
 // run goes on, and every write the run makes afterwards still lands: its lease,
 // the ledger and the counters that lease settles, the outcome it ends with, and
 // its record and review session in the runs bucket.
+//
+// The fixture carries a paused run beside the running one (PR6): a chain that
+// suspended itself before the update, whose record, node, saved session and
+// chain ledger the update rewrites nothing of, and which the run that resumes it
+// picks up afterwards. The count is the running run and the paused one — a
+// paused chain is in flight the way a running one is (PR12, D3195) — the update
+// waits for it exactly as it waits for the run that is going, and the paused run
+// is a fact of its own under the count's line.
 func TestUpdateLeavesARunInFlightRunning(t *testing.T) {
 	r := newConvergeRig(t, v3Node(nil))
 	// The deployed rules are the release behind's document and not a stand-in:
@@ -59,16 +79,29 @@ func TestUpdateLeavesARunInFlightRunning(t *testing.T) {
 	r.db.SetRules(previousRulesDocument(t))
 	before := rulePaths(t, r.db.Rules())
 	run := startRunInFlight(t, r)
+	held := startPausedRunInFlight(t, r, false)
+	// The release bound answers for this binary's own release, so the update
+	// really raises the required-CLI stamp while the runs are in flight: the one
+	// node the stamp moves is one no run reads, and the raise is the step this
+	// test's own claim is read over.
+	stampReleaseAnswers(t, http.StatusOK)
 
 	out := convergeOn(t, r, []string{"policy-rules-skew", "policy-older-than-binary", "plugin-pin"})
 
 	// One note, one fact per line: the runs are in flight and the update leaves
 	// them running. No refusal, and never a request to wait — the owner's ruling
 	// of 2026-11-09, and the reason the policy stage's refusal is not a thing
-	// this door does any more.
+	// this door does any more. The count is the running run and the paused one (a
+	// suspended run's execution has ended and released its lease, R12, so the
+	// count reads the service's node and the run's own record to name it at all,
+	// PR6), and the count's own sentence is untouched by that: the paused figure
+	// is one of the lines under it.
 	line := inFlightLine(t, out)
-	if !strings.Contains(line, "1 run in flight") {
-		t.Errorf("the update's note does not say how many runs are running: %q", line)
+	if !strings.Contains(line, "2 runs in flight: update waits for none and changes nothing they hold") {
+		t.Errorf("the update's note does not count the running run and the paused one in its own sentence: %q", line)
+	}
+	if !strings.Contains(line, "\n  paused: 1 run among them, held by a pause that still stands") {
+		t.Errorf("the update's note does not say that one of the two is a run a pause still stands over: %q", line)
 	}
 	for _, banned := range []string{"wait for them", "refus", "finish first, then"} {
 		if strings.Contains(line, banned) {
@@ -126,6 +159,27 @@ func TestUpdateLeavesARunInFlightRunning(t *testing.T) {
 		t.Errorf("the policy reads as found=%v version=%d after the update, want version %d", found, p.Version, projectpolicy.Version)
 	}
 
+	// The required CLI moved to this release in the same run, over the runs in
+	// flight: the stamp is one node no stage of a run reads, so the fence the
+	// project's members are held to rises while a run of the release behind
+	// keeps going, and that run is neither asked to finish first nor refused
+	// (docs/design/update-in-flight.md's version-stamp row).
+	var stampRaw json.RawMessage
+	stampFound, err := db.Get(context.Background(), versionstamp.Path, &stampRaw)
+	if err != nil {
+		t.Fatalf("reading the required CLI back after the update: %v", err)
+	}
+	if !stampFound {
+		t.Fatalf("the update left no required CLI at %s: the step this test is read over never ran", versionstamp.Path)
+	}
+	stamp, present, err := versionstamp.Decode(stampRaw)
+	if err != nil {
+		t.Fatalf("the required CLI at %s is not a stamp this binary can read: %v", versionstamp.Path, err)
+	}
+	if !present || stamp.Min != convergeRelease {
+		t.Errorf("the required CLI at %s reads present=%v min=%q after the update, want this release (%s): the raise did not land", versionstamp.Path, present, stamp.Min, convergeRelease)
+	}
+
 	// The default profile this update writes is a local-config write (S5, R1):
 	// it reaches no run, and the run above keeps its record, its ledger and its
 	// counters (laterWrites below) while the file the next run of this machine
@@ -136,6 +190,74 @@ func TestUpdateLeavesARunInFlightRunning(t *testing.T) {
 	}
 
 	run.laterWrites(t, r)
+
+	// And the paused run is where the update left it: nothing it holds was
+	// rewritten, and the run that resumes it picks the chain up afterwards.
+	held.untouched(t, r)
+	held.resumes(t, r)
+}
+
+// TestUpdateCountsPausedRuns is PR6's own acceptance read against the note: the
+// update's in-flight line says how many of the runs in flight are paused. A run
+// that suspended itself has ended its execution and released its lease (R12), so
+// the registry the count otherwise reads holds no entry of it, and a pause is
+// written in two places nothing else reads: the credentials service's node under
+// paused/ (C3, R26, D3185) and the run's own record, which is what says the run
+// really ended `paused` — the reading a resume itself makes (PR4) and the reason
+// a node on its own is not a paused run.
+//
+// The four cases are the two sides of each of those: a standing pause is counted;
+// a pause its launcher cancelled is not, because the chain is over and no guard
+// reads it as in flight any more (D3197, pauseStands); a node whose run did not
+// end paused is not, because no resume acts on it and the count is not a count of
+// the database's leftovers; and a machine with no pause says nothing about one.
+// Each is read off the note the door really printed, over a run really in flight
+// beside the paused one.
+func TestUpdateCountsPausedRuns(t *testing.T) {
+	line := func(t *testing.T, paused bool, cancelled bool) string {
+		t.Helper()
+		r := newConvergeRig(t, v7Node())
+		startRunInFlight(t, r)
+		if paused {
+			startPausedRunInFlight(t, r, cancelled)
+		}
+		return inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"}))
+	}
+	t.Run("a standing pause is counted", func(t *testing.T) {
+		got := line(t, true, false)
+		if !strings.Contains(got, "2 runs in flight: update waits for none and changes nothing they hold") {
+			t.Errorf("the note does not count the paused chain beside the running run, whose execution has ended and left the registry, in its own sentence: %q", got)
+		}
+		if !strings.Contains(got, "\n  paused: 1 run among them, held by a pause that still stands") {
+			t.Errorf("the note does not say that one of the two is a run a pause still stands over: %q", got)
+		}
+	})
+	t.Run("a cancelled pause is not", func(t *testing.T) {
+		got := line(t, true, true)
+		if !strings.Contains(got, "1 run in flight") {
+			t.Errorf("the note does not count the running run alone over a chain its launcher cancelled: %q", got)
+		}
+		if strings.Contains(got, "paused") {
+			t.Errorf("the note counts a cancelled pause as a run in flight, and the launcher took that chain out of flight (D3197): %q", got)
+		}
+	})
+	t.Run("a run that did not end paused is not", func(t *testing.T) {
+		r := newConvergeRig(t, v7Node())
+		startRunInFlight(t, r)
+		// The node is there and nothing cancelled it: what is missing is the run
+		// that ended `paused`, which is the half a resume reads.
+		startPausedRunWith(t, r, false, runstore.StatusSucceeded)
+		got := inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"}))
+		if !strings.Contains(got, "1 run in flight") || strings.Contains(got, "paused") {
+			t.Errorf("the note counts a node whose run did not end paused as a paused run in flight, and nothing will resume it: %q", got)
+		}
+	})
+	t.Run("no pause, no line", func(t *testing.T) {
+		got := line(t, false, false)
+		if !strings.Contains(got, "1 run in flight") || strings.Contains(got, "paused") {
+			t.Errorf("the note says something about a pause over a machine holding none: %q", got)
+		}
+	})
 }
 
 // TestRunInFlightSurvivesPolicyBump is CLAUDE.md's HARD RULE read against this
@@ -202,6 +324,13 @@ func TestUpdateLeavesARunInFlightRunningThroughTheProxySwitch(t *testing.T) {
 	// projects directory, and registerInstallation is what puts this one there.
 	r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
 	registerInstallation(t, r.initRig)
+	// The Cloud Run reads of the run: this fake speaks jobs and no service, so
+	// the credentials service's own paths are answered by this file's services
+	// skew and every other path by the jobs fake. Nothing is deployed in it —
+	// Cloud Run's 404 — which is the state the copy stage's guard reads the
+	// installation's own pin over, and that pin is a release newer than the
+	// family's (seedCredentialsService below).
+	providerKeyEndpoint(t, r.run, newRunServiceSkew(t))
 	// The service itself, as the release behind deployed it: the tfvars entry it
 	// holds, this release's image in the fake source so the credentials-service
 	// stage has a move to make, and the installation's own outputs, which is what
@@ -464,6 +593,80 @@ func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 	}
 }
 
+// TestUpdateInFlightLineCountsTheRunsOnTheOldRecord is MG3's own line under the
+// note, and the count the acceptance asks it for: this release keeps writing the
+// repository's old access record beside the routing table, and the line says how
+// many of the runs in flight are the ones it is written for — the runs whose job
+// image predates the table, which resolve from that record and from nothing else
+// (D3196, R25).
+//
+// The facts are the run's own record, which the runner writes at bootstrap out
+// of the build record inside its container (ImageInfo), and never the workflow's
+// current build record: an image rebuilt while a run flies leaves that run on the
+// one it started with. So the boundary is the run's own build time against the
+// moment the chain contract reached the branch (chainIntroduced), and the three
+// cases below are the two sides of it and the record that names no build time —
+// which counts, the direction the seal gate takes for an image it cannot show
+// knows the seal, because a run this door cannot place is one it cannot promise
+// the table is serving.
+//
+// A line whose count is zero is not printed at all: a machine whose runs all
+// carry the table has nothing to say about the record, and the note is the
+// count's line and one short line per fact, never a line that says nothing.
+func TestUpdateInFlightLineCountsTheRunsOnTheOldRecord(t *testing.T) {
+	line := func(t *testing.T, image *runstore.ImageInfo) string {
+		t.Helper()
+		prev := records
+		t.Cleanup(func() { records = prev })
+		r := newConvergeRig(t, v7Node())
+		run := startRunInFlight(t, r)
+		// Seeded after the run's own record is written, and in the map the fake
+		// bucket is built from (openFakeRecords): the door opens the bucket for
+		// itself, so the record it reads is the one standing here — which is the
+		// record the runner of that run left, image and all.
+		seedRunRecordImage(t, run.slug, inFlightRunID, image)
+		return inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"}))
+	}
+	t.Run("an image built before the table is counted", func(t *testing.T) {
+		built := chainIntroduced.Add(-time.Hour)
+		got := line(t, &runstore.ImageInfo{BuiltAt: &built, BakedCommit: "0123456789abcdef"})
+		if !strings.Contains(got, "old access record: still written, so 1 of these runs resolve from it") {
+			t.Errorf("the note does not count the run whose image predates the table:\n%s", got)
+		}
+	})
+	t.Run("an image built after the table is not", func(t *testing.T) {
+		built := chainIntroduced.Add(time.Hour)
+		got := line(t, &runstore.ImageInfo{BuiltAt: &built, BakedCommit: "0123456789abcdef"})
+		if strings.Contains(got, "old access record") {
+			t.Errorf("the note says a run resolves from the old access record over a run whose image carries the table:\n%s", got)
+		}
+	})
+	t.Run("a record that names no build time counts", func(t *testing.T) {
+		got := line(t, &runstore.ImageInfo{BakedCommit: "0123456789abcdef"})
+		if !strings.Contains(got, "old access record: still written, so 1 of these runs resolve from it") {
+			t.Errorf("the note does not count a run whose record names no build time: a run this door cannot place is not one it can promise the table serves\n%s", got)
+		}
+	})
+}
+
+// seedRunRecordImage puts a run's record, naming the image it is running,
+// where the fixture's fake runs bucket reads it: the document the runner writes
+// (encodeRecord is a plain Marshal, internal/runstore/replace.go), so the door's
+// read is the read the runner's own write produces. A nil image is the record of
+// a run whose bootstrap named none.
+func seedRunRecordImage(t *testing.T, slug, runID string, image *runstore.ImageInfo) {
+	t.Helper()
+	data, err := json.Marshal(&runstore.Record{
+		Version: 1, RunID: runID, Repo: "acme/app", Workflow: "app",
+		Status: runstore.StatusRunning, Stage: "implement", Outcome: runstore.OutcomeNone,
+		Image: image,
+	})
+	if err != nil {
+		t.Fatalf("encoding the run's record: %v", err)
+	}
+	records["runs/"+slug+"/"+runID+"/result.json"] = string(data)
+}
+
 // TestUpdateInFlightLineNamesTheCredentialsServiceWindow is the fourth step the
 // line names, and the one this release's reorder created: the update raises the
 // published node's version in the policy stage and replaces the service that
@@ -522,7 +725,9 @@ func TestUpdateInFlightLineNamesTheCredentialsServiceWindow(t *testing.T) {
 		// update writes its block and the service takes the revision that names
 		// the daemon's account: the one step that does reach the run, and the
 		// line says it is served by either revision rather than refused.
-		if !strings.Contains(got, "resident orchestrator:") || strings.Count(got, "resident orchestrator:") != strings.Count(got, "\n  ") {
+		// The old access record's own step (MG3) is named beside it when the run
+		// resolves from that record, and is not the credentials service's window.
+		if !strings.Contains(got, "resident orchestrator:") || strings.Count(got, "resident orchestrator:") != strings.Count(got, "\n  ")-strings.Count(got, "old access record:") {
 			t.Errorf("the note names more or less than the orchestrator's revision over a run this update otherwise leaves where it is:\n%s", got)
 		}
 	})
@@ -726,6 +931,174 @@ func (r *inFlightRun) laterWrites(t *testing.T, rig *convergeRig) {
 	}
 	if rec.Status != runstore.StatusSucceeded {
 		t.Errorf("the record reads status %q after the run's last write", rec.Status)
+	}
+}
+
+// pausedRunOnHold is a run that suspended itself before the update and comes
+// back after it: the two halves of its pause (C3), the session and the ledger it
+// holds, and the values as they stood when the update started, so a step that
+// rewrote any of them fails the read below.
+type pausedRunOnHold struct {
+	store   *runstore.Store
+	slug    string
+	pause   runstore.PauseRecord
+	node    runstore.PauseNode
+	session []byte
+	spent   budget.Micros
+}
+
+// startPausedRunInFlight plants a run that ended paused, as the runner's suspend
+// leaves it (the record the run ends with, the session it saved and the record
+// it wrote for its resumer), the credentials service's node under paused/ that
+// says the pause stands and when it is due (cancelled puts the launcher's mark
+// on it instead, D3197), and the run's own ledger in the budget database.
+// Everything is written before the update runs: the claim is about what the
+// update does to it. The chain the node names is the run id itself, the root a
+// chain is rooted at (D1045).
+func startPausedRunInFlight(t *testing.T, r *convergeRig, cancelled bool) *pausedRunOnHold {
+	t.Helper()
+	return startPausedRunWith(t, r, cancelled, runstore.StatusPaused)
+}
+
+// publishRecord places a run's record where every later reader of the fake runs
+// bucket finds it: the rig's opener serves the bucket from `records`, so a record
+// the fixture wrote through its own store — a bucket of its own, closed with the
+// store — is put beside them under the key the store reads it by. It is what a
+// real runs bucket holds, and the door's count reads the run's own record (its
+// status) as the fact that a pause still holds it.
+func publishRecord(t *testing.T, store *runstore.Store) {
+	t.Helper()
+	data, err := store.ReadFile(context.Background(), "result.json")
+	if err != nil {
+		t.Fatalf("reading back the run's record to publish it: %v", err)
+	}
+	if records == nil {
+		records = map[string]string{}
+	}
+	records[store.Prefix()+"result.json"] = string(data)
+}
+
+// startPausedRunWith is startPausedRunInFlight over the status the run's own
+// record carries. `paused` is the run a pause still holds (D3195's reading, and
+// the one a resume makes); any other status is the node the service wrote for a
+// run that ended that way, which is a pause nothing resumes.
+func startPausedRunWith(t *testing.T, r *convergeRig, cancelled bool, status runstore.Status) *pausedRunOnHold {
+	t.Helper()
+	ctx := context.Background()
+	slug, err := task.Slug("github", "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := runStoreIn(t, ctx, slug, pausedRunID)
+	pause := runstore.PauseRecord{
+		Version: runstore.PauseVersion, Stage: "implement",
+		Session: pausedSession, Checkpoint: pausedCheckpoint,
+	}
+	if err := store.WritePause(ctx, pause); err != nil {
+		t.Fatalf("writing the paused run's pause.json: %v", err)
+	}
+	session := []byte("the conversation the suspended run saved\n")
+	if err := store.PutSession(ctx, runstore.SessionMeta{
+		Version: 1, ID: pausedSession, HeadSHA: pausedCheckpoint, Pushed: true,
+		WorkDir: "/workspace", Bytes: int64(len(session)),
+	}, session); err != nil {
+		t.Fatalf("saving the paused run's session: %v", err)
+	}
+	if err := store.WriteRecord(ctx, &runstore.Record{
+		Version: 1, RunID: pausedRunID, Repo: "acme/app", Workflow: "app",
+		Status: status, Stage: "implement", Outcome: runstore.OutcomeNone,
+	}); err != nil {
+		t.Fatalf("writing the paused run's record: %v", err)
+	}
+	publishRecord(t, store)
+	node := runstore.PauseNode{
+		Launcher: inFlightOwner, ResumeAt: time.Now().Add(-time.Minute).UnixMilli(),
+		Chain: pausedRunID, PausedSeconds: 600, Cancelled: cancelled,
+	}
+	raw, err := node.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.db.Set(runstore.PauseNodePath(slug, pausedRunID), json.RawMessage(raw))
+	// The run's ledger, which its chain sums: written before the update and read
+	// back after it, so a step that took the chain's accounting away fails here.
+	spent := budget.Micros(250_000)
+	r.db.Set(budget.PathRun(slug, pausedRunID), map[string]any{"spent": spent, "reserved": budget.Micros(0)})
+	return &pausedRunOnHold{store: store, slug: slug, pause: pause, node: node, session: session, spent: spent}
+}
+
+// untouched asserts the update rewrote nothing the paused run holds: its record,
+// its node, its saved session and its chain's ledger, each read back the way the
+// side that owns it reads it (F36).
+func (p *pausedRunOnHold) untouched(t *testing.T, r *convergeRig) {
+	t.Helper()
+	ctx := context.Background()
+	rec, err := p.store.ReadRecord(ctx)
+	if err != nil {
+		t.Fatalf("the paused run's record could not be read after the update: %v", err)
+	}
+	if rec.Status != runstore.StatusPaused || rec.Stage != "implement" {
+		t.Errorf("the paused run's record reads status %q stage %q after the update, want the paused/implement it ended in: the update rewrote a record a paused run holds", rec.Status, rec.Stage)
+	}
+	db, err := newBudgetClient(ctx, r.db.URL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nodes map[string]map[string]json.RawMessage
+	if _, err := db.Get(ctx, runstore.PauseNodeRoot, &nodes); err != nil {
+		t.Fatalf("the paused node could not be read after the update: %v", err)
+	}
+	node, err := runstore.ParsePauseNode(nodes[p.slug][pausedRunID])
+	if err != nil {
+		t.Fatalf("the paused node is not one this release can read after the update: %v", err)
+	}
+	if *node != p.node {
+		t.Errorf("the paused node reads %+v after the update, want the one the credentials service wrote %+v: the update rewrote a node a paused run holds", *node, p.node)
+	}
+	meta, data, err := p.store.ReadSession(ctx)
+	if err != nil {
+		t.Fatalf("the paused run's saved session could not be read after the update: %v", err)
+	}
+	if meta.ID != pausedSession || !bytes.Equal(data, p.session) {
+		t.Errorf("the saved session reads %+v/%q after the update, want the one the suspended run left: the update rewrote what a resume restores", meta, data)
+	}
+	if got := numAt(t, r.db, budget.PathRun(p.slug, pausedRunID)+"/spent"); got != float64(p.spent) {
+		t.Errorf("the paused run's ledger reads spent=%v after the update, want %d: the update rewrote a chain's ledger", got, p.spent)
+	}
+}
+
+// resumes is the run the paused one comes back as, after the update: it reads
+// pause.json for the stage, the session and the checkpoint the suspended run
+// left (PR5's own read), and continues the chain — the resumed run's own record
+// landing under the node and the rules the update left behind. The resumer is
+// PR4's and is not wired here; what this proves is the half the update owns,
+// that the pause still reads as one a resume can pick up.
+func (p *pausedRunOnHold) resumes(t *testing.T, r *convergeRig) {
+	t.Helper()
+	ctx := context.Background()
+	rec, err := p.store.ReadPause(ctx)
+	if err != nil {
+		t.Fatalf("the resumed run could not read pause.json after the update: %v", err)
+	}
+	if *rec != p.pause {
+		t.Errorf("pause.json reads %+v after the update, want the record the suspended run left %+v", *rec, p.pause)
+	}
+	if rec.Stage != "implement" || rec.Checkpoint != pausedCheckpoint {
+		t.Errorf("pause.json names stage %q checkpoint %q after the update, want the implement/%s a resume checks out", rec.Stage, rec.Checkpoint, pausedCheckpoint)
+	}
+	resumed := p.store.Sibling(resumedRunID)
+	if err := resumed.WriteRecord(ctx, &runstore.Record{
+		Version: 1, RunID: resumedRunID, Repo: "acme/app", Workflow: "app",
+		Status: runstore.StatusRunning, Stage: rec.Stage, Outcome: runstore.OutcomeNone,
+	}); err != nil {
+		t.Fatalf("the resumed run could not write its record after the update: %v", err)
+	}
+	back, err := resumed.ReadRecord(ctx)
+	if err != nil {
+		t.Fatalf("the resumed run's record could not be read back: %v", err)
+	}
+	if back.Status != runstore.StatusRunning || back.Stage != "implement" {
+		t.Errorf("the resumed run's record reads status %q stage %q, want the running run that entered the stage the pause named", back.Status, back.Stage)
 	}
 }
 

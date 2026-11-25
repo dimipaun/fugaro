@@ -9,6 +9,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 // planStep is one step of the run's loop after implement, with its rounds
@@ -205,8 +206,66 @@ func (r *run) buildPlan() error {
 	if err != nil {
 		return err
 	}
-	r.plan = plan
+	r.setPlan(plan)
 	return nil
+}
+
+// setPlan commits a plan to the run and writes it to the record: the plan the
+// runner runs and the plan a reader sees are one plan, and the second of them is
+// the only place a level's cap survives — the resolution that produced it reads
+// the recipe's text, the run's configuration and the mode, none of which the
+// record keeps, so nothing else can replay it (V1.3). The escalation's rebuild
+// (security.go) commits through here for that reason.
+func (r *run) setPlan(plan []planStep) {
+	r.plan = plan
+	r.rec.Plan = planRecordOf(plan)
+}
+
+// planRecordOf is the plan as the record carries it. A plan of no steps records
+// nothing rather than an empty block: the field is absent for a run that built
+// none, so a reader cannot tell an empty plan from an unread one, and an empty
+// plan is not a state the runner reaches — a recipe always holds at least the
+// review step (recipe.Parse).
+func planRecordOf(plan []planStep) *runstore.PlanRecord {
+	if len(plan) == 0 {
+		return nil
+	}
+	steps := make([]runstore.PlanStepRecord, 0, len(plan))
+	for _, st := range plan {
+		steps = append(steps, runstore.PlanStepRecord{Kind: string(st.Kind), Rounds: st.Rounds})
+	}
+	return &runstore.PlanRecord{Steps: steps}
+}
+
+// refreshPlanRounds rewrites the plan block's level 2 and level 3 rounds where
+// the mode supplies them. setPlan writes the block once, at bootstrap, but a
+// senior or an adversarial round is spent under the number the mode the run has
+// reached supplies *then* (reviewRounds, adversarialRounds, D22), so a mode a
+// round raises leaves the block behind: the loop would run up to five senior
+// rounds at Critical while the record said Pro's three, and a reader would be
+// shown a cap nobody ran under — `fugaro diagnose` printing "level l2: 5 of 3
+// rounds" and the Run screen's bar drawn at 166.7% against a mark the level was
+// never given (V1.3).
+//
+// It is called at every moment that raised the level (recordRigor) and nowhere
+// else: a moment that resolves the level the run has already reached moves
+// nothing. The step's own precedence is kept — a number a layer, the recipe or
+// the task set is not the mode's to move — and level 1's step is left alone,
+// because the first-line loop spends the plan's own st.Rounds and never re-reads
+// the mode (runner.go, firstLine).
+func (r *run) refreshPlanRounds() {
+	if len(r.plan) == 0 {
+		return
+	}
+	for i, st := range r.plan {
+		switch st.Kind {
+		case recipe.StepReview:
+			r.plan[i].Rounds = r.reviewRounds(st)
+		case recipe.StepAdversarial:
+			r.plan[i].Rounds = r.adversarialRounds(st)
+		}
+	}
+	r.rec.Plan = planRecordOf(r.plan)
 }
 
 // planFor is the plan the run's levels make of its recipe, checked. levels is

@@ -1762,6 +1762,55 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			BundleRefusal(err), labelRead(readBundle, err))
 		return
 	}
+	// CS1: a project that publishes a routing table has its model calls served
+	// by the chain its entry names (R4), and such a call never reaches the
+	// cascade's own offering below: the chain REPLACES the fixed tier order, so
+	// the crafts, the admission intersection and the fixed order are the path of
+	// a project that publishes no table. A project that publishes none answers
+	// here unchanged (PublishedTable's own default), which is every installation
+	// not yet migrated and every existing test.
+	binding, _ := callSlipOf(ctx)
+	chainSel := &creds.Selector{Store: sc.State(), Settings: settingsOf(shared), Now: s.now}
+	plan, byChain, cerr := s.chainFor(ctx, cl, id, canonical, shared, b, binding)
+	if cerr != nil {
+		var cr *chainRefusal
+		if errors.As(cerr, &cr) {
+			// A refusal the walk itself wrote: it names its own status and type,
+			// and it is audited by the one path that audits refusals — one line,
+			// and no value in it, because no credential was touched.
+			s.refuseCall(ctx, w, id, purpose, "", "", cr.status, cr.typ, cr.what)
+			return
+		}
+		s.refuseCallCause(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable,
+			"the call's routing table could not be read", labelRead(readPolicyShared, cerr))
+		return
+	}
+	if byChain {
+		chainSel.Model = plan.model
+		cl.chain = &chainWalk{
+			plan:  plan,
+			sel:   chainSel,
+			cl:    cl,
+			asked: cl.body,
+			run:   creds.Run{Slug: id.Slug, ID: id.Run},
+			// C2's picker is PL3's own rule over the scope's state: a pool's
+			// members are judged and picked by the same free/Settings algebra the
+			// selection uses, so a pool is one more place a credential comes from
+			// and not a second vocabulary.
+			pick: creds.PoolRule{Store: sc.State(), Settings: settingsOf(shared), Now: s.now},
+			now:  s.now,
+		}
+		// tried is the chain's own record of what it dropped, and cands is the
+		// flattened members — every member a probe may be owed on, because the
+		// plan decided which sources this call may go out on and the policy's
+		// tier gate is not asked a second time (probeCandidatesFor): the chain
+		// REPLACES the fixed tier order, so applying it here would leave a
+		// source the walk serves with a mark no probe could ever clear. forward
+		// keeps its whole loop — the money, the 401 and the 429, the switch, U7
+		// — and the chain changes only the ORDER it walks.
+		s.forward(ctx, w, cl, chainSel, id, b, chainMembers(plan), plan.skipped)
+		return
+	}
 	cands, strategy, exclusive, notAdmitted, err := s.candidates(ctx, id, canonical, shared, b)
 	if err != nil {
 		// Two refusals share this branch and they are not the same answer. A
@@ -1772,6 +1821,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// switch or the path that would let it serve.
 		var refusal *poolRefusal
 		if errors.As(err, &refusal) {
+			// The class the walk set is the answer, and the two are not the
+			// same refusal: a walk that narrowed a candidate LIST to nothing
+			// read the state and found this call no candidate, which is
+			// no_candidate_credentials and carries the list; every other walk's
+			// refusal is about the call or about a document, and it keeps the
+			// service's own sentence under state_unavailable.
+			if refusal.class == ErrorNoCandidateCredentials {
+				s.refuseCandidates(ctx, w, id, purpose, refusal.message, refusal.tried)
+				return
+			}
 			s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, refusal.message)
 			return
 		}
@@ -1781,34 +1840,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// The slip's own fence on the offering (G12, R9), and the last thing
 	// between the candidates and the cascade: a credential that belongs to a
 	// person or to the project is served only under a slip that names it.
-	binding, _ := callSlipOf(ctx)
+	//
+	// binding was read above, before the chain was asked whether it serves this
+	// call at all, and it is the same value: callSlipOf is a pure read of the
+	// call's own context.
 	cands, notAdmitted = slipOffering(binding, cands, notAdmitted)
-	// C2's own rule on the offering (R7), read last and only for a call that
-	// was admitted under a WORKSPACE slip: the person's own token is offered
-	// FIRST, ahead of the shared entries the call is admitted to, so a run that
-	// holds a slip naming a personal credential spends the person's token and
-	// not the workspace's paid one. The reader is the scope's (C2's Personal),
-	// the candidate it answers is the cascade's own shape, and an answered
-	// error REFUSES the call rather than falling to the shared entries —
-	// D2974's whole point, and the reason the reader's three classes are three
-	// (PersonalReader). A call with no workspace slip, and one whose slip names
-	// no personal credential (found=false), is served exactly what it was
-	// admitted to, which is the state every call is in until the personal half
-	// is wired.
-	if binding != nil && binding.slip != nil {
-		if ps, person := personScopeOf(sc); person {
-			c, found, err := ps.Personal().Personal(ctx, *binding.slip)
-			switch {
-			case err != nil:
-				s.log.Error("credsvc: the call's personal credential could not be offered", "slip", binding.id, "error", err)
-				s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable,
-					"the call's personal credential could not be offered")
-				return
-			case found:
-				cands = append([]creds.Credential{c}, cands...)
-			}
-		}
-	}
+	// R7's candidate is already in this list, first, and already marked as the
+	// call's own exclusive one: it is assembled where the list is built
+	// (candidates, cascade.go) and never here, so the entry that is SERVED and
+	// not only the entry that is offered is the person's own token (D2974,
+	// D3144), and the class the reader answers is the sentence the call is
+	// refused with.
 	// The strategy travels with the candidate list it was answered for
 	// (candidates, roundrobin.go; MC7): a pool asking for round-robin is served
 	// by the rotation, and every other list by the cascade's own rule. It is

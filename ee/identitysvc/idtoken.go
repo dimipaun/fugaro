@@ -118,6 +118,13 @@ type Identity struct {
 	// it does not — an email-and-password sign-in's provider writes no id of its
 	// own, and the uid is stable per account.
 	Subject string
+	// UID is the Firebase account's own id — the `sub`/`user_id` pair above —
+	// and the value this project's own nodes are keyed on (K1's paired list is
+	// one node per uid). It is Subject for a sign-in whose provider writes no id
+	// of its own and differs from it otherwise, and it is not a secret: what the
+	// sealed paired list hides is its contents, not who the person is (spec's
+	// resolved decisions).
+	UID string
 	// Email is the address the project attested, folded the way this
 	// repository's member records fold one, and EmailVerified is the project's
 	// own statement about it.
@@ -243,6 +250,7 @@ func (v *IDTokenVerifier) Verify(ctx context.Context, raw string) (Identity, err
 	}
 	return Identity{
 		Subject:       subjectOf(claims, provider, sub),
+		UID:           uid,
 		Email:         email,
 		EmailVerified: verified,
 		Provider:      provider,

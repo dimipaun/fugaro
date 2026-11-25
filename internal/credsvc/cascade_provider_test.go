@@ -3,6 +3,7 @@ package credsvc
 import (
 	"context"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -457,10 +458,120 @@ func TestTheOfferingsProviderCredentialIsNotWhatAProbeRunsOn(t *testing.T) {
 	if probe := s.up.Body(0); !strings.Contains(string(probe), `"max_tokens":1`) {
 		t.Errorf("the first call is %s, want the probe: nothing was asked of the shared token, and the credential a probe is due on is the one the model admits", probe)
 	}
-	if got, _ := s.state.mark(provider); got != planted {
+	if got, _ := s.state.mark(provider); !reflect.DeepEqual(got, planted) {
 		t.Errorf("the provider credential's mark is %+v, want the one the exhaustion left (%+v): a probe ran on it, and the probe's body names this call's own model", got, planted)
 	}
 	if m, ok := s.state.mark(config.DefaultClaudeAccount); ok && !m.Available() {
 		t.Errorf("the shared token's mark is %+v, want it cleared: it is the credential the probe was owed on", m)
+	}
+}
+
+// TestEntryForServesAFamilyEntryByItsOwnKey is the RESOLUTION's half of C1's
+// family, and it is the half the copy (KS12) cannot work without: the offering
+// hands a call a repository's own entry by NAME — a repository's own Anthropic
+// key at tier B (ownNamedEntries, D3008) and its provider's key at the reserved
+// tier C (F32) — and entryFor is the one place that name becomes a value. Two of
+// the three arms it had could not answer one: the family is in no byName, so the
+// lookup by name refused it, and a repository's own PROVIDER key carries the
+// reserved tier C the PROJECT's provider key does, so the tier alone told
+// neither from the other. What a refusal here costs is the whole point of the
+// copy read backwards: a repository the copy has written an entry for is refused
+// EVERY model call it makes ("the selected credential is not in the bundle"),
+// which is worse than the state the copy set out to improve.
+//
+// The document is one a copy has run against (namedBundleDoc): two repositories
+// hold ONE provider name and one of them holds an Anthropic key of its own, so a
+// resolution that fell back to the name — or answered another repository's entry
+// of the same name — attaches a value nobody selected for this call (R2, F42).
+func TestEntryForServesAFamilyEntryByItsOwnKey(t *testing.T) {
+	doc, _, _, values := namedBundleDoc(t)
+	mine := repoEntryKeyFor(t, "github", "acme/one", "openrouter")
+	theirs := repoEntryKeyFor(t, "github", "acme/two", "openrouter")
+	own := repoEntryKeyFor(t, "github", "acme/one", config.AnthropicKeyAccount)
+	b, err := ParseBundle(doc)
+	if err != nil {
+		t.Fatalf("ParseBundle of the document a copy has run against: %v", err)
+	}
+
+	// Each member resolves to the entry its own key names, to the value the
+	// document holds under it and to nothing else: the kind is the family's own
+	// (never KindModel, which is the answer that would make an entry a cascade
+	// may select, F33) and the tier is the one the candidate was offered at.
+	for _, tc := range []struct {
+		what, key string
+		tier      creds.Tier
+	}{
+		{"the repository's own Anthropic key", own, creds.TierB},
+		{"the repository's own provider key", mine, creds.TierC},
+	} {
+		e, ok := entryFor(b, creds.Credential{Name: tc.key, Tier: tc.tier})
+		if !ok {
+			t.Fatalf("entryFor answered nothing for %s (%s at tier %s), and the document holds it: the offering offered it by name, and the call would be refused over a credential the bundle carries", tc.what, tc.key, tc.tier)
+		}
+		if e.Value() != values[tc.key] {
+			t.Errorf("%s resolved to a value the document does not hold under %s: the entry a call is served is the one its own key names (D3008)", tc.what, tc.key)
+		}
+		if e.Key != tc.key || e.Kind != KindRepoCredential || e.Tier != tc.tier {
+			t.Errorf("%s resolved to %+v, want the family's kind under the document key %q at tier %s", tc.what, e, tc.key, tc.tier)
+		}
+	}
+
+	// And never to another repository's entry of the same credential name: the
+	// two are one name in the document and two keys, and the other repository's
+	// is the value the fallback would attach.
+	if e, ok := entryFor(b, creds.Credential{Name: mine, Tier: creds.TierC}); !ok || e.Value() == values[theirs] {
+		t.Errorf("the candidate %s resolved to %+v, and the document holds %q for the same provider under another repository (R2): the family's key carries the repository it was entered for", mine, e, values[theirs])
+	}
+	// A family-shaped name the document does not hold resolves to nothing: the
+	// key is read as it stands and nothing is derived from it, so a candidate
+	// whose key no entry carries is not one this bundle can serve (D143).
+	absent := repoEntryKeyFor(t, "github", "acme/one", "deepseek")
+	if e, ok := entryFor(b, creds.Credential{Name: absent, Tier: creds.TierC}); ok {
+		t.Errorf("a family-shaped name the document does not hold resolved to %+v, want nothing", e)
+	}
+
+	// What entryFor answers is what send attaches to the call, so the
+	// repository's own Anthropic key is read off the request the upstream saw:
+	// its own value under the shape the entry names, and no other repository's
+	// anywhere in the headers. The fixture's client rewrites every host to a
+	// loopback fake, so a call to the key's own address — the Anthropic API —
+	// really arrives there and no request leaves the machine (Convention 9).
+	s := newSvc(t)
+	e, ok := entryFor(b, creds.Credential{Name: own, Tier: creds.TierB})
+	if !ok {
+		t.Fatal("the repository's own Anthropic key did not resolve to an entry")
+	}
+	ans, err := s.server.send(context.Background(), providerCall(t, MessagesPath), e)
+	if err != nil {
+		t.Fatalf("the call served by the repository's own Anthropic key was not sent: %v", err)
+	}
+	defer ans.resp.Body.Close()
+	if ans.resp.StatusCode != http.StatusOK {
+		t.Fatalf("the upstream answered %d, want its 200", ans.resp.StatusCode)
+	}
+	if ans.credential != values[own] {
+		t.Error("the answer is redacted with a value that is not the repository's own key's")
+	}
+	if n := s.up.Count(); n != 1 {
+		t.Fatalf("the upstream saw %d requests, want 1", n)
+	}
+	req := s.up.Seen()[0]
+	if got, want := req.Header.Get("x-api-key"), values[own]; got != want {
+		t.Errorf("the call carried x-api-key = %q, want the value of the entry its own key resolved to", got)
+	}
+	if got := req.Header.Get("Authorization"); got != "" {
+		t.Errorf("the call also carried Authorization = %q: the entry names one shape (D1418)", got)
+	}
+	for name, vals := range req.Header {
+		for _, v := range vals {
+			for _, other := range []string{values[mine], values[theirs]} {
+				if strings.Contains(v, other) {
+					t.Errorf("the call carries another repository's key in %s", name)
+				}
+			}
+		}
+	}
+	if got := req.URL.Path; got != MessagesPath {
+		t.Errorf("the call went to %q, want the entry's own address and the served path: a repository's own Anthropic key goes to the Anthropic API", got)
 	}
 }

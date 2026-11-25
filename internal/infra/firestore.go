@@ -110,6 +110,13 @@ type FirestoreStep struct {
 	planned                          bool
 	warnings                         []string
 	createDB, deployRules, writeMark bool
+	// dbKnown and dbExists are what the plan's own read of the database
+	// resource answered, kept apart from planned: the reads AFTER it (the mark,
+	// the collections, the rules) can fail on a database that is there, and a
+	// caller that decides something from the answer has to tell "there is no
+	// database" from "the plan never got the answer" (DatabaseExists,
+	// DatabaseKnown; RI2).
+	dbKnown, dbExists bool
 	// adoptedDB is where a database that appeared between the plan and the
 	// write, and was adopted instead of created, lives ("" when Apply created
 	// the database itself, or when the plan already found one).
@@ -132,6 +139,35 @@ func (s *FirestoreStep) CreatesDatabase() bool { return s.createDB }
 // not create it and the location is permanent (D3091).
 func (s *FirestoreStep) AdoptedLocation() string { return s.adoptedDB }
 
+// DatabaseExists reports whether the plan's own read of the database resource
+// found one.
+//
+// It is the run index's own gate (RI2): the Firebase root's composite indexes
+// can only be created under a database that is there, and this stage applies
+// that root BEFORE this step creates the database (D3027), so the run has to
+// ask here and hand the answer to the root's tfvars. A run that planned the
+// indexes against a project without a database would fail its apply and never
+// reach this step — and every run after it would fail the same way.
+//
+// It is this one read's answer and not the plan's, because the reads after it
+// are the plan's own business: a mark or a rules read that fails says nothing
+// about the database, and a caller must not read that failure as "there is
+// none" — the tfvars built from it would plan away the indexes an installation
+// already has. False is the safe direction for an installation whose state
+// holds no index: it costs a read and never a failed apply, and the indexes
+// arrive with the next run that can read the database. An installation whose
+// state already holds them is kept out of that arm by its own state and not by
+// this answer (internal/cli's runIndexIndexesManaged).
+func (s *FirestoreStep) DatabaseExists() bool { return s.dbExists }
+
+// DatabaseKnown reports whether that read answered at all.
+//
+// False is not "there is no database": it is "this plan never got the answer"
+// — a permission problem, the Firestore API not enabled yet, or any other
+// failure of the read itself. The run index's gate has to tell the two apart
+// (RI2), because "no database" plans the indexes away.
+func (s *FirestoreStep) DatabaseKnown() bool { return s.dbKnown }
+
 func fsErr(what string, err error) error {
 	if errors.Is(err, firestore.ErrPermission) {
 		return fmt.Errorf("%w: %s: %v (the Firestore API is enabled by the Firebase root, and fugaro needs a project owner, editor or budget admin; role changes take a few minutes to apply)", ErrFirestoreUnreadable, what, err)
@@ -143,15 +179,17 @@ func fsErr(what string, err error) error {
 // returns the lines the confirmation lists, and warnings. It makes no write.
 func (s *FirestoreStep) Plan(ctx context.Context) (lines, warnings []string, err error) {
 	s.createDB, s.deployRules, s.writeMark, s.planned = false, false, false, false
+	s.dbKnown, s.dbExists = false, false
 	s.warnings = nil
 	db, err := s.FS.GetDatabase(ctx)
 	switch {
 	case errors.Is(err, firestore.ErrNotFound):
-		s.createDB, s.writeMark = true, true
+		s.dbKnown, s.createDB, s.writeMark = true, true, true
 		lines = append(lines, fmt.Sprintf("Cloud Firestore database: CREATE the (default) database in %s (native mode, delete protection on). The location is PERMANENT: a Firestore database can never be moved, and fugaro never recreates one", s.Location))
 	case err != nil:
 		return nil, nil, fsErr("reading the Firestore database of "+s.FP, err)
 	default:
+		s.dbKnown, s.dbExists = true, true
 		if err := s.checkExisting(db); err != nil {
 			return nil, nil, err
 		}

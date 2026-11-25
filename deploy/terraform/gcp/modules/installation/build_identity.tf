@@ -177,20 +177,20 @@ resource "google_artifact_registry_repository_iam_member" "build_identity_ghcr_r
 
 # The rest of a catalog build's own steps, which stopped being a repository
 # build account's when B6 moved the build onto this identity: the copied
-# definitions a build reads, the record it writes and the provider credential
-# it clones with. Without them every catalog build — the operator's and the
-# nightly check's alike — fails on the first step that reaches one of them,
-# because those steps run as the identity and it holds nothing of the runs
-# bucket or of Secret Manager.
+# definitions a build reads and the record it writes. Without them every catalog
+# build — the operator's and the nightly check's alike — fails on the first step
+# that reaches one of them, because those steps run as the identity and it holds
+# nothing of the runs bucket. The third thing that account held, the provider
+# credential the build cloned with, is not this account's any more and not any
+# account's: the build fetches it from the credentials service (IS8, D3330).
 #
 # Both the set of repositories and the two conditions are the catalog check's
 # own input (var.catalog_check), and that is the honest carrier rather than a
 # second list beside it: its repositories are exactly the repositories whose
 # catalog entries this project builds, which is exactly whose definitions a
-# build reads, whose record it writes and whose credential it clones with. A
-# repository the catalog does not build needs none of the three, and a
-# repository added to the catalog is a tfvars change the same `fugaro update`
-# that re-renders the check's grants applies.
+# build reads and whose record it writes. A repository the catalog does not
+# build needs neither, and a repository added to the catalog is a tfvars change
+# the same `fugaro update` that re-renders the check's grants applies.
 #
 # The definitions read is objectViewer and not objectUser, for the reason
 # catalogcheck.tf's own grant gives: a build that could rewrite a definition
@@ -233,27 +233,15 @@ resource "google_storage_bucket_iam_member" "build_identity_records" {
   }
 }
 
-# The provider credential a build of one of this repository's entries clones
-# with, resolved by internal/infra through the one predicate the repository's
-# own jobs resolve it through (the project's container when the name is
-# project-scoped for the repository, the repository's own otherwise). Cloud
-# Build resolves AvailableSecrets as the account the build runs as, which is
-# the identity now, so this is modules/repo/build.tf's own build grant —
-# roles/secretmanager.secretAccessor on that repository's credential — one
-# account over. The container is not this module's (a repository root's, or a
-# project-wide one), which is why the grant names a secret ID rather than a
-# resource.
-resource "google_secret_manager_secret_iam_member" "build_identity_git_secret" {
-  for_each = local.credentials_service_on && var.catalog_check != null ? merge(
-    { for r in var.catalog_check.repositories : r.slug => r.git_secret_id if try(r.git_secret_id, "") != "" },
-    { for r in var.catalog_check.repositories : "${r.slug}/own" => r.own_git_secret_id if r.own_git_secret_id != null && r.own_git_secret_id != "" },
-  ) : {}
-
-  project   = var.project
-  secret_id = each.value
-  role      = "roles/secretmanager.secretAccessor"
-  member    = google_service_account.build_identity[0].member
-}
+# No provider credential, and that is the point of the account (IS8, D3330):
+# a catalog entry's build used to mount the repository's git credential as its
+# AvailableSecrets, and Cloud Build resolves those as the account the build runs
+# as, so the identity held modules/repo/build.tf's own build grant one account
+# over. The build asks the installation's credentials service for that
+# credential now, so there is no container for this account to read and no
+# accessor on one: the accessor that stood here until this release is gone, and
+# what a build of an entry clones with is the service's answer and not a
+# permission of the account it runs as.
 
 # A build that names a user-specified service account is written to Cloud
 # Logging as that account, and one without roles/logging.logWriter either

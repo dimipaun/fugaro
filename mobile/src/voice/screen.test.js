@@ -54,6 +54,7 @@ import { QUEUE_CAP, SCREEN_CODES, createVoiceScreen } from './screen.js';
 import { DIALOGUE_OUTCOME, createVoiceDialogue } from './dialogue.js';
 import { INTERRUPT_SWITCH } from './interrupt.js';
 import { createPipelineSpeaker } from './speaker.js';
+import { createTranscript } from '../text/index.js';
 
 /** A mailbox id shaped like an Auth uid, and never a real one. */
 const UID = 'AbCdEf0123456789ghIJkl';
@@ -151,6 +152,9 @@ async function harness(options = {}) {
     ...(options.utterance === undefined ? {} : { utterance: options.utterance }),
     ...(options.indicator === undefined ? {} : { indicator: options.indicator }),
     ...(options.engine === undefined ? {} : { engine: options.engine }),
+    // X1's conversation (D2788): wired only where a test asks for one, because
+    // the store is the test's own and the screen is handed its list.
+    ...(options.transcript === undefined ? {} : { transcript: options.transcript }),
   });
   return {
     audioIn,
@@ -412,7 +416,7 @@ test('a live orchestrator is what lifts the refusal, and it is P1.4 that says so
 
   const accepted = await h.screen.accept('run the tests');
   await settle();
-  assert.deepEqual({ ...accepted }, { ok: true, id: 'm-1', at: T0 });
+  assert.deepEqual({ ...accepted }, { ok: true, id: 'm-1', at: T0, text: 'run the tests' });
   assert.deepEqual(
     h.pathsWritten().filter((path) => path.includes('/inbox/')),
     [`mailbox/${UID}/inbox/m-1`],
@@ -529,6 +533,41 @@ test('stale is not offline for the screen, and P6.10 is what refuses it', async 
     [],
     'and nothing was written',
   );
+});
+
+test('a send the client refused is not a line in the one conversation, and one it accepted is', async () => {
+  // X1's recording rule (D2788) at the door the voice view writes through: the
+  // conversation holds the words that REACHED the session. A refusal is not a
+  // line -- D167's `unsent` is where refused text stays visible -- so the guard
+  // sits at the accept, before anything is recorded. This is the guard a
+  // reader cannot see: `record` is three lines below the refusal's return, and
+  // moving it up one statement would put words in the conversation that the
+  // agent was never sent.
+  const transcript = createTranscript({ now: () => T0, newId: () => 'l-1' });
+  const h = await harness({ transcript });
+  await h.plantHeartbeat();
+  h.advance(5 * INTERVAL_MS);
+  await h.screen.poll();
+
+  // P6.10's gate refuses the stale consumer, and the refusal SPEAKS (`gate.js`'s
+  // sentence), so the utterance is played out the way every other one here is.
+  const refused = h.screen.accept('run the tests');
+  await settle();
+  h.tts.finish();
+  assert.equal((await refused).ok, false, 'the client refused it');
+  await settle();
+  assert.deepEqual(h.pathsWritten().filter((path) => path.includes('/inbox/')), []);
+  assert.deepEqual(transcript.entries(), [], 'and the conversation did not take it');
+
+  // The same phone with a live consumer: the words reach the session, and the
+  // line is the operator's own -- so the assertion above is about the refusal
+  // and not about a screen that records nothing at all.
+  h.setNow(T0);
+  const sent = await h.screen.accept('ship the release notes');
+  await settle();
+  assert.equal(sent.ok, true, 'and the same door sends when nothing refuses it');
+  assert.deepEqual(transcript.entries().map((one) => [one.who, one.source, one.text]),
+    [['operator', 'voice', 'ship the release notes']]);
 });
 
 test('a transcript that arrives while offline is refused too, and nothing is written', async () => {
@@ -666,7 +705,7 @@ test('the lease does not gate the app: the phone sends while another consumer ho
 
   const accepted = await h.screen.accept('run the tests');
   await settle();
-  assert.deepEqual({ ...accepted }, { ok: true, id: 'm-1', at: T0 });
+  assert.deepEqual({ ...accepted }, { ok: true, id: 'm-1', at: T0, text: 'run the tests' });
 });
 
 // --- D122: the microphone the OS refused ------------------------------------
@@ -875,6 +914,7 @@ test('the screen shows what it is doing, in one frozen snapshot', async () => {
   const state = h.screen.state();
   assert.equal(Object.isFrozen(state), true);
   assert.deepEqual(Object.keys(state).sort(), [
+    'conversation',
     'indicator',
     'lease',
     'leaseRefused',
@@ -903,6 +943,9 @@ test('the screen shows what it is doing, in one frozen snapshot', async () => {
     speaking: false,
     turn: false,
     transcript: null,
+    // No transcript is wired in this harness, so there is no conversation to
+    // show and the snapshot says so rather than guessing at one (X1, D2788).
+    conversation: [],
     refused: null,
   });
   // The indicator has its place and is never blank (P5.3.7, design §4.2): one
@@ -1055,6 +1098,35 @@ test('the engine that produced an utterance is tagged on that line, and stays wi
   h.audioIn.speechStart();
   h.stt.final('and the linter');
   assert.deepEqual(h.screen.state().transcript, { text: 'and the linter', final: true, engine: 'deepgram' });
+});
+
+test('the line in the conversation keeps the engine of the words it holds, not the next utterance\'s', async () => {
+  // X1 (D2788). The tag is read when the utterance arrives, and the send is a
+  // round trip: reading it again where the line is appended -- one await later
+  // -- stamps the owner's words with whatever the pipeline heard in between,
+  // which is the lie the snapshot's own rule forbids one screen up.
+  const transcript = createTranscript({ now: () => T0, newId: () => 'l-1' });
+  let engine = 'local';
+  // P6.12's dialogue, so the second final is not a second message the screen
+  // accepts: this test is about one line's tag, not about the door.
+  const h = await harness({ transcript, engine: () => engine, utterance: async () => null });
+  await h.plantHeartbeat();
+  await h.screen.poll();
+  await h.screen.start();
+
+  // The send is out and has not answered: `accept` yields at its first await,
+  // and the next utterance -- from a provider -- arrives in the same tick.
+  const accepting = h.screen.accept('run the tests');
+  engine = 'deepgram';
+  h.audioIn.speechStart();
+  h.stt.final('and the linter');
+  assert.equal(h.screen.state().transcript.engine, 'deepgram', 'the tag belongs to the words just heard');
+
+  await accepting;
+  await settle();
+  assert.deepEqual(transcript.entries().map((one) => [one.text, one.engine]),
+    [['run the tests', 'local']],
+    'and the line says the engine that produced the words it holds');
 });
 
 test('an engine that cannot be named leaves its line untagged, and never tagged local', async () => {

@@ -379,6 +379,19 @@ func reissuable(s State, a Action) (WorkItem, error) {
 // launcher's own gate refuses, and a second copy of these checks in the issuer
 // is exactly where the two would come apart. An error is a refusal of the ask,
 // never the service's own failure.
+//
+// A RESUME IS NOT ONE OF THESE, and that is why nothing here recognises one
+// (D3189). A resume continues a paused run: its run id is a new one, so this
+// record carries no attempt of it — openAttempt asks for the intent's own run id
+// and a paused run's intent was recorded under the paused run — and a paused run
+// a person launched has no intent of this record at all. What the issuer is
+// served on for a resume is therefore not this record but the node the
+// credentials service itself wrote, which is the one case D3136 was widened by
+// and the reason the widening is the service's own check and not this one: this
+// side's record is written by a job's own container, and a resume derived from a
+// job-written record would be a resume any agent could ask for (F52). What the
+// two cases share is only the shape of the ask (identitywire.TicketRequest): one
+// names an attempt, the other names a resume, and never both.
 func ReissuableAttempt(s State, attempt, runID string) (WorkItem, error) {
 	w, _, err := openAttempt(s, IntentItem(attempt), attempt, runID)
 	return w, err

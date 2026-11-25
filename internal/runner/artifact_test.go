@@ -49,11 +49,6 @@ const (
 	// shapes. It is spelled here rather than read from the catalog so the
 	// render arm's own cases are about the arm and not about the entry.
 	sizzlePlanDiagnoseYAML = "version: 1\nname: sizzle\nmode: artifact\nsteps:\n  - plan: {}\n  - diagnose: {}\noutputs: { globs: [out/*.md] }\n"
-	// sizzleDefaultYAML is the render-only shape under the DEFAULT recipe
-	// name: the file a run reads when its task names no recipe, which is
-	// what a follow-up that inherits none does (recipe.go's resolveRecipe
-	// falls back to recipe.DefaultName).
-	sizzleDefaultYAML = "version: 1\nname: default\nmode: artifact\nsteps:\n  - render: {}\noutputs: { globs: [out/*.mp4] }\n"
 )
 
 // artifactSpec is a task spec for a mode: artifact recipe, with the mode in
@@ -898,91 +893,49 @@ func TestHaltAdviceForAHaltedArtifactRunSaysStartAgain(t *testing.T) {
 // for), so an empty spec.Mode used to take the artifact recipe's mode and run
 // the render, ending ARTIFACTS, NO PR for a task that continues PR #1.
 // Bootstrap therefore refuses the pair before any stage, keyed on the
-// RESOLVED recipe. The arms are the three ways a follow-up reaches one: the
-// previous run's text embedded in task.json, a repository recipe carried by
-// name, which the runner reads at this task's base (the launcher cannot: it
-// has the name alone), and — naming no recipe at all — the repository's own
-// .fugaro/recipes/default.yaml, which is what the runner falls back to for a
-// follow-up. That last one is why the refusal cannot be keyed on the task's
-// recipe either: there is none.
+// RESOLVED recipe. The arm is the one way a follow-up still reaches a recipe
+// this runner did not pick: the previous run's text, embedded in task.json.
+// The two repository-layer arms this test used to walk (a recipe kept by name
+// at the base, and the base's own .fugaro/recipes/default.yaml) are refused
+// earlier now — a task that leaves its recipe to the folder never reaches the
+// mode check (PR3, D3304; recipe_lift_test.go) — so a mode: artifact recipe
+// cannot arrive on a follow-up from the folder at all.
 //
 // Mutations: delete the `r.follow != nil && rcp.Mode == recipe.ModeArtifact`
-// refusal in runner.go and every arm runs the render instead: the record ends
+// refusal in runner.go and the arm runs the render instead: the record ends
 // succeeded/artifacts, the workdir holds out/sizzle.mp4 (asserted below), and
 // the run that was launched to continue PR #1 opened none. Narrow the refusal
 // to `spec.Mode == recipe.ModeArtifact` (key it on the spec rather than on
-// the RESOLVED recipe) and every arm is green again, which is the whole bug:
-// a follow-up's spec carries no mode. For the default-recipe arm the runner's
-// name must also come from the DEFAULT and not agent.recipe: recipe.go reads
-// agent.recipe for a first run only, so a follow-up with no recipe of its own
-// reads .fugaro/recipes/default.yaml (mutate the switch to apply agent.recipe
-// to follow-ups too and this arm stops being refused).
+// the RESOLVED recipe) and the arm is green again, which is the whole bug: a
+// follow-up's spec carries no mode.
 func TestFollowUpWhoseRecipeIsModeArtifactIsRefused(t *testing.T) {
-	cases := []struct {
-		name string
-		// recipe is what the task inherits; nil is a follow-up with no
-		// recipe at all.
-		recipe *task.Recipe
-		// agentRecipe, when set, goes into the BASE's fugaro.yaml
-		// (agent.recipe), which the runner applies to first runs only: the
-		// default-recipe arm proves that by naming a different recipe there.
-		agentRecipe string
-		extra       map[string]string
-	}{
-		{"the previous run's recipe text", &task.Recipe{Name: "sizzle", Source: string(recipe.SourceProject),
-			YAML: sizzleRenderOnlyYAML, SHA256: recipe.Sum([]byte(sizzleRenderOnlyYAML))}, "", nil},
-		{"a repository recipe kept by name", &task.Recipe{Name: "sizzle", Source: string(recipe.SourceRepo)}, "",
-			map[string]string{".fugaro/recipes/sizzle.yaml": sizzleRenderOnlyYAML}},
-		{"neither, so the repository's default", nil, "solo",
-			map[string]string{".fugaro/recipes/default.yaml": sizzleDefaultYAML}},
+	// The render is written into fugaro.yaml's commands.render rather than
+	// run from a script: with the refusal deleted it really runs, so the
+	// mutation shows as a delivered deliverable and not as a missing file
+	// standing in for one.
+	const render = "mkdir -p out && echo sizzle > out/sizzle.mp4"
+	h := followUpHarness(t, renderCfg(t, render, ""), nil)
+	h.followUpRecipe(t, followID, runID, "Render the trailer.", &task.Recipe{Name: "sizzle", Source: string(recipe.SourceProject),
+		YAML: sizzleRenderOnlyYAML, SHA256: recipe.Sum([]byte(sizzleRenderOnlyYAML))})
+	pushes := countPushes(t, h.harness)
+	rec, err := h.run(t)
+	if err == nil || rec.Status != runstore.StatusInfraError {
+		t.Fatalf("rec = %+v, err = %v; want an infra_error", rec, err)
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			// The render is written into fugaro.yaml's commands.render rather
-			// than run from a script: with the refusal deleted it really runs,
-			// so the mutation shows as a delivered deliverable and not as a
-			// missing file standing in for one.
-			const render = "mkdir -p out && echo sizzle > out/sizzle.mp4"
-			h := followUpHarness(t, renderCfg(t, render, ""), nil)
-			extra := c.extra
-			if c.agentRecipe != "" {
-				// Written to the remote, not to the first run's checkout, so
-				// the first run (which WOULD apply agent.recipe) is
-				// unaffected: a follow-up reads this one from origin/<ref>
-				// (readBaseConfig).
-				base := strings.Replace(renderCfg(t, render, ""), "  auth: api-key\n", "  auth: api-key\n  recipe: "+c.agentRecipe+"\n", 1)
-				extra = map[string]string{"fugaro.yaml": base}
-				for k, v := range c.extra {
-					extra[k] = v
-				}
-			}
-			if extra != nil {
-				// Committed to main, where a follow-up reads its repository
-				// recipe from (readRepoRecipe, origin/<ref>).
-				commitToRemote(t, h.harness, func(dir string) { testutil.WriteFiles(t, dir, extra) })
-			}
-			h.followUpRecipe(t, followID, runID, "Render the trailer.", c.recipe)
-			pushes := countPushes(t, h.harness)
-			rec, err := h.run(t)
-			if err == nil || rec.Status != runstore.StatusInfraError {
-				t.Fatalf("rec = %+v, err = %v; want an infra_error", rec, err)
-			}
-			if !strings.Contains(rec.Reason, "mode: artifact") || !strings.Contains(rec.Reason, "pull request #1") {
-				t.Fatalf("the reason does not name the mode and the rule: %q", rec.Reason)
-			}
-			if len(h.agent.calls) != 0 {
-				t.Fatalf("the agent ran %d times, want none", len(h.agent.calls))
-			}
-			if n := pushes(); n != 0 {
-				t.Fatalf("%d pushes, want none", n)
-			}
-			if rec.Outcome != runstore.OutcomeNone || rec.Render != nil {
-				t.Fatalf("the refused run claims artifacts: %+v", rec)
-			}
-			if _, err := os.Stat(filepath.Join(h.deps.WorkDir, "out", "sizzle.mp4")); err == nil {
-				t.Fatal("the render ran for a refused follow-up")
-			}
-		})
+	if !strings.Contains(rec.Reason, "mode: artifact") || !strings.Contains(rec.Reason, "pull request #1") {
+		t.Fatalf("the reason does not name the mode and the rule: %q", rec.Reason)
+	}
+	if len(h.agent.calls) != 0 {
+		t.Fatalf("the agent ran %d times, want none", len(h.agent.calls))
+	}
+	if n := pushes(); n != 0 {
+		t.Fatalf("%d pushes, want none", n)
+	}
+	if rec.Outcome != runstore.OutcomeNone || rec.Render != nil {
+		t.Fatalf("the refused run claims artifacts: %+v", rec)
+	}
+	if _, err := os.Stat(filepath.Join(h.deps.WorkDir, "out", "sizzle.mp4")); err == nil {
+		t.Fatal("the render ran for a refused follow-up")
 	}
 }
 

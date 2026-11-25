@@ -134,7 +134,11 @@ test.describe('the installation rail, in the real window', () => {
       expect(page.url()).toBe(APP_ENTRY_URL)
       const onboarding = page.locator('div.console-panel section.installation-onboarding')
       await expect(onboarding.locator('h1.installation-onboarding-title')).toHaveText('Set up your first installation')
-      await expect(onboarding.locator('code.installation-onboarding-command')).toHaveText('fugaro setup')
+      // The wizard, and not the command line (SW3b, D2904): the five questions
+      // are drawn and the operator is asked for no secret here.
+      await expect(onboarding.locator('section.console-wizard')).toHaveCount(1)
+      await expect(onboarding.locator('div.console-wizard-question')).toHaveCount(5)
+      await expect(onboarding.locator('code.installation-onboarding-command')).toHaveCount(0)
       // No Live refusal in its place.
       await expect(page.locator('div.console-panel section.console-unavailable')).toHaveCount(0)
       const rail = page.locator('aside.console-rail')

@@ -71,7 +71,7 @@ func stepNamed(out, name string) bool {
 }
 
 // writesALog is D1352's half of the batch: the run kept a log filed under its
-// own command name, which is also what a failure's "full output:" line points
+// own command name, which is also what a failure's "Log:" line points
 // at, and the log holds the run's own account — its step lines and the closing
 // line last. A run that kept no log has no directory to read and fails here; a
 // run that kept an empty one would point a person at nothing, which is what
@@ -297,17 +297,17 @@ func TestAllowDeleteAFailedWriteIsAFailedStep(t *testing.T) {
 	if err == nil {
 		t.Fatalf("the command reported a write the bucket refused:\n%s%s", out, errOut)
 	}
-	if !strings.Contains(out, markFailed+" delete-list:") {
+	if !strings.Contains(out, markFailed+" delete-list") {
 		t.Errorf("the refused write is not a failed step:\n%s%s", out, errOut)
 	}
 	reported(t, out, "delete-list")
-	if !strings.Contains(out, "full output: ") {
+	if !strings.Contains(out, "Log:  ") {
 		t.Errorf("the failure does not say where the run's own output is:\n%s", out)
 	}
 	// And the log is the run the screen shows: the same failed step and the
 	// same closing line (the path above points at it).
 	log := writesALog(t, "allow-delete")
-	if !strings.Contains(log, markFailed+" delete-list:") {
+	if !strings.Contains(log, markFailed+" delete-list") {
 		t.Errorf("the log does not hold the failed step:\n%s", log)
 	}
 }
@@ -523,7 +523,7 @@ func TestManagedApplyDoesNotDrawOverItsOwnOutput(t *testing.T) {
 	}
 	// Terraform's own progress is watched and not kept: this command has no
 	// redaction source, so D1352 gives it a log of the stage lines only
-	// (streamThrough), and what the failure's "full output:" points at is the
+	// (streamThrough), and what the failure's "Log:" points at is the
 	// run's own account of itself.
 	if _, log := onlyLog(t, "managed-apply"); strings.Contains(log, tfStream) {
 		t.Errorf("terraform's raw stream is in the run's log:\n%s", log)

@@ -20,6 +20,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/intake"
+	"github.com/dimipaun/fugaro/internal/secretname"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -2498,21 +2500,30 @@ func TestSecretsSetRefusesAWorkflowSecretWhoseEntryListsNobody(t *testing.T) {
 }
 
 // TestSecretsSetStoresAWorkflowSecretTheEntryLists: the bare command from a
-// checkout the workflow_secrets entry lists stores the project's copy, exactly
-// as a project_secrets entry makes the bare command store one (D1265). The
-// entry is operator-local and lists this repository, so the value stored once
-// here is the one this repository's jobs mount.
+// checkout the workflow_secrets entry lists stores the value once for the
+// project, exactly as a project_secrets entry makes the bare command store one
+// (D1265). The entry is operator-local and lists this repository, so the value
+// stored once here is the one this repository's jobs mount. Since IS4 that
+// once-for-the-project container is the intake's fugaro_p_<name>, so this
+// process holds no write of it (see TestSecretsSetWorkflowNameUsesIntake for
+// the wire).
 func TestSecretsSetStoresAWorkflowSecretTheEntryLists(t *testing.T) {
 	sm := secretsFixture(t)
-	projectSecretFixture(t, "workflow_secrets:\n  npm-token: { allow_data_to: [acme/app] }\n")
 	appCheckout(t)
+	projectSecretFixture(t,
+		"workflow_secrets:\n  npm-token: { allow_data_to: [acme/app] }\n"+
+			"credentials_service:\n  url: "+intakeTestCredentialsURL+"\n")
+	id := secretname.ProjectPrefix + "npm-token"
+	seen := fakeIntakeCalls(t, intakeAnswerForID(id))
 	out, errOut, err := executeStdin(t, tokenValue, "secrets", "set", "npm-token")
 	if err != nil {
 		t.Fatalf("the bare command from a checkout the entry lists: %v (%s)", err, errOut)
 	}
-	id := gcp.ProjectSecretID("aurora", "npm-token")
-	if got := string(sm.Latest(id)); got != tokenValue {
-		t.Fatalf("the project copy = %q, want the value just stored", got)
+	if len(*seen) != 1 {
+		t.Fatalf("the command made %d intake calls, want the one that stores the project's copy", len(*seen))
+	}
+	if sm.Latest(gcp.ProjectSecretID("aurora", "npm-token")) != nil {
+		t.Error("the workflow secret was written to the ProjectSecretID container, which is no longer what a workflow secret is")
 	}
 	if sm.Latest(gcp.SecretID(appSlug, "npm-token")) != nil {
 		t.Error("a repository copy was stored as well")
@@ -2520,8 +2531,67 @@ func TestSecretsSetStoresAWorkflowSecretTheEntryLists(t *testing.T) {
 	if !strings.Contains(out, id) {
 		t.Errorf("stdout does not name the container it stored to: %q", out)
 	}
-	if strings.Contains(out+errOut, tokenValue) {
-		t.Fatalf("a value leaked: %q %q", out, errOut)
+	noLeak(t, tokenValue, out, errOut)
+}
+
+// TestSecretsSetWorkflowNameUsesIntake (IS4, D3323, D3324): a name a workflow
+// declares, and the operator's workflow_secrets entry lists, is stored once for
+// the project through the installation's secrets intake as fugaro_p_<name>.
+// The container is the intake's own — this process opens no Secret Manager
+// client for it — and the request carries the workflow-secret marker, which is
+// what keeps a workflow's own secret from being written over by a project-shared
+// credential of the same name and the other way round (F18, G2).
+func TestSecretsSetWorkflowNameUsesIntake(t *testing.T) {
+	sm := secretsFixture(t)
+	appCheckout(t)
+	projectSecretFixture(t,
+		"workflow_secrets:\n  npm-token: { allow_data_to: [acme/app] }\n"+
+			"credentials_service:\n  url: "+intakeTestCredentialsURL+"\n")
+	want := secretname.ProjectPrefix + "npm-token"
+	seen := fakeIntakeCalls(t, intakeAnswerForID(want))
+	out, errOut, err := executeStdin(t, tokenValue, "secrets", "set", "npm-token")
+	if err != nil {
+		t.Fatalf("%v (%s)", err, errOut)
+	}
+	if len(*seen) != 1 {
+		t.Fatalf("the command made %d intake calls, want one", len(*seen))
+	}
+	call := (*seen)[0]
+	if call.URL != intakeTestIntakeURL || call.Call.Path != intake.CreatePath {
+		t.Errorf("the call went to %s%s, want %s%s", call.URL, call.Call.Path, intakeTestIntakeURL, intake.CreatePath)
+	}
+	req, ok := call.Call.Body.(intake.CreateRequest)
+	if !ok {
+		t.Fatalf("the request is %T, want the intake's own create document", call.Call.Body)
+	}
+	if req.Scope != intake.ScopeShared || req.Name != "npm-token" || !req.WorkflowSecret {
+		t.Errorf("the request is %+v, want the shared prefix asked for with the workflow-secret marker", req)
+	}
+	if req.Value != base64.StdEncoding.EncodeToString([]byte(tokenValue)) {
+		t.Error("the value did not travel to the intake")
+	}
+	if sm.Latest(gcp.ProjectSecretID("aurora", "npm-token")) != nil {
+		t.Error("the workflow secret was written to the project's own container as well")
+	}
+	// One line, and it says which container the value went into and by which
+	// path: the person who stored it is the one who has to be able to tell the
+	// two classes of container apart afterwards.
+	if !strings.Contains(errOut, want) || !strings.Contains(errOut, "intake") {
+		t.Errorf("stderr does not say the value went through the intake to %s: %q", want, errOut)
+	}
+	if !strings.Contains(out, want) {
+		t.Errorf("stdout does not name the container it stored to: %q", out)
+	}
+	noLeak(t, tokenValue, out, errOut)
+}
+
+// intakeAnswerForID is the fake intake's answer to a create: the container it
+// would have made, with a first version in it.
+func intakeAnswerForID(id string) func(secretsIntakeCall) {
+	return func(c secretsIntakeCall) {
+		if a, ok := c.Out.(*intake.SecretAnswer); ok {
+			*a = intake.SecretAnswer{ID: id, Version: "1", Created: true}
+		}
 	}
 }
 
@@ -2630,12 +2700,15 @@ func TestSecretsLsProjectWideShowsTheWorkflowBlocksReach(t *testing.T) {
 // secret -- and for no other name. A reserved name has no workflow_secrets
 // entry, so over one the clause describes a block that cannot hold it, and it
 // reads as a rule about the copy the person is not storing. The reach sentence
-// in front of it stays every project-wide store's, since who mounts the copy is
-// the question for all of them.
+// in front of it stays every project store's, since who mounts the copy is the
+// question for both classes -- the project-wide container and the intake's
+// fugaro_p_ one (IS4).
 func TestSecretsSetStatesTheWorkflowCaveatForAWorkflowSecretAlone(t *testing.T) {
 	sm := secretsFixture(t)
 	appCheckout(t)
-	projectSecretFixture(t, "workflow_secrets:\n  npm-token: { allow_data_to: [acme/app] }\n")
+	projectSecretFixture(t,
+		"workflow_secrets:\n  npm-token: { allow_data_to: [acme/app] }\n"+
+			"credentials_service:\n  url: "+intakeTestCredentialsURL+"\n")
 	_, errOut, err := executeStdin(t, tokenValue, "secrets", "set", "anthropic-api-key")
 	if err != nil {
 		t.Fatalf("%v (%s)", err, errOut)
@@ -2650,12 +2723,15 @@ func TestSecretsSetStatesTheWorkflowCaveatForAWorkflowSecretAlone(t *testing.T) 
 		t.Errorf("the workflow caveat is read over a reserved name, which no workflow_secrets entry holds: %q", errOut)
 	}
 
+	// The name a workflow declares takes the intake's path instead, and the
+	// caveat is the sentence its own note carries.
+	seen := fakeIntakeCalls(t, intakeAnswerForID(secretname.ProjectPrefix+"npm-token"))
 	_, errOut, err = executeStdin(t, tokenValue, "secrets", "set", "npm-token")
 	if err != nil {
 		t.Fatalf("%v (%s)", err, errOut)
 	}
-	if sm.Latest(gcp.ProjectSecretID("aurora", "npm-token")) == nil {
-		t.Fatal("the workflow secret did not take the project-wide path under test")
+	if len(*seen) != 1 {
+		t.Fatal("the workflow secret did not take the intake path under test")
 	}
 	if !strings.Contains(errOut, "A workflow's own secret (workflows.<n>.secrets) is shared this way only through its workflow_secrets entry") {
 		t.Errorf("the workflow caveat is missing over a workflow secret: %q", errOut)
@@ -2693,17 +2769,21 @@ func TestSecretsSetStatesAWildcardsReach(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			sm := secretsFixture(t)
+			secretsFixture(t)
 			appCheckout(t)
-			projectSecretFixture(t, "workflow_secrets:\n  npm-token: { allow_data_to: [\""+tc.entry+"\"] }\n")
+			projectSecretFixture(t,
+				"workflow_secrets:\n  npm-token: { allow_data_to: [\""+tc.entry+"\"] }\n"+
+					"credentials_service:\n  url: "+intakeTestCredentialsURL+"\n")
+			seen := fakeIntakeCalls(t, intakeAnswerForID(secretname.ProjectPrefix+"npm-token"))
 			_, errOut, err := executeStdin(t, tokenValue, "secrets", "set", "npm-token")
 			if err != nil {
 				t.Fatalf("%v (%s)", err, errOut)
 			}
-			// The note is the project-wide path's, so the store says which
-			// path the sentence under test was printed on.
-			if sm.Latest(gcp.ProjectSecretID("aurora", "npm-token")) == nil {
-				t.Fatal("the entry did not take the project-wide path under test")
+			// The note is the project secret's path's, so the store says which
+			// path the sentence under test was printed on: a workflow's own
+			// secret is stored through the intake since IS4.
+			if len(*seen) != 1 {
+				t.Fatal("the entry did not take the intake path under test")
 			}
 			if !strings.Contains(errOut, tc.want) {
 				t.Errorf("the note does not state the entry's reach: want %q in\n%s", tc.want, errOut)

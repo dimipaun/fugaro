@@ -12,6 +12,7 @@ The spec amends [../mobile-auth/spec.md](../mobile-auth/spec.md) and the mobile 
 | [reconciliation.md](reconciliation.md) | The amended spec: assumptions, findings F1-F41, decisions D2780-D2799 with answers, open items, UNVERIFIED. Where it disagrees with `spec.md`, it wins. |
 | [implementation-plan.md](implementation-plan.md) | Slices, tasks, levels, the critical path, the dependencies broken by contract and kept, the checks. Nothing in it is approved. |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's tasks as the graph `fugaro plan graph` reads. |
+| [app-spike-howto.md](app-spike-howto.md) | The owner's runbook for task M0's throwaway spike ([`mobile/spike/`](../../mobile/spike/)): the consoles, the EAS environment, the build, and how the readings get into `app-spike-DRAFT.md`. Nothing here is run by the repository. |
 
 ## Numbers taken
 
