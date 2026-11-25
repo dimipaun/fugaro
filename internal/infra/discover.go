@@ -71,6 +71,9 @@ type Clients struct {
 	APIKeys *apikeys.Service
 	// NoAuth is set with fakes: no credentials, so no quota project to ask about.
 	NoAuth bool
+	// QuotaProject is the project every call here is billed to, named by the
+	// caller (the installation's own project), never read from the credentials.
+	QuotaProject string
 }
 
 // Endpoints override the roots of the APIs gcp.Endpoints has no field for,
@@ -110,9 +113,9 @@ func NewClients(ctx context.Context, o gcp.Options, e Endpoints) (*Clients, erro
 			}
 		}
 	}
-	// withQuota: the target project is the quota project. Cloud Billing's is
-	// not (billingOpts): the target may be a project this very run creates,
-	// where the API cannot be enabled yet.
+	// withQuota: the target project is the quota project, named explicitly.
+	// Nothing here falls back to the credentials' own quota project, which may
+	// belong to another product.
 	optsFor := func(endpoint string, withQuota bool) []option.ClientOption {
 		out := []option.ClientOption{option.WithLogger(discardLogger)}
 		if endpoint != "" {
@@ -131,12 +134,9 @@ func NewClients(ctx context.Context, o gcp.Options, e Endpoints) (*Clients, erro
 		return out
 	}
 	opts := func(endpoint string) []option.ClientOption { return optsFor(endpoint, true) }
-	// The credentials' own quota project (gcloud auth application-default
-	// set-quota-project), as the project stage's clients: the billing reads
-	// of init never name the project being set up as the one that pays.
-	billingOpts := func(endpoint string) []option.ClientOption { return optsFor(endpoint, false) }
 	var c Clients
 	c.NoAuth = o.Endpoints.NoAuth
+	c.QuotaProject = o.GCPProject
 	var err error
 	if c.IAM, err = iam.NewService(ctx, opts(e.IAM)...); err != nil {
 		return nil, fmt.Errorf("connecting to IAM: %w", err)
@@ -170,7 +170,7 @@ func NewClients(ctx context.Context, o gcp.Options, e Endpoints) (*Clients, erro
 	}
 	// Only fugaro update --firebase-project calls it.
 	if !o.Endpoints.NoAuth || e.Billing != "" {
-		if c.Billing, err = billing.NewService(ctx, billingOpts(e.Billing)...); err != nil {
+		if c.Billing, err = billing.NewService(ctx, opts(e.Billing)...); err != nil {
 			return nil, fmt.Errorf("connecting to Cloud Billing: %w", err)
 		}
 	}
