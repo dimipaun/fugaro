@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -627,6 +628,39 @@ func TestModelsUseRefusesAProviderModelUnderOAuth(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "api-key") {
 		t.Errorf("the refusal does not say which auth the model needs: %v", err)
+	}
+	if got := readFileString(t, path); got != before {
+		t.Errorf("the refused switch wrote the file:\n%s", got)
+	}
+}
+
+// TestModelsUseNeverReadsAnUnsetAuthAsVertex: a project layer that states no
+// agent.auth has not chosen vertex, so a provider model is written to it and
+// each repository's own stated auth judges its launch.
+func TestModelsUseNeverReadsAnUnsetAuthAsVertex(t *testing.T) {
+	path := modelsUseProjectHome(t, "defaults:\n  rigor:\n    default: startup\n")
+
+	out, _, err := execute(t, "models", "use", "coder", "deepseek/deepseek-v4-pro")
+	if err != nil {
+		t.Fatalf("a layer that states no auth refused a provider model: %v\n%s", err, out)
+	}
+	if strings.Contains(out+fmt.Sprint(err), "agent.auth is vertex") {
+		t.Errorf("an unset auth was reported as vertex:\n%s", out)
+	}
+	if after := readFileString(t, path); !strings.Contains(after, "coder: deepseek/deepseek-v4-pro") {
+		t.Errorf("the pin was not written:\n%s", after)
+	}
+}
+
+// TestModelsUseRefusesAProviderModelUnderAnExplicitVertex: an auth the layer
+// states is still judged; vertex serves Claude only.
+func TestModelsUseRefusesAProviderModelUnderAnExplicitVertex(t *testing.T) {
+	path := modelsUseProjectHome(t, "defaults:\n  agent:\n    auth: vertex\n")
+	before := readFileString(t, path)
+
+	_, _, err := execute(t, "models", "use", "coder", "deepseek/deepseek-v4-pro")
+	if err == nil || !strings.Contains(err.Error(), "api-key") {
+		t.Fatalf("an explicit vertex accepted a provider model: %v", err)
 	}
 	if got := readFileString(t, path); got != before {
 		t.Errorf("the refused switch wrote the file:\n%s", got)
