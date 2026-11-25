@@ -79,12 +79,16 @@ doctor)
   ;;
 project)
   # `fugaro project policy show --json --project <name>`: the published policy
-  # node, which the check reads for its image_map (D1906) — the map's PUBLISHED
-  # half, since this machine's project config wins where it states one. The
-  # scenario is FAKE_FUGARO_MODE, so a test can pair a published map with the
-  # builds the gcloud fake serves; the default map is the one the default
-  # project's builds carry, because a map naming an entry no build carries
-  # describes a project that cannot exist.
+  # node, which the check reads for its repository-to-image map — the map's
+  # PUBLISHED half, since this machine's project config wins where it states
+  # one. The default is the `repo_images` member the release writes, keyed
+  # `provider/owner/name` (D3371/F35), which is what an installation the release
+  # has reached carries; `map-legacy` is the bare-name `image_map` one the
+  # release has NOT reached still carries, and is read only where no layer
+  # states `repo_images` at all (R2). The scenario is FAKE_FUGARO_MODE, so a test
+  # can pair a published map with the builds the gcloud fake serves; the default
+  # map is the one the default project's builds carry, because a map naming an
+  # entry no build carries describes a project that cannot exist.
   case "$*" in
   *"policy show"*) ;;
   *) exit 1 ;;
@@ -94,10 +98,16 @@ project)
     echo "error: the published policy could not be read (no such object)" >&2
     exit 1
     ;;
-  map-no-repo) printf '{"policy":{"image_map":{"acme/bb-sandbox":"sandbox-bb"}}}\n' ;;
+  map-no-repo) printf '{"policy":{"repo_images":{"bitbucket/acme/bb-sandbox":"sandbox-bb"}}}\n' ;;
   map-empty) printf '{"policy":{}}\n' ;;
-  map-source-elsewhere) printf '{"policy":{"image_map":{"acme/sandbox":"shared-web","acme/bb-sandbox":"sandbox-bb"}}}\n' ;;
-  *) printf '{"policy":{"image_map":{"acme/sandbox":"sandbox-web","acme/bb-sandbox":"sandbox-bb"}}}\n' ;;
+  map-source-elsewhere) printf '{"policy":{"repo_images":{"github/acme/sandbox":"shared-web","bitbucket/acme/bb-sandbox":"sandbox-bb"}}}\n' ;;
+  # The repository is keyed under the OTHER provider: the map really names
+  # `acme/sandbox`, but never as GitHub's, and a check that looked a repository
+  # up by its bare name would find this entry and pass on a map that does not
+  # answer for this repository at all (F35).
+  map-other-provider) printf '{"policy":{"repo_images":{"bitbucket/acme/sandbox":"shared-web","bitbucket/acme/bb-sandbox":"sandbox-bb"}}}\n' ;;
+  map-legacy) printf '{"policy":{"image_map":{"acme/sandbox":"sandbox-web","acme/bb-sandbox":"sandbox-bb"}}}\n' ;;
+  *) printf '{"policy":{"repo_images":{"github/acme/sandbox":"sandbox-web","bitbucket/acme/bb-sandbox":"sandbox-bb"}}}\n' ;;
   esac
   ;;
 *) exit 1 ;;
@@ -471,21 +481,26 @@ prepare() { # dir
   write_fake_gcloud "$1"
 }
 
-# write_local_project_config DIR — this machine's own project config for the
-# installation, whose `image_map` block is the map's LOCAL half and wins over the
-# published node's where it states one (localcfg's ImageMapEffective, D1906). The
-# path is the one localcfg's selector reads, under the HOME the harness gives the
-# check. Its map DISAGREES with the fake fugaro's published one on purpose, so a
-# check that read the published map alone would find no build at all.
-write_local_project_config() { # dir
+# write_local_project_config DIR [member] — this machine's own project config for
+# the installation, whose `repo_images` block is the map's LOCAL half and wins
+# over the published node's where it states one. The path is the one localcfg's
+# selector reads, under the HOME the harness gives the check. Its map DISAGREES
+# with the fake fugaro's published one on purpose, so a check that read the
+# published map alone would find no build at all. MEMBER (default `repo_images`)
+# writes the legacy `image_map` instead, whose keys are bare names: that block is
+# read only where no layer states `repo_images` (R2), which is the case the
+# legacy test below pins.
+write_local_project_config() { # dir [member]
+  local member=${2:-repo_images}
   mkdir -p "$1/home/.config/fugaro/projects"
-  cat >"$1/home/.config/fugaro/projects/fugaro.yaml" <<'CFG_EOF'
-project: fugaro
-gcp_project: fugaro-dev
-image_map:
-  acme/sandbox: local-web
-  acme/bb-sandbox: sandbox-bb
-CFG_EOF
+  {
+    printf 'project: fugaro\ngcp_project: fugaro-dev\n%s:\n' "$member"
+    if [ "$member" = repo_images ]; then
+      printf '  github/acme/sandbox: local-web\n  bitbucket/acme/bb-sandbox: sandbox-bb\n'
+    else
+      printf '  acme/sandbox: local-web\n  acme/bb-sandbox: sandbox-bb\n'
+    fi
+  } >"$1/home/.config/fugaro/projects/fugaro.yaml"
 }
 
 # --------------------------------------------------------------- the tests
@@ -597,7 +612,7 @@ test_a_build_is_found_through_the_map_when_the_source_repository_differs() {
   expect_status "$status" 0 "map source: the verdict"
   expect_contains "$out" "FACT build-github: PASS" "map source: the row"
   expect_contains "$out" "CATALOG ENTRY shared-web" "map source: the entry the map names"
-  expect_contains "$out" "found by the catalog entry shared-web its image_map names" "map source: how it was found"
+  expect_contains "$out" "found by the catalog entry shared-web its repository-to-image map (repo_images) names" "map source: how it was found"
   expect_contains "$out" "bitbucket.org/acme/bb-sandbox.git" "map source: the entry's source repository"
   # The credential shape is the post-IS8 one for this build too: no mount and the
   # service's address, whose entry route is where the credential step fetches the
@@ -619,7 +634,10 @@ test_a_repository_the_map_does_not_name_keeps_the_repourl_match() {
   expect_status "$status" 0 "not in the map: the verdict"
   expect_contains "$out" "FACT build-github: PASS" "not in the map: the row"
   expect_contains "$out" "found by the builds whose _REPO_URL is its own clone URL" "not in the map: how it was found"
-  expect_contains "$out" "does not name an entry for acme/sandbox" "not in the map: the reason"
+  # The repository is named by its OWN provider's key here and not by its bare
+  # name: a row that said `acme/sandbox` would leave the owner looking up a key
+  # the member it read does not have (F35).
+  expect_contains "$out" "does not name an entry for github/acme/sandbox" "not in the map: the reason"
   expect_contains "$out" "FACT build-bitbucket: PASS" "not in the map: the mapped repository"
 }
 
@@ -633,14 +651,14 @@ test_a_repository_the_map_does_not_name_and_has_no_build_says_how_to_map_it() {
   run196 "$dir" no-gh-build
   expect_status "$status" 2 "not in the map, no build: the verdict"
   expect_contains "$out" "FACT build-github: FAIL — no CATALOG-ENTRY build of acme/sandbox" "not in the map, no build: the row"
-  expect_contains "$out" "fugaro image map set acme/sandbox <entry>" "not in the map, no build: the remedy maps it first"
+  expect_contains "$out" "fugaro image map set github/acme/sandbox <entry>" "not in the map, no build: the remedy maps it first, under its own provider's key"
   expect_contains "$out" "fugaro image build <entry>" "not in the map, no build: the remedy builds the entry"
 }
 
-# The local project config's image_map is the map's LOCAL half and wins over the
-# published node's where it states one (localcfg's ImageMapEffective, D1906): the
-# two disagree here and the build carries the local answer, so a check that read
-# the published map alone would find no build at all.
+# The local project config's map is the map's LOCAL half and wins over the
+# published node's where it states one (R2): the two disagree here and the build
+# carries the local answer, so a check that read the published map alone would
+# find no build at all.
 test_the_local_project_configs_map_wins_over_the_published_one() {
   local dir=$work/maplocal
   prepare "$dir"
@@ -649,6 +667,57 @@ test_the_local_project_configs_map_wins_over_the_published_one() {
   expect_status "$status" 0 "local map: the verdict"
   expect_contains "$out" "FACT build-github: PASS" "local map: the row"
   expect_contains "$out" "CATALOG ENTRY local-web" "local map: the entry the local config names"
+  # Both halves are `repo_images`, so both key the repository by its provider:
+  # the row that names where it was found names that member, not the legacy one.
+  expect_contains "$out" "its repository-to-image map (repo_images) names" "local map: the member read"
+}
+
+# F35's own test: the map is looked up under the repository's `provider/owner/name`
+# key in `repo_images`, so a key the SAME owner/name carries under ANOTHER
+# provider is another repository's and answers nothing for this one. A check that
+# looked the repository up by its bare name would take that entry, look for a
+# build of it, find none, and report the GitHub repository as unmeasurable — on a
+# map that is right.
+test_a_key_under_another_provider_is_not_this_repositorys() {
+  local dir=$work/mapother
+  prepare "$dir"
+  run_env=(FAKE_FUGARO_MODE=map-other-provider)
+  run196 "$dir" map-other-provider
+  expect_status "$status" 0 "other provider's key: the verdict"
+  expect_contains "$out" "FACT build-github: PASS" "other provider's key: the row"
+  expect_contains "$out" "CATALOG ENTRY sandbox-web" "other provider's key: the entry its own builds carry"
+  expect_contains "$out" "does not name an entry for github/acme/sandbox" "other provider's key: the lookup was the provider's own"
+  expect_absent "$out" "CATALOG ENTRY shared-web" "other provider's key: the other provider's entry is never this repository's"
+}
+
+# The bare-name `image_map` an installation the release has NOT reached carries is
+# still read — and only where no layer states `repo_images` (R2): this is the one
+# shape whose keys are bare names, and the row names that member rather than
+# reporting the map as unreadable.
+test_a_legacy_image_map_is_still_read_by_bare_name() {
+  local dir=$work/maplegacy
+  prepare "$dir"
+  run_env=(FAKE_FUGARO_MODE=map-legacy)
+  run196 "$dir" ok
+  expect_status "$status" 0 "legacy map: the verdict"
+  expect_contains "$out" "FACT build-github: PASS" "legacy map: the row"
+  expect_contains "$out" "found by the catalog entry sandbox-web its legacy image_map names" "legacy map: the member read"
+  expect_contains "$out" "FACT build-bitbucket: PASS" "legacy map: the Bitbucket row"
+}
+
+# And `repo_images` wins wherever ANY layer states it, so a local legacy block
+# does not take the published `repo_images` away (R2, per member and never per
+# key): the builds here are the ones the published member names, and a check that
+# let the local bare-name block win would look for an entry no build carries.
+test_a_local_legacy_map_does_not_beat_the_published_repo_images() {
+  local dir=$work/maplocallegacy
+  prepare "$dir"
+  write_local_project_config "$dir" image_map
+  run196 "$dir" ok
+  expect_status "$status" 0 "local legacy: the verdict"
+  expect_contains "$out" "FACT build-github: PASS" "local legacy: the row"
+  expect_contains "$out" "CATALOG ENTRY sandbox-web" "local legacy: the published member answers"
+  expect_absent "$out" "CATALOG ENTRY local-web" "local legacy: the bare-name block did not answer"
 }
 
 # A published policy that cannot be read is not a failure of this check: the
@@ -1147,6 +1216,9 @@ t test_a_build_is_found_through_the_map_when_the_source_repository_differs
 t test_a_repository_the_map_does_not_name_keeps_the_repourl_match
 t test_a_repository_the_map_does_not_name_and_has_no_build_says_how_to_map_it
 t test_the_local_project_configs_map_wins_over_the_published_one
+t test_a_key_under_another_provider_is_not_this_repositorys
+t test_a_legacy_image_map_is_still_read_by_bare_name
+t test_a_local_legacy_map_does_not_beat_the_published_repo_images
 t test_a_published_map_that_cannot_be_read_still_measures_the_builds
 t test_the_builds_list_names_the_installation_region
 t test_a_service_that_cannot_be_read_is_unmeasured
