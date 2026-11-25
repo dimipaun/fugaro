@@ -37,11 +37,12 @@
 # what changed — the key as `fugaro settings` spells it or a suffix of it with
 # two or more segments, the word the update uses for the role, craft, level or
 # grade the key is about (`coder`, `craft coder`, `level l2`, `strong`), `a/b`,
-# `model grade`, `recipe`, or one of the two values verbatim. The repository is
-# matched only where it leads the line and every token as a whole word, so
-# `dimipaun/fugaro` is not named by a line about `dimipaun/fugaro-console`, and
-# an `ab.rate` change is not named by the word `stable`. Anything else is a
-# value that moved with nothing naming it, and this check fails on it.
+# a recipe's own path or name, or one of the two values verbatim. The repository
+# is matched only where it leads the line and every token as a whole word, so
+# `dimipaun/fugaro` is not named by a line about `dimipaun/fugaro-console`, an
+# `ab.rate` change is not named by the word `stable`, and a line about one
+# recipe names nothing about another. Anything else is a value that moved with
+# nothing naming it, and this check fails on it.
 #
 # Usage:      bash scripts/live-checks/check-911-lift-compare.sh <project> <snapshot> [--dry-run]
 #
@@ -401,14 +402,19 @@ def key_tokens(key):
     elif key.startswith("agent.levels.") and len(parts) > 2:
         toks.add("level " + parts[2])
     elif key.startswith("model_grades.") and len(parts) > 1:
+        # The grade's own word ("strong"), never the class words "grades" or
+        # "model grade": those stand in any line about any grade.
         toks.add(parts[1])
-        toks.update(("model grade", "grades"))
     elif key == "ab.rate":
         toks.add("a/b")
     return tuple(t.lower() for t in toks if t)
 
 def recipe_tokens(name, path):
-    toks = {"recipe", name}
+    # Never the word "recipe" on its own: it stands in a line about any recipe,
+    # so it would excuse a change to one by a line about another. The path the
+    # snapshot records is the repository-relative one 910 reads the text at,
+    # which is the path the update prints.
+    toks = {name}
     if path:
         toks.add(path)
         toks.add(path.rsplit("/", 1)[-1])

@@ -11,10 +11,11 @@
 # The readings are the point. Check 911 is the only thing that decides whether
 # release A's update left an installation as it found it, so the cases that
 # matter are the ones where a value moves: a value that moved with a line of the
-# update's plan naming it, one that moved with nothing naming it, a raw file
-# rewritten at the ref, a recipe whose text changed, a snapshot taken by the same
-# binary twice, an update whose lines were never captured, and a repository the
-# second read no longer lists.
+# update's plan naming it, one that moved with nothing naming it, a line that
+# looks like it names one and does not (another repository, another recipe), a
+# raw file rewritten at the ref, a recipe whose text changed, a snapshot taken
+# by the same binary twice, an update whose lines were never captured, and a
+# repository the second read no longer lists.
 #
 # Usage: bash scripts/live-checks/check-911-lift-compare_test.sh
 set -euo pipefail
@@ -491,6 +492,44 @@ test_a_recipe_the_update_renamed_is_named() {
   expect_contains "$out" "the update's plan names each of the 1 that moved" "the row counts what the plan named"
 }
 
+test_a_line_about_another_grade_does_not_name_this_one() {
+  case_dir other_grade
+  before_snapshot
+  settings_set "$answers/settings-after-acme-app.json" "model_grades.strong.model" "claude-haiku-4-5"
+  # A line about grades carries the words "model grade" whichever grade it is
+  # about: only the grade's own name names this grade.
+  printf 'acme/app: model grade strongest claude-x -> claude-y (the project\x27s)\n' \
+    >"$answers/plan.out"
+  printf 'before' >"$answers/phase"
+  run910_raw fugaro --plan "$snapfile"
+  printf 'after' >"$answers/phase"
+  run911
+  expect_status "$status" 1 "a line about another grade"
+  expect_row "$out" resolved FAIL "a line about another grade"
+  expect_contains "$out" "acme/app model_grades.strong.model (claude-opus-5-5 -> claude-haiku-4-5)" \
+    "the row names the grade that moved"
+  expect_contains "$out" "NOTHING naming it" "the row says the line did not name it"
+}
+
+test_a_line_about_another_recipe_does_not_name_this_one() {
+  case_dir recipe_other
+  before_snapshot
+  show_json "$answers/show-after-app-default.json" "2222222222222222222222222222222222222222222222222222222222222222"
+  # The word a line about any recipe carries names nothing about this one, the
+  # same trap as the repository whose name starts with this one's: the plan
+  # line is the repository's and is about a recipe, but not this recipe.
+  printf 'acme/app: .fugaro/recipes/other.yaml is published as the project recipe other\n' \
+    >"$answers/plan.out"
+  printf 'before' >"$answers/phase"
+  run910_raw fugaro --plan "$snapfile"
+  printf 'after' >"$answers/phase"
+  run911
+  expect_status "$status" 1 "a line about another recipe"
+  expect_row "$out" recipes FAIL "a line about another recipe"
+  expect_contains "$out" "acme/app default" "the row names the recipe that moved"
+  expect_contains "$out" "NOTHING naming it" "the row says the line did not name it"
+}
+
 test_a_repository_the_second_read_no_longer_lists_is_unverified() {
   case_dir repo_gone
   before_snapshot
@@ -695,6 +734,8 @@ t test_a_line_for_a_repository_whose_name_starts_with_this_one_does_not_name_it
 t test_a_raw_file_rewritten_at_the_ref_is_compared_too
 t test_a_recipe_whose_text_changed_is_compared_too
 t test_a_recipe_the_update_renamed_is_named
+t test_a_line_about_another_grade_does_not_name_this_one
+t test_a_line_about_another_recipe_does_not_name_this_one
 t test_a_repository_the_second_read_no_longer_lists_is_unverified
 t test_the_same_binary_twice_is_unverified
 t test_an_update_whose_lines_were_never_captured_is_unverified
