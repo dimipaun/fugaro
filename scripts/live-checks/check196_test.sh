@@ -6,12 +6,14 @@
 # measures no build at all), the installation's Cloud Run jobs and one execution,
 # the service's own log lines and the service's own IAM policy — out of a small
 # project built from the mode it is given, and the fake fugaro answers the
-# published policy node the check reads for its image_map. Both record every
+# published policy node the check reads for its repository-to-image map (the
+# `repo_images` member the release writes, or the legacy `image_map` an
+# installation it has not reached still carries, R2/F35). Both record every
 # argument they are handed, so the tests can assert that the check asked for the
 # sandbox installation's project and nothing else, that a repository's builds are
-# the ones the catalog entry its image_map names gives, that a row it could not
-# measure is never read as a pass, and that nothing secret-shaped ever reaches
-# the block.
+# the ones the catalog entry its own `provider/owner/name` key gives, that a row
+# it could not measure is never read as a pass, and that nothing secret-shaped
+# ever reaches the block.
 #
 # Usage: bash scripts/live-checks/check196_test.sh
 set -euo pipefail
@@ -225,7 +227,8 @@ def slug(provider):
 def build(repo, provider):
     """The CATALOG-ENTRY build of one repository, as it really is since D1900
     (repository-level derived images are disabled) and since IS8 (D3330): the
-    image the repository's image_map names, submitted by `fugaro image build
+    image the repository's own provider key in the map names, submitted by
+    `fugaro image build
     <entry>` or by `fugaro apply`'s owed catalog step, run as the installation's
     build identity, carrying NO secret at all -- the request names no
     availableSecrets and no step names a secretEnv, because the credential step
@@ -239,7 +242,8 @@ def build(repo, provider):
     entry = CATALOG_ENTRY[provider]
     source_repo, source_provider = repo, provider
     if mode == "map-source-elsewhere" and provider == "github":
-        # The served repository is a GitHub one and the entry its image_map names
+        # The served repository is a GitHub one and the entry its key in the map
+        # names
         # is SOURCED from a Bitbucket repository: the build's own `_REPO_URL` is
         # that repository's clone URL, so a match on `_REPO_URL` finds nothing
         # and only the entry the map names can select this build.
@@ -290,7 +294,7 @@ def derived_build(repo, provider):
     2026-11-24, and one nothing builds any more (D1900). It must never be read
     as the repository's image build: its `_IMAGE` names the repository and the
     workflow, not a catalog entry, so it is not the catalog entry the
-    repository's image_map names and this check cannot measure it."""
+    repository's own key in the map names and this check cannot measure it."""
     return {"id": "old-" + repo.split("/")[-1], "status": "SUCCESS",
             "startTime": "2026-11-19T10:00:00Z", "finishTime": "2026-11-19T10:05:00Z",
             "serviceAccount": "projects/fugaro-dev/serviceAccounts/" + account(provider),
@@ -526,7 +530,8 @@ test_dry_run() {
 
 # The project this check reads now is one whose builds are CATALOG ENTRIES': the
 # repository's own derived image is disabled (D1900), so the image each sandbox
-# repository builds is the entry its image_map names, submitted as the project's
+# repository builds is the entry its own key in the map names, submitted as the
+# project's
 # build identity, carrying no secret at all (IS8/D3330). Every row of the switch
 # mode is measured, and the whole run ends 0.
 test_happy_path() {
@@ -577,7 +582,7 @@ test_a_project_with_no_build_at_all() {
   expect_contains "$out" "FACT mounts-github: FAIL" "no builds: the mount row is not a pass"
   # The remedy names a command that works: 'fugaro image refresh' is refused
   # (repo-level images are disabled), so the row must not send the owner there,
-  # and it names the entry the repository's image_map gives.
+  # and it names the entry the repository's own key in the map gives.
   expect_contains "$out" "fugaro image build sandbox-web" "no builds: the remedy"
   expect_absent "$out" "Submit one with 'fugaro image refresh'" "no builds: the refused command is not the remedy"
   # The daily check is found by the repository itself, so it is measured too.
@@ -587,7 +592,7 @@ test_a_project_with_no_build_at_all() {
 test_a_project_whose_builds_are_derived_only() {
   # The shape this check read until 2026-11-24: builds that carry a `_SLUG` and
   # a service address and belong to a repository-level image no installation
-  # builds any more. They are not the catalog entry the image_map names, so the
+  # builds any more. They are not the catalog entry the map names, so the
   # build rows are unmeasured rather than read as this repository's image.
   local dir=$work/derived
   prepare "$dir"
@@ -599,7 +604,7 @@ test_a_project_whose_builds_are_derived_only() {
 }
 
 # A repository's builds are the newest whose `_IMAGE` names the CATALOG ENTRY its
-# image_map gives, and the build's own `_REPO_URL` is the ENTRY's source
+# provider key in the map gives, and the build's own `_REPO_URL` is the ENTRY's source
 # repository — not the served repository when one entry serves several. Here a
 # GitHub repository is mapped to an entry sourced from a BITBUCKET repository:
 # only the map can select this build, and the row names the source repository it

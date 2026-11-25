@@ -22,8 +22,8 @@
 # `repo_images`, keyed `provider/owner/name`, so the same `owner/name` at two
 # providers is two repositories (F35) — or, on an installation the release that
 # writes it has not reached, the bare-name `image_map` it still carries. That
-# build is not a repository's build at all. `fugaro image build <entry>` (and the same
-# step inside `fugaro apply`, apply.CatalogBuild) submits it as
+# build is not a repository's build at all. `fugaro image build <entry>` (and
+# the same step inside `fugaro apply`, apply.CatalogBuild) submits it as
 # gcp.CatalogBuildSpec: it runs as the PROJECT'S BUILD IDENTITY
 # (fugaro-build-identity@<project>.iam.gserviceaccount.com, B6/D2301) and never
 # as the repository's own `fugaro-b-…` build account; its request names the
@@ -670,8 +670,8 @@ def local_image_map(path, member="image_map"):
 
 def published_image_map(path, member="image_map"):
     """The project's published repo-to-image map out of `fugaro project policy
-    show --json` — the `repo_images` member by default, the legacy `image_map`
-    with MEMBER — or None when nothing is published and when the node states no
+    show --json` — its `repo_images` member with MEMBER=repo_images, the legacy
+    `image_map` otherwise — or None when nothing is published and when it states no
     such map at all (both are "no map of the node's", which the file's own
     answer then stands in for or leaves absent). A member of the wrong shape is
     no map either, which is what keeps a node that has not yet learned to print
