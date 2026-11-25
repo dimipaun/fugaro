@@ -618,6 +618,10 @@ func publishTicketShared(t *testing.T, f *cloudFixture, url string, ready bool) 
 // ticket is claimed at the address and a run handed the ticket alone stops at
 // bootstrap: the published record is what both halves are read from, the
 // service's URL and this repository's record of the root applied with it on.
+//
+// Mutation (run, restored): read the block alone — the resident's own config,
+// which is what the launch did before this fix — and it mints, which is the
+// first assertion here.
 func TestResidentLauncherAsksTheIssuer(t *testing.T) {
 	f := newLauncherFixture(t)
 	writeBuildRecord(t, f.cloudFixture, appSlug, "web", releaseIdentity)
@@ -700,8 +704,10 @@ func TestResidentLauncherAsksTheIssuer(t *testing.T) {
 // a run holding a ticket at no address, which stops at bootstrap with no
 // identity at all.
 //
-// Mutation (run, restored): judge the published record by its URL alone — the
-// resident's own arm before this case existed — and the service is asked.
+// Mutation (run, restored): judge the published service by its URL alone — the
+// resident's own arm before this case existed — and the ask is reached: this
+// test fails on the resident identity it has no metadata server to present, and
+// TestLaunchSignsLocallyWhereTheServiceDoesNotServeTheRun on the ask it records.
 func TestResidentLauncherSignsLocallyWhereTheServiceDoesNotServeTheRun(t *testing.T) {
 	f := newLauncherFixture(t)
 	writeBuildRecord(t, f.cloudFixture, appSlug, "web", releaseIdentity)
