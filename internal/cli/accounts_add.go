@@ -255,9 +255,11 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 			return userErr("--pool %s: a credential of this config holds that name, and this pool would walk more than that credential alone — a craft's access names a credential or a pool and does not say which, so the two may share a name only where the pool is that credential's own pool of one. Name the pool with --pool and a name no credential holds, or list it alone; nothing was written",
 				pluginwire.Printable(held))
 		}
-	} else if typ == config.CredentialTypeClaudeOAuth {
-		// The default PL2 gives every subscription token: a pool of one named
-		// after the account (D3176). A pool is what a craft's access, a
+	} else if _, rotating := lc.ClaudeAccounts[name]; typ == config.CredentialTypeClaudeOAuth && !rotating {
+		// The default PL2 gives every NEW subscription token: a pool of one named
+		// after the account (D3176). A rotation writes none and clears no pending
+		// removal (the owner's ruling of 2026-11-25): a pool the owner removed on
+		// purpose must not come back with a token replace. A pool is what a craft's access, a
 		// launcher's designation and a run's --pool name, so a token left out
 		// of one is a token no launcher can name. The name is the account's own
 		// because that is what a person types, and the loader admits the
