@@ -22362,6 +22362,8 @@
         "scripts/**",
         "scripts/belong.sh",
         "scripts/bump-plugin-version.sh",
+        "scripts/check-870-run-index-timings_test.sh",
+        "scripts/check-871-run-index-100x_test.sh",
         "scripts/ci-hygiene.sh",
         "scripts/ci-hygiene_test.sh",
         "scripts/deploy-portal.sh",
