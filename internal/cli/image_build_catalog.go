@@ -87,15 +87,18 @@ func runImageBuildCatalogOrDerived(cmd *cobra.Command, name string, o imageBuild
 // runImageBuildCatalog submits one Cloud Build per entry of cat (D1144):
 // each reads the Dockerfile the entry's source resolved to and this command
 // copied into the project's bucket, builds it with the checkout's
-// repository's provider credential and no secret of it, and promotes the
-// image into the installation's shared registry (D1152). The build runs as
-// the project's build identity (B6), which is the installation's account and
-// not the repository's: an entry may name repositories whose build account
-// the retirement of their roots has destroyed, so the account a catalog build
-// runs as has to outlive them. The credential is the clone step's alone and
-// no step of an entry's build mounts a secret (B9, D2311): the entry's
-// definition is refused at publish if it asks for one, and a build handed
-// none cannot satisfy a mount the refusal failed to read.
+// repository's provider credential, and promotes the image into the
+// installation's shared registry (D1152). The build runs as the project's
+// build identity (B6), which is the installation's account and not the
+// repository's: an entry may name repositories whose build account the
+// retirement of their roots has destroyed, so the account a catalog build
+// runs as has to outlive them. No definition the entry's own text holds is
+// handed a secret (B9, D2311): such an entry is refused at publish if it asks
+// for one, and a build handed none cannot satisfy a mount the refusal failed
+// to read. The credential reaches the build step only for a definition that
+// bakes (gcp.CatalogBuildSpec.Baked), whose bake stage clones at
+// FUGARO_COMMIT — that build step is the last to read the credential, so the
+// request keeps the secret and the volume on it.
 //
 // The credential and the record's slug are the checkout's repository's, so an
 // entry whose Dockerfile lives in another repository is refused rather than
