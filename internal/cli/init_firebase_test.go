@@ -1247,13 +1247,20 @@ func TestPrintVarsSaysAnExistingInstanceKeepsItsOwn(t *testing.T) {
 // policy with these two (the token exchange needs the key, not only the URL);
 // a job deployed with the mode off and nothing to read the policy with would
 // run on the environment ceiling with the policy unenforced. What the mode
-// still decides is FUGARO_BUDGET_MODE and the grace, which are the fallback
-// for an installation that has published no policy at all.
+// decides is the value of FUGARO_BUDGET_MODE, which every job names (AB5):
+// observe for a config that writes the word off or nothing at all, enforce for
+// one that writes enforce. The grace rides along whenever the config sets one.
 func TestInitRepoPassesRTDBEnv(t *testing.T) {
-	for mode, want := range map[string]map[string]bool{
-		"observe": {"FUGARO_RTDB_URL": true, "FUGARO_FIREBASE_API_KEY": true, "FUGARO_BUDGET_GRACE": true, "FUGARO_BUDGET_MODE": true},
-		"off":     {"FUGARO_RTDB_URL": true, "FUGARO_FIREBASE_API_KEY": true, "FUGARO_BUDGET_GRACE": false, "FUGARO_BUDGET_MODE": false},
+	// A name mapped to "" only has to be there; a name mapped to a value is
+	// read as the pair the tfvars carry.
+	for _, c := range []struct {
+		mode string
+		want map[string]string
+	}{
+		{"observe", map[string]string{"FUGARO_RTDB_URL": "", "FUGARO_FIREBASE_API_KEY": "", "FUGARO_BUDGET_GRACE": "2m0s", "FUGARO_BUDGET_MODE": "observe"}},
+		{"off", map[string]string{"FUGARO_RTDB_URL": "", "FUGARO_FIREBASE_API_KEY": "", "FUGARO_BUDGET_GRACE": "2m0s", "FUGARO_BUDGET_MODE": "observe"}},
 	} {
+		mode, want := c.mode, c.want
 		isolateProjects(t, t.TempDir())
 		path := writeProject(t, "aurora", "proj-1234")
 		data, err := os.ReadFile(path)
@@ -1272,9 +1279,13 @@ func TestInitRepoPassesRTDBEnv(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for key, wantKey := range want {
-			if got := strings.Contains(out, key); got != wantKey {
-				t.Errorf("mode %s: %s in the job's env = %v, want %v", mode, key, got, wantKey)
+		for key, val := range want {
+			pair := `"` + key + `": "` + val + `"`
+			if val == "" {
+				pair = `"` + key + `":`
+			}
+			if !strings.Contains(out, pair) {
+				t.Errorf("mode %s: the job's env does not carry %s", mode, pair)
 			}
 		}
 		for _, secretish := range []string{fpSigner, "aurora-fp\"", "token_signer"} {

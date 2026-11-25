@@ -375,6 +375,24 @@ type runOptions struct {
 	// because a value outside it is a launcher's mistake rather than a run's
 	// opinion.
 	rigor string
+	// promote is --promote: the area this run raises to the mode, instead of
+	// running a task of its own (docs/rigor-modes/levels-spec.md §4, LD6,
+	// docs/rigor-modes/levels-reconciliation.md §3b item 12). The area is the
+	// launch's one argument — `fugaro run --promote --mode <level> <area>` —
+	// and it must name a rule of the repository's own rigor.areas, whose paths
+	// become this launch's declared paths and whose level is compared with the
+	// one asked for: a target below it is refused and equal is allowed. Empty
+	// (the default) is no promote run at all, and the launch writes no such
+	// field: the task stays byte-identical to what the previous release wrote.
+	// The block is resolved once, at launch (resolvePromote), because the run
+	// has to be refused for a target it may not raise to before it is paid
+	// for.
+	promote string
+	// promoteFlag is whether --promote was given, and o.promote is the area the
+	// launch read out of its one argument (promoteArea): the flag is a switch
+	// and the area is the argument, so a promote launch is spelled
+	// `fugaro run --promote --mode <level> <area>`.
+	promoteFlag bool
 	// tier is --tier: the expectation tier this run's own launcher dispatches
 	// it at (docs/task-governance spec §3, implementation-plan T8.1): how much
 	// the run is expected to cost and take, which the runner records with the
@@ -560,6 +578,7 @@ func newRunCmd() *cobra.Command {
 	f.StringArrayVar(&o.attach, "attach", nil, "attach a file to the run: repeatable, uploaded to the run's own inputs/ and downloaded by a mode: artifact run into the checkout's inputs/ (needs a mode: artifact recipe; refused on a run ID that already has a task)")
 	f.BoolVar(&o.commitReports, "commit-reports", false, "hand the project's stored reports (reports/ of the runs bucket) to the run this launch starts: reads them with your own account, uploads every one the checkout's mirror folder does not already hold byte for byte into the run's own reports/, and names them in the task for the commit_reports step to commit. Needs --recipe commit-reports (the step is what reads them), is refused together with --attach, and is refused on a run ID that already has a task")
 	f.StringVar(&o.rigor, "mode", "", "the rigor mode to ask for: "+rigor.RigorList()+"; it is the narrowest rank of the mode's order, so it settles the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) whether it asks for more or for less, and only a floor, outside every layer, holds it back; hotfix is the mode the request takes whole and needs no opt-in anywhere — a first run, a follow-up and a launch from a coding agent's session alike; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps")
+	f.BoolVar(&o.promoteFlag, "promote", false, "raise the area named as this launch's one argument to the mode given with --mode, instead of running a task of your own: the run reads that area's backlog items and its code, works at the mode asked for, and closes the items it pays down (the ones whose code its own diff changes, and no others). The area is a rule this repository's own fugaro.yaml declares (rigor.areas), and its paths are the launch's declared paths, so --path is refused with it; a mode below the level the area already resolves to is refused, and equal is allowed; hotfix is never a target. Needs --mode and a checkout of the repository in the working directory")
 	f.StringArrayVar(&o.paths, "path", nil, "declare a path this run will touch, matched against the rigor.areas rules in effect (the repository's, and the project layer's beside them): repeatable; a run that declares none matches no area rule")
 	f.StringArrayVar(&o.contextRepos, "context", nil, "a repository this run reads and never writes, as owner/name: repeatable, at most "+fmt.Sprint(task.MaxContextRepos)+", each admitted by the project's allow_repos. The list goes into the task and into the run's own identity, and the run clones each one read-only, outside its working tree, as reference the prompt points it at: nothing in one is committed or pushed, and the read-only token a context repository is cloned with is the installation's credentials service's, which needs the GitHub App installed on it. Refused for a Bitbucket repository and where the installation's credentials service does not serve the repository")
 	f.StringVar(&o.tier, "tier", "", "the expectation tier to dispatch this run at: "+tier.List()+". It is what the run is expected to cost and take (governance.tiers in fugaro.yaml and the project layer), and never a cap: the run's own budget cap stays the ceiling. A --pr follow-up keeps the tier its PR's runs recorded; without this flag a run carries no expectation at all")
@@ -580,7 +599,7 @@ func newRunCmd() *cobra.Command {
 }
 
 // taskFlags are the flags --retry excludes: the stored task.json supplies them.
-var taskFlags = []string{"repo", "change-set", "ref", "workflow", "run-id", "batch", "title", "plan-task", "allow-duplicate", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "commit-reports", "mode", "path", "context", "tier", "security", "no-compression", "review-levels", "review-run", "max-usd", "max-tokens", "max-time", "max-review-rounds", "continues", "used-usd", "used-tokens", "used-time", "used-review-rounds"}
+var taskFlags = []string{"repo", "change-set", "ref", "workflow", "run-id", "batch", "title", "plan-task", "allow-duplicate", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "commit-reports", "mode", "path", "promote", "context", "tier", "security", "no-compression", "review-levels", "review-run", "max-usd", "max-tokens", "max-time", "max-review-rounds", "continues", "used-usd", "used-tokens", "used-time", "used-review-rounds"}
 
 // prFlags are the flags --pr excludes: the previous run on the PR supplies them.
 var prFlags = []string{"ref", "workflow"}
@@ -683,6 +702,18 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		if err = contextReposFlag(o); err != nil {
 			return err
 		}
+		// --promote, whose one argument is the area it raises: read here,
+		// before taskText takes the arguments as the task's own words, and
+		// validated with the flags above and for the same reason — the area
+		// is the caller's text, and everything a promote run does not carry
+		// is refused before the cloud is opened. Whether the area exists and
+		// what level it resolves to needs the repository's own file, so that
+		// reading is the launch's (resolvePromote).
+		if cmd.Flags().Changed("promote") {
+			if o.promote, err = promoteArea(cmd, o, args); err != nil {
+				return err
+			}
+		}
 		// The four --max-* chain limits, parsed once for every launch shape
 		// below and before the cloud is opened: a mistyped number is a
 		// caller's mistake, and it costs no read. A value that would loosen
@@ -700,7 +731,14 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		if err = chainContinueFlag(cmd, o); err != nil {
 			return err
 		}
-		if text, err = taskText(cmd, o.tf, args, prSet); err != nil {
+		if o.promote != "" {
+			// A promote run's task is the launcher's own line about the area
+			// (promoteTaskText): the brief it works from is the runner's,
+			// built from the area's own backlog items at bootstrap, so no
+			// words of the caller's reach the task — the one argument named
+			// the area, and taskText is not asked for a task at all.
+			text = promoteTaskText(o.promote, rigor.Rigor(o.rigor))
+		} else if text, err = taskText(cmd, o.tf, args, prSet); err != nil {
 			return err
 		}
 		// --review-levels, after the task text: - reads stdin, and the task
@@ -840,6 +878,19 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 				// owner's answer would be dropped without a word.
 				if cmd.Flags().Changed("owner-ruled") {
 					return userErr("--owner-ruled answers the findings a run on a pull request left, and --recipe %s reviews a pull request instead of fixing one", rr.Name)
+				}
+				// --promote is refused here for the same reason, and this is
+				// the only launch shape it could be dropped on: reviewSpec
+				// builds a spec of its own, and the promote block is not a
+				// field of it — a review run reviews a pull request rather
+				// than raising an area's code, and there is no pass for it to
+				// reach the runner through. Accepted, the flag would write no
+				// field anywhere and the area the person named would vanish
+				// without a word. Every other shape that carries the flag
+				// carries the block: newSpec and the follow-up's own builder
+				// both write it, and --retry refuses the flag outright.
+				if o.promote != "" {
+					return userErr("--promote raises an area of the repository's own code, and --recipe %s reviews a pull request instead of raising one (fugaro run --promote <area> --mode <level> launches the promote pass, with no --recipe)", rr.Name)
 				}
 				if lo, hi, ok := recipe.ReviewPRRange(rr.Name); ok {
 					if n := len(o.pr); n < lo || n > hi {
@@ -2180,6 +2231,20 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if err := checkCloneTaskGradeImage(env.lc, spec, warn); err != nil {
 			return config.Inputs{}, err
 		}
+		// The promote block, gated on the field and on the release that
+		// ships it: a runner older than promoteSince refuses the whole
+		// spec at bootstrap (task.Parse decodes with DisallowUnknownFields),
+		// after the launch was paid for. It comes before the rigor request
+		// below because a promote launch carries that request too — the
+		// mode and the area's own paths — and promoteSince is the newer of
+		// the two: the refusal a person can act on names the block they
+		// asked for rather than the mode they passed beside it.
+		if spec.Promote != nil {
+			if err := checkCloneImageSince(env.lc, spec, promoteSince,
+				promoteGateSubject(spec), "the promote block", "", warn); err != nil {
+				return config.Inputs{}, err
+			}
+		}
 		// The run's own rigor request, gated on the field the same way:
 		// a runner older than rigorRequestSince refuses a task carrying
 		// rigor or paths outright (task.Parse decodes with
@@ -2435,6 +2500,17 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		// see taskGradeSince, and the order is the clone branch's.
 		if err := checkTaskGradeImage(ctx, env, slug, spec, kind, warn); err != nil {
 			return config.Inputs{}, err
+		}
+		// The same gate as the clone branch's above, and for the same
+		// reason: the promote block is a new task field, a runner older
+		// than promoteSince refuses the whole spec at bootstrap, and it is
+		// judged before the request below because it is the newer of the
+		// two.
+		if spec.Promote != nil {
+			if err := checkImageSince(ctx, env, slug, spec, kind, promoteSince,
+				promoteGateSubject(spec), "the promote block", "", warn); err != nil {
+				return config.Inputs{}, err
+			}
 		}
 		// The same gate as the clone branch's above, and for the same
 		// reason: the request is a new task field, and a runner that
@@ -3134,6 +3210,11 @@ type attemptPlan struct {
 	// every attempt of a batch carries the same list, and empty for every
 	// other launch, whose task stores no manifest at all.
 	digestRuns []string
+	// promote is the area a promote launch raises (o.promote, resolved by
+	// resolvePromote): the area's name and this repository's part of it,
+	// which the spec stores and the run reads. Nil for every other launch,
+	// whose task carries no such block.
+	promote *task.Promote
 }
 
 // resolveAttemptPlan resolves everything a new run's spec needs except its
@@ -3240,7 +3321,19 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 	if err != nil {
 		return nil, err
 	}
-	return &attemptPlan{repo: repo, slug: slug, workflow: workflow, ref: ref, base: base, me: me, account: account, totalOverride: totalOverride, recipe: rcp, mode: mode, digestRuns: digestRuns}, nil
+	// The promote block, resolved last of all and only when the flag is
+	// given: it reads the repository's own document for the area and the
+	// level the area already resolves to, so a launch that may not raise it
+	// is refused here, before the task is stored and the execution started
+	// (resolvePromote). It is resolved once per plan, so a change set's
+	// members each answer for their own repository and its own file.
+	var promote *task.Promote
+	if o.promote != "" {
+		if promote, err = resolvePromote(ctx, repo, o.promote, o.rigor); err != nil {
+			return nil, err
+		}
+	}
+	return &attemptPlan{repo: repo, slug: slug, workflow: workflow, ref: ref, base: base, me: me, account: account, totalOverride: totalOverride, recipe: rcp, mode: mode, digestRuns: digestRuns, promote: promote}, nil
 }
 
 // buildAttemptSpec stamps a fresh run id (or o.runID, when given) onto plan,
@@ -3254,9 +3347,12 @@ func buildAttemptSpec(plan *attemptPlan, o *runOptions, text string) (string, *t
 			return "", nil, err
 		}
 	}
+	// A promote run declares the area's own paths rather than paths of its
+	// own (--promote refuses --path), so the runner resolves the level the
+	// area's rule decides for exactly the paths it raises (promotePaths).
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: plan.repo, Ref: plan.ref, BaseBranch: plan.base, Workflow: plan.workflow, Task: text, Title: o.title,
 		PlanTask: o.planTask, RequestedBy: plan.me, Batch: o.batch, Recipe: plan.recipe, Mode: plan.mode,
-		Rigor: rigor.Rigor(o.rigor), Paths: o.paths, Tier: tier.Tier(o.tier), DigestRuns: plan.digestRuns}
+		Rigor: rigor.Rigor(o.rigor), Paths: promotePaths(plan.promote, o.paths), Promote: plan.promote, Tier: tier.Tier(o.tier), DigestRuns: plan.digestRuns}
 	if plan.totalOverride != "" {
 		spec.Overrides.TotalTimeout = plan.totalOverride
 	}

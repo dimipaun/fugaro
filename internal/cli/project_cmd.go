@@ -1370,6 +1370,22 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		publishedReviewAgainstTask = old.ReviewAgainstTask
 	}
 	reviewAgainstTask := lc.ReviewAgainstTaskEffective(publishedReviewAgainstTask)
+	// The member's switch for the personal half of a workspace's credentials is
+	// kept by the triage switch's rule one key over (R9 of
+	// docs/workspace-credentials/, WC6, D2972), with the switch's own cost on
+	// the wrong reading: the node is what the workspace's service reads — the
+	// only enforcer, and never anything on the member's disk — so a publish from
+	// a machine whose config says nothing about it (a teammate's, whose config
+	// predates the key) must not be the write that turns the personal half off
+	// for the member that turned it on. A config that states the switch replaces
+	// what the node holds, and a config that states neither keeps the node's; the
+	// switch is a pointer on both sides because absent is off, so a node and a
+	// config that both say nothing publish no member at all.
+	var publishedPersonalTokens *bool
+	if old != nil {
+		publishedPersonalTokens = old.PersonalWorkspaceTokens
+	}
+	personalTokens := lc.PersonalWorkspaceTokensEffective(publishedPersonalTokens)
 	// The pools' subscription switch is kept by the triage switch's rule (F22,
 	// D1636), and the cost of the other reading is that switch's: the member is
 	// what makes a pool of two or more subscriptions serve anything at all
@@ -1450,29 +1466,30 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	// would be one no reader of this release serves. The publish door's own
 	// refusal of the word is above it, and the file itself loses it in AB8b.
 	pol := &projectpolicy.Policy{
-		DefaultClaudeAccount: defaultAccount,
-		ClaudeAccountStages:  stageAccounts,
-		Version:              projectpolicy.Version,
-		Budget:               projectpolicy.Budget{Mode: publishedMode(lc.Budget.Mode), PerRunUSD: lc.Budget.PerRunUSD, AllowedModels: lc.Budget.AllowedModels, MaxRunTokens: lc.Budget.MaxRunTokens},
-		AllowRepos:           nonNil(allow),
-		BaseBranch:           lc.BaseBranch,
-		Providers:            policyProviders(lc),
-		Prices:               policyPrices(lc),
-		Profiles:             profiles,
-		Accounts:             accounts,
-		BitbucketToken:       token,
-		BitbucketTokens:      tokens,
-		BitbucketAPIRoots:    lc.BitbucketAPIRoots,
-		ReviewFloor:          floor,
-		VerifierAccounts:     verifierAccounts,
-		ImageCatalog:         imageCatalog,
-		ImageServices:        imageServices,
-		ImageMap:             imageMap,
-		BakeRepos:            bakeRepos,
-		Triage:               triage,
-		ReviewAgainstTask:    reviewAgainstTask,
-		Orchestrator:         orchestrator,
-		SubscriptionSpread:   spread,
+		DefaultClaudeAccount:    defaultAccount,
+		ClaudeAccountStages:     stageAccounts,
+		Version:                 projectpolicy.Version,
+		Budget:                  projectpolicy.Budget{Mode: publishedMode(lc.Budget.Mode), PerRunUSD: lc.Budget.PerRunUSD, AllowedModels: lc.Budget.AllowedModels, MaxRunTokens: lc.Budget.MaxRunTokens},
+		AllowRepos:              nonNil(allow),
+		BaseBranch:              lc.BaseBranch,
+		Providers:               policyProviders(lc),
+		Prices:                  policyPrices(lc),
+		Profiles:                profiles,
+		Accounts:                accounts,
+		BitbucketToken:          token,
+		BitbucketTokens:         tokens,
+		BitbucketAPIRoots:       lc.BitbucketAPIRoots,
+		ReviewFloor:             floor,
+		VerifierAccounts:        verifierAccounts,
+		ImageCatalog:            imageCatalog,
+		ImageServices:           imageServices,
+		ImageMap:                imageMap,
+		BakeRepos:               bakeRepos,
+		Triage:                  triage,
+		ReviewAgainstTask:       reviewAgainstTask,
+		PersonalWorkspaceTokens: personalTokens,
+		Orchestrator:            orchestrator,
+		SubscriptionSpread:      spread,
 	}
 	switch {
 	case !silent:

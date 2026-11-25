@@ -669,6 +669,8 @@ states, and withholds it in the reduced mode with the rest of the Spend view.
 | `runs` | `[]runview.Row` | no | `[]` when none |
 | `totals` | `runview.Totals` | no | below |
 | `groups` | `[]object` | **yes** | **only under `runs ls --group-by failure_class`** (`internal/cli/runs_group.go`): the window's failures grouped, one object per class of the closed vocabulary of `docs/failure-classes/design.md` §3 that some run of the window ended in, beside the `runs` array rather than instead of it. Each group carries `class` (one of the nineteen names), `runs` (how many of the window's runs ended in it), `share` (that count's share **of the window's runs**, never of the spend — D1465) and `spend_usd` (what those runs cost). The order is the vocabulary's own (`failure.Classes()`), so two readers of one window read the same block. **`omitempty` is what keeps the phone's degraded feed alive**: the degraded watch document embeds this shape and the app refuses a key it does not know, so a block printed by a listing that never grouped would break the degraded screen (`internal/cli/watch.go`) |
+| `index_complete` | bool | **yes** | the run index's own answer about whether a walk has ever reached the end of history (D3215): **`false` until one has**, which is what makes a listing that reads the index honest about a short list — a reader that showed the rows of an unfinished index as the whole history would be showing a number the index does not support. **Present only on a listing whose rows came from the index** and absent on every listing the window answered (a flag the index does not serve, and every release that still reads the index's stub), because a listing that read no index has nothing to say about one; the document then reads exactly as it did before the field existed. `omitempty` is what keeps that safe: the degraded watch document embeds this shape and the app refuses a key it does not know, so a field a listing did not read must not reach the document it writes — the `groups` rule above |
+| `folded_through` | time.Time | **yes** | RFC 3339: **the moment the index is folded through** — how fresh the listing's rows are, since the index answers from what it has folded and a run minted after that moment is not in it yet. Carried with `index_complete` under the rule above: present exactly when the rows came from the index, absent otherwise, and **absent even there when the index has folded nothing** (it has no moment to name) |
 | `warnings` | `[]string` | no | the lines a human listing prints before its table |
 
 `runview.Row` (`internal/runview/runview.go`) is the run shape behind
@@ -881,6 +883,74 @@ a page costs what the window costs — and therefore `totals.runs`, the counts b
 and every dollar figure in it stay the window's however small the page is. A reader
 that divided one of those figures by the rows it drew would print a number this
 document does not carry, which is the one wrong answer the two flags could produce.
+
+**The default listing reads the run index, and it is no longer a window.** With none of
+`--since`, `--mine`, `--batch`, `--state`, `--debt`, `--group-by`, `--pr` and `--watch`
+(the flags whose reads stay the bucket's, each for its own reason — `internal/cli/runs.go`
+`indexListing`), `runs ls` asks the installation's run index for **the newest 50 runs by
+the index's own sort key, whatever their age, plus every run that has not ended** (D3203):
+a run still going is in the listing however far back it started, and 100× the history
+costs the same handful of requests. **The bucket is not listed on this path at all** —
+the index has said which runs to read, so no flat listing of a repository's objects is
+made, which is what the read exists to avoid. The row shape is unchanged: every run named
+is read and rendered exactly as the window's runs are. **The runs that have not ended lead
+the page**, ahead of the newest-50 rows: the page's last row is the cursor `--after` takes
+the next page from, and it has to be a row inside the newest-50 page, or an old active run
+printed last would hand on a cursor two hundred days old and the runs between the two
+would never be listed. An old active run can therefore be printed again by a later page —
+the active runs lead, and the index's order reaches their sort key again; the alternative,
+a run no page lists, is the one outcome the cursor must not have.
+
+**`totals` on this path is the summary document's**, not the page's, **when the listing
+covers the installation**: `runs ls` reads the index's own summary
+(`internal/runindex`), which counts every run the installation's index carries, and
+prints that as `totals` (D3203, D818). It is the same shape `runview.Totals` always was —
+the figure is a total of the installation rather than of the page drawn, which is the rule
+the paragraph above states and this path keeps. **A listing narrowed to some of the
+installation's repositories** — `--repo`, or a local config that lists them — **totals its
+own rows instead**, as a windowed listing does: the summary counts every repository's runs
+and spend, so a listing of one repository's rows beside the installation's figure would
+report money the reader did not ask for. **So does a listing the access gate has
+narrowed**: the gate drops the rows of repositories the credential holds no role in
+(D1586's read half), and a figure it has changed is recomputed from the rows it left, or a
+viewer of one repository would be shown the installation's spend.
+
+**`--since` still bounds a window, and the bound is the window's and not history's.** A
+listing given `--since` (or `--mine`, or `--batch`) is read whole from the index — every
+run of it the index carries, however far back the window reaches and however many runs
+that is — and `totals` is the sum of those rows, which is what the flags have always
+meant. **The console's own `--since 24h` reads are unchanged by any of this**: they are
+bounded listings and read exactly what they read before.
+
+**`--after=RUN-ID` stays a run id, and the index resolves it.** The cursor is not an
+opaque index token: it is a run id, which is what the console's allow-list checks and
+what a page's last row hands on. `runs ls` resolves that run's sort key from its own
+document in the index — or, **when the index has not folded that run yet, from the
+overlay**, which is where a run the index knows only as an id lives — and starts after
+it, in the index's order. An id neither holds stays the command's refusal.
+
+**`--pr=N` reads the index too** (D3204): the runs of a pull request the index has folded
+come from it, and the pull request's own index in the bucket and the other sources below
+go on covering the runs the run index does not have (`internal/cli/runs_pr.go`).
+
+**A listing the index cannot answer reads the window.** An index that has folded nothing
+and finished no walk — a fresh installation, and the stub every release before the index
+is wired answers with — is answered the way every listing was answered before the index
+existed, and **says nothing**: the window it reads is the listing, not a fallback from
+one, so there is no note to print and neither of the two fields below reaches the
+document (which is why the document is byte for byte the one this command printed before
+the index existed). **A reader that failed is the one case with a line**, on stderr, in
+one note: a listing that could not ask the index has something to say and reads the window
+beside it. Nothing silently short is ever printed: the two fields below are how a reader
+knows the difference.
+
+**`index_complete` and `folded_through` are on this document** — the index's own two
+facts about itself — and **the text listing says one line above its table while the index
+is still building** (`index_complete: false`): *the run index is still building: this
+listing is not the whole history yet*, with the moment it is folded through where it has
+one. The line is a note and not a warning: it is not in `warnings`, and it is not in the
+degraded feed's body (the fields are absent there, since the feed's listing is the
+window's).
 ### `fugaro runs ls --stream --json` — the listing as it arrives (the console improvements plan's RS1, the console's `runs.stream`)
 
 **Command:** the same `internal/cli/runs.go` `newLsCmd` / `runLs`, with
@@ -894,11 +964,19 @@ D2906, R8). `--stream` is accepted only with `--json`.
 carries **one element of this document's `runs` array, unchanged, in the
 document's own order** (created descending, then the run descending) under the
 line's `row` key; `end` is the last line of a feed that ran to completion, with
-`count` — how many `row` lines went before it — and the same `version`; `error`
-is a feed that failed after its first row, carrying the sentence the command
-would have printed, in one line. **A feed with no `end` line is an interrupted
-read**, which is why the count is carried: an empty window and a truncated read
-are otherwise the same bytes. `schemas/runs-stream.schema.json` is the authority
+`count` — how many `row` lines went before it — and the same `version`, plus the
+index's own two facts where the page came from the run index: **`index_complete`
+and `folded_through`, the same members and the same meaning as the document's
+(§5)**, absent exactly when they are absent there, which is the shape a consumer
+drawing rows as they arrive needs to tell a page of an index that is still
+building from the whole history — the feed is the shape most able to print a
+silently short list, since it never holds the document to check against. They
+are why the feed's version is **2** (a feed of version 1 carries neither); the
+`row` line is unchanged by that version, member for member; `error` is a feed
+that failed after its first row, carrying the sentence the command would have
+printed, in one line. **A feed with no `end` line is an interrupted read**,
+which is why the count is carried: an empty window and a truncated read are
+otherwise the same bytes. `schemas/runs-stream.schema.json` is the authority
 for the line — it is the schema of ONE line and not of the feed, and no object
 in it is closed, because members are added within a version and a consumer that
 refused one it does not know would refuse a newer CLI's feed — and

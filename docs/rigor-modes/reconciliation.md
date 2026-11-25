@@ -1035,9 +1035,18 @@ moved with the release that starts writing one, as the entries above do. Nothing
 changed; the row is named here for the reason the ones above are: a reader who finds the figure stale
 should find who moved it.)
 
+(Amended 2026-11-22: the rigor-modes plan's LV7.1 — `fugaro run --promote <area>`, the promotion
+pass that raises an area to the level its `--mode` names (LD6) — added `promoteSince` to
+`internal/cli/recipes_skew.go`, which moved the *Image-skew `Since` constants* row from 64 to 65. A
+task's `promote` block is a field the runner decodes strictly, so a job image older than the release
+that reads it refuses the whole spec at bootstrap, after the launch was paid for; the row moved with
+the release that starts reading the block, as the entries above do. Nothing in this folder changed;
+the row is named here for the reason the ones above are: a reader who finds the figure stale should
+find who moved it.)
+
 (Amended 2026-11-24: the repo-override-rulings plan's S5 — the release-A launch, its notes for a
 repository's lifted keys and its gate on a job image built before L8 — added `l8Since` to
-`internal/cli/recipes_skew.go`, which moved the *Image-skew `Since` constants* row from 64 to 65. The
+`internal/cli/recipes_skew.go`, which moved the *Image-skew `Since` constants* row from 65 to 66. The
 constant names the release whose runner drops the keys the project owns, resolves a repository's
 recipe from the project store and knows the layer's `ab.repos`, so the row moved with the release
 that starts reading it, as the entries above do. Its two companion constants, `abReposSince` and
@@ -1058,7 +1067,7 @@ figure stale should find who moved it.)
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 1 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
 | Files in `internal/runner` that mention `Severity` at all | 5 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
-| Image-skew `Since` constants | 65 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Image-skew `Since` constants | 66 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
 | Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 160 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |

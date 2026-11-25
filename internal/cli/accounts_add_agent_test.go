@@ -22,14 +22,47 @@ import (
 // TestAccountsAddClaudeRefusedInEveryAgentSession is the test that puts the
 // fake login on PATH, passes --claude and asserts its marker file is absent, so
 // a fence that moved off the login's own path fails there.
+//
+// Two refusals answer a session, and the world decides which. On a project
+// whose marks SAY it is not managed the fence refuses first — the sentence a
+// person at their own terminal reads on that project too, because what is
+// wrong is the project and not the session — and that is the first arm. On the
+// path a managed project takes, where the marks cannot be READ, a read that
+// broke is not an answer (D2218): the fence warns and goes on, and this
+// command's own gate then refuses the session, naming the marker and printing
+// the diff it did not write — the second arm, and the only one where the
+// marker is what makes the difference.
 func TestAccountsAddRefusesInAnAgentSession(t *testing.T) {
+	// The ordinary installation, by name. One row and not a loop over the
+	// markers: the fence answers a project that is not managed whether or not a
+	// session is running, so running it once per marker would prove nothing
+	// about any of them.
+	t.Run("an unmanaged project is refused by the fence", func(t *testing.T) {
+		path := ordinaryInstallationRig(t, accountsAddLocal).cfg
+		before := readFileString(t, path)
+		t.Setenv(accountsAddAgent, "1")
+
+		out, _, err := executeStdin(t, "", "accounts", "add", "team-a", "--repos", "acme/app")
+		if err == nil {
+			t.Fatalf("the command wrote on a project that is not managed:\n%s", out)
+		}
+		checkFenceRefusal(t, err, "accounts add")
+		if after := readFileString(t, path); after != before {
+			t.Errorf("the file changed under the fence:\n%s", after)
+		}
+	})
+
+	// A managed project whose marks cannot be read: the fence warns and goes
+	// on, and the command's own fence answers the session — the diff below is
+	// the half the fence never prints.
 	for _, marker := range agentenv.Markers {
 		t.Run(marker, func(t *testing.T) {
-			path := accountsAddFixture(t, accountsAddLocal)
-			before := readFileString(t, path)
+			r := newManagedAddRig(t, addRigLocal, addMarksManaged)
+			r.gcs.RefusePath("managed.json", 500, "InternalServerError", "", "the creation fact did not answer")
+			before := readFileString(t, r.cfg)
 			t.Setenv(marker, "1")
 
-			out, _, err := executeStdin(t, "", "accounts", "add", "team-a", "--repos", "acme/app")
+			out, _, err := executeStdin(t, "", "accounts", "add", "team-a", "--repos", "owner/repo-a")
 			if err == nil {
 				t.Fatal("the command wrote in a coding agent's session")
 			}
@@ -44,13 +77,13 @@ func TestAccountsAddRefusesInAnAgentSession(t *testing.T) {
 			}
 			// The diff is printed and the bytes are not written: the owner
 			// reads what the command would have done and does it themselves.
-			if !strings.Contains(out, path) {
+			if !strings.Contains(out, r.cfg) {
 				t.Errorf("the refusal does not name the file it refused to write:\n%s", out)
 			}
 			if !strings.Contains(out, "  + ") {
 				t.Errorf("the refusal does not print the diff:\n%s", out)
 			}
-			if after := readFileString(t, path); after != before {
+			if after := readFileString(t, r.cfg); after != before {
 				t.Errorf("the file changed in a coding agent's session:\n%s", after)
 			}
 		})
@@ -73,13 +106,14 @@ func rotationLocal(t *testing.T) string {
 // TestAccountsAddAsksNothing is this command's own reading of D1540: the
 // declaration, the profile entry, the secret and the converge are one
 // sentence, printed before the run makes them, and no question follows it.
-// The invocation passes neither --ask nor --yes and has no terminal, which is
-// the shape a script drives the command with — the deployment the old y/N was
-// answered for is the same one either way, and what a person gets instead of a
-// question is the sentence naming every change, printed before the first of
-// them is written.
+// The invocation passes neither --ask nor --yes, and it is the owner's own
+// terminal — the one place a managed project lets this command make the
+// change, and the shape the sentence was written for: what a person gets
+// instead of a question is the sentence naming every change, printed before
+// the first of them is written.
 func TestAccountsAddAsksNothing(t *testing.T) {
 	r := newAddRig(t)
+	ownerAtTheTerminal(t)
 	writes := r.secretWrites(t)
 
 	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a")
@@ -111,7 +145,15 @@ func TestAccountsAddAsksNothing(t *testing.T) {
 func TestAccountsAddRotationRerunRefusesInAnAgentSession(t *testing.T) {
 	for _, marker := range agentenv.Markers {
 		t.Run(marker, func(t *testing.T) {
-			r := newAddRigWith(t, rotationLocal(t))
+			// A managed project whose marks cannot be read: the fence warns
+			// and goes on (D2218), the gate is left standing nowhere, and the
+			// refusal below is this command's own — the one the file's own
+			// write path returns early from on this path, and the reason this
+			// test exists at all. On an ordinary installation the fence refuses
+			// the command whole, which says nothing about the re-run: a build
+			// with no fence on this path would pass there.
+			r := newManagedAddRig(t, rotationLocal(t), addMarksManaged)
+			r.gcs.RefusePath("managed.json", 500, "InternalServerError", "", "the creation fact did not answer")
 			writes := r.secretWrites(t)
 			before := readFileString(t, r.cfg)
 			t.Setenv(marker, "1")
@@ -149,11 +191,12 @@ func TestAccountsAddRotationRerunRefusesInAnAgentSession(t *testing.T) {
 // the file unchanged, so the change this run is about is the converge's — the
 // token stored project-wide and the database the mark lives in — and the run
 // names it instead of asking about it (D1540). The invocation below passes
-// neither --ask nor --yes and has no terminal: the sentence naming the
-// converge is printed in full, nothing waits on an answer to it, and the token
-// reaches the store.
+// neither --ask nor --yes and stands at the owner's own terminal: the sentence
+// naming the converge is printed in full, nothing waits on an answer to it, and
+// the token reaches the store.
 func TestAccountsAddRotationRerunAsksNothing(t *testing.T) {
 	r := newAddRigWith(t, rotationLocal(t))
+	ownerAtTheTerminal(t)
 	writes := r.secretWrites(t)
 
 	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a")

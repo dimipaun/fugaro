@@ -737,7 +737,9 @@ func TestCloudRunLsLogsDiagnose(t *testing.T) {
 	if _, totals := r.lsRun(id, "--batch", "other"); totals["runs"] != float64(0) {
 		t.Fatalf("ls --batch other: totals %v", totals)
 	}
-	// Plain ls: the local config's repositories, the last 7 days.
+	// Plain ls: the newest runs plus the ones going, read from the run index
+	// where this installation has one and from the local config's repositories
+	// over the last 7 days where it does not.
 	if out, err := r.cli("runs", "ls"); err != nil || !strings.Contains(out, task.ShortRun(id)) || !strings.Contains(out, "succeeded") {
 		t.Fatalf("ls: %s, %v", out, err)
 	}
