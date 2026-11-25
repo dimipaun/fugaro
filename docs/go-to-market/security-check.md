@@ -170,7 +170,7 @@ version's state), not the document, so it does not belong in the list.
 ### G2 — "Once shared project jobs exist" is stale: they exist — **closed**
 
 The sentence this gap objected to is gone: `SECURITY.md` was rewritten and now states the fact it was
-missing, in the words this gap proposed for it.
+missing.
 
 **The sentence** (`SECURITY.md:36`, "Inside a shared job there is no IAM boundary between
 repositories — the profile is the boundary"):
