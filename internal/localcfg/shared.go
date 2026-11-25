@@ -654,7 +654,7 @@ func mergeBatchBlock(local, published *Batch, optIn string) *Batch {
 // fresh map is returned, so neither argument is modified.
 //
 // The credentials service's records are carried one by one rather than as one,
-// because they are three keys of the file and a machine can hold some and not
+// because they are four keys of the file and a machine can hold some and not
 // the others: the entry a repository door writes carries all of them at once
 // (internal/cli's recordCredentialsServiceReady), while the upgrade backfill —
 // the door that repairs the roots no checkout here applies — writes the switch
@@ -678,6 +678,9 @@ func mergeRepoRecords(published, local map[string]Repo) map[string]Repo {
 		if l.StageAccountServed == nil {
 			l.StageAccountServed = p.StageAccountServed
 		}
+		if l.GitCredentialsServed == nil {
+			l.GitCredentialsServed = p.GitCredentialsServed
+		}
 		out[name] = l
 	}
 	return out
@@ -697,10 +700,10 @@ func mergeRepoRecords(published, local map[string]Repo) map[string]Repo {
 // record" is the key's absence, which is what omitempty writes). The published
 // entry is never modified.
 //
-// It is the same rule for every record of the credentials service — the switch
-// and R12's two facts beside it — because the merge above carries each of them
-// the same way: a key the local entry does not hold is not a difference, and a
-// key it does hold is.
+// It is the same rule for every record of the credentials service — the switch,
+// R12's two facts beside it, and the git credential's — because the merge above
+// carries each of them the same way: a key the local entry does not hold is not
+// a difference, and a key it does hold is.
 func withoutUnwrittenRecord(local, published any) any {
 	le, lok := local.(map[string]any)
 	pe, pok := published.(map[string]any)

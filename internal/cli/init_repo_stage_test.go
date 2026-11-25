@@ -316,6 +316,47 @@ func TestUpdateRepoKeepsTheRepositorysOwnAccountList(t *testing.T) {
 	}
 }
 
+// The record of the service's git credential is written on this entry by the
+// same run a moment before this write — recordCredentialsServiceReady judges
+// the bundle and stores the answer — so the write that rebuilds the entry has
+// to carry it, or the door erases its own judgement in the same `fugaro update
+// --repo` and the fact is unreachable through any command: gitCredentialGate
+// then refuses every vertex launch with a remedy (the same update --repo) that
+// re-enters the erase.
+//
+// The mutation is the missing GitCredentialsServed in writeRepoConfig's own
+// literal.
+func TestUpdateRepoKeepsTheGitCredentialFact(t *testing.T) {
+	e, _ := stageEngine(t, "", &initOptions{yes: true})
+	path := filepath.Join(t.TempDir(), "aurora.yaml")
+	e.lc = &localcfg.Config{
+		Version: 1, Name: "aurora", GCPProject: initProject, Region: "us-east5", RunsBucket: initRunsBucket,
+		Repos: map[string]localcfg.Repo{"acme/app": {
+			Provider: "github", BaseBranch: "trunk",
+			GitCredentialsServed: localcfg.RecordSwitch(true),
+		}},
+	}
+	cfg, problems := config.Parse([]byte(checkoutYAML("github", "vertex", "aurora", "")))
+	if cfg == nil {
+		t.Fatal(problems)
+	}
+	e.r.cmd.SetErr(io.Discard)
+	if err := e.r.writeRepoConfig(t.Context(), e.lc, infra.RepoSpec{Name: "acme/app", Provider: "github", BaseBranch: "main", GitHubAppID: "12345"}, cfg, path, nil); err != nil {
+		t.Fatal(err)
+	}
+	lc, err := localcfg.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := lc.Repos["acme/app"]
+	if !ok {
+		t.Fatalf("the repository's entry is gone from %s", path)
+	}
+	if !entry.GitCredentialsServedOn() {
+		t.Fatalf("the entry's git_credentials_served = %v, want true: the write rebuilt the entry without the record the same run had just written, so no command can leave the fact standing", entry.GitCredentialsServed)
+	}
+}
+
 // update --repo is the engine unchanged: its flag checks, its --print-vars
 // output (the variables alone on stdout, no result), and the embedded run's
 // refusal of an installation of another project, with the same words.

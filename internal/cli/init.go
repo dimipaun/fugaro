@@ -6946,20 +6946,22 @@ func (r *initRun) writeRepoConfig(ctx context.Context, lc *localcfg.Config, spec
 	// runs would then be answered 503 no_candidate_credentials by the
 	// credentials service while the node this publish writes still carries the
 	// admission, which is the state this key exists to end.
-	// The same care extends to R12's two facts, which the same door wrote on
-	// the same entry a moment ago (recordCredentialsServiceReady, KS19): this
+	// The same care extends to R12's two facts and the git credential's, which
+	// the same door wrote on the same entry a moment ago
+	// (recordCredentialsServiceReady, KS19): this
 	// write is the one `fugaro update` publishes for the installation, so a
 	// fact it did not carry over would be erased from the record of the very
 	// run that judged it — which is every run, the repository door writing this
 	// entry each time it converges. They travel with the switch, nil included,
 	// and for the same reason: an entry no update has judged must stay
 	// unjudged, and only the reading that judged it writes one.
-	var ready, providerKeysServed, stageAccountServed *bool
+	var ready, providerKeysServed, stageAccountServed, gitCredentialsServed *bool
 	var accounts []string
 	if entry, ok := lc.Repos[key]; ok {
 		ready = entry.CredentialsServiceReady
 		providerKeysServed = entry.ProviderKeysServed
 		stageAccountServed = entry.StageAccountServed
+		gitCredentialsServed = entry.GitCredentialsServed
 		accounts = entry.ClaudeAccounts
 	}
 	next.Repos[key] = localcfg.Repo{
@@ -6971,6 +6973,7 @@ func (r *initRun) writeRepoConfig(ctx context.Context, lc *localcfg.Config, spec
 		CredentialsServiceReady: ready,
 		ProviderKeysServed:      providerKeysServed,
 		StageAccountServed:      stageAccountServed,
+		GitCredentialsServed:    gitCredentialsServed,
 		ClaudeAccounts:          accounts,
 	}
 	if spec.UsesVertex() && !lc.UsesVertex() {

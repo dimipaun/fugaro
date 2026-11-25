@@ -317,6 +317,62 @@ func TestMergeSharedCarriesTheRepositoriesCredentialsServiceRecord(t *testing.T)
 	}
 }
 
+// TestMergeSharedCarriesTheRepositoriesGitCredentialFact: the same rule for
+// the record the ruling of 2026-11-24 added — whether the service's bundle
+// holds the git credential this repository's provider needs. It is written by
+// the machine that ran `fugaro update --repo` there and read by a launch on
+// every machine, so a publish from a machine with no record of its own must
+// not drop the published one: a teammate's vertex launch would then read the
+// absence as "not served" and be refused, with the fix (the update that wrote
+// the fact) being one that machine already ran.
+//
+// A record the local entry DOES hold wins, in both directions, exactly as the
+// switch's does: only the door that judged the bundle writes one.
+func TestMergeSharedCarriesTheRepositoriesGitCredentialFact(t *testing.T) {
+	published := sharedBase(t, "repos:\n  acme/web: { provider: github, workflows: [web], git_credentials_served: true }\n  acme/half: { provider: github, workflows: [web], git_credentials_served: false }\n")
+	local := sharedBase(t, "repos:\n  acme/web: { provider: github, workflows: [api] }\n  acme/half: { provider: github, workflows: [api] }\n")
+
+	got := MergeShared(published, local)
+	if !got.Repos["acme/web"].GitCredentialsServedOn() {
+		t.Errorf("a publish from a machine with no git credential record for acme/web dropped the published one: that machine's own entry carries none, and the record the machine that judged the bundle wrote is the only one there is")
+	}
+	if got.Repos["acme/half"].GitCredentialsServedOn() {
+		t.Errorf("the published record false for acme/half was overwritten by the local entry's absence: a recorded false is a bundle that cannot serve the credential, and the fail-safe direction is to read it")
+	}
+	out, err := got.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "git_credentials_served: true") {
+		t.Errorf("the merged config marshals without the git credential record it kept:\n%s", out)
+	}
+
+	off := sharedBase(t, "repos:\n  acme/web: { provider: github, workflows: [api], git_credentials_served: false }\n")
+	if MergeShared(published, off).Repos["acme/web"].GitCredentialsServedOn() {
+		t.Errorf("a local git credential record of false did not win over the published true: the bundle was emptied since, and a record that cannot say so admits a launch whose run stops at its first git call")
+	}
+	on := sharedBase(t, "repos:\n  acme/half: { provider: github, workflows: [api], git_credentials_served: true }\n")
+	if !MergeShared(published, on).Repos["acme/half"].GitCredentialsServedOn() {
+		t.Errorf("a local git credential record of true did not win over the published false")
+	}
+
+	// The diff agrees with the merge: a local entry that holds no record is no
+	// difference (the merge carries the published one over it, so publishing
+	// changes nothing), and one that holds a different record is.
+	same := sharedBase(t, "repos:\n  acme/web: { provider: github, workflows: [web] }\n")
+	if diff := SharedDiff(published, same); len(diff) != 0 {
+		t.Errorf("a local entry with no git credential record is reported as a difference from the published one: %v — the publish would write the published value back unchanged", diff)
+	}
+	differs := sharedBase(t, "repos:\n  acme/web: { provider: github, workflows: [web], git_credentials_served: false }\n")
+	if diff := SharedDiff(published, differs); len(diff) == 0 {
+		t.Errorf("a local git credential record of false is not reported as a difference from the published true: the publish would change the installation's file and nothing would say so")
+	}
+
+	if local.Repos["acme/web"].GitCredentialsServed != nil || published.Repos["acme/web"].GitCredentialsServed == nil {
+		t.Errorf("MergeShared modified an input's git credential record: local %v, published %v", local.Repos["acme/web"].GitCredentialsServed, published.Repos["acme/web"].GitCredentialsServed)
+	}
+}
+
 // TestMergeSharedKeepsThePublishedBatchBlock: the batch block is published —
 // it is the installation's facts (the image a run's job runs, its machine
 // type, the network and subnetwork its VMs are placed in, the account they run
