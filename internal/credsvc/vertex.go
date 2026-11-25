@@ -245,12 +245,20 @@ func (s *Server) serveVertex(ctx context.Context, w http.ResponseWriter, id Iden
 			err.Error(), labelRead(readUpstream, err))
 		return true, Tried{}
 	}
+	// What this source's answer carried is recorded in the same three arms the
+	// chain's own walk records it in — the answers this service reads as about
+	// the CREDENTIAL — as the names of its rate-limit headers and never a value
+	// (U1, Check 880). A Vertex answer carries Google's names, and the record
+	// says so rather than keeping the last one a Claude answer left.
 	switch status := ans.resp.StatusCode; {
 	case unauthorizedStatus(status):
 		// A 401 marks the source, and the walk moves on or answers exhausted
 		// with what the state says. Only an operator clears a broken mark
 		// (C1.21), and the attempt is settled at the zero a 401 is worth: an
-		// unbilled attempt must not eat the workspace's month.
+		// unbilled attempt must not eat the workspace's month. What the 401
+		// carried is recorded here (U1, Check 880): the observation is a node of
+		// its own, so the order against the hold below decides nothing.
+		s.recordRateLimitHeaders(ctx, sel, name, ans.resp.Header)
 		ans.resp.Body.Close()
 		if fail := s.settleCall(ctx, cl, unchargedUsage()); fail != nil {
 			s.refuseMeter(ctx, w, id, PurposeForward, fail)
@@ -266,7 +274,9 @@ func (s *Server) serveVertex(ctx context.Context, w http.ResponseWriter, id Iden
 		// A Vertex 429 is a limit on the project's Vertex as much as a key's
 		// 429 is a limit on the key. Nothing has been streamed, so the walk may
 		// move to its next source, and the mark carries whatever reset the
-		// answer named.
+		// answer named. The names the limit carried are the answer Check 880 is
+		// read after, so they are recorded here (U1, D3178).
+		s.recordRateLimitHeaders(ctx, sel, name, ans.resp.Header)
 		reset := usageLimitReset(ans.resp.Header, s.now())
 		ans.resp.Body.Close()
 		if fail := s.settleCall(ctx, cl, unchargedUsage()); fail != nil {
@@ -284,6 +294,14 @@ func (s *Server) serveVertex(ctx context.Context, w http.ResponseWriter, id Iden
 	// for a request Vertex refused, an overloaded_error, a 500. It is answered
 	// with the tier and the name of the project's Vertex, which is what tells
 	// the run's own gateway to price and settle it as money.
+	//
+	// A serve's names are recorded and the relayed refusals' beside it are not:
+	// a record is a claim that an answer says something about this source, and a
+	// 400 or a 500 says something about the request (the chain's own rule, U1,
+	// Check 880).
+	if code := ans.resp.StatusCode; code >= 200 && code < 300 {
+		s.recordRateLimitHeaders(ctx, sel, name, ans.resp.Header)
+	}
 	scan := &usageLimitScanner{}
 	s.answer(ctx, w, id, cl, ans, cred, nil, scan)
 	if scan.Found() {

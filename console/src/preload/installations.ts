@@ -68,6 +68,10 @@ export const INSTALLATION_OPERATIONS = Object.freeze([
   // process's table, where it is checked, and the preload's copy is only so that
   // `distros()` can name the channel it sends.
   ['distros', 'distros'],
+  // The Add project door (SW3c, R4): the picker's one row that opens a window
+  // rather than a process. It takes no arguments -- the wizard is the
+  // dashboard's own screen -- so the mirror needs nothing beyond the name.
+  ['addProject', 'addProject'],
 ] as const) satisfies readonly (readonly [string, string])[]
 
 /** InstallationOperationName is the closed union of channel names. */

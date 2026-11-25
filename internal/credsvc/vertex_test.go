@@ -24,6 +24,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -548,6 +549,56 @@ func TestAVertexLimitMovesOn(t *testing.T) {
 	if got := s.audit.String(); got != "" {
 		t.Errorf("the declined source wrote %q, want nothing: the walk writes the line for a call it could not place", got)
 	}
+}
+
+// TestVertexRecordsTheAnswersAboutTheSource: the record Check 880 reads is
+// written for a Vertex answer exactly where it is written for the chain's own —
+// a served answer (a 2xx), a usage limit and a 401 — and not beside them: a
+// relayed 500 is the caller's answer and says nothing about this source (the
+// chain's rule, "an answer about the request moves nothing"). Both answers
+// carry a utilisation figure's header, so the second case is caught by the
+// record it must not have made rather than by a record it made empty.
+//
+// The observation is a node of its own beside the mark (creds.Observation), so
+// it is read from the store directly and not out of the source's mark.
+func TestVertexRecordsTheAnswersAboutTheSource(t *testing.T) {
+	t.Run("a served answer's names are recorded", func(t *testing.T) {
+		served := http.Header{}
+		served.Set("Anthropic-Ratelimit-Unified-5h-Utilization", utilisationAnswer)
+		served.Set("X-Marker", notRateLimitValue)
+		reply := anthropicfake.MessageOK(testModel, testUsage)
+		reply.Header = served
+		s, _, _ := vertexFixture(t, reply)
+
+		cl := vertexCall(t, MessagesPath, vertexBodyDoc("vertex-200"))
+		done, _, rec, _ := serveVertexCall(t, s, vertexIdentity(s, testProject), cl, testVertexSource())
+		if !done || rec.Code != http.StatusOK {
+			t.Fatalf("the call is answered %d (done=%v), want the served 200", rec.Code, done)
+		}
+		o, ok := s.state.observation(config.CredentialVertex)
+		if !ok {
+			t.Fatal("the source that served the call has no observation: what a served answer carried was not recorded")
+		}
+		if want := []string{"Anthropic-Ratelimit-Unified-5h-Utilization"}; !slices.Equal(o.Headers, want) {
+			t.Errorf("the record is %v, want %v: the NAMES of the rate-limit headers and no other header", o.Headers, want)
+		}
+		assertNoValueRecorded(t, o, "Vertex's 200")
+	})
+
+	t.Run("a relayed refusal records nothing", func(t *testing.T) {
+		relayed := anthropicfake.Error(http.StatusInternalServerError, "api_error", "overloaded")
+		relayed.Header = http.Header{"Anthropic-Ratelimit-Unified-5h-Utilization": {utilisationAnswer}}
+		s, _, _ := vertexFixture(t, relayed)
+
+		cl := vertexCall(t, MessagesPath, vertexBodyDoc("vertex-500"))
+		_, tried, rec, _ := serveVertexCall(t, s, vertexIdentity(s, testProject), cl, testVertexSource())
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("the call is answered %d (%+v), want the relayed 500: it is the caller's answer", rec.Code, tried)
+		}
+		if o, ok := s.state.observation(config.CredentialVertex); ok {
+			t.Errorf("the source that answered a 500 recorded %v: a record is a claim about the source, and this answer is about the request", o.Headers)
+		}
+	})
 }
 
 // TestAVertex401MarksTheSourceBroken: a 401 is the one mark only an operator

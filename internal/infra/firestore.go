@@ -99,7 +99,8 @@ type FirestoreStep struct {
 	// not exist is created in, and a database that existed at plan time keeps
 	// the location it has, wherever that is (R5, D3091). A database that
 	// appears between the plan and the write is adopted only when it appeared
-	// here, because this is the location the person confirmed.
+	// here, because this is the location the plan named and the run printed
+	// (no step confirms a location: D3090 of docs/location-preference).
 	Location string
 	// Place is the place the installation's region lies in, which is what
 	// says whether an adopted database is outside it (D3091).
@@ -322,8 +323,8 @@ func (s *FirestoreStep) Apply(ctx context.Context) error {
 		created := err == nil
 		if errors.Is(err, firestore.ErrPrecondition) {
 			// Created by someone since the plan: adopt only if it is ours to
-			// adopt, and only where the plan and the person's confirmation put
-			// it. Ours-or-empty is asked first, because a database holding
+			// adopt, and only where the plan put it and the run printed it.
+			// Ours-or-empty is asked first, because a database holding
 			// somebody else's data is refused for that and not for where it is
 			// — and the refusal's own way out would be wrong advice about a
 			// database the next plan would refuse too.
@@ -332,13 +333,14 @@ func (s *FirestoreStep) Apply(ctx context.Context) error {
 					if _, err = s.adoptable(ctx); err == nil {
 						if db.LocationID != s.Location {
 							// A location is permanent and s.Location is the one
-							// confirmed, so a database that appeared elsewhere
-							// is a state nothing agreed to: refuse rather than
-							// quietly keeping the installation's history where
-							// nobody said it would live.
-							err = userErr("the Firebase project %s has had a Firestore database created in %s since this run read it, and this run was confirmed to create one in %s: a location can never be changed, so fugaro adopts a database only where the plan said it would be, and creates none. Nothing was written; run it again, and the plan will read the database where it is and adopt it there once you confirm", s.FP, db.LocationID, s.Location)
+							// the plan named and the run printed, so a database
+							// that appeared elsewhere is a state nothing
+							// announced: refuse rather than quietly keeping the
+							// installation's history where nobody said it would
+							// live.
+							err = userErr("the Firebase project %s has had a Firestore database created in %s since this run read it, and the plan this run printed said it would create one in %s: a location can never be changed, so fugaro adopts a database only where the plan said it would be, and creates none. Nothing was written; run it again, and the plan will read the database where it is and adopt it there", s.FP, db.LocationID, s.Location)
 						} else {
-							// Ours, and where it was confirmed: the run says
+							// Ours, and where the plan named: the run says
 							// where it is, because it did not create it.
 							s.adoptedDB = db.LocationID
 						}
@@ -351,11 +353,12 @@ func (s *FirestoreStep) Apply(ctx context.Context) error {
 		}
 		if created && (db.LocationID != s.Location || db.Type != "FIRESTORE_NATIVE") {
 			// We created it, and the service creates where it was asked: a
-			// location or a mode that is not the one confirmed is a surprise.
+			// location or a mode that is not the one asked for is a surprise.
 			// A database that existed at plan time is another matter — the plan
-			// named where it is and the person confirmed adopting it there,
+			// named where it is and printed it, and the run adopts it there,
 			// whatever that is (R5, D3091) — and the race above refuses one that
-			// appeared elsewhere after the plan, because nothing confirmed it.
+			// appeared elsewhere after the plan, because the plan named
+			// somewhere else.
 			return fmt.Errorf("the Firestore database of %s reads back in location %q, type %s, not %s: stopping", s.FP, db.LocationID, db.Type, s.Location)
 		}
 		s.createDB = false
