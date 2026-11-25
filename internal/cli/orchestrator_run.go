@@ -211,10 +211,17 @@ type orchestratorDaemon struct {
 	stamp versionstamp.Source
 	// once is --once: one cycle, then the clean exit, and decide is --decide:
 	// whether the tick this daemon builds reaches the decision agent at all.
-	once     bool
-	decide   bool
-	tick     *orchestrator.Tick
-	cache    *orchestrator.BriefCacheWriter
+	once   bool
+	decide bool
+	tick   *orchestrator.Tick
+	cache  *orchestrator.BriefCacheWriter
+	// claims is the guard the tick takes this daemon's claims through and
+	// releases the finished ones on (D3209), kept here as well because the beat
+	// re-stamps them beside the lease (orchestrator.Claim.Refresh): what the
+	// node records is when its holder last confirmed an item was still its own,
+	// and a daemon that beats only its lease would leave that stamp on the day
+	// the item was taken.
+	claims   *orchestrator.Claim
 	launched *launchInFlight
 	// launcher is the launcher the tick starts runs through, kept here because
 	// the list of nodes it finds an item in moves with the plans (nodes,
@@ -766,6 +773,13 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 		nodes:  append([]orchestrator.Store{d.node}, d.nodes...),
 		now:    d.db.ServerNow,
 	}
+	claims, err := orchestrator.NewClaim(d.db, d.id, d.db.ServerNow)
+	if err != nil {
+		return nil, userErr("%v", err)
+	}
+	// The same guard goes on the daemon: the beat re-stamps the claims it holds
+	// along with the lease it holds (beatAndRefresh).
+	d.claims = claims
 	return &orchestrator.Tick{
 		Store: d.node,
 		// The nodes beside the state node: the standing backlog's and one per
@@ -774,9 +788,19 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 		Nodes:    d.nodes,
 		Runs:     &orchestratorRunView{bucket: d.env.bucket.Bucket, env: d.env, db: d.db, warn: d.warn},
 		Launcher: d.launcher,
-		Mint:     func(now time.Time) (string, error) { return task.NewRunID(now, crand.Reader) },
-		Caps:     caps,
-		Breaker:  &orchestrator.Breaker{},
+		// The project's claims (D3209): the daemon takes the claim of a plan
+		// task or a backlog item before it starts the run for it and settles it
+		// when the item is finished — a plan task's claim marked finished and
+		// left standing, so that a second orchestrator of this project, whose
+		// own node still carries the task as approved, skips it rather than
+		// starting a second run of one piece of work — while a backlog item's
+		// claim comes off. The node is one under `orchestrator/~claims`, which
+		// the daemon writes with the credential it writes the state with — over
+		// IAM, since every token is refused there (F33, and no rules change).
+		Claims:  claims,
+		Mint:    func(now time.Time) (string, error) { return task.NewRunID(now, crand.Reader) },
+		Caps:    caps,
+		Breaker: &orchestrator.Breaker{},
 		// A tick has six things to say — a run it folded ended, it committed
 		// a question (O7), it merged under a ceiling that tells somebody
 		// (D2030), it blocked an item on a cycle across orchestrators (D3220),
@@ -1135,7 +1159,7 @@ func (d *orchestratorDaemon) refreshCaps(ctx context.Context) {
 // somebody else's.
 func (d *orchestratorDaemon) loop(ctx context.Context) error {
 	for {
-		if err := d.lease.Beat(ctx); err != nil {
+		if err := d.beatAndRefresh(ctx); err != nil {
 			if ctx.Err() != nil {
 				return d.cancelled(ctx)
 			}
@@ -1213,6 +1237,39 @@ func (d *orchestratorDaemon) loop(ctx context.Context) error {
 			return err
 		}
 	}
+}
+
+// beatAndRefresh is the daemon's beat: the lease it holds, and the claims it
+// holds beside it.
+//
+// The claims are re-stamped here and not released here: what releases a claim is
+// its item, and only the cycle that reads the nodes knows which items are
+// finished (orchestrator.Claim.Refresh, and the tick's last step). What the beat
+// adds is the stamp the node carries — the server time its holder last confirmed
+// the item was still its own — kept inside the beat's own cadence rather than
+// left on the day the item was taken. What it re-stamps is the picture the last
+// cycle read off the daemon's own nodes (orchestrator.Tick.Held) and not a walk
+// of the project's claims node, which grows with every claim the project ever
+// made.
+//
+// A refresh that failed is not the lease's failure, and this does not answer it
+// the way the loop answers a beat that failed: a lease failure has one answer
+// (the loop's own comment), while a claim whose stamp could not be written is a
+// node that no longer says when its holder last confirmed the item was still its
+// own — and stopping the daemon over it would cost the project every other item
+// it drives. It is said instead, once per failed beat, and the beat goes on.
+func (d *orchestratorDaemon) beatAndRefresh(ctx context.Context) error {
+	if err := d.lease.Beat(ctx); err != nil {
+		return err
+	}
+	if d.claims == nil || d.tick == nil {
+		return nil
+	}
+	if err := d.claims.Refresh(ctx, d.tick.Held()); err != nil {
+		fmt.Fprintf(d.warn, "orchestrator %s: the claims this daemon holds could not be re-stamped, so the node says this daemon confirmed an item it holds as long ago as it took it: %s\n",
+			safetext.Field(d.id), safetext.OneLine(err.Error()))
+	}
+	return nil
 }
 
 // handOver reports whether the binary the unit names has moved on from this
@@ -1347,7 +1404,7 @@ func (d *orchestratorDaemon) report(rep orchestrator.Report, err error) {
 	if err != nil {
 		return
 	}
-	fmt.Fprintf(d.out, "orchestrator %s: %s (%d folded, %d carried, %d judged)\n", safetext.Field(d.id), safetext.OneLine(string(rep.Outcome)), rep.Folded, rep.Carried, rep.Decided)
+	fmt.Fprintf(d.out, "orchestrator %s: %s (%d folded, %d carried, %d skipped, %d judged)\n", safetext.Field(d.id), safetext.OneLine(string(rep.Outcome)), rep.Folded, rep.Carried, rep.Skipped, rep.Decided)
 	// A judgement that failed is said and not raised: the cycle it was part of
 	// still folded its runs and still carries its items, and what a person
 	// reads here is that one case went unanswered — the fence was not written,
@@ -1384,15 +1441,17 @@ func (d *orchestratorDaemon) report(rep orchestrator.Report, err error) {
 // and not a reconnect's — because it is the node as it already stands and not a
 // change; the waker passes over each one it reads.
 //
-// The wait beats the claim while it runs, on the lease's own cadence. The
-// interval is a person's value and the claim expires at LeaseTTL, so a wait
-// that honoured the flag alone would leave the id un-beaten for a whole
-// interval: an interval a little under the TTL is a claim that lapses under the
+// The wait beats the id while it runs, on the lease's own cadence. The
+// interval is a person's value and the id's lease expires at LeaseTTL, so a
+// wait that honoured the flag alone would leave the id un-beaten for a whole
+// interval: an interval a little under the TTL is a lease that lapses under the
 // daemon holding it, and a second daemon takes that id while this one is still
-// driving it. A beat that failed is not answered here — it ends the wait, and
-// the loop's own Beat at the top of the cycle decides it, because a lease
-// failure has one answer and it is not this function's (a claim that went to
-// another machine stops the daemon, a database error is the process's).
+// driving it. An item's claim is a different thing with no clock of its own
+// (claim.go): it lapses under nobody, so nothing here is about it. A beat that
+// failed is not answered here — it ends the wait, and the loop's own Beat at the
+// top of the cycle decides it, because a lease failure has one answer and it is
+// not this function's (a lease that went to another machine stops the daemon, a
+// database error is the process's).
 func (d *orchestratorDaemon) wait(ctx context.Context) error {
 	if d.wake != nil {
 		return d.wake(ctx)
@@ -1425,7 +1484,7 @@ func (d *orchestratorDaemon) wait(ctx context.Context) error {
 			d.noteWake(w)
 			return nil
 		case <-beats:
-			if err := d.lease.Beat(ctx); err != nil {
+			if err := d.beatAndRefresh(ctx); err != nil {
 				return nil
 			}
 		case <-timer.C:

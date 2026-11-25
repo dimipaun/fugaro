@@ -3925,7 +3925,7 @@ func (r *initRun) runsBucketViewers(ctx context.Context, c *infra.Clients, spec 
 		return err
 	}
 	if !ok {
-		r.warn(fmt.Sprintf("project Viewers can still read gs://%s, transcripts and caches included: the removal was not confirmed; rerun "+r.o.doorProgram()+" to remove it", spec.RunsBucket))
+		r.warn(fmt.Sprintf("project Viewers can still read gs://%s: the removal was not confirmed; rerun "+r.o.doorProgram()+" to remove it", spec.RunsBucket))
 		return nil
 	}
 	if err := infra.RemoveProjectViewers(ctx, c, spec.RunsBucket, p); err != nil {
