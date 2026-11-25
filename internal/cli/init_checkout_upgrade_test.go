@@ -17,7 +17,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
-	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -68,10 +67,22 @@ func checkoutEngine(t *testing.T, o *initOptions) (*initEngine, *syncBuf) {
 	cmd.SetOut(out)
 	cmd.SetErr(&syncBuf{})
 	cmd.SetIn(strings.NewReader(""))
+	lc := &localcfg.Config{Name: "aurora", GCPProject: "proj-1234", Region: "us-east5",
+		Repos: map[string]localcfg.Repo{"acme/app": {Provider: "github"}}}
+	// The rig's own installation, where there is one: the cloud half builds its
+	// specs from the run's config (the bucket the build records live in, the
+	// rig's endpoints), and the checkout path used to re-read that file while
+	// U4's view path reads the run's own config. A config the rig never wrote is
+	// one no refresh can plan from.
+	if p := os.Getenv("FUGARO_CONFIG"); p != "" {
+		if rig, err := localcfg.Load(p); err == nil {
+			rig.Repos["acme/app"] = localcfg.Repo{Provider: "github"}
+			lc = rig
+		}
+	}
 	return &initEngine{
-		r: &initRun{o: o, w: out, in: bufio.NewReader(strings.NewReader("")), cmd: cmd},
-		lc: &localcfg.Config{Name: "aurora", GCPProject: "proj-1234", Region: "us-east5",
-			Repos: map[string]localcfg.Repo{"acme/app": {Provider: "github"}}},
+		r:  &initRun{o: o, w: out, in: bufio.NewReader(strings.NewReader("")), cmd: cmd},
+		lc: lc,
 	}, out
 }
 
@@ -356,9 +367,12 @@ func TestUpdateImageRefreshRefusesTagOnly(t *testing.T) {
 	}
 }
 
-// Outside a checkout there is nothing for the stage to do: one line, and the
+// Outside a checkout there is nothing for the stage to do: it reads the
+// project's repositories (U4), and a directory that is no checkout is one it
+// read none of them from, so it has no job image to refresh — one line, and the
 // converge goes on.
 func TestUpdateOutsideACheckoutSkipsCheckoutSteps(t *testing.T) {
+	useVersion(t, "0.5.1")
 	t.Chdir(t.TempDir())
 	e, _ := checkoutEngine(t, &initOptions{yes: true})
 	st := checkoutStageOf(t, e)
@@ -366,7 +380,7 @@ func TestUpdateOutsideACheckoutSkipsCheckoutSteps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.State != initflow.Skipped || !strings.Contains(status.Detail, "not in a checkout") {
+	if status.State != initflow.Skipped || !strings.Contains(status.Detail, "no repository of this project was read") {
 		t.Fatalf("outside a checkout: %+v", status)
 	}
 	out, err := st.Apply(t.Context(), initflow.Env{Yes: true})
@@ -436,11 +450,12 @@ func TestUpdateLocalStepsRunInAgentSession(t *testing.T) {
 		t.Errorf("the plugin was not installed in an agent's session\n%s", out)
 	}
 	// What a session leaves is the two checkout writes: the pin's removal,
-	// whose route is the door it is in (U5), and the cloud half.
-	root := filepath.Dir(filepath.Dir(settings))
+	// whose route is the door it is in (U5), and the cloud half — which is the
+	// project's now, every repository of it, so the line names no checkout
+	// (againView, U4).
 	if len(res.Left) != 2 || res.ExitCode() != 1 ||
 		!leftCommand(res, initflow.Plugin, selfCommand()+" update") ||
-		!leftCommand(res, checkoutStageName, selfCommand()+" update --repo "+root) {
+		!leftCommand(res, checkoutStageName, selfCommand()+" update") {
 		t.Fatalf("an agent's session reported the checkout done with the images untouched: left %+v, exit %d\n%s", res.Left, res.ExitCode(), out)
 	}
 }
@@ -460,13 +475,12 @@ func TestUpdateCloudWritesRefusedInAgentSessionEvenWithYes(t *testing.T) {
 	if len(*ran) != 0 || strings.Contains(out.String(), "fugaro image refresh of") {
 		t.Fatalf("an agent session reached the cloud: steps %q\n%s", *ran, out)
 	}
-	if !strings.Contains(out.String(), "cloud: skipped: a coding agent's session") {
+	if !strings.Contains(out.String(), "cloud: skipped: acme/app: a coding agent's session") {
 		t.Errorf("the cloud step was not refused by name:\n%s", out)
 	}
-	root := filepath.Dir(filepath.Dir(settings))
 	if len(res.Left) != 2 || res.ExitCode() != 1 ||
 		!leftCommand(res, initflow.Plugin, selfCommand()+" update") ||
-		!leftCommand(res, checkoutStageName, selfCommand()+" update --repo "+root) {
+		!leftCommand(res, checkoutStageName, selfCommand()+" update") {
 		t.Fatalf("the cloud half was not left for the user: left %+v, exit %d\n%s", res.Left, res.ExitCode(), out)
 	}
 	// The local half really ran, so this is not a run that refused everything
@@ -609,7 +623,6 @@ func TestUpdateAgentSessionRunsThePluginBeforeTheCheckout(t *testing.T) {
 // left-for-you accounting is here for. The two tests above fail with it too.
 func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
 	settings, _, ran := agentCheckout(t)
-	root := filepath.Dir(filepath.Dir(settings))
 
 	e, out := checkoutEngine(t, &initOptions{yes: true})
 	res := stageOutcome(t, e, checkoutStageOf(t, e))
@@ -627,7 +640,7 @@ func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
 		t.Errorf("the left-for-you does not say where the step can be run: %q", l.Text)
 	}
 	if want := []string{
-		selfCommand() + " update --repo " + root,
+		selfCommand() + " update",
 	}; !slices.Equal(l.Commands, want) {
 		t.Errorf("the left-for-you names %q, want %q (the parked step's own command, as its refusal words it)", l.Commands, want)
 	}
@@ -653,20 +666,20 @@ func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
 			t.Errorf("the second run's plan holds a %s step, and a checkout has no local step any more:\n%s", gone, out2)
 		}
 	}
-	if !strings.Contains(out2.String(), "skipped here: cloud") {
+	if !strings.Contains(out2.String(), "skipped here: acme/app: cloud") {
 		t.Errorf("the second run no longer says which step it leaves:\n%s", out2)
 	}
 	// The plan view's row is one clause (report.Brief) and the reason is whole
 	// in the log, so what is read here is the run's own block under it: the
 	// step it leaves is the checkout's cloud half, named in words.
-	if !strings.Contains(out2.String(), "the checkout's cloud half") {
+	if !strings.Contains(out2.String(), "this project's cloud half") {
 		t.Errorf("the second run no longer says which step it leaves:\n%s", out2)
 	}
 	b, err := res2.JSON()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), `"left_for_you"`) || !strings.Contains(string(b), selfCommand()+" update --repo "+root) {
+	if !strings.Contains(string(b), `"left_for_you"`) || !strings.Contains(string(b), selfCommand()+" update") {
 		t.Errorf("the JSON does not carry the step left for the user:\n%s", b)
 	}
 }
@@ -705,10 +718,9 @@ func TestUpdateLocalStepsRunInAgentSessionWithoutAYes(t *testing.T) {
 	if len(*ran) != 0 {
 		t.Errorf("the session reached the cloud without --yes: steps %q\n%s", *ran, out)
 	}
-	root := filepath.Dir(filepath.Dir(settings))
 	if len(res.Left) != 2 || res.ExitCode() != 1 ||
 		!leftCommand(res, initflow.Plugin, selfCommand()+" update") ||
-		!leftCommand(res, checkoutStageName, selfCommand()+" update --repo "+root) {
+		!leftCommand(res, checkoutStageName, selfCommand()+" update") {
 		t.Fatalf("the cloud half was not left for the user: left %+v, exit %d\n%s", res.Left, res.ExitCode(), out)
 	}
 }
@@ -781,11 +793,13 @@ func TestUpdateSecondRunWritesNothing(t *testing.T) {
 	}
 }
 
-// A checkout whose origin is not an owner/name is a failure, not a skip: the
-// refresh cannot resolve the repository, which is a real local-file error and
-// one the step fails on too. (A checkout with no origin at all is the
-// one the step is dropped for: TestUpdateSkipsCloudOnlyWhereTheCheckoutHasNoOrigin.)
-func TestUpdateFailsOnAnOriginItCannotRead(t *testing.T) {
+// A directory whose repository this machine cannot resolve is not a failure of
+// the run: the stage reads the project's repositories, and a directory it can
+// make no repository out of is one it read none of. Nothing is built and
+// nothing is written — the run never learned of a repository to build for. The
+// reason the reader could not read one is the reader's own line (R13), and the
+// stage reports the one it has: no repository of this project was read.
+func TestUpdateBuildsNothingInADirectoryItCannotRead(t *testing.T) {
 	t.Run("an origin that is not owner/name", func(t *testing.T) {
 		_, root := upgradeRig(t)
 		settings := filepath.Join(root, ".claude", "settings.json")
@@ -800,19 +814,19 @@ func TestUpdateFailsOnAnOriginItCannotRead(t *testing.T) {
 
 		e, out := checkoutEngine(t, &initOptions{yes: true})
 		res := stageOutcome(t, e, checkoutStageOf(t, e))
-		if res.Failed == nil || !strings.Contains(res.Failed.Error, "cannot tell the repository (owner/name) from the checkout's origin") {
-			t.Fatalf("an origin with no owner/name was not a failure: %+v\n%s", res, out)
+		if res.Failed != nil || stateOf(res, checkoutStageName) != initflow.Skipped {
+			t.Fatalf("a directory whose origin is not owner/name was not a skip: %+v\n%s", res, out)
 		}
 		if len(*ran) != 0 {
 			t.Errorf("the refresh ran over an origin it cannot read: %q\n%s", *ran, out)
 		}
 		if got := string(convergeRead(t, settings)); got != wiredAt("v0.5.0") {
-			t.Errorf("the pin moved before the run failed on the origin:\n%s\nwant it untouched:\n%s", got, wiredAt("v0.5.0"))
+			t.Errorf("the checkout's settings moved in a directory the run read no repository of:\n%s\nwant it untouched:\n%s", got, wiredAt("v0.5.0"))
 		}
 	})
 
-	// A checkout git itself cannot read is the other half: the stage never
-	// concluded "no origin", so it did not skip the step over it.
+	// A directory git itself cannot read is the other half: the reader answers
+	// no repository there too.
 	t.Run("a checkout git cannot read", func(t *testing.T) {
 		convergeEnv(t, "0.5.1")
 		dir := t.TempDir()
@@ -824,8 +838,8 @@ func TestUpdateFailsOnAnOriginItCannotRead(t *testing.T) {
 
 		e, out := checkoutEngine(t, &initOptions{yes: true})
 		res := stageOutcome(t, e, checkoutStageOf(t, e))
-		if res.Failed == nil || !strings.Contains(res.Failed.Error, "reading the checkout's remotes") {
-			t.Fatalf("a checkout git cannot read was not a failure: %+v\n%s", res, out)
+		if res.Failed != nil || stateOf(res, checkoutStageName) != initflow.Skipped {
+			t.Fatalf("a checkout git cannot read was not a skip: %+v\n%s", res, out)
 		}
 		if len(*ran) != 0 {
 			t.Errorf("the refresh ran in a checkout git cannot read: %q\n%s", *ran, out)
@@ -833,13 +847,17 @@ func TestUpdateFailsOnAnOriginItCannotRead(t *testing.T) {
 	})
 }
 
-// A checkout whose fugaro.yaml names another project is not this run's: the job
-// images are not refreshed in it, and nothing writes a pin any more (U2). The
-// plugin stage keeps the same gate on the half that is the checkout's — the
-// write U5 adds (F24, D955) — but the install is not the checkout's business:
-// the plugin in the user's own Claude Code is the same one for every project,
-// so a checkout this run may not wire is not a machine that needs nothing, and
-// the step still runs.
+// A repository whose fugaro.yaml names another project is not this run's: the
+// job images are not refreshed for it, and nothing writes a pin any more (U2).
+// The plugin stage keeps the same gate on the half that is the repository's —
+// the write U5 adds (F24, D955) — but the install is not the repository's
+// business: the plugin in the user's own Claude Code is the same one for every
+// project, so a repository this run may not wire is not a machine that needs
+// nothing, and the step still runs.
+//
+// The file that decides is the default branch's: the run reads no working tree
+// of its own (R6, R10), so the edit is committed and fetched before the run, as
+// a teammate's merge would leave it.
 func TestUpdateLeavesAnotherProjectsCheckoutAlone(t *testing.T) {
 	_, root := upgradeRig(t)
 	settings := filepath.Join(root, ".claude", "settings.json")
@@ -850,7 +868,9 @@ func TestUpdateLeavesAnotherProjectsCheckoutAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	testutil.Git(t, root, "remote", "set-url", "origin", "https://github.com/acme/app.git")
-	checkoutFile(t, filepath.Join(root, "fugaro.yaml"), "version: 1\nproject: someoneelse\ngit: { provider: github }\n")
+	checkoutFile(t, filepath.Join(root, "fugaro.yaml"), strings.Replace(refreshYAML, "project: aurora", "project: someoneelse", 1))
+	testutil.Git(t, root, "commit", "-q", "-am", "another project")
+	fetched(t, root)
 	f := testutil.NewClaudePluginFake(t, "[]", "[]")
 	f.On(t, "plugins", userInstall("0.5.1"), argsInstall...)
 	useFakeClaude(t, f)
@@ -867,10 +887,9 @@ func TestUpdateLeavesAnotherProjectsCheckoutAlone(t *testing.T) {
 	if len(*ran) != 0 {
 		t.Errorf("the refresh ran in another project's checkout: %q\n%s", *ran, out)
 	}
-	// The cloud half is the line this checkout stage still prints; the wiring
-	// half is not written at all, and the install half is the plugin stage's
-	// own step line.
-	if !strings.Contains(out.String(), "cloud: skipped: this checkout's fugaro.yaml names another project") {
+	// The cloud half is the line this stage still prints; the wiring half is not
+	// written at all, and the install half is the plugin stage's own step line.
+	if !strings.Contains(out.String(), "skipped here: acme/app: cloud (its fugaro.yaml names another project (or none), not aurora") {
 		t.Errorf("the cloud step was not skipped by name:\n%s", out)
 	}
 	if len(f.Changes(t)) == 0 {
@@ -878,14 +897,15 @@ func TestUpdateLeavesAnotherProjectsCheckoutAlone(t *testing.T) {
 	}
 }
 
-// A checkout with no origin remote has no repository for the refresh to work
-// on: the cloud step is skipped, which is where this differs from the refresh
-// asked for by name, whose step fails the same read. The pin an older fugaro
-// left stays in the file (U5: the
-// removal rides on the same gate, and a checkout this run may not write into is
-// not one to take it out of), while the plugin in Claude Code, which is the same
-// one for every repository, is still installed: the gate is the checkout
-// write's (F24, D955), not the machine's own install.
+// A directory with no origin remote is one the reader makes no repository out
+// of (R13): the stage read none of the project's repositories here, so it has
+// nothing to build and says so in its plan's line — where the refresh asked for
+// by name fails the same read, because there it is a repository somebody named.
+// The pin an older fugaro left stays in the file (U5: the removal rides on the
+// same gate, and a directory this run read no repository of is not one to write
+// into), while the plugin in Claude Code, which is the same one for every
+// repository, is still installed: the gate is the repository write's (F24,
+// D955), not the machine's own install.
 func TestUpdateSkipsCloudOnlyWhereTheCheckoutHasNoOrigin(t *testing.T) {
 	_, root := upgradeRig(t)
 	settings := filepath.Join(root, ".claude", "settings.json")
@@ -906,8 +926,8 @@ func TestUpdateSkipsCloudOnlyWhereTheCheckoutHasNoOrigin(t *testing.T) {
 	if res.Failed != nil || len(res.Left) != 0 {
 		t.Fatalf("the run did not finish: failed %+v, left %+v\n%s", res.Failed, res.Left, out)
 	}
-	if !strings.Contains(out.String(), "cloud: skipped: this checkout has no origin repository to refresh") {
-		t.Errorf("the cloud step was not skipped by name:\n%s", out)
+	if !strings.Contains(out.String(), "no repository of this project was read") {
+		t.Errorf("the stage does not say it read no repository of the project here:\n%s", out)
 	}
 	if len(*ran) != 0 {
 		t.Errorf("the refresh ran in a checkout with no repository to refresh: %q\n%s", *ran, out)
@@ -966,7 +986,7 @@ func TestUpdateSkipsWithoutAReleaseOrAFugaroCheckout(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if status.State != initflow.Skipped || !strings.Contains(status.Detail, "not a Fugaro checkout") {
+		if status.State != initflow.Skipped || !strings.Contains(status.Detail, "no repository of this project was read") {
 			t.Fatalf("a checkout with no fugaro.yaml and no wiring: %+v", status)
 		}
 		if _, err := st.Apply(t.Context(), initflow.Env{Yes: true}); err != nil {
@@ -989,8 +1009,8 @@ func TestUpdateSkipsWithoutAReleaseOrAFugaroCheckout(t *testing.T) {
 // The wiring's own words go with it: the skip names the file that is missing
 // rather than a settings file the reader cannot see in front of them.
 func TestUpdateRecognisesACheckoutByItsFugaroYAML(t *testing.T) {
-	// The checkout Fugaro is set up in, with nothing ever wired into it: this
-	// stage's one step is still this checkout's to run.
+	// The repository Fugaro is set up in, with nothing ever wired into it: this
+	// stage's one step is still this repository's to run.
 	t.Run("a fugaro.yaml and no wiring is a checkout", func(t *testing.T) {
 		_, root := upgradeRig(t)
 		if _, err := os.Stat(filepath.Join(root, ".claude", "settings.json")); !os.IsNotExist(err) {
@@ -1001,26 +1021,30 @@ func TestUpdateRecognisesACheckoutByItsFugaroYAML(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if status.State == initflow.Skipped && strings.Contains(status.Detail, "not a Fugaro checkout") {
-			t.Errorf("a checkout whose fugaro.yaml is right there was read as none: %+v", status)
+		if status.State == initflow.Skipped && strings.Contains(status.Detail, "no fugaro.yaml on the default branch") {
+			t.Errorf("a repository whose fugaro.yaml is right there was read as none: %+v", status)
 		}
 	})
 
 	// The wiring alone, with no fugaro.yaml: the pin in it is a leftover no
-	// release writes any more, and it is not what makes a checkout one.
+	// release writes any more, and it is not what makes a repository one. The
+	// file that decides is the default branch's (R6, R10), so the working tree
+	// is left out of it and the branch is what the run read.
 	t.Run("wiring alone is not a checkout", func(t *testing.T) {
 		_, root := upgradeRig(t)
 		if err := os.Remove(filepath.Join(root, "fugaro.yaml")); err != nil {
 			t.Fatal(err)
 		}
+		testutil.Git(t, root, "commit", "-q", "-am", "deleted")
+		fetched(t, root)
 		checkoutFile(t, filepath.Join(root, ".claude", "settings.json"), wiredAt("v0.5.0"))
 		e, _ := checkoutEngine(t, &initOptions{yes: true})
 		status, err := checkoutStageOf(t, e).Check(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
-		if status.State != initflow.Skipped || !strings.Contains(status.Detail, "not a Fugaro checkout") {
-			t.Fatalf("a checkout whose only mark is the wiring an older fugaro wrote is not this run's: %+v", status)
+		if status.State != initflow.Skipped || !strings.Contains(status.Detail, "no fugaro.yaml on the default branch") {
+			t.Fatalf("a repository whose only mark is the wiring an older fugaro wrote is not this run's: %+v", status)
 		}
 		if strings.Contains(status.Detail, "settings.json") {
 			t.Errorf("the skip names a settings file the reader cannot see in front of them: %q", status.Detail)
@@ -1243,7 +1267,7 @@ func TestUpdateFailedBuildNamesTheRunThatRetries(t *testing.T) {
 	if !strings.Contains(res.Failed.Error, "the build of acme/app/app was refused") {
 		t.Errorf("the failure is not the step's own sentence: %+v", res.Failed)
 	}
-	if want := selfCommand() + " update --repo " + root; !strings.Contains(res.Failed.Fix, want) {
+	if want := selfCommand() + " update"; !strings.Contains(res.Failed.Fix, want) {
 		t.Errorf("the fix does not name the run that offers the build again (%q): %q", want, res.Failed.Fix)
 	}
 	if strings.Contains(res.Failed.Fix, "resumes at "+checkoutStageName) {
@@ -1268,12 +1292,13 @@ func TestUpdateFailedBuildNamesTheRunThatRetries(t *testing.T) {
 }
 
 // TestUpdateCheckoutPlanLineIsTheUpdateDoorsOwnWords: the stage's one line is
-// what `fugaro update` says it does for the checkout, and the command the
-// person is running is this one. The retired second command is not named there
-// (U4), and it could not be: the steps this stage takes are the converge's, in
-// this project, with the local config this run wrote.
+// what `fugaro update` says it does for the project's repositories, and the
+// command the person is running is this one. It names the repository rather
+// than a directory (U4, R10), and the retired second command is not named there
+// (U4): the steps this stage takes are the converge's, in this project, with
+// the local config this run wrote.
 func TestUpdateCheckoutPlanLineIsTheUpdateDoorsOwnWords(t *testing.T) {
-	_, root := upgradeRig(t)
+	upgradeRig(t)
 	e, _ := checkoutEngine(t, &initOptions{yes: true})
 	st := checkoutStageOf(t, e)
 	plan, err := st.Plan(t.Context(), initflow.Env{Yes: true})
@@ -1283,8 +1308,8 @@ func TestUpdateCheckoutPlanLineIsTheUpdateDoorsOwnWords(t *testing.T) {
 	if strings.Contains(plan.Detail, "fugaro upgrade") {
 		t.Errorf("the plan's line sends the reader to a command this run is not: %q", plan.Detail)
 	}
-	if !strings.Contains(plan.Detail, pluginwire.Printable(root)) {
-		t.Errorf("the plan's line does not say which checkout it is for: %q", plan.Detail)
+	if !strings.Contains(plan.Detail, "acme/app") {
+		t.Errorf("the plan's line does not say which repository it is for: %q", plan.Detail)
 	}
 	if !strings.Contains(plan.Detail, "cloud") {
 		t.Errorf("the plan's line does not name the step it runs: %q", plan.Detail)
