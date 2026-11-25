@@ -828,10 +828,6 @@ export const SPAWN_KIND_FOR: Record<ArgumentKind, SpawnArgumentKind> = Object.fr
   pullRequest: 'pullRequest',
   flag: 'boolean',
   link: 'value',
-  // `gitProvider` is the one kind whose operation spawns nothing
-  // (`link.openPullRequest`, K2a): the mapping is total over Task 1.2's kinds,
-  // and `value` is what a bare word would reach an argv as if one ever did.
-  gitProvider: 'value',
   installationName: 'value',
   installationCheckout: 'value',
   // The graph read's scope (CG9a): one word behind `--source`, held to the
@@ -879,12 +875,12 @@ export const SPAWN_KIND_FOR: Record<ArgumentKind, SpawnArgumentKind> = Object.fr
   imageDockerfile: 'equalsValue',
   imageTags: 'equalsList',
   imageDescription: 'equalsText',
-  // `licenceKey` is the second kind whose operation spawns nothing
-  // (`licence.read`/`licence.save`, S2.7, carry `command: null`), for
-  // `gitProvider`'s reason: the mapping is total over ipc.ts's kinds, and
-  // `value` is what a bare word would reach an argv as if one ever did -- which
-  // is the one thing a licence key must never do (S2.1's hand-off: the key
-  // travels in a child's environment and in no argv).
+  // `licenceKey` is the kind whose operation spawns nothing
+  // (`licence.read`/`licence.save`, S2.7, carry `command: null`): the mapping is
+  // total over ipc.ts's kinds, and `value` is what a bare word would reach an
+  // argv as if one ever did -- which is the one thing a licence key must never
+  // do (S2.1's hand-off: the key travels in a child's environment and in no
+  // argv).
   licenceKey: 'value',
 })
 

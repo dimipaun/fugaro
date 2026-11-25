@@ -385,6 +385,25 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
   driver: 'person',
 })
 
+/** COORDINATOR_PR_DOCUMENT_KEYS is `coordinator show --json`'s own shape
+ * (`ee/coordinator/view.go`, `PRDocument`; coordinator v2 C3, D816; contract
+ * §6.15), in the struct's declaration order. No console operation reads that
+ * document any more -- the Coordinator tab is the map (I-ORCH) -- so this list
+ * is kept for the one claim it still carries: `sanitize.test.ts` holds that
+ * every string key of a document `console/docs/json-contract.md` defines is
+ * classed in `WIRE_TEXT_CLASSES` or declared in `NON_TEXT_STRING_KEYS`. */
+export const COORDINATOR_PR_DOCUMENT_KEYS: readonly string[] = Object.freeze([
+  'number',
+  'url',
+  'title',
+  'body',
+  'state',
+  'draft',
+  'branch',
+  'base',
+  'author',
+])
+
 /**
  * NON_TEXT_STRING_KEYS is the closed set of string keys that are **not** text:
  * a value the console compares, sorts or stamps rather than draws. They are
@@ -680,6 +699,16 @@ function boolAt(raw: unknown, field: string, where: string): boolean {
 function arrayAt(raw: unknown, field: string, where: string): readonly unknown[] {
   if (!Array.isArray(raw)) return refuse('not-an-array', field, where)
   return raw
+}
+
+/** requiredStringsAt is a string array that must be there: a record's `files`,
+ * a route's `models`, `allow_data_to` and `allowed_to`, an error's `problems`.
+ * An empty list is the answer "none" and not a missing answer, so the key is
+ * required and each member is a string. */
+function requiredStringsAt(raw: unknown, field: string, where: string): readonly string[] {
+  return arrayAt(raw, field, where).map((item, index) =>
+    stringAt(item, `${field}[${String(index)}]`, where),
+  )
 }
 
 /** optionalText is a string key the shape may leave out (`recipe`, `halted`,
@@ -2243,639 +2272,6 @@ export function decodePlanStatus(raw: unknown, where = 'the plan status document
 }
 
 // ---------------------------------------------------------------------------
-// The coordinator's stored project view (Bitbucket credentials T1.2).
-// ---------------------------------------------------------------------------
-
-/**
- * `fugaro coordinator status --from-store --all --json` is a **fourth**
- * document, and like the plan status one it is not a shape of the feed: it is
- * every repository the installation's local config lists, each with the view
- * the coordinator's sweep last stored for it (`ee/coordinator/state.go`,
- * `StoredProjectView`; `ee/coordinator/cli/coordinator_view.go`,
- * `runCoordinatorStatusFromStore`). So it has its own door,
- * `decodeCoordinatorStatus`.
- *
- * **`stored` is the field this decoder exists for.** An absent node and a
- * repository the sweep reconciled to nothing both read as a view with no
- * records, and a screen that drew the second when it held the first would claim
- * the coordinator had read a repository it never did. The CLI keeps the two
- * apart (`RepoView.Stored`) and this decoder keeps the flag a boolean rather
- * than folding it into "no records" — the screen labels a stored node as the
- * last stored view and an unstored one as the runs alone.
- *
- * **Nothing here is a reading.** Every number in this document is structure — a
- * pull request's number, a count of records, a retry count — and the console
- * draws the counts it computes from the arrays rather than a figure the
- * document carried, so no key of this shape goes through `readingOf`. The two
- * quantities a screen prints (`omitted`, `omitted_collisions`) are the CLI's
- * own `omitempty` counts, and absent means zero rather than unknown: the sweep
- * dropped nothing.
- */
-
-/** The exact key sets of the stored project view and of each object in it, in
- * the structs' declaration order (`ee/coordinator/state.go`,
- * `ee/coordinator/view.go`, `ee/coordinator/sweep.go`). A test reads
- * the same fields off those files, so a key one side gains without the other is
- * a failing test rather than an unread field. */
-export const COORDINATOR_STATUS_KEYS: readonly string[] = Object.freeze(['repos'])
-
-export const COORDINATOR_REPO_KEYS: readonly string[] = Object.freeze(['repo', 'provider', 'stored', 'view', 'stale'])
-
-export const COORDINATOR_VIEW_KEYS: readonly string[] = Object.freeze([
-  'repo',
-  'records',
-  'collisions',
-  'unread',
-  'omitted',
-  'omitted_collisions',
-])
-
-export const COORDINATOR_RECORD_KEYS: readonly string[] = Object.freeze([
-  'pr',
-  'runs',
-  'branch',
-  'release',
-  'in_flight',
-  'files',
-  'services',
-])
-
-export const COORDINATOR_RUN_KEYS: readonly string[] = Object.freeze([
-  'id',
-  'pr',
-  'status',
-  'outcome',
-  'terminal',
-  'branch',
-  'base_branch',
-  'declared_by',
-  'files',
-  'files_truncated',
-])
-
-export const COORDINATOR_PR_KEYS: readonly string[] = Object.freeze([
-  'number',
-  'url',
-  'title',
-  'branch',
-  'draft',
-  'state',
-])
-
-/** COORDINATOR_PR_DOCUMENT_KEYS is `coordinator show --json`'s own shape
- * (`ee/coordinator/view.go`, `PRDocument`; coordinator v2 C3, D816), in the
- * struct's declaration order. It is a second list rather than a widening of
- * `COORDINATOR_PR_KEYS` because it is a second shape: the view's reduced record
- * and the read that carries the description are two documents, and the whole
- * difference between them is `body` (the view drops it by design, F3). A key
- * one struct gains without the other is a failing test rather than an unread
- * field. */
-export const COORDINATOR_PR_DOCUMENT_KEYS: readonly string[] = Object.freeze([
-  'number',
-  'url',
-  'title',
-  'body',
-  'state',
-  'draft',
-  'branch',
-  'base',
-  'author',
-])
-
-export const COORDINATOR_COLLISION_KEYS: readonly string[] = Object.freeze(['a', 'b', 'files', 'services'])
-
-export const COORDINATOR_UNREAD_KEYS: readonly string[] = Object.freeze([
-  'number',
-  'reason',
-  'carried',
-  'failures',
-  'retry_after',
-])
-
-export const COORDINATOR_STALE_KEYS: readonly string[] = Object.freeze(['since', 'reason'])
-
-/** CoordinatorPullRequestDocument is one pull request as the host has it,
- * whole: what `fugaro coordinator show --repo owner/name --pr N --json` prints
- * (coordinator v2 C3, D816; `console/docs/json-contract.md` §6.15).
- *
- * **`body` is why the document exists** and the one field of the nine that is
- * many lines. It is untrusted text written by whoever opened the pull request
- * — like `title` — and it is carried whole and never parsed: nothing in it is
- * a link, a path, a command or a decision, and a renderer puts it through
- * `safetext.MultiLine` before it reaches a line or a cell. `url` is carried as
- * data and, like the view's own, is **not drawn at all** (design §5.1 rule 2).
- *
- * Every field but `number` is `omitempty` on the Go struct, so a field the host
- * did not answer arrives absent and reads as the empty string (or, for `draft`,
- * as false) — the CLI's own "there was nothing to say", never a gap this screen
- * has to draw as unknown. `number` is the one key the document must carry.
- */
-export interface CoordinatorPullRequestDocument {
-  readonly number: number
-  readonly url: string
-  readonly title: string
-  readonly body: string
-  readonly state: string
-  readonly draft: boolean
-  readonly branch: string
-  readonly base: string
-  readonly author: string
-}
-
-/** CoordinatorPullRequest is one pull request as the host last showed it.
- * `title` is untrusted text written by whoever opened it, and `url` is carried
- * as data and **not drawn at all**: the project view builds no element from it,
- * not as text and never as a link (design section 5.1 rule 2: the console
- * builds no link from a document's string). */
-export interface CoordinatorPullRequest {
-  readonly number: number
-  readonly url: string
-  readonly title: string
-  readonly branch: string
-  readonly draft: boolean
-  readonly state: string
-}
-
-/** CoordinatorRun is one run behind a record. `declaredBy` is a **declaration**
- * a launch record wrote about itself, never an identity. */
-export interface CoordinatorRun {
-  readonly id: string
-  readonly pr: number | null
-  readonly status: string
-  readonly outcome: string
-  readonly terminal: boolean
-  readonly branch: string
-  readonly baseBranch: string
-  readonly declaredBy: string
-  readonly files: readonly string[]
-  readonly filesTruncated: boolean
-}
-
-/** CoordinatorRecord is one unit of work: a pull request and the runs behind
- * it, or — for work that has not reached the host — the in-flight runs on their
- * own, with `pr` null. */
-export interface CoordinatorRecord {
-  readonly pr: CoordinatorPullRequest | null
-  readonly runs: readonly CoordinatorRun[]
-  readonly branch: string
-  readonly release: string
-  readonly inFlight: boolean
-  readonly files: readonly string[]
-  readonly services: readonly string[]
-}
-
-/** CoordinatorCollision is two in-flight records touching the same file or the
- * same service. */
-export interface CoordinatorCollision {
-  readonly a: string
-  readonly b: string
-  readonly files: readonly string[]
-  readonly services: readonly string[]
-}
-
-/** CoordinatorUnread is one pull request whose host state a sweep could not
- * read, with whether the state shown is the last one a sweep did read. */
-export interface CoordinatorUnread {
-  readonly number: number
-  readonly reason: string
-  readonly carried: boolean
-  readonly failures: number | null
-  readonly retryAfter: string | null
-}
-
-/** CoordinatorStale is the marker the sweep leaves when it could not reconcile
- * a repository, **exactly as stored**. No age is derived from `since`: the view
- * beside it carries no time by design, so an age would compare two things that
- * are not on the same scale. */
-export interface CoordinatorStale {
-  readonly since: string
-  readonly reason: string
-}
-
-/** CoordinatorView is one repository's stored view. `records` is empty both for
- * a repository the sweep reconciled to nothing and for one it never read; which
- * of the two it is comes from the enclosing `stored` flag and never from the
- * array's length. */
-export interface CoordinatorView {
-  readonly repo: string
-  readonly records: readonly CoordinatorRecord[]
-  readonly collisions: readonly CoordinatorCollision[]
-  readonly unread: readonly CoordinatorUnread[]
-  readonly omitted: number
-  readonly omittedCollisions: number
-}
-
-/** CoordinatorRepoView is one repository's node: the host it is on, whether the
- * database held a view at all, the view, and the marker beside it. */
-export interface CoordinatorRepoView {
-  readonly repo: string
-  /** The host the repository is on, `github` or `bitbucket`, or `''` for a CLI
-   * that had none to give — which is also what a CLI older than this field
-   * answers, and what a screen draws as text rather than as a link. */
-  readonly provider: string
-  readonly stored: boolean
-  readonly view: CoordinatorView
-  readonly stale: CoordinatorStale | null
-}
-
-/** CoordinatorStatusView is the whole document: every repository the
- * installation lists, in the order the CLI read them. */
-export interface CoordinatorStatusView {
-  readonly repos: readonly CoordinatorRepoView[]
-}
-
-/** CoordinatorIntent is one declaration as the store holds it: the record's own
- * fields and nothing derived from them (coordinator v2 C4; `console/docs/
- * json-contract.md` §6.16). `declaredBy` is **what the declaring side wrote
- * about itself** and never an identity: nothing verifies it and nothing may
- * admit or authorise anything by it (reconciliation finding #11), so a screen
- * draws it as a label.
- *
- * `branch`, `release`, the paths and the services are all written by whoever
- * can reach the report path, so every one of them is untrusted text carried as
- * data (design §5.1 rule 2) — and `at` is the **writer's** own clock, not this
- * console's, which is why no age is derived from it anywhere here. */
-export interface CoordinatorIntent {
-  /** The node's key: `IntentID`'s lower-case hex, a function of the caller and
-   * the declaration alone. It names one record and is **not** a secret. */
-  readonly id: string
-  readonly declaredBy: string
-  readonly at: string
-  readonly branch: string
-  readonly release: string
-  readonly files: readonly string[]
-  readonly services: readonly string[]
-}
-
-/** CoordinatorRepoIntents is one repository's stored declarations, newest first
- * by the record's own `at`. `provider` is the caller's answer and not the
- * node's, exactly as the stored view's is, and `''` is one of its answers: a
- * machine that had no provider to give. */
-export interface CoordinatorRepoIntents {
-  readonly repo: string
-  readonly provider: string
-  readonly intents: readonly CoordinatorIntent[]
-}
-
-/** CoordinatorIntentsView is the whole document. It is the `--all` shape and
- * only that: the CLI's single-repository form prints the repository object
- * alone, and this console's row fixes `--all` (`src/main/spawn.ts`), so the
- * one-repository document is refused here rather than read as a project with no
- * repositories. */
-export interface CoordinatorIntentsView {
-  readonly repos: readonly CoordinatorRepoIntents[]
-}
-
-/** COORDINATOR_INTENT_KEYS, COORDINATOR_REPO_INTENTS_KEYS and
- * COORDINATOR_INTENTS_KEYS are the declared intents document's keys, in the
- * spelling the wire uses: one record, one repository and the project. They are
- * here for the renderer that has to know which keys it owns — an unknown key is
- * ignored by the decoder (the module header's rule) and must never be drawn as
- * a figure — and for the tests that hold this list and the Go struct in step
- * (`ee/coordinator/cli/console_contract_test.go`). */
-export const COORDINATOR_INTENT_KEYS: readonly string[] = Object.freeze([
-  'id',
-  'declared_by',
-  'at',
-  'branch',
-  'release',
-  'files',
-  'services',
-])
-
-export const COORDINATOR_REPO_INTENTS_KEYS: readonly string[] = Object.freeze([
-  'repo',
-  'provider',
-  'intents',
-])
-
-export const COORDINATOR_INTENTS_KEYS: readonly string[] = Object.freeze(['repos'])
-
-/** coordinatorIntAt is a whole number the shape must carry and that must not be
- * negative: a pull request's number, a retry count. A fraction, a negative or a
- * numeral in a string is refused by name rather than read as zero, because a
- * count that is wrong is not one that is absent. */
-function coordinatorIntAt(raw: unknown, field: string, where: string): number {
-  const value = intAt(raw, field, where)
-  if (value < 0) return refuse('not-a-number', field, where)
-  return value
-}
-
-/** coordinatorNumberAt is `intAt` held to the positive range a pull request's
- * number lives in: `0` is the CLI's "no pull request" and never a number. */
-function coordinatorNumberAt(raw: unknown, field: string, where: string): number {
-  const value = intAt(raw, field, where)
-  if (value < 1) return refuse('not-a-number', field, where)
-  return value
-}
-
-/** coordinatorOptionalNumberAt is a positive whole number the shape may leave
- * out (`pr`, `failures`): absent and `null` both read as no number. */
-function coordinatorOptionalNumberAt(raw: Record<string, unknown>, key: string, field: string, where: string): number | null {
-  const value = raw[key]
-  if (value === undefined || value === null) return null
-  return coordinatorNumberAt(value, field === '' ? key : `${field}.${key}`, where)
-}
-
-/** coordinatorOptionalStampAt is an RFC 3339 stamp the shape may leave out
- * (`retry_after`): absent and `null` both read as no stamp. A value that is
- * there and is not a stamp is refused by field name rather than drawn as one. */
-function coordinatorOptionalStampAt(raw: Record<string, unknown>, key: string, field: string, where: string): string | null {
-  const value = raw[key]
-  if (value === undefined || value === null) return null
-  return timestampAt(value, field === '' ? key : `${field}.${key}`, where)
-}
-
-/** coordinatorStringsAt is a string array that must be there: a record's and a
- * run's `files`, a collision's `files` and `services`, and -- since console
- * 0.119.0, which is why the name is the coordinator's and the reader is not --
- * the models read's `models`, `allow_data_to` and `allowed_to`. An empty list
- * is the answer "no path" and not a missing answer, so the key is required and
- * each member is a string. */
-function coordinatorStringsAt(raw: unknown, field: string, where: string): readonly string[] {
-  return arrayAt(raw, field, where).map((item, index) =>
-    stringAt(item, `${field}[${String(index)}]`, where),
-  )
-}
-
-function coordinatorPrAt(raw: unknown, field: string, where: string): CoordinatorPullRequest {
-  const pr = objectAt(raw, field, where)
-  return {
-    number: coordinatorNumberAt(required(pr, 'number', field, where), `${field}.number`, where),
-    url: optionalText(pr, 'url', field, where),
-    title: optionalText(pr, 'title', field, where),
-    branch: optionalText(pr, 'branch', field, where),
-    draft: optionalBool(pr, 'draft', field, where),
-    state: optionalText(pr, 'state', field, where),
-  }
-}
-
-function coordinatorRunAt(raw: unknown, index: number, field: string, where: string): CoordinatorRun {
-  const at = `${field}[${String(index)}]`
-  const run = objectAt(raw, at, where)
-  return {
-    id: stringAt(required(run, 'id', at, where), `${at}.id`, where),
-    pr: coordinatorOptionalNumberAt(run, 'pr', at, where),
-    status: optionalText(run, 'status', at, where),
-    outcome: optionalText(run, 'outcome', at, where),
-    terminal: optionalBool(run, 'terminal', at, where),
-    branch: optionalText(run, 'branch', at, where),
-    baseBranch: optionalText(run, 'base_branch', at, where),
-    declaredBy: optionalText(run, 'declared_by', at, where),
-    files: coordinatorStringsAt(required(run, 'files', at, where), `${at}.files`, where),
-    filesTruncated: optionalBool(run, 'files_truncated', at, where),
-  }
-}
-
-function coordinatorRecordAt(raw: unknown, index: number, field: string, where: string): CoordinatorRecord {
-  const at = `${field}[${String(index)}]`
-  const record = objectAt(raw, at, where)
-  const pr = record['pr']
-  return {
-    pr: pr === undefined || pr === null ? null : coordinatorPrAt(pr, `${at}.pr`, where),
-    runs: arrayAt(required(record, 'runs', at, where), `${at}.runs`, where).map((item, runIndex) =>
-      coordinatorRunAt(item, runIndex, `${at}.runs`, where),
-    ),
-    branch: optionalText(record, 'branch', at, where),
-    release: optionalText(record, 'release', at, where),
-    inFlight: boolAt(required(record, 'in_flight', at, where), `${at}.in_flight`, where),
-    files: coordinatorStringsAt(required(record, 'files', at, where), `${at}.files`, where),
-    services: coordinatorStringsAt(required(record, 'services', at, where), `${at}.services`, where),
-  }
-}
-
-function coordinatorCollisionAt(raw: unknown, index: number, field: string, where: string): CoordinatorCollision {
-  const at = `${field}[${String(index)}]`
-  const collision = objectAt(raw, at, where)
-  return {
-    a: stringAt(required(collision, 'a', at, where), `${at}.a`, where),
-    b: stringAt(required(collision, 'b', at, where), `${at}.b`, where),
-    files: coordinatorStringsAt(required(collision, 'files', at, where), `${at}.files`, where),
-    services: coordinatorStringsAt(required(collision, 'services', at, where), `${at}.services`, where),
-  }
-}
-
-function coordinatorUnreadAt(raw: unknown, index: number, field: string, where: string): CoordinatorUnread {
-  const at = `${field}[${String(index)}]`
-  const unread = objectAt(raw, at, where)
-  return {
-    number: coordinatorNumberAt(required(unread, 'number', at, where), `${at}.number`, where),
-    reason: stringAt(required(unread, 'reason', at, where), `${at}.reason`, where),
-    carried: optionalBool(unread, 'carried', at, where),
-    failures: coordinatorOptionalNumberAt(unread, 'failures', at, where),
-    retryAfter: coordinatorOptionalStampAt(unread, 'retry_after', at, where),
-  }
-}
-
-function coordinatorStaleAt(raw: unknown, field: string, where: string): CoordinatorStale {
-  const stale = objectAt(raw, field, where)
-  return {
-    since: timestampAt(required(stale, 'since', field, where), `${field}.since`, where),
-    reason: stringAt(required(stale, 'reason', field, where), `${field}.reason`, where),
-  }
-}
-
-function coordinatorViewAt(raw: unknown, field: string, where: string): CoordinatorView {
-  const view = objectAt(raw, field, where)
-  return {
-    repo: stringAt(required(view, 'repo', field, where), `${field}.repo`, where),
-    records: arrayAt(required(view, 'records', field, where), `${field}.records`, where).map((item, index) =>
-      coordinatorRecordAt(item, index, `${field}.records`, where),
-    ),
-    collisions: arrayAt(required(view, 'collisions', field, where), `${field}.collisions`, where).map((item, index) =>
-      coordinatorCollisionAt(item, index, `${field}.collisions`, where),
-    ),
-    // `unread`, `omitted` and `omitted_collisions` are the sweep's own keys
-    // (`omitempty`), so absent means "nothing was dropped and every state was
-    // read" rather than "the console does not know".
-    unread:
-      view['unread'] === undefined || view['unread'] === null
-        ? []
-        : arrayAt(view['unread'], `${field}.unread`, where).map((item, index) =>
-            coordinatorUnreadAt(item, index, `${field}.unread`, where),
-          ),
-    omitted:
-      view['omitted'] === undefined || view['omitted'] === null
-        ? 0
-        : coordinatorIntAt(view['omitted'], `${field}.omitted`, where),
-    omittedCollisions:
-      view['omitted_collisions'] === undefined || view['omitted_collisions'] === null
-        ? 0
-        : coordinatorIntAt(view['omitted_collisions'], `${field}.omitted_collisions`, where),
-  }
-}
-
-function coordinatorRepoAt(raw: unknown, index: number, where: string): CoordinatorRepoView {
-  const field = `repos[${String(index)}]`
-  const repo = objectAt(raw, field, where)
-  const stale = repo['stale']
-  return {
-    repo: stringAt(required(repo, 'repo', field, where), `${field}.repo`, where),
-    // `provider` is additive (D814), so a CLI older than it writes no key at
-    // all: absent is the empty provider rather than a refusal of the whole
-    // document, and it is the same answer a machine with no provider to give
-    // sends — a screen draws the number as text for either.
-    provider:
-      repo['provider'] === undefined || repo['provider'] === null
-        ? ''
-        : stringAt(repo['provider'], `${field}.provider`, where),
-    stored: boolAt(required(repo, 'stored', field, where), `${field}.stored`, where),
-    view: coordinatorViewAt(required(repo, 'view', field, where), `${field}.view`, where),
-    stale: stale === undefined || stale === null ? null : coordinatorStaleAt(stale, `${field}.stale`, where),
-  }
-}
-
-function coordinatorStatusAt(raw: Record<string, unknown>, where: string): CoordinatorStatusView {
-  return {
-    repos: arrayAt(required(raw, 'repos', '', where), 'repos', where).map((item, index) =>
-      coordinatorRepoAt(item, index, where),
-    ),
-  }
-}
-
-/**
- * decodeCoordinatorStatus admits `coordinator status --from-store --all --json`
- * and nothing else. It is a separate door for `decodePlanStatus`'s reason: the
- * two documents share no marker, so a feed document handed here is refused for
- * the keys it is missing and this document handed to the feed's door is refused
- * as an unknown shape. Neither is read as the other.
- */
-export function decodeCoordinatorStatus(
-  raw: unknown,
-  where = 'the coordinator status document',
-): Decoded<CoordinatorStatusView> {
-  return at(where, () => coordinatorStatusAt(objectAt(raw, 'the document', where), where))
-}
-
-function coordinatorPullRequestAt(raw: Record<string, unknown>, where: string): CoordinatorPullRequestDocument {
-  return {
-    // `number` is the one key of this document that is **structure rather than
-    // a quantity**: it is the pull request the read was for, so an absent or
-    // fractional one is a document this console cannot draw rather than a
-    // figure it withholds (`intAt`).
-    number: intAt(required(raw, 'number', '', where), 'number', where),
-    url: optionalText(raw, 'url', '', where),
-    title: optionalText(raw, 'title', '', where),
-    body: optionalText(raw, 'body', '', where),
-    state: optionalText(raw, 'state', '', where),
-    // `draft` is the host's own flag, and absent is false, which is what the
-    // CLI's `omitempty` means -- never a claim that the host said it was not a
-    // draft.
-    draft: optionalBool(raw, 'draft', '', where),
-    branch: optionalText(raw, 'branch', '', where),
-    base: optionalText(raw, 'base', '', where),
-    author: optionalText(raw, 'author', '', where),
-  }
-}
-
-/**
- * decodeCoordinatorPullRequest admits `coordinator show --json` and nothing
- * else: one flat object, the pull request the read asked for (coordinator v2
- * C3, D816; `console/docs/json-contract.md` §6.15). It is a door of its own for
- * `decodeCoordinatorStatus`'s reason — the two documents share no key, so
- * neither is read as the other — and it is flat rather than wrapped because
- * there is one pull request in it and no list to enumerate.
- *
- * A field the host did not answer is absent, and absent reads as the empty
- * string (or, for `draft`, as false) rather than as a refusal: the CLI's
- * `omitempty` is its own "there was nothing to say", and a screen tells the two
- * apart by the key's presence rather than by its value. Nothing here is a
- * reading — the one number of the document is its own identity — so no key goes
- * through `readingOf`.
- */
-export function decodeCoordinatorPullRequest(
-  raw: unknown,
-  where = 'the coordinator pull request document',
-): Decoded<CoordinatorPullRequestDocument> {
-  return at(where, () => coordinatorPullRequestAt(objectAt(raw, 'the document', where), where))
-}
-
-/** coordinatorOptionalTextAt is `optionalText` with `null` refused: the keys
- * §6.16 marks "absent: yes, null: never" -- a declaration's `branch` and
- * `release`. The Go struct's `omitempty` drops the key rather than writing a
- * null, so absent is the empty string and a null is a document this build does
- * not know. */
-function coordinatorOptionalTextAt(raw: Record<string, unknown>, key: string, field: string, where: string): string {
-  const value = raw[key]
-  if (value === undefined) return ''
-  return stringAt(value, field === '' ? key : `${field}.${key}`, where)
-}
-
-function coordinatorIntentAt(raw: unknown, field: string, where: string): CoordinatorIntent {
-  const record = objectAt(raw, field, where)
-  return {
-    id: stringAt(required(record, 'id', field, where), `${field}.id`, where),
-    declaredBy: stringAt(required(record, 'declared_by', field, where), `${field}.declared_by`, where),
-    // `at` is required and it is a stamp rather than free text: the contract's
-    // table marks it "never absent", and the CLI writes the writer's own clock
-    // through `time.RFC3339Nano`. A record whose stamp this console cannot read
-    // is one it must not draw as a declaration with no time (`ReadRepoIntents`'
-    // own rule).
-    at: timestampAt(required(record, 'at', field, where), `${field}.at`, where),
-    // `branch` and `release` are `omitempty` on the Go struct, so absent is one
-    // of the two shapes the CLI prints and reads as "declared none" -- but
-    // `omitempty` drops the key rather than writing a null, and §6.16 marks
-    // both "null: never", so a null in their place is a shape this build does
-    // not know and is refused (`optionalText`'s house reading of a null is for
-    // the keys whose contract admits one).
-    branch: coordinatorOptionalTextAt(record, 'branch', field, where),
-    release: coordinatorOptionalTextAt(record, 'release', field, where),
-    // Both lists are required: the record's own promise is that a list it
-    // declares nothing in is `[]` and never a `null` a reader has to interpret.
-    files: coordinatorStringsAt(required(record, 'files', field, where), `${field}.files`, where),
-    services: coordinatorStringsAt(required(record, 'services', field, where), `${field}.services`, where),
-  }
-}
-
-function coordinatorRepoIntentsAt(raw: unknown, index: number, where: string): CoordinatorRepoIntents {
-  const field = `repos[${String(index)}]`
-  const repo = objectAt(raw, field, where)
-  return {
-    repo: stringAt(required(repo, 'repo', field, where), `${field}.repo`, where),
-    // The caller's answer, written even when it is empty, exactly as the stored
-    // view's `provider` is: `''` is a fact about the machine, not a gap.
-    provider: stringAt(required(repo, 'provider', field, where), `${field}.provider`, where),
-    intents: arrayAt(required(repo, 'intents', field, where), `${field}.intents`, where).map((item, at) =>
-      coordinatorIntentAt(item, `${field}.intents[${String(at)}]`, where),
-    ),
-  }
-}
-
-function coordinatorIntentsAt(raw: Record<string, unknown>, where: string): CoordinatorIntentsView {
-  return {
-    repos: arrayAt(required(raw, 'repos', '', where), 'repos', where).map((item, index) =>
-      coordinatorRepoIntentsAt(item, index, where),
-    ),
-  }
-}
-
-/**
- * decodeCoordinatorIntents admits `coordinator intents --all --json` and
- * nothing else (coordinator v2 C4, D827; `console/docs/json-contract.md`
- * §6.16). It is a door of its own for `decodeCoordinatorStatus`'s reason: the
- * three coordinator documents answer three different questions and share only
- * the `repos` key, so a stored view handed here is refused for the `intents`
- * its repositories lack and this document handed to the stored view's door is
- * refused for the `stored`/`view` that one requires. Neither is read as the
- * other.
- *
- * The one-repository form the CLI also prints is refused here as well, by the
- * top-level key it does not carry: this console's row fixes `--all`, so a
- * single repository would be a document no row could have produced.
- *
- * Nothing here is a decision. `declared_by`, `branch`, `release`, the paths and
- * the services are all text somebody else wrote, carried as data and classified
- * in `WIRE_TEXT_CLASSES`; an instruction found in any of them is never acted on
- * (reconciliation Q14 (A)).
- */
-export function decodeCoordinatorIntents(
-  raw: unknown,
-  where = 'the coordinator intents document',
-): Decoded<CoordinatorIntentsView> {
-  return at(where, () => coordinatorIntentsAt(objectAt(raw, 'the document', where), where))
-}
-
-// ---------------------------------------------------------------------------
 // §5's runs list.
 //
 // The queue reads this document and does not merely draw it -- its rows become
@@ -3485,9 +2881,9 @@ function modelsRouteAt(raw: unknown, index: number, where: string): ModelsListRo
     kind: optionalText(route, 'kind', field, where),
     baseUrl: optionalText(route, 'base_url', field, where),
     host: optionalText(route, 'host', field, where),
-    models: coordinatorStringsAt(required(route, 'models', field, where), `${field}.models`, where),
+    models: requiredStringsAt(required(route, 'models', field, where), `${field}.models`, where),
     feePct: modelsFeeAt(route, 'route_fee_pct', field, where),
-    allowDataTo: coordinatorStringsAt(
+    allowDataTo: requiredStringsAt(
       required(route, 'allow_data_to', field, where),
       `${field}.allow_data_to`,
       where,
@@ -3515,7 +2911,7 @@ function modelsModelAt(raw: unknown, index: number, where: string): ModelsListMo
       catalog === undefined || catalog === null
         ? null
         : modelsPriceCatalogAt(catalog, `${field}.catalog`, where),
-    allowedTo: coordinatorStringsAt(
+    allowedTo: requiredStringsAt(
       required(model, 'allowed_to', field, where),
       `${field}.allowed_to`,
       where,
@@ -3539,7 +2935,7 @@ function modelsRepoAt(raw: unknown, index: number, where: string): ModelsListRep
     problems:
       problems === undefined || problems === null
         ? []
-        : coordinatorStringsAt(problems, `${field}.problems`, where),
+        : requiredStringsAt(problems, `${field}.problems`, where),
   }
 }
 
@@ -3718,9 +3114,9 @@ export interface GraphView {
  * is `never` for both -- so a document that leaves one out is a shape this
  * build does not read, refused by the field's own name rather than drawn with a
  * time nobody stated. A value that is there and is not a stamp is refused the
- * same way. It is deliberately *not* `coordinatorOptionalStampAt`: that reader
- * folds an absent key into null, which is right for a key its document may
- * leave out and wrong for one this contract says it never does. */
+ * same way. It deliberately does not fold an absent key into null: that reading
+ * is right for a key its document may leave out and wrong for one this contract
+ * says it never does. */
 function graphStampAt(raw: Record<string, unknown>, key: string, field: string, where: string): string | null {
   const value = required(raw, key, field, where)
   if (value === null) return null
@@ -3826,7 +3222,7 @@ function graphAt(raw: Record<string, unknown>, where: string): GraphView {
     edges: arrayAt(required(raw, 'edges', '', where), 'edges', where).map((item, index) =>
       graphEdgeAt(item, index, where),
     ),
-    warnings: coordinatorStringsAt(required(raw, 'warnings', '', where), 'warnings', where),
+    warnings: requiredStringsAt(required(raw, 'warnings', '', where), 'warnings', where),
   }
 }
 
