@@ -201,6 +201,7 @@ var managedFencedCommands = map[string]string{
 	"project repos rm":            "nothing was un-enrolled: the enrolment's jobs and its allow-list entry live in the project",
 	"project sync":                "nothing was added: the offer is written into the project's published allow-list, which is what admits a repository to it",
 	"recipes publish":             "nothing was published: a recipe is written into the project's runs bucket",
+	"recipes rm":                  "nothing was removed: a recipe is removed from the project's runs bucket",
 	"reaper":                      "nothing was swept: the reaper deletes the project's leaked jobs and VMs",
 	"restore":                     "nothing was restored: a restore rebuilds a managed project",
 	"review":                      "no review was launched: it runs as a job of the project",
@@ -370,6 +371,9 @@ var managedExemptCommands = map[string]string{
 	"rigor security add":         "it writes the project layer's own file or the checkout's fugaro.yaml, and nothing in the project",
 	"rigor security rm":          "it writes the project layer's own file or the checkout's fugaro.yaml, and nothing in the project",
 	"rigor set":                  "it writes the project layer's own file on this machine, and nothing in the project",
+	"routing ls":                 "it only reads: the routing table and the entry each model goes out on",
+	"routing rm":                 "it writes this machine's project config, and nothing in the project",
+	"routing set":                "it writes this machine's project config, and nothing in the project",
 	"runs ls":                    "it only reads: a listing of the runs with their status, stage, cost and PR",
 	"runs reports":               "the project's own reports job runs it: it writes the project's own stored reports",
 	"runs show":                  "it only reads: one run's chain and what is left of its limits",
@@ -530,7 +534,7 @@ func newCoreRoot() *cobra.Command {
 	root.PersistentFlags().BoolP(verboseFlag, "v", false, "print the run's full output as it goes, not one line per step")
 	root.AddCommand(
 		newVersionCmd(), newValidateCmd(), newConfigCmd(), newVerifyCmd(), newExecCmd(), newImageCmd(),
-		newRunCmd(), newFollowUpsCmd(), newRecipesCmd(), newRunsCmd(), newEstimateCmd(), newStatsCmd(), newSeatsCmd(), newArtifactsCmd(), newLogsCmd(), newDiagnoseCmd(), newCancelCmd(), newTellCmd(), newSecretsCmd(), newCredsCmd(), newAccountsCmd(), newBackendsCmd(), newSetupCmd(), newUpdateCmd(), newRetiredInitCmd(), newBudgetCmd(), newWatchCmd(), newUpdateSkillsCmd(), newDoctorCmd(), newProjectCmd(), newSettingsCmd(), newWorkflowCmd(), newRigorCmd(), newAllowDeleteCmd(), newManagedCmd(), newRestoreCmd(), newPlanCmd(), newReaperCmd(), newBacklogCmd(), newIssueCmd(), newPairCmd(), newMailboxCmd(), newUserCmd(), newModelsCmd(), newCraftCmd(), newWorkspaceCmd(),
+		newRunCmd(), newFollowUpsCmd(), newRecipesCmd(), newRunsCmd(), newEstimateCmd(), newStatsCmd(), newSeatsCmd(), newArtifactsCmd(), newLogsCmd(), newDiagnoseCmd(), newCancelCmd(), newTellCmd(), newSecretsCmd(), newCredsCmd(), newAccountsCmd(), newBackendsCmd(), newSetupCmd(), newUpdateCmd(), newRetiredInitCmd(), newBudgetCmd(), newWatchCmd(), newUpdateSkillsCmd(), newDoctorCmd(), newProjectCmd(), newSettingsCmd(), newWorkflowCmd(), newRigorCmd(), newAllowDeleteCmd(), newManagedCmd(), newRestoreCmd(), newPlanCmd(), newReaperCmd(), newBacklogCmd(), newIssueCmd(), newPairCmd(), newMailboxCmd(), newUserCmd(), newModelsCmd(), newCraftCmd(), newWorkspaceCmd(), newRoutingCmd(),
 		// The independent review's own command. It is registered like any other
 		// core command, and its launch still refuses where one of E7's two
 		// halves is missing — an installation with no credentials service, or a

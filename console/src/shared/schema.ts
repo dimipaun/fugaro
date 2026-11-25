@@ -490,11 +490,12 @@ export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   // kill's `at`), so a fixture's copy is a reading and not the wire's own value.
   'waiting_until',
   // PR7 of model-credentials-routing: when a paused run's chain comes back,
-  // RFC 3339 UTC, on a `runs ls` row whose record ended `paused`. It is
+  // RFC 3339 UTC, on a finished row of the feed and on a `runs ls` row whose
+  // record ended `paused`. It is
   // `waiting_until`'s kind exactly -- a stamp a reader places in time next to
   // `now`, and one whose presence is the state -- and it is exempted here for
-  // the same reason, rather than classified: no screen draws it today (the
-  // paused row is VS3's).
+  // the same reason, rather than classified. The screens that draw it (VS3's
+  // paused rows) draw the instant the CLI wrote, through a class a stamp takes.
   'resume_at',
   // The jobs-free totals read (contract §6.17): `since` and `until` are the
   // window's two UTC days and `days_unknown` the days neither source answered
@@ -901,11 +902,66 @@ export function authModeOf(auth: string): string | null {
   return auth
 }
 
+/** PAUSED_STATUS is the runstore word a run that suspended itself ends with
+ * (contract-pause R15, D3185), named because two screens ask for it by name. */
+export const PAUSED_STATUS = 'paused'
+
+/**
+ * RUN_STATUSES is the run word a cell draws a word for, as this build knows
+ * it: `internal/cli/runs.go`'s `lsStates`, which is the CLI's own closed list --
+ * the runstore's statuses plus the four `runview` derives for a run that has
+ * recorded nothing yet -- and `PAUSED_STATUS` among them (R15).
+ *
+ * **The documents do not close the word; this list does.** `JSONFinished.status`
+ * and `runview.Row.status` are open strings on the wire, so a word outside this
+ * list still decodes, and it is drawn as `UNKNOWN_STATUS_WORD` rather than as
+ * itself -- the rule every enumeration this console reads follows (`live.ts`'s
+ * `healthFlag`): a status from a CLI newer than this build is no reason to draw
+ * a word no reader here has a meaning for. `paused` was that word until VS3 put
+ * it in this list.
+ */
+export const RUN_STATUSES: readonly string[] = Object.freeze([
+  'cancelled',
+  'error',
+  'failed',
+  'halted',
+  'infra_error',
+  'launching',
+  PAUSED_STATUS,
+  'pending',
+  'running',
+  'succeeded',
+  'unlaunched',
+  'unreviewed',
+])
+
+/** UNKNOWN_STATUS_WORD is what a status outside `RUN_STATUSES` is drawn as: the
+ * console's own word for "this build has no reading for that status". The
+ * document's word is never echoed -- a word this build does not know is a word
+ * it cannot vouch for. */
+export const UNKNOWN_STATUS_WORD = 'unknown'
+
+/**
+ * runStatusOf is the record's status as a word this build knows, or `null` for
+ * both ways a record can carry no such word: one this build does not know, and
+ * the empty string a decoder gives a key that was absent. A screen that draws a
+ * word tells them apart by the record itself -- `''` is nothing to draw, and
+ * anything else is one this build cannot vouch for.
+ */
+export function runStatusOf(status: string): string | null {
+  return RUN_STATUSES.includes(status) ? status : null
+}
+
 /**
  * FinishedView is a finished run (`JSONFinished`). `prUrl` and `prNumber` are
  * `null` when the run has no pull request -- the contract's `omitempty`, and
  * design section 4.3's gap 7: the console shows the repository, the number and
  * the URL as *text* and builds no link from them.
+ *
+ * `resumeAt` and `resumedBy` are a paused run's own two facts (R15), `null`
+ * when the row carries none. They are absent independently -- a pause still
+ * standing has the instant alone -- and each is present only where the CLI had
+ * something to fill it from, so neither is a member `status` implies.
  */
 export interface FinishedView {
   readonly run: string
@@ -918,6 +974,8 @@ export interface FinishedView {
   readonly prUrl: string | null
   readonly prNumber: number | null
   readonly ageSeconds: Reading
+  readonly resumeAt: string | null
+  readonly resumedBy: string | null
 }
 
 /** LiveDocument is an ordinary `watch --json` document. */
@@ -1403,8 +1461,10 @@ export const FINISHED_KEYS = [
  * paused row with both absent is the degradation this listing has always had for
  * a project whose pauses database it cannot see. It is `pr_state`'s omission a
  * seventh time, and the pin against the struct is again what would catch it.
- * The console reads no screen from either yet -- the paused row and its resume
- * time are the visibility plan's VS3 -- and they are classified rather than
+ * The paused row and its resume time are the visibility plan's VS3, which draws
+ * them: the Run screen reads both off its own `diagnose --json` record rather
+ * than off a listing row (`runview.Row` carries the same two names), so this
+ * table's rows are still accepted and dropped. They are classified rather than
  * exempted: `resume_at` is a stamp a reader compares with `now`
  * (`NON_TEXT_STRING_KEYS`, beside `waiting_until`, and its **presence** is what
  * says a resume is due rather than a string to draw) and `resumed_by` is a run
@@ -1566,6 +1626,8 @@ function finishedAt(raw: unknown, index: number, list: string, where: string): F
   const field = `${list}[${String(index)}]`
   const item = objectAt(raw, field, where)
   const prUrl = item.pr_url
+  const resumeAt = item.resume_at
+  const resumedBy = item.resumed_by
   return {
     run: stringAt(required(item, 'run', field, where), `${field}.run`, where),
     slug: stringAt(required(item, 'slug', field, where), `${field}.slug`, where),
@@ -1580,6 +1642,12 @@ function finishedAt(raw: unknown, index: number, list: string, where: string): F
     prUrl: prUrl === undefined || prUrl === null ? null : stringAt(prUrl, `${field}.pr_url`, where),
     prNumber: optionalInt(item, 'pr_number'),
     ageSeconds: readingOf(item, 'age_seconds', `${field}.age_seconds`),
+    // `resume_at` and `resumed_by` are `omitempty` too, and absent independently
+    // (JSONFinished): a paused run always carries `status`, and either fact may
+    // be missing beside it. Held to text, not to a stamp, for `waiting_until`'s
+    // reason -- see `NON_TEXT_STRING_KEYS`.
+    resumeAt: resumeAt === undefined || resumeAt === null ? null : stringAt(resumeAt, `${field}.resume_at`, where),
+    resumedBy: resumedBy === undefined || resumedBy === null ? null : stringAt(resumedBy, `${field}.resumed_by`, where),
   }
 }
 
