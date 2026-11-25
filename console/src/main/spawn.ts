@@ -502,7 +502,6 @@ export const SPAWN_FLAGS: readonly string[] = Object.freeze([
   '--mine',
   '--pr',
   '--project-wide',
-  '--from-store',
   // The graph stream's own mode word (the graph plan's CG9b), and the graph
   // watch's argv is its only user: it is a fixed word of that row's command path
   // (`graph --watch --json`) rather than a declared flag, so nothing a renderer
