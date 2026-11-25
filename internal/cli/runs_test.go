@@ -207,8 +207,8 @@ func TestLsWatchStopsWhenSettled(t *testing.T) {
 	f := newCloudFixture(t)
 	f.run.Project, f.run.Region = "proj-1234", "us-east5"
 	today := time.Now().UTC().Format("20060102")
-	e := seedRun(t, f, today+"-090000-aaaa", "", "someone@example.com", true)
-	seedRun(t, f, today+"-091000-bbbb", "", "someone@example.com", false) // unlaunched: settled
+	e := seedRun(t, f, today+"-000001-aaaa", "", "someone@example.com", true)
+	seedRun(t, f, today+"-000002-bbbb", "", "someone@example.com", false) // unlaunched: settled
 	f.run.SetState(e, backend.StateRunning)
 	out, err := executeWatch(t, 1, func() { f.run.SetState(e, backend.StateFailed) })
 	if err != nil {
@@ -263,7 +263,7 @@ func executeWatch(t *testing.T, n int, fn func()) (string, error) {
 func TestLsWatchReadsImageStatusOnce(t *testing.T) {
 	f := newCloudFixture(t)
 	today := time.Now().UTC().Format("20060102")
-	e := seedRun(t, f, today+"-090000-aaaa", "", "someone@example.com", true)
+	e := seedRun(t, f, today+"-000001-aaaa", "", "someone@example.com", true)
 	f.run.SetState(e, backend.StateRunning)
 	var reads atomic.Int32
 	prev := readImageStatus
