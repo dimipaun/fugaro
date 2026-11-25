@@ -591,7 +591,7 @@ func liftOpener(ctx context.Context, e *initEngine, lc *localcfg.Config) gitprov
 		if err != nil {
 			return nil, nil, err
 		}
-		open, err := openRepoProvider(openCatalogProvider, provEnv, catalogDockerfileRead, func(s string) {
+		open, err := openRepoProvider(openCatalogProvider, provEnv, repoServiceURL(lc, rs.Name), catalogDockerfileRead, func(s string) {
 			fmt.Fprintf(r.stageDetail(), "fugaro: warning: %s\n", s)
 		})
 		if err != nil {

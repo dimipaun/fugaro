@@ -131,20 +131,25 @@ func tokenReadHint(cause error) string {
 	}
 }
 
-// catalogServiceURL is the installation's credentials service for repository
-// repo, and "" where this machine's reads of it hold their own credential: the
-// address the installation publishes (configuredCredentialsServiceURL), for a
-// repository whose root was applied with the service on
-// (appliedBuildMountsServed -- the record buildServiceURL judges a
-// per-workflow build by, and the same two facts this command's build is
-// submitted with, image_build_catalog's serviceURL).
+// repoServiceURL is the installation's credentials service for repository repo,
+// and "" where the service does not serve it: the address the installation
+// publishes (configuredCredentialsServiceURL), for a repository whose root was
+// applied with the service on (appliedBuildMountsServed -- the record
+// buildServiceURL judges a per-workflow build by, and the same two facts this
+// command's build is submitted with, image_build_catalog's serviceURL).
+//
+// It is read from the local config and never from the environment: the
+// credentials-service URL variable providers.FromEnv reads is a JOB's fact
+// (configuredCredentialsServiceURL's own rule), and a person's shell holding it
+// would name a service their installation may not have.
 //
 // githubProviderEnv hands it to providers.FromEnv as EnvCredentialsServiceURL,
 // which is what opens the github provider keyless (C2.2, D145): the read needs
 // no key of this machine's, so it is not refused in a coding agent's session.
-// A repository the service does not serve answers "" and keeps the key path
-// exactly as it was.
-func catalogServiceURL(lc *localcfg.Config, repo string) string {
+// The opener installs the service's mint for the same value (openRepoProvider),
+// because a keyless provider has no source of its own. A repository the service
+// does not serve answers "" and keeps the key path exactly as it was.
+func repoServiceURL(lc *localcfg.Config, repo string) string {
 	if !appliedBuildMountsServed(lc, repo) {
 		return ""
 	}
@@ -257,7 +262,7 @@ func githubProviderEnv(ctx context.Context, w io.Writer, lc *localcfg.Config, rs
 	// none is announced, and nothing is refused here — the value the provider
 	// mints with is the service's, and the opener installs that mint
 	// (openRepoProvider) because a keyless provider has no source of its own.
-	if url := catalogServiceURL(lc, rs.Name); url != "" {
+	if url := repoServiceURL(lc, rs.Name); url != "" {
 		return append(env, providers.EnvCredentialsServiceURL+"="+url), "", nil
 	}
 	if err := refuseKeyReadAt(getenv, stdinTerminal, who, "the GitHub App's private key"); err != nil {
@@ -323,8 +328,11 @@ const catalogDockerfileRead = "reading a catalog entry's Dockerfile"
 
 // openRepoProvider opens the provider the environment repoProviderEnv built
 // names, installing the installation's credentials service as the source of its
-// installation tokens when that environment carries the service's address
-// (githubProviderEnv puts it there for a repository the service serves).
+// installation tokens when serviceURL is not empty -- the address
+// githubProviderEnv put in that environment for a repository the service serves
+// (repoServiceURL). The caller hands it in rather than this reading it back out
+// of the environment, so that the two arms cannot disagree about whether a read
+// goes through the service.
 //
 // A keyless github provider refuses every token until a source is installed
 // (providers.FromEnv, C2.2, D145): in a job the runner installs the service's
@@ -338,20 +346,19 @@ const catalogDockerfileRead = "reading a catalog entry's Dockerfile"
 // open is the caller's own seam (openCatalogProvider, openFollowUpsProvider),
 // what names the work the mint is made for, and warn receives the adapter's
 // warnings, as it does for the openers themselves.
-func openRepoProvider(open func([]string, func(string)) (string, gitprov.Opener, error), provEnv []string, what string, warn func(string)) (gitprov.Opener, error) {
+func openRepoProvider(open func([]string, func(string)) (string, gitprov.Opener, error), provEnv []string, serviceURL, what string, warn func(string)) (gitprov.Opener, error) {
 	_, o, err := open(provEnv, warn)
 	if err != nil {
 		return nil, err
 	}
-	url := envLookup(provEnv, providers.EnvCredentialsServiceURL)
-	if url == "" {
+	if serviceURL == "" {
 		return o, nil
 	}
 	// The App ID is the environment's own, which githubProviderEnv appended
 	// from the repository's spec: it is the number the mint's JWT is signed as
 	// and not a secret, and the one the provider was constructed with.
 	appID := envLookup(provEnv, providers.EnvGitHubAppID)
-	identity := func(ctx context.Context) (string, error) { return serviceReadIdentity(ctx, url, what) }
+	identity := func(ctx context.Context) (string, error) { return serviceReadIdentity(ctx, serviceURL, what) }
 	return func(ctx context.Context, kind, repo string) (gitprov.Provider, []string, error) {
 		p, secrets, err := o(ctx, kind, repo)
 		if err != nil {
@@ -364,7 +371,7 @@ func openRepoProvider(open func([]string, func(string)) (string, gitprov.Opener,
 			// reads the project's own token as it always has.
 			return p, secrets, nil
 		}
-		setter.UseServiceTokens((&github.ServiceReadTokens{URL: url, IDToken: identity}).Repo(repo, appID))
+		setter.UseServiceTokens((&github.ServiceReadTokens{URL: serviceURL, IDToken: identity}).Repo(repo, appID))
 		return p, secrets, nil
 	}, nil
 }

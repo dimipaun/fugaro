@@ -876,7 +876,7 @@ func TestCatalogProviderServedRepositoryMintsThroughTheService(t *testing.T) {
 			return rec, nil, nil
 		}, nil
 	}
-	opener, err := openRepoProvider(open, provEnv, catalogDockerfileRead, nil)
+	opener, err := openRepoProvider(open, provEnv, repoServiceURL(lc, rs.Name), catalogDockerfileRead, nil)
 	if err != nil {
 		t.Fatalf("%v", err)
 	}
@@ -902,5 +902,39 @@ func TestCatalogProviderServedRepositoryMintsThroughTheService(t *testing.T) {
 	}
 	if *resolves != 0 || *reads != 0 || notice.Len() != 0 {
 		t.Errorf("the App key was read (%d resolutions, %d reads) or announced (%q) on a read the service makes", *resolves, *reads, notice.String())
+	}
+}
+
+// TestCatalogProviderUnservedRepositoryInstallsNoMint: a shell that exports
+// FUGARO_CREDENTIALS_SERVICE_URL names nothing this read trusts. The variable is
+// a JOB's fact, and the address a person's read is made through is the
+// installation's own record of it (repoServiceURL): where the config does not
+// say the service serves this repository, the opener installs no mint, so the
+// read fails as it always has rather than sending the person's own identity to
+// an address out of the environment.
+func TestCatalogProviderUnservedRepositoryInstallsNoMint(t *testing.T) {
+	catalogClearProviderEnv(t)
+	lc, rs, entries := catalogProviderEnvRig(t)
+	t.Setenv(providers.EnvCredentialsServiceURL, catalogServiceURLPlaceholder)
+	catalogStubKeyRead(t, nil, errors.New("Secret Manager must not be read"))
+	provEnv, _, err := catalogProviderEnv(t.Context(), &bytes.Buffer{}, lc, rs, entries, os.Getenv, true, nil)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	rec := &catalogServiceRecordingProvider{Provider: &fake.Provider{Repo: "acme/app"}}
+	open := func([]string, func(string)) (string, gitprov.Opener, error) {
+		return gitprov.KindGitHub, func(context.Context, string, string) (gitprov.Provider, []string, error) {
+			return rec, nil, nil
+		}, nil
+	}
+	opener, err := openRepoProvider(open, provEnv, repoServiceURL(lc, rs.Name), catalogDockerfileRead, nil)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	if _, _, err := opener(t.Context(), gitprov.KindGitHub, "acme/app"); err != nil {
+		t.Fatalf("%v", err)
+	}
+	if rec.src != nil {
+		t.Errorf("a mint was installed (%T) for a repository this installation's own config does not say the service serves", rec.src)
 	}
 }
