@@ -257,11 +257,12 @@ func workflowBody(env string) string { return `{"env":"` + env + `"}` }
 // and the version that says which shape this is, and no variable at all.
 func workflowBodyV2(name string) string { return `{"name":"` + name + `","version":2}` }
 
-// openTheDoor clears config.RepoSecretsOff for one test and puts it back (G9,
-// F24): version 2 is refused while the door is shut, which is the state every
-// installation is in until the flip, so a test of the served path has to open
-// it. A test that opened it and did not close it would take every later test's
-// version-2 call with it.
+// openTheDoor opens the installation's repository-secrets door for one test and
+// puts it back (G9, F24): `config.RepoSecretsOff` false is D2313 reversed, the
+// state a repository's own copies are in force in, and it is the state version 2
+// is REFUSED in — a project copy would shadow a repository's own value. The
+// served path is the door SHUT, which is the state every installation is in
+// until the flip, so a test of that path calls nothing here.
 func openTheDoor(t *testing.T) {
 	t.Helper()
 	prev := config.RepoSecretsOff
@@ -989,7 +990,6 @@ func TestWorkflowSecretsNoReaderRefusesEvenForARecordedRepository(t *testing.T) 
 // that container and no value (G18).
 func TestWorkflowSecretsV2ServesAListedRepository(t *testing.T) {
 	f := newWorkflowSvc(t)
-	openTheDoor(t)
 	resp, body := f.fetchV2(t, testSharedName)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("a listed repository was answered %d, want the project secret: %s", resp.StatusCode, body)
@@ -1049,7 +1049,6 @@ func TestWorkflowSecretsV2ServesAListedRepository(t *testing.T) {
 func TestWorkflowSecretsV2RefusesAnUnlistedRepository(t *testing.T) {
 	t.Run("the record lists another repository", func(t *testing.T) {
 		f := newWorkflowSvc(t)
-		openTheDoor(t)
 		f.projects.rec = projectRecord(testOtherRepoPath)
 		resp, body := f.fetchV2(t, testSharedName)
 		assertRefusedV2(t, "a repository the record does not admit", resp, body, f.svc, f.workflowReads, StatusUnverified, 1, ErrorWorkflowSecretNotAllowed)
@@ -1062,13 +1061,11 @@ func TestWorkflowSecretsV2RefusesAnUnlistedRepository(t *testing.T) {
 	})
 	t.Run("the record names no such secret", func(t *testing.T) {
 		f := newWorkflowSvc(t)
-		openTheDoor(t)
 		resp, body := f.fetchV2(t, "not-a-listed-name")
 		assertRefusedV2(t, "a name the record does not hold", resp, body, f.svc, f.workflowReads, StatusUnverified, 1, ErrorWorkflowSecretNotAllowed)
 	})
 	t.Run("there is no record at all", func(t *testing.T) {
 		f := newWorkflowSvc(t)
-		openTheDoor(t)
 		f.projects.found = false
 		resp, body := f.fetchV2(t, testSharedName)
 		// An absent record admits nobody: it is never read as "every name is
@@ -1077,20 +1074,17 @@ func TestWorkflowSecretsV2RefusesAnUnlistedRepository(t *testing.T) {
 	})
 	t.Run("the record could not be read", func(t *testing.T) {
 		f := newWorkflowSvc(t)
-		openTheDoor(t)
 		f.projects.err = errors.New("the record could not be read")
 		resp, body := f.fetchV2(t, testSharedName)
 		assertRefusedV2(t, "an unreadable project record", resp, body, f.svc, f.workflowReads, StatusUnavailable, 1, ErrorStateUnavailable)
 	})
 	t.Run("the service has no record reader", func(t *testing.T) {
 		f := newWorkflowSvc(t, func(_ *svc, cfg *Config) { cfg.ProjectSecrets = nil })
-		openTheDoor(t)
 		resp, body := f.fetchV2(t, testSharedName)
 		assertRefusedV2(t, "a service with no project record reader", resp, body, f.svc, f.workflowReads, StatusUnavailable, 1, ErrorStateUnavailable)
 	})
 	t.Run("the caller's own repository is the one checked", func(t *testing.T) {
 		f := newWorkflowSvc(t)
-		openTheDoor(t)
 		f.projects.rec = projectRecord(testRepoPath)
 		// The other repository's job account presents ITS own run identity, so
 		// the pairing binds it: the record admits the fixture's repository and
@@ -1110,7 +1104,6 @@ func TestWorkflowSecretsV2RefusesAnUnlistedRepository(t *testing.T) {
 // container is refused without that credential ever entering this process.
 func TestWorkflowSecretsV2RefusesAnUnmarkedContainer(t *testing.T) {
 	f := newWorkflowSvc(t)
-	openTheDoor(t)
 	delete(f.dyn.marked, testSharedContainer)
 	resp, body := f.fetchV2(t, testSharedName)
 	if resp.StatusCode != StatusUnavailable {
@@ -1138,14 +1131,13 @@ func TestWorkflowSecretsV2RefusesAnUnmarkedContainer(t *testing.T) {
 // container that is already right. Both are refusals, and neither reads a value.
 func TestWorkflowSecretsV2RefusesAnUnreadableMarker(t *testing.T) {
 	f := newWorkflowSvc(t)
-	openTheDoor(t)
 	f.dyn.markerErr = errors.New("the container's labels could not be listed")
 	resp, body := f.fetchV2(t, testSharedName)
 	if resp.StatusCode != StatusUnavailable {
 		t.Fatalf("an unreadable marker answered %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
 	}
-	if e := refusal(t, resp.StatusCode, body); e.Error != ErrorWorkflowSecretUnmarked {
-		t.Errorf("the refusal is %q, want %q", e.Error, ErrorWorkflowSecretUnmarked)
+	if e := refusal(t, resp.StatusCode, body); e.Error != ErrorStateUnavailable {
+		t.Errorf("the refusal is %q, want %q: a marker that could not be read is the installation's state, not the container's shape", e.Error, ErrorStateUnavailable)
 	}
 	if len(f.dyn.reads) != 0 {
 		t.Errorf("the service read the value of %v; nothing is served from a container it could not classify", f.dyn.reads)
@@ -1207,13 +1199,15 @@ func TestWorkflowSecretsV2RefusesEachOtherClass(t *testing.T) {
 // the installation's state and not the caller's call — unavailable, and no
 // record, container or marker is read for it.
 //
-// It is also the state every installation is in until the flip, which is why the
-// test does not have to open the door to see it.
+// The door this test opens is the one every installation has SHUT until the
+// flip: the whole version-2 suite beside this one runs on the default (door
+// shut, version 2 served), so inverting the gate fails there and fails here.
 func TestWorkflowSecretsV2RefusedWhileRepoSecretsOn(t *testing.T) {
-	if !config.RepoSecretsOff {
-		t.Fatalf("config.RepoSecretsOff is false in this package: the door G9 names is open, so this test cannot see the state it is about")
-	}
 	f := newWorkflowSvc(t)
+	openTheDoor(t)
+	if config.RepoSecretsOff {
+		t.Fatalf("config.RepoSecretsOff is true after opening the door: this test cannot see the state it is about")
+	}
 	resp, body := f.fetchV2(t, testSharedName)
 	assertRefusedV2(t, "version 2 while repository secrets are in force", resp, body, f.svc, f.workflowReads, StatusUnavailable, 1, ErrorWorkflowSecretsOff)
 	if f.projects.reads != 0 {
@@ -1229,7 +1223,6 @@ func TestWorkflowSecretsV2RefusedWhileRepoSecretsOn(t *testing.T) {
 // which the grammar refuses so that a project secret can never shadow it.
 func TestWorkflowSecretsV2RefusesAPlatformCredentialName(t *testing.T) {
 	f := newWorkflowSvc(t)
-	openTheDoor(t)
 	resp, body := f.fetchV2(t, config.BitbucketSecret)
 	assertRefusedV2(t, "a platform credential's name", resp, body, f.svc, f.workflowReads, StatusRequestRefused, 1, ErrorRequestRefused)
 	if f.projects.reads != 0 {
@@ -1275,7 +1268,6 @@ func TestWorkflowSecretsAuditNamesOneContainer(t *testing.T) {
 	for _, tc := range calls {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newWorkflowSvc(t)
-			openTheDoor(t)
 			tc.call(t, f)
 			line := f.onlyAuditLine(t)
 			if got := auditField(line, "purpose"); got != PurposeWorkflowSecret {

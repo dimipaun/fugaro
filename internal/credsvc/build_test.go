@@ -1127,6 +1127,24 @@ func TestBuildCredentialsV2(t *testing.T) {
 		f.onlyAuditLine(t)
 	})
 
+	t.Run("a marker that could not be read", func(t *testing.T) {
+		f := newBuildCredsSvc(t)
+		projectRow(f)
+		f.reads.dyn.markerErr = errors.New("the container's labels could not be listed")
+		mine := f.rows[testRepoPath]
+		resp, raw := f.call(t, mine, buildCredsBody(testWorkflow, []string{testWorkflowEnv}, testAppID))
+		if resp.StatusCode != StatusUnavailable {
+			t.Fatalf("a build was answered %d for a marker that could not be read %s", resp.StatusCode, raw)
+		}
+		if e := refusal(t, resp.StatusCode, raw); e.Error != ErrorStateUnavailable {
+			t.Errorf("the refusal = %q, want %q: an unreadable marker is the installation's state, not the container's shape", e.Error, ErrorStateUnavailable)
+		}
+		if len(f.reads.dyn.reads) != 0 {
+			t.Errorf("the value of an unclassified container was read (%v)", f.reads.dyn.reads)
+		}
+		f.onlyAuditLine(t)
+	})
+
 	t.Run("a container outside the grammar is served as today", func(t *testing.T) {
 		f := newBuildCredsSvc(t)
 		mine := f.rows[testRepoPath]

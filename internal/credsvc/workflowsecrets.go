@@ -243,6 +243,12 @@ const (
 	// the project's own credential of that name rather than a workflow secret's.
 	// The fix is the operator's, and the sentence names it.
 	workflowSecretUnmarked = "that container is not marked as a workflow secret's, so this service does not serve it: an operator runs `fugaro secrets shared set NAME`"
+	// workflowSecretMarkerUnreadable answers a marker read that FAILED (F18,
+	// G2): the container may hold a workflow secret and the service could not
+	// tell, which is the state class and not the unmarked refusal above — the
+	// two have two different fixes, and the unmarked one would send an operator
+	// to rewrite a container that is already right.
+	workflowSecretMarkerUnreadable = "the workflow secret's marker could not be read, so this service does not serve it"
 	// workflowSecretFlipPending answers version 2 while `config.RepoSecretsOff`
 	// is false (G9, F24): a repository's own copies are still in force, so a
 	// project copy would shadow them. Nothing a caller can do; the sentence
@@ -376,7 +382,11 @@ func (s *Server) projectSecretReadable(ctx context.Context, name, container, rep
 	}
 	marked, err := markedContainer(ctx, source.Source, container)
 	if err != nil {
-		return nil, &projectSecretRefusal{StatusUnavailable, ErrorWorkflowSecretUnmarked, workflowSecretUnmarked, labelRead(readMarker, err)}
+		// A marker read that FAILED is the state class and not the unmarked
+		// refusal: the container may well be marked, and telling the caller to
+		// run `shared set` would send an operator to rewrite one that is already
+		// right. The cause stays on the operator's log line.
+		return nil, &projectSecretRefusal{StatusUnavailable, ErrorStateUnavailable, workflowSecretMarkerUnreadable, labelRead(readMarker, err)}
 	}
 	if !marked {
 		return nil, &projectSecretRefusal{StatusUnavailable, ErrorWorkflowSecretUnmarked, workflowSecretUnmarked, nil}
@@ -521,11 +531,12 @@ func (s *Server) workflowSecretByEnv(ctx context.Context, w http.ResponseWriter,
 // every workflow of an admitted repository may fetch the name, and the job
 // account still decides which repository that is.
 func (s *Server) workflowSecretByName(ctx context.Context, w http.ResponseWriter, id Identity, ja JobAccount, req WorkflowSecretsRequest) {
-	if config.RepoSecretsOff {
-		// G9, F24: with repository-level copies in force a project copy would
-		// shadow a repository's own value, so this version serves nothing until
-		// the door is shut. The refusal is the installation's state and not the
-		// caller's call, which is why it is unavailable and not a bad request.
+	if !config.RepoSecretsOff {
+		// G9, F24: the door is open, so a repository's own copies are in force
+		// and a project copy would shadow a repository's own value; this version
+		// serves nothing until it is shut. The refusal is the installation's
+		// state and not the caller's call, which is why it is unavailable and
+		// not a bad request.
 		s.refuseCall(ctx, w, id, PurposeWorkflowSecret, "", "", StatusUnavailable, ErrorWorkflowSecretsOff, workflowSecretFlipPending)
 		return
 	}
