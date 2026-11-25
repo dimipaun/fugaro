@@ -13,8 +13,10 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/routing"
 )
 
 // The closed reasons Admit answers with: one word per way a named challenger
@@ -49,9 +51,11 @@ const (
 	// the project's and a model outside the result is one this run may not use
 	// at all (D556).
 	ReasonNotAllowed = "not-allowed"
-	// ReasonUnrouted is a challenger no provider route serves for this
-	// repository: no provider claims it, or the one that does has an
-	// allow_data_to that does not name the repository (F18, D556).
+	// ReasonUnrouted is a challenger this repository cannot reach: on a project
+	// with no table, no provider route serves it — no provider claims it, or
+	// the one that does has an allow_data_to that does not name the repository
+	// (F18, D556); on a project with one, no entry of the table matches it or
+	// none of the winning entry's sources admits this repository (R22, D3182).
 	ReasonUnrouted = "unrouted"
 	// ReasonVariant is a challenger spelled as a variant (a ":" suffix) or as
 	// an alias, rather than the plain model ID the price table and the gateway
@@ -71,11 +75,14 @@ const (
 	// credential the cascade chose. Only an api-key run may send a call to
 	// another provider, so a challenger there is one the run would refuse
 	// (config.CheckProviderAuth, F18, D556's "the job already mounting the
-	// route's key").
+	// route's key"). It is a question about the repository's own access, so it
+	// is asked only on a project with no table: where there is one, the entry
+	// that matches the model is where its calls go out (D3170, R1).
 	ReasonNeedsAPIKey = "needs-api-key"
 	// ReasonNeedsEnforce is a provider-served challenger under a budget mode
 	// that is not enforce: the gateway holds the provider's key and routes the
-	// call, so without it the call would go to Anthropic (F18).
+	// call, so without it the call would go to Anthropic (F18). Like
+	// ReasonNeedsAPIKey it is asked only where the project publishes no table.
 	ReasonNeedsEnforce = "needs-enforce"
 )
 
@@ -85,9 +92,11 @@ const (
 // run's allow-list, the provider policy (a route claims the model, that
 // route's allow_data_to names the repository, and the ID is plain and priced),
 // the pin rule a run under a budget applies to its coder (an explicit model
-// ID, never an alias), the credential that may carry a provider's key, and the
-// budget gateway a provider's calls need (D556, F18). No challenger reaches a
-// provider this repository could not already use.
+// ID, never an alias), and the way this project reaches the model: the entry
+// of its routing table that matches, or, on a project that publishes none, the
+// credential that may carry a provider's key and the budget gateway a
+// provider's calls need (D556, F18, D3170). No challenger reaches a provider
+// this repository could not already use.
 //
 // Every one of them is a check the run itself makes at bootstrap, which is the
 // point: a challenger admitted here that the run would refuse there would burn
@@ -109,6 +118,15 @@ const (
 //     this does not mirror: a challenger spelled as a route's own ID is
 //     refused here even where the switch would route it, which is the safe
 //     direction and never a launched arm.
+//   - table is the project's routing table, published (RT4) and read by this
+//     installation's launcher. It is what the repository's access used to
+//     answer: a project that publishes one has its models reached by the chain
+//     of the entry that matches them, so the challenger's own chain is the
+//     question and cfg.Agent's auth says nothing about it. A project that
+//     publishes none is on the release-1 bridge, and the credential checks
+//     below are its answer. It is the same split the run's own gate makes
+//     (internal/cli's chainRoutingGate) and the same one a plan reads for
+//     whether a repository is the service's at all (infra.ChainPlanFor).
 //   - serviceHeldKey is whether the credentials service holds this
 //     installation's GitHub App key, so that the job opens its provider
 //     keyless (internal/gitprov/providers.FromEnv) and mints no read-only
@@ -135,8 +153,8 @@ const (
 //
 // A nil prices table skips the price rule, exactly as config.CheckProviderPolicy
 // does with one: a caller that has no table has no price question to ask.
-func Admit(cfg config.Config, layer config.AB, repo string, eff policy.Effective, providers map[string]config.ModelProvider, prices *pricing.Table, serviceHeldKey bool) (model string, ok bool, why string) {
-	return admitAgainst(cfg, layer, repo, eff, providers, prices, serviceHeldKey, cfg.Agent.ModelFor(config.RoleCoder))
+func Admit(cfg config.Config, layer config.AB, repo string, table routing.Table, eff policy.Effective, providers map[string]config.ModelProvider, prices *pricing.Table, serviceHeldKey bool) (model string, ok bool, why string) {
+	return admitAgainst(cfg, layer, repo, table, eff, providers, prices, serviceHeldKey, cfg.Agent.ModelFor(config.RoleCoder))
 }
 
 // admitAgainst is Admit's body with the model the pair varies given rather than
@@ -153,7 +171,7 @@ func Admit(cfg config.Config, layer config.AB, repo string, eff policy.Effective
 // allow-list, the provider policy, the pin rule, the credential and the
 // gateway are the same questions about the same repository whichever slot a
 // challenger's code goes to.
-func admitAgainst(cfg config.Config, layer config.AB, repo string, eff policy.Effective, providers map[string]config.ModelProvider, prices *pricing.Table, serviceHeldKey bool, varied string) (model string, ok bool, why string) {
+func admitAgainst(cfg config.Config, layer config.AB, repo string, table routing.Table, eff policy.Effective, providers map[string]config.ModelProvider, prices *pricing.Table, serviceHeldKey bool, varied string) (model string, ok bool, why string) {
 	if cfg.Git.Provider == gitprov.KindBitbucket {
 		return "", false, ReasonBitbucket
 	}
@@ -177,7 +195,7 @@ func admitAgainst(cfg config.Config, layer config.AB, repo string, eff policy.Ef
 			refuse(ReasonChampionModel)
 			continue
 		}
-		if why := refuseModel(cfg, c, repo, eff, providers, prices); why != "" {
+		if why := refuseModel(cfg, c, repo, table, eff, providers, prices); why != "" {
 			refuse(why)
 			continue
 		}
@@ -188,16 +206,18 @@ func admitAgainst(cfg config.Config, layer config.AB, repo string, eff policy.Ef
 
 // refuseModel is why this repository may not send its code to model as a coder
 // in this run, in the closed vocabulary above, or "" when it may: the run's
-// allow-list, the provider policy, the pin rule and the credential and gateway
-// a provider's call needs. It is the per-model half of Admit, and it is the
-// same half the judge model passes (A5.2's JudgeAdmit, O2): a judge is one more
-// place a pair's code goes, so it answers to the same rule a challenger does,
-// and the two callers share it rather than each keeping a copy that could drift.
+// allow-list, the provider policy, the pin rule and the way the project reaches
+// the model — its routing table's chain where it publishes one, the credential
+// and gateway a provider's call needs where it does not. It is the per-model
+// half of Admit, and it is the same half the judge model passes (A5.2's
+// JudgeAdmit, O2): a judge is one more place a pair's code goes, so it answers
+// to the same rule a challenger does, and the two callers share it rather than
+// each keeping a copy that could drift.
 //
 // The champion's own model is not asked about here: that the challenger is the
 // champion's model (ReasonChampionModel) is a fact about the pair, and D555's
 // rule, while the judge has no arm to be the same as.
-func refuseModel(cfg config.Config, model, repo string, eff policy.Effective, providers map[string]config.ModelProvider, prices *pricing.Table) string {
+func refuseModel(cfg config.Config, model, repo string, table routing.Table, eff policy.Effective, providers map[string]config.ModelProvider, prices *pricing.Table) string {
 	if !eff.Allows(model) {
 		return ReasonNotAllowed
 	}
@@ -214,6 +234,19 @@ func refuseModel(cfg config.Config, model, repo string, eff policy.Effective, pr
 	if pricing.IsAlias(model) {
 		return ReasonVariant
 	}
+	// A project that publishes a table reaches its models by that table and by
+	// nothing else (R1, R2): the entry that matches this model is its answer,
+	// and a model no entry matches is one this launch may not use however the
+	// repository's own access reads (R22). Reading the access here instead
+	// would admit an arm the run's own gate refuses (chainRoutingGate) under a
+	// credential nothing carries any more (D3170) — the pair slot and the job
+	// execution this whole function exists to save.
+	if len(table) > 0 {
+		if chainServes(table, model, repo) {
+			return ""
+		}
+		return ReasonUnrouted
+	}
 	if ps := config.CheckProviderAuth(agent, providers); len(ps) > 0 {
 		return ReasonNeedsAPIKey
 	}
@@ -221,6 +254,31 @@ func refuseModel(cfg config.Config, model, repo string, eff policy.Effective, pr
 		return ReasonNeedsEnforce
 	}
 	return ""
+}
+
+// chainServes reports whether the project's table reaches model for repo: the
+// entry the model resolves to (RT1), and a source of that entry's chain this
+// repository is admitted to (D3182). Both halves are asked because both refuse
+// the call: a model no entry matches has no source to walk (R22), and a chain
+// whose every source is admitted to another repository is one the run cannot
+// send this repository's code on.
+//
+// The walk is the plan's own (infra.ChainSourceServes), and it is shared rather
+// than restated here: whether a source admits a repository is one rule with two
+// readers — the plan that decides whether these runs are the credentials
+// service's at all, and this admission — and a second copy would be free to
+// drift from it, which is exactly the drift the table exists to prevent.
+func chainServes(table routing.Table, model, repo string) bool {
+	entry, err := routing.Resolve(table, model)
+	if err != nil {
+		return false
+	}
+	for _, s := range entry.Chain {
+		if infra.ChainSourceServes(s, repo) {
+			return true
+		}
+	}
+	return false
 }
 
 // coderAgent is the champion's agent with model in the coder slot, which is the

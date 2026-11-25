@@ -1660,11 +1660,21 @@ func plannedRun(ctx context.Context, env *cloudEnv, o *runOptions, slug string, 
 	// (credentialsServiceLaunchEnv, proxiedRepo's last question too); its own
 	// warning is the launch's to word, later and once.
 	auth, deployed := env.repoServiceAuth(ctx, spec, io.Discard)
+	// The project's routing table where it publishes one (D3170): a planner
+	// judges a challenger by the chain that matches its model. An installation
+	// that has not migrated has none, and a machine with no local config at all
+	// has none either — both are the release-1 bridge, and the planner answers
+	// as it always has.
+	var table routing.Table
+	if env.lc != nil {
+		table = env.lc.ModelRouting
+	}
 	run := PlannedRun{
 		Slug: slug, Repo: spec.Repo, Commit: launchCommit(ctx, spec.Repo, spec.Ref),
 		Spec: copied, Chosen: o.runID != "", Config: cfg,
 		Providers:      mixRoutes(env, spec.Repo, cfg),
 		Prices:         prices,
+		ModelRouting:   table,
 		ServiceHeldKey: len(credentialsServiceLaunchEnv(env.lc, "", spec.Repo, auth, env.policyMode(ctx), deployed, false)) > 0,
 	}
 	eff, _ := chainLimitPolicyOf(ctx, env, spec, cfg).merge(o.limits.layer())
