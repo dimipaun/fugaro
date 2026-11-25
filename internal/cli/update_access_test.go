@@ -395,7 +395,7 @@ func TestLegacyMemberFormsKeepTheirGrants(t *testing.T) {
 func TestAMigrationWithNoUserMemberWritesNoNode(t *testing.T) {
 	noAgentSession(t)
 	legacy := []string{"group:eng@example.com", "domain:example.com", "serviceAccount:auto@proj-1234.iam.gserviceaccount.com"}
-	_, db := accessRig(t, legacy, legacy, legacy, legacy)
+	r, db := accessRig(t, legacy, legacy, legacy, legacy)
 	fakeTerminal(t)
 	out, errOut, err := executeStdin(t, "", "update")
 	all := accessOut(out, errOut, err)
@@ -412,6 +412,13 @@ func TestAMigrationWithNoUserMemberWritesNoNode(t *testing.T) {
 		t.Fatalf("the migration left no marker: an installation whose lists it READ and found nobody in is indistinguishable from one nobody has migrated, and the commands RS6c gates would never be checked on it:\n%s", all)
 	}
 	userPairAs(t, accessMember(t, "owner@example.com"))
+	// The world is flagged managed here and not from the top, because this half
+	// is about the roster's refusal and not about D1541's fence: the caps live in
+	// the project's own budget database, so a project that is not managed is
+	// refused before the access gate is reached (managed_require.go — the
+	// sentence an ordinary installation answers with, and nothing about the
+	// roster). The two marks put the gate's own sentence back within reach.
+	markManagedProject(t, r)
 	_, _, err = execute(t, "budget", "set", "--global", "--per-run", "3")
 	accessRefused(t, err,
 		"nothing was set",

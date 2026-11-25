@@ -119,7 +119,7 @@ func TestCheckJobResolvesOverItsCopy(t *testing.T) {
 	if err != nil || cfg.Workflows[config.ImplicitWorkflow].Commands.Test != "sh test.sh" || layerSHAOf(cfg) != config.LayerSum([]byte(testProjectLayer)) {
 		t.Fatalf("cfg %+v, %v", cfg, err)
 	}
-	writeBucketFile(t, f, config.LayerCopyKey(slug), strings.Replace(testProjectLayer, testProjectLayerAgent, testProjectLayerAgent+"  budget: {}\n", 1))
+	writeBucketFile(t, f, config.LayerCopyKey(slug), layerReplacing(t, layerAgentLine+"  budget: {}\n"))
 	if _, err := jobHeadConfig(ctx, env.bucket, slug, tree, warn); err == nil || !strings.Contains(err.Error(), "is invalid") {
 		t.Fatalf("an invalid copy: %v", err)
 	}

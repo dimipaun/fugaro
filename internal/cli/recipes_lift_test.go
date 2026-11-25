@@ -180,7 +180,7 @@ func TestLaunchRefusesAnUnmigratedFolderRecipe(t *testing.T) {
 	// Refused: the default branch holds the file and there is no record.
 	f := newCloudFixture(t)
 	projectRecipesFixture(t, f, map[string]string{name: text})
-	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
+	writeBuildRecord(t, f, appSlug, "web", releaseL8)
 	appCopyCheckout(t, map[string]string{".fugaro/recipes/" + name + ".yaml": repoTeam})
 	_, _, err := execute(t, "run", "--run-id", "20261007-100000-abcd", "--recipe", name, "A task")
 	for _, want := range []string{"recipe " + name + " is still acme/app's own file", recipe.RepoPath(name), "has no migration record", "fugaro update"} {
@@ -212,7 +212,7 @@ func TestLaunchRefusesAnUnmigratedFolderRecipe(t *testing.T) {
 	// A repository whose default branch holds no such file, no record either.
 	f = newCloudFixture(t)
 	projectRecipesFixture(t, f, map[string]string{name: text})
-	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
+	writeBuildRecord(t, f, appSlug, "web", releaseL8)
 	appCopyCheckout(t, nil)
 	if _, _, err := execute(t, "run", "--run-id", "20261007-100000-abcd", "--recipe", name, "A task"); err != nil {
 		t.Fatalf("a repository with no folder recipe was refused: %v", err)

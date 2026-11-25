@@ -79,6 +79,9 @@
 #   FAKE_GH_RUN_OTHER  an extra run on the tag, "name:state" (default none),
 #                    for the rule that any other workflow the tag started has
 #                    to be green too
+#   FAKE_GH_DISPATCH_NO_RUN   non-empty: a dispatch is recorded in workflow_run
+#                    and starts no run at all, so the commit keeps having none
+#                    on every pass of a wait
 # A `gh workflow run` appends the run it started to ci_runs -- the workflow's
 # newest run, which is what a dispatch is: the head is the tip of the ref the
 # dispatch named (`--ref`) or of origin's own HEAD when it named none, the title
@@ -255,6 +258,12 @@ case "$1 ${2:-}" in
     # tip, the title the dispatch asked for, the commit's own checks, and a run
     # number above everything already there (the file's header).
     printf '%s\n' "$*" >>"$dir/workflow_run"
+    # FAKE_GH_DISPATCH_NO_RUN: GitHub accepts the dispatch and the commit still
+    # has no run the gate can read -- the ref moved between the read that made
+    # the gate dispatch and the dispatch itself, or the run never started. The
+    # invocation is recorded above either way, so a test can count the
+    # dispatches a wait made.
+    [ -z "${FAKE_GH_DISPATCH_NO_RUN:-}" ] || exit 0
     ref=""
     full=false
     prev=""
@@ -320,13 +329,21 @@ case "$1 ${2:-}" in
       */actions/runs*)
         case "$*" in
           *".display_title"*)
-            # scripts/release-gate.sh's read of a commit's `ci` runs: one
-            # tab-separated line per run, in the shape its --jq asks for
-            # ([run_number, check_suite_id, display_title] | @tsv), in the order
-            # the lines are written, exactly as the api lists runs -- the gate
-            # orders them itself, so this fake must not. The runs come from
-            # $dir/ci_runs (see the header); the gate keeps the newest row whose
-            # title says the run was full and reads that run's check suite.
+            # A commit's `ci` runs, one tab-separated line per run, in the order
+            # the lines are written, exactly as the api lists runs -- both
+            # readers order them themselves, so this fake must not. The runs come
+            # from $dir/ci_runs (see the header); the reader keeps the newest row
+            # whose title says the run was full and reads that run's check suite.
+            #
+            # Two readers ask this listing with two --jq expressions, and each
+            # gets what its own would produce: scripts/release-gate.sh's asks
+            # for the run's status, conclusion and URL too, so six fields, while
+            # scripts/release.sh's own read asks for the run number, suite and
+            # title alone, so three. A field an expression did not ask for is a
+            # `read` handing its last variable everything up to the next tab,
+            # which is how six fields silently hid a run from release.sh.
+            fields=3
+            case "$*" in *".html_url"*) fields=6 ;; esac
             sha=$(printf '%s' "$2" | sed -n 's|.*head_sha=\([^&]*\).*|\1|p')
             if [ -f "$dir/ci_runs" ]; then
               # A real tab: this file runs under /bin/sh, where $'\t' is not an
@@ -337,8 +354,21 @@ case "$1 ${2:-}" in
                 [ -n "$rsha" ] || continue
                 number=$((number + 1))
                 [ "$rsha" = "$sha" ] || continue
-                printf '%s\t%s\t%s\n' "${rnumber:-$number}" "$suite" "$title"
+                # The run's own status, conclusion and URL, the rest of the
+                # shape scripts/release-gate.sh reads a commit's runs with: a
+                # run is over and green here, except a "<sha>-red" suite, which
+                # is a full run's that ended red -- the verdict the gate ends a
+                # wait on at once.
+                conclusion=success
+                case "$suite" in *-red) conclusion=failure ;; esac
+                if [ "$fields" = 6 ]; then
+                  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${rnumber:-$number}" "$suite" "$title" completed "$conclusion" "https://github.com/$repo/actions/runs/${rnumber:-$number}"
+                else
+                  printf '%s\t%s\t%s\n' "${rnumber:-$number}" "$suite" "$title"
+                fi
               done <"$dir/ci_runs"
+            elif [ "$fields" = 6 ]; then
+              printf '1\t%s\t%s\t%s\t%s\t%s\n' "$sha" "ci (full)" completed success "https://github.com/$repo/actions/runs/1"
             else
               printf '1\t%s\t%s\n' "$sha" "ci (full)"
             fi

@@ -2,15 +2,21 @@ package cli
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"maps"
+	"os"
 	"slices"
 
+	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/intake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/safetext"
+	"github.com/dimipaun/fugaro/internal/secretname"
 )
 
 // writeWorkflowSecrets records, for the repository this run applied, the
@@ -189,4 +195,338 @@ func workflowSecretMountID(ready infra.RepoSpec, logical string) string {
 		return ready.ProjectSecrets[logical]
 	}
 	return ready.MountSecretID(logical)
+}
+
+// copyWorkflowSecretsToGrammar is D3325's migration: every workflow secret the
+// installation holds a project copy of becomes a `fugaro_p_<name>` container,
+// as the operator, so a run reads the one copy from the grammar the intake
+// writes and the credentials service serves (D3323, D3324).
+//
+// # What it reads and what it writes
+//
+// The source is `gcp.ProjectSecretID`'s container alone. Under D2313 that is
+// the only copy a run reads, so it is the only copy there is anything to move
+// (F16), and the repository-level `creds/workflowsecrets/<slug>` record is left
+// exactly as it is: version 1 still reads it until the follow-up removes the
+// route, and rewriting it would change what a run of the release behind fetches
+// in the middle of its own `fugaro update` (G4).
+//
+// The newest ENABLED version is the one copied and not the `latest` alias: an
+// operator's disable moves those two apart, and the version a run can read is
+// the enabled one.
+//
+// A name whose `fugaro_p_` container is ALREADY there with the intake's shape
+// AND holds an enabled version gets no version from this step. Two states reach
+// that branch and both are the same answer: a previous update copied it, or the
+// owner stored the name with `fugaro secrets set` since, which is newer than
+// anything the project copy holds (D3323 made that store the intake's). Which
+// of the two it is does not matter — the container's own version is the one a
+// run reads from now on. A container of that shape with no enabled version is
+// filled, which is the one state the step writes into a container it did not
+// make itself.
+//
+// # Never a value
+//
+// The value is read into memory, written, and dropped; it is redacted out of
+// the one error that could carry it back (a server that echoes the payload it
+// refused), and no line this step prints names it (G18). The refusal a foreign
+// container gets names the container and the command that fixes it, never a
+// value.
+//
+// # The record, and why it is asked for before anything is copied
+//
+// A name is recorded in the project record only once its value IS in the
+// grammar, and the record is what IS6 reads to decide which mounts, grants and
+// project copies go (D3325). So an installation with no database to write that
+// record into copies nothing: the two halves of the migration move together or
+// not at all, and a value copied with no record of it is a container nothing
+// would ever retire and whose mount nothing would drop.
+//
+// The entry a name gets is seeded from the operator's own `workflow_secrets`
+// `allow_data_to` and only when the record holds no entry for the name: an
+// entry the owner wrote with `fugaro secrets allow` is left exactly as it is,
+// which is the direction that can never widen a list a `deny` narrowed (F22,
+// F23, G8). A repository's own `secrets:` is never read here — a declaration a
+// repository controls is not a grant (F22).
+//
+// # Nothing here fails an upgrade
+//
+// Every state that leaves the installation as it is is a warning: a name whose
+// container is another writer's, a value that could not be written, a record
+// that could not be updated. The fail-closed direction is the one the migration
+// keeps — a name that was not copied is a name no record entry names, so IS6
+// leaves its mount, its grants and its project copy alone, and the next update
+// copies it (CLAUDE.md's HARD RULE, G4).
+//
+// The one state that STOPS the step is an operator with no read on a project
+// copy that is there: the roles Fugaro grants do not carry
+// secretmanager.versions.access — the project's Owner does
+// (docs/secret-readers.md E12) — and every remaining name would be refused the
+// same way. It is one line naming the fix, after the names copied before it are
+// recorded; the converge's own stages are what the owner came for, and an
+// upgrade that stopped over a permission the owner can grant in one line would
+// be the operator step the HARD RULE forbids. A name whose project copy is gone
+// — the state after IS6 retires one — is not this state: there is nothing to
+// copy for it and no read missing.
+//
+// A coding agent's session is refused like every other cloud write
+// (agentMarker): the step writes Secret Manager containers, so it changes
+// something outside this machine, and what a session gets instead is the one
+// command to run at a person's own terminal.
+func (e *initEngine) copyWorkflowSecretsToGrammar(ctx context.Context) {
+	r, o := e.r, e.r.o
+	// The door first, as in writeAdminList: this is the upgrade's step, and a
+	// project `fugaro setup` just created has no copies and no operator config.
+	if o.doorName() != updateDoor.name || o.planOnly {
+		return
+	}
+	lc := e.lc
+	names := workflowSecretCopyNames(lc)
+	if len(names) == 0 {
+		return
+	}
+	if agentMarker(os.Getenv, r.stdinTerminal()) != "" && !r.gateUnderway() {
+		r.warn(fmt.Sprintf("workflow secrets were not copied: a coding agent's session makes no cloud writes. Run `%s update` in your own terminal", selfCommand()))
+		return
+	}
+	// The record first: a value copied with no record of it is a container
+	// nothing retires and a mount nothing drops (the header).
+	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
+		return
+	}
+	db, err := newBudgetClient(ctx, lc.Budget.RTDBURL, lc.Endpoints.NoAuth)
+	if err != nil {
+		r.warn(fmt.Sprintf("workflow secrets were not copied: the database the record goes in could not be opened (%s)", safetext.FieldErr(err)))
+		return
+	}
+	if why := budgetDBUnadopted(ctx, lc, infra.NewDB(db, lc.Name, lc.GCPProject, ""), "the workflow secrets were not copied", selfCommand()+" update"); why != "" {
+		r.warn(why)
+		return
+	}
+	// Who made the container, which is the annotation the intake writes for a
+	// project-shared one (R10) and the shape check requires. A credential that
+	// cannot say who its holder is cannot make a container the intake accepts,
+	// and the fix is the terminal the operator owns.
+	who, err := authenticatedUser(ctx, lc)
+	if err != nil {
+		r.warn(fmt.Sprintf("workflow secrets were not copied: recording who made each container needs your own Google account (%s). Run `%s update` at your own terminal",
+			safetext.FieldErr(err), selfCommand()))
+		return
+	}
+	svc, err := gcp.NewSecrets(ctx, gcpOptions(lc))
+	if err != nil {
+		r.warn(fmt.Sprintf("workflow secrets were not copied: %s", safetext.FieldErr(err)))
+		return
+	}
+
+	var copied []string
+	already, skipped, refused := 0, 0, false
+	for _, name := range names {
+		copiedName, state, cause := copyOneWorkflowSecret(ctx, svc, lc.Name, name, who)
+		if state == copyRefusedNoRead {
+			// An operator with no read on the project copy at all: every
+			// remaining name would be refused the same way. The loop stops, and
+			// what it copied first is still recorded below — a copied value
+			// with no record is a container nothing retires (D3325).
+			refused = true
+			break
+		}
+		switch state {
+		case copyDone:
+			copied = append(copied, copiedName)
+		case copyAlready:
+			already++
+			copied = append(copied, copiedName)
+		case copyNothing:
+		default:
+			skipped++
+			r.warn(copySkipLine(state, name, cause))
+		}
+	}
+	if len(copied) > 0 {
+		if err := recordCopiedWorkflowSecrets(ctx, db, lc, copied); err != nil {
+			r.warn(fmt.Sprintf("workflow secrets were copied but not recorded (%s), so their mounts and project copies stay until the next update", safetext.FieldErr(err)))
+			return
+		}
+	}
+	if refused {
+		r.warn(workflowCopyNoReadLine(selfCommand()))
+		return
+	}
+	fmt.Fprintf(r.w, "workflow secrets: %d copied into the %s grammar (%d already there, %d skipped)\n",
+		len(copied)-already, secretname.ProjectPrefix, already, skipped)
+}
+
+// The states one name's copy ends in. copyRefusedNoRead is the one that stops
+// the step, and the rest warn and go on.
+type copyState int
+
+const (
+	copyFailed copyState = iota
+	copyDone
+	copyAlready
+	copyRefusedNoRead
+	// copyNothing is a name with nothing to move — no project copy at all, or
+	// one with no enabled version: there is no line to print, the name is not
+	// recorded, and IS6 keeps what the name still has.
+	copyNothing
+	// copyForeign is a name whose container is another writer's: a shape the
+	// intake does not write, or no marker on it. It is the one skip that gets
+	// the fix rather than the summary line.
+	copyForeign
+)
+
+// copyOneWorkflowSecret moves one name's project copy into the grammar and
+// answers what it did, with the cause of a failure for the one line a skipped
+// name gets. The value is read, written and dropped here: nothing it returns
+// carries one, and a failure's message is redacted of the bytes before it is
+// handed back (a server that echoes the payload it refused).
+func copyOneWorkflowSecret(ctx context.Context, svc *gcp.Secrets, fugaroProject, name, who string) (string, copyState, error) {
+	src := gcp.ProjectSecretID(fugaroProject, name)
+	ok, err := svc.CanReadValues(ctx, src)
+	if err != nil {
+		return name, copyFailed, err
+	}
+	if !ok {
+		// CanReadValues answers false, nil for a container that is not there as
+		// well as for one the operator may not read: only the second is a
+		// refusal that stops the step. No container at all is the routine state
+		// after IS6 retires a project copy, and a name in it has nothing to
+		// copy and is not one to stop the rest for.
+		_, found, err := svc.Container(ctx, src)
+		if err != nil {
+			return name, copyFailed, err
+		}
+		if !found {
+			return name, copyNothing, nil
+		}
+		return name, copyRefusedNoRead, nil
+	}
+	version, err := svc.LatestEnabled(ctx, src)
+	if err != nil {
+		return name, copyFailed, err
+	}
+	if version == "" {
+		return name, copyNothing, nil
+	}
+	dst, err := secretname.Project(name)
+	if err != nil {
+		return name, copyFailed, err
+	}
+	info, found, err := svc.Container(ctx, dst)
+	if err != nil {
+		return name, copyFailed, err
+	}
+	if found {
+		// Another writer's container, or a marked one of a shape the intake
+		// does not write: the step writes no version into it (G2). The check
+		// is the intake's own, asked through its own function, so a container
+		// this step made can never be one the next store refuses.
+		if err := intake.AcceptsWorkflowWrite(dst, intakeSecretOf(info)); err != nil {
+			return name, copyForeign, err
+		}
+		if v, err := svc.LatestEnabled(ctx, dst); err != nil {
+			return name, copyFailed, err
+		} else if v != "" {
+			return name, copyAlready, nil
+		}
+	} else if err := svc.Create(ctx, dst, intakeSharedLabels(), map[string]string{intake.AnnotationCreatedBy: who}); err != nil {
+		return name, copyFailed, err
+	}
+	value, err := svc.ReadVersion(ctx, src, version)
+	if err != nil {
+		return name, copyFailed, redactValue(err, value)
+	}
+	if _, err := svc.AddVersion(ctx, dst, value); err != nil {
+		err = redactValue(err, value)
+		clear(value)
+		return name, copyFailed, err
+	}
+	clear(value)
+	return name, copyDone, nil
+}
+
+// redactValue takes the copy's bytes out of a failure before it can reach a
+// line a person reads: the refusal names the fact, never the value (the
+// credentials-service rule). It is the one place a value and an error meet.
+func redactValue(err error, value []byte) error {
+	if err == nil || len(value) == 0 {
+		return err
+	}
+	return fmt.Errorf("%s", agent.Redact(err.Error(), []string{string(value), base64.StdEncoding.EncodeToString(value)}))
+}
+
+// intakeSecretOf is one of our containers as the intake's own shape check reads
+// it, so that the check the copy asks is the check the write path asks.
+func intakeSecretOf(c gcp.ContainerInfo) intake.Secret {
+	return intake.Secret{
+		Labels: c.Labels, Annotations: c.Annotations,
+		Shape: intake.Shape{TTL: c.TTL, ExpireTime: c.ExpireTime, Topics: c.Topics, CMEK: c.CMEK, Rotation: c.Rotation},
+	}
+}
+
+// intakeSharedLabels is the label set the intake writes for a project-shared
+// container, plus the marker that says the class of value in it is a workflow's
+// own (F18, G2). It is the same set `fugaro secrets set` writes through the
+// intake, spelled from the intake's own constants so the two ends can never
+// drift.
+func intakeSharedLabels() map[string]string {
+	return map[string]string{
+		intake.LabelScope:          string(intake.ScopeShared),
+		intake.LabelWorkflowSecret: intake.WorkflowSecretMarker,
+	}
+}
+
+// workflowSecretCopyNames is the workflow-secret names an installation holds a
+// project copy of, in order: the operator's `workflow_secrets` entries that
+// allow the value to somebody, which is exactly what the installation root
+// plans a container for (internal/infra's projectSecretContainers). A name no
+// entry admits has no container to copy and no list to seed.
+func workflowSecretCopyNames(lc *localcfg.Config) []string {
+	if lc == nil {
+		return nil
+	}
+	var out []string
+	for _, name := range slices.Sorted(maps.Keys(lc.WorkflowSecrets)) {
+		if len(lc.WorkflowSecrets[name].AllowDataTo) > 0 {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// copySkipLine is the one line a skipped name gets: why it was left alone and,
+// for a container another writer made, the command that clears it. It never
+// carries a value.
+func copySkipLine(state copyState, name string, cause error) string {
+	if state == copyForeign {
+		return fmt.Sprintf("%s was not copied: %s%s is not a container the intake made. Remove it with `%s secrets shared rm %s`",
+			name, secretname.ProjectPrefix, name, selfCommand(), name)
+	}
+	return fmt.Sprintf("workflow secret %s was not copied into the %s grammar (%s), so its mount and its project copy stay until the next update",
+		name, secretname.ProjectPrefix, safetext.FieldErr(cause))
+}
+
+// workflowCopyNoReadLine is the refusal an operator without a read on the
+// project copy is stopped with: the permission, and the one thing that gives
+// it.
+func workflowCopyNoReadLine(program string) string {
+	return fmt.Sprintf("workflow secrets were not copied: the project copy needs secretmanager.versions.access — run `%s update` as the project's Owner", program)
+}
+
+// recordCopiedWorkflowSecrets writes the names whose value is now in the
+// grammar into the project record, seeding each one's list from the operator's
+// own allow_data_to and leaving every entry the record already holds exactly as
+// it is (F23, G8).
+func recordCopiedWorkflowSecrets(ctx context.Context, db creds.DB, lc *localcfg.Config, names []string) error {
+	return creds.WriteProjectSecrets(ctx, db, func(cur creds.ProjectSecrets, found bool) (creds.ProjectSecrets, error) {
+		next := cur
+		for _, name := range names {
+			if _, held := next.Rule(name); held {
+				continue
+			}
+			next = next.WithRule(name, creds.ProjectSecretRule{Repos: slices.Clone(lc.WorkflowSecrets[name].AllowDataTo)})
+		}
+		return next, nil
+	})
 }

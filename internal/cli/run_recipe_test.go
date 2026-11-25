@@ -276,7 +276,7 @@ func TestRunRepoRecipeFromCheckout(t *testing.T) {
 	f := newCloudFixture(t)
 	recipeCheckout(t, f, "", map[string]string{".fugaro/recipes/mine.yaml": "version: 1\nname: mine\nsteps:\n  - review: { max_rounds: 4 }\n"})
 	other := mustSlug("github", "acme/other")
-	writeBuildRecord(t, f, other, "svc", releaseSeal)
+	writeBuildRecord(t, f, other, "svc", releaseL8)
 	copy := recipe.CopyName("mine", "github", "acme/other")
 	text := "version: 1\nname: " + copy + "\nsteps:\n  - review: { max_rounds: 1 }\n"
 	projectRecipesFixture(t, f, map[string]string{copy: text})

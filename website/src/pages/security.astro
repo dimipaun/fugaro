@@ -54,16 +54,16 @@
  *      `website/test/security.mjs` prove; what the labels *say together* is drawn by hand, and
  *      a picture can put two of the document's sentences side by side into a claim the
  *      document makes only as a conditional. The model-key card is the one place that could
- *      happen, so it is drawn as the document states it: `SECURITY.md`'s "What is not on by
- *      default" bullet is one sentence — the budget gateway is **not on by default**, so the
- *      real model key **sits in the agent's environment** — and its "With the budget gateway
- *      on, model keys stay out of the agent's environment" is the other half of that same
- *      conditional, never a second fact beside the first. So the card's title names the
- *      gateway, its first line the default, and its last two lines the key and where it sits:
- *      one state, the default one, which is the state the facts under the picture state too.
- *      Drawing "the budget gateway" and "sits in the agent's environment" as two co-equal
- *      lines would assert both halves of the conditional at once, and no test here reads a
- *      picture's arrangement — which is why the arrangement is written down.
+ *      happen, so it is drawn as the document states it: `SECURITY.md`'s "What is on by
+ *      default" bullet is one sentence — the budget gateway **is on by default**, so the
+ *      model key **stays out of the agent's environment** — and the run that would carry the
+ *      key in its own environment is the `oauth` run the credentials service does not serve,
+ *      never a second fact beside the first. So the card's title names the gateway, its first
+ *      line the default, and its last two lines the key and where it sits: one state, the
+ *      default one, which is the state the facts under the picture state too. Drawing "the
+ *      budget gateway" and "stays out of the agent's environment" as two co-equal lines would
+ *      assert the exception beside the rule, and no test here reads a picture's arrangement —
+ *      which is why the arrangement is written down.
  *   4. **A cross-reference inside the document becomes a link into the document.** The "In
  *      short" bullets each end by naming the section they come from
  *      (`([Known limits](#known-limits))`), and the page renders two of those sections and no
@@ -415,7 +415,7 @@ const KEY_IDEAS = [
   'The design assumes you trust the repository and the source of the task',
   'Fugaro runs a coding agent with its permission prompts turned off',
   "Each repository's jobs and builds run as their own service accounts",
-  'What is not on by default: the budget gateway',
+  'What is on by default: the budget gateway',
   'What limits the blast radius today',
   'What no boundary stops',
 ]
@@ -443,7 +443,7 @@ const DIAGRAM_FACTS = [
   'The design assumes you trust the repository and the source of the task: anyone who can push to it, launch a run, or is listed in `followup.trusted` can steer an agent that holds the credentials below',
   'Fugaro runs a coding agent with its permission prompts turned off, in a fresh cloud container per run, and ends every run with a pull request',
   "Each repository's jobs and builds run as their own service accounts",
-  "What is not on by default: the budget gateway, so with no `budget:` block the real model key sits in the agent's environment",
+  "What is on by default: the budget gateway, so with no `budget:` block the mode is `observe` and the model key stays out of the agent's environment",
 ].map((fact) => inline(quoted(fact)))
   .map((html) => withKeyIdeas(html))
 
@@ -568,21 +568,22 @@ if (unboldened.length > 0) {
           <text class="boundary-line" font-size="13" x="48" y="416">{diagramLabel('their own service accounts')}</text>
           <text class="boundary-line" font-size="13" x="48" y="440">{diagramLabel('narrow git credentials')}</text>
 
-          {/* The key the container holds, and the gateway that would keep it out of the agent's
+          {/* The key the container holds, and the gateway that keeps it out of the agent's
               environment — the document's own conditional, in the order it states it: the
-              gateway is *not on by default*, so the real key sits in the agent's environment.
+              gateway is *on by default*, so the model key stays out of the agent's environment.
               The two are one sentence and not two facts, so they are drawn as one: the card's
               title names the gateway, its first line the default, and its last two lines the
-              key and where it sits. Drawing "the budget gateway" beside "sits in the agent's
-              environment" as two co-equal lines would be a conjunction the document never
-              states (SECURITY.md:64 and :72 are the two halves of one conditional), and the
-              arrangement is the one thing about this drawing no gate reads — the gate measures
-              each label against the box it is drawn in, and cannot read what the boxes mean. */}
+              key and where it sits. Drawing "the budget gateway" beside "stays out of the
+              agent's environment" as two co-equal lines would be a conjunction the document
+              never states (SECURITY.md:8 is one sentence, whose run without a gateway is the
+              `oauth` run the credentials service does not serve), and the arrangement is the one
+              thing about this drawing no gate reads — the gate measures each label against the
+              box it is drawn in, and cannot read what the boxes mean. */}
           <rect class="boundary-card" data-pad="16" x="32" y="470" width="288" height="120" rx="10" />
           <text class="boundary-title" font-size="13" x="48" y="496">{diagramLabel('the budget gateway')}</text>
-          <text class="boundary-line" font-size="13" x="48" y="520">{diagramLabel('not on by default')}</text>
-          <text class="boundary-line" font-size="13" x="48" y="544">{diagramLabel('the real model key')}</text>
-          <text class="boundary-line" font-size="13" x="48" y="568">{diagramLabel("sits in the agent's environment")}</text>
+          <text class="boundary-line" font-size="13" x="48" y="520">{diagramLabel('on by default')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="544">{diagramLabel('the model key stays')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="568">{diagramLabel("out of the agent's environment")}</text>
 
           {/* Out of the container: the pull request every run ends with. */}
           <g class="boundary-arrow">
@@ -685,9 +686,9 @@ if (unboldened.length > 0) {
 
           <rect class="boundary-card" data-pad="16" x="600" y="216" width="262" height="144" rx="10" />
           <text class="boundary-title" font-size="14" x="616" y="242">{diagramLabel('the budget gateway')}</text>
-          <text class="boundary-line" font-size="14" x="616" y="266">{diagramLabel('not on by default')}</text>
-          <text class="boundary-line" font-size="14" x="616" y="290">{diagramLabel('the real model key')}</text>
-          <text class="boundary-line" font-size="14" x="616" y="314">{diagramLabel("sits in the agent's")}</text>
+          <text class="boundary-line" font-size="14" x="616" y="266">{diagramLabel('on by default')}</text>
+          <text class="boundary-line" font-size="14" x="616" y="290">{diagramLabel('the model key stays')}</text>
+          <text class="boundary-line" font-size="14" x="616" y="314">{diagramLabel("out of the agent's")}</text>
           <text class="boundary-line" font-size="14" x="616" y="338">{diagramLabel('environment')}</text>
 
           {/* Out of the container: the pull request every run ends with, on the right where the

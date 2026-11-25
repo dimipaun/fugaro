@@ -69,6 +69,22 @@ func publishedLayer(t *testing.T, f *cloudFixture, text string) {
 	}
 }
 
+// layerAgentLine is the fixture's defaults.agent line and the needle every
+// rewrite of it matches: one spelling, so a test that moves the fixture cannot
+// leave a rewrite matching nothing and reading as the layer it did not change.
+const layerAgentLine = testProjectLayerAgent
+
+// layerReplacing is testProjectLayer with its agent line rewritten, failing
+// rather than returning the layer unchanged when the needle no longer matches.
+func layerReplacing(t *testing.T, with string) string {
+	t.Helper()
+	out := strings.Replace(testProjectLayer, layerAgentLine, with, 1)
+	if out == testProjectLayer {
+		t.Fatalf("the project layer fixture no longer carries %q: the rewrite matched nothing", layerAgentLine)
+	}
+	return out
+}
+
 // layerWithDefaults is testProjectLayer with extra lines (indented two
 // spaces) added under defaults:.
 func layerWithDefaults(extra string) string {

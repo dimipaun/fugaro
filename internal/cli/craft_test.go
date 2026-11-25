@@ -503,13 +503,20 @@ agent:
 // (gcp_project) and the workflows block every fugaro.yaml needs, it is the
 // fixture's own file plus one narrowing line: an allow-list that names the
 // Claude IDs alone.
+//
+// The block writes no mode, which is what keeps this arm to one check: the mode
+// a layer leaves unwritten is no mode at all for the readers here (ceilingLayer
+// and craft's own `priced` flag), so the price rule is not asked and the
+// allow-list is the row's one sentence. The word that used to say that (`off`)
+// is refused by this very read now (AB2, D3009, D3022), which is why the file
+// names no mode rather than the word.
 const craftRepoResolvableYAML = `version: 1
 project: aurora
 gcp_project: aurora-gcp
 git: { provider: github }
 workflows:
   go: { commands: { build: go build ./..., test: go test ./... } }
-budget: { allowed_models: [claude-sonnet-5-5], mode: off }
+budget: { allowed_models: [claude-sonnet-5-5] }
 agent:
   auth: api-key
   crafts:
@@ -634,12 +641,13 @@ func TestCraftLsRowNamesWhyAModelCannotBeServed(t *testing.T) {
 	t.Run("the allow-list excludes the model", func(t *testing.T) {
 		// The coder's own model, under a project whose allow-list names the
 		// Claude IDs alone: the arm the ceiling contributes, and the one a run
-		// is refused by whatever its routes say. The mode is off and the price
-		// rule is asked anyway — a run with a gateway prices its calls in every
-		// mode (AB4, D3020) — and the coder's model carries the starter price
-		// its route's entry gives it, so the allow-list is the one problem this
-		// arm sees: one check, one sentence.
-		craftFixtureWith(t, "budget: { allowed_models: [claude-sonnet-5-5], mode: off }\n")
+		// is refused by whatever its routes say. The block names no mode — the arm
+		// that used to say the word `off`, which is refused now (AB2, D3009), and a
+		// mode left unset is observe (C1, R3) — and the price rule is asked anyway:
+		// a run with a gateway prices its calls in every mode (AB4, D3020), and the
+		// coder's model carries the starter price its route's entry gives it, so the
+		// allow-list is the one problem this arm sees: one check, one sentence.
+		craftFixtureWith(t, "budget: { allowed_models: [claude-sonnet-5-5] }\n")
 		out, _, err := execute(t, "craft", "ls", "--json")
 		if err != nil {
 			t.Fatalf("%v\n%s", err, out)

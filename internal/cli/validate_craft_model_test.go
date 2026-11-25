@@ -378,6 +378,7 @@ func TestLaunchTakesTheCraftsTheRunsBootstrapResolves(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, launchCraftAutoRoute)
 	configSkewCheckout(t, f, launchCraftAutoYAML)
+	publishedLayer(t, f, layerPins(launchCraftAutoYAML))
 	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releasePolicy)
 	_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
 	if ExitCode(err) != ExitUserError {

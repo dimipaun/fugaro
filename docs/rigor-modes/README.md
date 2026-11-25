@@ -173,9 +173,8 @@ operators` section:
   T1.5's built-in sensitive-path floors — the security tier's own Critical floor,
   and the one task the plan hands to an operator rather than to a run —
   Slice 5's Hotfix gate, its ready PR and the recorded follow-up task
-  (T5.3–T5.5) — the gate being the one piece
-  [docs/rigor-modes.md](../rigor-modes.md) names as missing — T6.3's per-mode
-  `typical:` line, and the documentation tasks (T7.2, T8.1, T8.3).
+  (T5.3–T5.5), closed 2026-11-18 as superseded by the Hotfix rulings — T6.3's
+  per-mode `typical:` line, and the documentation tasks (T7.2, T8.1, T8.3).
 - **Not a product document — the product document is
   [`docs/rigor-modes.md`](../rigor-modes.md).** This folder is where the design,
   the reconciliation and the plan live, and the two are separate on purpose: a

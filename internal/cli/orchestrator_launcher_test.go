@@ -1216,6 +1216,9 @@ func TestResidentRunIsTheItemsRefusesAFieldNoLaunchWrites(t *testing.T) {
 		}},
 		{"declared paths", "declared paths", func(ts *task.Spec) { ts.Paths = []string{"internal/cli"} }},
 		{"a requested rigor mode", "a requested rigor mode", func(ts *task.Spec) { ts.Rigor = "thorough" }},
+		{"a promote pass", "a promote pass", func(ts *task.Spec) {
+			ts.Promote = &task.Promote{Area: "payments", Paths: []string{"internal/payments/**"}}
+		}},
 		{"a batch label", "a batch label", func(ts *task.Spec) { ts.Batch = "batch-1" }},
 		{"review levels", "review levels", func(ts *task.Spec) { ts.ReviewLevels = &config.ReviewLevels{} }},
 		{"an expected scope", "an expected scope", func(ts *task.Spec) { ts.ExpectedScope = []string{"internal/cli"} }},
@@ -1302,7 +1305,7 @@ func TestResidentTaskFieldsAreAllClassified(t *testing.T) {
 	resolved := []string{"version", "run_id", "ref", "base_branch", "workflow", "requested_by",
 		"mode", "oauth_token", "overrides", "project_layer", "author", "digest_runs"}
 	refused := []string{"branch", "pr", "previous_run", "resumes", "owner_ruled", "context_repos", "review_prs",
-		"change_set", "inputs", "reports", "ab", "mutate", "paths", "rigor", "batch", "review_levels",
+		"change_set", "inputs", "reports", "ab", "mutate", "paths", "rigor", "promote", "batch", "review_levels",
 		"expected_scope", "follow_up_of", "model_grade", "review_class", "compression_off", "debt", "security",
 		"review_spec", "from_findings", "own_text"}
 	// overrides is classified as the launch's own because the launch writes one
