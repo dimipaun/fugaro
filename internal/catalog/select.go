@@ -359,8 +359,8 @@ type ImageRequest struct {
 	// Provider is the provider kind of Canonical's repository ("github",
 	// "bitbucket"): the half of a repo_images key a repository name does not
 	// carry. It names the key RepoImages is read under and is read by nothing
-	// else; a caller that cannot name its repository's provider has no
-	// repo_images answer, rather than a fallback to the old lookup (R10).
+	// else, so a caller that cannot name its repository's provider is answered
+	// by no entry rather than by the legacy map.
 	Provider string
 	// Canonical is the job's repository, as a person spells it ("Acme/App");
 	// the map is read under its canonical form, which is the form the map's

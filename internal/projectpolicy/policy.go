@@ -547,8 +547,9 @@ type Policy struct {
 	// decides what code a job executes, so it is the owner's policy — written by
 	// `fugaro image map set` in the local config and published by `fugaro
 	// update` — and never a key of the shared config in the runs bucket, which
-	// any launcher can write. `sharedForbidden` refuses it there and Shared nils
-	// it.
+	// any launcher can write. Refusing the key there (R7) and nil-ing it out of
+	// the shared config are T0c's and T0b's; until they land, this reader takes
+	// the member wherever it is written.
 	//
 	// ImageMap stays BESIDE it until a step after the credentials service is
 	// redeployed removes it (D3376 as amended): `update` builds images before it

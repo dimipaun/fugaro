@@ -6,8 +6,7 @@ is `provider/owner/name`) and **D3371** (the member is `repo_images` everywhere)
 what a message calls the map ([reconciliation.md](reconciliation.md)). The Go is
 `internal/projectpolicy/repoimages.go` and `internal/catalog/select.go`.
 
-This is the shape every other task compiles against. **T0b**, **S1**, **R1**, **R2a**, **R2b**,
-**R2c**, **R3**, **S2**, **S3** and **X1** are written against it; a side that finds this document
+This is the shape every other task of the plan compiles against; a side that finds this document
 wrong or incomplete raises a change request
 ([docs/contract-first-decoupling](../contract-first-decoupling/spec.md)) rather than working around
 it.

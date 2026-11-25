@@ -11,9 +11,9 @@ import (
 
 // RepoImages is the repo_images block of a policy: the catalog entry each of
 // the project's repositories runs, keyed by the repository's canonical name
-// ("<provider>/<owner>/<name>", Canonical — the spelling allow_repos patterns,
-// clone_urls and task.Slug already use, so one repository has one spelling in
-// this node whatever document names it).
+// ("<provider>/<owner>/<name>", Canonical — the spelling allow_repos patterns
+// and task.Slug already use, so one repository has one spelling in this node
+// whatever document names it).
 //
 // It is the successor of ImageMap, and a member of its own rather than the same
 // member with new keys (D3371): a key that meant owner/name must not start
@@ -123,7 +123,7 @@ func ValidRepoImages(m map[string]string) error {
 		at := fmt.Sprintf("projectpolicy: repo_images[%s]", key)
 		provider, repo, ok := strings.Cut(key, "/")
 		if !ok || !task.ValidProvider(provider) || !canonicalRepoPath(repo) {
-			return fmt.Errorf("%s: a key of the repository-to-image map is <provider>/<owner>/<name>, as github/acme/app: it is the spelling a job's own repository is looked up by, so a key in another form is a key no lookup reaches. Write it with fugaro image map set <provider>/<owner>/<name> <entry>", at)
+			return fmt.Errorf("%s: a repo_images key is <provider>/<owner>/<name>, as github/acme/app: it is the spelling a job's repository is looked up by, so a key in another form is one no lookup reaches; write it with fugaro image map set <provider>/<owner>/<name> <entry>", at)
 		}
 		if !config.ValidCatalogName(m[key]) {
 			return fmt.Errorf("%s: %s", at, config.CatalogNameMessage)
