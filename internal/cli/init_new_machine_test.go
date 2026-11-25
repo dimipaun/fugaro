@@ -163,7 +163,7 @@ func TestAdoptOlderInstallationReportsNoChanges(t *testing.T) {
 			t.Errorf("stage %s is %s (%s), want done, skipped, or changed", s.Name, s.State, s.Detail)
 		}
 	}
-	for name, state := range map[string]initflow.State{"installation": "done", "plugin": "skipped", "repository": "skipped"} {
+	for name, state := range map[string]initflow.State{"installation": "done", "plugin": "done", "repository": "skipped"} {
 		if states[name] != state {
 			t.Errorf("stage %s is %q, want %q\nstages %+v", name, states[name], state, res.Stages)
 		}
@@ -171,10 +171,10 @@ func TestAdoptOlderInstallationReportsNoChanges(t *testing.T) {
 	if !strings.Contains(details["installation"], "No changes") {
 		t.Errorf("the installation stage says %q, want No changes", details["installation"])
 	}
-	// The plugin stage has nothing to do: no claude in this rig, so there is no
-	// install to make, and the pin is not its write (U6a).
-	if !strings.Contains(details["plugin"], "claude is not on PATH") {
-		t.Errorf("the plugin stage says %q, want the install half's own skip\nstages %+v", details["plugin"], res.Stages)
+	// The plugin stage has nothing to do: this machine already has this
+	// release's plugin, and the checkout's pin is not its write (U6a).
+	if !strings.Contains(details["plugin"], "No changes") {
+		t.Errorf("the plugin stage says %q, want No changes\nstages %+v", details["plugin"], res.Stages)
 	}
 	pinned := `{"extraKnownMarketplaces":{"fugaro":{"source":{"source":"github","repo":"dimipaun/fugaro","ref":"v0.2.0"}}},"enabledPlugins":{"fugaro@fugaro":true}}` + "\n"
 	if got := convergeRead(t, settings); got != pinned {
