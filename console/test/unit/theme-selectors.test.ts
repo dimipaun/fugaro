@@ -113,8 +113,8 @@ const SCANNED: readonly string[] = Object.freeze([
   'manage.css',
 ])
 
-/** RAIL_HOOKS is the rail's fourteen classes, which §2.1 names and §4.1 draws as
- * fifteen elements (the name line, the warning mark and the empty-state line
+/** RAIL_HOOKS is the rail's fifteen classes, which §2.1 names and §4.1 draws as
+ * sixteen elements (the name line, the warning mark and the empty-state line
  * are the owner's design ruling of 2026-10-25; the collapse control went with
  * the rail's column when the header switcher replaced it on 2026-10-28). They
  * are listed here because the count is the claim: the stylesheet selects these
@@ -132,6 +132,7 @@ const RAIL_HOOKS: readonly string[] = Object.freeze([
   'console-rail-state',
   'console-rail-spend',
   'console-rail-add',
+  'console-rail-add-project',
   'console-rail-empty',
   'console-rail-hint',
 ])
@@ -1038,11 +1039,12 @@ describe('the theme’s selectors against the design’s §2 inventory', () => {
     expect(unknown, 'a rule selects an attribute the design’s §2 does not name').toEqual([])
   })
 
-  it('selects the rail’s fourteen hooks and no fifteenth', () => {
-    // "Fourteen hooks on fifteen elements" (design §2.1 and §4.1): the foot row
-    // and the button inside it share `console-rail-add`. A fifteenth
-    // `console-rail-*` class in the stylesheet would be a hook either the entry
-    // does not draw or §2.1 does not list, and both are the same defect.
+  it('selects the rail’s fifteen hooks and no sixteenth', () => {
+    // "Fifteen hooks on sixteen elements" (design §2.1 and §4.1): the foot row
+    // and the button inside it share `console-rail-add`, and the foot's second
+    // door is a class of its own (SW3c). A sixteenth `console-rail-*` class in
+    // the stylesheet would be a hook either the entry does not draw or §2.1 does
+    // not list, and both are the same defect.
     const rail = selectorsIn(readTheme('base.css')).classes.filter((name) => name.startsWith('console-rail'))
     expect(rail).toEqual([...RAIL_HOOKS].sort())
   })

@@ -70,13 +70,18 @@ func needsAnthropicKey(lc *localcfg.Config, cfg *config.Config, repo string) boo
 // a mode left unset and the word that is not a mode any more are both no mode
 // at all, so the layer writes nothing and every reader of the merge asks C1
 // what the effective mode is (D3009, R3).
+//
+// The mode is read off the block the config *writes* and not through
+// localcfg.BudgetMode, which answers observe for a mode nobody wrote (AB2,
+// D3010): a project that sets no budget at all has no ceiling to announce, and
+// a layer that carried observe for every installation would give it one.
 func ceilingLayer(lc *localcfg.Config) policy.Layer {
 	var l policy.Layer
 	if b := lc.Budget; b != nil {
 		l.PerRunUSD, l.MaxRunTokens, l.AllowedModels = b.PerRunUSD, b.MaxRunTokens, b.AllowedModels
-	}
-	if m := lc.BudgetMode(); m != "" && !policy.Mode(m).Removed() {
-		l.Mode = m
+		if b.Mode != "" && !policy.Mode(b.Mode).Removed() {
+			l.Mode = b.Mode
+		}
 	}
 	return l
 }

@@ -202,7 +202,7 @@ func wu8MirrorDoc(t *testing.T, members []workspace.MirrorEntry) []byte {
 		}
 		entries = append(entries, map[string]any{"address": m.Address, "kind": string(m.Kind), "external": m.External})
 	}
-	raw, err := json.Marshal(map[string]any{"members": entries})
+	raw, err := json.Marshal(map[string]any{"version": workspaceMirrorVersion, "members": entries})
 	if err != nil {
 		t.Fatalf("the test's own mirror: %v", err)
 	}

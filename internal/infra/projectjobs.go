@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
 )
@@ -1312,20 +1313,23 @@ func profilesAsPolicy(profiles map[string]config.JobProfile) map[string]projectp
 }
 
 // projectJobEnv is the installation's half of a project job's plain
-// environment: its identity and the budget backend's address and web key, and
-// nothing else. ProjectJobs adds the two values that follow from the profile
-// and the job — the GitHub App's ID (non-secret, owner ruling of 2026-10-17)
-// and runner.SecretEnvsVar, the list of variables that job's secrets are
-// mounted as.
+// environment: its identity, the budget backend's address and web key, and the
+// mode the installation's own config names, and nothing else. ProjectJobs adds
+// the two values that follow from the profile and the job — the GitHub App's
+// ID (non-secret, owner ruling of 2026-10-17) and runner.SecretEnvsVar, the
+// list of variables that job's secrets are mounted as.
 //
 // It is deliberately *not* budgetEnv, which sets per-repository values too
-// (the token ceiling, the model allow-list, the price overrides and the
-// deploy-time mode come from the repository's own config and its policy): a
-// project job is shared, so those ride the execution (plan task 3.3) instead
+// (the token ceiling, the model allow-list and the price overrides come from
+// the repository's own config and its policy): a project job is shared, so
+// those ride the execution (plan task 3.3) instead
 // of sitting in the job, where one repository's ceiling would become every
 // repository's. What stays is what belongs to the installation (D11, plan
 // task 1.4 step 1): a job deployed without the two backend variables cannot
-// read the project's policy at all.
+// read the project's policy at all, and the mode it names is the
+// installation's own — the fallback for a run whose policy node is absent
+// (AB5, F20, P3), while the mode a run really runs under is the published
+// policy's, which is stricter.
 //
 // vertex is the installation's own Vertex setting — the same one that becomes
 // the job's Vertex grant, and the same one a per-repository workflow reads at
@@ -1356,6 +1360,13 @@ func projectJobEnv(lc *localcfg.Config, bucket string, vertex bool) map[string]s
 			env[FirebaseAPIKeyEnv] = b.FirebaseAPIKey
 		}
 	}
+	// A shared job names its mode too (AB5, F20): no launcher puts one on the
+	// execution, so a job without the entry takes its mode from the published
+	// policy alone, and an older image reads a missing entry as off — the mode
+	// this release removed. The mode named here is the installation's, the same
+	// one its own config gives its jobs: a repository admitted to the profile
+	// cannot put its own on a job every repository of the profile shares.
+	env[BudgetModeEnv] = policy.Mode(lc.BudgetMode()).Effective()
 	return env
 }
 
