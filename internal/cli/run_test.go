@@ -114,7 +114,12 @@ func TestRunHumanOutput(t *testing.T) {
 // and printing it would be a chain of one: the shortening D1047 forbids
 // wherever an id is read back as the chain's. A chain the read could not follow
 // to the run that began it is named as well, with no id and no absence, because
-// an absent line here is what a launch that began a chain prints.
+// an absent line here is what a launch that began a chain prints. Every chain a
+// launch reads is the budget database's (AB4, F7: a launch exists only on an
+// installation that has one), so the marker is ENFORCED in every one of them —
+// the UNENFORCED marker belongs to the reading of a chain no database can
+// answer for, which `runs show` prints and no launch produces
+// (TestRunsShowMarksAChainWithNoDatabaseUnenforced).
 func TestLaunchTextNamesTheChainOnlyWhenThereIsOne(t *testing.T) {
 	t.Run("a launch that joins a chain", func(t *testing.T) {
 		f := chainRig(t)
@@ -123,7 +128,7 @@ func TestLaunchTextNamesTheChainOnlyWhenThereIsOne(t *testing.T) {
 		if err != nil {
 			t.Fatalf("run --pr: %v (%s)", err, errOut)
 		}
-		want := "  chain " + jsonRoot + " (4 runs, UNENFORCED)"
+		want := "  chain " + jsonRoot + " (4 runs, ENFORCED)"
 		if !strings.Contains(out, want) {
 			t.Errorf("output:\n%s\nwant it to name the chain:\n%s", out, want)
 		}
@@ -135,7 +140,7 @@ func TestLaunchTextNamesTheChainOnlyWhenThereIsOne(t *testing.T) {
 		if err != nil {
 			t.Fatalf("run --pr: %v (%s)", err, errOut)
 		}
-		want := "  chain unread: a link in it stops at a run the bucket no longer holds (UNENFORCED)"
+		want := "  chain unread: a link in it stops at a run the bucket no longer holds (ENFORCED)"
 		if !strings.Contains(out, want) {
 			t.Errorf("output:\n%s\nwant it to say the chain could not be followed:\n%s", out, want)
 		}
@@ -733,6 +738,7 @@ func TestRunResolvesFromTheCheckout(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(dir)
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseSeal)
 	if _, _, err := execute(t, "run", "--run-id", "20260927-100000-abcd", "A task"); err != nil {
 		t.Fatal(err)
 	}
@@ -900,6 +906,9 @@ func timeoutCheckout(t *testing.T, f *cloudFixture) {
 	t.Helper()
 	testutil.IsolateGit(t)
 	f.run.AddJob(gcp.JobName(mustSlug("github", "acme/other"), "svc"), "2", "4Gi")
+	// A job image the seal's gate can read: a launch from this checkout mints
+	// like every other one (AB4, F7).
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseSeal)
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
@@ -982,27 +991,29 @@ func TestRetryRefusesTotalTimeout(t *testing.T) {
 // block, after the image gates and before createTask, so an over-memory
 // artifact launch is refused with nothing written at all — no task, no
 // execution. The runner's own bootstrap is the third arm, for a launch whose
-// recipe the launcher cannot resolve.
+// recipe the launcher cannot resolve. The recipe is the project's copy of
+// acme/other's own artifact recipe, which is what a launch of that repository
+// resolves (D3303).
 func TestAnArtifactLaunchRefusesACapSetThatCannotFitMemory(t *testing.T) {
 	f := newCloudFixture(t)
 	testutil.IsolateGit(t)
 	f.run.AddJob(gcp.JobName(mustSlug("github", "acme/other"), "svc"), "2", "4Gi")
-	// A job image whose runner knows mode: artifact (artifactsSince): a spec
-	// carrying the mode is refused outright by an older one, so the launch
-	// would be refused by that gate before it reached the memory arithmetic
-	// this test is about.
-	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", release080)
+	// A job image whose runner knows mode: artifact (artifactsSince, below the
+	// seal) and the sealed budget token (releaseSeal): a spec carrying the mode
+	// is refused outright by an older one, so the launch would be refused by
+	// that gate before it reached the memory arithmetic this test is about, and
+	// every launch of this installation mints and is judged by the seal's gate
+	// (AB4, F7).
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseSeal)
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
 	yaml := "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\n" +
 		"workflows:\n  svc:\n    commands: { build: sh build.sh, test: sh test.sh, render: sh render.sh }\n" +
 		"    resources: { memory: 2Gi }\n"
-	testutil.WriteFiles(t, dir, map[string]string{
-		"fugaro.yaml":                 yaml,
-		".fugaro/recipes/sizzle.yaml": "version: 1\nname: sizzle\nmode: artifact\noutputs: { globs: [out/*.mp4] }\nsteps:\n  - render: {}\n",
-	})
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": yaml})
 	t.Chdir(dir)
+	repoRecipeCopy(t, f, "acme/other", "sizzle", projectSizzle)
 	_, _, err := execute(t, "run", "--recipe", "sizzle", "--run-id", "20261015-100000-a1b2", "Render the sizzle reel")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "resources.memory 2Gi") ||
 		!strings.Contains(err.Error(), "5 GiB") {
@@ -1613,14 +1624,20 @@ const release0112 = "ghcr.io/dimipaun/fugaro-base:0.11.2"
 // Mutation (drop the spec.PlanTask block from finishLaunch's built-image
 // branch): the launch goes through on the 0.8.0 image and fails at
 // bootstrap instead, and this test fails.
+//
+// The 0.8.0 image is below the seal's floor as well (releaseSeal), so the two
+// refusals are distinguishable: the first case is refused by the plan task's
+// gate, which answers first, and the third by nothing at all.
 func TestRunPlanTaskGatesOnTheImageThatKnowsIt(t *testing.T) {
 	f := newCloudFixture(t)
 	writeBuildRecord(t, f, appSlug, "web", release080)
 	wantRefused(t, f, "a plan task (--plan-task) needs a job image whose runner knows the plan task (fugaro "+planTaskSince+" or later)",
 		"run", "--repo", "acme/app", "--plan-task", "setup-wizard/W1.3", "Add a feature")
-	// The same image, a launch with no plan task: not gated, because the
-	// spec has no such field in it.
-	writeBuildRecord(t, f, appSlug, "web", release080)
+	// An image below the plan task's floor but at the seal's: a launch with no
+	// plan task is not gated, because the spec has no such field in it — and the
+	// image still has to read the sealed token, since every launch of this
+	// installation mints one (AB4, F7).
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261024-120000-abcd", "Add a feature"); err != nil {
 		t.Fatalf("a launch with no --plan-task must not be gated: %v", err)
 	}
@@ -1673,6 +1690,7 @@ func TestFollowUpDoesNotInheritThePlanTask(t *testing.T) {
 	root := firstRunSpec(rootID)
 	root.PlanTask = "setup-wizard/W1.3"
 	seedSpec(t, f, root, false)
+	seedTitleAwareImage(t, f)
 	rec := prRecord(rootID, "", 7, 1)
 	rec.StartedAt = time.Now().Add(-72 * time.Hour)
 	writeRecord(t, f, rootID, rec)
@@ -1894,6 +1912,13 @@ func TestACatalogDockerImageIsRefusedOnCloudRunBeforeTheLaunch(t *testing.T) {
 	// The job this launch runs on, deployed with the image the catalog gave
 	// it: the rule reads the deployed job, and not a fresh selection.
 	f.run.SetJob(gcp.JobName(appSlug, "web"), nil, "ghcr.io/acme/dind:1")
+	// The entry's own record, so the launch reaches the rule this test is
+	// about: every launch of an installation with a database mints, and the
+	// seal's image gate judges the image it would start on (AB4, F7) — an entry
+	// with no record at all is refused there, before the docker tag is asked.
+	// A record whose base is not a release passes that gate with its warning,
+	// which is the state a project image built by hand is in.
+	writeEntryBaseRecord(t, f, appSlug, "dind", "ghcr.io/acme/dind-base:dev")
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261103-100000-a1b2", "Add a feature")
 	if err == nil || !strings.Contains(err.Error(), "Cloud Run gen-2 has no Docker daemon") {
 		t.Fatalf("err = %v, want the docker tag's Cloud Run refusal", err)

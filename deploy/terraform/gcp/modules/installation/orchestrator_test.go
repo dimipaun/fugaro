@@ -62,6 +62,18 @@ var orchestratorResources = []struct{ typ, name string }{
 	// without roles/run.invoker before the container runs.
 	{"google_cloud_run_v2_service_iam_member", "orchestrator_credentials_invoker"},
 	{"google_cloud_scheduler_job", "orchestrator_tick"},
+	// The operators' token creation on the account itself, which the daemon on
+	// an operator's machine needs to mint its ID token (the one use of
+	// var.operators this file admits).
+	{"google_service_account_iam_member", "fugaro_orchestrator_token_creator"},
+	// The consumer's one signing grant (mobile-identity-pairing plan task J6;
+	// O17), and the reason it is HERE rather than beside the key it is on: this
+	// file is the table's, and TestOrchestratorIsNeverALauncher refuses the
+	// account's address as a member in any other file. The key, its ring and
+	// the role it grants are mailbox_key.tf's; this row binds that account to
+	// that role on that one key, which is O17's "the mailbox consumer's account
+	// only" (§4.2-§4.3's "it signs its replies through J6's KMS signer").
+	{"google_kms_crypto_key_iam_member", "orchestrator_mailbox_signer"},
 }
 
 // tfBlock returns the body of the resource block for typ and name, or "" when
@@ -253,6 +265,14 @@ func TestOrchestratorModuleGrantsTheDesignsTable(t *testing.T) {
 // table's.
 func TestOrchestratorIsNeverALauncher(t *testing.T) {
 	src := tfSource(t, orchestratorTF)
+	// The operators' token creation on the account is the one admitted use of
+	// var.operators: it grants operators the right to act as the account and
+	// never puts the account on a people list.
+	const operatorsFor = "for_each = local.orchestrator_on ? toset(var.operators) : toset([])"
+	if strings.Count(src, operatorsFor) != 1 {
+		t.Errorf("%s does not carry the operators' token-creator for_each exactly once", orchestratorTF)
+	}
+	src = strings.Replace(src, operatorsFor, "", 1)
 	for _, never := range []string{
 		"var.launchers", "var.operators", "var.viewers", "var.launcher_accounts",
 		"roles/firebasedatabase.viewer", "roles/datastore.viewer", "roles/serviceusage.serviceUsageConsumer",
@@ -415,13 +435,16 @@ func TestOrchestratorServiceIsTheDesignsShape(t *testing.T) {
 		`time_zone = "Etc/UTC"`,
 		"retry_count = 0",
 		`http_method = "POST"`,
-		`uri         = "${google_cloud_run_v2_service.orchestrator[0].uri}${local.orchestrator_tick_path}"`,
+		`uri         = "${local.orchestrator_url}${local.orchestrator_tick_path}"`,
 		`service_account_email = google_service_account.scheduler.email`,
-		`audience              = google_cloud_run_v2_service.orchestrator[0].uri`,
+		`audience              = local.orchestrator_url`,
 	} {
 		if !strings.Contains(tick, need) {
 			t.Errorf("%s: the tick does not carry %q:\n%s", orchestratorTF, need, tick)
 		}
+	}
+	if !strings.Contains(src, `orchestrator_url = local.orchestrator_on ? "https://${var.orchestrator.service}-${data.google_project.this[0].number}.${var.region}.run.app" : ""`) {
+		t.Errorf("%s: the tick's URL is not the service's deterministic <service>-<project number>.<region>.run.app: the `.uri` attribute is the a.run.app form, which internal/infra/tf's cover cannot tie to this project and refuses", orchestratorTF)
 	}
 	// The token is an ID token and not an access token: Cloud Run's front end
 	// admits a run.app caller by the ID token whose audience is the service,
@@ -471,6 +494,9 @@ func TestOrchestratorLeavesAPlanUntouchedWhenItIsOff(t *testing.T) {
 	twoSwitches := map[string]string{
 		"google_cloud_run_v2_service_iam_member.orchestrator_credentials_invoker": "count = local.orchestrator_credentials_on ? 1 : 0",
 		"google_service_account_iam_member.orchestrator_token_minter":             "count = local.orchestrator_on && var.people_minter ? 1 : 0",
+		// The operators' grant is a for_each over the operators, off with the
+		// orchestrator by an empty set.
+		"google_service_account_iam_member.fugaro_orchestrator_token_creator": "for_each = local.orchestrator_on ? toset(var.operators) : toset([])",
 	}
 	for _, r := range orchestratorResources {
 		block := tfBlock(src, r.typ, r.name)

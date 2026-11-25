@@ -1110,6 +1110,82 @@ span.run-tolerated-fix-cost {
   text-align: right;
 }
 
+/* The run's review levels: one row per level, the rounds its loop spent drawn
+ * against the cap the run's plan resolved for it (V1.3).
+ *
+ * **The bar is a text bar, exactly as `div.live-bar` above is**: its fill is the
+ * share it was drawn at, in the percent the console prints, and the tone under
+ * the text says whether that share is a measurement -- `--accent` when the
+ * document carries a cap to measure against, `--stale` when it does not, which
+ * is the same n/a `live-bar` draws for a cap nobody read. **A tone here is a
+ * statement about the reading and never about the level**: a level at its cap is
+ * a loop that used the rounds it was given and not an alarm, so nothing turns
+ * red at 100% (design section 6.1 rule 3, and the reason `span.run-stage-deadline`
+ * is uncoloured too).
+ *
+ * **The tone is the class and never a `data-state`**: this is the Run screen,
+ * where availability is the text and the reason in `title` and nothing else
+ * (design section 2.9), so `div.run-level-bar` carries the state as the word
+ * `run-level-bar-absent` names it rather than as an attribute -- the same
+ * spelling `p.run-split-absent` and `p.run-meta-absent` use for the absent case
+ * of their own figures, and the reason `bar()`'s `data-state` is not copied
+ * here.
+ *
+ * **The cap's own edge on that scale is the mark beside the text**
+ * (`run-level-cap-mark`), and it is drawn only where the document carries a cap:
+ * a level whose cap nobody resolved has no edge to mark, which is the bar V1.3
+ * says must not draw a full mark. The mark is a short vertical rule at the end
+ * of the bar's box -- the scale's right edge, where the cap sits -- and it is
+ * painted with the border tone rather than a state colour, because it is
+ * geometry. */
+li.run-level {
+  display: flex;
+  gap: var(--space-2xs);
+  align-items: baseline;
+}
+
+span.run-level-name {
+  min-width: 3ch;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+div.run-level-bar {
+  display: flex;
+  min-width: 6ch;
+  padding-inline: var(--space-2xs);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--font-size-sm);
+  text-align: right;
+  border-bottom: 3px solid var(--accent);
+}
+
+div.run-level-bar-absent {
+  color: var(--text-muted);
+  border-bottom-color: var(--stale);
+}
+
+span.run-level-cap-mark {
+  align-self: stretch;
+  border-right: var(--border-width) solid var(--border-strong);
+}
+
+p.run-level-figures {
+  display: flex;
+  gap: var(--space-3xs);
+  align-items: baseline;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+p.run-levels-absent {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
 /* The pull request is drawn as text with **no link at all**: `run.link` is
  * typed `null` and `PR_NO_LINK_REASON` explains why (design section 2.6), so
  * there is no anchor here to style. The one anchor the screen can draw is a log
@@ -1394,13 +1470,25 @@ main p {
   border-radius: var(--radius-sm);
 }
 
+/* The Add project door (SW3c, R4), under the list it adds a second project to:
+ * one button and no heading, because it is an action beside the installations
+ * rather than a section about them. It is drawn by the view only when the list
+ * has rows -- a console with no installation is already showing the first-run
+ * screen -- and its click opens the setup wizard in the dashboard window, which
+ * is why nothing here draws a form. */
+#picker-new-project {
+  margin-bottom: var(--space-md);
+}
+
 /* Every control of the picker is a button -- a row's Choose, Chosen, Use …
- * and Remove, and the onboarding screen's one link -- and a button's boundary
- * is `--border-strong`: `--border` is a decorative hairline and may never mark
- * a control's extent (design section 3.2's role table, and the
- * `--border`-is-decorative case in `test/unit/theme-tokens.test.ts`). */
+ * and Remove, the onboarding screen's one link, and the Add project door --
+ * and a button's boundary is `--border-strong`: `--border` is a decorative
+ * hairline and may never mark a control's extent (design section 3.2's role
+ * table, and the `--border`-is-decorative case in
+ * `test/unit/theme-tokens.test.ts`). */
 #picker-list button,
-#picker-onboarding button {
+#picker-onboarding button,
+#picker-new-project button {
   padding: var(--space-2xs) var(--space-xs);
   color: var(--text);
   border: var(--border-width) solid var(--border-strong);
@@ -1409,7 +1497,8 @@ main p {
 }
 
 #picker-list button:hover,
-#picker-onboarding button:hover {
+#picker-onboarding button:hover,
+#picker-new-project button:hover {
   color: var(--accent-ink);
 }
 
@@ -1418,7 +1507,8 @@ main p {
  * view draws is disabled together while a request is in flight, so this is one
  * rule over both sets rather than a rule per button. */
 #picker-list button:disabled,
-#picker-onboarding button:disabled {
+#picker-onboarding button:disabled,
+#picker-new-project button:disabled {
   color: var(--text-muted);
   border-style: dashed;
 }
@@ -2103,6 +2193,16 @@ p.graph-empty {
 
   div.live-bar[data-state='unavailable'],
   li.live-burn-bar[data-state='gap'] {
+    border-color: GrayText;
+  }
+
+  /* The run's level bars are fills of the same kind, and their tone is the
+   * class rather than a state (design section 2.9). */
+  div.run-level-bar {
+    border-bottom-color: Highlight;
+  }
+
+  div.run-level-bar-absent {
     border-color: GrayText;
   }
 

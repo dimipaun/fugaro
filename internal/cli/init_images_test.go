@@ -58,9 +58,13 @@ func newImagesRegistry(t *testing.T) *imagesRegistry {
 }
 
 // publish makes repo:tag an index with one linux/amd64 image.
-func (r *imagesRegistry) publish(repo, tag string) {
+func (r *imagesRegistry) publish(repo, tag string) { r.publishLayer(repo, tag, "layer of "+repo) }
+
+// publishLayer is publish with the one layer's content named, so two releases
+// of a repository can be two different images.
+func (r *imagesRegistry) publishLayer(repo, tag, content string) {
 	cfg := []byte(`{"os":"linux","architecture":"amd64"}`)
-	layer := []byte("layer of " + repo)
+	layer := []byte(content)
 	r.blobs[cdg(cfg)], r.blobs[cdg(layer)] = cfg, layer
 	im, _ := json.Marshal(map[string]any{"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
 		"config": map[string]any{"digest": cdg(cfg), "size": len(cfg)}, "layers": []any{map[string]any{"digest": cdg(layer), "size": len(layer)}}})
@@ -76,6 +80,15 @@ func (r *imagesRegistry) handle(w http.ResponseWriter, q *http.Request) {
 	defer r.mu.Unlock()
 	p := strings.TrimPrefix(q.URL.Path, "/v2/")
 	switch {
+	case strings.HasSuffix(p, "/tags/list"):
+		repo := strings.TrimSuffix(p, "/tags/list")
+		var tags []string
+		for k := range r.tags {
+			if t, ok := strings.CutPrefix(k, repo+":"); ok {
+				tags = append(tags, t)
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"name": repo, "tags": tags})
 	case strings.Contains(p, "/blobs/uploads/"):
 		repo, id, _ := strings.Cut(p, "/blobs/uploads/")
 		switch q.Method {
@@ -551,7 +564,7 @@ func TestHistoryLatestNeedsReplaceImage(t *testing.T) {
 // ordinary covered row of both front doors — so a person at the terminal is
 // what replaces the tag, with nothing typed at them, and the same call site in
 // `update` takes the same answer (update_test.go's
-// TestUpdateAppliesTheFourStepsItOwns). A run that has no terminal to be at (a
+// TestUpdateAppliesTheThreeStepsItOwns). A run that has no terminal to be at (a
 // pipe, --json, a coding agent's session) leaves the replacement to the user
 // with the one-line route and moves nothing. The real rule is in force here.
 //

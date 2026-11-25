@@ -129,7 +129,8 @@ closed, not yours to read) the restore proceeds only on --budget and
 --budget-currency. The billing account is always yours to give: the creation
 fact is not a credential and records none.
 
-NEW_PROJECT_ID must not exist: an existing project is refused (Fugaro only starts fresh).
+NEW_PROJECT_ID must not exist: restore creates a project, and adopts nothing
+(setup is the command that adopts one that holds nothing of Fugaro's).
 If the creation fails or does not end in a project this run created and
 marked, the local project config file is put back as it was and the restore
 can be run again; what the creation did in the cloud (the project, its
@@ -1033,7 +1034,7 @@ func (rr *restoreRun) say(format string, args ...any) {
 // sayThrough is the writer a command prints its own lines through: the writer
 // it was given — a person's stdout, or the stderr a warning belongs on — and
 // the run's log beside it (D1352, Reporter.Log), so the log is the run's full
-// output and not only its steps, and a failure's "full output:" path holds the
+// output and not only its steps, and a failure's "Log:" path holds the
 // sentences the run printed under its step.
 func sayThrough(rep *report.Reporter, w io.Writer) io.Writer {
 	return through(rep, w, true)
@@ -1367,7 +1368,7 @@ func restoreNotRestored(old *localcfg.Config, newID string) []string {
 		fmt.Sprintf("the runs that were in flight, and their RTDB counters: they ended with %s, and nothing here starts them again", old.GCPProject),
 		fmt.Sprintf("the spend history and the kill switch state: they lived in %s's Firestore database and RTDB, and a restore carries neither across", old.GCPProject),
 		fmt.Sprintf("the Firestore and RTDB application data of %s: the usage, the counters and every document the project held are gone, and this restore does not copy them", old.GCPProject),
-		"the Firestore database's location: the new project's is chosen once, by fugaro update --firebase-project <gcp-project-id>, and it can never be changed afterwards (a database of another location is never adopted)",
+		"the Firestore database's location: the new project's database is created where that installation's own region puts it, and a location can never be changed afterwards (a database that is already there is adopted where it is when it is empty or carries Fugaro's mark)",
 		"every secret value: the secrets are in the old project's Secret Manager and are never carried across. Set them again in the new project with fugaro secrets set, and treat the old values as disclosed if the old project was not deleted for you alone",
 		fmt.Sprintf("the plan files that were never stored: nothing reads a plan out of %s's state, and nothing here reads prior state either — the root is applied from zero", old.GCPProject),
 		fmt.Sprintf("%s: the owner's delete list is NOT carried across, and nothing this restore runs re-creates it. Write it again with fugaro allow-delete, and until you do, every delete and every replacement in %s is refused (D74)", managed.AllowDeleteObject, newID),

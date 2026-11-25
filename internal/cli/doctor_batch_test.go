@@ -15,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	crm "google.golang.org/api/cloudresourcemanager/v1"
 )
 
@@ -1098,6 +1099,107 @@ func TestValidateAgreesWithDoctorOnTheClaim(t *testing.T) {
 			}
 			if got, want := strings.Contains(optIn, "withdrawn"), tc.name == "a block whose opt-in was withdrawn"; got != want {
 				t.Errorf("the sentence does not name the state the fact is in (withdrawn=%v, want %v): %s", got, want, optIn)
+			}
+		})
+	}
+}
+
+// The check asks budgetMintOn, the function a launch decides with, so these
+// configs are the states of its own answer: a budget database, with the signer
+// account a run's identity is minted through -- which mints whatever the mode
+// says and whether or not a policy is published (AB4, F7) -- and no database at
+// all, where nothing mints because no launch of the installation happens (the
+// launcher refuses it with the fix), so the pair this check reads is not what
+// stops it and the check has nothing to report.
+//
+// A database with no signer yet is refused here as well, which is the one shape
+// where an arm of this check could drift from `fugaro validate`'s offline arm:
+// the pair is the database's own (AB4, F7), and the two readers of it answer
+// for the same configs (validate_batch.go's case is a block with the same two
+// fields and no signer).
+//
+// Mutation (drop the check from doctorBatchChecks): the minting cases read as
+// absent, and every "doctor reports no batch-budget-seal check" assertion
+// fails. Mutation (read the mode again): the two off cases stop being refused,
+// which is the direction AB4 closed. Mutation (read the signer): the
+// database-with-no-signer case passes and fails here.
+func TestDoctorBatchRefusesAMintingInstallation(t *testing.T) {
+	// budgetYAML is one installation's budget block, with a database of its own
+	// per case: a policy published for one case must not be found by another.
+	budgetYAML := func(t *testing.T, mode string, publish bool, signer string) string {
+		t.Helper()
+		db := gcpfake.NewRTDB(t)
+		if publish {
+			db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+			db.Set(projectpolicy.PathShared(), map[string]any{"version": projectpolicy.Version})
+		}
+		block := "budget: { mode: " + mode + ", per_run_usd: 5, firebase_project: proj-1234, rtdb_url: " + db.URL
+		if signer != "" {
+			block += ", token_signer: " + signer
+		}
+		return block + " }\n"
+	}
+	for _, tc := range []struct {
+		name       string
+		mode       string
+		publish    bool
+		noDatabase bool
+		noSigner   bool
+		mints      bool
+	}{
+		{name: "a budget mode that mints", mode: "enforce", mints: true},
+		{name: "a mode that says off with nothing published", mode: "off", mints: true},
+		{name: "a mode that says off with a published policy", mode: "off", publish: true, mints: true},
+		{name: "a database with no signer yet", mode: "enforce", noSigner: true, mints: true},
+		{name: "an installation with no budget database", noDatabase: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, f := newDoctorRig(t), newBatchFakes(t)
+			batchProvisioned(t, r, f)
+			signer := testSigner
+			if tc.noSigner {
+				signer = ""
+			}
+			block := batchLists + budgetYAML(t, tc.mode, tc.publish, signer)
+			if tc.noDatabase {
+				block = batchLists + "budget: { per_run_usd: 5 }\n"
+			}
+			r.withBatchSelected(t, f, batchBlock, block)
+			o := r.runDoctorJSON(t)
+			c, ok := doctorCheckByID(o.Checks, "batch-budget-seal")
+			if !ok {
+				t.Fatalf("doctor reports no batch-budget-seal check for an installation that selects the backend")
+			}
+			if !tc.mints {
+				if !c.OK {
+					t.Fatalf("an installation that does not mint is refused by the pair check: %+v", c)
+				}
+				return
+			}
+			if c.OK {
+				t.Fatalf("an installation that mints and selects the backend reads ok: %+v", c)
+			}
+			if c.Severity != "" {
+				t.Errorf("the pair has severity %q, want doctor's own hard failure: an installation that selects the backend is refused for it", c.Severity)
+			}
+			for _, want := range []string{"mints budget tokens", "docs/budget-token-channel/spec.md", "§1.6"} {
+				if !strings.Contains(c.Problem, want) {
+					t.Errorf("the finding does not name %q: %s", want, c.Problem)
+				}
+			}
+			// The repair is the installation's own answer, and it is the one
+			// thing provisioning cannot change: this backend stays unselected.
+			for _, want := range []string{"cloud-run", "Task 14"} {
+				if !strings.Contains(c.Fix, want) {
+					t.Errorf("the fix does not name %q: %s", want, c.Fix)
+				}
+			}
+			if !o.OK {
+				// The gate itself: doctor refuses the installation, not merely
+				// one of its lines.
+				if len(failingChecks(o)) == 0 {
+					t.Errorf("doctor is refused with no hard failure to name: %+v", o.Checks)
+				}
 			}
 		})
 	}

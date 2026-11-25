@@ -349,6 +349,19 @@ func TestSettingsJSONOwnerMatchesTheRefusalSettingsSetPrints(t *testing.T) {
 			t.Errorf("%s: settings set wrote a key the document says %s owns", r.Key, *row.Owner)
 			continue
 		}
+		// A lifted key is refused with the one sentence the contract holds for
+		// it (C1), and that sentence names the key's new home rather than the
+		// family the read still carries: the key left a repository's file for
+		// the project (D3237), so the column beside it is the pre-lift family —
+		// the writers that state the key in its new home move it in their own
+		// task, and the refusal is what must be true meanwhile. The row is held
+		// to the sentence, which is what a person reads.
+		if k, lifted := liftedKeyAt(r.Key); lifted {
+			if !strings.Contains(err.Error(), k.Why) {
+				t.Errorf("%s: the row is lifted, and `settings set` refuses it with %q rather than the sentence C1 holds: %q", r.Key, err, k.Why)
+			}
+			continue
+		}
 		family, namedByTheWrite := settingsFamilyCommands[r.Owner]
 		if !namedByTheWrite {
 			continue

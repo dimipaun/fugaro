@@ -11,10 +11,17 @@ package cli
 // own (C2's MemberOps and the intake it sweeps through), and the identity it
 // reads is offboardCaller's. Nothing here touches a database, a service, a
 // credential or a person's terminal.
+//
+// Its second half is the workspace half (WC10, F21): offboardWorkspacePerson
+// drives that core over every member a person holds and then sweeps the
+// WORKSPACE's own intake, whose containers the members' sweeps never reach
+// (D2960). TestTheSweepRunsWhenAMemberRefused pins the order and the "whatever
+// they answered".
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -409,12 +416,12 @@ func TestOffboardMemberWaitsForTheAdminList(t *testing.T) {
 // TestOffboardMemberAudits: the act is created in the MEMBER's own trail, once
 // and create-only (D2811) — a project admin holds no write on the workspace's
 // project, which is where the workspace's own trail lives (F11, D2813) — and
-// the entry says what happened: the act, the instant, who did it, which member
-// it was on and which person it was about.
+// the entry is C1's own event, which is the document that trail holds and the
+// shape every reader of it reads back (contract.md, "The audit event").
 //
 // Its name is a key of that node and not the person's address: a Realtime
-// Database key carries no dot, and every address does. Two entries that
-// recorded the same thing would be one entry, which is what create-only means.
+// Database key carries no dot, and every address does, so the id is minted for
+// the event rather than built from what it is about (C1's NewAuditEventID).
 func TestOffboardMemberAudits(t *testing.T) {
 	o, ops, _ := wu9Rig(t)
 
@@ -437,43 +444,119 @@ func TestOffboardMemberAudits(t *testing.T) {
 	if strings.Contains(entry.id, wu9Person) {
 		t.Errorf("the entry's name %q carries the person's address: an address has a dot, so a name built from it is one the node refuses or one that has to be escaped", entry.id)
 	}
-	if again := offboardAuditID(wu9Member, "user:"+wu9Person, wu9At); again != entry.id {
-		t.Errorf("the same act at the same instant is named %q and then %q: the name is a function of what the entry records", again, entry.id)
-	}
-
-	var ev struct {
-		Event         string `json:"event"`
-		At            string `json:"at"`
-		Actor         string `json:"actor"`
-		Member        string `json:"member"`
-		Firebase      string `json:"firebase"`
-		Person        string `json:"person"`
-		GrantsDropped int    `json:"grants_dropped"`
-	}
-	if err := json.Unmarshal(entry.event, &ev); err != nil {
-		t.Fatalf("the entry is not one JSON object: %v (%s)", err, entry.event)
-	}
-	if ev.Event != "offboarded" {
-		t.Errorf("the entry names the act %q, want %q", ev.Event, "offboarded")
-	}
-	if ev.Actor != "user:"+wu9Admin {
-		t.Errorf("the entry names the actor %q, want the caller the roster admitted (%q)", ev.Actor, "user:"+wu9Admin)
-	}
-	if ev.Member != wu9Member.Project || ev.Firebase != wu9Member.Firebase {
-		t.Errorf("the entry names the member as %q/%q, want both of its projects (%q/%q): they are one project only sometimes (F2, R10)",
-			ev.Member, ev.Firebase, wu9Member.Project, wu9Member.Firebase)
-	}
-	if ev.Person != "user:"+wu9Person {
-		t.Errorf("the entry names the person %q, want them in the roster's own spelling (%q)", ev.Person, "user:"+wu9Person)
-	}
-	if ev.GrantsDropped != 2 {
-		t.Errorf("the entry says %d grants were dropped, want the person's two", ev.GrantsDropped)
-	}
-	at, err := time.Parse(time.RFC3339Nano, ev.At)
+	// The entry is the event the member's trail holds, read back with the
+	// reader that trail's readers use.
+	ev, err := workspace.DecodeAuditEvent(entry.event)
 	if err != nil {
-		t.Fatalf("the entry's instant %q does not parse: %v", ev.At, err)
+		t.Fatalf("the entry is not an event this program reads back: %v\n%s", err, entry.event)
 	}
-	if !at.Equal(wu9At) {
-		t.Errorf("the entry is stamped %s, want %s", at, wu9At)
+	if ev.ID != entry.id {
+		t.Errorf("the entry is created under %q and its own id is %q: the id is the trail's key", entry.id, ev.ID)
+	}
+	if ev.Action != workspace.ActionUserOffboard {
+		t.Errorf("the entry names the act %q, want %q", ev.Action, workspace.ActionUserOffboard)
+	}
+	if ev.Actor != wu9Admin {
+		t.Errorf("the entry names the actor %q, want the caller the roster admitted (%q)", ev.Actor, wu9Admin)
+	}
+	if ev.Project != wu9Member.Project {
+		t.Errorf("the entry names the member %q, want the project it was on (%q)", ev.Project, wu9Member.Project)
+	}
+	if ev.Subject != wu9Person {
+		t.Errorf("the entry names the person %q, want them as the address the trail spells (%q)", ev.Subject, wu9Person)
+	}
+	if !ev.Time.Equal(wu9At) {
+		t.Errorf("the entry is stamped %s, want %s", ev.Time, wu9At)
+	}
+}
+
+// wu10Members is the member seam offboardWorkspacePerson drives: it records
+// every member it was asked to offboard, in the order it was asked, and refuses
+// the ones the test seeded. The rest of C2's methods are wu9FakeMemberOps's --
+// the helper calls none of them -- and its own Offboard, which fails a test, is
+// overridden here, because this helper's whole job is to be its caller.
+type wu10Members struct {
+	*wu9FakeMemberOps
+	trace *[]string
+	// errs is the failure a named member's offboarding answers, by project.
+	errs map[string]error
+}
+
+func (m *wu10Members) Offboard(_ context.Context, target workspace.MemberTarget, _ string) error {
+	*m.trace = append(*m.trace, "member "+target.Project)
+	return m.errs[target.Project]
+}
+
+// wu10Sweep is the WORKSPACE's own intake (F21), recording where in the order
+// it was reached: the point of the test below is that it is reached at all, and
+// last.
+type wu10Sweep struct {
+	trace   *[]string
+	deleted []string
+	err     error
+	calls   []string
+}
+
+func (s *wu10Sweep) Sweep(_ context.Context, address string) ([]string, error) {
+	*s.trace = append(*s.trace, "workspace "+address)
+	s.calls = append(s.calls, address)
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.deleted, nil
+}
+
+// TestTheSweepRunsWhenAMemberRefused: the workspace's own intake is swept
+// whatever the members answered (F21). A person's token is stored ONCE, at the
+// workspace (D2960), so it is the workspace's intake and no member's that holds
+// it: a member whose own update is still pending is a refusal this command
+// reports the person rather than half-removing them on, and a sweep skipped
+// there would leave the token behind exactly when the person most needs it gone.
+//
+// Every member is attempted, so one refusal does not leave the members after it
+// unswept; the FIRST refusal is the one reported, with the class it arrived in
+// (the wrap is `%w`); and the workspace's own answer is returned beside it,
+// because the containers that came back are the report's.
+func TestTheSweepRunsWhenAMemberRefused(t *testing.T) {
+	const wu10Person = "member@example.com"
+	trace := &[]string{}
+	members := &wu10Members{
+		wu9FakeMemberOps: &wu9FakeMemberOps{t: t},
+		trace:            trace,
+		errs: map[string]error{
+			"aurora": remote(fmt.Errorf("%s has not applied %s's stored grant yet: its own `%s update` is what is pending", "aurora", wu10Person, selfCommand())),
+		},
+	}
+	sweep := &wu10Sweep{trace: trace, deleted: []string{"fugaro_u_4242_github-token"}}
+	linked := []workspace.MemberTarget{{Project: "aurora"}, {Project: "borealis"}}
+
+	deleted, memberErr, sweepErr := offboardWorkspacePerson(context.Background(), members, sweep, linked, wu10Person)
+
+	if memberErr == nil {
+		t.Fatal("a member that refused was reported as a clean removal")
+	}
+	for _, want := range []string{"aurora", wu10Person, "update`"} {
+		if !strings.Contains(memberErr.Error(), want) {
+			t.Errorf("the member's refusal does not name %q, so the person cannot tell which member is owed an update:\n%v", want, memberErr)
+		}
+	}
+	if got := ExitCode(memberErr); got != ExitRemoteError {
+		t.Errorf("the refusal exits %d, want %d: the member's own class survives the wrap that names it (F23)", got, ExitRemoteError)
+	}
+	if sweepErr != nil {
+		t.Fatalf("the workspace's own intake was reported as failed: %v", sweepErr)
+	}
+	if len(sweep.calls) != 1 || sweep.calls[0] != wu10Person {
+		t.Errorf("the workspace's own intake was swept %v, want one call for %s even though a member refused", sweep.calls, wu10Person)
+	}
+	if len(deleted) != 1 || deleted[0] != "fugaro_u_4242_github-token" {
+		t.Errorf("the workspace's own answer is %v, want the container it deleted, which is what the report names", deleted)
+	}
+	// Every member is attempted, and the workspace's own intake comes AFTER all of
+	// them: its containers are what the members' sweeps cannot reach (D2960), and
+	// the order is the one the acceptance states.
+	want := []string{"member aurora", "member borealis", "workspace " + wu10Person}
+	if !slices.Equal(*trace, want) {
+		t.Errorf("the sweeps were made in the order %v, want %v: every member first, whatever they answered, and the workspace's own intake last", *trace, want)
 	}
 }

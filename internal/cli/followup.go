@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -141,11 +140,40 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 	})
 
 	c := &prChain{Runs: rows}
+	// The pause node of a run that ended paused, for the one word the rows
+	// cannot carry: a cancellation is written on the credentials service's node
+	// (D3197) and nowhere the runs bucket holds, so a chain whose pause was
+	// cancelled is one this follow-up may continue, and a chain whose pause
+	// stands is not (F64). It is read only for a row that says paused, so a
+	// pull request whose runs never suspended opens no database at all.
+	pauses := pauseFactsFor(ctx, env, func(format string, a ...any) { fmt.Fprintf(warn, format, a...) })
 	var runs []runview.Row // the launched runs
 	for _, r := range rows {
 		switch r.Status {
 		case runview.StatusError:
 			return nil, userErr("run %s on PR #%d can't be read (%s), so the PR's state is unknown; see fugaro diagnose %s", task.ShortRun(oneLine(r.Run)), pr, oneLine(r.Reason), task.ShortRun(oneLine(r.Run)))
+		case string(runstore.StatusPaused):
+			f, paused := pauseInFlight(r, pauses)
+			if !paused {
+				// A cancelled pause is a chain that is over: the run is the
+				// finished run its record says it is, and the reading below
+				// treats it as one.
+				break
+			}
+			// A suspended chain is in flight exactly as a running one is: the
+			// orchestrator resumes it at its own instant, and a follow-up
+			// launched now would be the second run of the chain between the
+			// pause and its resume (F64). So the refusal is the running one's
+			// shape, and the resume instant is the whole of what it adds --
+			// pause.max_pause bounds it (six hours by default, R15), so the
+			// wait it asks for is a bounded one. It names no cancel: a pause is
+			// cancelled by the launcher through the service's own route (PR10,
+			// D3197), not by anything this CLI takes today.
+			until := ""
+			if !f.resumeAt.IsZero() {
+				until = " until " + f.resumeAt.Format(time.RFC3339)
+			}
+			return nil, userErr("run %s on PR #%d is paused%s; wait for it to be resumed (fugaro runs ls --pr %d --repo %s)", task.ShortRun(oneLine(r.Run)), pr, until, pr, repo)
 		case runview.StatusLaunching, runview.StatusPending, string(runstore.StatusRunning):
 			return nil, userErr("run %s on PR #%d is still %s; wait for it to finish (fugaro runs ls --pr %d --repo %s) or cancel it", task.ShortRun(oneLine(r.Run)), pr, r.Status, pr, repo)
 		case runview.StatusUnlaunched:
@@ -194,7 +222,7 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 	c.CompressionOff = prev.CompressionOff
 	c.Recipe = prev.Recipe
 	c.ChangeSet = prev.ChangeSet
-	c.Title = prev.Title
+	c.Title = chainTitle(prev)
 	c.PrevReport = len(prev.DigestRuns) > 0
 	// The previous run's record, read once for the two things only it knows:
 	// the mode that run resolved, which a follow-up keeps and may only raise
@@ -745,85 +773,14 @@ func reuseStored(ctx context.Context, env *cloudEnv, slug string, o *runOptions,
 	return have, true, nil
 }
 
-// followUpTitleTimeout bounds the one read a follow-up's title may cost
-// (followUpPRTitle). A launch is a command a person waits on, and the name of
-// the pull request it continues is a nicety beside it: a host that has not
-// answered within this is a host this launch does without, and the run is then
-// listed by its own instructions' first line. The bound is well under the
-// default request timeout of the adapters (httpjson.DefaultTimeout, 30s), so
-// the wait ends here rather than at whatever the client would have allowed.
-const followUpTitleTimeout = 10 * time.Second
-
-// openFollowUpTitleProvider is OpenProvider, a seam for the one read
-// followUpPRTitle makes on a code host (openFollowUpsProvider's pattern in
-// followups.go): the launch opens the provider of the repository the pull
-// request lives in from this process's own environment, the way every read
-// outside a run's own job is. Tests replace it with a fake host.
-var openFollowUpTitleProvider = OpenProvider
-
-// followUpPRTitle is the title a follow-up with no title of its own and no
-// brief takes from the pull request it continues (fugaro run --pr N): the
-// pull request's own title as the code host reports it, made fit to be a run's
-// title the way the --title flag's value is (followUpTitle).
-//
-// It is BEST EFFORT, and it is never a refusal: a repository this machine
-// cannot name a provider for, a host it cannot open, a read that fails or
-// times out, and a title that is empty or sanitises to nothing all answer ""
-// — the empty title such a launch had before this existed, which leaves the
-// run named by its own instructions' first line. The launch must not fail,
-// and must not wait, over the name of a pull request: the read is one the run
-// would make itself, and a launcher that refused a follow-up because a forge
-// was slow would be a launcher nobody could use.
-func followUpPRTitle(ctx context.Context, env *cloudEnv, repo string, pr int, warn io.Writer) string {
-	co := checkoutConfig(ctx, repo)
-	if co == nil {
-		co = &config.Config{}
-	}
-	kind := env.repoProvider(repo, co)
-	if kind == "" {
-		return ""
-	}
-	if warn == nil {
-		warn = io.Discard
-	}
-	_, open, err := openFollowUpTitleProvider(os.Environ(), func(w string) {
-		fmt.Fprintf(warn, "warning: %s\n", w)
-	})
-	if err != nil {
-		return ""
-	}
-	ctx, cancel := context.WithTimeout(ctx, followUpTitleTimeout)
-	defer cancel()
-	p, _, err := open(ctx, kind, repo)
-	if err != nil || p == nil {
-		return ""
-	}
-	info, err := p.PullRequest(ctx, pr)
-	if err != nil {
-		return ""
-	}
-	return followUpTitle(info.Title)
-}
-
-// followUpTitle is a title read off a pull request as the run's own title, or
-// "" when what came back is no title at all. It is the treatment a brief's
-// title gets, in the same order and through the same two rules: safetext.Field
-// (the sanitiser titleFlag stores with — escape sequences and controls dropped,
-// bidi and zero-width characters dropped, every line break and run of
-// whitespace made one space) and then task's own cap and shape
-// (task.MaxTitleRunes, task.TitleProblem), which is what the runner applies to
-// a stored title when it reads the task back.
-//
-// The two differences from titleFlag are the ones a title nobody typed needs:
-// an over-long title is CUT to the cap rather than refused (the task says cap
-// it, and a launch that refused a pull request because its title is long would
-// be a launch that cannot continue that pull request), and a title that is
-// nothing after sanitising is no title rather than a mistake to report. Both
-// leave a value the runner accepts: Field's output is one printable line, and
-// cutting it at a rune boundary and trimming the space the cut may leave
-// yields text Field would return unchanged.
-func followUpTitle(raw string) string {
-	title := safetext.Field(raw)
+// chainTitle is the title a follow-up inherits from the run it continues: the
+// run's own title, else the first line of its brief, which is what watch, ls and
+// the console list that run by. It is made fit the way a stored title is
+// (safetext.Field, task.MaxTitleRunes, task.TitleProblem); "" only when the run
+// really carries nothing to name it by.
+func chainTitle(prev *task.Spec) string {
+	line := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(prev.TitleLine()), "# Task:"))
+	title := safetext.Field(line)
 	if r := []rune(title); len(r) > task.MaxTitleRunes {
 		title = strings.TrimSpace(string(r[:task.MaxTitleRunes]))
 	}
@@ -1000,24 +957,20 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 		if c.PrevReport {
 			return nil, refuseReportFollowUp(rcp.Name)
 		}
-		if err := refuseFollowUpRepoRecipe(ctx, repo, rcp.Name); err != nil {
+		if err := refuseFollowUpRepoRecipe(ctx, env, repo, rcp.Name); err != nil {
 			return nil, err
 		}
 	}
 	// The follow-up's title: the flag's when it is given, else the previous
-	// run's own (c.Title), so a chain of follow-ups keeps naming itself by
-	// the job it is. A chain whose first run carried no title has none to
-	// inherit; a follow-up that then has no brief of its own takes the title
-	// of the pull request it continues instead (followUpPRTitle), so the
-	// common plain `--pr N` launch — no TEXT, no --task-file, no --title —
-	// is named by the pull request a person is looking at rather than by
-	// nothing at all. It is read last and only there: a brief's own first
-	// line is a title somebody wrote for this run and always wins (TitleLine
-	// falls back to it), so the read is skipped whenever this launch has text
-	// of its own, and it never overrides a title the chain already carries.
+	// run's own (c.Title), so a chain of follow-ups keeps naming itself by the
+	// job it is, else the first line of the brief it carries (TitleLine). A
+	// follow-up with none of the three is refused: every run has a title, a run
+	// is never listed by "-", and a name the launcher made up or read off a code
+	// host (a read that fails without a token, silently) is how sixteen untitled
+	// runs went out in one batch.
 	title := cmp.Or(o.title, c.Title)
 	if title == "" && text == "" {
-		title = followUpPRTitle(ctx, env, repo, o.pr[0], warn)
+		return nil, userErr("nothing names this follow-up: the chain of PR #%d carries no title and this launch has no brief of its own, and every run has a title; pass --title \"<what the run does>\" (at most 100 characters)", o.pr[0])
 	}
 	// The follow-up's plan task is the flag's alone, never the run's it
 	// continues: a follow-up is joined to the graph through its pull request
@@ -1031,6 +984,19 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 	if err != nil {
 		return nil, err
 	}
+	// The promote block, for the follow-up that raises an area: the shape
+	// 12a's reading most often takes, since the pull request that pays an
+	// item down is the one the run is on and it is what the item's `## Closed
+	// by` names (D31). Resolved against this repository's own file, exactly as
+	// a first run's is (resolvePromote), and on the mode this follow-up
+	// resolved rather than the flag's: the target is the level the run really
+	// works at, and the raise-only rule below has already raised it.
+	var promote *task.Promote
+	if o.promote != "" {
+		if promote, err = resolvePromote(ctx, repo, o.promote, string(mode)); err != nil {
+			return nil, err
+		}
+	}
 	// The follow-up's tier is the flag's when it is given, else the tier the
 	// run it continues recorded: the envelope its pull request was dispatched
 	// under, which a follow-up of it keeps (resolvePR). No flag and no
@@ -1041,7 +1007,7 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 		CompressionOff: c.CompressionOff,
 		Branch:         c.Branch, PR: o.pr[0], PreviousRun: c.Previous.RunID, RequestedBy: me, Batch: o.batch, Recipe: rcp,
 		OwnerRuled: o.ownerRuled, ChangeSet: c.ChangeSet,
-		Rigor: mode, Paths: o.paths, Tier: cmp.Or(tier.Tier(o.tier), c.Tier)}
+		Rigor: mode, Paths: promotePaths(promote, o.paths), Promote: promote, Tier: cmp.Or(tier.Tier(o.tier), c.Tier)}
 	if total > 0 {
 		spec.Overrides.TotalTimeout = total.String()
 	}
@@ -1176,7 +1142,7 @@ func carryChosenRecipe(ctx context.Context, env *cloudEnv, repo string, c *prCha
 	var rcp *task.Recipe
 	changed := false
 	if ch.Source == string(recipe.SourceRepo) {
-		if err := refuseFollowUpRepoRecipe(ctx, repo, ch.Name); err != nil {
+		if err := refuseFollowUpRepoRecipe(ctx, env, repo, ch.Name); err != nil {
 			return nil, err
 		}
 		rcp = &task.Recipe{Name: ch.Name, Source: ch.Source}

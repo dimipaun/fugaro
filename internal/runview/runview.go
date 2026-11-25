@@ -269,6 +269,30 @@ type Row struct {
 	// from a single run of a pull request — and `omitempty` is what keeps
 	// that absence out of their JSON, as it does for the fields beside it.
 	PRState string `json:"pr_state,omitempty"`
+	// ResumeAt and ResumedBy are the pause a run ended in (contract-pause
+	// R15, D3195): the instant the orchestrator will resume its chain at, and
+	// the run that did resume it. A paused run is a run whose record ended
+	// with the status `paused` — its execution is terminal, its chain is in
+	// flight — so it is a row of this listing like any other, and these two
+	// are what says the chain comes back.
+	//
+	// Both are the LISTING's computation and not Join's, like PRState beside
+	// them, and neither is in the run's own records: the instant is the
+	// credentials service's node for the pause (`runstore.PauseNode`,
+	// `paused/<slug>/<run>`, written by the service alone before the run ends
+	// paused) and the resumer is another run's task naming this one under
+	// `resumes` (task.Spec.Resumes), which the read side stamps on
+	// (internal/cli's markPauses). A listing that makes neither read leaves
+	// both absent, which is the run's own record saying all it knows: it
+	// suspended itself and a resume is due, without when or by whom.
+	//
+	// ResumeAt is absent rather than zero when the node could not be read —
+	// a project with no pauses database, a read that failed, a node this
+	// release does not know — because a zero instant is a time, and this
+	// reader has no time to name. ResumedBy is absent until a run has resumed
+	// the pause, and is a run id like PreviousRun beside it.
+	ResumeAt  *time.Time `json:"resume_at,omitempty"`
+	ResumedBy string     `json:"resumed_by,omitempty"`
 	// Pushed means the run updated its branch, and PushedHead is the
 	// commit it pushed; see Pushed.
 	Pushed     bool       `json:"pushed"`

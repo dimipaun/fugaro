@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -9,18 +10,19 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/budget"
-	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
-// The resident orchestrator's opt-in is the installation root's `orchestrator`
+// The resident orchestrator's block is the installation root's `orchestrator`
 // variable (mobile plan tasks P5.1b and P5.1c; the owner's ruling of
-// 2026-11-20), and these are the three properties the door owes it: that the
-// block appears only when the owner asks for it, that every field in it is
-// derived from what the installation already holds, and that the release's own
-// pin reaches it on every later update the way it reaches the credentials
-// service, the intake and the voice hop.
+// 2026-11-20), and these are the properties the door owes it: that `fugaro
+// update` alone writes it, for an installation that can carry one and for no
+// other, that every field in it is derived from what the installation already
+// holds, that a run that never applies it leaves none behind, and that the
+// release's own pin reaches it on every later update the way it reaches the
+// credentials service, the intake and the voice hop.
 
 // orchestratorBlockIn reads the installation root's tfvars and returns the
 // resident orchestrator's block, or nil when the document carries none.
@@ -110,51 +112,37 @@ func seedIntake(t *testing.T, r *imagesRig, image string) {
 	}
 }
 
-// TestOrchestratorBlockIsWrittenOnlyWhenOptedIn is the switch itself, in both
-// directions and in the order the design's section 4.3 requires.
+// TestUpdateWritesTheOrchestratorBlockWhereItCanCarryOne is the writer itself:
+// a plain `fugaro update` of an installation that has the credentials service
+// and the Firebase backend writes the block, every field in it the
+// installation's own — the account, the service and the tick are
+// internal/infra's constants, the signer is the Firebase root's own account ID,
+// the project and the database are the budget block `fugaro update
+// --firebase-project` wrote, the region is the config's, and the image is the
+// pin the credentials service now runs, the binary whose `orchestrator serve`
+// subcommand it is. It names the signJwt grant in the line it prints.
 //
-// A run that was not asked for a resident orchestrator writes no block at all:
-// the account holds iam.serviceAccounts.signJwt on the budget signer, so it
-// exists only where an owner asked for it, and an installation that has not
-// opted in plans exactly what it planned before the variable existed.
+// A later run keeps it untouched: the block is the installation's record, and a
+// run that dropped it would plan the account's removal (a google_service_account
+// is data-bearing under D1551, so that plan is refused and the installation
+// stops converging).
 //
-// A run that WAS asked writes the block, and every field in it is the
-// installation's own: the account, the service and the tick are internal/infra's
-// constants, the signer is the Firebase root's own account ID, the project and
-// the database are the budget block `fugaro update --firebase-project` wrote,
-// the region is the config's, and the image is the pin this same run resolved
-// for the credentials service — the binary whose `orchestrator serve`
-// subcommand it runs.
+// An installation that cannot carry one — no Firebase backend recorded — is not
+// an error: the update succeeds, writes no block, and says in one line why.
 //
-// And an installation that has no credentials service is refused BY NAME rather
-// than given a block: the account is that service's own caller class, so an
-// installation without one would be an account whose every model call is
-// refused. The refusal says which command deploys it first.
-//
-// Mutation (run, restore): drop the `--orchestrator` gate from
-// ensureOrchestratorBlock and the first half fails with a block nobody asked
-// for; drop the CredentialsServiceImageOf check and the third asks for a block
-// the design's caller class cannot survive.
-func TestOrchestratorBlockIsWrittenOnlyWhenOptedIn(t *testing.T) {
+// Mutation (run, restore): make orchestratorVerdict answer false and the first
+// half fails with no block; drop the budget check from it and the last asks for
+// a block whose database the config does not name.
+func TestUpdateWritesTheOrchestratorBlockWhereItCanCarryOne(t *testing.T) {
 	r := orchestratorRig(t)
 
-	// Nothing asked: no block, and the installation is left as it was.
 	out, errOut, err := executeStdin(t, "", "update", "--firebase-project", fpID)
 	if err != nil {
-		t.Fatalf("the run that was not asked for a resident orchestrator failed: %v\n%s%s", err, out, errOut)
-	}
-	if block := orchestratorBlockIn(t, r); block != nil {
-		t.Errorf("a run that carries no --orchestrator wrote the block %v: the account holds iam.serviceAccounts.signJwt on the budget signer, and it may exist only where an owner asked for one\n%s%s", block, out, errOut)
-	}
-
-	// Asked: the block is written, derived field by field.
-	out, errOut, err = executeStdin(t, "", "update", "--firebase-project", fpID, "--orchestrator")
-	if err != nil {
-		t.Fatalf("the opt-in run failed: %v\n%s%s", err, out, errOut)
+		t.Fatalf("the update failed: %v\n%s%s", err, out, errOut)
 	}
 	block := orchestratorBlockIn(t, r)
 	if block == nil {
-		t.Fatalf("--orchestrator wrote no block:\n%s%s\n%s", out, errOut, r.tfvars(t))
+		t.Fatalf("a plain update wrote no orchestrator block:\n%s%s\n%s", out, errOut, r.tfvars(t))
 	}
 	want := map[string]any{
 		"account_id":        infra.OrchestratorAccountID,
@@ -170,90 +158,62 @@ func TestOrchestratorBlockIsWrittenOnlyWhenOptedIn(t *testing.T) {
 		"scheduler_region": "us-east4",
 	}
 	if !reflect.DeepEqual(block, want) {
-		t.Errorf("the block the opt-in wrote is\n%v\nwant\n%v\n: every field is the installation's own, and one this writer invented is a resource nobody asked for", block, want)
+		t.Errorf("the block the update wrote is\n%v\nwant\n%v\n: every field is the installation's own, and one this writer invented is a resource nobody asked for", block, want)
 	}
-	if !strings.Contains(out, infra.OrchestratorAccountID) || !strings.Contains(out, "opted in") {
-		t.Errorf("the opt-in run said nothing about what it turned on:\n%s", out)
+	if s := out + errOut; !strings.Contains(s, infra.OrchestratorAccountID+"@") || !strings.Contains(s, "signJwt") {
+		t.Errorf("the update said nothing about the account it adds or the grant that makes it the widest:\n%s", s)
+	}
+	if strings.Contains(out+errOut, "--orchestrator") {
+		t.Errorf("the update names a flag that no longer exists:\n%s%s", out, errOut)
 	}
 
-	// A later run that does not carry the flag keeps it: the block is the
-	// installation's record of having opted in, and a run that dropped it would
-	// plan the account's removal (a google_service_account is data-bearing under
-	// D1551, so that plan is refused and the installation stops converging).
 	held := marshalBlock(t, block)
 	out, errOut, err = executeStdin(t, "", "update", "--firebase-project", fpID)
 	if err != nil {
-		t.Fatalf("the run after the opt-in failed: %v\n%s%s", err, out, errOut)
+		t.Fatalf("the run after the first failed: %v\n%s%s", err, out, errOut)
 	}
 	if got := marshalBlock(t, orchestratorBlockIn(t, r)); got != held {
-		t.Errorf("a later run without the flag changed the block:\n%s\nwant it exactly as the opt-in left it:\n%s", got, held)
+		t.Errorf("a later run changed the block:\n%s\nwant it exactly as the first left it:\n%s", got, held)
 	}
 
-	// And an installation with no credentials service is refused, by name.
-	t.Run("refused without the credentials service", func(t *testing.T) {
-		fakeTerminal(t)
-		r := newImagesRig(t, convergeRelease)
-		r.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, firebase_project: "+fpID+", rtdb_url: "+r.db.URL+" }\n")
-		r.db.Set(rules.PathCredsRulesMarker(), rules.CredsRulesVersion)
-		r.db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
-		r.fs.SetDatabase("us-east5")
-		r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
-			"history_service_account": historyAccount,
-			"history_job":             nil,
-		})}
-		r.save(t)
+	t.Run("left off, with one line, where the installation records no Firebase backend", func(t *testing.T) {
+		r := orchestratorRig(t)
+		r.dropBudgetFromConfig(t)
 
-		out, errOut, err := executeStdin(t, "", "update", "--firebase-project", fpID, "--orchestrator")
+		out, errOut, err := executeStdin(t, "", "update")
 		s := out + errOut
-		if err == nil {
-			t.Fatalf("--orchestrator on an installation with no credentials service succeeded, want the refusal:\n%s", s)
-		}
-		if !strings.Contains(err.Error(), "credentials_service") || !strings.Contains(err.Error(), "--firebase-project") {
-			t.Errorf("the refusal does not name what is missing and the command that deploys it: %v\n%s", err, s)
+		if err != nil {
+			t.Fatalf("an installation that cannot carry the orchestrator failed its update: %v\n%s", err, s)
 		}
 		if block := orchestratorBlockIn(t, r); block != nil {
-			t.Errorf("a refused opt-in wrote the block anyway: %v", block)
+			t.Errorf("the update wrote a block for an installation with no database to point it at: %v", block)
 		}
-		if stage := stoppedStage(out); stage != initflow.Installation2 {
-			t.Errorf("the run stopped at %q, want %s: the refusal belongs to the stage that has the Firebase outputs\n%s", stage, initflow.Installation2, s)
+		if n := strings.Count(s, "resident orchestrator is left off"); n != 1 || !strings.Contains(s, "Firebase budget backend") {
+			t.Errorf("the update names why the orchestrator is left off %d time(s), want one line naming the missing backend:\n%s", n, s)
 		}
 	})
 }
 
-// TestOrchestratorOptInIsTakenBackWhenTheRunNeverAppliesIt is the window
-// between the write and the apply the block exists for.
+// TestOrchestratorBlockIsTakenBackWhenTheRunNeverAppliesIt is the window
+// between the write and the apply.
 //
 // ensureOrchestratorBlock writes the block into the workdir BEFORE the plan
 // that carries it, because the plan reads the document on disk — and a run can
 // end inside that window with nothing created: a plan that cannot be read, a
-// plan the guard refuses, the confirmation declined, --plan-only's stop. A
-// block left behind there is not the record of an opt-in, it IS the opt-in:
-// var.orchestrator is the module's switch, so a later `fugaro update --yes` —
-// precisely the run checkOrchestrator refuses the flag's own reading of — would
-// bring up the account, its five bindings, the pairing container and the
-// service on a document nobody answered for, and the flag's whole gate (a real
-// terminal, no --yes, no coding agent's session) would be worth nothing.
+// plan the guard refuses, the confirmation declined, --plan-only's stop. The
+// block is then not the record of an apply, it is the apply, taken by a run that
+// never got to it: a later update that asks nobody (a managed project's, or
+// --yes) would bring the account, its five bindings, the pairing container and
+// the service up on a document the failed run left. The writer takes it back
+// out, says so, and the next update writes it again and applies it.
 //
-// The failure is aimed at the installation root's plan in THIS stage, which is
-// the one the block was written for: with --firebase-project the installation
-// stage is skipped ("applied as the first step of the firebase backend"), so
-// the root is planned by the Firebase engine's own first step and again by the
-// audience fill the Firebase stage ends with — both before the block exists —
-// and the third plan is this one.
-//
-// The run after it is the plain one, and it is the door a leftover block would
-// open: nobody asks it anything (the rig is a managed project, whose gate
-// stands in for every confirmation) and it applies whatever the document on
-// disk names.
-func TestOrchestratorOptInIsTakenBackWhenTheRunNeverAppliesIt(t *testing.T) {
+// The failure is aimed at the installation root's plan in the
+// credentials-service stage, the one the block was written for: the plans
+// before it (the first apply, the audience fill) carry no block.
+func TestOrchestratorBlockIsTakenBackWhenTheRunNeverAppliesIt(t *testing.T) {
 	r := orchestratorRig(t)
-	// The installation root is planned three times in a --firebase-project run:
-	// as the Firebase engine's first step, by the audience fill the Firebase
-	// stage ends with, and here. The first two report changes and apply; the
-	// third — this stage's, with the block written — fails, and the fake
-	// repeats a list's last step for every plan past its end, which is what the
-	// plain update after it gets.
 	r.script["plan@installation"] = []map[string]any{
+		{"exit": 2},
 		{"exit": 2},
 		{"exit": 2},
 		{"exit": 1, "stderr": "Error: Error building changes: the installation root's plan failed"},
@@ -261,36 +221,26 @@ func TestOrchestratorOptInIsTakenBackWhenTheRunNeverAppliesIt(t *testing.T) {
 	}
 	r.save(t)
 
-	out, errOut, err := executeStdin(t, "", "update", "--firebase-project", fpID, "--orchestrator")
+	out, errOut, err := executeStdin(t, "", "update", "--firebase-project", fpID)
 	if err == nil {
-		t.Fatalf("the installation root's plan failed, yet the opt-in run succeeded:\n%s%s", out, errOut)
+		t.Fatalf("the installation root's plan failed, yet the update succeeded:\n%s%s", out, errOut)
 	}
-	if stage := stoppedStage(out); stage != initflow.Installation2 {
-		t.Fatalf("the run stopped at %q, want %s: the failure has to land in the window between the write and the apply it was written for, or this test proves nothing\n%s%s", stage, initflow.Installation2, out, errOut)
+	if stage := stoppedStage(out); stage != initflow.CredentialsService {
+		t.Fatalf("the run stopped at %q, want %s: the failure has to land in the window between the write and the apply, or this test proves nothing\n%s%s", stage, initflow.CredentialsService, out, errOut)
 	}
 	if !strings.Contains(out+errOut, "was not applied") {
 		t.Errorf("the run did not say the block it wrote was taken back out:\n%s%s", out, errOut)
 	}
 	if block := orchestratorBlockIn(t, r); block != nil {
-		t.Errorf("a run that applied nothing left the block in the workdir:\n%v\nthe next run that asks nobody would bring the account, its bindings and the service up from it", block)
+		t.Errorf("a run that applied nothing left the block in the workdir:\n%v", block)
 	}
 
-	applies := len(r.ran(t, "apply"))
 	out, errOut, err = executeStdin(t, "", "update", "--firebase-project", fpID)
 	if err != nil {
-		t.Fatalf("the plain update after the failed opt-in failed: %v\n%s%s", err, out, errOut)
+		t.Fatalf("the update after the failed one failed: %v\n%s%s", err, out, errOut)
 	}
-	if len(r.ran(t, "apply")) == applies {
-		t.Fatalf("the plain update applied nothing: a document that planned no changes cannot show whether it carried an orchestrator\n%s%s", out, errOut)
-	}
-	if block := orchestratorBlockIn(t, r); block != nil {
-		t.Errorf("the plain update carried an orchestrator block:\n%v\nwant the installation the run behind it was: no account, no service, no diff", block)
-	}
-	// The account's own name is too short a needle — "fugaro-orch" is a prefix
-	// of the "-orchestrator" service and unit names every run prints — so the
-	// search is for its address and for the sentence the opt-in writes.
-	if s := out + errOut; strings.Contains(s, infra.OrchestratorAccountID+"@") || strings.Contains(s, "opted in") {
-		t.Errorf("the plain update said something about the resident orchestrator:\n%s", s)
+	if block := orchestratorBlockIn(t, r); block == nil {
+		t.Errorf("the update after a run that applied nothing wrote no block: the installation never converges on the orchestrator\n%s%s", out, errOut)
 	}
 }
 
@@ -327,6 +277,10 @@ func orchestratorConvergeRig(t *testing.T, withBlock bool) *convergeRig {
 	changes := []planChange{change("module.installation.google_cloud_run_v2_service.credentials", "update")}
 	if withBlock {
 		changes = append(changes, change("module.installation.google_cloud_run_v2_service.orchestrator", "update"))
+	} else {
+		changes = append(changes,
+			change("module.installation.google_service_account.orchestrator[0]", "create"),
+			change("module.installation.google_cloud_run_v2_service_iam_member.orchestrator_credentials_invoker[0]", "create"))
 	}
 	r.setPlanAt(t, "installation", changes...)
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
@@ -419,16 +373,63 @@ func TestUpdateConvergesAnInstallationAtThePreviousVersionWithAndWithoutTheBlock
 		if orchestratorBlockIn(t, r.imagesRig) != nil {
 			t.Fatalf("the fixture already carries a block: %v", orchestratorBlockIn(t, r.imagesRig))
 		}
-
-		convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
-
-		if block := orchestratorBlockIn(t, r.imagesRig); block != nil {
-			t.Errorf("fugaro update wrote the resident orchestrator's block %v on an installation that never opted in: the account holds iam.serviceAccounts.signJwt on the budget signer, so it may exist only where an owner asked for it — and the run that wrote the credentials service's block and the intake's is not that ask", block)
-		}
 		if orchestratorBlockHeld(initProject) {
-			t.Error("after fugaro update, the daemon's identity is armed on an installation whose tfvars carry no block: the account does not exist there, and the identity would be an impersonation of an address no project holds, refused on every tick")
+			t.Fatal("the fixture's daemon identity is armed before the update: the account does not exist on an installation at the release behind")
+		}
+
+		run := startRunInFlight(t, r)
+
+		line := inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"}))
+		if !strings.Contains(line, "1 run in flight") || !strings.Contains(line, "waits for none") || !strings.Contains(line, "resident orchestrator") {
+			t.Errorf("the update does not say, beside the run in flight, that the orchestrator's revision reaches the credentials service it calls:\n%s", line)
+		}
+		rec, err := run.store.ReadRecord(context.Background())
+		if err != nil {
+			t.Fatalf("the run's record could not be read after the update: %v", err)
+		}
+		if rec.Status != runstore.StatusRunning || rec.Stage != "implement" {
+			t.Errorf("the run's record reads status %q stage %q after the update, want the running/implement it bootstrapped with", rec.Status, rec.Stage)
+		}
+		run.laterWrites(t, r)
+
+		// The document Terraform was handed is the whole of what the update
+		// decides: the block is var.orchestrator, and the module's own tests
+		// (modules/installation/orchestrator_test.go, and
+		// internal/infra's TestOrchestratorDaemonIsTheCredentialsServicesOwnCallerClass
+		// under the terraform tag) read from that variable the account
+		// fugaro-orch, roles/run.invoker on the credentials service for it and
+		// FUGARO_ORCHESTRATOR_ACCOUNTS on the service's revision.
+		block := orchestratorBlockIn(t, r.imagesRig)
+		if block == nil {
+			t.Fatalf("fugaro update gave the installation no resident orchestrator: the installation's %s carries no block, so the account fugaro-orch, its invoker grant on the credentials service and the service's orchestrator class are all still absent", infra.VarsFile)
+		}
+		if block["account_id"] != infra.OrchestratorAccountID || block["image"] != r.credentialsRefAt(convergeRelease) {
+			t.Errorf("the block the update wrote is %v: want the account %s on this release's pin %s", block, infra.OrchestratorAccountID, r.credentialsRefAt(convergeRelease))
+		}
+		if !orchestratorBlockHeld(initProject) {
+			t.Error("after fugaro update, the daemon's identity is not armed: the block is the record the account exists (orchestratorIdentityOf), and Check 640 stops at F19 until it is")
 		}
 	})
+}
+
+// dropBudgetFromConfig takes the budget block the credentials rig appended out
+// of the project's config: the installation then records no Firebase backend, so
+// the block has no database to be pointed at.
+func (r *imagesRig) dropBudgetFromConfig(t *testing.T) {
+	t.Helper()
+	b, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kept []string
+	for _, line := range strings.Split(string(b), "\n") {
+		if !strings.HasPrefix(line, "budget:") {
+			kept = append(kept, line)
+		}
+	}
+	if err := os.WriteFile(r.cfg, []byte(strings.Join(kept, "\n")), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // marshalBlock renders a tfvars block for comparison, so an assertion about

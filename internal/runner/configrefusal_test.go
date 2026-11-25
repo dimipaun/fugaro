@@ -16,10 +16,11 @@ import (
 // because the configuration it resolved is not one it can run, ends with the
 // class that names that cause (design §3: "the resolved configuration was
 // refused before the work could run"). The definition's own two examples open
-// the table — the resolved file itself, and a recipe the runner cannot read —
+// the table — the resolved file itself, and a recipe that does not parse —
 // and the rows after them are the other refusals this task classes: a layer
-// that does not parse, a recipe that is in neither place, and a file that
-// defines more than one workflow for a task that names none.
+// that does not parse, a recipe that is neither in the task nor in the
+// catalog, and a file that defines more than one workflow for a task that
+// names none.
 //
 // The status and the reason do not move: a refusal here has always ended
 // infra_error with the runner's own sentence, and the class is the field
@@ -81,9 +82,9 @@ func TestConfigRefusalIsConfigInvalid(t *testing.T) {
 		// that only matched them would pass without the recipe being read.
 		{"the run's recipe cannot be read", withRecipe, nil,
 			map[string]string{".fugaro/recipes/broken.yaml": "version: [\n"},
-			[]string{".fugaro/recipes/broken.yaml is invalid"}},
+			[]string{"project recipe broken (embedded in task.json) is invalid"}},
 		{"the run's recipe is nowhere", noSuchRecipe, nil, nil,
-			[]string{"recipe nosuch is not in", "nor in the catalog"}},
+			[]string{"recipe nosuch is neither embedded in the task nor in the catalog"}},
 		{"the task's project layer is refused", layeredRepo, layerSpec(badLayer), nil,
 			[]string{"the task's project layer", "budget.per_run_usd may only be set in: repo"}},
 		{"the task names no workflow and the file defines two", twoWorkflows, unnamedWorkflow, nil,

@@ -66,6 +66,10 @@
     "branch": { "type": "string", "pattern": "^fugaro/[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
     "pr": { "type": "integer", "minimum": 1 },
     "previous_run": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
+    "resumes": {
+      "type": "string",
+      "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$",
+      "description": "The run whose pause this one picks up (task.Spec.Resumes, runstore.PauseMemberResumes, docs/model-credentials-routing): the run that suspended itself on this pull request, whose pause.json names the stage it was in, the session it saved and the commit it pushed, and where this run enters rather than at the first stage (R18, D3185). Written only by the orchestrator's launcher, and only for a pause the credentials service recorded (R19, D3189). A resumed run is a follow-up of the run it continues, so branch, pr and previous_run are required beside it and name the same run: the chain link carries the chain's remaining budget (D1045 to D1047), the pull request's branch holds the checkpoint, and a task naming one run for the chain and another for the pause is refused by task.Spec.Validate. Needs a runner that reads the member: task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec rather than starting the work at its first stage." },
     "owner_ruled": {
       "type": "string",
       "minLength": 1,
@@ -192,6 +196,20 @@
       "items": { "type": "string", "pattern": "\\S", "maxLength": 200 },
       "maxItems": 100
     },
+    "promote": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The area a promote run raises (fugaro run --promote, docs/rigor-modes/levels-spec.md §4, LD6, docs/rigor-modes/levels-reconciliation.md §3b item 12): the area's name and this repository's paths in it, which the launcher resolved out of the repository's own fugaro.yaml (rigor.areas) before the task was stored. The run reads that area's backlog items and its code, works at the level `rigor` above names, and closes the items its own diff pays down (D31). `paths` above carries the same paths, since the area's own rule is what the run's level resolves from. Absent for every launch that is not a promote run, so every other spec is byte-identical to what the previous release wrote. Needs the runner that reads it: task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec, and the launch is refused at the job image the way `rigor` and `paths` above are.",
+      "required": ["area"],
+      "properties": {
+        "area": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "paths": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "\\S", "maxLength": 200 },
+          "maxItems": 100
+        }
+      }
+    },
     "tier": {
       "enum": ["trivial", "small", "medium", "large"],
       "description": "The expectation tier of this run (docs/task-governance/spec.md §3, plan T8.1): what the run is expected to cost and take, which selects one tier of fugaro.yaml's governance.tiers. Absent is untiered — every spec written before this release, and every launch that declares no tier. fugaro run --tier writes it, and a --pr follow-up carries the tier the run it follows recorded (plan T8.1b). The vocabulary is internal/tier's and spelled exactly as it spells it: a near miss (\"Trivial\", \"SMALL\") is refused, never read as an unknown tier. It is not `rigor` above: that one is the review's depth, a different question with a different vocabulary. Needs a 0.13.0 runner: an older runner's task.Parse decodes with DisallowUnknownFields and refuses the field outright."
@@ -244,7 +262,7 @@
       "required": ["name", "source"],
       "description": "The recipe the launching CLI resolved; absent means, for a first run, agent.recipe in fugaro.yaml at the ref, else default; for a follow-up, default (docs/recipes/spec.md).",
       "properties": {
-        "name": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$" },
+        "name": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,44}[a-z0-9])?-[0-9a-f]{8})?$", "description": "The recipe the launcher resolved: a recipe name, or the name of the project's copy of one (recipe.IsNameOrCopy) — the copy a migrated repository's runs embed." },
         "source": { "enum": ["repo", "project", "catalog"] },
         "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "yaml": { "type": "string", "minLength": 1, "maxLength": 16384 }
@@ -443,6 +461,7 @@
     "branch": ["pr", "previous_run"],
     "pr": ["branch", "previous_run"],
     "previous_run": ["branch", "pr"],
+    "resumes": ["branch", "pr", "previous_run"],
     "owner_ruled": ["branch", "pr", "previous_run"],
     "mutate": ["review_prs"],
     "own_text": ["from_findings"]

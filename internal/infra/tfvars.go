@@ -9,10 +9,12 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/place"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -60,7 +62,10 @@ type InstallOptions struct {
 	// StateBucket defaults to the local config's, else fugaro-tfstate-<project>.
 	StateBucket string
 	// EnableVertex enables the Vertex AI API; so does any repository the
-	// local config records as using it.
+	// local config records as using it, and any chain of the project's own
+	// routing table that names Vertex (ChainsNameVertex) — the service calls
+	// Vertex on the installation's own identity, so a table that names Vertex
+	// needs the API whether or not a repository of it records one.
 	EnableVertex bool
 	// SkipAPIs leaves the project's APIs to be managed elsewhere.
 	SkipAPIs bool
@@ -399,6 +404,72 @@ type CredentialsServiceSpec struct {
 	//   - a pointer to the owner's list: written as it is. The account is never
 	//     ADDED to it: a union would admit an identity `[]` cannot remove.
 	VerifierAccounts *[]string `json:"verifier_accounts,omitempty"`
+	// SharedJobAccounts are the installation's SHARED project jobs
+	// SharedJobAccounts are the installation's SHARED project jobs
+	// (CredentialsSharedJob): the shared coding class's admitted set (B5.1),
+	// one row per (profile, provider, account) the deployer creates a shared
+	// job for, plus the repositories that profile serves. It is neither of the
+	// two tables above and it is not a row of either: a shared job is ONE job
+	// for every repository a profile serves, so its account is admitted to the
+	// repositories of its profile and to nothing else, and a repository that
+	// runs on a per-repository job (a JobAccounts row) is admitted to its own
+	// repository alone.
+	//
+	// The rows carry the triple and never the account's email, for the reason
+	// the two tables above do (credsvc.SharedJobAccountFor over
+	// gcp.ProjectServiceAccountID): a shared job's service account is a hash of
+	// (profile, provider, account), and a list of addresses here would be a
+	// second derivation that can drift from the accounts the deployer creates.
+	// Account is the axis's OWN spelling, in which the empty string is the
+	// profile's no-account job (config.ProjectJobAccounts), and it is NOT
+	// ReviewVariantAccount's mapping: this class's caller is the coding job,
+	// which the axis spells as it is.
+	//
+	// Repos is the profile's own allow_repos, or — a profile that names none —
+	// the repositories this installation's own config records for the profile's
+	// provider (sharedJobRepos), and it is REQUIRED and may be empty: an empty
+	// Repos is the deny-all profile and not a refusal, while a row the service
+	// read as deny-all because the member was missing would be a job it refuses
+	// every call of (internal/cli's credentialsServiceSharedJobAccounts refuses
+	// the document rather than guess).
+	//
+	// It is left out of an installation that deploys no shared job at all — no
+	// profile on a provider a shared job serves — which is an installation
+	// whose service admits no shared caller: the fail-closed state, and not an
+	// error, since the class is inert until a job of it exists. It is the
+	// review table's rule and not JobAccounts' one, for the same reason.
+	SharedJobAccounts []CredentialsSharedJob `json:"shared_job_accounts,omitempty"`
+	// SignerAccount is the runs' signer account the service signs a run's
+	// identity as (launcher-does-not-mint plan tasks LM12 and LM13; D3121):
+	// the account the installation's Firebase root creates, as the bare
+	// address this process reads (FUGARO_SIGNER_ACCOUNT). It is derived from
+	// the local config's own budget block — the Firebase project the same
+	// root published — and it is written whenever that block is, because the
+	// service is deployed only into an installation that has one
+	// (firebaseBackend), and an installation whose budget backend exists has
+	// had that root applied: the signer is created there and not by the
+	// credentials service. Leaving it out is the state of an installation
+	// this release has not converged: the service starts with the entry
+	// absent and serves no identity route at all (I1's contract), rather
+	// than naming an account nothing created.
+	SignerAccount string `json:"signer_account,omitempty"`
+	// RosterServiceAccounts are the roster's `serviceAccount:` entries as
+	// bare addresses (LM12, LM13; D3123): the class a person's list cannot
+	// hold, because such a caller presents the account's own Google ID token
+	// rather than a person's, and — in the module — the list the service's
+	// invoker grant is made for. launchers.go derives it from the same
+	// merged list the launcher class comes from, so the accounts IAM admits
+	// to the service and the ones the process admits are one derivation, and
+	// a `group:` entry is on neither (launcherServiceAccounts says why).
+	RosterServiceAccounts []string `json:"roster_service_accounts,omitempty"`
+	// ImplicitAdmins are the installing machine's implicit admins as bare
+	// addresses (LM12, LM13; F29, R16 arm 1): the identity the launch gate
+	// admits whatever the roles node says, handed to the service so that the
+	// issuer's scope check gives the gate's answer and an owner is not
+	// refused a launch that works today. It is read from the machine's own
+	// terraform.budget_admins, through the same normalisation the gate reads
+	// it with (implicitAdmins).
+	ImplicitAdmins []string `json:"implicit_admins,omitempty"`
 	// URL is the service's OWN URL, the audience its callers' Google ID
 	// tokens are minted for. It is empty on the apply that CREATES the
 	// service: Cloud Run assigns the URL, nothing in the module may read the
@@ -444,6 +515,18 @@ type IntakeSpec struct {
 	// .invalid host no ID token is ever minted for) until the same stage reads
 	// the URL back from the module's own output and applies it.
 	URL string `json:"url,omitempty"`
+	// People is the intake's SECOND class list (WC3, R5, D3143): the people of
+	// a workspace's roster, as the bare addresses a Google ID token's email
+	// claim holds (infra.IntakePeople). It is a member of the INTAKE's own
+	// block and never of `launchers`, which is the workspace project's
+	// credentials service invoker set as well (F10), and it is empty — no key
+	// at all — for every installation that is not a workspace's project.
+	//
+	// `fugaro update` renders it from the workspace's roster on the owner's own
+	// run (init_stages.go's renderIntakePeople), so a person the roster gains
+	// waits for that one command, which binds the invoke grant beside it
+	// (D2971).
+	People []string `json:"people,omitempty"`
 }
 
 // VoiceServiceSpec is the installation root's var.voice_service (P5.3.3): the
@@ -515,6 +598,38 @@ type CredentialsReviewJob struct {
 	Profile  string `json:"profile"`
 	Provider string `json:"provider"`
 	Account  string `json:"account"`
+}
+
+// CredentialsSharedJob is one SHARED project job of the installation as the
+// credentials service's environment carries it (B5.1): the
+// (profile, provider, account) triple the job and its service account are
+// derived from (gcp.ProjectServiceAccountID), plus the repositories that
+// profile serves.
+//
+// It is the review row's shape one axis over and it is not that row: Account
+// is the axis' own spelling (the empty string is the profile's no-account job,
+// config.ProjectJobAccounts) and never ReviewVariantAccount's mapping, because
+// the caller this row admits holds the CODING job — the same job the launcher
+// launches a repository of an admitted profile onto (internal/cli's
+// launchProjectJobFor). Repos is what the call's admission is read through
+// (credsvc's ClassShared over projectpolicy.AdmitRepo): the repositories the
+// profile serves, as patterns, and an empty list is the profile that serves
+// none — a row whose callers are all refused.
+type CredentialsSharedJob struct {
+	Profile  string   `json:"profile"`
+	Provider string   `json:"provider"`
+	Account  string   `json:"account"`
+	Repos    []string `json:"repos"`
+}
+
+// credentialsSharedJobKey is the shared table's row identity, the same rule
+// credentialsReviewJobKey states for the review table: two rows are one row
+// exactly when they name one job. Repos is deliberately NOT part of it — the
+// repositories a profile serves are a fact ABOUT the job and not part of
+// naming it, so a profile whose list moved is the same row with another
+// value, which is what lets the union below update it in place.
+func credentialsSharedJobKey(j CredentialsSharedJob) string {
+	return j.Profile + "\x00" + j.Provider + "\x00" + j.Account
 }
 
 // The credentials service's singletons. The account is what reads the bundle,
@@ -649,6 +764,11 @@ func Credentials(lc *localcfg.Config, image string, publishedVerifiers []string)
 	if err != nil {
 		return CredentialsServiceSpec{}, err
 	}
+	shared, err := CredentialsSharedJobAccounts(lc)
+	if err != nil {
+		return CredentialsServiceSpec{}, err
+	}
+	signer, roster, admins := credentialsServiceIdentity(lc, b)
 	return CredentialsServiceSpec{
 		AccountID:         CredentialsAccountID,
 		Service:           CredentialsServiceName,
@@ -658,6 +778,7 @@ func Credentials(lc *localcfg.Config, image string, publishedVerifiers []string)
 		RTDBURL:           b.RTDBURL,
 		JobAccounts:       jobs,
 		ReviewJobAccounts: reviews,
+		SharedJobAccounts: shared,
 		// The one rule, applied here as the publisher applies it: the owner's
 		// list when the config states one — an explicit empty list included,
 		// which clears the route — and the node's otherwise. The pointer is
@@ -665,7 +786,70 @@ func Credentials(lc *localcfg.Config, image string, publishedVerifiers []string)
 		// field's own comment): nil here is the state the module's default is
 		// for, and the account it creates is admitted.
 		VerifierAccounts: verifierAccountsField(lc.VerifierAccountsEffective(publishedVerifiers)),
+		// The identity half's three names (LM12's variables, D3121, D3123,
+		// F29/R16), through the one derivation the carry reads too
+		// (credentialsServiceIdentity), so the run that deploys the service and
+		// every run after it configure it the same way.
+		SignerAccount:         signer,
+		RosterServiceAccounts: roster,
+		ImplicitAdmins:        admins,
 	}, nil
+}
+
+// credentialsServiceIdentity is the block's three identity names — the runs'
+// signer, the roster's service accounts and the implicit admins (LM12's
+// variables, D3121, D3123, F29/R16) — as one derivation, read by both writers
+// of the block: the deploy that composes it (Credentials) and the carry that
+// brings an installation's own block up to date
+// (RefreshCredentialsServiceIdentity). It is one function so the two cannot
+// disagree about what the service is configured with, which is the property
+// every class list of this service has.
+//
+// b is the budget block the signer's project comes from: the signer is the
+// Firebase root's own account, in the project that root creates it in, and the
+// root has been applied by the time the local config names the project. The
+// roster is the same merged launcher list the installation root's class is
+// derived from, read one member class over (launcherServiceAccounts), and the
+// implicit admins are the gate's own list, read the way the gate reads it
+// (implicitAdmins).
+func credentialsServiceIdentity(lc *localcfg.Config, b *localcfg.Budget) (string, []string, []string) {
+	return serviceAccountEmail(SignerAccountID, b.FirebaseProject),
+		launcherServiceAccounts(launchersWithOperators(lc.Terraform.Operators, lc.Terraform.Admins)),
+		implicitAdmins(lc.Terraform.BudgetAdmins)
+}
+
+// implicitAdmins is the machine's implicit admins as the bare addresses the
+// service compares a caller's Google ID token against (LM13; F29, R16 arm 1),
+// and it is the LAUNCH GATE's own list: the `user:` entries of the local
+// config's terraform.budget_admins, normalised by access.Member — the
+// function the gate reads them with (internal/cli's userImplicitAdmins),
+// whose member spelling is this list with `user:` in front of each address.
+// Handing the service the same people is what makes the issuer's scope check
+// give the gate's answer: an owner whose own address is on the list is
+// admitted to a launch the gate admits today, and one the config does not
+// name is refused in both places.
+//
+// A `group:` or `serviceAccount:` entry is not here and is not on the gate's
+// list either: neither is a person the roles node can place, and the implicit
+// class exists for the person whose grants are not written down yet. An
+// address that does not parse is dropped, exactly as the gate drops it.
+func implicitAdmins(members []string) []string {
+	out := []string{}
+	for _, m := range members {
+		address, ok := strings.CutPrefix(m, "user:")
+		if !ok {
+			continue
+		}
+		member, err := access.Member(address)
+		if err != nil {
+			continue
+		}
+		if email, ok := strings.CutPrefix(member, "user:"); ok {
+			out = append(out, email)
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // CredentialsInstallationFacts is Credentials' own question about the
@@ -806,14 +990,15 @@ func credentialsReviewJobKey(j CredentialsReviewJob) string {
 }
 
 // RefreshCredentialsServiceJobAccounts returns vars with the credentials
-// service's two job tables — job_accounts and review_job_accounts — brought up
-// to date with the installation the local config names now, and every other
-// member of the block — the image, the URL, the bundle container, the database
-// and the verifier list — exactly what it was.
+// service's three job tables — job_accounts, review_job_accounts and
+// shared_job_accounts — brought up to date with the installation the local
+// config names now, and every other member of the block — the image, the URL,
+// the bundle container, the database and the verifier list — exactly what it
+// was.
 //
-// The two tables are the members of the block this side composes out of the
+// The three tables are the members of the block this side composes out of the
 // local config (CredentialsJobAccounts over lc.Repos, CredentialsReviewJobAccounts
-// over lc.Profiles), and the deploy is their only other writer: Credentials
+// and CredentialsSharedJobAccounts over lc.Profiles), and the deploy is their only other writer: Credentials
 // fills them in on the run that CREATES the block, and every later run carries
 // the block as it is found (CarriedCredentialsService). A repository onboarded
 // after that deploy is therefore in the table of nobody — its root still grants
@@ -833,11 +1018,14 @@ func credentialsReviewJobKey(j CredentialsReviewJob) string {
 // no token is ever minted for, while a row a refresh DROPPED is a job that
 // holds an invoker grant and is refused. It is also what keeps an installation
 // whose config has not changed byte for byte what it was, which is what a
-// carried block owes its readers. The review table is read and unioned the same
-// way, with the one difference CredentialsReviewJobAccounts' own comment gives:
-// an installation that names no profile derives no review row at all, so the
-// empty table written here is the class's fail-closed state and not the refusal
-// an empty job_accounts is.
+// carried block owes its readers. The review and shared tables are read and
+// unioned the same way, with the one difference their own comments give: an
+// installation that names no profile — or no profile on a provider a shared job
+// serves — derives no row of them at all, so the empty table written here is
+// the class's fail-closed state and not the refusal an empty job_accounts is.
+// The shared table's ONE other difference is that a row's repositories are not
+// part of its identity, so a row the config still derives is taken whole from
+// the config rather than kept as found (see the union below).
 //
 // A config that cannot describe a table at all — a named repository whose
 // provider it does not state, no repository with a workflow, or a profile whose
@@ -926,6 +1114,168 @@ func RefreshCredentialsServiceJobAccounts(vars []byte, lc *localcfg.Config) ([]b
 		})
 		svc["review_job_accounts"] = mergedReview
 	}
+	// The shared table, read and unioned by the same rules, with the two
+	// differences its own row shape gives. The first is that the repositories a
+	// row carries are not part of its identity (credentialsSharedJobKey), so a
+	// row the config still derives has its repositories taken from the config:
+	// the profile's own allow_repos has moved where it moved, and a carried row
+	// kept verbatim would hold an admission the config no longer states (a
+	// repository switched off stays served, or one added stays refused and its
+	// runs die at their first git command). What that replacement may NOT do is
+	// narrow a row derived through sharedJobRepos' fallback, because the
+	// fallback is the UPDATING machine's own record and not the installation's:
+	// there the derived repositories are unioned with the carried ones
+	// (sharedRowReposComeFromTheMachine, unionSharedRepos). A row the config no
+	// longer derives is carried as it is, which is the direction every table
+	// here is unioned in: a row for a job the installation still holds is a job
+	// the service must keep admitting, and dropping it would refuse a caller
+	// the deployment runs.
+	var foundShared []CredentialsSharedJob
+	if raw, ok := svc["shared_job_accounts"]; ok && raw != nil {
+		b, err := json.Marshal(raw)
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(b, &foundShared); err != nil {
+			return nil, fmt.Errorf("the installation's credentials_service.shared_job_accounts is not a list of profile, provider, account and repos rows: %w", err)
+		}
+	}
+	shared, err := CredentialsSharedJobAccounts(lc)
+	if err != nil {
+		return nil, err
+	}
+	mergedShared := make([]CredentialsSharedJob, 0, len(foundShared)+len(shared))
+	mergedShared = append(mergedShared, foundShared...)
+	at := make(map[string]int, len(mergedShared))
+	for i, r := range mergedShared {
+		at[credentialsSharedJobKey(r)] = i
+	}
+	// The repositories the MERGED coding table above runs jobs for, by
+	// provider: the installation's own record of what it serves, every
+	// machine's entries in it, and the list a machine-fallback row is refreshed
+	// from.
+	providerRepos := map[string][]string{}
+	for _, j := range merged {
+		canonical, err := projectpolicy.Canonical(j.Provider, j.Repo)
+		if err != nil {
+			continue
+		}
+		if !slices.Contains(providerRepos[j.Provider], canonical) {
+			providerRepos[j.Provider] = append(providerRepos[j.Provider], canonical)
+		}
+	}
+	for _, r := range shared {
+		i, carried := at[credentialsSharedJobKey(r)]
+		r.Repos = slices.Clone(r.Repos)
+		// This machine's record is the fallback and never the whole of what
+		// the profile serves (sharedJobRepos), so a row derived through it is
+		// UNIONED with what the block carries and with the repositories the
+		// merged coding table runs jobs for, rather than written over them: an
+		// installation is updated from whichever machine runs the command, and
+		// a config that does not record a teammate's repository — while the
+		// coding table keeps that repository's job, unioned like every table
+		// here — would otherwise narrow the row and refuse the shared run of a
+		// repository the installation still runs jobs for. That is Check 580's
+		// 403 again, one axis over. The boundary is the published policy either
+		// way: projectpolicy.Admits is read by the service on every call
+		// (credsvc's pairShared), so a repository this installation no longer
+		// publishes is refused there whatever a row says.
+		pr, derived := lc.Profiles[r.Profile]
+		if derived && sharedRowReposComeFromTheMachine(pr) {
+			var held []string
+			if carried {
+				held = mergedShared[i].Repos
+			}
+			r.Repos = unionSharedRepos(r.Repos, slices.Concat(held, providerRepos[pr.Provider]))
+		}
+		if carried {
+			mergedShared[i] = r
+			continue
+		}
+		at[credentialsSharedJobKey(r)] = len(mergedShared)
+		mergedShared = append(mergedShared, r)
+	}
+	if len(mergedShared) > 0 {
+		slices.SortFunc(mergedShared, func(a, b CredentialsSharedJob) int {
+			return strings.Compare(credentialsSharedJobKey(a), credentialsSharedJobKey(b))
+		})
+		svc["shared_job_accounts"] = mergedShared
+	}
+	doc["credentials_service"] = svc
+	return sortedJSON(doc)
+}
+
+// RefreshCredentialsServiceIdentity returns vars with the credentials service
+// block's three identity names — signer_account, roster_service_accounts and
+// implicit_admins — brought up to date with the installation the local config
+// names now, and every other member of the block exactly what it was.
+//
+// The three names are the block's members this side derives from the local
+// config, and the deploy is their only other writer (Credentials): the run that
+// CREATES the block fills them in, and every later run carries the block as it
+// is found (CarriedCredentialsService). The names are new in this release, so
+// every installation that has the block from before it carries one without
+// them — and the block is carried byte for byte, so nothing else ever adds
+// them. That is the whole of LM13's acceptance at the installations that
+// matter: the roster's `serviceAccount:` entries and the implicit admins are
+// rendered to the service there too, the account that may knock and the account
+// that may be served stay one list (the module makes the service's invoker
+// grant for the same variable, iam.tf's credentials_roster_service_account),
+// and the runs' signer reaches the process, without which LM14's probe has
+// nothing to read and the minter grant can never move.
+//
+// The three are REPLACED, not unioned, which is where they part from the two
+// job tables RefreshCredentialsServiceJobAccounts composes: a job row the
+// refresh dropped is a job that holds an invoker grant and is refused by the
+// service (the union's own comment), while a roster or implicit-admin member
+// the config no longer names is a GRANT the service would keep for an account
+// that no longer launches, or an admission the CLI's own gate has already
+// withdrawn — a widening nothing can undo, and, for the implicit admins, a
+// disagreement between the two ends of the one rule F29/R16 arm 1 states.
+// Replacing is also what keeps an installation whose config has not changed
+// converging on the bytes it already has, because the derivation is the
+// deploy's own (credentialsServiceIdentity).
+//
+// A name with nothing to carry is DELETED rather than written empty, which is
+// what the spec's `omitempty` tags write and what the module's own defaults
+// read as the empty class: an installation whose roster names no service
+// account, or whose config names no implicit admin, then carries exactly the
+// bytes the run that deployed the service would have written.
+//
+// A config that cannot name the Firebase project the signer lives in is refused
+// rather than written around (firebaseBackend), the direction the job tables'
+// refresh takes: the caller then keeps the block it found, so an installation
+// whose service is deployed but whose config no longer names the project is
+// left with the names it has rather than a block with the signer dropped.
+func RefreshCredentialsServiceIdentity(vars []byte, lc *localcfg.Config) ([]byte, error) {
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	svc, _ := doc["credentials_service"].(map[string]any)
+	if svc == nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json carries no credentials_service to refresh the identity names of")
+	}
+	b, err := firebaseBackend(lc, "the credentials service")
+	if err != nil {
+		return nil, err
+	}
+	signer, roster, admins := credentialsServiceIdentity(lc, b)
+	if signer == "" {
+		delete(svc, "signer_account")
+	} else {
+		svc["signer_account"] = signer
+	}
+	if len(roster) == 0 {
+		delete(svc, "roster_service_accounts")
+	} else {
+		svc["roster_service_accounts"] = roster
+	}
+	if len(admins) == 0 {
+		delete(svc, "implicit_admins")
+	} else {
+		svc["implicit_admins"] = admins
+	}
 	doc["credentials_service"] = svc
 	return sortedJSON(doc)
 }
@@ -985,6 +1335,134 @@ func CredentialsReviewJobAccounts(lc *localcfg.Config) ([]CredentialsReviewJob, 
 		return strings.Compare(a.Account, b.Account)
 	})
 	return slices.Compact(out), nil
+}
+
+// CredentialsSharedJobAccounts is the installation's SHARED project jobs as
+// the module's var.credentials_service carries them: one row per
+// (profile, provider, account) the deployer creates a shared job for
+// (ProjectJobs' axis), with the repositories that profile serves.
+//
+// It is derived from the same two facts the deployer derives its jobs from and
+// from no third one: the profiles of the local config, held to SharedJobProvider
+// (the one predicate that says which providers a shared job serves) and to the
+// account axis with the names this installation declares a KEY credential left
+// out (config.ClaudeAccountTokenNames, which is the very filter projectJobs
+// applies when it composes the jobs) — so the accounts this service admits are
+// the accounts the deployment runs, which is the claim credsvc's
+// TestSharedJobAccountsAreTheNamesProjectJobsDeploys makes about the other
+// half. A profile is counted whatever its records say about the service
+// switch: the row is the class the service admits, and the switch is the
+// separate fact that decides whether a launch of that profile is handed this
+// service's address at all (CredentialsServiceServesProfile).
+//
+// An installation that deploys no shared job at all gets an empty table and no
+// error — the review table's own rule and for its own reason (the coding table
+// above is the exception, and the service refuses an empty version of it): a
+// service whose shared class is empty answers every caller of it with the
+// class's refusal, which is the fail-closed state and not a deployment that
+// cannot start.
+func CredentialsSharedJobAccounts(lc *localcfg.Config) ([]CredentialsSharedJob, error) {
+	var out []CredentialsSharedJob
+	for _, name := range slices.Sorted(maps.Keys(lc.Profiles)) {
+		pr := lc.Profiles[name]
+		if !SharedJobProvider(pr.Provider) {
+			continue
+		}
+		served := config.ClaudeAccountTokenNames(lc.Credentials, config.ProjectJobAccounts(pr))
+		repos := sharedJobRepos(lc, pr)
+		for _, account := range served {
+			out = append(out, CredentialsSharedJob{Profile: name, Provider: pr.Provider, Account: account, Repos: repos})
+		}
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	slices.SortFunc(out, func(a, b CredentialsSharedJob) int {
+		return strings.Compare(credentialsSharedJobKey(a), credentialsSharedJobKey(b))
+	})
+	return out, nil
+}
+
+// sharedJobRepos is the repositories a shared job's row carries: what its
+// profile serves, which is the profile's own allow_repos when it names one
+// (projectpolicy.ProfileAllowRepos' rule) and, when it names none, the
+// repositories this machine's config records for the profile's provider.
+//
+// The fallback is the installation's own record of its repositories and not
+// the published project list, which is the same list with every other
+// machine's shared entries in it (internal/cli's seedAllowRepos): reading it
+// here would be a database call the deploy path deliberately makes none of
+// (internal/cli's deployCredentialsService), and every entry the config does
+// not record is a repository whose shared caller this service then refuses —
+// which is the fail-closed direction for a value that is an admission, and
+// never a widening of one. What is written is always a subset of what the
+// project's own list admits, so the two gates the service reads a call
+// through (projectpolicy.Admits) are read here as they are read there.
+//
+// The value is never nil: the member is REQUIRED and an empty one is the
+// deny-all profile, while a missing one is a document the service refuses to
+// read at all.
+//
+// The fallback above is this machine's record and not the installation's, so a
+// refresh may not write a row over a carried one with it:
+// sharedRowReposComeFromTheMachine is the predicate the refresh asks, and the
+// union it makes there is why a machine whose config does not name a
+// teammate's repository cannot narrow a row.
+func sharedJobRepos(lc *localcfg.Config, pr config.JobProfile) []string {
+	if len(pr.AllowRepos) > 0 {
+		return slices.Clone(pr.AllowRepos)
+	}
+	out := []string{}
+	for _, key := range slices.Sorted(maps.Keys(lc.Repos)) {
+		entry := lc.Repos[key]
+		if entry.Provider != pr.Provider {
+			continue
+		}
+		canonical, err := projectpolicy.Canonical(entry.Provider, key)
+		if err != nil {
+			// A repository the config cannot canonicalise is one no admission
+			// of this service could ever match: it is dropped rather than
+			// written as a pattern that admits nothing.
+			continue
+		}
+		out = append(out, canonical)
+	}
+	return out
+}
+
+// sharedRowReposComeFromTheMachine reports whether a shared row's repositories
+// are the machine-recorded fallback rather than the profile's own allow_repos:
+// it is sharedJobRepos' two branches, asked by the refresh, which may replace a
+// carried row's repositories with the config's own when they are the profile's
+// own statement and never when they are this machine's fallback.
+//
+// It is asked only of a profile the config still names: a carried row whose
+// profile the config no longer derives is kept whole like every other table's,
+// which is why the caller asks lc.Profiles for the profile and not this
+// predicate alone (a missing profile is the zero JobProfile, which this would
+// read as the fallback branch).
+func sharedRowReposComeFromTheMachine(pr config.JobProfile) bool { return len(pr.AllowRepos) == 0 }
+
+// unionSharedRepos is derived's entries followed by carried's that derived does
+// not already hold, sorted: the row repositories a refresh writes when the
+// fallback branch above is what derived them. The result is a superset of what
+// the block carried, so a second refresh of the same document derives the same
+// list and converges on it.
+//
+// Sorted rather than in either list's own order because the two lists belong to
+// two machines: one that recorded a repository the other did not derives a
+// different order for the same set, and a row whose content is the same but
+// whose bytes differ plans a service update — a new revision — for a
+// reordering an owner cannot see.
+func unionSharedRepos(derived, carried []string) []string {
+	out := slices.Clone(derived)
+	for _, repo := range carried {
+		if !slices.Contains(out, repo) {
+			out = append(out, repo)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // CredentialsServiceURLOf returns the credentials_service.url the installation
@@ -1313,6 +1791,7 @@ func IntakeOf(vars []byte) (IntakeSpec, bool, error) {
 	spec.Service, _ = block["service"].(string)
 	spec.Image, _ = block["image"].(string)
 	spec.URL, _ = block["url"].(string)
+	spec.People = stringList(block["people"])
 	if spec.Service == "" || spec.Image == "" {
 		return IntakeSpec{}, false, nil
 	}
@@ -1336,6 +1815,27 @@ func IntakeURLOf(vars []byte) (string, error) {
 	block, _ := doc["intake"].(map[string]any)
 	url, _ := block["url"].(string)
 	return url, nil
+}
+
+// LauncherAccountsOf returns the launcher_accounts the installation root's
+// tfvars carry, and the empty list when they carry none — the module's own
+// default, which is also what the key's omitempty writes for an installation
+// whose launcher list names no `user:` member (InstallationSpec.LauncherAccounts,
+// InstallationVars).
+//
+// It is read beside IntakeOf's people because the intake's class is the two
+// TOGETHER: the block's people list is the roster's own, and whether it moves
+// the class the module reads depends on what the launchers already carry
+// (IntakeClass, intake.tf's local.intake_accounts).
+func LauncherAccountsOf(vars []byte) ([]string, error) {
+	if vars == nil {
+		return []string{}, nil
+	}
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, err
+	}
+	return stringList(doc["launcher_accounts"]), nil
 }
 
 // SetIntakeURL returns vars with intake.url set to url and every other entry —
@@ -1382,6 +1882,49 @@ func SetIntakeImage(vars []byte, image string) ([]byte, error) {
 		return nil, fmt.Errorf("the installation's terraform.tfvars.json carries no intake to set the image of")
 	}
 	block["image"] = image
+	doc["intake"] = block
+	return sortedJSON(doc)
+}
+
+// SetIntakePeople returns vars with the intake's second class list set to
+// people, and every other entry — of the document and of the intake's own
+// block — unchanged (SetIntakeURL's read-modify-write, on the block's other
+// member).
+//
+// An empty list REMOVES the key rather than writing [], and that is the
+// document's own shape: the module's default is the empty list, so the absent
+// key and [] are one plan, and IntakeSpec.People's omitempty writes a block
+// without it. It is also the state every installation that is not a workspace's
+// project is in, and a run that wrote [] into one would put a diff in its
+// tfvars for a fact it does not have.
+//
+// The list is sorted and deduplicated here, so two equal rosters give equal
+// bytes (sortedJSON's promise) whatever order a caller read them in.
+//
+// A document with no intake block is refused rather than given one, for
+// SetIntakeURL's reason: the people are a member of a block that turns on an
+// account, two roles, a service and its invoker grants, and a caller that
+// invented one would deploy the intake for an installation whose run never
+// resolved an image for it.
+func SetIntakePeople(vars []byte, people []string) ([]byte, error) {
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, err
+	}
+	block, _ := doc["intake"].(map[string]any)
+	if block == nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json carries no intake to set the roster's people on")
+	}
+	sorted := append([]string{}, people...)
+	slices.Sort(sorted)
+	delete(block, "people")
+	if sorted = slices.Compact(sorted); len(sorted) > 0 {
+		arr := make([]any, 0, len(sorted))
+		for _, p := range sorted {
+			arr = append(arr, p)
+		}
+		block["people"] = arr
+	}
 	doc["intake"] = block
 	return sortedJSON(doc)
 }
@@ -1932,9 +2475,8 @@ const OrchestratorKey = "orchestrator"
 // fugaro-orch, the launcher's project role, the runs bucket's conditioned write
 // and its unconditioned read, the token-minter role on the budget signer ACCOUNT
 // and the job runner's role on each of the installation's jobs — and the
-// installation holds it as STATE. The ONE writer is `fugaro update
-// --firebase-project <id> --orchestrator` (internal/cli's
-// ensureOrchestratorBlock, through infra.Orchestrator and SetOrchestrator), and
+// installation holds it as STATE. The ONE writer is `fugaro update`
+// (internal/cli's ensureOrchestratorBlock, in the credentials-service stage; through infra.Orchestrator and SetOrchestrator), and
 // it writes the block only where the installation holds none: from the apply
 // that creates the account onwards every path that re-serializes the root's
 // tfvars rebuilds the document from a spec that does not carry the key, so
@@ -2001,7 +2543,7 @@ func CarriedOrchestrator(vars, prev []byte) ([]byte, error) {
 // renders and the invoker grant orchestrator.tf adds — exists on exactly the
 // installations this answers true for. The writer asks it before it writes, and
 // the credentials-service stage asks it before it re-pins an image: an
-// installation that has not opted in is one no run hands an orchestrator.
+// installation that holds no block is one no run recomposes one for.
 //
 // A key present as null is NOT recorded. VoiceServiceRecorded answers the other
 // way for the same shape, because the question there is whether a run may
@@ -2189,6 +2731,21 @@ func budgetBillingAccountOf(state []byte) (account string, found bool, err error
 	return "", false, nil
 }
 
+// stringList is a decoded JSON array as the list of strings it holds, empty for
+// anything else: a member that is not a string is dropped rather than read as
+// one, because the block a caller asks about is a document this program either
+// wrote (where every member is a string) or one it refuses to act on at all.
+func stringList(v any) []string {
+	arr, _ := v.([]any)
+	out := make([]string, 0, len(arr))
+	for _, e := range arr {
+		if s, ok := e.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // varsDoc decodes an installation tfvars document, keeping numbers as
 // json.Number so that encoding it again writes the same digits.
 func varsDoc(vars []byte) (map[string]any, error) {
@@ -2296,7 +2853,7 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 			Log:                       LogNames{Bucket: LogBucket, View: LogView, Sink: LogSink, Exclusion: LogExclusion},
 		},
 		BucketLifecycle: BucketLifecycle{RunsDays: runsDays, CacheCustomTimeDays: cacheCustomTimeDays, CacheAgeDays: cacheAgeDays, ReportsDays: reportsDays},
-		EnableVertex:    o.EnableVertex || lc.UsesVertex(),
+		EnableVertex:    o.EnableVertex || lc.UsesVertex() || ChainsNameVertex(lc),
 		ManageAPIs:      !o.SkipAPIs,
 		Launchers:       members(o.Launchers, lc.Terraform.Operators),
 		Operators:       members(o.Operators, lc.Terraform.Admins),
@@ -2316,7 +2873,16 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 		LogBucketLocation: place.For(lc.Region).LogBucket.Where,
 		ProjectSecrets:    projectSecretContainers(lc),
 	}
-	jobs, err := projectJobs(lc, bucket, s.EnableVertex, o.CarriedJobProfiles)
+	// The shared job's Vertex GRANT is the API's own fact minus the modes that
+	// refuse a Vertex run outright (VertexGrantForJob): a job's account is
+	// planned no aiplatform permission on an enforcing project, where no run in
+	// flight can be using one, and keeps it on an `observe` one until release 2
+	// (X8). The review jobs below keep the whole fact: they are planned no
+	// Vertex grant whatever this argument says (reviewVariant's own ruling), so
+	// it reaches only their environment, where the two Vertex names are what an
+	// `agent.auth: vertex` agent refuses to start without — and a variant that
+	// cannot start is not a narrower variant.
+	jobs, err := projectJobs(lc, bucket, s.EnableVertex && VertexGrantForJob(lc.BudgetMode()), o.CarriedJobProfiles)
 	if err != nil {
 		return InstallationSpec{}, err
 	}

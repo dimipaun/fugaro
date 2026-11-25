@@ -269,31 +269,67 @@ func Select(ctx context.Context, in Input) (Output, error) {
 		// shard job rather than hand GitHub an empty matrix.
 		return selected(nil, fmt.Sprintf("nothing changed since %s", short(base)), false, false), nil
 	}
+	an := analyze(ctx, in, root, files)
+	if an.doubt != "" {
+		return full(ctx, in, root, an.doubt)
+	}
+	reason := fmt.Sprintf("selected %d packages from %s since %s",
+		len(an.chosen), selectCount(len(files), "changed file", "changed files"), short(base))
+	return selected(Pack(an.chosen, timings(ctx, in, root, run, runErr), legBudget(an.chosen, in.MaxLegs)), reason,
+		an.terraform, an.rules), nil
+}
+
+// analysis is what both callers work out about a change before they answer:
+// the packages it reaches, whether the terraform and rules jobs run, and a
+// doubt's reason where the change cannot be placed at all (R8).
+type analysis struct {
+	// doubt is why the change cannot be placed — a doubt's own reason, which
+	// both callers answer by running everything they would have run without a
+	// selector. Empty where the change could be placed.
+	doubt string
+	// chosen is the packages the change reaches, tag-gated ones dropped.
+	chosen []string
+	// terraform and rules say whether those jobs run: chosen from every
+	// package the change reaches, tag-gated ones included, since only the
+	// default-tag legs are narrowed (R6).
+	terraform bool
+	rules     bool
+}
+
+// analyze is the half `Select` and `SelectVerify` share: every doubt of R8 the
+// changed files themselves carry, and the packages a change reaches.
+//
+// The read map and the graph are read last, because a change that is a doubt
+// anyway needs neither and the graph is the expensive one.
+func analyze(ctx context.Context, in Input, root string, files []string) analysis {
 	for _, f := range files {
 		if alwaysFullChange(f) {
-			return full(ctx, in, root, ReasonAlwaysFull+": "+f)
+			return analysis{doubt: ReasonAlwaysFull + ": " + f}
 		}
 	}
-	// The read map and the graph are read last: a run that is full anyway needs
-	// neither, and the graph is the expensive one.
 	m, err := LoadReadMap(filepath.Join(root, readMapPath))
 	if err != nil {
-		return full(ctx, in, root, ReasonNoReadMap+": "+err.Error())
+		return analysis{doubt: ReasonNoReadMap + ": " + err.Error()}
 	}
 	g, module, err := graphOf(ctx, in, root)
 	if err != nil {
-		return full(ctx, in, root, ReasonNoGraph+": "+err.Error())
+		return analysis{doubt: ReasonNoGraph + ": " + err.Error()}
 	}
 	for _, f := range files {
 		if !mapped(f, m, g) {
-			return full(ctx, in, root, ReasonUnmapped+": "+f)
+			return analysis{doubt: ReasonUnmapped + ": " + f}
 		}
 	}
 	chosen := choose(files, m, g, module)
-	reason := fmt.Sprintf("selected %d packages from %s since %s",
-		len(chosen), selectCount(len(files), "changed file", "changed files"), short(base))
-	return selected(Pack(chosen, timings(ctx, in, root, run, runErr), legBudget(chosen, in.MaxLegs)), reason,
-		jobRuns(chosen, files, terraformTrees), jobRuns(chosen, files, rulesTrees)), nil
+	buildable, err := buildablePackages(ctx, in, root, module)
+	if err != nil {
+		return analysis{doubt: ReasonNoGraph + ": " + err.Error()}
+	}
+	return analysis{
+		chosen:    dropGated(chosen, gatedPackages(g.packages(module), buildable)),
+		terraform: jobRuns(chosen, files, terraformTrees),
+		rules:     jobRuns(chosen, files, rulesTrees),
+	}
 }
 
 // full is the answer to every doubt: the whole matrix and every job (R8).
@@ -332,7 +368,12 @@ func fullLegs(ctx context.Context, in Input, root string) ([]Leg, error) {
 			chosen = append(chosen, pkg)
 		}
 	}
+	buildable, err := buildablePackages(ctx, in, root, module)
+	if err != nil {
+		return nil, err
+	}
 	chosen = packChosenPackages(chosen)
+	chosen = dropGated(chosen, gatedPackages(chosen, buildable))
 	return Pack(chosen, "", legBudget(chosen, in.MaxLegs)), nil
 }
 
@@ -386,6 +427,51 @@ func graphOf(ctx context.Context, in Input, root string) (*Graph, string, error)
 		return nil, "", err
 	}
 	return g, module, nil
+}
+
+// buildablePackages is the packages of the module `go test` can be handed under
+// the default tags. `go list ./...` skips a directory whose every Go file is
+// behind a build tag, where a package named to `go test` explicitly is a setup
+// failure ("build constraints exclude all Go files"); the legs name their
+// packages, so a package missing here must not reach one.
+func buildablePackages(ctx context.Context, in Input, root, module string) (map[string]bool, error) {
+	out, err := command(in).Output(ctx, root, "go", "list", "-f", "{{.ImportPath}}", "./...")
+	if err != nil {
+		return nil, err
+	}
+	set := map[string]bool{}
+	for _, line := range strings.Split(string(out), "\n") {
+		if pkg, ok := repoPath(module, strings.TrimSpace(line)); ok {
+			set[pkg] = true
+		}
+	}
+	return set, nil
+}
+
+// gatedPackages is the packages of known that the default tags leave without a
+// buildable file. A package the listing never saw is not one of them: the read
+// map may name a path the graph does not own, and that is the map's to answer.
+func gatedPackages(known []string, buildable map[string]bool) map[string]bool {
+	gated := map[string]bool{}
+	for _, pkg := range known {
+		if !buildable[pkg] {
+			gated[pkg] = true
+		}
+	}
+	return gated
+}
+
+// dropGated takes the tag-gated packages out of the default-tag legs. What such
+// a package's tests need is a job that runs with the tag, which the terraform
+// and rules jobs are for the trees they own.
+func dropGated(chosen []string, gated map[string]bool) []string {
+	out := make([]string, 0, len(chosen))
+	for _, pkg := range chosen {
+		if !gated[pkg] {
+			out = append(out, pkg)
+		}
+	}
+	return out
 }
 
 // modulePath is the module line of the checkout's go.mod.

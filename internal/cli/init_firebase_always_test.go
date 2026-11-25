@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/runindex"
 )
 
 // AB7: the Firebase stage runs with no flag, on `setup` and `update`, and it
@@ -80,8 +81,8 @@ func tfRan(t *testing.T, r *initRig, root, sub string) []tfCall {
 
 // noStepLeftBehind fails on a run that stopped for anything but a step left for
 // the person: `fugaro update` closes such a run with "fugaro update is not
-// finished", and the Firestore location's note is one of those steps (D3027 —
-// the database is written before it, which is what these two tests are about).
+// finished" (D3027 — the budget database is written before the run history's
+// own, which is what these two tests are about).
 func noStepLeftBehind(t *testing.T, err error) {
 	t.Helper()
 	if err != nil && !strings.Contains(err.Error(), "step(s) left for you") {
@@ -266,7 +267,7 @@ func TestAManagedProjectCreatesItsDatabaseUnderTheGate(t *testing.T) {
 	if b := r.localConfig(t).Budget; b == nil || b.RTDBURL != r.db.URL {
 		t.Errorf("the local config records budget %+v, want the database this run made", b)
 	}
-	if !strings.Contains(out, "passed the deterministic gate") {
+	if !strings.Contains(out, "the gate admitted the plan") {
 		t.Errorf("the database's step does not say the gate decided it:\n%s", out)
 	}
 	if strings.Contains(out, "Type "+initProjectName) {
@@ -378,6 +379,277 @@ func TestAKnownDatabaseSkipsTheStageAsToday(t *testing.T) {
 	// This rig has no Firebase project's clients at all (no Cloud Billing, no
 	// Realtime Database fake): a stage that ran would fail rather than end 0,
 	// which is what makes the exit 0 an assertion of its own.
+	//
+	// The state bucket holds no Firebase state here, so the check's own read
+	// (RI2) answers "not read" and F34's line stands: the two states that skip
+	// this stage with a database recorded are this one and the indexed one, and
+	// TestAConvergedInstallationWithTheIndexesSkipsTheStage is the other. The
+	// one that does NOT skip it is an installation whose state does not carry
+	// the whole set the module declares: none of them
+	// (TestAPlainUpdateCreatesTheRunIndexesOfAConvergedInstallation), and the
+	// ten of an installation the release before left one short
+	// (TestAConvergedInstallationMissingOneIndexRunsTheStage).
+}
+
+// convergedFirebase puts the rig in the state a converged installation is in
+// as RI2 found it: the machine's local config records the budget database (F34,
+// so this stage has been skipped since AB7), the Firebase root's state object
+// is in the state bucket, the Realtime Database holds the nodes an apply left
+// in it, and the Firestore database — the one the run index's composite indexes
+// are created under — is there.
+func convergedFirebase(t *testing.T, r *fbRig) {
+	t.Helper()
+	r.firebaseState(t)
+	r.fs.SetDatabase("us-east5")
+	r.db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
+	r.db.Set(budget.PathProject, initProjectName)
+	r.db.Set(budget.PathMode, budget.ModeEnforce)
+	r.db.Set(budget.PathLimits, map[string]any{"maxReserveMicros": 5_000_000})
+	r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5, max_run_tokens: 100000, rtdb_url: "+r.db.URL+", firebase_project: \""+fpID+"\" }\n")
+}
+
+// TestAPlainUpdateCreatesTheRunIndexesOfAConvergedInstallation is RI2 at the
+// door the release note names. The eleven composite indexes of the run index
+// are the Firebase root's — no job and no other root creates them (F10) — and a
+// plain `fugaro update` has skipped that root on every installation whose
+// config records the budget database since AB7 (F34). The skip is the stage's
+// own check, and it holds only while the root's state already carries one of
+// them: this installation's does not, so one plain update is what applies the
+// root that creates them, with the gate the module needs (the database is
+// there, so its for_each is the eleven and not an empty set).
+//
+// Red before the check read the state: the run ended with the Firebase stage
+// skipped, "the project config already records the budget database", and no
+// apply in that root at all — only `fugaro update --firebase-project` reached
+// it, which is a different invocation from the one the release note names.
+//
+// The credential is the owner's (mayCreate): the apply that creates the indexes
+// is the Firebase root's, and that apply makes the project's IAM changes, so a
+// run that may not make them keeps F34's skip instead
+// (TestAnOperatorsPlainUpdateSkipsTheStageAndConverges).
+func TestAPlainUpdateCreatesTheRunIndexesOfAConvergedInstallation(t *testing.T) {
+	r := alwaysRig(t)
+	convergedFirebase(t, r)
+	mayCreate(t, r)
+	// The state manages nothing of the run index, and the plan the apply is made
+	// from is a create in that root. The eleven themselves are the module's and
+	// are pinned by the terraform-tagged TestFirebaseModulePlansRunIndexes: what
+	// this test is about is that a plain update reaches the root at all.
+	r.fbPlan(t, nil, nil, nil)
+	r.script["plan@firebase"] = map[string]any{"exit": 2, "stdout": planJSON(t, planChange{
+		"address": `module.firebase.google_firestore_index.run["role_updated_at"]`, "type": "google_firestore_index",
+		"change": map[string]any{"actions": []string{"create"}, "before": nil, "after": map[string]any{}}})}
+	r.save(t)
+	fakeTerminal(t)
+
+	out, err := updateRun(t, r.initRig, "update")
+	if err != nil {
+		t.Fatalf("a plain update of a converged installation did not converge: %v\n%s", err, out)
+	}
+	if got := r.applies(t); !slices.Contains(got, "firebase") {
+		t.Errorf("the Firebase root was applied in none of %v, so the run index's composite indexes were never created (F10)\n%s", got, out)
+	}
+	if v := r.fbVars(t)["firestore_database_exists"]; v != true {
+		t.Errorf("the Firebase root is applied with firestore_database_exists = %v, want true: the database the indexes are created under is there (RI2)", v)
+	}
+}
+
+// TestAnOperatorsPlainUpdateSkipsTheStageAndConverges is F34's own run, and the
+// one the state read must not turn into a failure: the credential is an
+// operator's, which the fake answers by holding none of the permissions the
+// Firebase root's apply makes the project's IAM changes with (mayCreate is what
+// a project owner holds). The indexes are therefore not this run's to create —
+// the same installation as the test above, with a credential that may not apply
+// that root — and it says so in one line and converges, exactly as the skip it
+// has always taken did.
+//
+// Red before the skip asked this: the state read answered "no index" and the run
+// took the whole Firebase flow, whose apply is the one this credential may not
+// make, so an operator's update failed instead of converging.
+func TestAnOperatorsPlainUpdateSkipsTheStageAndConverges(t *testing.T) {
+	r := alwaysRig(t)
+	convergedFirebase(t, r)
+	fakeTerminal(t)
+
+	out, err := updateRun(t, r.initRig, "update")
+	if err != nil {
+		t.Fatalf("an operator's plain update did not converge: %v\n%s", err, out)
+	}
+	l := stepLineOf(reportLines(out), initflow.Firebase)
+	if !strings.HasPrefix(l, markSkipped+" "+initflow.Firebase) || !strings.Contains(l, "already records the budget database") {
+		t.Errorf("the Firebase stage is %q, want the skip that says the database is known\n%s", l, out)
+	}
+	if !strings.Contains(l+newestLog(t, "update"), "may make project") {
+		t.Errorf("the run does not say the indexes wait for a credential that may make the project's IAM changes:\n%s", l+newestLog(t, "update"))
+	}
+	if got := r.applies(t); slices.Contains(got, "firebase") {
+		t.Errorf("the Firebase root was applied by a credential that may not make the project's IAM changes: %v", got)
+	}
+	if plan := tfRan(t, r.initRig, "firebase", "plan"); len(plan) != 0 {
+		t.Errorf("a skipped stage planned the Firebase root: %v", plan)
+	}
+}
+
+// runIndexAddresses is the run index's composite indexes as the Firebase root's
+// state holds them once an apply has created them (RI2, runindex.Indexes).
+func runIndexAddresses() []string {
+	out := make([]string, 0, len(runindex.Indexes))
+	for _, key := range runindex.Indexes {
+		out = append(out, runindex.IndexAddress(key))
+	}
+	return out
+}
+
+// TestAConvergedInstallationWithTheIndexesSkipsTheStage is F34 kept: the same
+// installation one update later, its Firebase root's state now carrying the
+// whole set the module declares, is what the skip has always been for. The
+// stage says its line, plans nothing in that root and applies nothing there.
+//
+// This rig has the Firebase project's fakes, so a stage that ran would be seen:
+// the assertion is not "the run survived" but "the root was never reached".
+func TestAConvergedInstallationWithTheIndexesSkipsTheStage(t *testing.T) {
+	r := alwaysRig(t)
+	convergedFirebase(t, r)
+	r.fbPlan(t, nil, nil, runIndexAddresses())
+	fakeTerminal(t)
+
+	out, err := updateRun(t, r.initRig, "update")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	l := stepLineOf(reportLines(out), initflow.Firebase)
+	if !strings.HasPrefix(l, markSkipped+" "+initflow.Firebase) || !strings.Contains(l, "already records the budget database") {
+		t.Errorf("the Firebase stage is %q, want the skip that says the state has the indexes\n%s", l, out)
+	}
+	if got := r.applies(t); slices.Contains(got, "firebase") {
+		t.Errorf("the Firebase root was applied for an installation whose state carries its indexes: %v", got)
+	}
+	if plan := tfRan(t, r.initRig, "firebase", "plan"); len(plan) != 0 {
+		t.Errorf("a skipped stage planned the Firebase root: %v", plan)
+	}
+}
+
+// TestAConvergedInstallationMissingOneIndexRunsTheStage is the row a later
+// release adds. The indexes are a closed set the module declares, and an
+// installation whose state carries ten of the eleven is NOT one whose update
+// may skip that root: the row it lacks would never reach it, and the query that
+// needs it would be refused for ever — which is the one thing `fugaro update`
+// may not be. The stage therefore runs, exactly as it does for an installation
+// that carries none of them.
+//
+// Red before the skip asked which of them the state carries (it asked whether
+// it carried any): the state's ten were read as an installation that has the
+// indexes, so the stage was skipped and the eleventh was never created.
+func TestAConvergedInstallationMissingOneIndexRunsTheStage(t *testing.T) {
+	r := alwaysRig(t)
+	convergedFirebase(t, r)
+	mayCreate(t, r)
+	addresses := runIndexAddresses()
+	missing := runindex.Indexes[len(runindex.Indexes)-1]
+	r.fbPlan(t, nil, nil, addresses[:len(addresses)-1])
+	// The plan the apply is made from is the root's answer for that state: the
+	// one index the state does not carry, planned as a create.
+	r.script["plan@firebase"] = map[string]any{"exit": 2, "stdout": planJSON(t, planChange{
+		"address": runindex.IndexAddress(missing), "type": "google_firestore_index",
+		"change": map[string]any{"actions": []string{"create"}, "before": nil, "after": map[string]any{}}})}
+	r.save(t)
+	fakeTerminal(t)
+
+	out, err := updateRun(t, r.initRig, "update")
+	if err != nil {
+		t.Fatalf("a plain update of an installation that is one index short did not converge: %v\n%s", err, out)
+	}
+	if got := r.applies(t); !slices.Contains(got, "firebase") {
+		t.Errorf("the Firebase root was applied in none of %v, so the run index's composite indexes it lacks were never created (F10)\n%s", got, out)
+	}
+	if v := r.fbVars(t)["firestore_database_exists"]; v != true {
+		t.Errorf("the Firebase root is applied with firestore_database_exists = %v, want true: the database the indexes are created under is there (RI2)", v)
+	}
+}
+
+// memberPin is the config of a project that joined a workspace, exactly as
+// `fugaro workspace add` writes it: the membership key and the four values the
+// pin is refused without (localcfg.validateWorkspace). The pin names no
+// service address, so the run publishes no credential route and the stage this
+// test is about is the only one that has something to do.
+const memberPin = "workspace: workspace-alpha\n" +
+	"workspace_pin:\n" +
+	"  firebase_project: workspace-alpha-1234\n" +
+	"  issuer: https://securetoken.google.com/workspace-alpha-1234\n" +
+	"  assertion_key: marker-assertion-key\n" +
+	"  service_account: fugaro-workspace@workspace-alpha-1234.iam.gserviceaccount.com\n"
+
+// memberServiceAccount is the account memberPin names: the one the root binds
+// the read to.
+const memberServiceAccount = "fugaro-workspace@workspace-alpha-1234.iam.gserviceaccount.com"
+
+// TestAPlainUpdateBindsAWorkspaceMembersRead is D2988 at the door the operator
+// note names: a member's own step is a plain `fugaro update`, with no flag and
+// no second command. The member's config records its database (F34) and the
+// Firebase root's state carries the run index's composite indexes, so RI2 has
+// nothing to ask for — and the state carries no binding for the workspace
+// service account the pin names, because the pin was written by `fugaro
+// workspace add` and no root has been applied with it since. The skip is
+// answered no on the second question and the apply that follows is the one
+// that creates the binding (modules/firebase/workspace_access.tf), with the
+// pin's account in its vars.
+//
+// Red before the check asked it: the member's plain update was skipped with
+// "the project config already records the budget database", the root was never
+// applied, and the workspace's service could not read that member's ledger —
+// only `fugaro update --firebase-project`, which the owner's ruling of
+// 2026-11-24 removed from the member's step, reached the root.
+func TestAPlainUpdateBindsAWorkspaceMembersRead(t *testing.T) {
+	r := alwaysRig(t)
+	convergedFirebase(t, r)
+	mayCreate(t, r)
+	r.appendConfig(t, memberPin)
+	r.fbPlan(t, nil, nil, runIndexAddresses())
+	// The plan the apply is made from is the root's answer for that state: the
+	// binding the state does not carry, planned as a create.
+	r.script["plan@firebase"] = map[string]any{"exit": 2, "stdout": planJSON(t, planChange{
+		"address": "module.firebase.google_project_iam_member.workspace_read[0]", "type": "google_project_iam_member",
+		"change": map[string]any{"actions": []string{"create"}, "before": nil, "after": map[string]any{}}})}
+	r.save(t)
+	fakeTerminal(t)
+
+	out, err := updateRun(t, r.initRig, "update")
+	if err != nil {
+		t.Fatalf("a member's plain update did not converge: %v\n%s", err, out)
+	}
+	if got := r.applies(t); !slices.Contains(got, "firebase") {
+		t.Fatalf("the Firebase root was applied in none of %v, so the workspace's read of this member's database was never bound and its workspace-served runs fail (D2988)\n%s", got, out)
+	}
+	if v := r.fbVars(t)["workspace_service_account"]; v != memberServiceAccount {
+		t.Errorf("the Firebase root is applied with workspace_service_account = %v, want the account this member's own pin names (%s): the binding is the pin's account and nothing the workspace publishes (W7)", v, memberServiceAccount)
+	}
+}
+
+// TestAConvergedMemberWithTheBindingSkipsTheStage is F34 kept for a member: one
+// update later the root's state carries the binding the run above created, so
+// the member's update has nothing left in that root — RI2's indexes are there
+// and D2988's read is there — and the skip the installation has had since AB7
+// stands. Without it every member's update would apply the Firebase root for
+// ever, which is the confirmation the skip exists to save.
+func TestAConvergedMemberWithTheBindingSkipsTheStage(t *testing.T) {
+	r := alwaysRig(t)
+	convergedFirebase(t, r)
+	mayCreate(t, r)
+	r.appendConfig(t, memberPin)
+	r.fbPlan(t, nil, nil, append(runIndexAddresses(), "module.firebase.google_project_iam_member.workspace_read[0]"))
+	fakeTerminal(t)
+
+	out, err := updateRun(t, r.initRig, "update")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	l := stepLineOf(reportLines(out), initflow.Firebase)
+	if !strings.HasPrefix(l, markSkipped+" "+initflow.Firebase) || !strings.Contains(l, "already records the budget database") {
+		t.Errorf("the Firebase stage is %q, want the skip that says the state carries what the root declares\n%s", l, out)
+	}
+	if got := r.applies(t); slices.Contains(got, "firebase") {
+		t.Errorf("the Firebase root was applied for a member whose state carries the binding: %v", got)
+	}
 }
 
 // TestWithNothingToAnswerTheStageIsSkippedWithItsLine is F4 and R2: a run
@@ -422,10 +694,13 @@ func TestWithNothingToAnswerTheStageIsSkippedWithItsLine(t *testing.T) {
 	}
 }
 
-// TestTheBudgetDatabaseIsWrittenBeforeTheLocationNote is D3027: the budget
-// database and the local config that records it come first, and a Firestore
-// location left for a person holds back the run history and nothing else.
-func TestTheBudgetDatabaseIsWrittenBeforeTheLocationNote(t *testing.T) {
+// TestTheBudgetDatabaseIsWrittenBeforeTheFirestoreDatabase is D3027: the budget
+// database and the local config that records it come first, and the run
+// history's own database — the only one whose location is permanent — is
+// created after them. No step confirms that location any more (LP10, D3090;
+// O2): the line saying where is printed and the database is created, in this
+// coding agent's session as anywhere else.
+func TestTheBudgetDatabaseIsWrittenBeforeTheFirestoreDatabase(t *testing.T) {
 	r := alwaysRig(t)
 	mayCreate(t, r)
 	noDatabaseYet(t, r)
@@ -442,16 +717,22 @@ func TestTheBudgetDatabaseIsWrittenBeforeTheLocationNote(t *testing.T) {
 	if b := r.localConfig(t).Budget; b == nil || b.RTDBURL != r.db.URL {
 		t.Errorf("the local config records budget %+v, want the database this run made", b)
 	}
-	if loc, _ := r.fs.Database(); loc != "" {
-		t.Errorf("the Firestore database was created in %s, and this run left its location for a person", loc)
+	loc := fsLocation(defaultRegion)
+	if got, _ := r.fs.Database(); got != loc {
+		t.Errorf("the Firestore database is in %q, want %s, created with nothing asked:\n%s", got, loc, out)
 	}
-	written, note := strings.Index(out, "wrote the database"), strings.Index(out, "⚠ CONFIRM (project ")
+	for _, l := range strings.Split(out, "\n") {
+		if strings.Contains(l, "⚠ CONFIRM") && strings.Contains(l, "Firestore") {
+			t.Errorf("the database's location is still a note of its own:\n%s", l)
+		}
+	}
+	line, written := strings.Index(out, "the Firestore database is created in "+loc), strings.Index(out, "wrote the database")
 	switch {
 	case written < 0:
 		t.Errorf("no line says the budget database was written:\n%s", out)
-	case note < 0:
-		t.Errorf("the Firestore location's note is not in the run at all, so the order this test is about was never reached:\n%s", out)
-	case written > note:
-		t.Errorf("the location's note comes before the budget database's write:\n%s", out)
+	case line < 0:
+		t.Errorf("no line says where the Firestore database is created:\n%s", out)
+	case written > line:
+		t.Errorf("the Firestore database's line comes before the budget database's write:\n%s", out)
 	}
 }

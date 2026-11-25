@@ -193,7 +193,11 @@ func writeUnit(u service.Unit) error {
 // It is idempotent in the sense the command documents: writing the file again
 // is a re-render from the current template, and the reload is what replaces the
 // daemon that is running with the one that file names.
-func installUnit(ctx context.Context, m service.Manager, u service.Unit) error {
+// name is the orchestrator the unit is about, which is the empty string for the
+// project's own: it is the `--name` of the command the failure below names, and
+// a message spelling the bare command for a named unit would send the person to
+// the project's orchestrator instead of the one whose unit did not load.
+func installUnit(ctx context.Context, m service.Manager, u service.Unit, name string) error {
 	if err := writeUnit(u); err != nil {
 		return err
 	}
@@ -203,8 +207,8 @@ func installUnit(ctx context.Context, m service.Manager, u service.Unit) error {
 		// the text, finds it current, and reloads nothing (a reload with nothing
 		// to reload would make every run noisy). The failure names the command
 		// that loads the file regardless of its text, which is the way out.
-		return fmt.Errorf("%w (the unit's file is written at %s; `%s orchestrator install` loads it again)",
-			err, safetext.Field(u.Path), selfCommand())
+		return fmt.Errorf("%w (the unit's file is written at %s; `%s` loads it again)",
+			err, safetext.Field(u.Path), orchestratorUnitCommand("install", name))
 	}
 	return nil
 }
@@ -306,7 +310,7 @@ func runOrchestratorInstall(cmd *cobra.Command, o *orchestratorUnitOptions) erro
 	if err := confirmUnitInstall(cmd, u, o.name); err != nil {
 		return err
 	}
-	if err := installUnit(cmd.Context(), m, u); err != nil {
+	if err := installUnit(cmd.Context(), m, u, o.name); err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "Installed %s and loaded it with %s. Uninstall it with `%s`.\n", safetext.Field(u.Path), u.Platform, orchestratorUnitCommand("uninstall", o.name))

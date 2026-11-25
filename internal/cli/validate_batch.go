@@ -124,6 +124,18 @@ func batchValidateProblems(lc *localcfg.Config, cfg *config.Config, rcp *recipe.
 		ps = append(ps, config.Problem{Path: "batch.opt_in", Message: batchOptInRefusal(lc)})
 	}
 
+	// Offline this is the config's own arm, and since AB4 that arm is the whole
+	// answer: a launch mints for every configuration that names a budget
+	// database, whatever its mode and whether or not a policy is published
+	// (budgetBackendOn), so a config with a database and this backend is a
+	// config whose every launch is refused, and nothing this file does not read
+	// could change that. `fugaro doctor` asks the same function
+	// (doctorBatchBudgetSeal), so the two readers of the pair cannot disagree
+	// about the shapes a config can hold.
+	if on, _ := budgetBackendOn(lc); on {
+		ps = append(ps, config.Problem{Path: "backend", Message: "this installation selects backend: cloud-batch and names a budget database (budget.rtdb_url), so every launch of it mints a budget token -- and a Batch job has no carrier for the token's seal key, so every launch is refused before the job is created (docs/budget-token-channel/spec.md; docs/compute-backend/spec.md §1.6). Minting is the installation's, not a run's: there is no per-run fallback, and the installation has to stay on backend: cloud-run"})
+	}
+
 	// The artifact boundary (Global Constraint 13, design artifact-runs.md
 	// §8.5 and D11). The repository's recipe is what decides whether a run of
 	// it produces artifacts, so the check reads the recipe this checkout

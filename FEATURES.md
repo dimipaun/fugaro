@@ -6,7 +6,7 @@ Fugaro runs each task you hand it as its own throwaway job in your cloud project
 
 A ✓ under Community, Team or Enterprise means the feature is included there, and a dash means it is not.
 
-as_of: v0.27.0
+as_of: v0.29.0
 
 | Feature | What it does | Status | Community | Team | Enterprise |
 | --- | --- | --- | --- | --- | --- |
@@ -18,10 +18,10 @@ as_of: v0.27.0
 | Manage the repositories a project holds | The repositories enrolled in a project are added, removed, listed and checked with one command each, and the check says what is left of an enrolment a step done out of order left half-finished. A removal undoes the enrolment and leaves a run that is going alone. | Coming soon | ✓ | ✓ | ✓ |
 | Drive Fugaro from Claude Code | Fugaro's commands are driven from Claude Code through a plugin installed for you, and the plugin says when an update is due. In a managed project the agent runs the cloud-changing commands itself, behind a deterministic gate instead of a prompt. | Available | ✓ | ✓ | ✓ |
 | A model that did not write the code reviews it | Every run is reviewed by a model other than the one that wrote the code, and a triage step decides which findings hold the merge and which do not. | Available | ✓ | ✓ | ✓ |
-| Reviews check the change against the task | A review is given the task the pull request was written for, so it can say that part of the task is unmet or that the change differs from it, and a review of a pull request no run produced can be given a task by hand. | Coming soon | ✓ | ✓ | ✓ |
+| Reviews check the change against the task | A review is given the task the pull request was written for, so it can say that part of the task is unmet or that the change differs from it, and a review of a pull request no run produced can be given a task by hand. | Available | ✓ | ✓ | ✓ |
 | Review a pull request on its own, at a chosen depth | A pull request can be reviewed by a separate review job, with the review depth chosen for the project and a second model offered as the reviewer. | Coming soon | ✓ | ✓ | ✓ |
-| Choose the model and the account behind every stage | Each stage of a run can use a different model and a different account, with named accounts, aliases that can be repointed, and a vision model that reads pictures for a coder that cannot. | Coming soon | ✓ | ✓ | ✓ |
-| Change any setting with a command | Every setting at every level — local, repository and project — is read and changed by a command, so no configuration file is edited by hand. | Coming soon | ✓ | ✓ | ✓ |
+| Choose the model and the account behind every stage | Each stage of a run can use a different model and a different account, with named accounts, aliases that can be repointed, and a vision model that reads pictures for a coder that cannot. | Available | ✓ | ✓ | ✓ |
+| Change any setting with a command | Every setting at every level — local, repository and project — is read and changed by a command, so no configuration file is edited by hand. | Available | ✓ | ✓ | ✓ |
 | One write path behind every setting | A setting is changed through one write path, whichever command owns the field, so a field with invariants or a publish step is written only by the command that understands it. A generic write to a field another command owns is refused, naming the command to use. | Available | ✓ | ✓ | ✓ |
 | Choose how thorough a run is | A project picks a rigor mode, from a quick proof of concept to a change that must not break anything, and every stage of a run follows it. | Coming soon | ✓ | ✓ | ✓ |
 | Nothing stops to ask you a question | No command prompts, and none waits on a closed input: a step that needs a decision takes a flag, a budget cap or a refusal that prints the fix. | Available | ✓ | ✓ | ✓ |
@@ -35,12 +35,12 @@ as_of: v0.27.0
 | Say what counts as security-sensitive | A project names the paths that count as security-sensitive and the executables a run may use, so a change to a sensitive path is escalated and a run nobody reviewed is reported as such. | Available | ✓ | ✓ | ✓ |
 | Decide who may launch and cancel | A project grants roles — viewer, operator and admin — each with a scope, so a person can read, launch or cancel only within the projects and repositories they were given. | Available | ✓ | ✓ | ✓ |
 | Find out what went wrong | A failed command's log can be read by a local diagnostic agent, and what it finds can be sent to the issue tracker from the command line. An issue already filed can be followed up to see what happened to it. | Available | ✓ | ✓ | ✓ |
-| Explain a failure with your project's own credential | When the machine in front of you holds no model login of its own, the evidence a failed command collected is handed to one bounded job in your own project, and a person standing at that machine still gets the cause and the fix. The job reads the redacted evidence and nothing else. | Coming soon | ✓ | ✓ | ✓ |
+| Explain a failure with your project's own credential | When the machine in front of you holds no model login of its own, the evidence a failed command collected is handed to one bounded job in your own project, and a person standing at that machine still gets the cause and the fix. The job reads the redacted evidence and nothing else. | Available | ✓ | ✓ | ✓ |
 | Reports on how your runs are going | Every run ends with a classified failure, and a periodic digest reports what a project's runs did — the failures, the spend and the patterns worth acting on. | Coming soon | ✓ | ✓ | ✓ |
 | Recorded spend matches what the provider billed | A run's spend is settled on the cost the model provider reports, priced conservatively where the provider reports none, and an alarm is raised when settled and estimated spend drift apart. | Available | ✓ | ✓ | ✓ |
 | Runs share a project's jobs | A project's runs share a small pool of jobs and image caches instead of one job per repository, and what each run may reach is decided per job. | Coming soon | ✓ | ✓ | ✓ |
 | Let Fugaro work through your queue | An orchestrator works through a queue of tasks on its own, keeps its state in the cloud rather than on a machine, and pauses when a repository refuses it. | Available | ✓ | ✓ | ✓ |
-| Know when the work will be ready and what it will cost | A task graph shows a range for when the work will be ready and roughly what it will cost, and ad hoc items join the same graph as nodes. The estimate is informational and reserves no budget. | Coming soon | ✓ | ✓ | ✓ |
+| Know when the work will be ready and what it will cost | A task graph shows a range for when the work will be ready and roughly what it will cost, and ad hoc items join the same graph as nodes. The estimate is informational and reserves no budget. | Available | ✓ | ✓ | ✓ |
 | Pull requests that stop converging | When a pull request stops converging, the orchestrator escalates through a ladder of rungs — rebase and retest, resume, one stronger pass, merge with follow-ups, or split — instead of retrying forever. | Available | ✓ | ✓ | ✓ |
 | Read the docs, the support matrix and the change log | The public site carries the documentation, a matrix of what Fugaro supports on each platform and integration, and a change log of what every release brought. | Available | ✓ | ✓ | ✓ |
 | The desktop console | A desktop app for macOS and Linux shows a project's settings, its runs and its coordinator queue, and reads the same data the command line does. | Available | — | ✓ | ✓ |
@@ -59,7 +59,7 @@ as_of: v0.27.0
 ```json
 {
   "version": 1,
-  "as_of": "v0.27.0",
+  "as_of": "v0.29.0",
   "rows": [
     {
       "id": "run-a-task",
@@ -153,7 +153,7 @@ as_of: v0.27.0
       "id": "review-against-the-task",
       "name": "Reviews check the change against the task",
       "explanation": "A review is given the task the pull request was written for, so it can say that part of the task is unmet or that the change differs from it, and a review of a pull request no run produced can be given a task by hand.",
-      "status": "coming-soon",
+      "status": "available",
       "plans": {
         "community": true,
         "team": true,
@@ -175,7 +175,7 @@ as_of: v0.27.0
       "id": "model-access",
       "name": "Choose the model and the account behind every stage",
       "explanation": "Each stage of a run can use a different model and a different account, with named accounts, aliases that can be repointed, and a vision model that reads pictures for a coder that cannot.",
-      "status": "coming-soon",
+      "status": "available",
       "plans": {
         "community": true,
         "team": true,
@@ -186,7 +186,7 @@ as_of: v0.27.0
       "id": "settings-and-config",
       "name": "Change any setting with a command",
       "explanation": "Every setting at every level — local, repository and project — is read and changed by a command, so no configuration file is edited by hand.",
-      "status": "coming-soon",
+      "status": "available",
       "plans": {
         "community": true,
         "team": true,
@@ -340,7 +340,7 @@ as_of: v0.27.0
       "id": "cloud-diagnosis-job",
       "name": "Explain a failure with your project's own credential",
       "explanation": "When the machine in front of you holds no model login of its own, the evidence a failed command collected is handed to one bounded job in your own project, and a person standing at that machine still gets the cause and the fix. The job reads the redacted evidence and nothing else.",
-      "status": "coming-soon",
+      "status": "available",
       "plans": {
         "community": true,
         "team": true,
@@ -395,7 +395,7 @@ as_of: v0.27.0
       "id": "orchestrator-estimates",
       "name": "Know when the work will be ready and what it will cost",
       "explanation": "A task graph shows a range for when the work will be ready and roughly what it will cost, and ad hoc items join the same graph as nodes. The estimate is informational and reserves no budget.",
-      "status": "coming-soon",
+      "status": "available",
       "plans": {
         "community": true,
         "team": true,

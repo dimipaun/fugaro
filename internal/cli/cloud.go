@@ -232,7 +232,17 @@ func openCloud(ctx context.Context, o cloudOptions) (*cloudEnv, error) {
 
 // openCloudFor connects to the backend and the runs bucket of an already
 // selected project config.
+//
+// D1541's fence is applied here, before any client exists: the command the
+// root's pre-run filed in ctx (managed_require.go) is asked whether it may
+// write to a project that is not managed, and a fenced one is refused with
+// nothing opened. A command that reaches its cloud clients another way asks the
+// same question itself (requireManaged); one whose clients are opened here gets
+// the fence by construction, and cannot forget it.
 func openCloudFor(ctx context.Context, lc *localcfg.Config) (*cloudEnv, error) {
+	if err := requireManaged(ctx, managedCommandFrom(ctx), lc); err != nil {
+		return nil, err
+	}
 	opts := gcp.Options{GCPProject: lc.GCPProject, Region: lc.Region, LogView: lc.LogView, Endpoints: gcp.Endpoints{
 		Run: lc.Endpoints.Run, Logging: lc.Endpoints.Logging, SecretManager: lc.Endpoints.SecretManager,
 		CloudBuild: lc.Endpoints.CloudBuild, NoAuth: lc.Endpoints.NoAuth}}
@@ -373,7 +383,18 @@ func openBudgetDB(ctx context.Context, o cloudOptions) (*localcfg.Config, *rtdb.
 }
 
 // budgetDBFor is openBudgetDB's second half, for a config already selected.
+//
+// D1541's fence is applied here as it is in openCloudFor, and for the same
+// reason: the budget database is the project's own store — its caps, its
+// counters, its kill switch, its orchestrator and its pairing record — so a
+// command that writes into it and is not managed-refused must not reach a
+// client at all. An exempt command is answered without a read
+// (requireManaged), which is what makes this safe to ask at a seam the
+// read-only commands open too.
 func budgetDBFor(ctx context.Context, lc *localcfg.Config) (*localcfg.Config, *rtdb.Client, error) {
+	if err := requireManaged(ctx, managedCommandFrom(ctx), lc); err != nil {
+		return nil, nil, err
+	}
 	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
 		return nil, nil, userErr("project %s has no Firebase budget backend (budget.rtdb_url is not set in its project config): an operator runs fugaro update --firebase-project %s --name %s", lc.Name, firebaseProjectIDWord(lc.GCPProject), lc.Name)
 	}
@@ -727,6 +748,30 @@ func (o resolveRunOptions) pickRun(ref string, cands []runCandidate) (string, st
 	return c.slug, c.runID, nil
 }
 
+// checkExecutionName refuses an execution name the selected backend's codec does
+// not parse in the configured region, and names the region it is in when that
+// is the mismatch. It reads nothing.
+func (e *cloudEnv) checkExecutionName(name string) error {
+	// The name is parsed by the codec of the backend this command selected,
+	// never by Cloud Run's own: the two backends spell a run's identity
+	// differently (eight fields with an execution in them against six with
+	// none), so a project whose backend is not Cloud Run would otherwise be
+	// checked against the wrong shape (design compute-backend.md §2.5, §8.1
+	// Task 8, C12). This is ParseInRegion rather than ValidateRun: the job
+	// binding a name would need is the run's own, and it is checked below by
+	// gcp.CheckRunExecution, which reads the FUGARO_RUN the execution itself
+	// reports (internal/backend/codec.go's ValidateRun has no production
+	// caller for that reason).
+	if _, err := e.be.Codec().ParseInRegion(name, e.lc.Region); err != nil {
+		var wr *backend.WrongRegionError
+		if errors.As(err, &wr) {
+			return fmt.Errorf("the run's execution is in region %s, not %s; pass --region %s to follow it", wr.Region, wr.Want, wr.Region)
+		}
+		return err
+	}
+	return nil
+}
+
 // checkExecution refuses name, an execution name read from the bucket
 // objects of run slug/<runID>, unless it is that run's own execution: the
 // FUGARO_RUN the execution itself reports is the run's (gcp.CheckRunExecution).
@@ -755,21 +800,7 @@ func (o resolveRunOptions) pickRun(ref string, cands []runCandidate) (string, st
 // the caller asked about, which the caller knows from the reference it
 // resolved (and not from an object the run itself can write).
 func (e *cloudEnv) checkExecution(ctx context.Context, x *backend.Execution, name, slug, runID string) (*backend.Execution, error) {
-	// The name is parsed by the codec of the backend this command selected,
-	// never by Cloud Run's own: the two backends spell a run's identity
-	// differently (eight fields with an execution in them against six with
-	// none), so a project whose backend is not Cloud Run would otherwise be
-	// checked against the wrong shape (design compute-backend.md §2.5, §8.1
-	// Task 8, C12). This is ParseInRegion rather than ValidateRun: the job
-	// binding a name would need is the run's own, and it is checked below by
-	// gcp.CheckRunExecution, which reads the FUGARO_RUN the execution itself
-	// reports (internal/backend/codec.go's ValidateRun has no production
-	// caller for that reason).
-	if _, err := e.be.Codec().ParseInRegion(name, e.lc.Region); err != nil {
-		var wr *backend.WrongRegionError
-		if errors.As(err, &wr) {
-			return nil, fmt.Errorf("the run's execution is in region %s, not %s; pass --region %s to follow it", wr.Region, wr.Want, wr.Region)
-		}
+	if err := e.checkExecutionName(name); err != nil {
 		return nil, err
 	}
 	if x == nil {

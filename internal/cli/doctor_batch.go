@@ -149,6 +149,10 @@ func doctorBatchChecks(ctx context.Context, lc *localcfg.Config, c *crm.Service)
 	// The opt-in fact is read first: it is an installation's own answer rather
 	// than the project's, and it decides whether the grant below is even
 	// wanted (BR7, R3).
+	// The seal's pair is read first: it is the one finding on this path that no
+	// apply clears, so an operator who has it reads it before the provisioning
+	// below rather than after it.
+	out = append(out, doctorBatchBudgetSeal(ctx, lc)...)
 	out = append(out, doctorBatchOptIn(lc))
 	out = append(out, doctorBatchAPIs(ctx, lc)...)
 	out = append(out, doctorBatchJobDefinition(lc))
@@ -299,6 +303,68 @@ func doctorBatchLinkGrant(ctx context.Context, lc *localcfg.Config, c *crm.Servi
 			"run fugaro update in "+lc.GCPProject+", which applies the compute root's grant for the credentials service account (or, if the grant was just written, rerun fugaro doctor once it propagates)")}
 	}
 	return []doctorCheck{{ID: id, OK: true}}
+}
+
+// doctorBatchBudgetSeal is the pair no provisioning clears: an installation
+// that mints budget tokens and selects `backend: cloud-batch`.
+//
+// Every launch of an installation that mints carries the budget token's seal
+// key, and internal/backend/batch's jobDefinition refuses a launch carrying
+// that environment entry before the job is created: a Batch job's `variables`
+// are the job's definition -- a standing copy readable by every launcher the
+// IAM Condition admits and by the reaper -- so the key has no carrier on this
+// backend and the refusal is the owner's answer rather than a gap
+// (docs/budget-token-channel/spec.md, "The Batch backend refuses a sealed
+// launch"; plan 2026-10-19-compute-backend.md Task 14 and P1). Minting is the
+// installation's and an installation has one backend, so there is no per-run
+// fallback: the whole installation stays on cloud-run.
+//
+// The design asks for this check by name -- the pair read at the gate rather
+// than met at jobs.create's doorstep, after a token was minted and dropped --
+// and Task 10 is the enable that made the pair reachable at all, since a name
+// nothing selects cannot be minting on this backend
+// (docs/compute-backend/spec.md §1.6, §8.1 task 9).
+//
+// The minting question is budgetMintOn's, the same function a launch decides
+// with: a gate that mints where a launch does not, or the other way round,
+// would be a check disagreeing with the runs it is about. It is asked only of a
+// config that selects the backend -- an installation that mints and runs on
+// cloud-run has no such pair, and this check reads nothing for it.
+//
+// Since AB4 every launch of an installation with a budget database mints, so
+// the answer is the database's own: an installation that names one selects
+// this backend and is refused here, whatever its mode, its published policy or
+// its signer. A missing signer is deliberately not read as an answer -- it
+// refuses every launch of the installation whichever backend it selects, so it
+// is another check's subject, and reading it here would make doctor disagree
+// with `fugaro validate`'s offline arm (validate_batch.go) about a config
+// shape both of them hold. An installation that names no database mints
+// nothing -- no launch of it happens at all, the launcher refusing it with the
+// fix -- and this check has no pair to report for it, so it passes and the
+// state is named where it belongs: the launch's own refusal, which says who
+// creates the database, and doctor's other lines about the installation's
+// budget.
+func doctorBatchBudgetSeal(ctx context.Context, lc *localcfg.Config) []doctorCheck {
+	const id = "batch-budget-seal"
+	if lc.Backend() != backend.CloudBatch {
+		return nil
+	}
+	// The flag alone is the answer, exactly as it is in `fugaro validate`'s
+	// offline arm; the error beside it is the signer's refusal, which is not
+	// about this backend.
+	if mints, _ := (&cloudEnv{lc: lc}).budgetMintOn(ctx); !mints {
+		// This installation has no database, so the pair has nothing to report:
+		// no launch of it reaches this backend at all, because budgetBackendOn
+		// refuses them first and says so with the fix. Passing here is not a
+		// silent pass -- what is missing is named where it bites, by the
+		// launch's own refusal and by doctor's lines about the installation's
+		// budget -- and a finding here would put the Batch gate in the way of an
+		// installation whose problem is another one entirely.
+		return []doctorCheck{{ID: id, OK: true}}
+	}
+	return []doctorCheck{batchProblem(lc, id,
+		"this installation names a budget database and its project config selects backend: cloud-batch (docs/compute-backend/spec.md §1.6): every launch of an installation with a database mints budget tokens (AB4, F7), so every launch of it is refused before the job is created. A launch carries the budget token's seal key in an environment entry, and a Batch job has no carrier for one: its variables are the job's definition, a standing copy readable by every launcher the IAM Condition admits and by the reaper (docs/budget-token-channel/spec.md, \"The Batch backend refuses a sealed launch\"). Minting is the installation's, not a run's, so there is no per-run fallback",
+		"keep this installation on backend: cloud-run: every installation with a budget database mints (AB4, F7), so there is no setting of this one that would let a run go to Batch. The seal's carrier is a documented limit rather than something this installation can provision around (plan 2026-10-19-compute-backend.md Task 14, P1)")}
 }
 
 // batchJobsGetGranted reports whether some binding of p that names member holds

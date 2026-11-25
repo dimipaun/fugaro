@@ -279,8 +279,8 @@ const RECIPES_DOC = {
 }
 
 /** fakeBridge is a bridge of this build's own making, from `new-ops.ts`'s names
- * rather than from the stub (`stubs/bridge-stub.ts` says a consumer's test
- * builds its own, which is what lets I-OPS delete the stub whole). Each named
+ * rather than from a fixture (`contract-ops.md` says a consumer's test builds
+ * its own, which is what let I-OPS delete the stub bridge whole). Each named
  * operation gets the method the contract names for it and answers the document
  * under `document`; every other operation has no method at all, which is the
  * older build this file's last case reads. */

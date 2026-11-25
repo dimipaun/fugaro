@@ -94,14 +94,27 @@ type workspaceRosterDeps struct {
 	// Members is what this command does to one member project (C2): the stored
 	// admin grant it writes, and the offboarding a removal runs.
 	Members workspace.MemberOps
+	// Sweep is the WORKSPACE's own intake (F21): the containers a person stored
+	// at the workspace's project, which a removal deletes beside the members'
+	// sweeps. A nil Sweep is a build that wired no intake, and removing a person
+	// refuses on it rather than leaving their token behind (workspaceSweeper).
+	Sweep workspaceSweeper
 	// Authority is the workspace's mechanism (C2): the live admin binding, and
 	// the binding list the admin gate is read against (D2823).
 	Authority workspace.Authority
-	// Linked are the member projects the workspace holds now, which are the ones
-	// a stored grant reaches. Resolving them is the wiring's business: it is the
-	// same list `Authority.Holds` answers for, and reading that here would be a
-	// call per member for a list the caller already has.
-	Linked []workspace.MemberTarget
+	// Linked answers the member projects the workspace holds now, which are the
+	// ones a stored grant reaches. Resolving them is the wiring's business, and
+	// it is a CALL and not a list the opener already holds: the same list is
+	// what `Authority.Holds` answers for, and it costs a read of the roster
+	// node plus one call per member.
+	//
+	// Deferred to the first use inside the body, because that is A7's order
+	// (D1590): a command of this family may not make one of those calls before
+	// its own agent-session refusal, and a command that never needs the list at
+	// all -- `workspace domains add|rm` edits the node and nothing else, and an
+	// `add` that sets no admin reaches no member — may not make one at all. A
+	// nil Linked is a build that wired no list, and it is no members.
+	Linked func(ctx context.Context) ([]workspace.MemberTarget, error)
 	// getenv is the environment the agent-session fence reads, and now and rand
 	// mint an audit event's id. A nil getenv is the process environment, a nil
 	// now is the clock and a nil rand is the system's randomness: they are seams
@@ -153,10 +166,24 @@ rewrite it cannot set a binding.
 Every write here refuses in a coding agent's session and asks nothing: a change
 that cannot be made is refused with the flag or the command that can make it.`,
 	}
+	// grant and revoke take the MEMBER side (C2) rather than the workspace's own
+	// roster: the member is named by the command's own argument, and its database
+	// is reached with the caller's own credentials, so what they are given is the
+	// selected config's side (WU8's own doc, D2801).
+	//
+	// One side each, and not one between them: the side carries the sentence it
+	// refuses an unreadable selection with, and that sentence names the command
+	// that ran -- a shared side would hand a revoke the grant command's words.
+	memberSide := func(what string) workspaceSides {
+		return workspaceSides{side: workspaceAmbientSide(what)}
+	}
+	grant, revoke := memberSide("fugaro workspace user grant"), memberSide("fugaro workspace user revoke")
 	cmd.AddCommand(
-		newWorkspaceUserAddCmd(open),
-		newWorkspaceUserRmCmd(open),
+		workspaceReported(newWorkspaceUserAddCmd(open), "workspace-user-add"),
+		workspaceReported(newWorkspaceUserRmCmd(open), "workspace-user-rm"),
 		newWorkspaceUserLsCmd(open),
+		workspaceReported(newWorkspaceUserGrantCmd(grant), "workspace-user-grant"),
+		workspaceReported(newWorkspaceUserRevokeCmd(revoke), "workspace-user-revoke"),
 	)
 	return cmd
 }
@@ -331,6 +358,16 @@ func (d workspaceRosterDeps) env() func(string) string {
 // clause says what was not done, and the refusal says where to run it instead.
 func (d workspaceRosterDeps) refuseAgent(clause string) error {
 	return AgentSessionRefusal(d.env(), clause)
+}
+
+// linkedMembers resolves the list of members the workspace holds now, and it is
+// called from the point in the body that needs it and from nowhere earlier: the
+// resolution reads the cloud, and the fence above comes first (A7).
+func (d workspaceRosterDeps) linkedMembers(ctx context.Context) ([]workspace.MemberTarget, error) {
+	if d.Linked == nil {
+		return nil, nil
+	}
+	return d.Linked(ctx)
 }
 
 // readRoster reads the roster node once and decodes it, answering the revision
@@ -606,6 +643,16 @@ func runWorkspaceUserAdd(cmd *cobra.Command, open workspaceRosterOpen, o *worksp
 			return err
 		}
 	}
+	// The members the workspace holds are read HERE and only for an admin: it is
+	// the list D2818's stored grant is written into, the fence above has already
+	// refused a coding agent's session (A7), and every refusal this command makes
+	// about its own arguments is made before the read.
+	var linked []workspace.MemberTarget
+	if o.admin {
+		if linked, err = d.linkedMembers(ctx); err != nil {
+			return err
+		}
+	}
 
 	// The change is judged and written first, and the authority's and the
 	// members' half of an admin comes after it: a record whose binding failed is
@@ -624,7 +671,7 @@ func runWorkspaceUserAdd(cmd *cobra.Command, open workspaceRosterOpen, o *worksp
 			external: o.external,
 			admin:    o.admin,
 			roles:    roles,
-			linked:   d.Linked,
+			linked:   linked,
 		})
 		if err != nil {
 			return nil, err
@@ -645,10 +692,18 @@ func runWorkspaceUserAdd(cmd *cobra.Command, open workspaceRosterOpen, o *worksp
 		return err
 	}
 	if o.admin {
-		if err := d.Authority.AddAdmin(ctx, address); err != nil {
+		// The authority's own spelling of a person is the member form the live
+		// binding is written and read in (`user:<address>`): AdminBindings
+		// answers it that way, and both mechanisms bind it that way, so the
+		// write and the read that confirms it are one value.
+		member, err := accesslib.Member(address)
+		if err != nil {
+			return userErr("%s as a live binding: %v", safetext.Field(address), err)
+		}
+		if err := d.Authority.AddAdmin(ctx, member); err != nil {
 			return fmt.Errorf("making %s a workspace admin: %w", safetext.FieldErr(err), err)
 		}
-		for _, m := range d.Linked {
+		for _, m := range linked {
 			if err := d.writeMemberAdminGrant(ctx, m, address); err != nil {
 				return err
 			}
@@ -657,7 +712,7 @@ func runWorkspaceUserAdd(cmd *cobra.Command, open workspaceRosterOpen, o *worksp
 			return err
 		}
 	}
-	return workspaceUserAddSay(cmd.OutOrStdout(), d, next, address, o.admin, len(d.Linked))
+	return workspaceUserAddSay(cmd.OutOrStdout(), d, next, address, o.admin, len(linked))
 }
 
 // workspaceAddWant is the change `add` judges: one person or machine, and
@@ -876,39 +931,116 @@ func runWorkspaceUserRm(cmd *cobra.Command, open workspaceRosterOpen, o *workspa
 	}
 	person := workspacePersonOf(roster, address)
 
+	// The members the workspace holds are read HERE, once, for the two things
+	// that need them -- the offboarding a person's removal runs and the count the
+	// report prints — and not by a removal that needs neither, which is a
+	// machine's. The fence above has already refused a coding agent's session
+	// (A7) and the gate reads that come before this one touch the workspace's
+	// own node, not a member's.
+	var linked []workspace.MemberTarget
+	if person.Kind == workspace.KindHuman || o.admin {
+		if linked, err = d.linkedMembers(ctx); err != nil {
+			return err
+		}
+	}
+
 	// The member- and authority-side effects come first, and the node last: a
 	// person who is offboarded and still recorded is a command to re-run, and a
 	// person out of the roster whose authority still stands is one no command of
 	// this family can reach (the header says so at length).
+	//
+	// A person's removal sweeps TWO installations (F21): every member the
+	// workspace holds, and then the workspace's own project, whose intake holds
+	// the token they stored once (D2960). The workspace's sweep runs whatever the
+	// members answered (offboardWorkspacePerson says why), and EVERY return after
+	// it carries its answer out (workspaceUserRmCarry), because the containers are
+	// already gone or already refused by then: a member's refusal is returned
+	// before the node, as this command has always refused on one, and it does not
+	// take the sweep's own answer down with it.
+	var (
+		deleted  []string
+		sweepErr error
+	)
 	if person.Kind == workspace.KindHuman {
 		if d.Members == nil {
 			return userErr("workspace %s has no member operations this machine can read: removing a person sweeps them out of every member the workspace holds (C2's Offboard), and this machine's wiring supplies it", safetext.Field(d.Workspace))
 		}
-		for _, m := range d.Linked {
-			if err := d.Members.Offboard(ctx, m, address); err != nil {
-				return fmt.Errorf("offboarding %s from %s: %w", safetext.Field(address), safetext.Field(m.Project), err)
+		if d.Sweep == nil {
+			return userErr("workspace %s has no intake this machine can reach: a person's token is stored once, at the workspace (D2960), and removing them deletes every container they own there (F21), so this machine's wiring supplies the workspace's own intake", safetext.Field(d.Workspace))
+		}
+		var memberErr error
+		deleted, memberErr, sweepErr = offboardWorkspacePerson(ctx, d.Members, d.Sweep, linked, address)
+		if memberErr != nil {
+			// The sweep has ALREADY run (offboardWorkspacePerson) and the node is
+			// not written, so this is the one path that reports the two answers and
+			// stops: what the workspace's own intake removed is said here -- a
+			// person whose member refused still has to know their token at the
+			// workspace is gone -- and a sweep that failed is returned beside the
+			// refusal rather than behind it. The halting line is NOT said: the
+			// roster was not written, so R3's minute has not started and they are
+			// still a member whose run keeps going.
+			if err := workspaceUserRmSweptSay(cmd.OutOrStdout(), address, deleted, sweepErr == nil, false); err != nil {
+				return workspaceUserRmCarry(memberErr, address, err)
 			}
+			return workspaceUserRmCarry(memberErr, address, sweepErr)
 		}
 	}
 	if o.admin {
-		if err := d.Authority.RemoveAdmin(ctx, address); err != nil {
-			return fmt.Errorf("removing %s's workspace admin binding: %w", safetext.Field(address), err)
+		member, err := accesslib.Member(address)
+		if err != nil {
+			return workspaceUserRmCarry(userErr("%s as a live binding: %v", safetext.Field(address), err), address, sweepErr)
+		}
+		if err := d.Authority.RemoveAdmin(ctx, member); err != nil {
+			return workspaceUserRmCarry(fmt.Errorf("removing %s's workspace admin binding: %w", safetext.Field(address), err), address, sweepErr)
 		}
 	}
 	if err := d.writeRoster(ctx, func(current *workspace.Roster) (*workspace.Roster, error) {
 		return workspaceRmJudged(current, address, o.admin)
 	}, roster, rev); err != nil {
-		return err
+		return workspaceUserRmCarry(err, address, sweepErr)
 	}
 	if err := d.file(ctx, actor, workspace.ActionUserRemove, "", address, ""); err != nil {
-		return err
+		return workspaceUserRmCarry(err, address, sweepErr)
 	}
 	if o.admin {
 		if err := d.file(ctx, actor, workspace.ActionAdminRemove, "", address, workspace.RoleAdmin); err != nil {
-			return err
+			return workspaceUserRmCarry(err, address, sweepErr)
 		}
 	}
-	return workspaceUserRmSay(cmd.OutOrStdout(), d, address, o.admin, len(d.Linked))
+	w := cmd.OutOrStdout()
+	if err := workspaceUserRmSay(w, d, address, o.admin, len(linked)); err != nil {
+		return workspaceUserRmCarry(err, address, sweepErr)
+	}
+	if person.Kind == workspace.KindHuman {
+		if err := workspaceUserRmSweptSay(w, address, deleted, sweepErr == nil, true); err != nil {
+			return workspaceUserRmCarry(err, address, sweepErr)
+		}
+	}
+	return workspaceUserRmCarry(nil, address, sweepErr)
+}
+
+// workspaceUserRmCarry returns err with the workspace's own sweep's failure beside
+// it, and returns err untouched when that sweep answered -- a nil err is the
+// no-further-error case, so the tail of a removal that landed is the named
+// refusal and nothing else.
+//
+// It exists because the sweep runs BEFORE every step below it and before the
+// node: once offboardWorkspacePerson has returned, the person's containers at the
+// workspace are deleted or the delete failed, and neither fact may be dropped by
+// a later step that fails for a reason of its own. A person reading
+// `removing X's workspace admin binding: ...` has to learn as well that the sweep
+// did not do its half, or they will read the removal as a whole that failed
+// cleanly (offboardWorkspacePerson's own doc says why the two answers are
+// separate).
+func workspaceUserRmCarry(err error, address string, sweepErr error) error {
+	if sweepErr == nil {
+		return err
+	}
+	named := fmt.Errorf("the workspace's own intake did not sweep %s's containers: %w", safetext.Field(address), sweepErr)
+	if err == nil {
+		return named
+	}
+	return errors.Join(err, named)
 }
 
 // workspaceRmJudged is a removal as a pure function of the roster the node
@@ -994,6 +1126,39 @@ func workspaceUserRmSay(w io.Writer, d workspaceRosterDeps, address string, admi
 	return nil
 }
 
+// workspaceUserRmSweptSay says what the workspace's own intake swept for the
+// person (F21), and, when the removal landed, that a run in flight on their token
+// halts within a minute (R3, D3146).
+//
+// swept is the sweep's own answer: the containers are reported only when the
+// delete landed, and a failed delete is the error the caller returns (carried
+// through every path by workspaceUserRmCarry), never a second line here.
+//
+// halt is whether the removal itself landed, and it is false on the one path that
+// reports this and stops: a member's refusal. The halting line is about the
+// REMOVAL and not about the sweep -- R3 is the workspace's service re-reading the
+// roster as it re-reads its node (60 seconds) and refusing every call under a slip
+// whose owner has left it -- so on that path there is nothing to say: the roster
+// was not written, the person is still a member, and their run keeps going. Where
+// the removal landed, the line is printed WHATEVER the sweep answered, because a
+// sweep that failed does not make the halting false (WC0's threat model §7).
+func workspaceUserRmSweptSay(w io.Writer, address string, deleted []string, swept, halt bool) error {
+	if halt {
+		if _, err := fmt.Fprintf(w, "a run in flight on %s's token halts within a minute: the workspace's service re-reads the roster as it re-reads its node and refuses every call under a slip whose owner has left it, so the removal stops the run and the sweep of their containers is not what does (R3, D3146)\n", safetext.Field(address)); err != nil {
+			return err
+		}
+	}
+	if !swept {
+		return nil
+	}
+	if len(deleted) == 0 {
+		_, err := fmt.Fprintf(w, "%s stored no secrets of their own at the workspace: its own intake's sweep removed nothing\n", safetext.Field(address))
+		return err
+	}
+	_, err := fmt.Fprintf(w, "removed %d secrets %s stored at the workspace: %s\n", len(deleted), safetext.Field(address), strings.Join(printableAll(deleted), ", "))
+	return err
+}
+
 // runWorkspaceUserLs is ls's body.
 func runWorkspaceUserLs(cmd *cobra.Command, open workspaceRosterOpen, o *workspaceUserLsOptions) error {
 	ctx := cmd.Context()
@@ -1027,11 +1192,15 @@ func runWorkspaceUserLs(cmd *cobra.Command, open workspaceRosterOpen, o *workspa
 // A read that FAILS is an error, and the command refuses on it: a listing that
 // silently dropped a member would read as a member whose people hold nothing.
 func (d workspaceRosterDeps) memberGrants(ctx context.Context) (map[string][]accesslib.Grant, error) {
-	out := make(map[string][]accesslib.Grant, len(d.Linked))
+	linked, err := d.linkedMembers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string][]accesslib.Grant, len(linked))
 	if d.Members == nil {
 		return out, nil
 	}
-	for _, m := range d.Linked {
+	for _, m := range linked {
 		doc, err := d.Members.ReadGrants(ctx, m)
 		if err != nil {
 			return nil, fmt.Errorf("reading %s's own roster: %w", safetext.Field(m.Project), err)

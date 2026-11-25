@@ -55,6 +55,18 @@ type credentialsFixture struct {
 			Profile  string `json:"profile"`
 			Provider string `json:"provider"`
 		} `json:"review_job_accounts"`
+		// The shared project jobs (B5.1), the same rule one axis over: the
+		// fields are declared in the order the module's jsonencode writes them
+		// (alphabetical), because this test compares the value the plan carries
+		// against this struct's own marshalling. Its account is the axis's own
+		// spelling, so the profile's no-account job is the EMPTY string here
+		// where the review row above spells it "default".
+		SharedJobAccounts []struct {
+			Account  string   `json:"account"`
+			Profile  string   `json:"profile"`
+			Provider string   `json:"provider"`
+			Repos    []string `json:"repos"`
+		} `json:"shared_job_accounts"`
 		VerifierAccounts []string `json:"verifier_accounts"`
 	} `json:"credentials_service"`
 	// Coordinator is the coordinator's opt-in (coordinator plan P5), which this
@@ -153,9 +165,11 @@ func credentialsServiceEnvOf(t *testing.T, rc ResourceChange) (plain map[string]
 // coordinator account, the eleventh, the review-only jobs (C3.9a), which
 // arrive with the installation's review variants, the twelfth, the
 // launcher class (D1938, F25; DS2.2), which arrives with the roster's own
-// people, and the thirteenth, the project's build identity (B5, D2301), which
+// people, the thirteenth, the project's build identity (B5, D2301), which
 // arrives with the account the module creates beside the service and is the
-// build route's one caller class. So a variable the Go side
+// build route's one caller class, and the fourteenth, the shared project jobs
+// (B5.1), which arrive with the shared jobs the deployment composes and are
+// what a run launched onto one of those jobs is served by. So a variable the Go side
 // computes and the module drops — or one the module sets from a value the
 // fixture does not carry — is a service that never answers a job, or a verify
 // route that admits nobody, on an installation whose init reports success.
@@ -188,6 +202,13 @@ func TestGoldenCredentialsServiceCarriesItsNames(t *testing.T) {
 		t.Fatalf("the credentials fixture names no review job: this plan is the one that exercises the module's conditional review entry (C3.9a), and a fixture that names none could not tell it from the names the module always sets: %v", f)
 	}
 	review, err := json.Marshal(c.ReviewJobAccounts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.SharedJobAccounts) == 0 {
+		t.Fatalf("the credentials fixture names no shared job: this plan is the one that exercises the module's conditional shared entry (B5.1), and a fixture that names none could not tell it from the names the module always sets: %v", f)
+	}
+	shared, err := json.Marshal(c.SharedJobAccounts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,6 +251,7 @@ func TestGoldenCredentialsServiceCarriesItsNames(t *testing.T) {
 		"FUGARO_CREDENTIALS_SERVICE_URL": c.URL,
 		"FUGARO_JOB_ACCOUNTS":            string(jobAccounts),
 		"FUGARO_REVIEW_JOB_ACCOUNTS":     string(review),
+		"FUGARO_SHARED_JOB_ACCOUNTS":     string(shared),
 		"FUGARO_VERIFIER_ACCOUNTS":       string(verifiers),
 		"FUGARO_PERSON_ACCOUNTS":         string(people),
 		"FUGARO_COORDINATOR_ACCOUNT":     coordinator,
@@ -246,14 +268,12 @@ func TestGoldenCredentialsServiceCarriesItsNames(t *testing.T) {
 	// (CredentialsServiceEnvAwaitingTheModule), so the plan plus that list is
 	// what the allow-list must hold — and each name on that list is checked
 	// against the plan first, which is the tripwire that fails once the module
-	// starts rendering it and the entry is left behind. That list holds
-	// FUGARO_SHARED_JOB_ACCOUNTS now (B5.1, ahead of the module that will render
-	// it), so the plan alone no longer spells the allow-list: the plan plus
-	// that one name is what the cover holds. FUGARO_LAUNCHER_ACCOUNTS was the
-	// entry before it, and left the list in the change that made
-	// credentials.tf render the name (DS2.2), as the identity half's three did
-	// in LM12's change — which is why the names below and not that list spell
-	// them now.
+	// starts rendering it and the entry is left behind. That list is EMPTY now:
+	// FUGARO_SHARED_JOB_ACCOUNTS was its last entry and left it in the change
+	// that made credentials.tf render the name (B5.1), which is why the map
+	// below spells it — FUGARO_LAUNCHER_ACCOUNTS was the entry before it, and
+	// left the list the same way in the change that made credentials.tf render
+	// the name (DS2.2), as the identity half's three did in LM12's change.
 	names := slices.Sorted(maps.Keys(want))
 	allowed := slices.Clone(credentialsServiceEnv)
 	slices.Sort(allowed)
@@ -333,6 +353,42 @@ func TestGoldenCredentialsServiceCarriesItsNames(t *testing.T) {
 		}
 		if tr.Provider == "" || tr.Repo == "" || tr.Workflow == "" {
 			t.Errorf("FUGARO_JOB_ACCOUNTS[%d] leaves a field empty: the service refuses a triple it cannot derive an account from", i)
+		}
+	}
+	// The shared class's rows are held the same way the coding table's are, and
+	// to one field more: a row carries the repositories the profile serves, and
+	// the member has to be THERE — the service refuses a row whose `repos` is
+	// absent by name (internal/cli's credentialsServiceSharedJobAccounts),
+	// because a row read as deny-all is a shared job it refuses every call of,
+	// while an empty array is the deny-all profile the document may state on
+	// purpose. So the value is compared against a decode of the plan's own
+	// bytes rather than trusted to be the fixture's string: a module that
+	// dropped the member would otherwise pass this test on a JSON encoding
+	// that never carried it.
+	var sharedRows []map[string]any
+	if err := json.Unmarshal([]byte(got["FUGARO_SHARED_JOB_ACCOUNTS"]), &sharedRows); err != nil {
+		t.Fatalf("FUGARO_SHARED_JOB_ACCOUNTS is not a JSON array of rows: %v", err)
+	}
+	if len(sharedRows) != len(c.SharedJobAccounts) {
+		t.Fatalf("FUGARO_SHARED_JOB_ACCOUNTS has %d entries, want the fixture's %d", len(sharedRows), len(c.SharedJobAccounts))
+	}
+	for i, row := range sharedRows {
+		w := c.SharedJobAccounts[i]
+		if row["profile"] != w.Profile || row["provider"] != w.Provider || row["account"] != w.Account {
+			t.Errorf("FUGARO_SHARED_JOB_ACCOUNTS[%d] = %v, want %s/%s/%q", i, row, w.Profile, w.Provider, w.Account)
+		}
+		repos, ok := row["repos"].([]any)
+		if !ok {
+			t.Fatalf("FUGARO_SHARED_JOB_ACCOUNTS[%d] carries no repositories (%v): the service refuses a row whose repos is absent, and one it read as deny-all refuses every caller of the class", i, row)
+		}
+		if len(repos) != len(w.Repos) {
+			t.Errorf("FUGARO_SHARED_JOB_ACCOUNTS[%d] admits %v, want the fixture's %v", i, repos, w.Repos)
+			continue
+		}
+		for j, r := range repos {
+			if s, ok := r.(string); !ok || s != w.Repos[j] {
+				t.Errorf("FUGARO_SHARED_JOB_ACCOUNTS[%d].repos[%d] = %v, want %q", i, j, r, w.Repos[j])
+			}
 		}
 	}
 	// The service itself: the name, the account and the image the fixture

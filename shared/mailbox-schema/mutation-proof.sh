@@ -7,11 +7,11 @@
 # `npm test` fail. A guard whose mutation survives is a guard no test defends,
 # which for this module -- the protocol P1.1, P3.6 and P4.1 speak -- is the
 # difference between a fence and a comment. Section 6 is the group about the
-# bounds: seventeen of its twenty-two rows move a comparison by one, which is the
+# bounds: nineteen of its twenty-four rows move a comparison by one, which is the
 # mutation this module has actually been wrong about; four more narrow a rule by
 # removing one of its terms instead (the carriage return from the line-break
 # rule, DEL from the two character rules, and the second head-SHA length from the
-# SHA rule); and the last replaces an equality test with a range test, which is
+# SHA rule); and one more replaces an equality test with a range test, which is
 # neither.
 #
 #   shared/mailbox-schema/mutation-proof.sh
@@ -351,12 +351,23 @@ run "action: a repository's characters are checked" \
   "  if (!REPO_CHARS.test(repo)) return { bad: refuse(REFUSALS.BAD_CHARACTER, 'action.target.repo') };" ""
 run "action: a cancel does not resolve to a repository" \
   "  if (verb === 'cancel') return { bad: refuse(REFUSALS.BAD_TARGET, 'action.target') };" ""
-run "action: a merge does not resolve to a run" \
-  "    if (verb === 'merge') return { bad: refuse(REFUSALS.BAD_TARGET, 'action.target') };" ""
+run "action: a merge or a launch does not resolve to a run" \
+  "    if (verb === 'merge' || verb === 'launch') return { bad: refuse(REFUSALS.BAD_TARGET, 'action.target') };" ""
 run "action: a repository target needs a pull request number" \
-  "  for (const key of REPO_TARGET_FIELDS) {
-    if (!Object.hasOwn(value, key))" "  for (const key of REPO_TARGET_FIELDS) {
-    if (false)"
+  "  if (wantsPR && !Object.hasOwn(value, 'pr')) return { bad: refuse(REFUSALS.MISSING_FIELD, 'action.target.pr') };" ""
+run "action: a launch's target is the repository alone (O10)" \
+  "    if (Object.hasOwn(value, 'pr')) return { bad: refuse(REFUSALS.BAD_TARGET, 'action.target') };" ""
+run "action: a launch names the mode it starts in (O10)" \
+  "  if (isLaunch && !Object.hasOwn(value, 'mode')) {
+    return { bad: refuse(REFUSALS.MISSING_FIELD, 'action.mode') };
+  }" ""
+run "action: only a launch names a mode (O10)" \
+  "    if (!isLaunch) return { bad: refuse(REFUSALS.FIELD_NOT_ALLOWED, 'action.mode') };" ""
+run "action: every verb but a launch carries a confirmation" \
+  "  if (!isLaunch && !Object.hasOwn(value, 'confirmation')) {" "  if (false) {"
+run "action: a launch needs no confirmation (a plain start, D162)" \
+  "  if (!isLaunch && !Object.hasOwn(value, 'confirmation')) {" \
+  "  if (!Object.hasOwn(value, 'confirmation')) {"
 run "action: the pull request number is a positive integer" \
   "  if (!Number.isSafeInteger(pr) || pr < 1) return { bad: refuse(REFUSALS.BAD_TARGET, 'action.target.pr') };" ""
 run "action: a merge carries the head it was confirmed against" \
@@ -486,13 +497,13 @@ run "canonicalBytes: -0 is refused" \
 #
 # Every guard above is DISABLED: a check deleted, a pattern replaced by `false`.
 # None of them moves a comparison by one, and that is the mutation this module
-# was actually wrong about. Seventeen of the twenty-two rows below move one
+# was actually wrong about. Nineteen of the twenty-four rows below move one
 # instead. Four more drop a term of a rule without moving anything: `string: a
 # body loses the carriage return` drops the `code === 0x0d` term of the
 # line-break rule, `string: DEL is no longer refused` and `id: DEL is no longer
 # refused` drop the `|| code === 0x7f` term of a character rule, and `action: the
 # second head-SHA length is dropped` drops the `&& value.length !== SHA_MAX`
-# conjunct of the SHA rule. The twenty-second does neither: `action: the head SHA
+# conjunct of the SHA rule. One more does neither: `action: the head SHA
 # may be any length from SHA_MIN to SHA_MAX` replaces the SHA rule's equality
 # test with a range test, and what kills it is a refusal of a head SHA between
 # the two lengths — the module's own, and the shared file's. They are here for
@@ -516,9 +527,10 @@ run "canonicalBytes: -0 is refused" \
 # TestTheSharedBoundVectorsHold on the Go side.
 #
 # So: add a bound to the schema, and it needs a row in vectors.bounds.json AND a
-# mutant here — the last four rows are P5.2.1's, the token's and the zone's, each
-# in both directions. A bound with a row and no mutant is a row that can be
-# deleted by an edit to bounds.test.js without this harness noticing.
+# mutant here — the mode bound of O10's typed launch (J5a) is the last pair, and
+# the four before it are P5.2.1's, the token's and the zone's, each in both
+# directions. A bound with a row and no mutant is a row that can be deleted by an
+# edit to bounds.test.js without this harness noticing.
 # ---------------------------------------------------------------------------
 run "id: the length bound, narrowed by one (the bound itself refused)" \
   "  if (value.length > ID_MAX) return { bad: refuse(REFUSALS.TOO_LONG, field) };" \
@@ -565,6 +577,12 @@ run "action: the repository bound, narrowed by one" \
 run "action: the repository bound, widened by one" \
   "  if (repo.length > TARGET_MAX) return { bad: refuse(REFUSALS.TOO_LONG, 'action.target.repo') };" \
   "  if (repo.length > TARGET_MAX + 1) return { bad: refuse(REFUSALS.TOO_LONG, 'action.target.repo') };"
+run "action: the mode bound, narrowed by one (O10)" \
+  "    mode = identityField(value.mode, 'action.mode', MODE_MAX);" \
+  "    mode = identityField(value.mode, 'action.mode', MODE_MAX - 1);"
+run "action: the mode bound, widened by one (O10)" \
+  "    mode = identityField(value.mode, 'action.mode', MODE_MAX);" \
+  "    mode = identityField(value.mode, 'action.mode', MODE_MAX + 1);"
 run "action: the head SHA may be any length from SHA_MIN to SHA_MAX" \
   "  if (value.length !== SHA_MIN && value.length !== SHA_MAX) {" \
   "  if (value.length < SHA_MIN || value.length > SHA_MAX) {"

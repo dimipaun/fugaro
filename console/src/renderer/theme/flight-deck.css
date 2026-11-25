@@ -3471,46 +3471,46 @@ span.graph-legend-swatch[data-edge='critical'] {
   border-top-color: var(--live);
 }
 
-/* ---- Coordinator (console redesign, step 7) ------------------------------
+/* ---- Coordinator (CG7b, D3210) -------------------------------------------
  *
- * The project view (`console/src/renderer/screens/coordinator.ts`): one panel
- * per repository the installation's config lists, each opening with its head row
- * -- the repository's name and which view the node is -- then the strip of
- * counts, the sweep's own marker, the records with the runs behind them, the
- * collisions and the pull requests whose host state no sweep could read.
+ * The tab (`console/src/renderer/screens/coordinator.ts`): **one section** and
+ * one read. It draws the project's **active orchestrators** as a graph -- a box
+ * per orchestrator, laid out by the same elk worker the Graph screen uses -- with
+ * a line of health above it and the drill-down panel under a box a reader opens.
  *
- * **What this section took over from `screens.css`.** That file's whole
- * Coordinator block is deleted with the markup that met it: the panel's frame,
- * the name, the source line, the marker, the counts, the records, the runs, the
- * collisions and the unreads are rewritten here against this step's drawing. Two
- * of its rules are deliberately **not** carried over, because the design this
- * step draws does not have them: the name and the source line are one head row
- * rather than two stacked lines, and a record's facts are one head row with the
- * runs under it rather than a wrapping line the runs are hung off. The shared
- * alignment rule of section 2.10 loses `coordinator-count-value` from its
- * selector list; the figure is aligned by the rule below, the way the Run
- * screen's `run-number` already is.
+ * **What D3210 removed, and why nothing here restyles it.** The v2 tab was a
+ * panel of four sections -- the action queue, the fleet's totals, the job list
+ * and the transcript -- over the stored `coordinator status` view, and every
+ * class this block used to carry for them (`coordinator-queue-*`,
+ * `coordinator-total*`, `coordinator-repo*`, `coordinator-record*`,
+ * `coordinator-jobs-*`, `coordinator-transcript-*`, `coordinator-description-*`)
+ * is gone with the markup. A rule for a class no screen writes is a rule nobody
+ * can see is dead, so they are deleted rather than left standing.
  *
- * **Header-first, and the declared-by rule, are 0.117.0's and stay.** The read's
- * source line and the console's sentence about the age the stored view does not
- * carry are drawn in the frame the tab is opened in, above every panel, and the
- * screen still claims no age anywhere: the marker's stamp is the string the
- * document holds. `span.coordinator-run-by` is the launch record's own
- * declaration about itself, unverified, and it is drawn as the person-shaped
- * text it is -- that rule lives in the screen (`nameableText`), and all this
- * stylesheet does with it is give it the tone of a datum.
+ * **The drawing is a picture of now, and it says so.** A node is on the map
+ * because a credential is driving it this second, so the canvas carries no
+ * history and no per-run row: the box holds the orchestrator's name, its driver,
+ * its two counts and its lease age, and the health line above it says whether
+ * the sweep that keeps the leases honest is running. That is the whole of the
+ * tab, and the four reads the v2 tab made are not made at all.
  *
- * **The tones are the state tokens' roles and not a second palette** (section
- * 3.2, section 3.5). Two readings take `--warn`, whose role cell is "attention":
- * the sweep's stale marker, and a pull request whose state no sweep could read --
- * both drawn as banners with the console's own word inside them. A **collision**
- * takes `--danger`: it is the one reading here where two runs are working on the
- * same file, and it is drawn twice, as the marked cell of the strip and as a
- * callout whose own word says what the pair is. Every tone travels with its
- * word, so this screen still adds no arm to the `forced-colors` block.
+ * **The tones are the state tokens' roles and not a second palette** (styling
+ * design sections 3.2 and 3.5). Two readings take `--warn`: an **overlap** --
+ * two orchestrators on the same files, the one thing here a person has to look
+ * at -- and a **sweep that is off**, which is the console's own sentence naming
+ * the fix rather than a figure nobody can read. A **dependency** is `--decor`:
+ * it is a fact, not a warning. Every tone travels with its word -- the warning's
+ * sentence, the sweep-off note -- so this screen adds **no arm** to the
+ * forced-colors block, exactly as the v2 tab did: the one thing forced colors
+ * takes away is a colour, and the dash on an overlap edge is a second channel
+ * the system's own pass leaves alone.
  *
- * **The screen is read-only and draws no control**, so nothing here carries a
- * transition beyond the focus ring the shared blocks already have.
+ * **A box is a control, and it is drawn as one.** `g.coordinator-node` carries
+ * `role="button"` and `tabindex="0"`, so the press is answered by the entry's own
+ * listener and Enter and Space are answered beside it; the cursor and the focus
+ * ring below are what say a box can be opened. The selected box is marked by the
+ * boundary's width and the tone, and the panel under the canvas repeats the name
+ * in its own heading, so the selection is readable without the boundary.
  * ------------------------------------------------------------------------- */
 
 section.coordinator {
@@ -3518,1097 +3518,373 @@ section.coordinator {
   color: var(--text);
 }
 
-/* The read's own command line, and the console's two sentences under it: which
- * command this drawing came from, the age the stored view does not carry, and an
- * installation that lists no repository. The command line is monospace because
- * it is a command and not a reading. */
-p.coordinator-source {
+/* The heading and the read's own command line. The line is monospace because it
+ * is a command and not a reading, the way every screen's source line is. */
+header.coordinator-header {
+  margin: 0 0 var(--space-sm);
+}
+
+h1.coordinator-title {
   margin: 0 0 var(--space-2xs);
+  font-size: var(--text-h1);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+}
+
+p.coordinator-source {
+  margin: 0;
   color: var(--text-3);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
 }
 
-p.coordinator-age,
-p.coordinator-empty {
-  margin: 0 0 var(--space-sm);
+/* The floor (F40): the CLI this console is built against is older than the
+ * release `orchestrator map` arrives in, so the tab names the release the read
+ * needs and spawns nothing. It is a sentence, not a refusal, so it takes the
+ * quiet tone the empty state takes -- and the version it needs is monospaced,
+ * because it is a version a person has to match against their own `fugaro`. */
+p.coordinator-floor {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-sm);
+}
+
+span.coordinator-floor-version {
   color: var(--text-2);
-  font-size: var(--text-sm);
-}
-
-/* One repository's panel, on the frame the redesign gives a panel
- * (`section.live-fleet`): the same ground, the same hairline and the same
- * radius, because the two are the same kind of block on two screens. */
-section.coordinator-repo {
-  margin-bottom: var(--section-gap);
-  padding: var(--panel-pad);
-  background: var(--surface);
-  border: var(--rule-width) solid var(--line);
-  border-radius: var(--radius-xl);
-}
-
-/* The head row: the name and the source line on one line that folds on a narrow
- * window rather than shrinking either (section 4.2). It carries the space below
- * it, so the strip is never glued to the name. */
-div.coordinator-repo-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2xs) var(--space-sm);
-  margin-bottom: var(--space-sm);
-}
-
-h2.coordinator-repo-name {
-  margin: 0;
-  color: var(--text);
-  font-size: var(--text-h2);
-  font-weight: var(--weight-semibold);
-}
-
-/* Which view the node is -- the stored word, or the runs-only fallback. It is a
- * sentence the CLI wrote about the document and not a state this console
- * measured, so it carries the quiet tone and no mark of its own. */
-p.coordinator-repo-state {
-  margin: 0;
-  color: var(--text-3);
-  font-size: var(--text-sm);
-}
-
-/* The sweep's marker, exactly as stored, as the amber banner the Run screen's
- * halt draws: a tinted block on the warn border, its introducing word a filled
- * chip at the head of the line. The stamp is a document string, so it is
- * monospace beside the console's own word rather than reformatted into a date
- * this console would be claiming. */
-div.coordinator-repo-stale {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2xs) var(--space-sm);
-  margin: 0 0 var(--space-sm);
-  padding: var(--space-xs) var(--space-sm);
-  background: var(--warn-tint);
-  border: var(--rule-width) solid var(--warn-border);
-  border-radius: var(--radius-md);
-  font-size: var(--text-sm);
-}
-
-span.coordinator-stale-word {
-  padding: 0 var(--space-2xs);
-  color: var(--warn-ink);
-  background: var(--warn);
-  border-radius: var(--radius-chip);
-  font-size: var(--text-label);
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-span.coordinator-stale-since {
-  color: var(--warn-text);
   font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
 }
 
-span.coordinator-stale-reason {
-  color: var(--warn-text);
-}
-
-/* The strip of counts: three cells, the console's own word for each and the
- * reading beside it, on one line that folds rather than clipping a figure. The
- * two hairlines make it a strip and not three loose words, which is what the
- * figure a reader scans for needs. */
-div.coordinator-counts {
+/* The health line: the sweep's own state, when it last woke and how long ago it
+ * was, in one wrapping row of labelled readings. It is the tab's **only** line
+ * that is always drawn from the document, so it sits above everything the sweep
+ * produced and stays up when the map is empty or the worker refused. */
+div.coordinator-health {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-2xs) var(--space-md);
+  gap: var(--space-md);
   margin: 0 0 var(--space-sm);
-  padding: var(--space-2xs) 0;
-  border-block: var(--rule-width) solid var(--line-subtle);
-}
-
-span.coordinator-count {
-  display: inline-flex;
-  align-items: baseline;
-  gap: var(--space-3xs);
-}
-
-span.coordinator-count-word {
-  color: var(--text-3);
-  font-size: var(--text-label);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-/* The reading is a span of its own -- the screen's number hook -- so section
- * 2.10's tabular figures and `ch` minimum land on the figure and never on the
- * word, and a count that grows a digit keeps its width and its place in the
- * row. */
-span.coordinator-count-value {
-  min-width: 6ch;
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: var(--text-md);
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-
-/* The strip's one state: a repository whose records collide is a repository a
- * reader has to look at. The mark is on the cell rather than on the figure, so
- * the word `collisions` is inside it and the tone is the second channel -- a
- * greyscale reader loses the red and not the fact (section 3.5). The class is
- * selected **without a tag**: it is one of the classes `numberCell` is handed
- * through its own `...classes` parameter, which is the shape the scan of section
- * 2.12 cannot pair with the `span` the helper draws (the same reason
- * `coordinator-more` has no tag in its rule). */
-.coordinator-count-alert {
-  padding: 0 var(--space-2xs);
-  background: var(--danger-tint);
-  border: var(--rule-width) solid var(--danger-border);
-  border-radius: var(--radius-chip);
-}
-
-.coordinator-count-alert span.coordinator-count-word,
-.coordinator-count-alert span.coordinator-count-value {
-  color: var(--danger-text);
-}
-
-/* The bound that left records or collisions out: the console's own sentence with
- * the counts it kept, in the tone the graph's `graph-not-shown` draws the same
- * reading in -- a bound dropped something. */
-p.coordinator-omitted {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2xs) var(--space-sm);
-  margin: 0 0 var(--space-sm);
-  font-size: var(--text-xs);
-  font-variant-numeric: tabular-nums;
-}
-
-span.coordinator-omitted-word {
-  color: var(--warn-text);
-}
-
-ul.coordinator-records,
-ul.coordinator-collisions,
-ul.coordinator-unreads {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3xs);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-/* One record: a pull request with the runs behind it, or the in-flight runs
- * alone. The head is the row and the runs hang under it, indented behind a
- * hairline -- the shape a nested panel takes everywhere in this console (section
- * 3.8) -- and the hairline below is the row's own boundary, which is the one
- * thing a forced-colors reader keeps of this block. */
-li.coordinator-record {
-  padding: var(--space-2xs) 0;
+  padding: 0 0 var(--space-xs);
   border-bottom: var(--rule-width) solid var(--line-subtle);
 }
 
-div.coordinator-record-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2xs) var(--space-sm);
-  min-height: var(--row-height);
-}
-
-span.coordinator-record-label,
-button.coordinator-record-label {
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-weight: var(--weight-medium);
-}
-
-span.coordinator-record-title {
-  color: var(--text);
-  font-size: var(--text-sm);
-}
-
-span.coordinator-record-branch,
-span.coordinator-record-release {
-  color: var(--text-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-}
-
-/* What the host says the pull request is, with the console's own `draft` beside
- * it in one chip: the pair is one fact, and both of its halves are words. */
-span.coordinator-record-chip {
+p.coordinator-health-item {
   display: inline-flex;
   align-items: baseline;
-  gap: var(--space-3xs);
-  padding: 0 var(--space-2xs);
-  color: var(--text-2);
-  background: var(--surface-sunken);
-  border: var(--rule-width) solid var(--line-subtle);
-  border-radius: var(--radius-chip);
+  gap: var(--space-2xs);
+}
+
+span.coordinator-health-word {
+  color: var(--text-3);
   font-size: var(--text-label);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-span.coordinator-record-draft {
-  color: var(--warn-text);
-}
-
-span.coordinator-record-flight,
-span.coordinator-record-noruns {
-  color: var(--text-3);
-  font-size: var(--text-xs);
-}
-
-/* The pull request's own description and the control that opens it (K3). The
- * disclosure sits between the record's head row and the runs because that is
- * where the description does, and it is drawn as one quiet line of the record
- * rather than as a boxed control: the underline on hover and on the keyboard's
- * focus is what says the line can be pressed, which is the channel the job
- * list's own row takes for the same reason.
- *
- * **Every hook here is selected without a tag.** The five classes arrive through
- * exported constants (`COORDINATOR_DESCRIPTION_*_CLASS`), and the scan that pairs
- * a selector with the tag the renderer draws reads a constant as a parameter --
- * so `button.coordinator-description-head` would be refused as a tag nothing
- * draws. The names are this screen's own and no rule competes for them, so the
- * tag would buy no specificity: the ground `coordinator-count-alert` and K4's
- * own nine stand on. */
-.coordinator-description-head {
-  display: block;
-  width: 100%;
-  min-height: var(--row-height);
-  padding: var(--space-2xs) 0;
-  color: var(--text-3);
-  font-size: var(--text-xs);
-  text-align: left;
-}
-
-.coordinator-description-head:hover,
-.coordinator-description-head:focus-visible {
-  text-decoration: underline;
-}
-
-/* The block the description is drawn into: indented behind a hairline, the shape
- * a nested panel takes everywhere in this console (section 3.8). Its being away
- * until the disclosure is pressed is the `hidden` attribute and the reset's own
- * rule for it, never a `display` written here -- a second answer to the same
- * question is a second answer the accessibility tree loses to. */
-.coordinator-description {
-  margin: 0 0 var(--space-2xs);
-  padding-left: var(--space-sm);
-  border-left: var(--rule-width) solid var(--line-subtle);
-}
-
-/* One line of the description, drawn as the host wrote it: no markdown is
- * rendered out of it, no line is joined to its neighbour and nothing in it
- * becomes an element of its own (K3). */
-.coordinator-description-line {
-  color: var(--text-2);
-  font-size: var(--text-sm);
-}
-
-/* `Show all`: the one control a clipped description offers, in the console's own
- * words and carrying nothing of the document. */
-.coordinator-description-all {
-  display: block;
-  margin-top: var(--space-2xs);
-  color: var(--text-3);
-  font-size: var(--text-xs);
-}
-
-.coordinator-description-all:hover,
-.coordinator-description-all:focus-visible {
-  text-decoration: underline;
-}
-
-/* A pull request that carries no description at all: the console's own sentence
- * rather than a block of nothing. */
-.coordinator-description-empty {
-  margin: 0;
-  color: var(--text-3);
-  font-size: var(--text-xs);
-}
-
-ul.coordinator-runs {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3xs);
-  margin: var(--space-2xs) 0 0;
-  padding-left: var(--space-sm);
-  list-style: none;
-  border-left: var(--rule-width) solid var(--line-subtle);
-}
-
-li.coordinator-run {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2xs) var(--space-sm);
-  font-size: var(--text-sm);
-}
-
-span.coordinator-run-id {
-  color: var(--text);
-  font-family: var(--font-mono);
-}
-
-/* The declaration and not an identity: the launch record wrote it about itself
- * and nothing verified it, so it keeps the tone of a datum and never the weight
- * of a name. */
-span.coordinator-run-by {
-  color: var(--text-2);
-}
-
-span.coordinator-run-status,
-span.coordinator-run-outcome,
-span.coordinator-run-declared-word,
-span.coordinator-run-open,
-span.coordinator-run-short {
-  color: var(--text-3);
-  font-size: var(--text-xs);
-}
-
-/* One collision: two records in flight on the same files or services, drawn as a
- * callout -- the pair, the console's sentence between them and the shared paths,
- * already cut to the console's cap. `--danger` and not `--warn`, because this is
- * the one reading where work is about to touch work, and the 3 px left rule is
- * the tone's second channel rather than its only one. */
-li.coordinator-collision {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2xs) var(--space-sm);
-  padding: var(--space-xs) var(--space-sm);
-  background: var(--danger-tint);
-  border: var(--rule-width) solid var(--danger-border);
-  border-left: 3px solid var(--danger);
-  border-radius: var(--radius-md);
-}
-
-span.coordinator-collision-a,
-span.coordinator-collision-b {
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-}
-
-span.coordinator-collision-word {
-  color: var(--danger-text);
-  font-size: var(--text-xs);
   font-weight: var(--weight-medium);
-}
-
-.coordinator-file {
-  color: var(--text-2);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-}
-
-.coordinator-service {
-  color: var(--text-2);
-  font-size: var(--text-xs);
-}
-
-/* How many of a cut list were not drawn: a figure, so it is tabular and quiet
- * beside the members that were, whether it stands at the end of a collision's
- * paths or at the end of a record's runs. */
-.coordinator-more {
-  color: var(--text-3);
-  font-size: var(--text-xs);
-  font-variant-numeric: tabular-nums;
-}
-
-/* One pull request a sweep could not read: the amber chip, with the introducing
- * word filled at its head, the reason the sweep gave and the stamp it left for
- * the retry. The view carries no time of its own, so the stamp is drawn as
- * stored and no age is derived from it. */
-li.coordinator-unread {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2xs) var(--space-sm);
-  padding: var(--space-xs) var(--space-sm);
-  background: var(--warn-tint);
-  border: var(--rule-width) solid var(--warn-border);
-  border-radius: var(--radius-md);
-}
-
-span.coordinator-unread-word {
-  padding: 0 var(--space-2xs);
-  color: var(--warn-ink);
-  background: var(--warn);
-  border-radius: var(--radius-chip);
-  font-size: var(--text-label);
-  font-weight: var(--weight-semibold);
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
-span.coordinator-unread-number {
-  color: var(--warn-text);
+span.coordinator-health-value {
+  color: var(--text-2);
   font-family: var(--font-mono);
-}
-
-span.coordinator-unread-reason,
-span.coordinator-unread-carried,
-span.coordinator-unread-retry {
-  color: var(--warn-text);
   font-size: var(--text-xs);
 }
 
-/* ---- The action queue and the fleet's totals (console 0.118.0, K1) --------
- *
- * The screen's two new sections, above the panel of repositories: the action
- * queue -- what is waiting for a person, one row per item, with the one button
- * that answers it -- and the fleet's totals strip. Both are drawn from reads of
- * their own (`coordinator status`, `runs ls`, `plan status`, `budget show`), and
- * each wears its own busy mark while its reads are out, so this block adds no
- * state of its own: `section.ts`'s mark, its dimming and the skeleton above it
- * are the whole of "this part is still being read".
- *
- * **The screen is no longer read-only, and that is K1's one change here.** The
- * queue draws the console's two doors out of this page: the launch confirmation
- * (Retry and Launch, the form the Live screen already owns) and the Spend screen
- * (a budget alert's Open Spend). They are real buttons, so they take the hit
- * area and the focus ring the shared blocks give every control, and the one
- * transition below is the pair of properties a hover moves -- the same shape
- * `button.console-stamp-refresh` has. The queue's jobs button is the one other
- * control here, and it is a disclosure rather than a door out of the page; the
- * rest of the screen is text, and K1 draws no link.
- *
- * **No tone is the only channel here.** A kind is one of four words in a chip, a
- * budget alert's ground is a sentence beside it (`the kill switch is on`, `this
- * repository is killed`, `this repository has reached its daily cap`), and the
- * blind-spot line counts what the page cannot reach in the console's own words.
- * A rule that tinted one item's chip and not its neighbours' would be a state
- * only a reader who sees colour can read, so there is none.
- *
- * **Five rules below name no tag, and the renderer is why.** The screen draws
- * its four sections, the queue's head and the queue's jobs button through
- * exported constants
- * (`COORDINATOR_QUEUE_CLASS` and its neighbours), which the selector scan reads
- * as a parameter and cannot pair with a tag, so a rule spelled
- * `section.coordinator-queue` would be refused as a tag nothing draws. The class
- * names are this screen's own and no other rule competes for them, so the tag
- * would buy no specificity; `coordinator-count-alert` is written the same way
- * for the same reason.
- * ------------------------------------------------------------------------- */
-
-/* The screen's four sections take the frame the redesign gives a panel
- * (`section.coordinator-repo`): the same ground, the same hairline and the same
- * radius, because they are the same kind of block on the same screen. */
-.coordinator-queue,
-.coordinator-totals,
-.coordinator-jobs,
-.coordinator-transcript {
-  margin-bottom: var(--section-gap);
-  padding: var(--panel-pad);
-  background: var(--surface);
-  border: var(--rule-width) solid var(--line);
-  border-radius: var(--radius-xl);
-}
-
-/* The queue's own line: the count of what is waiting, the word it counts and,
- * for a queue that holds nothing, the console's sentence instead of a zero. It
- * wraps rather than shrinking the figure, like every other row here. */
-.coordinator-queue-head {
+/* One lease row per node: the orchestrator's name, then its age. The name is
+ * drawn with the box's own name rule, so the row and the canvas say the same
+ * thing about the same orchestrator -- and a node whose lease carries no
+ * readable stamp draws the console's `n/a` with its reason in the title rather
+ * than a `0s` nobody measured. */
+p.coordinator-lease {
   display: flex;
-  flex-wrap: wrap;
   align-items: baseline;
-  gap: var(--space-2xs) var(--space-sm);
-  margin-bottom: var(--space-sm);
+  gap: var(--space-xs);
+  margin: 0 0 var(--space-3xs);
+  font-size: var(--text-xs);
 }
 
-/* The count is the page's own figure -- the items this console drew -- so it is
- * the head's first element and reads as one: mono, tabular, and never a word. */
-span.coordinator-queue-count {
-  min-width: 3ch;
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: var(--text-h2);
-  font-variant-numeric: tabular-nums;
-}
-
-span.coordinator-queue-word {
+span.coordinator-lease-name {
   color: var(--text-2);
-  font-size: var(--text-sm);
   font-weight: var(--weight-medium);
 }
 
-/* The same slot the count occupies, for the queue that holds nothing: a state
- * and not a zero (the screen draws one or the other, never both). */
-span.coordinator-queue-empty {
+span.coordinator-lease-word {
+  color: var(--text-3);
+}
+
+span.coordinator-lease-age {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+}
+
+/* The sweep is off: the console's own sentence, the fix, and the document's note
+ * when it wrote one. `--warn` and not `--danger`: nothing is broken, and a
+ * deployment switch is a thing a person turns on. The fix is monospaced because
+ * it is the command line to run, and the note is the CLI's own free text. */
+p.coordinator-sweep-off {
+  margin: 0 0 var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--warn-text);
+  background: var(--warn-tint);
+  border: var(--rule-width) solid var(--warn-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+}
+
+span.coordinator-sweep-off-word {
+  font-weight: var(--weight-semibold);
+}
+
+span.coordinator-sweep-off-fix {
+  font-family: var(--font-mono);
+}
+
+span.coordinator-sweep-off-note {
   color: var(--text-2);
+}
+
+/* The overlap warning: a count and a sentence, both of them the console's own
+ * words over a figure the model counted. It is drawn **only** when the sweep is
+ * running -- with the sweep off there is no overlap information at all, and a
+ * zero here would be a claim about a sweep nobody ran. */
+p.coordinator-overlap-warning {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-xs);
+  margin: 0 0 var(--space-sm);
+  padding: var(--space-2xs) var(--space-sm);
+  color: var(--warn-text);
+  background: var(--warn-tint);
+  border-left: 3px solid var(--warn);
+  font-size: var(--text-xs);
+}
+
+span.coordinator-overlap-warning-count {
+  font-family: var(--font-mono);
+  font-weight: var(--weight-semibold);
+}
+
+span.coordinator-overlap-warning-word {
+  font-weight: var(--weight-medium);
+}
+
+/* The two sentences a map with nothing to draw leaves: the project drives no
+ * orchestrator, or the worker answered no placement and the list below is the
+ * fallback. Both are the console's prose about its own gap. */
+p.coordinator-empty,
+p.coordinator-no-canvas {
+  margin: 0 0 var(--space-xs);
+  color: var(--text-3);
   font-size: var(--text-sm);
 }
 
-/* One read's part of the queue. It is a host and holds no state of its own --
- * the section's mark is what says the part is still being read -- so all this
- * gives it is the rhythm between its items. */
-ul.coordinator-queue-items {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2xs);
+/* The canvas. It is one `svg` the screen sized from the boxes the engine placed,
+ * and it scales to the panel rather than scrolling: the engine's own answer is a
+ * picture, and half of one behind a scrollbar is a picture nobody read. The
+ * `viewBox` is the drawing's own extent, so the box that no room was asked for
+ * is the box that gets scaled down. */
+section.coordinator svg.coordinator-graph {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  max-height: 60vh;
+  overflow: visible;
+}
+
+/* A box is a control: the cursor and the ring are what say so, and both are the
+ * shared vocabulary's (`--focus-ring-width` and its offset are the same two
+ * steps every other control in this console draws its ring with). */
+section.coordinator svg g.coordinator-node {
+  cursor: pointer;
+}
+
+section.coordinator svg g.coordinator-node:focus-visible {
+  outline: var(--focus-ring-width) solid var(--accent);
+  outline-offset: var(--focus-ring-offset);
+}
+
+section.coordinator svg .coordinator-node-box {
+  fill: var(--surface-2);
+  stroke: var(--line-strong);
+  stroke-width: 1;
+}
+
+/* The selected box thickens and takes `--live`. The boundary is the second
+ * channel beside the panel's own heading: a reader who cannot see the tone still
+ * has the width, and the panel below names the orchestrator either way. */
+section.coordinator svg g.coordinator-node[aria-pressed='true'] .coordinator-node-box {
+  stroke: var(--live);
+  stroke-width: 2;
+}
+
+section.coordinator svg .coordinator-node-name {
+  fill: var(--text);
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+}
+
+/* The driver and the two counts are one foot of footnotes under the name: the
+ * driver is who holds the lease, and the counts are the two figures the map
+ * carries. `driver unknown` is the console's own word for a read that failed,
+ * and it is drawn in the same tone as a driver -- it is a fact about the read
+ * and not a warning about the orchestrator. */
+section.coordinator svg .coordinator-node-driver,
+section.coordinator svg .coordinator-node-fact {
+  fill: var(--text-3);
+  font-size: var(--text-xs);
+}
+
+section.coordinator svg .coordinator-node-fact {
+  font-family: var(--font-mono);
+}
+
+/* An edge. A dependency is solid `--decor`: it is a fact about the order two
+ * orchestrators run in, and there is nothing to look at. An overlap is dashed
+ * **and** amber, because "these two are on the same files" is the one reading
+ * here a person acts on, and the dash is the channel that survives forced
+ * colors. The reason the document wrote is the path's own `<title>`, so it is a
+ * tooltip and never a label the line has to fit. */
+section.coordinator svg path.coordinator-edge {
+  fill: none;
+  stroke-width: 1.5;
+}
+
+section.coordinator svg .coordinator-edge-depends {
+  stroke: var(--decor);
+}
+
+section.coordinator svg .coordinator-edge-overlap {
+  stroke: var(--warn);
+  stroke-dasharray: 6 4;
+}
+
+/* The fallback list: the same figures and the same words as the canvas, drawn as
+ * rows for a worker that placed nothing. A row is separated from the next by the
+ * hairline the design's tables use, and each row's connections are words under
+ * its counts. */
+ul.coordinator-list {
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-/* One thing waiting: its facts on one line that folds, and the one button that
- * answers it at the end of that line. The hairline below is the item's own
- * boundary, the shape a record row already draws. */
-li.coordinator-queue-item {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2xs) var(--space-sm);
+li.coordinator-row {
   padding: var(--space-xs) 0;
   border-bottom: var(--rule-width) solid var(--line-subtle);
 }
 
-/* What the item is -- PR, JOB, PLAN or BUDGET -- in the console's own word, in
- * the chip the record rows draw their state in. */
-span.coordinator-queue-kind {
-  padding: 0 var(--space-2xs);
-  color: var(--text-2);
+li.coordinator-row:last-child {
+  border-bottom: none;
+}
+
+span.coordinator-row-name {
+  display: block;
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+span.coordinator-row-edge {
+  display: block;
+  margin-top: var(--space-3xs);
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+
+/* The one word in the list that is a warning, and it is the same tone the dashed
+ * edge is: the line says which orchestrator and the word says which relation. */
+span.coordinator-row-edge[data-kind='overlap'] {
+  color: var(--warn-text);
+}
+
+/* The drill-down panel: the live tasks of the orchestrator whose box was opened.
+ * It is drawn under the canvas rather than over it, so the map stays readable
+ * while a reader reads one node's items -- and its own heading repeats the name
+ * the box drew, which is what tells a reader which box the panel belongs to. */
+section.coordinator-tasks {
+  margin-top: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
   background: var(--surface-sunken);
-  border: var(--rule-width) solid var(--line-subtle);
-  border-radius: var(--radius-chip);
-  font-size: var(--text-label);
+  border: var(--rule-width) solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+div.coordinator-tasks-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-xs);
+}
+
+h2.coordinator-tasks-word {
+  margin: 0;
+  font-size: var(--text-h2);
   font-weight: var(--weight-semibold);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
-/* The subject -- a pull request's number, a run's id, a task's id -- in the
- * mono every key on this screen is drawn in, and the scope, the repository and
- * the title beside it in the tones the record rows already use. */
-span.coordinator-queue-subject,
-button.coordinator-queue-subject {
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-weight: var(--weight-medium);
-}
-
-/* A pull request's number is a button where the console can form the triple the
- * main process builds the destination from, and text where it cannot (K2), and
- * the two are meant to read alike: the reset below takes the browser's chrome
- * off the button, so a row's number looks the same whichever it is, and the
- * underline on hover and on focus is the second channel that says it can be
- * pressed -- never a tone alone, which is the rule every state on this theme
- * follows (§3.5). The row's own height is the hit target: `--row-height` is the
- * smallest the design's tokens give, and these rows are the dense reference the
- * screen is for, so the number does not get a 44px box of its own. */
-button.coordinator-record-label,
-button.coordinator-queue-subject {
-  min-height: var(--row-height);
-  padding: 0;
-  border: 0;
-  background: none;
-  font-size: inherit;
-  text-align: start;
-  cursor: pointer;
-}
-
-button.coordinator-record-label:hover,
-button.coordinator-record-label:focus-visible,
-button.coordinator-queue-subject:hover,
-button.coordinator-queue-subject:focus-visible {
-  text-decoration: underline;
-}
-
-span.coordinator-queue-scope,
-span.coordinator-queue-repo {
-  color: var(--text-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-}
-
-span.coordinator-queue-title {
-  color: var(--text);
-  font-size: var(--text-sm);
-}
-
-/* Why it is waiting, in the console's own words: the rule the queue applied and
- * never a claim about the work. */
-span.coordinator-queue-why {
-  color: var(--text-3);
-  font-size: var(--text-xs);
-}
-
-/* The item's one control: the launch confirmation for a PR, a job or a task,
- * and the Spend screen for a budget alert. Pushed to the end of the row, so the
- * four items are a column of buttons a reader can run down. */
-button.coordinator-queue-button {
-  min-height: var(--hit-min);
-  margin-inline-start: auto;
-  padding: 0 var(--space-md);
-  border: var(--rule-width) solid var(--line);
-  border-radius: var(--radius-sm);
-  background: transparent;
+button.coordinator-tasks-close {
+  padding: var(--space-2xs) var(--space-xs);
   color: var(--text-2);
+  background: transparent;
+  border: var(--rule-width) solid var(--control-border);
+  border-radius: var(--radius-chip);
   font-family: inherit;
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
+  font-size: var(--text-xs);
   cursor: pointer;
-  transition:
-    color var(--duration-fast) var(--ease-out),
-    border-color var(--duration-fast) var(--ease-out);
+  transition: color var(--duration-fast) var(--ease-out);
 }
 
-button.coordinator-queue-button:hover {
-  border-color: var(--line-strong);
-  color: var(--text);
+button.coordinator-tasks-close:hover {
+  color: var(--live-text);
+  border-color: var(--live-border);
 }
 
-/* The note a part carries instead of items when its read was not made at all: an
- * installation that records no checkout, or the reduced mode's withheld caps.
- * It is the console's own sentence about its own gap. */
-p.coordinator-queue-note {
+button.coordinator-tasks-close:focus-visible {
+  outline: var(--focus-ring-width) solid var(--accent);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* The two states of a panel with no row in it: the orchestrator holds no live
+ * task, or the read that asked for them refused. Both are the console's prose,
+ * so both take the quiet tone. */
+p.coordinator-tasks-empty {
   margin: 0;
   color: var(--text-3);
-  font-size: var(--text-xs);
-}
-
-/* The queue's one control that is not an item's: the press that reads the jobs.
- * It stands in the jobs' part while that part holds no items, so it takes the
- * same hit area, hairline and hover as an item's button, and none of that
- * button's push to the end of the row -- it is alone in its own. */
-.coordinator-queue-jobs {
-  min-height: var(--hit-min);
-  padding: 0 var(--space-md);
-  border: var(--rule-width) solid var(--line);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-2);
-  font-family: inherit;
   font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-  cursor: pointer;
-  transition:
-    color var(--duration-fast) var(--ease-out),
-    border-color var(--duration-fast) var(--ease-out);
 }
 
-.coordinator-queue-jobs:hover {
-  border-color: var(--line-strong);
-  color: var(--text);
-}
-
-/* What the page cannot reach, in one line under the items: the console's own
- * sentence and the two counts, each a cell of the same strip the repositories
- * draw. It holds no control, which is the point of the line. */
-p.coordinator-blind {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2xs) var(--space-md);
-  margin: var(--space-sm) 0 0;
-  padding-top: var(--space-2xs);
-  border-top: var(--rule-width) solid var(--line-subtle);
-  font-size: var(--text-xs);
-}
-
-span.coordinator-blind-word {
-  color: var(--text-3);
-}
-
-/* The fleet's strip: the six cells of the repository strip on the screen's own
- * panel, one line that folds. The mark waits on its own line above them
- * (`flex-basis: 100%`) rather than sitting beside the figures it is standing
- * in for. */
-.coordinator-totals {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2xs) var(--space-md);
-}
-
-/* The strip's own mark takes a line of its own, so the six figures it is
- * reading stay on one line above it. It is also the window's slot, for the same
- * reason and one of its own: the strip has two reads behind it (console 0.119.0)
- * and each of their marks gets a line of its own rather than sitting in the
- * middle of the figures the other read drew. */
-.coordinator-totals .console-busy-slot {
-  flex-basis: 100%;
-}
-
-/* The two sentences the strip says in its own words: the days nothing answered
- * for, and a CLI too old for the window's command. Neither is a figure, so
- * neither may take a cell's shape -- they take a line of the strip's own, in the
- * quiet tone the queue's and the job list's notes do. */
-p.coordinator-window-unknown,
-p.coordinator-window-note {
-  flex-basis: 100%;
-  margin: 0;
-  color: var(--text-3);
-  font-size: var(--text-xs);
-}
-
-/* ---- The job list (console 0.119.0, K4) ---------------------------------- */
-
-/* The screen's third section: the runs of the last day, read when the operator
- * asks for them and never with the page. It is drawn the way the other two are
- * -- a panel, a head line, the rows, the one control the section offers at that
- * moment -- and the two rules below are why its figures and its rows read as two
- * different things.
- *
- * **The head is the window and the list is the page, and neither is a count of
- * the other.** The head carries the first page's own `totals`, which the CLI
- * summed over everything it read (C2, #1545: `--limit` cuts what it prints and
- * sums what it read), so the two figures above the rows are deliberately not a
- * count of the rows under them. Nothing here recomputes either from the other.
- *
- * **The row's expansion is an attribute and not a rule of this block.** The head
- * is a real `button` (`coordinator-job-head`), the body under it is `hidden`
- * until that button's press, and the reset's own `[hidden]` rule is what takes
- * the body away: a block that wrote a `display` for the body would be a second
- * answer to the same question, and the one that lost would be the accessibility
- * tree's.
- *
- * **Nine of the hooks this section draws name no tag, and K1's five are written
- * that way for the same reason.** The section, its head, its list and its controls
- * are drawn through exported constants (`COORDINATOR_JOBS_CLASS` and its
- * neighbours), and `coordinator-jobs-load`, `coordinator-jobs-older`,
- * `coordinator-job-detail`, `coordinator-job-cost` and `coordinator-job-more`
- * arrive through `jobsControl`'s own `className` parameter and the `...classes`
- * two of the screen's cells take: the scan that pairs a selector with the tag the
- * renderer draws reads both as a parameter, and a rule spelled
- * `section.coordinator-jobs` would be refused as a tag nothing draws. The
- * section's own rule is written in the panel list above, with the other
- * sections', so the other eight hooks' rules are the tagless ones in this block.
- * The class names are this screen's own and no rule competes for them, so the
- * tag would buy no specificity; `coordinator-count-alert` is written the same
- * way, and so are the body's own cost cell and the note a cut list leaves
- * (`jobCell` passes both through a helper's `...classes`).
- * ------------------------------------------------------------------------- */
-
-/* The head line: the window's own word and its two figures, and the slot the
- * section's mark is put in. It folds rather than shrinking a figure, like every
- * other row on this screen. */
-.coordinator-jobs-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2xs) var(--space-sm);
-  margin-bottom: var(--space-sm);
-}
-
-/* The mark takes a line of its own, so the two figures it is standing in for
- * stay on one line above it -- the same shape the fleet's strip gives its own. */
-.coordinator-jobs-head .console-busy-slot {
-  flex-basis: 100%;
-}
-
-span.coordinator-jobs-window-word {
-  color: var(--text-2);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-}
-
-/* The rows: one job each, a button's line and the body that line opens, with the
- * hairline between two rows that the queue's items already draw. The list is a
- * host and holds no state of its own. */
-.coordinator-jobs-list {
-  display: flex;
-  flex-direction: column;
+ul.coordinator-task-list {
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-li.coordinator-job {
-  display: flex;
-  flex-direction: column;
-  border-bottom: var(--rule-width) solid var(--line-subtle);
-}
-
-/* The row's own line, and the control that opens the body: a button, so it takes
- * the reset's own `cursor: pointer` and the one focus ring every control here
- * takes, and this rule only gives it the row's shape -- full width, the line's
- * rhythm, and the row's own height as its hit area. */
-button.coordinator-job-head {
+li.coordinator-task {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: var(--space-2xs) var(--space-sm);
-  width: 100%;
-  min-height: var(--row-height);
+  gap: var(--space-xs);
   padding: var(--space-2xs) 0;
-}
-
-/* The two states that say the line can be opened, in the one channel the queue's
- * subject buttons use for the same reason: this row draws no border and no
- * background of its own, so the underline is what tells a reader the line is the
- * control -- and it is drawn for the keyboard's focus as well as for the pointer,
- * because a ring on the whole row is a weaker signal than the text that moves. */
-button.coordinator-job-head:hover,
-button.coordinator-job-head:focus-visible {
-  text-decoration: underline;
-}
-
-/* The run's id, in the mono every key on this screen is drawn in. */
-span.coordinator-job-id {
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-weight: var(--weight-medium);
-}
-
-/* Where the job ran, what the CLI called its outcome and the stage it stopped
- * at: the small mono the queue's scope line already uses. */
-span.coordinator-job-repo,
-span.coordinator-job-status,
-span.coordinator-job-outcome,
-span.coordinator-job-stage {
-  color: var(--text-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-}
-
-/* The untrusted title whoever wrote the task wrote, and the branch, the plan
- * task and the launch declaration beside it in the body. */
-span.coordinator-job-title {
-  color: var(--text);
-  font-size: var(--text-sm);
-}
-
-/* The body: the row's remaining facts, one line that folds, in the tone the
- * head's small cells use. */
-.coordinator-job-detail {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2xs) var(--space-sm);
-  padding-bottom: var(--space-2xs);
-}
-
-span.coordinator-job-branch,
-span.coordinator-job-plan,
-span.coordinator-job-by,
-span.coordinator-job-created,
-span.coordinator-job-pr,
-span.coordinator-job-reason,
-span.coordinator-job-file,
-span.coordinator-job-short {
-  color: var(--text-3);
-  font-size: var(--text-xs);
-}
-
-/* What the read cost and how many changed paths were left off it: the figure
- * keeps the screen's own reading style (`coordinator-count`'s cell, which is the
- * number hook of section 2.10), and the count of what a cut list left is the
- * quiet sentence `coordinator-more` already draws in the collision rows. */
-.coordinator-job-cost {
-  color: var(--text-3);
-}
-
-.coordinator-job-more {
-  color: var(--text-3);
-  font-size: var(--text-xs);
-}
-
-/* The section's controls: the press that asks for the list and the press that
- * asks for the page after it, in the shape the queue's own jobs button has --
- * the same hit area, hairline and hover, because they are the same kind of
- * control on the same screen. */
-.coordinator-jobs-controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-sm);
-  margin-top: var(--space-sm);
-}
-
-.coordinator-jobs-load,
-.coordinator-jobs-older {
-  min-height: var(--hit-min);
-  padding: 0 var(--space-md);
-  border: var(--rule-width) solid var(--line);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-2);
-  font-family: inherit;
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-  cursor: pointer;
-  transition:
-    color var(--duration-fast) var(--ease-out),
-    border-color var(--duration-fast) var(--ease-out);
-}
-
-/* Hover and the keyboard's focus are one declaration, in the shape K1's subject
- * buttons take: both are the same state -- "this can be pressed" -- and the
- * keyboard is never given less of it than the pointer. The ring the reset draws
- * is the other half, and this is the half that survives a forced-colors
- * stylesheet. */
-.coordinator-jobs-load:hover,
-.coordinator-jobs-load:focus-visible,
-.coordinator-jobs-older:hover,
-.coordinator-jobs-older:focus-visible {
-  border-color: var(--line-strong);
-  color: var(--text);
-}
-
-/* The two sentences the list says in its own words: a window that holds no run,
- * and a CLI older than the release the paged read needs. Both are the console's
- * own prose about its own gap, so they take the quiet tone the queue's note
- * does. */
-p.coordinator-jobs-empty,
-p.coordinator-jobs-note {
-  margin: 0;
-  color: var(--text-3);
-  font-size: var(--text-xs);
-}
-
-/* ---- The read-only transcript pane (console 0.119.0, K5) ----------------- */
-
-/* The screen's fourth section: what the fleet's orchestrators have declared, and
- * the stored view's answers to three questions the console composes itself. It
- * takes the panel frame with the other three (the rule at the top of this block)
- * and holds **no input of any kind** -- the declarations are read, never written,
- * and the front door that would write one is not built (D820, D827). Nothing
- * below gives an element a field's shape, because there is no field.
- *
- * **The four hooks the screen draws with a literal class name are qualified with
- * the tag it draws them as** (`p.coordinator-transcript-word` and its three
- * neighbours); every other hook in this block arrives through an exported
- * constant (`COORDINATOR_TRANSCRIPT_CLASS` and its neighbours), which the
- * selector scan reads as a parameter and cannot pair with a tag, so a rule
- * spelled `p.coordinator-transcript-intent` would be refused as a tag nothing
- * draws. The class names are this screen's own and no rule competes for them, so
- * the tag would buy no specificity -- the same reason K1's and K4's blocks are
- * written the way they are.
- * ------------------------------------------------------------------------- */
-
-/* The pane's own name, above everything it draws. It is a heading rather than a
- * figure, so it takes the tone the queue's own word takes and no mono. */
-p.coordinator-transcript-word {
-  margin: 0 0 var(--space-sm);
-  color: var(--text-2);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-semibold);
-}
-
-/* The host the entry fills: the stamp, the declarations and the questions, in
- * the order they were drawn. It holds no state of its own -- the section's mark
- * is what says a read is still out -- so all this gives it is the rhythm. */
-.coordinator-transcript-host {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-}
-
-/* One repository's declarations: the repository in the mono every key on this
- * screen is drawn in, over the lines that declare something about it. */
-.coordinator-transcript-repo {
-  margin: 0;
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-}
-
-/* One declaration: its fields on a line that folds, with the hairline every
- * record row on this screen draws under it. */
-.coordinator-transcript-intent {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2xs) var(--space-sm);
-  margin: 0;
-  padding: 0 0 var(--space-2xs);
   border-bottom: var(--rule-width) solid var(--line-subtle);
 }
 
-/* The word that introduces a declaration, in the small caps the record rows give
- * the same word. */
-span.coordinator-transcript-declared-word {
-  color: var(--text-3);
-  font-size: var(--text-label);
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+li.coordinator-task:last-child {
+  border-bottom: none;
 }
 
-/* **The declaring side's own words, and the tone that says what they are.** The
- * value is a declaration and never an identity: nothing verifies it and nothing
- * may be admitted by it (reconciliation finding #11), so it is drawn quietly and
- * in the italic the console keeps for a claim rather than for a fact. */
-.coordinator-transcript-declaration {
+span.coordinator-task-title {
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+
+span.coordinator-task-state {
   color: var(--text-2);
-  font-style: italic;
-}
-
-/* The writer's own clock, which is not this console's and carries no age: the
- * pane never derives one from it, so it is drawn as the store wrote it and in
- * the quiet tone the pane's own prose takes. */
-.coordinator-transcript-at {
-  color: var(--text-3);
   font-size: var(--text-xs);
 }
 
-/* What the declaration is about -- the branch, the release, the paths and the
- * services -- in the small mono the screen's other keys are drawn in. Each is
- * written by whoever can reach the report path, so each is drawn as data: this
- * rule gives them a tone and nothing else. */
-.coordinator-transcript-branch,
-.coordinator-transcript-release,
-.coordinator-transcript-file,
-.coordinator-transcript-service {
-  color: var(--text-2);
+span.coordinator-task-repo {
+  color: var(--text-3);
   font-family: var(--font-mono);
-  font-size: var(--text-xs);
-}
-
-/* One of the three questions the console asks the stored view, with the answers
- * under it. The question is the console's own word and the answers are the
- * view's, so the block is a column and the two read differently. */
-.coordinator-transcript-question {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2xs);
-}
-
-.coordinator-transcript-question-word {
-  margin: 0;
-  color: var(--text-2);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-}
-
-/* One repository's answer: the repository, then the fact. It is indented under
- * its question, which is what makes the question the line it belongs to, and it
- * carries the answer's own tone -- what is inside it is the store's text
- * whichever field it came from. */
-.coordinator-transcript-answer {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2xs) var(--space-sm);
-  margin: 0;
-  padding-left: var(--space-sm);
-  color: var(--text-2);
-  font-size: var(--text-sm);
-}
-
-/* The sweep's own marker, drawn in the word the record rows use for it. */
-span.coordinator-transcript-stale-word {
-  color: var(--text-2);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-}
-
-/* The two sentences the pane says in its own words: the front door that is not
- * built, and a question the stored view answers with nothing. Both are the
- * console's prose about its own gap, so they take the quiet tone the queue's
- * note does. */
-p.coordinator-transcript-missing,
-.coordinator-transcript-none {
-  margin: 0;
-  color: var(--text-3);
   font-size: var(--text-xs);
 }
 

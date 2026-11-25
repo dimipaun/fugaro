@@ -5,18 +5,41 @@
 # It settles S4's reading (plan B4.7, its "What it measures"; the
 # reconciliation's **D2076** (a) and **D2077** (a), **R5**, **R6**, **G18**,
 # **G19**, **G20**, **F28**, **F29** and **U9**; the build route is B4.3, the
-# grant is B4.4 and the fetch is B4.5). Until B4.9's flip a switched repository's
-# build still mounts its git credential and its workflow build secrets, so an
-# offline reading settles nothing: whether `fugaro image refresh` and the daily
-# check really bake with a credential the BUILD ACCOUNT fetched from the service
-# with its own metadata ID token, whether the service serves a build only its
-# OWN repository's credential (G20), and — after the flip — whether the accessor
-# and the `availableSecrets` are really gone while a build still succeeds, are
-# answers of a live installation. So this check reads what real builds did: the
-# request each build carried (`gcloud builds describe`), the job the daily check
-# runs as (`gcloud run jobs`), the account that may invoke the service
+# grant is B4.4 and the fetch is B4.5). An offline reading settles nothing:
+# whether the image the owner's repositories really bake is submitted and
+# finishes, under which account, with which credential, what the daily check
+# runs as, and whether the service's GUEST list admits one caller and not
+# another, are answers of a live installation. So this check reads what real
+# builds did: the request each build carried, the job the daily check runs as
+# (`gcloud run jobs`), the account that may invoke the service
 # (`gcloud run services get-iam-policy`) and the service's OWN lines
 # (`credsvc: audit`, purpose `build`) — and it never calls the service itself.
+#
+# WHAT THE INSTALLATION BUILDS NOW (changed 2026-11-24). A repository's own
+# derived image is disabled (D1900): `fugaro image build --workflow` and
+# `fugaro image refresh` print a notice and build nothing, and what the owner's
+# repositories build is the CATALOG ENTRY their `image_map` names. That build is
+# not a repository's build at all. `fugaro image build <entry>` (and the same
+# step inside `fugaro apply`, apply.CatalogBuild) submits it as
+# gcp.CatalogBuildSpec: it runs as the PROJECT'S BUILD IDENTITY
+# (fugaro-build-identity@<project>.iam.gserviceaccount.com, B6/D2301) and never
+# as the repository's own `fugaro-b-…` build account; its request names the
+# entry in `_IMAGE` (`<region>-docker.pkg.dev/<project>/<shared-registry>/catalog-<entry>`)
+# and the checkout it bakes in `_REPO_URL` (the entry's SOURCE repository, which
+# is the served repository only where the entry is sourced from it), and carries
+# NO `_SLUG`, no `_WORKFLOW` and no `_SECRET_ENVS`.
+# AND IT CARRIES NO SECRET AT ALL (IS8, D3330): the request names no
+# `availableSecrets` and no step names a `secretEnv`, and it names the
+# installation's credentials service in `_CREDENTIALS_SERVICE_URL` instead —
+# which its submission REFUSES to leave empty (internal/cli/image_build_catalog.go)
+# — because its credential step asks that service's entry route for the git
+# credential of the entry it is building, as the project's build identity, which
+# is the caller that route admits (credsvc.BuildTokenPath). A build with no
+# mount and NO address is the shape that holds no credential at all and is the
+# FAIL; a build that still carries a mount is one from before IS8, which the
+# build identity no longer holds an accessor for, and is a FAIL too. This check
+# reads what a build really carries and says so, rather than requiring a shape
+# no build of this installation has.
 # A FAIL in the switch mode stops S4 and returns to the owner as a decision
 # (B4.8 is the gate, B4.10 the flip's).
 #
@@ -24,14 +47,18 @@
 #             bash scripts/live-checks/check196.sh --dry-run      (prints the
 #             plan and calls NOTHING: no gcloud, no fugaro)
 #             bash scripts/live-checks/check196.sh --after-flip   (Check 196's
-#             second half: the accessor and availableSecrets gone, a build that
-#             still succeeds)
-# Needs:      bash, mktemp, python3, gcloud (authenticated as you: read Cloud
-#             Build's own records and one of the two repositories' builds, read
-#             Cloud Run jobs and one execution, read the service's own IAM
+#             second half: the check job's accessor and availableSecrets gone, a
+#             build that still succeeds)
+# Needs:      bash, mktemp, python3, gcloud (authenticated as you: list the
+#             REGION's own builds and read each repository's own catalog builds
+#             out of them, read the credentials service itself and ONE of its
+#             executions, read Cloud Run jobs, read the service's own IAM
 #             policy, and read the service's own lines out of Cloud Logging) and
-#             fugaro (doctor and version). Nothing is installed and nothing is
-#             fetched.
+#             fugaro (doctor, version, and `project policy show --json`, which
+#             is where the project's published `image_map` is read). The
+#             project config under $XDG_CONFIG_HOME/fugaro/projects is read as
+#             a file when it states a map of its own. Nothing is installed and
+#             nothing is fetched.
 # Where:      installation `fugaro` ONLY — project fugaro-dev, region us-east5.
 #             Both are HARD-CODED in this file and never read from `gcloud
 #             config get-value project`, and `fugaro doctor --project fugaro
@@ -42,9 +69,10 @@
 # Creates:    nothing in the installation, the project or any repository. This
 #             check WRITES nothing and DELETES nothing: it reads Cloud Build's
 #             own records, Cloud Run's jobs and the service's own lines, and the
-#             other repository's builds. The builds it reads are the ones YOU
-#             submitted with `fugaro image refresh` (B4.8), and they are the
-#             project's own log rather than this check's.
+#             other repository's builds. The builds it reads are the catalog
+#             entry's own, which `fugaro image build <entry>` (or `fugaro
+#             apply`) submitted, and they are the project's own log rather than
+#             this check's.
 # Costs:      wall clock, not money: minutes at the terminal. No build is
 #             submitted by the check itself.
 # Runs:       by YOU. No agent runs any step of it, and no agent has: what it
@@ -78,6 +106,29 @@
 # CHECK196_LOG_LIMIT, CHECK196_LOG_WAIT_SECONDS, CHECK196_LOG_POLL_SECONDS,
 # CHECK196_DRY_RUN, CHECK196_KEEP_SCRATCH. None of them can point this check at
 # another project or another region: those two are constants in this file.
+#
+# WHICH BUILDS ARE A REPOSITORY'S (changed 2026-11-24). The entry is the one the
+# project's EFFECTIVE `image_map` names for the repository (D1906): this
+# machine's project config when it states a map, the published policy node's
+# otherwise — read with `fugaro project policy show --json`, the one read of the
+# node this check makes — and the repository's builds are the newest ones whose
+# `_IMAGE` names `catalog-<that entry>`. The build's own `_REPO_URL` is the
+# ENTRY's source repository — the Dockerfile's repository, which one shared
+# entry serves to every repository mapped to it — so matching a repository's
+# builds by it missed every repository that is not the entry's source. A
+# repository the map does not mention keeps the `_REPO_URL` match.
+# The listing itself is the installation's REGION: `gcloud builds list
+# --region=${L}` (a catalog build is a REGIONAL build, and the global listing
+# holds none of them). With no region to pass there is no listing: the row
+# stops rather than reading the global one, because a global listing is a
+# reading of another region's builds and would report every catalog build as
+# missing.
+# The daily CHECK job is a repository's own and is unchanged by any of this: a
+# repository-level image check is disabled with the repository-level images
+# (D1900, internal/infra's IS2), so a repository the installation deploys no
+# `fugarochk-` job for is read INFO rather than as a row that could not be
+# measured — and a job an earlier release made, which `fugaro update` keeps, is
+# read exactly as before.
 #
 # -E (errtrace) as well as -e: without it a command that fails inside a command
 # substitution ends the shell with a bare exit 1 and NO error trap — the block
@@ -159,12 +210,23 @@ need_tools() {
 # makes the log filter below the same on every installation.
 P=fugaro-dev
 L=us-east5
+# The Fugaro project's own name, which every fugaro command below is pinned to
+# (`--project`): the installation is the one under test and nothing may select
+# another.
+NAME=fugaro
 SVC=fugaro-credentials
 # A repository's build service account is `fugaro-b-…@<project>.iam.gserviceaccount.com`
 # (gcp.BuildServiceAccountID), so a caller is recognised as a repository's build
 # by this prefix and the installation's own domain. The daily check's job name
-# starts `fugarochk-` (gcp.CheckJobName).
+# starts `fugarochk-` (gcp.CheckJobName). The CATALOG build's account is not a
+# repository's at all: it is the installation's ONE project-wide build identity,
+# `fugaro-build-identity@<project>.iam.gserviceaccount.com`
+# (gcp.BuildIdentityAccountID, B6/D2301), and the shared registry every catalog
+# entry's image lives in names the entry after this segment
+# (`catalog-<entry>`, gcp.SharedCatalogImage).
 BUILD_ACCOUNT_PREFIX=fugaro-b-
+BUILD_IDENTITY_ID=fugaro-build-identity
+CATALOG_IMAGE_PREFIX=catalog-
 CHECK_JOB_PREFIX=fugarochk-
 
 # ------------------------------------------------------------- scratch + trap
@@ -321,22 +383,49 @@ write_reader() {
 """Check 196's reader: one file, one reading per subcommand, no credential in
 any of them.
 
-builds  argv: `gcloud builds list --format=json`'s file, a repository. Prints the
-        repository's OWN newest derived-image build field by field: its id, its
+builds  argv: `gcloud builds list --region=<region> --format=json`'s file, a
+        repository and the catalog entry the project's `image_map` names for it
+        (empty when the map does not mention the repository). Prints the
+        repository's OWN newest CATALOG-ENTRY build field by field: its id, its
         status, the account it ran as (a resource name, reduced to the address
-        it ends in), the substitutions this check reads (`_SLUG`, `_WORKFLOW`,
-        `_SECRET_ENVS`, `_CREDENTIALS_SERVICE_URL`), the Secret Manager
-        CONTAINER ids its `availableSecrets` names (a container is a name and
-        never a value, G18) and the env names its build step carries as
-        `secretEnv`. `found=no` when the project's last builds hold none of the
-        repository's.
-job     argv: `gcloud run jobs list --format=json`'s file, a repository's slug.
-        Prints the repository's own daily CHECK job (named `fugarochk-…`,
-        gcp.CheckJobName): its name, the account its containers run as, whether
-        it carries FUGARO_CREDENTIALS_SERVICE_URL at all, and each Secret
-        Manager container its env is fed from (`mount=<ENV>|<id>`), which is the
-        mount the flip takes away. `found=no` when this installation deploys no
-        such job for the repository.
+        it ends in), the catalog ENTRY and image its `_IMAGE` names, the SOURCE
+        repository its own `_REPO_URL` names (the entry's checkout, which is not
+        the served repository when one entry serves several), which of the two
+        selected the build (`match=map` or `match=repourl`), the substitutions
+        this check reads (`_SLUG`, `_WORKFLOW`, `_SECRET_ENVS`,
+        `_CREDENTIALS_SERVICE_URL`), the Secret Manager CONTAINER ids its
+        `availableSecrets` names (a container is a name and never a value, G18)
+        and the env names its build step carries as `secretEnv`. With an entry
+        the builds are the ones whose `_IMAGE` names `catalog-<entry>`, because
+        the build's `_REPO_URL` is the entry's SOURCE repository and not the
+        repository the entry serves; without one (a repository the map does not
+        mention) they are the ones whose `_REPO_URL` is the repository's own
+        clone URL. A build that is not a catalog entry's is not this
+        repository's image build at all (D1900: repository-level images are
+        disabled) and is skipped. `found=no` when the region's last builds hold
+        none of the repository's.
+imagemap argv: a project config's path (or `-`), and `fugaro project policy
+        show --json`'s file (or `-`). Prints the project's EFFECTIVE
+        repo-to-image map (D1906) as `map=<repo>|<entry>` lines, and
+        `map-read=local|published|none` naming which layer answered: the config
+        when it states an `image_map` block of its own (an empty block is a
+        stated empty map, which takes a published one away), the published
+        node's otherwise.
+job     argv: `gcloud run jobs list --format=json`'s file, a repository
+        (`<workspace>/<repository>`). Prints the repository's own daily CHECK job
+        (named `fugarochk-…`, gcp.CheckJobName), found by the clone URL its own
+        FUGARO_REMOTE carries or by its `fugaro_repo` label — and the label it
+        prints back as `slug=`, because that is the key the repository's record
+        and the service's own lines are written under: its name, the account its
+        containers run as, whether it carries FUGARO_CREDENTIALS_SERVICE_URL at
+        all, and each Secret Manager container its env is fed from
+        (`mount=<ENV>|<id>`), which is the mount the flip takes away. `found=no`
+        when this installation deploys no such job for the repository.
+svc     argv: `gcloud run services describe fugaro-credentials --format=json`'s
+        file. Prints the service's own name and the URL Cloud Run serves it on
+        (`status.url`), which is the address every caller mints its ID token
+        for — read off the SERVICE and never off a build, so this row is a
+        measurement even when the project holds no build at all.
 exec    argv: `gcloud run jobs executions list --format=json`'s file. Prints the
         newest execution's name and status, and how many the listing holds.
 iam     argv: one `gcloud secrets get-iam-policy --format=json` document. Prints
@@ -362,6 +451,13 @@ CHECK_JOB_PREFIX = "fugarochk-"
 
 
 def word(v, cap=80):
+    """One field of a document, for the block's own `key=value` shape. A field
+    the document does not carry is `-` and never the word `None`: the callers
+    read `-` as "nothing here", and a `None` printed as a word is an answer
+    they would take for a value — a build with no `_SLUG` substitution, which
+    is every catalog build, would be looked up as the repository named `None`."""
+    if v is None:
+        return "-"
     return WORD.sub("", str(v))[:cap] or "-"
 
 
@@ -449,23 +545,128 @@ def commit_short_name(v):
     return s.split("/")[-1]
 
 
-def builds_of(path, repo):
-    """Every build of one repository, newest first. The repository is matched by
-    the request's own `_REPO_URL` substitution (the clone URL without
-    credentials), which every derived-image build carries and no other build
-    does — a reading that leaned on anything else would count another
-    repository's build, or the project's own catalog build, as this one's."""
+def catalog_entry_of(b):
+    """The catalog ENTRY a build bakes, or "" for a build that is not a catalog
+    entry's. `_IMAGE` is the whole answer: the catalog build's image is
+    `<region>-docker.pkg.dev/<project>/<shared-registry>/catalog-<entry>`
+    (gcp.SharedCatalogImage/SharedRegistryRepoID), while a derived build's names
+    the repository and the workflow. An entry that names a context of its own is
+    the same shape; a PREBUILT entry's image is the author's own reference and
+    is therefore not a catalog build of this project, which is what the segment
+    count and the prefix together reject."""
+    image = str(((b.get("substitutions") or {}).get("_IMAGE")) or "")
+    parts = image.split("/")
+    if len(parts) < 4:
+        return ""
+    name = parts[-1]
+    if not name.startswith("catalog-"):
+        return ""
+    return name[len("catalog-"):]
+
+
+def repourl_of(b):
+    """The clone URL a build's request names as `_REPO_URL`: the checkout it was
+    submitted from. For a catalog build that is the ENTRY's source repository —
+    the Dockerfile's repository — and not the repository the entry serves, which
+    is why the map's entry and not this is what matches a repository's builds."""
+    return str(((b.get("substitutions") or {}).get("_REPO_URL")) or "")
+
+
+def builds_of(path, repo, entry=""):
+    """Every CATALOG-ENTRY build of one repository, newest first, and which of
+    the two answers selected them.
+
+    With an ENTRY (the catalog entry the project's `image_map` names for the
+    repository) the builds are the ones whose `_IMAGE` names `catalog-<entry>`:
+    that is the image the repository runs, and one entry may serve several
+    repositories, so the build's own `_REPO_URL` — the entry's SOURCE repository
+    — cannot be the match. Without one (a repository the map does not mention)
+    they are the ones whose `_REPO_URL` is the repository's own clone URL, which
+    is what this check read before the map existed.
+
+    Either way the build must be a catalog entry's: a repository-level derived
+    image is disabled (D1900), so a derived build in this list is history from
+    before that and says nothing about the image the repository builds today."""
     out = []
     for b in load(path) or []:
         if not isinstance(b, dict):
             continue
-        subs = b.get("substitutions") or {}
-        url = subs.get("_REPO_URL") or ""
-        if not (url == "https://" + repo + ".git" or url.endswith("/" + repo + ".git")):
+        if not catalog_entry_of(b):
             continue
+        if entry:
+            if catalog_entry_of(b) != entry:
+                continue
+        else:
+            url = repourl_of(b)
+            if not (url == "https://" + repo + ".git" or url.endswith("/" + repo + ".git")):
+                continue
         out.append(b)
     out.sort(key=lambda b: str(b.get("startTime") or b.get("createTime") or ""), reverse=True)
-    return out
+    return out, ("map" if entry else "repourl")
+
+
+def yaml_scalar(s):
+    s = s.strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in "'\"":
+        return s[1:-1]
+    return s
+
+
+def local_image_map(path):
+    """The `image_map` block of a project config, or None when the file states
+    no such block. None is not {}: a file that says nothing keeps the published
+    node's map, while a written block with no entry in it is how a published one
+    is taken away on purpose (localcfg's ImageMapEffective). The block is read
+    from the file's own lines rather than through a YAML library, because the
+    one shape this file writes for a `map[string]string` is `key: value` lines
+    indented under the key; a value the writer quoted is unquoted here."""
+    if not path or path == "-":
+        return None
+    try:
+        with open(path) as fh:
+            lines = fh.read().splitlines()
+    except Exception:
+        return None
+    out, saw, inblock = {}, False, False
+    for raw in lines:
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        if raw[:1] not in (" ", "\t"):
+            key, sep, rest = raw.partition(":")
+            inblock = bool(sep) and key.strip() == "image_map"
+            if inblock:
+                saw = True
+                inner = rest.strip()
+                if inner.startswith("{") and inner.endswith("}"):
+                    for part in inner[1:-1].split(","):
+                        k, _, v = part.partition(":")
+                        if k.strip():
+                            out[yaml_scalar(k)] = yaml_scalar(v)
+                    inblock = False
+            continue
+        if not inblock:
+            continue
+        key, sep, rest = raw.strip().partition(":")
+        if sep and key.strip():
+            out[yaml_scalar(key)] = yaml_scalar(rest)
+    return out if saw else None
+
+
+def published_image_map(path):
+    """The project's published `image_map` out of `fugaro project policy
+    show --json`, or None when nothing is published and when the node states no
+    map at all (both are "no map of the node's", which the file's own answer
+    then stands in for or leaves absent)."""
+    doc = load(path)
+    if not isinstance(doc, dict):
+        return None
+    policy = doc.get("policy")
+    if not isinstance(policy, dict):
+        return None
+    m = policy.get("image_map")
+    if not isinstance(m, dict) or not m:
+        return None
+    return {str(k): str(v) for k, v in m.items()}
 
 
 def containers_of_build(b):
@@ -504,7 +705,8 @@ def account_address(v):
 cmd = sys.argv[1] if len(sys.argv) > 1 else ""
 if cmd == "builds":
     repo = sys.argv[3]
-    bs = builds_of(sys.argv[2], repo)
+    entry = sys.argv[4] if len(sys.argv) > 4 else ""
+    bs, match = builds_of(sys.argv[2], repo, entry)
     if not bs:
         print("found=no")
     else:
@@ -512,9 +714,13 @@ if cmd == "builds":
         print("found=yes")
         print("count=%s" % len(bs))
         subs = b.get("substitutions") or {}
+        print("match=%s" % match)
+        print("source=%s" % word(repourl_of(b), 200))
         print("id=%s" % word(b.get("id"), 60))
         print("status=%s" % word(b.get("status"), 40))
         print("account=%s" % word(account_address(b.get("serviceAccount")), 160))
+        print("entry=%s" % word(catalog_entry_of(b), 100))
+        print("image=%s" % text(subs.get("_IMAGE"), 200))
         print("slug=%s" % word(subs.get("_SLUG"), 100))
         print("workflow=%s" % word(subs.get("_WORKFLOW"), 80))
         print("secret_envs=%s" % word(subs.get("_SECRET_ENVS"), 200))
@@ -534,8 +740,32 @@ if cmd == "builds":
         print("secretenv=%s" % len(envs))
         for name in envs:
             print("secretenv_name=%s" % word(name, 80))
+elif cmd == "imagemap":
+    # The EFFECTIVE map (localcfg's ImageMapEffective): this machine's project
+    # config when it states an `image_map` block — an empty block included,
+    # which is a published map taken away on purpose — and the published policy
+    # node's otherwise. The repository keys are printed as written: they are
+    # `owner/name` and the caller looks one up by the name it was given.
+    local = local_image_map(sys.argv[2] if len(sys.argv) > 2 else "")
+    if local is not None:
+        print("map-read=local")
+        for repo in sorted(local):
+            print("map=%s|%s" % (repo, local[repo]))
+    else:
+        published = published_image_map(sys.argv[3] if len(sys.argv) > 3 else "")
+        if published is not None:
+            print("map-read=published")
+            for repo in sorted(published):
+                print("map=%s|%s" % (repo, published[repo]))
+        else:
+            print("map-read=none")
 elif cmd == "job":
-    slug = sys.argv[3]
+    # The repository is named as a person writes it (`<workspace>/<repository>`),
+    # never by its slug: a CATALOG build carries no `_SLUG` substitution, so the
+    # build's own record is not where a repository's slug can be read — the job
+    # is, and the label it is found by is the slug this reading prints back.
+    repo = sys.argv[3]
+    owner, _, short = repo.partition("/")
     doc = load(sys.argv[2]) or []
     found = None
     for job in doc:
@@ -544,15 +774,19 @@ elif cmd == "job":
         name = ((job.get("metadata") or {}).get("name")) or ""
         if not name.startswith(CHECK_JOB_PREFIX):
             continue
-        # The check job of ONE repository: matched by the `fugaro_repo` label the
-        # installation writes (which is the repository's slug) or by a container's
-        # own FUGARO_REMOTE, so a job whose label the installation had not written
-        # is still found.
+        # The check job of ONE repository: matched by a container's own
+        # FUGARO_REMOTE, which is the clone URL the job was applied for — the
+        # repository's own and no other's — or, for a job whose containers name
+        # no remote this reading can see, by the `fugaro_repo` label the
+        # installation writes (the repository's canonical slug).
         label = ((job.get("metadata") or {}).get("labels") or {}).get("fugaro_repo") or ""
         remote = ""
         for c in containers_of(job):
             remote = (env(c).get("FUGARO_REMOTE") or {}).get("value") or remote
-        owns = label == slug or remote.endswith("/" + slug.split("-")[0] + ".git")
+        candidates = [repo, short, owner + "-" + short]
+        owns = any(remote.endswith("/" + c + ".git") for c in candidates if c) \
+            or (bool(label) and any(label == c or label.startswith(c + "-")
+                                    for c in candidates if "/" not in c))
         if not owns:
             continue
         found = job
@@ -563,6 +797,7 @@ elif cmd == "job":
         print("found=yes")
         spec = spec_of(found)
         print("name=%s" % word((found.get("metadata") or {}).get("name"), 80))
+        print("slug=%s" % word(((found.get("metadata") or {}).get("labels") or {}).get("fugaro_repo"), 100))
         sa = (spec.get("serviceAccountName") if isinstance(spec, dict) else "") or ""
         print("account=%s" % word(sa, 160) if sa else "account=-")
         url, mounts = "absent", []
@@ -627,6 +862,20 @@ elif cmd == "svciam":
                 n += 1
                 print("binding=%s|%s" % (word(role, 120), word(bare_member(m), 200)))
         print("bindings=%s" % n)
+elif cmd == "svc":
+    doc = load(sys.argv[2])
+    if not isinstance(doc, dict):
+        print("found=no")
+    else:
+        print("found=yes")
+        meta = doc.get("metadata") or {}
+        status = doc.get("status") or {}
+        print("name=%s" % word(meta.get("name"), 80))
+        # status.url is the address Cloud Run serves the revision on, which is
+        # the audience every caller mints its Google ID token for
+        # (internal/cli/credentials_serve.go's credentialsServiceAudience): a
+        # name, never a credential.
+        print("url=%s" % (text(status.get("url") or "", 200) or "-"))
 elif cmd == "audit":
     for entry in load(sys.argv[2]) or []:
         if not isinstance(entry, dict):
@@ -713,17 +962,128 @@ guard_inputs() {
 BUILDS_FILE=""
 JOBS_FILE=""
 SERVICE_URL=""
+SERVICE_DOC=""
+SERVICE_ERR=""
 
-# read_builds: the project's recent builds, once, for both repositories.
+# read_service: the credentials service ITSELF, once. The row this feeds is the
+# service's own address, and reading it off a build — which is what this check
+# did until 2026-11-24 — made the row conditional on a build existing: with no
+# catalog build among the project's last builds the row was never reached and
+# printed `FAIL — not reached`, on an installation whose service was serving
+# runs perfectly well. The service is a resource of the installation and is read
+# as one.
+read_service() { # (SERVICE_DOC)
+  SERVICE_DOC=$SCRATCH/service.json
+  if ! gcloud run services describe "${SVC:?}" --project="${P:?}" --region="${L:?}" --format=json >"$SERVICE_DOC" 2>"$SCRATCH/service.err"; then
+    SERVICE_ERR="the credentials service ${SVC} itself cannot be read: 'gcloud run services describe ${SVC} --project=${P} --region=${L} --format=json' failed with $(last_lines "$SCRATCH/service.err"). YOUR account needs run.services.get, which a project Owner has"
+    return 1
+  fi
+  return 0
+}
+
+# read_builds: the REGION's recent builds, once, for both repositories. The
+# region is not optional and there is no fallback to a global listing: a catalog
+# build is a regional build (`gcloud builds submit --region`), so a global
+# `gcloud builds list` holds none of them and would report every repository as
+# having no build at all — the misreading this row is here to stop. `L` is a
+# constant in this file, so "the region cannot be read" is a guard against the
+# constant going missing rather than a state of the installation, and it stops
+# the run instead of listing another region's builds.
 read_builds() {
   BUILDS_FILE=$SCRATCH/builds.json
-  if ! gcloud builds list --project="${P:?}" --limit="${BUILDS:?}" --format=json >"$BUILDS_FILE" 2>"$SCRATCH/builds.err"; then
-    stop "the project's recent builds cannot be read: 'gcloud builds list --project=${P} --limit=${BUILDS} --format=json' failed with $(last_lines "$SCRATCH/builds.err"). YOUR account needs cloudbuild.builds.list, which a project Owner has"
+  [ -n "$L" ] || stop "the installation's region is empty, so the project's builds cannot be listed: 'gcloud builds list' with no --region reads the GLOBAL builds, which hold no catalog build at all (every catalog build is a regional one), and the check would report every repository as having none. This is a defect in the check itself: the region is a constant in this file (L)"
+  if ! gcloud builds list --project="${P:?}" --region="$L" --limit="${BUILDS:?}" --format=json >"$BUILDS_FILE" 2>"$SCRATCH/builds.err"; then
+    stop "the project's recent builds cannot be read: 'gcloud builds list --project=${P} --region=${L} --limit=${BUILDS} --format=json' failed with $(last_lines "$SCRATCH/builds.err"). YOUR account needs cloudbuild.builds.list in ${L}, which a project Owner has"
   fi
   case "$(head -c 1 "$BUILDS_FILE" 2>/dev/null || true)" in
   "[") ;;
-  *) stop "the project's recent builds are not the JSON array this check reads (is this gcloud too old for --format=json?): $(last_lines "$SCRATCH/builds.err")" ;;
+  *) stop "the region's recent builds are not the JSON array this check reads (is this gcloud too old for --format=json?): $(last_lines "$SCRATCH/builds.err")" ;;
   esac
+}
+
+# project_config_file — this machine's own project config for the installation,
+# the file whose `image_map` is the map's local half (localcfg's ImageMapEffective):
+# $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml, else ~/.config/fugaro/projects/<name>.yaml,
+# and $FUGARO_CONFIG when the canonical path holds nothing (the same order
+# localcfg's selector takes). A path that is not there is not a failure: the
+# reader answers "the file states no map" and the published node's map stands.
+project_config_file() {
+  local dir cfg
+  dir=${XDG_CONFIG_HOME:-}
+  if [ -z "$dir" ]; then dir="${HOME:-}/.config"; fi
+  cfg="$dir/fugaro/projects/${NAME}.yaml"
+  if [ ! -f "$cfg" ] && [ -n "${FUGARO_CONFIG:-}" ]; then cfg=$FUGARO_CONFIG; fi
+  printf '%s\n' "$cfg"
+}
+
+# read_image_map: the project's EFFECTIVE repo-to-image map (D1906), once, for
+# both repositories. The local config's block wins when it states one — an empty
+# block is a stated empty map and takes a published one away — and the published
+# policy node's map stands otherwise, which is what a job reads. Both are read
+# here and the keep rule is the reader's: a node that cannot be read is not a
+# failure of the check, it is the local half answering alone (and no map at all
+# when the file states none either, which the build rows then say).
+IMAGE_MAP_FILE=""
+IMAGE_MAP_READ=""
+IMAGE_MAP_ERR=""
+read_image_map() {
+  IMAGE_MAP_FILE=$SCRATCH/imagemap
+  local cfg policy=$SCRATCH/policy.json
+  cfg=$(project_config_file)
+  IMAGE_MAP_ERR=""
+  if ! fugaro project policy show --json --project "${NAME:?}" >"$policy" 2>"$SCRATCH/policy.err"; then
+    IMAGE_MAP_ERR="fugaro project policy show --json failed with $(last_lines "$SCRATCH/policy.err")"
+    : >"$policy"
+  fi
+  if ! reader imagemap "$cfg" "$policy" >"$IMAGE_MAP_FILE" 2>"$SCRATCH/imagemap.err"; then
+    stop "the project's image_map could not be read (the reader failed): $(last_lines "$SCRATCH/imagemap.err")"
+  fi
+  IMAGE_MAP_READ=$(field_of map-read "$(cat "$IMAGE_MAP_FILE")")
+}
+
+# map_entry_for REPO — the catalog entry the project's effective image_map names
+# for a repository, or nothing when the map does not mention it (which is not a
+# failure: a repository no map names keeps the `_REPO_URL` match, and a map the
+# check could not read at all names nothing).
+map_entry_for() { # map_entry_for REPO
+  [ -f "$IMAGE_MAP_FILE" ] || return 0
+  awk -F'|' -v r="$1" '$1 == "map=" r { print $2; exit }' "$IMAGE_MAP_FILE"
+}
+
+# map_phrase REPO — how a row says which answer found the repository's builds,
+# in one clause: the entry its image_map names, or the `_REPO_URL` match and why
+# the map did not answer.
+map_phrase() { # map_phrase REPO ENTRY MATCH
+  local repo=$1 entry=$2 match=$3
+  if [ "$match" = map ]; then
+    printf 'the catalog entry %s its image_map names' "$entry"
+    return 0
+  fi
+  case "$IMAGE_MAP_READ" in
+  none)
+    printf 'the builds whose _REPO_URL is its own clone URL (the project image_map names no entry for %s, so the map did not select them%s)' \
+      "$repo" "${IMAGE_MAP_ERR:+; $IMAGE_MAP_ERR}"
+    ;;
+  *)
+    printf 'the builds whose _REPO_URL is its own clone URL (the project image_map does not name an entry for %s)' "$repo"
+    ;;
+  esac
+}
+
+# no_build_remedy REPO — why no build was found for a repository and the one
+# command that submits it. A repository the map names has an entry to build and
+# a command that names it; one the map does not name has to be mapped first, and
+# the sentence says so rather than naming an entry the project never chose.
+no_build_remedy() { # no_build_remedy REPO
+  local repo=$1 entry
+  entry=$(map_entry_for "$repo")
+  if [ -n "$entry" ]; then
+    printf "A repository-level derived image is disabled (D1900) and 'fugaro image refresh' is refused, so what a repository runs is the CATALOG ENTRY its image_map names — %s for %s — and this repository's builds are the newest whose _IMAGE names catalog-%s. Submit it with 'fugaro image build %s' in a checkout of the entry's source repository (or with 'fugaro apply', whose owed catalog-build step submits the same build) and run this check again" \
+      "$entry" "$repo" "$entry" "$entry"
+    return 0
+  fi
+  printf "The project's effective image_map names no entry for %s (read %s%s), so the check looked for the builds whose _REPO_URL is its own clone URL. A repository-level derived image is disabled (D1900) and 'fugaro image refresh' is refused, so what a repository runs is the CATALOG ENTRY its image_map names: map %s to one with 'fugaro image map set %s <entry>', submit it with 'fugaro image build <entry>' (or 'fugaro apply'), and run this check again" \
+    "$repo" "${IMAGE_MAP_READ:-none}" "${IMAGE_MAP_ERR:+; $IMAGE_MAP_ERR}" "$repo" "$repo"
 }
 
 # read_jobs: the installation's Cloud Run jobs, once, for both repositories.
@@ -736,7 +1096,9 @@ read_jobs() {
 
 # read_build REPO KEY — read the repository's newest build into the scratch
 # directory, and print the reader's answer. Cached so the two rows about one
-# repository read it once.
+# repository read it once. The catalog entry comes from the project's effective
+# image_map (map_entry_for) and is what selects the builds; empty means the map
+# names no entry for the repository and the `_REPO_URL` match stands.
 read_build() { # read_build REPO KEY
   local key=$2 f
   f="$SCRATCH/builds-$key"
@@ -746,7 +1108,7 @@ read_build() { # read_build REPO KEY
     # it through, which would end that subshell rather than this check and reach
     # the owner as "an internal error ended this check" instead of as the one
     # reason it could not measure.
-    reader builds "$BUILDS_FILE" "$1" >"$f" 2>"$SCRATCH/builds-$key.err" || return 1
+    reader builds "$BUILDS_FILE" "$1" "$(map_entry_for "$1")" >"$f" 2>"$SCRATCH/builds-$key.err" || return 1
   fi
   cat "$f"
 }
@@ -755,9 +1117,48 @@ read_build() { # read_build REPO KEY
 build_read() { # build_read REPO KEY
   local ans
   if ! ans=$(read_build "$1" "$2"); then
-    stop "the project's own builds could not be read (the reader failed on ${1}): $(last_lines "$SCRATCH/builds-$2.err")"
+    stop "the region's own builds could not be read (the reader failed on ${1}): $(last_lines "$SCRATCH/builds-$2.err")"
   fi
   printf '%s\n' "$ans"
+}
+
+# read_job REPO KEY — read the reader's answer for one repository's daily check
+# job, cached so the rows about one repository read it once. The job is found by
+# the repository itself (`<workspace>/<repository>`) and not by a slug out of a
+# build's substitution: a catalog build carries no `_SLUG`, and the job's own
+# `fugaro_repo` label is where a repository's slug is read from.
+read_job() {
+  local key=$2 f
+  f="$SCRATCH/job-$key"
+  if [ ! -f "$f" ]; then
+    reader job "$JOBS_FILE" "$1" >"$f" 2>"$SCRATCH/job-$key.err" || return 1
+  fi
+  cat "$f"
+}
+
+# job_read REPO KEY — read_job, with a reader that failed stopping the run.
+job_read() {
+  local ans
+  if ! ans=$(read_job "$1" "$2"); then
+    stop "the installation's Cloud Run jobs could not be read (the reader failed on ${1}): $(last_lines "$SCRATCH/job-$2.err")"
+  fi
+  printf '%s\n' "$ans"
+}
+
+# repo_slug BUILD_SLUG LABEL REPO — the key a repository's record and the
+# service's own lines are written under (G20). A derived build carries it as its
+# own `_SLUG` substitution; a CATALOG build carries none, and the same slug is
+# written on the repository's daily check job as its `fugaro_repo` label, which
+# is where this reading takes it from then. `-` when neither answers.
+repo_slug() { # repo_slug BUILD_SLUG LABEL REPO
+  local slug=$1 ans
+  case "$slug" in "" | "-") ;; *) printf '%s\n' "$slug"; return 0 ;; esac
+  ans=$(job_read "$3" "$2")
+  if [ "$(field_of found "$ans")" = yes ]; then
+    slug=$(field_of slug "$ans")
+    case "$slug" in "" | "-") ;; *) printf '%s\n' "$slug"; return 0 ;; esac
+  fi
+  printf '%s\n' -
 }
 
 # is_build_account ACCOUNT — whether a Cloud Build serviceAccount field names a
@@ -768,6 +1169,19 @@ build_read() { # build_read REPO KEY
 is_build_account() {
   case "$1" in
   "${BUILD_ACCOUNT_PREFIX}"*"@${P}.iam.gserviceaccount.com") return 0 ;;
+  esac
+  return 1
+}
+
+# is_build_identity ACCOUNT — whether the field names the installation's OWN
+# build identity, `fugaro-build-identity@<project>.iam.gserviceaccount.com`
+# (gcp.BuildIdentityAccountID, B6/D2301). It is the ONE account a CATALOG build
+# runs as — gcp.CatalogBuildSpec.check refuses any other, so neither a
+# repository's build account nor a retired root's account is ever the one a
+# catalog build runs as — and it is project-wide rather than one repository's.
+is_build_identity() {
+  case "$1" in
+  "${BUILD_IDENTITY_ID}@${P}.iam.gserviceaccount.com") return 0 ;;
   esac
   return 1
 }
@@ -817,86 +1231,117 @@ audit_read() { # audit_read SLUG
 }
 
 # ------------------------------------------------------------------- the steps
-# step_service: the address the service is at, read off the GitHub repository's
-# newest build. The switch is B4.9's replacement of the build's mounts: a
-# switched repository's build names the service in `_CREDENTIALS_SERVICE_URL`,
-# and a build that names none is one whose root has not been re-applied with the
-# switch on.
+# step_service: the service ITSELF — that the installation's credentials service
+# is deployed and that Cloud Run serves it at an address. It is read off the
+# service and off nothing else, deliberately: this row is the one part of the
+# reading that is independent of every build, so a project whose last builds
+# hold no catalog build still measures it (and a build's own address — which
+# every catalog build names since IS8 — cannot make it FAIL).
 step_service() {
-  local ans url
-  ans=$(build_read "$REPO" github)
-  if [ "$(field_of found "$ans")" != yes ]; then
+  local ans name url
+  if ! read_service; then
+    unmeasured service "$SERVICE_ERR"
     return 0
   fi
-  url=$(field_of url_value "$ans")
+  ans=$(reader svc "$SERVICE_DOC" 2>"$SCRATCH/service-read.err") \
+    || { unmeasured service "the credentials service's own document cannot be read: $(last_lines "$SCRATCH/service-read.err")"; return 0; }
+  if [ "$(field_of found "$ans")" != yes ]; then
+    fact service FAIL "the credentials service ${SVC} is not deployed in ${P} (Cloud Run has no service of that name in ${L}): every caller's address is empty, so no build, job or run of a switched repository has a service to fetch a credential from. Deploy it with 'fugaro update' at the installation's own checkout"
+    return 0
+  fi
+  name=$(field_of name "$ans")
+  url=$(field_of url "$ans")
   if [ -z "$url" ] || [ "$url" = "-" ]; then
-    fact service FAIL "the GitHub repository's newest build names no credentials service (its substitution _CREDENTIALS_SERVICE_URL is empty), so the build holds its own git credential and its workflow secrets as mounts and nothing was served. Re-apply the repository's root with the switch on ('fugaro update --repo' in a checkout of ${REPO}), refresh the image ('fugaro image refresh'), and run this check again"
+    fact service FAIL "the credentials service ${name:-$SVC} is deployed in ${P} but Cloud Run serves it no URL (status.url is empty), so no caller can mint an ID token for it: every credential a switched repository's build, job or run fetches would be refused before the service answers. Read it with 'gcloud run services describe ${SVC} --project=${P} --region=${L}'"
     return 0
   fi
   SERVICE_URL=$url
-  fact service PASS "the credentials service is at ${url}, read off ${REPO}'s own newest build's _CREDENTIALS_SERVICE_URL substitution (the address B4.5 hands the credential step)"
+  fact service PASS "the credentials service is at ${url} (Cloud Run service ${name:-$SVC} in ${P}/${L}, read off the service itself and not off any build): it is deployed and reachable, which is the address every caller mints its Google ID token for. Whether a build names it is a separate row: a catalog entry's build names it too, as the address its credential step asks for the git credential of the entry it bakes (IS8, D3330), and a build that carries no mount and names no address holds no credential at all"
 }
 
-# step_repo LABEL REPO PROVIDER — one sandbox repository's build, its daily
-# check and the service's own lines for it.
+# step_repo LABEL REPO PROVIDER — the image one sandbox repository builds (the
+# catalog entry its image_map names), the credential that build mounts, and the
+# service's own lines for the repository.
 step_repo() { # step_repo LABEL REPO PROVIDER
   local label=$1 repo=$2 provider=$3 ans
   ans=$(build_read "$repo" "$label")
-  local found id status account slug workflow containers url
+  local found id status account entry image src_repo match containers url slug
   found=$(field_of found "$ans")
   if [ "$found" != yes ]; then
-    unmeasured "build-$label" "no build of ${repo} is among the project's last ${BUILDS} builds, so nothing about its build could be read. Submit one with 'fugaro image refresh' in a checkout of ${repo} (B4.8 does this for each sandbox checkout) and run this check again"
-    unmeasured "mounts-$label" "no build of ${repo} was read, so its request's availableSecrets could not be measured"
-    unmeasured "served-$label" "no build of ${repo} was read, so the service's own lines for it could not be measured"
+    unmeasured "build-$label" "no CATALOG-ENTRY build of ${repo} is among the ${L} region's last ${BUILDS} builds, so the image this repository runs could not be read. $(no_build_remedy "$repo")"
+    unmeasured "mounts-$label" "no catalog-entry build of ${repo} was read, so the secrets its request carries could not be measured"
+    unmeasured "served-$label" "no catalog-entry build of ${repo} was read, so the service's own lines for it could not be measured"
     return 0
   fi
   id=$(field_of id "$ans")
   status=$(field_of status "$ans")
   account=$(field_of account "$ans")
-  slug=$(field_of slug "$ans")
-  workflow=$(field_of workflow "$ans")
+  entry=$(field_of entry "$ans")
+  image=$(field_of image "$ans")
+  src_repo=$(field_of source "$ans")
+  match=$(field_of match "$ans")
   containers=$(field_of containers "$ans")
+  envcount=$(field_of secretenv "$ans")
   url=$(field_of url "$ans")
+  url_value=$(field_of url_value "$ans")
+  slug=$(repo_slug "$(field_of slug "$ans")" "$label" "$repo")
 
-  # build-LABEL: the build baked with a credential the service fetched, rather
-  # than one the request mounted. A SUCCESS build that ran as the repository's
-  # own build account and names the service is exactly that.
+  # build-LABEL: the image this repository really runs — the CATALOG ENTRY its
+  # image_map names, baked from the ENTRY's source repository (the checkout the
+  # build bakes, which is the served repository only where the entry is sourced
+  # from it) — ended SUCCESS and ran as the installation's build identity, which
+  # is the account a catalog build runs as and the only one
+  # gcp.CatalogBuildSpec.check admits (B6/D2301). Its request names the
+  # credentials service, and that is the shape since IS8: the entry's git
+  # credential is what its credential step asks that service for (D3330).
   if [ "$status" != SUCCESS ]; then
-    fact "build-$label" FAIL "the newest build of ${repo} (${id}) ended ${status}, not SUCCESS: $(read_audit_said "$slug") . Read it with 'gcloud builds log ${id} --project=${P}'. A build of a served repository reads its credential from the service at the credential step, so a build that cannot finish is the service, the switch or the request"
-  elif ! is_build_account "$account"; then
-    fact "build-$label" FAIL "the newest build of ${repo} (${id}) ended SUCCESS but its own record says it ran as ${account:-nobody this reading can name}, not as a build account of ${P} (${BUILD_ACCOUNT_PREFIX}…@${P}.iam.gserviceaccount.com): a build that ran as another identity is not a statement about this repository's build account"
-  elif [ "$url" != present ]; then
-    fact "build-$label" FAIL "the newest build of ${repo} (${id}) ended SUCCESS but its request names no credentials service: it holds its own git credential and workflow secrets as mounts, so B4.9's flip has not reached this repository's builds. Re-apply the root ('fugaro update --repo') and refresh the image"
+    fact "build-$label" FAIL "the newest catalog build of ${repo} (${id}, the entry ${entry:-unknown}'s image, found by $(map_phrase "$repo" "$entry" "$match")) ended ${status}, not SUCCESS: $(read_audit_said "$slug") . Read it with 'gcloud builds log ${id} --project=${P} --region=${L}'. A catalog entry's build bakes from the entry's source repository (${src_repo:-unknown}) and asks the credentials service (${url_value:-no address}) for that entry's git credential, so a build that cannot finish is that call, the entry's definition or that checkout"
+  elif ! is_build_identity "$account"; then
+    fact "build-$label" FAIL "the newest catalog build of ${repo} (${id}, entry ${entry}) ended SUCCESS but its own record says it ran as ${account:-nobody this reading can name}, not as the installation's build identity (${BUILD_IDENTITY_ID}@${P}.iam.gserviceaccount.com): a catalog entry's build runs as the project's build identity — which is the caller the service's entry route admits — and never as a repository's build account, and a build that ran as another identity is not a statement about this installation's entry builds"
   else
-    fact "build-$label" PASS "the newest build of ${repo} (${id}, workflow ${workflow}) ended SUCCESS, ran as ${account}, and names the credentials service in its request: it baked with a credential fetched from the service and not one it mounted"
+    fact "build-$label" PASS "the newest build of ${repo} is the CATALOG ENTRY ${entry}'s image (${image}, build ${id}, found by $(map_phrase "$repo" "$entry" "$match")): it ended SUCCESS and ran as ${account}, the installation's build identity — so the image this repository runs really is the entry its image_map names, baked from that entry's source repository (${src_repo:-unknown}), and the account is the one gcp.CatalogBuildSpec.check admits. Its request names the credentials service (${url_value:-none}) and carries no secret of its own: the credential step asks that service for the entry's git credential, as the project's build identity, which is the caller the entry route admits (IS8, D3330)"
   fi
 
-  # mounts-LABEL: before the flip a served repository's build still MOUNTS every
-  # secret it read before — the fetch reads what the mount read (F33, D1267) —
-  # so a request that names the service and still carries availableSecrets is
-  # the pre-flip state this mode reads. A request that carries none is the flip
-  # already landed.
-  if [ "$url" != present ]; then
-    unmeasured "mounts-$label" "the newest build of ${repo} names no credentials service, so whether it mounts its secrets says nothing about the switch"
-  else
-    case "$containers" in
-    "" | *[!0-9]*) unmeasured "mounts-$label" "the reader did not answer how many containers the build's availableSecrets names: $(last_lines "$SCRATCH/builds-$label.err")" ;;
-    0)
-      fact "mounts-$label" INFO "the newest build of ${repo} names the service and carries no availableSecrets: the S4 flip (B4.9) has already landed for it, so this mode is reading a post-flip installation. The --after-flip mode is the one to run"
-      ;;
-    *)
-      fact "mounts-$label" PASS "the newest build of ${repo} names the service and still carries ${containers} availableSecrets entries: the build mounts its git credential and its workflow secrets while the credential step fetches the same ones from the service (F33, D1267 — the fetch reads what the mount read)"
-      ;;
-    esac
-  fi
+  # mounts-LABEL: the secrets a catalog build carries. Since IS8 (D3330) the
+  # request names NO availableSecrets and no step names a secretEnv: the
+  # credential comes from the service's entry route instead, and the build
+  # identity's accessor on the git secret went with the mount
+  # (deploy/terraform/gcp/modules/installation/build_identity.tf). So 0
+  # containers and 0 secretEnv beside the service's address is the good shape,
+  # and both halves of the FAIL are real: a mount the build identity can no
+  # longer read, and no address beside no mount, which is a build with no
+  # credential of any kind. Each count is held to being a number on its own: a
+  # `case` over "$a:$b" would read the separator as a non-digit.
+  case "$containers" in "" | *[!0-9]*) containers=unreadable ;; esac
+  case "$envcount" in "" | *[!0-9]*) envcount=unreadable ;; esac
+  case "$containers:$envcount" in
+  *unreadable*) unmeasured "mounts-$label" "the reader did not answer how many containers and secretEnv entries the build's request names: $(last_lines "$SCRATCH/builds-$label.err")" ;;
+  0:0)
+    if [ "$url" = present ]; then
+      fact "mounts-$label" PASS "the newest catalog build of ${repo} (${id}, entry ${entry}) carries 0 availableSecrets and 0 secretEnv entries and names the credentials service (${url_value}): the request asks Cloud Build for no secret at all — IS8 (D3330) took the mount with the build identity's accessor on it — and the credential step fetches the entry's git credential from the service instead, which is the one credential path a catalog build has"
+    else
+      fact "mounts-$label" FAIL "the newest catalog build of ${repo} (${id}) carries no availableSecrets and no secretEnv entry and names no credentials service either: the build holds no credential of any kind, so its clone can only fail. Submit the entry again with 'fugaro image build ${entry}' (or 'fugaro apply')"
+    fi
+    ;;
+  *)
+    fact "mounts-$label" FAIL "the newest catalog build of ${repo} (${id}, entry ${entry}) still carries ${containers} availableSecrets entry(ies) and ${envcount} secretEnv entry(ies): a catalog entry's request names no secret at all since IS8 (D3330) — the mount went with the build identity's accessor on it — so this is a build from before that change or one nobody of this installation submitted. Submit the entry again with 'fugaro image build ${entry}' (or 'fugaro apply')"
+    ;;
+  esac
 
-  # served-LABEL: the service's own lines for this repository. A build of a
-  # served repository asks the build route once, and the line names the caller
-  # the service VERIFIED (the account Cloud Run minted the build's ID token for,
-  # G20 — the one field a call cannot claim for itself), the credential it was
-  # served and the purpose.
+  # served-LABEL: the service's own lines for this repository. The build route's
+  # lines name the caller the service VERIFIED (the account Cloud Run minted the
+  # build's ID token for, G20 — the one field a call cannot claim for itself),
+  # the credential it was served and the repository. A CATALOG build is answered
+  # by the service's ENTRY route instead (credsvc's PurposeBuildToken for the
+  # GitHub half, PurposeBuildGrant for the Bitbucket proxy), whose lines name the
+  # project's build identity and NO repository: one token covers the entry's
+  # repositories, so a line naming one of them would say the mint was for that
+  # one. The row therefore cannot find a catalog build's call under a
+  # repository's slug, and it reads what the service wrote for the repository's
+  # OWN builds and says which of the two shapes it is rather than calling the
+  # absence a failure.
   if [ -z "$slug" ] || [ "$slug" = "-" ]; then
-    unmeasured "served-$label" "the newest build of ${repo} carries no _SLUG substitution, so the key its record is written under — and the repository the service's own lines name — cannot be read"
+    unmeasured "served-$label" "the repository's slug could not be read — neither from the build's _SLUG substitution (a catalog build carries none) nor from the fugaro_repo label of its daily check job — so the repository the service's own lines name cannot be looked up"
   else
     step_served "served-$label" "$repo" "$slug" "$account" "$provider"
   fi
@@ -927,19 +1372,40 @@ read_audit_said() { # read_audit_said SLUG
 # `bitbucket-token…` — the installation's bundle token, whose name carries which
 # token of the family it is (bbtokens.Name), so the reading takes the family
 # rather than one spelling of it and a typed token is not read as a wrong one.
+# These are the lines of a REPOSITORY's own build (purpose `build`, keyed by the
+# repository's slug); a catalog build's are the entry route's, which name no
+# repository at all, and an empty answer for a catalog build is therefore the
+# shape this installation predicts and not a failure.
 step_served() {
   local key=$1 repo=$2 slug=$3 account=$4 provider=$5 ans lines
   local cred
   if [ "$provider" = github ]; then cred=github-app-key; else cred="bitbucket-token…"; fi
   if ! ans=$(audit_read "$slug"); then
-    unmeasured "served-$label" "the service's own lines for ${repo} could not be read (the log read failed): yours needs roles/logging.viewer on ${P}. Read them by hand with 'gcloud logging read \"resource.labels.service_name=${SVC} jsonPayload.repository=${slug}\" --project=${P}'"
+    unmeasured "$key" "the service's own lines for ${repo} could not be read (the log read failed): yours needs roles/logging.viewer on ${P}. Read them by hand with 'gcloud logging read \"resource.labels.service_name=${SVC} jsonPayload.repository=${slug}\" --project=${P}'"
     return 0
   fi
   lines=$(printf '%s\n' "$ans" | sed -n 's/^audit=ok|//p' | wc -l | tr -d ' ')
   if [ "${lines:-0}" -eq 0 ]; then
     local refused
     refused=$(printf '%s\n' "$ans" | sed -n 's/^refused=[^|]*|//p' | head -n 1 | redact | cut -c1-300)
-    fact "$key" FAIL "the service wrote no 'credsvc: audit' line of purpose build for ${repo} (slug ${slug}): the build's credential was answered by something else, or the build's calls were refused.${refused:+ Its own refusal line reads: ${refused}.} Read the service's lines with 'gcloud logging read \"resource.labels.service_name=${SVC} jsonPayload.repository=${slug}\" --project=${P}'"
+    if [ -n "$refused" ]; then
+      # The service refused a call that named this repository. Nothing of this
+      # installation's does: its catalog builds are answered by the entry route,
+      # which names no repository, and a repository-level build is disabled
+      # (D1900/IS2). So the refusal is the finding, in the service's own words.
+      fact "$key" FAIL "the service refused a call for ${repo} (slug ${slug}), and served it no 'credsvc: audit' line of purpose build: ${refused}. A catalog build's own call is answered by the service's entry route and names no repository (IS8/D3330), so a refusal under this repository's slug is not one of this installation's builds. Read the lines by hand with 'gcloud logging read \"resource.labels.service_name=${SVC} jsonPayload.repository=${slug}\" --project=${P}'"
+      return 0
+    fi
+    # No line and no refusal: the build the row is about is a CATALOG entry's —
+    # every build this check reads is — and a catalog build is answered by the
+    # service's ENTRY route (IS8/D3330), whose lines name the project's build
+    # identity and NO repository, because one token covers the entry's
+    # repositories and a line naming one of them would say the mint was for that
+    # one. So no line under a repository's slug is this installation's own shape,
+    # and a FAIL here would end the switch mode on a working installation. What
+    # the row settles is that the service wrote this repository no build line and
+    # refused nothing of it.
+    fact "$key" INFO "the newest build of ${repo} is a catalog entry's, and the service wrote no 'credsvc: audit' line of purpose build for ${repo} (slug ${slug}) — which is what this installation's shape predicts: a catalog build asks the service's ENTRY route, whose lines name the project's build identity and no repository (one token covers the entry's repositories, IS8/D3330), so its call cannot appear under a repository's slug. Read a repository's own lines with 'gcloud logging read \"resource.labels.service_name=${SVC} jsonPayload.repository=${slug}\" --project=${P}', and the entry route's with the same minus the repository and jsonPayload.purpose=\\\"build_token\\\""
     return 0
   fi
   local got
@@ -959,36 +1425,40 @@ step_served() {
   fi
 }
 
-# step_check_repo LABEL REPO — the daily check of one repository, found by the
-# slug its own newest build carries. A repository whose build was not read has
-# no slug to find its job by, and the row says that rather than "this
-# installation deploys no check job", which is a different fact.
+# step_check_repo LABEL REPO PROVIDER — the repository's daily check job, found
+# by the repository ITSELF: by the clone URL its own containers carry as
+# FUGARO_REMOTE, and by the `fugaro_repo` label the installation writes on it —
+# which is where this row reads the repository's SLUG from, since a catalog
+# build carries no `_SLUG` substitution to read one out of. The row therefore
+# does not depend on the build rows at all: a project whose last builds hold no
+# catalog build still measures its daily check.
 step_check_repo() { # step_check_repo LABEL REPO PROVIDER
-  local label=$1 repo=$2 provider=$3 ans
-  ans=$(build_read "$repo" "$label")
-  if [ "$(field_of found "$ans")" != yes ]; then
-    unmeasured "check-$label" "no build of ${repo} was read, so the repository's slug — the key its daily check job is found by — could not be read either"
-    return 0
-  fi
-  step_check "$label" "$repo" "$provider" "$(field_of slug "$ans")" "$(field_of account "$ans")"
+  step_check "$1" "$2" "$3"
 }
 
-# step_check LABEL REPO PROVIDER SLUG ACCOUNT — the daily image check in the
-# switch mode, which is the shape the installation plans before the flip: the
-# repository's own check job runs as the build account and still mounts the
+# step_check LABEL REPO PROVIDER — the daily image check in the switch mode,
+# which is the shape the installation plans before the flip: the repository's
+# own check job runs as a repository build account and still mounts the
 # repository's git credential, and it carries NO service address — the address
 # arrives with the mount's removal, because a job that mounted nothing and named
 # no service would hold no credential at all (internal/infra/spec.go's
 # checkMountServed, which both this environment and the job's own mount read).
 # Its newest execution succeeded.
-step_check() { # step_check LABEL REPO PROVIDER SLUG ACCOUNT
-  local label=$1 repo=$2 provider=$3 slug=$4 account=$5 ans
-  ans=$(reader job "$JOBS_FILE" "$slug" 2>"$SCRATCH/job-$label.err") \
-    || { unmeasured "check-$label" "the installation's Cloud Run jobs could not be read: $(last_lines "$SCRATCH/job-$label.err")"; return 0; }
+step_check() { # step_check LABEL REPO PROVIDER
+  local label=$1 repo=$2 provider=$3 slug ans
+  ans=$(job_read "$repo" "$label")
   if [ "$(field_of found "$ans")" != yes ]; then
-    unmeasured "check-$label" "this installation deploys no daily check job (a job named ${CHECK_JOB_PREFIX}…) for ${repo} (slug ${slug}): the image check is what re-bakes the repository daily, and no job of this repository could be read. Deploy it with 'fugaro update --repo' in a checkout of ${repo}"
+    # Absent, and that is not a failure a catalog repository can be held to: a
+    # repository-level image check is disabled with the repository-level images
+    # (D1900, internal/infra's IS2), so the installation emits no `fugarochk-`
+    # job for a repository that has none — the image a repository runs is its
+    # catalog entry's, and the entry's build is the build-* row above. A
+    # repository that already had a job keeps it (IS2 retires nothing), and the
+    # rows below read that one: this INFO is only the absence.
+    fact "check-$label" INFO "this installation deploys no daily check job (a job named ${CHECK_JOB_PREFIX}…) for ${repo}, and that is the shape D1900 (internal/infra's IS2) gives a repository that has none: a repository-level image check is disabled with the repository-level images, so the image this repository runs is its catalog entry's and the build-* row above is what reads it. Nothing here is measured, and nothing is claimed about a job there is not: if this repository should have one — it had one before and it is gone, since IS2 retires nothing — re-apply the root with 'fugaro update --repo' in a checkout of ${repo}"
     return 0
   fi
+  slug=$(field_of slug "$ans")
   local name sa url mounts m gitenv
   name=$(field_of name "$ans")
   sa=$(field_of account "$ans")
@@ -1023,11 +1493,16 @@ step_check() { # step_check LABEL REPO PROVIDER SLUG ACCOUNT
     return 0
     ;;
   esac
-  # absent:N (N > 0): the shape this mode reads. The job must run as the build
-  # account — the mount's accessor is that account's — and the repository's own
-  # git credential must be among what it mounts.
-  if [ "$sa" != "$account" ]; then
-    fact "check-$label" FAIL "the daily check job ${name} of ${repo} runs as ${sa:-nobody}, not as the repository's build account ${account}: the mount the check reads its git credential from is one that account's accessor alone opens"
+  # absent:N (N > 0): the shape this mode reads. The job must run as a
+  # repository's build account of THIS installation — the mount's accessor is
+  # that account's — and the repository's own git credential must be among what
+  # it mounts. The account is read off the JOB and held to the `fugaro-b-`
+  # prefix, never to the account a build ran as: a repository's newest build is
+  # now its CATALOG entry's and runs as the project's build identity
+  # (fugaro-build-identity@…, D2301), which is not the account the daily check
+  # job runs as.
+  if ! is_build_account "$sa"; then
+    fact "check-$label" FAIL "the daily check job ${name} of ${repo} runs as ${sa:-nobody this reading can name}, not as a repository's build account of ${P} (${BUILD_ACCOUNT_PREFIX}…@${P}.iam.gserviceaccount.com): the mount the check reads its git credential from is one that account's accessor alone opens"
     return 0
   fi
   if ! printf '%s\n' "$ans" | grep -q "^mount=${gitenv}|"; then
@@ -1042,12 +1517,12 @@ step_check() { # step_check LABEL REPO PROVIDER SLUG ACCOUNT
     local est
     est=$(field_of state "$ex")
     if [ "$est" = True ] || [ "$est" = true ]; then
-      fact "check-$label" PASS "the daily check job ${name} of ${repo} runs as the repository's build account ${account}, mounts the repository's git credential (${gitenv}) and carries no FUGARO_CREDENTIALS_SERVICE_URL — the pre-flip shape, and the one the flip replaces with the service's address — and its newest execution ended completed: the image check still succeeds with the mount, so the flip is the only thing left to read"
+      fact "check-$label" PASS "the daily check job ${name} of ${repo} (slug ${slug}) runs as the repository's build account ${sa}, mounts the repository's git credential (${gitenv}) and carries no FUGARO_CREDENTIALS_SERVICE_URL — the pre-flip shape, and the one the flip replaces with the service's address — and its newest execution ended completed: the image check still succeeds with the mount, so the flip is the only thing left to read"
     else
-      fact "check-$label" FAIL "the daily check job ${name} of ${repo} runs as ${account} and mounts the repository's git credential, but its newest execution's Completed condition reads ${est:-nothing}: the image check did not succeed. Read it with 'gcloud run jobs executions list --job=${name} --region=${L} --project=${P}'"
+      fact "check-$label" FAIL "the daily check job ${name} of ${repo} runs as ${sa} and mounts the repository's git credential, but its newest execution's Completed condition reads ${est:-nothing}: the image check did not succeed. Read it with 'gcloud run jobs executions list --job=${name} --region=${L} --project=${P}'"
     fi
   else
-    unmeasured "check-$label" "the check job ${name} of ${repo} mounts the repository's git credential (${gitenv}) and runs as ${account}, but its executions could not be read: $(last_lines "$SCRATCH/exec-$label.err")"
+    unmeasured "check-$label" "the check job ${name} of ${repo} mounts the repository's git credential (${gitenv}) and runs as ${sa}, but its executions could not be read: $(last_lines "$SCRATCH/exec-$label.err")"
   fi
 }
 
@@ -1097,58 +1572,75 @@ step_boundary() {
 }
 
 # ------------------------------------------------------------ the flip's steps
-# step_flip_repo LABEL REPO PROVIDER — the flip: the build request names no
-# availableSecrets, the check job mounts nothing, and a build still succeeds.
+# step_flip_repo LABEL REPO PROVIDER — the flip: the accessor and the mounts are
+# gone from the repository's own JOB, and a build still bakes. For a repository
+# whose image is a CATALOG ENTRY the build half of the flip does not apply, and
+# this mode reads that too rather than failing an installation that is right:
+# B4.9's class list takes the mounts off a repository's own build, and a catalog
+# build is not one — it names no secret and asks the credentials service's entry
+# route for its credential, which is the shape IS8 (D3330) gave every catalog
+# build, before and after the flip. What the flip really changes for such a
+# repository is its daily check job, which is the noaccessor-LABEL row below.
 step_flip_repo() { # step_flip_repo LABEL REPO PROVIDER
   local label=$1 repo=$2 provider=$3 ans
   ans=$(build_read "$repo" "$label")
   if [ "$(field_of found "$ans")" != yes ]; then
-    unmeasured "noavailable-$label" "no build of ${repo} is among the project's last ${BUILDS} builds: submit one with 'fugaro image refresh' after the flipping 'fugaro update' and run this mode again"
-    unmeasured "build-flip-$label" "no build of ${repo} was read"
-    unmeasured "served-$label-flip" "no build of ${repo} was read"
-    unmeasured "noaccessor-$label" "no build of ${repo} was read, so the repository's slug and its check job could not be read"
+    unmeasured "noavailable-$label" "no CATALOG-ENTRY build of ${repo} is among the ${L} region's last ${BUILDS} builds, so what the flip left on this repository's build could not be read. $(no_build_remedy "$repo")"
+    unmeasured "build-flip-$label" "no catalog-entry build of ${repo} was read"
+    unmeasured "served-$label-flip" "no catalog-entry build of ${repo} was read"
+    unmeasured "noaccessor-$label" "no catalog-entry build of ${repo} was read"
     return 0
   fi
-  local id status account slug url containers envcount
+  local id status account entry src_repo match slug url containers envcount
   id=$(field_of id "$ans")
   status=$(field_of status "$ans")
   account=$(field_of account "$ans")
-  slug=$(field_of slug "$ans")
+  entry=$(field_of entry "$ans")
+  src_repo=$(field_of source "$ans")
+  match=$(field_of match "$ans")
   url=$(field_of url "$ans")
+  url_value=$(field_of url_value "$ans")
   containers=$(field_of containers "$ans")
   envcount=$(field_of secretenv "$ans")
+  slug=$(repo_slug "$(field_of slug "$ans")" "$label" "$repo")
 
-  # noavailable-LABEL: the flip's whole point — the build request carries no
-  # availableSecrets and no secretEnv, because the build account holds no
-  # accessor on any of them once the class list carries the build's classes.
-  # Each count is held to being a number on its own: a `case` over "$a:$b"
-  # would read the separator as a non-digit and call every answer unmeasured.
+  # noavailable-LABEL: what the flip left on this repository's BUILD. A catalog
+  # build carries no secret at all since IS8 (D3330) and takes its credential
+  # from the service's entry route, which the flip does not reach either — the
+  # flip's class list is a repository's OWN build, and this build is not one. So
+  # 0 containers and 0 secretEnv entries beside the service's address is the
+  # shape, before and after: a mount is a build from before IS8, whose secret the
+  # build identity no longer has an accessor for, and no address beside no mount
+  # is a build with no credential of any kind. Each count is held to being a
+  # number on its own: a `case` over "$a:$b" would read the separator as a
+  # non-digit and call every answer unmeasured.
   case "$containers" in "" | *[!0-9]*) containers=unreadable ;; esac
   case "$envcount" in "" | *[!0-9]*) envcount=unreadable ;; esac
   case "$containers:$envcount" in
   *unreadable*) unmeasured "noavailable-$label" "the reader did not answer how many containers and secretEnv entries the build carries: $(last_lines "$SCRATCH/builds-$label.err")" ;;
   0:0)
     if [ "$url" != present ]; then
-      fact "noavailable-$label" FAIL "the newest build of ${repo} carries no availableSecrets but also names no credentials service: a build with neither a mount nor a service has no credential at all and could only fail. The switch and the flip have moved apart — re-apply the root ('fugaro update --repo') and refresh the image"
+      fact "noavailable-$label" FAIL "the newest catalog build of ${repo} (${id}) carries no availableSecrets and no secretEnv entry and names no credentials service either: a build with neither a secret nor an address has no credential at all and could only fail. A catalog entry's build takes its credential from the service's entry route, whose address its request always names (IS8, D3330) — submit the entry again with 'fugaro image build ${entry}' (or 'fugaro apply')"
     else
-      fact "noavailable-$label" PASS "the newest build of ${repo} (${id}) names the credentials service and carries 0 availableSecrets and 0 secretEnv entries: the request asks Cloud Build for no secret, whose accessor the build account has given up (B4.9, D2077)"
+      fact "noavailable-$label" PASS "the newest build of ${repo} (${id}) carries 0 availableSecrets and 0 secretEnv entries and names the credentials service: the request asks Cloud Build for no secret — the mount went with the build identity's accessor on it (IS8, D3330) — and the credential step fetches the entry's git credential from the service instead, which is the shape of every catalog build and not something the flip reaches"
     fi
     ;;
   *)
-    fact "noavailable-$label" FAIL "the newest build of ${repo} (${id}) still carries ${containers} availableSecrets entries and ${envcount} secretEnv entries, so the build request names the secrets the flip was to take away. The flip has not reached this repository's builds — check the class list (config.BuildServedSecretClasses) and re-apply the root"
+    fact "noavailable-$label" FAIL "the newest build of ${repo} (${id}, entry ${entry}) still carries ${containers} availableSecrets entries and ${envcount} secretEnv entries beside the address ${url_value:-none}: a catalog entry's request names no secret at all since IS8 (D3330) — the mount went with the build identity's accessor on it — so this is a build from before that change or one nobody of this installation submitted. Check the class list (config.BuildServedSecretClasses) and submit the entry again with 'fugaro image build ${entry}' (or 'fugaro apply')"
     ;;
   esac
 
-  # build-flip-LABEL: a build after the flip still succeeds.
-  if [ "$status" = SUCCESS ] && is_build_account "$account" && [ "$url" = present ]; then
-    fact "build-flip-$label" PASS "the newest build of ${repo} (${id}) ended SUCCESS, ran as ${account} and names the credentials service: with the mounts gone, the service is the build's only credential path, and the build still bakes"
+  # build-flip-LABEL: a build after the flip still succeeds and still runs as
+  # the account a catalog build runs as.
+  if [ "$status" = SUCCESS ] && is_build_identity "$account"; then
+    fact "build-flip-$label" PASS "the newest build of ${repo} is the CATALOG ENTRY ${entry}'s image (${id}, found by $(map_phrase "$repo" "$entry" "$match")): it ended SUCCESS and ran as ${account}, the installation's build identity, taking its git credential from the service's entry route — so the image this repository runs still bakes, and nothing the flip took was a path this build used"
   else
-    fact "build-flip-$label" FAIL "the newest build of ${repo} (${id}) did not read as a success of the served build: status ${status}, account ${account:-none}, service ${url}. A build after the flip whose request names no secret must get every credential from the service, so a build that could not finish is the flip having broken the path"
+    fact "build-flip-$label" FAIL "the newest catalog build of ${repo} (${id}, entry ${entry:-unknown}) did not read as a success of a catalog build: status ${status}, account ${account:-none}, service ${url}. A catalog entry's build runs as the installation's build identity (${BUILD_IDENTITY_ID}@${P}.iam.gserviceaccount.com), which is the caller the service's entry route admits, so a build that could not finish is that call, the entry's definition or the entry's source repository (${src_repo:-unknown}) having broken"
   fi
 
   # served-flip-LABEL: the service's own lines for that build.
   if [ -z "$slug" ] || [ "$slug" = "-" ]; then
-    unmeasured "served-$label-flip" "the newest build of ${repo} carries no _SLUG substitution, so the service's own lines for it cannot be read"
+    unmeasured "served-$label-flip" "the repository's slug could not be read (a catalog build carries no _SLUG, and no check job label answered), so the service's own lines for it cannot be looked up"
   else
     step_served "served-$label-flip" "$repo" "$slug" "$account" "$provider"
   fi
@@ -1160,25 +1652,29 @@ step_flip_repo() { # step_flip_repo LABEL REPO PROVIDER
   # a job that mounted nothing and named no service would hold no credential at
   # all, so both are read here.
   local jans
-  if [ -z "$slug" ] || [ "$slug" = "-" ]; then
-    unmeasured "noaccessor-$label" "the newest build of ${repo} carries no _SLUG substitution, so the repository's check job cannot be found"
-  elif jans=$(reader job "$JOBS_FILE" "$slug" 2>"$SCRATCH/job-$label.err"); then
+  if jans=$(job_read "$repo" "$label"); then
     if [ "$(field_of found "$jans")" != yes ]; then
-      unmeasured "noaccessor-$label" "no daily check job of ${repo} (slug ${slug}) could be read, so whether it still mounts a secret is unmeasured"
+      # Absent, and the flip had nothing to reach: a repository-level image
+      # check is disabled with the repository-level images (D1900, IS2), so a
+      # repository that has no `fugarochk-` job is one the installation emits
+      # none for, and there is no mount of its to read away. The same INFO the
+      # switch mode's check-* row reads, for the same reason.
+      fact "noaccessor-$label" INFO "this installation deploys no daily check job of ${repo} (a job named ${CHECK_JOB_PREFIX}…), so there is no mount of this repository's for the flip to have taken away — the shape D1900 (internal/infra's IS2) gives a repository that has none, since a repository-level image check is disabled with the repository-level images. Nothing here is measured: if this repository should have one — it had one before and it is gone, since IS2 retires nothing — re-apply the root with 'fugaro update --repo'"
     else
-      local jm ju
+      local jm ju jname
+      jname=$(field_of name "$jans")
       jm=$(field_of mounts "$jans")
       ju=$(field_of url "$jans")
       case "$jm" in
-      "" | *[!0-9]*) unmeasured "noaccessor-$label" "how many secret mounts the check job ${slug} carries could not be read" ;;
+      "" | *[!0-9]*) unmeasured "noaccessor-$label" "how many secret mounts the check job ${jname} of ${repo} carries could not be read" ;;
       0)
         if [ "$ju" != present ]; then
-          fact "noaccessor-$label" FAIL "the daily check job of ${repo} mounts no Secret Manager container but carries no FUGARO_CREDENTIALS_SERVICE_URL either: with the build account's accessor gone (B4.9) the job holds no credential at all, so its check can only fail. The mount and the address go together — re-apply the root ('fugaro update --repo')"
+          fact "noaccessor-$label" FAIL "the daily check job ${jname} of ${repo} mounts no Secret Manager container but carries no FUGARO_CREDENTIALS_SERVICE_URL either: with the build account's accessor gone (B4.9) the job holds no credential at all, so its check can only fail. The mount and the address go together — re-apply the root ('fugaro update --repo')"
         else
-          fact "noaccessor-$label" PASS "the daily check job of ${repo} carries 0 Secret Manager mounts and names the credentials service: with the build account's accessor gone (B4.9) the check's own clone and its rebuilds read their credentials, like the repository's builds, from the service"
+          fact "noaccessor-$label" PASS "the daily check job ${jname} of ${repo} (slug ${slug}) carries 0 Secret Manager mounts and names the credentials service (${ju}): with the build account's accessor gone (B4.9) the check's own clone and the catalog entries it re-bakes read their credentials from the service — for a repository whose image is a catalog entry this is the flip's whole effect, since the entry's own build is not reached by it"
         fi
         ;;
-      *) fact "noaccessor-$label" FAIL "the daily check job of ${repo} still mounts ${jm} Secret Manager container(s): the flip has not dropped the check job's secret_key_ref mounts (B4.9, check.tf), so the build account still needs an accessor on them. Re-apply the root" ;;
+      *) fact "noaccessor-$label" FAIL "the daily check job ${jname} of ${repo} still mounts ${jm} Secret Manager container(s): the flip has not dropped the check job's secret_key_ref mounts (B4.9, check.tf), so the build account still needs an accessor on them. Re-apply the root" ;;
       esac
     fi
   else
@@ -1190,18 +1686,20 @@ step_flip_repo() { # step_flip_repo LABEL REPO PROVIDER
 # delete. Printed by --dry-run, which runs NOTHING: no gcloud and no fugaro is
 # called, so this mode is safe on a machine with no credentials at all.
 print_plan() {
-  say "dry run: NOTHING below was run, and no tool was called at all — not gcloud, not fugaro. A real run would first check that this is the fugaro-dev installation (fugaro doctor --project fugaro --all) and that fugaro version is not a development build, then read, in this order:"
-  say "  [network] gcloud builds list --project=${P} --limit=${BUILDS} --format=json  (the project's recent builds; the two repositories' own are picked out by their _REPO_URL substitution)"
-  say "  [network] gcloud run jobs list --project=${P} --region=${L} --format=json  (the installation's Cloud Run jobs; each repository's daily check job is the fugarochk-… one)"
+  say "dry run: NOTHING below was run, and no tool was called at all — not gcloud, not fugaro. A real run would first check that this is the fugaro-dev installation (fugaro doctor --project fugaro --all) and that fugaro version is not a development build, then read the project's effective image_map — this machine's project config for ${NAME} when it states one, the published policy node otherwise — and then, in this order:"
+  say "  [network] gcloud builds list --project=${P} --region=${L} --limit=${BUILDS} --format=json  (the INSTALLATION'S REGION's recent builds — a listing with no --region reads the global region and would find none of them; each repository's own are the newest builds whose _IMAGE names catalog-<the entry its image_map names>, and a repository the map does not mention is matched by its own _REPO_URL clone URL instead — a repository-level derived image is disabled, D1900)"
+  say "  [network] fugaro project policy show --json --project ${NAME}  (the published policy node, read for its image_map when this machine's project config states none — the map's local half wins where it writes one, D1906; a node that cannot be read is not a failure, the local half answers alone)"
+  say "  [network] gcloud run services describe ${SVC} --project=${P} --region=${L} --format=json  (the credentials service ITSELF: this row is read off the service and not off any build, so it is measured even when the project holds no build at all)"
+  say "  [network] gcloud run jobs list --project=${P} --region=${L} --format=json  (the installation's Cloud Run jobs; each repository's daily check job is the fugarochk-… one, found by its FUGARO_REMOTE clone URL or its fugaro_repo label)"
   say "  [network] gcloud logging read 'resource.labels.service_name=${SVC} jsonPayload.purpose=build' --project=${P}  (the service's OWN credsvc: audit lines for each repository, retried while Cloud Logging catches up)"
   say "  [network] gcloud run jobs executions list --job=<the check job> --project=${P} --region=${L} --format=json  (the daily check's newest execution)"
   say "  [network] gcloud run services get-iam-policy ${SVC} --project=${P} --region=${L} --format=json  (who may invoke the service: B4.4's grant to the build accounts, and no public member)"
   if [ "$MODE" = flip ]; then
-    say "and, for each repository, it would read its NEWEST build's request for the two things the flip takes away: that it carries no availableSecrets and no secretEnv, that its check job mounts nothing AND names the service's address instead, and that the build still ended SUCCESS with the service named."
+    say "and, for each repository, it would read its NEWEST catalog-entry build (that it still ended SUCCESS and still ran as the installation's build identity, and that it carries no secret at all and names the credentials service — the shape IS8/D3330 gave every catalog build, which the flip does not reach), its check job (that it now mounts NOTHING and names the service's address instead — which is the flip's whole effect on such a repository) and the service's own lines for it."
   else
-    say "and, for each repository, it would read its newest build (status, the account it ran as, its _CREDENTIALS_SERVICE_URL, and the availableSecrets it still carries), the service's own lines for it, and its daily check job (that it runs as the build account, mounts the repository's git credential and carries NO service address — the pre-flip shape) with that job's newest execution."
+    say "and, for each repository, it would read its newest CATALOG-ENTRY build (status, the entry and image its _IMAGE names, the account it ran as — the installation's build identity, never a repository build account — and that it carries no availableSecrets and names the credentials service, which is where its credential step fetches the entry's git credential from since IS8/D3330), the service's own lines for it, and its daily check job (found by its own clone URL and fugaro_repo label: that it runs as a repository build account, mounts the repository's git credential and carries NO service address — the pre-flip shape) with that job's newest execution."
   fi
-  say "This check creates nothing, submits no build and deletes nothing: its Restore removes the scratch directory and nothing else. The builds it reads are the ones YOU submitted with 'fugaro image refresh'."
+  say "This check creates nothing, submits no build and deletes nothing: its Restore removes the scratch directory and nothing else. The builds it reads are the catalog entries' own, which 'fugaro image build <entry>' (or 'fugaro apply') submitted; 'fugaro image refresh' is refused (D1900) and builds nothing."
 }
 
 main() {
@@ -1218,6 +1716,7 @@ main() {
   fi
 
   guard_project
+  read_image_map
   read_builds
   read_jobs
 

@@ -65,9 +65,27 @@ type Tick struct {
 	// Launcher starts one run for one attempt, under the run id the state has
 	// already recorded.
 	Launcher Launcher
+	// Claims is the project's claims (claim.go, D3209): what a cycle takes on
+	// an item before its work starts, re-stamps while it holds it and settles
+	// once the item is finished — a plan task's claim marked finished and left
+	// standing, a work item's released — so that two orchestrators of one
+	// project never start a run for one plan task or one backlog item. Nil is
+	// a cycle that claims nothing — a process that makes no write to this
+	// subtree — and then every item is this daemon's as it was before claims.
+	Claims ClaimGuard
 	// Mint mints that run id. It is the daemon's (internal/task in O8): this
 	// package knows no run ids of its own.
 	Mint MintFunc
+	// Pauses reads the pauses the credentials service recorded for this project
+	// (PR4, D3185): the nodes under runstore.PauseNodeRoot, each with the paused
+	// run's own status and the run that has resumed it. Left unset the cycle
+	// resumes nothing at all, which is the direction a daemon that was given no
+	// path to the project's database fails in.
+	Pauses PauseReader
+	// Resume starts the run that continues one paused run, and answers its id.
+	// Left unset the cycle resumes nothing, for the reason above: a resume it
+	// cannot start is a resume it must not pretend to have made.
+	Resume ResumeLauncher
 	// Caps are the guardrails the cycle plans under. KillSwitch comes from
 	// whoever can read the budget (O8) and is on whenever it could not be
 	// read; a Tick built with the zero Caps starts nothing, which is the
@@ -154,7 +172,31 @@ type Tick struct {
 	// writes comes from it, and a cycle that cannot read it refuses rather
 	// than stamping anything with this machine's clock (D1230).
 	Now ServerNow
+	// mine is the claim of every item this daemon's own nodes carried when its
+	// cycle last read them, as the cycle left it (HeldClaims): the work in
+	// flight, which is what the next beat settles from. It is the cycle's own
+	// reading and never a second one, so a beat re-stamps and settles what this
+	// daemon knows it holds rather than walking the project's claims node, which
+	// grows with every claim the project ever made (claim.go's header).
+	mine []Held
 }
+
+// Held is the claim of every item this daemon's own nodes carried when its cycle
+// last read them (Tick.mine, HeldClaims): what the beat between two cycles
+// settles, and nothing else. It is empty until a cycle has run, which is also
+// the first moment a claim of this daemon's can exist — a claim is taken inside
+// a cycle (launch.go).
+//
+// **A daemon that has not run a cycle yet settles nothing**, so its first beat
+// after a restart re-stamps no claim: a claim it took before the restart keeps
+// the stamp it was written with until the first cycle reads the nodes, which is
+// one beat and one cycle and the safe direction whatever the gap — nothing reads
+// an item's stamp to decide anything (claim.go's header), and the walk of the
+// claims node that would close the gap is the read the refresh exists without.
+//
+// What comes back is a copy: the caller settles the claims it names and never
+// edits the reading the cycle kept, which the next beat hands out again.
+func (t *Tick) Held() []Held { return slices.Clone(t.mine) }
 
 // Report is what one cycle did, for the loop's log and for the tests.
 type Report struct {
@@ -171,6 +213,29 @@ type Report struct {
 	// Carried is how many of the plan's actions the starter carried out — a
 	// launch, a retry, a re-issue or an abandonment.
 	Carried int
+	// Skipped is how many of the plan's actions the cycle skipped because the
+	// item is another orchestrator's: the claim on it is held elsewhere
+	// (ErrItemClaimed, D3209), so the item is that daemon's work and this cycle
+	// carries nothing for it and fails nothing over it. It spends no cap room
+	// either: the plan leaves the items this cycle has learned are another
+	// orchestrator's out before the caps are read, and a skip hands its slot
+	// back, so the room goes to the work that is this daemon's own (carry).
+	//
+	// It is not a move and it is not a cycle that did nothing. Two orchestrators
+	// of one project are the deployment the claim exists for (D3206, D3207), and
+	// there the loser of a claim skips every item the winner holds: read as a
+	// cycle that achieved nothing, three of those in a row would reach the
+	// breaker's threshold and pause the node — refusing this daemon's own
+	// unclaimed items too, over a daemon doing exactly what the deployment asks
+	// of it (D1228).
+	Skipped int
+	// Resumed is how many paused runs the cycle started again (PR4, D3185): the
+	// pauses the credentials service recorded whose resume time had passed, that
+	// nothing had resumed and whose run really ended `paused`. It is a launch
+	// and not a plan action — nothing about it is a cap's business, because a
+	// chain's remaining budget is the resumed run's (D1045-D1047) — and it is
+	// counted as work for the same reason a re-issue is.
+	Resumed int
 	// Blocked is how many of the cycle's own items the cycle set blocked
 	// because they sit on a dependency cycle that crosses orchestrators (D3220).
 	// It is a write like any other and it is counted like one: a cycle whose
@@ -215,6 +280,12 @@ type Report struct {
 	// the cycle for the same reason: the comment is a channel and the ledger
 	// is the record.
 	LadderErr error
+	// ResumeErr is the pauses the cycle would not resume and why: a node this
+	// release cannot read, and a pause a launcher would not start. It never
+	// fails the cycle — the pause is still due at the next tick, and one pause
+	// that cannot be resumed must not hold the daemon's other work back — and
+	// it is what the loop's log reads.
+	ResumeErr error
 }
 
 // Step runs one cycle.
@@ -377,6 +448,14 @@ type cycle struct {
 	// find no pause and start work into the refusal the pause was raised for
 	// (O19, D2022 (a)).
 	paused bool
+	// held is the claim of every item another orchestrator holds, by claim path
+	// (claimKey), as this cycle has found it out: an action the starter refused
+	// for ErrItemClaimed (D3209). The plan leaves those items out, so a skip
+	// spends no room and the node is planned again for the room it leaves
+	// (carry). It is one cycle's own reading and nothing is kept from it, so an
+	// item whose claim was settled between two cycles is that cycle's work
+	// again.
+	held map[string]bool
 	// cross is what this cycle's own items' cross references resolved to
 	// (D3208), read once for the whole cycle: the plan and the ladder of every
 	// node read it, and it is the reading the cycle's own writes leave alone —
@@ -1156,6 +1235,14 @@ func (c *cycle) run(ctx context.Context) error {
 	if err := c.carry(ctx, view); err != nil {
 		return c.settled(err)
 	}
+	// The project's pauses are resumed with the state node's own turn, and once
+	// for the whole cycle: a paused chain belongs to no node of the plan — the
+	// item behind it is in flight and stays so — and the reading is the
+	// project's, so a plan node or the backlog that resumed the same pause again
+	// would be a second resumer of one node (D3185).
+	if err := c.resume(ctx); err != nil {
+		return c.settled(err)
+	}
 	if err := c.escalate(ctx); err != nil {
 		return c.settled(err)
 	}
@@ -1180,8 +1267,49 @@ func (c *cycle) run(ctx context.Context) error {
 		c.settle()
 	}
 
+	// The claims of the finished items are settled last, once every write that
+	// finished them has landed (D3209): an item the fold's own reading of a run,
+	// the merge read or a split moved to done or cancelled is work nobody is on
+	// any more. What settling it means is the item's identity (claim.go): a plan
+	// task's claim is marked finished and stays, because a rival whose own node
+	// still carries the task approved would take a freed node as unclaimed work
+	// and start a second run of it, while a work item's claim comes off, its id
+	// being this one node's own. It is last because it is about what landed —
+	// and it is every finished item the nodes carry and not only what moved in
+	// this cycle, which is what settles a claim this daemon's earlier cycle
+	// failed to settle or died before settling.
+	if err := c.releaseClaims(ctx); err != nil {
+		return err
+	}
 	c.rep.Outcome = c.outcome()
 	return nil
+}
+
+// releaseClaims settles this orchestrator's claim on every item a node of this
+// project has finished, over the nodes as they now stand, and re-stamps the
+// claims it still holds (Claim.Refresh, D3209). Every finished item the nodes
+// carry and not only the ones this cycle moved, so that a settlement that
+// failed, and one a cycle that died after the item's own write had landed never
+// made, are made by the next cycle that reads the node. A claim that cannot be
+// settled fails the cycle: the item is finished and its claim is stale, so the
+// next cycle reads the same nodes and settles it then, and a daemon that
+// swallowed the refusal would leave the item blocked for every other
+// orchestrator of the project with nothing said.
+//
+// What it settles is the work in flight and nothing else (HeldClaims): the items
+// this daemon's nodes carry that an attempt was committed for, one claim each.
+// That is the reading the beat settles from between two cycles, so it is kept on
+// the tick as the cycle's own picture of what it holds.
+func (c *cycle) releaseClaims(ctx context.Context) error {
+	if c.tick.Claims == nil {
+		return nil
+	}
+	held, err := HeldClaims(c.states())
+	if err != nil {
+		return err
+	}
+	c.tick.mine = held
+	return c.tick.Claims.Refresh(ctx, held)
 }
 
 // fold writes what the finished runs mean into the items, and says so once the
@@ -1326,17 +1454,95 @@ func (c *cycle) writeFold(ctx context.Context, base State, folded int, ops []Op,
 // no question still plans nothing while one stands anywhere in the project.
 // The first action that cannot be carried out ends the cycle — what it left is
 // what the starter committed before it, and the next tick re-derives the rest.
+//
+// An action whose item another orchestrator holds the claim on is not one of
+// those: it is skipped, because the item is that orchestrator's work and not
+// this daemon's (ErrItemClaimed, D3209), and nothing about it is this cycle's to
+// carry or to fail over. The skip is counted on the report all the same
+// (Skipped), because a cycle that skipped every action it planned is a cycle
+// waiting on another orchestrator and not one that did nothing (outcome).
+//
+// What a skip must not do is spend the cycle's room (claimKey): the item was
+// never started, so the slot the plan gave it goes back — the tally comes down
+// — the item is remembered as another orchestrator's and the node is planned
+// again for whatever the room it used leaves. That is what makes a project
+// usable when the items that come first in a node's order are held elsewhere:
+// finished plan-task claims stand for good and a rival's own copy of those tasks
+// reads approved for good, so without this the daemon would spend its whole
+// allowance on skips and never plan the work that is its own. Each pass either
+// carries everything it planned or leaves at least one more item out, so it ends.
 func (c *cycle) carry(ctx context.Context, view RunView) error {
-	starter := Starter{Launcher: c.tick.Launcher, Commit: c.commit, Mint: c.tick.Mint}
-	actions, planned := planNode(c.state, view, c.tick.Caps, c.now, c.counts, c.planned, c.paused, c.cross)
-	c.planned = planned
-	for _, a := range actions {
-		next, err := starter.Start(ctx, c.state, a, c.now)
-		if err != nil {
-			return err
+	starter := Starter{Launcher: c.tick.Launcher, Commit: c.commit, Mint: c.tick.Mint, Claims: c.tick.Claims}
+	if c.held == nil {
+		c.held = map[string]bool{}
+	}
+	for {
+		actions, planned := planNode(c.state, view, c.tick.Caps, c.now, c.counts, c.planned, c.paused, c.cross, c.held)
+		c.planned = planned
+		if len(actions) == 0 {
+			return nil
 		}
-		c.state = next
-		c.rep.Carried++
+		skipped := false
+		for _, a := range actions {
+			next, err := starter.Start(ctx, c.state, a, c.now)
+			if errors.Is(err, ErrItemClaimed) {
+				c.rep.Skipped++
+				// The slot the plan gave the action goes back to the cycle: the
+				// item was never started, so it must not hold room a launch
+				// would use. Only a launch and a retry are counted by the plan —
+				// a re-issue spends nothing a cap is there to bound (planNode) —
+				// so only those have a slot to hand back.
+				if a.Kind == ActionLaunch || a.Kind == ActionRetry {
+					c.planned--
+				}
+				if w, ok := c.state.Item(a.ItemID); ok {
+					c.held[claimKey(c.state.AgentID, w)] = true
+				}
+				skipped = true
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			c.state = next
+			c.rep.Carried++
+		}
+		if !skipped {
+			return nil
+		}
+	}
+}
+
+// resume is one cycle's turn at the project's pauses (PR4, D3185): every pause
+// the credentials service recorded that is due now is started once as the run
+// that continues it.
+//
+// It writes nothing to the state node, and that is deliberate: what the cycle
+// knows about a resume is the launcher's answer — a run id this side has no item
+// for — and the record of the resume is the chain's own run, whose task names
+// `resumes`. A mark written here would be a second writer of the paused run's
+// chain for a fact the chain already carries.
+//
+// A pause a launcher would not start does not fail the cycle: the pause is still
+// due at the next tick, and one pause that cannot be resumed must not hold the
+// daemon's other work back (the resident pass's own rule). What it is is a line
+// the loop's log carries (Report.ResumeErr). The read failing is different and
+// is the cycle's own failure: a project whose pauses could not be read is a
+// project whose daemon is working blind, and it must not carry on as though
+// nothing were paused.
+//
+// It is a launch and it asks what every launch path asks before it starts
+// anything (Caps.KillSwitch's own note): the kill switch, and the daemon's pause
+// — the same reading the plan is handed, over the same nodes — so a cycle that
+// is stopped resumes nothing, whatever stopped it.
+func (c *cycle) resume(ctx context.Context) error {
+	out, err := ResumePauses(ctx, c.tick.Pauses, c.tick.Resume, c.tick.Caps, c.paused, c.now)
+	if err != nil {
+		return err
+	}
+	c.rep.Resumed += out.Resumed
+	if len(out.Refused) > 0 {
+		c.rep.ResumeErr = errors.Join(out.Refused...)
 	}
 	return nil
 }
@@ -1359,6 +1565,14 @@ func (c *cycle) carry(ctx context.Context, view RunView) error {
 // ends owes a person, and the breaker names no item (boundRetry,
 // mergeRetryWindow).
 //
+// An action the cycle skipped because another orchestrator holds the item
+// (Skipped) is that same reading once more: the work is going, on the daemon
+// that holds it, and this one has nothing to do about it and nothing to ask
+// anyone. Two orchestrators of one project is the deployment the claim is for
+// (D3206, D3207), and the loser of a claim skips what the winner holds — read as
+// a cycle that did nothing, three of those stop a daemon whose own unclaimed
+// items are still there for it (D1228).
+//
 // A judgement counts as work when it landed — Decided is the case the agent
 // answered and the patch it landed is committed — and a cycle whose only news
 // is a call is read by what the call came to: a call that failed or answered
@@ -1366,11 +1580,11 @@ func (c *cycle) carry(ctx context.Context, view RunView) error {
 // is progress whatever the call beside it came to.
 func (c *cycle) outcome() CycleOutcome {
 	switch {
-	case c.rep.Folded > 0 || c.rep.Carried > 0 || c.rep.Triaged > 0 || c.rep.Escalated > 0 || c.rep.Decided > 0 || c.rep.Merged > 0 || c.rep.Blocked > 0:
+	case c.rep.Folded > 0 || c.rep.Carried > 0 || c.rep.Triaged > 0 || c.rep.Escalated > 0 || c.rep.Decided > 0 || c.rep.Merged > 0 || c.rep.Blocked > 0 || c.rep.Resumed > 0:
 		return CycleProgress
 	case c.rep.DecideOutcome != "":
 		return c.rep.DecideOutcome
-	case c.anyNode(func(s State) bool { return hasOpenIntent(s) || hasReviewWait(s) }) || c.rep.Waited > 0:
+	case c.anyNode(func(s State) bool { return hasOpenIntent(s) || hasReviewWait(s) }) || c.rep.Waited > 0 || c.rep.Skipped > 0:
 		return CycleInFlight
 	}
 	return CycleEmpty

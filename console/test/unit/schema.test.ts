@@ -65,11 +65,17 @@ import {
   TOTAL_KEYS,
   LIVE_MARKERS,
   NON_TEXT_STRING_KEYS,
+  ORCHESTRATOR_MAP_DOCUMENT_VERSION,
+  ORCHESTRATOR_MAP_EDGE_KEYS,
+  ORCHESTRATOR_MAP_HEALTH_KEYS,
+  ORCHESTRATOR_MAP_KEYS,
+  ORCHESTRATOR_MAP_NODE_KEYS,
   WIRE_TEXT_CLASSES,
   decodeCoordinatorStatus,
   decodeCoordinatorPullRequest,
   decodeCoordinatorIntents,
   decodeDocument,
+  decodeOrchestratorMap,
   decodePlanStatus,
   decodeSnapshot,
   knownTopLevelKeys,
@@ -79,6 +85,7 @@ import type {
   CoordinatorIntentsView,
   CoordinatorPullRequestDocument,
   CoordinatorStatusView,
+  OrchestratorMapView,
   PlanState,
   PlanStatusView,
 } from '../../src/shared/schema'
@@ -178,6 +185,17 @@ const COORDINATOR_VIEW_SOURCE = readFileSync(
 )
 const COORDINATOR_SWEEP_SOURCE = readFileSync(
   fileURLToPath(new URL('../../../ee/coordinator/sweep.go', import.meta.url)),
+  'utf8',
+)
+
+/**
+ * ORCHESTRATOR_MAP_SOURCE is `internal/orchestrator/mapdoc.go`, read the same way
+ * and for the same reason (the console-fixes plan's CG7a, D3221): it is the one
+ * file the map document's shape is written in, and the four lists below are the
+ * console's copy of it.
+ */
+const ORCHESTRATOR_MAP_SOURCE = readFileSync(
+  fileURLToPath(new URL('../../../internal/orchestrator/mapdoc.go', import.meta.url)),
   'utf8',
 )
 
@@ -471,6 +489,19 @@ const FULL_ROW: JSONDoc = Object.freeze({
   // screen draws it yet -- and it is a word of the CLI's own table rather than
   // text a job wrote, so it is in `NON_TEXT_STRING_KEYS`.
   pr_state: 'ready',
+  // PR7 of model-credentials-routing, between `pr_state` and `pushed` in the
+  // struct: the pause a row ended in -- the instant the orchestrator resumes
+  // the run's chain at, and the run that did resume it (contract-pause R15,
+  // D3195). `runs ls` writes them on a row whose record ended `paused` and on
+  // no other, and this row is not one, so they are carried here for the
+  // classification walk's sake and not as a document the CLI writes: the
+  // strings of a `runs ls` row are what `RECORD_KEYS` is checked against, and a
+  // key with no class would otherwise fall out of that walk unseen. Neither is
+  // read by a screen yet -- the paused row is VS3's -- and they are classified
+  // rather than exempted: `resume_at` is a stamp beside `waiting_until` and
+  // `resumed_by` a run id like `previous_run` below.
+  resume_at: '2026-10-15T12:40:00Z',
+  resumed_by: '20261015-124000-aa03',
   pushed: true,
   pushed_head: 'c'.repeat(40),
   started_at: '2026-10-15T10:20:00Z',
@@ -527,6 +558,13 @@ const FULL_LIVE_RUN: JSONDoc = Object.freeze({
   // by id (`shared/rigor.ts`), and nothing draws these yet.
   mode: 'critical',
   from: 'area',
+  // model-credentials-routing CS9: what the run's running stage goes out on,
+  // the kind of source the routing table served it with and the name after a
+  // colon when the kind names one. Always present on a live row — `-` is what a
+  // run the project's table does not serve, and a run under rules that predate
+  // the member, writes. Accepted, not read from this row: the Live screen's
+  // replacement for the auth column is the visibility plan's VS1.
+  source: 'pool:team',
   notional: true,
   spent_usd: 12.5,
   age_seconds: 1761,
@@ -582,6 +620,14 @@ const FULL_FINISHED_RUN: JSONDoc = Object.freeze({
   launched_by: 'redacted@example.invalid',
   // GV1.2: a finished run does not stop having been asked to work on a task.
   plan_task: 'setup-wizard/W1.3',
+  // PR7 of model-credentials-routing: a paused run is a row of `finished[]` --
+  // its execution is terminal and its chain is in flight -- so the two facts of
+  // its pause are `JSONFinished`'s own, and `JSONRun`'s neither: a run still
+  // going has not paused yet. They are the credentials service's node for the
+  // pause and the task of the run that picked it up, both the listing's own
+  // computation, so a row whose reader could see neither carries neither.
+  resume_at: '2026-10-15T12:40:00Z',
+  resumed_by: '20261015-124000-aa03',
 })
 
 /** LIVE_REAL is the committed fixture's first document carrying those two rows:
@@ -767,6 +813,16 @@ describe('both document shapes decode', () => {
       expect(runKeys, `JSONRun carries ${found}`).toContain(found)
       expect(FINISHED_KEYS, `JSONFinished does not carry ${found}`).not.toContain(found)
     }
+    // PR7 of model-credentials-routing's two are the mirror image of those:
+    // `JSONFinished`'s alone, because a paused run is a finished row -- its
+    // execution is terminal -- and a run still going has not paused yet. Named
+    // for the same reason the five and `plan_task` above are: the comparison
+    // would agree with two lists that lost one together.
+    const finishedKeys = structTags(WATCH_SOURCE, 'JSONFinished').map((tag) => tag.key)
+    for (const found of ['resume_at', 'resumed_by']) {
+      expect(finishedKeys, `JSONFinished carries ${found}`).toContain(found)
+      expect(RUN_KEYS, `JSONRun does not carry ${found}`).not.toContain(found)
+    }
     // The fixture above claims to carry every key of the shape, and a claim in a
     // comment is what let the drift happen twice: the row's own key set is held
     // to the list, so a key added to `RUN_KEYS` and forgotten here fails this
@@ -800,6 +856,12 @@ describe('both document shapes decode', () => {
     // GV1.2's `plan_task` (decision GD5), named for the same reason: the
     // comparison below cannot catch a key both sides lost together.
     expect(fromTheStruct, 'plan_task is the omission this pin exists for').toContain('plan_task')
+    // PR7 of model-credentials-routing's pair, named the same way: the row's
+    // pause and its resumer arrived between `pr_state` and `pushed`, and the
+    // comparison above cannot catch a key both sides lost together.
+    for (const found of ['resume_at', 'resumed_by']) {
+      expect(fromTheStruct, `${found} is the arrival this pin names`).toContain(found)
+    }
     expect([...RECORD_KEYS].sort()).toEqual([...fromTheStruct].sort())
     expect(RECORD_KEYS.length).toBe(fromTheStruct.length)
     // The keys without `omitempty` are the ones whose absence broke it, and they
@@ -2410,5 +2472,293 @@ describe('the Members view’s document (roles-and-scopes RS7)', () => {
       const on = lists.find(([name]) => name === role)?.[1] ?? []
       expect(on, `${member} is on no ${role} list`).toContain(member)
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The orchestrator map (the console-fixes plan's CG7a; C-ORCH's contract,
+// `docs/console-fixes/contract-orchestrators.md`; D3221).
+// ---------------------------------------------------------------------------
+
+describe('the orchestrator map document (CG7a)', () => {
+  /** stringLeaves walks the document and returns every string leaf with the key
+   * that holds it, which is what the classification walk below needs: a class is
+   * per-key and not per-element, so an array keeps its parent's key. */
+  function stringLeaves(value: unknown, key = '', path = ''): readonly { key: string; path: string }[] {
+    if (typeof value === 'string') return [{ key, path }]
+    if (Array.isArray(value)) {
+      return value.flatMap((item, index) => stringLeaves(item, key, `${path}[${String(index)}]`))
+    }
+    if (value !== null && typeof value === 'object') {
+      return Object.entries(value).flatMap(([name, child]) =>
+        stringLeaves(child, name, path === '' ? name : `${path}.${name}`),
+      )
+    }
+    return []
+  }
+
+  /**
+   * ORCHESTRATOR_MAP is one `orchestrator map --json` document, written from the
+   * Go structs (`internal/orchestrator/mapdoc.go`) rather than recorded: it
+   * carries the two edge kinds, a node whose lease has no readable stamp (`null`)
+   * beside one that has an age, and a sweep that is on with `ok_at` unset --
+   * which is the "a tick is running" state the health distinguishes from "no
+   * sweep at all". Its keys are pinned against the structs below, in the structs'
+   * own declaration order.
+   */
+  const ORCHESTRATOR_MAP: JSONDoc = {
+    version: 1,
+    project: 'acme',
+    generated_at: '2026-11-22T12:00:00Z',
+    nodes: [
+      { id: 'acme', name: '', driver: 'user:operator@example.com', active_tasks: 2, running_jobs: 1, lease_age_seconds: 12.5 },
+      {
+        id: 'acme~blue',
+        name: 'blue',
+        driver: '',
+        active_tasks: 0,
+        running_jobs: 0,
+        lease_age_seconds: null,
+      },
+    ],
+    edges: [
+      { from: 'acme', to: 'acme~blue', kind: 'dependency', reason: '' },
+      { from: 'acme~blue', to: 'acme', kind: 'overlap', reason: 'the collision the coordinator stored' },
+    ],
+    health: {
+      sweep: true,
+      started_at: '2026-11-22T11:59:30Z',
+      ok_at: null,
+      at: '2026-11-22T12:00:00Z',
+      note: '',
+    },
+  }
+
+  /** mapDecoded is a map document that must decode, or the failure is the
+   * refusal's own sentence rather than an assertion three lines later. */
+  function mapDecoded(raw: unknown, where = 'the orchestrator map document'): OrchestratorMapView {
+    const result = decodeOrchestratorMap(raw, where)
+    if (!result.ok) throw new Error(result.skew.because)
+    return result.value
+  }
+
+  /** mapRefusal is the refusal of a map document that must be refused. */
+  function mapRefusal(raw: unknown): { field: string; name: string } {
+    const result = decodeOrchestratorMap(raw, 'the orchestrator map document')
+    if (result.ok) throw new Error('expected a refusal')
+    return result.skew.refusal
+  }
+
+  it('lists every key of the document and of each object in it, read off the structs', () => {
+    // The read this fixture stands for is `fugaro orchestrator map --json`, and
+    // `internal/orchestrator/mapdoc.go` is the one file its shape is written in,
+    // so a key the CLI gains without this fixture gaining it is a column the
+    // Coordinator tab would silently draw nothing for -- and a key the fixture
+    // carries that no struct writes is a value no read could ever print. Both
+    // directions, as the Members and plan pins above, and in the structs'
+    // declaration order, which is the order the fixture is written in.
+    const pairs: readonly (readonly [readonly StructTag[], readonly string[], string])[] = [
+      [structTags(ORCHESTRATOR_MAP_SOURCE, 'MapDoc'), Object.keys(ORCHESTRATOR_MAP), 'the document'],
+      [
+        structTags(ORCHESTRATOR_MAP_SOURCE, 'MapNode'),
+        Object.keys((ORCHESTRATOR_MAP.nodes as JSONDoc[])[0] ?? {}),
+        'nodes[]',
+      ],
+      [
+        structTags(ORCHESTRATOR_MAP_SOURCE, 'MapEdge'),
+        Object.keys((ORCHESTRATOR_MAP.edges as JSONDoc[])[0] ?? {}),
+        'edges[]',
+      ],
+      [structTags(ORCHESTRATOR_MAP_SOURCE, 'MapHealth'), Object.keys(ORCHESTRATOR_MAP.health as JSONDoc), 'health'],
+    ]
+    for (const [tags, keys, what] of pairs) {
+      expect(tags.map((tag) => tag.key), what).toEqual([...keys])
+    }
+    // ...and the four lists are the same reading, so a key the structs gain
+    // without the console's list gaining it fails here rather than at a screen.
+    expect([...ORCHESTRATOR_MAP_KEYS], 'the document').toEqual(
+      structTags(ORCHESTRATOR_MAP_SOURCE, 'MapDoc').map((tag) => tag.key),
+    )
+    expect([...ORCHESTRATOR_MAP_NODE_KEYS], 'nodes[]').toEqual(
+      structTags(ORCHESTRATOR_MAP_SOURCE, 'MapNode').map((tag) => tag.key),
+    )
+    expect([...ORCHESTRATOR_MAP_EDGE_KEYS], 'edges[]').toEqual(
+      structTags(ORCHESTRATOR_MAP_SOURCE, 'MapEdge').map((tag) => tag.key),
+    )
+    expect([...ORCHESTRATOR_MAP_HEALTH_KEYS], 'health').toEqual(
+      structTags(ORCHESTRATOR_MAP_SOURCE, 'MapHealth').map((tag) => tag.key),
+    )
+  })
+
+  it('decodes the document, and reads a lease age as an age and never as zero', () => {
+    const document = mapDecoded(ORCHESTRATOR_MAP)
+    expect(document.version).toBe(ORCHESTRATOR_MAP_DOCUMENT_VERSION)
+    expect(document.project).toBe('acme')
+    expect(document.generatedAt).toBe('2026-11-22T12:00:00Z')
+    expect(document.nodes.map((node) => node.id)).toEqual(['acme', 'acme~blue'])
+    // The three facts a node exists to carry: a name half that is `""` for the
+    // project's default orchestrator (and not a named one with a blank name), a
+    // driver that is `""` when the node is unreadable, and a lease age that is
+    // **null** when the lease carries no stamp -- which is not `0`, a claim
+    // about a beat this reader does not have.
+    expect(document.nodes[0]?.name).toBe('')
+    expect(document.nodes[0]?.driver).toBe('user:operator@example.com')
+    expect(document.nodes[0]?.leaseAgeSeconds).toBe(12.5)
+    expect(document.nodes[0]?.activeTasks).toBe(2)
+    expect(document.nodes[1]?.driver).toBe('')
+    expect(document.nodes[1]?.leaseAgeSeconds).toBeNull()
+    // The edges are the two kinds, and a dependency's `reason` is `""` because
+    // the two ids already say what it is.
+    expect(document.edges.map((edge) => edge.kind)).toEqual(['dependency', 'overlap'])
+    expect(document.edges[0]?.reason).toBe('')
+    expect(document.edges[1]?.reason).toBe('the collision the coordinator stored')
+    // The health: the sweep is on, `ok_at` is null because no tick has finished
+    // since it started, and the absence of an overlap edge therefore means
+    // nothing yet rather than "nothing overlaps".
+    expect(document.health.sweep).toBe(true)
+    expect(document.health.startedAt).toBe('2026-11-22T11:59:30Z')
+    expect(document.health.okAt).toBeNull()
+    expect(document.health.at).toBe('2026-11-22T12:00:00Z')
+  })
+
+  it('decodes an empty map, which is a fact and not an unreadable document', () => {
+    // A project with nothing being driven is an empty `nodes` with an empty
+    // `edges` -- never a null list, and never a refusal: a screen draws "no
+    // orchestrator is being driven now", which is a reading rather than a
+    // failure to read.
+    const empty = mapDecoded(
+      patched(ORCHESTRATOR_MAP, ['nodes'], []),
+    )
+    expect(empty.nodes).toEqual([])
+    const noEdges = mapDecoded(patched(ORCHESTRATOR_MAP, ['edges'], []))
+    expect(noEdges.edges).toEqual([])
+    // ...and a map whose sweep is off carries no heartbeat at all: the three
+    // times are null and the note says why.
+    const off = mapDecoded(
+      patched(
+        patched(patched(patched(ORCHESTRATOR_MAP, ['health', 'sweep'], false), ['health', 'started_at'], null), ['health', 'ok_at'], null),
+        ['health', 'at'],
+        null,
+      ),
+    )
+    expect(off.health.sweep).toBe(false)
+    expect(off.health.startedAt).toBeNull()
+    expect(off.health.note).toBe('')
+  })
+
+  it('refuses a document of another version, by name', () => {
+    // The version is checked exactly, for `GRAPH_DOCUMENT_VERSION`'s reason: the
+    // contract promises a field is only ever added within a version, so a
+    // version this build does not know is a document whose fields may have been
+    // re-meant rather than grown.
+    const refusal = mapRefusal(patched(ORCHESTRATOR_MAP, ['version'], 2))
+    expect(refusal.name).toBe('unknown-value')
+    expect(refusal.field).toBe('version')
+    expect(mapRefusal(patched(ORCHESTRATOR_MAP, ['version'], '1')).name).toBe('not-a-number')
+  })
+
+  it('refuses a missing field the contract always writes, by name', () => {
+    // The four keys the contract always writes (`nodes`, `edges`, `health` and
+    // `generated_at`, `mapRequired` in `mapdoc.go`) are required here: an absent
+    // one is not a document of this shape, whatever a struct decode's zero value
+    // would make of it. `patched`/`without` are the two spellings the Go side
+    // refuses on the raw value -- an absent key and a null one.
+    for (const key of ['nodes', 'edges', 'health', 'generated_at']) {
+      const missing = mapRefusal(without(ORCHESTRATOR_MAP, [key]))
+      expect(missing.name, key).toBe('missing')
+      expect(missing.field, key).toBe(key)
+      const nulled = mapRefusal(patched(ORCHESTRATOR_MAP, [key], null))
+      expect(nulled.field, key).toBe(key)
+    }
+    // A node's own keys are required too, and the one that is deliberately not
+    // `optionalInt`: an absent `lease_age_seconds` would read as "every lease is
+    // unreadable", which is a claim the document did not make.
+    const noAge = mapRefusal(without(ORCHESTRATOR_MAP, ['nodes', 0, 'lease_age_seconds']))
+    expect(noAge.name).toBe('missing')
+    expect(noAge.field).toBe('nodes[0].lease_age_seconds')
+    const badAge = mapRefusal(patched(ORCHESTRATOR_MAP, ['nodes', 0, 'lease_age_seconds'], '12s'))
+    expect(badAge.name).toBe('not-a-number')
+    expect(badAge.field).toBe('nodes[0].lease_age_seconds')
+  })
+
+  it('refuses a field of the wrong kind, naming the field and not the document', () => {
+    const cases: readonly (readonly [readonly (string | number)[], unknown, string, string])[] = [
+      [['project'], 7, 'not-a-string', 'project'],
+      [['generated_at'], 'yesterday', 'not-a-timestamp', 'generated_at'],
+      [['nodes'], {}, 'not-an-array', 'nodes'],
+      [['nodes', 0], 'a node', 'not-an-object', 'nodes[0]'],
+      [['nodes', 0, 'active_tasks'], 1.5, 'not-a-number', 'nodes[0].active_tasks'],
+      [['edges', 1, 'kind'], 3, 'not-a-string', 'edges[1].kind'],
+      [['health'], [], 'not-an-object', 'health'],
+      [['health', 'sweep'], 'on', 'not-a-boolean', 'health.sweep'],
+      [['health', 'ok_at'], 'yesterday', 'not-a-timestamp', 'health.ok_at'],
+      [['health', 'note'], 5, 'not-a-string', 'health.note'],
+    ]
+    for (const [path, value, name, field] of cases) {
+      const refusal = mapRefusal(patched(ORCHESTRATOR_MAP, path, value))
+      expect(refusal.name, field).toBe(name)
+      expect(refusal.field, field).toBe(field)
+    }
+  })
+
+  it('ignores a key it does not know, at every level, rather than refusing the document', () => {
+    // The owner's ruling of 2026-10-30, which every decoder in this module
+    // follows: an unknown key is additive and a reader that refused it would
+    // break on a CLI that grew one. The map is the document a *newer* CLI is
+    // likeliest to have grown -- C-ORCH's shape is the newest here -- so this is
+    // the direction that matters.
+    const grown = mapDecoded({
+      ...ORCHESTRATOR_MAP,
+      future: { anything: true },
+      nodes: (ORCHESTRATOR_MAP.nodes as JSONDoc[]).map((node) => ({ ...node, future: 1 })),
+      edges: (ORCHESTRATOR_MAP.edges as JSONDoc[]).map((edge) => ({ ...edge, future: 2 })),
+      health: { ...(ORCHESTRATOR_MAP.health as JSONDoc), future: 3 },
+    })
+    expect(grown.nodes).toHaveLength(2)
+    expect(grown.health.sweep).toBe(true)
+  })
+
+  it('classifies every string the map draws, and exempts the stamps it does not', () => {
+    // The same walk `graph-read.test.ts` makes, over this document: a string key
+    // the map carries and this module has not classified is a value a screen
+    // would draw **unsanitized** -- `driver`, `reason` and `note` are written by
+    // whoever holds a lease and by the coordinator's own sweep -- so the class
+    // is required rather than optional. `id`, `name`, `from`, `to`, `kind` and
+    // `project` are identities the Go side refuses to sanitize, and they carry
+    // the drawn classes of the keys they share with the graph document.
+    const leaves = stringLeaves(ORCHESTRATOR_MAP)
+    expect(leaves.map((leaf) => leaf.key)).toContain('driver')
+    expect(leaves.map((leaf) => leaf.key)).toContain('note')
+    const unclassified = leaves.filter(
+      (leaf) => wireTextClass(leaf.key) === undefined && !NON_TEXT_STRING_KEYS.includes(leaf.key),
+    )
+    expect(unclassified.map((leaf) => leaf.path)).toEqual([])
+    // Not vacuous: the walk found both halves of the claim, and the three free
+    // texts are the prose this document carries.
+    expect(leaves.some((leaf) => wireTextClass(leaf.key) === 'person')).toBe(true)
+    expect(leaves.some((leaf) => wireTextClass(leaf.key) === 'sentence')).toBe(true)
+    expect(wireTextClass('driver')).toBe('person')
+    expect(wireTextClass('note')).toBeDefined()
+    // The stamps carry no class and are exempted: `generated_at` and `started_at`
+    // are the graph document's own keys, and `ok_at` is the map's one addition to
+    // that list -- an instant a screen turns into an age and compares, never a
+    // string it draws.
+    for (const key of ['generated_at', 'started_at', 'ok_at', 'at']) {
+      expect(NON_TEXT_STRING_KEYS, key).toContain(key)
+      expect(wireTextClass(key), key).toBeUndefined()
+    }
+  })
+
+  it('refuses a graph or a feed document handed to its door, and is refused by theirs', () => {
+    // **The doors are three and none is read as another.** A graph document has
+    // no `nodes`/`edges`/`health` envelope, and a feed document carries
+    // `stream_id`/`seq` -- so each is refused here for the keys it is missing,
+    // by name, rather than drawn as a map with no orchestrators.
+    expect(mapRefusal({ sources: [], edges: [] }).name).toBe('missing')
+    expect(mapRefusal({ stream_id: 's1', seq: 1, document: {} }).name).toBe('missing')
+    // ...and in the other direction: the map handed to the snapshot door is not
+    // a run view, so it is refused there too.
+    const asSnapshot = decodeSnapshot(ORCHESTRATOR_MAP)
+    expect(asSnapshot.ok).toBe(false)
   })
 })
