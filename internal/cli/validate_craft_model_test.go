@@ -176,6 +176,8 @@ func TestLaunchRefusesACraftModelOutsideTheAllowList(t *testing.T) {
 	noAgentSession(t)
 	f := newCloudFixture(t)
 	configSkewCheckout(t, f, launchCraftAllowListYAML)
+	publishedLayer(t, f, layerPins(launchCraftAllowListYAML))
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releasePolicy)
 	_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("the launch: err = %v (exit %d), want the crafts refused", err, ExitCode(err))
@@ -234,6 +236,8 @@ func TestLaunchRefusesTheSameModelForL1AndL2ThroughCrafts(t *testing.T) {
 	noAgentSession(t)
 	f := newCloudFixture(t)
 	configSkewCheckout(t, f, launchCraftSameModelYAML)
+	publishedLayer(t, f, layerPins(launchCraftSameModelYAML))
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releasePolicy)
 	_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("the launch: err = %v (exit %d), want the levels refused", err, ExitCode(err))
@@ -292,6 +296,7 @@ func TestLaunchServesACraftWhoseLevelIsOff(t *testing.T) {
 		noAgentSession(t)
 		f := newCloudFixture(t)
 		configSkewCheckout(t, f, fmt.Sprintf(launchCraftOffLevelYAML, "off"))
+		publishedLayer(t, f, layerPins(fmt.Sprintf(launchCraftOffLevelYAML, "off")))
 		writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releasePolicy)
 		if _, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task"); err != nil {
 			t.Fatalf("the launch refused a craft whose level does not run: %v", err)
@@ -304,6 +309,7 @@ func TestLaunchServesACraftWhoseLevelIsOff(t *testing.T) {
 		noAgentSession(t)
 		f := newCloudFixture(t)
 		configSkewCheckout(t, f, fmt.Sprintf(launchCraftOffLevelYAML, "on"))
+		publishedLayer(t, f, layerPins(fmt.Sprintf(launchCraftOffLevelYAML, "on")))
 		writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releasePolicy)
 		_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
 		if ExitCode(err) != ExitUserError {
