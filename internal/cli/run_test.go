@@ -1004,7 +1004,7 @@ func TestAnArtifactLaunchRefusesACapSetThatCannotFitMemory(t *testing.T) {
 	// that gate before it reached the memory arithmetic this test is about, and
 	// every launch of this installation mints and is judged by the seal's gate
 	// (AB4, F7).
-	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseSeal)
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseL8)
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")

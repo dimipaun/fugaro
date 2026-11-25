@@ -1557,7 +1557,10 @@ describe('the confirm channels', () => {
 //   - a flow that **wrote after the installation moved** fails both cancel
 //     cases, one with a window open and one while the dry run is in flight;
 //   - a flow that **retried a refusal** fails "answers a refused write with the
-//     CLI's sentence, and starts no second child" (D1112).
+//     CLI's sentence, and starts no second child" (D1112);
+//   - a flow that **spawned a `repo`-layer write naming no checkout, or drew a
+//     target line that was not the argv's own `--repo` word** fails "names the
+//     file a `repo`-layer edit writes" (RC80, L12).
 
 describe('the settings edit behind the same window', () => {
   it('reads, dry-runs, asks, and writes only once the window’s own top frame said yes', async () => {
@@ -1595,6 +1598,46 @@ describe('the settings edit behind the same window', () => {
     expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run', 'narrowing'])
     // What the window showed is what is spawned: the source is handed the drawn
     // argv, which is the one it refuses a plan for differing from.
+    expect(source.spawns[1]?.shown).toStrictEqual(shown.argv)
+  })
+
+  it('names the file a `repo`-layer edit writes, in the window and in both spawns (RC80, L12)', async () => {
+    // The row's own `target_layer` is the layer written (D1105), and a
+    // repository-layer edit is the one whose target the layer's name does not
+    // give: `--layer repo` says *a checkout's `fugaro.yaml`* and not *which*.
+    // The window draws the file, read out of the argv the two spawns carry, so
+    // the line and the child are one plan.
+    const clock = aClock()
+    const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
+    const directory = '/Users/owner/src/checkout'
+    const source = settingsEditSource({
+      read: () => Promise.resolve({ document: settingsReadDocument([settingsRow({ target_layer: 'repo' })]) }),
+      dryRun: { refusal: null, document: settingsDryRun({ layer: 'repo' }), text: '' },
+    })
+    const runner = createSettingsEdit({
+      ...source.deps,
+      argvForEdit: (args, phase, layer) => Promise.resolve(settingsArgv(phase, args, layer, directory)),
+      confirmer,
+    })
+    const set = { op: 'set', key: SETTINGS_KEY, value: '30' } as const
+    const edited = runner.edit(set)
+    await untilSettled()
+    const window = windows[0] as FakeWindow
+
+    const shown = await settingsShownOf(ipcMain, window)
+    expect(shown.layer).toBe('repo')
+    expect(shown.target).toBe(`writes fugaro.yaml in ${directory}`)
+    expect(shown.argv).toStrictEqual(settingsArgv('narrowing', set, 'repo', directory))
+    // The pair is in front of the terminator, so the child reads it as a flag
+    // and not as part of the value.
+    expect(shown.argv[shown.argv.indexOf('--repo') + 1]).toBe(directory)
+    expect(shown.argv.indexOf('--repo')).toBeLessThan(shown.argv.indexOf('--'))
+    expect(source.spawns[0]?.shown).toStrictEqual(settingsArgv('dry-run', set, 'repo', directory))
+
+    ready(window, clock)
+    await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes' })
+    expect(await edited).toStrictEqual({ ok: true, sentence: SETTINGS_WRITE_TEXT })
+    expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run', 'narrowing'])
     expect(source.spawns[1]?.shown).toStrictEqual(shown.argv)
   })
 
@@ -2784,10 +2827,11 @@ function settingsArgv(
   phase: SettingsEditPhase,
   args: ValidatedArguments = { op: 'set', key: SETTINGS_KEY, value: '30' },
   layer = 'project',
+  directory: string | undefined = undefined,
 ): readonly string[] {
   return argvFor(SETTINGS_EDIT_OPERATION, args, {
     target: { project: PROJECT },
-    directory: undefined,
+    directory,
     settingsEdit: { phase, layer },
   })
 }
@@ -2843,6 +2887,7 @@ function settingsSubject(overrides: Partial<SettingsConfirmView> = {}): Settings
     oldValue: '25',
     newValue: '30',
     layer: 'project',
+    target: '',
     wins: 'project',
     sentence: '',
     widening: false,

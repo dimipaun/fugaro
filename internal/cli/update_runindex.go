@@ -73,7 +73,7 @@ func (e *initEngine) reindexRunIndex(ctx context.Context) {
 	// in a no-auth config, at endpoints.firestore. A config that names neither
 	// is one whose index this run cannot reach at all -- there is nothing to
 	// rebuild and nothing to say -- and it is left alone silently.
-	if e.lc.Budget == nil || e.lc.Budget.FirebaseProject == "" || (e.lc.Endpoints.NoAuth && e.lc.Endpoints.Firestore == "") {
+	if noIndexDatabase(e.lc) {
 		return
 	}
 	db, err := newBudgetClient(ctx, e.lc.Budget.RTDBURL, e.lc.Endpoints.NoAuth)

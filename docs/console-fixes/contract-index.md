@@ -9,9 +9,9 @@ cursor (F39, D3215), and the three `--json` additions the readers make.
 **Status: the contract, and the package that declares it.** `internal/runindex`
 holds `Entry`, `Summary`, `Filter`, `Cursor`, `Page` and the `Reader` interface
 (C-INDEX); the queries, the reader, the writer, the indexes and the wiring are
-RI1–RI5, IR1–IR6 and I-INDEX. Until I-INDEX lands, the commands compile against
-the package's stub (`internal/runindex/stub.go`), which reads nothing and says
-the index is incomplete, so no reader prints an empty list as the truth.
+RI1–RI5, IR1–IR6 and I-INDEX. I-INDEX has landed, so the readers build the real
+`Reader` from the installation's own Firestore and budget database
+(`internal/cli/runindex_wire.go`) and C-INDEX's stub is gone.
 
 Where this file and the plan disagree, the plan wins and this file is wrong.
 

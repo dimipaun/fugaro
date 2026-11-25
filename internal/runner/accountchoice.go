@@ -19,6 +19,11 @@ import (
 // off is explicit-only, and explicit-only is what §11.2's chain already gives
 // and what this release ships (D875, §11.4).
 //
+// It is asked only of a run the credentials service does not serve: where that
+// service serves the run's calls the walk is gone, since the pool's own rule
+// chooses the credential there (accountWalkApplies, D3171), and nothing of this
+// file is read.
+//
 // Three properties are the whole of the design, and each is a way this code
 // could go wrong:
 //
@@ -148,6 +153,14 @@ func (r *run) accountAuto(ctx context.Context) bool {
 // accounts are an OAuth feature: a run authenticating another way names no
 // account at all (claudeAccountAllowed refuses one before any launch).
 func (r *run) accountWalkApplies() bool {
+	if r.chainServed() {
+		// The walk is gone where the credentials service serves the run (D3171):
+		// the service holds the accounts and applies the pool's own rule to pick
+		// the member, so a run-level choice of an account here would be a second
+		// answer to which credential serves a stage — and the one this container
+		// could not deliver anyway, since a served run holds no account's token.
+		return false
+	}
 	if claudeAccountOf(r.spec.OAuthToken) != "" {
 		return false
 	}
@@ -276,19 +289,33 @@ func (r *run) stageAccountCandidates(ctx context.Context) ([]string, error) {
 		// that can read no policy has one account, the unsuffixed default.
 		return []string{config.DefaultClaudeAccount}, nil
 	}
+	canonical, err := r.canonicalRepo()
+	if err != nil {
+		return nil, err
+	}
+	return stageAccountCandidates(p, canonical, r.reviewJob()), nil
+}
+
+// canonicalRepo is this run's repository as the published policy writes
+// repositories, "" when this run cannot name it that way. It is the name every
+// admission rule about this run's repository is asked with — the walk's list
+// (stageAccountCandidates) and a pool member's own allow_repos (poolchoice.go)
+// — so no two of them judge one repository under two names. A project job's
+// provider is the one its own name pins (job.Provider, as checkProviderAdmission
+// reads it) and a per-repository run's is the kind the slug it was launched with
+// derives (providerForSlug): a run admitted to a project job is judged by its
+// job's provider and not by its slug.
+func (r *run) canonicalRepo() (string, error) {
 	kind := ""
 	if job, project := r.projectJob(); project {
 		kind = job.Provider
 	} else if k, ok := providerForSlug(r.d.Store.Slug(), r.spec.Repo); ok {
 		kind = k
 	}
-	canonical := ""
-	if kind != "" {
-		if canonical, err = projectpolicy.Canonical(kind, r.spec.Repo); err != nil {
-			return nil, err
-		}
+	if kind == "" {
+		return "", nil
 	}
-	return stageAccountCandidates(p, canonical, r.reviewJob()), nil
+	return projectpolicy.Canonical(kind, r.spec.Repo)
 }
 
 // stageAccountCandidates is the walk's list itself, over the policy the run
