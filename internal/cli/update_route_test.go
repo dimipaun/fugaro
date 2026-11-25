@@ -511,6 +511,15 @@ func TestLeavingRemovesTheRoute(t *testing.T) {
 	}
 }
 
+// routingOnlyConfig is the local config of a project whose one member that only
+// the node can carry is its routing table: the project's own Anthropic key,
+// answering every Claude model. It is the config a project that has never
+// published a node writes when the table is the whole of what it has to say.
+const routingOnlyConfig = "model_routing:\n" +
+	"  - match: claude-*\n" +
+	"    chain:\n" +
+	"      - { kind: anthropic }\n"
+
 // routeTableConfig is the local config of a project that has written its
 // routing table (RT4): one credential of the project, the pool of it, the craft
 // the table answers for, and the table itself — a pool source for the craft's
@@ -705,5 +714,81 @@ func TestUpdateConvergesFromAPolicyWithoutRouting(t *testing.T) {
 	}
 	if string(settled) != string(after) {
 		t.Errorf("a second update rewrote the converged node:\nbefore %s\nafter  %s", after, settled)
+	}
+}
+
+// TestUpdateFirstPublishesARoutingTableOnlyConfig is the first publish's own
+// case for the key (RT4, R21, F49): a project that has never published a node
+// and whose config states the routing table, and nothing else only the node can
+// carry, has to get that table onto the node from `fugaro update` alone. The
+// table is read off the node and nowhere else — a run's calls are served from
+// it and the credentials service reads the key's presence as the marker that
+// the installation is migrated (PL3) — so a stage that reported nothing to do
+// here would leave the owner's routing in a file no run reads, with
+// `fugaro project policy publish` as the second command the HARD RULE forbids.
+func TestUpdateFirstPublishesARoutingTableOnlyConfig(t *testing.T) {
+	f := newProjectFixture(t, routingOnlyConfig)
+	h := newMigrationRig(t, f, &initOptions{})
+	// A project's first node is the owner's to write, so the write is the one
+	// the person at their own terminal confirms by typing the project's name
+	// (the fixture's name, as every other first-publish test does).
+	fakeTerminal(t)
+	h.cmd.SetIn(strings.NewReader("aurora\n"))
+
+	st, err := h.s.Check(t.Context())
+	if err != nil {
+		t.Fatalf("the check refused a config whose one node-only member is the routing table: %v", err)
+	}
+	if st.State != initflow.Todo {
+		t.Fatalf("the check says %s %q, want the project's first publish: the table reaches a run from the node and nowhere else", st.State, st.Detail)
+	}
+	if !strings.Contains(st.Detail, "the routing table") {
+		t.Errorf("the line does not name the routing table among the members only the node carries: %q", st.Detail)
+	}
+	if out, err := h.apply(t, false); err != nil {
+		t.Fatalf("the update published nothing: %v\n%s", err, out)
+	}
+	p := publishedPolicy(t, f)
+	if p.ModelRouting == nil {
+		t.Fatal("the node the update published carries no model_routing, so no run is served by the owner's table and the service reads the project as unmigrated (PL3)")
+	}
+	if len(p.ModelRouting.Entries) != 1 || p.ModelRouting.Entries[0].Match != "claude-*" ||
+		len(p.ModelRouting.Entries[0].Chain) != 1 || p.ModelRouting.Entries[0].Chain[0].Kind != routing.KindAnthropic {
+		t.Errorf("the table the node carries is %+v, want the config's own entry", p.ModelRouting.Entries)
+	}
+}
+
+// TestUpdateRefusesANodeCarryingAMemberItDoesNotModel is the read every writer
+// of the node makes, asked of this stage (projectpolicy.DecodeStrict): the
+// contract lets a later release grow model_routing inside the key without a
+// version bump (R21, R25), and the publish builds the key from the typed
+// members rather than patching it — so the update refuses such a node and
+// leaves it exactly as it was, rather than silently dropping the member it
+// cannot write back.
+func TestUpdateRefusesANodeCarryingAMemberItDoesNotModel(t *testing.T) {
+	f := newProjectFixture(t, routingOnlyConfig)
+	node := staleBudgetNode()
+	node["model_routing"] = map[string]any{
+		"entries": []any{map[string]any{
+			"match": "claude-*",
+			"chain": []any{map[string]any{"kind": "anthropic"}},
+			// The growth this test is about: a member only a later release
+			// writes, which this one models nowhere.
+			"retired_at": "2027-01-01",
+		}},
+	}
+	f.db.Set(projectpolicy.PathShared(), node)
+	before := nodeJSON(t, f, projectpolicy.PathShared())
+	h := newMigrationRig(t, f, &initOptions{})
+
+	out, err := h.apply(t, true)
+	if err == nil {
+		t.Fatalf("the update published over a node carrying a member it does not model:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "model_routing") || !strings.Contains(err.Error(), "retired_at") {
+		t.Errorf("the refusal names neither the key nor the member: %v", err)
+	}
+	if after := nodeJSON(t, f, projectpolicy.PathShared()); after != before {
+		t.Errorf("the node moved under a refusal:\nbefore %s\nafter  %s", before, after)
 	}
 }

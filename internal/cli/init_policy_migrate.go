@@ -262,13 +262,17 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 	// The publish half reads the same node, through the same ownership gate and
 	// the same ETag: the stage is one writer, and a publish that opened a second
 	// read path would be the second writer — with its own, weaker gate — that
-	// #1460's review found between two stages worded alike. The decode is the
-	// tolerant one (projectpolicy.Decode and not publishedPolicyOf): a node
-	// carrying top-level keys this Fugaro does not model is read here and
-	// refused at the write, by the one sentence both halves share
-	// (refuseMigrationUnknownKeys), rather than by a sentence the migration half
-	// would then never reach.
-	old, _, derr := projectpolicy.Decode(base)
+	// #1460's review found between two stages worded alike. The decode is that
+	// writer's one (projectpolicy.DecodeStrict, the read the explicit door and
+	// checkPolicyBytes make): the publish builds model_routing from the typed
+	// members rather than patching it, so a member inside the key that this
+	// release does not model — growth the contract allows without a version bump
+	// (R21, R25) — would be dropped from the node silently. A node carrying
+	// top-level keys this Fugaro does not model is still read here and refused at
+	// the write, by the sentence both halves share
+	// (refuseMigrationUnknownKeys), rather than by one the migration half would
+	// then never reach.
+	old, _, derr := projectpolicy.DecodeStrict(base)
 	if derr != nil {
 		return nil, true, policyMigrationRefusal(derr)
 	}
@@ -410,6 +414,18 @@ func firstPublishNodeOnlyMembers(lc *localcfg.Config) []string {
 	}
 	if lc.Crafts != (config.Crafts{}) {
 		out = append(out, "the crafts")
+	}
+	// The routing table joins them (RT4, R21, F49): the node's key is the table a
+	// run's calls are served from, and its presence is what the credentials
+	// service reads as the marker that an installation has been migrated (PL3),
+	// so a project whose config states one and which has never published a node
+	// has left the owner's routing in a file no run reads. The publisher's drift
+	// row closes that gap for a project that already holds a node; only this list
+	// closes it for one that holds none, and it is asked of the publisher's own
+	// guard for the member (modelRoutingForPublish writes the table for a config
+	// that states one).
+	if len(lc.ModelRouting) > 0 {
+		out = append(out, "the routing table")
 	}
 	// The cascade and the model grades are the crafts' own case (N4, D2607): the
 	// credentials service reads the cascade off the published node — its
