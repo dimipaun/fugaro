@@ -802,7 +802,7 @@ var inlineAgentSites = []inlineAgentSite{
 		l := onboardLeft(originInfo{Repo: "acme/app", Host: "github.com"}, "setup")
 		return l.Kind == initflow.LeftCommand && strings.Contains(l.Text, "--onboard-repo")
 	}},
-	{"initsecrets.go Left", "initsecrets.go Left (the wording of the secrets route)", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
+	{"initsecrets.go leftText", "initsecrets.go leftText (the wording of the secrets route)", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
 		l := (&secretsStage{e: e, tg: &secretTarget{repo: "acme/app", wanted: []string{"API_KEY"}}}).Left()
 		return !strings.Contains(l.Text, "not through a coding agent")
 	}},
