@@ -87,8 +87,10 @@ import type { OperationName } from '../../main/ipc'
 import { launcherFull } from '../../shared/launcher'
 import { readRigor, rigorLayerWord, rigorModeWord } from '../../shared/rigor'
 import type { RigorView } from '../../shared/rigor'
-import { sanitizeText } from '../../shared/sanitize'
+import { PAUSED_STATUS, UNKNOWN_STATUS_WORD, runStatusOf } from '../../shared/schema'
+import { isMarkerText, sanitizeText } from '../../shared/sanitize'
 import type { TextClass } from '../../shared/sanitize'
+import { shortRun } from '../../shared/shortid'
 import { putLink, putReading, putText } from '../app'
 import { BUSY_SLOT_CLASS } from '../section'
 import type { SkeletonBlock, SkeletonShape } from '../skeleton'
@@ -188,6 +190,14 @@ export interface RunRow {
   readonly reason: string | null
   readonly branch: string | null
   readonly outcome: string | null
+  /** the instant a **paused** run's resume is due at (`resume_at`, the
+   * credentials service's node for the pause, RFC 3339 UTC) and the run that
+   * resumed it (`resumed_by`) -- `null` when the record carries neither, which
+   * is every run that did not suspend itself and a paused one whose listing
+   * could read neither. The two are absent independently (JSONFinished), so
+   * neither is drawn from the other. */
+  readonly resumeAt: string | null
+  readonly resumedBy: string | null
   readonly requestedBy: string | null
   /** the run's whole recorded launcher (`launched_by`), `null` when the record
    * carries none -- the identity the record holds, drawn as it wrote it
@@ -1268,6 +1278,8 @@ export function buildRunModel(inputs: RunInputs): RunModel {
       reason: textAt(row['reason']),
       branch: textAt(row['branch']),
       outcome: textAt(row['outcome']),
+      resumeAt: textAt(row['resume_at']),
+      resumedBy: textAt(row['resumed_by']),
       requestedBy: textAt(row['requested_by']),
       launchedBy: textAt(row['launched_by']),
       created: textAt(row['created']),
@@ -1536,12 +1548,14 @@ function fillCrumb(factory: RunFactory, model: RunModel, crumb: ScreenElement): 
 }
 
 /** fillHeader is the rest of the header: the run's own columns, its rigor, its
- * status strip and, for a halted run, the line naming why. All of them are the
- * record's, so all of them arrive with it. */
+ * status strip, and the line a paused or halted run adds to it -- when the
+ * pause's resume is due and what resumed it (R15), or why the run halted. All
+ * of them are the record's, so all of them arrive with it. */
 function fillHeader(factory: RunFactory, model: RunModel, header: ScreenElement): void {
   header.append(metaLine(factory, model))
   if (model.row.rigor !== null) header.append(rigorLine(factory, model.row.rigor))
   header.append(statusStrip(factory, model))
+  if (model.row.status === PAUSED_STATUS) header.append(pausedLine(factory, model))
   if (model.halt !== null) header.append(haltLine(factory, model.halt))
 }
 
@@ -1649,9 +1663,19 @@ function statusStrip(factory: RunFactory, model: RunModel): ScreenElement {
   const element = make(factory, 'div', 'run-strip')
   const lifecycle = cell(element, factory, 'div', 'run-strip-cell')
   literal(cell(lifecycle, factory, 'span', 'run-strip-label'), 'LIFECYCLE')
-  // `status` is a string the run's record carries, not a word this console
-  // chose, so it goes through `putText` like every other document string.
-  putText(cell(lifecycle, factory, 'span', 'run-strip-value', 'run-status'), model.row.status, 'label', 'row.status')
+  // **The status word is drawn from this console's own table, and the word it
+  // does not know is drawn as `unknown` rather than as itself.** `status` is
+  // the only place a run's state is spelled on this screen, so a word this
+  // build has no reading for -- a `paused` written before VS3 put it in
+  // `RUN_STATUSES`, a status a newer CLI adds -- must not be echoed: the cell
+  // says the console does not know it, which is true, where the document's own
+  // word would be a claim the screen cannot keep (`live.ts`'s `healthFlag` is
+  // the same rule for the same kind of value). A record carrying no status at
+  // all is neither: there is nothing to draw, and the cell is empty.
+  const status = cell(lifecycle, factory, 'span', 'run-strip-value', 'run-status')
+  const known = runStatusOf(model.row.status)
+  if (known !== null) putText(status, known, 'label', 'row.status')
+  else if (model.row.status !== '') literal(status, UNKNOWN_STATUS_WORD)
   const outcome = cell(element, factory, 'div', 'run-strip-cell')
   literal(cell(outcome, factory, 'span', 'run-strip-label'), 'OUTCOME')
   const outcomeValue = cell(outcome, factory, 'span', 'run-strip-value', 'run-outcome')
@@ -1739,6 +1763,87 @@ function rigorWord(
     return
   }
   putText(element, value, 'label', field)
+}
+
+/** PAUSED_WORD, PAUSED_RESUME_WORD and PAUSED_RESUMED_BY_WORD are the three
+ * words a paused run's line says, and all three are the CLI's own:
+ * `internal/watch/render.go` draws a paused run's line as
+ * `<PAUSED> <ending> <title> · expected resume <stamp> · resumed by <ending>`.
+ * The status word itself is not among them -- the LIFECYCLE cell above already
+ * draws it, and it is the record's own string (`runStatusOf`) rather than a word
+ * this file chose. */
+const PAUSED_WORD = 'PAUSED'
+
+const PAUSED_RESUME_WORD = 'expected resume'
+
+const PAUSED_RESUMED_BY_WORD = 'resumed by'
+
+/**
+ * pausedLine is a paused run's own two facts (contract-pause R15, D3195): the
+ * instant its resume is due at, and the run that resumed it.
+ *
+ * **The line is drawn only for a run whose record ended `paused`**
+ * (`fillHeader`), because the status is the one thing a paused record always
+ * carries: the two facts beside it are absent independently -- a pause still
+ * standing has no resumer yet, and a listing that could not read the
+ * credentials service's node for the pause has no instant -- so a line drawn for
+ * every run would be a line of absences on a run that never suspended itself.
+ *
+ * Each absent half is the console's `n/a` with the reason in the `title`
+ * (`maybeCell`), never a blank cell: "this pause has not been resumed" and "the
+ * console could not read the resumer" are two different facts and must not look
+ * alike. The instant is drawn as the stamp the CLI wrote, in the `label` class
+ * `haltLine` draws a halting's own moment with -- a moment to place beside `now`
+ * rather than a number this console counted.
+ *
+ * The resumer is a run id drawn as its ending, with the whole id on the cell as
+ * `data-run-id` (`putRunRef`): **this screen wires that one door** (entry.ts's
+ * `showRun`), because a paused run's reader asks what brought it back and the
+ * answer is another run this console can open.
+ */
+function pausedLine(factory: RunFactory, model: RunModel): ScreenElement {
+  const element = make(factory, 'div', 'run-paused')
+  literal(cell(element, factory, 'span', 'run-paused-word'), PAUSED_WORD)
+  const at = cell(element, factory, 'span', 'run-paused-at')
+  literal(cell(at, factory, 'span', 'run-paused-at-word'), PAUSED_RESUME_WORD)
+  maybeCell(at, factory, 'span', model.row.resumeAt, 'label', 'row.resume_at', 'run-paused-at-value')
+  const by = cell(element, factory, 'span', 'run-paused-by')
+  literal(cell(by, factory, 'span', 'run-paused-by-word'), PAUSED_RESUMED_BY_WORD)
+  // A pause nobody has resumed yet draws the mark and carries no door: there is
+  // no id to open, and the mark's `title` says which fact is missing, where a
+  // cell that simply had no attribute would look like a run this console could
+  // not open.
+  if (model.row.resumedBy === null) {
+    maybeCell(by, factory, 'span', model.row.resumedBy, 'runId', 'row.resumed_by', 'run-paused-by-value')
+  } else {
+    putRunRef(cell(by, factory, 'span', 'run-paused-by-value'), model.row.resumedBy, 'row.resumed_by')
+  }
+  return element
+}
+
+/**
+ * putRunRef draws another run's ending into a cell and keeps its whole id on it
+ * as `data-run-id`, the door `entry.ts`'s `showRun` opens that run from. It is
+ * `live.ts`'s `putRunId` for this screen, under the same two rules: the ending
+ * is what a person reads and types back (`task.ShortRun`) while the whole id
+ * travels beside it, because a command takes four or more characters as an
+ * ending and a longer one could still match two runs; and a value the `runId`
+ * class refuses is drawn through `putText` -- the console's own reason -- with
+ * **no attribute at all**, so a cell whose id could not be drawn is not a door
+ * to whatever the mark happens to be.
+ *
+ * The ending is the id's plain four characters rather than a cut grown by the
+ * values drawn around it (`live.ts`'s `runEndings`): the resumer is a value
+ * *inside* a line here, not a row of a table this screen draws.
+ */
+function putRunRef(element: ScreenElement, raw: string, field: string): void {
+  const id = sanitizeText(raw, 'runId', field)
+  if (!id.ok || isMarkerText(id.text)) {
+    putText(element, raw, 'runId', field)
+    return
+  }
+  element.setAttribute('data-run-id', id.text)
+  literal(element, shortRun(id.text))
 }
 
 /** haltLine is why the run halted: the word, the reason, and where and when the

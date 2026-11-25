@@ -303,7 +303,9 @@ func (r *run) writeCommitReports(ctx context.Context) ([]string, error) {
 // away, and the ones a person or an older run put there stay where they are.
 // They are named by their path -- a name this step checked against its own
 // shape, never anything a file holds (G1) -- and the log is the run's own
-// record of them.
+// record of them: in the message, so that the product's own log reader prints
+// them (`fugaro logs` projects a field's message and tags and no attributes),
+// and beside it as the "paths" attribute, for a structured reader.
 func (r *run) nameUnhandedReports(dir string, rows []digest.Row, handed map[string]bool) {
 	var extra []string
 	for _, row := range rows {
@@ -315,8 +317,9 @@ func (r *run) nameUnhandedReports(dir string, rows []digest.Row, handed map[stri
 		return
 	}
 	sort.Strings(extra)
-	r.d.Log.Warn("the report folder holds reports this run was not handed; they are left alone, because the store only adds and overwrites and a run never takes a report away",
-		"paths", strings.Join(extra, " "))
+	names := strings.Join(extra, " ")
+	r.d.Log.Warn("the report folder holds reports this run was not handed; they are left alone, because the store only adds and overwrites and a run never takes a report away: "+names,
+		"paths", names)
 }
 
 // mirrorFileMatches reports whether the file at path already holds exactly what

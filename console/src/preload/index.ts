@@ -146,48 +146,26 @@ export const BRIDGE_VERSION = 1
  * ruling of 2026-10-25): `installation.list` spawns `config list --json`, and
  * the other five act on the console's own store and window.
  *
- * **Bitbucket credentials T1.2 added the twenty-third** (`coordinator.status` /
- * `coordinatorStatus`, the project view read from the coordinator's stored
- * view -- `fugaro coordinator status --from-store --all --json`, D364) and left
- * the other twenty-two exactly where they were. It is the one read of the CLI's
- * this surface can reach that needs no credential of the host's, and its two
- * flags are words of `src/main/spawn.ts`'s row rather than arguments, which is
- * why the row declares none.
- *
  * **V2.5.1a added the twenty-fourth** (`run.launch` / `launchRun`, the console's
  * one write, design section 5.1 rule 11) and left the other twenty-three exactly
- * where they were. The twenty-third is above it in this list.
+ * where they were. It is the row here whose child mints a credential of the
+ * host's: a run that holds the App's private key and pushes and opens the pull
+ * request with a token carrying `contents: write`.
  *
- * **Coordinator v2 K2a added the twenty-fifth** (`link.openPullRequest` /
- * `openPullRequest`, D814 and D815) and left the other twenty-four exactly where
- * they were. The twenty-fourth is above it in this list.
- *
- * **Coordinator v2 C3 added the twenty-sixth** (`coordinator.show` /
- * `coordinatorShow`, one pull request as the host has it, the description
- * included -- D816) and left the other twenty-five exactly where they were. It
- * sits directly under `coordinator.status` because the two are the same subject
- * asked two ways, and it is the second row here whose child mints a credential
- * of the host's: the first is `run.launch`, the launch at the end of this list,
- * whose child is a run that holds the App's private key and pushes and opens the
- * pull request with a token carrying `contents: write`. This row's is the
- * coordinator's own read-only installation token, which is what its two
- * arguments and no third key are for (`src/main/ipc.ts`).
- *
- * **Coordinator v2 C4 added the twenty-seventh** (`coordinator.intents` /
- * `coordinatorIntents`, what the fleet's writers have declared, newest first --
- * D827) and left the other twenty-six exactly where they were. It sits directly
- * under `coordinator.show`, the same subject asked a third way. It is the first
- * row here with **no argument at all**: the whole argv is `src/main/spawn.ts`'s
- * row, `--all --json`, so no word of it is caller-influenced -- and like the
- * project view above it, its child mints nothing of the host's: the
- * declarations are the caller's own database node.
+ * **The console-fixes plan's I-ORCH removed the four v2 operations no screen
+ * reaches any more** (`link.openPullRequest` / `openPullRequest`, D814 and D815,
+ * and the coordinator v2 reads `coordinator.status` / `coordinatorStatus`, D364,
+ * `coordinator.show` / `coordinatorShow`, D816, and `coordinator.intents` /
+ * `coordinatorIntents`, D827), so the surface's rows and the methods above them
+ * are gone in one place: an operation no screen can reach that every reader
+ * still sees is a surface a reader cannot trust.
  *
  * **Console 0.119.0 added the twenty-eighth** (`runs.summary` / `summaryRuns`,
  * the jobs-free totals read -- `fugaro runs summary --json`, the CLI half of
  * which is B4, #1580) and left the other twenty-seven exactly where they were.
  * It sits directly under `runs.stats`, the other read of the runs family that
  * answers from the budget rather than from a run record. Its method is the
- * plainest case of rule 5's shape after the declarations read: the operation
+ * plainest case of rule 5's shape: the operation
  * declares **one optional window** and nothing else, so no other word of the
  * argv is caller-influenced -- and the window is the console's own closed set
  * (`src/main/ipc.ts`'s `SUMMARY_SINCE_WINDOWS`), which is why a renderer cannot
@@ -267,8 +245,8 @@ export const BRIDGE_VERSION = 1
  * and D1480 and D1481, and rule 6 carries a row for each) and left the other
  * thirty-two exactly where they were. They are **not in 0.119.0** or 0.120.0 as
  * they shipped: they land with CM4, in the release that carries the managed
- * screens' plan. They sit under `coordinator.intents`, the declarations
- * read, because the three are the same tab's reads of what the project has
+ * screens' plan. They sit under `orchestrator.map`, the tab's own map read,
+ * because they are the Project tab's reads of what the project has
  * stored, and **each declares no argument at all**: neither command has a
  * positional word, and the two project flags are main-process state rather than
  * arguments (`takesProject`, rule 3, `src/main/spawn.ts`), so this is the one
@@ -318,7 +296,7 @@ export const BRIDGE_VERSION = 1
  * exactly where they were. It is **not in 0.119.0** through 0.122.0 as they
  * shipped: it lands in the release that carries GV3.2. It is this surface's
  * **third write** (rule 14 of section 5.1, after V2.5.1a's launch and the
- * settings write of C3) and it sits under `coordinator.intents` with the
+ * settings write of C3) and it sits under `orchestrator.map` with the
  * project's stored reads, because the record it writes is the one the Graph
  * draws. It is the only row here whose **every** word is main-process state read
  * out of a document, and the renderer's own two arguments reach it as **ids**
@@ -434,12 +412,6 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   ['installation.current', 'getInstallation'],
   ['environment.report', 'environmentReport'],
   ['link.openExternal', 'openExternal'],
-  // The clickable pull request number (Coordinator v2 K2a, D814/D815). One row,
-  // and the method takes the operation's own three fields: the provider, the
-  // repository and the number. It carries **no URL**, because the main process
-  // builds the link from those three fields -- a `url` a job wrote is drawn as
-  // text and never reaches the browser (rule 2, F2).
-  ['link.openPullRequest', 'openPullRequest'],
   // The installation rail (owner's design ruling of 2026-10-25). The console
   // never shows a picker screen: the rail lists every installation, a click
   // switches the console to one, and a row that cannot be read opens its issue
@@ -454,42 +426,11 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   ['installation.remove', 'removeInstallation'],
   ['installation.reveal', 'revealInstallation'],
   ['installation.open', 'openInstallations'],
-  // The project view (Bitbucket credentials T1.2, D364): `fugaro coordinator
-  // status --from-store --all --json`, the one read of the CLI's that needs no
-  // credential of the host's. One row here for the reason L5b's and GV2.1's are
-  // one row each: a method that took the operation as an argument is the shape
-  // rule 5 forbids. The two flags the read fixes are words of `src/main/
-  // spawn.ts`'s row, not arguments a renderer sends -- the row here declares
-  // none.
-  ['coordinator.status', 'coordinatorStatus'],
-  // The pull request read (coordinator v2 C3, D816): `coordinator show --repo
-  // <owner/name> --pr <n> --json`, one pull request as the host has it, the
-  // description included -- which the project view's row above cannot carry,
-  // because the stored view drops a body by design (reconciliation F3). One row
-  // here for the same reason as every other: the two arguments are the
-  // operation's own closed schema (`src/main/ipc.ts`), and a method that took
-  // the operation as an argument is the shape rule 5 forbids. **It is the second
-  // row whose child mints a credential of the host's**, after `run.launch` at
-  // the end of this list -- the person read set's own read-only installation
-  // token (contents, pull requests and metadata, all read), against a launched
-  // run's write set -- so its two arguments are the whole of
-  // what a renderer can influence about the argv, and no credential of the host's
-  // reaches this surface, the reply or a log line.
-  ['coordinator.show', 'coordinatorShow'],
-  // The declarations read (coordinator v2 C4, D827): `coordinator intents --all
-  // --json`, what the fleet's writers have stored, newest first. One row here
-  // for the same reason as every other -- a method that took the operation as
-  // an argument is the shape rule 5 forbids -- and this row's method is the
-  // plainest case of it: the operation has no argument, so the row declares
-  // none and `--all` is a word of the argv rather than a control. `declared_by`
-  // comes back as a **declaration** -- the string a writer put in its own
-  // record -- never as an identity this process establishes.
-  ['coordinator.intents', 'coordinatorIntents'],
   // The orchestrator map (the console-fixes plan's CG7a, D3221): `fugaro
   // orchestrator map --json`, the project's active orchestrators, the
   // connections between them and the coordinator's heartbeat. One row here for
-  // the same reason as every other, and this row is the declarations read's
-  // shape exactly: the operation has no argument at all, so the row declares
+  // the same reason as every other, and this row is the plainest shape of all:
+  // the operation has no argument at all, so the row declares
   // none and every word of the argv is the main process's own. The document is
   // the one the Coordinator tab draws, and the read sits behind
   // `ORCHESTRATOR_MAP_CLI_FLOOR` (`src/shared/version.ts`) -- a CLI below it is

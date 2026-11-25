@@ -387,6 +387,19 @@ func checkedWrite(id string, got Secret, o owner) error {
 	return checkMarker(id, got, o)
 }
 
+// AcceptsWorkflowWrite reports whether a project-shared container that already
+// exists is one this intake would write a workflow's own secret into: the shape
+// check and the marker check, asked exactly as the write path asks them
+// (checkedWrite). It is exported for one caller — `fugaro update`'s migration of
+// a project copy into the fugaro_p_ grammar (internal/cli) — so that a container
+// that migration creates is one the next `fugaro secrets set` accepts, and one
+// another writer made is skipped rather than written into (G2). Two definitions
+// of that fence could come to disagree about a container the copy made, which is
+// the one thing this export prevents.
+func AcceptsWorkflowWrite(id string, got Secret) error {
+	return checkedWrite(id, got, owner{shared: true, workflow: true})
+}
+
 // checkMarker refuses a write whose class is not the container's own: a
 // workflow's value is stored in a container carrying the marker and a
 // project-shared credential in one that does not, both directions (F18, G2).

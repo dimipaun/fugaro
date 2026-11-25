@@ -413,65 +413,14 @@ export interface FugaroSource {
    * at all, a call the door refused before it queued anything.
    */
   roadmapMove(args: ValidatedArguments): Promise<RoadmapMoveAnswer>
-  /**
-   * coordinatorStatus is the project view: every repository the installation's
-   * local config lists, drawn from the view the coordinator's sweep last stored
-   * (`coordinator status --from-store --all --json`, Bitbucket credentials
-   * T1.2, D364).
-   *
-   * It is the one read here that asks nothing of the host: the stored view is
-   * the caller's own database read (`roles/firebasedatabase.viewer`), so there
-   * is no App key, no Bitbucket credential and no host call behind it. A
-   * repository the coordinator has never reconciled answers the runs half with
-   * `"stored": false` rather than refusing -- which is the state this console
-   * draws as "the runs alone", and the reason the read is safe on an
-   * installation whose coordinator was never turned on.
-   *
-   * Its two flags (`--from-store`, `--all`) are words of the spawn row and never
-   * arguments: an implementation must not let a caller turn either off, since
-   * the question is the *project's* whole repository set and a read without
-   * `--from-store` would be a host call this console has no credential for.
-   */
-  coordinatorStatus(args: ValidatedArguments): Promise<Snapshot>
-  /** coordinatorShow is one pull request as the host has it, the description
-   * included (`coordinator show --json --repo <owner/name> --pr <n>`,
-   * coordinator v2 C3, D816; `console/docs/json-contract.md` §6.15). The two
-   * arguments are the operation's own and both required, and an implementation
-   * must add no word of its own to that argv: this is the second read whose
-   * child mints a credential of the host's: `run.launch` is the first, and its
-   * child is a run whose token can write. This one's is the person read set's
-   * own read-only installation token -- contents read, pull requests read and
-   * metadata read, no `write` of any kind
-   * (`github.PersonReadTokenPermissions`) -- so what it is asked and nothing
-   * else is what it may send. It has no precondition of its own beyond the two
-   * arguments: the CLI resolves the repository's provider itself, the
-   * credential with it, and the credentials service from the project's own
-   * published block -- a project that publishes none refuses rather than
-   * reading. */
-  coordinatorShow(args: ValidatedArguments): Promise<Snapshot>
-  /** coordinatorIntents is what the fleet's writers have declared, newest first
-   * (`coordinator intents --all --json`, coordinator v2 C4, D827;
-   * `console/docs/json-contract.md` §6.16). It has **no argument at all**: the
-   * whole argv is the spawn row's own words, so an implementation must add no
-   * word of its own to it and has nothing a caller could influence. Like the
-   * stored view beside it, the read is the caller's own database node -- no App
-   * key, no installation token, no provider and no host -- so it has no
-   * precondition of its own where `coordinatorShow`'s host read needs the
-   * credentials service its project publishes: the reads that ask the host are
-   * the ones that need one, and this one is not among them --
-   * neither is `coordinatorStatus`, which is the stored view and needs no host
-   * credential either. */
-  coordinatorIntents(args: ValidatedArguments): Promise<Snapshot>
   /** orchestratorMap is the project's active orchestrators, the connections
    * between them and the coordinator's own heartbeat (`orchestrator map --json`,
    * the console-fixes plan's CG7a; C-ORCH's document,
-   * `internal/orchestrator/mapdoc.go`; `console/docs/json-contract.md` gains the
-   * section for it with the plan's I-ORCH, which wires the map end to end). It
-   * has **no argument at all**, the declarations read's
-   * shape: the whole argv is the spawn row's own words, so an implementation
-   * must add no word of its own and a caller influences nothing -- the document
-   * is one project's, so there is no scope to narrow. Like `coordinatorIntents`
-   * it is the caller's own database read (the orchestrator nodes, their leases,
+   * `internal/orchestrator/mapdoc.go`; `console/docs/json-contract.md` §6.26).
+   * It has **no argument at all**: the whole argv is the spawn row's own words,
+   * so an implementation must add no word of its own and a caller influences
+   * nothing -- the document is one project's, so there is no scope to narrow.
+   * It is the caller's own database read (the orchestrator nodes, their leases,
    * the claims and the heartbeat, `roles/firebasedatabase.viewer`), so it needs
    * no host credential and no published credentials service.
    *
@@ -491,9 +440,8 @@ export interface FugaroSource {
    * the command's own bound: **`argv` is never in it** (D1476), which is why no
    * screen can widen the disclosure by asking differently. The read is the
    * caller's own database node and the installation's two marks, like
-   * `coordinatorIntents` above and for the same reason: no host credential is
-   * involved, so it needs no published credentials service where
-   * `coordinatorShow`'s host read needs the one its project publishes. */
+   * `orchestratorMap` above and for the same reason: no host credential is
+   * involved, so it needs no published credentials service. */
   managedStatus(args: ValidatedArguments): Promise<Snapshot>
   /** policyShow is the published policy node a project's runs read, and nothing
    * else (`project policy show --json`, the same plan's CM4, D1480 and D1481).
@@ -1019,10 +967,7 @@ export function handlersFor(
       const feed = source.subscribeGraph(args)
       return await feed.current()
     },
-    'coordinator.status': (args) => source.coordinatorStatus(args),
-    'coordinator.show': (args) => source.coordinatorShow(args),
-    'coordinator.intents': (args) => source.coordinatorIntents(args),
-    // The orchestrator map (CG7a). A read like the declarations above it and no
+    // The orchestrator map (CG7a). A read like the ones above it and no
     // argument either, so the handler is the call itself: the source's own
     // version floor is what decides whether a child is spawned at all.
     'orchestrator.map': (args) => source.orchestratorMap(args),
@@ -1127,7 +1072,6 @@ export type CliBackedHandlers = Omit<
   | 'startup.compatibility'
   | 'run.launch'
   | 'settings.edit'
-  | 'link.openPullRequest'
   | 'licence.read'
   | 'licence.save'
   // The nine console-improvements operations (AL) are omitted here for the

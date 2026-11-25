@@ -1,0 +1,34 @@
+[
+  {
+    "candidates": [
+      {
+        "content": { "role": "model", "parts": [{ "text": "the " }] },
+        "index": 0
+      }
+    ],
+    "usageMetadata": { "promptTokenCount": 300, "totalTokenCount": 300 }
+  },
+  {
+    "candidates": [
+      {
+        "content": { "role": "model", "parts": [{ "text": "answer is " }] },
+        "index": 0
+      }
+    ]
+  },
+  {
+    "candidates": [
+      {
+        "content": { "role": "model", "parts": [{ "text": "42." }] },
+        "finishReason": "STOP",
+        "index": 0
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 300,
+      "candidatesTokenCount": 9,
+      "totalTokenCount": 309
+    },
+    "responseId": "aStreamedText"
+  }
+]

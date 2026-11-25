@@ -25,8 +25,8 @@ streams:
     # The last CLI release, v0.21.2 "Rhino two"; 0.22.0 "Sloth" is next (the
     # field below stays at the version main carries: a hotfix is cut from its
     # own branch and is never merged back).
-    current: "0.28.0"
-    next: Zander
+    current: "0.29.0"
+    next: Zebra
     tag_prefix: v
 
   - name: console
@@ -36,9 +36,9 @@ streams:
     # updater refuses a downgrade (docs/release.md, "Console releases"). Apple
     # and Lemon are avoided, and internal/streams refuses them.
     names: [Cherry, Mango, Melon, Nectarine, Orange, Papaya, Peach, Pear, Plum, Pomelo, Quince, Raspberry, Strawberry, Tangerine, Ugli, Watermelon, Yuzu, Zante, Zapote, Ziziphus, Zucchini, Zwetschge]
-    # The last console release, console-v0.125.0 "Watermelon"; 0.126.0 "Yuzu" is next.
-    current: "0.125.0"
-    next: Yuzu
+    # The last console release, console-v0.127.0 "Zante"; 0.128.0 "Zapote" is next.
+    current: "0.127.0"
+    next: Zapote
     tag_prefix: console-v
 
   - name: mobile

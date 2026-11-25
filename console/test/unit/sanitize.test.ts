@@ -1794,13 +1794,14 @@ describe('the writers', () => {
 
 describe('the coordinator\u2019s pull request document (coordinator v2 C3)', () => {
   // The nine keys of `coordinator show`'s document (`ee/coordinator/view.go`,
-  // `PRDocument`). Two of them are not strings; the seven that are must each
-  // name a class in `schema.ts`, because this document is drawn by a screen that
-  // has no class of its own to spell: the description is the whole reason the
-  // read exists, and the state is the *host's* word rather than one of the CLI's
-  // constant tables -- so `state` is classed here rather than left beside the
-  // enums in `NON_TEXT_STRING_KEYS`, where a key means "the console compares or
-  // sorts this, it never draws it".
+  // `PRDocument`, contract §6.15). Two of them are not strings; the seven that
+  // are must each name a class in `schema.ts`: no console operation reads this
+  // document since the Coordinator tab became the map (I-ORCH), and it is
+  // classed anyway -- the console's class map covers every string key of every
+  // document the contract defines, and the host's own words are the reason
+  // `state` is classed here rather than left beside the enums in
+  // `NON_TEXT_STRING_KEYS`, where a key means "the console compares or sorts
+  // this, it never draws it".
   it('classes every string key of the document, the description included', () => {
     const strings = COORDINATOR_PR_DOCUMENT_KEYS.filter(
       (key) => key !== 'number' && key !== 'draft',
@@ -1822,7 +1823,7 @@ describe('the coordinator\u2019s pull request document (coordinator v2 C3)', () 
 
   it('draws a hostile description as inert text, through the class the map gives it', () => {
     // A description is written by whoever opened the pull request, and it is the
-    // one field this read adds to the stored view: a terminal escape, an OSC-8
+    // one field that document adds to the stored view's record: a terminal escape, an OSC-8
     // hyperlink sequence, a bidi override and a line break, in one value. The
     // screen passes the class the map gives the key and nothing else, which is
     // the property this test holds.
