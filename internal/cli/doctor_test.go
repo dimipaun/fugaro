@@ -2062,6 +2062,14 @@ func apiKeyRigFiles(t *testing.T, lines string, extra map[string]string) *doctor
 	// where the checks that read the model read it now (S1, D3237): the rig
 	// resolves as it did when the key was the file's own.
 	if pins := pinsLayer(yaml); pins != "" {
+		// doctor's layer lines read the runs bucket (layerDrift), which this
+		// rig names as the real gs://fugaro-runs-proj-1234: a layer that
+		// applies would open that bucket, and a machine holding credentials
+		// would then reach the network. The bucket_url under the test's own
+		// directory keeps the read local, and findLayer's name check passes
+		// either way (localcfg.RunsBucketName reads runs_bucket).
+		bucketDir := t.TempDir()
+		addLocalLines(t, r, "bucket_url: file://"+bucketDir+"\n")
 		attachLayerHere(t, "aurora", pins)
 		yaml = anchoredText(yaml)
 	}
