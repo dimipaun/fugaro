@@ -810,6 +810,28 @@ for f in sorted(os.listdir(d)):
         break
 PY
 }
+# submitted_entrypoints: the interpreter every container the check submitted is
+# launched with, one per line, read out of the configurations the fake kept. The
+# probe's body is POSIX and the image need not carry bash, so the entrypoint and
+# the shebang have to agree: a body launched with an interpreter the image does
+# not have dies at start with nothing on stdout, which is the failure the first
+# run could not tell apart from a line that never reached Cloud Logging.
+submitted_entrypoints() {
+  python3 - "$dir/state/submits" <<'PY' 2>/dev/null || true
+import json, os, sys
+d = sys.argv[1]
+seen = set()
+for f in sorted(os.listdir(d)):
+    obj = json.load(open(os.path.join(d, f)))
+    for tg in obj.get("taskGroups", []):
+        for r in tg.get("taskSpec", {}).get("runnables", []):
+            c = r.get("container", {})
+            if c.get("commands"):
+                seen.add(c.get("entrypoint") or "<none>")
+for e in sorted(seen):
+    print(e)
+PY
+}
 # write_default_case: the platform answers most cases start from. Both jobs ran;
 # the probe's VM carries Batch's OWN job-uid label, which is the Google-made fact
 # u1-link is about and the field a forge would have to reproduce, and its own
@@ -1147,6 +1169,14 @@ test_happy_path() {
   [ -n "$marker" ] || fail "happy: no marker value was submitted at all, so u3-measured nothing"
   expect_absent "$out" "$marker" "happy: the block"
   expect_absent "$err" "$marker" "happy: the progress log"
+  # The body the check submitted is POSIX and its shebang is /bin/sh, and the
+  # image it runs in need not carry bash: a container launched with /bin/bash
+  # there dies at start with nothing on stdout, so the entrypoint the job names
+  # has to be the one the body can be read by.
+  local eps
+  eps=$(submitted_entrypoints)
+  [ "$eps" = "/bin/sh" ] \
+    || fail "happy: the submitted containers launch $(printf '%s' "$eps" | tr '\n' ' ')— the body is POSIX and the shebang is /bin/sh"
 }
 
 # The red step of BR0, as the plan states it: "the self-test fails when the

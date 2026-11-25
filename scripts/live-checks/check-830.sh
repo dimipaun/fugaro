@@ -544,8 +544,9 @@ wait_for_lines() { # wait_for_lines UID PATTERN OUTFILE SECONDS
 # it is expanded by this script: every parameter reaches the container as one of
 # the job's own variables, which is also how the marker variable gets there.
 # It prints one `C830` line per reading and never prints the marker's value.
-# It runs under /bin/sh and sets no `-e`: the image's own shell is the one thing
-# this check must not have to assume. The first run of this check reported no
+# It runs under /bin/sh — the shebang and the job's own entrypoint both name it,
+# and the suite pins that they agree — and sets no `-e`: the image's own shell is
+# the one thing this check must not have to assume. The first run of this check reported no
 # line of the container's own at all, and a `#!/bin/bash` container in an image
 # that ships no bash fails at start with nothing on stdout — the check could not
 # tell that from a line that never reached Cloud Logging. /bin/sh is in every
@@ -676,7 +677,7 @@ if body:
     with open(body) as fh:
         container = {
             "imageUri": params["image"],
-            "entrypoint": "/bin/bash",
+            "entrypoint": "/bin/sh",
             "commands": ["-c", fh.read()],
         }
 else:
