@@ -82,7 +82,7 @@ func vertexSecretsRun(t *testing.T, svc *secretsService) *bk {
 // run, the fetch stops at `this run has no run identity` before any stage, and
 // every assertion below fails on a run that never reached its first one.
 func TestVertexRunHasRunIdentity(t *testing.T) {
-	svc := &secretsService{values: map[string]string{secretEnvVar: fetchedSecretValue}}
+	svc := &secretsService{envs: map[string]string{secretEnvVar: fetchedSecretValue}}
 	b := vertexSecretsRun(t, svc)
 
 	var seen string
