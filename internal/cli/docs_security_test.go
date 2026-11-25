@@ -39,6 +39,11 @@ func TestSecurityMdStatesTheModelAndItsLimits(t *testing.T) {
 		// budget mode defaults to off (always-a-budget, F17): the real key
 		// stays out of the agent's environment in every mode.
 		"With no `budget:` block the mode is `observe`, so the caps record rather than stop.",
+		// The other half of that bullet, which a tightening pass dropped and a
+		// review asked back: the code refuses the word outright
+		// (policy.Mode.Removed, ModeOffRefusal), so the document has to say
+		// there is none to write.
+		"there is no `off` to write instead",
 		"Vertex has no dollar cap, in any mode.",
 		"roles/storage.objectAdmin",
 		"it can read the token from the runner's `/proc`",
