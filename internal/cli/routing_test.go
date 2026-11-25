@@ -235,6 +235,54 @@ defaults:
 	}
 }
 
+// TestRoutingOutsideACheckoutStillJudgesTheLayer: a write is judged against
+// every model a run of the project can call, and the project layer names them
+// whether or not the directory the command is run from is a checkout at all.
+// The layer cached here pins a model no entry of the fixture's table matches —
+// its background model, which no craft names — and the test then stands outside
+// every repository. A model list that dropped the layer's pins there would
+// accept a write that leaves that model unrouted, which is the fail-open R1 and
+// R22 refuse.
+func TestRoutingOutsideACheckoutStillJudgesTheLayer(t *testing.T) {
+	path, _ := routingFixture(t)
+	routingSaveLayer(t, `version: 1
+project: aurora
+gcp_project: aurora-gcp
+defaults:
+  git: { provider: github }
+  agent:
+    auth: api-key
+    models:
+      background: gemini-3-pro
+`)
+	t.Chdir(t.TempDir())
+	out, _, err := execute(t, "routing", "ls")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if line := routingLine(t, routingSection(t, out, "MODEL"), "gemini-3-pro"); !strings.Contains(line, "no entry matches") {
+		t.Errorf("the layer's own model is not a row of the read outside a checkout: %q\n%s", line, out)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, errOut, err := execute(t, "routing", "set", "claude-*", "pool:claude-pool")
+	if err == nil {
+		t.Fatalf("the write was accepted outside a checkout, leaving the layer's model unrouted:\n%s%s", out, errOut)
+	}
+	if !strings.Contains(err.Error(), "gemini-3-pro") {
+		t.Errorf("the refusal is %q, and it must name the model the layer names", err.Error())
+	}
+	after, rerr := os.ReadFile(path)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if !bytes.Equal(before, after) {
+		t.Error("a refused write left the file changed")
+	}
+}
+
 // TestRoutingLsJSONMatchesSchema validates the document the read writes against
 // schemas/routing-ls.schema.json, the contract a consumer reads it by (D784),
 // and holds the loaded document to the same rows the text read prints.

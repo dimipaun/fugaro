@@ -50,7 +50,7 @@
         },
         "chain": {
           "type": "array",
-          "description": "The entry's sources, first usable one wins, each spelled the way `fugaro routing set` takes them, so what this document prints is what that command accepts.",
+          "description": "The entry's sources, first usable one wins, each spelled the way `fugaro routing set` takes them, so what this document prints is what that command accepts. A source's `admit` list is not part of the spelling: `fugaro routing set` writes none, and a reader that needs the list reads it in `sources`.",
           "items": {
             "type": "string",
             "minLength": 1

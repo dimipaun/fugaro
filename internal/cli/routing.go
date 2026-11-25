@@ -92,10 +92,11 @@ entry's chain spelled the way ` + "`fugaro routing set`" + ` takes it.
 
 Below it is one row per model a run of this project can be served on — the five
 crafts' resolved models, the four models ` + "`agent.models`" + ` pins and each review
-level's ` + "`agent.levels.<level>.model`" + ` the checkout writes — with the entry that
-answers it and why that entry won: the only entry that matches, the longest of
-several patterns, or an exact ID over the patterns that also match. A model no
-entry matches is a run that cannot start, and the row says so.
+level's ` + "`agent.levels.<level>.model`" + `, out of the agent the run resolves (this
+checkout's file over the project layer's defaults) — with the entry that answers
+it and why that entry won: the only entry that matches, the longest of several
+patterns, or an exact ID over the patterns that also match. A model no entry
+matches is a run that cannot start, and the row says so.
 
 The read is offline: it reaches no bucket, no database and no host.`,
 		Args: cobra.NoArgs,
@@ -186,7 +187,11 @@ func runRoutingLs(cmd *cobra.Command, o *routingLsOptions) error {
 		}
 		doc.Entries = append(doc.Entries, row)
 	}
-	for _, m := range routingModels(cmd, lc) {
+	models, err := routingModels(cmd, lc)
+	if err != nil {
+		return err
+	}
+	for _, m := range models {
 		entry, why := routingWinner(lc.ModelRouting, m.model)
 		crafts := m.crafts
 		if crafts == nil {
@@ -259,8 +264,15 @@ type routingModel struct {
 // pass craftLsServes reads a craft's model verdict with — never the checkout's
 // block alone: a project layer pinning a model, a role or a review level names
 // a model every repository of the project runs on, and the table a write is
-// refused over has to carry it. Where this directory is no checkout the block
-// reads as it does for `fugaro craft ls`, empty.
+// refused over has to carry it.
+//
+// Where that resolution is not available — this directory is no checkout, or
+// the file is one the rules refuse — both documents are read as they stand
+// rather than neither. A write is judged against every model a run of the
+// project can call, and the layer names them whether or not the directory the
+// command is run from names a file at all: a list that dropped them would let a
+// removal leave a model the project runs on unrouted, which is the fail-open
+// R1 and R22 exist to refuse.
 //
 // One list for the whole family: `ls` renders it and `set`/`rm` hand it to the
 // checks (routing.Checks.Models), so the table a person reads about and the
@@ -270,7 +282,7 @@ type routingModel struct {
 // grade, a `--model` override, a level a recipe adds — because they are decided
 // per launch and not by any file. RT6's `validate` is where a launch's answer is
 // judged; this row is what this machine's configuration says.
-func routingModels(cmd *cobra.Command, lc *localcfg.Config) []routingModel {
+func routingModels(cmd *cobra.Command, lc *localcfg.Config) ([]routingModel, error) {
 	files := craftLsFiles{lc: lc}
 	if data, ok := checkoutFugaroYAML(cmd); ok {
 		if agent, ok := config.AgentOf(data); ok {
@@ -281,12 +293,7 @@ func routingModels(cmd *cobra.Command, lc *localcfg.Config) []routingModel {
 	eff, _ := craft.Resolve(craftLsLayers(files), craftLsSpread(lc))
 	// Read after the layers are assembled: files.agent stays the checkout's own
 	// block, which craftLsLayers reads the repo layer's crafts from.
-	agent := files.agent
-	if files.repo {
-		if cfg, _, ps := config.Resolve(files.data, files.layer); len(ps) == 0 {
-			agent = cfg.Agent
-		}
-	}
+	agents := []config.Agent{files.agent}
 
 	var out []routingModel
 	add := func(model, craftName string) {
@@ -308,15 +315,17 @@ func routingModels(cmd *cobra.Command, lc *localcfg.Config) []routingModel {
 	for _, name := range config.CraftNames {
 		add(eff[name].Model, name)
 	}
-	for _, model := range agent.PinnedModels() {
-		add(model, "")
-	}
-	for _, l := range []*config.LevelSetting{agent.Levels.L1, agent.Levels.L2, agent.Levels.L3} {
-		if l != nil {
-			add(l.Model, "")
+	for _, agent := range agents {
+		for _, model := range agent.PinnedModels() {
+			add(model, "")
+		}
+		for _, l := range []*config.LevelSetting{agent.Levels.L1, agent.Levels.L2, agent.Levels.L3} {
+			if l != nil {
+				add(l.Model, "")
+			}
 		}
 	}
-	return out
+	return out, nil
 }
 
 // routingWinner is the entry a model goes out on and why it won.
@@ -329,7 +338,7 @@ func routingWinner(table routing.Table, model string) (routing.Entry, string) {
 	entry, err := routing.Resolve(table, model)
 	if err != nil {
 		if errors.Is(err, routing.ErrNoEntry) {
-			return routing.Entry{}, fmt.Sprintf("no entry matches %s, so a run that calls it cannot start (write one with `fugaro routing set %s <source>...`)", model, model)
+			return routing.Entry{}, fmt.Sprintf("no entry matches it, so a run that calls it cannot start: write one with `fugaro routing set %s <source>...`", model)
 		}
 		// The resolver's other refusal is the twin pattern (D3172): two entries
 		// claim this model with one pattern, so neither is the more specific and
@@ -403,10 +412,10 @@ func routingParseSource(arg string) (routing.Source, error) {
 		}
 		return s, nil
 	}
-	return routing.Source{}, userErr("%s is not a credential source: write %s, %s, %s, %s or %s, and %s after any of them for a written downgrade",
+	return routing.Source{}, userErr("%s is not a credential source: write %s, %s, %s, %s or %s",
 		config.CodeSpan(arg),
 		config.CodeSpan(string(routing.KindLauncherPool)), config.CodeSpan("pool:NAME"), config.CodeSpan(string(routing.KindAnthropic)),
-		config.CodeSpan("provider:NAME"), config.CodeSpan(string(routing.KindVertex)), config.CodeSpan("@MODEL"))
+		config.CodeSpan("provider:NAME"), config.CodeSpan(string(routing.KindVertex)))
 }
 
 func newRoutingSetCmd() *cobra.Command {
@@ -552,7 +561,11 @@ func routingWrite(cmd *cobra.Command, command, what string, edit func(routing.Ta
 	if err != nil {
 		return err
 	}
-	problems, warnings := routing.Problems(routingChecks(cmd, lc, next))
+	in, err := routingChecks(cmd, lc, next)
+	if err != nil {
+		return err
+	}
+	problems, warnings := routing.Problems(in)
 	for _, w := range warnings {
 		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", oneLine(w.Message))
 	}
@@ -592,7 +605,7 @@ func routingWrite(cmd *cobra.Command, command, what string, edit func(routing.Ta
 // project's (contract-table.md). Check50Passed is left false: nothing in this
 // release records Check 50 as run (reconciliation O3), and the fail-closed
 // answer is the one a table carrying a routed Claude must meet.
-func routingChecks(cmd *cobra.Command, lc *localcfg.Config, table routing.Table) routing.Checks {
+func routingChecks(cmd *cobra.Command, lc *localcfg.Config, table routing.Table) (routing.Checks, error) {
 	in := routing.Checks{
 		Table:       table,
 		Credentials: lc.Credentials,
@@ -602,8 +615,12 @@ func routingChecks(cmd *cobra.Command, lc *localcfg.Config, table routing.Table)
 	if lc.Budget != nil {
 		in.BudgetMode, in.BudgetPerRunUSD = lc.Budget.Mode, lc.Budget.PerRunUSD
 	}
-	for _, m := range routingModels(cmd, lc) {
+	models, err := routingModels(cmd, lc)
+	if err != nil {
+		return routing.Checks{}, err
+	}
+	for _, m := range models {
 		in.Models = append(in.Models, m.model)
 	}
-	return in
+	return in, nil
 }
