@@ -6849,7 +6849,7 @@ func servicesLaunchEnv(entry config.Entry) string {
 // config's repository entry and published with the rest of it, so a teammate's
 // `fugaro run` on a machine that never ran the update reads it too,
 // internal/localcfg/shared.go) — and this repository's agent.auth, read live,
-// is one the service serves under the mode the published node carries. All of
+// is one the service serves. All of
 // them, because the URL is not a hint: the same variable is what opens the git
 // provider keyless (internal/gitprov/providers/providers.go), which reads no
 // App key at all once it is set, and what makes a Bitbucket repository a
@@ -6860,16 +6860,6 @@ func servicesLaunchEnv(entry config.Entry) string {
 // That is the answer for a repository's OWN job. A launch on a shared project
 // job is judged on its PROFILE (below), because that is the switch its mounts
 // were taken on.
-//
-// mode is the budget mode the published node carries, read by the launcher
-// (policyMode) and handed in: it is the switch's fourth condition for an
-// `api-key` or `oauth` repository alone (D2071), because the gateway the
-// service is reached through exists only in `observe` and `enforce`. A
-// repository on a project whose mode is `off` gets no address at all and keeps
-// the mounts it has. A read that found no node answers "", which is that same
-// held-off answer — the fail-closed direction — while the repository's own
-// record and tfvars remain the two answers a launch without a document
-// decides on (below).
 //
 // The config is the published shared one where this machine has no local
 // config of its own (localcfg.Select), and the URL in it is the installation's
@@ -6978,6 +6968,10 @@ func servicesLaunchEnv(entry config.Entry) string {
 // it is read for a repository's own job alone: a shared job's grant is the
 // installation root's, made from the same record wherever that root was applied.
 //
+// mode is this launch's reading of the published node's budget mode, and
+// nothing here reads it: the switch stopped taking a mode (AB15, D3009), and
+// the argument stays until I1 drops it with the constants.
+//
 // review says this launch runs on a shared job's review-only variant
 // (spec.Mode's review mode), which the caller resolves before it calls this:
 // such a launch is told nothing, whatever the job and the config say.
@@ -7022,7 +7016,7 @@ func credentialsServiceLaunchEnv(lc *localcfg.Config, sharedProfile, repo, auth,
 	// service serves on its own identity (D3174) — and a repository the bridge
 	// would serve keeps its answer.
 	ready := local.CredentialsServiceOn()
-	serves := infra.CredentialsServiceServes(installed, ready, auth, mode) ||
+	serves := infra.CredentialsServiceServes(installed, ready, auth) ||
 		infra.CredentialsServiceServesChains(installed, ready, infra.ChainPlanFor(lc, repo))
 	if auth == "" && !serves {
 		// No document this launcher could read, so the switch's third

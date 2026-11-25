@@ -208,9 +208,9 @@ func capsText(caps budget.GlobalCaps, defaults budget.DefaultCaps) string {
 // migrateRemovedMode, AB8a): from AB2 on the node's decoder refuses a node that
 // says the word that was a budget mode (D3022), and that node is the one this
 // line exists for — the policy stage of this same run rewrites it to observe
-// (budgetModeAfterMigration), and what that rewrite does to this repository's
-// job is what the listing is owed (F26). A read through the decoder would
-// answer "" for exactly the node this line is about.
+// (projectpolicy's migrateRemovedMode), and what that rewrite does to this
+// repository's job is what the listing is owed (F26). A read through the
+// decoder would answer "" for exactly the node this line is about.
 func (e *initEngine) nodeBudgetMode(ctx context.Context) string {
 	if e.lc == nil {
 		return ""
@@ -242,18 +242,6 @@ func nodeModeInBytes(raw []byte) string {
 		return ""
 	}
 	return node.Budget.Mode
-}
-
-// budgetModeAfterMigration is the mode the policy stage of this same run leaves
-// the node with: the word that is not a mode any more is rewritten to observe
-// in place (projectpolicy's migrateRemovedMode, AB8a, D3010), and every other
-// mode — and a node whose budget block names none — is left exactly where it
-// is.
-func budgetModeAfterMigration(mode string) string {
-	if policy.Mode(mode).Removed() {
-		return policy.ModeObserve
-	}
-	return mode
 }
 
 // credentialsServiceInstalled is the switch's first condition as this machine's
@@ -300,42 +288,44 @@ func (e *initEngine) bundleServes(ctx context.Context, auth, repo string, data [
 // budgetStopModelKey is F26 for this run's repository: the model credential the
 // apply that follows moves out of its job, "" when none moves.
 //
-// The two modes are the published node's, as its bytes write it now and as the
-// policy stage of this same run will leave it, because the node's mode is the
-// mode the apply reads. The key moves exactly where those two disagree: an
-// api-key or oauth repository on a node that says the word is one the switch
-// holds off, and the same node rewritten to observe is one the switch serves
-// where the bundle is ready — which is the apply that drops the key from its
-// job.
+// The mode is the published node's, as its bytes write it now: the switch
+// stopped reading it (AB15), so the state this line is about is the one whose
+// answer the switch's change flipped — a node that says the word.
 func (e *initEngine) budgetStopModelKey(ctx context.Context, repo, auth string, data []byte) string {
 	before := e.nodeBudgetMode(ctx)
-	after := budgetModeAfterMigration(before)
 	installed := e.credentialsServiceInstalled()
-	// The mode half is asked first: the bundle is read only where the two modes
-	// disagree, which is the only state this line can be printed in. A read
+	// The mode half is asked first: the bundle is read only where the node says
+	// the word, which is the only state this line can be printed in. A read
 	// spent on every other repository would be a cloud call, and a warning
 	// (readCredentialsBundle), for a line nobody prints.
-	if movedModelKey(installed, true, auth, before, after) == "" {
+	if movedModelKey(installed, true, auth, before) == "" {
 		return ""
 	}
-	return movedModelKey(installed, e.bundleServes(ctx, auth, repo, data), auth, before, after)
+	return movedModelKey(installed, e.bundleServes(ctx, auth, repo, data), auth, before)
 }
 
 // movedModelKey is F26's predicate: the model credential that leaves the
 // repository's job, "" when none does, asked through the switch's own predicate
-// twice — once on the mode the node writes now and once on the mode the policy
-// stage leaves it with. infra.CredentialsServiceServes is the one predicate
-// both answers come from, so this line cannot claim a move the apply does not
-// make.
+// so this line cannot claim a move the apply does not make.
+//
+// The state it names is the one the switch's answer changed in (AB15): a node
+// that says the word was held off it, the apply that follows serves the
+// repository where the bundle is ready, and the key its job mounts goes. A node
+// that already said observe or enforce was served before the change — the word
+// was not a mode condition for it — so its key left at an earlier apply and
+// nothing moves here. A node that says no mode at all is a node this line does
+// not judge: the entry a node's bytes carry and a read that answered nothing
+// are the same empty string (nodeBudgetMode), and the listing names no move it
+// did not read.
 //
 // ready is the bundle's own reading (bundleServes) and never the record in the
 // local config: a record that is true means an earlier apply already dropped
 // the key, which is not a move this apply makes.
-func movedModelKey(installed, ready bool, auth, before, after string) string {
-	if infra.CredentialsServiceServes(installed, ready, auth, before) {
+func movedModelKey(installed, ready bool, auth, before string) string {
+	if !policy.Mode(before).Removed() {
 		return ""
 	}
-	if !infra.CredentialsServiceServes(installed, ready, auth, after) {
+	if !infra.CredentialsServiceServes(installed, ready, auth) {
 		return ""
 	}
 	switch auth {
