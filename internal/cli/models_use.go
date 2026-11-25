@@ -582,7 +582,7 @@ func modelsUseModelCheck(lc *localcfg.Config, launch modelsUseLaunch, target set
 	if err := modelsUseRefuseID(id); err != nil {
 		return err
 	}
-	if err := modelsUseTableCheck(lc, id); err != nil {
+	if err := modelsUseTableCheck(lc, scope, id); err != nil {
 		return err
 	}
 	name, p, claimed := config.ProviderFor(lc.Providers, id)
@@ -650,10 +650,13 @@ func modelsUseModelCheck(lc *localcfg.Config, launch modelsUseLaunch, target set
 // every model that entry matches meets them, and refusing a pin over one would
 // print the same fix from a second place.
 //
-// A project that publishes no table is not asked: its models are reached the
-// release-1 way (D3170), which is what the rest of modelsUseModelCheck judges.
-func modelsUseTableCheck(lc *localcfg.Config, id string) error {
-	problems, _ := modelRoutingProblems(lc, []string{id})
+// A table that does not govern the runs this write is for is not asked either:
+// the write's repositories are the scope's own (scope.repos, the set the route
+// checks above are made over), and where no source of the table admits one of
+// them its models are reached the release-1 way (D3170, O7, R25) — which is what
+// the rest of modelsUseModelCheck judges.
+func modelsUseTableCheck(lc *localcfg.Config, scope modelsUseScope, id string) error {
+	problems, _ := modelRoutingProblems(lc, scope.repos, []string{id})
 	for _, p := range problems {
 		if p.Code == routing.CodeNoEntry || p.Code == routing.CodeTwinPattern {
 			return userErr("model_routing: %s", oneLine(p.Message))

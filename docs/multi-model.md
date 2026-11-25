@@ -336,7 +336,8 @@ follows the coder because it runs the coder's role slot — the ladder's grade i
 craft that took the senior review's access would be served by a pool judged against a model the judge
 does not run.
 `fugaro craft ls` prints, per craft, the model it resolves to, where that came from, and the chain
-the model resolves to — the routing table's answer, empty on a project that publishes no table.
+the model resolves to — the routing table's answer, empty where the table does not serve this
+repository.
 A craft's access is written in the repository's own `fugaro.yaml`
 (`agent.crafts.<craft>.access`) and **only** there: a project sets a craft's model for every
 repository of it and never its access, because the access names something the owner's own config

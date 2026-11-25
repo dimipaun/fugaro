@@ -162,8 +162,31 @@ func craftFixtureBridge(t *testing.T) string {
 	return craftFixtureBody(t, craftLocalExtra)
 }
 
-// craftFixtureBody is the world both fixtures build, from the text appended to
-// the installation's own config.
+// craftRoutingTableElsewhere is a table that serves another repository and not
+// this checkout's own: every source names an admit list the checkout is not in
+// (D3182), so no entry of it governs a run of this repository — which is the
+// second way a project is on the release-1 bridge, beside publishing no table at
+// all (O7, R25, D3196).
+const craftRoutingTableElsewhere = `
+model_routing:
+  - match: claude-*
+    chain:
+      - {kind: anthropic, admit: [other/repo]}
+`
+
+// craftFixtureElsewhere is the fixture world whose routing table serves another
+// repository: the checkout names aurora/api as its origin and the table admits
+// only other/repo, so the project publishes a table that is not in force for
+// these runs.
+func craftFixtureElsewhere(t *testing.T) string {
+	t.Helper()
+	orig := craftFixtureBody(t, craftLocalExtra+craftRoutingTableElsewhere)
+	testutil.Git(t, ".", "remote", "add", "origin", "https://github.com/aurora/api.git")
+	return orig
+}
+
+// craftFixtureBody is the world every craft fixture builds, from the text
+// appended to the installation's own config.
 func craftFixtureBody(t *testing.T, body string) string {
 	t.Helper()
 	orig, err := os.Getwd()
@@ -300,22 +323,54 @@ func TestCraftLsOnTheBridgeShowsNoChainProblem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
+	jsOut, _, err := execute(t, "craft", "ls", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, jsOut)
+	}
+	craftLsOnTheReleaseOneBridge(t, out, errOut, jsOut)
+}
+
+// TestCraftLsWhereTheTableServesAnotherRepo is the same read on the second state
+// that means the same thing: the project publishes a table, and every source of
+// it is admitted to another repository (D3182, D3196), so no entry of it governs
+// these runs. The read's answer is the one above's, row for row, because the
+// question it asks first is the gate's own — whether the table serves this
+// repository — and not whether a table exists at all.
+func TestCraftLsWhereTheTableServesAnotherRepo(t *testing.T) {
+	craftFixtureElsewhere(t)
+	out, errOut, err := execute(t, "craft", "ls")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	jsOut, _, err := execute(t, "craft", "ls", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, jsOut)
+	}
+	craftLsOnTheReleaseOneBridge(t, out, errOut, jsOut)
+}
+
+// craftLsOnTheReleaseOneBridge holds a read to the release-1 answer: no row is
+// refused and no row carries a chain or a problem, every craft that names a model
+// is served by the checks of its own facts, and the document has no
+// chain_problem member. The two states that mean it — a project that publishes no
+// routing table and one whose every source is admitted to another repository
+// (D3170, O7, R25, D3196) — are one answer, so the two tests above share this.
+func craftLsOnTheReleaseOneBridge(t *testing.T, out, errOut, jsOut string) {
+	t.Helper()
 	if strings.Contains(out, "no entry") || strings.Contains(out, "no:") {
-		t.Errorf("a project that publishes no table has no entry to miss, so no row is refused:\n%s", out)
+		t.Errorf("no table serves this repository, so no row of it is refused:\n%s", out)
 	}
 	for _, row := range craftRows() {
 		line := craftLine(t, out, row.Craft)
 		if !strings.Contains(line, "yes") {
-			t.Errorf("the %s row is not served on a bridge project: %q", row.Craft, line)
+			t.Errorf("the %s row is not served on the release-1 bridge: %q", row.Craft, line)
+		}
+		if strings.Contains(line, "→") {
+			t.Errorf("the %s row prints a chain, and a table that does not serve this repository has none to print: %q", row.Craft, line)
 		}
 	}
 	if errOut != "" && strings.Contains(errOut, "fugaro: problem:") {
 		t.Errorf("the fixture's accesses all resolve, so the read has nothing to warn about: %q", errOut)
-	}
-
-	jsOut, _, err := execute(t, "craft", "ls", "--json")
-	if err != nil {
-		t.Fatalf("%v\n%s", err, jsOut)
 	}
 	var doc craftLsDoc
 	if err := json.Unmarshal([]byte(jsOut), &doc); err != nil {
@@ -323,14 +378,14 @@ func TestCraftLsOnTheBridgeShowsNoChainProblem(t *testing.T) {
 	}
 	for _, row := range doc.Crafts {
 		if len(row.Chain) != 0 || row.ChainProblem != "" {
-			t.Errorf("the %s row resolves to %v / %q, and a project that publishes no table routes nothing by one", row.Craft, row.Chain, row.ChainProblem)
+			t.Errorf("the %s row resolves to %v / %q, and no table that serves this repository has an entry to resolve it by", row.Craft, row.Chain, row.ChainProblem)
 		}
 		if row.Model != "" && !row.Servable {
-			t.Errorf("the %s row is not servable on a bridge project: %s", row.Craft, row.ModelProblem)
+			t.Errorf("the %s row is not servable on the release-1 bridge: %s", row.Craft, row.ModelProblem)
 		}
 	}
 	if strings.Contains(jsOut, "chain_problem") {
-		t.Errorf("the document carries a chain_problem member on a project with no table:\n%s", jsOut)
+		t.Errorf("the document carries a chain_problem member where no table serves the repository:\n%s", jsOut)
 	}
 }
 

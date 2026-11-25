@@ -907,3 +907,33 @@ func TestModelsUseRefusesAnUnroutedModel(t *testing.T) {
 		t.Errorf("the pin was not written:\n%s", readFileString(t, path))
 	}
 }
+
+// modelsUseRoutedElsewhere is the same project with a table that serves another
+// repository: its one source is admitted to a repository this project does not
+// onboard (D3182), so no entry of it governs a write to this project's layer.
+// The entry reaches a model the write below does not name, so the pin is one no
+// entry of the table matches — the case the table's own reader would refuse.
+const modelsUseRoutedElsewhere = modelsUseLayerProject + `
+model_routing:
+  - match: vendor/model-q
+    chain:
+      - {kind: provider, provider: openrouter, admit: [owner/other]}
+`
+
+// TestModelsUseWritesAModelATableThatServesAnotherRepoDoesNotRoute: a table
+// whose every source is admitted to another repository is not in force for this
+// project's runs (O7, R25, D3196), so the pin is judged the release-1 way — as
+// on a project that publishes no table — and written, rather than refused with
+// the table's sentence about an entry no run of these repositories reads.
+func TestModelsUseWritesAModelATableThatServesAnotherRepoDoesNotRoute(t *testing.T) {
+	modelsWriteHomeWith(t, modelsUseRoutedElsewhere)
+	path := settingsWriteLayerFile(t, modelsUseLayerCommented)
+
+	out, _, err := execute(t, "models", "use", "coder", "vendor/model-x")
+	if err != nil {
+		t.Fatalf("a model no entry of a table that serves another repository matches was refused: %v\n%s", err, out)
+	}
+	if !strings.Contains(readFileString(t, path), "coder: vendor/model-x") {
+		t.Errorf("the pin was not written:\n%s", readFileString(t, path))
+	}
+}

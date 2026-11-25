@@ -11,6 +11,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/craft"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
@@ -137,16 +138,18 @@ type craftLsRow struct {
 	// project's routing table resolves Model to, in the order the project wrote
 	// them, first usable one wins, each spelled the way `fugaro routing ls`
 	// spells a source (RT5). It is written on every row, empty included, so a
-	// consumer reads one without a nil check. A project that publishes no table
-	// routes its calls the release-1 way (D3170, R25), so every row of one has
-	// an empty chain and no ChainProblem.
+	// consumer reads one without a nil check. A project whose table does not
+	// serve this repository -- none published, or one whose every source is
+	// admitted to another (D3182) -- routes its calls the release-1 way (D3170,
+	// O7, R25, D3196), so every row of one has an empty chain and no
+	// ChainProblem.
 	Chain []string `json:"chain"`
 	// ChainProblem is why Model resolves to no chain, in one sentence: no entry
 	// of the table matches it, two entries claim it with one pattern
 	// (routing.Resolve's two refusals, RT1), or the entry that wins names no
 	// source. Absent when Chain is not empty, for a craft that names no model
 	// -- which is served by the role slot below it and has no chain to miss
-	// (F17) -- and for every row of a project that publishes no table.
+	// (F17) -- and for every row of a repository the table does not serve.
 	ChainProblem string `json:"chain_problem,omitempty"`
 	// Servable is whether a run can serve Model: the project's allow-list
 	// admits it, a route claims it and a price row covers it -- MC15's verdict
@@ -193,7 +196,7 @@ func runCraftLs(cmd *cobra.Command, o *craftLsOptions) error {
 	for _, name := range config.CraftNames {
 		e := eff[name]
 		why := serves.modelProblem(name, e.Model)
-		chain, chainWhy := craftLsChain(table, e.Model)
+		chain, chainWhy := craftLsChain(table, serves.repo, e.Model)
 		doc.Crafts = append(doc.Crafts, craftLsRow{
 			Craft: name, Model: e.Model, ModelFrom: e.ModelFrom,
 			Chain: chain, ChainProblem: chainWhy,
@@ -364,6 +367,10 @@ type craftLsServe struct {
 	// run is accounted for now, and the price of a craft's model is what says
 	// a run of that craft can be.
 	priced bool
+	// repo is the repository these runs are for: the checkout's origin, "" when
+	// it names none. It is read once, here, because the routes and the chain
+	// below are both answered for it.
+	repo string
 }
 
 // craftLsServes assembles them from the documents the read already resolved.
@@ -406,6 +413,7 @@ func craftLsServes(cmd *cobra.Command, f craftLsFiles) craftLsServe {
 	if err != nil {
 		repo = ""
 	}
+	s.repo = repo
 	_, claimed, _ := layerRoutes(f.lc, f.layer, repo)
 	s.routes = runner.ProvidersFor(claimed, repo)
 	if ov, err := f.lc.Overrides(); err == nil {
@@ -449,17 +457,20 @@ func (s craftLsServe) modelProblem(craft, model string) string {
 // is the fix a reader needs. A craft that names no model has no chain and no
 // problem: it runs the model of the slot it follows (F17).
 //
-// A project that publishes no table has no chain and no problem either: its
-// calls go out the release-1 way, on the access its crafts resolve to (D3170,
-// R25), and the table is not the document that answers for them. Every reader
-// of the table in this release asks this question the same way (`validate`'s
-// modelRoutingProblems, the launch's chainRoutingGate, doctor's read), and
-// asking it here as well is what keeps `craft ls` from reporting every craft of
-// every installation that has not migrated as unserved — the sentence
-// routingWinner gives a model no entry matches is the launch gate's refusal,
-// written for a run the table really governs.
-func craftLsChain(table routing.Table, model string) (chain []string, problem string) {
-	if model == "" || len(table) == 0 {
+// A table that does not serve this repository has no chain and no problem
+// either: a project that publishes none and one whose every source is admitted
+// to another repository are one answer (infra.ChainServes, the walk
+// chainRoutingGate makes through ChainPlanFor(...).Serves and ee/ab's admission
+// makes on its own), and such a repository's calls go out the release-1 way, on
+// the access its crafts resolve to (D3170, O7, R25, D3196). Every reader of the
+// table in this release asks this question the same way (`validate`'s
+// modelRoutingProblems, the launch's gate, doctor's read), and asking it here as
+// well is what keeps `craft ls` from reporting every craft of a repository the
+// table does not govern as unserved — the sentence routingWinner gives a model
+// no entry matches is the launch gate's refusal, written for a run the table
+// really governs.
+func craftLsChain(table routing.Table, repo, model string) (chain []string, problem string) {
+	if model == "" || !infra.ChainServes(table, repo) {
 		return []string{}, ""
 	}
 	entry, why := routingWinner(table, model)
