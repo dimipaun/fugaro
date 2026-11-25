@@ -338,7 +338,7 @@ func accountsAddRunStages(ctx context.Context, cmd *cobra.Command, run *stepRun,
 	// what its last line is made of. The loop printing it here would account a
 	// run "Done" before the step that may fail (G3).
 	opts.ReportBorrowed = true
-	res, err := initflow.Run(ctx, accountsAddStages(e), opts)
+	res, err := e.runStages(ctx, accountsAddStages(e), opts)
 	cmd.SetOut(answer)
 	if err != nil {
 		return nil, userErr("%v", err)

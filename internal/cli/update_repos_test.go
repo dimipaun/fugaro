@@ -204,3 +204,33 @@ func TestNewRepoLineSanitises(t *testing.T) {
 		t.Errorf("a long detail came back as %q, and a cut one says so", long.Detail)
 	}
 }
+
+// TestReposNoticesAreTheStepsAlone: a stage and a step after the loop report
+// through the same entry point (C1), and only the step's lines are the run's
+// notices -- the document's `notices` member and the stream's `notice` lines.
+// A stage's lines are on the stage's own result (`repos`) and printed under
+// its header, so a reader that took them from both would count every
+// repository twice (U13, R12).
+func TestReposNoticesAreTheStepsAlone(t *testing.T) {
+	e := &initEngine{}
+	lines := []initflow.RepoLine{{Repo: "acme/app", State: initflow.RepoNeedsYou, Detail: "the pin"}}
+
+	e.inStages = true
+	e.reportRepos("plugin", lines)
+	if got := e.notices(); len(got) != 0 {
+		t.Fatalf("a stage's lines came back as the notices %+v, want none: a stage's lines are its own, and the loop reads them off the stage", got)
+	}
+	if len(e.reposState.stages) != 1 {
+		t.Errorf("the stage's report was not recorded: the run keeps what a stage reported")
+	}
+
+	e.inStages = false
+	e.reportRepos("backlog", lines)
+	got := e.notices()
+	if len(got) != 1 {
+		t.Fatalf("the notices are %+v, want the one line the step reported: a step after the loop has no stage of its own", got)
+	}
+	if got[0].Step != "backlog" || got[0].Repo != "acme/app" || got[0].State != initflow.RepoNeedsYou || got[0].Detail != "the pin" {
+		t.Errorf("the notice is %+v, want the step's own name on the line it reported", got[0])
+	}
+}

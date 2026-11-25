@@ -98,14 +98,16 @@ type enrolledIn struct {
 	Memo *reposState
 }
 
-// reposState is one run's per-repository state: the enrolled list it read,
-// and the lines every stage and step reported about it.
+// reposState is one run's per-repository state: the enrolled list it read, the
+// lines the stages reported about it, and the ones the steps outside the stage
+// loop reported, which are the run's notices.
 type reposState struct {
 	mu       sync.Mutex
 	listed   bool
 	views    []repoView
 	patterns []string
-	reported []reportedLines
+	stages   []reportedLines
+	steps    []reportedLines
 }
 
 // reportedLines is one report: the stage or step it is under, and the lines
@@ -116,12 +118,23 @@ type reportedLines struct {
 	lines []initflow.RepoLine
 }
 
-// report records lines under name, for the human output and the output
-// members (U13).
+// report records the lines a stage reported under its own name while the stage
+// loop ran (U13). The loop reads the same lines off the stage and prints them
+// under its header, so they are the stage's own: the run's notices are the
+// steps' alone (notice).
 func (s *reposState) report(name string, lines []initflow.RepoLine) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.reported = append(s.reported, reportedLines{name: name, lines: slices.Clone(lines)})
+	s.stages = append(s.stages, reportedLines{name: name, lines: slices.Clone(lines)})
+}
+
+// notice records the lines a step outside the stage loop reported under its own
+// name. A step has no Stage, so nothing carries them but the run's notices
+// (notices).
+func (s *reposState) notice(name string, lines []initflow.RepoLine) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.steps = append(s.steps, reportedLines{name: name, lines: slices.Clone(lines)})
 }
 
 // enrolledRepos is the project's repositories, as every stage of `fugaro
@@ -177,13 +190,19 @@ func (e *initEngine) repos(ctx context.Context) ([]repoView, []string) {
 	return enrolledRepos(ctx, enrolledIn{LC: e.lc, Memo: &e.reposState})
 }
 
-// reportRepos records the lines a stage or a step after the loop reports
-// under its own name. A stage also hands the same lines back from RepoLines,
-// which is how the loop reads them and where it prints them (U13, emitRepos);
-// a step after the loop has no Stage and reports this way alone, and its lines
-// are the run's notices (notices).
+// reportRepos records the lines a stage or a step after the loop reports under
+// its own name (C1). A stage reports while the stage loop runs, and the loop
+// reads the same lines back off the stage and prints them under its header
+// (RepoLines, printRepoLines); a step reports with no loop running and has no
+// stage to carry them, so its lines are the run's notices (notices). The two
+// are told apart here, by the loop's own phase (inStages), because a stage's
+// lines are on its result and must never be the document's notices twice.
 func (e *initEngine) reportRepos(name string, lines []initflow.RepoLine) {
-	e.reposState.report(name, lines)
+	if e.inStages {
+		e.reposState.report(name, lines)
+		return
+	}
+	e.reposState.notice(name, lines)
 }
 
 // printRepoLines is the loop's OnRepos: one line per repository, printed under
@@ -209,12 +228,14 @@ func (e *initEngine) printRepoLines(lines []initflow.RepoLine) {
 // notices is the lines the run's steps after the stage loop reported, in the
 // order they were reported, as the document's `notices` member and the stream's
 // `notice` lines carry them (R12, R19). A step has no stage of its own, so its
-// own name is on every line.
+// own name is on every line; a stage's lines are not here at all, because the
+// stage's result already carries them (`repos`) and a reader would otherwise
+// count every repository twice.
 func (e *initEngine) notices() []initflow.Notice {
 	e.reposState.mu.Lock()
 	defer e.reposState.mu.Unlock()
 	var out []initflow.Notice
-	for _, rep := range e.reposState.reported {
+	for _, rep := range e.reposState.steps {
 		for _, ln := range rep.lines {
 			out = append(out, initflow.Notice{Step: rep.name, Repo: ln.Repo, State: ln.State, Detail: ln.Detail})
 		}

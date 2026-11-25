@@ -143,6 +143,12 @@ type initEngine struct {
 	// (update_repos.go).
 	reposState reposState
 
+	// inStages is whether the stage loop is running: a stage reports its
+	// per-repository lines while it does and a step after the loop reports
+	// them outside it, and only a step's are the run's notices
+	// (reportRepos, runStages).
+	inStages bool
+
 	// flagFactVersion is the version the self-flag step's own read of the
 	// creation fact answered with, and 0 where that step read nothing
 	// (update_selfflag.go). The marker step asks it beside the gate's version
@@ -498,6 +504,18 @@ func stagesNamed(e *initEngine, names ...string) (stages []initflow.Stage, unans
 	return stages, slices.Sorted(maps.Keys(want))
 }
 
+// runStages runs the stage loop with the options a caller built, with the loop
+// marked as running while it does: a stage reports its per-repository lines
+// through the same entry point a step does, and this is what tells the two
+// apart (reportRepos). Every loop this engine drives goes through here,
+// `apply`, `project enroll` and the accounts included.
+func (e *initEngine) runStages(ctx context.Context, stages []initflow.Stage, o initflow.Options) (*initflow.Result, error) {
+	prev := e.inStages
+	e.inStages = true
+	defer func() { e.inStages = prev }()
+	return initflow.Run(ctx, stages, o)
+}
+
 // converge runs the converge's default and --firebase-project modes through the
 // loop and maps its result to what init returns.
 //
@@ -588,7 +606,7 @@ func (e *initEngine) converge(ctx context.Context) error {
 	// it is the steps themselves.
 	e.r.printRunHeader(e.lc.Name, "")
 	fmt.Fprintln(e.r.w, e.r.qs.Header(convergeSection(e.r.o)))
-	res, err := initflow.Run(ctx, stages, e.options())
+	res, err := e.runStages(ctx, stages, e.options())
 	// The steps this run answered are steps nothing owes any more: `update`
 	// runs every stage, and the entries of the stages it ran successfully are
 	// cleared here and nowhere else (D1567). It is after the loop because the
