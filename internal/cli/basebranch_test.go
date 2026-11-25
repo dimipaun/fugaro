@@ -60,9 +60,14 @@ const noBaseBranchYAML = "version: 1\nproject: aurora\ngit: { provider: github }
 // publishBaseBranch writes the policy node a launcher reads the project's
 // default base branch from, with the rules marker that makes the node visible
 // to it (projectpolicy.Read).
+//
+// The node carries no budget block: it is published for its base branch, the
+// installation's own config is where the budget lives here, and a block would
+// have to name a mode this release has (off is not one any more, D3009 — such a
+// node is refused by its own reader, AB8a).
 func publishBaseBranch(t *testing.T, db *gcpfake.RTDB, branch string) {
 	t.Helper()
-	node := map[string]any{"version": projectpolicy.Version, "allow_repos": []string{"github/acme/other"}, "budget": map[string]any{"mode": "off"}}
+	node := map[string]any{"version": projectpolicy.Version, "allow_repos": []string{"github/acme/other"}}
 	if branch != "" {
 		node["base_branch"] = branch
 	}

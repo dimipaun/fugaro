@@ -2100,9 +2100,19 @@ func budgetEnv(lc *localcfg.Config, env map[string]string) error {
 	}
 	// The mode stays the deploy-time mode: it is the fallback for the case
 	// where no policy exists (P3), and the grace only matters to a session.
-	if mode := lc.BudgetMode(); mode != localcfg.BudgetOff {
-		env[BudgetModeEnv] = mode
-		if b := lc.Budget; b != nil && b.Grace > 0 {
+	//
+	// The mode written is the one the config *says*, so a config that writes
+	// none leaves the job without an entry, as does the word that was a mode
+	// until this release — the shape the release behind gave every job of every
+	// installation. The local config answers observe for a mode it does not
+	// write now (AB2, D3010, localcfg.BudgetMode), and taking that answer here
+	// would put a mode entry on every job of every installation that exists,
+	// which is AB5's move to make, on purpose and with the readiness note that
+	// goes with it ("budgetEnv writes FUGARO_BUDGET_MODE and the grace for every
+	// job, observe when unset", F13). AB5 drops this read.
+	if b := lc.Budget; b != nil && b.Mode != "" && b.Mode != localcfg.BudgetOff {
+		env[BudgetModeEnv] = b.Mode
+		if b.Grace > 0 {
 			env[BudgetGraceEnv] = b.Grace.String()
 		}
 	}
