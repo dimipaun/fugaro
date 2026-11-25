@@ -8681,6 +8681,7 @@ Flags:
 | `--plan-task` | string | "" | no | record the plan task this run works on, as <plan>/<task> (for example setup-wizard/W1.3): the id the console's graph joins this run to a node by; it changes nothing about what the run does, and a follow-up (--pr) records one only when given. A plan task that a run in flight, or a pull request a run of it left behind, already holds is refused (--allow-duplicate launches it anyway) |
 | `--pr` | intSlice | `[]` | no | continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions); with a mode: review --recipe, review PR N instead (repeatable, 1 to 4, any open PR) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--promote` | bool | `false` | no | raise the area named as this launch's one argument to the mode given with --mode, instead of running a task of your own: the run reads that area's backlog items and its code, works at the mode asked for, and closes the items it pays down (the ones whose code its own diff changes, and no others). The area is a rule this repository's own fugaro.yaml declares (rigor.areas), and its paths are the launch's declared paths, so --path is refused with it; a mode below the level the area already resolves to is refused, and equal is allowed; hotfix is never a target. Needs --mode and a checkout of the repository in the working directory |
 | `--recipe` | string | "" | no | the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's (ab-judge, commit-reports, default, escalate, lint-fix, merge-judge, pick, premium, rebase, review-only, run-digest, solo, standard, test-and-fix, troubleshoot); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's |
 | `--ref` | string | "" | no | base branch or ref the run is cut from (default: the branch this checkout is on, when origin has it and it is not the base branch; else the base branch (fugaro.yaml git.base_branch, then the local config's, then the project's base_branch, then main)) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
@@ -8844,15 +8845,37 @@ List runs with their status, stage, cost and PR
 List runs, newest first -- created descending, then run descending --
 joining the runs bucket with what the backend knows.
 
-By default ls shows the last 7 days of the local config's repositories (every
-repository in the bucket when the config lists none). A run shows as succeeded
-only when its result.json says so; an execution that ended without finalizing
-is an infra_error.
+By default ls lists the newest 50 runs by time plus every run that is
+still going, whatever its age, read from the installation's run index rather
+than by scanning the bucket: no listing of the bucket's objects is made on
+that path, so the listing costs a handful of requests however much history
+there is. Its totals are then the index's own summary -- every run the
+installation's index carries, not the page -- which is the figure of a
+listing that covers the installation: one narrowed to some of its
+repositories (--repo, or a local config that lists them) totals the rows
+it read, as a windowed listing does. While the index is still building,
+the listing says so in one line above its table, and --json carries
+index_complete and folded_through.
+
+A run shows as succeeded only when its result.json says so; an execution that
+ended without finalizing is an infra_error.
+
+--since W bounds a window instead of a count: every run of it is listed,
+bounded by the window and not by history, and its totals are those rows'.
+--mine and --batch bound one the same way. A listing the index cannot answer
+reads the bucket's own window instead, and that window is the last
+7 days of the local config's repositories (every repository in the
+bucket when the config lists none). An index that could not be read says so
+in one note; an index that has folded nothing yet -- a fresh installation,
+before its first fold -- reads the window in silence and carries no index
+fact either way, which is the state every installation is in until then.
 
 --limit N prints the newest N rows of the listing and shortens nothing else:
-the window is still read, and the totals line, in the text listing and in
---json's totals, is the whole window's, because a page is not a total. 0,
-the default, prints every row of the window.
+the totals line, in the text listing and in --json's totals, is the listing's
+own -- the index's summary by default, and the rows of the window with --since
+-- because a page is not a total. 0, the default, prints every row of it -- a
+default listing's own page (the newest 50 plus the runs still going), or the
+whole window when --since, --mine or --batch bounds the listing instead.
 
 --after RUN-ID starts the listing after that run: the rows strictly after it
 in the listing's order, so the same argv with the last id of a page is the
@@ -8939,7 +8962,7 @@ Flags:
 | `--group-by` | string | "" | no | group the listing by one field (failure_class) |
 | `-h`, `--help` | bool | `false` | no | help for ls |
 | `--json` | bool | `false` | no | print machine-readable output |
-| `--limit` | int | `0` | no | print only the newest N rows (0, the default, is every row of the window; the totals stay the window's) |
+| `--limit` | int | `0` | no | print only the newest N rows of the listing (0, the default, is every row of it: a default listing's page, a bounded one's whole window; the totals stay the listing's) |
 | `--mine` | bool | `false` | no | only runs you requested |
 | `--pr` | int | `0` | no | only runs on this pull request (needs one repository; --since defaults to 90d) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |

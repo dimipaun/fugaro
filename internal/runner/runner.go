@@ -628,6 +628,12 @@ type run struct {
 	// is in the diff (D993); it is empty for a run that added none, which is
 	// every run whose task was not an asset.
 	binariesAdmitted []string
+	// promote is the run's promote pass (fugaro run --promote, LV7.1),
+	// resolved once from the checkout at the first brief (promoteRun) and read
+	// again at finalize, where the branch's own items answer what the run did
+	// with the area's debt: nil for every run whose task carries no promote
+	// block, which is every run that is not raising an area's level.
+	promote *promotePass
 	// rigorCfg is the run's rigor configuration *as the base branch has it*
 	// (docs/rigor-modes D25), read once at bootstrap and reused at every
 	// later moment (rigor.go); rigorRev is the revision it was read from, ""
@@ -4198,6 +4204,12 @@ func (r *run) systemPromptData() PromptData {
 	if r.follow != nil {
 		pd.FollowUp = followup.SystemPromptLines(r.promptData())
 	}
+	// The promote brief (LV7.1), resolved here and once: it reads the
+	// checkout's own backlog items, and the same list is what the finalize
+	// reading judges the branch against (promoteRun).
+	if p := r.promoteRun(); p != nil {
+		pd.Promote = p.brief
+	}
 	return pd
 }
 
@@ -6834,6 +6846,12 @@ func (r *run) finalize(ctx context.Context) error {
 	// value a later slice's rules act on is the one the run's whole diff
 	// answered (rigor.go).
 	r.finalizeRigor()
+	// A promote run's own reading of its branch (LV7.1, D31): the area's items
+	// as the run's first brief found them against the folder the run's own
+	// commits left. It writes nothing — the agent closed what it paid down, in
+	// its own commits — and the pull request's status section reports what it
+	// read (promotePart, promote.go).
+	r.readPromote(ctx)
 	// Nothing is written after the commit the suite ran on. The run used to
 	// file the findings it left open as backlog items here, which committed
 	// after that suite run and was not verified: a test that pins a fact
