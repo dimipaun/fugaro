@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"io"
 	"slices"
 	"strings"
 	"testing"
@@ -165,6 +166,40 @@ func TestCheckoutStageReportsARepositoryItCannotRead(t *testing.T) {
 	}
 	if !strings.Contains(lines[0].Detail, "no fugaro.yaml on the default branch") {
 		t.Errorf("the line does not carry the reader's own reason: %q", lines[0].Detail)
+	}
+}
+
+// TestRefreshManagedGateOpensFromTheView: a refresh for a repository the run
+// read from the project (refreshOptions.view) opens the managed gate from the
+// view's own selection of this machine's config, never from the directory the
+// run was started in — which, outside a checkout, holds no marks to read and is
+// not what the plan was made against (U4, R6, R10).
+//
+// The mutation caught: openRefreshManaged reaching o.checkoutDir() for the
+// installation. The gate then stays shut wherever the update was started
+// outside a checkout, and a managed project's base pin, check-job config and
+// job move ask for the typed project name — or are refused — depending on that
+// directory.
+func TestRefreshManagedGateOpensFromTheView(t *testing.T) {
+	useVersion(t, "0.5.1")
+	r := newManagedRefreshRig(t, managedRefreshMarker(1))
+	// Where the update was started: no checkout, and no config a door that
+	// reads the working directory could find in one (R10).
+	t.Chdir(t.TempDir())
+	t.Setenv("FUGARO_CONFIG", "")
+
+	rv := &refreshView{
+		v:      repoView{Repo: "acme/app", Provider: "github", Cfg: r.tg.cfg},
+		lc:     r.tg.lc,
+		lcPath: r.cfg,
+	}
+	m := openRefreshManaged(t.Context(), gateCmd(), refreshOptions{view: rv},
+		&initOptions{cloud: cloudOptions{stderr: func() io.Writer { return io.Discard }}})
+	if m == nil {
+		t.Fatal("the gate's door stayed shut for a repository the caller read from the project, though both marks are in place: the door was opened from the directory this run was started in, which is not a checkout")
+	}
+	if m.lc != rv.lc {
+		t.Errorf("the gate read another installation than the view's own: the plan would be judged against one and applied to another (refreshManaged.lc)")
 	}
 }
 
