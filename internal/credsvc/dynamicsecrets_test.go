@@ -22,6 +22,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -52,6 +53,18 @@ type dynReader struct {
 	// what makes "read once, by the candidate's own name" a fact and not an
 	// inference.
 	reads []string
+	// marked is the containers that carry the intake's workflow-secret marker
+	// (F18, G2). A name the map does not hold is UNMARKED, which is the
+	// ordinary case here: every container these tests read is a model
+	// credential's, and the marker is what says a container is not one.
+	marked map[string]bool
+	// markerErr is what Marked answers while it is set, so a marker read that
+	// failed needs no cloud and no transport.
+	markerErr error
+	// markerReads is every secret ID this fixture was asked about a marker for,
+	// in order, which is what makes "the marker is checked before the value is
+	// read" a fact (the two lists are separate on purpose).
+	markerReads []string
 }
 
 func (d *dynReader) Latest(context.Context) ([]byte, error) { return d.doc, nil }
@@ -63,6 +76,14 @@ func (d *dynReader) Value(_ context.Context, secretID string) (string, bool, err
 	}
 	v, ok := d.values[secretID]
 	return v, ok, nil
+}
+
+func (d *dynReader) Marked(_ context.Context, secretID string) (bool, error) {
+	d.markerReads = append(d.markerReads, secretID)
+	if d.markerErr != nil {
+		return false, d.markerErr
+	}
+	return d.marked[secretID], nil
 }
 
 // docOnly is a source that reads no containers: it is a BundleSource and not a
@@ -85,7 +106,7 @@ type perSecretSvc struct {
 func newPerSecretSvc(t *testing.T) *perSecretSvc {
 	t.Helper()
 	f := &perSecretSvc{
-		dyn:    &dynReader{doc: testBundleDoc(t), values: map[string]string{}},
+		dyn:    &dynReader{doc: testBundleDoc(t), values: map[string]string{}, marked: map[string]bool{}},
 		loader: &BundleLoader{},
 	}
 	f.loader.Source = f.dyn
@@ -684,5 +705,136 @@ func TestPerSecretValueClassifiesEveryAnswer(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestCascadeReadRefusesAMarkedContainer is G2 read from the other side
+// (F18, D3328): a candidate whose container carries the intake's workflow-secret
+// marker holds a WORKFLOW secret, and this half of the resolution serves model
+// credentials — so the call is refused and the bundle's entry under the same
+// name is NOT served in its place.
+//
+// The refusal is not a fall, and that is the whole point: `fugaro_p_` is also
+// the grammar of the project's model keys, so a name can be both a workflow
+// secret's and an entry an operator wrote, and serving that entry for a marked
+// container would be the shadowing the marker keeps apart, in the other
+// direction.
+//
+// The value is never read: the marker is asked for BEFORE the value, so a
+// workflow secret's value does not enter this process on this path at all, which
+// the two read lists say apart.
+func TestCascadeReadRefusesAMarkedContainer(t *testing.T) {
+	s := newPerSecretSvc(t)
+	shared, err := secretname.Project(testSharedName)
+	if err != nil {
+		t.Fatalf("the grammar refuses the fixture's project name: %v", err)
+	}
+	held := fakeCred(t, "workflow-secret")
+	s.dyn.values[shared] = held
+	s.dyn.marked[shared] = true
+
+	rec, _ := s.serve(t, creds.Credential{Name: shared, Tier: creds.TierA})
+	if rec.Code != StatusUnavailable {
+		t.Fatalf("a marked container was answered %d, want %d: %s", rec.Code, StatusUnavailable, rec.Body)
+	}
+	if e := refusal(t, rec.Code, rec.Body.Bytes()); e.Message != perSecretRefusal {
+		t.Errorf("the refusal is %q, want the class's own %q", e.Message, perSecretRefusal)
+	}
+	if len(s.dyn.reads) != 0 {
+		t.Errorf("the service read the value of %v; the marker is asked for FIRST, so a workflow secret's value never enters this process here", s.dyn.reads)
+	}
+	if want := []string{shared}; !slices.Equal(s.dyn.markerReads, want) {
+		t.Errorf("the markers read = %v, want %v", s.dyn.markerReads, want)
+	}
+	if n := s.up.Count(); n != 0 {
+		t.Errorf("the upstream saw %d requests; a refused call sends nothing", n)
+	}
+	if strings.Contains(rec.Body.String(), held) {
+		t.Errorf("the refusal carries the workflow secret's value")
+	}
+	if got := len(auditLines(t, s.auditLog)); got != 1 {
+		t.Errorf("the refusal wrote %d audit lines, want 1", got)
+	}
+}
+
+// TestPerSecretMarkerIsAskedOfProjectsOnly is G2's cost on the grammar's two
+// halves: the marker is written on the shared prefix alone — the intake refuses
+// a workflow-secret write on a per-user name before it makes the container — so
+// a `fugaro_u_` candidate is not asked about one. It matters because the ask is
+// a Secret Manager LIST, the low-quota read, and the resolution runs it on
+// every forwarded model request: a personal-token or rotated-key candidate that
+// paid a list per call would spend a project's quota on an answer that cannot be
+// yes, and a list that failed would refuse the call (fail-closed).
+//
+// The value is still served, which is the other half of the claim: skipping the
+// ask is not skipping the candidate.
+func TestPerSecretMarkerIsAskedOfProjectsOnly(t *testing.T) {
+	t.Run("a personal container is served without a marker read", func(t *testing.T) {
+		s := newPerSecretSvc(t)
+		name := mustUserName(t, testLauncherSub, testAccount)
+		rotated := fakeCred(t, "rotated")
+		s.dyn.values[name] = rotated
+
+		rec, _ := s.serve(t, creds.Credential{Name: name, Tier: creds.TierA})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("the answer is %d, want the upstream's 200: %s", rec.Code, rec.Body)
+		}
+		if got, want := authOf(t, s), "Bearer "+rotated; got != want {
+			t.Errorf("the call carried %q, want the container's %q", got, want)
+		}
+		if len(s.dyn.markerReads) != 0 {
+			t.Errorf("the service asked about the marker of %v; the marker is the shared prefix's, and a per-user container cannot carry it (F18, G2)", s.dyn.markerReads)
+		}
+	})
+
+	t.Run("a personal candidate with no container reads no marker either", func(t *testing.T) {
+		s := newPerSecretSvc(t)
+		name := mustUserName(t, testLauncherSub, testAccount)
+
+		rec, _ := s.serve(t, creds.Credential{Name: name, Tier: creds.TierA})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("the answer is %d, want the upstream's 200: %s", rec.Code, rec.Body)
+		}
+		if len(s.dyn.markerReads) != 0 {
+			t.Errorf("the service asked about the marker of %v for a candidate whose container is not the shared prefix's", s.dyn.markerReads)
+		}
+	})
+}
+
+// TestPerSecretMarkerReadsAreBounded is the quota half of the same rule: the
+// marker answer is held for a short window, so N calls of one run — and the
+// calls of every run of a repository, in one instance — make ONE list and not
+// N. The window is what keeps a stale answer from outliving a container the
+// intake has just marked: the clock the fixture drives moves the service's own,
+// so this is the window's edge and not a coincidence of timing.
+func TestPerSecretMarkerReadsAreBounded(t *testing.T) {
+	s := newPerSecretSvc(t)
+	shared, err := secretname.Project(testSharedName)
+	if err != nil {
+		t.Fatalf("the grammar refuses the fixture's project name: %v", err)
+	}
+	rotated := fakeCred(t, "rotated-project")
+	s.dyn.values[shared] = rotated
+	for i := 0; i < 6; i++ {
+		s.up.Script = append(s.up.Script, anthropicfake.MessageOK(testModel, testUsage))
+	}
+
+	for i := 0; i < 5; i++ {
+		rec, _ := s.serve(t, creds.Credential{Name: shared, Tier: creds.TierA})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("call %d was answered %d, want the upstream's 200: %s", i+1, rec.Code, rec.Body)
+		}
+	}
+	if want := []string{shared}; !slices.Equal(s.dyn.markerReads, want) {
+		t.Errorf("five calls made the marker reads %v, want exactly %v: the answer is held for the window", s.dyn.markerReads, want)
+	}
+
+	s.now = s.now.Add(markerTTL)
+	rec, _ := s.serve(t, creds.Credential{Name: shared, Tier: creds.TierA})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the call after the window was answered %d, want the upstream's 200: %s", rec.Code, rec.Body)
+	}
+	if want := []string{shared, shared}; !slices.Equal(s.dyn.markerReads, want) {
+		t.Errorf("the marker reads after the window = %v, want %v: an answer past its window is asked for again", s.dyn.markerReads, want)
 	}
 }

@@ -40,7 +40,7 @@
 version: 1
 as_of:
   cli: v0.29.0
-  console: v0.125.0
+  console: v0.127.0
 never_say:
   - "any model"
   - "via MCP"

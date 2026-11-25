@@ -1,0 +1,101 @@
+{
+  "project": "example-project",
+  "mode": "observe",
+  "day": "2026-11-24",
+  "now": "2026-11-24T12:30:00Z",
+  "connection": { "state": "live", "reason": "", "age_seconds": 3 },
+  "total": {
+    "counted_usd": 4.6,
+    "spent_usd": 3.1,
+    "notional_usd": 0.8,
+    "leased_usd": 1.5,
+    "daily_cap_usd": 40,
+    "percent": 11.5,
+    "max_parallel": 20,
+    "burn": { "known": true, "usd_per_min": 0.04, "fast": false },
+    "kill": null,
+    "runs": 1,
+    "run_hours": 1.25
+  },
+  "repos": [
+    {
+      "slug": "example-owner-example-repo",
+      "repo": "example-owner/example-repo",
+      "counted_usd": 4.6,
+      "spent_usd": 3.1,
+      "notional_usd": 0.8,
+      "leased_usd": 1.5,
+      "daily_cap_usd": 40,
+      "percent": 11.5,
+      "burn": { "known": true, "usd_per_min": 0.04, "fast": false },
+      "kill": null
+    }
+  ],
+  "runs": [
+    {
+      "run": "20261124-120000-c19a",
+      "slug": "example-owner-example-repo",
+      "repo": "example-owner/example-repo",
+      "title": "wire the console to the live feed",
+      "stage": "implement",
+      "round": "1",
+      "verify": "pending",
+      "models": "claude-sonnet-4-5-20250929 / claude-opus-4-1",
+      "recipe": "implement",
+      "auth": "oauth",
+      "notional": false,
+      "spent_usd": 3.1,
+      "age_seconds": 1800,
+      "health": "ok",
+      "deadline": "ok"
+    }
+  ],
+  "finished": [
+    {
+      "run": "20261124-101500-9a3c",
+      "slug": "example-owner-example-repo",
+      "repo": "example-owner/example-repo",
+      "title": "the console shows a paused run",
+      "status": "paused",
+      "outcome": "none",
+      "failed": false,
+      "age_seconds": 4500,
+      "resume_at": "2026-11-24T11:30:00Z",
+      "resumed_by": "20261124-113000-77b1",
+      "plan_task": "VS3",
+      "launched_by": "ana@example.test"
+    },
+    {
+      "run": "20261124-091000-4e77",
+      "slug": "example-owner-example-repo",
+      "repo": "example-owner/example-repo",
+      "title": "rotate the pool a project's second stage was served from",
+      "status": "paused",
+      "outcome": "none",
+      "failed": false,
+      "age_seconds": 8400,
+      "resume_at": "2026-11-24T13:05:00Z"
+    },
+    {
+      "run": "20261124-080000-1f22",
+      "slug": "example-owner-example-repo",
+      "repo": "example-owner/example-repo",
+      "title": "carry the cascade's third source into the switch log",
+      "status": "paused",
+      "outcome": "none",
+      "failed": false,
+      "age_seconds": 12200
+    },
+    {
+      "run": "20261124-070500-6b40",
+      "slug": "example-owner-example-repo",
+      "repo": "example-owner/example-repo",
+      "title": "a status this build has never been taught",
+      "status": "quarantined",
+      "outcome": "none",
+      "failed": false,
+      "age_seconds": 14000
+    }
+  ],
+  "ready": []
+}

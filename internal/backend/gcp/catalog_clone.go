@@ -10,6 +10,8 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
+	"github.com/dimipaun/fugaro/internal/imagebake"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The generated clone step (B8): the one step of a catalog build that holds the
@@ -25,17 +27,25 @@ import (
 // The credential therefore reaches a build the entry has no part in: Fugaro
 // writes this Dockerfile and this script, they are that build's whole context,
 // it is built from the pinned base digest with GIT_CONFIG_NOSYSTEM=1, and what
-// it exports is the checkout, tagged as an image the worker holds, which the
+// it exports is the checkouts, tagged as images the worker holds, which the
 // entry's own build copies from in place of a secret (catalogEntryBuildStep).
+//
+// Every checkout a definition bakes comes from here and not from a stage of the
+// entry's own build: the definition names the repositories and their clone URLs
+// (imagebake's marker lines, read into CatalogBuildSpec.Baked), this step clones
+// each of them, and the stages imagebake composed copy them out of the image it
+// tagged (imagebake.BakedImage) — so no `RUN` of the entry's build is a clone,
+// and none of them can read a credential (B8, F19, D2311).
 //
 // The step alone decides what the credential may be spent on, and it decides it
 // before each fetch rather than trusting the provider: the store file it is
 // given is per host, every URL the repository itself declares — a submodule's, an
-// LFS endpoint's — is read and refused when it names another one, and
-// protocol.file and protocol.ext are set to never, so neither a path nor a
-// program is a transport at all. Then the credential's own end: GitHub revokes
-// the token at its own endpoint, and a Bitbucket build holds no token to revoke
-// (rule 7, R6).
+// LFS endpoint's — is read and refused when it names another one, a repository
+// of an entry that bakes is refused when the entry's own repositories do not
+// cover it, and protocol.file and protocol.ext are set to never, so neither a
+// path nor a program is a transport at all. Then the credential's own end:
+// GitHub revokes the token at its own endpoint, and a Bitbucket build holds no
+// token to revoke (rule 7, R6).
 const (
 	// catalogCloneStepID is the clone step's id in a catalog build's step list,
 	// where the checkout an entry with a build context used to get one.
@@ -45,10 +55,10 @@ const (
 	// else, so the build that holds the credential reads no file an entry
 	// wrote.
 	catalogCloneWork = "/workspace/clone"
-	// catalogCloneDockerfile is the generated Dockerfile in that directory.
-	catalogCloneDockerfile = catalogCloneWork + "/Dockerfile"
-	// catalogCloneScript is the generated clone script in it.
-	catalogCloneScript = catalogCloneWork + "/clone.sh"
+	// catalogCloneDockerfilePath is the generated Dockerfile in that directory.
+	catalogCloneDockerfilePath = catalogCloneWork + "/Dockerfile"
+	// catalogCloneScriptPath is the generated clone script in it.
+	catalogCloneScriptPath = catalogCloneWork + "/clone.sh"
 	// catalogCloneName is the script's name where the generated build copies it
 	// to, inside the clone stage the entry never shares.
 	catalogCloneName = "/usr/local/lib/fugaro-clone.sh"
@@ -95,8 +105,10 @@ const (
 	catalogCloneCredential = "/creds/git-credentials"
 )
 
-// catalogCloneDockerfileText is the Dockerfile the clone step builds, in full:
-// the engine's own, and no part of it the entry's.
+// catalogCloneDockerfileText is the Dockerfile the clone step builds, up to the
+// scratch stage that carries its tree out — the stages after it are the
+// checkout and, for a definition that bakes, the image its stages copy
+// (catalogCloneDockerfile).
 //
 // It runs from the pinned base digest the step hands it and sets
 // GIT_CONFIG_NOSYSTEM=1, so the git that spends the credential is the base
@@ -106,11 +118,12 @@ const (
 // itself, after the `.lfsconfig` that could point them at another host has been
 // read (rule 6).
 //
-// The export is the checkout and nothing else: the clone writes under /out, the
+// The export is the checkouts and nothing else: the clone writes under /out, the
 // stage the credential ran in leaves this build no other way than through the
-// scratch stage below, and what that stage carries out is the image the step
-// tags for the entry's build to copy — and, for an entry that names a build
-// context, the same tree exported as the directory docker is handed.
+// scratch stages below, and what those carry out is the images the step tags for
+// the entry's build to copy — and, for an entry that names a build context, the
+// same tree exported as the directory docker is handed.
+//
 // The frontend is pinned as every Dockerfile Fugaro writes pins it
 // (images/derived/Dockerfile.tmpl and the four beside it), so the clone is
 // built by the same frontend the entries are.
@@ -132,39 +145,64 @@ USER fugaro
 COPY clone.sh ` + catalogCloneName + `
 RUN --mount=type=secret,id=git-credentials,uid=1000 sh ` + catalogCloneName + `
 FROM scratch AS checkout
-COPY --from=clone --chown=1000:1000 /out/ /
 `
 
-// catalogCloneScriptText is the script the generated build runs, and the only
-// thing in that build that reads the credential: the secret mount is its
-// standard input's neighbour and never an argument, an environment value, a
-// line of output or an error.
+// catalogCloneDockerfile is that Dockerfile with the stages after it, which are
+// what each kind of definition is handed:
 //
-// Every git it runs goes through gitx, so the credential file, the two
-// transports that are never allowed and the prompt that is never waited for are
-// stated once: a fetch that git makes for itself — a submodule, an LFS object —
-// inherits them because it is the same process.
+//   - `checkout` is the repository the build runs for, at the root of an image
+//     whose name every entry's Dockerfile has always copied it by
+//     (catalogCloneImage). A definition that bakes nothing clones that one
+//     repository into /out, and its own stages are the entry's own — a
+//     hand-written Dockerfile that copies this image, or clones itself with a
+//     credential of its own (D1208).
+//   - `baked` is every repository the definition that bakes names, one directory
+//     per repository slug (imagebake.Root's layout is the stages' business), and
+//     the entry's build copies each out of it with the stage imagebake composed
+//     (imagebake.BakedImage). It is built only when there is one: an entry that
+//     bakes names no repository and no stage copies from it.
 //
-// The values reach it through the environment (see the Dockerfile), and each is
-// quoted where it is used: `--` before the URL of a clone or a fetch, `"$VAR"`
-// everywhere, and no `eval`. What a repository names about itself — a
-// submodule's URL, an LFS endpoint — is read from a file the clone just made and
-// refused when it does not belong to this host, before the fetch that would use
-// it.
-//
-// catalogCloneScriptText is the clone step's script. Its fetch-by-id failure
-// line — "the branch was force-pushed; re-run the build" — stands for a commit
-// that was never pushed as well, and the script cannot tell the two apart: it
-// holds no branch name, and the shallow clone's own refs are the only ones it
-// may read, so both are the same fact here, that this remote does not publish
-// the commit. A commit that was never pushed is refused in the checkout, before
-// anything is submitted (internal/cli's refuseUnpushedCommit), so what reaches
-// this line through the CLI is a real force-push — and a template driven by
-// hand, which has no checkout to judge.
-const catalogCloneScriptText = `set -eu
-export LC_ALL=C
-CRED=/run/secrets/git-credentials
+// The clone's own work, which the two share, runs once: docker builds the stage
+// up to each of them out of the same cache.
+func catalogCloneDockerfile(s CatalogBuildSpec) string {
+	var b strings.Builder
+	b.WriteString(catalogCloneDockerfileText)
+	if len(s.Baked) == 0 {
+		b.WriteString("COPY --from=clone --chown=1000:1000 /out/ /\n")
+		return b.String()
+	}
+	fmt.Fprintf(&b, "COPY --from=clone --chown=1000:1000 /out/%s/ /\n", catalogBakedOwn(s).Slug)
+	b.WriteString("FROM scratch AS baked\n")
+	b.WriteString("COPY --from=clone --chown=1000:1000 /out/ /\n")
+	return b.String()
+}
 
+// catalogBakedOwn is the repository a definition that bakes names last, and the
+// one the build runs for: imagebake composes the build's own stage last, so the
+// checkout the definition is known by is the one that repository's jobs open
+// (imagebake.BakedSlug, imagebake.Append). It is what the generated Dockerfile
+// exports as the checkout image and what the script holds REPO_URL to.
+func catalogBakedOwn(s CatalogBuildSpec) imagebake.Repo {
+	return s.Baked[len(s.Baked)-1]
+}
+
+// catalogCloneScriptHelpers is the part of the generated script every catalog
+// build runs, up to the clone: every git it runs goes through gitx, so the
+// credential file, the two transports that are never allowed and the prompt that
+// is never waited for are stated once — a fetch that git makes for itself, a
+// submodule or an LFS object, inherits them because it is the same process — and
+// the values reach it through the environment (see the Dockerfile), each quoted
+// where it is used: `--` before the URL of a clone or a fetch, `"$VAR"`
+// everywhere, and no `eval`.
+//
+// What a repository names about itself — a submodule's URL, an LFS endpoint — is
+// read from a file the clone just made and refused when it does not belong to
+// this host, before the fetch that would use it. A definition that bakes gets a
+// second refusal over the same URLs: the entry's own repositories are what the
+// build's credential was minted for (COVERED, the plan's own repositories), and a
+// declaration that resolves to a repository outside them is refused where it is
+// read (imagebake's B2, the guard the composed stages used to carry).
+const catalogCloneScriptHelpers = `
 gitx() {
   GIT_TERMINAL_PROMPT=0 git \
     -c credential.helper= \
@@ -198,15 +236,60 @@ foreign_url() {
   return 1
 }
 
-# check_urls reads the URLs a checkout declares for its submodules and refuses
-# one that is not this host's, naming the submodule and never the URL: a URL
-# that does not belong here is the one value that may carry a credential of its
-# own, and this script prints no credential.
+# The coverage refusal names the repository the URL resolves to, folded the way
+# the covered set is: the host, the owner and the name, lower-cased, with a
+# trailing "/" and ".git" off. Two things follow from that fold and both are the
+# point of it. A URL that carries a credential cannot put it in the build log,
+# because everything from a "?" or a "#" is off the text a refusal prints, and so
+# is a userinfo — the text before the URL's first "/" is its host, and only there
+# does the fold drop everything up to the last "@", so a token in a userinfo, a
+# query or a fragment is off a build log line (the fold also drops control
+# characters, so nothing in that URL can rewrite the log it appears in). And a
+# repository the credential does not cover is not one this build fetches,
+# whatever it is called.
+#
+# The coverage refusal comes first, so a declaration that resolves to a repository
+# outside the entry's own is refused naming it and not merely as a URL of another
+# host (B2, spec.md's "fail with a clear message naming the repo that isn't
+# covered"). The host refusal is left for what the fold cannot name: a transport
+# that is not http, a value git would read as an option, an empty one, and a host
+# whose spelling is not the entry's own.
+#
+# Both are skipped for a definition that bakes nothing (COVERED empty), where
+# nothing of the engine's is cloned and the host refusal alone is the guard.
 check_urls() {
-  git config --file "$1" --get-regexp '^submodule\..*\.url$' | while read -r key url; do
-    foreign_url "$url" || continue
-    echo "the submodule $(printf '%s' "$key" | tr -d '[:cntrl:]') names a URL that is not $REPO_HOST: this build's credential is offered to $REPO_HOST alone" >&2
-    exit 1
+  # git answers 1 for a file with no such key and 128 for one it cannot read, and
+  # the second is a refusal: a checkout whose declarations git never read is not
+  # one this guard can show is covered.
+  status=0
+  urls=$(git config --file "$1" --get-regexp '^submodule\..*\.url$') || status=$?
+  [ "$status" = 0 ] || [ "$status" = 1 ] || exit 1
+  printf '%s\n' "$urls" | while read -r key url; do
+    [ -n "$key" ] || continue
+    if [ -n "$COVERED" ]; then
+      # The loop splits on whitespace and must not glob: a declaration holding "*",
+      # "?" or "[" would otherwise be expanded against the build's filesystem and
+      # read as whatever it matched rather than as the URL it is. The value is
+      # quoted inside the case pattern below for the same reason.
+      repo=$(printf '%s' "$url" | tr 'A-Z' 'a-z' | tr -d '\000-\037\177')
+      repo=${repo#*://}
+      repo=${repo%%[?]*}
+      repo=${repo%%[#]*}
+      auth=${repo%%/*}
+      rest=${repo#"$auth"}
+      repo=${auth##*@}$rest
+      repo=${repo%/}
+      repo=${repo%%.git}
+      [ -n "$repo" ] || repo="a repository this build cannot read"
+      case " $COVERED " in *" $repo "*) ;; *)
+        echo "a submodule of this checkout is $repo, which this build's credential does not cover: it covers the repositories of the entry being built and no others" >&2
+        exit 1 ;;
+      esac
+    fi
+    if foreign_url "$url"; then
+      echo "the submodule $(printf '%s' "$key" | tr -d '[:cntrl:]') names a URL that is not $REPO_HOST: this build's credential is offered to $REPO_HOST alone" >&2
+      exit 1
+    fi
   done
 }
 
@@ -235,8 +318,9 @@ check_lfs_url() {
 # fetch_tree fetches what a repository holds beside its own files: its LFS
 # objects, then its submodules, and then the same for each of those. A level's
 # URLs are read and refused before the level under it is fetched, so a nested
-# .gitmodules naming another host is refused before any credential is offered to
-# it (rule 6).
+# .gitmodules naming another host — or, for an entry that bakes, a repository
+# outside the entry's own — is refused before any credential is offered to it
+# (rule 6).
 fetch_tree() {
   if [ -f "$1/.lfsconfig" ]; then
     check_lfs_url "$1/.lfsconfig"
@@ -248,8 +332,8 @@ fetch_tree() {
   # verb reads a flag list for its spelling, and update's initialising flag in
   # front of another is that spelling (internal/cli/docs_live_init_census_test.go).
   gitx -C "$1" submodule update --quiet --init
-  gitx -C "$1" submodule foreach --quiet 'printf "%s\n" "$sm_path"' | while IFS= read -r path; do
-    fetch_tree "$1/$path"
+  gitx -C "$1" submodule foreach --quiet 'printf "%s\n" "$sm_path"' | while IFS= read -r line; do
+    fetch_tree "$1/$line"
   done
 }
 
@@ -261,12 +345,19 @@ esac
 case "$COMMIT" in
   ""|*[!0-9a-f]*) echo "COMMIT is not a commit ID" >&2; exit 1 ;;
 esac
+`
 
-# The commit is the one the definition pinned and never the branch head: the
-# branch head at build time is the tree the definition was copied from only by
-# accident (D1394). The clone is shallow, so a commit that is not the tip is
-# fetched by itself, and one the remote no longer has fails the build saying so
-# rather than baking another tree — the shape the derived template's build uses.
+// catalogCloneScriptOwn is the clone of the repository the build runs for, for a
+// definition that bakes nothing: it is the only repository the step clones, and
+// it lands at /out — the root of the image an entry's Dockerfile copies
+// (catalogCloneImage).
+//
+// The commit is the one the definition pinned and never the branch head: the
+// branch head at build time is the tree the definition was copied from only by
+// accident (D1394). The clone is shallow, so a commit that is not the tip is
+// fetched by itself, and one the remote no longer has fails the build saying so
+// rather than baking another tree — the shape the derived template's build uses.
+const catalogCloneScriptOwn = `
 gitx clone --quiet --depth 1 --no-checkout -- "$REPO_URL" /out
 gitx -C /out cat-file -e "$COMMIT^{commit}" 2>/dev/null \
   || gitx -C /out fetch --quiet origin "$COMMIT" \
@@ -276,8 +367,133 @@ gitx -C /out reset --quiet --hard "$COMMIT"
 fetch_tree /out
 `
 
-// catalogCloneRevoke is what the script ends with where the provider can revoke:
-// the credential ends with this step (rule 7).
+// catalogCloneScript is the script the generated build runs, and the only thing
+// in that build that reads the credential: the secret mount is its standard
+// input's neighbour and never an argument, an environment value, a line of
+// output or an error.
+//
+// What it clones is what the definition bakes: the repository the build runs for
+// at the commit the build pinned, and — for a definition that bakes several —
+// each of the entry's other repositories at the head of the branch the definition
+// names for it. The step holds one commit and that is the build's own: the others
+// are the branch's head at the moment the build runs, which is what an entry's
+// own Dockerfile that clones by hand has always done, and the reason a repository
+// that wants its image pinned pins it by naming the entry its own workflow runs.
+//
+// A definition that bakes is held to the checkout it was composed for before
+// anything is cloned: the nightly check rebuilds an entry as whichever repository
+// the spec assigns it to (infra's catalogCheckRepos), and without the guard such
+// a rebuild would clone one repository into another's slug path, under the marker
+// and the tag the composed definition gave it, and the smoke would pass on the
+// pairing it read from the two. The refusal is about the repository and not the
+// spelling — the composed origin, the origin's capricious marks and the canonical
+// form the catalog build passes are one fold (imagebake.OriginID) — and every
+// repository the definition names is refused with it.
+//
+// catalogCloneScriptText is the clone step's script. Its fetch-by-id failure
+// line — "the branch was force-pushed; re-run the build" — stands for a commit
+// that was never pushed as well, and the script cannot tell the two apart: it
+// holds no branch name, and the shallow clone's own refs are the only ones it
+// may read, so both are the same fact here, that this remote does not publish
+// the commit. A commit that was never pushed is refused in the checkout, before
+// anything is submitted (internal/cli's refuseUnpushedCommit), so what reaches
+// this line through the CLI is a real force-push — and a template driven by
+// hand, which has no checkout to judge.
+func catalogCloneScript(s CatalogBuildSpec) (string, error) {
+	for _, r := range s.Baked {
+		if err := r.Spellable(); err != nil {
+			return "", fmt.Errorf("the definition bakes the checkout %s: %w", r.Slug, err)
+		}
+	}
+	var b strings.Builder
+	b.WriteString("set -eu\nexport LC_ALL=C\nCRED=/run/secrets/git-credentials\n")
+	covered := make([]string, 0, len(s.Baked))
+	for _, r := range s.Baked {
+		if id := coveredID(r.URL); id != "" {
+			covered = append(covered, id)
+		}
+	}
+	fmt.Fprintf(&b, "COVERED='%s'\n", strings.Join(covered, " "))
+	b.WriteString(catalogCloneScriptHelpers)
+	if len(s.Baked) == 0 {
+		b.WriteString(catalogCloneScriptOwn)
+	} else {
+		b.WriteString(catalogCloneScriptBaked(s.Baked))
+	}
+	if s.GitProvider == gitprov.KindGitHub {
+		b.WriteString(catalogCloneRevoke)
+	}
+	return b.String(), nil
+}
+
+// catalogCloneScriptBaked is the script above for a definition that bakes: the
+// build's own repository into its slug's directory, then each of the entry's
+// other repositories into its own, and then what a repository holds beside its
+// files — its LFS objects and its submodules — for every one of them.
+//
+// The definition's own marker line is what the two are read from
+// (imagebake.BakedRepos), and the build's own is the last of them, which is the
+// one the guard holds REPO_URL to. The branch the others are cloned at is the
+// one their marker names: the definition was composed from the project's own
+// repository records, and a branch that is not a branch name imagebake refuses
+// before this script is written.
+func catalogCloneScriptBaked(baked []imagebake.Repo) string {
+	own := baked[len(baked)-1]
+	var b strings.Builder
+	fmt.Fprintf(&b, `
+# The repository the build runs for, held to the definition: a rebuild of an entry
+# that bakes has to run as the repository whose checkout the definition bakes.
+own=$(printf '%%s' "$REPO_URL" | tr 'A-Z' 'a-z')
+own=${own%%/}
+own=${own%%.git}
+[ "$own" = '%s' ] || { echo "this definition bakes one repository's checkout, and REPO_URL is not it: a rebuild of the entry has to run as the repository whose checkout it bakes" >&2; exit 1; }
+gitx clone --quiet --depth 1 --no-checkout -- "$REPO_URL" /out/%s
+gitx -C /out/%s cat-file -e "$COMMIT^{commit}" 2>/dev/null \
+  || gitx -C /out/%s fetch --quiet origin "$COMMIT" \
+  || { echo "commit $COMMIT is no longer reachable: the branch was force-pushed; re-run the build" >&2; exit 1; }
+gitx -C /out/%s reset --quiet --hard "$COMMIT"
+
+fetch_tree /out/%s
+`, imagebake.OriginID(own.URL), own.Slug, own.Slug, own.Slug, own.Slug, own.Slug)
+	for _, r := range baked[:len(baked)-1] {
+		fmt.Fprintf(&b, `
+# One of the entry's other repositories, at the head of the branch the definition
+# names for it: the build holds the commit of its own repository and no other.
+gitx clone --quiet --branch '%s' --single-branch -- '%s' /out/%s
+
+fetch_tree /out/%s
+`, r.Branch, r.URL, r.Slug, r.Slug)
+	}
+	return b.String()
+}
+
+// coveredID is the repository a clone URL names, as the coverage check's own
+// shell spells it: the host and the path, lower-cased, with a trailing "/" and
+// ".git" off. Go computes the covered set here and the shell folds the
+// submodule's own URL, so the two spellings have to be one — a set the shell
+// could not match would refuse every submodule of a repository the entry
+// covers.
+//
+// The path is the escaped one, which is the text a URL really carries: a
+// repository spelled with an escape (repourl.CloneURL's note about
+// https://bitbucket.org/acme/sandb%6fx.git) folds to the bytes the shell sees
+// only this way. An empty answer drops the repository from the covered set
+// rather than adding a name nothing matches: a URL without a host is not one
+// imagebake composes a stage for (Repo.Spellable), and a covered set that lost a
+// member refuses MORE submodules, which is the direction a guard may be wrong
+// in.
+func coveredID(u string) string {
+	parsed, err := url.Parse(u)
+	if err != nil || parsed.Host == "" {
+		return ""
+	}
+	id := task.ASCIILower(parsed.Host + parsed.EscapedPath())
+	return strings.TrimSuffix(strings.TrimSuffix(id, "/"), ".git")
+}
+
+// catalogCloneRevoke is what the step that reads the credential ends with where
+// the provider can revoke: the credential ends with the clone step (rule 7), for
+// every definition, because no step of the entry's own build is handed it.
 //
 // GitHub's endpoint revokes the token that carries it and needs no other
 // identity, so the token itself is the call: it is read back out of the
@@ -286,12 +502,17 @@ fetch_tree /out
 // shape scripts/live-checks/check190.sh uses for the same reason: the value is
 // never an argument, an environment value or a line of output, and curl reads it
 // from a file and prints nothing of it. A revoke that fails does not fail the
-// clone: the token expires inside the build's timeout either way, which is where
+// build: the token expires inside the build's timeout either way, which is where
 // a Bitbucket build starts — it is answered a proxy grant and no token at all
 // (R6), so this is not appended for one.
+//
+// The token it cannot read back is said and not passed over: an empty read is a
+// credential file this step cannot see (a git that is not on the worker, a file
+// a step removed) and a build whose token is then left to expire, which is a
+// thing an operator reading the log has to be able to see.
 const catalogCloneRevoke = `
 tok=$(printf 'protocol=https\nhost=%s\n\n' "$REPO_HOST" | git credential-store --file="$CRED" get | sed -n 's/^password=//p') || tok=
-[ -n "$tok" ] || exit 0
+[ -n "$tok" ] || { echo "the installation token could not be read back for revocation; it expires inside this build's timeout" >&2; exit 0; }
 conf=$(mktemp)
 (umask 077 && printf 'header = "Authorization: Bearer %s"\n' "$tok" > "$conf")
 curl --silent --show-error --fail --request DELETE \
@@ -304,10 +525,10 @@ rm -f "$conf"
 `
 
 // catalogTemplateCredentialArg is the git credential the derived template's
-// build step hands the Dockerfile it builds, and the one thing a catalog build
-// must not pass it: the entry's own RUN steps may ask for that secret by id
-// (F19, review round 2), so the credential reaches the clone step's build and no
-// build of the entry's own.
+// build step hands the Dockerfile it builds. A catalog build takes it out of
+// every entry's build step: no stage of a catalog entry clones any more, so
+// where the credential would reach the entry's build there is nothing to read it
+// (B8, F19, D2311) — the checkouts arrive as the images the clone step built.
 const catalogTemplateCredentialArg = `--secret "id=git-credentials,src=` + catalogCloneCredential + `"`
 
 // catalogTemplateCredentialLine is that argument as the one line of the build
@@ -326,9 +547,9 @@ const catalogTemplateCredentialLine = catalogTemplateCredentialArg + " \\"
 // this step exists to close.
 var errTemplateCredentialMoved = errors.New("the embedded build template no longer hands the git credential to the build step: this binary's catalog build must be read again")
 
-// catalogCloneStep is the step that clones the entry's repository for the
-// entry's build to copy: the build request carries it, and neither the entry's
-// Dockerfile nor the copied definition is part of the build it runs.
+// catalogCloneStep is the step that clones the repositories the entry's build
+// copies: the build request carries it, and neither the entry's Dockerfile nor
+// the copied definition is part of the build it runs.
 //
 // The base is pinned the way the template's build step pins it — the digest of
 // the base image this worker already holds, which the credential step's own
@@ -349,9 +570,9 @@ func catalogCloneStep(s CatalogBuildSpec, buildCwd string) (*cloudbuild.BuildSte
 	if err != nil || u.Host == "" {
 		return nil, fmt.Errorf("the repository URL %s does not parse", RedactURL(s.RepoURL))
 	}
-	script := catalogCloneScriptText
-	if s.GitProvider == gitprov.KindGitHub {
-		script += catalogCloneRevoke
+	script, err := catalogCloneScript(s)
+	if err != nil {
+		return nil, err
 	}
 	env := []string{
 		"DOCKER_BUILDKIT=1",
@@ -369,7 +590,7 @@ func catalogCloneStep(s CatalogBuildSpec, buildCwd string) (*cloudbuild.BuildSte
 		Name:       "gcr.io/cloud-builders/docker",
 		Entrypoint: "bash",
 		Env:        env,
-		Args:       []string{"-c", cloudBuildEscape(catalogCloneStepScript(script, s.Context != ""))},
+		Args:       []string{"-c", cloudBuildEscape(catalogCloneStepScript(s, script))},
 		Volumes:    []*cloudbuild.Volume{{Name: "fugaro-creds", Path: "/creds"}},
 	}, nil
 }
@@ -393,40 +614,48 @@ func (s CatalogBuildSpec) cloneCommit() string {
 //
 // The credential file is removed however this step ends, the build failing and
 // the guard refusing included — an exit trap, the shape the template's own build
-// step uses for the same file. The step is the last that mounts the volume it
-// lives in, and the entry's build step no longer mounts it at all.
+// step uses for the same file. This step is the only one that mounts the volume
+// it lives in: the entry's build step is handed neither the file nor the volume
+// (catalogEntryBuildStep), so nothing outlives it.
 //
-// The generated Dockerfile is built twice, and the two builds differ in their
-// last flag alone: once tagged catalogCloneImage, which is the image the entry's
-// Dockerfile copies the checkout out of, and — for an entry that names a build
-// context — once more with the `type=local` export catalogCloneDest is written
-// by. The second build is the first one's own cache — the same Dockerfile at the
-// same arguments — so the clone itself runs once, and what the export writes is
-// the tree the scratch stage carries out and nothing else.
-func catalogCloneStepScript(script string, context bool) string {
+// The generated Dockerfile is built once per image the entry's build copies out
+// of, and the builds differ in their last flags alone: once with the checkout
+// stage tagged catalogCloneImage, which is the image every entry's Dockerfile
+// copies, once more with the baked stage tagged imagebake.BakedImage, which the
+// stages of a definition that bakes copy each checkout out of (Baked), and —
+// for an entry that names a build context — once more with the `type=local`
+// export catalogCloneDest is written by. Each build is the one before it cache,
+// the same Dockerfile at the same arguments, so the clone itself runs once, and
+// what each writes is the tree its own scratch stage carries out and nothing
+// else.
+func catalogCloneStepScript(s CatalogBuildSpec, script string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "set -eu\nexport LC_ALL=C\ninstall -d -m 0700 %s\n", catalogCloneWork)
-	fmt.Fprintf(&b, "trap 'rm -f %s' EXIT\n", catalogCloneCredential)
-	fmt.Fprintf(&b, "cat > %s <<'FUGARO_DOCKERFILE'\n%sFUGARO_DOCKERFILE\n", catalogCloneDockerfile, catalogCloneDockerfileText)
-	fmt.Fprintf(&b, "cat > %s <<'FUGARO_SCRIPT'\n%sFUGARO_SCRIPT\n", catalogCloneScript, script)
+	fmt.Fprintf(&b, "set -eu\nexport LC_ALL=C\ninstall -d -m 0700 %s\ntrap 'rm -f %s' EXIT\n", catalogCloneWork, catalogCloneCredential)
+	fmt.Fprintf(&b, "cat > %s <<'FUGARO_DOCKERFILE'\n%sFUGARO_DOCKERFILE\n", catalogCloneDockerfilePath, catalogCloneDockerfile(s))
+	fmt.Fprintf(&b, "cat > %s <<'FUGARO_SCRIPT'\n%sFUGARO_SCRIPT\n", catalogCloneScriptPath, script)
 	b.WriteString(`base=$(docker image inspect --format '{{index .RepoDigests 0}}' "$FUGARO_BASE") \
   || { echo "the base image $FUGARO_BASE is not on this worker" >&2; exit 1; }
-docker build ` + catalogCloneBuildFlags + `  --tag ` + catalogCloneImage + ` \
+docker build ` + catalogCloneBuildFlags + `  --target checkout --tag ` + catalogCloneImage + ` \
   ` + catalogCloneWork + "\n")
-	if context {
+	if len(s.Baked) > 0 {
+		b.WriteString("docker build " + catalogCloneBuildFlags + "  --target baked --tag " + imagebake.BakedImage + ` \
+  ` + catalogCloneWork + "\n")
+	}
+	if s.Context != "" {
 		b.WriteString("docker build " + catalogCloneBuildFlags +
-			`  --output "type=local,dest=` + catalogCloneDest + `" \
+			`  --target checkout --output "type=local,dest=` + catalogCloneDest + `" \
   ` + catalogCloneWork + "\n")
 		b.WriteString(catalogCloneGuard)
 	}
 	return b.String()
 }
 
-// catalogCloneBuildFlags is the flag list both builds of the generated
-// Dockerfile take, ending in the continuation that joins the line after it: the
-// same build twice, with the output the only difference between them.
+// catalogCloneBuildFlags is the flag list every build of the generated
+// Dockerfile takes, ending in the continuation that joins the line after it: the
+// same build each time, with the target and the output the only difference
+// between them.
 const catalogCloneBuildFlags = `--progress plain \
-  --file ` + catalogCloneDockerfile + ` \
+  --file ` + catalogCloneDockerfilePath + ` \
   --build-arg "FUGARO_BASE=$base" \
   --build-arg "REPO_URL=$REPO_URL" \
   --build-arg "COMMIT=$COMMIT" \
@@ -452,11 +681,13 @@ esac
 `
 
 // catalogEntryBuildStep makes the entry's own build step the one a catalog build
-// runs: the checkout the clone step tagged reaches it as the image
-// catalogCloneImage, which the worker holds by the time this step runs and no
-// flag of this step names, and the git credential the derived template hands its
-// build step is not in this request's build step at all — nor is the volume that
-// holds it, which no step after the clone mounts.
+// runs: the checkouts the clone step tagged reach it as images the worker holds
+// by the time this step runs, and no flag of this step names them. The git
+// credential the derived template hands its build step is taken out of the
+// request — with the volume that holds it, which no step after the clone mounts —
+// for every definition, the ones that bake included (B8, F19): a definition that
+// bakes copies the checkouts the clone step made (Baked) and mounts no secret of
+// its own, so there is nothing in the entry's build to hand the credential to.
 //
 // Only the credential is taken out here, and no other secret is left to take
 // out: the repository's workflow secrets, declared in its fugaro.yaml, reached a
