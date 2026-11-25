@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/initflow"
 )
@@ -88,5 +91,62 @@ func TestBudgetOffNoticeFromDefaultBranch(t *testing.T) {
 	}
 	if got := convergeRead(t, filepath.Join(root, repoNoticeYAMLFile)); got != refreshYAML+offRepoYAML {
 		t.Errorf("fugaro.yaml after the step:\n%s\nwant it left as the repository committed it", got)
+	}
+}
+
+// A checkout is somebody else's, and the extra files this step reads are read
+// the way a checkout's own files are (config.ReadRegular): a settings file that
+// is a symlink is not followed — it could name any file the reader can read —
+// and one that is a FIFO is not opened at all, so the read cannot block. The
+// step still answers, with no notice for the file it did not get (U6a).
+func TestNoticeReadsNoExtraFileThatIsNotARegularOne(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// plant makes .claude/settings.json what the case is about, and
+		// answers whether the case can run here.
+		plant func(t *testing.T, settings string) bool
+	}{
+		{name: "a symlink", plant: func(t *testing.T, settings string) bool {
+			real := filepath.Join(filepath.Dir(filepath.Dir(settings)), "elsewhere.json")
+			checkoutFile(t, real, pinnedAmongOthers)
+			if err := os.Symlink(real, settings); err != nil {
+				t.Skip(err)
+				return false
+			}
+			return true
+		}},
+		{name: "a FIFO", plant: func(t *testing.T, settings string) bool {
+			if err := os.MkdirAll(filepath.Dir(settings), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := syscall.Mkfifo(settings, 0o644); err != nil {
+				t.Skip(err)
+				return false
+			}
+			return true
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := repoCheckout(t, githubOrigin, refreshYAML)
+			t.Chdir(root)
+			settings := filepath.Join(root, repoNoticePinFile)
+			if !tc.plant(t, settings) {
+				return
+			}
+			e, out := checkoutEngine(t, nil)
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				e.noticeRepoValues(theUpdateLeavesTheRemoval(t.Context()))
+			}()
+			select {
+			case <-done:
+			case <-time.After(30 * time.Second):
+				t.Fatalf("the step did not answer with a %s in the checkout: the read blocked", tc.name)
+			}
+			if seen := out.String(); strings.Contains(seen, repoNoticePinEdit) {
+				t.Errorf("a %s earned the pin's notice: the file was read:\n%s", tc.name, seen)
+			}
+		})
 	}
 }

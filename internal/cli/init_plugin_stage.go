@@ -14,14 +14,13 @@ import (
 )
 
 // The plugin stage (stage 8): the plugin installed, or updated, in the user's
-// own Claude Code through the claude CLI, at user scope, and the pin an older
-// fugaro left in the checkout taken out (U5). The merge that wrote the pin was
-// deleted outright (D949, answered 2026-11-04; U2 of
-// docs/plugin-user-scope/implementation-plan.md), so nothing writes one any
-// more and the removal is the only thing in the tree that touches one at all
-// (F26): the checkout is written once, to take the two entries the merge left
-// out, and every other write of this stage is on this machine, in the user's
-// own plugin installation.
+// own Claude Code through the claude CLI, at user scope. The merge that wrote a
+// pin into the checkout was deleted outright (D949, answered 2026-11-04; U2 of
+// docs/plugin-user-scope/implementation-plan.md), and since U6a nothing writes
+// one either: a pin an older fugaro left is a notice `update` prints after the
+// loop (repo_notices.go, D3340), so this stage writes no checkout at all and
+// every write it makes is on this machine, in the user's own plugin
+// installation.
 //
 // The stage is here and not in the checkout stage because it runs before the
 // repository stage (initflow's order, F3): a session whose repository stage
@@ -39,19 +38,12 @@ import (
 // stages were guarding — so it runs although one of them stopped, and its line
 // says which.
 //
-// The two halves have different gates (D955, U8). The removal's gates are the
-// checkout's own, whole: its origin, its fugaro.yaml and the machine config's
-// answer about the repository that origin names — everything that authorises
-// writing .claude/settings.json in somebody's checkout — and a checkout this
-// run may not write into still leaves the pin exactly as it is. The install half
-// reads none of them: the plugin it installs is the same one for every checkout,
-// it concerns no repository, and the gate that consults the machine's config
-// would send every teammate to fugaro setup for a write that is not the
-// repository's (F24). So the install happens in any directory, checkout or not,
-// and the removal's gate is read only where the checkout carries a pin at all
-// (s.pin): a gate authorises a write, and where there is nothing to write it
-// authorises nothing and is asked nothing — which is what keeps a new machine's
-// empty repository list from being an answer about the machine's own plugin.
+// The stage reads no checkout gate (D955, U8): the plugin it installs is the
+// same one for every checkout, it concerns no repository, and the gate that
+// consults the machine's config would send every teammate to fugaro setup for a
+// write that is not the repository's (F24). So the install happens in any
+// directory, checkout or not, and a new machine's empty repository list is no
+// answer about the machine's own plugin.
 
 type pluginStage struct {
 	e *initEngine
@@ -105,11 +97,6 @@ func pluginInstallDir() string { return os.TempDir() }
 // not simply assigned: the run's own write moves what it was read from — the
 // install that clears the version behind it — and the execution pass checks
 // this stage again after the apply that changed it.
-//
-// The pin's removal alone is not that fact: a checkout that carries a pin and
-// the plugin this release already installs has nothing of the run's to move but
-// the two entries, and a billable image rebuild is not what taking them out
-// asks for (U5).
 func (s *pluginStage) Check(ctx context.Context) (initflow.Status, error) {
 	st, err := s.status(ctx)
 	if err == nil && s.installStep {
@@ -346,12 +333,12 @@ func pluginStep(ctx context.Context, u *stepCtx) stepResult {
 // pluginCheck is the plugin step under --check: Claude Code's record of
 // installed plugins compared with this fugaro, no claude run. It answers about
 // the install the write path maintains, the machine's own at user scope
-// (claudeplugin.UserVersion), which Status reads off the record whether or not
-// the checkout carries a pin (pluginwire.Report.UserInstall): what applies to
-// the checkout is another question — doctor's, and the staleness warning's —
-// and a checkout-scoped install with nothing at user scope would answer it with
-// a version while the machine's own Claude Code has no plugin, which is the
-// install this step's write still makes (D949, U2).
+// (claudeplugin.UserVersion), which Status reads off the record
+// (pluginwire.Report.UserInstall): what applies to a checkout is another
+// question — doctor's, and the staleness warning's — and a checkout-scoped
+// install with nothing at user scope would answer it with a version while the
+// machine's own Claude Code has no plugin, which is the install this step's
+// write still makes (D949, U2).
 func pluginCheck(u *stepCtx, ver string) stepResult {
 	r := pluginwire.Status(u.loc.Settings, Version, installedPlugins())
 	switch r.UserInstall {

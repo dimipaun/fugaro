@@ -1194,8 +1194,10 @@ func (r *initRun) lockWorkdirs(project string) (func(), error) {
 }
 
 // markTheUpdateReads makes this run's every read of a checkout's fugaro.yaml
-// the read of the file this run's own removal offer leaves behind: the word
-// that was a budget mode taken out of the bytes before anything judges them
+// the read of the file with the dead word taken out: budget.mode: off is not a
+// budget mode any more, and this run's answer to it is a notice naming the line
+// to delete rather than a write (repo_notices.go, U6a, D3340), so the bytes are
+// read through the word before anything judges them
 // (fugaroYAMLWithoutRemovedMode, AB8b, F22). The published node's own read is
 // the converge's, marked by policyMemo rather than here.
 //

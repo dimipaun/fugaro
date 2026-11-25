@@ -53,6 +53,11 @@ only when the caller asked for those paths. A stage reads nothing it did not ask
 reader takes the extra paths as an option, so a stage that needs a file says so in the input rather
 than reading one behind the list's back.
 
+An extra file is read the way a checkout's own files are (`config.ReadRegular`,
+`config.MaxCheckoutFile`): only a regular file, at most the bound, opened without following a
+symlink and without blocking. A checkout is somebody else's, so a symlink, a FIFO or a device is
+not read, and a file that cannot be read that way is not carried.
+
 ## The line
 
 A stage reports one `initflow.RepoLine` per repository it has something to say about:
