@@ -20,13 +20,13 @@ import (
 // one document the index keeps per installation (runindex.Summary) -- with the
 // operator's own credentials, through the same Firestore client the spend
 // history is read with, rather than through the Reader the commands compile
-// against. Two reasons. The Reader cannot say the index is absent: its stub
-// answers "incomplete" for every installation until I-INDEX wires the real one
-// (internal/runindex/stub.go), and an installation whose index has never been
-// built is not one with an incomplete index -- there is nothing to rebuild, and
-// `fugaro update` builds the first one. And the fact the line is decided on is
-// the document's own: a Reader merges the RTDB overlay in and so answers a
-// different question (D3202).
+// against. Two reasons. The Reader cannot say the index is absent: an
+// installation with no index database answers "incomplete" through it
+// (emptyIndexReader, runindex_wire.go), and an installation whose index has
+// never been built is not one with an incomplete index -- there is nothing to
+// rebuild, and `fugaro update` builds the first one. And the fact the line is
+// decided on is the document's own: a Reader merges the RTDB overlay in and so
+// answers a different question (D3202).
 //
 // A document that is absent, or a summary that is complete with a stamp inside
 // the budget database's own retention, is silence -- and that is the state of
