@@ -16,22 +16,31 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 // The compute stage: the Batch backend's installation-level provisioning
-// (design docs/compute-backend/spec.md §3.2, §3.7, §8.1 task 6). It is the
-// owner's step, and it is behind --provision-batch: what it creates is money
-// and infrastructure `fugaro update` does not apply, and a run that never asks
-// for it never reaches this root.
+// (design docs/compute-backend/spec.md §3.2, §3.7, §8.1 task 6).
+//
+// The FIRST provisioning is the owner's step and it is behind
+// --provision-batch: that is money and infrastructure created on purpose, and
+// a run that never asks for it never reaches this root. Converging a root that
+// already exists is the other path, and `fugaro update` reaches it by the
+// installation's own opt-in fact (R2, D3110) — and so does the `fugaro apply`
+// that answers a step this machine owes, which registers the stage on the same
+// fact (initStages). A run whose installation never opted in reaches this root
+// on neither door.
 //
 // It is money and it is permanent — a preloaded boot image's Cloud Build, a
 // Cloud NAT's hours, a custom role and a scheduled job — so --yes cannot
 // cover it (the stage is registered noYes, and the step is one no answer a run
-// carries reaches either) and its confirmation is the owner's own session: a person at a real
-// terminal is what applies it, and nothing is typed at them (D1540). A coding
-// agent's session is refused rather than left for the owner like a session
-// that merely cannot answer (D1555, Apply), and what it reads beside the
-// refusal is the command its owner runs themselves (Left).
+// carries reaches either): the FIRST provisioning is confirmed by a person at a
+// real terminal, who types the project's name, and nothing else is asked of
+// them (D1540); the update's converge asks nothing at all, the opt-in fact
+// being what authorizes it. A coding agent's session is refused rather than
+// left for the owner like a session that merely cannot answer (D1555, Apply),
+// and what it reads beside the refusal is the command its owner runs
+// themselves (Left).
 //
 // What it does NOT do: touch the installation's own root (a workdir and a
 // state of its own, see infra.ComputeWorkdir), handle a secret, or delete
@@ -47,6 +56,13 @@ import (
 // does not grant is refused before anything is confirmed.
 type computeStage struct {
 	e *initEngine
+	// underUpdate is the door this stage was registered by: false is
+	// `--provision-batch`'s first provisioning (the owner's own step, one
+	// typed confirmation), true is `fugaro update`'s converge of a root the
+	// installation opted in to (R2, R12). The two differ in who authorizes the
+	// apply, in what they skip, and in whether a rebuild is started -- not in
+	// what they plan.
+	underUpdate bool
 	// changes and applied mirror engineStage's, so the plan view and the
 	// JSON result read the same either way.
 	changes *infra.PlanCounts
@@ -77,16 +93,85 @@ type computeStage struct {
 
 func newComputeStage(e *initEngine) *computeStage { return &computeStage{e: e} }
 
+// newUpdateComputeStage is the stage `fugaro update` registers where the
+// installation's own opt-in fact says it is on Batch (R2, D3110): the same root,
+// converged by the one command the upgrade is, on an installation that asked for
+// it.
+func newUpdateComputeStage(e *initEngine) *computeStage {
+	return &computeStage{e: e, underUpdate: true}
+}
+
 func (s *computeStage) Name() string { return initflow.Compute }
 
 // Check cannot know without planning whether anything is missing, so it says
 // what it will do; Plan does the reading, and a Plan that finds nothing is
 // the stage being done.
-func (s *computeStage) Check(context.Context) (initflow.Status, error) {
+//
+// Under `fugaro update` it is the stage's whole gate, and it is what makes the
+// stage safe to register on every opted-in installation: an updating machine
+// whose credential is not an operator's skips it with one line (R2, A2), and so
+// does one whose root was never provisioned, naming the first provisioning's own
+// command (D3110). A coding agent's session is not skipped here: the loop
+// refuses it, and it can only do that for a stage that reaches it -- a Skipped
+// status would suppress the refusal. Nothing is applied on any of these paths.
+func (s *computeStage) Check(ctx context.Context) (initflow.Status, error) {
+	if !s.underUpdate {
+		return initflow.Status{State: initflow.Todo, Detail: "plans when applied"}, nil
+	}
+	if m := agentMarker(os.Getenv, s.e.r.stdinTerminal()); m != "" {
+		return initflow.Status{State: initflow.Todo, Detail: "plans when applied"}, nil
+	}
+	skip, err := s.updateSkip(ctx)
+	if err != nil {
+		return initflow.Status{}, err
+	}
+	if skip != "" {
+		return initflow.Status{State: initflow.Skipped, Detail: skip}, nil
+	}
 	return initflow.Status{State: initflow.Todo, Detail: "plans when applied"}, nil
 }
 
+// updateSkip is why an opted-in installation's update leaves the compute root
+// alone, or "" where it has nothing to say: this machine's credential is not one
+// of the installation's operators, or the root holds no resource yet.
+//
+// The second answer reads the STATE and not the plan, and the difference is the
+// whole of it: a root that was never applied plans every resource it would
+// create, which is exactly `--provision-batch`'s first provisioning -- the
+// update converges what exists and never does that (D3110, R2). A root that is
+// there and needs tightening goes on to Apply.
+func (s *computeStage) updateSkip(ctx context.Context) (string, error) {
+	caller, err := accessCallerLookup(ctx)
+	if err != nil || !slices.ContainsFunc(s.e.spec.Operators, func(m string) bool { return strings.EqualFold(m, caller) }) {
+		// Failing closed and saying the same thing: a credential that could not
+		// be read and one that is not on the roster are the same fact for a
+		// person reading this line -- the root is not theirs to apply -- and
+		// neither is a reason to stop the update (R2).
+		return "skipped: only an operator applies the compute root, and this machine's credential is not one", nil
+	}
+	if err := s.prepare(ctx); err != nil {
+		return "", err
+	}
+	st, err := s.t.ShowState(ctx)
+	if err != nil {
+		return "", remote(err)
+	}
+	if !st.Managed() {
+		return "skipped: the compute root was never provisioned here; provision it once with " + selfCommand() + " setup --provision-batch", nil
+	}
+	return "", nil
+}
+
+// Left is what a person does about this stage. Under `--provision-batch` it is
+// that flag's own command; under update it is the update, run at a terminal:
+// the stage is noYes, so the loop hands it to the person instead of applying it
+// wherever the session has no terminal (initflow's converge), and the `fugaro
+// apply` that answers a step this machine owes reaches the same stage by the
+// same opt-in fact (initStages).
 func (s *computeStage) Left() initflow.Left {
+	if s.underUpdate {
+		return promptLeft(initflow.Compute, "run the command below at a terminal: it asks you nothing and applies the compute root the installation opted in to", updateDoor.name)
+	}
 	return promptLeft(initflow.Compute, "run the command below: it asks you nothing and provisions the batch", s.e.r.o.doorName(), "--provision-batch")
 }
 
@@ -145,6 +230,9 @@ func (s *computeStage) Apply(ctx context.Context, _ initflow.Env) (initflow.Outc
 	e, r := s.e, s.e.r
 	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
 		return initflow.Outcome{}, &initflow.AgentError{Marker: m}
+	}
+	if s.underUpdate {
+		return s.updateApply(ctx)
 	}
 	plan, err := s.plan(ctx)
 	if err != nil {
@@ -216,6 +304,151 @@ func (s *computeStage) Apply(ctx context.Context, _ initflow.Env) (initflow.Outc
 	}
 	s.announceBackend()
 	return initflow.Outcome{Changed: true, Detail: "applied: " + counts.String() + " (preload image " + s.image + ", socket gid label " + s.gidLabel + ")"}, nil
+}
+
+// updateApply is the compute root under `fugaro update` (R2, R12): the same
+// plan, guard and grant rules as the provisioning, and three things that are
+// not the provisioning's.
+//
+// It asks nothing. The operator's opt-in fact is the authorization -- the
+// installation asked for this root and the update is what applies it -- so the
+// typed confirmation stays where it is, on `fugaro setup --provision-batch`,
+// and no flag confirms this path either (the stage is registered noYes, so a run
+// with no terminal leaves it for the operator instead of applying it).
+//
+// It writes no block and says nothing about the selection: the block is the
+// provisioning's (and BR16's, for the facts `fugaro update` owns), and every
+// machine's own `backend:` is that machine's.
+//
+// It starts the preload rebuild only where the plan changes what that image is
+// built from -- a role or a grant is not an input, and an update that tightens
+// one must not spend a Cloud Build (R12). Where it does, the one line says so
+// with what it costs.
+//
+// A Batch run in flight is named in one line and changes nothing: the update is
+// safe while runs fly, always (the owner's requirement of 2026-11-09). The count
+// is the runs on this backend, read the way the update's own note reads them.
+func (s *computeStage) updateApply(ctx context.Context) (initflow.Outcome, error) {
+	r := s.e.r
+	// The read-only preview pass prepared this root, and it ran before the
+	// stages that change what prepare reads: the images stage records this
+	// release's base pin and hands the engine the refreshed config, and the
+	// installation stage rewrites the outputs this root takes as its inputs. A
+	// memo of that pass would land this release's pin one update late — the
+	// tfvars would carry the release behind's pin, terraform would compare it
+	// against a state holding the same value and report no change — so R12's
+	// rebuild would never start in the run that changed its inputs. The
+	// converge prepares again, as init.go's writeConfig drops the policy
+	// stage's own preview read for the same reason.
+	s.t = nil
+	plan, err := s.plan(ctx)
+	if err != nil {
+		return initflow.Outcome{}, err
+	}
+	if plan == nil {
+		s.changes = &infra.PlanCounts{}
+		fmt.Fprintln(r.stageDetail(), "No changes: the compute backend's provisioning matches the plan.")
+		return initflow.Outcome{Detail: "No changes"}, nil
+	}
+	r.planBlock(plan)
+	if err := r.guard(ctx, s.e.c, plan, r.o.allowDelete); err != nil {
+		return initflow.Outcome{}, err
+	}
+	if err := s.grants(plan); err != nil {
+		return initflow.Outcome{}, err
+	}
+	counts := infra.CountPlan(plan)
+	s.changes = &counts
+	if n := s.batchRunsInFlight(ctx); n > 0 {
+		fmt.Fprintf(r.w, "%s in flight: this step changes nothing it holds\n", runsPhrase(n))
+	}
+	if err := s.apply(ctx, plan); err != nil {
+		return initflow.Outcome{}, err
+	}
+	s.applied = true
+	r.res.Applied = true
+	if preloadInputsChange(plan) {
+		if err := infra.RunSchedulerJob(ctx, s.e.c, s.e.spec.Project, s.spec.SchedulerRegion, s.spec.Names.PreloadSchedulerJob); err != nil {
+			return initflow.Outcome{}, &initflow.StageError{Err: err,
+				Fix: "start it yourself: gcloud scheduler jobs run " + s.spec.Names.PreloadSchedulerJob + " --location=" + s.spec.SchedulerRegion + " --project=" + s.e.spec.Project}
+		}
+		fmt.Fprintf(r.w, "the preload image's inputs changed: its rebuild starts now (Cloud Build, about two minutes, billable), rather than at its weekly schedule\n")
+	}
+	return initflow.Outcome{Changed: true, Detail: "applied: " + counts.String()}, nil
+}
+
+// preloadInputsChange reports whether a plan changes what the preloaded boot
+// image is built from: the rebuild's own job, which is where the build's inputs
+// live (modules/compute/preload.tf puts the base image, the refresh window and
+// the family in the job's body). Everything else the root holds -- the network,
+// the accounts and their bindings, the reaper's sweep -- leaves the image as it
+// is, which is what R12's "an apply that changes only a role or a grant starts no
+// rebuild" is about.
+func preloadInputsChange(plan *tf.Plan) bool {
+	for _, rc := range plan.ResourceChanges {
+		if !planChangesSomething(rc) {
+			continue
+		}
+		if strings.HasPrefix(rc.Address, "module.compute.google_cloud_scheduler_job.preload_rebuild") {
+			return true
+		}
+	}
+	return false
+}
+
+// planChangesSomething reports whether a change acts on its resource at all: a
+// no-op and a read are in every plan terraform prints, for every resource the
+// root holds.
+func planChangesSomething(rc tf.ResourceChange) bool {
+	return slices.ContainsFunc(rc.Change.Actions, func(a string) bool { return a != "no-op" && a != "read" })
+}
+
+// batchRunsInFlight counts this project's runs in flight that were launched on
+// the Batch backend: the registry's entries, and each run's own launch record,
+// which is where the backend it started on is written (runstore.Launch.Backend).
+// It is the count R12's line carries.
+//
+// It reads the runs the way the update's own note does (announceRunsInFlight,
+// update_in_flight.go), narrowed to the runs whose record names this backend: a
+// run on Cloud Run holds nothing the compute root touches. Every failure is
+// silence and not an error -- the note's own rule: a count that could not be read
+// is a line nobody printed, never a reason for the one command the upgrade is to
+// stop.
+func (s *computeStage) batchRunsInFlight(ctx context.Context) int {
+	e := s.e
+	if e.lc == nil {
+		return 0
+	}
+	lc, db, err := budgetDBFor(ctx, e.lc)
+	if err != nil {
+		return 0
+	}
+	agents, err := inFlightRegistry(ctx, db, lc)
+	if err != nil || len(agents) == 0 {
+		return 0
+	}
+	url := recordReadURL(e.lc)
+	if url == "" {
+		return 0
+	}
+	b, err := openRecordBucket(ctx, url)
+	if err != nil {
+		return 0
+	}
+	defer b.Close()
+	n := 0
+	for slug, runs := range agents {
+		for runID := range runs {
+			launch, err := runstore.Open(b.Bucket, slug, runID).ReadLaunch(ctx)
+			if err != nil || launch == nil {
+				continue
+			}
+			if launch.Backend == backend.CloudBatch {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 // grants refuses a plan whose grants are not the compute module's (see the
@@ -293,7 +526,7 @@ func unconfirmed(next, confirmed *tf.Plan) []string {
 	var out []string
 	for _, rc := range next.ResourceChanges {
 		acts := rc.Change.Actions
-		if !slices.ContainsFunc(acts, func(a string) bool { return a != "no-op" && a != "read" }) {
+		if !planChangesSomething(rc) {
 			continue
 		}
 		if prev, ok := had[rc.Address]; !ok || !slices.Equal(prev, acts) {
@@ -345,6 +578,14 @@ func (s *computeStage) readOutputs(ctx context.Context) error {
 // pinned base image.
 func (s *computeStage) prepare(ctx context.Context) error {
 	e := s.e
+	// Memoized for one pass: under update the stage's own Check prepares the
+	// root to read its state, and the plan behind it reuses the same workdir.
+	// The answer is the same only within a pass — the stages before this one
+	// change what prepare reads — so the update door's converge drops the memo
+	// before it plans (updateApply).
+	if s.t != nil {
+		return nil
+	}
 	if err := e.setup(ctx); err != nil {
 		return err
 	}

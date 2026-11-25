@@ -126,6 +126,8 @@ const MODULES: readonly string[] = Object.freeze([
   'shared/notice.js',
   'shared/version.js',
   'shared/stringify.js',
+  'shared/shortid.js',
+  'shared/schema.js',
   'shared/replay.js',
   'renderer/app.js',
   'renderer/skeleton.js',
@@ -402,7 +404,7 @@ const DIAGNOSIS: JSONDoc = {
     workflow: 'default',
     oauth_account: 'claude-ops@example.test',
     recipe: 'default',
-    status: 'finished',
+    status: 'succeeded',
     stage: 'done',
     reason: 'the run finished',
     branch: 'fugaro/20261015-110030-4a5b',
@@ -614,7 +616,7 @@ test.describe('the Run detail screen', () => {
 
     expect(drawn.theme).toBe('light')
     expect(drawn.runId).toBe('20261015-110030-4a5b')
-    expect(drawn.status).toBe('finished')
+    expect(drawn.status).toBe('succeeded')
     // The three accounts, apart: the billed model figure (the row's `model_usd`
     // less the part its plan paid), the estimate by design, and the total the
     // table charged.

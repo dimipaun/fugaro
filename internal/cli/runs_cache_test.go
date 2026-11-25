@@ -65,6 +65,10 @@ type genDriver struct {
 	objects map[string][]byte
 	gens    map[string]int64
 	reads   []string
+	// listings is how many listings the bucket was asked for, which is what a
+	// read that goes back to the bucket for its rows spends and a read the
+	// index answers does not (D3205).
+	listings int
 	// unlisted are objects the flat listing leaves out while every other
 	// listing still sees them: a run written between the two listings a
 	// window is read with, which only the earlier one names.
@@ -115,6 +119,7 @@ func (d *genDriver) ListPaged(_ context.Context, opts *driver.ListOptions) (*dri
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	d.listings++
 	keys := slices.Sorted(maps.Keys(d.objects))
 	var page driver.ListPage
 	seen := map[string]struct{}{}
@@ -191,6 +196,13 @@ func (d *genDriver) set(key string, body []byte) int64 {
 	d.gens[key]++
 	d.objects[key] = body
 	return d.gens[key]
+}
+
+// listings is how many listings the bucket has been asked for.
+func (d *genDriver) listingsServed() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.listings
 }
 
 // keysRead is every object key a read reached since the last forget.

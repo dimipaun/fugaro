@@ -344,6 +344,8 @@ excluded:
     reason: "An internal move of code between directories, with nothing a user sees."
   - spec: feature-matrix
     reason: "This matrix's own spec: internal, and excluded from its own rows (R4)."
+  - spec: gitlab-support
+    reason: "Parked by the owner and not built: GitLab support waits on a named need, with no plan, no reconciliation and no code."
   - spec: go-to-market
     reason: "Go-to-market work — the marketing pages and their campaigns — not a capability of the product."
   - spec: how-to

@@ -790,11 +790,17 @@ func refuseNewerPolicy(raw []byte) error {
 // publishedPolicyOf is the node as a policy, or nil when none is published.
 // A node this Fugaro cannot read is refused rather than replaced: publishing
 // over one would drop whatever it is that this binary does not understand.
+//
+// The strict read is the one that answers "cannot read" here, for the reason
+// the sentence above gives: what this release does not model inside the routing
+// table is a member a publish would drop, since the block is written from the
+// typed members and not patched — so a node a later release wrote is one this
+// binary refuses to publish over, and the move is the upgrade.
 func publishedPolicyOf(raw []byte, exists bool) (*projectpolicy.Policy, error) {
 	if !exists {
 		return nil, nil
 	}
-	p, found, err := projectpolicy.Decode(raw)
+	p, found, err := projectpolicy.DecodeStrict(raw)
 	var ve *projectpolicy.VersionError
 	switch {
 	case errors.As(err, &ve):
@@ -1370,6 +1376,22 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		publishedReviewAgainstTask = old.ReviewAgainstTask
 	}
 	reviewAgainstTask := lc.ReviewAgainstTaskEffective(publishedReviewAgainstTask)
+	// The member's switch for the personal half of a workspace's credentials is
+	// kept by the triage switch's rule one key over (R9 of
+	// docs/workspace-credentials/, WC6, D2972), with the switch's own cost on
+	// the wrong reading: the node is what the workspace's service reads — the
+	// only enforcer, and never anything on the member's disk — so a publish from
+	// a machine whose config says nothing about it (a teammate's, whose config
+	// predates the key) must not be the write that turns the personal half off
+	// for the member that turned it on. A config that states the switch replaces
+	// what the node holds, and a config that states neither keeps the node's; the
+	// switch is a pointer on both sides because absent is off, so a node and a
+	// config that both say nothing publish no member at all.
+	var publishedPersonalTokens *bool
+	if old != nil {
+		publishedPersonalTokens = old.PersonalWorkspaceTokens
+	}
+	personalTokens := lc.PersonalWorkspaceTokensEffective(publishedPersonalTokens)
 	// The pools' subscription switch is kept by the triage switch's rule (F22,
 	// D1636), and the cost of the other reading is that switch's: the member is
 	// what makes a pool of two or more subscriptions serve anything at all
@@ -1450,29 +1472,30 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	// would be one no reader of this release serves. The publish door's own
 	// refusal of the word is above it, and the file itself loses it in AB8b.
 	pol := &projectpolicy.Policy{
-		DefaultClaudeAccount: defaultAccount,
-		ClaudeAccountStages:  stageAccounts,
-		Version:              projectpolicy.Version,
-		Budget:               projectpolicy.Budget{Mode: publishedMode(lc.Budget.Mode), PerRunUSD: lc.Budget.PerRunUSD, AllowedModels: lc.Budget.AllowedModels, MaxRunTokens: lc.Budget.MaxRunTokens},
-		AllowRepos:           nonNil(allow),
-		BaseBranch:           lc.BaseBranch,
-		Providers:            policyProviders(lc),
-		Prices:               policyPrices(lc),
-		Profiles:             profiles,
-		Accounts:             accounts,
-		BitbucketToken:       token,
-		BitbucketTokens:      tokens,
-		BitbucketAPIRoots:    lc.BitbucketAPIRoots,
-		ReviewFloor:          floor,
-		VerifierAccounts:     verifierAccounts,
-		ImageCatalog:         imageCatalog,
-		ImageServices:        imageServices,
-		ImageMap:             imageMap,
-		BakeRepos:            bakeRepos,
-		Triage:               triage,
-		ReviewAgainstTask:    reviewAgainstTask,
-		Orchestrator:         orchestrator,
-		SubscriptionSpread:   spread,
+		DefaultClaudeAccount:    defaultAccount,
+		ClaudeAccountStages:     stageAccounts,
+		Version:                 projectpolicy.Version,
+		Budget:                  projectpolicy.Budget{Mode: publishedMode(lc.Budget.Mode), PerRunUSD: lc.Budget.PerRunUSD, AllowedModels: lc.Budget.AllowedModels, MaxRunTokens: lc.Budget.MaxRunTokens},
+		AllowRepos:              nonNil(allow),
+		BaseBranch:              lc.BaseBranch,
+		Providers:               policyProviders(lc),
+		Prices:                  policyPrices(lc),
+		Profiles:                profiles,
+		Accounts:                accounts,
+		BitbucketToken:          token,
+		BitbucketTokens:         tokens,
+		BitbucketAPIRoots:       lc.BitbucketAPIRoots,
+		ReviewFloor:             floor,
+		VerifierAccounts:        verifierAccounts,
+		ImageCatalog:            imageCatalog,
+		ImageServices:           imageServices,
+		ImageMap:                imageMap,
+		BakeRepos:               bakeRepos,
+		Triage:                  triage,
+		ReviewAgainstTask:       reviewAgainstTask,
+		PersonalWorkspaceTokens: personalTokens,
+		Orchestrator:            orchestrator,
+		SubscriptionSpread:      spread,
 	}
 	switch {
 	case !silent:
@@ -2534,8 +2557,15 @@ func jsonMember(raw []byte, key string) (json.RawMessage, bool, error) {
 // price_policy outside its two values, a misspelt model pattern, a per_run_usd
 // that rounds to nothing): either way nothing is written, and the operator
 // sees which value it was.
+//
+// The read is the strict one (projectpolicy.DecodeStrict), because this is the
+// writer: a member inside the routing table that this release does not model,
+// and a table RT3's checks refuse, are exactly the mistakes this gate is here
+// to keep off the node. A run in flight reads that same node through Decode,
+// which tolerates both — a reader that refused them would halt every job image
+// on the project over a node a later release published.
 func checkPolicyBytes(raw []byte) error {
-	p, found, err := projectpolicy.Decode(raw)
+	p, found, err := projectpolicy.DecodeStrict(raw)
 	switch {
 	case err != nil:
 		// The credentials member, when the refusal names one, is the block this

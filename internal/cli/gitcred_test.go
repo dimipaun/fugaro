@@ -105,6 +105,36 @@ func TestGitCredentialBitbucket(t *testing.T) {
 	}
 }
 
+// TestGitCredentialRefusesAnOutThatKeptNothing: the step reads back what it
+// wrote, so a step that wrote none fails where the step that owed the
+// credential is named. Without it the build runs on and clones with an empty
+// file, answering `could not read Username for 'https://github.com'` — a
+// sentence naming neither the credential nor the build that failed to write it
+// (check 390).
+func TestGitCredentialRefusesAnOutThatKeptNothing(t *testing.T) {
+	testutil.IsolateGit(t)
+	line := "https://x-token-auth:tok3n@bitbucket.org\n"
+	empty := filepath.Join(t.TempDir(), "git-credentials")
+	if err := os.WriteFile(empty, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := credentialLanded(empty, line)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("a credential the out kept nothing of: exit %d, %v", ExitCode(err), err)
+	}
+	if !strings.Contains(err.Error(), "holds no credential after writing it") || strings.Contains(err.Error(), "tok3n") {
+		t.Errorf("the refusal does not name what happened, or prints the token: %v", err)
+	}
+	// The control: the line the step wrote is what a build reads.
+	wrote := filepath.Join(t.TempDir(), "git-credentials")
+	if err := os.WriteFile(wrote, []byte(line), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := credentialLanded(wrote, line); err != nil {
+		t.Errorf("the credential the step wrote was refused: %v", err)
+	}
+}
+
 func appKeyPEM(t *testing.T) string {
 	t.Helper()
 	k, err := rsa.GenerateKey(rand.Reader, 2048)
