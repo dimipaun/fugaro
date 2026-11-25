@@ -160,6 +160,7 @@
     {
       "package": "./deploy/terraform",
       "reads": [
+        "*[!0-9]*",
         "SECURITY.md",
         "cmd/fugaro/**",
         "deploy/**",
@@ -4735,6 +4736,8 @@
         "*",
         "*a",
         "*a*",
+        "a*",
+        "a**",
         "cmd/fugaro/**",
         "deploy/terraform/**",
         "docs/plans/*",
@@ -5531,6 +5534,7 @@
     {
       "package": "./internal/backend/gcp",
       "reads": [
+        "*",
         "cmd/fugaro/**",
         "deploy/terraform/**",
         "deploy/terraform/gcp/modules/workflow/variables.tf",
@@ -5566,6 +5570,7 @@
         "internal/backend/**",
         "internal/backend/backendtest/**",
         "internal/backend/batch/**",
+        "internal/backend/gcp/*",
         "internal/backend/gcp/**",
         "internal/backend/gcp/*.go",
         "internal/backend/gcp/names.go",
@@ -10961,6 +10966,7 @@
       "package": "./internal/gateway",
       "reads": [
         "*",
+        "a*",
         "cmd/fugaro/**",
         "d**",
         "deploy/terraform/**",
@@ -12803,7 +12809,6 @@
     {
       "package": "./internal/imagebake",
       "reads": [
-        "*",
         "cmd/fugaro/**",
         "deploy/terraform/**",
         "docs/plans/*",
@@ -12880,7 +12885,6 @@
         "internal/headroomproc/**",
         "internal/identitywire/**",
         "internal/image/**",
-        "internal/imagebake/*",
         "internal/imagebake/**",
         "internal/imagecheck/**",
         "internal/imagesurvey/**",
@@ -16539,6 +16543,7 @@
         "CLAUDE.md",
         "README.md",
         "SECURITY.md",
+        "a*",
         "docs/**",
         "docs/**/*.graph.json",
         "docs/console-dependency-graph/implementation-plan.graph.json",
@@ -17298,6 +17303,7 @@
         "**",
         "*a",
         "*b",
+        "a*",
         "brand/*.png",
         "cmd/fugaro/**",
         "deploy/terraform/**",
