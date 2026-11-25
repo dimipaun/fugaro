@@ -404,7 +404,7 @@ func TestSummaryPrintsTheTable(t *testing.T) {
 			}
 		}
 	}
-	wantHeader := "REPOSITORY RUNS SUCCEEDED FAILED HALTED CANCELLED INFRA ERROR PAUSED OTHER SPENT NOTIONAL COMPUTE"
+	wantHeader := "REPOSITORY RUNS SUCCEEDED FAILED HALTED CANCELLED INFRA ERROR OTHER SPENT NOTIONAL COMPUTE"
 	if got := strings.Join(rows["REPOSITORY"], " "); got != wantHeader {
 		t.Errorf("header = %q, want %q\n%s", got, wantHeader, out)
 	}
@@ -414,11 +414,11 @@ func TestSummaryPrintsTheTable(t *testing.T) {
 	}{
 		// The repository the database answered for: two runs, no compute
 		// estimate, so n/a rather than a zero that would read as free.
-		{"acme/app", "acme/app 2 1 1 0 0 0 0 0 $2 $0 n/a"},
+		{"acme/app", "acme/app 2 1 1 0 0 0 0 $2 $0 n/a"},
 		// The repository the history answered for, one run and its compute.
-		{"acme/other", "acme/other 1 1 0 0 0 0 0 0 $1 $0 $0.50"},
+		{"acme/other", "acme/other 1 1 0 0 0 0 0 $1 $0 $0.50"},
 		// The TOTAL row: the rows above added up, compute included.
-		{"TOTAL", "TOTAL 3 2 1 0 0 0 0 0 $3 $0 $0.50"},
+		{"TOTAL", "TOTAL 3 2 1 0 0 0 0 $3 $0 $0.50"},
 	} {
 		got := strings.Join(rows[tc.first], " ")
 		if got != tc.want {
@@ -572,7 +572,7 @@ func TestSummaryCountsAreNeverNegative(t *testing.T) {
 		}
 	}
 	for _, first := range []string{"acme/app", "TOTAL"} {
-		if got, want := strings.Join(rows[first], " "), first+" 3 3 0 0 0 0 0 0 $2 $0 n/a"; got != want {
+		if got, want := strings.Join(rows[first], " "), first+" 3 3 0 0 0 0 0 $2 $0 n/a"; got != want {
 			t.Errorf("the %s row = %q, want %q\n%s", first, got, want, table)
 		}
 	}
