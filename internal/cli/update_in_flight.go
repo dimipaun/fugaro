@@ -833,9 +833,9 @@ func (e *initEngine) workspaceDropsReach(ctx context.Context, db *rtdb.Client) b
 // turns the personal half's switch off under a run in flight (R11 of
 // docs/workspace-credentials/, WC11, R9, D2972): the workspace's service
 // re-reads the member's published policy as it serves a call, so a person's run
-// whose project no longer states the switch falls back to the shared entries at
-// the service's next call instead of being served the token it started with
-// (D3144's direction, taken for a state the person did not choose).
+// whose project no longer states the switch is refused at the service's next
+// call instead of being served the token it started with, and no shared entry
+// stands in for it (contract-scope-person.md §6).
 //
 // What it asks is the pair of values and not the stage's own decision, as every
 // clause here: the node as it stands, read before any stage of this run has
