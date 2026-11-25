@@ -3330,16 +3330,19 @@ func TestTheSlipOfASwitchedProjectJobNamesTheJobsOwnAccount(t *testing.T) {
 // The two rows are the switch's own conditions and nothing else: the
 // installation has the service in both, and the row that differs is the
 // repository's record (`fugaro update`'s answer about its own root) or the
-// document the run will read (`agent.auth`, which the service serves only as
-// the cascade).
+// document the run will read (`agent.auth`). The document's row flipped with
+// CS6: `vertex` is an auth the service serves now (D3174), so a recorded job
+// is handed the address whatever its file says and the record is the only
+// condition left that keeps a job off the service.
 func TestLaunchKeepsAnUnswitchedProjectJobOffTheService(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		repo     string
 		recorded bool
+		want     bool
 	}{
-		{"a record that says off", projectJobCascadeRepoYAML, false},
-		{"an auth the service does not serve", strings.Replace(projectJobRepoYAML, "auth: api-key", "auth: vertex", 1), true},
+		{"a record that says off", projectJobCascadeRepoYAML, false, false},
+		{"a vertex document on a recorded job", strings.Replace(projectJobRepoYAML, "auth: api-key", "auth: vertex", 1), true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newCascadeProjectJobFixture(t, tc.repo)
@@ -3355,8 +3358,15 @@ func TestLaunchKeepsAnUnswitchedProjectJobOffTheService(t *testing.T) {
 			if len(calls) != 1 || calls[0].Job != f.job {
 				t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the shared job %s: without that this test says nothing about a shared project job", len(calls), calls, f.job)
 			}
-			if got, ok := calls[0].Env[providers.EnvCredentialsServiceURL]; ok {
-				t.Errorf("the execution carries %s = %q, want no entry at all: the switch this launcher hands the address on is the one the plan decides with (infra.CredentialsServiceServes), and a job off it keeps every mount it has (G17) rather than being sent to a service that cannot serve it", providers.EnvCredentialsServiceURL, got)
+			got, ok := calls[0].Env[providers.EnvCredentialsServiceURL]
+			if !tc.want {
+				if ok {
+					t.Errorf("the execution carries %s = %q, want no entry at all: the switch this launcher hands the address on is the one the plan decides with, and a job off it keeps every mount it has (G17) rather than being sent to a service that cannot serve it", providers.EnvCredentialsServiceURL, got)
+				}
+				return
+			}
+			if !ok || got != credentialsServiceFixtureURL {
+				t.Errorf("the execution carries %s = %q, want the installation's own address (%s): a recorded job is one the service serves, and a run it serves reaches it through the address alone (CS6)", providers.EnvCredentialsServiceURL, got, credentialsServiceFixtureURL)
 			}
 		})
 	}

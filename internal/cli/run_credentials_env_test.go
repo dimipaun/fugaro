@@ -470,9 +470,18 @@ func TestCredentialsServiceLaunchEnv(t *testing.T) {
 			lc:   sharedJob(appOn),
 			want: true,
 		},
-		"a served profile, an auth the service cannot serve": {
+		// CS6 put `vertex` in the set the service serves (D3174), so the auth
+		// arm of this function now lets a vertex document through; this row was
+		// the one auth that arm turned away. The deployer's own list is
+		// narrower still -- config.ServiceServedAuths names api-key and oauth,
+		// and the plan's CS11 leaves it until the owner says otherwise -- so
+		// the launch's answer and the profile's mounts disagree for a vertex
+		// document. That reconciliation is the table's, which the plan gives to
+		// CS10 and CS11; this row pins today's answer.
+		"a served profile, a vertex document (served since CS6)": {
 			lc:   sharedJob(appOn),
 			auth: config.DefaultAgentAuth,
+			want: true,
 		},
 		"a profile no repository of which is on the switch": {
 			lc:   sharedJob(appOff),
