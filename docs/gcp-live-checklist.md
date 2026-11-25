@@ -24925,8 +24925,8 @@ probe job, the container's own readings, the VM, the guards and `restore`. **Whe
 container's own arrives**, three rows carry what the block then owes the reader, all read before the
 job is deleted and while its VM is still alive: `probe-ran` says how far the container got (nothing
 at all, or a prefix ending early) and names the readings taken next; `probe-diag` prints the job's
-own state and status events, each task's state and its events, the VM's serial console tail (scanned
-so that nothing that looks like a credential is printed) and the same query under the job's own
+own state and status events, each task's state and its events, the VM's serial console tail (the events
+and the console scanned so nothing credential-shaped is printed) and the same query under the job's own
 resource type (`resource.type="batch.googleapis.com/Job"`) by the runner's label and by the uid
 alone, which is what tells "its lines landed under a log name the runner does not read" apart from
 "nothing landed at all"; and `probe-exit` reads the container's **second channel** — its task's exit

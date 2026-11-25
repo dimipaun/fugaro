@@ -964,7 +964,11 @@ step_probe_diag() {
   diag_read "$SCRATCH/job-a-diag.json"
   job_state=$(diag_field state)
   task_states=$(diag_field tasks)
-  events=$(diag_events)
+  # The status events are written by the platform, not by this check: an event's
+  # description is free text, so it goes through the same redaction the serial
+  # console does before any of it reaches a row that promises no credential-shaped
+  # value is printed.
+  events=$(diag_events | redact_stream 2>/dev/null | oneline)
   tasks_shown=$(printf '%s' "${task_states:-none reported}" | oneline)
   local serial="not taken"
   if [ -n "$A_VM_NAME" ] && [ -n "$A_VM_ZONE" ]; then
@@ -1003,7 +1007,7 @@ step_probe_exit() {
     fact probe-exit INFO "not taken: the container's own lines came back, so its second channel was not needed — and reading it would mean waiting ${WAIT_EXIT}s for the container to end for a reading its lines already gave. This row is read when probe-ran fails: the task's exit status is 100 plus one bit per reading (reached the end of its reads, the metadata server answered, a token was obtained, all four claims present, the marker reached its environment), and it is the one channel that survives a broken log channel"
     return 0
   fi
-  local waited=0
+  local waited=0 ended=no
   while :; do
     gcloud batch jobs describe "$JOB_A" --project="${P:?}" --location="${L:?}" --format=json >"$SCRATCH/job-a-exit.json" 2>/dev/null || true
     diag_read "$SCRATCH/job-a-exit.json"
@@ -1011,7 +1015,7 @@ step_probe_exit() {
     EXIT_RC=$(diag_exit)
     [ -n "$EXIT_RC" ] && break
     case "$EXIT_STATE" in
-    SUCCEEDED | FAILED | CANCELLED | DELETION_IN_PROGRESS) break ;;
+    SUCCEEDED | FAILED | CANCELLED | DELETION_IN_PROGRESS) ended=yes; break ;;
     esac
     [ "$waited" -ge "$WAIT_EXIT" ] && break
     sleep 10
@@ -1035,8 +1039,12 @@ step_probe_exit() {
     fact probe-exit INFO "the probe's task reported an exit status of its own: ${EXIT_RC} (job state ${EXIT_STATE:-<unread>}), which reads as ${said:-nothing: none of its reads were taken}. It is the container's own code, not Batch's — Batch's failures are reserved above 50000. This is the second channel, read with the batch.jobs.get this service already makes, and the u2-token and u3-marker rows below answer from it where the log channel is empty"
     return 0
   fi
-  if [ -z "$EXIT_RC" ] && [ "$waited" -lt "$WAIT_EXIT" ] && [ "$EXIT_STATE" != SUCCEEDED ] && [ "$EXIT_STATE" != FAILED ]; then
-    fact probe-exit FAIL "neither channel answered: the container's lines never arrived and the job had not ended within ${WAIT_EXIT}s, so no task exit status was written and the container's own readings are UNKNOWN rather than absent — this run cannot tell a container that never ran from one whose lines did not land. Raise CHK830_WAIT_EXIT (the container's own life is CHK830_LINGER_A raised to outlast CHK830_WAIT_LINES, so the two bounds move together) and run again"
+  # Whether the job ENDED is what tells the two failure rows apart: a task that
+  # ended without a readable code is a different reading from a job that had not
+  # ended at all when this row stopped waiting, and this is the row the first run
+  # of this check needed and did not have.
+  if [ -z "$EXIT_RC" ] && [ "$ended" != yes ]; then
+    fact probe-exit FAIL "neither channel answered: the container's lines never arrived and the job had not ended within ${WAIT_EXIT}s (its own state read ${EXIT_STATE:-<unread>} at the last poll), so no task exit status was written and the container's own readings are UNKNOWN rather than absent — this run cannot tell a container that never ran from one whose lines did not land, and it does NOT say the task ended. Raise CHK830_WAIT_EXIT (the container's own life is CHK830_LINGER_A raised to outlast CHK830_WAIT_LINES, so the two bounds move together) and run again"
     return 0
   fi
   # The code is spelled out in a variable rather than inside a `:+` expansion:
@@ -1094,7 +1102,16 @@ step_u2_token() {
     # set, never a value — what each claim said is only in the log channel, which
     # is why the row names the channel rather than printing the claims.
     if [ "$EXIT_TOKEN" = yes ] && [ "$EXIT_CLAIMS" = yes ]; then
-      fact u2-token PASS "answered by the task's exit status, not by the log channel: the container reached the metadata server and its identity token in full format carried all four claims — google.compute_engine.instance_id, instance_name, project_id and zone — as its own second channel reports (no 'C830 token len=' line came back, so the token's claims cannot be printed here; run the check again once the log channel answers and this row reads them out). What the container's own metadata read says about the VM agrees with the probe's instance: ${A_VM_NAME:-<unread>} (id ${A_VM_ID:-<unread>}, zone ${A_VM_ZONE:-<unread>}). The token itself is printed nowhere — it is a bearer credential for that VM"
+      # This branch is reached only with no line of the container's own, so the
+      # instance this row can name is the one the LIST gave, not the one the
+      # container named: the row says which reading it is, the way vm-a does.
+      local u2_vmsaid
+      if [ -n "${A_VM_NAME:-}" ]; then
+        u2_vmsaid="the VM this row can name, ${A_VM_NAME} (id ${A_VM_ID:-<unread>}, zone ${A_VM_ZONE:-<unread>}), is the one the instance list gave — the container never named it, and no line of its own arrived to agree with anything here (see vm-a) — so that part of this reading is the weaker one"
+      else
+        u2_vmsaid="no instance is known for this job at all (see vm-a), so this row says nothing about which VM the token was minted for"
+      fi
+      fact u2-token PASS "answered by the task's exit status, not by the log channel: the container reached the metadata server and its identity token in full format carried all four claims — google.compute_engine.instance_id, instance_name, project_id and zone — as its own second channel reports (no 'C830 token len=' line came back, so the token's claims cannot be printed here; run the check again once the log channel answers and this row reads them out). For the VM: ${u2_vmsaid}. The token itself is printed nowhere — it is a bearer credential for that VM"
     elif [ "$EXIT_TOKEN" = yes ]; then
       fact u2-token FAIL "answered by the task's exit status, not by the log channel: an identity token in full format WAS obtained, but not all four claims it must carry for D3101 (instance_id, instance_name, project_id, zone) were found in it — the second channel reports that much and the log channel, which would name the missing claim, never answered. U2 is answered against the design and R4 applies: rerun after the log channel answers, or read the token's claims by hand in the job's own log"
     elif [ "$EXIT_REACHED" = yes ]; then
@@ -1539,7 +1556,12 @@ step_forge() {
   sort -u -o "$SCRATCH/forge.keys" "$SCRATCH/forge.keys"
   write_forge_py
   write_compare_py
-  python3 "$SCRATCH/forge_args.py" "$SCRATCH/forge.keys" "$A_UID" "$JOB_A" "$A_VM_NAME" "$A_VM_ID" "$AUD" "$LINGER_B" >"$SCRATCH/forge.args" 2>/dev/null || true
+  # The forging container's life is raised past the wait for its lines exactly as
+  # the probe's is: it has to be alive when the fields are read off its VM, and a
+  # container that ended before its lines were waited out would have taken the
+  # reading with it — which is what the first run of this check cost it.
+  PROBE_LIFE_B=$(probe_life_b)
+  python3 "$SCRATCH/forge_args.py" "$SCRATCH/forge.keys" "$A_UID" "$JOB_A" "$A_VM_NAME" "$A_VM_ID" "$AUD" "$PROBE_LIFE_B" >"$SCRATCH/forge.args" 2>/dev/null || true
   local labels_arg metadata_arg labels_json env_json skipped labels_b keys_tried
   # Read with awk rather than sed: awk's -F'\t' is a tab on every awk the owner
   # may have, where BSD sed takes `\t` in a pattern for the two characters and
@@ -1558,13 +1580,20 @@ step_forge() {
 d = json.loads(sys.argv[1])
 d.update(json.loads(sys.argv[2]))
 print(json.dumps(d))' "$labels_json" "$(json_obj "$CHK_LABEL=$CHK_VALUE")")
+  # The forging job's container gets the life the probe's does, for the same
+  # reason: it has to be alive when the fields are read off its VM, and the check
+  # waits WAIT_LINES_B for its lines before it reads anything.
+  env_json=$(python3 -c 'import json,sys
+d = json.loads(sys.argv[1])
+d.update(json.loads(sys.argv[2]))
+print(json.dumps(d))' "$env_json" "$(json_obj "FUGARO_CHK830_LINGER=$PROBE_LIFE_B")")
   say "submitting the forging job ${JOB_B}: ${keys_tried} keys carrying the probe's identity, into Job.labels, AllocationPolicy.labels and the task's variables"
   mk_params "$SCRATCH/params-b" \
     out="$SCRATCH/job-b.json" \
     image="$IMAGE" \
     script="$SCRATCH/container.sh" \
     machine="$MT" cpu="$CPU_MILLI" mem="$MEMORY_MIB" \
-    max_run="$((LINGER_B + 300))s" \
+    max_run="$((PROBE_LIFE_B + 300))s" \
     labels="$labels_b" \
     alabels="$labels_b" \
     env="$env_json"
@@ -1599,7 +1628,7 @@ print(json.dumps(d))' "$labels_json" "$(json_obj "$CHK_LABEL=$CHK_VALUE")")
     elif [ -z "$(forge_judged job-b)" ]; then
       unjudged=$(forge_rows job-b n/a)
       unreadable=$(forge_rows job-b unreadable)
-      fact u1-forge FAIL "the forge attempt was not judged: ${JOB_B} carried the probe job's uid (${A_UID}) and name (${JOB_A}) in ${keys_tried} launcher-controlled keys — Job.labels, AllocationPolicy.labels and the task's variables — and ${compared}, so none of the fields u1-link named was read off this avenue to compare with them${unjudged:+: $(printf '%s' "$unjudged" | oneline) could not be read off it}${unreadable:+, and $(printf '%s' "$unreadable" | oneline) could not be read at all}. Control: ${control} of those keys are on that VM at all. This sitting therefore does not show the link cannot be forged: give the forging job's container longer (CHK830_WAIT_LINES_B=<seconds>), or read the fields u1-link named and compare them by hand"
+      fact u1-forge FAIL "the forge attempt was not judged: ${JOB_B} carried the probe job's uid (${A_UID}) and name (${JOB_A}) in ${keys_tried} launcher-controlled keys — Job.labels, AllocationPolicy.labels and the task's variables — and ${compared}, so none of the fields u1-link named was read off this avenue to compare with them${unjudged:+: $(printf '%s' "$unjudged" | oneline) could not be read off it}${unreadable:+, and $(printf '%s' "$unreadable" | oneline) could not be read at all}. Control: ${control} of those keys are on that VM at all. This sitting therefore does not show the link cannot be forged: give the forging job's container a longer life (CHK830_LINGER_B=<seconds>, which is raised to outlast the wait for its lines) and, if its lines are merely slow to land, a longer wait for them (CHK830_WAIT_LINES_B=<seconds>), or read the fields u1-link named and compare them by hand"
     else
       fact u1-forge PASS "a second job cannot forge the link: ${JOB_B} carried the probe job's uid (${A_UID}) and name (${JOB_A}) in ${keys_tried} launcher-controlled keys — Job.labels, AllocationPolicy.labels and the task's variables — and neither its VM nor its own job object carries the probe's identity in any of the fields the probe's own readings carry it in (${compared}). Control: ${control} of those keys are on that VM at all${skipped:+, and $(printf '%s' "$skipped" | oneline) could not be written as a label}"
     fi
@@ -1840,7 +1869,7 @@ print_plan() {
   say "  [local]  guards: no xtrace, the owner marker, the tree this script lives in, and the project refusal"
   say "  [local]  the tree reads: the log filter out of internal/backend/batch/logs.go, the managed label pair out of internal/backend/gcp/names.go, and the wrapped variable's name out of docs/batch-run-identity/"
   say "  [cloud]  gcloud compute instances list — the instance list before the probe, which is how a VM is found if the container cannot name its own"
-  say "  [cloud]  gcloud batch jobs submit ${JOB_A} — ONE job (${MT}, ${CPU_MILLI}m/${MEMORY_MIB}MiB, container alive ${LINGER_A}s after its reads) carrying ${CHK_LABEL}=${CHK_VALUE}, the managed label, the marker variable ${MARKER_NAME} with a generated stand-in value, logs to CLOUD_LOGGING and no retry"
+  say "  [cloud]  gcloud batch jobs submit ${JOB_A} — ONE job (${MT}, ${CPU_MILLI}m/${MEMORY_MIB}MiB, container alive $(probe_life_a)s after its reads) carrying ${CHK_LABEL}=${CHK_VALUE}, the managed label, the marker variable ${MARKER_NAME} with a generated stand-in value, logs to CLOUD_LOGGING and no retry"
   say "  [cloud]  gcloud batch jobs describe ${JOB_A} — its uid, state and create time"
   say "  [cloud]  gcloud logging read (labels.job_uid=\"<uid>\" AND logName=\"${TASK_LOG}\") until the container's own 'C830 read' line arrives — the container's metadata reads and its token claims (never the token itself), bounded at ${WAIT_LINES}s"
   say "  [cloud]  ONLY IF no line arrived: gcloud batch jobs describe ${JOB_A} (the job's own state and status events, each task's state and its events), gcloud compute instances get-serial-port-output <the VM> (its last 40 lines, scanned so no value that looks like a token is printed), the same log query under resource.type=\"batch.googleapis.com/Job\" by the uid, and a bounded wait for the task to end — its exit status is the container's second channel, read with the batch.jobs.get the service already makes (probe-diag, probe-exit)"

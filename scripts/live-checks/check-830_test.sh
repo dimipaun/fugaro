@@ -1035,6 +1035,15 @@ write_default_case() { # write_default_case DIR [bend...]
       printf '[]\n' >"$d/state/log-$uid_a.json"
       write_diag "$d" "$job_a" FAILED FAILED 50000
       ;;
+    probe-never-ends)
+      # The job that never gets to run: nothing of the container's own came back
+      # and, when the wait ends, the job's own state is still not a terminal one,
+      # so no task exit status was ever written. probe-exit has to say THAT; a row
+      # read from this state once asserted "the task ended (job state ...)" about
+      # a job that had not ended, which is the opposite of what happened.
+      printf '[]\n' >"$d/state/log-$uid_a.json"
+      write_diag "$d" "$job_a" QUEUED RUNNING ""
+      ;;
     log-late)
       # The platform where a job's lines land late: the first read of that job's
       # task logs answers with nothing and the one after it answers with the
@@ -1730,6 +1739,27 @@ test_no_line_arrives_and_the_task_reported_nothing_either() {
   expect_last_line "CHECK 830 RESULT: FAIL" "never ran"
 }
 
+test_a_job_that_never_ended_says_so() {
+  setup_case never-ends
+  write_default_case "$dir" probe-never-ends
+  run_check CHK830_WAIT_EXIT=10
+  expect_status "$status" 1 "never ends"
+  expect_verdict probe-ran FAIL "never ends: the row"
+  expect_row probe-diag "the job's own state is QUEUED" "never ends: the job's own state is read and it is not a terminal one"
+  expect_verdict probe-exit FAIL "never ends: the second channel did not answer"
+  expect_row probe-exit "had not ended within 10s" "never ends: the wait expired, and the row says that rather than the opposite"
+  expect_row probe-exit "state read QUEUED at the last poll" "never ends: with the state the last poll saw"
+  expect_row probe-exit "UNKNOWN rather than absent" "never ends: and what that means for the rows below"
+  # The row this state used to print said the task HAD ended. A job that never
+  # scheduled is the one reading where that sentence is the opposite of what the
+  # platform reported, so it must not be there — the row says what it does NOT
+  # say, which is why the needle is the old sentence and not its words.
+  expect_absent "$out" "the task ended (job state" "never ends: the row does not claim the task ended"
+  expect_verdict u2-token FAIL "never ends: U2 is not answered"
+  expect_row u2-token "neither channel answered" "never ends: and the row says so"
+  expect_last_line "CHECK 830 RESULT: FAIL" "never ends"
+}
+
 test_lines_that_arrive_late_are_waited_for() {
   setup_case late-lines
   write_default_case "$dir" log-late
@@ -1794,6 +1824,7 @@ t test_an_audit_record_from_another_run_is_not_this_runs
 t test_a_marker_that_never_reached_the_container_is_void
 t test_no_line_arrives_and_the_exit_status_answers
 t test_no_line_arrives_and_the_task_reported_nothing_either
+t test_a_job_that_never_ended_says_so
 t test_lines_that_arrive_late_are_waited_for
 t test_a_name_that_comes_back_slowly_is_measured
 t test_a_name_that_never_comes_back_is_a_failure
