@@ -364,6 +364,13 @@ var grantRules = map[string]map[string]who{
 		// what the module's literal spelling pins, since this table sees only
 		// the member.
 		"roles/iam.serviceAccountUser": toPeople | toAccounts,
+		// The build identity's own OpenID token minting, on ITSELF: Cloud Build
+		// serves a build's ID token from its metadata server only to a
+		// user-specified account that holds iam.serviceAccounts.getOpenIdToken
+		// (otherwise the endpoint answers 404), and the catalog build's
+		// credential step needs one for the credentials service. What holds the
+		// grant to the account itself is buildIdentityOpenIDGrant.
+		"roles/iam.serviceAccountOpenIdTokenCreator": toBuildIdentity,
 		// D75's one-time impersonation setup: the operators, and nobody else,
 		// may assume the deployer account. On an account, for people — the
 		// grant that makes the managed apply possible and the only grant of
@@ -2757,6 +2764,9 @@ func (c Cover) grant(rc ResourceChange, creates, createdSAIDs, heldSAIDs map[str
 	if why == "" && t == "google_kms_crypto_key_iam_member" {
 		why = c.mailboxSignerGrant(rc.Change)
 	}
+	if why == "" && t == "google_service_account_iam_member" && c.isBuildIdentityMember(str(rc.Change.After["member"])) {
+		why = c.buildIdentityOpenIDGrant(rc.Change)
+	}
 	if why == "" {
 		why = c.deployerGrant(t, rc.Change, dep.accounts[modulePrefix(rc)])
 	}
@@ -3451,6 +3461,28 @@ func (c Cover) orchestratorMinterGrant(ch Change) string {
 		}
 	}
 	return fmt.Sprintf("grants fugaroTokenMinter on %s to the resident orchestrator: the design's row is the budget signer account of this run (%s), and signJwt on any other account makes the resident orchestrator that account — the job accounts holding the model credentials among them (section 4.3, section 6 rule 5)", id, signerID+"@<one of this run's projects>.iam.gserviceaccount.com")
+}
+
+// buildIdentityOpenIDGrant says why a build identity's OpenID-token grant is not
+// the module's row, "" when it is or when the grant is not this row at all. The
+// row opens by member and role, and this closes it to the target: the role is
+// held on the build identity's OWN account of this run, so a plan that moved it
+// to another account, a job's or the credentials service's, would let a build
+// mint an identity token as that account.
+func (c Cover) buildIdentityOpenIDGrant(ch Change) string {
+	if str(ch.After["role"]) != "roles/iam.serviceAccountOpenIdTokenCreator" {
+		return ""
+	}
+	if unknown(ch, "service_account_id") {
+		return "a token-creator grant to the build identity whose account is not known: the row is the build identity's own account, written out in build_identity.tf"
+	}
+	id := str(ch.After["service_account_id"])
+	if m := saName.FindStringSubmatch(id); m != nil {
+		if p := c.installationProject(); p != "" && m[1] == p && m[3] == p && m[2] == BuildIdentityAccountID {
+			return ""
+		}
+	}
+	return fmt.Sprintf("grants roles/iam.serviceAccountOpenIdTokenCreator on %s to the build identity: it may mint an identity token as itself and as no other account", id)
 }
 
 // mobileMinterGrant is orchestratorMinterGrant's rule for the public mobile
