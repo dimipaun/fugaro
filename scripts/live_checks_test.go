@@ -913,6 +913,7 @@ var liveCheckScripts = []struct {
 	{"check-821.sh", "check-821_test.sh"},
 	{"check-910-lift-snapshot.sh", "check-910-lift-snapshot_test.sh"},
 	{"check-911-lift-compare.sh", "check-911-lift-compare_test.sh"},
+	{"check940.sh", "check940_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
