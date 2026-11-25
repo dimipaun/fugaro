@@ -7063,7 +7063,7 @@ func TestReleaseGateDispatchesARunACommitNeverHad(t *testing.T) {
 		start := time.Now()
 		// Empty GATE_WAIT_SECONDS falls back to RELEASE_GATE_TIMEOUT_MIN, so this
 		// also pins the default deadline and the minutes it is reported in.
-		ok, out := h.run(t, "GATE_DRY_RUN=1", "GATE_WAIT_SECONDS=", "RELEASE_GATE_TIMEOUT_MIN=90")
+		ok, out := h.run(t, "GATE_DRY_RUN=1", "GATE_WAIT_SECONDS=", "RELEASE_GATE_TIMEOUT_MIN=90", "GITHUB_ACTIONS=")
 		if !ok {
 			t.Fatalf("the dry run refused a commit whose checks are only running:\n%s", out)
 		}
