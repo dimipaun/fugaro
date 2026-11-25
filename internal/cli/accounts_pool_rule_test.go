@@ -500,3 +500,48 @@ func fieldNames(m map[string]json.RawMessage) []string {
 	slices.Sort(out)
 	return out
 }
+
+// TestAccountsAddReplacingATokenLeavesPoolsAlone: the default pool of one is
+// for a NEW account (the owner's ruling of 2026-11-25). A run that only
+// replaces the token of an account the config already has writes no pool, so
+// the edit never reaches the clearing of a pending pool removal either (that
+// record is consumed by the apply this rig runs, so the pool is what is read).
+func TestAccountsAddReplacingATokenLeavesPoolsAlone(t *testing.T) {
+	path := accountsAddFixture(t, accountsAddLocal)
+	ownerAtTheTerminal(t)
+
+	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "legacy",
+		"--repos", "acme/app", "--type", "claude-oauth")
+	if err != nil {
+		t.Fatalf("accounts add (a replace): %v\n%s", err, out)
+	}
+	if strings.Contains(out, "declare pools.") {
+		t.Errorf("a token replace names a pool it wrote:\n%s", out)
+	}
+	lc, err := localcfg.Parse([]byte(readFileString(t, path)))
+	if err != nil {
+		t.Fatalf("the file this command wrote does not read back: %v", err)
+	}
+	if len(lc.Pools) != 0 {
+		t.Errorf("a token replace wrote a pool: %+v", lc.Pools)
+	}
+}
+
+// TestAccountsAddExplicitPoolStillWritesOnAReplace pins that --pool is not
+// changed by the rule above: a person who names the pool gets it, replace or not.
+func TestAccountsAddExplicitPoolStillWritesOnAReplace(t *testing.T) {
+	path := accountsAddFixture(t, accountsAddLocal)
+	ownerAtTheTerminal(t)
+
+	if out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "legacy",
+		"--repos", "acme/app", "--type", "claude-oauth", "--pool", "paid"); err != nil {
+		t.Fatalf("accounts add --pool (a replace): %v\n%s", err, out)
+	}
+	lc, err := localcfg.Parse([]byte(readFileString(t, path)))
+	if err != nil {
+		t.Fatalf("the file this command wrote does not read back: %v", err)
+	}
+	if pool, ok := accountsPoolOf(lc, "paid"); !ok || strings.Join(pool.Members, ",") != "legacy" {
+		t.Errorf("pools.paid was not written with the account: %+v", lc.Pools)
+	}
+}

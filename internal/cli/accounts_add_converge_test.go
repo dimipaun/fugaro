@@ -254,19 +254,16 @@ func TestAccountsAddReplacesTheTokenOnRerun(t *testing.T) {
 	if got := lc.Profiles["standard"].ClaudeAccounts; !slices.Equal(got, []string{"team-a"}) {
 		t.Errorf("profiles.standard.claude_accounts = %v after the rotation, want one entry", got)
 	}
-	// The second run's one edit is PL2's pool of one (D3176): the name is a
-	// subscription credential now — the first run's own converge declared the
-	// account as one — so the token is put in a pool of one named after it. A
-	// rotation of a name no pool holds is the one edit left; every other key is
-	// already what it would write.
-	pool, ok := accountsPoolOf(lc, "team-a")
-	if !ok || !slices.Equal(pool.Members, []string{"team-a"}) {
-		t.Errorf("the rotation left %s in no pool of one: %+v", "team-a", lc.Pools)
+	// A rotation writes no pool (the owner's ruling of 2026-11-25): the pool of
+	// one belongs to a NEW account, so a replace of a name that is already an
+	// account leaves pools alone and the run reports no change.
+	if _, ok := accountsPoolOf(lc, "team-a"); ok {
+		t.Errorf("the rotation wrote a pool of one for %s: %+v", "team-a", lc.Pools)
 	}
-	if strings.Contains(out, ": no change") {
-		t.Errorf("the second run reported no change although it wrote the pool of one:\n%s", out)
+	if !strings.Contains(out, ": no change") {
+		t.Errorf("the second run reported a change although a rotation writes no key:\n%s", out)
 	}
-	// And with the pool written, a third run changes no key at all: it reads the
+	// And a third run changes no key at all either: it reads the
 	// config, stores the value and converges. (The confirmation's own rotation
 	// sentence, which a widening re-run prints, is A1's — accounts_add_test.go.)
 	third, _, err := executeStdin(t, rotated+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a")
