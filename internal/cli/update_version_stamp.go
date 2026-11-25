@@ -160,9 +160,13 @@ func (versionStampStage) Left() initflow.Left {
 // asks (F22), which is where a database marked by another installation is
 // refused with that function's own sentence.
 //
-// A malformed stamp is returned as it is and not turned into a skip: it is the
-// one read failure the spec fails closed on (spec, D3264), and this stage is a
-// writer that must never overwrite a node it cannot read.
+// A read that fails is a skip and not the run's failure, exactly as the fence's
+// own read is (D3264): a blip must not stop the one command that brings the
+// installation forward, and the stamp stays a step this machine owes (Undone),
+// so the next update raises it. A malformed stamp is returned as it is and not
+// turned into a skip: it is the one read failure the spec fails closed on
+// (spec, D3264), and this stage is a writer that must never overwrite a node it
+// cannot read.
 func (s *versionStampStage) read(ctx context.Context) (*versionStampPlan, error) {
 	ver := releaseVersion()
 	if ver == "" {
@@ -182,7 +186,7 @@ func (s *versionStampStage) read(ctx context.Context) (*versionStampPlan, error)
 	var raw json.RawMessage
 	etag, found, err := db.GetETag(ctx, versionstamp.Path, &raw)
 	if err != nil {
-		return nil, dbErr(lc, err, false)
+		return nil, &versionStampSkip{reason: fmt.Sprintf("the required CLI is left as it is: %s", oneLine(err.Error())), undone: true}
 	}
 	p := &versionStampPlan{lc: lc, db: db, ver: ver, etag: etag, found: found}
 	if found {

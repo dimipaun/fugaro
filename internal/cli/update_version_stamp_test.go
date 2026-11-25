@@ -294,6 +294,40 @@ func TestLostRaceWritesNothingAndSaysSo(t *testing.T) {
 	}
 }
 
+// TestStampStageLeavesTheStampWhenTheNodeCannotBeRead: a read that fails is a
+// skip and not the run's failure (D3264). The fence at the door already said so
+// in one line, and a stage that failed here would stop the one command that
+// brings the installation forward over a database blip — the stamp stays a step
+// this machine owes, and the next update raises it.
+func TestStampStageLeavesTheStampWhenTheNodeCannotBeRead(t *testing.T) {
+	r, db := stampRig(t)
+	publishedSeam(t, true)
+	db.RefusePath("required_cli", 503, "UNAVAILABLE", "", "down")
+	e := stampEngine(t, r, &initOptions{door: updateDoor.name, yes: true})
+	st, err := checkStamp(t, e)
+	if err != nil {
+		t.Fatalf("an unreadable stamp stopped the stage: %v", err)
+	}
+	if st.State != initflow.Skipped || !st.Undone {
+		t.Fatalf("Check = %+v, want skipped and owed: the stamp is still a step this installation owes", st)
+	}
+	for _, want := range []string{"the required CLI is left as it is", "503"} {
+		if !strings.Contains(st.Detail, want) {
+			t.Errorf("the skip does not carry %q: %q", want, st.Detail)
+		}
+	}
+	res, out, err := runStampStage(t, r, &initOptions{door: updateDoor.name, yes: true})
+	if err != nil {
+		t.Fatalf("a run over a node it could not read failed: %v\n%s", err, out)
+	}
+	if res.Failed != nil {
+		t.Errorf("the run stopped at the %s stage over a node it could not read", res.Failed.Stage)
+	}
+	if got := stampNodeWrites(db); got != 0 {
+		t.Errorf("a node that could not be read was written %d times", got)
+	}
+}
+
 // TestStampStageRefusesAMalformedStamp: a node this binary cannot read is the
 // one read failure the fence fails closed on, and a writer must never overwrite
 // a node somebody meant (versionstamp.MalformedError).
