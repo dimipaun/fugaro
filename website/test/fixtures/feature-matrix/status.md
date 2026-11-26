@@ -3,7 +3,7 @@ The status page the feature matrix's builder is tested against
 (website/test/feature-matrix.mjs; docs/feature-matrix/implementation-plan.md, task T1).
 
 It is **not** `docs/status.md`, and nothing in `npm run check` reads that file (R2). It carries
-the four tables in the real page's own words, and every name in it is one the test's own mapping
+the five tables in the real page's own words, and every name in it is one the test's own mapping
 gives a feature or excludes, so a case that changes one name, one heading or one row has
 something to disagree with.
 
