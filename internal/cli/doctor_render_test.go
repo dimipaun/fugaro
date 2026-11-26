@@ -1105,9 +1105,10 @@ func TestDoctorUnreadCheckThatSaysOKIsCounted(t *testing.T) {
 	// The verdict --security prints above the sweep is held by the same rule: a
 	// check the sweep holds is printed below it, so an ok one that carries the
 	// marker may not be answered with the ok line the reader would read first.
-	// The ID is one the sweep holds rather than prints: model-key-in-agent is
-	// the one sweep check the default view prints as an item as well
-	// (doctorClassSecurity), so its verdict is the item one, not this one.
+	// The ID is one the sweep holds and does not print: the class that is both
+	// printed and counted (doctorClassSecurity) holds no check since RT7
+	// removed the model key in the agent's reach, and a check in it would take
+	// the item verdict here rather than this one.
 	sweep := doctorCheck{ID: "token-signers", OK: true, unread: true, Severity: "info",
 		Problem: "whether a member may sign a budget token could not be checked"}
 	shown := doctorSecurityOutput(t, []doctorCheck{sweep})

@@ -27,10 +27,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
-	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
-	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/secretname"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -1451,143 +1449,6 @@ func flipNotServed(lc *localcfg.Config, repo, auth string) string {
 		return "the local config records no apply of its root with the service on"
 	}
 	return fmt.Sprintf("its agent.auth is %q, and the service serves the %q, %q and %q ones", auth, config.AuthCascade, config.AuthAPIKey, config.AuthOAuth)
-}
-
-// doctorModelKeyInAgent is doctor's "model-key-in-agent" check: a model
-// credential this workflow's agent holds in its own environment (D503d).
-//
-// The workflow's auth is what decides it: api-key mounts ANTHROPIC_API_KEY and
-// oauth mounts CLAUDE_CODE_OAUTH_TOKEN into the agent's environment unless
-// something holds the credential away from it — the budget gateway, which
-// carries an api-key run's key itself (runner.GatewayOn: oauth never goes
-// through it, and vertex and cascade carry no credential of the job's own at
-// all), or the installation's credentials service.
-//
-// The service's half is the SWITCH's own predicate and not the installation's
-// block (B2.2, B2.3, D2071): an `api-key` or `oauth` repository reaches the
-// service where the record `fugaro update` left for it says its root was
-// applied with the switch on — which is what a bundle holding the credential
-// its auth needs leaves behind; the budget mode was the second condition there
-// and is none any more (AB15, D3009). A switched run's agent environment is
-// built as the cascade's
-// (runner's servedAuth), so no credential of the job's reaches the agent, and
-// no mount of the two Claude credentials is left for it to read either once the
-// root carrying the switch has been applied since the flip (B2.7, G17).
-// A repository off the switch keeps both, and the line names what the switch
-// is missing: the mode, or the bundle entry the auth's runs are served under.
-//
-// What it may NOT say is that the bundle lacks an entry: the bundle's document
-// is read only behind --check-bitbucket-token (doctorBundleChecks), so the
-// entry is named as the one the switch waits for and never as one doctor
-// found absent.
-//
-// Information, never a failure: an installation that runs without the budget
-// is a legitimate choice, and the line is the reading an owner asked for — the
-// agent's own environment is where a leaked key is worth the most.
-func doctorModelKeyInAgent(lc *localcfg.Config, rf *resolvedFile, repo string) *doctorCheck {
-	if rf == nil || rf.Cfg == nil {
-		return nil
-	}
-	auth := rf.Cfg.Agent.Auth
-	if auth == "" {
-		auth = config.DefaultAgentAuth
-	}
-	var env string
-	switch auth {
-	case "api-key":
-		env = config.ReservedSecrets[config.AnthropicSecret]
-	case "oauth":
-		env = config.ReservedSecrets[config.ClaudeOAuthToken]
-	default:
-		return nil
-	}
-	// C1's reading of the local config's mode (AB3, D3009): an unset mode, or
-	// one a hand edit left as the old word, is observe, which is the mode the
-	// switch below admits — so no branch of this check has a mode that is
-	// neither of the two any more.
-	mode := policy.Mode(lc.BudgetMode()).Effective()
-	if runner.GatewayOn(auth, mode) {
-		return nil
-	}
-	// The bundle entries this auth's runs are served under, in the bundle's own
-	// spelling (the document key `fugaro creds set` takes): the Anthropic key
-	// for api-key, and every account an oauth repository's workflows may run
-	// under, resolved through this machine's aliases first — exactly the set
-	// the switch's readiness reads (credentialsBundleServes).
-	entries := []string{config.AnthropicSecret}
-	if auth == "oauth" {
-		entries = oauthSwitchBundleEntries(rf.Cfg, lc, repo)
-	}
-	needs := "`" + strings.Join(entries, "`, `") + "`"
-	installed := lc.CredentialsService != nil && lc.CredentialsService.URL != ""
-	local, _ := lc.RepoFor(repo)
-	if runner.ServiceSwitchedAuth(auth) && infra.CredentialsServiceServes(installed, local.CredentialsServiceOn(), auth) {
-		return nil
-	}
-	var why string
-	switch {
-	case !installed:
-		why = fmt.Sprintf("the installation has no credentials service to hold it, and the switch would need %s in its bundle", needs)
-	default:
-		why = fmt.Sprintf("the credentials service is held off for this repository: %s records a root as applied with the switch on only where the service's bundle holds %s, and this repository's record does not say it was", selfCommand()+" update --repo", needs)
-	}
-	// The two routes are the auth's own. An api-key run reaches the service
-	// THROUGH the gateway, so turning the budget on holds the key whether or not
-	// a service is deployed; an oauth run never starts a gateway (F30), so the
-	// service is the only route there. The budget mode is a condition of
-	// neither route to the service (AB15, D3009): what the switch waits for is
-	// the bundle.
-	route := fmt.Sprintf("put the installation's credentials service in front of it (an ordinary %s update deploys it, and its own %s update --repo switches this repository onto it once the service's bundle holds %s: %s creds set %s)",
-		selfCommand(), selfCommand(), needs, selfCommand(), entries[0])
-	fix := "to take it out of the agent's reach, " + route + " — the gateway is no route of its own, because an oauth run never starts one"
-	if auth == "api-key" {
-		fix = "to take it out of the agent's reach, turn the budget on (budget.mode observe or enforce: the gateway holds the key), or " + route
-	}
-	// The two facts the update record carries beside the switch (KS19) are said
-	// in the line that reports the switch, because a fact the record says is on
-	// while the switch is held off is the reading worth having: the bundle, the
-	// service and the allow-list hold for it, so the half that is missing is the
-	// one named above and nothing else.
-	facts := fmt.Sprintf("the record %s leaves for this repository says its provider keys are %s and its stage account is %s",
-		selfCommand()+" update --repo", servedFact(local.ProviderKeysServedOn()), servedFact(local.StageAccountServedOn()))
-	return &doctorCheck{ID: "model-key-in-agent", Severity: "info",
-		Problem: fmt.Sprintf("this repository's workflows (%s) run with agent.auth %s, and the model credential reaches the agent's own environment as %s (%s, and %s)",
-			strings.Join(printableNames(slices.Sorted(maps.Keys(rf.Cfg.Workflows))), ", "), auth, env, why, facts),
-		Fix: fix}
-}
-
-// servedFact is what the update record says about one of the two facts it
-// decides beside the switch, in the record's own words: the field is written as
-// a switch (localcfg.RecordSwitch), so a fact written off reads exactly as one
-// that was never written.
-func servedFact(on bool) string {
-	if on {
-		return "served"
-	}
-	return "not served"
-}
-
-// oauthSwitchBundleEntries are the bundle's own DOCUMENT keys for an oauth
-// repository's runs: one per account infra.WorkflowAccounts gives it — the
-// accounts its jobs exist for, which are the accounts a launch may name — with
-// this machine's aliases resolved first, because a name that is an alias would
-// otherwise be held off for an account the bundle does hold
-// (credentialsBundleServes resolves the same way). The spelling is the document
-// key and not the account, because it is what `fugaro creds set` takes and what
-// the service's loader reads back as that account. The set is never empty:
-// AllowedClaudeAccounts always names the default account, which is why the
-// caller may read its first element as a name `fugaro creds set` takes.
-func oauthSwitchBundleEntries(cfg *config.Config, lc *localcfg.Config, repo string) []string {
-	accounts := infra.WorkflowAccounts(cfg, lc, repo)
-	out := make([]string, 0, len(accounts))
-	for _, account := range accounts {
-		if resolved, _ := lc.ResolveAccount(account); resolved != "" {
-			account = resolved
-		}
-		out = append(out, config.ClaudeAccountSecret(account))
-	}
-	slices.Sort(out)
-	return slices.Compact(out)
 }
 
 // proxiedBitbucketRepos are the repositories of this installation's local
