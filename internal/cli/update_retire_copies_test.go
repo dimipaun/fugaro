@@ -19,10 +19,11 @@ package cli
 // step's to change.
 //
 // Both tests pin the release-level switch the whole step hangs on
-// (infra.ProjectCopiesDropped): with it off — this release — none of that
-// happens on any installation, and with it on it does. The release that removes
-// the workflow_secrets loop (IS6) flips the production value; the pair of
-// tests is what says which side of it an installation is on.
+// (infra.ProjectCopiesDropped): with it off — every release before IS6 — none
+// of that happens on any installation, and with it on — this release, which
+// removed the workflow_secrets loop — it does. The pair of tests is what says
+// which side of it an installation is on, and neither reads the production
+// value.
 
 import (
 	"context"

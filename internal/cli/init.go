@@ -5738,6 +5738,14 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// jobs go out on and the ones the record below names, so a launch on any of
 	// them (`--token`, D2070 (a)) is a run this bundle reading has to cover.
 	r.recordCredentialsServiceReady(ctx, lc, outs, cfg, in.Policy, repo, cfg.Git.Provider, cfg.Agent.Auth, infra.WorkflowAccounts(cfg, lc, repo), policyBudgetMode(in.Policy))
+	// Which workflow secrets this installation's record marks copied, read
+	// before the spec so the plan it produces is the one this installation can
+	// serve: a name the record does not hold keeps its mount, its accessors and
+	// its project copy, and the job reads the value itself (IS5's skipped name,
+	// IS6). It is the same reader, and the same record, IS13's retirement is
+	// decided by; a read that could not be made names nothing, so nothing is
+	// dropped — the direction both halves fail in.
+	in.CopiedWorkflowSecrets = r.workflowSecretsCopiedForPlan(ctx, lc)
 	if spec, err = infra.Repo(in); err != nil {
 		return initErr(err)
 	}
