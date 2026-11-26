@@ -2559,10 +2559,10 @@ function scopeNeed(factory: ScreenFactory, picture: ScopePicture, node: ScopeNod
  * **The screen draws the value the model sanitized and never a decision of its
  * own about it**: the document carries no number field, so the id is the number,
  * and the class its wire key declares decides what a reader sees -- a coordinator
- * id begins with `<owner>/<name>`, which that class placeholders, so the cell for
- * `acme/widgets#42` reads `[redacted]#42` (`graph/model.ts` carries the whole
- * reasoning). What this screen adds is that it neither cuts an id down to its
- * digits nor reformats one: an id is identity rather than prose (D1356).
+ * id begins with `<owner>/<name>`, which that class draws as it came, so the cell
+ * for `acme/widgets#42` reads `acme/widgets#42` (`graph/model.ts` carries the
+ * whole reasoning). What this screen adds is that it neither cuts an id down to
+ * its digits nor reformats one: an id is identity rather than prose (D1356).
  *
  * **A coordinator node opens no run**, which is why there is no door on this row
  * and no `data-run-id`: the console's run list is one *installation's* own, and a
