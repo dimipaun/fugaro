@@ -121,11 +121,19 @@ case "${1:-} ${2:-}" in
   case "${3:-}" in
   describe)
     # $4 is the job name: the installation's own job answers from job.json, and
-    # the check's own throwaway job is absent unless a case puts one there.
+    # the check's own throwaway job is absent unless a case puts one there (a
+    # file probe-exists). WHICH words the absence is answered with is the case's
+    # to choose, through probe-absent.err: the real gcloud says
+    # `Cannot find job [NAME].` and older/accepted spellings say NOT_FOUND, and
+    # the guard has to read both as the same answer.
     if [ "${4:-}" = "$FAKE840_PROBE" ]; then
       if [ -f "$FAKE840_DIR/probe-exists" ]; then
         cat "$FAKE840_DIR/probe.json"
         exit 0
+      fi
+      if [ -s "$FAKE840_DIR/probe-absent.err" ]; then
+        cat "$FAKE840_DIR/probe-absent.err" >&2
+        exit 1
       fi
       printf 'ERROR: (gcloud.run.jobs.describe) NOT_FOUND: job %s not found\n' "${4:-}" >&2
       exit 1
@@ -949,6 +957,41 @@ test_a_job_that_already_exists_is_refused() {
   expect_absent "$(cat "$dir/state/calls")" "run jobs delete" "and it deletes nothing it did not create"
 }
 
+# The real gcloud does not answer NOT_FOUND for a Cloud Run job that is not
+# there: it exits 1 with
+# `ERROR: (gcloud.run.jobs.describe) Cannot find job [NAME].` — no NOT_FOUND in
+# it. Both guards that read a describe (the one before anything is created and
+# the read-back after the delete) read absence from those words, so this
+# spelling and the NOT_FOUND one must be the same answer: a guard that knows
+# only NOT_FOUND stops a real check at its first guard against a clean project.
+test_each_spelling_of_absence_is_absence() {
+  setup_case cannot-find-job
+  printf 'ERROR: (gcloud.run.jobs.describe) Cannot find job [%s].\n' "$PROBE" >"$dir/state/probe-absent.err"
+  run840 --project "$PROJECT" --region "$REGION" --job "$JOB"
+  expect_status "$status" 0 "gcloud's real wording for a missing job"
+  expect_contains "$out" "FACT probe: PASS" "gcloud's real wording for a missing job"
+  expect_contains "$(cat "$dir/state/calls")" "run jobs create" "the run went past its first guard and created its job"
+  expect_contains "$out" "FACT restore: PASS" "the deletion read back with the same words"
+
+  setup_case not-found-job
+  printf 'ERROR: (gcloud.run.jobs.describe) NOT_FOUND: job %s not found\n' "$PROBE" >"$dir/state/probe-absent.err"
+  run840 --project "$PROJECT" --region "$REGION" --job "$JOB"
+  expect_status "$status" 0 "the NOT_FOUND spelling"
+  expect_contains "$out" "FACT probe: PASS" "the NOT_FOUND spelling"
+}
+
+# The other half of the case above: a describe that failed WITHOUT saying the
+# job is absent is not the answer "it is not there". The guard stops rather than
+# adopting, or overwriting, a job it could not read.
+test_a_describe_that_failed_for_another_reason_is_not_absence() {
+  setup_case denied
+  printf 'ERROR: (gcloud.run.jobs.describe) PERMISSION_DENIED: caller does not have permission\n' >"$dir/state/probe-absent.err"
+  run840 --project "$PROJECT" --region "$REGION" --job "$JOB"
+  expect_status "$status" 2 "a describe that failed without saying the job is absent"
+  expect_contains "$out" "FACT probe: FAIL" "a describe that failed without saying the job is absent"
+  expect_absent "$(cat "$dir/state/calls")" "run jobs create" "nothing was created"
+}
+
 test_a_missing_token_stops() {
   setup_case no-token
   printf '1' >"$dir/state/token.status"
@@ -1143,6 +1186,8 @@ t test_a_log_read_that_never_carries_the_execution_stops
 t test_a_token_with_no_claims_stops
 t test_a_log_carrying_an_earlier_execution_reads_only_this_one
 t test_a_job_that_already_exists_is_refused
+t test_each_spelling_of_absence_is_absence
+t test_a_describe_that_failed_for_another_reason_is_not_absence
 t test_a_missing_token_stops
 t test_belong_is_refused
 t test_an_id_that_is_not_a_project_or_a_region_is_refused
