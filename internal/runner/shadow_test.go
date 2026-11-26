@@ -1196,9 +1196,13 @@ func armFollowupHarness(t *testing.T, cfg string) (*gw, *fuHarness) {
 // follow-up harness's own followUp does, with this task's ab block.
 func (h *fuHarness) armFollowup(t *testing.T, id, text string, ab *task.AB) {
 	t.Helper()
+	// The project layer is the harness's own — the arm's ab: block with the
+	// models this installation prices a run by (armLayer, testutil.MergePins,
+	// S1): it is the same layer for every run of the project, and a follow-up
+	// carries it as the first run did.
 	spec := &task.Spec{Version: 1, RunID: id, Repo: "acme/app", Ref: "main", Workflow: h.first.Workflow,
 		Task: text, Branch: "fugaro/" + runID, PR: 1, PreviousRun: runID, AB: ab,
-		ProjectLayer: &task.ProjectLayer{SHA256: config.LayerSum([]byte(armLayer)), Generation: 3, YAML: armLayer}}
+		ProjectLayer: h.layer}
 	store := runstore.Open(h.bucket, repoSlug, id)
 	if err := store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)

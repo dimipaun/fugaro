@@ -11,6 +11,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/routing"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // chainLevelModel is the model a level of the task's own block names in the
@@ -25,11 +26,14 @@ const chainLevelModel = "gpt-5"
 // api-key one, the fixture's own policy), so nothing but the table's own gate
 // is asked about it.
 //
-// agent.model is a lifted key (R1, D3237): a repository's file still writes it
-// and this release still reads it, and a job image older than release A —
-// l8Since, which is where it stops being honoured — is what L8's own gate
-// refuses (l8LiftedKeyLaunch). The arm below therefore moves the fixture's base
-// image to l8Since, so the refusal it reads is the table's and not that one's.
+// agent.model is a lifted key (R1, D3237): a repository's file still writes it,
+// the job image's runner is what honours it (a file this launcher reads is
+// dropped — S1, config.Resolve), and a job image older than release A — l8Since,
+// which is where the runner stops honouring it — is what L8's own gate refuses
+// (l8LiftedKeyLaunch). The arms below therefore move the fixture's base image to
+// l8Since, so a refusal they read is the table's and not that one's; and the
+// model the launch prices the run by is published as the project layer
+// (chainCheckout), which is where a launch reads a repository's model now.
 const chainLaunchYAML = `version: 1
 project: aurora
 git:
@@ -47,6 +51,28 @@ workflows:
       test: sh test.sh
     timeouts: { total: 5m, stage: 2m, verify: 1m, finalize_reserve: 30s }
 `
+
+// chainCheckout puts the fixture's checkout of acme/app in the working
+// directory, with the file's own lifted keys published as the project layer it
+// resolves over: a repository's file may no longer decide its own models (S1,
+// D3237), so agent.model is the layer's and the file is anchored to it
+// (publishFilePins). The file keeps the key it wrote — an installation whose
+// project layer already carries it is the state L8's own gate is judged on —
+// and the model the run is priced by is the layer's either way.
+func chainCheckout(t *testing.T, f *cloudFixture, yaml string) {
+	t.Helper()
+	projectJobCheckoutYAML(t, publishFilePins(t, f, yaml))
+}
+
+// chainLayer is the task's own copy of the layer chainCheckout publishes: a
+// launch resolves the file at the run's ref over the layer the task carries
+// (cascadeRefConfig, embedProjectLayer), and the layer is where a run reads a
+// repository's models from since S1 (D3237) — a spec a rig built directly,
+// without going through a launch, carries none unless it is set.
+func chainLayer(yaml string) *task.ProjectLayer {
+	text := layerPins(yaml)
+	return &task.ProjectLayer{YAML: text, SHA256: config.LayerSum([]byte(text))}
+}
 
 // chainTableYAML is a project's first table, written the way `fugaro routing
 // set` writes one: one entry for the model the cascade fixture's run calls,
@@ -93,9 +119,10 @@ const chainUnroutedYAML = `model_routing:
 // other/repo alone.
 func TestRunGrantsByTheTable(t *testing.T) {
 	r := newSlipLaunchRigOver(t, func(t *testing.T, f *launchBudgetFixture) {
-		projectJobCheckoutYAML(t, cascadeLaunchYAML)
+		chainCheckout(t, f.cloudFixture, chainLaunchYAML)
 		f.appendConfig(t, chainTableYAML)
 	})
+	r.spec.ProjectLayer = chainLayer(chainLaunchYAML)
 	plain := r.launch(t, func(req credsvc.SlipGrantRequest) (credsvc.SlipGrantResponse, error) {
 		return credsvc.SlipGrantResponse{Slip: fakeSlipID, MaxRuntimeSeconds: req.MaxRuntimeSeconds}, nil
 	})
@@ -145,9 +172,10 @@ const chainLevelYAML = `model_routing:
 // the grant, and the gate arm below launches a run whose level has no source.
 func TestRunGrantsTheTasksLevelModel(t *testing.T) {
 	r := newSlipLaunchRigOver(t, func(t *testing.T, f *launchBudgetFixture) {
-		projectJobCheckoutYAML(t, cascadeLaunchYAML)
+		chainCheckout(t, f.cloudFixture, chainLaunchYAML)
 		f.appendConfig(t, chainLevelYAML)
 	})
+	r.spec.ProjectLayer = chainLayer(chainLaunchYAML)
 	r.spec.ReviewLevels = &config.ReviewLevels{L2: &config.LevelSetting{Model: chainLevelModel}}
 	r.launch(t, func(req credsvc.SlipGrantRequest) (credsvc.SlipGrantResponse, error) {
 		return credsvc.SlipGrantResponse{Slip: fakeSlipID, MaxRuntimeSeconds: req.MaxRuntimeSeconds}, nil
@@ -220,7 +248,7 @@ func TestRunRefusesAnUnroutedModel(t *testing.T) {
 		// gate this arm reads is the table's, so the image moves first.
 		f.rewriteConfig(t, "fugaro-base/fugaro-base:"+nodeRelease, "fugaro-base/fugaro-base:"+l8Since)
 		f.appendConfig(t, chainUnroutedYAML)
-		projectJobCheckoutYAML(t, chainLaunchYAML)
+		chainCheckout(t, f.cloudFixture, chainLaunchYAML)
 		_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", runID, "Add a feature")
 		if ExitCode(err) != ExitUserError {
 			t.Fatalf("a launch whose model the table does not route: err = %v, want a refusal naming the model and the fix", err)
