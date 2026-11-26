@@ -534,8 +534,10 @@ func TestLiftStageLowersTheCapBehindTheGate(t *testing.T) {
 // with the models and agent.auth in the layer file and a record per repository,
 // and a second update changes nothing.
 func TestUpdateLiftsEveryKey(t *testing.T) {
-	// Block style: yamledit cannot add a key inside a flow map (defaults.agent: { auth: x }).
-	r := newLayerRig(t, strings.Replace(testProjectLayer, "  agent: { auth: api-key }\n", "", 1))
+	// The fixture layer's agent line goes, so what the planner writes lands in a
+	// block of its own: yamledit cannot add a key inside a flow map, and
+	// defaults.agent is one while the line stands.
+	r := newLayerRig(t, strings.Replace(testProjectLayer, layerAgentLine, "", 1))
 	old := liftRepositories
 	liftRepositories = func(context.Context, *initEngine, *localcfg.Config, []string) ([]lift.Repo, []string, error) {
 		file := []byte("agent:\n  auth: cascade\n  models:\n    background: claude-haiku-4-5\n")
@@ -579,7 +581,7 @@ func TestUpdateLiftsEveryKey(t *testing.T) {
 // nobody to answer it is refused at once.
 func TestUpdateAskChoosesAuthWhereReposDisagree(t *testing.T) {
 	setup := func(t *testing.T) {
-		newLayerRig(t, strings.Replace(testProjectLayer, "  agent: { auth: api-key }\n", "", 1))
+		newLayerRig(t, strings.Replace(testProjectLayer, layerAgentLine, "", 1))
 		old := liftRepositories
 		liftRepositories = func(context.Context, *initEngine, *localcfg.Config, []string) ([]lift.Repo, []string, error) {
 			return []lift.Repo{
