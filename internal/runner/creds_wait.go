@@ -63,7 +63,7 @@ func (e *exhaustedError) Error() string {
 
 // noteExhausted is where the credential service's typed answer arrives, and
 // the only way a stage learns of it: it ends the stage in flight, which the
-// caller's own loop then answers with the action beside it (haltOnExhaustedAnswer).
+// caller's own loop then answers with the action beside it (followExhaustedAnswer).
 // C1.15's upstream calls it from the gateway's request path, where the
 // service's answer to a forwarded call is read (ReadExhaustedUntil); a test
 // drives it through RunHandle.NoteExhausted. Nothing in this release calls it
@@ -96,8 +96,8 @@ func (r *run) noteExhausted(e credsvc.ExhaustedUntil, action runstore.PauseActio
 	stop(&exhaustedError{Until: e.ResetAt.UTC(), Action: action, ResumeAt: resumeAt.UTC()})
 }
 
-// haltOnExhaustedAnswer carries out the action the exhausted answer named,
-// and reports the halt that ends the run when the action is one: nil is the
+// followExhaustedAnswer carries out the action the exhausted answer named, and
+// reports the error that ends the stage when the action is one: nil is the
 // wait, which the caller takes next (D3184).
 //
 // The action is the credentials service's decision and never the runner's
@@ -109,16 +109,16 @@ func (r *run) noteExhausted(e credsvc.ExhaustedUntil, action runstore.PauseActio
 // idling nor a run of tomorrow is open to it. A halt it takes like any other
 // run, which is the answer it would have had anyway.
 //
-// A pause is recognized and ends the run the way a halt does: nothing here
-// suspends a run yet, and a run that waited for the reset the service meant to
-// resume it at would spend the container the pause exists to release (D3184).
-// The instant the pause carries is the service's own figure and is named in
-// the halt's detail so its operator can see what was asked (R8).
+// A pause suspends the run (suspend.go, R12): it saves the session, pushes the
+// work in progress, writes pause.json, tells the service it has saved, ends
+// `paused` and releases its lease, and the service resumes the chain later as
+// a new run (D3185). stage and session are what the pause records: the stage a
+// resumed run enters, and the session it restores.
 //
 // An empty action is a service of a release behind, which decides no action
 // and is waited out as it always was, and an action outside the three cannot
 // arrive: the gateway refuses one before it hands an answer over.
-func (r *run) haltOnExhaustedAnswer(ex exhaustedError) error {
+func (r *run) followExhaustedAnswer(ctx context.Context, stage, session string, ex exhaustedError) error {
 	until := ex.Until.UTC().Format(time.RFC3339)
 	if ex.Action != runstore.ActionHalt && r.reachedRigor() == rigor.Hotfix {
 		return r.haltNoCredential(fmt.Sprintf(
@@ -129,9 +129,7 @@ func (r *run) haltOnExhaustedAnswer(ex exhaustedError) error {
 		return r.haltNoCredential(fmt.Sprintf(
 			"the credential service answered that no credential is usable before %s and that this run should end rather than wait for it", until))
 	case runstore.ActionPause:
-		return r.haltNoCredential(fmt.Sprintf(
-			"the credential service answered that this run should be suspended until %s; this release cannot suspend a run, so it ended instead (the earliest reset is %s)",
-			ex.ResumeAt.UTC().Format(time.RFC3339), until))
+		return Suspend(ctx, r, stage, session, ex)
 	}
 	return nil
 }

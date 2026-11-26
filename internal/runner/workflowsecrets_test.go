@@ -181,29 +181,10 @@ func (s *secretsService) serve(w http.ResponseWriter, r *http.Request) {
 // relay carries a call that is not the workflow-secrets route to the model
 // upstream's stand-in, the way the service carries a run's model calls.
 func (s *secretsService) relay(w http.ResponseWriter, r *http.Request) {
-	body, _ := io.ReadAll(r.Body)
 	s.mu.Lock()
 	upstream := s.upstream
 	s.mu.Unlock()
-	req, err := http.NewRequestWithContext(r.Context(), r.Method, upstream+r.URL.RequestURI(), bytes.NewReader(body))
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-	req.Header = r.Header.Clone()
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		w.WriteHeader(http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-	for k, vs := range resp.Header {
-		for _, v := range vs {
-			w.Header().Add(k, v)
-		}
-	}
-	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, resp.Body)
+	relayTo(upstream, w, r)
 }
 
 // asked is the variable of every version-1 call the service received, in order.
