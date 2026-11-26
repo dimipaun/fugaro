@@ -63,21 +63,21 @@ func TestDocsUsageLimitSwitchKeepsATriedListAndNeverLoops(t *testing.T) {
 }
 
 // TestDocsUsageLimitSwitchRequiresExplicitToken pins the one rule that makes
-// the switch actually work: a follow-up inherits its previous run's account
-// by design, so the relaunch command must name --token explicitly, in both
-// the follow-up and the fresh-launch (no PR yet) cases, or it would silently
-// retry the very account that just hit its limit.
+// the switch actually work: a launch is served from its launcher's own pool
+// (and never re-picks one on its own), so the relaunch command must name it
+// explicitly with --pool, in both the follow-up and the fresh-launch (no PR
+// yet) cases, or it would silently run on the pool that just hit its limit.
 func TestDocsUsageLimitSwitchRequiresExplicitToken(t *testing.T) {
 	followup := readSkillFile(t, "../../plugin/skills/working/reference/followup.md")
-	if !strings.Contains(followup, "inherits the previous run's Claude account by design") {
-		t.Error("followup.md no longer says a follow-up inherits its account by design")
+	if !strings.Contains(followup, "is served from its own launcher's pool") {
+		t.Error("followup.md no longer says a follow-up is served from its own launcher's pool")
 	}
-	if !strings.Contains(followup, "fugaro run --pr N --repo <owner/name> --token NAME --run-id <id> --json") {
-		t.Error("followup.md's account-switch relaunch no longer names --token explicitly")
+	if !strings.Contains(followup, "fugaro run --pr N --repo <owner/name> --pool NAME --run-id <id> --json") {
+		t.Error("followup.md's usage-limit relaunch no longer names --pool explicitly")
 	}
 	launch := readSkillFile(t, "../../plugin/skills/working/reference/launch.md")
-	if !strings.Contains(launch, "fugaro run --repo <owner/name> --workflow <name> --ref <base-branch> --token NAME --run-id <id> --json") {
-		t.Error("launch.md's no-PR-yet relaunch no longer names --token explicitly")
+	if !strings.Contains(launch, "fugaro run --repo <owner/name> --workflow <name> --ref <base-branch> --pool NAME --run-id <id> --json") {
+		t.Error("launch.md's no-PR-yet relaunch no longer names --pool explicitly")
 	}
 }
 
@@ -269,7 +269,7 @@ func TestDocsSkillSummaryDoesNotRestateTheOldLooseTrigger(t *testing.T) {
 // auth that can run out of Claude headroom without being one — its tier A is a
 // subscription token the credentials service holds and chooses, not an account
 // this machine's local config admits, so `fugaro accounts ls` cannot answer
-// what it may use and `--token NAME` cannot name what the service will pick.
+// what it may use and `--pool NAME` cannot name what the service will pick.
 // The paragraph is what stops the section's advice being followed for a run it
 // does not fit: a cascade run that ran out of tier A is the *service's*
 // business (it marks the credential and switches to the next tier), and the
@@ -283,7 +283,7 @@ func TestDocsUsageLimitSwitchDoesNotApplyToACascadeRun(t *testing.T) {
 		"the credentials service",
 		"docs/credentials-service/runbook.md",
 		"`fugaro accounts ls` cannot answer",
-		"`--token NAME` does not name",
+		"`--pool NAME` does not name",
 		"is not a run this section switches",
 	} {
 		if !strings.Contains(flat, want) {
