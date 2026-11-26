@@ -49,18 +49,31 @@ variable "installation" {
     launchers = list(string)
     operators = list(string)
     # The installation's credentials service (D146, D147), absent while it has
-    # not opted in: its Cloud Run service name, its region and the email of its
-    # own account, which the workflow module turns into each job account's
-    # roles/run.invoker grant, the drop of that job's model-secret accessors,
-    # and the service account's own secretAccessor on each secret the job mounts
-    # (D2074, from `account`). This module reads the first two for the build
-    # account's own invoker grant (B4.4): one switch, so a build is admitted to
-    # the service on exactly the installations whose jobs are.
+    # not opted in and while this repository is handed no address at all
+    # (infra.CredentialsServiceAddress): its Cloud Run service name, its region
+    # and the email of its own account, which the workflow module turns into
+    # each job account's roles/run.invoker grant, and — with the fact below —
+    # the drop of that job's model-secret accessors and the service account's
+    # own secretAccessor on each secret the job mounts (D2074, from `account`).
     credentials_service = optional(object({
       name    = string
       region  = string
       account = optional(string, "")
     }))
+    # Whether that service serves THIS repository's credentials
+    # (infra.CredentialsServiceServes), which is the half every drop below is
+    # keyed on: the job's model-secret accessors and mounts and the build
+    # account's own accessor list go, and the service's own account is granted
+    # each container the jobs still mount. Optional and TRUE, so a tfvars
+    # written before this input existed — which carried credentials_service
+    # only for a repository the switch served — plans exactly what it planned,
+    # and FALSE is the one repository handed the address without being served:
+    # a `vertex` one (D3326 as amended by F17), whose runs fetch workflow
+    # secrets through the service and give up nothing. This module reads it for
+    # the build account's own invoker grant too (B4.4, build.tf): a build reads
+    # its credential at the service exactly where its accessors were taken
+    # away, so a root that dropped nothing grants its build account no call.
+    credentials_service_serves = optional(bool, true)
     # The project's catalog check job account (D1148), its email, or "" on an
     # installation whose project publishes no catalog. It is what
     # catalogcheck.tf grants actAs on this repository's build account to, so a

@@ -782,6 +782,21 @@ import (
 // finding U9 exists for, that a step left for the owner is not a refusal, and
 // that an update which asks a question is a finding -- with no gcloud and no
 // curl anywhere, because the check holds no credential.
+// Checks 850 and 851 are the workspace-credentials plan's own, and each drives a
+// fake `gcloud` and a fake `fugaro` over files the case writes. 850's fake
+// `gcloud` is a small model of a workspace's project: the project policy and the
+// two services' own policies (so a case can say who holds an invoke grant and
+// under what condition a service account reaches a person's container), the
+// containers the project holds, and the workspace's own two services' log lines --
+// the intake's `intake: audit` lines by their sub, and the credentials service's
+// `credsvc: audit` and `credsvc: refused` lines by their run -- while its fake
+// `fugaro` answers `version`, `doctor` and `runs ls`, so a case can bend a
+// refusal's own sentence, a removal's moment and a run that did not halt. 851's
+// fake `gcloud` serves that service's lines for a member whose switch was never
+// turned on (a case bends them to name a `fugaro_u_` container) and its fake
+// `fugaro` answers the three doctor documents, the update logs of the case's own,
+// the run listing and the version, so a case says what both updates left and that
+// the member without the switch saw no change.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -834,6 +849,7 @@ var liveCheckScripts = []struct {
 	{"check-501.sh", "check-501_test.sh"},
 	{"check-580.sh", "check-580_test.sh"},
 	{"check-581.sh", "check-581_test.sh"},
+	{"check-582.sh", "check-582_test.sh"},
 	{"check-411.sh", "check-411_test.sh"},
 	{"check-412.sh", "check-412_test.sh"},
 	{"check-c0.sh", "check-c0_test.sh"},
@@ -930,6 +946,8 @@ var liveCheckScripts = []struct {
 	{"check-911-lift-compare.sh", "check-911-lift-compare_test.sh"},
 	{"check-912-lift-refusal.sh", "check-912-lift-refusal_test.sh"},
 	{"check940.sh", "check940_test.sh"},
+	{"check-850.sh", "check-850_test.sh"},
+	{"check-851.sh", "check-851_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent

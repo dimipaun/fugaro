@@ -13,8 +13,14 @@ repository's matrix may not show into the test output (R1).
 
 # A status page, for the builder's tests
 
-As of whenever, read from `main`. This paragraph, the comment above and the rules the four
+As of whenever, read from `main`. This paragraph, the comment above and the rules the five
 tables follow are prose: the builder reads the headings and the rows, and nothing else.
+
+## UAT
+
+| Spec | Merged | Left |
+| --- | --- | --- |
+| uat-spec | 6/6 | the owner's check |
 
 ## Nearly There (NT)
 

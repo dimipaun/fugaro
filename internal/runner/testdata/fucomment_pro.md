@@ -15,7 +15,7 @@
 
 **Reviews:** round 1: ship
 
-**Rigor:** pro, from repo, at bootstrap, read from origin/main
+**Rigor:** pro, from project, at bootstrap, read from origin/main
 
 **Tests:** passed on <sha> (3 tests, 0 failures)
 
