@@ -27,6 +27,13 @@
 // The link is pinned the same way: the URL is the page the website serves,
 // `website/src/pages/getting-started.astro`, so the two cannot drift apart.
 //
+// The third block is the first-run wizard's **budget question** (T6 of
+// `docs/managed-flag-ergonomics/implementation-plan.md`, D2210/D2212): the
+// amount the field is drawn with is the CLI's own default, the question is asked
+// where the CLI asks it, and the member is sent only to a CLI that reads it.
+// Same pin, same reason -- the console's number and the CLI's are one fact
+// written in two languages.
+//
 // **The mutation each test catches**: change one character of a constant, or
 // change the file it points at, and the test goes red by name. The reverse --
 // a `website/data/install.yaml` that renamed the cask -- fails the same way,
@@ -39,6 +46,10 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 import { FUGARO_INSTALL_COMMAND, FUGARO_SETUP_COMMAND, GETTING_STARTED_URL, NO_ONBOARDING, firstInstallationState, installCliState } from '../../src/main/onboarding'
+import { setupAnswersForCli } from '../../src/main/wizardrun'
+import type { SetupAnswersHeld } from '../../src/main/wizardrun'
+import { WIZARD_BUDGET_DEFAULT, WIZARD_BUDGET_NOTE, WIZARD_QUESTIONS } from '../../src/renderer/wizard/wizard'
+import { SETUP_BUDGET_CLI_FLOOR, setupBudgetSupported } from '../../src/shared/version'
 import { FUGARO_INSTALL_COMMAND as SOURCE_INSTALL_COMMAND } from '../../src/source/cli'
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url))
@@ -141,6 +152,73 @@ describe('the getting-started link', () => {
     const site = read('website/data/site.yaml')
     expect(site).toContain(`canonical_url: https://${new URL(GETTING_STARTED_URL).host}`)
     expect(site).toContain(`  - ${new URL(GETTING_STARTED_URL).host}`)
+  })
+})
+
+describe('the budget question', () => {
+  it('is drawn with the amount the CLI itself defaults to, and says what the number is', () => {
+    // `internal/infra/managed/defaults.go` is where the CLI writes the amount
+    // down (D2212), and the form's field is prefilled with it: one number in two
+    // languages, so an amount that moved in the CLI fails here rather than
+    // leaving the form suggesting a figure nothing records.
+    const declared = /DefaultBudgetAmount\s+int64\s*=\s*(\d+)/.exec(read('internal/infra/managed/defaults.go'))?.[1]
+    expect(declared, 'internal/infra/managed/defaults.go must declare DefaultBudgetAmount').toBeDefined()
+    expect(WIZARD_BUDGET_DEFAULT).toBe(String(declared))
+    const row = WIZARD_QUESTIONS.find((question) => question.key === 'budget')
+    expect(row?.default).toBe(WIZARD_BUDGET_DEFAULT)
+    expect(row?.required).toBe(false)
+    expect(row?.note).toBe(WIZARD_BUDGET_NOTE)
+    // The one thing an operator has to be told before they change the figure:
+    // this number is the alert's threshold, and what stops a run is the
+    // gateway's cost cap, a different figure in a different place (D2210). A
+    // note that lost that would let the field read as the thing that stops a
+    // run, and the run would stop on a figure nobody could find.
+    expect(WIZARD_BUDGET_NOTE).toContain('alert')
+    expect(WIZARD_BUDGET_NOTE).toContain('cap on spending')
+    // ...and an empty field is the CLI's default rather than a refusal, which is
+    // why the note names what emptiness does.
+    expect(WIZARD_BUDGET_NOTE).toContain('empty takes the default')
+  })
+
+  it('is asked where the CLI asks it, in the CLI’s own table', () => {
+    // The order is the CLI's (`setupAnswerQuestions`,
+    // `internal/cli/setup_answers.go`): a member's place in that table is the
+    // place its own flag is read, and a form that asked the same questions in
+    // another order would print a transcript an operator cannot follow against
+    // the run's own output.
+    const source = read('internal/cli/setup_answers.go')
+    const table = source.slice(source.indexOf('var setupAnswerQuestions'))
+    const declared = [...table.matchAll(/\{"([a-z_]+)",\s*"--[a-z-]+"\}/g)].map((match) => match[1] ?? '')
+    expect(declared.length).toBeGreaterThan(0)
+    const asked = new Set(WIZARD_QUESTIONS.map((question) => question.key))
+    // The CLI's table carries two members the form does not ask -- `location`
+    // (the place the CLI's wizard asks, which this form answers as a region) and
+    // `budget_currency` (USD by default, D2211) -- so the claim is about the
+    // ones the form does ask: every one of them is the CLI's, in the CLI's order.
+    expect(declared.filter((key) => asked.has(key))).toEqual(WIZARD_QUESTIONS.map((question) => question.key))
+    expect(declared.indexOf('budget')).toBe(declared.indexOf('rigor') + 1)
+  })
+
+  it('is sent only to a CLI that reads it, and dropped for one that does not', () => {
+    // The member is newer than the answers file it travels in (T2b), and the CLI
+    // decodes that document strictly: a `budget` an older CLI is handed fails
+    // the whole plan by name. So the floor is the first release that reads it,
+    // and a line below it is sent the document without the member -- absent,
+    // which is the answer an operator who never touched the field gave and the
+    // CLI's own default of 100.
+    expect(SETUP_BUDGET_CLI_FLOOR).toMatch(/^\d+\.\d+\.\d+$/)
+    const answers: SetupAnswersHeld = Object.freeze({
+      gcp_project: 'a-project',
+      region: 'us-east5',
+      name: '',
+      rigor: 'pro',
+      budget: 250,
+      bake_repos: undefined,
+    })
+    const floor = SETUP_BUDGET_CLI_FLOOR ?? ''
+    expect(setupBudgetSupported(floor)).toBe(true)
+    expect(setupAnswersForCli(answers, floor).budget).toBe(250)
+    expect(setupAnswersForCli(answers, '0.28.9').budget).toBeUndefined()
   })
 })
 
