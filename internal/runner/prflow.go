@@ -903,6 +903,11 @@ func (r *run) sectionLines(head string, parts ...string) string {
 	// longer line -- a full run ID is what every version of the CLI takes.
 	id := inlineText(task.ShortRun(r.rec.RunID))
 	out := line + "\n"
+	// The questions the agent asked open the section, above its change set, its
+	// decisions and its deferrals (LV5.2, LD8, LF11): the run stopped on a call
+	// it may not make, and a reader who reads no further than the first lines
+	// has to meet what a follow-up has to answer.
+	out += r.openQuestionsPart()
 	out += r.changeSetPart()
 	out += r.ownerPart()
 	out += r.deferredPart()
@@ -1083,6 +1088,39 @@ func (r *run) ownerWaiting() bool {
 		return true
 	}
 	return r.rec.Halt != nil && r.rec.Halt.Reason == runstore.HaltOwnerDecision
+}
+
+// openQuestionsPart is the status section's OPEN QUESTIONS block (LV5.2, LD8,
+// LF11): the questions the agent asked in its own hand-back file, one bullet
+// each, and what the section it opens is for — the pull request is a draft
+// until a follow-up answers them, and a reader has to see the questions to
+// answer them. It opens every status section the run writes while its file
+// carries them, and the final one most of all.
+//
+// The entries are the agent's own text about its own work, so they go through
+// handBackEntry like every other hand-back entry: a question carrying a
+// heading, a marker or a line break stays the text it is rather than the
+// section's structure.
+//
+// "" for a run whose own file asked nothing: the runner's fallback body is
+// built from the task text and asks nothing on the agent's behalf (handBack).
+// A section whose bound left entries out says so, the way the hand-back block
+// does, so a partial list never reads as the whole one.
+func (r *run) openQuestionsPart() string {
+	hb, fromAgent := r.handBack()
+	if !askedGuidance(hb, fromAgent) {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("**OPEN QUESTIONS**\n")
+	for _, q := range hb.OpenQuestions.Entries {
+		b.WriteString(handBackEntry(q) + "\n")
+	}
+	if hb.OpenQuestions.Dropped > 0 {
+		b.WriteString(hiddenHandBackLine(hb.OpenQuestions.Dropped) + "\n")
+	}
+	b.WriteString("\n")
+	return b.String()
 }
 
 // ownerPart is the status section's list of the decisions the run is waiting

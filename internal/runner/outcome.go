@@ -40,6 +40,23 @@ const ReasonNoHandBack = "the agent wrote no hand-back file"
 // sentence says which of them the agent owed and did not write.
 const ReasonHandBackSection = "the hand-back's %s section is empty"
 
+// ReasonOpenQuestions is Decide's reason when the agent's own hand-back asked
+// a question the run may not settle by itself (LV5.2, LD8): a scope, cost or
+// data-model call the agent stopped on rather than make. It is not a level's
+// section — the contract lets any level's agent write it — so the sentence
+// says what the run is waiting for and never which level owed it.
+const ReasonOpenQuestions = "the agent's hand-back asks for guidance: a follow-up answers it, and the pull request is a draft until one does"
+
+// askedGuidance reports whether the agent's own hand-back file asked the run's
+// questions, which is the one thing LV5.2 reads from it: the section is
+// non-empty, and the text is the agent's file rather than the runner's
+// fallback body built from the task (handBack). The record's needs_guidance,
+// the draft Decide keeps and the status section's OPEN QUESTIONS block are all
+// this one reading.
+func askedGuidance(hb HandBack, fromAgent bool) bool {
+	return fromAgent && len(hb.OpenQuestions.Entries) > 0
+}
+
 // Kind is which of the three endings Decide's answer is, as one word beside
 // the reason and the class: what the record's status is written from (D995).
 // It is an enum of its own rather than a reading of the reason, because the
@@ -88,6 +105,12 @@ type Decision struct {
 	// KindReady, and the constructors below are the only way this package
 	// builds one.
 	Kind Kind
+	// NeedsGuidance says the run stopped on a question its agent asked rather
+	// than on anything its own work failed (LV5.2, LD8). It is set by the one
+	// answer that reads the questions and is written to the record's
+	// needs_guidance by the caller, so a Decision and the record it produced
+	// cannot disagree about it. False for every other answer.
+	NeedsGuidance bool
 }
 
 // readyDecision is Decide's yes: the reason a tolerated or accepted round earns
@@ -115,6 +138,17 @@ func blockedDecision(reason string, class failure.Class) Decision {
 // kind, which is what the status is written from.
 func unreviewedDecision(reason string) Decision {
 	return Decision{Reason: reason, Class: failure.ReviewUnread, Kind: KindUnreviewed}
+}
+
+// guidanceDecision is Decide's no for a run whose agent asked a question it
+// may not settle by itself (LV5.2, LD8). The kind is blocked rather than
+// unreviewed: the run did not end for the absence of a verdict — its reviews
+// may have shipped — but on a call only a person can make, which is the
+// owner-decision stop's own answer (D995). The class is empty for the same
+// reason: the design's §3 has no row for a run waiting on a person, which is
+// what unclassified says.
+func guidanceDecision() Decision {
+	return Decision{Reason: ReasonOpenQuestions, Class: failure.Unclassified, Kind: KindBlocked, NeedsGuidance: true}
 }
 
 // Decide applies the PR outcome rule (design §4.2): ready only if the latest
@@ -156,7 +190,11 @@ func unreviewedDecision(reason string) Decision {
 // level's row carries a section the agent writes (LV5.1): the file must be
 // there, and the sections the level's promise stands on must have something
 // under them, while the lists beside them may be empty — a list with nothing on
-// it is honest. It is asked last, at the answers that would otherwise be yes,
+// it is honest. The same reading answers the run's questions (LV5.2, LD8): a
+// non-empty Open questions section is the agent's own stop, and the run ends a
+// draft with NeedsGuidance whatever its reviews said, which is why that case
+// sits above the verdicts and not among the yeses. LV5.1's sections are asked
+// last, at the answers that would otherwise be yes,
 // so a run refused for a cause of its own still reports that cause; the check
 // proves the agent wrote a non-empty heading and nothing about what the heading
 // says, which is the reviewer's to judge.
@@ -186,6 +224,16 @@ func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSumma
 		// halt on the same decisions reads its class off the halt's own reason
 		// instead (haltClass), where no family holds it either.
 		return blockedDecision(ownerWaitingReason(pendingOwner(owner)), failure.Unclassified)
+	case askedGuidance(hb, fromAgent):
+		// Below the owner's decisions and above every verdict: a decision left
+		// to the owner is one a follow-up can only be launched with the
+		// owner's ruling over, so it is the answer a launcher has to see
+		// first. The questions are the agent's own and stop the run whatever
+		// its rounds said — a reviewer's `ship` approves the diff, never the
+		// call the agent declined to make (LV5.2, LD8, LF11) — so they are
+		// read before the verdicts, and the pull request stays a draft until a
+		// follow-up answers them.
+		return guidanceDecision()
 	case last == nil:
 		return unreviewedDecision("no review verdict")
 	case last.Verdict == "none":
