@@ -214,6 +214,20 @@ REFUSAL
 
 add_cmd() { # add_cmd ARGS...
   [ -f "$state/add.exit" ] && exit "$(cat "$state/add.exit")"
+  if [ -f "$state/add.refusal" ]; then
+    # A plan the guard refuses, in the CLI's own shape: the head, the advice a
+    # managed project's session is given, and the address under it — the line
+    # Check 670's own failure message has to carry.
+    cat >&2 <<'REFUSED'
+Error: the plan would delete or replace 1 resource(s), or do something the guard doesn't know; nothing was applied. This is a managed project: deleting or replacing fugaro's own resources in it is its owner's decision, made by the owner and not by this session, so say which address is refused to the person who owns the project and stop:
+    module.installation.google_storage_bucket_iam_member.state["user:dimipaun@example.com"] (delete)
+  Log:  /tmp/chk670/installation.log
+  Help: fugaro troubleshoot
+– 2 steps not run (they need installation)
+stopped at installation; fix: fix what the error says and rerun fugaro project repos add: it resumes at installation
+REFUSED
+    exit 1
+  fi
   local r=$4 n steps=6
   if [ -f "$state/git.noyaml" ]; then
     printf 'fugaro.yaml for %s: pull request https://github.com/%s/pull/1\nmerge it, then run `fugaro project repos add %s` again to finish\n' "$r" "$r" "$r"
@@ -976,6 +990,20 @@ test_an_enrolment_that_refuses_stops() {
   expect_absent "$(cat "$dir/state/logs/fugaro.calls")" "secrets ls" "an enrolment that exits 1: nothing after it is read"
 }
 
+test_an_enrolment_a_guard_refuses_names_what_it_refused() {
+  # An enrolment that stops at a plan the guard refused has to name what it
+  # refused: they are the one thing its reader acts on, and the guard's own
+  # sentence puts them under an advice longer than the 400 characters a row
+  # prints of it (Check 670, 2026-11-26).
+  local dir=$work/add-guard
+  prepare "$dir"
+  : >"$dir/state/add.refusal"
+  run_check "$dir"
+  expect_status "$status" 1 "a guard refusal"
+  expect_row aborted 'the plan would delete or replace 1 resource(s): module.installation.google_storage_bucket_iam_member.state["user:dimipaun@example.com"] (delete)' "a guard refusal: the refused address is named"
+  expect_contains "$err" "the enrolment is the whole of this check's first step" "a guard refusal: the refusal"
+}
+
 test_an_enrolment_that_prints_seven_steps_stops() {
   # A converge that prints a number of steps other than six, or runs a number
   # other than the six it printed, is the reading this row exists for.
@@ -1461,6 +1489,7 @@ t test_a_doctor_with_no_project_is_not_measured
 t test_a_checkout_of_another_installation_is_not_measured
 t test_a_gcp_project_that_is_not_the_checkouts_is_refused
 t test_an_enrolment_that_refuses_stops
+t test_an_enrolment_a_guard_refuses_names_what_it_refused
 t test_an_enrolment_that_prints_seven_steps_stops
 t test_an_enrolment_that_does_not_name_the_build_stops
 t test_a_listing_that_does_not_answer_is_not_measured
