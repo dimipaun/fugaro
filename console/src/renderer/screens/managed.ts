@@ -227,10 +227,11 @@ function named(raw: unknown): string | null {
 }
 
 /** drawnRefusal is the CLI's own refusal sentence, sanitized, or the console's
- * sentence for one it cannot draw. The free-text rules would draw
- * `roles/datastore.viewer` as `[redacted]` and the project as `<project>`, and
- * the remedy is the whole value of a refusal, so this is `sanitizeRefusal` --
- * the one door per screen, as `degraded.ts` and `projects.ts` both say. */
+ * sentence for one it cannot draw. The remedy is the whole value of a refusal,
+ * so this is `sanitizeRefusal` -- the one door per screen, as `degraded.ts` and
+ * `projects.ts` both say -- and what it is still run for is the credential half:
+ * the free-text rules that drew a role as `[redacted]` and a project as
+ * `<project>` went with D3213 (2026-11-21). */
 function drawnRefusal(because: string): string {
   const drawn = sanitizeRefusal(because, 'the reason this section has nothing to draw')
   return drawn.ok ? drawn.text : REFUSAL_UNREADABLE

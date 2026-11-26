@@ -5202,12 +5202,12 @@ func TestProjectJobAccountGetsTheInvokerGrant(t *testing.T) {
 	body := blocks[0].body
 	for _, want := range []string{
 		// Null is the switch's own answer on this side, and the whole of it.
-		"count = var.job.credentials_service == null ? 0 : 1",
+		"count = local.credentials_grant == null ? 0 : 1",
 		// The service's own name and the region it runs in: the two values
 		// internal/infra writes (infra.CredentialsServiceName and the
 		// installation's region), and never a URL.
-		"location = var.job.credentials_service.region",
-		"name     = var.job.credentials_service.name",
+		"location = local.credentials_grant.region",
+		"name     = local.credentials_grant.name",
 		`role     = "roles/run.invoker"`,
 		// The job's own account and no other member, ever.
 		"member   = google_service_account.job.member",

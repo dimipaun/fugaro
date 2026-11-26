@@ -408,7 +408,7 @@ func TestDocsCheck195IsRegistered(t *testing.T) {
 	for _, want := range []string{
 		// The banner, before the owner's gate (B4.2) has been run: the section
 		// states that nothing has measured this yet.
-		"**not run",
+		"**run 2026-11-26: done",
 		// The register's own rule for an owner-run check: no agent runs any step
 		// of it, and the text has to say so.
 		"no agent runs any step of it",

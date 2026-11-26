@@ -23,7 +23,7 @@ This plan builds [spec.md](spec.md) as amended by [reconciliation.md](reconcilia
 | A forged index entry never adds a row | RL3's `TestForgedEntryAddsNoRow` |
 | A run that is on N and missing from the index still shows (older image, erased entry) | RL3's `TestRecentRunMissingFromIndexStillShows` |
 | No entry for N: today's scan, same rows | RL3's `TestNoIndexFallsBackToScan` |
-| A writer can never overwrite another run's entry as a unit | RL2's `TestEntryPathIsPerRun`; RL2W's `TestRunnerWritesOnlyItsOwnEntry` |
+| A writer can never overwrite another run's entry as a unit | RL2's `TestEntryPathIsPerRun`; the retirement of RL2W's writer, `TestRunnerWritesNoPRIndex` (IR5a) |
 | Readers of `runs/<slug>/` skip `pr-index/` | RL2's `TestReadersSkipPRIndex` |
 | `fugaro update` converges an installation of the previous version and leaves an in-flight run untouched | RL2B's `TestUpdateBackfillsPRIndex`, `TestUpdateBackfillLeavesRunInFlight` |
 | `--no-cache` still works and still gives the same rows | RL3's `TestNoCacheUsesIndex` |
@@ -59,6 +59,7 @@ This plan builds [spec.md](spec.md) as amended by [reconciliation.md](reconcilia
 - Reviewer tier: opus with an independent review: a new object the untrusted job account writes and a reader trusts as a hint.
 
 ### RL2W: the runner and the launcher write their entry
+- **Superseded (D3204, 2026-11-25):** the runner's half retired with IR5a of [docs/console-fixes/implementation-plan.md](../console-fixes/implementation-plan.md): `notePR`, `checkPullRequest` and the review artifact stage write nothing under `runs/<slug>/pr-index/` any more, and `internal/runner/prindex_test.go`, whose tests the `Tests` line below names, went with them (`TestRunnerWritesNoPRIndex` in `prindex_retired_test.go` and `TestRunnerWritesNoPRIndexFromTheReviewArtifact` replace them). The launcher's write and the backfill stop with IR5b, with the objects left in place.
 - Acceptance: the runner writes its own run's entry (`kind: opened`) when it opens a pull request and (`followed`) when a follow-up run starts on one, never another run's; a write failure is a warning in the run's log and never fails the run; the CLI writes the entry for `fugaro run --pr N` at launch, so an older job image's follow-up is covered; a run that opens no pull request writes none.
 - Files: `internal/runner/prindex.go` (new), `internal/runner/prindex_test.go` (new), `internal/runner/runner.go`, `internal/cli/followup.go`, `internal/cli/followup_test.go`.
 - Interfaces: consumes RL2's `PutPRIndex`.

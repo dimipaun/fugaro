@@ -47,10 +47,11 @@ import {
   unavailable,
 } from '../../src/shared/availability'
 import { TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
-import { decodeSnapshot } from '../../src/shared/schema'
+import { decodeRunsList, decodeSnapshot } from '../../src/shared/schema'
 import type { JSONDoc } from '../../src/source/source'
+import { RUNS_LIST_MAX_LIMIT } from '../../src/main/ipc'
 import { githubToken } from '../support/fakeSecrets'
-import type { LiveDocument, RunView } from '../../src/shared/schema'
+import type { LiveDocument, RunsListRow, RunView } from '../../src/shared/schema'
 import {
   BurnHistory,
   HourHistory,
@@ -62,6 +63,10 @@ import {
   LIVE_HOUR_WINDOW_WORD,
   LIVE_LOST_AFTER_SECONDS,
   LIVE_NEAR_DEADLINE_FRACTION,
+  LIVE_OLDER_BUSY,
+  LIVE_OLDER_PAGE,
+  LIVE_OLDER_TITLE,
+  LIVE_OLDER_WORD,
   LIVE_SILENT_AFTER_SECONDS,
   LIVE_STALE_AFTER_SECONDS,
   LIVE_THEMES,
@@ -73,6 +78,11 @@ import {
   headroomOf,
   healthFlag,
   hoursLeftOf,
+  liveOlderOf,
+  liveOlderReading,
+  liveOlderRefused,
+  olderPageOf,
+  olderRequest,
   perHourOf,
   pipelineOf,
   redZoneOf,
@@ -85,6 +95,7 @@ import {
 import type {
   LiveFactory,
   LiveModel,
+  LiveOlder,
   LiveRunRow,
   RunFlag,
   ScreenElement,
@@ -2139,6 +2150,178 @@ describe('the rendered screen', () => {
     // clicked into a navigation.
     const tree = renderLive(factory, modelOf(theLastFrame()), 'light')
     expect(walk(tree).filter((node) => node.tag === 'a')).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Older history on demand (the console-fixes plan's IR7, finding F4).
+// ---------------------------------------------------------------------------
+
+/** page is one `runs ls --json` answer, read through the real decoder: the rows
+ * are `runview.Row`s as the CLI writes them, so what the section folds in is
+ * what the wire carries and not an object invented beside it. */
+function page(...ids: readonly string[]): readonly RunsListRow[] {
+  const raw = {
+    runs: ids.map((run, at) => ({
+      run,
+      repo: 'r-4c25cf20/r-f1aa9214',
+      status: at % 2 === 0 ? 'ready' : 'halted',
+      terminal: true,
+      title: `older run ${String(at)}`,
+      ...(at % 2 === 0 ? {} : { halt: { by: 'someone', at: '2026-10-14T09:00:00Z', reason: 'spent' } }),
+    })),
+  }
+  const decoded = decodeRunsList(raw)
+  if (!decoded.ok) throw new Error(decoded.skew.because)
+  return decoded.value.runs
+}
+
+/** runIds is `n` run ids in the CLI's own order, newest first. */
+function runIds(n: number): readonly string[] {
+  return Array.from({ length: n }, (_, at) => `20261014-1200${String(at).padStart(2, '0')}-bb01`)
+}
+
+const OLDEST_OF_THE_WINDOW = '20261015-120000-aa01'
+
+/** withOlder is the screen drawn for one older section, over the fixture's last
+ * frame. */
+function withOlder(older: LiveOlder): ScreenElement {
+  return renderLive(factory, buildLiveModel(theLastFrame(), new BurnHistory(), null, undefined, undefined, older), 'light')
+}
+
+describe('older history on demand (IR7)', () => {
+  it('asks for the page after the last run drawn, at a page size the console admits', () => {
+    // The acceptance's own argv: `runs ls --json --limit=50 --after=<last run
+    // id>`. The cursor is a **run id** and not an instant, which is what the
+    // wire keeps (`contract-index.md`), and the page size is this file's own
+    // constant -- held under the console's ceiling here rather than by an import
+    // in the screen, because the renderer may not import `src/main`.
+    const request = olderRequest(liveOlderOf(true, OLDEST_OF_THE_WINDOW))
+    expect(request).toEqual({ limit: LIVE_OLDER_PAGE, after: OLDEST_OF_THE_WINDOW })
+    expect(LIVE_OLDER_PAGE).toBeLessThanOrEqual(RUNS_LIST_MAX_LIMIT)
+    expect(LIVE_OLDER_PAGE).toBeGreaterThan(0)
+  })
+
+  it('has nothing to ask for before the floor, with no cursor, or with a read already out', () => {
+    // Four refusals, and each is a different reason to spawn nothing: the CLI is
+    // below IR1's release, the window drew no run to page after, the last page
+    // was short, and a page is already being read.
+    expect(olderRequest(liveOlderOf(false, OLDEST_OF_THE_WINDOW))).toBeNull()
+    expect(olderRequest(liveOlderOf(true, null))).toBeNull()
+    const short = olderPageOf(page(...runIds(3)), liveOlderOf(true, OLDEST_OF_THE_WINDOW))
+    expect(short.more).toBe(false)
+    expect(olderRequest(short)).toBeNull()
+    const reading = liveOlderReading(liveOlderOf(true, OLDEST_OF_THE_WINDOW))
+    expect(olderRequest(reading)).toBeNull()
+    expect(reading.reading).toBe(true)
+  })
+
+  it('appends the second page after the first, with the cursor on the last run id of the page just read', () => {
+    // **The cursor is the last run id of the page just read**, not of the whole
+    // list: `--after` starts after that run, so the next page begins with the
+    // run that follows it. The first page is a full page (`LIVE_OLDER_PAGE`
+    // rows), so another may follow; the rows of the two pages are appended in
+    // the CLI's order and never sorted or de-duplicated here.
+    const first = page(...runIds(LIVE_OLDER_PAGE))
+    const lastOfFirst = runIds(LIVE_OLDER_PAGE)[LIVE_OLDER_PAGE - 1] ?? ''
+    const afterFirst = olderPageOf(first, liveOlderOf(true, OLDEST_OF_THE_WINDOW))
+    expect(afterFirst.rows).toHaveLength(LIVE_OLDER_PAGE)
+    expect(afterFirst.cursor).toBe(lastOfFirst)
+    expect(afterFirst.more).toBe(true)
+
+    const second = page(...runIds(4))
+    const afterSecond = olderPageOf(second, afterFirst)
+    expect(afterSecond.rows.map((row) => row.run)).toEqual([
+      ...first.map((row) => row.run),
+      ...second.map((row) => row.run),
+    ])
+    expect(afterSecond.cursor).toBe(runIds(4)[3])
+    // A page shorter than the page size is the end of the list: this console
+    // cannot count a history it has not read, and the alternative -- an empty
+    // page -- is a round trip whose answer is nothing.
+    expect(afterSecond.more).toBe(false)
+  })
+
+  it('draws nothing at all below the floor, and nothing for a window with no run', () => {
+    // A control whose press is a refusal is worse than no control: below the
+    // floor the section is not drawn -- not empty, and not disabled -- and the
+    // Live list is the day's runs, which is what it always was.
+    expect(all(withOlder(liveOlderOf(false, OLDEST_OF_THE_WINDOW)), 'live-older')).toEqual([])
+    expect(all(withOlder(liveOlderOf(true, null)), 'live-older')).toEqual([])
+    // The default model -- every drawing the earlier tests and the goldens were
+    // taken from -- is the same nothing.
+    expect(all(renderLive(factory, modelOf(theLastFrame()), 'light'), 'live-older')).toEqual([])
+  })
+
+  it('draws the rows, each a door to its run, and the control that asks for the next page', () => {
+    // A **full** page, which is the case a control is drawn in: the page came
+    // back at the page size, so another may follow (`more`).
+    const older = olderPageOf(page(...runIds(LIVE_OLDER_PAGE)), liveOlderOf(true, OLDEST_OF_THE_WINDOW))
+    const tree = withOlder(older)
+    const section = one(tree, 'live-older')
+    expect(section.tag).toBe('section')
+    expect(section.getAttribute('aria-label')).toBe(LIVE_OLDER_TITLE)
+    expect(texts(section, 'live-older-title')).toEqual([LIVE_OLDER_TITLE])
+    expect(all(section, 'live-older-row')).toHaveLength(LIVE_OLDER_PAGE)
+    expect(all(section, 'live-older-run-id').map((cell) => cell.getAttribute('data-run-id'))).toEqual([
+      ...runIds(LIVE_OLDER_PAGE),
+    ])
+    expect(all(section, 'live-older-repo').map((cell) => cell.textContent)).toEqual(
+      Array.from({ length: LIVE_OLDER_PAGE }, () => 'r-4c25cf20/r-f1aa9214'),
+    )
+    // A halted run's status word **is** the halt (`runstore.StatusHalted`), so
+    // the cell says it once and the section draws no second mark for it.
+    expect(texts(section, 'live-older-status').slice(0, 3)).toEqual(['ready', 'halted', 'ready'])
+    expect(texts(section, 'live-older-load')).toEqual([LIVE_OLDER_WORD])
+    expect(one(section, 'live-older-load').getAttribute('type')).toBe('button')
+  })
+
+  it('draws its own busy state while a page is out, and keeps the rows under it', () => {
+    // **The section's busy state is this read's and not the feed's** (F4): the
+    // control says what is being read in the frame the press happened in, the
+    // section announces itself busy, and the rows already drawn stay -- a page
+    // being read is not a page that said the older runs are gone.
+    const drawn = olderPageOf(page(...runIds(LIVE_OLDER_PAGE)), liveOlderOf(true, OLDEST_OF_THE_WINDOW))
+    const tree = withOlder(liveOlderReading(drawn))
+    const section = one(tree, 'live-older')
+    expect(section.getAttribute('aria-busy')).toBe('true')
+    expect(texts(section, 'live-older-load')).toEqual([LIVE_OLDER_BUSY])
+    expect(one(section, 'live-older-load').getAttribute('aria-disabled')).toBe('true')
+    expect(all(section, 'live-older-row')).toHaveLength(LIVE_OLDER_PAGE)
+    // The busy slot is the section's first child, so the entry's mark lands at
+    // the top of this section rather than under the rows.
+    expect((section.childNodes()[0] as FakeScreen).classes).toContain('console-busy-slot')
+  })
+
+  it('keeps the rows and the control under a refusal, and draws the CLI’s own sentence', () => {
+    // A refused page is a read that did not answer, not a list that ended: the
+    // rows stay, the control stays (the operator's press is the remedy), and the
+    // sentence is drawn in its own place with the section's own field.
+    const refused = liveOlderRefused(
+      olderPageOf(page(...runIds(LIVE_OLDER_PAGE)), liveOlderOf(true, OLDEST_OF_THE_WINDOW)),
+      'runs ls: exit status 1',
+    )
+    const section = one(withOlder(refused), 'live-older')
+    expect(texts(section, 'live-older-refusal')).toEqual(['runs ls: exit status 1'])
+    expect(all(section, 'live-older-row')).toHaveLength(LIVE_OLDER_PAGE)
+    expect(texts(section, 'live-older-load')).toEqual([LIVE_OLDER_WORD])
+    expect(one(section, 'live-older-load').getAttribute('aria-disabled')).toBeNull()
+    expect(section.getAttribute('aria-busy')).toBeNull()
+  })
+
+  it('draws no control at the end of the list, and the rows it did read', () => {
+    const end = olderPageOf(page(...runIds(2)), liveOlderOf(true, OLDEST_OF_THE_WINDOW))
+    const section = one(withOlder(end), 'live-older')
+    expect(all(section, 'live-older-load')).toEqual([])
+    expect(all(section, 'live-older-row')).toHaveLength(2)
+  })
+
+  it('holds the section’s words in one place', () => {
+    // The control's label and the busy label are this file's vocabulary and are
+    // drawn through `literal`: nothing a job wrote reaches them.
+    expect(LIVE_OLDER_WORD).toBe('Load older')
+    expect(LIVE_OLDER_BUSY).toContain('older')
+    expect(LIVE_OLDER_TITLE).toBe('Older runs')
   })
 })
 
