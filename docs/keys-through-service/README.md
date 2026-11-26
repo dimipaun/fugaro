@@ -57,14 +57,16 @@ would take a last mount, answered 2026-11-20) are as recommended. **D3009 is the
 answer and withdraws D3002 and D3004**: "We should always have a budget. If anyone doesn't care,
 they can set a high number." Tasks KS7 and KS8 and Check 782 went with them.
 
-**Review round 3** added D3013 to D3015, answered 2026-11-20. **D3013 is not the recommendation**:
-the owner runs Check 50 before release A is cut, because a Claude model through a provider works
-today and release A would stop it. D3014 (the copy follows a newer version and names it) and D3015
+**Review round 3** added D3013 to D3015, answered 2026-11-20. **D3013 is not the recommendation,
+and the owner amended it on 2026-11-26**: release A ships with the refusal standing and Check 50
+not run, because a Claude model through a provider works today and release A stops it, and KS20
+names every repository the gate stops. D3014 (the copy follows a newer version and names it) and D3015
 (an account's token stays per account, which narrows D3008) are as recommended. Round 3's fixes
 are the last commit and were not reviewed again.
 
 **What a reader should not take from here:** no task is approved; each needs the owner's go by name.
-Release A is not cut before the owner has run Check 50 and KS20 has merged. Release B (KS13,
+Release A ships with Check 50's result not in: KS3's refusal stands and KS20 names the repositories
+it stops (the owner's ruling of 2026-11-26). Release B (KS13,
 KS11, KS14 to KS16) is not launched before release A is cut, and KS13 not before model
 credentials routing's I1 has merged (2026-11-22; credentials belong to models' own I1 before it). KS14 and KS15 also
 wait on the plan that removes budget mode off, which is not written yet, and KS16 on secrets
