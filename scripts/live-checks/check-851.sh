@@ -804,6 +804,10 @@ main() {
     plan
     return 0
   fi
+  # The control row reads INFO rather than the block's "FAIL — not reached": a
+  # real run does not stop at the plan, and a clean run's block must carry no
+  # FAIL a reader would take for a finding.
+  fact dry-run INFO "not a dry run: the rows below were measured on a real run, and nothing was written"
   say "checking the two updates and the runs that were in flight across them"
   [ -n "$WORKSPACE_PROJECT" ] && step_converged workspace-converged "$WORKSPACE_PROJECT" "the workspace"
   step_converged member-converged "$MEMBER_PROJECT" "the member"

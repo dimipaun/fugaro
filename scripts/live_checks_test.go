@@ -773,6 +773,27 @@ import (
 // finding U9 exists for, that a step left for the owner is not a refusal, and
 // that an update which asks a question is a finding -- with no gcloud and no
 // curl anywhere, because the check holds no credential.
+// Checks 850 and 851 are the workspace's personal half, WC12 of
+// docs/workspace-credentials/. 850 is run BY the person under test and settles
+// U5, U6 and U10 on a real workspace; its test's fakes are a fake `gcloud` for
+// the one account read and a fake `fugaro` over the person's own calls (the
+// intake listing, the store -- whose value comes in on stdin and is written to
+// a file rather than to the case's output -- the config layer, the members'
+// published nodes and the runs' listings), with the admin-side policies, the
+// one accessor read and the service's audit lines served as the files the owner
+// is told to save; so a case says what each refusal reads (another person's
+// account, a project role, a store that answers and leaves nothing, a config
+// with no published layer, a switch written on a disk and never published, a
+// halt without the remedy's own command, a removal outside the window) and
+// which rows a reading the person cannot make leaves unmeasured. 851 is the
+// owner's, over two `fugaro update`s staged at the previous release: its fakes
+// are a fake `fugaro` for the two doctor documents, the run listing, the
+// member's published node and the version, and a fake `gcloud` for the
+// service's own audit lines, so a case says that a warning left behind, an
+// update log without the in-flight sentence, a step that did not land, a run
+// the update stopped and a member the release published the switch for are each
+// the finding -- and that a log the service wrote no line about reads
+// unmeasured rather than "served nothing".
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -917,6 +938,8 @@ var liveCheckScripts = []struct {
 	{"check733.sh", "check733_test.sh"},
 	{"check-820.sh", "check-820_test.sh"},
 	{"check-821.sh", "check-821_test.sh"},
+	{"check-850.sh", "check-850_test.sh"},
+	{"check-851.sh", "check-851_test.sh"},
 	{"check-910-lift-snapshot.sh", "check-910-lift-snapshot_test.sh"},
 	{"check-911-lift-compare.sh", "check-911-lift-compare_test.sh"},
 	{"check940.sh", "check940_test.sh"},

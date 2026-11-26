@@ -728,7 +728,7 @@ step_config() {
     fact config-named FAIL "the config loaded and names no project layer (where '${where:-}', sha256 '${sha:-}'): the person can read their own file and not the project's published layer, which is the read U10 is about. Read it yourself: FUGARO_PROJECT=${WORKSPACE_PROJECT} fugaro config layer --json"
     return 0
   fi
-  fact config-named PASS "the workspace's project config loaded with the project named (fugaro config layer --json, as ${PERSON}): the published layer resolved from ${where} at generation $(field_of generation "$parsed"), sha256 ${sha:0:12}… — U10 holds, the person who is no launcher of ${WORKSPACE_PROJECT} loads its config by naming it (R13, D3148), and the same config file is what carries the intake's address"
+  fact config-named PASS "the workspace's project config loaded with the project named (fugaro config layer --json, as ${PERSON}${WS_CONFIG:+ with FUGARO_CONFIG=${WS_CONFIG}}${WS_CONFIG:- with FUGARO_PROJECT=${WORKSPACE_PROJECT}}): the published layer resolved from ${where} at generation $(field_of generation "$parsed"), sha256 ${sha:0:12}… — U10 holds, the person who is no launcher of ${WORKSPACE_PROJECT} loads its config by naming it (R13, D3148), and the same config file is what carries the intake's address"
 }
 
 # step_switch: the member's own switch, read off the node the workspace's service
@@ -1099,6 +1099,10 @@ main() {
     plan
     return 0
   fi
+  # The control row reads INFO rather than the block's "FAIL — not reached": a
+  # real run does not stop at the plan, and a clean run's block must carry no
+  # FAIL a reader would take for a finding.
+  fact dry-run INFO "not a dry run: the rows below were measured on a real run, and nothing was written outside the container this check stored and then removed"
   if [ -z "$WORKSPACE_PROJECT" ]; then
     unmeasured intake-admits "CHECK850_WORKSPACE_PROJECT was not set, so this run does not know the workspace's Fugaro project. Name it: CHECK850_WORKSPACE_PROJECT=<the workspace's project>"
     unmeasured token-stored "CHECK850_WORKSPACE_PROJECT was not set, so there is no workspace to store a token in. Name it: CHECK850_WORKSPACE_PROJECT=<the workspace's project>"

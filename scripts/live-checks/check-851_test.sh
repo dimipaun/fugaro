@@ -290,6 +290,7 @@ test_a_converged_pair_and_two_finished_runs_pass() {
   )
   run851
   expect_status "$status" 0 "every measured criterion held"
+  expect_contains "$out" "FACT dry-run: INFO" "a real run is not a dry run, and the block says so rather than FAIL"
   expect_contains "$out" "FACT workspace-converged: PASS" "the workspace's doctor is clean"
   expect_contains "$out" "FACT member-converged: PASS" "the member's doctor is clean"
   expect_contains "$out" "NO warning after the update" "the row says what converged means"
