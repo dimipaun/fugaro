@@ -122,6 +122,12 @@ func (e *initEngine) noticeRepoValues(ctx context.Context) {
 		return
 	}
 	views, _ := e.repos(ctx)
+	// KS20's finding rides this step (claude_gate.go): the repositories this
+	// release's credentials service stops, one line each, off the same read of
+	// the enrolled list. It is here rather than in the step list because this
+	// step is the same thing — one pass, one line per repository, needs-you —
+	// and because that list is KS12's file in this plan's own order.
+	e.noticeClaudeGate(views)
 	lines := noticeRepoLines(views)
 	if len(lines) == 0 {
 		return

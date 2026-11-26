@@ -21,6 +21,13 @@ merged is withdrawn, its I1 among them, so **KS13 now waits on model credentials
 (its A1), which puts the work of the withdrawn CM6, CM9, CM15 and CM16 in the tree. The entries
 below that named the earlier plan's I1 are marked in place.
 
+**Amended 2026-11-26 by the owner's ruling.** Release A ships **without Check 50's result**: the
+checklist's row still reads not run, R3's refusal stays exactly as KS3 wrote it, and the check's
+result flips the gate in a change after the plan. KS20 is the not-run branch of its own
+Acceptance — `doctor` and `fugaro update` name every repository that pins a Claude model through a
+provider, with the fix, before release A stops it — and the owner's run of Check 50 is no longer a
+task's wait. D3013, F40, R3 and O10 are marked in place.
+
 ## 1. What the spec asks for, and what the repository already has
 
 | The spec's concept | What the repository has |
@@ -291,8 +298,8 @@ gateway test matched `ProviderWire`. Consequence: each task as amended.
 **F40 — Wrong (review round 3), corrects D3000's consequence.** A Claude model routed through a
 provider works today on the mounted key: `doctor` only warns that its cost is unmeasured
 (`routingCacheMarkersUnmeasured`, `internal/cli/doctor.go`), and the one Check 50 refusal is the
-service's (`creds.checkCandidates`). Sending routed calls through the service would stop those
-runs in release A. Consequence: D3013, KS20.
+service's (`creds.checkCandidates`). Sending routed calls through the service stops those runs in
+release A — the owner accepted that on 2026-11-26 and had KS20 name them. Consequence: D3013, KS20.
 
 **F41 — Wrong (review round 3), corrects R10 and R12.** `ready` asked for less than R12's fact, so
 a mount could go while the gateway still fell back to it (a project with no allow-list). And a
@@ -390,7 +397,7 @@ All answered by the owner on 2026-11-19, D3012 to D3015 on 2026-11-20.
 | **D3010** | With off gone, does `observe` stay (F38)? | Yes. Two modes remain, and `fugaro update` rewrites off to `observe`, so no run starts being refused by a cap nobody chose | added by review round 2; as recommended |
 | **D3011** | Where does the removal of off live (F38)? | In a spec of its own, "always a budget", written next. This plan drops its budget-off tasks | added by review round 2; as recommended |
 | **D3012** | KS14 removes the Terraform that can mount a key. What does an update do where the owner's copy never ran, given D3006? | The update stops before the Terraform step, changes nothing, and says a project owner must run `fugaro update` once. Every repository keeps running on its mounts | added by review round 2; as recommended |
-| **D3013** | A Claude model through a provider works on the mount today and would stop in release A (F40). What then? | **The owner runs Check 50 before release A is cut**, and its result decides the gate | added by review round 3; **not the recommendation** (which was to serve it with today's warning) |
+| **D3013** | A Claude model through a provider works on the mount today and would stop in release A (F40). What then? | **Release A ships with the refusal standing and Check 50 not run** (the owner's ruling of 2026-11-26), and the check's result flips the gate in a change after the plan; KS20 is the not-run branch, naming every repository the gate stops | added by review round 3; **not the recommendation** (which was to serve it with today's warning); **amended 2026-11-26: the earlier answer — the owner runs Check 50 before release A is cut — is withdrawn** |
 | **D3014** | An operator can still add a version to a key's container, and the copy follows it (F43). Which wins until the containers are deleted? | The copy follows the newer version and prints one line naming the container. Owner-only becomes fully true when the containers are deleted | added by review round 3; as recommended |
 | **D3015** | Does D3008 reach an account's OAuth token (F42)? | No. A token stays entered once under its account's name; D3008 applies to Anthropic and provider keys | added by review round 3; as recommended; **it narrows D3008** |
 
@@ -422,7 +429,9 @@ plan. It is O4, for the owner.
   entry from the run's verified repository, so a run cannot ask for another repository's key.
 - **R3. The gate, narrowed.** The service refuses a provider credential for a Claude model until
   Check 50 passes, with the refusal that names the check, and serves it for any other model
-  (D3000). Which models are Claude's is the existing pin vocabulary, not a new list.
+  (D3000). Which models are Claude's is the existing pin vocabulary, not a new list. **It stands
+  in release A** (the owner's ruling of 2026-11-26): the release ships with the row still reading
+  not run, and KS20 names the repositories it stops.
 - **R4. The copy.** *(Amended by review round 1.)* `fugaro update` gains one stage, after the stage
   that deploys the service, that for each model key the installation holds outside the bundle
   reads the newest version and writes it into the bundle, through the existing guard for an older
@@ -519,8 +528,10 @@ One tension was found and settled: D3006 (an operator's update keeps the mounts)
 - **O8.** D3008 multiplies the bundle's entries by the repositories that share a key, and rotating
   a shared key becomes one write per repository. `fugaro creds set` takes the repositories to
   write in one command (KS2), and KS1's worst case is counted that way (U5).
-- **O10.** D3013 puts an owner-run live check in front of release A. Until Check 50 is run and KS20
-  merged, release A cannot be cut, whatever else is ready.
+- **O10.** *(Amended 2026-11-26.)* Release A ships with Check 50 not run: the gate stands, and
+  KS20's `doctor` check and update notice name every repository it stops, before the release stops
+  them. The check's result flips the gate in a change of its own, so the wait D3013 first wrote —
+  no release A until the owner has run Check 50 — is withdrawn.
 - **O11.** Review round 3's fixes are the last commit and were not reviewed again; the skill's cap
   is three rounds.
 - **O12.** The graph cannot say that KS1 and KS19 wait for C1 (they build its other sides). A
