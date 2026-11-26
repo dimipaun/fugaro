@@ -27450,10 +27450,14 @@ session by name and refuses a shell started with `-x`. The script is
   least one execution of one of them is **RUNNING** — an execution Cloud Run has not completed, its status carrying no
   `completionTime`. Where none is in flight the row is **UNVERIFIED**: the state this check is about is an execution
   launched **before** the update and still running **after** it, and a check that measured nothing settles nothing.
-- **exec**: one row per running execution — the image digest the execution **records** (its own spec's container image;
-  a reference that is a digest is used as it is, and a tag is resolved through the registry) against the digest its
-  **job's template** now resolves to. A Fugaro job is deployed with a moving tag, so the job's side always goes through
-  `gcloud artifacts docker images describe`. **DIFFERENT is PASS**: the execution keeps the image it was created with,
+- **exec**: one row per running execution — the image digest the execution **records** against the digest its
+  **job's template** now resolves to. **Only a digest the execution itself records counts**: a `fugaro run` copies its
+  job's container image and overrides only its args and env (`internal/backend/gcp`'s `RunJob`), so an execution that
+  records the job's own moving tag records no digest of its own — its row is **UNVERIFIED**, because resolving that tag
+  now would answer the job's current digest, which is the side of the comparison that is already known, and every
+  retried execution would read FAIL whichever image it booted. A Fugaro job is deployed with a moving tag, so the job's
+  side always goes through `gcloud artifacts docker images describe`; an **execution's own reference is never resolved**.
+  **DIFFERENT is PASS**: the execution keeps the image it was created with,
   so a retry of it boots that one and never the rebuilt one. **THE SAME with a task retried** (`status.retriedCount`) is
   **FAIL**, naming the execution: the retry took the rebuilt image, U1 is settled the other way, and **D3304**'s refusal
   can meet this run. **THE SAME with no retry is UNVERIFIED**: nothing then says whether the job's image moved under the

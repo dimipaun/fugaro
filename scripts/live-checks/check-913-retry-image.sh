@@ -21,8 +21,12 @@
 #            launched before the update and still running after it, and a check
 #            that measured nothing settles nothing.
 #   exec     one row per running execution: the image digest the execution RECORDS
-#            (its own spec's container image, resolved through the registry where
-#            it is a tag) against the digest its job's template now resolves to.
+#            against the digest its job's template now resolves to. Only a digest
+#            the execution itself records counts: a Fugaro launch copies its job's
+#            container image and overrides only its args and env, so an execution
+#            that records the job's own moving tag records no digest of its own,
+#            and its row is UNVERIFIED — the tag answers what that reference is
+#            now, never what this execution booted.
 #            DIFFERENT is PASS: it keeps its own image, so a retry of it takes
 #            the image it was created with and never the rebuilt one. THE SAME is
 #            FAIL where that execution's status says a task has RETRIED
@@ -41,8 +45,12 @@
 #
 # The job's current image is NOT itself a digest: a Fugaro job is deployed with
 # a moving tag (`:latest`), so the digest is resolved from the registry
-# (`gcloud artifacts docker images describe`, as Check 390 reads it). A digest
-# an execution already records is used as it is. Nothing is written anywhere.
+# (`gcloud artifacts docker images describe`, as Check 390 reads it) — once per
+# distinct reference that a JOB's template carries, and never for an execution's
+# reference: that one would answer what the tag is now, which is the job's own
+# digest and not the image the execution booted.
+# An image an execution records WITH a digest is used as it is. Nothing is
+# written anywhere.
 #
 # Usage:   bash scripts/live-checks/check-913-retry-image.sh <project> [--dry-run]
 #          bash scripts/live-checks/check-913-retry-image.sh --help
@@ -57,8 +65,8 @@
 #          Registry on the installation (roles/run.viewer and a registry read —
 #          the operator role holds both).
 # Calls:   gcloud run jobs list; gcloud run jobs executions list, one per job;
-#          gcloud artifacts docker images describe, one per distinct image
-#          reference that is a tag. Every call runs with stdin closed.
+#          gcloud artifacts docker images describe, one per distinct JOB template
+#          image reference that is a tag. Every call runs with stdin closed.
 # Where:   the project's own cloud objects, READ ONLY. No run is launched and
 #          nothing is written.
 # Costs:   nothing.
@@ -207,11 +215,14 @@ Check 913 plan (nothing is called: no gcloud, no read)
    job's old sweeps; the RUNNING ones are those whose status carries no
    completionTime.
 4. gcloud artifacts docker images describe <ref> --format=json, once per distinct
-   image reference that is a tag — the digest it resolves to now. A reference an
-   execution records as a digest is used as it is.
+   JOB template image reference that is a tag — the digest it resolves to now. An
+   execution's own reference is never resolved: a run copies its job's image, so
+   the tag it may record would answer the job's digest and not the image that
+   execution booted. Only a digest an execution records itself is used.
 5. judge each running execution: its own image digest against its job's. Equal
    with a task retried (\`status.retriedCount\`) is FAIL; equal with no retry is
-   UNVERIFIED; different is PASS.
+   UNVERIFIED; different is PASS. An execution that records no digest of its own
+   is UNVERIFIED: nothing in its document says what it booted.
 
 Nothing is written, no token is read, and every call runs with stdin closed.
 PLAN
@@ -510,7 +521,27 @@ def mode_judge(args):
         if ref:
             want[ref] = digest
 
-    def digest_of(ref, what):
+    def exec_digest(ref, what):
+        """The digest the execution itself records, and nothing else. A run
+        copies its job's container image and overrides only its args and env
+        (internal/backend/gcp's RunJob), so an execution that records the job's
+        moving tag records no digest of its own: resolving that tag would answer
+        the job's current digest, which is what the execution is compared
+        against, and every retried one would read FAIL whichever image it
+        booted."""
+        if not ref:
+            return "", "the %s records no container image at all" % what
+        m = DIGEST.search(ref)
+        if m:
+            return m.group(1), ""
+        return "", ("the %s records the reference %s and no digest of its own: a Fugaro launch copies its job's "
+                    "container image and overrides only its args and env, so this execution may have booted any "
+                    "image that tag has pointed at — resolving the tag now would answer the job's own digest, "
+                    "which is the one side of this comparison that is already known") % (what, ref)
+
+    def job_digest(ref, what):
+        """The digest the job's template resolves to now: a digest it carries as
+        it stands, else the registry's answer for the tag it is deployed with."""
         if not ref:
             return "", "the %s records no container image" % what
         m = DIGEST.search(ref)
@@ -533,8 +564,8 @@ def mode_judge(args):
     for name in sorted(own):
         e = own[name]
         job = e["job"]
-        mine, why = digest_of(e["image"], "execution %s of %s" % (name, job))
-        theirs, why2 = digest_of(jobs.get(job, ""), "job " + job)
+        mine, why = exec_digest(e["image"], "execution %s of %s" % (name, job))
+        theirs, why2 = job_digest(jobs.get(job, ""), "job " + job)
         where = "%s/%s" % (job, name)
         retry = e["retried"]
         if not mine or not theirs:
@@ -645,10 +676,10 @@ if [ "$RUNNING" = 0 ]; then
   exit 0
 fi
 
-# Every distinct image reference that is a tag resolves once: the executions' own
-# references first, then the jobs' templates.
+# Every distinct JOB template image reference that is a tag resolves once. An
+# execution's own reference is never resolved: it would answer the job's digest.
 : >"$SCRATCH/refs"
-{ cut -d'|' -f3 "$SCRATCH/running" 2>/dev/null || true; printf '%s\n' "$JOBS" | cut -d'|' -f2; } |
+printf '%s\n' "$JOBS" | cut -d'|' -f2 |
   { grep -v '@sha256:' || true; } | { grep -v '^$' || true; } | sort -u >"$SCRATCH/refs"
 : >"$SCRATCH/digests"
 while IFS= read -r ref; do

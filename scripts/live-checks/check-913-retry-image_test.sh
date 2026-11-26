@@ -267,24 +267,44 @@ test_an_execution_on_the_job_s_image_with_no_retry_settles_nothing() {
   expect_contains "$out" "CHECK 913 RESULT: INCOMPLETE (exit 3)" "the verdict"
 }
 
-test_a_digest_the_registry_would_not_answer_is_unverified() {
-  # The execution records a TAG, and the registry answers NOT_FOUND for it: the
-  # digest it runs was not read, so the row measures nothing.
-  case_dir digest_unread
+test_an_execution_that_records_only_a_tag_is_unverified() {
+  # A Fugaro launch copies its job's image and overrides only its args and env,
+  # so an execution that records the job's own moving tag records no digest of
+  # its own: resolving that tag would answer the job's digest and read FAIL
+  # whichever image the execution booted.
+  case_dir exec_records_a_tag
   printf '%s|%s-exec:latest|0|1|no\n' "$JOB-9m4k2" "$REGISTRY" >"$answers/execs-$JOB"
   run913
-  expect_status "$status" 3 "a digest the registry would not answer"
-  expect_row "$out" exec UNVERIFIED "a digest the registry would not answer"
+  expect_status "$status" 3 "an execution that records a tag"
+  expect_row "$out" exec UNVERIFIED "an execution that records a tag"
+  expect_contains "$out" "records the reference" "the row says what the execution records"
+  expect_contains "$out" "no digest of its own" "the row says the digest is missing"
+  expect_not_contains "$out" "CHECK 913 RESULT: FAIL" "a tag an execution records is never a FAIL"
+  # The execution's own reference is never resolved: the only registry read is
+  # the JOB template's.
+  expect_calls "$(cat "$CALLS")" "artifacts docker" 1 "only the job's reference is resolved"
+  expect_not_contains "$(cat "$CALLS")" "$REGISTRY-exec" "the execution's reference is never sent to the registry"
+}
+
+test_a_job_digest_the_registry_would_not_answer_is_unverified() {
+  # The job's template is a tag the registry answers NOT_FOUND for: the digest it
+  # resolves to was not read, so no execution of it can be held to it.
+  case_dir digest_unread
+  : >"$answers/digests"
+  run913
+  expect_status "$status" 3 "a job digest the registry would not answer"
+  expect_row "$out" exec UNVERIFIED "a job digest the registry would not answer"
   expect_contains "$out" "artifacts docker images describe" "the row names the read that failed"
 }
 
 test_a_registry_answer_with_no_sha256_is_unverified() {
   case_dir registry_nosha
   printf yes >"$answers/nosha"
-  printf '%s|%s-exec:latest|0|1|no\n' "$JOB-9m4k2" "$REGISTRY" >"$answers/execs-$JOB"
+  printf '%s|%s-exec@%s|0|1|no\n' "$JOB-9m4k2" "$REGISTRY-exec" "$OLD_DIGEST" >"$answers/execs-$JOB"
   run913
   expect_status "$status" 3 "a registry answer carrying no digest"
   expect_row "$out" exec UNVERIFIED "a registry answer carrying no digest"
+  expect_contains "$out" "was not read" "the row says the job's digest was not read"
 }
 
 test_a_job_whose_executions_could_not_be_read_is_unverified() {
@@ -332,7 +352,11 @@ test_the_failing_job_is_the_one_named() {
   local second=fugaro-acme-app-review
   printf '%s\n' "$second|$REGISTRY-review" >>"$answers/jobs"
   printf '%s|%s\n' "$REGISTRY-review" "$JOB_DIGEST" >>"$answers/digests"
-  printf '%s-77a1b|%s|3|0|no\n' "$second" "$REGISTRY-review" >"$answers/execs-$second"
+  # The second job's execution records a DIGEST, and it is the one its job now
+  # resolves to, with a task retried: the retry took the rebuilt image. (An
+  # execution recording the job's own tag records no digest and could not be
+  # judged at all, which is the case below.)
+  printf '%s-77a1b|%s-review@%s|3|0|no\n' "$second" "$REGISTRY" "$JOB_DIGEST" >"$answers/execs-$second"
   run913
   expect_status "$status" 1 "one job of two failing"
   expect_row "$out" exec FAIL "one job of two failing"
@@ -471,7 +495,8 @@ t() {
 t test_the_happy_path
 t test_an_execution_that_retried_its_rebuilt_image_is_a_fail
 t test_an_execution_on_the_job_s_image_with_no_retry_settles_nothing
-t test_a_digest_the_registry_would_not_answer_is_unverified
+t test_an_execution_that_records_only_a_tag_is_unverified
+t test_a_job_digest_the_registry_would_not_answer_is_unverified
 t test_a_registry_answer_with_no_sha256_is_unverified
 t test_a_job_whose_executions_could_not_be_read_is_unverified
 t test_a_full_window_is_unverified
