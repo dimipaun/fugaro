@@ -157,6 +157,16 @@ func TestCoverNotCovered(t *testing.T) {
 		"computed member from the same module's account": {[]ResourceChange{
 			{Address: "module.a.google_service_account.s", Type: "google_service_account", Change: Change{Actions: []string{"create"}, After: map[string]any{}, AfterUnknown: map[string]any{}}},
 			{Address: "module.a.google_project_iam_member.m", Type: "google_project_iam_member", Change: Change{Actions: []string{"create"}, After: map[string]any{"role": "roles/logging.logWriter"}, AfterUnknown: map[string]any{"member": true}}}}, true},
+		// An incremental plan (0.29.5's credentials-service invoker grant on a
+		// job account that is a no-op) writes the member as a service account
+		// the module HOLDS and does not create, which is the module's own
+		// account just the same.
+		"computed member where the module holds its account": {[]ResourceChange{
+			{Address: "module.a.google_service_account.s", Type: "google_service_account", Change: Change{Actions: []string{"no-op"}, After: map[string]any{"account_id": "fugaro-p-acme-0123abcd"}}},
+			{Address: "module.a.google_project_iam_member.m", Type: "google_project_iam_member", Change: Change{Actions: []string{"create"}, After: map[string]any{"role": "roles/logging.logWriter"}, AfterUnknown: map[string]any{"member": true}}}}, true},
+		"computed member where only another module holds one": {[]ResourceChange{
+			{Address: "module.b.google_service_account.s", Type: "google_service_account", Change: Change{Actions: []string{"no-op"}, After: map[string]any{"account_id": "fugaro-p-acme-0123abcd"}}},
+			{Address: "module.a.google_project_iam_member.m", Type: "google_project_iam_member", Change: Change{Actions: []string{"create"}, After: map[string]any{"role": "roles/logging.logWriter"}, AfterUnknown: map[string]any{"member": true}}}}, false},
 		"computed role from another module's custom role": {[]ResourceChange{
 			{Address: "module.a.google_project_iam_custom_role.r", Type: "google_project_iam_custom_role", Change: Change{Actions: []string{"create"}, After: map[string]any{}, AfterUnknown: map[string]any{}}},
 			{Address: "module.b.google_project_iam_member.m", Type: "google_project_iam_member", Change: Change{Actions: []string{"create"}, After: map[string]any{"member": "user:me@example.com"}, AfterUnknown: map[string]any{"role": true}}}}, false},
