@@ -919,6 +919,7 @@ var liveCheckScripts = []struct {
 	{"check-821.sh", "check-821_test.sh"},
 	{"check-910-lift-snapshot.sh", "check-910-lift-snapshot_test.sh"},
 	{"check-911-lift-compare.sh", "check-911-lift-compare_test.sh"},
+	{"check-912-lift-refusal.sh", "check-912-lift-refusal_test.sh"},
 	{"check940.sh", "check940_test.sh"},
 }
 

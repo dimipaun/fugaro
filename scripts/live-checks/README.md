@@ -23,6 +23,21 @@ CHECK_TEST_ONLY=test_the_whole_check_passes bash scripts/live-checks/check680_te
 CHECK_TEST_SHARD=0/3 bash scripts/live-checks/check680_test.sh   # every 3rd case
 ```
 
+## Three checks that are one measurement
+
+`check-910-lift-snapshot.sh`, `check-911-lift-compare.sh` and
+`check-912-lift-refusal.sh` ([docs/repo-override-rulings](../../docs/repo-override-rulings/implementation-plan.md))
+measure the L8 migration, which lifts every repository's model choice, A/B
+rate, rigor level and areas and `.fugaro/recipes/` into the project layer.
+`check-910-lift-snapshot.sh` records what every enrolled repository means
+before release A's `fugaro update` — and, in a second run with the release-A
+binary, the update's own plan lines; `check-911-lift-compare.sh` reads the same
+values again after the migration and compares them with 910's snapshot; and
+`check-912-lift-refusal.sh`, after release B is installed, reads one checkout at
+two refs: the refusal on the default branch, with the fix, and the naming — not
+the refusal — on an older ref. Each command, and what every row of a block
+means, is in [`docs/gcp-live-checklist.md`](../../docs/gcp-live-checklist.md).
+
 ## A full pass, locally, in shards
 
 The suite is every script's every case, and one pass of it is long: tens of
