@@ -859,6 +859,12 @@ func accountsPoolContribute(cmd *cobra.Command, o accountsPoolContributeOptions)
 	if err := secretsIntakeRefusal(os.Getenv, "contributed"); err != nil {
 		return err
 	}
+	// The pool is this verb's --to and never a positional argument: a positional
+	// one is refused as a token pasted in the wrong place, so the argument form
+	// the two removal verbs take does not exist here.
+	if o.to == "" {
+		return userErr("this command needs the pool: name it with --to")
+	}
 	pool, member, err := accountsPoolMemberNames(o.to, o.member)
 	if err != nil {
 		return err
@@ -941,7 +947,7 @@ func accountsPoolMemberRemove(cmd *cobra.Command, o accountsPoolMemberOptions, p
 // which is the mark an admin writes.
 func accountsPoolMemberNames(pool, member string) (string, string, error) {
 	if pool == "" {
-		return "", "", userErr("this command needs the pool: name it with --to or as the argument")
+		return "", "", userErr("this command needs the pool: name it as the argument")
 	}
 	if msg := config.ValidCredentialRef(pool); msg != "" {
 		return "", "", userErr("the pool named is not one: %s", msg)

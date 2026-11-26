@@ -607,10 +607,11 @@ func checkMarker(id string, got Secret, o owner) error {
 // annotations is the annotation set the intake writes for a container (R10).
 // A per-user container carries its owner's account id and address beside the
 // account that made it; a pool's member carries the contributor's own, which
-// is what makes it theirs (D3194, R9); a project-shared one carries only who
-// made it, because it has no single owner.
+// is what makes it theirs (D3194, R9); a project-shared one — and a pool's own
+// member, which is the marker and holds the admin's token rather than one
+// person's — carries only who made it, because it has no single owner.
 func annotations(o owner) map[string]string {
-	if o.shared && o.pool == "" {
+	if o.shared && (o.pool == "" || o.mark) {
 		return map[string]string{AnnotationCreatedBy: o.creator}
 	}
 	return map[string]string{
