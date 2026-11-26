@@ -145,6 +145,10 @@ test('a malformed success is bad-response, never a repaired session', () => {
     ['no id token', { ...good, idToken: '' }],
     ['no refresh token', { ...good, refreshToken: undefined }],
     ['a token with no auth_time', { ...good, idToken: fakeToken({ sub: 'x' }) }],
+    // A real authentication time is a Unix time; zero is what a token with a
+    // placeholder claim carries, and the store refuses such a record, so an
+    // accepted one would be a document the store could not read back.
+    ['a token whose auth_time is zero', { ...good, idToken: fakeToken({ auth_time: 0 }) }],
     ['a token that is not a JWT', { ...good, idToken: 'not-a-jwt' }],
     ['an expiry that is not a number', { ...good, expiresIn: 'soon' }],
   ]) {

@@ -208,13 +208,6 @@ export class IdentityStore {
     return { ok: true };
   }
 
-  /** The stored records, refusing a document this store did not write. */
-  async #records() {
-    const read = await this.#read();
-    if (!read.ok) throw read;
-    return read.records;
-  }
-
   /** Forget one identity's cached token. Called wherever its session changes. */
   #forget(id) {
     this.#tokens.delete(id);
@@ -269,7 +262,9 @@ export class IdentityStore {
       // adds the length bound, so an id no item could be named for is refused
       // here rather than by the store's write.
       if (id === null || !isIdentitySessionId(id)) return refuse(IDENTITY_CODES.BAD_IDENTITY, 'sub');
-      const records = await this.#records();
+      const read = await this.#read();
+      if (!read.ok) return read;
+      const records = read.records;
       if (records.some((record) => record.id === id)) return refuse(IDENTITY_CODES.DUPLICATE_IDENTITY, 'id');
       const record = Object.freeze({
         id,
@@ -283,9 +278,12 @@ export class IdentityStore {
       const stored = await this.#sessions.put(id, session.refreshToken);
       if (!stored.ok) {
         // The record goes back: an identity without its item lists a session
-        // the phone does not have.
-        await this.#write(records);
-        return refuse(IDENTITY_CODES.STORE_FAILED, 'session');
+        // the phone does not have. A rollback that fails too leaves the record
+        // behind -- its item is missing, so it fails closed, and `remove`
+        // clears it -- and the refusal that comes back names the records rather
+        // than saying a write that did not happen had.
+        const rolledBack = await this.#write(records);
+        return rolledBack.ok ? refuse(IDENTITY_CODES.STORE_FAILED, 'session') : rolledBack;
       }
       this.#cacheToken(id, session);
       return Object.freeze({ ok: true, identity: entry(record) });
@@ -299,14 +297,18 @@ export class IdentityStore {
    */
   async remove(id) {
     return this.#serial(async () => {
-      const records = await this.#records();
+      const read = await this.#read();
+      if (!read.ok) return read;
+      const records = read.records;
       const record = records.find((candidate) => candidate.id === id);
       if (record === undefined) return refuse(IDENTITY_CODES.UNKNOWN_IDENTITY, 'id');
       const deleted = await this.#sessions.delete(id);
       if (!deleted.ok) return refuse(IDENTITY_CODES.STORE_FAILED, 'session');
+      // The item is gone, so the cached token goes with it, whether or not the
+      // record write below lands.
+      this.#forget(id);
       const written = await this.#write(records.filter((candidate) => candidate.id !== id));
       if (!written.ok) return written;
-      this.#forget(id);
       return Object.freeze({ ok: true, removed: entry(record) });
     });
   }
@@ -320,7 +322,9 @@ export class IdentityStore {
    */
   async reauthenticate(id, { idToken, nonce }) {
     return this.#serial(async () => {
-      const records = await this.#records();
+      const read = await this.#read();
+      if (!read.ok) return read;
+      const records = read.records;
       const record = records.find((candidate) => candidate.id === id);
       if (record === undefined) return refuse(IDENTITY_CODES.UNKNOWN_IDENTITY, 'id');
       const signed = await this.#signIn({ apiKey: this.#apiKey, provider: record.provider, idToken, nonce });
@@ -345,16 +349,17 @@ export class IdentityStore {
    */
   async idToken(id) {
     return this.#serial(async () => {
-      const records = await this.#records();
-      const record = records.find((candidate) => candidate.id === id);
+      const read = await this.#read();
+      if (!read.ok) return read;
+      const record = read.records.find((candidate) => candidate.id === id);
       if (record === undefined) return refuse(IDENTITY_CODES.UNKNOWN_IDENTITY, 'id');
       const cached = this.#tokens.get(id);
       if (cached !== undefined && cached.expiresAt - TOKEN_SKEW_MS > this.#now()) {
         return Object.freeze({ ok: true, idToken: cached.idToken });
       }
-      const read = await this.#tokenOf(id);
-      if (!read.ok) return read;
-      const renewed = await this.#refresh({ apiKey: this.#apiKey, refreshToken: read.token });
+      const issued = await this.#tokenOf(id);
+      if (!issued.ok) return issued;
+      const renewed = await this.#refresh({ apiKey: this.#apiKey, refreshToken: issued.token });
       if (!renewed.ok) return renewed;
       const stored = await this.#sessions.put(id, renewed.tokens.refreshToken);
       if (!stored.ok) return refuse(IDENTITY_CODES.STORE_FAILED, 'session');

@@ -249,8 +249,12 @@ export function parseSignIn({ provider, status, body }) {
   if (expiresIn === null) return refuse(PROVIDER_CODES.BAD_RESPONSE, 'expiresIn');
   const email = parsed.email === undefined || parsed.email === null ? null : parsed.email;
   if (email !== null && (typeof email !== 'string' || email === '')) return refuse(PROVIDER_CODES.BAD_RESPONSE, 'email');
+  // A real `auth_time` is a Unix time, so zero and a negative are refusals the
+  // same way a missing one is -- and the store refuses them again when it reads
+  // its own records, so accepting one here would write a document the store
+  // could not read back.
   const authTime = claimsOf(idToken)?.auth_time;
-  if (!Number.isInteger(authTime)) return refuse(PROVIDER_CODES.BAD_RESPONSE, 'authTime');
+  if (!Number.isInteger(authTime) || authTime <= 0) return refuse(PROVIDER_CODES.BAD_RESPONSE, 'authTime');
   return Object.freeze({
     ok: true,
     session: Object.freeze({

@@ -277,6 +277,23 @@ test('a records document the store cannot read is a refusal, and the data is lef
   assert.equal(refused.code, IDENTITY_CODES.UNREADABLE_RECORDS);
   assert.equal(await settings.getItem('fugaro.identities'), 'not json', 'a corrupt document is never wiped silently');
 
+  // Every door that would write answers the same refusal rather than rejecting:
+  // a screen that awaited `add` and got a rejection has no `ok: false` branch to
+  // show, and a `catch` receives something that is not an Error.
+  const { store: signing, settings: signingSettings } = makeStore({ signInTable: { 'token-g': sessionOf(GOOGLE) } });
+  await signingSettings.setItem('fugaro.identities', 'not json');
+  const answers = await Promise.all([
+    signing.add({ provider: 'google.com', idToken: 'token-g' }),
+    signing.remove(idOf(GOOGLE)),
+    signing.reauthenticate(idOf(GOOGLE), { idToken: 'token-g' }),
+    signing.idToken(idOf(GOOGLE)),
+  ]);
+  for (const answer of answers) {
+    assert.equal(answer.ok, false);
+    assert.equal(answer.code, IDENTITY_CODES.UNREADABLE_RECORDS);
+    assert.equal(answer.field, 'records');
+  }
+
   // A record that is not one this store wrote is the same refusal.
   await settings.setItem('fugaro.identities', JSON.stringify({ version: 1, records: [{ id: 'x', provider: 'google.com', sub: 'y', email: 'e@e.test', authTime: 1, extra: true }] }));
   assert.equal((await store.list()).code, IDENTITY_CODES.UNREADABLE_RECORDS);
@@ -299,6 +316,74 @@ test('a session write that fails rolls the record back: no identity without its 
   const refused = await store.add({ provider: 'google.com', idToken: 'token-g' });
   assert.equal(refused.code, IDENTITY_CODES.STORE_FAILED);
   assert.deepEqual((await store.list()).identities, [], 'the record went back with the failed item');
+});
+
+test('a rollback that also fails is named, and the fail-closed record can still be removed', async () => {
+  const settings = new MemorySettingsStore();
+  let writes = 0;
+  // The record write lands, the rollback does not, and the later removal does.
+  const flaky = {
+    async getItem(key) { return settings.getItem(key); },
+    async setItem(key, value) {
+      writes += 1;
+      if (writes === 2) throw new Error('full');
+      return settings.setItem(key, value);
+    },
+    async deleteItem(key) { return settings.deleteItem(key); },
+  };
+  const locked = {
+    async getItem() { return null; },
+    async setItem() { throw new Error('locked'); },
+    async deleteItem() {},
+  };
+  const store = new IdentityStore({
+    settings: flaky,
+    sessions: new IdentitySessionStore(locked),
+    apiKey: 'synthetic-api-key',
+    signIn: async () => Object.freeze({ ok: true, session: sessionOf(GOOGLE) }),
+    refresh: async () => Object.freeze({ ok: false, code: PROVIDER_CODES.NETWORK, field: null }),
+  });
+  const refused = await store.add({ provider: 'google.com', idToken: 'token-g' });
+  assert.equal(refused.code, IDENTITY_CODES.STORE_FAILED);
+  assert.equal(refused.field, 'records', 'the refusal names the half that could not be put back');
+  // The record is there and its item is not: it fails closed, and `remove`
+  // clears it rather than leaving an identity nothing can delete.
+  assert.equal((await store.list()).identities.length, 1);
+  assert.equal((await store.idToken(idOf(GOOGLE))).code, IDENTITY_CODES.SESSION_ABSENT);
+  assert.equal((await store.remove(idOf(GOOGLE))).ok, true);
+  assert.deepEqual((await store.list()).identities, []);
+});
+
+test('a removal whose record write fails has already forgotten the cached token', async () => {
+  const settings = new MemorySettingsStore();
+  let fail = false;
+  const flaky = {
+    async getItem(key) { return settings.getItem(key); },
+    async setItem(key, value) {
+      if (fail) throw new Error('full');
+      return settings.setItem(key, value);
+    },
+    async deleteItem(key) { return settings.deleteItem(key); },
+  };
+  const secrets = new MemorySecureStore();
+  const store = new IdentityStore({
+    settings: flaky,
+    sessions: new IdentitySessionStore(secrets),
+    apiKey: 'synthetic-api-key',
+    signIn: async () => Object.freeze({ ok: true, session: sessionOf(GOOGLE) }),
+    refresh: async () => Object.freeze({ ok: false, code: PROVIDER_CODES.NETWORK, field: null }),
+  });
+  await store.add({ provider: 'google.com', idToken: 'token-g' });
+  // The sign-in's token is live, so the store is holding it.
+  assert.equal((await store.idToken(idOf(GOOGLE))).ok, true);
+  fail = true;
+  const refused = await store.remove(idOf(GOOGLE));
+  assert.equal(refused.code, IDENTITY_CODES.STORE_FAILED);
+  assert.equal(refused.field, 'records');
+  // The item went, so the remembered token went with it: a delete that leaves a
+  // cached credential behind is a token answered for an identity that has none.
+  assert.deepEqual(secrets.keys(), []);
+  assert.equal((await store.idToken(idOf(GOOGLE))).code, IDENTITY_CODES.SESSION_ABSENT);
 });
 
 test('a removal whose session delete fails keeps the record, so it can be retried', async () => {
