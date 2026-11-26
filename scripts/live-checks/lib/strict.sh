@@ -27,13 +27,6 @@ LIVE_CHECK_LIB=${LIVE_CHECK_LIB:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}
 # strict_fugaro_verify ARGV...
 # 0 when ARGV is a command and flags the real CLI takes, else 1 with the CLI's
 # own wording on stderr ("fugaro: unknown flag: --x").
-# strict_flag_arity TABLE KEY: the arity recorded for KEY (path|flag) in the
-# newline-delimited table the verifier builds.
-strict_flag_arity() {
-  local rest=${1#*$'\n'"$2"=}
-  printf '%s' "${rest%%$'\n'*}"
-}
-
 strict_fugaro_verify() {
   local table=$LIVE_CHECK_LIB/fugaro-surface.tsv
   if [ ! -r "$table" ]; then
@@ -41,7 +34,12 @@ strict_fugaro_verify() {
     return 1
   fi
   # Newline-delimited tables, not associative arrays: macOS ships bash 3.2.
-  local iscmd=$'\n' flags=$'\n'
+  # `flags` names every flag a path takes, `valued` the ones that take a value:
+  # a membership test on the second answers the arity, where reading it out of
+  # the first by pattern removal cost about a second per flag on the command
+  # line -- every fake of every check paid it, and it is what put a check's test
+  # past its runner's deadline on a loaded machine.
+  local iscmd=$'\n' flags=$'\n' valued=$'\n'
   local line kind rest path name ar sh
   while IFS= read -r line; do
     case "$line" in '' | '#'*) continue ;; esac
@@ -60,6 +58,10 @@ strict_fugaro_verify() {
       name=${rest#*$'\t'}
       flags+="$path|$name=$ar"$'\n'
       [ -n "$sh" ] && flags+="$path|$sh=$ar"$'\n'
+      if [ "$ar" = value ]; then
+        valued+="$path|$name"$'\n'
+        [ -n "$sh" ] && valued+="$path|$sh"$'\n'
+      fi
       ;;
     esac
   done <"$table"
@@ -78,7 +80,9 @@ strict_fugaro_verify() {
       name=${tok%%=*}
       case "$flags" in
       *$'\n'"$path|$name="*)
-        if [ "$(strict_flag_arity "$flags" "$path|$name")" = value ] && [ "$tok" = "$name" ]; then i=$((i + 1)); fi
+        if [ "$tok" = "$name" ]; then
+          case "$valued" in *$'\n'"$path|$name"$'\n'*) i=$((i + 1)) ;; esac
+        fi
         ;;
       *)
         name=${name#--}
@@ -92,7 +96,9 @@ strict_fugaro_verify() {
       short=${tok:0:2}
       case "$flags" in
       *$'\n'"$path|$short="*)
-        if [ "$(strict_flag_arity "$flags" "$path|$short")" = value ] && [ "$tok" = "$short" ]; then i=$((i + 1)); fi
+        if [ "$tok" = "$short" ]; then
+          case "$valued" in *$'\n'"$path|$short"$'\n'*) i=$((i + 1)) ;; esac
+        fi
         ;;
       *)
         printf "fugaro: unknown shorthand flag: '%s' in %s\n" "${tok:1:1}" "$tok" >&2

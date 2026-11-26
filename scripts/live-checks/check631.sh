@@ -448,12 +448,18 @@ row_field() { # row_field COLUMN — one column of the run this check launched
   awk -F'\t' -v id="$RUN_ID" -v col="$1" '$1 == "row" && $2 == id { print $col; exit }' "$SCRATCH/rows.txt" 2>/dev/null
 }
 
+# The bound is counted in tenths of a second, and the poll is the same tenth:
+# every command this check runs answers in milliseconds, and a poll of a whole
+# second made each of them cost a second of wall clock -- forty-odd of them per
+# run, which is what put this check's test past its runner's deadline on a
+# loaded machine. A tick that overruns under load only makes the bound later,
+# never earlier.
 bound_loop() { # bound_loop SECONDS PID
-  local secs=$1 pid=$2 waited=0
+  local secs=$1 pid=$2 ticks=$(( $1 * 10 )) waited=0
   BOUNDED_TIMED_OUT=no
   while kill -0 "$pid" 2>/dev/null; do
-    [ "$waited" -lt "$secs" ] || break
-    sleep 1
+    [ "$waited" -lt "$ticks" ] || break
+    sleep 0.1
     waited=$((waited + 1))
   done
   if kill -0 "$pid" 2>/dev/null; then
