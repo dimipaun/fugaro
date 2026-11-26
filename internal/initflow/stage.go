@@ -1063,6 +1063,16 @@ func AskUnmanaged() string {
 	return "--ask: this project's marks do not answer \"managed\", so this run asks the confirmations it always asks; that is not an error"
 }
 
+// AskValues is the line --ask prints on `fugaro update` where its value entry
+// turns on and the marks did not answer "managed": there is no gate
+// confirmation to put back, and what the flag does here is ask for this
+// project's repositories' secret values at the owner's own terminal (D3347,
+// R18). It is not AskUnmanaged's words: that line promises a run that behaves
+// exactly as it always has, and here the flag does something new.
+func AskValues() string {
+	return "--ask: this project's marks do not answer \"managed\", so the gate restores nothing; its repositories' missing secret values are asked for at this terminal"
+}
+
 // AskNoGate is the line --ask prints in a run the managed gate never covers:
 // --plan-only applies nothing by its own definition, and a run whose own
 // arguments shape the installation is one the gate must never judge (the
@@ -1109,21 +1119,33 @@ func askNobody(c Conditions) string {
 // AskDecision is the whole of what --ask does once the marks have been read,
 // as one rule rather than a copy per command: the line the run prints, or the
 // refusal. managed is what the read answered (both marks there and readable,
-// the same value every caller decides a step under).
+// the same value every caller decides a step under). values is whether this
+// run's --ask also turns on value entry — the update door alone (D3347, R18) —
+// so that a project the marks did not answer "managed" for is not the no-op it
+// is everywhere else at a terminal.
 //
-// An empty line and an empty refusal is "the flag was not passed". Exactly one
-// of the two is answered otherwise, and the order is the rule's: a project the
-// marks did not answer "managed" for is the no-op line whatever the session is
-// (there is nothing to restore, so there is nothing to refuse either), and a
-// managed project refuses wherever no prompt can be answered.
-func AskDecision(c Conditions, managed bool) (line, refusal string) {
-	if !managed {
-		return AskUnmanaged(), ""
-	}
-	if c.Agent != "" || c.NonInteractive || c.JSON || !c.Terminal {
+// An empty line and an empty refusal is "the flag prints and refuses nothing
+// here" — the flag was not passed, or the door's value entry has no terminal to
+// ask at (the stage then leaves its own `fugaro secrets set` lines, D1540).
+// Otherwise exactly one of the two is answered, and the order is the rule's: a
+// project the marks answered "managed" for restores the gate's confirmations
+// and refuses where no prompt can be answered; one the marks did not answer
+// "managed" for is the no-op line, unless --ask turns value entry on there —
+// where the values are asked at the owner's own terminal (AskValues).
+func AskDecision(c Conditions, managed, values bool) (line, refusal string) {
+	canPrompt := c.Agent == "" && !c.NonInteractive && !c.JSON && c.Terminal
+	switch {
+	case managed && canPrompt:
+		return AskRestored(), ""
+	case managed:
 		return "", AskRefusal(c)
+	case !values:
+		return AskUnmanaged(), ""
+	case canPrompt:
+		return AskValues(), ""
+	default:
+		return "", ""
 	}
-	return AskRestored(), ""
 }
 
 // Conditions are what a run says about who is there.
