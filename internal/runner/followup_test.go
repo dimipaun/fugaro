@@ -1181,7 +1181,9 @@ func TestFollowUpBaseFileSymlinkEscapeRefused(t *testing.T) {
 }
 
 func TestFollowUpClearsStaleAnswer(t *testing.T) {
-	h := followUpHarness(t, "", nil)
+	// POC owes no hand-back file, which is what lets a run with no answer be ready.
+	cfg := strings.Replace(followUpYAML(t, ""), "agent:\n", "rigor:\n  default: poc\nagent:\n", 1)
+	h := followUpHarness(t, cfg, func(h *harness) { h.noHandBack = true })
 	h.followUp(t, followID, runID, "Tidy up.")
 	// An earlier run's followup.md left in the state dir, as a reused
 	// directory would hold it.
