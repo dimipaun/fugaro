@@ -746,6 +746,11 @@ func TestServiceRefusalIsNeverRelayed(t *testing.T) {
 		relayed  bool
 		exhaust  *time.Time
 		triedLen int
+		// action and resumeAt are what the answer's own action members must
+		// read back as: the action the service decided for the run (C3), and
+		// the instant a pause carries.
+		action   string
+		resumeAt *time.Time
 	}{
 		{
 			name: "state_unavailable", status: http.StatusServiceUnavailable,
@@ -842,6 +847,51 @@ func TestServiceRefusalIsNeverRelayed(t *testing.T) {
 			want: http.StatusForbidden, halt: true, detail: stateDetailUnreadable,
 		},
 		{
+			// The action the service decided for the run (C3, R19): the
+			// gateway reads it back and hands it over, and the runner is what
+			// carries it out. The reset is the same member a wait's answer has
+			// always carried.
+			name: "exhausted_until with the wait action", status: http.StatusServiceUnavailable,
+			body: `{"error":"exhausted_until","message":"` + serviceSaid + `","reset_at":1800000000000,"action":"wait"}`,
+			want: http.StatusServiceUnavailable, exhaust: ptrTime(time.UnixMilli(1800000000000).UTC()),
+			action: ActionWait,
+		},
+		{
+			name: "exhausted_until with the halt action", status: http.StatusServiceUnavailable,
+			body: `{"error":"exhausted_until","message":"` + serviceSaid + `","reset_at":1800000000000,"action":"halt"}`,
+			want: http.StatusServiceUnavailable, exhaust: ptrTime(time.UnixMilli(1800000000000).UTC()),
+			action: ActionHalt,
+		},
+		{
+			// The pause carries the instant the service will resume the run
+			// at, which is the one member the runner does not choose (R8).
+			name: "exhausted_until with the pause action", status: http.StatusServiceUnavailable,
+			body: `{"error":"exhausted_until","message":"` + serviceSaid + `","reset_at":1800000000000,"action":"pause","resume_at":1800001800000}`,
+			want: http.StatusServiceUnavailable, exhaust: ptrTime(time.UnixMilli(1800000000000).UTC()),
+			action: ActionPause, resumeAt: ptrTime(time.UnixMilli(1800001800000).UTC()),
+		},
+		{
+			// An action outside the closed set is a value neither side of this
+			// contract wrote: the run halts rather than wait for a reset no
+			// action named.
+			name: "exhausted_until with an action this release does not know", status: http.StatusServiceUnavailable,
+			body: `{"error":"exhausted_until","message":"` + serviceSaid + `","reset_at":1800000000000,"action":"suspend"}`,
+			want: http.StatusForbidden, halt: true, detail: stateDetailUnreadable,
+		},
+		{
+			// The instant rides with a pause alone (C3): an answer that names
+			// no pause and a resume time is not one this contract could have
+			// written, and half of a pause is not acted on.
+			name: "exhausted_until with a resume instant and no pause", status: http.StatusServiceUnavailable,
+			body: `{"error":"exhausted_until","message":"` + serviceSaid + `","reset_at":1800000000000,"action":"wait","resume_at":1800001800000}`,
+			want: http.StatusForbidden, halt: true, detail: stateDetailUnreadable,
+		},
+		{
+			name: "exhausted_until with a pause and no resume instant", status: http.StatusServiceUnavailable,
+			body: `{"error":"exhausted_until","message":"` + serviceSaid + `","reset_at":1800000000000,"action":"pause"}`,
+			want: http.StatusForbidden, halt: true, detail: stateDetailUnreadable,
+		},
+		{
 			// A model error the service relayed: another writer's body, and
 			// one the agent has always seen.
 			name: "a model error the service relayed", status: http.StatusBadRequest,
@@ -922,10 +972,21 @@ func TestServiceRefusalIsNeverRelayed(t *testing.T) {
 			if !ex.ResetAt.Equal(*tc.exhaust) {
 				t.Errorf("the reset instant read back as %v, want %v", ex.ResetAt, *tc.exhaust)
 			}
+			if ex.Action != tc.action {
+				t.Errorf("the action read back as %q, want %q", ex.Action, tc.action)
+			}
+			switch {
+			case tc.resumeAt == nil && !ex.ResumeAt.IsZero():
+				t.Errorf("an answer the service named no pause on carries a resume instant: %v", ex.ResumeAt)
+			case tc.resumeAt != nil && !ex.ResumeAt.Equal(*tc.resumeAt):
+				t.Errorf("the resume instant read back as %v, want %v", ex.ResumeAt, *tc.resumeAt)
+			}
 			if len(ex.Tried) != tc.triedLen {
 				t.Fatalf("the tried list read back as %d entries, want %d", len(ex.Tried), tc.triedLen)
 			}
-			if ex.Tried[0].Name != "cred-a" || ex.Tried[0].Tier != TierA || ex.Tried[0].Reason != ReasonExhausted {
+			// The entry's own members, where the answer names one: the cases
+			// about the action carry none.
+			if tc.triedLen > 0 && (ex.Tried[0].Name != "cred-a" || ex.Tried[0].Tier != TierA || ex.Tried[0].Reason != ReasonExhausted) {
 				t.Errorf("the first tried entry read back as %+v", ex.Tried[0])
 			}
 			if got := resp.Header.Get("Retry-After"); got != "" {
