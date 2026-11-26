@@ -110,8 +110,10 @@ func TestParallelismSkillHasDecouplingSection(t *testing.T) {
 // mode a task resolves is read from the settings and matched to the task's
 // footprint by the agent itself (F18), so the text has to name the read — and
 // name it against the repository: an unaimed read covers the installation's own
-// scopes and never opens the repository's fugaro.yaml, so it would report a mode
-// that repository's runs do not resolve.
+// scopes alone, so it would report a mode that repository's runs do not resolve.
+// The repository's own level is the project layer's `rigor.repos` entry for it
+// (D3237, B11): a repository's `rigor.default` is a lifted key, so the read names
+// `rigor.repos` beside the project's areas.
 //
 // The same table says what the mode does to the pass (D1818), and the two rows
 // that decide whether the pass runs at all are the two a later edit is likeliest
@@ -123,7 +125,7 @@ func TestParallelismSkillContractTaskRigor(t *testing.T) {
 	for _, want := range []string{
 		"the highest rigor of the tasks that consume it",
 		"fugaro run --mode",
-		"fugaro settings rigor.default rigor.areas --repo",
+		"fugaro settings rigor.repos rigor.areas --repo",
 		`"scope": "repo:<owner/name>"`,
 		"fugaro review --pr",
 	} {

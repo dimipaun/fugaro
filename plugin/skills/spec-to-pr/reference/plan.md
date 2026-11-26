@@ -49,10 +49,10 @@ An edge A to B says B waits for A. Much of that waiting is an order the plan acc
 
 Weigh the break before you keep it: the pass adds two tasks, so break an edge only when the weighted path shrinks. Give each node a `size` (a stub-only contract is small against the pair it separates), then let the CLI work out the gain rather than guessing it.
 
-**By the mode each task resolves.** Read the settings for the repository and match the tasks' paths against the area patterns:
+**By the mode each task resolves.** Read the settings for the repository and match the tasks' paths against the area patterns. The repository's level is the project layer's `rigor.repos` entry for it; a project area whose `members` names the repository outranks that entry, and a `match`-only area stands below it:
 
 ```bash
-fugaro settings rigor.default rigor.areas --repo <owner/name> --json
+fugaro settings rigor.repos rigor.areas --repo <owner/name> --json
 ```
 
 | Mode | The pass |
