@@ -6750,6 +6750,21 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		// execution may exist. Keep the claim, and the token object: an
 		// execution that did start needs it (a --retry mints another); the runner's result.json tells
 		// the truth, and --retry reads it.
+		//
+		// A Batch create that answered this way may have made its job all the
+		// same, and a job nothing registers is a VM that runs, is billed and
+		// stops at its claim -- and no later --retry can put that right, because
+		// BR17's route writes the id once, on the record the ask wrote, while
+		// this launcher holds the claim that makes the record's job its own. So
+		// the id is read back and written here too (registerBatchJob). A
+		// platform that holds no job of the name is the create that never
+		// happened -- the ordinary answer to this branch -- and is not a
+		// failure of this launch's own.
+		if launchBackend(env.be) == backend.CloudBatch {
+			if rerr := registerBatchJob(ctx, env, slug, variant, spec); rerr != nil && !errors.Is(rerr, errNoBatchJob) {
+				return res, remote(fmt.Errorf("launching %s: the outcome is unknown (%w), and the Batch job it may have created could not be registered either (%s), so a job the create made can never claim this run's identity; the claim is kept, so nothing relaunches it on its own: check the platform and the installation's credentials service, then fugaro run --retry %s", res.Run, err, oneLine(rerr.Error()), res.Run))
+			}
+		}
 		return res, remote(fmt.Errorf("launching %s: the outcome is unknown (%w); don't relaunch before %s: fugaro run --retry %s launches the task only if it never started, and refuses with nothing launched, naming the run's pull request, if it did",
 			res.Run, err, now.Add(claimTTL).UTC().Format(time.RFC3339), res.Run))
 	}
@@ -6761,7 +6776,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	// launch fails with nothing recorded — the same cleanup the platform's own
 	// refusal gets above, because the same thing is true: no run of this id
 	// will start.
-	if rerr := registerBatchJob(ctx, env, slug, variant, spec, ref); rerr != nil {
+	if rerr := registerBatchJob(ctx, env, slug, variant, spec); rerr != nil {
 		rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		releaseClaim(rctx, env, s, holder)
 		if minted {

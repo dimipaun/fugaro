@@ -564,6 +564,132 @@ func TestTheJobIsRegisteredAfterTheCreateWithItsId(t *testing.T) {
 	}
 }
 
+// seedBatchJob puts a job of the given id into the Batch fake the way a create
+// that really landed leaves it -- a call to the fake itself, because the create
+// the launch below makes is the ambiguous one and creates nothing through the
+// client -- and answers the id the platform assigned it. The uid is then
+// replaced with a sentinel, so a registration that carries it can only have read
+// THIS job back.
+func seedBatchJob(t *testing.T, bf *gcpfake.Batch, id, uid string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, bf.URL+"/v1/projects/"+bf.Project+"/locations/"+bf.Region+"/jobs?jobId="+id, strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("seeding the Batch job %s: %v", id, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("seeding the Batch job %s: status %d", id, resp.StatusCode)
+	}
+	bf.SetUID(id, uid)
+}
+
+// ambiguousJobUID is the id the seeded job above is given: a value no create
+// could answer, so a registration carrying it proves the read-back reached that
+// job.
+const ambiguousJobUID = "uid-of-the-job-the-ambiguous-create-made"
+
+// TestTheJobIsRegisteredAfterAnAmbiguousCreate is the second half of the call
+// above, on the branch where the create's outcome is unknown (R1, BR17).
+//
+// A Batch create that answered a timeout, a 5xx or a dropped connection may have
+// made its job all the same. A job nothing registers is a VM that runs, is
+// billed and stops at its claim -- and no later --retry can put that right:
+// BR17's route writes the id once, on the record the ask wrote, and only the
+// launcher holding the claim may write it. So the id is read back here too, and
+// registered; the launch still fails with the ambiguity it always did, because
+// what a person must not do is relaunch before the claim goes stale.
+//
+// The job is seeded before the launch and the create is made to fail, so this is
+// the case the finding describes: the platform holds the job, the client was
+// told nothing. The uid compared is the sentinel SeedBatchJob set, so a
+// registration of anything but that job fails here.
+//
+// The second half is the create that never happened -- the ordinary answer to
+// this branch -- which must not register, must not cancel a job that is not
+// there and must not warn: the launch's own message is the one it always was.
+func TestTheJobIsRegisteredAfterAnAmbiguousCreate(t *testing.T) {
+	expires := time.Now().Add(30 * time.Minute)
+	w := newBatchLaunchWorld(t, batchAnswers(expires))
+	id := batchpkg.JobID(appSlug, variantOf(t, w.spec), w.spec.RunID)
+	seedBatchJob(t, w.bf, id, ambiguousJobUID)
+	w.bf.FailCreateWith = http.StatusServiceUnavailable
+	var warned strings.Builder
+	prevWarn := launchWarn
+	launchWarn = &warned
+	t.Cleanup(func() { launchWarn = prevWarn })
+
+	_, err := w.launch(t)
+	if err == nil {
+		t.Fatal("a launch whose create answered 503 was not refused: the outcome is unknown and the operator must not relaunch before the claim goes stale")
+	}
+	if !strings.Contains(err.Error(), "the outcome is unknown") {
+		t.Errorf("the launch of the ambiguous create failed with %q, want the ambiguity it always reported", err)
+	}
+	if strings.Contains(err.Error(), "could not be registered") {
+		t.Errorf("the launch reported a registration failure (%q): the seeded job is there to be read back and registered", err)
+	}
+	var seen []identitywire.JobRequest
+	for _, call := range w.svc.asked() {
+		if call.Path != identitywire.JobPath {
+			continue
+		}
+		var req identitywire.JobRequest
+		if err := json.Unmarshal([]byte(call.Body), &req); err != nil {
+			t.Fatalf("the registration the service received is not this contract's: %v (%q)", err, call.Body)
+		}
+		seen = append(seen, req)
+	}
+	if len(seen) != 1 {
+		t.Fatalf("the service received %d registration(s), want 1: a job the ambiguous create may have made is read back and registered here, or nothing can ever claim its identity", len(seen))
+	}
+	if got := seen[0]; got.Slug != appSlug || got.Run != w.spec.RunID || got.JobID != ambiguousJobUID || !strings.HasSuffix(string(got.Job), "/jobs/"+id) {
+		t.Errorf("the registration carries %+v, want %s/%s of the job %s with the id %q: the job the create made is the one read back",
+			got, appSlug, w.spec.RunID, id, ambiguousJobUID)
+	}
+	if got := w.bf.Cancels(); len(got) != 0 {
+		t.Errorf("the launch cancelled %v: the job was registered, so there is nothing to stop", got)
+	}
+	// Only the job's own warnings are read here: the world's launch warns about
+	// a slip besides, which is the fixture's and not this branch's.
+	if got := warned.String(); strings.Contains(got, "Batch job") || strings.Contains(got, id) {
+		t.Errorf("the launch warned %q about a job it registered: a warning is for a job left behind, and this one is not", got)
+	}
+
+	// The ordinary case of the same branch: the create made nothing, so the
+	// read-back finds no job, and that is not this launch's failure.
+	none := newBatchLaunchWorld(t, batchAnswers(expires))
+	none.bf.FailCreateWith = http.StatusServiceUnavailable
+	noneID := batchpkg.JobID(appSlug, variantOf(t, none.spec), none.spec.RunID)
+	var noneWarned strings.Builder
+	launchWarn = &noneWarned
+	_, err = none.launch(t)
+	if err == nil {
+		t.Fatal("a launch whose create answered 503 with no job behind it was not refused")
+	}
+	if !strings.Contains(err.Error(), "the outcome is unknown") {
+		t.Errorf("the launch of the ambiguous create failed with %q, want the ambiguity it always reported", err)
+	}
+	if strings.Contains(err.Error(), "could not be registered") {
+		t.Errorf("the launch reported a registration failure (%q): the create made nothing, which is the ordinary answer to this branch", err)
+	}
+	for _, call := range none.svc.asked() {
+		if call.Path == identitywire.JobPath {
+			t.Errorf("the service received a registration (%q) for a create that made no job", call.Body)
+		}
+	}
+	if got := none.bf.Cancels(); len(got) != 0 {
+		t.Errorf("the launch cancelled %v: no job of that name exists to cancel", got)
+	}
+	if got := noneWarned.String(); strings.Contains(got, "Batch job") || strings.Contains(got, noneID) {
+		t.Errorf("the launch warned %q about a job that does not exist: the create made nothing, and a warning here would name a job to delete", got)
+	}
+}
+
 // TestABatchLaunchCarriesTheTicketAndNothingElse is BR1's acceptance at the
 // launcher, seen whole: a launch on an installation whose block carries the
 // opt-in fact asks for the run's ticket naming the job it is about to create,

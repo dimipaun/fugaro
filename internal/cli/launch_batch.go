@@ -193,22 +193,28 @@ type batchJobIDReader interface {
 }
 
 // registerBatchJob is BR17's registration, the launcher's second call: after the
-// create returned, the id the platform gave the job is written on the run's
-// issuance record, so the record names the execution the service will serve the
-// run's identity to (BR1, R1, D3108).
+// create returned -- and on the branch where its outcome is unknown, where a job
+// the create may have made is read back and registered the same way -- the id
+// the platform gave the job is written on the run's issuance record, so the
+// record names the execution the service will serve the run's identity to (BR1,
+// R1, D3108).
 //
-// It runs on the launch's own path and nowhere else -- launchRun calls it once
-// the backend answered -- and it is what BR4's claim is held to: a record whose
-// job carries no id is a record the link refuses, so a launch that skipped this
-// call would start a VM that could never claim its identity.
+// It runs on the launch's own path and nowhere else -- launchRun calls it twice,
+// once on each of those branches -- and it is what BR4's claim is held to: a
+// record whose job carries no id is a record the link refuses, so a launch that
+// skipped this call would start a VM that could never claim its identity, which
+// no later --retry can put right: BR17's route writes an id once, on the record
+// the ticket ask wrote, and only the launcher that holds the claim may write it.
 //
 // **A job that cannot be registered is stopped.** The create has happened by
 // the time this runs, so a failure here leaves a Batch job with nothing that can
 // ever claim it: its VM would run, be billed and stop at its claim. The job is
 // cancelled before the launch fails, and a cancellation that failed is said out
 // loud (launchWarn) with the job's name, because the one thing left is an
-// operator deleting it.
-func registerBatchJob(ctx context.Context, env *cloudEnv, slug, variant string, spec *task.Spec, ref backend.ExecutionRef) error {
+// operator deleting it. A platform that holds no job of the name at all is the
+// one failure that is not this: errNoBatchJob, nothing to cancel and nothing to
+// report, because the create made nothing.
+func registerBatchJob(ctx context.Context, env *cloudEnv, slug, variant string, spec *task.Spec) error {
 	if launchBackend(env.be) != backend.CloudBatch {
 		return nil
 	}
@@ -222,16 +228,28 @@ func registerBatchJob(ctx context.Context, env *cloudEnv, slug, variant string, 
 	}
 	id, err := reader.CreatedJobID(ctx, full)
 	if err != nil {
-		cancelBatchJob(ctx, env, ref, "its id could not be read")
-		return remote(fmt.Errorf("the Batch job %s was created and its id could not be read, so this run was not registered and nothing can claim its identity: %s. The job was cancelled, so its VM does not keep running", full, oneLine(err.Error())))
+		if errors.Is(err, backend.ErrNotFound) {
+			return remote(fmt.Errorf("%w: %s", errNoBatchJob, full))
+		}
+		cancelBatchJob(ctx, env, full, "its id could not be read")
+		return remote(fmt.Errorf("the Batch job %s could not be read back after the create, so this run was not registered and nothing can claim its identity: %s. The job was cancelled, so its VM does not keep running", full, oneLine(err.Error())))
 	}
 	req := identitywire.JobRequest{Slug: slug, Run: spec.RunID, Job: full, JobID: id}
 	if err := env.registerJob(ctx, req); err != nil {
-		cancelBatchJob(ctx, env, ref, "it could not be registered")
+		cancelBatchJob(ctx, env, full, "it could not be registered")
 		return err
 	}
 	return nil
 }
+
+// errNoBatchJob is what the id read-back answers when the platform holds no job
+// of the name this launch derived: the create made nothing. It is the ordinary
+// answer to an ambiguous create -- a timeout or a dropped connection whose
+// request never landed -- and it is told apart from a read-back that failed for
+// another reason, which is a job that exists and cannot be named: the first has
+// nothing to cancel, nothing to warn about and no identity lost, and the second
+// leaves a VM that would run, be billed and stop at its claim.
+var errNoBatchJob = errors.New("the platform holds no Batch job of this launch's name")
 
 // registerJob makes BR17's registration call itself: the contract's body, the
 // launcher's own identity, and the refusal read back the way the ticket ask's is
@@ -319,10 +337,15 @@ func batchRegistrationRefusal(req identitywire.JobRequest, status int, body []by
 // failure is warned about rather than refused -- the launch is already failing
 // -- and the warning names the job, which is the one thing an operator needs to
 // delete it by hand.
-func cancelBatchJob(ctx context.Context, env *cloudEnv, ref backend.ExecutionRef, why string) {
+//
+// It is given the launcher's own name for the job and not the reference a
+// create answered with, because the branch whose create's outcome is unknown has
+// no reference at all: the name the ask and the registration were made over is
+// the one the job really has.
+func cancelBatchJob(ctx context.Context, env *cloudEnv, full identitywire.JobName, why string) {
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
-	if err := env.be.Cancel(cctx, ref.Name); err != nil {
-		fmt.Fprintf(launchWarn, "the Batch job %s was created, %s, and it could not be cancelled (%s): delete it in your own terminal, so its VM stops being billed\n", ref.Name, why, oneLine(err.Error()))
+	if err := env.be.Cancel(cctx, string(full)); err != nil {
+		fmt.Fprintf(launchWarn, "the Batch job %s was created, %s, and it could not be cancelled (%s): delete it in your own terminal, so its VM stops being billed\n", full, why, oneLine(err.Error()))
 	}
 }
