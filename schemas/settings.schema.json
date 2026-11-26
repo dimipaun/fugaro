@@ -1619,6 +1619,9 @@
         "registry_host": {
           "default": "unset = none: no image has been pinned yet"
         },
+        "repo_images": {
+          "default": "unset = none: no repository is mapped, and the catalog's default entry decides the image"
+        },
         "reports_commit.dir": {
           "default": "unset = docs/fugaro-reviews-mirror: a folder the report layout never writes, so a designated repository's own reports and the mirror cannot meet"
         },

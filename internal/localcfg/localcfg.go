@@ -550,6 +550,21 @@ type Config struct {
 	// node's (ImageMapEffective); a written map with no entry is how a
 	// published one is taken away on purpose.
 	ImageMap map[string]string `yaml:"image_map,omitempty"`
+	// RepoImages is the project's repository-to-image map in the form L11 gives
+	// it (D3370, D3371): the catalog entry each of the project's repositories
+	// runs, keyed by provider/owner/name rather than by a bare repository name,
+	// so one name at two providers is two entries and a repository is mapped
+	// once. It is the successor of ImageMap above, which stays beside it while
+	// `fugaro update` migrates a project's map from the old keys to these
+	// (D3372). It travels the catalog's way and for its reason: the map decides
+	// which image a job executes, so a launcher who could write it into the
+	// runs bucket's shared config would be choosing what code every teammate's
+	// runs run. Shared nils it.
+	//
+	// A nil map is a file that says nothing about the map, which keeps the
+	// node's (RepoImagesEffective); a written map with no entry is how a
+	// published one is taken away on purpose.
+	RepoImages map[string]string `yaml:"repo_images,omitempty"`
 	// BakeRepos is whether a repository is baked into the image its job runs
 	// (D1901), the setup wizard's question, answered yes when it is asked with
 	// nothing else. It is the owner's policy like the map above and reaches a
@@ -3026,6 +3041,37 @@ func (c *Config) ImageMapEffective(published map[string]string) map[string]strin
 	return effective
 }
 
+// RepoImagesEffective is the repository-to-image map the project serves a
+// repository's image from, and which member it read it from (R2, D3372).
+//
+// The order is R2's: any repo_images wins over any image_map, this file's
+// first and then the node's; the legacy map — this file's first, then the
+// node's — is read only when neither place carries repo_images. The node's half
+// is projectpolicy.Policy.EffectiveRepoImages, so the rule is written once and
+// the credentials service and the image selection cannot disagree with this
+// reader about which member a node serves.
+//
+// fromRepoImages says which half the answer is: true when the keys are
+// provider/owner/name (repo_images) and false when they are bare repository
+// names (image_map). A caller fills exactly one of catalog.ImageRequest's
+// RepoImages and LegacyMap from it. A written repo_images with no entry is this
+// file taking the node's map away on purpose, exactly as ImageMapEffective's
+// written-empty map does for the old member, so the answer is then empty with
+// fromRepoImages true and no legacy map is read.
+func (c *Config) RepoImagesEffective(published *projectpolicy.Policy) (images map[string]string, fromRepoImages bool) {
+	if c.RepoImages != nil {
+		return c.RepoImages, true
+	}
+	if node, ok := published.EffectiveRepoImages(); ok {
+		return node, true
+	}
+	var legacy map[string]string
+	if published != nil {
+		legacy = published.ImageMap
+	}
+	return c.ImageMapEffective(legacy), false
+}
+
 // CloneURLsEffective is the keep rule for the clone URLs (SD5, D842, D844): the
 // block this file states when it writes one — a written block with no entry
 // included, which is how a published one is taken away on purpose — and the
@@ -3734,6 +3780,33 @@ func (c *Config) validate() error {
 			bad("%s: an image_map key is a repository name, as acme/app: it is the name a job's own repository is looked up by, and one in another case is a key no lookup reaches", at)
 		}
 		if !config.ValidCatalogName(c.ImageMap[repo]) {
+			bad("%s: %s", at, config.CatalogNameMessage)
+		}
+	}
+	// The repository-to-image map is held to the node's own rule here, the way
+	// the catalog and the map above are: it is copied into the policy node, and
+	// a key or a name this file accepted while the node refused it would be a
+	// mapping that never reaches a run — while one the node accepted and this
+	// file refused would never reach it at all. The key is the canonical name
+	// of a repository at a provider (projectpolicy.ValidRepoImages, which the
+	// node's own decoder calls), and the value is a catalog entry name
+	// (config.ValidCatalogName, the rule an entry's name and a workflow's
+	// image_name are held to).
+	//
+	// The provider is held to its SHAPE (task.ValidProvider) and not to
+	// config.Providers, which is the node's rule as well (R10): a key at a
+	// provider this release does not serve is kept and serves nothing, because
+	// a later release that adds one would otherwise make every older reader
+	// refuse the node — and the node is re-read while runs are in flight.
+	for _, repo := range slices.Sorted(maps.Keys(c.RepoImages)) {
+		at := "repo_images." + pluginwire.Printable(repo)
+		provider, path, ok := strings.Cut(repo, "/")
+		canon, err := task.CanonicalRepo(path)
+		if !ok || !task.ValidProvider(provider) || err != nil || canon != path {
+			bad("%s: a repo_images key is <provider>/<owner>/<name>, as github/acme/app: a key in another form is one no lookup reaches", at)
+			continue
+		}
+		if !config.ValidCatalogName(c.RepoImages[repo]) {
 			bad("%s: %s", at, config.CatalogNameMessage)
 		}
 	}

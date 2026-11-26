@@ -376,8 +376,14 @@ const (
 // the `models` family's, since the layer file is what `fugaro config publish`
 // carries and not the generic path, whose allowlist reaches no key of that
 // family — so the rows without a generic writer move by the one.
+//
+// T0b of docs/image-map-by-provider/ is the last mover, by one row and by none:
+// the local config's repo_images is the repository-to-image map in the form L11
+// gives it (D3370, D3371), one row beside image_map's while both members exist
+// (R15), and its owner is the `image map` family, so no name in the allowlist
+// and no prefix of it reaches the row.
 const (
-	cfmRegistryRows   = 542
+	cfmRegistryRows   = 543
 	cfmAllowlistNamed = 122
 )
 
