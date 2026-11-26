@@ -2003,9 +2003,12 @@ func TestDeployedSecretIDsReadsEveryJobsMounts(t *testing.T) {
 	f.run.AddJob("fugaro-acme-api-api", "2", "4Gi")
 	f.run.SetJobEnv("fugaro-acme-api-api", map[string]string{"OTHER": "a-value"})
 
-	ids, warning := DeployedSecretIDs(context.Background(), f.c, spec)
+	ids, answered, warning := DeployedSecretIDs(context.Background(), f.c, spec)
 	if warning != "" {
 		t.Fatalf("the read answered %q for a listing that worked", warning)
+	}
+	if !answered {
+		t.Fatalf("the read answered %v for a listing that worked, want the IDs to be the installation's own mounts", ids)
 	}
 	if len(ids) != 1 || !ids[copyID] {
 		t.Fatalf("ids = %v, want exactly %s", ids, copyID)
