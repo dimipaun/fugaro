@@ -88,6 +88,7 @@ func proxiedModulePlan(t *testing.T, proxied, service bool) (accessors []string,
 	dir := t.TempDir()
 	main := `variable "workflow" { type = any }
 variable "credentials_service" { default = null }
+variable "credentials_service_serves" { default = true }
 variable "bitbucket_proxied" { type = bool }
 variable "model_secrets_served" { type = string }
 

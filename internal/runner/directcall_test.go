@@ -25,7 +25,7 @@ func TestDirectCallHasNoTools(t *testing.T) {
 	g := newGWFiles(t, gwConfig(t, ""), "observe", "", nil,
 		anthropicfake.MessageOK(sonnet, pricing.Usage{Input: 30000, Output: 40}))
 	ctx := context.Background()
-	if err := g.store.WriteTask(ctx, evaluateSpec(stepProbeName, stepProbeYAML)); err != nil {
+	if err := g.store.WriteTask(ctx, g.taskWithLayer(evaluateSpec(stepProbeName, stepProbeYAML))); err != nil {
 		t.Fatal(err)
 	}
 	rec, err := g.run(t)

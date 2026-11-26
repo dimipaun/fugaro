@@ -663,7 +663,7 @@ func TestEarlyDraftFalseKeepsFinalizeOnly(t *testing.T) {
 		t.Fatalf("calls = %q", calls)
 	}
 	pr := onlyPR(t, h.provider)
-	if pr.Body != "Adds feature.txt." || strings.Contains(pr.Body, "fugaro:status") || !slices.Equal(pr.Reviewers, []string{"octocat"}) {
+	if pr.Body != owedBody("Adds feature.txt.") || strings.Contains(pr.Body, "fugaro:status") || !slices.Equal(pr.Reviewers, []string{"octocat"}) {
 		t.Fatalf("PR = %+v", pr)
 	}
 	if rec.PR.Desc != "" {
@@ -1351,7 +1351,7 @@ func TestTaskWithoutExternalUnchanged(t *testing.T) {
 	if strings.Contains(body, "Fixes") {
 		t.Errorf("a run for no issue carries a closing line:\n%s", body)
 	}
-	if want := "Adds feature.txt.\n\n" + statusBegin; !strings.HasPrefix(body, want) {
+	if want := owedBody("Adds feature.txt.") + "\n\n" + statusBegin; !strings.HasPrefix(body, want) {
 		t.Errorf("the description and the section must follow each other as they did before the field, want %q:\n%s", want, body)
 	}
 }
@@ -1403,7 +1403,7 @@ func TestPRBodyIgnoresAnIdItCannotName(t *testing.T) {
 			if strings.Contains(body, "@") {
 				t.Errorf("the body carries a mention out of the task's external id:\n%s", body)
 			}
-			if want := "Adds feature.txt.\n\n" + statusBegin; !strings.HasPrefix(body, want) {
+			if want := owedBody("Adds feature.txt.") + "\n\n" + statusBegin; !strings.HasPrefix(body, want) {
 				t.Errorf("the body must be the one a task with no external id opens, want %q:\n%s", want, body)
 			}
 		})
