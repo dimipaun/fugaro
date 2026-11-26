@@ -12,24 +12,39 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
-// areaPromoteYAML is a repository whose two areas are the ones a promote launch
-// raises: `payments` at critical, `ledger` at pro, over a repository whose own
-// default is poc — so a promote run can raise (ledger to critical), stand
-// equal (payments at critical) or be refused for going below (payments at
-// pro).
+// areaPromoteYAML is the two areas a promote launch raises — `payments` at
+// critical, `ledger` at pro, over a default of poc — so a promote run can raise
+// (ledger to critical), stand equal (payments at critical) or be refused for
+// going below (payments at pro). It is the block a repository's file writes
+// before the lift, and since S1 (D3237) the launch reads it where it resolves
+// now: as the project layer the fixture's file is anchored to (publishFilePins).
 const areaPromoteYAML = "rigor:\n  default: poc\n  areas:\n" +
 	"    - { name: payments, match: \"internal/payments/**\", mode: critical }\n" +
 	"    - { name: ledger, match: \"internal/ledger/**\", mode: pro }\n"
 
+// areaPromoteWorkflows is the workflow a launch of the fixture's checkout
+// resolves: one of the two the installation's config admits.
+const areaPromoteWorkflows = "workflows:\n  web: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+
 // areaPromoteFixture is a launch of acme/app from a checkout whose fugaro.yaml
-// declares those areas, on a job image whose runner reads the promote block —
-// the release this work ships in, since an older one refuses the stored task at
+// writes those areas, on a job image whose runner reads the promote block — the
+// release this work ships in, since an older one refuses the stored task at
 // bootstrap (TestRunPromoteRefusesAJobImageThatPredatesTheBlock).
 func areaPromoteFixture(t *testing.T) *cloudFixture {
 	t.Helper()
+	return areaPromoteFixtureOn(t, "ghcr.io/dimipaun/fugaro-base:"+promoteSince)
+}
+
+// areaPromoteFixtureOn is areaPromoteFixture on a job image of the caller's
+// own: the test that judges the promote block's image gate needs a record of a
+// base older than promoteSince, which is the same world otherwise.
+func areaPromoteFixtureOn(t *testing.T, image string) *cloudFixture {
+	t.Helper()
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+promoteSince)
-	checkoutWorkflows(t, areaPromoteYAML, "  web: { commands: { build: sh build.sh, test: sh test.sh } }\n")
+	writeBuildRecord(t, f, appSlug, "web", image)
+	promoteLayerCheckout(t, publishFilePins(t, f, "version: 1\nproject: aurora\n"+
+		"git: { provider: github, base_branch: main }\nagent: { auth: api-key }\n"+
+		areaPromoteYAML+areaPromoteWorkflows))
 	return f
 }
 
@@ -114,9 +129,11 @@ func TestRunPromoteRefusesATargetBelowTheArea(t *testing.T) {
 	t.Run("a brace pattern", func(t *testing.T) {
 		f := newCloudFixture(t)
 		writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+promoteSince)
-		checkoutWorkflows(t, "rigor:\n  default: poc\n  areas:\n"+
-			"    - { name: money, match: \"internal/{payments,ledger}/**\", mode: critical }\n",
-			"  web: { commands: { build: sh build.sh, test: sh test.sh } }\n")
+		promoteLayerCheckout(t, publishFilePins(t, f, "version: 1\nproject: aurora\n"+
+			"git: { provider: github, base_branch: main }\nagent: { auth: api-key }\n"+
+			"rigor:\n  default: poc\n  areas:\n"+
+			"    - { name: money, match: \"internal/{payments,ledger}/**\", mode: critical }\n"+
+			areaPromoteWorkflows))
 		for _, mode := range []string{"pro", "poc"} {
 			_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261122-130101-abcd", "--promote", "money", "--mode", mode)
 			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "already resolves to critical") {
@@ -262,10 +279,8 @@ func TestRunPromoteRefusesHotfixAndAModeOfItsOwn(t *testing.T) {
 // TestRunPromoteIsGatedOnACloneWorkflow's, and neither test covers the other's
 // branch: this one judges a build record, and that one has no record to judge.
 func TestRunPromoteRefusesAJobImageThatPredatesTheBlock(t *testing.T) {
-	f := newCloudFixture(t)
 	older := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, promoteSince, -1)
-	writeBuildRecord(t, f, appSlug, "web", older)
-	checkoutWorkflows(t, areaPromoteYAML, "  web: { commands: { build: sh build.sh, test: sh test.sh } }\n")
+	areaPromoteFixtureOn(t, older)
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261122-130500-abcd", "--promote", "ledger", "--mode", "critical")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want the job image refused", err)
@@ -301,8 +316,9 @@ func TestRunPromoteIsGatedOnACloneWorkflow(t *testing.T) {
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
-	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nworkflows:\n" +
-		"  svc: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n" + areaPromoteYAML})
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": publishFilePins(t, f,
+		"version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nworkflows:\n"+
+			"  svc: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n"+areaPromoteYAML)})
 	t.Chdir(dir)
 	_, _, err := execute(t, "run", "--run-id", "20261122-130600-abcd", "--promote", "ledger", "--mode", "critical")
 	if ExitCode(err) != ExitUserError {
