@@ -70,6 +70,11 @@ type refreshOptions struct {
 	// command): it confirms every step, with no terminal needed, but never
 	// in a coding agent's session.
 	yes bool
+	// onDivergence is --on-divergence: the choice a shared-image divergence is
+	// answered with, named rather than asked (design shared-images.md §5, and
+	// the no-prompt policy: this CLI asks nothing). An empty value answers
+	// nothing, and a divergence then prints its proposal and stops.
+	onDivergence string
 	// ask is --ask (the owner's rule of 2026-11-04, and --yes's symmetric
 	// half): in a project whose marks say it is managed, where this command
 	// asks nothing — the owner's ruling of 2026-11-01 — the flag asks the
@@ -179,6 +184,9 @@ func (o refreshOptions) again() string {
 	for _, d := range o.expectDigests {
 		args = append(args, "--expect-digest", quoteWord(d))
 	}
+	if o.onDivergence != "" {
+		args = append(args, "--on-divergence", quoteWord(o.onDivergence))
+	}
 	return strings.Join(args, " ")
 }
 
@@ -228,6 +236,9 @@ type refreshPlan struct {
 	builds []string
 	ver    string // the release version this run targets
 	yes    bool   // --yes: builds are confirmed without a prompt
+	// onDivergence is --on-divergence, carried to step 4 for the shared-image
+	// workflows the step refreshes.
+	onDivergence string
 	// managed is the gate this run is under, and nil for every run that is
 	// not a coding agent's session in a managed project (openRefreshManaged):
 	// each build is admitted through it, one at a time, and a nil one leaves
@@ -436,7 +447,7 @@ func preflightPlan(ctx context.Context, o refreshOptions, root string, lc *local
 		return nil, userErr("%v", err)
 	}
 	p := &refreshPlan{root: root, repo: repo, slug: slug, lc: lc, lcPath: lcPath, lcOld: old, cfg: cfg,
-		workflows: wfs, kinds: kinds, want: map[string]string{}, atPin: map[string]bool{}, why: map[string]string{}, ver: ver, yes: o.yes, managed: o.managed}
+		workflows: wfs, kinds: kinds, want: map[string]string{}, atPin: map[string]bool{}, why: map[string]string{}, ver: ver, yes: o.yes, onDivergence: o.onDivergence, managed: o.managed}
 	for _, k := range kinds {
 		var ref string
 		if ref, p.atPin[k], err = refreshBase(lc, k, ver); err != nil {
@@ -560,6 +571,7 @@ func newImageRefreshCmd() *cobra.Command {
 	f.StringArrayVar(&o.workflows, "workflow", nil, "a workflow to refresh (repeatable; default: every workflow in fugaro.yaml)")
 	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release base images come from, as for the converge (default ghcr.io/dimipaun)")
 	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "cross-check the digest of a base image's release signature, KIND=sha256:<hex>, as for the converge (repeatable)")
+	f.StringVar(&o.onDivergence, "on-divergence", "", "the choice a shared-image divergence is answered with, where this repository's resolved dependency set is one the image its job is on does not hold: fork (build an image for this set), adopt=<owner/name> (move onto the image that repository is on, when it holds this set in full) or pin (keep the image it is on). Nothing is built until one is named: with no flag the refresh prints the proposal and stops. Refused in a coding agent's session")
 	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmations this run would otherwise skip (the project's name typed at each step that asks) instead of applying on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the questions back. It cannot restore a confirmation the billable builds no longer have: those ask nothing in any session, and each leases its cost from the project's budget where the installation has one. Refused where nobody can answer them (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
