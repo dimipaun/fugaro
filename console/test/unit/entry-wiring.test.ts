@@ -115,12 +115,14 @@ import {
 import { NEW_OPS_NOT_AVAILABLE, NEW_OPS_UNREADABLE, SETUP_ANSWER_KEYS } from '../../src/shared/new-ops'
 import type { SettingsEditorOpenRequest, SettingsEditorOutcome } from '../../src/shared/new-ops'
 import {
+  WIZARD_BUDGET_DEFAULT,
   WIZARD_CLASS,
   WIZARD_FOLLOW_CLASS,
   WIZARD_FOLLOW_LABEL,
   WIZARD_INPUT_CLASS,
   WIZARD_QUESTION_ATTRIBUTE,
   WIZARD_QUESTION_CLASS,
+  WIZARD_RIGOR_MODES,
   WIZARD_SUBMIT_CLASS,
   WIZARD_SUBMIT_LABEL,
   WIZARD_YES,
@@ -3086,7 +3088,7 @@ describe('the Add project door', () => {
     return classed(railOf(document), RAIL_ADD_PROJECT_CLASS).find((node) => node.tagName === 'BUTTON')
   }
 
-  /** wizardIn is the wizard one screen holds, and the five question rows it drew. */
+  /** wizardIn is the wizard one screen holds, and the six question rows it drew. */
   function wizardIn(screen: FakeNode): FakeNode {
     const wizard = classed(screen, WIZARD_CLASS)[0]
     if (wizard === undefined) throw new Error('the screen drew no wizard')
@@ -3102,15 +3104,26 @@ describe('the Add project door', () => {
     return marked.length === 1 ? (marked[0]?.textContent ?? '') : `${marked.length} buttons are current`
   }
 
-  /** answerEveryQuestion fills the wizard's five controls. The answers are not
-   * what this suite is about (`wizard.test.ts` drives the form); they are only
-   * what it takes to reach the run's end. */
+  /** answerEveryQuestion fills the wizard's six controls with answers `assemble`
+   * takes -- a mode for the rigor select, a whole amount for the budget field,
+   * a text for the rest -- so the press really sends the plan this suite reaches
+   * the run's end through. The answers are not what this suite is about
+   * (`wizard.test.ts` drives the form); they are only what it takes to get
+   * there. */
   function answerEveryQuestion(wizard: FakeNode): void {
     for (const row of classed(wizard, WIZARD_QUESTION_CLASS)) {
       const control = classed(row, WIZARD_INPUT_CLASS)[0]
       if (control === undefined) throw new Error('a question drew no control')
       const key = row.attributes.get(WIZARD_QUESTION_ATTRIBUTE) ?? ''
-      ;(control as unknown as { value: string }).value = key === 'bake_repos' ? WIZARD_YES : 'answer'
+      const answer =
+        key === 'bake_repos'
+          ? WIZARD_YES
+          : key === 'rigor'
+            ? (WIZARD_RIGOR_MODES[0] ?? '')
+            : key === 'budget'
+              ? WIZARD_BUDGET_DEFAULT
+              : 'answer'
+      ;(control as unknown as { value: string }).value = answer
     }
   }
 
@@ -3257,7 +3270,11 @@ describe('the Add project door', () => {
       listed += 1
       return { ok: true, data: { rows: listed === 1 ? [aurora] : [aurora, segundo] } }
     }
-    bridge.planSetup = async (): Promise<unknown> => feedOf(DONE)
+    const planned: unknown[] = []
+    bridge.planSetup = async (payload: unknown): Promise<unknown> => {
+      planned.push(payload)
+      return feedOf(DONE)
+    }
     bridge.applySetup = async (): Promise<unknown> => feedOf(DONE)
     const document = await boot(bridge, new FakeDocument())
     expect(rowsOf(document).map((row) => classed(row, RAIL_NAME_CLASS)[0]?.textContent)).toEqual(['aurora'])
@@ -3268,6 +3285,13 @@ describe('the Add project door', () => {
     answerEveryQuestion(wizard)
     buttonLabelled(wizard, WIZARD_SUBMIT_LABEL).click()
     await settle()
+    // The press really planned: answers `assemble` refuses send nothing, and a
+    // case whose submit is refused would still reach the list read below (the
+    // fake bridge answers the apply whatever was planned).
+    expect(planned, 'the submit sent no plan: `assemble` refused the answers').toHaveLength(1)
+    expect((planned[0] as { answers: Record<string, unknown> }).answers['budget']).toBe(
+      Number(WIZARD_BUDGET_DEFAULT),
+    )
     // The apply is main's own follow-up press (SW3a): the plan is confirmed, and
     // the run's end is what the list read follows.
     buttonLabelled(wizard, WIZARD_FOLLOW_LABEL).click()

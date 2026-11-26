@@ -32,7 +32,7 @@
 //     feed that stops without one is a read the console ended -- a cap, a killed
 //     child, a lost channel -- and it is drawn as an interrupted read with
 //     Retry, never as a complete list that happens to be short (RS2, R1).
-//   - **an answers object never names a file.** `setup.plan` carries the five
+//   - **an answers object never names a file.** `setup.plan` carries the six
 //     answers and `setup.apply` carries nothing at all; main serialises them
 //     into bytes it holds in memory and hands those bytes to the child on stdin
 //     (`--answers-file -`). A path in either payload is a file a hostile process
@@ -231,27 +231,42 @@ export type NewOperationRequest = {
 // The setup answers.
 // ---------------------------------------------------------------------------
 
-/** SETUP_ANSWER_KEYS is the five questions `fugaro setup` asks
- * (`internal/cli/setup.go`, `setupQuestions`), in the order it asks them. These
- * are what the wizard collects and what the renderer sends; **`version` is not
- * one of them** -- it is the answers file's own schema version, which main adds
- * when it serialises the file. */
+/** SETUP_ANSWER_KEYS is the six questions `fugaro setup` asks
+ * (`internal/cli/setup.go`, `setupQuestions`; `budget` is added by
+ * `setupAnswerQuestions` for D2210), in the order it asks them. These are what
+ * the wizard collects and what the renderer sends; **`version` is not one of
+ * them** -- it is the answers file's own schema version, which main adds when it
+ * serialises the file -- and neither is `budget_currency`, which the CLI
+ * defaults to USD (D2211) and this console sends nothing for. */
 export const SETUP_ANSWER_KEYS: readonly string[] = Object.freeze([
   'gcp_project',
   'region',
   'name',
   'rigor',
+  'budget',
   'bake_repos',
 ])
 
 /** SETUP_ANSWERS_FILE_KEYS is every key of the file the CLI decodes
- * (`schemas/setup-answers.json`, ST1): the five answers, and the schema's
+ * (`schemas/setup-answers.json`, ST1): the six answers, and the schema's
  * `version` in front of them. Named here so the difference between what the
  * renderer sends and what the child reads is one place and not two. */
 export const SETUP_ANSWERS_FILE_KEYS: readonly string[] = Object.freeze([
   'version',
   ...SETUP_ANSWER_KEYS,
 ])
+
+/** SETUP_BUDGET_MIN and SETUP_BUDGET_MAX are the bounds of the `budget` answer,
+ * and they are the CLI's own rule rather than this console's: the amount is the
+ * installation's monthly budget **alert** threshold, and `managed.Budget.Check`
+ * (`internal/infra/managed/marker.go`) refuses a marker outside
+ * `MinBudgetAmount` to `MaxBudgetAmount` -- one to ten million whole units of
+ * the currency -- so a document answering outside them would be refused by the
+ * installation later rather than by whoever typed it. The answers file's schema
+ * states the same two numbers (`schemas/setup-answers.schema.json`), which is
+ * where `new-ops.test.ts` reads them. */
+export const SETUP_BUDGET_MIN = 1
+export const SETUP_BUDGET_MAX = 10_000_000
 
 /** SetupRigor is the rigor mode as the wire spells it: the five modes of
  * `docs/rigor-modes`. It has no default and the setup file requires it, which is
@@ -276,6 +291,11 @@ export interface SetupAnswers {
   readonly region: string
   readonly name: string
   readonly rigor: SetupRigor
+  /** `budget` is the monthly budget alert the CLI's own question suggests
+   * (D2210) and is **absent** for a field left empty: the answers file's member
+   * is optional, so sending nothing is how the operator takes the CLI's default
+   * of 100 USD (D2212) rather than how they ask for no budget at all. */
+  readonly budget?: number
   readonly bake_repos: boolean
 }
 
@@ -436,21 +456,39 @@ export interface RecipesView {
 
 /** SetupEventType is the closed set of setup event lines (`setup --events`,
  * ST2). */
-export type SetupEventType = 'stage' | 'step' | 'left_for_you' | 'done' | 'error'
+export type SetupEventType = 'stage' | 'step' | 'left_for_you' | 'notice' | 'done' | 'error'
 
 /** SETUP_EVENT_TYPES is that set as a value, in the plan's own order. */
 export const SETUP_EVENT_TYPES: readonly SetupEventType[] = Object.freeze([
   'stage',
   'step',
   'left_for_you',
+  'notice',
   'done',
   'error',
 ])
 
-/** SetupStageEvent is a stage's line: the stage's name, the state the converge
- * settled it with, its own one-line detail, the stage it waited for, and whether
- * it skipped without doing its work (the CLI's `undone`, which tells a skipped
- * stage from one that found nothing to do). */
+/** SetupRepoLine is one repository a stage has something to say about: how the
+ * stage left it (`done`, `needs you`, `unread` or `skipped`, the CLI's own four
+ * words) and one line of detail, absent when the state says it all. Both the
+ * name and the detail are a repository's own text -- a path, a branch name, a
+ * provider's sentence -- so a view draws them through the text class it draws
+ * untrusted text with. */
+export interface SetupRepoLine {
+  readonly repo: string
+  readonly state: string
+  readonly detail: string
+}
+
+/**
+ * SetupStageEvent is a stage's line: the stage's name, the state the converge
+ * settled it with, its own one-line detail, the stage it waited for, whether it
+ * skipped without doing its work (the CLI's `undone`, which tells a skipped
+ * stage from one that found nothing to do), and the lines it reported about the
+ * repositories it read (U13; `[]` for a stage that reports none). A stage that
+ * reports lines says their summary as its detail -- "3 repositories: 1 done,
+ * 1 needs you, 1 unread" -- which is the same sentence from every directory.
+ */
 export interface SetupStageEvent {
   readonly type: 'stage'
   readonly name: string
@@ -458,6 +496,7 @@ export interface SetupStageEvent {
   readonly detail: string
   readonly after: string
   readonly undone: boolean
+  readonly repos: readonly SetupRepoLine[]
 }
 
 /**
@@ -486,6 +525,21 @@ export interface SetupLeftForYouEvent {
   readonly commands: readonly string[]
 }
 
+/**
+ * SetupNoticeEvent is one line the run reported outside its stages: a step after
+ * the stage loop, or an admit pattern the reader could not expand into
+ * repository names (R12, R19). `step` is the step's own name -- a step after the
+ * loop has no stage to report under -- and `repo` and `state` are the empty
+ * string for a notice about no repository at all.
+ */
+export interface SetupNoticeEvent {
+  readonly type: 'notice'
+  readonly step: string
+  readonly repo: string
+  readonly state: string
+  readonly detail: string
+}
+
 /** SetupDoneEvent is the line that says the run finished: it is what makes a
  * setup feed complete rather than interrupted. */
 export interface SetupDoneEvent {
@@ -506,6 +560,7 @@ export type SetupEvent =
   | SetupStageEvent
   | SetupStepEvent
   | SetupLeftForYouEvent
+  | SetupNoticeEvent
   | SetupDoneEvent
   | SetupErrorEvent
 
@@ -1005,6 +1060,20 @@ function stageEventAt(line: Record<string, unknown>, field: string, where: strin
     detail: optionalStringAt(line, 'detail', field, where),
     after: optionalStringAt(line, 'after', field, where),
     undone: optionalBoolAt(line, 'undone', field, where),
+    repos: optionalArrayAt(line, 'repos', field, where).map((raw, index) =>
+      repoLineAt(raw, `${field}.repos[${String(index)}]`, where),
+    ),
+  }
+}
+
+/** repoLineAt is one repository a stage reported on: the name and the state are
+ * the line's own, and the detail is absent when the state says it all. */
+function repoLineAt(raw: unknown, field: string, where: string): SetupRepoLine {
+  const line = objectAt(raw, field, where)
+  return {
+    repo: stringAt(memberAt(line, 'repo', field, where), `${field}.repo`, where),
+    state: stringAt(memberAt(line, 'state', field, where), `${field}.state`, where),
+    detail: optionalStringAt(line, 'detail', field, where),
   }
 }
 
@@ -1013,6 +1082,19 @@ function stepEventAt(line: Record<string, unknown>, field: string, where: string
     type: 'step',
     stage: stringAt(memberAt(line, 'stage', field, where), `${field}.stage`, where),
     name: optionalStringAt(line, 'name', field, where),
+    detail: optionalStringAt(line, 'detail', field, where),
+  }
+}
+
+/** noticeEventAt is one line the run reported outside its stages: the step's own
+ * name, and the repository or admit pattern it is about -- both empty for a
+ * notice about no repository. */
+function noticeEventAt(line: Record<string, unknown>, field: string, where: string): SetupNoticeEvent {
+  return {
+    type: 'notice',
+    step: stringAt(memberAt(line, 'step', field, where), `${field}.step`, where),
+    repo: optionalStringAt(line, 'repo', field, where),
+    state: optionalStringAt(line, 'state', field, where),
     detail: optionalStringAt(line, 'detail', field, where),
   }
 }
@@ -1052,6 +1134,7 @@ function setupFeedAt(document: Record<string, unknown>, where: string): SetupFee
     if (type === 'stage') events.push(stageEventAt(line, field, where))
     else if (type === 'step') events.push(stepEventAt(line, field, where))
     else if (type === 'left_for_you') events.push(leftEventAt(line, field, where))
+    else if (type === 'notice') events.push(noticeEventAt(line, field, where))
     else if (type === 'done') {
       done = true
       events.push({ type: 'done' })

@@ -1,49 +1,49 @@
-{"type":"stage","name":"preflight","state":"done","detail":"","after":"","undone":false}
-{"type":"stage","name":"installation","state":"will-do","detail":"0 imports, 1 creates, 0 updates","after":"","undone":false}
-{"type":"stage","name":"firebase","state":"skipped","detail":"no budget database was created: nothing answers this run's confirmation (no terminal, --json, a pipe and a coding agent never do); a project owner runs fugaro setup once","after":"","undone":false}
-{"type":"stage","name":"images","state":"skipped","detail":"no image to pin or copy: the history image goes with the history job (which this run deploys where it has just created or adopted the budget database, or where --firebase-project names it), and a base image with --base KIND, with a checkout whose fugaro.yaml names it, or with a project image catalog whose entries this installation builds","after":"","undone":false}
-{"type":"stage","name":"installation-2","state":"skipped","detail":"the installation has no budget backend, so there is no history job to deploy: run fugaro update once a project owner has created one","after":"","undone":false}
-{"type":"stage","name":"secrets","state":"skipped","detail":"not in a checkout of a repository: run fugaro setup there to take its secrets","after":"","undone":false}
-{"type":"stage","name":"plugin","state":"skipped","detail":"a development build has no release plugin to install","after":"","undone":false}
-{"type":"stage","name":"repository","state":"skipped","detail":"not in a checkout: run fugaro setup --repo in a checkout of the repository to onboard it","after":"","undone":false}
-{"type":"stage","name":"rules","state":"skipped","detail":"the project config records no shared Firebase budget backend (budget.firebase_project): fugaro update --firebase-project proj-1234 adopts one, and the security rules are deployed with it","after":"","undone":false}
-{"type":"stage","name":"model-prices","state":"done","detail":"<config> writes every cache price under the name this release documents","after":"","undone":false}
-{"type":"stage","name":"policy","state":"skipped","detail":"the project's config names no Firebase budget backend, so there is no published policy node to read","after":"","undone":true}
-{"type":"stage","name":"credentials-service","state":"skipped","detail":"a development build resolves no released image","after":"","undone":false}
-{"type":"stage","name":"credentials-copy","state":"skipped","detail":"the project's config carries no credentials_service block, and its presence is what turns the credentials service on: this installation has no credentials service, so there is no bundle for the copy to write a model key into","after":"","undone":false}
-{"type":"stage","name":"version-stamp","state":"skipped","detail":"this is a development build, which names no release: the required CLI is left exactly as it is","after":"","undone":false}
-{"type":"stage","name":"workspace-project","state":"skipped","detail":"this installation declares no workspace of its own: aurora's project config carries neither workspace_members nor workspace_cap, so there is no workspace service account to create and no database grant to make here (a member's project holds no grant on the workspace's project, spec §5)","after":"","undone":false}
-{"type":"stage","name":"workspace","state":"skipped","detail":"the project aurora declares no workspace: it has no workspace_members table and no workspace_cap, so it publishes no workspace record — a member's config names the workspace it joined (workspace: and workspace_pin:) and never publishes one","after":"","undone":false}
-{"type":"stage","name":"credentials-route","state":"skipped","detail":"the project's config names no Firebase budget backend, so there is no database to publish the credential route in","after":"","undone":false}
-{"type":"stage","name":"lift","state":"skipped","detail":"the runs bucket (gs://fugaro-runs-proj-1234) could not be read, so this run migrates nothing: fugaro: test tried to open the real gs:// bucket gs://fugaro-runs-proj-1234; use a bucket_url: file:// fixture or override openRecordBucket","after":"","undone":true}
-{"type":"stage","name":"layer","state":"skipped","detail":"the project layer's bucket (gs://fugaro-runs-proj-1234) could not be read, so this run leaves the project layer and its local layer file as they are: fugaro: test tried to open the real gs:// bucket gs://fugaro-runs-proj-1234; use a bucket_url: file:// fixture or override openRecordBucket","after":"","undone":true}
-{"type":"stage","name":"checkout","state":"skipped","detail":"a development build has no release to refresh to","after":"","undone":false}
-{"type":"stage","name":"unit","state":"skipped","detail":"the login unit is written by a run you are watching at your own terminal: this one has nobody at it, so nothing is written (fugaro orchestrator install writes one by hand)","after":"","undone":false}
+{"type":"stage","name":"preflight","state":"done","detail":"","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"installation","state":"will-do","detail":"0 imports, 1 creates, 0 updates","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"firebase","state":"skipped","detail":"no budget database was created: nothing answers this run's confirmation (no terminal, --json, a pipe and a coding agent never do); a project owner runs fugaro setup once","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"images","state":"skipped","detail":"no image to pin or copy: the history image goes with the history job (which this run deploys where it has just created or adopted the budget database, or where --firebase-project names it), and a base image with --base KIND, with a checkout whose fugaro.yaml names it, or with a project image catalog whose entries this installation builds","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"installation-2","state":"skipped","detail":"the installation has no budget backend, so there is no history job to deploy: run fugaro update once a project owner has created one","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"secrets","state":"skipped","detail":"not in a checkout of a repository: run fugaro setup there to take its secrets","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"plugin","state":"skipped","detail":"a development build has no release plugin to install","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"repository","state":"skipped","detail":"not in a checkout: run fugaro setup --repo in a checkout of the repository to onboard it","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"rules","state":"skipped","detail":"the project config records no shared Firebase budget backend (budget.firebase_project): fugaro update --firebase-project proj-1234 adopts one, and the security rules are deployed with it","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"model-prices","state":"done","detail":"<config> writes every cache price under the name this release documents","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"policy","state":"skipped","detail":"the project's config names no Firebase budget backend, so there is no published policy node to read","after":"","undone":true,"repos":[]}
+{"type":"stage","name":"credentials-service","state":"skipped","detail":"a development build resolves no released image","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"credentials-copy","state":"skipped","detail":"the project's config carries no credentials_service block, and its presence is what turns the credentials service on: this installation has no credentials service, so there is no bundle for the copy to write a model key into","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"version-stamp","state":"skipped","detail":"this is a development build, which names no release: the required CLI is left exactly as it is","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"workspace-project","state":"skipped","detail":"this installation declares no workspace of its own: aurora's project config carries neither workspace_members nor workspace_cap, so there is no workspace service account to create and no database grant to make here (a member's project holds no grant on the workspace's project, spec §5)","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"workspace","state":"skipped","detail":"the project aurora declares no workspace: it has no workspace_members table and no workspace_cap, so it publishes no workspace record — a member's config names the workspace it joined (workspace: and workspace_pin:) and never publishes one","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"credentials-route","state":"skipped","detail":"the project's config names no Firebase budget backend, so there is no database to publish the credential route in","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"lift","state":"skipped","detail":"the runs bucket (gs://fugaro-runs-proj-1234) could not be read, so this run migrates nothing: fugaro: test tried to open the real gs:// bucket gs://fugaro-runs-proj-1234; use a bucket_url: file:// fixture or override openRecordBucket","after":"","undone":true,"repos":[]}
+{"type":"stage","name":"layer","state":"skipped","detail":"the project layer's bucket (gs://fugaro-runs-proj-1234) could not be read, so this run leaves the project layer and its local layer file as they are: fugaro: test tried to open the real gs:// bucket gs://fugaro-runs-proj-1234; use a bucket_url: file:// fixture or override openRecordBucket","after":"","undone":true,"repos":[]}
+{"type":"stage","name":"checkout","state":"skipped","detail":"a development build has no release to refresh to","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"unit","state":"skipped","detail":"the login unit is written by a run you are watching at your own terminal: this one has nobody at it, so nothing is written (fugaro orchestrator install writes one by hand)","after":"","undone":false,"repos":[]}
 {"type":"done","exit_code":0}
 {"type":"step","stage":"preflight","name":"preflight","detail":""}
-{"type":"stage","name":"preflight","state":"done","detail":"","after":"","undone":false}
+{"type":"stage","name":"preflight","state":"done","detail":"","after":"","undone":false,"repos":[]}
 {"type":"step","stage":"installation","name":"installation","detail":""}
 {"type":"left_for_you","stage":"installation","kind":"prompt","text":"in your own terminal window, not through a coding agent or a pipe, run the command below: it asks you nothing and the apply goes ahead","commands":["fugaro setup"]}
-{"type":"stage","name":"installation","state":"needs-you","detail":"a coding agent's session is present (CLAUDECODE is set), so nothing is applied: run this in your own terminal window, not through a coding agent","after":"","undone":false}
-{"type":"stage","name":"firebase","state":"blocked","detail":"waits for installation","after":"","undone":false}
-{"type":"stage","name":"images","state":"blocked","detail":"waits for installation","after":"","undone":false}
-{"type":"stage","name":"installation-2","state":"blocked","detail":"waits for installation","after":"","undone":false}
-{"type":"stage","name":"secrets","state":"blocked","detail":"waits for installation","after":"","undone":false}
+{"type":"stage","name":"installation","state":"needs-you","detail":"a coding agent's session is present (CLAUDECODE is set), so nothing is applied: run this in your own terminal window, not through a coding agent","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"firebase","state":"blocked","detail":"waits for installation","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"images","state":"blocked","detail":"waits for installation","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"installation-2","state":"blocked","detail":"waits for installation","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"secrets","state":"blocked","detail":"waits for installation","after":"","undone":false,"repos":[]}
 {"type":"step","stage":"plugin","name":"plugin","detail":""}
-{"type":"stage","name":"plugin","state":"skipped","detail":"machine-local: ran although installation waits for you; a development build has no release plugin to install","after":"","undone":false}
-{"type":"stage","name":"repository","state":"blocked","detail":"waits for installation","after":"","undone":false}
-{"type":"stage","name":"rules","state":"blocked","detail":"waits for installation","after":"","undone":false}
-{"type":"stage","name":"model-prices","state":"blocked","detail":"waits for installation","after":"","undone":false}
-{"type":"stage","name":"policy","state":"blocked","detail":"waits for installation","after":"","undone":false}
-{"type":"stage","name":"credentials-service","state":"blocked","detail":"waits for installation","after":"","undone":false}
-{"type":"stage","name":"credentials-copy","state":"blocked","detail":"waits for installation","after":"","undone":false}
-{"type":"stage","name":"version-stamp","state":"blocked","detail":"waits for installation","after":"","undone":false}
-{"type":"stage","name":"workspace-project","state":"blocked","detail":"waits for installation","after":"","undone":false}
-{"type":"stage","name":"workspace","state":"blocked","detail":"waits for installation","after":"","undone":false}
-{"type":"stage","name":"credentials-route","state":"blocked","detail":"waits for installation","after":"","undone":false}
-{"type":"stage","name":"lift","state":"blocked","detail":"waits for installation","after":"","undone":false}
-{"type":"stage","name":"layer","state":"blocked","detail":"waits for installation","after":"","undone":false}
-{"type":"stage","name":"checkout","state":"blocked","detail":"waits for installation","after":"","undone":false}
-{"type":"stage","name":"unit","state":"blocked","detail":"waits for installation","after":"","undone":false}
+{"type":"stage","name":"plugin","state":"skipped","detail":"machine-local: ran although installation waits for you; a development build has no release plugin to install","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"repository","state":"blocked","detail":"waits for installation","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"rules","state":"blocked","detail":"waits for installation","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"model-prices","state":"blocked","detail":"waits for installation","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"policy","state":"blocked","detail":"waits for installation","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"credentials-service","state":"blocked","detail":"waits for installation","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"credentials-copy","state":"blocked","detail":"waits for installation","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"version-stamp","state":"blocked","detail":"waits for installation","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"workspace-project","state":"blocked","detail":"waits for installation","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"workspace","state":"blocked","detail":"waits for installation","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"credentials-route","state":"blocked","detail":"waits for installation","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"lift","state":"blocked","detail":"waits for installation","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"layer","state":"blocked","detail":"waits for installation","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"checkout","state":"blocked","detail":"waits for installation","after":"","undone":false,"repos":[]}
+{"type":"stage","name":"unit","state":"blocked","detail":"waits for installation","after":"","undone":false,"repos":[]}
 {"type":"done","exit_code":1}
 {"type":"error","stage":"","error":"fugaro setup does not take --check: that is fugaro update's (it reports what a converge that has already run would do, and a first run has nothing to report: fugaro setup --check has no installation to read)","fix":"","exit_code":1}

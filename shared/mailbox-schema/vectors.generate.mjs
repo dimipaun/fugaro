@@ -356,10 +356,10 @@ refused('a switch that is not a boolean', 'a switch is true or false, and never 
 refused('an unknown field inside prefs', '§3.8\'s controls are a closed set like every other record here', 'message', message(aRegistration({ prefs: { ...registration.prefs, sound: true } })));
 const file = {
   format: 'fugaro mailbox message tag vectors',
-  algorithm: 'HMAC-SHA-256 over canonicalBytes(message, direction), lowercase hex (mobile plan §3.5, D171; direction by the owner ruling of 2026-10-18)',
+  algorithm: 'HMAC-SHA-256 (D171) or Ed25519 (O6) over canonicalBytes(message, direction): the MAC in lowercase hex, the device signature in unpadded base64url (mobile plan §3.5, D171, O6; direction by the owner ruling of 2026-10-18)',
   direction: 'the node the record is stored in (inbox, outbox or heartbeat), covered as the field "direction"; it is never stored in the record, and a reader passes the node it read from',
   canonical: 'JSON, keys sorted by code point at every depth, no insignificant whitespace, absent fields omitted, JSON\'s own escaping only, integers only',
-  covered: 'every field except mac and acked, plus the direction',
+  covered: 'every field except the tag it is written in (mac or sig, neither covering itself) and acked, plus the direction',
   key: KEY,
   key_note: 'a readable placeholder, not a credential: the real key is the per-pairing key of D171 and never appears in this repository',
   generated_by: 'node shared/mailbox-schema/vectors.generate.mjs',

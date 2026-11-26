@@ -113,21 +113,20 @@ func (r *initRun) retireProjectCopies(ctx context.Context, c *infra.Clients, lc 
 	}
 	// Whether a deployed job still names one, which is the only thing that
 	// keeps its container (G4). A read that could not be made answers no IDs
-	// WITH a warning, and nothing is deleted then.
-	mounted, why := infra.DeployedSecretIDs(ctx, c, spec)
+	// and answered false, with the warning a person needs or with no line at
+	// all on a run that is already over.
+	mounted, answered, why := infra.DeployedSecretIDs(ctx, c, spec)
 	if why != "" {
 		r.warn(why)
 	}
 	// Which copies may be deleted is infra.ProjectCopiesToDelete's answer and
 	// not a second rule standing beside it, so the rule a test pins is the rule
 	// this run applies. A read that could not be made is not "nothing names
-	// it": with why non-empty the set is empty, every copy stays alive, and the
-	// next update asks again.
+	// it": with answered false the set is empty, every copy stays alive, and
+	// the next update asks again.
 	deletable := map[string]bool{}
-	if why == "" {
-		for _, cp := range infra.ProjectCopiesToDelete(copies, mounted) {
-			deletable[cp.ID] = true
-		}
+	for _, cp := range infra.ProjectCopiesToDelete(copies, mounted, answered) {
+		deletable[cp.ID] = true
 	}
 	var retired []infra.ProjectCopy
 	seen, marked, deleted, kept := 0, 0, 0, 0

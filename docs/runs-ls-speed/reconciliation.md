@@ -3,6 +3,8 @@
 Checked against `origin/main` at `b8858034b` on 2026-11-19. **Where this document disagrees with [spec.md](spec.md), this document wins.**
 Decisions **D2960–D2967** are taken as recommendations (the owner approved the shape in outline and asked for rows, not questions); **D2968–D2969** are reserved. **Check 760** is taken; **761–769** are reserved.
 
+**Superseded in part (D3204, 2026-11-25).** The GCS pull-request index these decisions describe has no runner writer any more (IR5a of [docs/console-fixes/implementation-plan.md](../console-fixes/implementation-plan.md)), and loses its launcher writer and its backfill with IR5b, with the objects left in place for the reader that still falls back to them. The rows below are the record of the 2026-11-19 decision; where one says the runner writes the index, read it as the launcher's write until IR5b and nothing after.
+
 ## Assumptions
 
 - **A1.** The owner's outline stands: RL1 live set, RL2 index, RL3 `--pr` through it, RL4 optional summary, RL5 docs and Check. RL2 is split into three tasks (RL2, RL2W, RL2B) and RL5 into two (RL5, RL6) so each stays near five files.

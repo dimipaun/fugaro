@@ -93,6 +93,11 @@ var credsImporters = []string{
 	// routed run, which reads a published record to build a run's options.
 	"internal/runner",
 	"internal/gateway",
+	// internal/e2e, from the image-secrets plan's I1: its test package stands
+	// the shipped service up (credsvc.NewServer), whose Config.State and Slips
+	// are creds-typed. No job image is built from a test package, and it names
+	// the two stores the service is handed -- no value, and no write.
+	"internal/e2e",
 }
 
 // TestCredsIsNotReachableFromARun fails if any file outside the allow-list
@@ -128,7 +133,7 @@ func TestCredsIsNotReachableFromARun(t *testing.T) {
 	// deliberate edit here and not a quiet import somewhere (review finding m8),
 	// and a name that is no longer a caller should leave the list rather than
 	// widen it.
-	want := []string{"internal/creds", "internal/credsvc", "internal/cli", "internal/runner", "internal/gateway"}
+	want := []string{"internal/creds", "internal/credsvc", "internal/cli", "internal/runner", "internal/gateway", "internal/e2e"}
 	if len(credsImporters) != len(want) {
 		t.Fatalf("the allow-list holds %d entries %v; want exactly %v", len(credsImporters), credsImporters, want)
 	}
