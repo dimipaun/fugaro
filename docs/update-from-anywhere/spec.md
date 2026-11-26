@@ -134,8 +134,13 @@ acme/old: unread: the repository is gone (404): `fugaro project repos rm github/
 The hint only moves the hinted repository's line to the top of each stage, in human output.
 `--json` and `--events` never move with it: repositories are sorted by canonical name. A stage
 event's `detail` is a summary that is the same from every directory (for example "3 repositories:
-1 done, 1 needs you, 1 unread"). The per-repository lines go in a new member, `repos`, a list of
-`{repo, state, detail}` (`setup_events.go`). This is an addition, so no version bump.
+1 done, 1 needs you, 1 unread"). A stage with one thing of its own to say about a step it did not
+run — the checkout's cloud half, skipped for every repository it read — adds that sentence after
+the summary, in one line: "1 repository: 1 unread; skipped here: acme/app: cloud (a coding agent's
+session never applies cloud changes)". The summary counts how the repositories were left and never
+names the step that was dropped for one of them. The per-repository lines go in a new member,
+`repos`, a list of `{repo, state, detail}` (`setup_events.go`). This is an addition, so no version
+bump.
 
 ## Interactions
 

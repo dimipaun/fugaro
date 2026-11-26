@@ -514,6 +514,16 @@ func (l *loop) reposOf(s Stage, r StageResult) StageResult {
 		// stage, and what the account prints under the cross — and the lines,
 		// which the result still carries beside it, do not replace it (U13).
 		r.Detail = repoSummary(r.Repos)
+		if n, ok := s.(StageNote); ok {
+			// The stage's own line about the step it did not run here, after the
+			// lines' summary: the summary counts how the repositories were left
+			// and never says which step was dropped for one of them, and a stage
+			// that dropped a step for every repository of the project would
+			// otherwise report it nowhere at all.
+			if note := oneLine(l.redact(n.Note())); note != "" {
+				r.Detail += "; " + note
+			}
+		}
 	}
 	return r
 }
