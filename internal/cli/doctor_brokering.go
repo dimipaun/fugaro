@@ -27,7 +27,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
-	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -1501,12 +1500,7 @@ func doctorModelKeyInAgent(lc *localcfg.Config, rf *resolvedFile, repo string) *
 	default:
 		return nil
 	}
-	// C1's reading of the local config's mode (AB3, D3009): an unset mode, or
-	// one a hand edit left as the old word, is observe, which is the mode the
-	// switch below admits — so no branch of this check has a mode that is
-	// neither of the two any more.
-	mode := policy.Mode(lc.BudgetMode()).Effective()
-	if runner.GatewayOn(auth, mode) {
+	if runner.GatewayOn(auth) {
 		return nil
 	}
 	// The bundle entries this auth's runs are served under, in the bundle's own

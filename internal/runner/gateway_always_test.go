@@ -19,10 +19,10 @@ import (
 )
 
 // allModes is every string a job's FUGARO_BUDGET_MODE can carry into a run:
-// the two the vocabulary keeps, unset, and the word that used to be a mode and
-// is read as observe until C1's constant goes (AB2). A test that varies the
-// mode sweeps this.
-var allModes = []string{"", string(policy.ModeOff), policy.ModeObserve, policy.ModeEnforce}
+// the two the vocabulary keeps, unset, and the word that used to be a mode,
+// which the vocabulary reads as observe and no constant names any more (I1,
+// D3009). A test that varies the mode sweeps this.
+var allModes = []string{"", "off", policy.ModeObserve, policy.ModeEnforce}
 
 // TestTheGatewayNoLongerReadsTheMode (AB1b, D3009, F15): there is always a
 // budget, so whether a run has a gateway is a fact about its credential and
@@ -41,20 +41,19 @@ var allModes = []string{"", string(policy.ModeOff), policy.ModeObserve, policy.M
 // harness's own runs — and every job of an installation whose mode is unset —
 // keyless and gateway-less again.
 func TestTheGatewayNoLongerReadsTheMode(t *testing.T) {
+	// The predicate itself is the credential's, and I1 dropped the mode it used
+	// to be asked with (AB1b, D3009): there is no argument left for a run's own
+	// mode to be ignored through.
 	for _, auth := range []string{"api-key", "vertex", config.AuthCascade} {
-		for _, mode := range allModes {
-			if !runner.GatewayOn(auth, mode) {
-				t.Errorf("GatewayOn(%q, %q) = false: the mode is not a fact of the gateway any more (D3009)", auth, mode)
-			}
+		if !runner.GatewayOn(auth) {
+			t.Errorf("GatewayOn(%q) = false: the mode is not a fact of the gateway any more (D3009)", auth)
 		}
 	}
 	// The credential's own arm is untouched: a credential the gateway cannot
 	// carry has no gateway in any mode, which is what keeps an oauth run the
 	// one that reaches Anthropic with a token of its own (D3026, R12).
-	for _, mode := range allModes {
-		if runner.GatewayOn("oauth", mode) {
-			t.Errorf("GatewayOn(%q, %q) = true: oauth is not a credential the gateway carries", "oauth", mode)
-		}
+	if runner.GatewayOn("oauth") {
+		t.Errorf("GatewayOn(%q) = true: oauth is not a credential the gateway carries", "oauth")
 	}
 	for _, mode := range allModes {
 		// An enforcing run without a cap halts at bootstrap (HaltNoCap), which

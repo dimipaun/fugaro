@@ -57,7 +57,7 @@ func TestValidateAcceptsCascade(t *testing.T) {
 	}
 }
 
-// TestCascadeRefusedWithBudgetOff is the gateway rule a cascade workflow is
+// TestCascadeRefusedWith"off" is the gateway rule a cascade workflow is
 // held to: its calls are made by the gateway, so the mode the run has to be one
 // this release accounts under, and a word that is not is refused, naming what
 // it read. observe and enforce both pass: the cascade needs the gateway to be
@@ -85,8 +85,8 @@ func TestValidateAcceptsCascade(t *testing.T) {
 // refuse.
 func TestCascadeRefusedWithBudgetOff(t *testing.T) {
 	a := Agent{Auth: AuthCascade}
-	got := problemsText(CheckCascadeGateway(a, BudgetOff))
-	if !strings.Contains(got, "agent.auth") || !strings.Contains(got, BudgetOff) {
+	got := problemsText(CheckCascadeGateway(a, "off"))
+	if !strings.Contains(got, "agent.auth") || !strings.Contains(got, "off") {
 		t.Errorf("the removed word was not refused at the key that carries it: %s", got)
 	}
 	if !strings.Contains(got, policy.ModeOffRefusal) {
