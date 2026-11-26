@@ -2056,7 +2056,7 @@ var runAccountGrants = setOf(
 	// role and no actAs or token minting — to an account THIS module creates,
 	// and its target is the service and not the runs bucket. The service's own
 	// class check is what decides what the account is served (B5.1, G21).
-	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.job.credentials_service.name | google_service_account.job.member | for_each= | perms=`,
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=local.credentials_grant.name | google_service_account.job.member | for_each= | perms=`,
 	// Reviewed for CSR14 (the verifier account, D1068): the account's whole
 	// reach, and it is these two rows. The first is the job's row above again —
 	// the same role on the same service, to an account THIS module creates on

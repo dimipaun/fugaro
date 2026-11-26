@@ -3149,6 +3149,10 @@ func TestProfilesKeepTheirOwnReviewVariants(t *testing.T) {
 		if got, want := j.Env[providers.EnvCredentialsServiceURL], "https://fugaro-credentials-123456789012.us-east5.run.app"; got != want {
 			t.Errorf("%s carries %s = %q, want %q", name, providers.EnvCredentialsServiceURL, got, want)
 		}
+		if j.CredentialsServiceGrant == nil {
+			t.Errorf("%s carries no invoker grant on the credentials service, which its token fetch needs", name)
+		}
+		j.CredentialsServiceGrant = nil
 		delete(b.Env, providers.EnvCredentialsServiceURL)
 		delete(j.Env, providers.EnvCredentialsServiceURL)
 		if !reflect.DeepEqual(b, j) {
@@ -3388,6 +3392,22 @@ func TestAddReviewVariantRefusesACollision(t *testing.T) {
 		}
 		if len(out) != 0 {
 			t.Errorf("the review set moved on a refused add: %v", sortedJobNames(out))
+		}
+	}
+}
+
+func TestSharedBitbucketJobsAreGrantedTheServiceWithTheSwitchOff(t *testing.T) {
+	lc := m4LocalConfig + projectJobRepoLC + m5Additions + projectProfilesLCBlock + credentialsServiceLCBlock
+	jobs := projectJobsFor(t, lc)
+	if len(jobs) == 0 {
+		t.Fatal("no shared job derived")
+	}
+	for name, j := range jobs {
+		if j.CredentialsService != nil {
+			t.Fatalf("%s is served with no repository switched on", name)
+		}
+		if got, want := j.CredentialsServiceGrant != nil, j.Provider != githubProvider; got != want {
+			t.Errorf("%s (%s): invoker grant = %v, want %v", name, j.Provider, got, want)
 		}
 	}
 }
