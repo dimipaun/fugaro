@@ -2256,217 +2256,14 @@ func TestDoctorBrokeringSecretRotationAge(t *testing.T) {
 	})
 }
 
-// TestDoctorBrokeringModelKeyInAgent: the reading an owner asked for — which
-// model credential a workflow's agent holds in its own environment. It is
-// information, never a failure (running without the budget is a legitimate
-// choice), and it is silent whenever something holds the credential away from
-// the agent: the budget gateway for an api-key run, and the credentials service
-// for the auths the switch admits, which for an api-key repository is the same
-// budget mode the gateway is asked about (CredentialsServiceServes) and for an
-// oauth one the switch alone.
-func TestDoctorBrokeringModelKeyInAgent(t *testing.T) {
-	newRig := func(t *testing.T, auth string, withService bool) *doctorRig {
-		t.Helper()
-		r := newDoctorRig(t)
-		yaml := strings.Replace(cliMinimalYAML, "workflows:", "agent: { auth: "+auth+" }\nworkflows:", 1)
-		dir := checkoutWith(t, map[string]string{"fugaro.yaml": yaml})
-		testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
-		if withService {
-			addLocalLines(t, r, "credentials_service: { url: https://fugaro-credentials-abc-uc.a.run.app }\n")
-		}
-		return r
-	}
-	check := func(t *testing.T, r *doctorRig) []doctorCheck {
-		t.Helper()
-		out, _, _ := execute(t, "doctor", "--json")
-		var o doctorOutput
-		if err := json.Unmarshal([]byte(out), &o); err != nil {
-			t.Fatalf("json: %v\n%s", err, out)
-		}
-		return checksByID(o, "model-key-in-agent")
-	}
-
-	// An api-key repository is no finding whatever the mode says — a budget
-	// block or none: every run of it has a gateway now (AB1b, D3009), and the
-	// gateway is what holds the key out of the agent's own environment. The
-	// state this subtest used to be — an api-key repository with no mode named,
-	// read as the key's being in the agent's reach — is not a state any run is
-	// in any more.
-	t.Run("api-key, no service", func(t *testing.T) {
-		if cs := check(t, newRig(t, "api-key", false)); len(cs) != 0 {
-			t.Errorf("model-key-in-agent = %+v, want none: the gateway holds the key", cs)
-		}
-	})
-
-	t.Run("oauth, no service", func(t *testing.T) {
-		cs := check(t, newRig(t, "oauth", false))
-		if len(cs) != 1 || cs[0].OK || cs[0].Severity != "info" {
-			t.Fatalf("model-key-in-agent = %+v, want one informational line", cs)
-		}
-		if !strings.Contains(cs[0].Problem, config.ReservedSecrets[config.ClaudeOAuthToken]) {
-			t.Errorf("the line does not name the variable: %q", cs[0].Problem)
-		}
-	})
-
-	// The service's half is the switch's own predicate, so what makes this
-	// silent is the state a switched run is in — a budget mode the gateway
-	// exists in, a service deployed, and the record `fugaro update --repo`
-	// leaves when it applies a root with the switch on — and not the
-	// credentials_service block alone. oauth is where that shows on its own:
-	// the gateway never holds it (F30), so the switch is the only thing that
-	// can.
-	t.Run("the credentials service holds it", func(t *testing.T) {
-		r := newRig(t, "oauth", true)
-		addLocalLines(t, r, "budget: { mode: enforce, per_run_usd: 5 }\n")
-		addLocalLines(t, r, "repos:\n  acme/app: { provider: github, workflows: [app], credentials_service_ready: true }\n")
-		if cs := check(t, r); len(cs) != 0 {
-			t.Errorf("a repository whose root was applied with the switch on got %+v", cs)
-		}
-	})
-
-	t.Run("vertex carries none", func(t *testing.T) {
-		if cs := check(t, newRig(t, "vertex", false)); len(cs) != 0 {
-			t.Errorf("an installation whose agent holds no key of its own got %+v", cs)
-		}
-	})
-
-	// The gateway is what decides this check, not auth on its own: with the
-	// budget on, the model credential is the gateway's and the agent's own
-	// environment carries none of it (runner.GatewayOn), so an api-key workflow
-	// is not a finding. The mutant this kills is the check that reads auth and
-	// forgets the gateway, which reports a key in the agent's reach for an
-	// installation that took the credential out of it.
-	t.Run("api-key with the budget on", func(t *testing.T) {
-		for _, mode := range []string{"observe", "enforce"} {
-			r := newRig(t, "api-key", false)
-			addLocalLines(t, r, "budget: { mode: "+mode+", per_run_usd: 5 }\n")
-			if cs := check(t, r); len(cs) != 0 {
-				t.Errorf("budget.mode %s: model-key-in-agent = %+v, want none: the gateway holds the key", mode, cs)
-			}
-		}
-	})
-}
-
-// modelKeyRig is a checkout of github.com/acme/app whose workflows run with
-// agent.auth auth, on an installation carrying the extra local lines — with the
-// credentials service block (service) or without it.
-func modelKeyRig(t *testing.T, auth string, service bool, local string) *doctorRig {
-	t.Helper()
-	r := newDoctorRig(t)
-	yaml := strings.Replace(cliMinimalYAML, "workflows:", "agent: { auth: "+auth+" }\nworkflows:", 1)
-	dir := checkoutWith(t, map[string]string{"fugaro.yaml": yaml})
-	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
-	if service {
-		addLocalLines(t, r, "credentials_service: { url: https://fugaro-credentials-abc-uc.a.run.app }\n")
-	}
-	if local != "" {
-		addLocalLines(t, r, local)
-	}
-	return r
-}
-
-// modelKeyCheck is doctor's model-key-in-agent finding on that rig, read from
-// --json as an owner reads it.
-func modelKeyCheck(t *testing.T, r *doctorRig) []doctorCheck {
-	t.Helper()
-	out, _, _ := execute(t, "doctor", "--json")
-	var o doctorOutput
-	if err := json.Unmarshal([]byte(out), &o); err != nil {
-		t.Fatalf("json: %v\n%s", err, out)
-	}
-	return checksByID(o, "model-key-in-agent")
-}
-
-// TestDoctorBrokeringNamesWhyAnOAuthRepoIsOffTheSwitch: an oauth repository is
-// the auth the gateway never holds (F30), so its line is the switch's answer
-// alone, and the switch is held off for it until the record `fugaro update
-// --repo` leaves says its root was applied with the credential its runs are
-// served under in the service's bundle (B2.3). The check names that state and
-// the bundle entries the switch waits for — in the bundle's own document
-// spelling, which is what `fugaro creds set` takes — and it never says the
-// bundle lacks them: doctor reads the bundle's document only behind
-// --check-bitbucket-token.
-func TestDoctorBrokeringNamesWhyAnOAuthRepoIsOffTheSwitch(t *testing.T) {
-	t.Run("the record says the root was applied with the switch off", func(t *testing.T) {
-		r := modelKeyRig(t, "oauth", true, "budget: { mode: enforce, per_run_usd: 5 }\n")
-		cs := modelKeyCheck(t, r)
-		if len(cs) != 1 || cs[0].OK || cs[0].Severity != "info" {
-			t.Fatalf("model-key-in-agent = %+v, want one informational line", cs)
-		}
-		if !strings.Contains(cs[0].Problem, "held off for this repository") {
-			t.Errorf("the line does not name the switch as the reason: %q", cs[0].Problem)
-		}
-		if !strings.Contains(cs[0].Problem, config.ClaudeOAuthToken) {
-			t.Errorf("the line does not name the entry the switch waits for: %q", cs[0].Problem)
-		}
-		if !strings.Contains(cs[0].Fix, "creds set "+config.ClaudeOAuthToken) {
-			t.Errorf("the fix does not name the command that fills the bundle: %q", cs[0].Fix)
-		}
-		// The gateway is not a route for this auth, and the fix must not offer
-		// it as one: an oauth run never starts a gateway (F30), so a line that
-		// said "turn the budget on" would send the operator to a switch that
-		// does nothing for this repository.
-		if strings.Contains(cs[0].Fix, "turn the budget on") || !strings.Contains(cs[0].Fix, "never starts one") {
-			t.Errorf("the fix offers the gateway for an oauth repository: %q", cs[0].Fix)
-		}
-		if checksFail(cs, true) {
-			t.Errorf("the line fails doctor under --strict: %+v", cs)
-		}
-	})
-
-	t.Run("no service to switch the repository onto", func(t *testing.T) {
-		r := modelKeyRig(t, "oauth", false, "budget: { mode: enforce, per_run_usd: 5 }\n")
-		cs := modelKeyCheck(t, r)
-		if len(cs) != 1 || cs[0].OK {
-			t.Fatalf("model-key-in-agent = %+v, want one informational line", cs)
-		}
-		if !strings.Contains(cs[0].Problem, "no credentials service") {
-			t.Errorf("the line does not name the missing service: %q", cs[0].Problem)
-		}
-	})
-}
-
-// TestDoctorBrokeringHoldsTheKeyForAnAPIKeyRepoInEveryMode: the mode was the
-// whole answer for an api-key repository, because the service is reached from
-// behind the gateway and the gateway existed in observe and enforce alone
-// (D2071) — so a repository whose record says its root was applied with the
-// switch on, on a project whose mode was off, was one where neither the gateway
-// nor the service held the key. The gateway carries this auth in every mode now
-// (AB1b, D3009), so the key is held whichever the mode says and whether or not
-// a mode is named at all: the state this test still names is the one where a
-// service happens to be deployed, which is not what holds the key, and the
-// line is silent there for the gateway's own reason.
-//
-// The mutant this kills is the check that reads the credentials service as the
-// gateway's replacement rather than as the thing behind it: it reports a
-// repository the switch holds off as one whose key is held away.
-func TestDoctorBrokeringHoldsTheKeyForAnAPIKeyRepoInEveryMode(t *testing.T) {
-	for _, local := range []string{
-		// No mode named, a mode on: the gateway holds the key either way.
-		"repos:\n  acme/app: { provider: github, workflows: [app], credentials_service_ready: true }\n",
-		"budget: { mode: enforce, per_run_usd: 5 }\nrepos:\n  acme/app: { provider: github, workflows: [app], credentials_service_ready: true }\n",
-	} {
-		r := modelKeyRig(t, "api-key", true, local)
-		if cs := modelKeyCheck(t, r); len(cs) != 0 {
-			t.Errorf("model-key-in-agent = %+v, want none: the gateway holds the key (local lines %q)", cs, local)
-		}
-	}
-	// The same rig with no service deployed: the gateway is still what holds
-	// it, so the line is silent there too.
-	if cs := modelKeyCheck(t, modelKeyRig(t, "api-key", false, "")); len(cs) != 0 {
-		t.Errorf("an installation with no service got %+v, want none", cs)
-	}
-}
-
 // TestDoctorBrokeringStatesOnTheOneScreen is item 1's classification read from
 // the checks' own emitters rather than from a fixture: every state of the six
 // secrets-brokering IDs is driven through the rig and then through the three
 // views. What each state is worth is decided by what the check emits — a
 // warning is an item of the default view, printed with the command that fixes
 // it; a measurement is printed by --all and counted by nothing; an information
-// line is counted in the pointer the default view ends with, which is where the
-// owner's ruling of 2026-10-31 puts model-key-in-agent — except the one the
-// ruling of 2026-11-01 puts in both, below.
+// line is counted in the pointer the default view ends with, and the owner's
+// ruling of 2026-11-01 kept one of them in the two views at once, below.
 func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 	wants := func(t *testing.T, got string, want ...string) {
 		t.Helper()
@@ -2678,45 +2475,6 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 			t.Errorf("--all does not name the job that still mounts the token")
 		}
 	})
-
-	// The owner's ruling, corrected on 2026-11-01: a model credential that
-	// reaches a workflow's agent is a counted security finding printed on the
-	// default screen. It is the one check that is both — the item carries the
-	// check's own fix, and the screen still ends with the count, because it is
-	// a security finding and the pointer is how the screen says the sweep has
-	// something. The installation that runs without the budget is a legitimate
-	// one, so neither the item nor the count fails doctor.
-	//
-	// The credential in that state is oauth's: an api-key run has a gateway in
-	// every mode now (AB1b, D3026), and the gateway is what holds its key out of
-	// the agent's environment, so no api-key repository is in this state any
-	// more — while an oauth run never starts a gateway (F30), and its token is
-	// in the agent's environment until the credentials service is in front of
-	// it. The state the subtest used to be, an api-key repository with no mode
-	// named, is asserted to be silent where the check's own tests are
-	// (TestDoctorBrokeringModelKeyInAgent).
-	t.Run("the model credential reaches the agent", func(t *testing.T) {
-		newDoctorRig(t)
-		dir := checkoutWith(t, map[string]string{"fugaro.yaml": strings.Replace(cliMinimalYAML,
-			"workflows:", "agent: { auth: oauth }\nworkflows:", 1)})
-		testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
-		out, _, _ := execute(t, "doctor", "--json")
-		var o doctorOutput
-		if err := json.Unmarshal([]byte(out), &o); err != nil {
-			t.Fatalf("json: %v\n%s", err, out)
-		}
-		cs := checksByID(o, "model-key-in-agent")
-		if len(cs) != 1 || cs[0].Class != doctorClassSecurity {
-			t.Fatalf("model-key-in-agent = %+v, want the printed and counted security finding", cs)
-		}
-		def := doctorDefaultOutput(t, o.Checks)
-		wants(t, def,
-			"info model-key-in-agent:", "update deploys it",
-			"an oauth run never starts one")
-		counted(t, def, "`fugaro doctor --security`")
-		wants(t, doctorSecurityOutput(t, o.Checks),
-			"model-key-in-agent", "an oauth run never starts one")
-	})
 }
 
 // TestDoctorBrokeringCleanInstallationIsOneLine: the same rule the owner's one
@@ -2749,7 +2507,7 @@ func TestDoctorBrokeringCleanInstallationIsOneLine(t *testing.T) {
 	for _, c := range o.Checks {
 		switch c.ID {
 		case "credentials-service-deployed", "secret-rotation-age", "bundle-bitbucket-token",
-			"bitbucket-token-valid", "bitbucket-direct", "model-key-in-agent":
+			"bitbucket-token-valid", "bitbucket-direct":
 			mine = append(mine, c)
 		}
 	}

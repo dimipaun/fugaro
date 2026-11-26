@@ -87,8 +87,9 @@ type EnvSpec struct {
 	// environment of a repository the table does not serve: Auth's own arm, the
 	// token where the gateway does not serve the run (X1 deletes that branch).
 	//
-	// The runner sets it in the same task that gives the gateway the fact (CS6,
-	// one file, runner.go): until then a served run reaches here with Auth
+	// The runner passes it in its EnvSpec literal, from the same predicate the
+	// gateway's own options are built from (model-credentials-routing CS6,
+	// runner.go and gateway.go): a served run also reaches here with Auth
 	// already spelled cascade (the runner's servedAuth), which builds the same
 	// environment, and this field is the name the fact is passed under rather
 	// than a second path.

@@ -32,7 +32,7 @@ func TestDecideHandBackFollowUpIsReady(t *testing.T) {
 		{"no followup.md, only the pr.md a first run writes", implement("rename"), runner.ReasonNoHandBack},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h := followUpHarness(t, handBackFollowCfg(t, "pro"), nil, commitOnly("feature"), review("ship", 0))
+			h := followUpHarness(t, handBackFollowCfg(t, "pro"), func(h *harness) { h.noHandBack = true }, commitOnly("feature"), review("ship", 0))
 			h.comment(t, "alice", aliceID, "Please rename the helper to fooBar.")
 			h.followUp(t, followID, runID, "")
 			rec, err := h.run(t, tc.step, review("ship", 0))
@@ -64,6 +64,7 @@ func TestDecideHandBackIgnoresTheTaskText(t *testing.T) {
 		"## Morning note\n- what broke: the import stopped on a duplicate key\n"
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: brief, Rigor: rigor.Hotfix}
 	h := newHarness(t, firstLineCfg(t, 2, ""), spec)
+	h.noHandBack = true
 	rec, err := h.run(t, noAccount(implement("feature")), review("ship", 0))
 	if err != nil {
 		t.Fatal(err)

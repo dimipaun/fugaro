@@ -1071,6 +1071,14 @@ type initRun struct {
 	// place. False -- every other case, including every unmanaged project and
 	// every coding agent's session -- is the flow as it has always run.
 	retireAuto bool
+	// retireWholeRoot makes retirePlan's plan the destruction of the ROOT
+	// itself rather than the set difference of one configuration change (M2,
+	// D2303): every address the state holds goes, so the plan is a destroy
+	// plan (tf.PlanDestroy) and the registry's lifecycle.prevent_destroy is
+	// lifted from the workdir's copy of the module for that one plan and
+	// apply (infra.LiftRegistryPreventDestroy). It is set only by
+	// retireSharedRoot, which is the one caller that retires a root whole.
+	retireWholeRoot bool
 }
 
 // initResult is what --json prints.
@@ -5745,12 +5753,22 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// M7, D2312 as amended: a repository a deployed profile admits (the spec's
 	// Shared, M6's mark) runs on the project's shared jobs, so this run enrols
 	// it and applies no repository-level Terraform at all. The root is skipped
-	// whole — its workdir's plan, its state, its first image builds, its
-	// retirement and the flip's drop, which is judged on the applies that would
-	// take a mount away and there are none — while everything the project's
-	// records need is still written (enrolSharedRepo).
+	// whole — its workdir's plan, its first image builds and the flip's drop,
+	// which is judged on the applies that would take a mount away and there
+	// are none — while everything the project's records need is still written
+	// (enrolSharedRepo).
+	//
+	// M2, D2303: the root it had before the profile admitted it is retired
+	// here, after the enrolment, so that a retirement that is held back or
+	// declined costs the update nothing it came to do. retireSharedRoot reads
+	// the state itself, because no repository-level Terraform of this run has
+	// and the set is the state's whole contents rather than a difference
+	// between the state and the configuration.
 	if spec.Shared {
 		if err := r.enrolSharedRepo(ctx, lc, spec, cfg, path, old); err != nil {
+			return err
+		}
+		if err := r.retireSharedRoot(ctx, c, t, wd, lc, spec, inst.StateBucket, slug, rootOpts); err != nil {
 			return err
 		}
 		if !embedded {
@@ -7207,9 +7225,10 @@ func (r *initRun) forgetSharedRepo(ctx context.Context, lc *localcfg.Config, rep
 // container a name is read from is the project's whatever this repository's
 // own containers hold (update_workflowsecrets.go's D2313 half).
 //
-// Nothing of the repository root is reached: no plan, no state, no first image
-// build, no retirement, and no flip drop (there is no apply that could take a
-// mount away).
+// Nothing of the repository root is reached: no plan, no first image build and
+// no flip drop (there is no apply that could take a mount away). The root a
+// profile admitted the repository away from is retired by M2's own flow, which
+// repoEngine runs after this one (retireSharedRoot).
 func (r *initRun) enrolSharedRepo(ctx context.Context, lc *localcfg.Config, spec infra.RepoSpec, cfg *config.Config, path string, old []byte) error {
 	// M1's warning (D2313), once for the repository and not once per name: a
 	// repository declaring secrets: keeps its containers and mounts, and no run

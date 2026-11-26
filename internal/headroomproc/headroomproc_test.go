@@ -56,8 +56,13 @@ func runHelper(mode string) {
 		// the whole process group can end it.
 		signal.Ignore(syscall.SIGTERM)
 		if path := os.Getenv(pidFileEnv); path != "" {
-			if err := os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+			// Rename, so a reader never sees the file created but still empty.
+			tmp := path + ".tmp"
+			if err := os.WriteFile(tmp, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
 				helperFail("write pid file: %v", err)
+			}
+			if err := os.Rename(tmp, path); err != nil {
+				helperFail("publish pid file: %v", err)
 			}
 		}
 		select {}

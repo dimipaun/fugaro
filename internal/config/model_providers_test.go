@@ -440,6 +440,7 @@ func TestRepoCannotEnableARoute(t *testing.T) {
 	const pinned = `
 version: 1
 project: aurora
+gcp_project: aurora-fugaro
 git: { provider: github }
 agent:
   auth: api-key
@@ -461,9 +462,19 @@ workflows:
 			t.Errorf("fugaro.yaml accepted:\n%s", doc)
 		}
 	}
-	cfg, problems := Parse([]byte(pinned))
+	// The pin a run resolves is the project layer's from release A on (D3237,
+	// R2): the file above may write agent.models.* and no longer decides it,
+	// so the pin CheckProviderPolicy judges here is the layer's own.
+	layer, lps := ParseProjectLayer([]byte(routeLayer), LayerAnchor{Project: "aurora", GCPProject: "aurora-fugaro"})
+	if len(lps) > 0 {
+		t.Fatalf("layer problems: %v", lps)
+	}
+	cfg, _, problems := Resolve([]byte(pinned), layer)
 	if len(problems) > 0 {
-		t.Fatalf("a repository pinning the model was refused at parse time: %v", problems)
+		t.Fatalf("a project pinning the model was refused at resolve time: %v", problems)
+	}
+	if cfg.Agent.Models.Reviewer != "anthropic/claude-sonnet-5.5" {
+		t.Fatalf("agent.models.reviewer resolved to %q, want the layer's pin", cfg.Agent.Models.Reviewer)
 	}
 	ps := map[string]ModelProvider{"openrouter": okProvider()}
 	got := problemsText(CheckProviderPolicy(cfg.Agent, nil, "dimipaun/fugaro", ps, claimPrices(t, ps)))
@@ -471,6 +482,17 @@ workflows:
 		t.Errorf("the pin was not refused: %q", got)
 	}
 }
+
+// routeLayer is the project layer the fixtures above resolve over: a project
+// states the models its repositories run (D3237), and `pinned`'s own copy of
+// them is read and dropped (R2) — so the pin under test is this one.
+const routeLayer = `version: 1
+project: aurora
+gcp_project: aurora-fugaro
+defaults:
+  agent:
+    models: {coder: deepseek/deepseek-v4-flash, reviewer: anthropic/claude-sonnet-5.5}
+`
 
 // TestClaimedClaudeRouteKeepsEveryOtherRefusal pins the carried review item
 // the claim must not erode: a route that names a Claude ID grants passage

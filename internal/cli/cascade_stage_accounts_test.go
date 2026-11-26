@@ -62,7 +62,7 @@ const cascadeStageAccountsNote = "note: project stage accounts do not apply to a
 // which is the state Check 191 met.
 func TestValidateSkipsTheProjectStageAccountsOfACascadeRepository(t *testing.T) {
 	cascadeMixProject(t)
-	out, errOut, err := execute(t, "validate", writeConfig(t, cascadeCLI))
+	out, errOut, err := execute(t, "validate", pinnedFile(t, cascadeCLI))
 	if err != nil {
 		t.Fatalf("a cascade file under a project whose config names stage accounts: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
 	}
@@ -103,7 +103,7 @@ func TestValidateKeepsTheRefusalEveryOtherAuthOfTheProjectMeets(t *testing.T) {
 	cascadeStageAccountProject(t,
 		stageAccountAccountsYAML+"  acme-personal: { allow_data_to: [acme/other] }\n",
 		stagesBlock("review", "acme-overflow", "adversarial", "acme-personal"))
-	out, errOut, err := execute(t, "validate", writeConfig(t, cascadeCLI))
+	out, errOut, err := execute(t, "validate", pinnedFile(t, cascadeCLI))
 	if err != nil {
 		t.Fatalf("a cascade file is refused for the project's two stage accounts: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
 	}
@@ -128,7 +128,7 @@ func TestValidateKeepsTheRefusalEveryOtherAuthOfTheProjectMeets(t *testing.T) {
 func TestValidateRefusesARepositoryThatNamesItsOwnStageAccount(t *testing.T) {
 	cascadeMixProject(t)
 	file := cascadeCLI + "stages:\n  review:\n    claude_account: acme-overflow\n"
-	out, _, err := execute(t, "validate", writeConfig(t, file))
+	out, _, err := execute(t, "validate", pinnedFile(t, file))
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("a fugaro.yaml naming its own stage account: exit %d, want a user refusal\n%s", ExitCode(err), out)
 	}
