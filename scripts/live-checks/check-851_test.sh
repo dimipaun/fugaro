@@ -287,6 +287,21 @@ test_a_converged_pair_and_two_finished_runs_pass() {
   expect_contains "$out" "takes none of it" "the row names the rule it read"
 }
 
+test_a_real_run_does_not_report_the_plan_row_as_a_failure() {
+  fixtures_ok
+  CHECK851_TEST_ENV=(
+    CHECK851_WORKSPACE_UPDATE_LOG="$fx/ws-update.log"
+    CHECK851_MEMBER_UPDATE_LOG="$fx/member-update.log"
+    CHECK851_WORKSPACE_RUN=shrt
+    CHECK851_MEMBER_RUN=long
+  )
+  run_check
+  expect_status "$status" 0 "the converged pair passes, whatever the block says of the plan"
+  expect_contains "$out" "FACT dry-run: INFO" "a real run says the plan row is not one of its own"
+  expect_absent "$out" "FACT dry-run: FAIL" "and never brands it a row that broke"
+  expect_absent "$out" "not reached (the run stopped before this step)" "no row reads as one the run stopped before"
+}
+
 test_a_warning_on_the_member_with_the_switch_off_fails() {
   fixtures_ok
   doctor_json quiet "the personal half reached a member that never turned the switch on" >"$fx/doctor-quiet.json"
@@ -602,6 +617,7 @@ t() {
 t test_help
 t test_dry_run_measures_nothing
 t test_a_converged_pair_and_two_finished_runs_pass
+t test_a_real_run_does_not_report_the_plan_row_as_a_failure
 t test_a_warning_on_the_workspace_fails
 t test_a_warning_on_the_member_fails
 t test_a_doctor_that_refuses_with_no_check_is_unmeasured

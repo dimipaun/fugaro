@@ -27279,8 +27279,8 @@ are grepped, never restated.
   this row exists for.
 
 Its other rows are its own honesty about itself: the CLI version every row is read against, that this shell is not
-tracing, that `--dry-run` ran nothing, the list of acts **no script may take for you**, and the two rows that read
-the scratch directory back as gone.
+tracing, that `--dry-run` ran nothing (on a real run that row reads INFO and says the plan is the dry run's own),
+the list of acts **no script may take for you**, and the two rows that read the scratch directory back as gone.
 
 **What has to exist before it runs.** A workspace whose personal half is configured (WC13's §9: the workspace
 owner's `fugaro update` binds the roster its two grants, each member's admin turns the switch on and updates, and
@@ -27386,8 +27386,9 @@ step of it.**
   never asked for it.
 
 Its other rows are its own honesty about itself: the CLI version the two updates' logs are read against, that this
-shell is not tracing, that `--dry-run` ran nothing, the list of acts **no script may take for you**, and the two
-rows that read the scratch directory back as gone.
+shell is not tracing, that `--dry-run` ran nothing (on a real run that row reads INFO and says the plan is the dry
+run's own), the list of acts **no script may take for you**, and the two rows that read the scratch directory back
+as gone.
 
 **What has to exist before it runs.** Both sides **staged at the previous release** — the release before the one
 carrying the personal half, whether as an older installed CLI or a checkout at the previous tag — and then, before

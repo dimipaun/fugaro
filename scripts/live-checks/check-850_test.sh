@@ -250,14 +250,18 @@ PY
 
 now_iso() { python3 -c 'import datetime,sys;print((datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(seconds=int(sys.argv[1]))).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$1"; }
 
-NOW=$(now_iso 0)
-REMOVED_AT=$(now_iso 0)
-
 # fixtures_ok: a workspace that answers every row the way the release promises,
-# and one run per row that did.
+# and one run per row that did. The removal moment and the refusal line are two
+# readings of one instant (0s and 20s), and both are made here, with every case:
+# a moment captured once when this file started is a moment the fixture's own
+# line drifts away from as the file runs, so a loaded machine made the check
+# read its own correct refusal as outside the minute — a FAIL, and an exit 1
+# where the case expects the 2 an unmeasured row is.
 fixtures_ok() {
   rm -f "$fx/fail"
   : >"$fx/fail"
+  NOW=$(now_iso 0)
+  REMOVED_AT=$NOW
   policy_json "$fx/project.json" \
     "roles/viewer|user:someone@example.com|-" \
     "roles/secretmanager.secretAccessor|serviceAccount:$SA|$ACCESSOR_COND|$ACCESSOR_TITLE"
@@ -281,26 +285,31 @@ fixtures_ok() {
     "the slip's owner has left the workspace's roster (slip_owner_removed): the run halts and is served no other credential (D3146)"
 }
 
-all_options=(
-  CHECK850_WORKSPACE_PROJECT=$WORKSPACE
-  CHECK850_PERSON=$PERSON
-  CHECK850_PERSON_SUB=$SUB
-  CHECK850_CONTAINER=$CONTAINER
-  CHECK850_MEMBER_ONE_PROJECT=mem-one
-  CHECK850_MEMBER_ONE_RUN=$RID_ONE
-  CHECK850_MEMBER_TWO_PROJECT=mem-two
-  CHECK850_MEMBER_TWO_RUN=$RID_TWO
-  CHECK850_OTHER_PERSON=$OTHER_PERSON
-  CHECK850_OTHER_PROJECT=mem-one
-  CHECK850_OTHER_RUN=$RID_OTHER
-  CHECK850_OFF_PROJECT=mem-one
-  CHECK850_OFF_RUN=$RID_OFF
-  CHECK850_DELETED_PROJECT=mem-one
-  CHECK850_DELETED_RUN=$RID_DEL
-  CHECK850_REMOVED_PROJECT=mem-one
-  CHECK850_REMOVED_RUN=$RID_REM
-  CHECK850_REMOVED_AT=$REMOVED_AT
-)
+# all_options: the twelve knobs, rebuilt for each case and not once for the
+# file: CHECK850_REMOVED_AT is the moment the case's own fixture wrote, so a
+# case that runs late still hands the check the pair it built.
+all_options() {
+  OPTIONS=(
+    CHECK850_WORKSPACE_PROJECT=$WORKSPACE
+    CHECK850_PERSON=$PERSON
+    CHECK850_PERSON_SUB=$SUB
+    CHECK850_CONTAINER=$CONTAINER
+    CHECK850_MEMBER_ONE_PROJECT=mem-one
+    CHECK850_MEMBER_ONE_RUN=$RID_ONE
+    CHECK850_MEMBER_TWO_PROJECT=mem-two
+    CHECK850_MEMBER_TWO_RUN=$RID_TWO
+    CHECK850_OTHER_PERSON=$OTHER_PERSON
+    CHECK850_OTHER_PROJECT=mem-one
+    CHECK850_OTHER_RUN=$RID_OTHER
+    CHECK850_OFF_PROJECT=mem-one
+    CHECK850_OFF_RUN=$RID_OFF
+    CHECK850_DELETED_PROJECT=mem-one
+    CHECK850_DELETED_RUN=$RID_DEL
+    CHECK850_REMOVED_PROJECT=mem-one
+    CHECK850_REMOVED_RUN=$RID_REM
+    CHECK850_REMOVED_AT=$REMOVED_AT
+  )
+}
 
 run850() {
   status=0
@@ -313,7 +322,8 @@ run850() {
 }
 
 run_check() {
-  RUN850_ENV=("${all_options[@]}" ${CHECK850_TEST_ENV[@]+"${CHECK850_TEST_ENV[@]}"})
+  all_options
+  RUN850_ENV=("${OPTIONS[@]}" ${CHECK850_TEST_ENV[@]+"${CHECK850_TEST_ENV[@]}"})
   run850 "$@"
 }
 
@@ -623,6 +633,15 @@ test_an_unknown_argument_is_refused() {
   expect_contains "$err" "unknown argument: --nonsense" "the refusal names it"
 }
 
+test_a_real_run_does_not_report_the_plan_row_as_a_failure() {
+  fixtures_ok
+  run_check
+  expect_status "$status" 0 "the clean workspace passes, whatever the block says of the plan"
+  expect_contains "$out" "FACT dry-run: INFO" "a real run says the plan row is not one of its own"
+  expect_absent "$out" "FACT dry-run: FAIL" "and never brands it a row that broke"
+  expect_absent "$out" "not reached (the run stopped before this step)" "no row reads as one the run stopped before"
+}
+
 # Sharding, so a Go test could run these side by side: CHECK_TEST_SHARD="i/n"
 # runs every n-th test starting at i, CHECK850_TEST_ONLY=name runs that one.
 test_index=0
@@ -670,6 +689,7 @@ t test_the_installation_guard_refuses_another_project
 t test_an_agent_session_is_refused
 t test_a_grace_of_zero_is_refused
 t test_an_unknown_argument_is_refused
+t test_a_real_run_does_not_report_the_plan_row_as_a_failure
 
 if [ "$failures" -ne 0 ]; then
   echo "check-850_test.sh: $failures failure(s)" >&2

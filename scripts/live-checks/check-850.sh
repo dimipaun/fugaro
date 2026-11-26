@@ -992,6 +992,10 @@ main() {
     plan
     return 0
   fi
+  # The block carries a row per key, and `dry-run` is the plan's own: a real run
+  # says so here, because a key no step writes is printed as a FAIL the run
+  # stopped before — a row that broke, which is not what this is.
+  fact dry-run INFO "not measured: this run read the rows above, and the plan is what '--dry-run' prints instead of reading anything"
   if [ -z "$WORKSPACE_PROJECT" ]; then
     for k in person-container served-one served-two other-person switch-off token-deleted removed; do
       unmeasured "$k" "not read: CHECK850_WORKSPACE_PROJECT was not set, so the workspace's own project — where every container, policy and line of this check lives — was never named"

@@ -723,6 +723,10 @@ main() {
     plan
     return 0
   fi
+  # The block carries a row per key, and `dry-run` is the plan's own: a real run
+  # says so here, because a key no step writes is printed as a FAIL the run
+  # stopped before — a row that broke, which is not what this is.
+  fact dry-run INFO "not measured: this run read the rows above, and the plan is what '--dry-run' prints instead of reading anything"
   say "checking the two updates and the runs that were in flight across them"
   [ -n "$WORKSPACE_PROJECT" ] && step_converged workspace-converged "$WORKSPACE_PROJECT" "the workspace"
   step_converged member-converged "$MEMBER_PROJECT" "the member"
