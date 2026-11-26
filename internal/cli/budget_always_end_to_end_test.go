@@ -146,7 +146,7 @@ func TestUpdateLeavesARunStartedWithoutABudgetRunning(t *testing.T) {
 	r := offLocalConverge(t, offNode(), refreshYAML)
 	run := startRunInFlight(t, r)
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", repoPluginPinCheckID})
 
 	// The line R5 owes, printed while this machine's config still says the
 	// word: such a run holds its key already and finishes. And never a request

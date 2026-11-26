@@ -132,6 +132,14 @@ func (c *Config) Shared() *Config {
 	s.CredentialCascade = nil
 	s.ModelGrades = nil
 	s.NodeRemovals = nil
+	// The pause block is dropped with them and for the cascade's reason one
+	// step out: its three settings decide how long a run holds a job's time
+	// before it suspends and how long a chain may sit paused in total
+	// (D3184, D3187, D3190), so a launcher who could write them into the runs
+	// bucket's shared file would be changing every teammate's project to suit
+	// their own run. It travels to the policy node instead, which the runner
+	// and the credentials service read.
+	s.Pause = nil
 	s.ProjectSecrets = nil
 	s.WorkflowSecrets = nil
 	// BitbucketAPIRoots is the owner's policy as well, and it travels the same
@@ -272,6 +280,12 @@ func (c *Config) Shared() *Config {
 	// teammate's runs execute. ParseShared refuses the key besides, because a
 	// shared config carrying it was not written by the converge.
 	s.ImageMap = nil
+	// RepoImages is dropped here for ImageMap's reason, one member over: a map
+	// that names the image each repository runs is the same choice the catalog
+	// is, made per repository, so a launcher who could write it into the runs
+	// bucket's shared file would be choosing what code a teammate's runs
+	// execute.
+	s.RepoImages = nil
 	// BakeRepos is dropped here for the catalog's reason too: whether a
 	// repository is baked into its image is the owner's decision about every
 	// repository of the project, and a launcher who could write it into the
