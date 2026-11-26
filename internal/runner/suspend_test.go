@@ -59,14 +59,14 @@ func answeredStage(t *testing.T, handle func() *runner.RunHandle, reset time.Tim
 	}
 }
 
-// suspendingStage is a stage the pause answer ends, after the stage has done
-// what a stage does: the run's model call, served by the credentials service's
+// suspendingStage is a stage the pause answer ends, after inner has done what
+// the stage does: the run's model call, served by the credentials service's
 // stand-in, and a commit of its own, in a session of its own. So the pause has
 // all three things it acts on — work to push, a session to save, a lease to
 // release — and a run that suspended on an empty checkout could not tell them
-// apart.
-func suspendingStage(handle func() *runner.RunHandle, reset, resumeAt time.Time, statuses *[]int) step {
-	inner := calling(statuses, implement("feature"), call{sonnet, 4000})
+// apart. inner is the stage's own work: what it commits, what it leaves in the
+// tree, what it keeps out of the index.
+func suspendingStage(handle func() *runner.RunHandle, reset, resumeAt time.Time, inner step) step {
 	return withSession(func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		res, err := inner(t, ctx, req)
 		if err != nil {
@@ -306,7 +306,7 @@ func TestSuspendFollowsTheAnswer(t *testing.T) {
 		reset := time.Now().Add(3 * time.Minute)
 		resumeAt := reset.Add(30 * time.Minute)
 		var st []int
-		rec, err := b.run(t, suspendingStage(handle, reset, resumeAt, &st))
+		rec, err := b.run(t, suspendingStage(handle, reset, resumeAt, calling(&st, implement("feature"), call{sonnet, 4000})))
 		if err != nil {
 			t.Fatalf("a suspended run returned %v, want nil so the job exits 0", err)
 		}
@@ -362,7 +362,7 @@ func TestSuspendFollowsTheAnswer(t *testing.T) {
 		reset := time.Now().Add(3 * time.Minute)
 		resumeAt := reset.Add(30 * time.Minute)
 		var st []int
-		rec, err := b.run(t, suspendingStage(handle, reset, resumeAt, &st))
+		rec, err := b.run(t, suspendingStage(handle, reset, resumeAt, calling(&st, implement("feature"), call{sonnet, 4000})))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -499,7 +499,7 @@ func TestSuspendSavesBeforeItExits(t *testing.T) {
 		}
 	}
 	var st []int
-	rec, err := b.run(t, suspendingStage(handle, reset, resumeAt, &st))
+	rec, err := b.run(t, suspendingStage(handle, reset, resumeAt, calling(&st, implement("feature"), call{sonnet, 4000})))
 	if err != nil || rec.Status != runstore.StatusPaused {
 		t.Fatalf("rec = %+v, err = %v; want a suspended run", rec, err)
 	}
@@ -539,7 +539,7 @@ func TestSuspendReleasesTheLease(t *testing.T) {
 	reset := time.Now().Add(3 * time.Minute)
 	resumeAt := reset.Add(30 * time.Minute)
 	var st []int
-	rec, err := b.run(t, suspendingStage(handle, reset, resumeAt, &st))
+	rec, err := b.run(t, suspendingStage(handle, reset, resumeAt, calling(&st, implement("feature"), call{sonnet, 4000})))
 	if err != nil || rec.Status != runstore.StatusPaused {
 		t.Fatalf("rec = %+v, err = %v; want a suspended run", rec, err)
 	}
@@ -555,4 +555,140 @@ func TestSuspendReleasesTheLease(t *testing.T) {
 	if e := b.entry(); e != nil {
 		t.Errorf("the run's registry entry was left behind: %v", e)
 	}
+}
+
+// TestSuspendSavesTheWorkSession: a pause taken while a review stage runs names
+// the run's WORK session and never the reviewer's (D138). What a resume restores
+// is session/session.json, and it refuses a pause naming any other session
+// (prepareResume, R18) — so a pause that recorded the reviewer's would leave the
+// chain nothing to pick up, or worse, hand the resumed run the review of the work
+// as the work.
+func TestSuspendSavesTheWorkSession(t *testing.T) {
+	svc := &pauseService{}
+	b := pauseRun(t, svc)
+	handle := watchRun(t)
+	runner.SetCredsWait(t, noWait(t))
+	reset := time.Now().Add(3 * time.Minute)
+	resumeAt := reset.Add(30 * time.Minute)
+
+	var work string
+	impl := withSession(func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		work = req.SessionID
+		return implement("feature")(t, ctx, req)
+	}, "", pauseSessionBody)
+	// The reviewer's session, as agentLoop hands a review stage a fresh ID of
+	// its own: a real one, so nothing here rests on it being unusable.
+	const reviewer = "3f1a2b4c-5d6e-4f70-8192-a3b4c5d6e7f8"
+	rev := withSession(answeredStage(t, handle, reset, gateway.ActionPause, resumeAt), reviewer, pauseSessionBody)
+
+	rec, err := b.run(t, impl, rev)
+	if err != nil || rec.Status != runstore.StatusPaused {
+		t.Fatalf("rec = %+v, err = %v; want a suspended run", rec, err)
+	}
+	if !agent.ValidSessionID(work) || work == reviewer {
+		t.Fatalf("the work session is %q and the reviewer's is %q; want two sessions of their own", work, reviewer)
+	}
+	p, err := b.store.ReadPause(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Stage != "review" {
+		t.Errorf("the pause records stage %q; want the stage it suspended in", p.Stage)
+	}
+	if p.Session != work {
+		t.Errorf("the pause names session %q; the work session is %q and the reviewer's %q, and a resume restores the work alone",
+			p.Session, work, reviewer)
+	}
+	if m, _, err := b.store.ReadSession(context.Background()); err != nil || m.ID != p.Session {
+		t.Errorf("the session the pause names is not the one a resume would restore: %+v, %v", m, err)
+	}
+}
+
+// TestSuspendKeepsWhatTheAgentLeftUncommitted: the checkpoint carries the work
+// the agent left in the tree beside what it committed. A resume checks out a
+// commit and a session and nothing else (D3185), so work neither carries dies
+// with the container — and an interrupted stage is exactly where uncommitted
+// work is likeliest, the agent not having got to committing it.
+func TestSuspendKeepsWhatTheAgentLeftUncommitted(t *testing.T) {
+	svc := &pauseService{}
+	b := pauseRun(t, svc)
+	handle := watchRun(t)
+	runner.SetCredsWait(t, noWait(t))
+	reset := time.Now().Add(3 * time.Minute)
+	resumeAt := reset.Add(30 * time.Minute)
+	var st []int
+	inner := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		res, err := calling(&st, implement("feature"), call{sonnet, 4000})(t, ctx, req)
+		// What the stage had not committed when the credential ran out: the
+		// file is in the tree and in no commit.
+		shell(t, req, "echo half a file > half.txt")
+		return res, err
+	}
+	rec, err := b.run(t, suspendingStage(handle, reset, resumeAt, inner))
+	if err != nil || rec.Status != runstore.StatusPaused {
+		t.Fatalf("rec = %+v, err = %v; want a suspended run", rec, err)
+	}
+	p, err := b.store.ReadPause(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// On the remote, which is where a resume cuts its checkout from.
+	files := testutil.Git(t, b.harness.remote, "show", "--name-only", "--format=", p.Checkpoint)
+	if !strings.Contains(files, "half.txt") {
+		t.Errorf("the checkpoint %s the pause pushed does not carry the work the agent left uncommitted: %s", p.Checkpoint[:7], files)
+	}
+	const leftover = "fugaro: uncommitted work at pause"
+	if msg := strings.TrimSpace(testutil.Git(t, b.harness.remote, "log", "-1", "--format=%s", p.Checkpoint)); msg != leftover {
+		t.Errorf("the checkpoint's commit says %q, want %q", msg, leftover)
+	}
+}
+
+// TestSuspendRefusesACommitHoldingASecret: the pause's push carries work the
+// agent left behind, so it passes the run's own scan for the values it redacts
+// before it pushes (checkpointClean, as the poll's pushes do). A range that does
+// not clear the scan is not pushed at all, and the run does not end `paused`: it
+// ends as a credential-starved one, with neither the commits holding the value
+// nor the value itself reaching the branch or the record.
+func TestSuspendRefusesACommitHoldingASecret(t *testing.T) {
+	svc := &pauseService{}
+	b := pauseRun(t, svc)
+	const leaked = "pause-leaked-secret-value"
+	// A job's own secret, registered through the environment variable that
+	// names the job's secret envs (SecretEnvsVar), as the checkpoint poller's
+	// own case registers one.
+	b.harness.deps.Env = append(b.harness.deps.Env, "PAUSE_LEAK="+leaked, runner.SecretEnvsVar+"=PAUSE_LEAK")
+	handle := watchRun(t)
+	runner.SetCredsWait(t, noWait(t))
+	reset := time.Now().Add(3 * time.Minute)
+	resumeAt := reset.Add(30 * time.Minute)
+	var st []int
+	inner := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo "+leaked+" > leak.txt && git add -A && git commit -qm leak")
+		return calling(&st, implement("feature"), call{sonnet, 4000})(t, ctx, req)
+	}
+	rec, err := b.run(t, suspendingStage(handle, reset, resumeAt, inner))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Halt == nil ||
+		rec.Halt.Reason != runstore.HaltNoCredential || rec.Halt.Scope != "run" {
+		t.Fatalf("the run ended %s/%s with halt %+v; want one whose credential ran out", rec.Status, rec.Outcome, rec.Halt)
+	}
+	if !strings.Contains(rec.Halt.Detail, "scan") {
+		t.Errorf("the halt does not name the scan that stopped the pause: %q", rec.Halt.Detail)
+	}
+	if strings.Contains(rec.Reason+rec.Halt.Detail, leaked) {
+		t.Error("the run's own words carry the value it redacts")
+	}
+	if n := len(svc.asked()); n != 0 {
+		t.Errorf("%d /pause calls; a run that could not push its work was not suspended", n)
+	}
+	if _, err := b.store.ReadPause(context.Background()); err == nil {
+		t.Error("the pause nothing took wrote pause.json: a resume would check out work the run refused to publish")
+	}
+	// What the branch carries is not this test's question: the run halts, and a
+	// halted run's finalize publishes the work it stopped on — its own path,
+	// with its own guards — where the pause's push is the one the scan exists
+	// for. What is asserted here is that the pause did not take: no ask, no
+	// record, and a halt that names the scan.
 }
