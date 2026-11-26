@@ -103,6 +103,14 @@ type initOptions struct {
 	// `fugaro upgrade` that was not a converge at all.
 	checkOnly bool
 
+	// repoHint is the repository this run's working directory is a checkout of
+	// ("" when it is not one, or when the door never looked): the hint the
+	// human output orders a stage's per-repository lines by, and nothing else
+	// (spec §Output, hintFirst). It is read once, where the run's selection
+	// already read this checkout, and no stage reads a working directory for
+	// it (R10).
+	repoHint string
+
 	// planning is whether this run plans an installation, which is what makes a
 	// --region that is not the installation's own a refusal (LP8, D3088 as
 	// amended). Only the runs that plan set it: repoEngine, which is
@@ -688,6 +696,20 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	return cmd
 }
 
+// runStages runs the stage loop with the options a caller built, with the loop
+// marked as running while it does: a stage reports its per-repository lines
+// through the same entry point a step does, and this is what tells the two
+// apart (reportRepos). Every loop this run drives goes through here — the
+// converge, the wizard's questions, `apply`, `project enroll`, the accounts
+// and the after-write door — so a stage's lines are a stage's wherever they
+// were reported from.
+func (r *initRun) runStages(ctx context.Context, stages []initflow.Stage, o initflow.Options) (*initflow.Result, error) {
+	prev := r.inStages
+	r.inStages = true
+	defer func() { r.inStages = prev }()
+	return initflow.Run(ctx, stages, o)
+}
+
 // initRun is one run of the converge, whichever front door it is (task
 // W2.1: the verb it used to name was `init`, which is a tombstone now).
 type initRun struct {
@@ -731,6 +753,13 @@ type initRun struct {
 	// (refreshOptions.detail) writes its lines where that converge keeps its
 	// own, instead of onto a screen that run has already accounted for (§9.2).
 	detail io.Writer
+	// inStages is whether the stage loop is running: a stage reports its
+	// per-repository lines while it does and a step after the loop reports
+	// them outside it, and only a step's are the run's notices
+	// (reportRepos, runStages). It is the run's and not the engine's because
+	// the wizard's questions are a loop of their own, asked before there is an
+	// engine to drive them (gatherInputs).
+	inStages bool
 	// cover is the run's own cover (initEngine.cover), set by the one door that
 	// has no review screen: `fugaro apply` converges the installation as it is
 	// and asks nothing, so its steps' plans are judged by the cover the review
@@ -772,6 +801,11 @@ type initRun struct {
 	events      *setupEvents
 	anchorNoted bool // update --repo's pointer at --anchor has been said
 	ideNoted    bool // the IDE-terminal notice has been said, once per run
+	// repoNotices is the lines the run's steps after the stage loop reported
+	// (update_repos.go's reportRepos, read off the engine's memo), and nil on a
+	// run that has no engine — a refusal, --check, an anchor run — which
+	// reported none. collectNotices is what reads it.
+	repoNotices func() []initflow.Notice
 	// enrolmentNote is what the repo engine did for a repository a deployed
 	// profile admits, in one line (M7): the engine prints it where there is no
 	// stage of its own to carry it (the update --repo door), and the converge's
@@ -1060,6 +1094,11 @@ type initResult struct {
 	// stage's state, and what only the user can do.
 	Stages     []initflow.StageResult `json:"stages,omitempty"`
 	LeftForYou []initflow.Left        `json:"left_for_you"`
+	// Notices are the lines the run reported outside its stages: the steps
+	// after the stage loop, and the admit patterns the reader could not expand
+	// into names (R12, R19). It is the additive member U13 adds, and the event
+	// feed carries the same lines as `notice` events.
+	Notices []initflow.Notice `json:"notices,omitempty"`
 	// Failed is the stage the converge stopped at, with the one-line fix;
 	// Note says why a run only planned.
 	Failed *initflow.Failure `json:"failed,omitempty"`
@@ -1428,6 +1467,10 @@ func runInit(r *initRun) error {
 	}
 
 	e := &initEngine{r: r, lc: lc, spec: spec, path: path, old: old}
+	// The lines the steps after the stage loop report are the engine's memo's
+	// (update_repos.go), and the result reads them where it is printed
+	// (collectNotices): this is where the run is handed the way to.
+	r.repoNotices = e.notices
 	if !o.forget && !o.configOnly {
 		// The default and --firebase-project modes: the converge loop over the
 		// engines (init_stages.go), whose own outcome records the creation
@@ -2400,6 +2443,13 @@ func loadInitConfig(ctx context.Context, o *initOptions) (lc *localcfg.Config, p
 	co, err := checkoutProject(ctx, "")
 	if err != nil {
 		return nil, "", nil, err
+	}
+	if co != nil {
+		// The hint, read here where the selection already read this checkout
+		// and not by a stage (R10).
+		if oi, ok := readOrigin(ctx, co.Root); ok {
+			o.repoHint = oi.Repo
+		}
 	}
 	sel, lc, err := selectNamed(o.cloud, co, true, o.name)
 	if err != nil {
@@ -5067,10 +5117,29 @@ func forgetDeletesLogBucket(p *tf.Plan) bool {
 	return false
 }
 
+// collectNotices is the lines the run's steps after the stage loop reported,
+// locked into the result (initflow.Notice, R12, R19): the engine's memo holds
+// them and this is where the document and the feed read it. A run with no
+// engine, or one that reported none, is the result as it stands.
+func (r *initRun) collectNotices() {
+	if r.repoNotices == nil {
+		return
+	}
+	r.res.Notices = r.repoNotices()
+}
+
+// printResult is the --json document, or nothing when the run asked for the
+// event feed instead.
 func (r *initRun) printResult() error {
 	if !r.o.asJSON {
 		return nil
 	}
+	// The lines the steps after the loop reported (update_repos.go): the memo
+	// they were recorded in is the engine's, and this is the one place both
+	// answers read it — the document below, and the feed the door writes when
+	// the command ends (setup_events.go) — so the two cannot come to say
+	// different things.
+	r.collectNotices()
 	if r.events != nil {
 		// --events replaced the document with the feed (setup_events.go): this
 		// run's account is the lines already written, and its last one is
