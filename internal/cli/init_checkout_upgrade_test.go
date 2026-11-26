@@ -657,7 +657,7 @@ func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
 			t.Errorf("the second run's plan holds a %s step, and a checkout has no local step any more:\n%s", gone, out2)
 		}
 	}
-	if !strings.Contains(out2.String(), "skipped here: acme/app: cloud") {
+	if !strings.Contains(out2.String(), "acme/app: needs you: a coding agent's session") {
 		t.Errorf("the second run no longer says which step it leaves:\n%s", out2)
 	}
 	// The plan view's row is one clause (report.Brief) and the reason is whole
@@ -879,7 +879,7 @@ func TestUpdateLeavesAnotherProjectsCheckoutAlone(t *testing.T) {
 	}
 	// The cloud half is the line this stage still prints; the wiring half is not
 	// written at all, and the install half is the plugin stage's own step line.
-	if !strings.Contains(out.String(), "skipped here: acme/app: cloud (its fugaro.yaml names another project (or none), not aurora") {
+	if !strings.Contains(out.String(), "acme/app: skipped: its fugaro.yaml names another project (or none), not aurora") {
 		t.Errorf("the cloud step was not skipped by name:\n%s", out)
 	}
 	if len(f.Changes(t)) == 0 {

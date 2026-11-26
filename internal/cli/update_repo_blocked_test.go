@@ -149,7 +149,7 @@ func TestUpdateDoesNotBuildFromACheckoutFileTheRunDidNotOnboard(t *testing.T) {
 	// images are that repository's, and a build from a config no cloud run of
 	// the project reads is the half the tolerance is not for. The line names
 	// the repository the step was dropped for (U4).
-	if row := rows[initflow.Checkout].line; !strings.Contains(row, "skipped here: acme/app: cloud") {
+	if row := rows[initflow.Checkout].line; !strings.Contains(row, "1 skipped") || !strings.Contains(out, "acme/app: needs you: ") {
 		t.Errorf("the checkout stage's line is %q, want the cloud step dropped for a repository the repository stage did not onboard\n%s", row, out)
 	}
 	if n := len(r.builder.specs); n != 0 {
