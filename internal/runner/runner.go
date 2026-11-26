@@ -205,6 +205,14 @@ type run struct {
 	// gateSteps are the recipe's leading check steps (gate.go), run before
 	// implement; nil for a recipe with none.
 	gateSteps []recipe.Step
+	// gateHandBack is the account the check gate wrote for a first run whose
+	// autofix took implement's place, as a reader of the file gets it back,
+	// and gateHandBackSHA the commit it was written on. Both are "" for every
+	// other run. refreshGateHandBack rewrites from them at finalize, where the
+	// account written before the review loop is stale whenever a fix round
+	// committed on top of the autofix (handback_part.go, LV5.1).
+	gateHandBack    string
+	gateHandBackSHA string
 	// digest is whether the resolved recipe's first step is the digest step
 	// (recipe.UsesDigest, T3.1): a report run, whose first step the runner
 	// executes itself -- the reports it writes are its own work, with no
@@ -6911,6 +6919,12 @@ func (r *run) finalize(ctx context.Context) error {
 	r.recordOwnerDecisions(halt)
 	pol := r.findingsPolicy()
 	decidedRound := r.decidingReview()
+	// The check gate's own account is refreshed before it is read: the commits
+	// are all made by now, and a fix round's (or the leftover commit's) landed
+	// on top of the autofix it was written on (LV5.1).
+	if err := r.refreshGateHandBack(ctx); err != nil {
+		r.d.Log.Warn("refreshing the check gate's hand-back failed; the account stays as the gate wrote it", "err", r.redact(err.Error()))
+	}
 	// What the level promised the reader and what the agent handed back, read
 	// here so readiness reads the agent's own file rather than a second parse
 	// of it (LV5.1).

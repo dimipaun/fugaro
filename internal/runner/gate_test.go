@@ -232,6 +232,53 @@ func TestLintAutofixHandBackCarriesTheSectionsTheLevelNeeds(t *testing.T) {
 	}
 }
 
+// TestLintAutofixHandBackCoversAFixRoundsCommit: the gate writes its account
+// before the review loop, and the loop's fix rounds commit on top of the
+// autofix. Readiness takes the file either way — it is there and it carries the
+// level's sections — so what the run publishes would call the autofix the whole
+// of the change and hand back a revert plan that leaves the fixer's commit on
+// the branch. The account is rewritten at finalize, where every commit is made.
+//
+// Mutation: drop the refresh at finalize, and the published revert plan names
+// the autofix commit alone, so following it leaves the fix round's commit.
+func TestLintAutofixHandBackCoversAFixRoundsCommit(t *testing.T) {
+	cfg := gateCfg(t, "lint-fix", 2, "true", "test -f fixed", "touch fixed")
+	h := newHarnessFiles(t, cfg, nil, gateFiles("lint-fix", lintFixRecipe))
+	h.noHandBack = true
+	rec, err := h.run(t, review("changes", 1), fixTrackedFile, review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Gate != "fixed" || rec.Outcome != runstore.OutcomeReady || rec.Reason != "" {
+		t.Fatalf("record = gate %q outcome %s (reason %q), want the fixed gate's ready", rec.Gate, rec.Outcome, rec.Reason)
+	}
+	if len(rec.HeadSHA) < 7 {
+		t.Fatalf("the run published no head: %q", rec.HeadSHA)
+	}
+	head := rec.HeadSHA[:7]
+	body := onlyPR(t, h.provider).Body
+	plan := lineWithPrefix(t, body, "- revert every commit the run made")
+	if !strings.Contains(plan, ".."+head) {
+		t.Fatalf("the revert plan does not end at the fix round's commit %s, so reverting it leaves that commit on the branch:\n%s\n\n%s", head, plan, body)
+	}
+	if !strings.Contains(body, "the run committed more on top of it, up to `"+head+"`") {
+		t.Fatalf("the account still calls the autofix the whole of the run's work:\n%s", body)
+	}
+}
+
+// lineWithPrefix is the first line of the published account that opens with
+// prefix, which is how one entry under a section is rendered.
+func lineWithPrefix(t *testing.T, body, prefix string) string {
+	t.Helper()
+	for _, l := range strings.Split(body, "\n") {
+		if strings.HasPrefix(l, prefix) {
+			return l
+		}
+	}
+	t.Fatalf("the published account carries no %q line:\n%s", prefix, body)
+	return ""
+}
+
 // fixTrackedFile is a fix step for the Fixed-gate path: it modifies "fixed",
 // the file autofix already committed (so `git commit -am` has something
 // tracked to stage), rather than fixStep's "feature.txt", which only
