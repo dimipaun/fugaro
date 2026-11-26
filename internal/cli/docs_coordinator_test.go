@@ -1747,6 +1747,7 @@ const (
 	coordinatorMobilePlan        = "docs/mobile/implementation-plan.md"
 	coordinatorCredentialsReadme = "docs/credentials-service/README.md"
 	coordinatorRigorPlan         = "docs/rigor-modes/implementation-plan.md"
+	coordinatorRigorRecon        = "docs/rigor-modes/reconciliation.md"
 )
 
 // coordinatorChecksRowHead and coordinatorDecisionsRowHead are the first cells of the two rows
@@ -1809,6 +1810,12 @@ var coordinatorDecisionBlocks = []coordinatorNumberBlock{
 	{"D160–D179", coordinatorMobileReadme, "| **D160–D179** | **the functional spec v0.1**", "**D160–D179** the mobile functional spec"},
 	{"D180–D192", "docs/website/redesign/README.md", "**`D180`–`D192`**, the first", "**D180–D192** the website redesign, proposed"},
 	{"D79–D89", "docs/website/redesign/implementation-plan.md", "`D79`–`D89` is a deliberately unused gap", "**D79–D89** is **deliberately unused**"},
+	// The rigor-modes work's block, taken when the owner answered its item O7 with the one
+	// sequence on 2026-11-26. It is read from that work's reconciliation, where the answer is
+	// written and where the block's own label is, and not from the plan's T0.3: the plan names
+	// the block its 2026-10-20 base read (D221 onward), which docs/mobile-auth/ took two days
+	// later, so the plan's line is the stale reading and not the one this row is checked against.
+	{"D3380 onward", coordinatorRigorRecon, "**D3380 onward**", "| **D3380 onward** | **the rigor-modes work's**"},
 }
 
 // coordinatorCheckBlocks is the checks row: the register's own blocks, and the two documents
@@ -1861,6 +1868,7 @@ var coordinatorSectionCitationRE = regexp.MustCompile("`(?:([A-Za-z0-9_./-]+\\.m
 // out of a block and into the prose is a failure and not a silence.
 var coordinatorSectionProseCitations = map[string]string{
 	"docs/design/always-on-orchestrator.md": "the Check 110 row names the design claiming that number; the design is in open PR #632 and not on main",
+	"docs/image-map-by-provider/README.md":  "the D-block row reads this tree's highest decision number (D3379) from that work's reserved tail",
 }
 
 // coordinatorUnwrittenRE finds the words that call a range's numbers unspoken for. They are the

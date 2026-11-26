@@ -151,8 +151,9 @@ into. The
 task that writes the check (T8.1) owns the register line and this section's
 number in the same commit.
 
-**This plan takes no D-number.** Its decisions are **D1–D32**, folder-local and
-distinct by folder, like `docs/windows-cli/`'s D1–D16 and
+**This plan takes no D-number of its own: the one sequence gives it a block.**
+Its decisions are **D1–D32**, folder-local and distinct by folder, like
+`docs/windows-cli/`'s D1–D16 and
 `docs/setup-wizard/`'s D1–D12. The register
 (`docs/coordinator/README.md` §"The numbers this work holds") allocates
 **D1–D192** — the owner's allocation, block by block — and anchors that figure
@@ -161,8 +162,13 @@ which is why it has to be read anchored, the way `docs/mobile/voice-session/`
 reads it: at this plan's base `1d325928` the register's own command finds
 **D220**, because voice-session writes **D201–D220** there, the same work whose
 **D219** the check table above cites. So **D193 onward is not free at this
-tree** — the next free block is **D221 onward**. O7 states the choice, the
-reading and the collision; this plan takes no number either way.
+tree** — the next free block at that base was **D221 onward**. O7 states the
+choice, the reading and the collision, and **the owner answered it on 2026-11-26
+with the one sequence**: the decisions take **D3380 onward** (to **D3411**), the
+next block above every number this tree writes, and not the next free block D221
+— `docs/mobile-auth/` took D221 and the numbers beside it two days after this
+plan's base. The row is in the register, and T0.3 writes it. This document keeps
+writing the decisions **D1–D32**.
 
 ## 4. Conventions every task follows
 
@@ -409,18 +415,20 @@ product code.
 - **Reviewer.** senior (in-loop).
 - **Commit.** `docs(rigor-modes): pin the folder's own claims`
 
-**T0.3 — the register line, if O7 is answered with one sequence**
+**T0.3 — the register line, O7 answered with the one sequence**
 - **Files.** `docs/coordinator/README.md` (the D-block row),
   `internal/cli/docs_coordinator_test.go` (its pin, which holds that row to the
-  line the document carries it on).
+  line the document carries it on: the block is added to the list that guard
+  reads, and no guard is changed).
 - **Tests.** `docs_coordinator_test.go`'s own guards, unchanged, which is the
   point: the register's line moves and the test that reads it stays the same.
-  The line it records is **D221 onward** — the next free block read from this
-  plan's base (O7), not the register's unanchored **D193 onward**, which
-  `docs/mobile/voice-session/` already sits inside.
+  The line it records is **D3380 onward** — the next block above every decision
+  number written on this tree, read at this change's base (O7's own rule), and
+  not the next free block this plan's base read, **D221 onward**, which
+  `docs/mobile-auth/` took on 2026-10-22, nor the register's unanchored
+  **D193 onward**, which `docs/mobile/voice-session/` already sits inside.
 - **Red step.** The register does not mention this folder, so a test asserting
-  that it does fails. If O7 is answered "keep the block local", this task is
-  dropped and its absence is recorded in the index.
+  that it does fails.
 - **Verification.** `GOFLAGS=-p=2 go test ./internal/cli -run 'DocsCoordinator' -count=1 -timeout 20m`
 - **Depends on.** O7 answered.
 - **Reviewer.** senior (in-loop).
