@@ -7002,8 +7002,10 @@ func servicesLaunchEnv(entry config.Entry) string {
 // the repository the run works on and auth its agent.auth as the run will read
 // it (the ref's fugaro.yaml, else the checkout's).
 //
-// THE SWITCH DECIDES, and it is the same function the plan decides with
-// (infra.CredentialsServiceServes): the installation has the block, the record
+// THE ADDRESS DECIDES, and it is the same function the plan decides with
+// (infra.CredentialsServiceAddress, which is infra.CredentialsServiceServes for
+// every auth and the installation's own block for a `vertex` one, D3326/F17):
+// the installation has the block, the record
 // `fugaro update` wrote for this repository says a root of it was applied with
 // the service on (localcfg.Repo.CredentialsServiceReady, written into the local
 // config's repository entry and published with the rest of it, so a teammate's
@@ -7016,6 +7018,17 @@ func servicesLaunchEnv(entry config.Entry) string {
 // proxied one (proxiedRepo). A job that still mounts its own model credential
 // and is handed the address of a service that cannot serve it would lose the
 // credential it has and get nothing in its place.
+//
+// A VERTEX repository is the one repository told without being served (D3326):
+// the address is what its runner fetches its workflow secrets through
+// (internal/runner's fetchWorkflowSecrets), and the vertex arm reaches that one
+// auth alone — a repository the switch holds off is not handed the address,
+// because the variable would open its git provider keyless and move a model
+// path that works (F17). The record is deliberately not read for it: that
+// record is the model switch's own answer and is false for `vertex` by
+// construction, so a launch waiting for it would never hand a vertex
+// repository anything. Its one reader that cannot read a document — a console
+// launch, below — reads the repository's own recorded auth instead.
 //
 // That is the answer for a repository's OWN job. A launch on a shared project
 // job is judged on its PROFILE (below), because that is the switch its mounts
@@ -7169,25 +7182,41 @@ func credentialsServiceLaunchEnv(lc *localcfg.Config, sharedProfile, repo, auth,
 	}
 	local, _ := lc.RepoFor(repo)
 	// Two arms, one answer, exactly as the repository root's plan reads them
-	// (internal/infra's resolve): the release-1 bridge, which reads agent.auth,
-	// and the table, which does not. A repository the table serves is told
-	// about the service whatever its file names — a `vertex` repository above
-	// all, which has no credential to hand the service and whose chain the
-	// service serves on its own identity (D3174) — and a repository the bridge
-	// would serve keeps its answer.
+	// (internal/infra's resolve): the address, which is the release-1 bridge
+	// with the vertex arm beside it, and the table, which does not read
+	// agent.auth at all. A repository the table serves is told about the
+	// service whatever its file names — whose chain the service serves on its
+	// own identity (D3174) — and a repository the bridge would serve, or a
+	// `vertex` one of an installation that has the block, keeps its answer.
 	ready := local.CredentialsServiceOn()
-	serves := infra.CredentialsServiceServes(installed, ready, auth) ||
+	serves := infra.CredentialsServiceAddress(installed, ready, auth) ||
 		infra.CredentialsServiceServesChains(installed, ready, infra.ChainPlanFor(lc, repo))
 	if auth == "" && !serves {
-		// No document this launcher could read, so the switch's third
-		// condition is judged on the two answers that do not need one: the
-		// repository's own record, and this machine's tfvars of the root it
-		// was applied from. Either one saying on is enough — both are written
-		// by an apply that dropped the job's mounts and granted its account
-		// roles/run.invoker, and a launch that withheld the address from a
-		// repository whose mounts are already gone would halt at the service's
-		// door (D143).
-		serves = installed && (local.CredentialsServiceOn() || deployed)
+		if local.Vertex {
+			// The auth this launcher could not read, read off the repository's
+			// own record of it instead (localcfg.Repo.Vertex, which `fugaro
+			// update` writes from the very auth the spec builder decides the
+			// address with, infra's repoCtx): a vertex repository's address is
+			// the installation's own block and nothing else
+			// (CredentialsServiceAddress's vertex arm), so both stand-ins
+			// below describe the model switch, which is false for it by
+			// construction. Without this a console launch of a vertex
+			// repository — no document to read and no tfvars of its root on
+			// the machine that spawns it — was handed nothing while its root's
+			// own apply granted its account roles/run.invoker, and its run
+			// then fetched no workflow secret at all.
+			serves = installed
+		} else {
+			// No document this launcher could read, so the switch's third
+			// condition is judged on the two answers that do not need one: the
+			// repository's own record, and this machine's tfvars of the root it
+			// was applied from. Either one saying on is enough — both are written
+			// by an apply that dropped the job's mounts and granted its account
+			// roles/run.invoker, and a launch that withheld the address from a
+			// repository whose mounts are already gone would halt at the service's
+			// door (D143).
+			serves = installed && (ready || deployed)
+		}
 	}
 	if !serves {
 		return nil
