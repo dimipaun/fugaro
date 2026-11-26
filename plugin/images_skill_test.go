@@ -353,7 +353,7 @@ func TestImagesSkillRerunProposesDiffOnly(t *testing.T) {
 	}
 	section := imageSkillSection(t, body, "Rerunning")
 	for _, want := range []string{
-		"fugaro image survey --json", "setup", "catalog", "image_map", "bake_repos",
+		"fugaro image survey --json", "setup", "catalog", "repo_images", "legacy_image_map", "bake_repos",
 		"only", "differs", "never", "reshuffle",
 	} {
 		if !strings.Contains(section, want) {
