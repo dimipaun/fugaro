@@ -182,7 +182,8 @@ func TestDocsProjectLayerSaysRoutingIsApplied(t *testing.T) {
 		"**halts the run** rather than falling back to the direct path",
 		"`fugaro project policy publish` writes the block from the operator's own config",
 		"`budget.*`, `model_prices`, `allow_repos` and `routing` take effect in this release",
-		"a run routes by the providers its own job carries (`FUGARO_MODEL_PROVIDERS`)",
+		"A run on a **per-repository** job still routes by the providers its own job carries (`FUGARO_MODEL_PROVIDERS`)",
+		"**applied on a shared job**: there a run holds no route table of its own, so it routes by the node's block cut to the repository the run is for",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("docs/project-layer.md lacks %q", want)

@@ -129,6 +129,37 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	if err != nil {
 		return err
 	}
+	// A shared project job is one job for every repository of a profile, so its
+	// deployment carries no route table (internal/infra's projectJobEnv) and
+	// nothing on the launch may supply one: a route names the host a
+	// repository's code goes to, the secret that holds the key it goes with and
+	// the price its calls are charged at, and a launcher that wrote them would
+	// send the profile's provider key and the repository's code to a host of its
+	// own choosing and could undercut the owner's cap with its own price table.
+	// The node is the one object a launcher cannot write, so on a shared job the
+	// owner's published providers, filtered to the repository the run is for,
+	// are the whole of the run's routes, and the job's environment contributes
+	// none of them. A per-repository job keeps the routes its own deployment
+	// wrote, which hold the same per-repository filter (internal/infra's
+	// ProvidersEnv) and are the owner's config's.
+	if _, shared := r.projectJob(); shared {
+		routes := ProvidersFor(pp.ProviderCarrier(), r.spec.Repo)
+		if l := cfg.Layer; l != nil {
+			merged, ps := config.ApplyClaudeClaims(routes, config.ClaimsOnRoutes(routes, l.ClaudeModels))
+			if len(ps) > 0 {
+				return fmt.Errorf("the project layer's claude_models: %s", problemsText(ps))
+			}
+			routes = merged
+		}
+		r.providers = routes
+		// The job's price overrides go with its routes, for the cap's own
+		// reason: they are what a call is charged at, so a launcher that
+		// lowered one would price its way around the ceiling. What is left is
+		// the node's own model_prices, applied below (policyCeiling), or —
+		// where the node prices nothing — the built-in table over the routes
+		// just resolved (the nil Prices below).
+		c.Prices = nil
+	}
 	var fromPolicy map[string]bool
 	if found {
 		if ceiling, c, fromPolicy, err = r.policyCeiling(pp, ceiling, c); err != nil {

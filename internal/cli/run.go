@@ -6770,27 +6770,12 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	}
 	svcAuth, deployed := env.repoServiceAuth(ctx, spec, launchWarn)
 	lspec.Env = credentialsServiceLaunchEnv(env.serviceConfig(), jobProfile, spec.Repo, svcAuth, env.policyMode(ctx), deployed, reviewJob)
-	if job != nil {
-		// The project's model environment, on a launch that runs on the shared
-		// job: the values a per-repository job carries in its own definition
-		// (internal/infra's budgetEnv and ProvidersEnv) and this one cannot,
-		// because a job every repository of the profile shares may not hold one
-		// repository's table (projectJobEnv states why). Without them a run
-		// whose coder is a provider-served model has no route at all and
-		// bootstrap refuses it, "no provider serves it" (check 580).
-		menv, merr := projectJobModelEnv(env.lc, spec.Repo)
-		if merr != nil {
-			cancel()
-			rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-			releaseClaim(rctx, env, s, holder)
-			if minted {
-				env.dropBudgetToken(rctx, slug, spec.RunID) // nothing started, so nothing will take it
-			}
-			rcancel()
-			return res, userErr("%v", merr)
-		}
-		lspec.Env = append(lspec.Env, menv...)
-	}
+	// A launch on a shared project job writes no model environment: the job is
+	// shared by every repository of its profile, so the routes, the prices and
+	// the allow-list a run goes by are the owner's published policy node's, and
+	// the run reads them there (internal/runner's resolvePolicy). A launcher's
+	// own config is not the owner of any of the three — the node is the one
+	// object a launcher cannot write.
 	// The run's slip, asked for exactly where the service's address was just
 	// written: the grant the credentials service keeps for this run, whose id
 	// the job claims at its first call and presents on every call after it
@@ -7243,49 +7228,6 @@ func credentialsServiceLaunchEnv(lc *localcfg.Config, sharedProfile, repo, auth,
 		return nil
 	}
 	return []string{envCredentialsServiceURL + "=" + lc.CredentialsService.URL}
-}
-
-// projectJobModelEnv is the project's model half of a launch on a shared
-// project job's execution: the provider routes this repository may send code
-// to, the owner's price overrides and the model allow-list, each written as
-// internal/infra writes it into a per-repository job's own environment
-// (budgetEnv and ProvidersEnv) and under the runner's own names, so the run
-// reads them through the one reader either way.
-//
-// A project job is shared by every repository of its profile, so none of the
-// three may sit in its definition: one repository's table would become every
-// repository's, and a provider's allow_data_to is a per-repository fact. They
-// ride THIS execution instead, filtered here to the repository the run is for
-// (runner.ProvidersEnv). The mode is left out — the job names the
-// installation's own, which no repository may change — and so are the
-// backend's address and web key, which projectJobEnv deploys.
-func projectJobModelEnv(lc *localcfg.Config, repo string) ([]string, error) {
-	if lc == nil {
-		return nil, nil
-	}
-	var env []string
-	pv, err := runner.ProvidersEnv(lc.Providers, repo)
-	if err != nil {
-		return nil, err
-	}
-	if pv != "" {
-		env = append(env, runner.ModelProvidersEnv+"="+pv)
-	}
-	o, err := lc.Overrides()
-	if err != nil {
-		return nil, err
-	}
-	prices, err := o.Env()
-	if err != nil {
-		return nil, err
-	}
-	if prices != "" {
-		env = append(env, runner.ModelPricesEnv+"="+prices)
-	}
-	if b := lc.Budget; b != nil && b.AllowedModels != nil {
-		env = append(env, runner.AllowedModelsEnv+"="+strings.Join(b.AllowedModels, ","))
-	}
-	return env, nil
 }
 
 // envSlip is the variable a run reads its slip's id from, and this is an alias
