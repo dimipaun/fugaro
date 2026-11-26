@@ -72,8 +72,8 @@ variable "job" {
       name   = string
       region = string
     }))
-    # The same service for a job that reaches it for git alone (a shared
-    # Bitbucket job): grants the invoker role and drops no mount.
+    # The same service for every shared job, switched or not: grants the
+    # invoker role and drops no mount.
     credentials_service_grant = optional(object({
       name   = string
       region = string

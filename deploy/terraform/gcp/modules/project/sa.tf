@@ -110,7 +110,7 @@ locals {
   shared_job_served_secret_classes = ["model"]
 
   # The service the account may invoke: the served profile's, or the one a
-  # git-only job (shared Bitbucket) reaches with every mount kept.
+  # grant every shared job holds with every mount kept.
   credentials_grant = var.job.credentials_service != null ? var.job.credentials_service : var.job.credentials_service_grant
 
   # The model credentials the class's drop reaches, identified the way

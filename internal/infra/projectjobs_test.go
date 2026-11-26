@@ -342,6 +342,7 @@ func TestEmptySharedJobListChangesNothing(t *testing.T) {
 			t.Errorf("the job %s carries the credentials service %+v, want %+v: the name is the one the installation root creates it under and the region is the installation's, and the URL is Cloud Run's to assign — a job is told it at launch (internal/cli's credentialsServiceLaunchEnv), never from the tfvars", name, *job.CredentialsService, *want)
 		}
 		job.CredentialsService, before.CredentialsService = nil, nil
+		job.CredentialsServiceGrant, before.CredentialsServiceGrant = nil, nil
 		if !reflect.DeepEqual(job, before) {
 			t.Errorf("the job %s = %+v with the service switched on, want the job it is with the service off, %+v: the grant and the address are all this task adds (G17 — the mounts are dropped by B5.7's flip alone)", name, job, before)
 		}
@@ -3396,7 +3397,22 @@ func TestAddReviewVariantRefusesACollision(t *testing.T) {
 	}
 }
 
-func TestSharedBitbucketJobsAreGrantedTheServiceWithTheSwitchOff(t *testing.T) {
+func TestAnUnswitchedRepoKeepsEveryJobsGrant(t *testing.T) {
+	tail := m5Additions + projectProfilesLCBlock + credentialsServiceLCBlock
+	on := parseLC(t, m4LocalConfig+projectJobRepoReadyLC+tail)
+	off := parseLC(t, m4LocalConfig+projectJobRepoLC+tail)
+	jobs, err := ProjectJobs(on, "fugaro-runs-proj-1234", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, j := range RefreshProjectJobCredentialsService(jobs, off) {
+		if j.CredentialsServiceGrant == nil {
+			t.Errorf("%s lost its invoker grant when no repository of its profile is switched: the plan would delete it", name)
+		}
+	}
+}
+
+func TestSharedJobsAreGrantedTheServiceWithTheSwitchOff(t *testing.T) {
 	lc := m4LocalConfig + projectJobRepoLC + m5Additions + projectProfilesLCBlock + credentialsServiceLCBlock
 	jobs := projectJobsFor(t, lc)
 	if len(jobs) == 0 {
@@ -3406,8 +3422,8 @@ func TestSharedBitbucketJobsAreGrantedTheServiceWithTheSwitchOff(t *testing.T) {
 		if j.CredentialsService != nil {
 			t.Fatalf("%s is served with no repository switched on", name)
 		}
-		if got, want := j.CredentialsServiceGrant != nil, j.Provider != githubProvider; got != want {
-			t.Errorf("%s (%s): invoker grant = %v, want %v", name, j.Provider, got, want)
+		if j.CredentialsServiceGrant == nil {
+			t.Errorf("%s (%s): no invoker grant with the switch off", name, j.Provider)
 		}
 	}
 }
