@@ -2,7 +2,7 @@
 // signer the service itself holds, and the probe that proves it can sign (R8,
 // F33).
 //
-// The claim signs from here too — identitySignerFor is the one place this
+// The claim signs from here too — IdentitySignerFor is the one place this
 // service builds a signer, so a run's identity (identity_claim.go) and the
 // probe's payload are signed by the same account through the same
 // construction, and a deployment that could sign one and not the other is not
@@ -30,7 +30,7 @@ import (
 // signer and never with an access token of its own.
 const identitySignerScope = "https://www.googleapis.com/auth/cloud-platform"
 
-// identitySignerFor builds the runs' signer: the account the installation's
+// IdentitySignerFor builds the runs' signer: the account the installation's
 // row names (IdentityConfig.Signer), signed through token.IAMSigner with the
 // credential the service itself runs as.
 //
@@ -39,7 +39,14 @@ const identitySignerScope = "https://www.googleapis.com/auth/cloud-platform"
 // is: what a test replaces is where the credential comes from, and everything
 // above it — the claims' checks, the token's own re-read (token.MintAt) — is
 // the real code either way.
-var identitySignerFor = func(ctx context.Context, email string) (token.Signer, error) {
+//
+// It is exported for the one test that cannot live in this package:
+// internal/cli's launch-to-session test builds a whole deployment through
+// credentialsServiceConfig and drives a launcher, a claim and an exchange
+// through the service that deployment starts, and the runs' identities that
+// service signs have to be signed over internal/gcpfake's endpoint. No
+// production code assigns it.
+var IdentitySignerFor = func(ctx context.Context, email string) (token.Signer, error) {
 	ts, err := google.DefaultTokenSource(ctx, identitySignerScope)
 	if err != nil {
 		return nil, err
@@ -155,7 +162,7 @@ func (s *Server) identityProbe(ctx context.Context, w http.ResponseWriter, r *ht
 		s.refuseIdentityCall(ctx, w, "", "", StatusRequestRefused, identitywire.RefusalIdentityRefused, requestRefused+err.Error())
 		return
 	}
-	signer, err := identitySignerFor(ctx, s.cfg.Identity.Signer)
+	signer, err := IdentitySignerFor(ctx, s.cfg.Identity.Signer)
 	if err != nil {
 		// The error is the credential's own and is logged, never answered: a
 		// refusal names the field and never what the call sent (the service's

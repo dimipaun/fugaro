@@ -252,13 +252,13 @@ func newClaimFixture(t *testing.T, operators ...string) *claimFixture {
 	// token.IAMSigner) pointed at the fake endpoint: what a test replaces is
 	// where the service's own credential comes from, and everything above it —
 	// the claims' checks, the payload, token.MintAt's re-read — is the real code.
-	old := identitySignerFor
-	identitySignerFor = func(_ context.Context, email string) (token.Signer, error) {
+	old := IdentitySignerFor
+	IdentitySignerFor = func(_ context.Context, email string) (token.Signer, error) {
 		return token.NewIAMSigner(email,
 			oauth2.StaticTokenSource(&oauth2.Token{AccessToken: testClaimCredential}),
 			token.WithIAMEndpoint(iam.URL))
 	}
-	t.Cleanup(func() { identitySignerFor = old })
+	t.Cleanup(func() { IdentitySignerFor = old })
 	return &claimFixture{svc: s, issuance: issuance, iam: iam}
 }
 

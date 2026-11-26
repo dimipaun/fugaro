@@ -81,7 +81,7 @@ func (s *Server) identityRoute(ctx context.Context, w http.ResponseWriter, r *ht
 // no issuer" and says so — which would be a lie about a deployment that has
 // one and cannot use it.
 func (s *Server) identityMintRoute(ctx context.Context, w http.ResponseWriter, r *http.Request, h func(context.Context, http.ResponseWriter, *http.Request, token.Signer)) {
-	signer, err := identitySignerFor(ctx, s.cfg.Identity.Signer)
+	signer, err := IdentitySignerFor(ctx, s.cfg.Identity.Signer)
 	if err != nil {
 		// The error is the credential's own and is logged, never answered: a
 		// refusal names the field and never what the call sent (the service's
