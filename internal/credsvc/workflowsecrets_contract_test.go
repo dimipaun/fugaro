@@ -1,9 +1,8 @@
 package credsvc
 
 // The version-2 workflow-secrets contract (C1, D3324, D3328, D3333): the
-// request a run sends by NAME, the answer that echoes it, the refusal codes
-// version 2 answers with, and the stub both sides of this plan test against
-// until the service and the runner exist.
+// request a run sends by NAME, the answer that echoes it, and the refusal codes
+// version 2 answers with.
 //
 // It is a contract test and not a route test: nothing here builds a server,
 // reads a record or verifies an identity. What it holds is what the two sides
@@ -11,12 +10,11 @@ package credsvc
 // 1 call is byte for byte what it was and never grows a name, and a version 2
 // call never carries an environment variable -- plus the codes a refusal of
 // version 2 must be readable as, which is what lets the runner print the fix
-// for the case it actually met (R-request's whole point).
+// for the case it actually met (R-request's whole point). The route those
+// shapes are served by is I1's, and its own tests are workflowsecrets_test.go.
 
 import (
 	"encoding/json"
-	"io"
-	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -146,76 +144,6 @@ func TestWorkflowSecretsRequestV2Shape(t *testing.T) {
 					t.Errorf("the code reads back as %q, want %q", e.Error, tc.code)
 				}
 			})
-		}
-	})
-
-	t.Run("the stub answers version 2 from its map", func(t *testing.T) {
-		value := fakeCred(t, "stub-value")
-		other := fakeCred(t, "stub-other")
-		srv := httptest.NewServer(WorkflowSecretsStub{
-			Values: map[string]string{testSecretName: value},
-			Envs:   map[string]string{testSecretEnv: other},
-		})
-		defer srv.Close()
-
-		post := func(t *testing.T, body string) (int, []byte) {
-			t.Helper()
-			resp, err := http.Post(srv.URL+WorkflowSecretsPath, contentTypeJSON, strings.NewReader(body))
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer resp.Body.Close()
-			out, err := io.ReadAll(resp.Body)
-			if err != nil {
-				t.Fatal(err)
-			}
-			return resp.StatusCode, out
-		}
-
-		status, body := post(t, `{"name":"deploy-token","version":2}`)
-		if status != http.StatusOK {
-			t.Fatalf("the stub answered %d for a name it holds: %s", status, body)
-		}
-		var ans WorkflowSecretsResponse
-		if err := json.Unmarshal(body, &ans); err != nil {
-			t.Fatalf("the stub's answer is not this contract's: %v", err)
-		}
-		if ans.Name != testSecretName || ans.Value != value {
-			t.Errorf("the stub answered name %q, value %q", ans.Name, ans.Value)
-		}
-		if ans.Env != "" {
-			t.Errorf("a version 2 answer carries the variable %q, which no version 2 call named", ans.Env)
-		}
-
-		status, body = post(t, `{"name":"review-token","version":2}`)
-		if status != StatusUnverified {
-			t.Fatalf("the stub answered %d for a name it does not hold, want %d: %s", status, StatusUnverified, body)
-		}
-		e, err := ReadWireError(status, body)
-		if err != nil {
-			t.Fatalf("the stub's refusal is not this contract's: %v", err)
-		}
-		if e.Error != ErrorWorkflowSecretNotAllowed {
-			t.Errorf("the stub refused with %q, want %q: a caller must be able to tell an unlisted name from an unmarked container", e.Error, ErrorWorkflowSecretNotAllowed)
-		}
-		if strings.Contains(string(body), testSecretOther) {
-			t.Error("the stub's refusal echoes the name it was asked for")
-		}
-
-		status, body = post(t, `{"env":"DEPLOY_TOKEN"}`)
-		if status != http.StatusOK {
-			t.Fatalf("the stub answered %d for a version 1 call it holds: %s", status, body)
-		}
-		if err := json.Unmarshal(body, &ans); err != nil {
-			t.Fatalf("the stub's version 1 answer is not this contract's: %v", err)
-		}
-		if ans.Env != testSecretEnv || ans.Value != other {
-			t.Errorf("the stub answered env %q, value %q", ans.Env, ans.Value)
-		}
-
-		status, body = post(t, `{"name":"deploy-token"}`)
-		if status != StatusRequestRefused {
-			t.Fatalf("the stub answered %d for a body with no version, want %d: %s", status, StatusRequestRefused, body)
 		}
 	})
 }
