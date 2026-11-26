@@ -1328,7 +1328,11 @@ const personGrantRefused = "the workspace did not grant this call a slip"
 // the installation's grant and claim have, and for the same reason (a StatusOK
 // audit line requires a credential and a grant issues none, audit.go).
 func (s *Server) personGrant(ctx context.Context, w http.ResponseWriter, r *http.Request, ps personScope) {
-	tok, err := bearerFromHTTP(r)
+	// The person header ahead of the bearer, as the installation's grant reads
+	// it: this route's caller is a person too, and Cloud Run's front end
+	// consumes the ID token a person's own account minted and hands the service
+	// that header changed.
+	tok, err := personBearerFromHTTP(r)
 	if err != nil {
 		s.refuse(w, StatusUnverified, ErrorUnverifiedJobIdentity, err.Error())
 		return

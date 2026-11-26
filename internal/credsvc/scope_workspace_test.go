@@ -2143,6 +2143,41 @@ func TestTheGrantAdmitsOnlyARosterPerson(t *testing.T) {
 	}
 }
 
+// TestTheGrantAdmitsThePersonHeader: this route's caller is a person, so the
+// token arrives where the installation's grant takes its own — in
+// HeaderPersonIdentity, ahead of a bearer Cloud Run's front end has already
+// consumed for the invoker check (personBearerFromHTTP). The second call is
+// that shape exactly: a valid but different token in the bearer (a service
+// account's, which the class refuses) and the person's own in the header. A
+// route reading the bearer would refuse it, which is the 403 an operator met
+// on every launch before the installation's grant learned the same header.
+func TestTheGrantAdmitsThePersonHeader(t *testing.T) {
+	p := newWSPerson(t)
+	svc := p.service(t)
+	person := func(r *http.Request) { r.Header.Set(HeaderPersonIdentity, wsLauncherBearer) }
+	resp, body := p.grant(t, svc, "", p.grantBody(t, wsAccountA, creds.PersonTokenName), person)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("a grant whose token is in %s alone = %d, want 200: %s", HeaderPersonIdentity, resp.StatusCode, body)
+	}
+	var ans creds.PersonGrant
+	if err := json.Unmarshal(body, &ans); err != nil {
+		t.Fatalf("the grant's answer is not one C1 reads: %v", err)
+	}
+	if !ans.Held || ans.Slip == "" {
+		t.Errorf("the grant answered held=%v slip=%q, want the slip the header's own person holds", ans.Held, ans.Slip)
+	}
+	if got := lines(svc.audit); len(got) != 1 {
+		t.Errorf("the grant wrote %d audit lines, want 1", len(got))
+	}
+
+	p2 := newWSPerson(t)
+	svc2 := p2.service(t)
+	resp, body = p2.grant(t, svc2, wsStrangerBearer, p2.grantBody(t, wsAccountA, creds.PersonTokenName), person)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("a grant whose bearer is a service account and whose %s holds the person's own token = %d, want 200: %s", HeaderPersonIdentity, resp.StatusCode, body)
+	}
+}
+
 // TestAServiceAccountIsRefusedAGrant: the workspace's class is people, and a
 // service account of a member's project is not one — the class refuses it
 // before any roster is read, so there is no caller for a line to name and the

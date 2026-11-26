@@ -406,6 +406,38 @@ func TestTheGrantCarriesNoClaimSecret(t *testing.T) {
 	}
 }
 
+// TestTheGrantCallPresentsThePersonHeader: the workspace's grant route reads a
+// person's own Google ID token from X-Fugaro-Person-Identity ahead of the
+// bearer, because Cloud Run's front end consumes a valid ID token in
+// Authorization for the invoker check and hands the service that header
+// changed. The call is the real one here (personGrantOverService against a
+// service this test runs), so what this holds is the request the launcher
+// really sends and not a fixture's stand-in.
+func TestTheGrantCallPresentsThePersonHeader(t *testing.T) {
+	var auth, person string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth, person = r.Header.Get("Authorization"), r.Header.Get(credsvc.HeaderPersonIdentity)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"held":true,"slip":"` + fakeSlipID + `"}`))
+	}))
+	t.Cleanup(srv.Close)
+	prev := personGrant
+	personGrant = personGrantOverService
+	t.Cleanup(func() { personGrant = prev })
+
+	r := newPersonalLaunchRig(t, personalRouteRecord(srv.URL), true)
+	plain := r.launch(t, nil)
+	if !slices.Contains(plain, creds.PersonSlipEnv+"="+fakeSlipID) {
+		t.Fatalf("the workspace's grant did not reach the launch: %v", plain)
+	}
+	if auth != "Bearer "+fakeLauncherToken {
+		t.Errorf("the grant call presented %q as its bearer, want this launcher's own Google ID token", auth)
+	}
+	if person != fakeLauncherToken {
+		t.Errorf("the grant call presented %s %q, want the same token: the front end's rewrite leaves the route's own bearer unusable, and the route reads this header ahead of it", credsvc.HeaderPersonIdentity, person)
+	}
+}
+
 // TestTheLaunchSaysWhichTokenItDrawsOn: D3142's line. A person stored their
 // token to use it, so a run of theirs draws on it without being asked — and the
 // launch says so, naming the workspace the token is held at and the flag that

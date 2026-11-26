@@ -127,6 +127,11 @@ func personGrantOverService(ctx context.Context, serviceURL string, req creds.Pe
 	hreq.Header.Set("Content-Type", "application/json")
 	hreq.Header.Set("Accept", "application/json")
 	hreq.Header.Set("Authorization", "Bearer "+identity)
+	// The same token again in the person header, as the installation's grant
+	// call sends it: Cloud Run's front end consumes a valid ID token in
+	// Authorization for the invoker check and hands the workspace that header
+	// changed, so the bearer alone is a token this route's person class refuses.
+	hreq.Header.Set(credsvc.HeaderPersonIdentity, identity)
 	resp, err := slipClient().Do(hreq)
 	if err != nil {
 		return creds.PersonGrant{}, errors.New("the workspace's credentials service could not be reached")
