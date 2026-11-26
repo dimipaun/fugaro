@@ -64,10 +64,15 @@ function makeStore({ signInTable = {}, refreshTable = {}, sessions } = {}) {
   return { store, settings, secrets };
 }
 
+/** The refresh token `sessionOf` gives an identity when a test names none. */
+function refreshOf(identity) {
+  return `synthetic-refresh-${identity.sub}`;
+}
+
 /** A provider session as providers.js parses it, for the sign-in table. */
 function sessionOf(
   identity,
-  { idToken = `synthetic-id-token-${identity.sub}`, refreshToken = `synthetic-refresh-${identity.sub}`, expiresIn = 3600 } = {},
+  { idToken = `synthetic-id-token-${identity.sub}`, refreshToken = refreshOf(identity), expiresIn = 3600 } = {},
 ) {
   return { ...identity, idToken, refreshToken, expiresIn };
 }
@@ -129,7 +134,9 @@ test('an identity with no email at all is unusable for pairing, with its own cod
 test('one secure-store item per identity, and removing one leaves the other whole', async () => {
   const { store, secrets } = makeStore({
     signInTable: { 'token-g': sessionOf(GOOGLE), 'token-a': sessionOf(APPLE) },
-    refreshTable: { 'synthetic-refresh-google-sub': { idToken: 'synthetic-fresh-google', refreshToken: 'synthetic-refresh-google-sub', expiresIn: 3600 } },
+    refreshTable: {
+      [refreshOf(GOOGLE)]: { idToken: 'synthetic-fresh-google', refreshToken: refreshOf(GOOGLE), expiresIn: 3600 },
+    },
   });
   await store.add({ provider: 'google.com', idToken: 'token-g' });
   await store.add({ provider: 'apple.com', idToken: 'token-a' });
@@ -181,7 +188,7 @@ test('re-authentication updates the authentication time and the session, indepen
   assert.equal(await secrets.getItem(`fugaro.identity-session.${idOf(GOOGLE)}`), 'synthetic-refresh-new');
   // The other identity was not touched.
   assert.equal(listed.identities.find((i) => i.id === idOf(APPLE)).authTime, APPLE.authTime);
-  assert.equal(await secrets.getItem(`fugaro.identity-session.${idOf(APPLE)}`), 'synthetic-refresh-apple-sub');
+  assert.equal(await secrets.getItem(`fugaro.identity-session.${idOf(APPLE)}`), refreshOf(APPLE));
 });
 
 test('a re-authentication that lands on another person is refused and changes nothing', async () => {
@@ -198,7 +205,7 @@ test('a re-authentication that lands on another person is refused and changes no
   const listed = await store.list();
   assert.equal(listed.identities.length, 1);
   assert.equal(listed.identities[0].sub, GOOGLE.sub);
-  assert.equal(await secrets.getItem(`fugaro.identity-session.${idOf(GOOGLE)}`), 'synthetic-refresh-google-sub');
+  assert.equal(await secrets.getItem(`fugaro.identity-session.${idOf(GOOGLE)}`), refreshOf(GOOGLE));
 });
 
 test('the id token is refreshed through the stored session, cached within its life, and rotated on the store', async () => {

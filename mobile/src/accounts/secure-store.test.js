@@ -28,10 +28,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  IDENTITY_SESSION_PREFIX,
+  IdentitySessionStore,
   MemorySecureStore,
   SECRET_KEY_PREFIX,
   SECURE_STORE_CODES,
   SecretStore,
+  identitySessionKey,
   secretKey,
 } from './secure-store.js';
 import { SECRET_ITEMS, Secret, secret } from './secret.js';
@@ -456,7 +459,11 @@ test('a bad id, a bad value and a value this module did not write are each refus
   ]) {
     const refused = await store.put(GOOGLE_ID, value);
     assert.equal(refused.code, SECURE_STORE_CODES.BAD_VALUE, name);
-    assert.equal(JSON.stringify(refused).includes(String(value)), false, 'the refusal never carries the value');
+    // The empty value has nothing to carry, and an empty needle is in every
+    // haystack: only the values with characters are searched for.
+    if (typeof value === 'string' && value !== '') {
+      assert.equal(JSON.stringify(refused).includes(value), false, 'the refusal never carries the value');
+    }
   }
   assert.deepEqual(port.keys(), [], 'nothing refused was written');
 

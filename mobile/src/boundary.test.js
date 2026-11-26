@@ -157,7 +157,15 @@ const RULES = [
     // reached through a spelling the pattern does not read, so the rule's
     // claim -- one reviewed file per egress -- still holds over the tree with
     // the two of them on the list.
-    allow: ['src/voice-switch/hop.js', 'spike/src/firebase/idp.js'],
+    //
+    // `src/identity/providers.js` is M1's: the same REST exchange as the
+    // spike's, now the app's, because D2793 answers "several identities?" with
+    // REST sign-in and no second Firebase SDK instance (F13). The only thing it
+    // sends is a provider token at the identity project, and it is on this list
+    // deliberately rather than through a spelling the pattern does not read --
+    // one reviewed file per egress, and this is where the phone's provider
+    // token leaves from.
+    allow: ['src/voice-switch/hop.js', 'spike/src/firebase/idp.js', 'src/identity/providers.js'],
     why: 'P5.3.7: the egress path is the only thing in the app that talks to a third party, and a second file that could open the network is a second place a byte could leave from',
   },
 ];
