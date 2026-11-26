@@ -621,6 +621,19 @@ func plantingImplement(t *testing.T) string {
 }
 
 // newRunID mints a run ID of now, so ls's default window holds it.
+// newRunIDAfter is a run id that sorts after every id given: a follow-up whose
+// id sorts before the run it continues is refused, and two ids made in one
+// second differ only by their random suffix.
+func newRunIDAfter(t *testing.T, prev ...string) string {
+	t.Helper()
+	for {
+		id := newRunID(t)
+		if id > slices.Max(prev) {
+			return id
+		}
+	}
+}
+
 func newRunID(t *testing.T) string {
 	t.Helper()
 	id, err := task.NewRunID(time.Now(), crand.Reader)
@@ -974,10 +987,7 @@ func TestCloudFollowUpOnePR(t *testing.T) {
 	r.comment(1, gitprov.Comment{ID: "g2", Kind: gitprov.CommentGeneral, Author: "mallory", AuthorID: malloryID, Collaborator: true,
 		Body: malloryBody, CreatedAt: now.Add(2 * time.Millisecond)})
 
-	second := newRunID(t)
-	for second == first {
-		second = newRunID(t)
-	}
+	second := newRunIDAfter(t, first)
 	out, err := r.cli("run", "--repo", "acme/app", "--pr", "1", "--run-id", second, "--json", "also rename x")
 	var launch struct {
 		Status, Branch string
@@ -1079,10 +1089,7 @@ func TestCloudFollowUpOnePR(t *testing.T) {
 	const moreBody = "Please also tidy y."
 	r.comment(1, gitprov.Comment{ID: "g3", Kind: gitprov.CommentGeneral, Author: "alice", AuthorID: aliceID, Collaborator: true,
 		Body: moreBody, CreatedAt: time.Now().UTC()})
-	third := newRunID(t)
-	for third == first || third == second {
-		third = newRunID(t)
-	}
+	third := newRunIDAfter(t, second)
 	out, err = r.cli("run", "--repo", "acme/app", "--pr", "1", "--run-id", third, "--json")
 	prev.PreviousRun = ""
 	if err != nil || json.Unmarshal([]byte(out), &prev) != nil || prev.PreviousRun != second || !strings.Contains(out, `"branch": "fugaro/`+first+`"`) {
