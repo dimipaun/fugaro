@@ -214,8 +214,9 @@ var catalogNameRE = ProjectNameRE
 // ValidCatalogName reports whether name may be a catalog entry's name, the
 // rule an entry's own name is held to here and a workflow's image_name is held
 // to there. It is exported with the sentence its refusal prints because a
-// third document names an entry: the published policy node's image_map values
-// are entry names (the image setup skill, D1906), and that map is read in
+// third document names an entry: the published policy node's
+// repository-to-image map (`repo_images`) holds entry names (the image setup
+// skill, D1906), and that map is read in
 // internal/projectpolicy and written by the local config's loader — two
 // packages that cannot restate this rule without a second one to keep in step.
 func ValidCatalogName(name string) bool { return catalogNameRE.MatchString(name) }

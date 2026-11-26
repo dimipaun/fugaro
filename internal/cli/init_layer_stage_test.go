@@ -353,6 +353,7 @@ func TestUpdatePublishesTheProjectLayerWhenItIsUnpublished(t *testing.T) {
 // equal, publishes nothing rather than the same bytes again.
 func TestUpdatePublishesALayerFileAWriterJustWrote(t *testing.T) {
 	r := newLayerRig(t, testProjectLayer)
+	r.managedRuns(t, initProjectName, initProject)
 	fakeTerminal(t)
 	path := localLayerPath(t)
 	recordLayer(t, testProjectLayer, "0")

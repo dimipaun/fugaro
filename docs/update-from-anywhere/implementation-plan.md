@@ -89,7 +89,8 @@ launches by plan edges holds it by hand.
    doors.
 5. **The wiring** (I1) and **the documents** (U7a, U7b).
 6. **After L2** (U11): the repository stage over every repository.
-7. **The owner's check** (K1, Check 930).
+7. **After U11** (U12): `update --repo` goes.
+8. **The owner's check** (K1, Check 930).
 
 ## Tasks
 
@@ -517,6 +518,31 @@ launches by plan edges holds it by hand.
   see the launch notes).
 - Commit: `update-from-anywhere U11: the repository stage over every repository`
 - Reviewer tier: opus, with an independent review (it applies Terraform roots).
+
+### U12: `update --repo` goes (after U11)
+- Added by the owner's ruling of 2026-11-26 (D3353). Until U11 merges nothing changes: `update --repo`
+  stays as it is. U12 depends on U11 and on U9d, and launches after both.
+- Acceptance:
+  - The `--repo` flag is removed from `fugaro update`. A repository's records come from plain
+    `fugaro update` over every enrolled repository, read from its default branch (U11).
+  - Every document, help text, plugin skill line, website page and message that tells anyone to run
+    `fugaro update --repo` per checkout names plain `fugaro update` instead: the README's Providers
+    step 6, `docs/how-to/budgets.md`, `registry-cleanup.md`, `retiring-a-workflow.md`,
+    `offboarding.md` and `teammates.md`, `plugin/skills/update/SKILL.md`, and the doctor fix texts
+    (the `credentials-service-deployed` one among them). These are report rows RC90 and RC94.
+  - A test pins that no live document or message still names `update --repo`.
+- Files: `internal/cli/init.go`, `internal/cli/init_repo_stage.go`, `internal/cli/doctor_brokering.go`,
+  `README.md`, `docs/how-to/budgets.md`, `docs/how-to/registry-cleanup.md`,
+  `docs/how-to/retiring-a-workflow.md`, `docs/how-to/offboarding.md`, `docs/how-to/teammates.md`,
+  `plugin/skills/update/SKILL.md`, `internal/cli/docs_no_update_repo_test.go` (new).
+- Interfaces: removes the `--repo` flag of `update`; consumes U11's repository stage.
+- Tests: `TestUpdateHasNoRepoFlag`, `TestNoLiveDocumentNamesUpdateRepo`,
+  `TestDoctorFixTextsNamePlainUpdate`.
+- Command: `go test ./internal/cli/ -run 'TestUpdateHasNoRepoFlag|TestNoLiveDocumentNamesUpdateRepo|TestDoctorFixTextsNamePlainUpdate|Docs' -count=1 && go test ./plugin/ -count=1`
+- Red step: `TestUpdateHasNoRepoFlag` fails while `update` still registers `--repo`.
+- Depends on: U11 (the repository stage replaces what `--repo` did); U9d (the same documents).
+- Commit: `update-from-anywhere U12: update --repo goes`
+- Reviewer tier: opus, with an independent review (it removes a flag the plugin skills name).
 
 ### I1: integration: the real list, the end-to-end tests
 - Kind: integration.

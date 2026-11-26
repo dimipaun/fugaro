@@ -1220,8 +1220,10 @@ workflows:
 // beside it rather than merged into it: the level replaces the inherited one
 // whole. Read the other way, a layer that writes any other key is turning the
 // level back on, so an inherited `none: true` is cleared. A repository can
-// therefore turn a level the project set off, and turn one the project turned
-// off back on, which is what docs/multi-model.md §4 tells it it can do.
+// therefore turn on a level the project turned off, which is what
+// docs/multi-model.md §4 tells it it can do, and turn off one the project
+// leaves alone — never one the project turns on: a level on beats off (B4,
+// spec §5.2), so that off is dropped and recorded (TestTightenOnly).
 func TestLayerLevelsNoneReplacesTheLevel(t *testing.T) {
 	const head = "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
 	const workflows = "workflows:\n  default:\n    commands: { build: make, test: make test }\n"
@@ -1237,13 +1239,12 @@ func TestLayerLevelsNoneReplacesTheLevel(t *testing.T) {
 		goneSource string
 	}{
 		{
-			name:       "the repository turns the project's level off",
+			name:       "the repository turns off a level the project leaves alone",
 			level:      "l1",
-			layerLevel: "      l1: { model: claude-haiku-4-5, effort: low }\n",
+			layerLevel: "      l2: { effort: low }\n",
 			repoLevel:  "    l1: { none: true }\n",
 			off:        true,
 			repoSource: "agent.levels.l1.none",
-			goneSource: "agent.levels.l1.model",
 		},
 		{
 			name:       "the repository turns the project's none back on",
@@ -1290,8 +1291,10 @@ func TestLayerLevelsNoneReplacesTheLevel(t *testing.T) {
 			if src := res.SourceOf(tc.repoSource); src != SourceRepo {
 				t.Errorf("SourceOf(%s) = %q, want %q", tc.repoSource, src, SourceRepo)
 			}
-			if src := res.SourceOf(tc.goneSource); src != SourceDefault {
-				t.Errorf("SourceOf(%s) = %q, want %q: no layer set it, the key did not survive the merge", tc.goneSource, src, SourceDefault)
+			if tc.goneSource != "" {
+				if src := res.SourceOf(tc.goneSource); src != SourceDefault {
+					t.Errorf("SourceOf(%s) = %q, want %q: no layer set it, the key did not survive the merge", tc.goneSource, src, SourceDefault)
+				}
 			}
 		})
 	}

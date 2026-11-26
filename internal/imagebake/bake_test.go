@@ -19,12 +19,15 @@ func bakeOn() *bool  { v := true; return &v }
 func bakeOff() *bool { v := false; return &v }
 
 // repoSpec is one of the project's repositories as a build resolves it: the
-// canonical name, the slug its checkout is written at (task.Slug) and the https
-// URL it clones from. The slugs are the shape task.Slug emits and are written
-// out rather than computed here, because a test that derived them would be a
-// second implementation of the thing it is checking.
+// canonical name, the provider key the map reads it by (projectpolicy.Canonical,
+// which a repository name alone does not carry), the slug its checkout is
+// written at (task.Slug) and the https URL it clones from. GitHub is the
+// provider a test names unless it is about the other one. The slugs are the
+// shape task.Slug emits and are written out rather than computed here, because a
+// test that derived them would be a second implementation of the thing it is
+// checking.
 func repoSpec(name, slug string) Repo {
-	return Repo{Repo: name, Slug: slug, URL: "https://github.com/" + name + ".git", Branch: "main"}
+	return Repo{Repo: name, Key: "github/" + name, Slug: slug, URL: "https://github.com/" + name + ".git", Branch: "main"}
 }
 
 // names is what a plan bakes, as a line names it.
@@ -43,7 +46,7 @@ func reqApp() Request {
 	return Request{
 		Entry: "app",
 		Repo:  repoSpec("acme/app", "app-1234abcd"),
-		Map:   map[string]string{"acme/app": "app"},
+		Map:   map[string]string{"github/acme/app": "app"},
 		Repos: []Repo{repoSpec("acme/app", "app-1234abcd")},
 		Bake:  bakeOn(),
 	}
@@ -99,7 +102,7 @@ func TestDecideBakesSeveralRepos(t *testing.T) {
 		repoSpec("acme/spare", "spare-4444dddd"),
 	}
 	req.Map = map[string]string{
-		"acme/app": "app", "acme/api": "app", "acme/web": "app", "acme/tool": "other",
+		"github/acme/app": "app", "github/acme/api": "app", "github/acme/web": "app", "github/acme/tool": "other",
 	}
 	p := Decide(req)
 	if len(p.Baked) != 3 {
@@ -178,7 +181,7 @@ func TestDecideBakesOnlyTheMapEntrysRepositories(t *testing.T) {
 // bake is refused by name instead of composed from a guess (D2301).
 func TestDecideRefusesARepositoryTheProjectDoesNotAdmit(t *testing.T) {
 	req := reqApp()
-	req.Map = map[string]string{"acme/app": "app", "acme/web": "app"}
+	req.Map = map[string]string{"github/acme/app": "app", "github/acme/web": "app"}
 	p := Decide(req)
 	if len(p.Baked) != 0 {
 		t.Fatalf("Decide baked %q into an entry that serves a repository this project does not admit", names(p.Baked))
@@ -198,9 +201,95 @@ func TestDecideRefusesARepositoryTheProjectDoesNotAdmit(t *testing.T) {
 	// A key that is not a repository name is refused too: it is a published
 	// node's own text, and it reaches a line a person reads.
 	req = reqApp()
-	req.Map = map[string]string{"acme/app": "app", "not a repo": "app"}
+	req.Map = map[string]string{"github/acme/app": "app", "not a repo": "app"}
 	if p := Decide(req); len(p.Baked) != 0 || !strings.Contains(p.Reason, "which is not a repository") {
 		t.Errorf("Decide baked %q with the reason %q, want a refusal naming the map key that is not a repository", names(p.Baked), p.Reason)
+	}
+}
+
+// TestDecideByProviderKey: the map is read by provider/owner/name, so one name
+// at two providers is two keys and two entries (D3370). A build of the Bitbucket
+// acme/app reads the Bitbucket key: a lookup by the bare name would read the
+// GitHub key and bake a checkout whose jobs run another image, and would refuse
+// the bake over a repository this build never clones.
+func TestDecideByProviderKey(t *testing.T) {
+	req := reqApp()
+	own := Repo{Repo: "acme/app", Key: "bitbucket/acme/app", Slug: "app-1234abcd", URL: "https://bitbucket.org/acme/app.git", Branch: "main"}
+	req.Repo, req.Repos = own, []Repo{own}
+
+	// The project serves acme/app at Bitbucket, and the map names it at both
+	// providers: the build's own key bakes its checkout, the other provider's is
+	// skipped (R9).
+	req.Map = map[string]string{"bitbucket/acme/app": "app", "github/acme/app": "app"}
+	p := Decide(req)
+	if len(p.Baked) != 1 || p.Baked[0].Key != "bitbucket/acme/app" {
+		t.Fatalf("Decide bakes %q (%s), want the one repository this build runs for, read at its own provider", names(p.Baked), p.Reason)
+	}
+
+	// The map puts only the other provider's key on the entry, and this
+	// repository's own workflow names the entry: nothing is baked, and both the
+	// reason and the fix name the key the map is read by — a key the person's own
+	// command has to spell the same way.
+	req.Reference = "app"
+	req.Map = map[string]string{"github/acme/app": "app"}
+	p = Decide(req)
+	if len(p.Baked) != 0 {
+		t.Fatalf("Decide baked %q from a key at a provider this build does not run at", names(p.Baked))
+	}
+	if !strings.Contains(p.Reason, "bitbucket/acme/app") || !strings.Contains(p.Fix, "fugaro image map set bitbucket/acme/app app") {
+		t.Errorf("the reason %q and the fix %q do not name the key the map is read by", p.Reason, p.Fix)
+	}
+}
+
+// TestEntryReposSkipsAKeyAtTheWrongProvider: R9, and F14's case — a key
+// D3375's migration wrote for a provider the project turns out not to serve
+// (bitbucket/acme/app where acme/app is only at GitHub). It names a repository
+// no job of this image runs and that this build holds no credential for, so it
+// is skipped: one such key must not refuse the whole bake.
+func TestEntryReposSkipsAKeyAtTheWrongProvider(t *testing.T) {
+	req := reqApp()
+	req.Map = map[string]string{"github/acme/app": "app", "bitbucket/acme/app": "app"}
+	baked, refused := entryRepos(req)
+	if refused != "" {
+		t.Fatalf("entryRepos refused the bake (%s): a key at a provider this build does not run at is skipped and not refused", refused)
+	}
+	if len(baked) != 1 || baked[0].Key != "github/acme/app" {
+		t.Errorf("entryRepos baked %+v, want the build's own repository alone", baked)
+	}
+}
+
+// TestEntryReposStillRefusesAnUnadmittedRepo: R9's other half. A key at the
+// build's own provider for a repository the project does not admit is still
+// refused, by name: the build holds no URL and no provider for it, and the
+// entry's jobs may well run this image, so a skipped key here would bake
+// nothing quietly.
+func TestEntryReposStillRefusesAnUnadmittedRepo(t *testing.T) {
+	req := reqApp()
+	req.Map = map[string]string{"github/acme/app": "app", "github/acme/other": "app"}
+	baked, refused := entryRepos(req)
+	if refused == "" {
+		t.Fatalf("entryRepos baked %+v, want a refusal: github/acme/other is not a repository this project admits", baked)
+	}
+	if !strings.Contains(refused, "github/acme/other") || !strings.Contains(refused, "not a repository this project admits") {
+		t.Errorf("the refusal %q does not name the key and why it is refused", refused)
+	}
+}
+
+// TestDecideReadsALegacyMap: R2. A map in the old form — bare names, matching
+// every provider — is read as it always was, because a node or a local config
+// `update` has not rewritten yet still holds it. repo_images wins where the
+// project has one, per member and never per key.
+func TestDecideReadsALegacyMap(t *testing.T) {
+	req := reqApp()
+	req.Map = nil
+	req.LegacyMap = map[string]string{"acme/app": "app"}
+	if p := Decide(req); len(p.Baked) != 1 {
+		t.Fatalf("Decide baked nothing (%s): a legacy map puts this repository on the entry", p.Reason)
+	}
+	req.Map = map[string]string{"github/acme/app": "app"}
+	req.LegacyMap = map[string]string{"acme/app": "other"}
+	if p := Decide(req); len(p.Baked) != 1 {
+		t.Fatalf("Decide baked nothing (%s): repo_images answers whatever the legacy map holds", p.Reason)
 	}
 }
 
@@ -212,9 +301,13 @@ func TestDecideRefusesARepositoryTheProjectDoesNotAdmit(t *testing.T) {
 // with no credential at all.
 func TestDecideRefusesARepositoryOnAnotherHost(t *testing.T) {
 	req := reqApp()
-	req.Map = map[string]string{"acme/app": "app", "acme/web": "app"}
+	req.Map = map[string]string{"github/acme/app": "app", "bitbucket/acme/web": "app"}
+	// The project serves acme/web at Bitbucket, so this key is one R9 keeps: what
+	// refuses it is the host its clone URL sends the credential to. A build that
+	// skipped it instead would bake an image acme/web's jobs run with no checkout
+	// of theirs in it.
 	other := repoSpec("acme/web", "web-2222bbbb")
-	other.URL = "https://bitbucket.org/acme/web.git"
+	other.Key, other.URL = "bitbucket/acme/web", "https://bitbucket.org/acme/web.git"
 	req.Repos = append(req.Repos, other)
 	p := Decide(req)
 	if len(p.Baked) != 0 {
@@ -228,6 +321,7 @@ func TestDecideRefusesARepositoryOnAnotherHost(t *testing.T) {
 	same := repoSpec("acme/web", "web-2222bbbb")
 	same.URL = "https://GitHub.com/acme/web"
 	req.Repos = append(req.Repos[:1], same)
+	req.Map = map[string]string{"github/acme/app": "app", "github/acme/web": "app"}
 	if p := Decide(req); len(p.Baked) != 2 {
 		t.Errorf("Decide bakes %q (%s), want both repositories: their clone URLs are on one host", names(p.Baked), p.Reason)
 	}
@@ -239,7 +333,7 @@ func TestDecideBakesNothingForAnotherImage(t *testing.T) {
 	for name, req := range map[string]Request{
 		"the map puts the repository on another entry": func() Request {
 			r := reqApp()
-			r.Map = map[string]string{"acme/app": "other"}
+			r.Map = map[string]string{"github/acme/app": "other"}
 			return r
 		}(),
 		"the map names no repository at all": func() Request {
@@ -298,7 +392,7 @@ func TestDecideBakesNothingWhileTheMapDoesNotListIt(t *testing.T) {
 	}
 	// Recorded there, the bake lands: the map puts this repository on the entry
 	// its own workflow names, and puts no other repository on it.
-	req.Map = map[string]string{"acme/app": "app"}
+	req.Map = map[string]string{"github/acme/app": "app"}
 	if p := Decide(req); len(p.Baked) != 1 {
 		t.Fatalf("Decide baked nothing (%s): the map puts this repository on the entry its workflow names", p.Reason)
 	}

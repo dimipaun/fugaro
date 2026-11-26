@@ -14,7 +14,7 @@ func TestEntryOwnIsTheAuthorsBytes(t *testing.T) {
 	const own = "ARG FUGARO_BASE\nFROM ${FUGARO_BASE}\nRUN --mount=type=secret,id=git-credentials git clone \"$REPO_URL\" /work/repo\n"
 	rep := repoSpec("acme/app", "app-1234abcd")
 	def, err := Append([]byte(own), Decide(Request{
-		Entry: "app", Repo: rep, Repos: []Repo{rep}, Map: map[string]string{"acme/app": "app"},
+		Entry: "app", Repo: rep, Repos: []Repo{rep}, Map: map[string]string{"github/acme/app": "app"},
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -45,7 +45,7 @@ func TestEntryOwnIsTheAuthorsBytes(t *testing.T) {
 	// carry several stages and the entry's own bytes are still the prefix of
 	// both: the first marker is the boundary, whichever stage is the last.
 	twice, err := Append(def, Decide(Request{
-		Entry: "app", Repo: rep, Repos: []Repo{rep}, Map: map[string]string{"acme/app": "app"},
+		Entry: "app", Repo: rep, Repos: []Repo{rep}, Map: map[string]string{"github/acme/app": "app"},
 	}))
 	if err != nil {
 		t.Fatal(err)

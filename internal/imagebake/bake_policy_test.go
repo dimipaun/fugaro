@@ -19,14 +19,14 @@ import (
 // makes: the shape the package's own test file builds, written again here because
 // the two files are two packages.
 func bakeRepoSpec(name, slug string) imagebake.Repo {
-	return imagebake.Repo{Repo: name, Slug: slug, URL: "https://github.com/" + name + ".git", Branch: "main"}
+	return imagebake.Repo{Repo: name, Key: "github/" + name, Slug: slug, URL: "https://github.com/" + name + ".git", Branch: "main"}
 }
 
 func bakeRequest() imagebake.Request {
 	return imagebake.Request{
 		Entry: "app",
 		Repo:  bakeRepoSpec("acme/app", "app-1234abcd"),
-		Map:   map[string]string{"acme/app": "app"},
+		Map:   map[string]string{"github/acme/app": "app"},
 		Repos: []imagebake.Repo{bakeRepoSpec("acme/app", "app-1234abcd")},
 		Bake:  bakeOn(),
 	}
@@ -59,7 +59,7 @@ func TestDecideAnUnsetSwitchIsOn(t *testing.T) {
 		"the map names nothing":                    func() imagebake.Request { r := bakeRequest(); r.Map = nil; return r }(),
 		"the entry serves another repository too": func() imagebake.Request {
 			r := bakeRequest()
-			r.Map = map[string]string{"acme/app": "app", "acme/web": "app"}
+			r.Map = map[string]string{"github/acme/app": "app", "github/acme/web": "app"}
 			r.Repos = append(r.Repos, bakeRepoSpec("acme/web", "web-2222bbbb"))
 			return r
 		}(),

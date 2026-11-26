@@ -1135,6 +1135,34 @@ func TestCatalogBuildBakesTheMappedReposCheckout(t *testing.T) {
 	}
 }
 
+// TestBuildCatalogBakesByProvider: the bake reads the repository-to-image map by
+// provider (D3370, R9). A project that names acme/app at both providers holds two
+// keys, and a build of the Bitbucket checkout is the Bitbucket one: the GitHub
+// key serves no repository this build clones, so it is skipped and neither adds
+// a checkout of the other provider nor refuses the bake the map does ask for.
+func TestBuildCatalogBakesByProvider(t *testing.T) {
+	_, gcs, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
+	f.appendConfig(t, "repo_images:\n  bitbucket/acme/app: tools\n  github/acme/app: tools\nbake_repos: true\n")
+
+	_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
+	if err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	dir := "/work/baked/" + mustSlug(gitprov.KindBitbucket, "acme/app")
+	got, _ := catalogCopy(t, gcs, "tools")
+	if baked, ok := imagebake.BakedDir([]byte(got)); !ok || baked != dir {
+		t.Errorf("the copy bakes at %q, %v; want the Bitbucket checkout at %s: the map's Bitbucket key names this build's repository", baked, ok, dir)
+	}
+	// One stage: the GitHub key is a provider this build holds no credential for,
+	// and the project serves acme/app at Bitbucket alone (R9).
+	if n := strings.Count(got, "# fugaro bake: "); n != 1 {
+		t.Errorf("the copy carries %d bake stages, want the one the map names at this build's provider:\n%s", n, got)
+	}
+	if !strings.Contains(stderr, "bakes the checkout of acme/app at "+dir) {
+		t.Errorf("stderr = %q, want the one baked checkout the map's own provider names", stderr)
+	}
+}
+
 // catalogBuildCredentialArg is the git credential the derived template hands a
 // build step, as the submitted request spells it: gcp's
 // catalogTemplateCredentialArg, whose text that package's own test pins

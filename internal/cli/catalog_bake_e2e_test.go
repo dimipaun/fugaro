@@ -91,7 +91,9 @@ func TestCatalogBuildBakesTwoReposThroughTheService(t *testing.T) {
 	const second = "acme/lib"
 	fb, gcs, f := catalogBuildCheckoutFor(t, cliMinimalYAML, catalogBuildYAML, gitprov.KindGitHub, catalogBuildAppID)
 	addRepoToProject(t, second, gitprov.KindGitHub, catalogBuildAppID)
-	f.appendConfig(t, "image_map:\n  acme/app: tools\n  "+second+": tools\nbake_repos: true\n")
+	// The map is keyed by provider (repo_images, D3370): one key per repository,
+	// under the provider the project serves it at, which is GitHub here for both.
+	f.appendConfig(t, "repo_images:\n  github/acme/app: tools\n  github/"+second+": tools\nbake_repos: true\n")
 
 	_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
 	if err != nil {

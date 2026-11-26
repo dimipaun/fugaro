@@ -351,6 +351,30 @@
    }
   },
   {
+   "id": "U12",
+   "title": "update --repo goes (after U11)",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/init.go",
+     "internal/cli/init_repo_stage.go",
+     "internal/cli/doctor_brokering.go",
+     "README.md",
+     "docs/how-to/budgets.md",
+     "docs/how-to/registry-cleanup.md",
+     "docs/how-to/retiring-a-workflow.md",
+     "docs/how-to/offboarding.md",
+     "docs/how-to/teammates.md",
+     "plugin/skills/update/SKILL.md",
+     "internal/cli/docs_no_update_repo_test.go"
+    ]
+   }
+  },
+  {
    "id": "I1",
    "title": "integration: the real list, the end-to-end tests",
    "run": null,
@@ -597,6 +621,16 @@
    "task": "R-view-files",
    "needs": "I1",
    "reason": "kept: a change to C1's files comes after every consumer has landed, never beside the contract"
+  },
+  {
+   "task": "U12",
+   "needs": "U11",
+   "reason": "kept, behaviour: the repository stage replaces what --repo did"
+  },
+  {
+   "task": "U12",
+   "needs": "U9d",
+   "reason": "kept: both rewrite the same live documents"
   }
  ],
  "decoupling": [
