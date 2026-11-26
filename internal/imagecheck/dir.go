@@ -54,6 +54,20 @@ func (d Dir) Glob(pattern string) ([]string, error) {
 	return doublestar.Glob(os.DirFS(d.Root), pattern, doublestar.WithFilesOnly(), doublestar.WithNoFollow())
 }
 
+// Size is the file's size, without reading it (sizedTree): the caller that
+// bounds a key file's read asks this first.
+func (d Dir) Size(path string) (int64, error) {
+	full, err := d.file(path)
+	if err != nil {
+		return 0, err
+	}
+	fi, err := os.Stat(full)
+	if err != nil {
+		return 0, err
+	}
+	return fi.Size(), nil
+}
+
 // ReadFile reads a regular file of the tree.
 func (d Dir) ReadFile(path string) ([]byte, error) {
 	full, err := d.file(path)

@@ -382,6 +382,87 @@ func SharedRegistryRepoID() string {
 	return derive("fugaro-shared-images", "shared", "images", maxRegistry, registryHashHex)
 }
 
+// SharedImagePrefix is the name every shared image carries inside
+// SharedRegistryRepoID, so a name can never be read as one of the catalog's
+// own (catalogImagePrefix, internal/infra/checkjob.go).
+const SharedImagePrefix = "img-"
+
+// sharedKeyHex is the number of a key's leading hex characters the image's
+// name carries (§2.6): enough that two keys of one installation collide never,
+// and short enough that the name stays readable.
+const sharedKeyHex = 12
+
+// SharedImageName is the image of a normalised dependency-set key, untagged:
+// <registry>/<shared registry>/img-<the key's first 12 hex>. The name carries
+// no repository and no workflow, because the same name is the same dependency
+// set — which is the whole of §2.6's point. key is imagecheck.Key's own
+// answer, and a value that is not lower-case hex of the length Key returns is
+// refused rather than spelled into a registry path.
+func SharedImageName(registry, key string) (string, error) {
+	if !validSharedKey(key) {
+		return "", fmt.Errorf("a shared image's key must be %d lower-case hex characters, not %d", sharedKeyLen, len(key))
+	}
+	return strings.TrimSuffix(registry, "/") + "/" + SharedRegistryRepoID() + "/" + SharedImagePrefix + key[:sharedKeyHex], nil
+}
+
+// sharedKeyLen is the length of imagecheck.Key's answer: the hex SHA-256 of the
+// canonical form.
+const sharedKeyLen = 64
+
+// validSharedKey reports whether key is shaped as imagecheck.Key's answer.
+// This package cannot import imagecheck (imagecheck imports nothing of the
+// backend, and the name is written where a registry path is built), so the
+// shape is stated here once and both halves of the layout are held to it by
+// TestSharedImageNameMatchesTheKey.
+func validSharedKey(key string) bool {
+	if len(key) != sharedKeyLen {
+		return false
+	}
+	for i := 0; i < len(key); i++ {
+		switch c := key[i]; {
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'f':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// SharedImageKey is the key a shared image was named for, from the image name
+// SharedImageName wrote: the 12 hex the name carries, which is a prefix of the
+// key and not the key. ok is false for any other image, and for one of
+// SharedRegistryRepoID whose name is not a shared image's (a catalog entry's,
+// which lives in the same registry).
+func SharedImageKey(image string) (prefix string, ok bool) {
+	base, _ := cutTag(image)
+	parts := strings.Split(base, "/")
+	if len(parts) < 3 || parts[len(parts)-2] != SharedRegistryRepoID() {
+		return "", false
+	}
+	name, found := strings.CutPrefix(parts[len(parts)-1], SharedImagePrefix)
+	if !found || len(name) != sharedKeyHex {
+		return "", false
+	}
+	for i := 0; i < len(name); i++ {
+		switch c := name[i]; {
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'f':
+		default:
+			return "", false
+		}
+	}
+	return name, true
+}
+
+// cutTag splits an image reference at its tag, leaving a digest reference's
+// own "@" alone: a name carries a tag or a digest, never both.
+func cutTag(image string) (base, tag string) {
+	base, tag, found := strings.Cut(image, ":")
+	if !found || strings.Contains(base, "@") {
+		return image, ""
+	}
+	return base, tag
+}
+
 // DefaultRegistryHost is the registry host, the prefix of every image
 // registry, of a new installation in region of project:
 // <region>-docker.pkg.dev/<project>.
