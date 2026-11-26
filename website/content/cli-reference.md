@@ -4255,7 +4255,7 @@ Subcommands:
 - `fugaro image build` -- Build a catalog entry's image with Cloud Build, or the workflow's derived image; --local builds the derived one with local Docker
 - `fugaro image check` -- Decide whether each workflow's image needs a rebuild (the daily check; locally it only prints the decision)
 - `fugaro image ls` -- List the project's image catalog entries, or the shared-image lock's with --shared
-- `fugaro image map` -- Map a repository to an image catalog entry (the project's image_map)
+- `fugaro image map` -- Map a repository to an image catalog entry (the project's repo_images)
 - `fugaro image promote` -- Copy a repository's image definition into the catalog and point the repository at it
 - `fugaro image refresh` -- Move a repository onto this release's base image: pin it, point the daily image check job at it, rebuild what is stale
 - `fugaro image render` -- Print the Dockerfile that builds the workflow's derived image
@@ -4474,7 +4474,7 @@ This command has no subcommands.
 
 ## `fugaro image map`
 
-Map a repository to an image catalog entry (the project's image_map)
+Map a repository to an image catalog entry (the project's repo_images)
 
 Usage: `fugaro image map`
 
@@ -4494,17 +4494,20 @@ Map a repository to an image catalog entry, in this machine's project config
 
 Map one of the project's repositories to an image catalog entry, in this
 machine's project config: the copy fugaro update publishes to the project's
-policy node (image_map). From there the repository's jobs run that entry's
+policy node (repo_images). From there the repository's jobs run that entry's
 image, so the mapping is a project setting and not a per-repository one — a
 rerun of the skill that proposed it changes one line here rather than one
 file in every repository.
 
-The repository is one the project's local config lists (fugaro update --repo
-onboards one), as owner/name or as a path inside its checkout, and the entry
-is one this machine's catalog names (fugaro image add writes one). Setting a
-repository that is already mapped replaces its entry; the file's map is the
-project's whole map, so a map published from another machine is replaced by
-this file's rather than added to.
+The repository is named as provider/owner/name (github/acme/app), or as
+owner/name for one the project's local config lists (fugaro update --repo
+onboards one), or as a path inside its checkout; the entry is one this
+machine's catalog names (fugaro image add writes one). Setting a repository
+that is already mapped replaces its entry. The file's map is the project's
+whole map, and it is what fugaro update publishes: a file that holds none
+of its own takes the map the project publishes into it first — a name the
+migration cannot place is dropped with its line — so a mapping written
+here adds to the project's map rather than replacing it.
 
 This write is a person's own: fugaro update publishes it, and a coding
 agent's session is refused it, in a managed project by that project's gate.
@@ -4659,11 +4662,11 @@ Remove an image catalog entry from this machine's project config
 Remove a named image from the project's image catalog, in this machine's
 project config. The removal is refused while a repository's job still runs
 the entry — because a workflow names it (image_name:), because the
-project's image_map gives it to the repository, or because the tag-cover
-rule picks it for the tags the workflow needs — since that job would then
-be on an image no catalog describes. Point the repository at another entry
-first (image_name: in its fugaro.yaml, or fugaro image map set), then
-remove the entry.
+project's repository-to-image map (`repo_images`) gives it to the
+repository, or because the tag-cover rule picks it for the tags the
+workflow needs — since that job would then be on an image no catalog
+describes. Point the repository at another entry first (image_name: in its
+fugaro.yaml, or fugaro image map set), then remove the entry.
 
 The removal is made live by this one command: the repository whose job ran
 the entry is redeployed and the catalog is published without it, so no
@@ -4725,7 +4728,8 @@ Report what a project-level image setup would have to work from: every
 repository this machine's project config lists, the signals each one carries
 (its lockfiles and version files, a Dockerfile and its base image, its CI
 file, and the services its compose or Testcontainers files name), and the
-catalog, repository-to-image map and bake setting the project has today.
+catalog, the repository-to-image map (`repo_images`) and the bake setting
+the project has today.
 
 Nothing is cloned, built or written: each repository is read through the
 code host's own file API with the token this shell holds, at a fixed list of
