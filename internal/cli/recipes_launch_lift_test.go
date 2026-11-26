@@ -68,9 +68,9 @@ func publishCopy(t *testing.T, f *cloudFixture, repo, name, text string) string 
 func TestLaunchEmbedsTheCopy(t *testing.T) {
 	t.Run("a first run from outside a checkout", func(t *testing.T) {
 		f := newProjectJobFixture(t)
-		// The copy this launch embeds needs the release A base: the fixture's
-		// own is the node's release (nodeRelease), below recipeCopySince.
-		rewriteConfig(t, "fugaro-base:"+nodeRelease, "fugaro-base:"+recipeCopySince)
+		// The copy this launch embeds needs the release A base, which the
+		// fixture's own is: its image is the node's release (nodeRelease) and
+		// that release is release A's (recipeCopySince, LM21).
 		projectRecipesFixture(t, f.cloudFixture, nil)
 		copied := publishCopy(t, f.cloudFixture, "acme/app", "mine", repoRecipe)
 		s := newServiceReadFixture(t)

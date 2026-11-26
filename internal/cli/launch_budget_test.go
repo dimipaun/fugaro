@@ -1816,12 +1816,18 @@ func TestServiceAuthSinceHasAReleaseBullet(t *testing.T) {
 
 // imageGateOnly reports whether err is policyImageGate's refusal of a node
 // the image at base is older than, with none of the proxy refusal's words.
+// The node's own release is what the image has to reach
+// (projectpolicy.VersionSince), so a row whose fixture names an image older
+// than it reads the image gate's refusal whatever else that row is about.
 func imageGateOnly(err error, base string) bool {
-	rel, ok := projectpolicy.VersionRelease(projectpolicy.Version - 1)
-	if !ok || !strings.Contains(err.Error(), "needs a job image whose runner knows policy version") {
+	if !strings.Contains(err.Error(), "needs a job image whose runner knows policy version") {
 		return false
 	}
-	return !strings.Contains(err.Error(), "Bitbucket proxy") && !strings.HasSuffix(base, ":"+rel)
+	if strings.Contains(err.Error(), "Bitbucket proxy") {
+		return false
+	}
+	tag := base[strings.LastIndex(base, ":")+1:]
+	return newer(nodeRelease, tag)
 }
 
 // TestOlderCLIIsToldToUpgrade is LM21's own guarantee (D3124): the release an
