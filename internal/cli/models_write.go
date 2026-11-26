@@ -97,9 +97,9 @@ func modelsRefuseVariant(id string) error {
 const modelsRoleBackground = "background"
 
 // modelsRoleVision is the fourth key agent.models has, and a literal for the
-// background key's reason: no stage is the vision one either (a stage's own
-// model runs the slot only where it cannot read an image, D2000), so the slot
-// has no config.Role to be spelled with.
+// background key's reason: no stage is the vision one either (a run's coder
+// stages run the slot only where the task names an image their own model cannot
+// read, D2000, D2017), so the slot has no config.Role to be spelled with.
 const modelsRoleVision = "vision"
 
 // modelsRoleNames are the four keys agent.models has, in the order every

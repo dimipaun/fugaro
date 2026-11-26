@@ -417,7 +417,7 @@
           "default": "unset = agent.model"
         },
         "agent.models.vision": {
-          "default": "unset = none: a stage whose own model cannot read an image keeps it",
+          "default": "unset = none: every stage keeps the coder's own model",
           "description": "Fugaro before 0.23.0 refuses the key, in fugaro.yaml and in a project layer's defaults: both files are decoded strictly, so a job image older than that release fails at bootstrap on a key its runner does not know, and the launch is what refuses it (internal/cli's visionSince). The slot is unusable before that release for a second reason: pricing a model's images needs model_prices' image_tokens, which the same release carries."
         },
         "agent.oauth_token": {
@@ -1106,7 +1106,7 @@
           "default": "unset = defaults.agent.model"
         },
         "layer.defaults.agent.models.vision": {
-          "default": "unset = none: a stage whose own model cannot read an image keeps it",
+          "default": "unset = none: every stage keeps the coder's own model",
           "description": "Fugaro before 0.23.0 refuses the key, in fugaro.yaml and in a project layer's defaults: both files are decoded strictly, so a job image older than that release fails at bootstrap on a key its runner does not know, and the launch is what refuses it (internal/cli's visionSince). The slot is unusable before that release for a second reason: pricing a model's images needs model_prices' image_tokens, which the same release carries."
         },
         "layer.defaults.agent.recipe": {
