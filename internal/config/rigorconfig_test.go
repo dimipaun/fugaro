@@ -80,12 +80,20 @@ func TestRigorIsOutOfTheHashWhenTheFileWritesNone(t *testing.T) {
 		t.Errorf("a config whose file writes no rigor: block carries the key anyway, so its hash moves for a file that did not change: %s", b)
 	}
 
+	// The keys of the block are the project's now (D3237): a repository's
+	// `rigor.default` and `rigor.areas` are dropped before the merge (R2), so
+	// the block the file wrote resolves empty — and the block itself stays,
+	// because writing `rigor:` at all is the repository opting in, which is no
+	// lifted key.
 	with, _, ps := Resolve([]byte(minimalRepo+"rigor: { default: poc }\n"), layer)
 	if len(ps) > 0 {
 		t.Fatal(ps)
 	}
-	if with.Rigor == nil || with.Rigor.Default != rigor.POC {
-		t.Fatalf("the block a file writes did not resolve: %+v", with.Rigor)
+	if with.Rigor == nil || with.Rigor.Default != "" || len(with.Rigor.Areas) != 0 {
+		t.Fatalf("the block a file writes resolved %+v, want the empty block the drop left: its keys are the project's (D3237)", with.Rigor)
+	}
+	if !with.RepoRigorSet {
+		t.Error("a file that writes a rigor: block lost its own key: the block is the opt-in and no lifted key")
 	}
 	if with.SHA256() == c.SHA256() {
 		t.Error("a file that writes a rigor: block hashes as one that writes none")
@@ -224,14 +232,17 @@ func TestRigorScalarShorthand(t *testing.T) {
 	if cfg.Rigor == nil || cfg.Rigor.Default != rigor.Critical || len(cfg.Rigor.Areas) != 0 {
 		t.Fatalf("rigor: critical resolved %+v, want the default alone", cfg.Rigor)
 	}
-	// The block form still carries both keys, and the scalar is the level:
-	// a value outside the vocabulary is refused where it is written.
+	// The block form is the same decoder, and a repository's copy of it is
+	// dropped like every other lifted key (D3237, R2): the level and the areas
+	// it names are the project's now, so the file's own block resolves empty
+	// while the two spellings are still read — the refusals below are the
+	// vocabulary's, at the key the file wrote.
 	cfg, ps = Parse([]byte(minimalRepo + "git: {provider: github}\nrigor: {default: poc, areas: [{name: docs, match: \"docs/**\", level: pro}]}\nworkflows: {app: {commands: {build: sh b, test: sh t}}}\n"))
 	if len(ps) > 0 {
 		t.Fatalf("the block form was refused: %s", problemsText(ps))
 	}
-	if cfg.Rigor.Default != rigor.POC || len(cfg.Rigor.Areas) != 1 || cfg.Rigor.Areas[0].Level != rigor.Pro {
-		t.Fatalf("the block form resolved %+v", cfg.Rigor)
+	if cfg.Rigor == nil || cfg.Rigor.Default != "" || len(cfg.Rigor.Areas) != 0 {
+		t.Fatalf("the block form resolved %+v, want the empty block the drop left", cfg.Rigor)
 	}
 	_, ps = Parse([]byte(minimalRepo + "git: {provider: github}\nrigor: Paranoid\nworkflows: {app: {commands: {build: sh b, test: sh t}}}\n"))
 	if len(ps) == 0 || !strings.Contains(problemsText(ps), "rigor must be one of "+rigor.RigorList()) {
@@ -256,21 +267,23 @@ func TestRigorScalarShorthand(t *testing.T) {
 // Mutation (refuse `mode:` by name again): the two loads below report it, and
 // an installation whose file still writes the old key fails its next run.
 func TestRigorReadsTheOldModeKey(t *testing.T) {
+	// The areas a repository's file writes are the project's now (D3237), so
+	// the resolved block carries none of them whatever key spelled their level;
+	// that the loader still reads both is what the refusals below hold, the
+	// rule a person has already upgraded being the one `level:` decides.
 	cfg, ps := Parse([]byte(minimalRepo + "git: {provider: github}\nrigor:\n  areas:\n    - {name: docs, match: \"docs/**\", mode: pro}\nworkflows: {app: {commands: {build: sh b, test: sh t}}}\n"))
 	if len(ps) > 0 {
 		t.Fatalf("the repository layer's old key: %s", problemsText(ps))
 	}
-	if cfg.Rigor == nil || len(cfg.Rigor.Areas) != 1 || cfg.Rigor.Areas[0].Level != rigor.Pro {
-		t.Fatalf("the repository layer read %+v, want one rule at pro", cfg.Rigor)
+	if cfg.Rigor == nil || len(cfg.Rigor.Areas) != 0 {
+		t.Fatalf("the repository layer read %+v, want the empty block the drop left", cfg.Rigor)
 	}
-	// The new key wins where a file still carries both, so a rule a person has
-	// already upgraded cannot be dragged back by the line beside it.
 	cfg, ps = Parse([]byte(minimalRepo + "git: {provider: github}\nrigor:\n  areas:\n    - {name: docs, match: \"docs/**\", mode: poc, level: pro}\nworkflows: {app: {commands: {build: sh b, test: sh t}}}\n"))
 	if len(ps) > 0 {
 		t.Fatalf("a rule carrying both keys: %s", problemsText(ps))
 	}
-	if len(cfg.Rigor.Areas) != 1 || cfg.Rigor.Areas[0].Level != rigor.Pro {
-		t.Fatalf("a rule carrying both keys read %+v, want level's value", cfg.Rigor.Areas)
+	if cfg.Rigor == nil || len(cfg.Rigor.Areas) != 0 {
+		t.Fatalf("a rule carrying both keys read %+v, want the empty block the drop left", cfg.Rigor.Areas)
 	}
 	_, ps = Parse([]byte(minimalRepo + "git: {provider: github}\nrigor:\n  areas:\n    - {name: docs, match: \"docs/**\", mode: pro, level: Paranoid}\nworkflows: {app: {commands: {build: sh b, test: sh t}}}\n"))
 	if got := problemsText(ps); !strings.Contains(got, "level must be one of "+rigor.RigorList()) {
@@ -295,7 +308,9 @@ func TestRigorReadsTheOldModeKey(t *testing.T) {
 // `default:` line writes. Both answers are taken from the document's own text,
 // so a file that writes neither spelling — including one that still writes
 // `mode:` — reports neither, and a file that writes one reports exactly that
-// one.
+// one. A repository's areas leave the file in release A (D3237, R2), so the
+// repository's half reports the scalar alone and the layer's half is where the
+// area key is judged.
 //
 // Mutation (read the parsed rules instead of the tree, e.g. answer
 // setsRigorLevel with len(r.Areas) > 0): the `mode:` cases below report the
@@ -307,7 +322,10 @@ func TestRigorSpellingsAreReadFromTheText(t *testing.T) {
 		text             string
 		level, shorthand bool
 	}{
-		{"this release's area key", minimalRepo + "rigor:\n  areas:\n    - {name: docs, match: \"docs/**\", level: pro}\n", true, false},
+		// The areas are the project's from release A on (D3237), so a
+		// repository that writes the key reports nothing: the gate follows the
+		// configuration a run reads, and the file's own areas are dropped (R2).
+		{"this release's area key", minimalRepo + "rigor:\n  areas:\n    - {name: docs, match: \"docs/**\", level: pro}\n", false, false},
 		{"the scalar shorthand", minimalRepo + "rigor: critical\n", false, true},
 		{"the released area key", minimalRepo + "rigor:\n  areas:\n    - {name: docs, match: \"docs/**\", mode: pro}\n", false, false},
 		{"a block that names neither", minimalRepo + "rigor: { default: critical }\n", false, false},
