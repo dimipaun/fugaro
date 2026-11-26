@@ -884,22 +884,39 @@ JSON
   printf 'unclaimed\nno-key\nclaim\nrepo\n' >"$json/validate-modes"
 }
 
-# job_doc [SECRET] [PLAIN]: the repository's job as `gcloud run jobs list`
-# carries it, with the two env entries this check reads — FUGARO_REMOTE, which
-# matches the job to the repository, and the ANTHROPIC_API_KEY entry, whose
-# secretRef name is the container step 1 resolves the secret from. An empty
-# SECRET writes a job with no such entry, which is the case the check cannot
-# name a secret on; a PLAIN value writes the entry as a plain variable instead
-# of a mount, which is the shape whose value is a credential and not a name.
-job_doc() { # job_doc [anthropic-secret] [plaintext]
-  local secret=${1-$anthropic_secret} plain=${2-} mount=""
+# job_doc [SECRET] [PLAIN] [SHAPE]: the repository's job as `gcloud run jobs
+# list` carries it, with the two env entries this check reads — FUGARO_REMOTE,
+# which matches the job to the repository, and the ANTHROPIC_API_KEY entry,
+# whose secretRef name is the container step 1 resolves the secret from. An
+# empty SECRET writes a job with no such entry, which is the case the check
+# cannot name a secret on; a PLAIN value writes the entry as a plain variable
+# instead of a mount, which is the shape whose value is a credential and not a
+# name.
+#
+# A mount is written in one of the two spellings the APIs carry it in, and both
+# are fixtures because the check reads both: SHAPE `v1`, the default, is what
+# `gcloud run jobs …` answers with — run/v1's EnvVarSource, `valueFrom
+# .secretKeyRef.{name,key}`, which check197, check330, check611 and check-lc4 all
+# read off a real project — and SHAPE `v2` is the API's own shape, `valueSource
+# .secretKeyRef.{secret,version}`, which the job module writes and `doctor` reads
+# back (internal/cli/doctor_job_mounts.go). Reading one spelling only would stop
+# the check on a job that does mount the key.
+job_doc() { # job_doc [anthropic-secret] [plaintext] [v1|v2]
+  local secret=${1-$anthropic_secret} plain=${2-} shape=${3-v1} mount="" key=
+  if [ "$shape" = v2 ]; then key=",{\"name\":\"FUGARO_FIREBASE_API_KEY\",\"valueSource\":{\"secretKeyRef\":{\"secret\":\"fb-key\",\"version\":\"latest\"}}}"
+  else key=",{\"name\":\"FUGARO_FIREBASE_API_KEY\",\"valueFrom\":{\"secretKeyRef\":{\"name\":\"fb-key\",\"key\":\"latest\"}}}"
+  fi
   if [ -n "$plain" ]; then
     mount=",{\"name\":\"ANTHROPIC_API_KEY\",\"value\":\"$plain\"}"
   elif [ -n "$secret" ]; then
-    mount=",{\"name\":\"ANTHROPIC_API_KEY\",\"valueSource\":{\"secretKeyRef\":{\"name\":\"$secret\",\"key\":\"latest\"}}}"
+    if [ "$shape" = v2 ]; then
+      mount=",{\"name\":\"ANTHROPIC_API_KEY\",\"valueSource\":{\"secretKeyRef\":{\"secret\":\"$secret\",\"version\":\"latest\"}}}"
+    else
+      mount=",{\"name\":\"ANTHROPIC_API_KEY\",\"valueFrom\":{\"secretKeyRef\":{\"name\":\"$secret\",\"key\":\"latest\"}}}"
+    fi
   fi
   cat <<JSON
-[{"metadata":{"name":"fugaro-run-9f8e7d6c","labels":{"fugaro_repo":"$slug"},"updateTime":"2026-11-20T15:00:00Z"},"spec":{"template":{"spec":{"template":{"spec":{"containers":[{"image":"img","env":[{"name":"FUGARO_REMOTE","value":"$origin"},{"name":"FUGARO_FIREBASE_API_KEY","valueSource":{"secretKeyRef":{"name":"fb-key"}}}$mount]}]}}}}}}]
+[{"metadata":{"name":"fugaro-run-9f8e7d6c","labels":{"fugaro_repo":"$slug"},"updateTime":"2026-11-20T15:00:00Z"},"spec":{"template":{"spec":{"template":{"spec":{"containers":[{"image":"img","env":[{"name":"FUGARO_REMOTE","value":"$origin"}$key$mount]}]}}}}}}]
 JSON
 }
 
@@ -1270,6 +1287,16 @@ test_a_job_that_mounts_no_key_is_not_measured() {
   expect_absent "$gcloud_calls" "versions disable" "a job with no key mount: nothing is moved"
 }
 
+test_a_v2_shaped_mount_is_read_too() {
+  local dir=$work/v2-shape
+  prepare "$dir"
+  job_doc "$anthropic_secret" "" v2 >"$dir/state/jobs.json"
+  run_check "$dir"
+  expect_status "$status" 0 "a job whose mount is spelled the v2 way"
+  expect_contains "$gcloud_calls" "versions list $anthropic_secret" "a v2 mount: the container is read out of secretKeyRef.secret"
+  expect_contains "$gcloud_calls" "versions enable 3 --secret=$anthropic_secret" "a v2 mount: the version moved is that container's"
+}
+
 test_a_key_written_into_the_job_is_not_a_secret_name() {
   local dir=$work/plain-key
   prepare "$dir"
@@ -1542,6 +1569,7 @@ t test_a_repository_config_that_tolerates_a_routing_key_is_a_finding
 t test_a_key_version_that_cannot_be_re_enabled_is_a_finding
 t test_a_version_that_is_not_enabled_to_begin_with_is_not_measured
 t test_a_job_that_mounts_no_key_is_not_measured
+t test_a_v2_shaped_mount_is_read_too
 t test_a_key_written_into_the_job_is_not_a_secret_name
 t test_the_override_names_the_key_container_by_hand
 t test_a_key_container_with_no_version_is_not_measured

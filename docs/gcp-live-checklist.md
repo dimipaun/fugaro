@@ -3142,10 +3142,16 @@ git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
 # Secret Manager secret is derived per scope (`gcp.SecretID`,
 # `fugaro-<slug>-anthropic-api-key-<hash>`), so the logical `anthropic-api-key`
 # is not a container and gcloud answers NOT_FOUND for it. A mount's secretRef
-# is a NAME, so nothing here reads a value.
+# is a NAME, so nothing here reads a value. Both spellings are read, because
+# both are in the wild and one of them is not the other's field: `gcloud`'s
+# run/v1 answer names it `valueFrom.secretKeyRef.name` (what check197, check330,
+# check611 and check-lc4 read off a real project) and the API's own shape names
+# it `valueSource.secretKeyRef.secret` (what the job module writes and `doctor`
+# reads back, internal/cli/doctor_job_mounts.go). A reader that knew one
+# spelling would stop here on a job that does mount the key.
 KEY=$(gcloud run jobs describe "${JOB:?}" --region="${L:?}" --project="${P:?}" \
   --format=json \
-  | jq -r '[.spec.template.spec.template.spec.containers[0].env[] | select(.name == "ANTHROPIC_API_KEY") | .valueSource.secretKeyRef.name] | first // ""' \
+  | jq -r '[.spec.template.spec.template.spec.containers[0].env[] | select(.name == "ANTHROPIC_API_KEY") | (.valueFrom.secretKeyRef.name // .valueSource.secretKeyRef.secret // "")] | first // ""' \
   | awk -F/ '{print $NF}')
 [ -n "$KEY" ] || { echo "Check 45 stopped: the job ${JOB} answers no ANTHROPIC_API_KEY mount, so there is no key container whose version step 2 could move. Read the job ('gcloud run jobs describe ${JOB} --region=${L} --project=${P} --format=json')." >&2; exit 1; }
 ```
@@ -3558,10 +3564,13 @@ START=/tmp/chk50-run-started-at
 # the logical `anthropic-api-key` is not a container and gcloud answers NOT_FOUND
 # for it. The version steps 1, 2 and 6 move is one of the container the job is
 # fed ANTHROPIC_API_KEY from; a mount's secretRef is a NAME, so nothing here
-# reads a value.
+# reads a value. Both spellings are read, as Check 45's block says and for the
+# same reason: `valueFrom.secretKeyRef.name` is what `gcloud`'s run/v1 answer
+# carries and `valueSource.secretKeyRef.secret` is the API's own shape, and a
+# reader that knew one would stop here on a job that does mount the key.
 KEY=$(gcloud run jobs describe "${JOB:?}" --region="${L:?}" --project="${P:?}" \
   --format=json \
-  | jq -r '[.spec.template.spec.template.spec.containers[0].env[] | select(.name == "ANTHROPIC_API_KEY") | .valueSource.secretKeyRef.name] | first // ""' \
+  | jq -r '[.spec.template.spec.template.spec.containers[0].env[] | select(.name == "ANTHROPIC_API_KEY") | (.valueFrom.secretKeyRef.name // .valueSource.secretKeyRef.secret // "")] | first // ""' \
   | awk -F/ '{print $NF}')
 [ -n "$KEY" ] || { echo "Check 50 stopped: the job ${JOB} answers no ANTHROPIC_API_KEY mount, so there is no key container whose version this check could move. Read the job ('gcloud run jobs describe ${JOB} --region=${L} --project=${P} --format=json'), or run the script with CHECK50_ANTHROPIC_SECRET=<the secret>." >&2; exit 1; }
 
