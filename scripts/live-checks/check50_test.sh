@@ -884,14 +884,18 @@ JSON
   printf 'unclaimed\nno-key\nclaim\nrepo\n' >"$json/validate-modes"
 }
 
-# job_doc [SECRET]: the repository's job as `gcloud run jobs list` carries it,
-# with the two env entries this check reads — FUGARO_REMOTE, which matches the
-# job to the repository, and the ANTHROPIC_API_KEY mount, whose secretRef name is
-# the container step 1 resolves the secret from. An empty SECRET writes a job
-# with no such mount, which is the case the check cannot name a secret on.
-job_doc() { # job_doc [anthropic-secret]
-  local secret=${1-$anthropic_secret} mount=""
-  if [ -n "$secret" ]; then
+# job_doc [SECRET] [PLAIN]: the repository's job as `gcloud run jobs list`
+# carries it, with the two env entries this check reads — FUGARO_REMOTE, which
+# matches the job to the repository, and the ANTHROPIC_API_KEY entry, whose
+# secretRef name is the container step 1 resolves the secret from. An empty
+# SECRET writes a job with no such entry, which is the case the check cannot
+# name a secret on; a PLAIN value writes the entry as a plain variable instead
+# of a mount, which is the shape whose value is a credential and not a name.
+job_doc() { # job_doc [anthropic-secret] [plaintext]
+  local secret=${1-$anthropic_secret} plain=${2-} mount=""
+  if [ -n "$plain" ]; then
+    mount=",{\"name\":\"ANTHROPIC_API_KEY\",\"value\":\"$plain\"}"
+  elif [ -n "$secret" ]; then
     mount=",{\"name\":\"ANTHROPIC_API_KEY\",\"valueSource\":{\"secretKeyRef\":{\"name\":\"$secret\",\"key\":\"latest\"}}}"
   fi
   cat <<JSON
@@ -1266,6 +1270,18 @@ test_a_job_that_mounts_no_key_is_not_measured() {
   expect_absent "$gcloud_calls" "versions disable" "a job with no key mount: nothing is moved"
 }
 
+test_a_key_written_into_the_job_is_not_a_secret_name() {
+  local dir=$work/plain-key
+  prepare "$dir"
+  job_doc "" "plain-value-not-a-key" >"$dir/state/jobs.json"
+  run_check "$dir"
+  expect_status "$status" 2 "a job carrying the key as a plain value"
+  expect_contains "$out" "mounts no ANTHROPIC_API_KEY" "a plain value: the row reads it as no mount at all"
+  expect_absent "$out" "plain-value-not-a-key" "a plain value: the value is never printed for the owner to paste back"
+  expect_absent "$gcloud_calls" "plain-value-not-a-key" "a plain value: the value is never an argument of gcloud"
+  expect_absent "$gcloud_calls" "versions list" "a plain value: no secret is read from it"
+}
+
 test_the_override_names_the_key_container_by_hand() {
   local dir=$work/override
   prepare "$dir"
@@ -1526,6 +1542,7 @@ t test_a_repository_config_that_tolerates_a_routing_key_is_a_finding
 t test_a_key_version_that_cannot_be_re_enabled_is_a_finding
 t test_a_version_that_is_not_enabled_to_begin_with_is_not_measured
 t test_a_job_that_mounts_no_key_is_not_measured
+t test_a_key_written_into_the_job_is_not_a_secret_name
 t test_the_override_names_the_key_container_by_hand
 t test_a_key_container_with_no_version_is_not_measured
 t test_the_no_policy_arm_refuses_without_a_terminal

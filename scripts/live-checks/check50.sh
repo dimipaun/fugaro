@@ -307,6 +307,25 @@ def env_of(container):
     return out
 
 
+def secret_mount(container, name):
+    """The Secret Manager secret the container's `name` variable is fed from, or
+    "" — for a variable that is not there, and for one that carries a plain
+    value instead of a reference. Only a reference is read, in both spellings
+    the API carries it in, because the other reading is a credential: a job with
+    the key written into its own environment would answer the key itself, and
+    that value would then be an argv of `gcloud secrets versions` and a line
+    printed for the owner to paste back (check-lc4.sh's secret_of reads the same
+    two spellings for the same reason)."""
+    for entry in (container.get("env") or []) if isinstance(container, dict) else []:
+        if not isinstance(entry, dict) or text(entry.get("name")) != name:
+            continue
+        ref = (entry.get("valueFrom") or {}).get("secretKeyRef") or {}
+        if not ref:
+            ref = (entry.get("valueSource") or {}).get("secretKeyRef") or {}
+        return text(ref.get("name") or ref.get("secret"))
+    return ""
+
+
 what = sys.argv[1]
 doc = load(sys.argv[2])
 
@@ -491,14 +510,14 @@ elif what == "jobs":
         print("envs=")
         print("anthropic_secret=")
     else:
-        env = env_of(container_env(chosen))
+        container = container_env(chosen)
         print("job=%s" % text((chosen.get("metadata") or {}).get("name")))
-        print("envs=%s" % ",".join(sorted(env.keys())))
+        print("envs=%s" % ",".join(sorted(env_of(container).keys())))
         # The secret the job is actually fed the Anthropic key from: the
         # container is derived per scope (gcp.SecretID), so the logical name
         # `anthropic-api-key` names no container at all. A reference may be a
         # full resource path, so only its last segment is a secret ID.
-        ref = env.get("ANTHROPIC_API_KEY", "")
+        ref = secret_mount(container, "ANTHROPIC_API_KEY")
         print("anthropic_secret=%s" % (ref.split("/")[-1] if ref else ""))
 elif what == "versions":
     rows = doc if isinstance(doc, list) else []
