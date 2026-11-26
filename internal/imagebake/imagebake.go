@@ -368,20 +368,29 @@ func (req Request) mappedEntry() (string, bool) {
 // (Request.Repo), so it is admitted by construction, and the project's list
 // answers for the others alone.
 //
-// Under repo_images a key carries a provider, and a key whose provider is not
-// the one this build's own repository is served at is skipped rather than
-// refused (R9): no job of it reads this image — one credential is for one host,
-// so no key of another provider could be cloned here anyway — and refusing
-// would break every bake for a project that maps one name at two providers.
-// That is also the skip an old nested key gets (R10): "acme/team/app" reads as
-// the provider "acme", which serves nothing this build clones from. A key at
-// this build's own provider is held to the project's list as it always was: a
-// repository the list does not answer for is refused, because this build holds
-// no URL and no provider for it and the entry's jobs may well run this image.
+// Under repo_images a key carries a provider. A key a provider this build's
+// enrolled set serves no repository at is skipped rather than refused (R9): a key
+// a migration wrote for a provider the project turns out not to serve (F14,
+// D3375) must not refuse the bake the build's own key asks for, and no job of the
+// other provider reads this image. That is also the skip an old nested key gets
+// (R10): "acme/team/app" reads as the provider "acme", which serves nothing. A key
+// at a provider this build does serve is held to the project's repositories as a
+// bare name was: a repository the project does not admit, and one that clones
+// from another host, are both still refused by name.
 func entryRepos(req Request) ([]Repo, string) {
 	byName := make(map[string]Repo, len(req.Repos))
+	byKey := make(map[string]Repo, len(req.Repos))
+	serves := map[string]bool{}
 	for _, r := range req.Repos {
 		byName[r.Repo] = r
+		if p, _, ok := strings.Cut(r.Key, "/"); ok {
+			byKey[r.Key], serves[p] = r, true
+		}
+	}
+	// The build's own repository is the one its enrolled set need not list, so
+	// its provider is served by construction.
+	if p, _, ok := strings.Cut(req.Repo.Key, "/"); ok {
+		serves[p] = true
 	}
 	legacy := len(req.Map) == 0
 	mapped := req.Map
@@ -418,24 +427,31 @@ func entryRepos(req Request) ([]Repo, string) {
 			out = append(out, req.Repo)
 			continue
 		}
-		repo := name
-		if !legacy {
-			// The map is a config value and a published node, so a key is held to
-			// the shape of a provider-qualified repository name before it reaches a
-			// line a person reads or a command they run.
-			prov, rest, ok := strings.Cut(name, "/")
-			if !ok || !task.ValidProvider(prov) {
+		// The map is a config value and a published node, so a key is held to the
+		// shape of a repository name before it reaches a line a person reads or a
+		// command they run — and under repo_images that shape is a provider and a
+		// canonical name together, with the provider held to its shape alone
+		// (R10), so a key a newer release wrote for a provider this one does not
+		// know is skipped rather than refused.
+		repo, prov := name, ""
+		if legacy {
+			if _, err := task.CanonicalRepo(repo); err != nil {
 				return nil, fmt.Sprintf("the map names %q, which is not a repository", name)
 			}
-			if prov != req.ownProvider() {
-				continue
+		} else {
+			var ok bool
+			if prov, repo, ok = strings.Cut(name, "/"); !ok || !task.ValidProvider(prov) {
+				return nil, fmt.Sprintf("the map names %q, which is not a repository", name)
 			}
-			repo = rest
-		} else if _, err := task.CanonicalRepo(repo); err != nil {
-			return nil, fmt.Sprintf("the map names %q, which is not a repository", name)
 		}
 		r, admitted := byName[repo]
+		if !legacy {
+			r, admitted = byKey[name]
+		}
 		if !admitted {
+			if !legacy && !serves[prov] {
+				continue
+			}
 			return nil, fmt.Sprintf("the map puts %s on it, which is not a repository this project admits", name)
 		}
 		if _, err := Path(r.Slug); err != nil {
@@ -452,15 +468,6 @@ func entryRepos(req Request) ([]Repo, string) {
 		out = append(out, r)
 	}
 	return out, ""
-}
-
-// ownProvider is the provider the build's own repository is served at, read off
-// its key ("github" of "github/acme/app"), "" when the caller named none. A
-// caller that cannot name its provider is answered by no entry rather than by
-// the legacy lookup (spec §Readers), so an empty answer bakes nothing else.
-func (req Request) ownProvider() string {
-	prov, _, _ := strings.Cut(req.Repo.Key, "/")
-	return prov
 }
 
 // urlHost is the host a clone URL sends its credential to, lower-cased, or ""

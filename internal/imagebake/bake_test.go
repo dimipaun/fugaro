@@ -301,12 +301,13 @@ func TestDecideReadsALegacyMap(t *testing.T) {
 // with no credential at all.
 func TestDecideRefusesARepositoryOnAnotherHost(t *testing.T) {
 	req := reqApp()
-	req.Map = map[string]string{"github/acme/app": "app", "github/acme/web": "app"}
-	// The key's provider is the build's own, so R9 does not skip it: what refuses
-	// it is the host its clone URL sends the credential to (an enterprise GitHub,
-	// which is a different host from github.com).
+	req.Map = map[string]string{"github/acme/app": "app", "bitbucket/acme/web": "app"}
+	// The project serves acme/web at Bitbucket, so this key is one R9 keeps: what
+	// refuses it is the host its clone URL sends the credential to. A build that
+	// skipped it instead would bake an image acme/web's jobs run with no checkout
+	// of theirs in it.
 	other := repoSpec("acme/web", "web-2222bbbb")
-	other.URL = "https://github.example.com/acme/web.git"
+	other.Key, other.URL = "bitbucket/acme/web", "https://bitbucket.org/acme/web.git"
 	req.Repos = append(req.Repos, other)
 	p := Decide(req)
 	if len(p.Baked) != 0 {
@@ -320,6 +321,7 @@ func TestDecideRefusesARepositoryOnAnotherHost(t *testing.T) {
 	same := repoSpec("acme/web", "web-2222bbbb")
 	same.URL = "https://GitHub.com/acme/web"
 	req.Repos = append(req.Repos[:1], same)
+	req.Map = map[string]string{"github/acme/app": "app", "github/acme/web": "app"}
 	if p := Decide(req); len(p.Baked) != 2 {
 		t.Errorf("Decide bakes %q (%s), want both repositories: their clone URLs are on one host", names(p.Baked), p.Reason)
 	}
