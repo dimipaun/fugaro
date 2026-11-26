@@ -79,6 +79,8 @@ import (
 const (
 	routingNoCheckoutWarn   = "the routing table was not written: no checkout of %s is here, so its calls would route nowhere"
 	routingUnwrittenWarn    = "the routing table was not written: the config it writes does not validate (%s)"
+	routingUnreadableWarn   = "the routing table was not written: %s could not be read (%s)"
+	routingWriteFailedWarn  = "the routing table was not written: %s (%s)"
 	routingUnpublishedWarn  = "the routing table was not published: the project's policy cannot carry the pool %s, so a table naming it is refused"
 	routingFallbackAutoLine = "routing: fallback is auto, so a run pays on the key as soon as its subscriptions are exhausted, not after the old threshold"
 )
@@ -241,12 +243,12 @@ func (e *initEngine) migrateRouting(res *initflow.Result) {
 	// members and leaves every other one as the file has it.
 	old, err := os.ReadFile(e.path)
 	if err != nil {
-		r.warn(fmt.Sprintf("the routing table was not written: %s could not be read (%s)", e.path, safetext.FieldErr(err)))
+		r.warn(fmt.Sprintf(routingUnreadableWarn, e.path, safetext.FieldErr(err)))
 		return
 	}
 	cur, err := localcfg.Parse(old)
 	if err != nil {
-		r.warn(fmt.Sprintf("the routing table was not written: %s could not be read (%s)", e.path, safetext.FieldErr(err)))
+		r.warn(fmt.Sprintf(routingUnreadableWarn, e.path, safetext.FieldErr(err)))
 		return
 	}
 	next := *cur
@@ -256,11 +258,11 @@ func (e *initEngine) migrateRouting(res *initflow.Result) {
 		_, err = localcfg.Parse(data)
 	}
 	if err != nil {
-		r.warn(fmt.Sprintf("the routing table was not written: the config it writes does not validate (%s)", safetext.FieldErr(err)))
+		r.warn(fmt.Sprintf(routingUnwrittenWarn, safetext.FieldErr(err)))
 		return
 	}
 	if err := r.writeLocalConfig(&next, e.path, old, true); err != nil {
-		r.warn(fmt.Sprintf("the routing table was not written: %s (%s)", e.path, safetext.FieldErr(err)))
+		r.warn(fmt.Sprintf(routingWriteFailedWarn, e.path, safetext.FieldErr(err)))
 	}
 }
 

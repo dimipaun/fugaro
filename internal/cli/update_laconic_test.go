@@ -47,6 +47,9 @@ func TestUpdateMessagesAreLaconic(t *testing.T) {
 		// one pool and one short error, which is the shape each is read in.
 		"routing no checkout": fmt.Sprintf(routingNoCheckoutWarn, "acme/api, acme/web"),
 		"routing unwritten":   fmt.Sprintf(routingUnwrittenWarn, "invalid_credentials"),
+		"routing unreadable":  fmt.Sprintf(routingUnreadableWarn, "/home/u/.config/fugaro/projects/aurora.yaml", "permission denied"),
+		"routing write failed": fmt.Sprintf(routingWriteFailedWarn,
+			"/home/u/.config/fugaro/projects/aurora.yaml", "permission denied"),
 		"routing unpublished": fmt.Sprintf(routingUnpublishedWarn, "team"),
 		"routing fallback":    routingFallbackAutoLine,
 	}
