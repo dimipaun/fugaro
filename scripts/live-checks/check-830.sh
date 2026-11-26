@@ -344,11 +344,18 @@ JOB_B=fugaro-chk830-forge
 # u1-handmade FAILS — which is the finding, not a false pass: what a launcher
 # chooses cannot be what the link rests on.
 HANDMADE_VM=${JOB_A}-handmade
-# A container with curl and python3, so the probe reads the metadata server
-# itself. It is a Google-hosted public image: the probe is not about the
-# installation's own image, and naming one that a project may not have would
-# make this check depend on a build.
-IMAGE=${CHK830_IMAGE:-gcr.io/google.com/cloudsdktool/google-cloud-cli:slim}
+# A container that needs a POSIX shell and python3 and nothing else: the probe
+# reads the metadata server with python3, the same interpreter it decodes the
+# token with, so the image never has to carry curl. It is a Google-hosted public
+# image — the probe is not about the installation's own image, and naming one
+# that a project may not have would make this check depend on a build — and it
+# is the Alpine variant of the gcloud SDK image rather than its `slim` one
+# because the pull is the thing a probe that never starts is waiting for: the
+# owner's two runs of 2026-11-26 left the job SCHEDULED for the whole 600s wait
+# with its VM running and not one line of the container's own, and a container
+# whose image is still coming is exactly that. CHK830_IMAGE overrides it, and
+# CHK830_PULL_BOUND bounds the pull inside the wait for the probe's first line.
+IMAGE=${CHK830_IMAGE:-gcr.io/google.com/cloudsdktool/google-cloud-cli:alpine}
 MT=e2-standard-4
 CPU_MILLI=2000
 MEMORY_MIB=4096
@@ -365,6 +372,15 @@ WAIT_LINES=${CHK830_WAIT_LINES:-600}
 WAIT_LINES_B=${CHK830_WAIT_LINES_B:-180}
 WAIT_AUDIT=${CHK830_WAIT_AUDIT:-180}
 WAIT_EXIT=${CHK830_WAIT_EXIT:-420}
+# How long the container's image pull is given. A container whose image is still
+# being pulled has produced no line of its own, so the wait for the probe's
+# first line is never shorter than this bound — and the bound is what the two
+# runs of 2026-11-26 are read against: the job stayed SCHEDULED with its VM up
+# for the whole wait, which is a pull that did not finish, and the row has to be
+# able to say so rather than leave the reader to guess. It is a knob for the same
+# reason the others are: a slow project should be given longer, not read as a
+# FAIL.
+PULL_BOUND=${CHK830_PULL_BOUND:-600}
 REUSE_BOUND=${CHK830_REUSE_BOUND:-180}
 REUSE_POLL=${CHK830_REUSE_POLL:-5}
 # How long the container itself lives, which is the linger RAISED to outlast the
@@ -378,10 +394,18 @@ life_of() { # life_of LINGER WAIT
   [ "$life" -ge "$(( $2 + 60 ))" ] || life=$(( $2 + 60 ))
   printf '%s' "$life"
 }
+# The wait for the probe's first line: the configured wait, raised to the pull
+# bound. A container cannot report before its image is there, so a wait under the
+# bound would read a pull in progress as a container that never ran.
+wait_lines_bound() { # wait_lines_bound
+  [ "$WAIT_LINES" -ge "$PULL_BOUND" ] && { printf '%s' "$WAIT_LINES"; return 0; }
+  printf '%s' "$PULL_BOUND"
+}
+WAIT_LINES_A=$(wait_lines_bound)
 # A unit of the bound arithmetic: each is read once, and the job's own
 # maxRunDuration is computed from the life so a container Batch kills on time
 # cannot be mistaken for one that failed.
-probe_life_a() { life_of "$LINGER_A" "$WAIT_LINES"; }
+probe_life_a() { life_of "$LINGER_A" "$WAIT_LINES_A"; }
 probe_life_b() { life_of "$LINGER_B" "$WAIT_LINES_B"; }
 # Deleting a Batch job is asynchronous: the delete is accepted at once and the
 # job stays listable, in DELETION_IN_PROGRESS, until the platform has finished
@@ -568,7 +592,20 @@ write_container() {
 #!/bin/sh
 set -u
 MD=http://metadata.google.internal/computeMetadata/v1
-md() { curl -s --max-time 8 -H 'Metadata-Flavor: Google' "$MD/$1" 2>/dev/null || true; }
+# python3 is this container's one hard requirement — it decodes the token below
+# — so it reads the metadata server too, and the image is free to be a small one
+# that carries no curl.
+md() {
+  python3 - "$1" <<'C830MD' 2>/dev/null || true
+import sys, urllib.request
+req = urllib.request.Request("http://metadata.google.internal/computeMetadata/v1/" + sys.argv[1],
+                             headers={"Metadata-Flavor": "Google"})
+try:
+    sys.stdout.write(urllib.request.urlopen(req, timeout=8).read().decode())
+except Exception:
+    pass
+C830MD
+}
 bits=0
 echo "C830 start host=$(hostname)"
 name=''
@@ -773,7 +810,7 @@ step_submit_a() {
     fact probe-submitted FAIL "the probe job ${JOB_A} was created but answers with no UID, and a Batch job's task logs are selected by that UID (internal/backend/batch/logs.go refuses one without it): nothing can be read about this job"
     stop "the probe job answered with no UID, so its logs cannot be read"
   fi
-  fact probe-submitted PASS "the probe job ${JOB_A} was created in ${P}/${L} (uid ${A_UID}, state ${A_STATE:-<unread>}, created ${A_CREATED:-<unread>}; ${MT}, ${CPU_MILLI}m/${MEMORY_MIB}MiB, container alive ${PROBE_LIFE_A}s after its reads — the ${LINGER_A}s linger raised to outlast the ${WAIT_LINES}s wait for its lines, so a run whose lines never arrive can still read the VM they never came from and the task's exit status). It carries ${CHK_LABEL}=${CHK_VALUE} and ${MANAGED_KEY}=${MANAGED_VAL} in Job.labels and in AllocationPolicy.labels, the marker variable ${MARKER_NAME} with a stand-in value, logs to CLOUD_LOGGING, and no retry — the shape a real run's job has. Its container reports each of its readings twice, in its lines and in the task's exit status"
+  fact probe-submitted PASS "the probe job ${JOB_A} was created in ${P}/${L} (uid ${A_UID}, state ${A_STATE:-<unread>}, created ${A_CREATED:-<unread>}; ${MT}, ${CPU_MILLI}m/${MEMORY_MIB}MiB, container alive ${PROBE_LIFE_A}s after its reads — the ${LINGER_A}s linger raised to outlast the ${WAIT_LINES_A}s wait for its lines, so a run whose lines never arrive can still read the VM they never came from and the task's exit status). It carries ${CHK_LABEL}=${CHK_VALUE} and ${MANAGED_KEY}=${MANAGED_VAL} in Job.labels and in AllocationPolicy.labels, the marker variable ${MARKER_NAME} with a stand-in value, logs to CLOUD_LOGGING, and no retry — the shape a real run's job has. Its container reports each of its readings twice, in its lines and in the task's exit status"
 }
 
 # observe-a: the container's own readings, then the VM it ran on. The
@@ -782,7 +819,7 @@ step_submit_a() {
 # real job's logs — which is worth knowing on its own.
 step_observe_a() {
   local pattern='^C830 read$'
-  if wait_for_lines "$A_UID" "$pattern" "$SCRATCH/lines-a" "$WAIT_LINES"; then
+  if wait_for_lines "$A_UID" "$pattern" "$SCRATCH/lines-a" "$WAIT_LINES_A"; then
     LINES_A=yes
     fact probe-ran PASS "the probe container ran and reported: $(count_matching "$SCRATCH/lines-a" '^C830 ') C830 lines came back through the tree's own filter (labels.job_uid=\"${A_UID}\" AND logName=\"${TASK_LOG}\"), the last of them 'C830 read'. The container then stays alive ${PROBE_LIFE_A}s so its VM can be read from outside while it exists"
   else
@@ -800,7 +837,13 @@ step_observe_a() {
     else
       prefix="not one line of the container's own came back at all, so either the container never ran (image pull, the interpreter its entrypoint names, quota, a task that failed at start) or its lines do not land in the log the runner reads"
     fi
-    fact probe-ran FAIL "no 'C830 read' line arrived in ${WAIT_LINES}s through the tree's own filter (labels.job_uid=\"${A_UID}\" AND logName=\"${TASK_LOG}\"): ${prefix}. The rows below do not conclude from this: the job's own state and events, its task's state and events, the VM's serial console and the same query under the job's own resource type are read next (probe-diag), and the container's task exit status — its second channel — is read once the task has ended (probe-exit)"
+    # The job's own state at the end of the wait is the one reading that tells a
+    # container that never started from one whose lines did not land: a job still
+    # SCHEDULED with its VM up has run nothing, so its image is the reading to
+    # look at, and probe-diag reads the VM's boot log for the pull.
+    local state_now
+    state_now=$(job_field "$JOB_A" status.state)
+    fact probe-ran FAIL "no 'C830 read' line arrived in ${WAIT_LINES_A}s through the tree's own filter (labels.job_uid=\"${A_UID}\" AND logName=\"${TASK_LOG}\"): ${prefix}. The job's own state at the end of that wait was ${state_now:-<unread>} — SCHEDULED or PENDING there is a container that never started, and its image pull (${IMAGE}) is then what the VM's own boot log is read for. The rows below do not conclude from this: the job's own state and events, its task's state and events, the VM's serial console and the same query under the job's own resource type are read next (probe-diag), and the container's task exit status — its second channel — is read once the task has ended (probe-exit)"
   fi
   if ! vm_of_job "$SCRATCH/lines-a"; then
     fact vm-a FAIL "${VM_PROBLEM}: which instance is this job's is unknown, so nothing is read off it. A run of another job in ${P} at the same time is the innocent reading — run this check when the project is quiet"
@@ -944,11 +987,50 @@ first_lines() { # first_lines FILE LIMIT
   printf '%s' "$out"
 }
 
+# vm_network: whether the VM has an external address, and the network and
+# subnetwork it is on. A pull that can never finish and one that is merely slow
+# look the same from outside; the VM's own object is where they are told apart,
+# because a VM with no external address reaches a registry only through whatever
+# its network gives it. Nothing is printed but the interfaces.
+vm_network() {
+  [ -s "$SCRATCH/vm-a.json" ] || {
+    printf '%s' "not taken: the VM's own object was not read (see vm-a)"
+    return 0
+  }
+  python3 - "$SCRATCH/vm-a.json" <<'C830NET' 2>/dev/null || printf '%s' "the VM's own object could not be read for its interfaces"
+import json, sys
+try:
+    vm = json.load(open(sys.argv[1]))
+except Exception:
+    raise SystemExit(1)
+out = []
+for ni in vm.get("networkInterfaces") or []:
+    nets = [a.get("natIP") for a in (ni.get("accessConfigs") or []) if a.get("natIP")]
+    out.append("nic %s on %s/%s, %s" % (
+        ni.get("name") or "?",
+        (ni.get("network") or "?").split("/")[-1],
+        (ni.get("subnetwork") or "?").split("/")[-1],
+        ("external address " + ",".join(nets)) if nets else "NO external address"))
+print("; ".join(out) or "the object names no network interface")
+C830NET
+}
+
+# What a container that started leaves in the VM's serial console, and what a
+# container that never started leaves instead. The Batch agent writes the
+# container-start line there, so the boot log is the one reading that settles
+# whether the container ever ran — which a job still SCHEDULED with its VM up
+# cannot otherwise settle. The pull's own lines are collected loosely beside it,
+# because the agent's wording is not this check's to pin.
+CONTAINER_START_RE='Started Batch task container'
+PULL_RE='(docker|containerd|Pulling|pulling|pull|manifest|registry|image|Batch agent|batch_agent)'
+
 # probe-diag: what the block owes a run whose lines did not arrive. It is taken
 # BEFORE the job is deleted and while the VM is still alive (which is why the
 # container's own life is the linger raised to outlast the wait for its lines),
 # and it reads four things: the job's state and its own status events, each
-# task's state and its status events, the VM's serial console tail, and the same
+# task's state and its status events, the VM's serial console — whether the
+# container start is in it at all, what the log says of the pull, its tail, and
+# the VM's own interfaces — and the same
 # log query under the job's own resource type — both by the runner's label and by
 # the uid alone, because "the label is not the one the lines carry" and "the log
 # name is not the one the runner reads" are two of the ways the first run's lines
@@ -970,16 +1052,26 @@ step_probe_diag() {
   # value is printed.
   events=$(diag_events | redact_stream 2>/dev/null | oneline)
   tasks_shown=$(printf '%s' "${task_states:-none reported}" | oneline)
-  local serial="not taken"
+  local boot="not taken" net="not taken"
   if [ -n "$A_VM_NAME" ] && [ -n "$A_VM_ZONE" ]; then
     if gcloud compute instances get-serial-port-output "$A_VM_NAME" --project="${P:?}" --zone="${A_VM_ZONE:?}" >"$SCRATCH/serial-a.txt" 2>"$SCRATCH/err"; then
       tail -n 40 "$SCRATCH/serial-a.txt" | redact_stream >"$SCRATCH/serial-a.tail" 2>/dev/null || : >"$SCRATCH/serial-a.tail"
-      serial="its last $(count_lines "$SCRATCH/serial-a.tail") non-empty line(s) of the last 40, redacted for anything that looks like a credential: $(first_lines "$SCRATCH/serial-a.tail" 40)"
+      local started pulls started_note
+      started=$(count_matching "$SCRATCH/serial-a.txt" "$CONTAINER_START_RE")
+      pulls=$(grep -Ei "$PULL_RE" "$SCRATCH/serial-a.txt" 2>/dev/null | tail -n 3 | redact_stream | oneline | cut -c1-400 || true)
+      if [ "${started:-0}" -gt 0 ]; then
+        started_note="the container-start line (\"${CONTAINER_START_RE}\") is in it ${started} time(s), so the container did start on this VM (a container that ran and whose lines did not land is then the reading)"
+      else
+        started_note="the container-start line (\"${CONTAINER_START_RE}\") is in it NOT ONCE, so the container never started on this VM — a container whose image was still coming is what that reads as, and the last lines of the log that speak of the pull or the agent are: $(printf '%s' "${pulls:-<none>}")"
+      fi
+      boot="its serial console (the VM's boot log) holds $(count_lines "$SCRATCH/serial-a.txt") non-empty line(s): ${started_note}. Its last $(count_lines "$SCRATCH/serial-a.tail") non-empty line(s) of the last 40, redacted for anything that looks like a credential: $(first_lines "$SCRATCH/serial-a.tail" 40)"
     else
-      serial="the read failed ($(oneline <"$SCRATCH/err")) — the VM had been destroyed by then, which is what the container's own life ($PROBE_LIFE_A}s here) governs"
+      boot="the read failed ($(oneline <"$SCRATCH/err")) — the VM had been destroyed by then, which is what the container's own life (${PROBE_LIFE_A}s here) governs"
     fi
+    net=$(vm_network)
   else
-    serial="not taken: which instance is this job's is unknown (see vm-a)"
+    boot="not taken: which instance is this job's is unknown (see vm-a)"
+    net="not taken: which instance is this job's is unknown (see vm-a)"
   fi
   log_text "resource.type=\"batch.googleapis.com/Job\" AND labels.job_uid=\"${A_UID}\"" "$SCRATCH/job-res-lines.txt"
   log_text "resource.type=\"batch.googleapis.com/Job\" AND \"${A_UID}\"" "$SCRATCH/job-any-lines.txt"
@@ -990,7 +1082,7 @@ step_probe_diag() {
   [ "${by_label:-0}" -gt 0 ] && found_label=", the first of them \"$(first_lines "$SCRATCH/job-res-lines.txt" 2)\""
   found_any=""
   [ "${by_any:-0}" -gt 0 ] && found_any=", the first of them \"$(first_lines "$SCRATCH/job-any-lines.txt" 2)\""
-  fact probe-diag INFO "no line of the container's own arrived, so this run owes the reader the evidence that says which of the three it was — and reads it before the job is deleted: the job's own state is ${job_state:-<unread>} and its task's state(s) ${task_states:-<unread>}; the job's and the task's own status events read: ${events:-<none>}. The VM's serial console: ${serial}. The same query under the job's own resource type (resource.type=\"batch.googleapis.com/Job\") found ${by_label} line(s) by the runner's label (labels.job_uid=\"${A_UID}\" — the read that catches the container's lines under a log name the runner does not read)${found_label}, and ${by_any} line(s) by the uid alone (any field carrying it — the read that catches a label that is not labels.job_uid)${found_any}. Nothing is printed from the job's own object but these fields, and nothing that looks like a credential is printed at all"
+  fact probe-diag INFO "no line of the container's own arrived, so this run owes the reader the evidence that says which of the three it was — and reads it before the job is deleted: the job's own state is ${job_state:-<unread>} and its task's state(s) ${task_states:-<unread>}; the job's and the task's own status events read: ${events:-<none>}. The VM's serial console: ${boot}. The VM's own interfaces: ${net}. The wait for the container's first line was ${WAIT_LINES_A}s — the configured ${WAIT_LINES}s raised to the ${PULL_BOUND}s pull bound — so the pull for the image ${IMAGE} did not finish inside that bound. The same query under the job's own resource type (resource.type=\"batch.googleapis.com/Job\") found ${by_label} line(s) by the runner's label (labels.job_uid=\"${A_UID}\" — the read that catches the container's lines under a log name the runner does not read)${found_label}, and ${by_any} line(s) by the uid alone (any field carrying it — the read that catches a label that is not labels.job_uid)${found_any}. Nothing is printed from the job's own object but these fields, and nothing that looks like a credential is printed at all"
 }
 # probe-exit: the probe's second channel. A container that never starts reports
 # no exit status at all; one that starts reports 100 plus a bit per reading it
