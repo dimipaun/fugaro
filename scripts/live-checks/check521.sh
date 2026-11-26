@@ -20,7 +20,12 @@
 #     the sandbox checkout: the coder's own price row carries no image rate and
 #     `agent.models.vision` is unset. The task must name an image file — the
 #     check refuses a `--task` that names none, because the refusal it measures
-#     is the one the task's own text triggers;
+#     is the one the task's own text triggers. **A project that SETS the slot
+#     is not a state this check can measure and not one it may write away**:
+#     nothing the check may run unsets it (`fugaro models use` only sets the
+#     key, `fugaro settings unset` refuses it, D853), so the premise row names
+#     the state it needs and the check ends as one that could not measure
+#     rather than launching a run that would be Check 520's;
 #   * one sandbox run whose task names a `.png`, launched with `fugaro run
 #     --json`. **Nothing it launches can outlive it**: the run refuses at
 #     bootstrap within seconds, and a run that has not ended by
@@ -67,8 +72,10 @@
 #             1: a criterion did not hold, or a guard stopped the run — among
 #             them a build older than the release the work ships in. 2: the
 #             check could not measure — a tool is missing, the checkout is not
-#             one, a `--json` document could not be read, or the run never
-#             ended and had to be cancelled. A key the run never reached reads
+#             one, a `--json` document could not be read, the run never ended
+#             and had to be cancelled, the listing never carried the run's own
+#             row, or the project's `agent.models.vision` is set (a state only
+#             the operator can clear). A key the run never reached reads
 #             `FAIL — not reached`.
 #
 # A NOTE ON WHAT IS NEVER PRINTED: no credential value reaches this script's
@@ -511,7 +518,13 @@ step_premise() {
     return 0
     ;;
   *"is priced without an image rate"*)
-    fact premise FAIL "doctor says: ${problem} — agent.models.vision is SET in ${SANDBOX}, so the run below would run the picture on that model (Check 520's state) rather than being refused. Unset the slot (fugaro models use <repo> vision <the model agent.model names>, or edit the repository's fugaro.yaml) and run this check again. Its own remedy line reads: ${fix}"
+    # The slot is NOT unset in this project, and nothing this check may run can
+    # unset it: `fugaro models use` only sets it and `fugaro settings unset`
+    # refuses the key (D853), so the project layer file is the operator's and
+    # this check may not write it. The row says what state it needs rather than
+    # launching a run that would be Check 520's (the picture read on that
+    # model), and the check ends as one that could not measure.
+    unmeasured premise "doctor says: ${problem} — agent.models.vision is SET in ${SANDBOX}'s project, and this check's premise is a project whose slot is UNSET: the run below would read the picture on that model (Check 520's state) rather than being refused, and nothing this check may run unsets the slot. Clear it in the project layer file ('fugaro config show' names it; publish it with 'fugaro config publish') or point --sandbox at a repository whose project never set one, and run this check again. Doctor's own remedy line reads: ${fix}"
     return 0
     ;;
   esac
@@ -568,16 +581,22 @@ step_terminal() {
     unmeasured terminal "there is no run to follow: the row above says why"
     return 0
   fi
-  say "waiting for ${RUN_ID} to end (up to ${RUN_TIMEOUT}s; fugaro runs ls --repo ${LAUNCH_REPO} --json --limit 1)"
-  local waited=0 run_status="" ended="" stage=""
+  say "waiting for ${RUN_ID} to end (up to ${RUN_TIMEOUT}s; fugaro runs ls --repo ${LAUNCH_REPO} --json, picked row by row)"
+  # The listing is read WHOLE and the run's own row is picked out of it by its
+  # id: `--limit 1` reads the newest row alone, and a run that has just ended
+  # is not where that row is — another run of the same repository lands above
+  # it, and the row this check reads then reads as a run whose status and stage
+  # are `unknown` (run 20261126-0318, the owner's).
+  local waited=0 run_status="" ended="" stage="" listed=no
   while [ "$waited" -lt "$RUN_TIMEOUT" ]; do
-    run_bounded "$CLI_TIMEOUT" rows "$SANDBOX" "$FUGARO_BIN" runs ls --repo "$LAUNCH_REPO" --json --limit 1
+    run_bounded "$CLI_TIMEOUT" rows "$SANDBOX" "$FUGARO_BIN" runs ls --repo "$LAUNCH_REPO" --json
     run_status="" ended="" stage=""
     if [ "$BOUNDED_STATUS" = 0 ] && read_json rows "$SCRATCH/rows.out" "$SCRATCH/rows.txt"; then
       run_status=$(row_field 3)
       ended=$(row_field 4)
       stage=$(row_field 5)
       RUN_REF=$(row_field 6)
+      if [ -n "$ended" ]; then listed=yes; fi
       if [ "$ended" = true ]; then break; fi
     fi
     sleep "$POLL_SECONDS"
@@ -585,6 +604,13 @@ step_terminal() {
   done
   if [ "$ended" != true ]; then
     cancel_run "it had not ended after ${RUN_TIMEOUT}s"
+    # A run whose row the listing never carried is a different reading from one
+    # that is there and still going: the first says this check could not read
+    # the run at all, and it may not report it as a status it never saw.
+    if [ "$listed" != yes ]; then
+      unmeasured terminal "${RUN_ID} never appeared in 'fugaro runs ls --repo ${LAUNCH_REPO} --json' over ${waited}s, so this check could not read its status or stage at all — the listing is what names the run's own ending, and a run it does not carry is one nothing here can grade. It was cancelled rather than left behind; what the cancel printed is in $SCRATCH/cancel.out and $SCRATCH/cancel.err. Read the run with 'fugaro runs show ${RUN_ID}' before running this check again"
+      return 0
+    fi
     unmeasured terminal "${RUN_ID} had not ended after ${RUN_TIMEOUT}s (last row: status=${run_status:-unknown}, stage=${stage:-unknown}): a bootstrap refusal ends in seconds, so a run still going is one this check could not measure — and it was cancelled rather than left behind. What the cancel printed is in $SCRATCH/cancel.out and $SCRATCH/cancel.err. Read the run with 'fugaro runs show ${RUN_ID}' before running this check again"
     return 0
   fi
