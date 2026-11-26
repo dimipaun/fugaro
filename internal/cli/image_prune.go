@@ -92,6 +92,10 @@ func runImagePrune(cmd *cobra.Command, o cloudOptions, dryRun bool) error {
 	if err != nil {
 		return remote(err)
 	}
+	// §9 puts images.retention_days in the project layer, beside base_images,
+	// and never in a repository's fugaro.yaml: it is the layer the build path
+	// reads those from, here the machine's own file or, on a machine with
+	// none, the published config lc was loaded from.
 	retention := env.lc.ImageRetentionDays()
 	now := time.Now().UTC()
 	lock, err := imagecheck.ReadLock(ctx, records)
