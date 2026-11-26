@@ -16632,12 +16632,19 @@ stage's work already paid for.
   sentence has the coder priced without an image rate and `agent.models.vision` **unset**. The slot set is
   Check 520's state and the check says so rather than launching: a run with the slot set would run the
   picture on that model instead of being refused, and this check's cost is nothing only because the refusal
-  comes first. A coder that reads images itself (**D2016**) is the same kind of finding. The task must name
-  an image file, by name or by the kind's own word — the two spellings the run's own check matches — and a
-  `--task` that names neither is refused before anything is launched, because the refusal this measures is
-  the one the task's text triggers.
+  comes first. **A project that sets the slot is a state the check cannot set up for itself** — nothing it
+  may run unsets the key (`fugaro models use` only sets it, `fugaro settings unset` refuses it, **D853**), and
+  the project layer file is the operator's — so the premise row names the state it needs and the check ends as
+  one that could not measure (**exit 2**) rather than launching a run that would be Check 520's. A coder that
+  reads images itself (**D2016**) is the same kind of finding. The task must name an image file, by name or by
+  the kind's own word — the two spellings the run's own check matches — and a `--task` that names neither is
+  refused before anything is launched, because the refusal this measures is the one the task's text triggers.
 - **The run.** One sandbox run launched with `fugaro run --json` from the checkout and followed with
-  `fugaro runs ls --json` until it is terminal. It ends in seconds: the refusal is at bootstrap and no stage
+  `fugaro runs ls --json` until it is terminal — the listing is read **whole** and the run's own row is
+  picked out of it by its id, because a listing cut to the newest row (`--limit 1`) is not where a run that
+  has just ended is, and a run read by position alone reads as one whose status and stage are `unknown`. A
+  run the listing never carried at all is a row the check could not measure, and it says that rather than
+  reporting a status it never saw. It ends in seconds: the refusal is at bootstrap and no stage
   starts. **Nothing it launches outlives it** — a run that has not ended within `CHECK521_RUN_TIMEOUT_SECONDS`
   is cancelled with `fugaro cancel <run> --now` from the step that gives up on it **and** from the script's
   exit trap, so a Ctrl-C in the middle cancels it too, and the `cancelled` row (or its `FAIL`, with the
@@ -16673,10 +16680,11 @@ bash scripts/live-checks/check521.sh --sandbox <a sandbox repository checkout>
 Progress goes to stderr and one `CHECK 521 RESULT` block goes to stdout at the end: paste that whole block
 here and nothing else. **Exit `0`** is every criterion that was measured holding; **`1`** is a measured
 criterion that did not hold, or a guard that stopped the run — among them a build older than the release,
-a premise that is not the state this measures, a run that succeeded, and a refusal under another failure
+a coder that reads images itself, a run that succeeded, and a refusal under another failure
 class; **`2`** is the check not being able to measure (a tool missing, the checkout not being one, a record
-that could not be read, or a run that never ended and had to be cancelled). A key the run never reached
-reads `FAIL — not reached`. The knobs are `CHECK521_DRY_RUN`, `CHECK521_KEEP_SCRATCH`, `CHECK521_SANDBOX`,
+that could not be read, the project's `agent.models.vision` already set — a state only the operator can
+clear — or a run that never ended, or whose row the listing never carried, and had to be cancelled). A key
+the run never reached reads `FAIL — not reached`. The knobs are `CHECK521_DRY_RUN`, `CHECK521_KEEP_SCRATCH`, `CHECK521_SANDBOX`,
 `CHECK521_TASK` (what the run is launched with; it must name an image file) and `CHECK521_RECIPE`,
 `CHECK521_RELEASE` (0.24.0), `CHECK521_REGION` (us-east5), `CHECK521_RUN_TIMEOUT_SECONDS` (900),
 `CHECK521_POLL_SECONDS` (10), `CHECK521_CLI_TIMEOUT_SECONDS` (180), `CHECK521_LAUNCH_TIMEOUT_SECONDS` (600),
