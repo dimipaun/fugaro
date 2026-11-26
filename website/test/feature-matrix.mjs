@@ -58,6 +58,7 @@ function features() {
     feature('parked-only', 'community', ['parked-alone']),
     feature('parked-alongside', 'community', ['parked-spec', 'done-spec']),
     feature('held', 'community', ['held-spec'], { status: 'coming-soon', reason: 'Built, and not shipped yet.' }),
+    feature('accepting', 'community', ['uat-spec']),
   ]
 }
 
@@ -148,13 +149,19 @@ test('a spec with merged tasks in To do or parked has started', () => {
   assert.equal(byId(snapshot).get('nearly').status, 'coming-soon', 'a spec in Nearly There has started as well')
 })
 
+test('a spec in UAT is done: built, and waiting for the owner', () => {
+  const snapshot = snapshotOf()
+
+  assert.equal(byId(snapshot).get('accepting').status, 'available', 'UAT holds specs whose agent work is complete, so the feature has shipped')
+})
+
 test('a feature whose specs are all parked is left off the matrix', () => {
   const snapshot = snapshotOf()
 
   assert.ok(!byId(snapshot).has('parked-only'), 'a parked spec is not a promise, and a row of nothing but parked specs is not a row (D2443)')
   assert.deepEqual(
     snapshot.rows.map((row) => row.id),
-    ['shipped', 'in-flight', 'nearly', 'later', 'just-merged', 'parked-alongside', 'held'],
+    ['shipped', 'in-flight', 'nearly', 'later', 'just-merged', 'parked-alongside', 'held', 'accepting'],
     'the rows are the mapping\'s own order, less the one feature left off',
   )
 })
