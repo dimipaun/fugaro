@@ -598,7 +598,7 @@ func newRunCmd() *cobra.Command {
 	addChainContinueFlags(cmd, &o)
 	f.IntSliceVar(&o.pr, "pr", nil, "continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions); with a mode: review --recipe, review PR N instead (repeatable, 1 to 4, any open PR)")
 	f.StringVar(&o.recipe, "recipe", "", "the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's ("+strings.Join(recipe.CatalogNames(), ", ")+"); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's")
-	f.StringVar(&o.token, "token", "", "retired: name the pool this run should draw on with --pool. It still names the Claude account a workflow whose agent.auth is oauth runs as on an installation whose published routing table does not serve this repository, and is refused where the table does; default: agent.oauth_token in fugaro.yaml, else the repository's default account, and a follow-up (--pr) keeps its previous run's account unless this is given explicitly")
+	f.StringVar(&o.token, "token", "", "retired: name the pool this run should draw on with --pool. It still names the Claude account a workflow whose agent.auth is oauth runs as where no chain of the run's models names the launcher's pool — the account pools an oauth chain is made of — and is refused where one does; default: agent.oauth_token in fugaro.yaml, else the repository's default account, and a follow-up (--pr) keeps its previous run's account unless this is given explicitly")
 	f.StringVar(&o.pool, "pool", "", "the pool \"the launcher's pool\" resolves to for this run, from a pool you own or are allowed on (`fugaro accounts pool ls` lists them): the run's grant carries the name and the credentials service holds it to the pools you are entitled to. Refused where no chain of the run's models names the launcher's pool; a follow-up (--pr) names its own pool, and only a resume keeps the pool its launch named")
 	f.StringArrayVar(&o.attach, "attach", nil, "attach a file to the run: repeatable, uploaded to the run's own inputs/ and downloaded by a mode: artifact run into the checkout's inputs/ (needs a mode: artifact recipe; refused on a run ID that already has a task)")
 	f.BoolVar(&o.commitReports, "commit-reports", false, "hand the project's stored reports (reports/ of the runs bucket) to the run this launch starts: reads them with your own account, uploads every one the checkout's mirror folder does not already hold byte for byte into the run's own reports/, and names them in the task for the commit_reports step to commit. Needs --recipe commit-reports (the step is what reads them), is refused together with --attach, and is refused on a run ID that already has a task")
@@ -7528,20 +7528,23 @@ func chainNamesTheLaunchersPool(table routing.Table, models []string, repo strin
 
 // poolGate is the two refusals this flag change makes (CS12, D3176 as amended).
 //
-// `--token` is retired where the project's table serves this run: naming a
-// Claude account by hand is what the launcher's pool does now, and the pool the
-// run names takes its place. Where no table serves the run the flag keeps its
-// old meaning, because the release-1 bridge is what such a run goes out on
-// (R25, D3196) and refusing the flag there would refuse a configuration no
-// migration has reached — the plan's own reason for reporting a lone token in
-// release 1 rather than refusing it. A review launch keeps it until CS15
-// retires it: the review job's account is that task's subject, not this one's.
-//
-// `--pool` needs a chain to resolve in. Where no chain of the run's models
+// `--pool` needs a chain to resolve in: where no chain of the run's models
 // names the launcher's pool the name resolves to nothing, so the launch is
 // refused with the fix rather than started on a pool no chain holds
-// (contract-pools, D3176); the entitlement to the name is the service's, and
+// (contract-pools, D3176). The entitlement to the name is the service's, and
 // never a question this launcher answers.
+//
+// `--token` is retired exactly where `--pool` replaces it, which is the one
+// place the account stops being what a workflow runs as: a chain that names the
+// launcher's pool. Where no chain does — an installation whose table does not
+// serve the repository, and every `oauth` chain the migration writes, whose
+// sources are the account pools and never the launcher's (R4, D3182) — the flag
+// keeps its meaning, because refusing it there would leave the account switch
+// with no command at all: the launch would hold neither a pool name to resolve
+// nor an account. Such a run goes out on the release-1 bridge besides, which is
+// what an installation no migration has reached runs on (R25, D3196). A review
+// launch keeps the flag until CS15 retires it: the review job's account is that
+// task's subject, not this one's.
 //
 // It runs after chainRoutingGate, which refuses a model no entry of the table
 // matches: the two read one table and one set of models (launchRunModels), so
@@ -7551,16 +7554,16 @@ func (e *cloudEnv) poolGate(ctx context.Context, o *runOptions, spec *task.Spec)
 	if o == nil || (o.token == "" && o.pool == "") {
 		return nil
 	}
-	served := e.lc != nil && infra.ChainPlanFor(e.lc, spec.Repo).Serves
 	var table routing.Table
-	if served {
+	if e.lc != nil {
 		table = e.lc.ModelRouting
 	}
-	if o.token != "" && served && spec.Mode != recipe.ModeReview {
+	launchers := chainNamesTheLaunchersPool(table, launchRunModels(ctx, e, spec), spec.Repo)
+	if o.token != "" && launchers && spec.Mode != recipe.ModeReview {
 		return userErr("--token is retired: name the pool this run should draw on with --pool")
 	}
-	if o.pool != "" && !chainNamesTheLaunchersPool(table, launchRunModels(ctx, e, spec), spec.Repo) {
-		return userErr("--pool %s: no chain of this run's models names the launcher's pool, so the name resolves to nothing: add a %s source to the chain with fugaro routing set", oneLineCLI(o.pool), routing.KindLauncherPool)
+	if o.pool != "" && !launchers {
+		return userErr("--pool %s: no chain of this run's models names the launcher's pool: name the account with --token, or add a %s source with fugaro routing set", oneLineCLI(o.pool), routing.KindLauncherPool)
 	}
 	return nil
 }

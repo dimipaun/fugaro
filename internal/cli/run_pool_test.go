@@ -139,6 +139,32 @@ func TestTokenFlagIsRejectedWithTheFix(t *testing.T) {
 	})
 }
 
+// TestReviewLaunchKeepsTheTokenFlag: `fugaro review --token NAME` is not
+// refused where the table names the launcher's pool. The review job's account
+// is CS15's subject, and the guard that exempts `recipe.ModeReview` from the
+// retirement is what keeps the command the plugin and `cli-reference.md`
+// document working until that task lands: without it a review launch on a
+// switched installation is refused exactly like a run's, and the account the
+// review job must run as has no way to be named at all.
+//
+// The fixture is the review one with a table that names the launcher's pool in
+// a chain matching every model — the world where the guard is the only thing
+// standing between `fugaro review --token` and the refusal, since the run arms
+// above read the same table and are refused. Mutation (verified, run and
+// restored): dropping `spec.Mode != recipe.ModeReview` from poolGate's token
+// arm fails this test.
+func TestReviewLaunchKeepsTheTokenFlag(t *testing.T) {
+	f := newReviewFixture(t)
+	f.appendConfig(t, poolEveryModelTableYAML)
+	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
+	if _, _, err := reviewCLI(t, "--pr", "7", "--token", "acme-personal"); err != nil {
+		t.Fatalf("a review of PR #7 on acme-personal where the table names the launcher's pool: %v: the review job's account is named with --token until CS15 retires it", err)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("the review launch started %d executions, want 1: the guard keeps the launch, it does not merely keep the command silent", n)
+	}
+}
+
 // TestPoolFlagNeedsALaunchersPoolInAChain: `fugaro run --pool <name>` carries
 // the name on the run's grant request as the pool the launcher's pool resolves
 // to for this run (C2's named_pool, D3176 as amended), beside the sources the
@@ -192,7 +218,7 @@ func TestPoolFlagNeedsALaunchersPoolInAChain(t *testing.T) {
 		if ExitCode(err) != ExitUserError {
 			t.Fatalf("a launch naming a pool no chain of its models names: err = %v, want a refusal naming the pool and the fix", err)
 		}
-		for _, want := range []string{"team", string(routing.KindLauncherPool), "fugaro routing set"} {
+		for _, want := range []string{"team", string(routing.KindLauncherPool), "fugaro routing set", "name the account with --token"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("the refusal does not name %q: %v", want, err)
 			}

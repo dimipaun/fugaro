@@ -75,6 +75,20 @@ func TestDocsUsageLimitSwitchRequiresExplicitPool(t *testing.T) {
 	if !strings.Contains(followup, "fugaro run --pr N --repo <owner/name> --pool NAME --run-id <id> --json") {
 		t.Error("followup.md's pool-switch relaunch no longer names --pool explicitly")
 	}
+	// The switch has to name a command that works in the installation it is
+	// prescribed for: --pool is refused where no chain of the run's models
+	// names the launcher's pool, which is every `oauth` chain the migration
+	// writes (its sources are the account pools, R4) and every installation
+	// whose table does not serve the repository yet. --token is the flag that
+	// still names the account there (D3176 as amended, CS12), so the skill
+	// names both and the CLI refuses either with a fix naming the other.
+	diagnose := readSkillFile(t, "../../plugin/skills/working/reference/diagnose.md")
+	if !strings.Contains(diagnose, "`--token NAME` where no chain of the run's models names the launcher's pool") {
+		t.Error("diagnose.md's usage-limit switch no longer names --token for the installation where --pool resolves to nothing")
+	}
+	if !strings.Contains(followup, "`--token NAME` for an `oauth` repository's account") {
+		t.Error("followup.md's usage-limit switch no longer names --token for an oauth repository's account")
+	}
 	launch := readSkillFile(t, "../../plugin/skills/working/reference/launch.md")
 	if !strings.Contains(launch, "fugaro run --repo <owner/name> --workflow <name> --ref <base-branch> --pool NAME --run-id <id> --json") {
 		t.Error("launch.md's no-PR-yet relaunch no longer names --pool explicitly")
