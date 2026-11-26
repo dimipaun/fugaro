@@ -136,7 +136,7 @@ func TestCheckoutStageNamesARepositoryItCannotBuild(t *testing.T) {
 	if got := stateOf(res, checkoutStageName); got != initflow.Skipped {
 		t.Errorf("the checkout stage is %q, want %q: there is nothing here it may build\n%s", got, initflow.Skipped, out)
 	}
-	if !strings.Contains(out.String(), "skipped here: beta/web: cloud (") {
+	if !strings.Contains(out.String(), "beta/web: needs you: ") {
 		t.Errorf("the run does not name the repository it cannot build:\n%s", out)
 	}
 }

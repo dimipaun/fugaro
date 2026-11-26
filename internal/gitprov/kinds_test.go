@@ -65,6 +65,7 @@ var forgeKindGoSites = map[string]string{
 	"internal/cli/project_enroll.go":           "the kind `project sync --bitbucket` lists a workspace's repositories through, and the kind each listed name is canonicalised as",
 	"internal/cli/review.go":                   "the kind the App-ID gate a refusal names belongs to: the one provider whose implicit review-only job is composed only with an App ID recorded",
 	"internal/cli/project_status.go":           "the two enrolment rows only a GitHub repository has: the App installation read and the `github-app-key` container's version, which a Bitbucket repository answers with its workspace token instead",
+	"internal/cli/project_enroll_starter.go":   "which host the starter fugaro.yaml's pull request is opened on, read off the repository's kind",
 	"internal/cli/project_enroll_converge.go":  "the kind the enrolment reads off a repository's origin remote, and the GitHub-only App ID its repos: entry is built with",
 	"internal/cli/reviewverify.go":             "reading a pull request's head per provider",
 	"internal/cli/run.go":                      "the kind a launch resolves for the slug it runs on, refused for a read-only context repository the credentials service cannot fetch",
