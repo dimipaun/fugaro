@@ -35,10 +35,11 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { KIND, OUTCOME, REFUSAL, initialState, step } from '../../../shared/mailbox/index.js';
-import { REFUSALS as SCHEMA_REFUSALS, validateHeartbeat, validateMessage } from '../../../shared/mailbox-schema/index.js';
+import { REFUSALS as SCHEMA_REFUSALS, SIG_CHARS, canonicalBytes, validateHeartbeat, validateMessage } from '../../../shared/mailbox-schema/index.js';
 import { REASON, STATE, evaluatePresence } from '../../../shared/presence/index.js';
 import { MemorySecureStore, SecretStore, secret } from '../accounts/index.js';
 import { LICENCE_SPEECH, LICENCE_STATE_CODES, LICENCE_STATES, createLicenceState } from '../licence/state.js';
+import { encodeBase64url } from '../pairing/base64url.js';
 import { CLIENT_CODES, MAILBOX_TTL_MS, PRESENCE_REASON, createMailboxClient, toPresenceHeartbeat } from './client.js';
 import { MemoryConnection } from './connection.js';
 import { GATE_CODES, OFFLINE_SPEECH } from './gate.js';
@@ -194,6 +195,9 @@ async function harness(options = {}) {
     // constructor must still catch, and a harness that quietly replaced them
     // would be a harness no test could use to ask about them.
     ...(options.licence === undefined ? {} : { licence: options.licence }),
+    // O6's port, on the same terms: a client without one is a phone paired the
+    // OLD way and a test that never mentions it is a test about that phone.
+    ...(options.session === undefined ? {} : { session: options.session }),
   });
 
   // **The phone starts where the app's does: one poll already made.**
@@ -416,6 +420,33 @@ test('a client built without a connection refuses to send, and says why (the rev
   // A port that IS given and cannot answer is still a wiring bug: the default
   // covers "not wired", not "wired to nothing".
   assert.throws(() => createMailboxClient({ ...wiring, connection: {} }), TypeError, 'a half-wired connection');
+});
+
+test('the session is optional -- its absence is the old pairing, not a hole -- and a half-wired one throws', () => {
+  // O6: a phone paired the new way is handed C2's port and signs with the device
+  // key; a phone paired the old way has no port at all and tags with D171's
+  // per-pairing key. Both are real pairings, so -- exactly as with `connection`,
+  // and for the opposite reason -- the absence is not a fault: a client with no
+  // session is the phone that writes the MAC.
+  const wiring = {
+    account: ACCOUNT,
+    keys: new SecretStore(new MemorySecureStore()),
+    store: new MemoryMailboxStore(),
+    speaker: new MemorySpeaker(),
+    now: () => T0,
+    newId: () => 'm-1',
+    secrets: SECRETS,
+    heartbeatIntervalMs: INTERVAL_MS,
+  };
+  for (const session of [undefined, null]) {
+    assert.equal(createMailboxClient({ ...wiring, session }).ok, true, String(session));
+  }
+  // A port that IS given and cannot sign would write records no consumer can
+  // verify: that is a wiring bug, and it is caught here rather than at the
+  // first utterance, with the owner waiting.
+  for (const session of [{}, { signMessage: 'sign' }, 7, 'session', [], () => {}]) {
+    assert.throws(() => createMailboxClient({ ...wiring, session }), TypeError, String(session));
+  }
 });
 
 test('an account tuple that is not usable is a wiring failure carrying P3.1\'s code', () => {
@@ -1667,6 +1698,13 @@ function actionRecord(at) {
   };
 }
 
+/** O10's typed start, as the app's start button would build it: the mode it
+ * would start in, the repository alone, and no confirmation (a launch needs
+ * none; a costly mode without one is the consumer's refusal, not the phone's). */
+function launchRecord(repo = 'fugaro/mailbox', mode = 'implement') {
+  return { id: 'a-2', verb: 'launch', mode, target: { repo } };
+}
+
 test('with no connection nothing is written, and the owner is told why', async () => {
   const h = await harness();
   h.connection.setOnline(false);
@@ -2455,30 +2493,33 @@ test('a licence port that cannot be asked is a wiring failure, like every other 
 // The composition is `shared/command`'s (`jobWrite`): which kind of record a
 // verb makes, and whether the session's role may make it. What these tests pin
 // is the half that is this file's -- that the composition is written through
-// the ONE write path, as D113 has it, and that a start is D162's plain launch
-// message while a cancel is D169's action record (D2787).
+// the ONE write path, as D113 has it, and that a start is O10's typed launch and
+// a cancel D169's action record (D2787).
 
 /** The session value `sendJob` reads: the port's `role`, and nothing else. */
 const OPERATOR_SESSION = Object.freeze({ role: 'operator' });
 const VIEWER_SESSION = Object.freeze({ role: 'viewer' });
 
-test('a start is one plain launch message through the one write path', async () => {
+test('a start is one typed launch action through the one write path', async () => {
   const h = await harness();
+  const record = launchRecord();
   assert.deepEqual(
-    await h.client.sendJob(OPERATOR_SESSION, { verb: 'launch', text: 'fix the flaky test' }),
+    await h.client.sendJob(OPERATOR_SESSION, { verb: 'launch', text: 'fix the flaky test', record }),
     { ok: true, id: 'm-1', at: T0, text: 'fix the flaky test' },
   );
   assert.deepEqual(h.store.writes().map((entry) => entry.path), [`${INBOX}/m-1`]);
   assertD113WriteSet(h.store, h.paths);
 
-  // D162: a launch is an ordinary message -- the five fields, no `kind`, no
-  // action, no confirmation. It is only the caller's classification that makes
-  // it a launch at all, and that classification is not written to the record.
+  // O10 (J5b): a start is D162's launch, typed -- the five fields plus the
+  // record the button built, so the consumer can read the mode it would start in
+  // rather than guess at prose. The owner's own words travel beside it, and the
+  // record is the caller's, uncopied.
   const written = h.valueAt(`${INBOX}/m-1`);
-  assert.deepEqual(Object.keys(written), ['id', 'sender', 'text', 'at', 'mac']);
+  assert.deepEqual(Object.keys(written), ['id', 'sender', 'text', 'at', 'kind', 'action', 'mac']);
+  assert.equal(written.kind, 'action');
+  assert.deepEqual(written.action, record);
   assert.equal(written.text, 'fix the flaky test');
   assert.equal(validateMessage(written).ok, true);
-  assert.equal(JSON.stringify(written).includes('launch'), false, 'the classification is not in the record');
 });
 
 test('a cancel is one action record, and it is never queued', async () => {
@@ -2504,7 +2545,7 @@ test('a cancel is one action record, and it is never queued', async () => {
 
 test('a viewer sends nothing: the write is refused before the store is called', async () => {
   for (const request of [
-    { verb: 'launch', text: 'fix the flaky test' },
+    { verb: 'launch', text: 'fix the flaky test', record: launchRecord() },
     { verb: 'cancel', text: 'Cancel run run-42.', record: actionRecord(T0) },
   ]) {
     const h = await harness();
@@ -2528,6 +2569,11 @@ test('a refusal from the composition is returned unchanged, and nothing is writt
     code: 'bad-record',
     field: 'record.verb',
   });
+  assert.deepEqual(await h.client.sendJob(OPERATOR_SESSION, { verb: 'launch', text: 'fix it' }), {
+    ok: false,
+    code: 'bad-record',
+    field: 'record',
+  });
   assert.deepEqual(await h.client.sendJob(OPERATOR_SESSION, { verb: 'delete', text: 'x' }), {
     ok: false,
     code: 'unknown-verb',
@@ -2542,7 +2588,8 @@ test('a job command meets the same gate as every other write', async () => {
   // no second path around the gate for a job command either.
   const h = await harness();
   h.connection.setOnline(false);
-  const refused = await h.client.sendJob(OPERATOR_SESSION, { verb: 'launch', text: 'fix the flaky test' });
+  const refused = await h.client.sendJob(OPERATOR_SESSION,
+    { verb: 'launch', text: 'fix the flaky test', record: launchRecord() });
   assert.equal(refused.ok, false);
   assert.equal(refused.code, GATE_CODES.NO_CONNECTION);
   assert.deepEqual(h.store.writes(), []);
@@ -2554,6 +2601,111 @@ test('the role is a display claim: it is read, and it is not written anywhere', 
   // trace of it -- a role in a message would be a grant the phone had made
   // itself.
   const h = await harness();
-  await h.client.sendJob(OPERATOR_SESSION, { verb: 'launch', text: 'fix the flaky test' });
+  await h.client.sendJob(OPERATOR_SESSION, { verb: 'launch', text: 'fix the flaky test', record: launchRecord() });
   assert.equal(JSON.stringify(h.store.writes()).includes('operator'), false);
 });
+
+// ---------------------------------------------------------------------------
+// O6: the device signature, chosen at the wiring (J5b)
+// ---------------------------------------------------------------------------
+
+/** A device signature: 64 bytes, fixed, so a test can say what the tag must be.
+ * The real one is Ed25519 over the same canonical bytes, and `mac.test.js` owns
+ * that shape; what this file is about is which scheme a client is wired for. */
+const DEVICE_SIGNATURE = Uint8Array.from({ length: 64 }, (_, index) => index);
+
+/**
+ * C2's port, as far as this file needs it: a `role` for `sendJob`, and a
+ * `signMessage` that records the bytes it was handed and answers with a 64-byte
+ * signature. **A function and not a key** -- the device key never leaves the
+ * session, which is the whole reason `sigOf` is handed a signer.
+ */
+function signingSession(options = {}) {
+  const signed = [];
+  return {
+    signed,
+    session: {
+      role: options.role ?? 'operator',
+      async signMessage(bytes) {
+        signed.push(Uint8Array.from(bytes));
+        if (options.refuse === true) throw new Error('the session has no key to sign with');
+        return DEVICE_SIGNATURE;
+      },
+    },
+  };
+}
+
+test('a session-paired phone signs: the record carries a sig, and the keychain is never read', async () => {
+  // O6 and the acceptance's first half: a phone paired the new way signs every
+  // mailbox message with its device key, through the port, and writes `sig`
+  // instead of `mac`. Exactly one of the two is on the record -- the schema
+  // refuses both or neither (`tagFields`).
+  const session = signingSession();
+  const h = await harness({
+    session: session.session,
+    keys: countingKeys(new SecretStore(new MemorySecureStore())),
+  });
+  assert.deepEqual(
+    await h.client.send('fix the flaky test'),
+    { ok: true, id: 'm-1', at: T0, text: 'fix the flaky test' },
+  );
+  const written = h.valueAt(`${INBOX}/m-1`);
+  assert.deepEqual(Object.keys(written), ['id', 'sender', 'text', 'at', 'sig'], 'a sig, and no mac');
+  assert.equal(written.sig, encodeBase64url(DEVICE_SIGNATURE));
+  assert.equal(validateMessage(written).ok, true);
+
+  // **The bytes are the schema's, and they are the ones the MAC covers too**:
+  // one serialisation, whichever scheme covers it, so the consumer verifies the
+  // same string it would have MAC'd.
+  assert.equal(session.signed.length, 1);
+  const { sig: _tag, ...base } = written;
+  assert.equal(new TextDecoder().decode(session.signed[0]), canonicalBytes(base, 'inbox'));
+
+  // The pairing's key is not part of this write at all: it is not read, so a
+  // session-paired phone does not depend on the keychain being readable -- which
+  // is the other half of the task's last acceptance line.
+  assert.deepEqual(h.keys.asked(), [], 'the pairing key was not asked for');
+});
+
+test('a session that cannot sign writes nothing, and the refusal names the session', async () => {
+  // A session that has signed out is the same fault the Keychain's is -- this
+  // machine holds signing material for the pairing and could not use it -- so it
+  // is the same code; the field is what says which material to look at, because
+  // the fix is not the same one.
+  const session = signingSession({ refuse: true });
+  const h = await harness({ session: session.session });
+  assert.deepEqual(await h.client.send('fix the flaky test'), refuse(CLIENT_CODES.KEY_UNREADABLE, 'session'));
+  assert.deepEqual(h.store.writes(), [], 'nothing is written, and nothing is queued');
+  assert.deepEqual(h.client.pending(), []);
+  assert.deepEqual(h.client.unsent(), []);
+  assert.deepEqual(h.speaker.spoken(), [], 'and nothing is said: a failed key is not an event to speak');
+});
+
+test('a registration and a job command are signed by the same chosen scheme', async () => {
+  // D113: there is ONE write path, so the scheme is not a property of `send`.
+  // The registration and the two job verbs go through the same `tagOf`, and a
+  // session-paired phone signs all three.
+  const session = signingSession();
+  const h = await harness({
+    session: session.session,
+    keys: countingKeys(new SecretStore(new MemorySecureStore())),
+  });
+  const registered = await h.client.register({ token: 'not-a-real-token', platform: 'ios', prefs: PREFS });
+  assert.equal(registered.ok, true);
+  const launch = await h.client.sendJob(OPERATOR_SESSION,
+    { verb: 'launch', text: 'fix the flaky test', record: launchRecord() });
+  assert.equal(launch.ok, true);
+  const cancel = await h.client.sendJob(OPERATOR_SESSION,
+    { verb: 'cancel', text: 'Cancel run run-42.', record: actionRecord(T0) });
+  assert.equal(cancel.ok, true);
+
+  for (const id of [registered.id, launch.id, cancel.id]) {
+    const written = h.valueAt(`${INBOX}/${id}`);
+    assert.equal(typeof written.sig, 'string', id);
+    assert.equal(written.sig.length, SIG_CHARS, id);
+    assert.equal('mac' in written, false, id);
+    assert.equal(validateMessage(written).ok, true, id);
+  }
+  assert.deepEqual(h.keys.asked(), [], 'no write asked for the pairing key');
+});
+

@@ -135,7 +135,7 @@ func publishAfterWrite(ctx context.Context, cmd *cobra.Command, change afterWrit
 	// two conditions initEngine.managedStage asks, with the door and the
 	// plan-only flag already settled by this run's own construction.
 	opts.ManagedGate = func(name string) bool { return gatedStages[name] && r.gateUnderway() }
-	res, err := initflow.Run(ctx, stages, opts)
+	res, err := r.runStages(ctx, stages, opts)
 	if err != nil || res.Failed != nil || len(res.Left) > 0 {
 		// Every way a stage can stop short is one answer for the person: the
 		// change is saved and it is not live. What stopped it is the run's own

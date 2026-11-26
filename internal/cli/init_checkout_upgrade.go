@@ -5,43 +5,51 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
-// The checkout stage of the converge (initflow.Checkout): the checkout's own
-// half of the one command, `fugaro update` — the owner's rule of 2026-10-30,
-// one fugaro update is the whole upgrade, and U4 of
-// docs/plugin-user-scope/implementation-plan.md retired the second command that
-// used to run these steps. The user is busy and is not expected to run another
-// one, so the repository's job images move here, with the version the binary
-// just became.
+// The checkout stage of the converge (initflow.Checkout): the job images of
+// every repository this project lists, on the one command, `fugaro update` —
+// the owner's rule of 2026-10-30, one fugaro update is the whole upgrade, and
+// U4 of docs/plugin-user-scope/implementation-plan.md retired the second
+// command that used to run these steps. The user is busy and is not expected to
+// run another one, so each repository's job images move here, with the version
+// the binary just became.
+//
+// It reads no working directory (U4 of docs/update-from-anywhere, R10): it asks
+// the run for the project's repositories (e.repos, contract C1) and runs the
+// cloud step once per repository, from that repository's fugaro.yaml and head
+// commit — the same staleness test and the same build a checkout ran before
+// (R6). A repository it cannot read, one whose file names another project and
+// one this machine cannot build get one line each, named, and the run goes on:
+// the stage is the project's, not the directory's.
 //
 // It calls the step itself and never a copy of it, so the mode and the apply
-// cannot drift: a refusal (a cloud write in a coding agent's session, a
-// billable build not confirmed) is the step's own, in its own words, and what
-// `fugaro update --check` reads is the same function (update_check.go). The
-// policy step is not among them: the policy stage
+// cannot drift: a refusal (a cloud write in a coding agent's session) is the
+// step's own, in its own words, and what `fugaro update --check` reads is the
+// same function (update_check.go). The policy step is not among them: the
+// policy stage
 // (init_policy_migrate.go) is that migration, registered for the same
 // checkout, and running it twice would migrate one node twice. The pin and the
 // plugin are not among them either, and that is decision D941 (U1 of
 // docs/plugin-user-scope/implementation-plan.md): they are the plugin stage's
 // own, because that stage runs before the repository stage and the plugin
 // install is the step that clears the staleness line every command prints — a
-// step that a stopped repository, or a checkout the run never reached, may not
-// take with it (reconciliation.md F13).
+// step that a stopped repository, or a repository the run never reached, may
+// not take with it (reconciliation.md F13).
 //
-// The stage is skipped, not failed, where there is no checkout to work on: a
-// `fugaro update` from a directory that is not one, or a checkout Fugaro is
-// not set up in, has no job images to refresh.
+// The stage is skipped, not failed, where it has no repository to work on: a
+// project whose repositories this machine read none of has no job images to
+// refresh, and so has one whose every repository is skipped for a reason of its
+// own.
 
-// checkoutSteps are the steps this stage runs for the checkout, in the order
+// checkoutSteps are the steps this stage runs for each repository, in the order
 // the converge's own four have, minus the policy step the converge already runs
 // as its own stage and minus the pin and the plugin, which are the plugin
 // stage's (init_plugin_stage.go).
@@ -51,11 +59,15 @@ type checkoutStage struct {
 	e *initEngine
 	// pastStops are the stops this run is running past this stage
 	// (initflow.PastStops), the repository stage's needs-you stop when it has
-	// one: the stage's cloud step builds from the repository that stop is
-	// about, so the run that is running past the stop drops it rather than
+	// one: the stage's cloud step builds from the repositories this run
+	// onboards, so the run that is running past the stop drops it rather than
 	// building out of order, and says so in its own line rather than leaving
 	// the reader to guess what became of the images.
 	pastStops []string
+	// lines is what this run said about each repository it read: one line per
+	// repository, built as the plan and the apply answer for them (C1). The
+	// loop reads them off the stage through RepoLines (U13).
+	lines []initflow.RepoLine
 }
 
 func newCheckoutStage(e *initEngine) *checkoutStage { return &checkoutStage{e: e} }
@@ -65,7 +77,7 @@ func (*checkoutStage) Name() string { return initflow.Checkout }
 // PastStops is the run's own answer to whether the repository stage stopped
 // (initflow.PastStops): what this stage's row tolerates is a stop the run is
 // at, and which stop it is cannot be read off the world — the run's own writes
-// move the world, and the repository stage's anchor edits this very checkout's
+// move the world, and the repository stage's anchor edits a repository's
 // fugaro.yaml in the run that onboarded it.
 func (s *checkoutStage) PastStops(stops []string) { s.pastStops = stops }
 
@@ -80,260 +92,245 @@ func (*checkoutStage) SelfConfirming() {}
 // not this machine's — so what the marker buys here is not the step but the
 // run's account of it: the stage's plan drops the cloud step under a marker,
 // in that step's own sentence (cloudAgentRefusal), and the apply leaves it for
-// the user as a named step with the commands that run it, where a stage the
+// the user as a named step with the command that runs it, where a stage the
 // loop never applied would be one line naming this door and nothing of what
 // became of the images. The machine's own writes — the pin and the plugin
 // in the user's own Claude Code — are the plugin stage's since U1, and that
 // stage is LocalUnderAgent for the same reason it is there.
 func (*checkoutStage) LocalUnderAgent() {}
 
-// Left is the command that runs this checkout's half in the user's own
-// terminal: this door, which is the one command the whole upgrade is (D948,
-// U4), run from the checkout it is about.
+// Left is the command that runs this stage's half in the user's own terminal:
+// this door, which is the one command the whole upgrade is (D948, U4). It is
+// the project's repositories it re-reads, so it names no repository and no
+// directory (againView).
 func (s *checkoutStage) Left() initflow.Left {
 	return initflow.Left{Stage: initflow.Checkout, Kind: initflow.LeftCommand, Text: selfCommand() + " update"}
 }
 
-// checkout is the checkout this stage works on, and the one line saying why
-// it has none.
-func (s *checkoutStage) checkout() (pluginwire.Location, string) {
-	loc, ok := pluginwire.Locate(".")
-	if !ok {
-		return pluginwire.Location{}, "not in a checkout: the checkout's job images are refreshed where the checkout is"
-	}
-	if releaseVersion() == "" {
-		return loc, "a development build has no release to refresh to"
-	}
-	if !fugaroCheckout(loc) {
-		return loc, "not a Fugaro checkout: it has no fugaro.yaml (set it up with fugaro setup and /fugaro:setup first)"
-	}
-	return loc, ""
-}
+// RepoLines is what this run said about each repository it read: one line per
+// repository, in canonical owner/name order, which is how the loop carries
+// them into the stage's result and its event (C1, U13).
+func (s *checkoutStage) RepoLines() []initflow.RepoLine { return s.lines }
 
-// plannedStep is one of the checkout's steps in this run: the step, the line
-// saying why it is skipped here when it is, and whether that skip is this
-// session's own doing — a step the user still owes, rather than one that is
-// not this checkout's to run at all.
-type plannedStep struct {
+// repoPlace is one repository's cloud step in this run: the step, the view the
+// run read the repository through, and the line saying why it is skipped here
+// when it is. The stage has one place per repository of the project.
+type repoPlace struct {
 	step checkStep
+	view repoView
 	skip string
-	// parked: this run does not run the step and never will (the cloud half
-	// in a coding agent's session, planFor), so the stage is done with what
-	// it may do and still not done: the run reports the step as left for the
-	// user, and says so on every run until it is run where it can be.
+	// state is how the stage leaves this repository where it does not run the
+	// step for it: unread is the reader's own word for one it could not read
+	// (R13), skipped for one the stage does not apply to, needs you for one
+	// only the owner can take the next step on.
+	state initflow.RepoState
+	// parked: this run does not run the step and never will (the cloud half in a
+	// coding agent's session, placeFor), so the stage is done with what it may
+	// do and still not done: the run reports the step as left for the user, and
+	// says so on every run until it is run where it can be.
 	parked bool
 }
 
-// planFor is the steps this checkout's run has, and the steps it does not:
-// four reasons drop the cloud step, and none of them is a skip over a
-// failure. A coding agent's session leaves the cloud out (U7: the plugin stage
-// moves the pin and the plugin there, the images do not), the step never having
-// been reached to say it itself because the loop applied this stage as
-// LocalUnderAgent. That drop
-// is the one of the four that is parked and not skipped: the step is the
-// user's, in the terminal where it can run, and the stage reports it every
-// run. A checkout
-// with no origin remote has no repository for the refresh to resolve — a skip,
-// not the failure the step makes of that read where the refresh is asked for by
-// name, because here the step is one of a run. A checkout
-// whose fugaro.yaml names another project is not this run's to touch, and
-// neither is one whose repository this run did not onboard
-// (repositoryStopped): the job images are that repository's, so a build where
-// the run refused to onboard it is a billable image from a config no cloud run
-// of the project reads.
-//
-// Everything else is the steps' own: every other reason the refresh skips (no
-// fugaro.yaml, a teammate checkout, one not onboarded, a development build, a
-// custom base) is cloudCheck's verdict and cloudStep says it, and every other
-// reason it fails — an origin that is not owner/name, a checkout git cannot
-// read — is a failure here too, not a skip.
-func (s *checkoutStage) planFor(ctx context.Context, env initflow.Env, loc pluginwire.Location) ([]plannedStep, error) {
-	u := s.e.stepCtx(env, loc)
-	cloudSkip, cloudParked := "", false
-	switch other, err := s.namesAnotherProject(loc); {
-	case err != nil:
-		return nil, err
-	case other != "":
-		cloudSkip = other
-	case u.agent != "":
-		cloudSkip, cloudParked = cloudAgentRefusal(u), true
-	default:
-		origin, err := hasOriginRemote(ctx, loc.Root)
-		if err != nil {
-			return nil, fmt.Errorf("reading the checkout's remotes: %w", err)
-		}
-		cloudSkip = "this checkout has no origin repository to refresh"
-		if origin {
-			// The origin is read first, as it always was: a checkout git
-			// cannot read is a failure of the stage and not a reason to drop
-			// a step, so the run's own stop is asked about only where there is
-			// a refresh to drop.
-			cloudSkip = s.repositoryStopped()
-		}
+func (p repoPlace) repo() string { return p.view.Repo }
+
+// plan is this run's places, one per repository of the project, and the one
+// line saying why the stage has none. It is read once per answer — the reader
+// memoizes the list per run (C1) — and it resets the reported lines, which each
+// answer builds again for the repositories it answered for.
+func (s *checkoutStage) plan(ctx context.Context) ([]repoPlace, string) {
+	if releaseVersion() == "" {
+		return nil, "a development build has no release to refresh to"
 	}
-	steps := make([]plannedStep, 0, len(checkoutSteps))
-	for _, step := range checkoutSteps {
-		p := plannedStep{step: step}
-		if step.name == "cloud" {
-			p.skip, p.parked = cloudSkip, cloudParked
-		}
-		steps = append(steps, p)
+	views, _ := s.e.repos(ctx)
+	if len(views) == 0 {
+		return nil, "no repository of this project was read, so there is no job image to refresh"
 	}
-	return steps, nil
+	s.lines = nil
+	places := make([]repoPlace, 0, len(views))
+	for _, v := range views {
+		places = append(places, s.placeFor(v))
+	}
+	return places, ""
 }
 
-// namesAnotherProject is why this checkout is not the one this run is for: its
-// fugaro.yaml names a project that is not this run's, or none at all. The
-// plugin stage gates on exactly this (init_plugin_stage.go), for the same
-// reason: a checkout of another project is not touched — its job images least
-// of all, and, until the pin's writer is deleted (U2), its plugin wiring. A
-// fugaro.yaml that cannot be read is not a pass but a failure: unknown is not
-// the same as matching, and it could name any project.
-func (s *checkoutStage) namesAnotherProject(loc pluginwire.Location) (string, error) {
-	data, err := readFugaroYAML(filepath.Join(loc.Root, "fugaro.yaml"))
+// placeFor is the cloud step for one repository this run read, or the line
+// saying why the stage does not run it here. Every arm but the last is a skip
+// with the line the run reports: a repository the reader could not read is
+// never planned from (R13, RepoUnread); one whose fugaro.yaml names another
+// project (or none) is not this run's to touch; one this machine has no local
+// config entry for cannot be built from here — the region, the registry host
+// and the image names are read from that entry — and that build is the owner's
+// go (V1, D3350, R20); and a run whose repository stage stopped for the user
+// builds nothing for the repository it stopped on (repositoryStopped). Under a
+// coding agent's marker the step is parked rather than skipped: it is the
+// user's, in the terminal where it can run.
+func (s *checkoutStage) placeFor(v repoView) repoPlace {
+	p := repoPlace{step: checkoutSteps[0], view: v, state: initflow.RepoDone}
+	u := s.placeCtx(initflow.Env{}, p)
 	switch {
-	case err == nil:
-		if p, perr := config.ProjectOf(data); perr != nil || p != s.e.lc.Name {
-			return "this checkout's fugaro.yaml names another project (or none), not " + pluginwire.Printable(s.e.lc.Name) + ": its job images are not refreshed here", nil
-		}
-	case !errors.Is(err, os.ErrNotExist):
-		return "", fmt.Errorf("this checkout's fugaro.yaml cannot be read, so which project it names is unknown and its job images are not refreshed: %s", oneLine(err.Error()))
+	case !v.Read():
+		p.skip, p.state = v.Unread, initflow.RepoUnread
+	case v.Cfg == nil:
+		p.skip, p.state = "its fugaro.yaml could not be parsed from its default branch", initflow.RepoUnread
+	case !s.thisProject(v):
+		p.skip, p.state = "its fugaro.yaml names another project (or none), not "+pluginwire.Printable(s.e.lc.Name)+": its job images are not refreshed here", initflow.RepoSkipped
+	case s.repositoryStopped() != "":
+		p.skip, p.state = s.repositoryStopped(), initflow.RepoSkipped
+	case !buildableHere(s.e.lc, v):
+		p.skip, p.state = "this machine has no local config entry saying which provider serves it, so its job images cannot be built from here: onboard it here first ("+selfCommand()+" update --repo <its checkout>)", initflow.RepoNeedsYou
+	case u.agent != "":
+		p.skip, p.parked, p.state = cloudAgentRefusal(u), true, initflow.RepoNeedsYou
+	default:
+		return p
 	}
-	return "", nil
+	s.lines = append(s.lines, newRepoLine(v.Repo, p.state, p.skip))
+	return p
+}
+
+// thisProject is whether a repository's fugaro.yaml names this run's project:
+// the file of another project is not this run's to touch, its job images least
+// of all. A file whose project cannot be read is that case too — unknown is not
+// the same as matching, and it could name any project — and the reader has
+// already refused a file it could not parse (R13).
+func (s *checkoutStage) thisProject(v repoView) bool {
+	p, err := config.ProjectOf(v.YAML)
+	return err == nil && p == s.e.lc.Name
+}
+
+// buildableHere is whether this machine can build a repository's job images:
+// the local config's entry for it is what the region, the registry host, the
+// image names and the clone URL are read from, so a repository known only from
+// the project's list is one this stage reports rather than builds (V1, D3350).
+func buildableHere(lc *localcfg.Config, v repoView) bool {
+	e, ok := viewEntry(lc, v)
+	return ok && e.Provider != ""
 }
 
 // repositoryStopped is why the cloud step is dropped: this run stopped at the
 // repository stage for the user, and the job images this step builds are that
-// stage's — built for the repository it onboards, off the layer and the
-// fugaro.yaml it just touched — so a run that did not get it onboarded builds
-// nothing. The stop is the run's own (PastStops), never a fresh look at the
-// checkout: the repository stage's own answers move the world under it — its
-// anchor writes gcp_project: into this checkout's fugaro.yaml in the very run
-// that onboarded it, which leaves the working tree different from the default
-// branch — and a stage that re-derived the stop from that would drop the
-// refresh of a repository the run had just onboarded, on that run and on every
-// run until the edit is merged (#1836).
+// stage's — built for the repositories it onboards, off the layer and the
+// fugaro.yaml it just touched — so a run that did not get them onboarded builds
+// nothing. The stop is the run's own (PastStops), never a fresh look at a
+// repository: the repository stage's own answers move the world under it — its
+// anchor writes gcp_project: into a repository's fugaro.yaml in the very run
+// that onboarded it, which leaves that repository's working tree different from
+// its default branch — and a stage that re-derived the stop from that would
+// drop the refresh of a repository the run had just onboarded, on that run and
+// on every run until the edit is merged (#1836).
 //
-// It is every needs-you stop of that stage, not only the ones about the file:
+// It is every needs-you stop of that stage, not only the ones about a file:
 // a repository the run may not onboard — an unlisted one, an agent's refusal,
 // a missing GitHub App ID — is one whose job images may not be built either,
 // and the build submitted over it fails at the job's own steps and leaves the
 // user a second command this door may not name.
 //
-// The stage's row still tolerates the stop (initflow's order): the plugin
-// stage ahead of it is where the machine's own writes happen, and what the
-// tolerance is for here is that the checkout says in its own line what became
-// of the images rather than leaving the run's account at "waits for
-// repository".
+// The stop names no repository (initflow.PastStops is the stage's answer), so
+// it drops the step for every repository of the project; a run that stopped on
+// one of them is a stop to tell apart per repository, which is the reader's
+// list to carry when it lands (I1).
 func (s *checkoutStage) repositoryStopped() string {
 	if slices.Contains(s.pastStops, initflow.Repository) {
-		return "the repository stage stopped for the user in this run, and this checkout's job images are built for the repository it onboards: they are not refreshed here, and the next " + s.e.r.o.doorProgram() + " that gets past that stage refreshes them"
+		return "the repository stage stopped for the user in this run, and this stage's job images are built for the repositories it onboards: they are not refreshed here, and the next " + s.e.r.o.doorProgram() + " that gets past that stage refreshes them"
 	}
 	return ""
 }
 
-// hasOriginRemote: whether the checkout has an origin remote at all. It is the
-// one case where the cloud step is dropped here: the refresh resolves the
-// repository from the origin, and a checkout with none has nothing to resolve.
-// A git read that fails is not that case and is an error, as it is wherever
-// the step reads it: the step is dropped only for a checkout that answers, and
-// answers that it has no origin.
-func hasOriginRemote(ctx context.Context, root string) (bool, error) {
-	out, err := gitCmd(ctx, root, "remote").Output()
-	if err != nil {
-		return false, err
-	}
-	return slices.Contains(strings.Fields(string(out)), "origin"), nil
-}
-
 // detail is the stage's one line, in both the read-only view and the plan: the
-// steps it runs, and the one it does not.
-func (s *checkoutStage) detail(steps []plannedStep, loc pluginwire.Location) string {
-	names, skipped := make([]string, 0, len(steps)), make([]string, 0, len(steps))
-	for _, p := range steps {
+// repositories it refreshes, and the ones it does not, with the reason.
+func (s *checkoutStage) detail(places []repoPlace) string {
+	runs, skipped := make([]string, 0, len(places)), make([]string, 0, len(places))
+	for _, p := range places {
 		if p.skip != "" {
-			skipped = append(skipped, p.step.name+" ("+p.skip+")")
+			skipped = append(skipped, pluginwire.Printable(p.repo())+": "+p.step.name+" ("+p.skip+")")
 			continue
 		}
-		names = append(names, p.step.name)
+		runs = append(runs, pluginwire.Printable(p.repo()))
 	}
-	line := fmt.Sprintf("moves the checkout %s to this release: %s", pluginwire.Printable(loc.Root), strings.Join(names, ", "))
+	line := "moves this project's job images to this release"
+	if len(runs) > 0 {
+		line += ": " + places[0].step.name + " for " + strings.Join(runs, ", ")
+	}
 	if len(skipped) > 0 {
 		line += "; skipped here: " + strings.Join(skipped, "; ")
 	}
 	return line
 }
 
-// Check answers whether this checkout has anything to do, by running the steps
-// in their check mode: the same mode `fugaro update --check` runs (u.o.check),
-// which reads and decides and never writes, never asks and never calls the
-// cloud. Every step at this release is a checkout already at it, and a second
-// fugaro update then writes nothing, builds nothing and needs no terminal.
-// Anything else is something for the apply, which reports it in the step's own
-// words — and a step that fails in its check mode fails the stage here, at the
-// same point the apply would.
+// Check answers whether this project has anything to do, by running each
+// repository's step in its check mode: the same mode `fugaro update --check`
+// runs (u.o.check), which reads and decides and never writes, never asks and
+// never calls the cloud. Every repository at this release is one already at it,
+// and a second fugaro update then writes nothing, builds nothing and needs no
+// terminal. Anything else is something for the apply, which reports it in the
+// step's own words — and a step that fails in its check mode fails the stage
+// here, at the same point the apply would.
 //
 // The cloud step's own verdict is the one thing that check mode cannot settle
 // on its own: it reads fugaro.yaml and the local config and never a build
-// record, so the run that is taking this checkout to this release — the run
-// whose job images move with it — has to be asked about separately
+// record, so the run that is taking these repositories to this release — the
+// run whose job images move with it — has to be asked about separately
 // (initEngine.checkoutBehind).
 func (s *checkoutStage) Check(ctx context.Context) (initflow.Status, error) {
-	loc, why := s.checkout()
+	places, why := s.plan(ctx)
 	if why != "" {
 		return initflow.Status{State: initflow.Skipped, Detail: why}, nil
 	}
-	steps, err := s.planFor(ctx, initflow.Env{}, loc)
-	if err != nil {
-		return initflow.Status{}, err
-	}
 	var current []string
 	todo := false
-	for _, p := range steps {
+	for _, p := range places {
 		if p.skip != "" {
-			// Not this checkout's step at all: nothing to do about it here.
+			// Not this repository's step at all: nothing to do about it here.
 			continue
 		}
-		// Every step is checked, not just up to the first with something to
-		// do: a step that fails here fails the run before any of them
+		// Every repository is checked, not just up to the first with something
+		// to do: a step that fails here fails the run before any of them
 		// writes.
-		switch r := s.checkStep(ctx, p.step, loc); r.state {
+		switch r := s.checkPlace(ctx, p); r.state {
 		case stepFailed:
 			return initflow.Status{}, errors.New(r.reason)
 		case stepCurrent:
-			if p.step.name == "cloud" && s.e.checkoutBehind {
+			if s.e.checkoutBehind {
 				// The cloud step's own check reads fugaro.yaml and the local
 				// config and never a build record (cloudCheck), so it cannot
 				// see the job images the refresh moves: a run that is taking
-				// this checkout to this release is one whose job images move
-				// with it (initEngine.checkoutBehind), and what they are on is
-				// the apply's to say, not this check's. The step is the only
-				// one this stage has, so dropping it here is dropping the
+				// these repositories to this release is one whose job images
+				// move with it (initEngine.checkoutBehind), and what they are
+				// on is the apply's to say, not this check's. The step is the
+				// only one this stage has, so dropping it here is dropping the
 				// stage — which is what a run that stopped refreshing the
-				// repository's job images on an upgrade was doing.
+				// repositories' job images on an upgrade was doing.
 				todo = true
 				break
 			}
-			current = append(current, p.step.name)
+			current = append(current, p.repo())
 		default:
 			todo = true
 		}
 	}
-	if todo || len(current) == 0 || parked(steps) {
-		return initflow.Status{State: initflow.Todo, Detail: s.detail(steps, loc)}, nil
+	switch {
+	case parked(places):
+		return initflow.Status{State: initflow.Todo, Detail: s.detail(places)}, nil
+	case allSkipped(places), todo || len(current) == 0:
+		// Every repository of the project is skipped for a reason of its own:
+		// there is nothing here for this stage to do.
+		state := initflow.Todo
+		if allSkipped(places) {
+			state = initflow.Skipped
+		}
+		return initflow.Status{State: state, Detail: s.detail(places)}, nil
 	}
 	return initflow.Status{State: initflow.Done, Detail: "up to date: " + strings.Join(current, ", ")}, nil
 }
 
-// parked reports whether this run leaves one of the checkout's steps for the
+// parked reports whether this run leaves one of the repositories' steps for the
 // user. A step that is parked is not done and never will be here, so the stage
 // is not done either: reporting it as such is what made a coding agent's
 // session read as a finished checkout while the images were never touched, and
 // what made the second run of one drop even the note that they were skipped.
 // The apply is what says which step it is (leftBehind), so the line keeps the
 // plan's own words on every run.
-func parked(steps []plannedStep) bool {
-	for _, p := range steps {
+func parked(places []repoPlace) bool {
+	for _, p := range places {
 		if p.parked {
 			return true
 		}
@@ -341,12 +338,37 @@ func parked(steps []plannedStep) bool {
 	return false
 }
 
-// checkStep is one step of the sequence in its check mode: read-only, no
-// prompt, and quiet. The notes and warnings a check prints — the fork warning,
-// the caveat on the deployed job's config copy — belong to the apply that
-// really runs the step, not to a look at whether there is anything to do.
-func (s *checkoutStage) checkStep(ctx context.Context, step checkStep, loc pluginwire.Location) stepResult {
-	u := s.e.stepCtx(initflow.Env{}, loc)
+// allSkipped reports whether every repository of the project is skipped here, so
+// that the stage has nothing to do at all; a stage with no repository at all is
+// the plan's own line and not this.
+func allSkipped(places []repoPlace) bool {
+	if len(places) == 0 {
+		return false
+	}
+	for _, p := range places {
+		if p.skip == "" {
+			return false
+		}
+	}
+	return true
+}
+
+// placeCtx is what the steps see for one repository this run read: the run's own
+// command and output, the flags the steps read, and the view the step runs for
+// (u.view). The location is the zero one, because no working directory is read
+// for a repository the run read from the project's list (R10).
+func (s *checkoutStage) placeCtx(env initflow.Env, p repoPlace) *stepCtx {
+	u := s.e.stepCtx(env, pluginwire.Location{})
+	u.view = &refreshView{v: p.view, lc: s.e.lc, lcPath: s.e.path, lcOld: s.e.old}
+	return u
+}
+
+// checkPlace is one repository's step in its check mode: read-only, no prompt,
+// and quiet. The notes and warnings a check prints — the fork warning, the
+// caveat on the deployed job's config copy — belong to the apply that really
+// runs the step, not to a look at whether there is anything to do.
+func (s *checkoutStage) checkPlace(ctx context.Context, p repoPlace) stepResult {
+	u := s.placeCtx(initflow.Env{}, p)
 	u.o.check = true
 	u.w = io.Discard
 	c := *s.e.r.cmd // the run's command, its output silenced: the steps' side notes go there
@@ -354,43 +376,64 @@ func (s *checkoutStage) checkStep(ctx context.Context, step checkStep, loc plugi
 	c.SetErr(io.Discard)
 	c.SetContext(ctx)
 	u.cmd = &c
-	return step.run(ctx, u)
+	return p.step.run(ctx, u)
 }
 
-func (s *checkoutStage) Plan(ctx context.Context, env initflow.Env) (initflow.Plan, error) {
-	loc, why := s.checkout()
+// record is one line about one repository, from the step's own result: how the
+// stage left it, and the step's own sentence about it. A place that was skipped
+// reported its line when it was planned (placeFor).
+func (s *checkoutStage) record(p repoPlace, r stepResult) {
+	if p.skip != "" {
+		return
+	}
+	s.lines = append(s.lines, newRepoLine(p.repo(), repoStateOf(r), r.reason))
+}
+
+// repoStateOf is where one repository's step left it, in the list's own words: a
+// step that ran to the end left it done, and one it skipped or failed on is the
+// owner's to take next.
+func repoStateOf(r stepResult) initflow.RepoState {
+	switch r.state {
+	case stepSkipped, stepFailed:
+		return initflow.RepoNeedsYou
+	}
+	return initflow.RepoDone
+}
+
+func (s *checkoutStage) Plan(ctx context.Context, _ initflow.Env) (initflow.Plan, error) {
+	places, why := s.plan(ctx)
 	if why != "" {
 		return initflow.Plan{NothingToDo: true, Detail: why}, nil
 	}
-	steps, err := s.planFor(ctx, env, loc)
-	if err != nil {
-		return initflow.Plan{}, err
-	}
-	return initflow.Plan{Detail: s.detail(steps, loc)}, nil
+	return initflow.Plan{Detail: s.detail(places)}, nil
 }
 
-// Apply runs the stage's steps in the order checkoutSteps gives them and stops
-// at the first that fails — one checkout, one stop. Its outcome is the steps'
-// own: something changed, or everything was already current or skipped.
+// Apply runs the stage's steps for the project's repositories in the order
+// checkoutSteps gives them and stops at the first that fails — one stop, and
+// the repositories after it report the step the run never reached. Its outcome
+// is the steps' own: something changed, or everything was already current or
+// skipped.
 func (s *checkoutStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
-	loc, why := s.checkout()
+	places, why := s.plan(ctx)
 	if why != "" {
 		return initflow.Outcome{Detail: why}, nil
 	}
-	steps, err := s.planFor(ctx, env, loc)
-	if err != nil {
-		return initflow.Outcome{}, err
+	if allSkipped(places) && !parked(places) {
+		// Nothing here is this stage's to run: every repository is skipped for a
+		// reason the plan's line already says, and there is nothing to ask
+		// about or build.
+		return initflow.Outcome{Detail: s.detail(places)}, nil
 	}
-	u := s.e.stepCtx(env, loc)
+	u := s.e.stepCtx(env, pluginwire.Location{})
 	if !env.Yes && !env.Interactive && u.agent == "" {
 		// The cloud step asks before every change, each billable build
 		// included, and there is no terminal here to ask at; the stage
-		// leaves the whole checkout for the user rather than running a step
+		// leaves the project for the user rather than running a step
 		// it cannot confirm. A coding agent's session
 		// is not that case, and it is the one the gate has to look at: the
 		// save from leaving the stage to the user there is no longer a step
 		// of its own (the pin and the plugin became the plugin stage's, U1),
-		// and what planFor's agent arm drops is the cloud half alone — so a
+		// and what placeFor's agent arm drops is the cloud half alone — so a
 		// gate that answered the marker's no-terminal run with needs-you
 		// would leave the run's account of the images at the stage's own
 		// line, with none of the step's own sentence in it.
@@ -404,27 +447,41 @@ func (s *checkoutStage) Apply(ctx context.Context, env initflow.Env) (initflow.O
 	prev := s.e.r.cmd.Context()
 	s.e.r.cmd.SetContext(ctx)
 	defer s.e.r.cmd.SetContext(prev)
-	var changed []string
-	for _, p := range steps {
+	var done []string
+	for _, p := range places {
+		pu := s.placeCtx(env, p)
 		r := stepResult{name: p.step.name, state: stepSkipped, reason: p.skip}
 		if p.skip == "" {
-			r = p.step.run(ctx, u)
+			r = p.step.run(ctx, pu)
 			r.name = p.step.name
+			s.record(p, r)
 		}
-		printStep(s.e.r.w, r)
+		printRepoStep(s.e.r.w, p.repo(), r)
 		if r.state == stepFailed {
-			return initflow.Outcome{}, s.stepFailure(r, u, p.step)
+			return initflow.Outcome{}, s.stepFailure(r, pu, p.step)
 		}
 		if r.state == stepDone {
-			changed = append(changed, r.name)
+			done = append(done, p.step.name+" for "+pluginwire.Printable(p.repo()))
 		}
 	}
 	out := initflow.Outcome{Detail: "No changes"}
-	if len(changed) > 0 {
-		out = initflow.Outcome{Changed: true, Detail: "ran " + strings.Join(changed, ", ") + " for this checkout"}
+	if len(done) > 0 {
+		out = initflow.Outcome{Changed: true, Detail: "ran " + strings.Join(done, ", ")}
 	}
-	out.Left = s.leftBehind(u, steps)
+	out.Left = s.leftBehind(env, places)
 	return out, nil
+}
+
+// printRepoStep is one step's line for one of the project's repositories: the
+// step, its state, the repository it ran for, and why. One line per repository,
+// so a run that refreshed several says what it did where — and a run that read
+// none of them never reaches here.
+func printRepoStep(w io.Writer, repo string, r stepResult) {
+	line := r.name + ": " + string(r.state) + ": " + pluginwire.Printable(oneLine(repo))
+	if r.reason != "" {
+		line += ": " + r.reason
+	}
+	fmt.Fprintln(w, line)
 }
 
 // stepFailure is a step of this stage that failed, as the run reports it: the
@@ -441,40 +498,41 @@ func (s *checkoutStage) Apply(ctx context.Context, env initflow.Env) (initflow.O
 // the rerun starts with (cloudCheck) reads that config and fugaro.yaml and
 // never a build record — the records live in the runs bucket — so a build that
 // failed, or was not confirmed, reads as a finished cloud half afterwards and
-// this door is done at the checkout. The run that offers the build again is
-// the one whose cloud step really runs the refresh, which is the run the
-// step's own stop line already names: that line for this checkout, with this
-// run's flags (u.o.again), said here so the two do not drift.
+// this door is done at the repository. The run that offers the build again is
+// the one whose cloud step really runs the refresh, which is the run this
+// step's own stop line names (u.cloudCommand): said here so the two do not
+// drift.
 func (s *checkoutStage) stepFailure(r stepResult, u *stepCtx, step checkStep) error {
 	err := errors.New(r.reason)
 	if step.name != "cloud" {
 		return err
 	}
-	return &initflow.StageError{Err: err, Fix: fmt.Sprintf("rerun %s in your own terminal window: its cloud step re-reads the build records, so the build that was not submitted is offered again (a rerun of %s never reaches it: this stage's own check reads fugaro.yaml and the local config, never a build record)",
-		u.o.again(u.loc.Root), selfCommand()+" "+s.e.r.o.doorName())}
+	return &initflow.StageError{Err: err, Fix: fmt.Sprintf("rerun %s in your own terminal window: its cloud step re-reads the build records, so the build that was not submitted is offered again (this stage's own check reads fugaro.yaml and the local config, never a build record)",
+		u.cloudCommand())}
 }
 
 // leftBehind is what this apply leaves the user, or nil: the parked cloud half,
-// as a step of this run that only the user can run. The commands are the ones
-// the parked step's own refusal names — this run's flags for this checkout
-// (cloudLine) — rather than this stage's one line,
+// as a step of this run that only the user can run. The command is the one the
+// parked step's own refusal names — this run's flags, for the project's
+// repositories (cloudCommand, againView) — rather than this stage's one line,
 // because the refusal is what knows the flags this run carries. The why is the
 // plan's line, in the step's own words (cloudAgentRefusal).
-func (s *checkoutStage) leftBehind(u *stepCtx, steps []plannedStep) *initflow.Left {
-	for _, p := range steps {
+func (s *checkoutStage) leftBehind(env initflow.Env, places []repoPlace) *initflow.Left {
+	for _, p := range places {
 		if !p.parked {
 			continue
 		}
+		u := s.placeCtx(env, p)
 		return &initflow.Left{Stage: initflow.Checkout, Kind: initflow.LeftCommand,
-			Text:     "in your own terminal window, not through a coding agent or a pipe, run the checkout's cloud half — the base image, the daily check job's config and the billable job-image builds, each confirmed as it is — by running",
-			Commands: []string{u.o.cloudLine(u.loc.Root)}}
+			Text:     "in your own terminal window, not through a coding agent or a pipe, run this project's cloud half — the base images, the daily check jobs' config and the billable job-image builds, each confirmed as it is — by running",
+			Commands: []string{u.cloudCommand()}}
 	}
 	return nil
 }
 
 func (*checkoutStage) Verify(context.Context) error { return nil }
 
-// stepCtx is what the steps see for this checkout: the converge's own command
+// stepCtx is what the steps see for one repository: the converge's own command
 // and output, the flags the steps read, and the marker of the coding agent's
 // session this run is in — the run's own options().Agent, and not a second read
 // of the environment, so that the stages and the loop that drives them answer

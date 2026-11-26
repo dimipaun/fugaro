@@ -230,9 +230,10 @@ func TestTriageMergesOnlyWithGreenCIAndANonCriticalFindingSet(t *testing.T) {
 	}
 }
 
-// TestTriageFailsClosedWithoutAFindingsFile: BF1's file is not on main
-// (reconciliation U10), so until it lands every triage takes the outcome that
-// acts on nothing (D1247).
+// TestTriageFailsClosedWithoutAFindingsFile: a run that finalized before the
+// runner wrote BF1's artifact — or one whose write did not land — is a findings
+// read nobody could make, and every triage on it takes the outcome that acts on
+// nothing (D1247).
 func TestTriageFailsClosedWithoutAFindingsFile(t *testing.T) {
 	in := mergeable()
 	in.Findings = orchestrator.Findings{Read: orchestrator.FindingsAbsent}

@@ -317,7 +317,7 @@ func TestDigestAttemptsRefused(t *testing.T) {
 // paid to start.
 //
 // Mutations: drop the refuseFollowUpReportMode calls from newFollowUpSpec and
-// carryChosenRecipe and the one from refuseFollowUpRepoRecipe, and every arm
+// carryChosenRecipe, and every arm
 // but the last launches a job and fails wantRefused on the execution count as
 // well as on the missing refusal; drop the prChain.PrevReport arm of
 // newFollowUpSpec and the last arm does.
@@ -458,14 +458,17 @@ func TestDigestRetryRefused(t *testing.T) {
 // digest step from the text it carries.
 func TestDigestManifestRepoRecipe(t *testing.T) {
 	f := digestFixture(t)
+	// The digest gate passes on the fixture's own image, but the copy this
+	// launch embeds is refused below releaseCopy (recipeCopySince).
+	writeBuildRecord(t, f, appSlug, "web", releaseCopy)
 	mine := []string{manifestRunID(time.Now().Add(-time.Hour))}
 	seedManifestRun(t, f, "acme/app", appSlug, mine[0])
 	reportRecipeCheckout(t)
 	copy := repoRecipeCopy(t, f, "acme/app", "report", digestRepoRecipe)
 
 	spec := launchWith(t, f, "report", "20261028-120000-abcd")
-	if spec.Recipe == nil || spec.Recipe.Name != copy || spec.Recipe.Source != string(recipe.SourceProject) {
-		t.Fatalf("recipe = %+v, want the project's copy of the repository's report recipe", spec.Recipe)
+	if spec.Recipe == nil || spec.Recipe.Name != copy || spec.Recipe.Source != string(recipe.SourceProject) || spec.Recipe.YAML == "" {
+		t.Fatalf("recipe = %+v, want the project's copy of the repository's own report recipe, embedded", spec.Recipe)
 	}
 	if !slices.Equal(spec.DigestRuns, mine) {
 		t.Fatalf("digest_runs = %v, want %v", spec.DigestRuns, mine)
@@ -539,6 +542,10 @@ func TestDigestManifestOnlyForReportRuns(t *testing.T) {
 // this fails on the execution count and on the stored task.
 func TestDigestEmptyListingRefused(t *testing.T) {
 	f := digestFixture(t)
+	// The launch that must go through at the end carries the copy the store
+	// holds of the repository's own report recipe, which the release-A gate
+	// refuses below releaseCopy; the fixture's own image is below it.
+	writeBuildRecord(t, f, appSlug, "web", releaseCopy)
 	refuse := func(t *testing.T, name, id string) {
 		t.Helper()
 		_, _, err := execute(t, "run", "--repo", "acme/app", "--recipe", name, "--run-id", id, "Periodic run review")
