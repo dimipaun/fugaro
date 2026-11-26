@@ -156,9 +156,25 @@ converges first, and until then that repository's runs halt with a reason naming
 (F17, R16/R19). A member that uses an orchestrator, a coordinator or image builds **keeps its own
 forge credential**: a shared entry of the workspace's pool carries a forge credential too (its own
 kind, which is what a run's forge routes are served by), but the workspace's service admits a
-member's job accounts and the workspace owner's people and no other caller class, so the member's
-orchestrator, coordinator and image builds — different callers on different routes — keep calling
-their own project's service (D2988, F24).
+member's job accounts, the workspace owner's people and the workspace's own roster people on the
+two routes below, and no other caller class, so the member's orchestrator, coordinator and image
+builds — different callers on different routes — keep calling their own project's service
+(D2988, F24).
+
+**A workspace's service now admits a member's *person*, on two routes of its own**
+([workspace-credentials](../workspace-credentials/README.md) R3/R4): the **grant route**, where a
+person's `fugaro run` asks for a grant for a run of their own, and the **calls a run makes under
+the slip the service granted** — the personal half, a person's own Claude subscription token stored
+once at the workspace's own project, served to that person's runs and never to another's. It admits
+them on the one list it *can* check, the workspace's own roster, which it re-reads every 60 seconds:
+a person taken off it is refused their next grant and the calls of a run already in flight, which
+halts with a reason naming the removal (D3146). The roster's people are a class of their own
+**beside** the workspace owner's, rendered into the installation's admission by the workspace
+owner's `fugaro update` (R5, D2971); the reach does not change, since a person admitted there is
+served **their own** token and nothing of another's (D2962, D2976). The half is the member's own
+switch (`personal_workspace_tokens`, off when absent, D2972), and a member whose model route is its
+own service shadows it (D3141). §4 of [spec.md](spec.md) still says no member's person is admitted:
+that design's threat model §8 is where the amendment is recorded.
 
 ## The owner's spec, and what was not recovered
 
