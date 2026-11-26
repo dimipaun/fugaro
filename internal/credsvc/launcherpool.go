@@ -15,6 +15,18 @@ package credsvc
 // request's own `--pool` name. The entitlement is one rule for both the
 // designated and the named case — poolServesPrincipal — so naming a pool can
 // never widen what a run may be served from.
+//
+// A SERVICE ACCOUNT's pool is D3181's, and it is the one place this file reads a
+// pool's own principal to resolve one (PL6): the published pool whose principal
+// that account is — the project pool an admin fills — is the launcher's where
+// the account has designated none, which is the state it is normally in (a
+// designation is a launcher's own session's act, and a service account's runs
+// are launched by a pipeline). It never draws on a person's pool (D2976), and
+// the two cases the plan names come out of the same reading: a run that resumes
+// a person's paused run carries THAT person in its slip's launcher (R8, D3191)
+// and is resolved as a person's, and a run the orchestrator reissues carries the
+// launcher of the original slip and the pool that launch named — the
+// orchestrator's own class never decides either.
 
 import (
 	"context"
@@ -71,13 +83,13 @@ func (l launcherPools) LauncherPool(ctx context.Context, principal routing.Princ
 		}
 		// A designation answers for ONE project: one written for another
 		// installation's is not this project's answer, whatever principal it
-		// names (R26).
-		if !found || d.Project != project {
-			return none, false, nil
+		// names (R26) — so it is not this run's pool name, and what answers
+		// below is what answers a principal that designated nothing.
+		if found && d.Project == project {
+			poolName = d.Pool
 		}
-		poolName = d.Pool
 	}
-	pool, ok := namedPool(poolName, shared)
+	pool, ok := poolForLauncher(poolName, shared, principal)
 	if !ok {
 		return none, false, nil
 	}
@@ -122,6 +134,55 @@ func readDesignation(ctx context.Context, s *Server, principal routing.Principal
 	return creds.ReadDesignation(ctx, db, principal)
 }
 
+// poolForLauncher is the pool one launcher's run is served from: the pool its
+// launch named with `--pool`, or, where the launch named none, the principal's
+// designation — and, where a service account has designated none, the published
+// project pool whose principal it is (D3181).
+//
+// An empty name reaches the second two cases and never the pool a policy holds
+// under an empty name: a pool's name is a member a validator holds to the
+// credential-name grammar (PL1), so `namedPool` answers no pool for one, and the
+// service-account search below is what a run that named nothing is resolved by.
+func poolForLauncher(poolName string, shared *projectpolicy.Policy, principal routing.Principal) (config.Pool, bool) {
+	if poolName != "" {
+		pool, ok := namedPool(poolName, shared)
+		if !ok || !poolServesPrincipal(pool, principal) {
+			return config.Pool{}, false
+		}
+		return pool, true
+	}
+	pool, ok := poolOfServiceAccount(shared, principal)
+	if !ok || !poolServesPrincipal(pool, principal) {
+		return config.Pool{}, false
+	}
+	return pool, true
+}
+
+// poolOfServiceAccount is the project pool a service account's runs are served
+// from where the account has designated none (D3181, PL6): the published pool
+// whose principal that account is — the one an admin fills, because a run of a
+// pipeline holds no session to fill its own.
+//
+// The FIRST such pool is the answer where a project publishes several, which is
+// the project's own order: every one of them is that account's by its own
+// statement, so no pool is served that the account's runs may not draw on, and
+// the order the installation wrote is the one an operator can read back. A
+// principal that is not a service account is answered no pool at all: a person's
+// run is resolved from that person's designation and never from a pool that
+// merely names them, which is PL4's rule and stays PL4's.
+func poolOfServiceAccount(shared *projectpolicy.Policy, principal routing.Principal) (config.Pool, bool) {
+	if principal.Kind != routing.PrincipalServiceAccount {
+		return config.Pool{}, false
+	}
+	for _, pool := range shared.CraftPools {
+		own := principalOfPool(pool)
+		if own.Kind == routing.PrincipalServiceAccount && serviceAccountIs(own.ID, principal.ID) {
+			return pool, true
+		}
+	}
+	return config.Pool{}, false
+}
+
 // poolServesPrincipal reports whether a pool is one this principal's runs may be
 // served from (D3176, D3181): the pool's own principal is the launcher's, or it
 // is the project's — the shared pool, which every account the migration wrapped
@@ -142,6 +203,14 @@ func poolServesPrincipal(pool config.Pool, principal routing.Principal) bool {
 	own := principalOfPool(pool)
 	if own.Kind == routing.PrincipalProject {
 		return true
+	}
+	if own.Kind == routing.PrincipalServiceAccount && principal.Kind == routing.PrincipalServiceAccount {
+		// The two addresses are compared folded (serviceAccountIs), because
+		// that is how the roster admits the account's own token in the first
+		// place: a pool written with the address spelled otherwise is the same
+		// account's, and failing to see that would fall a run back to a paid
+		// source over the case of a letter.
+		return serviceAccountIs(own.ID, principal.ID)
 	}
 	return own == principal
 }
