@@ -181,6 +181,12 @@ func newConvergeRigYAML(t *testing.T, node map[string]any, yaml string) *converg
 	stubBuildPricer(t)
 	r := newImagesRig(t, convergeRelease)
 	buildBudgetCaps(r.db)
+	// The installation this rig converges is a managed one (TN1): the two
+	// halves of the creation fact, and the credentials a record is written
+	// with. It is what every converge test below starts from, and a test about
+	// a project the read answers is unmanaged takes the halves of the world it
+	// is given.
+	r.managedInstallation(t)
 	r.installationState(t)
 	// The installation is there and nothing about it has to change: the plan
 	// reads back empty, so the run is about the stale things alone.
@@ -661,8 +667,8 @@ func convergeOn(t *testing.T, r *convergeRig, stale []string) string {
 
 	out, errOut, err := executeStdin(t, "aurora\n", "update")
 	if err != nil {
-		t.Fatalf("fugaro update stopped at %s (exit %d), so this installation needs a second command:\n%s\n%s",
-			stoppedStage(out), ExitCode(err), out, errOut)
+		t.Fatalf("fugaro update stopped at %s (exit %d), so this installation needs a second command:\n%v\n%s\n%s",
+			stoppedStage(out), ExitCode(err), err, out, errOut)
 	}
 
 	after := doctorChecks(t, r.root)

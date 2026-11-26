@@ -105,8 +105,21 @@ func managedRequired(cmd *cobra.Command, gcpProject, reason string) error {
 	if what == "" {
 		what = "nothing was written: this command changes a managed project"
 	}
+	return managedRequiredFrom(what, gcpProject, reason)
+}
+
+// managedRequiredFrom is managedRequired for a caller that states the opening
+// clause itself: the converge's own stop (T3) refuses an installation that is
+// not managed before any cloud client is opened, and the two commands that
+// reach it — `fugaro update`, and `fugaro setup` on an installation that
+// already exists — carry their reason on managedExemptCommands (T7a) rather
+// than an opening clause, because the fence beside a cloud client is not what
+// refuses them. Everything after the clause — the project, the read's own
+// reason and the one command that flags an existing project managed — is this
+// file's, so the refusal cannot come to say two different things.
+func managedRequiredFrom(clause, gcpProject, reason string) error {
 	return userErr("%s: %s is not managed (%s), and no flag of this command turns an installation that is not managed into one: the command that flags an existing project managed is `%s`, run by its owner at their own terminal (D1541)",
-		what, safetext.Field(gcpProject), safetext.Field(reason), managedFlagCommand())
+		clause, safetext.Field(gcpProject), safetext.Field(reason), managedFlagCommand())
 }
 
 // errNoCloudForManagedRead is the fence's answer on an installation that names

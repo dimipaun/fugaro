@@ -38,15 +38,12 @@ import (
 // path that does not exist so a developer's own Application Default
 // Credentials can never decide what a record names.
 
-// updateManagedRig is updateRig in a managed project with a coding agent's
-// session: the two marks (the runs bucket's object and the project's label),
-// the credentials isolated, and the marker set.
+// updateManagedRig is updateRig — a managed project already, with the
+// credentials isolated — in a coding agent's session.
 func updateManagedRig(t *testing.T) *initRig {
 	t.Helper()
 	r := updateRig(t)
-	r.managedRuns(t, initProjectName, initProject)
 	t.Setenv("CLAUDECODE", "1")
-	isolateGateCredentials(t)
 	return r
 }
 

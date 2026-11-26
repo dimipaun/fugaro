@@ -27,11 +27,22 @@ import (
 // outside any checkout: `update`'s own stages are what is under test here, and
 // a checkout adds the plugin and repository stages, which have their own
 // files.
+//
+// The installation is a managed one — both halves of the creation fact, and
+// the credentials a record is written with isolated — because that is the only
+// installation `fugaro update` converges since TN1: a project the managed read
+// answers is unmanaged is stopped at the head of the engine, naming
+// `fugaro managed flag` (update_managed.go's stopUnmanaged). A test that is
+// about the other answer takes the marks off the world it is given.
+//
+// The fact records no amount (version 1, managedRuns' own body), which is the
+// state every one of these installations is in: what a run records is the
+// installation's own business, and a test about an amount seeds one.
 func updateRig(t *testing.T) *initRig {
 	t.Helper()
 	releaseBuild(t, "0.2.0")
 	r := newInitRig(t)
-	r.stateBucket()
+	r.managedInstallation(t)
 	r.script["plan"] = map[string]any{"exit": 0}
 	r.save(t)
 	t.Chdir(t.TempDir())

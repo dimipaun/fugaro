@@ -158,6 +158,14 @@ type initGate struct {
 	// change within a run's own read of it, and a re-read before a write is the
 	// helper's, not this struct's.
 	managed bool
+	// unread is why the marks could not be read at all, and nil whenever the
+	// read answered (managed or not). D2218 makes the two different answers:
+	// "not managed" is the project's own answer and stops the run (stopUnmanaged),
+	// while a read that FAILED cannot be taken for it — it warns and the run
+	// goes on along the path an unmanaged project took before this plan, with
+	// its confirmations and its agent-session refusals, and never through the
+	// gate, which no failed read may open.
+	unread error
 }
 
 // underway is whether this run's gate is open now: the marks were read, they
@@ -223,7 +231,7 @@ func (e *initEngine) gateRun(ctx context.Context) error {
 		return nil
 	}
 	if r.gate == nil && r.gateable() {
-		r.gate = readUpdateGate(e, r)
+		r.gate = e.gateRead()
 	}
 	// The refusal is the user's to read and the run's to stop: it is returned
 	// whole (a user error, exit 1), and nothing after it runs — no stage, no
@@ -276,7 +284,7 @@ func (e *initEngine) managedStage(name string) bool {
 		// The converge reads this once for the whole run (gateRun). This is
 		// the same read for a caller that reached a stage without it — the
 		// helpers of a test, or an engine that drives the loop itself.
-		r.gate = readUpdateGate(e, r)
+		r.gate = e.gateRead()
 	}
 	return r.gate.underway()
 }
@@ -359,10 +367,87 @@ func readUpdateGate(e *initEngine, r *initRun) *initGate {
 	}
 	gate, err := readManagedGate(ctx, env, facts)
 	if err != nil {
+		// Kept and not dropped (D2218): the caller that asks about the
+		// installation's being managed — the stop at the head of the converge
+		// — has to tell a read that failed from one that answered, and the
+		// only place that difference exists is here.
+		g.unread = err
 		return g
 	}
 	g.g, g.managed = gate, gate.managed
 	return g
+}
+
+// gateRead is the run's own read of the marks, whoever asks for it first: the
+// stop at the head of the converge, which asks before the loop exists, and
+// gateRun, which asks for the stages (D1015: one read per command).
+//
+// It is kept on the ENGINE and not on the run's gate (r.gate) because the two
+// are not the same thing: r.gate is the gate the STAGES run under, and a shaped
+// run and a --plan-only run have none (gateable) — while the stop asks about
+// every run that could write, whatever its stages are judged by, and the budget
+// rewrite asks about the installation the amount is recorded on. One read
+// either way: gateRun takes this one where the run is gateable, and a second
+// asker gets the answer this run already paid for.
+//
+// A read that failed is cached like any other: an answer that could not be made
+// is not a reason to ask the same two APIs again within one command, and every
+// asker has to read the same answer — the warning is printed once, by the first
+// asker (stopUnmanaged).
+func (e *initEngine) gateRead() *initGate {
+	if e.marksRead == nil {
+		e.marksRead = readUpdateGate(e, e.r)
+	}
+	return e.marksRead
+}
+
+// unmanagedStopClause is the opening clause of the converge's own refusal on an
+// installation that is not managed (T3, D2217's principle): the two doors that
+// reach the engine — `fugaro update`, and `fugaro setup` on an installation
+// that already exists (R8) — carry their reason on managedExemptCommands rather
+// than an opening clause, because the fence beside a cloud client is not what
+// refuses them. One sentence for both doors, because the answer and the command
+// it names are the same one.
+const unmanagedStopClause = "nothing was applied: this command converges an installation, and Fugaro only touches managed projects"
+
+// stopUnmanaged is D2217's rule at this engine's one door in, and the first
+// thing a writing converge does: Fugaro only touches managed projects, so an
+// installation the managed read ANSWERS is unmanaged is refused here, through
+// managedRequired, naming the one command that flags an existing project
+// managed (TN1, D1541).
+//
+// It sits at the head of converge and not beside the loop's first stage (F16):
+// the run rewrites this machine's own config before the first stage plans
+// (guardCatalogEntries, rewriteLocalBudgetMode), and a stop that wrote that
+// file first would be a stop that changed the machine it refused. Nothing has
+// been written before this call — no cloud write and no local one — so the
+// refusal is safe with runs in flight: it asks no run to finish and changes
+// nothing one holds (docs/design/update-in-flight.md).
+//
+// A read that FAILED is not an answer and does not stop the run (D2218): it
+// warns in requireManaged's own words, the run goes on along the path an
+// unmanaged project took before this plan — its confirmations, its
+// coding-agent refusals — and the gate stays shut, because a failed read cannot
+// open it. A read that answers "not managed" stops, whatever reason it gave.
+//
+// --plan-only and --check apply nothing, so a preview has no write for this
+// stop to protect and reads the installation as it is. Neither is a creating
+// run this stop's: it is the run that makes the project managed in the first
+// place, and a resumed creation is a creating run (D2214, R8).
+func (e *initEngine) stopUnmanaged() error {
+	r, o := e.r, e.r.o
+	if o.planOnly || o.checkOnly || o.createProject {
+		return nil
+	}
+	g := e.gateRead()
+	switch {
+	case g.unread != nil:
+		warnManagedUnreadable(r.cmd, e.lc, g.unread)
+		return nil
+	case g.managed:
+		return nil
+	}
+	return managedRequiredFrom(unmanagedStopClause, r.gcpProject, g.g.marks.Reason)
 }
 
 // gateUnderway is whether this run has the managed gate open: the marks were

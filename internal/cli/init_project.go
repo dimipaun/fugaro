@@ -102,6 +102,12 @@ func (o *initOptions) checkCreateProject() error {
 	// installation stage's, and the project, its Firebase link, its billing
 	// and its APIs are all made before it, so a run that ended there would
 	// have changed cloud and left nothing that says why.
+	// The currency, for the same reason and from the other side: check()'s trio
+	// rule lets an explicit --budget keep the currency a managed project's
+	// creation fact records (R6), and this run's creation fact is the one it is
+	// about to write — there is none to keep.
+	case o.budget > 0 && o.budgetCurrency == "":
+		return userErr("a budget needs --budget-currency: this run creates the project, so there is no creation fact whose currency --budget could keep. Pass --budget-currency <code>, three upper-case letters such as USD")
 	case o.billingAccount == "" && o.budget > 0 && o.budgetCurrency != "":
 		return userErr("a budget needs --billing-account: this run creates the project, so there is no installation whose state records the account its alert was created with. Pass --billing-account <id> with --budget and --budget-currency")
 	}

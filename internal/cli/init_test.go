@@ -107,6 +107,37 @@ func labelled(f *gcpfake.CRM, project string) {
 	f.SetLabels(project, map[string]string{managed.ProjectLabelKey: managed.ProjectLabelValue})
 }
 
+// managedInstallation is the two halves of the creation fact every installation
+// that exists carries since TN1: the label on the project and the object in the
+// runs bucket. A command that converges an installation is stopped at the head
+// of the engine when the managed read answers is unmanaged (update_managed.go's
+// stopUnmanaged), so a fixture of "an installation already there" that is not
+// this one is a fixture of a project Fugaro never created.
+//
+// The credentials a record is written with are isolated with it: the fact is
+// what opens the gate, and one opened gate writes records naming the account
+// the run is running as (D1014), which is a network call a hermetic test cannot
+// make.
+//
+// The object is seeded with Put rather than through the fake's HTTP surface:
+// what is there is the world's, not a call the run made, and a test that
+// asserts a refusal touched no cloud counts the rig's own uploads as touches.
+// The fact is version 1 — the creation that records no amount — because an
+// amount is the installation's own business, and a test about one records it.
+func (r *initRig) managedInstallation(t *testing.T) {
+	t.Helper()
+	r.stateBucket()
+	r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+	r.gcs.SetBucketPolicy(initRunsBucket, gcpfake.ConvenienceBindings(initProject))
+	labelled(r.crm, initProject)
+	body, err := managed.Marker{Version: managed.MarkerVersion, GCPProject: initProject}.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.gcs.Put(initRunsBucket, managed.MarkerObject, body)
+	isolateGateCredentials(t)
+}
+
 func newInitRig(t *testing.T) *initRig {
 	t.Helper()
 	// The converge runs the plugin step: without this, a rig would install
@@ -201,6 +232,19 @@ func change(addr string, actions ...string) planChange {
 	}
 	return planChange{"address": addr, "type": typ,
 		"change": map[string]any{"actions": actions, "before": map[string]any{}, "after": after}}
+}
+
+// installationChange is the change a converge scripts for the installation root
+// when what the test is about is the run and not the plan: one the cover admits,
+// so the step is the gate's to judge on a managed installation (TN1's world —
+// update_managed_test.go's admitted plans use the same resource).
+//
+// A rig's scripted plan is not applied by anything: the fake Terraform answers
+// the apply with the scripted outputs, so a change here means "this root has
+// work to do", which is what puts a step in front of the gate at all. A test
+// that is about the plan's own content scripts that content itself.
+func installationChange() planChange {
+	return change("module.installation.google_service_account.scheduler", "create")
 }
 
 // setPlan makes the fake's show -json report changes, in every root.

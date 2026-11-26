@@ -90,6 +90,12 @@ type initOptions struct {
 	operators, admins               []string
 	budget                          int64
 	budgetCurrency, billingAccount  string
+	// budgetChanged and budgetCurrencyChanged are whether --budget and
+	// --budget-currency were named on this command line, which is what makes a
+	// rewrite a statement by the owner rather than a default's doing: the
+	// amount has no default here (D2215, R6), and a currency the owner did not
+	// name follows the one the creation fact records rather than the default.
+	budgetChanged, budgetCurrencyChanged bool
 	alertEmail                      string
 	noLogIsolation                  bool
 	registryCleanup                 string
@@ -429,25 +435,30 @@ const retiredCredentialsFlag = "provision-credentials"
 // what triggers that write.
 const managedFlaggingSentence = "and --managed never flags one: it records the budget of a project the run creates"
 
-// budgetFlagHelp is --budget's help, and on `fugaro update` it carries the one
-// thing that door does with the budget besides recording it: given the trio
-// once, the run flags an installation that is not managed as managed, in the
-// same command (D1553, update_selfflag.go), and that write is what takes the
-// installation's typed confirmation away — so the flag that triggers it says
-// so, before the run, rather than only in the run's own output.
+// budgetFlagHelp is --budget's help, and on `fugaro update` it carries what
+// that door does with the amount besides planning the alert: given explicitly,
+// it replaces the amount the managed project's creation fact records, before
+// anything is applied, and prints the old figure beside the new one (D2215,
+// R7; update_budget_rewrite.go). So the flag that makes that write says so,
+// before the run, rather than only in the run's own output.
 //
 // It is a function of the door for the reason the sentences beside it are: the
 // help of a flag on the door the reader is running must be true of that door.
 // `--managed` cannot be where the update door says this — it is declared there,
 // hidden and refused by name (see managedFlaggingSentence) — and on `fugaro
 // setup` the trio is only the budget the installation records, because setup
-// flags nothing it did not create.
+// changes no fact it did not write.
+//
+// The door no longer flags an installation (TN1): on one that is not managed
+// it stops and names `fugaro managed flag`, and this help says that too,
+// because a reader who passes --budget to such an installation is owed the
+// answer the run will give them.
 func budgetFlagHelp(d convergeDoor) string {
 	help := "a monthly budget on the project, in whole units of --budget-currency"
 	if d.name != updateDoor.name {
 		return help
 	}
-	return help + ". On an installation that is not managed, giving " + d.name + " the budget once — --budget, --budget-currency and --billing-account together — flags that installation as managed in the same run: it writes gs://fugaro-runs-<gcp-project>/fugaro/managed.json and the fugaro_managed=true label on the project itself, and from the next run on that project's applies no longer stop for the typed confirmation. The run prints what it writes before it writes it, and the write is refused inside a coding agent's session and inside a Fugaro run's process"
+	return help + ". On a managed project, passing --budget replaces the amount gs://fugaro-runs-<gcp-project>/fugaro/managed.json records, before anything is applied, and the run prints the old amount and the new one; --budget-currency not passed keeps the currency recorded there. On a project that is not managed, " + d.name + " stops instead and names `fugaro managed flag`, the one command that makes an existing project managed. The write is refused inside a coding agent's session and inside a Fugaro run's process"
 }
 
 func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
@@ -463,6 +474,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 			o.alertEmailChanged, o.baseImageChanged = f.Changed("alert-email"), f.Changed("base-image")
 			o.budgetAdminsChanged = f.Changed("budget-admin")
 			o.bakeReposChanged = f.Changed("bake-repos")
+			o.budgetChanged, o.budgetCurrencyChanged = f.Changed("budget"), f.Changed("budget-currency")
 			r := newInitRun(cmd, o)
 			// A flag that belongs to the other door: refused here, by name,
 			// before anything is read, prompted for or applied, so a script
@@ -2308,7 +2320,7 @@ func (o *initOptions) check() error {
 	// reads no cloud has nothing to take it from, so there the three are still
 	// required together.
 	if o.budget != 0 || o.budgetCurrency != "" || o.billingAccount != "" {
-		if o.budget <= 0 || o.budgetCurrency == "" {
+		if o.budget <= 0 || (o.budgetCurrency == "" && !o.takesRecordedCurrency()) {
 			return userErr("a budget needs --budget (more than 0) and --budget-currency together")
 		}
 		if o.billingAccount == "" && !o.carriesBudget() {
@@ -2325,6 +2337,20 @@ func (o *initOptions) check() error {
 // account out of, and --forget is the rollback, which carries nothing forward
 // at all.
 func (o *initOptions) carriesBudget() bool { return !o.printVars && !o.forget }
+
+// takesRecordedCurrency is whether this run can take the currency a managed
+// project's creation fact records when --budget-currency is not given (R6 of
+// docs/managed-flag-ergonomics/reconciliation.md): a rewrite keeps the recorded
+// currency unless the owner names another, and the run that makes it is the
+// same one that takes the billed account out of the installation's own state
+// (carriesBudget) — the two together are what lets the owner change the amount
+// alone, without knowing the currency or the account by heart.
+//
+// A creating run cannot: its creation fact is the one it is about to write, and
+// checkCreateProject is what refuses an amount with no currency there. A run
+// that reads no cloud has nothing to take it from, and the trio rule above
+// still holds it to the pair.
+func (o *initOptions) takesRecordedCurrency() bool { return o.carriesBudget() }
 
 // budgetFigures is the amount and the currency a creating run's budget is
 // created with and recorded by: what --budget and --budget-currency settled (or

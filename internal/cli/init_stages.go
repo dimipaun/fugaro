@@ -143,16 +143,14 @@ type initEngine struct {
 	// (update_repos.go).
 	reposState reposState
 
-	// flagFactVersion is the version the self-flag step's own read of the
-	// creation fact answered with, and 0 where that step read nothing
-	// (update_selfflag.go). The marker step asks it beside the gate's version
-	// for the one installation whose fact the gate never saw: the half-written
-	// flag, whose object write succeeded and whose label write then failed. A
-	// run that finishes that flag has read the object — the step could not
-	// complete the object otherwise — so the version the migration needs is
-	// already in hand, and taking a read of its own for it would be the second
-	// read of an object this run has answered once.
-	flagFactVersion int
+	// marksRead is this run's one read of the managed project's marks
+	// (update_managed.go's gateRead), whoever asked for it first: the stop at
+	// the head of the converge, which asks before the loop exists, the budget
+	// rewrite, and gateRun, which asks for the stages. It is not the run's gate
+	// (initRun.gate) because the two answer different questions — that one is
+	// the gate the stages run under, and a shaped run and a --plan-only run
+	// have none — and it is one read either way (D1015).
+	marksRead *initGate
 }
 
 // environment runs the environment check once (it prints the local
@@ -513,6 +511,19 @@ func stagesNamed(e *initEngine, names ...string) (stages []initflow.Stage, unans
 // decides is what is applied and in what order — the canonical one
 // (initflow.Names), not the order the questions were asked in.
 func (e *initEngine) converge(ctx context.Context) error {
+	// The managed project's fence, and the first thing a writing converge
+	// does: an installation the read answers is unmanaged stops here, before
+	// the local config is rewritten below and before the first cloud write
+	// (F16), and the amount the run was given, if it was given one, is
+	// recorded before anything is applied (update_managed.go's stopUnmanaged,
+	// update_budget_rewrite.go). Both refuse by returning, and nothing above
+	// them has written anything.
+	if err := e.stopUnmanaged(); err != nil {
+		return err
+	}
+	if err := e.rewriteBudget(ctx); err != nil {
+		return err
+	}
 	// The owner's own local config, read before anything else this run does and
 	// before the first stage plans (update_catalog_guard.go): every image
 	// catalog entry this release will refuse is named here, and the one entry
@@ -678,20 +689,15 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 		}
 		return r.failureShown(res.Cause)
 	}
-	// D1553's self-flag, and it is here rather than beside markCreated above
-	// because of what each of the two marks means: markCreated records what a
-	// run created, which is true whatever the run did afterwards, while this
-	// one takes the installation's typed confirmation away, and a run that
-	// failed above applied nothing to be confirmed. So it is reached only by a
-	// run whose stages all succeeded, and its own test drives that path
-	// (update_selfflag.go, TestUpdateOnAnUnmanagedInstallation...). It is
-	// still before printResult, so what it says and the warnings it records are
-	// in the result the print encodes — the reason markCreated is where it is.
-	if err := e.selfFlagUnmanaged(ctx); err != nil {
-		_ = r.printResult()
-		return err
-	}
-	// And D1548's, on the same path and for the same reason: the converge has
+	// D1553's self-flag used to stand here, and it is gone (TN1): `update`
+	// never marks a project, and an installation that is not managed is
+	// stopped at the head of the converge instead (update_managed.go's
+	// stopUnmanaged). What is left of D1553 is the amount: a run given an
+	// explicit --budget records it in the marker before its first stage
+	// (update_budget_rewrite.go), which is the same file's successor.
+	//
+	// D1548's step stands here, on the same path and for the same reason: the
+	// converge has
 	// applied everything it had, and the mode a managed project's runs read is
 	// raised here or on no run at all (update_budget_mode.go). It returns no
 	// error — every state that leaves the mode as it is is a warning or

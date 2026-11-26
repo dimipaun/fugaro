@@ -138,6 +138,7 @@ func TestUpdateRepoCarriesTheProxiedFact(t *testing.T) {
 func proxiedConvergeRig(t *testing.T) (*initRig, *gcpfake.RTDB) {
 	t.Helper()
 	r := newInitRig(t)
+	r.managedInstallation(t)
 	r.repoReady(t)
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 		"credentials_service": map[string]any{"name": "fugaro-credentials", "region": "us-east5"},
