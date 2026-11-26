@@ -1446,6 +1446,52 @@ func TestDiagnoseStaleDraft(t *testing.T) {
 	}
 }
 
+// TestDiagnosePrintsGuidance: a run whose agent asked a question it may not
+// settle says so in one line beside the draft it ended (LV5.2, LD8), in the
+// text and in the row a screen reads, and a run that asked nothing prints no
+// line at all — `diagnose` never has to read the hand-back text to answer.
+//
+// Mutation: read the flag off the record's reason instead of the field, and the
+// line below is lost the moment a later writer replaces the sentence.
+func TestDiagnosePrintsGuidance(t *testing.T) {
+	f := newCloudFixture(t)
+	const (
+		asked = "20260927-100000-abcd"
+		quiet = "20260927-100000-bbbb"
+		want  = "Guidance: the agent's hand-back asks a question it may not settle; a follow-up answers it"
+	)
+	for _, tc := range []struct {
+		id        string
+		guidance  bool
+		needsLine bool
+	}{
+		{asked, true, true},
+		{quiet, false, false},
+	} {
+		exec := seedRun(t, f, tc.id, "", "someone@example.com", true)
+		ctx := context.Background()
+		b, _ := blob.OpenBucket(ctx, f.bucket)
+		defer b.Close()
+		s := runstore.Open(b, appSlug, tc.id)
+		rec := &runstore.Record{Version: 1, RunID: tc.id, Repo: "acme/app", Workflow: "web", Execution: exec,
+			Status: runstore.StatusFailed, Stage: "writeback", Outcome: runstore.OutcomeDraft,
+			Reason: "the agent's hand-back asks for guidance", NeedsGuidance: tc.guidance,
+			PR: &runstore.PRRef{Number: 7, URL: "https://bitbucket.org/acme/app/pull-requests/7"}}
+		if err := s.WriteRecord(ctx, rec); err != nil {
+			t.Fatal(err)
+		}
+		human, _, err := execute(t, "diagnose", tc.id)
+		if err != nil || strings.Contains(human, want) != tc.needsLine {
+			t.Fatalf("diagnose guidance line = %v, want %v (%v):\n%s", strings.Contains(human, want), tc.needsLine, err, human)
+		}
+		out, _, err := execute(t, "diagnose", "--json", tc.id)
+		var d Diagnosis
+		if err != nil || json.Unmarshal([]byte(out), &d) != nil || d.Row.NeedsGuidance != tc.guidance {
+			t.Fatalf("json needs_guidance = %v, want %v (%v):\n%s", d.Row.NeedsGuidance, tc.guidance, err, out)
+		}
+	}
+}
+
 func TestDiagnoseDraftTextIsSanitised(t *testing.T) {
 	r := runview.Row{PR: 7, PRURL: "https://h/pr/7\x1b[2J", StaleDraft: true}
 	var b strings.Builder
