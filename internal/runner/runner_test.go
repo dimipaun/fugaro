@@ -228,13 +228,18 @@ func oauthEnv(h *harness) {
 
 // withPins is the task's project layer with the pins in it: the harness's own
 // when the task carries none, and the test's own layer with the pins merged
-// when it carries one that names no model (testutil.MergePins).
-func withPins(pl *task.ProjectLayer, pins string) *task.ProjectLayer {
-	if pl == nil {
-		return &task.ProjectLayer{SHA256: config.LayerSum([]byte(pins)), Generation: 3, YAML: pins}
+// when it carries one that names no model (testutil.MergePins). The fixture's
+// own tighten-only agent keys are stated there too (testutil.SanctionAgent):
+// a number the project says nothing about is judged against the mode's row
+// (RT1, R20, RT2), and a case about what a number does reads the number the
+// fixture wrote.
+func withPins(pl *task.ProjectLayer, pins, file string) *task.ProjectLayer {
+	text, gen := pins, int64(3)
+	if pl != nil {
+		text, gen = testutil.MergePins(pl.YAML, pins), pl.Generation
 	}
-	merged := testutil.MergePins(pl.YAML, pins)
-	return &task.ProjectLayer{SHA256: config.LayerSum([]byte(merged)), Generation: pl.Generation, YAML: merged}
+	text = testutil.SanctionAgent(file, text)
+	return &task.ProjectLayer{SHA256: config.LayerSum([]byte(text)), Generation: gen, YAML: text}
 }
 
 // liftedRecipe is the recipe a fixture's launch now embeds (PR3, D3304): a
@@ -299,7 +304,7 @@ func newHarnessFiles(t *testing.T, cfg string, spec *task.Spec, extra map[string
 		spec = &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature"}
 	}
 	if pins != "" {
-		spec.ProjectLayer = withPins(spec.ProjectLayer, pins)
+		spec.ProjectLayer = withPins(spec.ProjectLayer, pins, pinned)
 	}
 	if spec.Recipe == nil {
 		spec.Recipe = liftedRecipe(files)

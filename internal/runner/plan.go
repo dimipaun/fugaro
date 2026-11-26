@@ -448,13 +448,13 @@ func planOf(rcp *recipe.Recipe, levels config.Levels, a config.Agent, reviewOver
 }
 
 // setRounds is one step's rounds: the number a layer above the mode set, or
-// the mode's own row where none did, held inside the recipe's bound. A
-// repository's number the project layer says nothing about arrives here
-// already judged against that row (planAgent, R20, RT2), so 0 is also what a
-// value the row outbid reads as. 0 is the layers' "unset" — config.Validate refuses 0 nowhere but reads it as "the mode
+// the mode's own row where none did, held inside the recipe's bound. 0 is the
+// layers' "unset" — config.Validate refuses 0 nowhere but reads it as "the mode
 // supplies this", and recipe.Step.MaxRounds uses 0 the same way — so a step
 // whose set is 0 takes the mode's number and never runs no rounds at all, which
-// checkPlan would refuse.
+// checkPlan would refuse. A repository's number the project layer says nothing
+// about arrives here already judged against the row (planAgent, R20, RT2), so 0
+// is also what a number the row outbid reads as.
 func setRounds(set, modeDefault, bound int) int {
 	if set == 0 {
 		set = modeDefault
