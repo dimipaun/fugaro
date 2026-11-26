@@ -1150,8 +1150,9 @@ func orphanContainers(ctx context.Context, c *Clients, spec RepoSpec, stateAddrs
 }
 
 // DeployedSecretIDs is every Secret Manager container a deployed Cloud Run job
-// of the installation names in its environment, by container ID, with the one
-// warning a caller prints when the question could not be asked at all.
+// of the installation names in its environment, by container ID, with whether
+// the question was answered at all and the warning a caller prints when it was
+// not.
 //
 // It is what answers G4 for a project copy D3325 retires: the state removal
 // destroys nothing, so the copy may be deleted only on a run that can see that
@@ -1164,13 +1165,15 @@ func orphanContainers(ctx context.Context, c *Clients, spec RepoSpec, stateAddrs
 //
 // The read covers EVERY job of the installation, not this repository's: the
 // job that still mounts a project copy is any repository's, including one this
-// run never touches. It fails closed — a listing that was refused or failed
-// answers no IDs and the warning — and that is the whole point: "could not
-// look" and "nothing names it" must never be the same answer for a call that
-// deletes a container.
-func DeployedSecretIDs(ctx context.Context, c *Clients, spec InstallationSpec) (ids map[string]bool, warning string) {
+// run never touches. It fails closed, and answered is what makes that a fact a
+// caller cannot get wrong: false — no client, a listing that was refused or
+// failed, a run whose own context is done — is a question that was never
+// answered, and "could not look" must never read as "nothing names it" for a
+// call that deletes a container. Only true says the IDs are the installation's
+// deployed mounts.
+func DeployedSecretIDs(ctx context.Context, c *Clients, spec InstallationSpec) (ids map[string]bool, answered bool, warning string) {
 	if c == nil || c.Run == nil {
-		return nil, jobsReadFailed(ctx, errors.New("no Cloud Run client"), spec)
+		return nil, false, jobsReadFailed(ctx, errNoRunClient, spec)
 	}
 	parent := "projects/" + spec.Project + "/locations/" + spec.Region
 	out := map[string]bool{}
@@ -1196,16 +1199,23 @@ func DeployedSecretIDs(ctx context.Context, c *Clients, spec InstallationSpec) (
 		return nil
 	})
 	if err != nil {
-		return nil, jobsReadFailed(ctx, err, spec)
+		return nil, false, jobsReadFailed(ctx, err, spec)
 	}
-	return out, ""
+	return out, true, ""
 }
+
+// errNoRunClient is a read there was no client to make: no Cloud Run service is
+// connected in this run, which is a state the update door never reaches — it
+// builds every client or fails before a step runs — and one no caller may read
+// as "nothing names it" if it ever does.
+var errNoRunClient = errors.New("there is no Cloud Run client in this run")
 
 // jobsReadFailed is the one warning DeployedSecretIDs answers a read it could
 // not make with: what stays undone because of it, and the gcloud command that
 // asks the same question by hand. Empty, with the run abandoned, is a run that
 // is giving up rather than a permission the operator lacks — the caller prints
-// no line for a run that is already over.
+// no line for a run that is already over, and answered false keeps the copies
+// alive either way.
 func jobsReadFailed(ctx context.Context, err error, spec InstallationSpec) string {
 	if ctx.Err() != nil {
 		return ""

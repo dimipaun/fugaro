@@ -116,17 +116,23 @@ func ProjectCopyRemovals(stateAddrs []string, copies []ProjectCopy) []string {
 }
 
 // ProjectCopiesToDelete is the retired copies whose LIVE container this run may
-// delete: the ones no deployed job names (G4). mounted is every Secret Manager
-// container a deployed Cloud Run job of the installation names (DeployedSecretIDs)
-// — this installation's own jobs and every repository's, because a repository's
-// job mounts the copy until its own root is re-applied onto the grammar.
+// delete: the ones no deployed job names (G4), and none at all when the run
+// could not ask. mounted is every Secret Manager container a deployed Cloud Run
+// job of the installation names (DeployedSecretIDs) — this installation's own
+// jobs and every repository's, because a repository's job mounts the copy until
+// its own root is re-applied onto the grammar — and answered is whether that
+// read was made at all, so that the question a run could not ask is never the
+// same input as the question it asked and got nothing back from.
 //
 // Removing an instance from the state destroys nothing, so the container stays
 // while anything still reads it: it is marked retired and left alive, out of the
 // state, read by the job that names it, and the next update asks the same
 // question. Nothing waits for that job to be re-applied — a copy is deleted by
 // the update whose own read found nothing naming it, and by no other.
-func ProjectCopiesToDelete(copies []ProjectCopy, mounted map[string]bool) []ProjectCopy {
+func ProjectCopiesToDelete(copies []ProjectCopy, mounted map[string]bool, answered bool) []ProjectCopy {
+	if !answered {
+		return nil
+	}
 	var out []ProjectCopy
 	for _, cp := range copies {
 		if mounted[cp.ID] {
