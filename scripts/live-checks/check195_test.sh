@@ -640,11 +640,19 @@ server and calls the service with it -- and this fake answers both halves the wa
 the real ones do: a JWT-shaped token whose `email` claim is the account the build
 runs as, and a 200 only for a token minted for that account and this URL.
 
+The mint itself is answered for the request the product's own build steps make
+and for no other -- the default service account's identity endpoint, the header
+the metadata server requires, the audience URL-encoded, and no `format`
+parameter -- because that request is the one this check exists to make: the two
+calls its step used to send (with `format=full` and a raw audience) are answered
+nothing, which is what the owner's run of 2026-11-26 got back from them.
+
 The two ends are knobbed so the step's own EXIT-CODE MAPPING can be read where it
 is written -- the six `exit`s in the step and nowhere else. FAKE_STEP_METADATA is
 `token` (mint the token, the default), `empty` (the metadata server answers
-nothing, which is the step's exit 14) or `error` (it REFUSES with an HTTP 4xx and
-a body, which is curl's own `-f` case and the same exit 14); FAKE_STEP_CLAIM is
+nothing, which is the step's exit 14) or `error` (it REFUSES with an HTTP 404 and
+a body, which is curl's own `-f` case and the same exit 14, with curl's own words
+about the refusal on stderr, where the step has to keep them); FAKE_STEP_CLAIM is
 the `email` claim the minted token carries (the account by default, another
 identity for exit 15); and
 FAKE_STEP_FRONT is what the service's front end answers -- `admit` (the default:
@@ -660,7 +668,7 @@ that never landed) or `refuse-once` (the first fails and the next lands, which i
 the retry the step is written with). No access token and no authorization header
 value is ever written to that file: only the body the step posted.
 """
-import base64, json, os, sys
+import base64, json, os, sys, urllib.parse
 
 CALLER = "fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com"
 LOG = os.environ.get("FAKE_LOG_DIR", "")
@@ -669,9 +677,29 @@ METADATA = os.environ.get("FAKE_STEP_METADATA", "token")
 FRONT = os.environ.get("FAKE_STEP_FRONT", "admit")
 args = sys.argv[1:]
 url = ""
-for a in args:
-    if a.startswith("http"):
-        url = a
+
+
+def get_url():
+    # curl's own `--get`: the pair `--data-urlencode` is given is appended to the
+    # URL as its query string, which is how the product's build step hands the
+    # audience over (internal/backend/gcp/catalog_clone.go's grant step). The
+    # value is left as it arrives -- URL-encoded, the way curl sends it -- and
+    # the audience is decoded where it is read.
+    found = ""
+    pairs = []
+    for i, a in enumerate(args):
+        if a.startswith("http"):
+            found = a
+        elif a in ("--data-urlencode", "-d", "--data"):
+            pairs.append(args[i + 1] if i + 1 < len(args) else "")
+        elif a.startswith("--data-urlencode="):
+            pairs.append(a.split("=", 1)[1])
+    if pairs:
+        found += ("&" if "?" in found else "?") + "&".join(pairs)
+    return found
+
+
+url = get_url()
 if LOG:
     with open(os.path.join(LOG, "step-curl.calls"), "a") as fh:
         fh.write("curl " + " ".join(args) + "\n")
@@ -702,8 +730,10 @@ def write_out():
 def headers():
     out = []
     for i, a in enumerate(args):
-        if a == "-H":
+        if a in ("-H", "--header"):
             out.append(args[i + 1])
+        elif a.startswith("--header="):
+            out.append(a.split("=", 1)[1])
         elif a.startswith("-H"):
             out.append(a[2:].lstrip("="))
     return out
@@ -762,20 +792,37 @@ if "metadata.google.internal" in url:
         # so it never calls the service, which is its exit 14.
         sys.exit(0)
     if METADATA == "error":
-        # The metadata server that REFUSES the request: an HTTP 404 with a body.
-        # curl -f turns that into a non-zero exit with NOTHING on stdout, which
-        # is how the step's exit 14 is reachable; without -f curl exits 0 with
-        # the error TEXT on stdout, and that text is not a token -- it goes on
-        # to be sent as a bearer token, and the front end's 401 would be read as
-        # "the front end refused the token" when the token was never minted.
+        # The metadata server that REFUSES the request: an HTTP 404 with a body,
+        # and curl's own words about it on stderr. curl -f turns that into a
+        # non-zero exit with NOTHING on stdout, which is how the step's exit 14
+        # is reachable; without -f curl exits 0 with the error TEXT on stdout,
+        # and that text is not a token -- it goes on to be sent as a bearer
+        # token, and the front end's 401 would be read as "the front end refused
+        # the token" when the token was never minted. The stderr line is the
+        # `--show-error` the product's own build step reads its token with: a
+        # mint that answers nothing and says nothing else is the reading that
+        # left the owner's run of 2026-11-26 unsettled.
         if has_flag("f", "--fail"):
+            sys.stderr.write("curl: (22) The requested URL returned error: 404\n")
             sys.exit(22)
         sys.stdout.write("Not Found: the metadata server refused this request\n")
+        sys.exit(0)
+    # The mint: answered for the request the product's own build steps make and
+    # for no other. internal/backend/gcp/catalog_clone.go's grant step and
+    # internal/cli/gitcred_build.go both ask the default account's identity
+    # endpoint with the header the metadata server requires and the audience
+    # URL-encoded, and neither sends a `format` parameter; a request of any other
+    # shape is answered nothing at all.
+    if (
+        "/service-accounts/default/identity" not in url
+        or "format=" in url
+        or not any(h == "Metadata-Flavor: Google" for h in headers())
+    ):
         sys.exit(0)
     audience = ""
     for part in url.split("?", 1)[-1].split("&"):
         if part.startswith("audience="):
-            audience = part[len("audience="):]
+            audience = urllib.parse.unquote(part[len("audience="):])
     sys.stdout.write(minted_token(audience))
     sys.exit(0)
 
@@ -1021,7 +1068,17 @@ test_the_generated_step_mints_a_token_and_reads_its_own_email_claim() {
     fail "the step: no script could be lifted out of the generated build config"
     return 0
   }
-  expect_contains "$(cat "$step")" 'tok="$(curl -f -sS' "the step: after Cloud Build's own reduction the token is minted with a command substitution, and the -f is what keeps an HTTP error body out of it"
+  # The mint is the product's own call and not a shape of this check's own
+  # invention: the build's default service account's identity endpoint, the
+  # header the metadata server requires, the audience URL-encoded, and no
+  # `format` parameter -- no mint in the product sends one
+  # (internal/backend/gcp/catalog_clone.go's grant step, internal/cli/
+  # gitcred_build.go), and the owner's run of 2026-11-26 read nothing at all back
+  # from the two calls this step used to send with it.
+  expect_contains "$(cat "$step")" 'tok="$(curl --silent --show-error --fail --max-time 30' "the step: after Cloud Build's own reduction the token is minted with the product's own curl invocation"
+  expect_contains "$(cat "$step")" '"${meta}/default/identity"' "the step: the token is asked of the build's own default service account's identity endpoint"
+  expect_contains "$(cat "$step")" '--get --data-urlencode "audience=${url}"' "the step: the audience is the service's own URL, URL-encoded the way the product's build step asks for it"
+  expect_absent "$(cat "$step")" "format=" "the step: no format parameter, which is the request the product's mints never send"
   expect_absent "$(cat "$step")" "sys.argv" "the step: nothing reads an argument the step never passed"
 
   write_fake_curl_for_the_step "$dir/stepbin"
@@ -1033,7 +1090,7 @@ test_the_generated_step_mints_a_token_and_reads_its_own_email_claim() {
   expect_contains "$step_out" "CHK195 status=200 email=fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com" "the step: the one line it prints"
   expect_absent "$step_out" "email=unread" "the step: the email claim is read out of the token it minted"
   expect_contains "$(cat "$dir/logs/step-curl.calls")" "metadata.google.internal" "the step: it mints its token from the metadata server"
-  expect_contains "$(cat "$dir/logs/step-curl.calls")" "-H Metadata-Flavor: Google" "the step: the metadata call carries the header the metadata server requires"
+  expect_contains "$(cat "$dir/logs/step-curl.calls")" "--header Metadata-Flavor: Google" "the step: the metadata call carries the header the metadata server requires"
   expect_contains "$(cat "$dir/logs/step-curl.calls")" "Authorization: Bearer " "the step: the call to the service carries the token as a bearer header"
   # The object the check reads the line back out of: the step posts its own one
   # line there, with an ACCESS token from the same metadata server, and the
@@ -1136,6 +1193,39 @@ test_the_step_ends_with_one_exit_code_per_outcome() {
   # The token itself is never printed on any of those paths, and the credential
   # line of a refusenik's log is the one thing this check must not put there.
   expect_absent "$(cat "$dir/step.out")" "fake-signature" "the step mapping: no arm of the mapping prints the token"
+}
+
+# A mint that answers nothing has to say WHY it answered nothing, and this is the
+# fact the owner's run of 2026-11-26 went without: the step read `status=notoken`
+# out of the object and nothing else anywhere -- both of its calls sent curl's
+# stderr to /dev/null -- so the run could not tell a refused request from a
+# metadata server that was never reached, and the check is still unsettled for it.
+# The product's own build step reads its token with curl's `--show-error` and
+# keeps what the metadata server says (internal/backend/gcp/catalog_clone.go's
+# grant step), so this step does too: the metadata server's own words land in the
+# build's log beside the one line, and the reading stays the same.
+test_a_metadata_server_that_mints_nothing_says_why() {
+  local dir=$work/stepwhy
+  prepare "$dir"
+  run195 "$dir"
+  expect_status "$status" 0 "the mint that answered nothing: the run that generates the step"
+  local step=$dir/step.sh
+  lift_step_script "$dir/logs/cloudbuild.yaml" "$step" || {
+    fail "the mint that answered nothing: no script could be lifted out of the generated build config"
+    return 0
+  }
+  write_fake_curl_for_the_step "$dir/stepbin"
+  status=0
+  env PATH="$dir/stepbin:$PATH" FAKE_LOG_DIR="$dir/logs" FAKE_STEP_METADATA=error \
+    bash "$step" >"$dir/step.out" 2>"$dir/step.err" || status=$?
+  expect_status "$status" 14 "the mint that answered nothing: the step's own outcome code, unchanged"
+  expect_contains "$(cat "$dir/step.out")" "CHK195 status=notoken email=unread" "the mint that answered nothing: the one line the check reads"
+  expect_contains "$(cat "$dir/step.err")" "404" "the mint that answered nothing: the metadata server's own answer is kept, so the build's log says why no token came"
+  expect_absent "$(cat "$dir/step.out")" "404" "the mint that answered nothing: nothing of that answer is printed as the line"
+  expect_absent "$(cat "$dir/step.out")" "fake-signature" "the mint that answered nothing: no token is printed on this path either"
+  # And the object the check reads first carries the line, so the outcome reaches
+  # the block whether or not the log ever arrives.
+  expect_contains "$(cat "$dir/logs/step-upload.txt")" "CHK195 status=notoken email=unread" "the mint that answered nothing: the line is written into the object too"
 }
 
 # A knob the header advertises and nothing reads is worse than no knob at all: a
@@ -1245,7 +1335,8 @@ test_happy_path() {
   expect_contains "$build" "--async" "happy path: the build is read back by its status, not by streaming its log"
   expect_contains "$(cat "$dir/logs/cloudbuild.yaml")" "logging: CLOUD_LOGGING_ONLY" "happy path: the build says where its logs go"
   expect_contains "$(cat "$dir/logs/cloudbuild.yaml")" "metadata.google.internal" "happy path: the step mints its token from the build's own metadata server"
-  expect_contains "$(cat "$dir/logs/cloudbuild.yaml")" "audience=https://fugaro-chk195-fake-ue.a.run.app&format=full" "happy path: the token's audience is the deployed service's own URL"
+  expect_contains "$(cat "$dir/logs/cloudbuild.yaml")" 'url="https://fugaro-chk195-fake-ue.a.run.app"' "happy path: the step's audience is the deployed service's own URL"
+  expect_contains "$(cat "$dir/logs/cloudbuild.yaml")" '--get --data-urlencode "audience=$${url}"' "happy path: the mint asks for that URL as the token's audience, the way the product's own build step asks for it, and the double dollar is Cloud Build's escape: an unescaped reference would be substituted away before the shell ever saw it"
   expect_contains "$(cat "$dir/logs/cloudbuild.yaml")" "fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com" "happy path: the step names the throwaway account"
   expect_contains "$calls" "builds describe fake-build-1" "happy path: the build's status was read back"
   # The line came out of the object, so the log was not read at all: that is the
@@ -1927,6 +2018,7 @@ t test_a_service_that_answers_unauthenticated_calls_stops_the_run
 t test_every_advertised_knob_is_read
 t test_the_generated_step_mints_a_token_and_reads_its_own_email_claim
 t test_the_step_ends_with_one_exit_code_per_outcome
+t test_a_metadata_server_that_mints_nothing_says_why
 t test_the_step_retries_the_write_into_the_object
 t test_happy_path
 t test_a_service_already_there_is_a_hard_stop

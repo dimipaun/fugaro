@@ -480,7 +480,8 @@ func (l *loop) emitRepos(r StageResult) {
 // repositories it read (RepoReporter, C1): the lines themselves, and the
 // summary built from them as the stage's own detail — what a reader of the
 // document and of the feed gets is then the same from every directory, which
-// the stage's own reason, naming the run's working directory, would not be.
+// the stage's own reason, naming the run's working directory, would not be —
+// and the one line the stage has of its own where it has one (StageNote).
 //
 // The lines are redacted like every other line that reaches the document or
 // the screen (F6), and a stage that reported none — one that does no
@@ -514,6 +515,16 @@ func (l *loop) reposOf(s Stage, r StageResult) StageResult {
 		// stage, and what the account prints under the cross — and the lines,
 		// which the result still carries beside it, do not replace it (U13).
 		r.Detail = repoSummary(r.Repos)
+		if n, ok := s.(StageNote); ok {
+			// The stage's own line about the step it did not run here, after the
+			// lines' summary: the summary counts how the repositories were left
+			// and never says which step was dropped for one of them, and a stage
+			// that dropped a step for every repository of the project would
+			// otherwise report it nowhere at all.
+			if note := oneLine(l.redact(n.Note())); note != "" {
+				r.Detail += "; " + note
+			}
+		}
 	}
 	return r
 }

@@ -22,14 +22,17 @@
 #
 # So the check does its own setup and teardown and reads, row by row:
 #
-#   premise     the installation is one this release has not reached: the
-#               repository's job carries no database address, and the
-#               installation's own state refuses as one with no budget backend
-#               ('fugaro project policy show --project <name> --json', which
-#               answers exit 0 on one that has a backend). A failure here is a
-#               STOP (exit 2), not a finding — this check is about an
-#               installation at the PREVIOUS release, and on one already
-#               migrated every row below would be a row about nothing.
+#   premise     the installation is one this release has not reached, read at
+#               once through its own budget state: 'fugaro budget show --json',
+#               which only a budget database can answer, must refuse as an
+#               installation with no backend; and the repository's job must carry
+#               no database address. Both are read BEFORE anything is launched,
+#               the budget state first — an installation that already has its
+#               database stops the check there, before the job is even described,
+#               with the three ways forward below. A failure here is a STOP
+#               (exit 2), not a finding — this check is about an installation at
+#               the PREVIOUS release, and on one already migrated every row below
+#               would be a row about nothing.
 #   in-flight   a run is launched BEFORE the update and its id recorded.
 #   update      `fugaro update` is run as the project owner, TWICE as the
 #               after-deploy steps name it: for the installation (which creates
@@ -53,6 +56,15 @@
 #               nothing (no job of ITS OWN project, read from its local config,
 #               may carry a database address) and must say that a project owner
 #               has to run it (U1, D3023).
+#
+# An installation that already has its budget database is not one this check can
+# measure — the upgrade it watches has already happened there — so that reading
+# stops it at once, before any run is launched, and names the THREE WAYS FORWARD
+# in one line: point it at a second installation that predates the release
+# (`--installation`, `--gcp-project`, and that installation's own `--job`,
+# `--sandbox` and `--region`), record U1, U2 and U4 as waived by the owner in
+# docs/always-a-budget, or run it on a fresh scratch project `fugaro setup`
+# created at the release behind.
 #
 # It launches TWO runs of a sandbox repository on the installation you name, and
 # a project owner's `fugaro update` on it. Both COST MONEY: the runs' own model
@@ -335,6 +347,12 @@ Usage:
     [--dry-run]
   bash scripts/live-checks/check790.sh --help
 
+It reads the installation's budget state first and STOPS AT ONCE, before any run
+is launched, on one that already has its budget database — naming the three ways
+forward: a second installation that predates the release, the owner's waiver of
+U1, U2 and U4 in docs/always-a-budget, or a fresh scratch project `fugaro setup`
+created at the release behind.
+
 It launches TWO paid runs and runs `fugaro update` for the installation as its
 project owner. Every row it prints is one criterion of the register's Check 790;
 the last line of the block is the verdict and the exit status:
@@ -414,11 +432,15 @@ Check 790 plan (nothing is called: no gcloud, no fugaro, no run, no update)
 
 What it would do, in order:
 
-  premise      gcloud run jobs describe ${JOB:-<job>} --project ${GCP_PROJECT:-<project>} --region ${REGION:-<region>}
-               read the first container's environment NAMES: FUGARO_RTDB_URL must be ABSENT; and
-               fugaro project policy show --project ${INSTALLATION:-<installation>} --json   (in ${SANDBOX:-<sandbox>})
-               must REFUSE as an installation with no budget backend. A premise that does not hold
-               STOPS the check (exit 2).
+  premise      fugaro budget show --json --project ${INSTALLATION:-<installation>}   (in ${SANDBOX:-<sandbox>})
+               -> the installation's own budget state, read FIRST: it must REFUSE for want of a budget
+               backend, and an installation that already has its database STOPS the check AT ONCE
+               (exit 2) with the three ways forward: a second installation that predates the release
+               (--installation, --gcp-project), the owner's waiver of U1, U2 and U4 in
+               docs/always-a-budget, or a fresh scratch project 'fugaro setup' created at the release behind.
+               Then  gcloud run jobs describe ${JOB:-<job>} --project ${GCP_PROJECT:-<project>} --region ${REGION:-<region>}
+               read the first container's environment NAMES: FUGARO_RTDB_URL must be ABSENT.
+               A premise that does not hold STOPS the check (exit 2), before any run is launched.
   in-flight    fugaro run --task-file <a task the check writes> --json   (in ${SANDBOX:-<sandbox>})
                -> the FIRST paid run, launched before the update.
   update       fugaro update --project ${INSTALLATION:-<installation>}
@@ -549,8 +571,31 @@ launch_run() { # launch_run <outfile> — launches one run of the sandbox reposi
 
 # ---------------------------------------------------------------- the rows
 
+# The three ways forward a person has when the installation they named already
+# has its budget database. It is one sentence, and both the row that reads FAIL
+# and the stop line beside it carry it, so the two cannot drift apart.
+BUDGET_THERE_FIX="point the check at a second installation that predates the release (--installation, --gcp-project, and that installation's own --job, --sandbox and --region), run it on a fresh scratch project that 'fugaro setup' created at the release behind, or record U1, U2 and U4 as waived by the owner in docs/always-a-budget"
+
 step_premise() {
-  say "reading the installation's state before the update (premise)"
+  # The FIRST reading, and the reason this check stops at once rather than a
+  # paragraph later: 'fugaro budget show --json' is the one command only a budget
+  # database can answer (an installation with no backend has no database to read
+  # the mode, the caps and the counters from, so it refuses and names it), and an
+  # installation that already has its database has no upgrade for Check 790 to
+  # watch — the owner's own fugaro-dev, mode enforce and caps set, is exactly
+  # that. Nothing is described and nothing is launched before it holds.
+  say "reading the installation's budget state before anything else (premise, first)"
+  local status=0
+  (cd "$SANDBOX" && fugaro budget show --json --project "$INSTALLATION") >"$SCRATCH/budget.json" 2>"$SCRATCH/budget.err" || status=$?
+  if [ "$status" -eq 0 ]; then
+    fact premise FAIL "the installation ${INSTALLATION} already has its budget database: 'fugaro budget show --json' answered (mode '$(jget "$SCRATCH/budget.json" mode)') instead of refusing as an installation with no budget backend, so the upgrade Check 790 watches has already happened here and every row below would be a row about nothing. Three ways forward: ${BUDGET_THERE_FIX}"
+    stop "the installation ${INSTALLATION} already has a budget database, and Check 790 watches the upgrade that gives one — there is no upgrade to watch here: ${BUDGET_THERE_FIX}"
+  fi
+  if ! grep -qiE 'no firebase budget backend|budget\.rtdb_url' "$SCRATCH/budget.err" "$SCRATCH/budget.json" 2>/dev/null; then
+    fact premise UNVERIFIED "'fugaro budget show --json --project ${INSTALLATION}' exited ${status} without naming a missing budget backend, so whether this installation is at the previous release is NOT measured: $(head -c 300 "$SCRATCH/budget.err" 2>/dev/null). Read that command yourself ('fugaro budget show --json --project ${INSTALLATION}'), and run the check again on an installation whose refusal says it has no backend"
+    stop "the installation's own budget state could not be read — nothing is launched on an installation nobody settled"
+  fi
+  say "reading the repository's job before the update (premise, second)"
   describe_job "$SCRATCH/job-before.json" || {
     fact premise FAIL "the job '${JOB}' could not be described in ${GCP_PROJECT}/${REGION}: $(head -c 400 "$SCRATCH/job-before.json.err" 2>/dev/null). Nothing can be read about an installation whose job is not there"
     stop "the job '${JOB}' could not be described — check --job, --gcp-project and --region"
@@ -558,27 +603,10 @@ step_premise() {
   local names
   names=$(job_env "$SCRATCH/job-before.json")
   if printf '%s\n' "$names" | grep -q '^FUGARO_RTDB_URL='; then
-    fact premise FAIL "the job '${JOB}' already carries a database address (FUGARO_RTDB_URL), so this installation has already been reached by the release: Check 790 is about an installation at the PREVIOUS release with NO budget database, and every row below would be a row about nothing. Run the check on such an installation, or read the register's section for what to do with one already migrated"
-    stop "the installation already has a budget database — this check is about the release before it"
+    fact premise FAIL "the job '${JOB}' already carries a database address (FUGARO_RTDB_URL), so this installation has already been reached by the release: Check 790 is about an installation at the PREVIOUS release with NO budget database, and every row below would be a row about nothing. Three ways forward: ${BUDGET_THERE_FIX}"
+    stop "the installation's job already carries a database address, and Check 790 watches the upgrade that gives one: ${BUDGET_THERE_FIX}"
   fi
-  # The second reading is the installation's own config, through the one command
-  # that reads the published node: an installation with no Firebase backend has
-  # no node to read, so the command refuses and names it. An exit 0 means the
-  # release has already been here. Any OTHER failure leaves the row UNVERIFIED
-  # and stops the check, deliberately: the check launches two paid runs, and a
-  # premise nobody settled is not a state to spend on. A changed wording of the
-  # refusal, then, costs a person nothing but the run of this check.
-  local status=0
-  (cd "$SANDBOX" && fugaro project policy show --project "$INSTALLATION" --json) >"$SCRATCH/policy.json" 2>"$SCRATCH/policy.json.err" || status=$?
-  if [ "$status" -eq 0 ]; then
-    fact premise FAIL "the published policy of ${INSTALLATION} was read and answered (exit 0), so this installation already has a budget backend: Check 790 is about an installation at the PREVIOUS release with NO budget database, and every row below would be a row about nothing. Run the check on such an installation, or read the register's section for what to do with one already migrated"
-    stop "the installation already has a budget database — this check is about the release before it"
-  fi
-  if ! grep -qiE 'no firebase budget backend|budget\.rtdb_url' "$SCRATCH/policy.json.err" "$SCRATCH/policy.json" 2>/dev/null; then
-    fact premise UNVERIFIED "'fugaro project policy show --project ${INSTALLATION} --json' exited ${status} without naming a missing budget backend, so whether this installation is at the previous release is NOT measured: $(head -c 300 "$SCRATCH/policy.json.err" 2>/dev/null). Read that command yourself, and run the check again on an installation whose refusal says it has no backend"
-    stop "the installation's own state could not be read — nothing is launched on an installation nobody settled"
-  fi
-  fact premise PASS "the job '${JOB}' of ${GCP_PROJECT}/${REGION} carries no FUGARO_RTDB_URL, and 'fugaro project policy show --project ${INSTALLATION} --json' refused because the installation has no budget backend (exit ${status}): this installation is at the previous release, which is the state Check 790 is about"
+  fact premise PASS "the installation's own budget state refuses for want of a backend ('fugaro budget show --json' exited ${status} naming budget.rtdb_url) and the job '${JOB}' of ${GCP_PROJECT}/${REGION} carries no FUGARO_RTDB_URL: this installation is at the previous release, which is the state Check 790 is about"
 }
 
 step_inflight() {

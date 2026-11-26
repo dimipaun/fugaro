@@ -610,17 +610,21 @@ var rigorModesAnyNumberRE = regexp.MustCompile(`([FDOU])([0-9]+)`)
 // document here may still cite, because it belongs to a register the document
 // names: the coordinator's allocation (D192), the free range its row states
 // (D193), the two sibling folders' D-blocks (docs/windows-cli/'s D1–D16 and
-// docs/setup-wizard/'s D1–D12), and the block the folder's own O7 reads out of
-// the register — docs/mobile/voice-session/'s D201–D220, the numbers around them
-// that voice-session left alone (D200, written nowhere here), and the next free
-// block at this folder's base (D221), which O7 recommends by name.
+// docs/setup-wizard/'s D1–D12), the block the folder's own O7 reads out of the
+// register — docs/mobile/voice-session/'s D201–D220, the numbers around them
+// that voice-session left alone (D200, written nowhere here), and the block O7
+// recommended at this folder's base (D221) — and the block the owner's answer to
+// O7 of 2026-11-26 gives this folder in the one sequence (D3380, and its end
+// D3411), which the register records, with the number that reading was taken
+// above (D3379, docs/image-map-by-provider/'s reserved tail).
 //
 // Each is allowed only where the document names its owner, because "D16" beside
 // no name is a citation of a decision this folder does not have. The register's
 // figures are quoted with the anchor they were read at (docs/coordinator/README.md's
-// row says "at `c6009b5f`"), which is why the block above is read from this
-// folder's base commit rather than trusted as current: at `1d325928` the highest
-// number written anywhere in docs/ is D220, not D192.
+// row says "at `c6009b5f`"), which is why the block above the folder's own was
+// read at a base commit rather than trusted as current: at `1d325928` the highest
+// number written anywhere in docs/ is D220, not D192, and at the change that
+// recorded D3380 it is D3379.
 var rigorModesForeignNumber = []struct {
 	prefix, owner string
 	end           int
@@ -634,6 +638,10 @@ var rigorModesForeignNumber = []struct {
 	{"D", "docs/mobile/voice-session/", 219},
 	{"D", "docs/mobile/voice-session/", 220},
 	{"D", "next free block", 221},
+	{"D", "docs/mobile-auth/", 236},
+	{"D", "the one sequence", 3380},
+	{"D", "the one sequence", 3411},
+	{"D", "docs/image-map-by-provider/", 3379},
 }
 
 // TestDocsRigorModesEveryBlockRangeIsCurrent: every block range a document in

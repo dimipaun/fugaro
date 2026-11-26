@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -39,11 +38,11 @@ import (
 // note S2 and S5 print and not a gate stop (R1).
 
 // claudeGateCheckID is doctor's row, and claudeGateStep the name the update
-// reports the same finding under. They are the same string because they are
-// the same finding.
+// reports the same finding under. The step is the check's own string because
+// they are the same finding: one value, so the two surfaces cannot drift apart.
 const (
 	claudeGateCheckID = "claude-through-a-provider"
-	claudeGateStep    = "claude-through-a-provider"
+	claudeGateStep    = claudeGateCheckID
 )
 
 // claudeGateLead and claudeGateFix are the finding and its fix, the same text
@@ -245,10 +244,11 @@ func (e *initEngine) noticeClaudeGate(views []repoView) {
 
 // doctorClaudeGateChecks is the same finding as doctor's row: one warning
 // naming every enrolled repository the gate stops, with the pins and the fix
-// (D3000, R15). It reads the repositories through C1's list, as doctor's two
-// per-repository notice checks do, because doctor has no engine of its own.
-func doctorClaudeGateChecks(ctx context.Context, lc *localcfg.Config) []doctorCheck {
-	views, _ := enrolledRepos(ctx, enrolledIn{LC: lc})
+// (D3000, R15). It reads the views doctor's per-repository notice checks have
+// already taken (doctorRepoNoticeChecks), because doctor has no engine of its
+// own and because C1's list is a read of every enrolled repository: a second
+// read of it would read each of them twice for the same facts.
+func doctorClaudeGateChecks(lc *localcfg.Config, views []repoView) []doctorCheck {
 	lines := claudeGateLines(lc, views)
 	if len(lines) == 0 {
 		return nil

@@ -185,6 +185,16 @@ func happyInstallation(t *testing.T, r *initRig, changes ...planChange) {
 	r.save(t)
 }
 
+// installationStateRead answers the installation root's own state read, which
+// the retirement of the shared project jobs makes once per converge
+// (retireProjectJobs, before the plan it decides). It is scripted apart from
+// the plan's `show` so that a fixture whose plans are a positional list keeps
+// its answers for the plans: a state that holds no project module instance is
+// one where the document and the state agree, and nothing is retired.
+func installationStateRead(r *initRig) {
+	r.script["show -json@installation"] = map[string]any{"stdout": emptyStateDoc}
+}
+
 // An apply that failed only on resources Google had not caught up with is run
 // again -- and the whole cycle with it: the new plan is shown, judged and
 // applied, rather than the old saved plan being applied a second time.
@@ -193,6 +203,7 @@ func TestPropagationRetryRerunsTheInstallationStep(t *testing.T) {
 	fakeTerminal(t)
 	r := updateRig(t)
 	happyInstallation(t, r)
+	installationStateRead(r)
 	r.script["apply@installation"] = []any{
 		map[string]any{"exit": 1, "stderr": theReported404s},
 		map[string]any{"exit": 0},
@@ -211,10 +222,15 @@ func TestPropagationRetryRerunsTheInstallationStep(t *testing.T) {
 	// stage that applies the root again for the scheduled jobs (R7), which the
 	// retry neither shares nor disturbs. A cycle of a managed project's step
 	// reads the plan three times: the step's own confirmation, and the gate's
-	// two reads of the same saved file (gateStep).
+	// two reads of the same saved file (gateStep). The show that leads each
+	// converge is the retirement's read of the installation's state
+	// (retireProjectJobs): it runs once before the cycle, and a retry re-plans
+	// without it.
 	if got, want := rootSubs(t, r, "installation", "plan", "show", "apply"), []string{
+		"show",
 		"plan", "show", "show", "show", "apply",
 		"plan", "show", "show", "show", "apply",
+		"show",
 		"plan", "show", "show", "show", "apply",
 	}; !slices.Equal(got, want) {
 		t.Errorf("the installation root's plan/show/apply = %q, want the whole cycle again\n%s", got, out)
@@ -241,6 +257,7 @@ func TestPropagationRetryKeepsRetryingAfterItsOwnApplyCreated(t *testing.T) {
 	// alone, which is what terraform finds left to do once its own apply
 	// created the service; the fake repeats the last answer, so the third
 	// attempt plans the same leftover.
+	installationStateRead(r)
 	r.script["plan@installation"] = map[string]any{"exit": 2}
 	r.script["show@installation"] = []any{
 		map[string]any{"stdout": planJSON(t, credentialsServiceChanges()...)},
@@ -292,6 +309,7 @@ func TestPropagationRetryHoldsTheNewPlanToTheGuard(t *testing.T) {
 	// the re-plan's.
 	const runsBucket = "module.installation.google_storage_bucket.runs"
 	r.appendConfig(t, "image_source: ghcr.io/dimipaun\n")
+	installationStateRead(r)
 	attempts := func(changes []planChange) []any {
 		out := make([]any, 0, 3)
 		for range 3 {
@@ -540,6 +558,7 @@ func TestPropagationRetryAppliesNothingUnderTheFailedAttemptsAdmission(t *testin
 	refused := append(credentialsAccountChanges(), iamBindingCreate())
 	admittedJSON := map[string]any{"stdout": planJSON(t, admitted...)}
 	refusedJSON := map[string]any{"stdout": planJSON(t, refused...)}
+	installationStateRead(r)
 	r.script["plan@installation"] = map[string]any{"exit": 2}
 	r.script["show@installation"] = []any{admittedJSON, admittedJSON, admittedJSON, refusedJSON, refusedJSON, refusedJSON}
 	r.script["apply@installation"] = []any{

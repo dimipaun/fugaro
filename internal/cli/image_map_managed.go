@@ -103,7 +103,7 @@ func imageMapGate(ctx context.Context, lc *localcfg.Config, doc []byte, marker s
 // imageMapRules is the rules the gate judges a session's map write by: one
 // rule, which refuses it, in the words the refusal and the record carry.
 func imageMapRules() []string {
-	return []string{"the map decides which image every job of the repository runs, and the catalog entry it names is another document: the entry's own definition — the Dockerfile it is built from, the repository that file lives in — is what says where this repository's code is built, and it is not among the bytes judged here, so the project's owner writes the map at their own terminal"}
+	return []string{"the repository-to-image map (`repo_images`) decides which image every job of the repository runs, and the catalog entry it names is another document: the entry's own definition — the Dockerfile it is built from, the repository that file lives in — is what says where this repository's code is built, and it is not among the bytes judged here, so the project's owner writes the map at their own terminal"}
 }
 
 // imageMapSession is this command's own refusal in a coding agent's session:

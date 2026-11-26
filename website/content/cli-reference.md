@@ -878,8 +878,12 @@ Flags:
 Subcommands:
 
 - `fugaro accounts pool add` -- Declare a pool with these members, in this order
+- `fugaro accounts pool contribute` -- Contribute your own token to a pool that takes contributions
+- `fugaro accounts pool designate` -- Record which pool of the project's your own runs go out on
 - `fugaro accounts pool ls` -- List the named pools and the members each one walks
 - `fugaro accounts pool rm` -- Remove a pool from this project's config
+- `fugaro accounts pool rm-member` -- Remove a member from a pool, as an admin
+- `fugaro accounts pool withdraw` -- Withdraw your own contribution from a pool
 
 ## `fugaro accounts pool add`
 
@@ -947,6 +951,87 @@ Flags:
 | `--rule` | string | "" | no | how the service picks among the members the pool can use (ordered, round-robin, failover). Left out, a pool that exists keeps the rule it has and is served by its strategy |
 | `--service-account` | string | "" | no | the address of the service account this pool belongs to, written as the pool's principal |
 | `--strategy` | string | "" | no | how the pool walks its members: failover (the default: try them in order) or round-robin (share the load). Left out, a pool that exists keeps the strategy it has |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro accounts pool contribute`
+
+Contribute your own token to a pool that takes contributions
+
+Contribute YOUR OWN token to a project pool that takes contributions, as the
+member --member names: it is stored as a member of that pool, and not as a
+credential of your own.
+
+The token is read from stdin (or a hidden prompt) exactly as fugaro secrets user
+set reads one — never from an argument, a flag or the environment, and never
+printed — and it is written with the account your identity token carries, so it
+is yours to withdraw and an admin's to remove. Nobody contributes a token in
+another person's name: the intake refuses a write into a member that is not the
+caller's own (R9).
+
+The pool must be one an admin has marked as taking contributions. An admin marks
+it by running this command with no --member, which writes the pool's own member
+and only an admin may write it; a contribution to a pool with no such mark is
+refused. An admin removes any member with fugaro accounts pool rm-member.
+
+The call is made with your own Google ID token, which the installation's intake
+verifies, and against the address this project's own config file carries: it is
+run by a person at their own terminal and never inside a coding agent's session
+or a run's own process.
+
+Usage: `fugaro accounts pool contribute --to POOL [--member NAME]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for contribute |
+| `--json` | bool | `false` | no | print the intake's answer as JSON |
+| `--member` | string | "" | no | the member to contribute under (default: the pool itself, which is the mark that says the pool takes contributions, and only an admin may write it) |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--to` | string | "" | no | the pool to contribute to |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro accounts pool designate`
+
+Record which pool of the project's your own runs go out on
+
+Record your own designation for this project: the pool of the project's that
+the runs you launch go out on, recorded at the installation's credentials
+service and keyed on the account it verifies.
+
+The pool is a pool of the project's published policy (fugaro accounts pool ls
+names the installation's own), and it must be one your principal owns: the
+service refuses a pool that belongs to another person or to another account.
+There is nothing to name but the pool — a designation is a statement about
+yourself, so the request has no field a principal could be written in and no
+caller can designate for someone else (R26).
+
+The call is made with your own Google ID token, which the service verifies, and
+against the address this project's own config file carries: it is run by a
+person at their own terminal and never inside a coding agent's session or a
+run's own process.
+
+Usage: `fugaro accounts pool designate POOL`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for designate |
+| `--json` | bool | `false` | no | print the record the service wrote, as JSON |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
@@ -1029,6 +1114,74 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for rm |
 | `--layer` | string | "" | no | the layer to write (local, project, repo) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro accounts pool rm-member`
+
+Remove a member from a pool, as an admin
+
+Remove the member NAME from the pool POOL, whoever contributed it: this is the
+admin's half of R9, and the intake admits it to a caller on the installation's
+derived admin list.
+
+A contributor withdraws their own with fugaro accounts pool withdraw, which is
+the same call admitted to a different person.
+
+The call is made with your own Google ID token, which the installation's intake
+verifies, and against the address this project's own config file carries: it is
+run by a person at their own terminal and never inside a coding agent's session
+or a run's own process.
+
+Usage: `fugaro accounts pool rm-member POOL --member NAME`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for rm-member |
+| `--json` | bool | `false` | no | print the intake's answer as JSON |
+| `--member` | string | "" | no | the member to remove, which is the name the pool's container carries |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro accounts pool withdraw`
+
+Withdraw your own contribution from a pool
+
+Remove the member NAME from the pool POOL: the container your own contribution
+to that pool is stored in, and the token in it with it.
+
+The intake decides whose member it is: a contributor withdraws their own and is
+refused another's, and an admin removes any. fugaro accounts pool rm-member is
+the same call under the admin's own name.
+
+The call is made with your own Google ID token, which the installation's intake
+verifies, and against the address this project's own config file carries: it is
+run by a person at their own terminal and never inside a coding agent's session
+or a run's own process.
+
+Usage: `fugaro accounts pool withdraw POOL --member NAME`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for withdraw |
+| `--json` | bool | `false` | no | print the intake's answer as JSON |
+| `--member` | string | "" | no | the member to remove, which is the name the pool's container carries |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
@@ -4102,7 +4255,7 @@ Subcommands:
 - `fugaro image build` -- Build a catalog entry's image with Cloud Build, or the workflow's derived image; --local builds the derived one with local Docker
 - `fugaro image check` -- Decide whether each workflow's image needs a rebuild (the daily check; locally it only prints the decision)
 - `fugaro image ls` -- List the project's image catalog entries, or the shared-image lock's with --shared
-- `fugaro image map` -- Map a repository to an image catalog entry (the project's image_map)
+- `fugaro image map` -- Map a repository to an image catalog entry (the project's repo_images)
 - `fugaro image promote` -- Copy a repository's image definition into the catalog and point the repository at it
 - `fugaro image refresh` -- Move a repository onto this release's base image: pin it, point the daily image check job at it, rebuild what is stale
 - `fugaro image render` -- Print the Dockerfile that builds the workflow's derived image
@@ -4321,7 +4474,7 @@ This command has no subcommands.
 
 ## `fugaro image map`
 
-Map a repository to an image catalog entry (the project's image_map)
+Map a repository to an image catalog entry (the project's repo_images)
 
 Usage: `fugaro image map`
 
@@ -4341,17 +4494,20 @@ Map a repository to an image catalog entry, in this machine's project config
 
 Map one of the project's repositories to an image catalog entry, in this
 machine's project config: the copy fugaro update publishes to the project's
-policy node (image_map). From there the repository's jobs run that entry's
+policy node (repo_images). From there the repository's jobs run that entry's
 image, so the mapping is a project setting and not a per-repository one — a
 rerun of the skill that proposed it changes one line here rather than one
 file in every repository.
 
-The repository is one the project's local config lists (fugaro update --repo
-onboards one), as owner/name or as a path inside its checkout, and the entry
-is one this machine's catalog names (fugaro image add writes one). Setting a
-repository that is already mapped replaces its entry; the file's map is the
-project's whole map, so a map published from another machine is replaced by
-this file's rather than added to.
+The repository is named as provider/owner/name (github/acme/app), or as
+owner/name for one the project's local config lists (fugaro update --repo
+onboards one), or as a path inside its checkout; the entry is one this
+machine's catalog names (fugaro image add writes one). Setting a repository
+that is already mapped replaces its entry. The file's map is the project's
+whole map, and it is what fugaro update publishes: a file that holds none
+of its own takes the map the project publishes into it first — a name the
+migration cannot place is dropped with its line — so a mapping written
+here adds to the project's map rather than replacing it.
 
 This write is a person's own: fugaro update publishes it, and a coding
 agent's session is refused it, in a managed project by that project's gate.
@@ -4467,6 +4623,7 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for refresh |
 | `--image-source` | string | "" | no | the registry and owner the release base images come from, as for the converge (default ghcr.io/dimipaun) |
+| `--on-divergence` | string | "" | no | the choice a shared-image divergence is answered with, where the image this repository's job is on does not hold the set its checkout resolves: fork (build an image for this set), adopt=<owner/name> (move onto the image that repository is on, when it holds this set in full) or pin (keep the image it is on, and warn). With no flag the refresh prints the proposal and stops, and no build runs; refused in a coding agent's session |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | owner/name (or a path inside its checkout) of the repository; it must be this checkout's origin (refresh reads fugaro.yaml from the checkout) |
@@ -4505,11 +4662,11 @@ Remove an image catalog entry from this machine's project config
 Remove a named image from the project's image catalog, in this machine's
 project config. The removal is refused while a repository's job still runs
 the entry — because a workflow names it (image_name:), because the
-project's image_map gives it to the repository, or because the tag-cover
-rule picks it for the tags the workflow needs — since that job would then
-be on an image no catalog describes. Point the repository at another entry
-first (image_name: in its fugaro.yaml, or fugaro image map set), then
-remove the entry.
+project's repository-to-image map (`repo_images`) gives it to the
+repository, or because the tag-cover rule picks it for the tags the
+workflow needs — since that job would then be on an image no catalog
+describes. Point the repository at another entry first (image_name: in its
+fugaro.yaml, or fugaro image map set), then remove the entry.
 
 The removal is made live by this one command: the repository whose job ran
 the entry is redeployed and the catalog is published without it, so no
@@ -4571,7 +4728,8 @@ Report what a project-level image setup would have to work from: every
 repository this machine's project config lists, the signals each one carries
 (its lockfiles and version files, a Dockerfile and its base image, its CI
 file, and the services its compose or Testcontainers files name), and the
-catalog, repository-to-image map and bake setting the project has today.
+catalog, the repository-to-image map (`repo_images`) and the bake setting
+the project has today.
 
 Nothing is cloned, built or written: each repository is read through the
 code host's own file API with the token this shell holds, at a fixed list of
@@ -11234,7 +11392,7 @@ Flags:
 | `--budget-admin` | stringArray | `[]` | no | with --firebase-project: an IAM member who may change caps and kill switches besides the GCP project's owners and editors (repeatable; default: the local config's terraform.budget_admins) |
 | `--budget-currency` | string | "" | no | the budget's currency, such as USD |
 | `--budget-mode` | string | "" | no | with --firebase-project: observe or enforce: the jobs' budget mode in the project config, and the project-wide mode in the database (an absent one is seeded observe) |
-| `--check` | bool | `false` | no | read-only: write nothing, run no claude command and make no cloud call, print what each step of update would do from this checkout's own files, and exit 1 when anything is stale. The checkout is PATH (update --check [PATH]); the converge's own flags are refused rather than ignored, because this mode runs none of them. The rules and the policy steps are skipped with a note naming the command that answers them: the deployed rules generation and the published policy node live in the cloud, and reading either is the call this flag promises not to make |
+| `--check` | bool | `false` | no | read-only: write nothing, run no claude command and read each repository through the credentials service, print what each step of update would do, and exit 1 when anything is stale. fugaro update --check takes no PATH, and the converge's own flags are refused rather than ignored, because this mode runs none of them. The rules and the policy steps are skipped with a note naming the command that answers them: the deployed rules generation and the published policy node live in the cloud, and reading either is the call this flag does not make |
 | `--check-github-app` | bool | `false` | no | let the GitHub App pre-check read the App's private key from Secret Manager with your own credentials (held in memory only, for one signed token; refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it); without it update checks only with the key you typed in this run |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--config-only` | bool | `false` | no | only write the local config, from the installation's outputs (else the flags) |

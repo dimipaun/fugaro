@@ -46,6 +46,16 @@ type owner struct {
 	// container and a project-shared credential in an unmarked one, in both
 	// directions.
 	workflow bool
+	// pool is the project pool this call's container is a member of, and empty
+	// for every container that is not one (D3194, R9). It is written as the
+	// pool's label and compared against it, and it is the whole of what tells a
+	// pool's member and a project-shared credential apart.
+	pool string
+	// mark reports that this container is the pool's own — the one named for
+	// the pool itself, which says the pool takes contributions and which only
+	// an admin writes. It is the pool's marker, and like every other
+	// project-shared container it carries no owner's annotations.
+	mark bool
 }
 
 // The handler's own sentinels, each of which fail() maps to one refusal. They
@@ -91,6 +101,17 @@ func (s *Server) set(w http.ResponseWriter, r *http.Request, op string) {
 		c.fail(fmt.Errorf("%w: the workflow-secret marker is the project-shared prefix's: a workflow's own secret is stored once for the project (%s), and a per-user container has no workflow to be shared with", errRequestRefused, secretname.ProjectPrefix))
 		return
 	}
+	// A pool is the project's, so a contribution is the shared prefix's, and a
+	// contribution is a person's own token rather than a workflow's. Both are
+	// refused before the value is decoded, as the marker's scope is.
+	if req.Pool != "" && req.Scope != ScopeShared {
+		c.fail(fmt.Errorf("%w: a pool is the project's, so a contribution to one is stored under the project-shared prefix (%s): a per-user container is your own and belongs to no pool (D3194)", errRequestRefused, secretname.ProjectPrefix))
+		return
+	}
+	if req.Pool != "" && req.WorkflowSecret {
+		c.fail(fmt.Errorf("%w: a contribution to a pool is a person's own token and never a secret a workflow declares, so it carries no %s marker (D3194)", errRequestRefused, LabelWorkflowSecret))
+		return
+	}
 	value, err := decodeValue(req.Value)
 	if err != nil {
 		c.fail(err)
@@ -100,7 +121,7 @@ func (s *Server) set(w http.ResponseWriter, r *http.Request, op string) {
 	// handler that holds a credential cannot reach an answer without saying
 	// which one it held.
 	c.value = value
-	o, id, err := s.container(r.Context(), caller, req.Scope, req.Name)
+	o, id, err := s.container(r.Context(), caller, req.Scope, req.Name, req.Pool)
 	if err != nil {
 		c.fail(err)
 		return
@@ -244,7 +265,7 @@ func (s *Server) remove(w http.ResponseWriter, r *http.Request) {
 		// theirs is left, and the audit line names the member either way.
 		c.answer(http.StatusOK, DeleteAnswer{Deleted: deleted})
 	default:
-		o, id, err := s.container(r.Context(), caller, req.Scope, req.Name)
+		o, id, err := s.deleteTarget(r.Context(), caller, req)
 		if err != nil {
 			c.fail(err)
 			return
@@ -277,8 +298,9 @@ func (s *Server) remove(w http.ResponseWriter, r *http.Request) {
 // container answers the secret ID a call is about, and whose container it is.
 // The prefix comes from the caller's verified account id and the name, and
 // from nothing else (R3); the shared prefix is an admin's alone, checked
-// before the name is even looked at.
-func (s *Server) container(ctx context.Context, caller credsvc.LauncherCaller, scope Scope, name string) (owner, string, error) {
+// before the name is even looked at — with the one case D3194 adds, a person's
+// own contribution to a pool an admin has marked as taking them.
+func (s *Server) container(ctx context.Context, caller credsvc.LauncherCaller, scope Scope, name, pool string) (owner, string, error) {
 	switch scope {
 	case ScopeUser:
 		id, err := secretname.User(caller.Sub, name)
@@ -287,6 +309,9 @@ func (s *Server) container(ctx context.Context, caller credsvc.LauncherCaller, s
 		}
 		return owner{sub: caller.Sub, email: canonicalOr(caller.Account), creator: canonicalOr(caller.Account)}, id, nil
 	case ScopeShared:
+		if pool != "" {
+			return s.contribution(ctx, caller, name, pool)
+		}
 		if err := s.adminOnly(ctx, caller); err != nil {
 			return owner{}, "", err
 		}
@@ -297,6 +322,127 @@ func (s *Server) container(ctx context.Context, caller credsvc.LauncherCaller, s
 		return owner{creator: canonicalOr(caller.Account), shared: true}, id, nil
 	default:
 		return owner{}, "", scopeRefused(scope)
+	}
+}
+
+// deleteTarget answers whose container a delete by name is about. An ordinary
+// name is its own prefix's, resolved exactly as a write is; a delete naming a
+// pool is a member of it, and that is the one case a member reaches the
+// project's prefix (D3194, R9).
+func (s *Server) deleteTarget(ctx context.Context, caller credsvc.LauncherCaller, req DeleteRequest) (owner, string, error) {
+	if req.Pool == "" {
+		return s.container(ctx, caller, req.Scope, req.Name, "")
+	}
+	if req.Scope != ScopeShared {
+		return owner{}, "", fmt.Errorf("%w: a pool is the project's, so its members are stored under the project-shared prefix (%s): a per-user container is your own and belongs to no pool (D3194)", errRequestRefused, secretname.ProjectPrefix)
+	}
+	id, err := secretname.Project(req.Name)
+	if err != nil {
+		return owner{}, "", fmt.Errorf("%w: %w", errRequestRefused, err)
+	}
+	got, found, err := s.cfg.Secrets.Describe(ctx, id)
+	if err != nil {
+		return owner{}, "", err
+	}
+	if !found {
+		return owner{}, "", errNoSuchSecret
+	}
+	// The container's own label says which pool it is a member of, and one
+	// naming another pool is refused rather than answered: a withdrawal names
+	// the pool it withdraws from, and the label is what the container is.
+	if member := got.Labels[LabelPoolContributions]; member != req.Pool {
+		if member == "" {
+			return owner{}, "", fmt.Errorf("%w: %s is not a member of the pool %s: a member carries %s=%s, and this container does not (D3194)", errForeignContainer, id, pluginwire.Printable(req.Pool), LabelPoolContributions, pluginwire.Printable(req.Pool))
+		}
+		return owner{}, "", fmt.Errorf("%w: %s is a member of the pool %s and this call withdraws it from %s (D3194)", errForeignContainer, id, pluginwire.Printable(member), pluginwire.Printable(req.Pool))
+	}
+	o := memberOf(id, got)
+	// The pool's marker is the admin's and a member's contribution is the
+	// contributor's own: a caller who is neither withdraws nothing, and an
+	// admin removes any of them (R9).
+	if o.sub != caller.Sub {
+		if err := s.adminOnly(ctx, caller); err != nil {
+			return owner{}, "", err
+		}
+	}
+	return o, id, nil
+}
+
+// contribution answers whose container a write to a pool is about, and it is
+// the one case a member writes the project's prefix (D3194, R9).
+//
+// The pool's OWN member — the container named for the pool itself — is the
+// pool's marker: an admin writes it, and its being there is what says the pool
+// takes contributions at all. Every other member is one person's own token,
+// admitted only where the marker is there and written with the contributor's
+// own owner annotations, which is what makes it theirs to write again and
+// theirs to withdraw.
+func (s *Server) contribution(ctx context.Context, caller credsvc.LauncherCaller, name, pool string) (owner, string, error) {
+	id, err := secretname.Project(name)
+	if err != nil {
+		return owner{}, "", fmt.Errorf("%w: %w", errRequestRefused, err)
+	}
+	if _, err := secretname.Project(pool); err != nil {
+		return owner{}, "", fmt.Errorf("%w: %s is not a pool a contribution can be made to: a pool is a name, and this is not one", errRequestRefused, pluginwire.Printable(pool))
+	}
+	if name == pool {
+		// The pool's own member is its marker, and only an admin writes it:
+		// the marker is the statement that the pool takes contributions, and
+		// what it holds is the admin's own token.
+		if err := s.adminOnly(ctx, caller); err != nil {
+			return owner{}, "", err
+		}
+		return owner{creator: canonicalOr(caller.Account), shared: true, pool: pool, mark: true}, id, nil
+	}
+	marked, err := s.markedPool(ctx, pool)
+	if err != nil {
+		return owner{}, "", err
+	}
+	if !marked {
+		return owner{}, "", fmt.Errorf("%w: the pool %s is not one that takes contributions: an admin marks it by contributing to it, and until then only an admin writes it (D3194)", errRequestRefused, pluginwire.Printable(pool))
+	}
+	address := canonicalOr(caller.Account)
+	return owner{sub: caller.Sub, email: address, creator: address, shared: true, pool: pool}, id, nil
+}
+
+// markedPool reports whether a pool carries its marker: the container named
+// for the pool, carrying LabelPoolContributions with the pool's own name. A
+// pool with no marker takes no contributions, and a read that cannot answer is
+// a refusal rather than a no (D143).
+func (s *Server) markedPool(ctx context.Context, pool string) (bool, error) {
+	id, err := secretname.Project(pool)
+	if err != nil {
+		return false, fmt.Errorf("%w: %w", errRequestRefused, err)
+	}
+	got, found, err := s.cfg.Secrets.Describe(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	if !found {
+		return false, nil
+	}
+	return got.Labels[LabelPoolContributions] == pool, nil
+}
+
+// memberOf is the owner a pool's member carries, read back off the container:
+// the contributor's own annotations, and the label that says which pool it is
+// a member of. It is the read side of contribution, and it is how a delete
+// knows whose member it is holding without asking the request (R12: the name
+// is the truth, and for a member of a pool the name cannot carry the
+// contributor, so the annotations the intake alone writes stand in its place).
+func memberOf(id string, got Secret) owner {
+	n, err := secretname.Parse(id)
+	if err != nil {
+		return owner{}
+	}
+	return owner{
+		sub:      got.Annotations[AnnotationOwnerSub],
+		email:    got.Annotations[AnnotationOwnerEmail],
+		creator:  got.Annotations[AnnotationCreatedBy],
+		shared:   true,
+		pool:     got.Labels[LabelPoolContributions],
+		mark:     n.ID == got.Labels[LabelPoolContributions],
+		workflow: false,
 	}
 }
 
@@ -402,7 +548,9 @@ func AcceptsWorkflowWrite(id string, got Secret) error {
 
 // checkMarker refuses a write whose class is not the container's own: a
 // workflow's value is stored in a container carrying the marker and a
-// project-shared credential in one that does not, both directions (F18, G2).
+// project-shared credential in one that does not, both directions (F18, G2) —
+// and, for the other label, a pool's member holds a contribution and a
+// project-shared credential is never stored in one (D3194, R9).
 //
 // The marker is set at create alone — neither this service nor the credentials
 // service holds secrets.update — so what a container was made for is the whole
@@ -423,13 +571,30 @@ func checkMarker(id string, got Secret, o owner) error {
 	if !o.shared {
 		return nil
 	}
-	marked := got.Labels[LabelWorkflowSecret] == WorkflowSecretMarker
-	if marked == o.workflow {
-		return nil
-	}
 	name := secretname.Name{Name: id}
 	if n, err := secretname.Parse(id); err == nil {
 		name = n
+	}
+	// A pool's member and the project's own credential are two classes of the
+	// shared prefix, and neither holds the other's value (D3194). The label
+	// says which a container is, it is written at create alone, and it is
+	// compared both ways for the marker's reason (G2).
+	if member := got.Labels[LabelPoolContributions]; member != o.pool {
+		switch {
+		case member == "":
+			return fmt.Errorf("%w: %s is not a member of the pool %s, and a contribution is stored only in one that carries %s=%s (D3194): contribute under the member's own name, or remove this container with `fugaro secrets shared rm %s` if the value in it was meant for the pool",
+				errForeignContainer, id, pluginwire.Printable(o.pool), LabelPoolContributions, pluginwire.Printable(o.pool), pluginwire.Printable(name.Name))
+		case o.pool == "":
+			return fmt.Errorf("%w: %s is a member of the pool %s and carries %s=%s, so a project-shared credential is not stored in it (D3194): remove this container with `fugaro accounts pool rm-member %s --member %s` if the token in it is to go, or store the credential under a name no pool's member holds",
+				errForeignContainer, id, pluginwire.Printable(member), LabelPoolContributions, pluginwire.Printable(member), pluginwire.Printable(member), pluginwire.Printable(name.Name))
+		default:
+			return fmt.Errorf("%w: %s is a member of the pool %s and this call contributes to %s (D3194): a member belongs to one pool",
+				errForeignContainer, id, pluginwire.Printable(member), pluginwire.Printable(o.pool))
+		}
+	}
+	marked := got.Labels[LabelWorkflowSecret] == WorkflowSecretMarker
+	if marked == o.workflow {
+		return nil
 	}
 	if o.workflow {
 		return fmt.Errorf("%w: %s holds a project-shared credential and carries no %s=%s marker, so a workflow's own secret is not stored in it (G2): store the workflow's value under a name no project-shared credential holds, or remove this container with `fugaro secrets shared rm %s` if the value in it was meant for the workflow",
@@ -441,10 +606,12 @@ func checkMarker(id string, got Secret, o owner) error {
 
 // annotations is the annotation set the intake writes for a container (R10).
 // A per-user container carries its owner's account id and address beside the
-// account that made it; a project-shared one carries only who made it, because
-// it has no single owner.
+// account that made it; a pool's member carries the contributor's own, which
+// is what makes it theirs (D3194, R9); a project-shared one — and a pool's own
+// member, which is the marker and holds the admin's token rather than one
+// person's — carries only who made it, because it has no single owner.
 func annotations(o owner) map[string]string {
-	if o.shared {
+	if o.shared && (o.pool == "" || o.mark) {
 		return map[string]string{AnnotationCreatedBy: o.creator}
 	}
 	return map[string]string{
@@ -455,12 +622,13 @@ func annotations(o owner) map[string]string {
 }
 
 // labels is the label set the intake writes for a container: which scope it
-// belongs to, — for a per-user one — the account id its name carries, and —
-// for a workflow's own secret — the marker. They are how the next call finds
-// it again, since the intake holds no secrets.get and no name filter (see the
-// label constants), and the marker is among them because a container is only
-// ever created once: the class a container was made for is decided by the
-// call that made it and read from the container for every call after.
+// belongs to, — for a per-user one — the account id its name carries, — for a
+// pool's member — the pool it belongs to, and — for a workflow's own secret —
+// the marker. They are how the next call finds it again, since the intake
+// holds no secrets.get and no name filter (see the label constants), and the
+// markers are among them because a container is only ever created once: the
+// class a container was made for is decided by the call that made it and read
+// from the container for every call after.
 func labels(o owner) map[string]string {
 	scope := ScopeUser
 	if o.shared {
@@ -469,6 +637,9 @@ func labels(o owner) map[string]string {
 	out := map[string]string{LabelScope: string(scope)}
 	if !o.shared {
 		out[LabelOwnerSub] = o.sub
+	}
+	if o.pool != "" {
+		out[LabelPoolContributions] = o.pool
 	}
 	if o.workflow {
 		out[LabelWorkflowSecret] = WorkflowSecretMarker
@@ -521,10 +692,29 @@ func checkShape(id string, got Secret, o owner) error {
 		return fmt.Errorf("%w: %s carries no %s annotation, so this intake did not make it%s", errForeignContainer, id, AnnotationCreatedBy, notOurs)
 	}
 	if o.shared {
-		// A shared container has no owner: an owner annotation on one was
-		// written by someone else, and this intake does not write it.
-		if got.Annotations[AnnotationOwnerSub] != "" || got.Annotations[AnnotationOwnerEmail] != "" {
-			return fmt.Errorf("%w: %s is a project-shared container and carries an owner's annotations%s", errForeignContainer, id, notOurs)
+		// A project-shared container has no owner: an owner annotation on one
+		// was written by someone else, and this intake does not write it. A
+		// pool's member is the one exception (D3194, R9) — it is one person's
+		// token in a pool, so it carries the contributor's own annotations,
+		// and the pool's marker, named for the pool itself, carries none.
+		if o.pool == "" {
+			if got.Annotations[AnnotationOwnerSub] != "" || got.Annotations[AnnotationOwnerEmail] != "" {
+				return fmt.Errorf("%w: %s is a project-shared container and carries an owner's annotations%s", errForeignContainer, id, notOurs)
+			}
+			return nil
+		}
+		if o.mark {
+			if got.Annotations[AnnotationOwnerSub] != "" || got.Annotations[AnnotationOwnerEmail] != "" {
+				return fmt.Errorf("%w: %s is the pool %s's own member and carries an owner's annotations%s", errForeignContainer, id, pluginwire.Printable(o.pool), notOurs)
+			}
+			return nil
+		}
+		if got.Annotations[AnnotationOwnerSub] != o.sub {
+			return fmt.Errorf("%w: %s carries the contributor account %s and this call is %s%s", errForeignContainer, id,
+				pluginwire.Printable(got.Annotations[AnnotationOwnerSub]), pluginwire.Printable(o.sub), notOurs)
+		}
+		if got.Annotations[AnnotationOwnerEmail] != o.email || got.Annotations[AnnotationCreatedBy] != o.creator {
+			return fmt.Errorf("%w: %s carries annotations that are not the ones this call would have written, so another writer made it%s", errForeignContainer, id, notOurs)
 		}
 		return nil
 	}

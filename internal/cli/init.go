@@ -645,7 +645,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// is worded for the door that reads it — setup declares it, hides it and
 	// refuses it by name (setupDoor.foreign), the shape --forget has on that
 	// door.
-	f.BoolVar(&o.checkOnly, "check", false, "read-only: write nothing, run no claude command and make no cloud call, print what each step of "+d.name+" would do from this checkout's own files, and exit 1 when anything is stale. The checkout is PATH ("+d.name+" --check [PATH]); the converge's own flags are refused rather than ignored, because this mode runs none of them. The rules and the policy steps are skipped with a note naming the command that answers them: the deployed rules generation and the published policy node live in the cloud, and reading either is the call this flag promises not to make")
+	f.BoolVar(&o.checkOnly, "check", false, "read-only: write nothing, run no claude command and read each repository through the credentials service, print what each step of "+d.name+" would do, and exit 1 when anything is stale. fugaro "+d.name+" --check takes no PATH, and the converge's own flags are refused rather than ignored, because this mode runs none of them. The rules and the policy steps are skipped with a note naming the command that answers them: the deployed rules generation and the published policy node live in the cloud, and reading either is the call this flag does not make")
 	f.BoolVar(&o.planOnly, "plan-only", false, "stop after showing the plan (it creates nothing)")
 	f.BoolVar(&o.printVars, "print-vars", false, "print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates)")
 	f.BoolVar(&o.configOnly, "config-only", false, "only write the local config, from the installation's outputs (else the flags)")
@@ -3593,9 +3593,8 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 	// lose afterwards. CarriedProjectJobs keeps the job, whole, from the
 	// record the run that deployed it left, so that a project whose last
 	// github repository moves to Bitbucket, or that adds a repository on a
-	// second App, keeps converging instead of stopping on a job's deletion it
-	// cannot undo ("retiring a project job is not supported yet",
-	// RefuseProjectJobDeletes). The names are the ones heldDefaultProfiles
+	// second App, keeps converging instead of stopping on a job's deletion.
+	// The names are the ones heldDefaultProfiles
 	// decided from the same documents, and they are empty on every run that
 	// composes its jobs itself.
 	if len(spec.CarriedProjectJobs) > 0 {
@@ -3609,9 +3608,9 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 	// on the same records: a name such a credential is declared for gets no job
 	// at all from this release's composer (D1670, the filter ProjectJobs
 	// applies), so a document without the job the state holds is the plan of
-	// that job's destruction — and RefuseProjectJobDeletes stops the whole
-	// update on it, with "restore the profile as it was" as its remedy, which
-	// here is putting back the very name the filter drops the job for.
+	// that job's destruction — refused by RefuseProjectJobDeletes, whose
+	// remedy (restore the profile as it was) is here putting back the very
+	// name the filter drops the job for.
 	// CarriedProjectJobAccounts keeps each of them, whole, from the record the
 	// release behind deployed them in.
 	if len(spec.CarriedProjectJobAccounts) > 0 {
@@ -3907,6 +3906,15 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	// the module's prevent_destroy refuses that plan while the state still
 	// holds the instance (U5, IS13).
 	r.removeRetiredCopiesFromState(ctx, t, retiredCopies, spec.ProjectSecrets)
+	// And the shared project jobs the document no longer declares: their job
+	// cannot be deleted by any apply (the module protects it), so the job's
+	// address leaves the state, the API delete removes the job itself, and the
+	// apply below removes what the instance owned beside it (issue #3686,
+	// update_retire_jobs.go).
+	jobsRetired, err := r.retireProjectJobs(ctx, c, t, wd, spec)
+	if err != nil {
+		return outs, false, err
+	}
 	// What the installation already is: its name may not change, and an
 	// unnamed one is named only on request. Before any plan.
 	var prior infra.InstallationOutputs
@@ -4009,7 +4017,16 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		// same way, so a managed project's record names it rather than warning
 		// about an unannounced removal.
 		identity = append(identity, infra.BuildIdentityAccessorAllowDelete(plan)...)
-		allowed := append(append(append(slices.Clone(r.o.allowDelete), hardening...), upgrade...), identity...)
+		// The addresses of the project jobs this run retired on the way in:
+		// their instances are out of the state, so the plan's own deletes at
+		// them are the service accounts and grants the retired jobs owned, and
+		// those are this run's to make — exactly as the minter rows above are
+		// (infra.RetireAllowDelete reads the plan, so a plan that does anything
+		// else at those addresses is still refused). The gate is handed the
+		// same set apart from the two lists above, because what admitted it has
+		// to read as the retirement it is.
+		retireAllowed := infra.RetireAllowDelete(plan, jobsRetired)
+		allowed := append(append(append(append(slices.Clone(r.o.allowDelete), hardening...), upgrade...), identity...), retireAllowed...)
 		counts := infra.CountPlan(plan)
 		// The managed gate judges the plan BEFORE the guard and the
 		// confirmation, and replaces both when it admits it (D1016,
@@ -4017,7 +4034,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		// what the gate refused rather than the guard's advice, which is what
 		// a managed project's refusal is about. Everything the guard's own
 		// path prints or records stays where it was, on the path that runs it.
-		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons), upgrade, identity)
+		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons), upgrade, identity, retireAllowed)
 		if err != nil {
 			return plan, err
 		}
@@ -5786,6 +5803,14 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// jobs go out on and the ones the record below names, so a launch on any of
 	// them (`--token`, D2070 (a)) is a run this bundle reading has to cover.
 	r.recordCredentialsServiceReady(ctx, lc, outs, cfg, in.Policy, repo, cfg.Git.Provider, cfg.Agent.Auth, infra.WorkflowAccounts(cfg, lc, repo), policyBudgetMode(in.Policy))
+	// Which workflow secrets this installation's record marks copied, read
+	// before the spec so the plan it produces is the one this installation can
+	// serve: a name the record does not hold keeps its mount, its accessors and
+	// its project copy, and the job reads the value itself (IS5's skipped name,
+	// IS6). It is the same reader, and the same record, IS13's retirement is
+	// decided by; a read that could not be made names nothing, so nothing is
+	// dropped — the direction both halves fail in.
+	in.CopiedWorkflowSecrets = r.workflowSecretsCopiedForPlan(ctx, lc)
 	if spec, err = infra.Repo(in); err != nil {
 		return initErr(err)
 	}
@@ -6450,7 +6475,22 @@ const printVarsNoBudget = "the budget alert this installation holds is not in th
 // --gcp-project and --region applied. The checkout that selects it is
 // dir's, the one being onboarded, not the working directory's.
 func loadRepoConfig(ctx context.Context, o *initOptions, dir string) (lc *localcfg.Config, path string, old []byte, err error) {
-	co, err := checkoutProject(ctx, dir)
+	return loadRepoConfigAt(ctx, o, dir, checkoutProject)
+}
+
+// loadRepoConfigReadOnly is loadRepoConfig for the one caller that must write
+// nothing — `fugaro update --check` (U10): the checkout is resolved, so
+// looking at it does not remember it (checkoutProject's one side effect),
+// which is the same split the reader that must not write takes
+// (config list --json, resolveCheckout).
+func loadRepoConfigReadOnly(ctx context.Context, o *initOptions, dir string) (lc *localcfg.Config, path string, old []byte, err error) {
+	return loadRepoConfigAt(ctx, o, dir, resolveCheckout)
+}
+
+// loadRepoConfigAt is both of them: at is the checkout the selection is
+// resolved through, and its only difference is the writing.
+func loadRepoConfigAt(ctx context.Context, o *initOptions, dir string, at func(context.Context, string) (*localcfg.Checkout, error)) (lc *localcfg.Config, path string, old []byte, err error) {
+	co, err := at(ctx, dir)
 	if err != nil {
 		return nil, "", nil, err
 	}
@@ -6747,7 +6787,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 		// does not admit this plan (D1016, update_managed.go). A repository root
 		// is one of Fugaro's own too, so it is judged by the same cover and the
 		// same guard the installation's roots are.
-		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons), nil, nil)
+		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons), nil, nil, nil)
 		if err != nil {
 			return plan, err
 		}
@@ -6905,9 +6945,10 @@ func (r *initRun) submitAndWait(ctx context.Context, b cloudBuilder, lc *localcf
 	if err != nil {
 		return "", false, err
 	}
-	// A repository the credentials service serves (B4.9, D2076): the build's
-	// credential step fetches the git credential and the workflow's own build
-	// secrets there instead of reading the mounts the apply took away, and the
+	// A repository whose build carries the credentials service's address
+	// (B4.9, D2076, IS6): the build's credential step fetches the git
+	// credential and the workflow's own build secrets there instead of reading
+	// the mounts the apply took away, and the
 	// address is what tells it to. The ID above is the caller's, read back out
 	// of the apply's own spec or resolved live, and a served request names no
 	// secret at all — so it is carried and unused, never looked up here.

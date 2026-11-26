@@ -182,6 +182,7 @@ func TestAVisionModelIsRoutedAndPriced(t *testing.T) {
 	cfg := withVision(t, gwConfig(t, "  first_line_review: off\n  first_line_rounds: 1\n"), vision)
 	g := routeRun(t, cfg, "enforce", "50", []string{"deepseek/*"}, prices,
 		[]anthropicfake.Reply{anthropicfake.Compat{}.MessageOK(vision, use)}, "acme/app")
+	g.setTask(t, "Fix the console golden: docs/shot.png is out of date")
 	if m, ok := g.deps.Spend.Prices.Lookup(vision); !ok || m.ImageTokens == 0 {
 		t.Fatalf("the run's table has no image rate for %s: the route's row is what makes it a model a stage may run for an image", vision)
 	}

@@ -251,6 +251,17 @@ locals {
   # every drop with it, which is why the default is true.
   service_serves = var.credentials_service != null && var.credentials_service_serves
 
+  # Whether this repository is handed the service's ADDRESS at all — the
+  # variable being set, whatever it serves (IS6). It is the gate of the
+  # FETCHED class alone, and it is wider than local.service_serves for exactly
+  # the one repository IS9 already separated: a `vertex` repository is handed
+  # the address and served no credential of its own, so nothing of its job's
+  # goes for the service to hand back (D3326/F17) — and the workflow secrets
+  # the flip took off its job DO go, because the run fetches those from the
+  # service over that same address, whatever the repository's model path is.
+  # The flip is the one class whose drop is the address's and not the service's.
+  service_addressed = var.credentials_service != null
+
   # One entry per mount, so the drop below is per mount and never per name.
   is_service_held = {
     for env, logical in var.workflow.secret_env :
@@ -274,13 +285,18 @@ locals {
   # is, and a tfvars that still names one of them cannot be applied into a job
   # that reads it.
   #
-  # The gate is local.service_serves and not the block alone (IS9): a `vertex`
-  # repository is handed the address and served nothing, so its job keeps every
-  # accessor (D3326, F17). The clause can only turn a drop off, and it does so
-  # exactly where the service is granted nothing.
+  # The two clauses carry different gates, which is the one thing IS6 changes
+  # here. The service-held one is gated on local.service_serves and not on the
+  # block alone (IS9): a `vertex` repository is handed the address and served
+  # nothing, so its job keeps every accessor (D3326, F17). The fetched one is
+  # gated on the address (local.service_addressed), because that drop is the
+  # run's fetch and not the service's bundle: the same `vertex` job gives up
+  # its workflow secrets' accessors and mounts, and reads their values from the
+  # service its own account may invoke. Each clause can only turn a drop off,
+  # and each does so exactly where the half it belongs to is not granted.
   job_secret_names = toset([
     for env, logical in var.workflow.secret_env :
-    logical if !local.service_serves || !local.is_service_held[env] && !contains(local.vault_secret_names, logical)
+    logical if !(local.service_serves && local.is_service_held[env]) && !(local.service_addressed && contains(local.vault_secret_names, logical))
   ])
 
   # The secrets the job's CONTAINER still declares, by the variable each is
@@ -324,20 +340,19 @@ locals {
   # tfvars), because the runner reads that value from the service at bootstrap
   # (B3.4) rather than from its own environment.
   #
-  # The gate is local.service_serves here too, for job_secret_names' reason: a
-  # mount the job's account has no accessor on is a job Cloud Run refuses to
-  # create, so the two go together — and neither goes for the one repository
-  # handed the address without being served (IS9, D3326).
+  # The gates are job_secret_names' — local.service_serves for the two halves
+  # the service holds, local.service_addressed for the fetched class — and for
+  # that local's reason: a mount the job's account has no accessor on is a job
+  # Cloud Run refuses to create, so each mount goes exactly where its own
+  # accessor went (IS6, IS9, D3326).
   job_mounts = {
     for env, logical in var.workflow.secret_env :
-    env => logical if !local.service_serves || !contains(local.service_held_secret_names, logical) && !local.is_proxied_git[env] && !contains(local.vault_secret_names, logical)
+    env => logical if !(local.service_serves && (contains(local.service_held_secret_names, logical) || local.is_proxied_git[env])) && !(local.service_addressed && contains(local.vault_secret_names, logical))
   }
 
   # The secrets the CREDENTIALS SERVICE's own account may read, by logical name:
   # one per container the job mounts, which is the set job_mounts above decides
-  # (D2074), plus the fetched class's own containers (B3.8) — a name the job no
-  # longer mounts is exactly the container the service has to read, since the
-  # run's fetch is what takes its place. The service is what a run asks for a
+  # (D2074) and nothing else. The service is what a run asks for a
   # workflow secret at fetch time (B3.4), so it has to be able to read the
   # container it is asked for — and the job's own accessor is neither moved nor
   # widened by it: two accounts, two grants, one container.
@@ -352,13 +367,17 @@ locals {
   # the FLIP: the plan that takes a mount away (C2.2's App key, C1.20's model
   # mounts, B1.13's proxied token) empties that entry here in the same apply.
   #
-  # B3.8's fetched class is the one flip that does NOT narrow it, and the
-  # reason is the direction the value travels: those three credentials are
-  # handed to a run from the service's own bundle, while a workflow secret's
-  # value is read from THIS job's container when the run fetches it (D2074,
-  # B3.4). So the container stays in the set after its mount goes — local
-  # vault_secret_names is added back below, and the two lists together are
-  # still "one grant per container this job's own secrets live in".
+  # B3.8's fetched class used to be the one flip that did not narrow it — the
+  # container stayed in the set after its mount went, on the reasoning that a
+  # workflow secret's value is read from THIS job's container when the run
+  # fetches it (D2074, B3.4). IS6 takes it out: the container a run's fetch
+  # reads is no longer the job's mount at all, it is the installation's own
+  # copy of that name in the fugaro_p_ grammar, which the service already holds
+  # a prefix-wide grant on (D3323, modules/installation/credentials.tf). A
+  # per-container grant on the retired copy is one no run asks for, and the
+  # copy is what IS13 is taking out of the state and deleting; local
+  # vault_secret_names is therefore NOT added back below, and the set is the
+  # mounts alone again.
   #
   # toset, not the list of mounts: two variables may mount the same logical
   # name, and a repeated name in a for_each is an error rather than a second
@@ -381,7 +400,7 @@ locals {
   # answers "" for a null object and for one that carries no account at all —
   # the second is how deploy/terraform's proxied_git_test evaluates this file
   # with a stub of only name and region.
-  service_secret_names = local.service_serves && try(var.credentials_service.account, "") != "" ? toset(concat(values(local.job_mounts), local.vault_secret_names)) : toset([])
+  service_secret_names = local.service_serves && try(var.credentials_service.account, "") != "" ? toset(values(local.job_mounts)) : toset([])
 }
 
 # Each secret the job mounts and may read, at the secret level, never the

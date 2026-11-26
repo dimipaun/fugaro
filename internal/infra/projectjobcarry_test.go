@@ -353,6 +353,64 @@ func TestCarriedProjectJobsLeavesTheSpecsOwnJobAlone(t *testing.T) {
 	}
 }
 
+// TestCarriedProjectJobNamesPutsBackTheNamedJobsAlone: the carry of the
+// instances a retirement KEEPS (issue #3686) takes the named jobs out of the
+// record and nothing else, from both keys, and reports the names it answered
+// for — which is what lets the caller say in one line about the names it could
+// not carry, rather than passing over an instance it cannot leave whole.
+//
+// A job the document already composes is the spec's own answer and stays (the
+// shared walk's rule): a kept instance's name is one the document does not
+// carry, which is what makes it a retirement at all, so this is the carry's
+// own safety net rather than a shape the caller produces.
+//
+// prev nil is a machine that has never planned this installation, and it is
+// the one input where the caller is told nothing was taken: the instance then
+// cannot be left whole, and the plan's own refusal is what says so.
+func TestCarriedProjectJobNamesPutsBackTheNamedJobsAlone(t *testing.T) {
+	deployed := []byte(`{
+	  "project_jobs": {
+	    "gone": {"profile": "standard", "provider": "github", "account": "team-a", "job": "gone"},
+	    "live": {"profile": "standard", "provider": "github", "account": "team-b", "job": "live"}
+	  },
+	  "project_review_jobs": {
+	    "gone-review": {"profile": "standard", "provider": "github", "account": "team-a-review", "job": "gone-review"}
+	  }
+	}`)
+	fresh := []byte(`{"project_jobs": {"live": {"profile": "standard", "provider": "github", "account": "team-b", "job": "live", "cpu": "4"}}}`)
+
+	got, carried, err := CarriedProjectJobNames(fresh, deployed, []string{"gone", "gone-review", "absent"})
+	if err != nil {
+		t.Fatalf("the carry failed: %v", err)
+	}
+	if !slices.Equal(carried, []string{"gone", "gone-review"}) {
+		t.Errorf("the carry answered for %v; want the two names the record holds, sorted and without the one it does not", carried)
+	}
+	if _, ok := projectJobsOf(t, got)["gone"]; !ok {
+		t.Errorf("the document does not carry the kept coding job: %s", got)
+	}
+	if _, ok := reviewJobsOf(t, got)["gone-review"]; !ok {
+		t.Errorf("the document does not carry the kept instance's review variant: %s", got)
+	}
+	// The spec's own answer is left exactly as the spec wrote it, and a job
+	// neither key of the record holds is carried as nothing.
+	if cpu, _ := projectJobsOf(t, got)["live"].(map[string]any)["cpu"].(string); cpu != "4" {
+		t.Errorf("the document's live job reads %v; want the spec's own, untouched", projectJobsOf(t, got)["live"])
+	}
+	// A job the document already carries is not one the carry took.
+	if _, carried, _ := CarriedProjectJobNames(fresh, deployed, []string{"live"}); len(carried) != 0 {
+		t.Errorf("the carry answered for %v; want nothing for a job the document composes itself", carried)
+	}
+	// A machine that has never planned this installation holds no record.
+	_, carried, err = CarriedProjectJobNames(fresh, nil, []string{"gone"})
+	if err != nil {
+		t.Fatalf("the carry failed: %v", err)
+	}
+	if len(carried) != 0 {
+		t.Errorf("the carry answered for %v with no record at all; want nothing, so the caller says it could not be left whole", carried)
+	}
+}
+
 // projectJobEnvFact is the document vars with key inside the project_jobs job
 // named name set to value: the fixture that distinguishes two documents by a
 // fact inside the job they carry.

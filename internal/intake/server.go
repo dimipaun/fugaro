@@ -31,7 +31,13 @@
 //     written only by an address on the derived admin list `fugaro update`
 //     publishes (internal/access's PathAdminList), which the intake reads as a
 //     bucket object and nothing else: it holds no database role, and the list
-//     lags a role change until the next update.
+//     lags a role change until the next update. One case is not an admin's
+//     (D3194, R9): a person contributes their OWN token to a project pool an
+//     admin has marked as taking contributions, as a member of that pool. The
+//     container carries the contributor's own owner annotations and the pool's
+//     label, so it is theirs to write again and theirs — or an admin's — to
+//     remove, and every other shared container is still the admin list's
+//     alone.
 //   - IT WRITES ONLY CONTAINERS IT MADE (R12). An existing container is
 //     written into only when its shape is exactly the intake's own — no TTL,
 //     no expiry, no Pub/Sub topic, no CMEK key, no rotation schedule, and
@@ -167,6 +173,15 @@ const (
 	// serves only the names whose container carries it (G2, DS3.3), and
 	// `fugaro secrets shared ls` is a list call over this same label set.
 	LabelWorkflowSecret = "fugaro_workflow_secret"
+	// LabelPoolContributions marks a project-shared container as a member of a
+	// project pool: its value is the pool's name. The container named for the
+	// pool itself is the pool's MARKER — there the label's value and the
+	// container's own name are the same — and an admin makes it by contributing
+	// to the pool; every other member is one person's own token, admitted only
+	// where the marker is there (D3194, R9). Like the workflow marker it is
+	// written at create alone, and it is what keeps a pool's member and a
+	// project-shared credential from being stored in one another.
+	LabelPoolContributions = "fugaro_pool_contributions"
 )
 
 // WorkflowSecretMarker is the value LabelWorkflowSecret is written with: one
@@ -238,6 +253,14 @@ type CreateRequest struct {
 	// project, and a per-user container has no workflow to share with, so a
 	// call asking for it there is refused.
 	WorkflowSecret bool `json:"workflow_secret,omitempty"`
+	// Pool makes this call a contribution to a project pool rather than a
+	// project-shared credential (D3194, R9): the container is the pool's member
+	// the name names, carrying LabelPoolContributions with this pool, and it is
+	// written with the caller's own owner annotations. The pool's own member —
+	// Name equal to Pool — is its marker, and only an admin writes it. The
+	// pool is the project's, so a contribution is the shared prefix's; a name
+	// the caller does not own is refused rather than written.
+	Pool string `json:"pool,omitempty"`
 }
 
 // SecretAnswer is the answer to a create, a version or a delete: which
@@ -278,6 +301,12 @@ type DeleteRequest struct {
 	Scope Scope  `json:"scope"`
 	Name  string `json:"name,omitempty"`
 	Owner string `json:"owner,omitempty"`
+	// Pool withdraws the named container from a project pool instead of
+	// deleting a project-shared credential (D3194, R9). The container's own
+	// label says which pool it is a member of, and one that names another pool
+	// is refused rather than answered. A member may withdraw their own
+	// contribution; the pool's marker and another's member are an admin's.
+	Pool string `json:"pool,omitempty"`
 }
 
 // DeleteAnswer names what was removed, so a sweep says what it did rather than

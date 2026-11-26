@@ -434,7 +434,7 @@ test_happy_path() {
   expect_contains "$out" "FACT sandbox: PASS" "happy path: the checkout and its project"
   expect_contains "$out" "belongs to ${project}" "happy path: the project it read"
   expect_contains "$out" "FACT premise: PASS" "happy path: the premise"
-  expect_contains "$out" "the vision slot covers it, which is the state V7 rewrites" "happy path: what the premise means"
+  expect_contains "$out" "the vision slot covers it, which is the state a run naming an image is rewritten in (V7, D2017)" "happy path: what the premise means"
   expect_contains "$out" "FACT models: PASS" "happy path: the two models"
   expect_contains "$out" "runs coder ${coder} and agent.models.vision ${vision}" "happy path: which two"
   expect_contains "$out" "FACT run-launched: PASS" "happy path: the launch"

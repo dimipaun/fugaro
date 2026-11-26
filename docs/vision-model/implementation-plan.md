@@ -2,7 +2,9 @@
 
 **Status: plan only; nothing is implemented; no task is approved, and none has a release slot.** The
 owner answered D2000–D2016 on 2026-11-10, every one as recommended, and every task below is written to that answer
-[reconciliation.md](reconciliation.md) §4 gives, and each task names the decisions it carries. Where a
+[reconciliation.md](reconciliation.md) §4 gives, and each task names the decisions it carries. **Amended
+2026-11-26 (owner, D2017): the vision slot serves only the runs that read a picture.** V0–V7 have
+landed; the ruling narrows V7, and the task below carries it. Where a
 task and the reconciliation disagree, **the reconciliation's findings (F1–F19) and decisions
 (D2000–D2016) win and the task is wrong**.
 
@@ -147,6 +149,14 @@ names every one.
 
 Both are live: they need a real repository, a real model and a real image, so no test in the tree can
 stand in for them.
+
+**D2017 leaves both checks' premise rows standing.** Each is read from `fugaro doctor --json`'s
+`vision-coder` sentence — the coder's own price row, and whether the slot is set — and each check
+launches exactly the run the rewrite now reaches: 520's task names the `__screenshots__` PNG and 521's
+names a `.png`, so the run is one that reads a picture and the slot, the refusal and the stage timings
+all still measure what they were written to measure. What neither measures is the ruling itself — a run
+naming no picture keeping the coder's model, and spending at the coder's row — which is this work's
+reserved **Check 522**, an owner step named in the PR body rather than a script here.
 
 **Check 520 — a text-only coder reads a screenshot.** A repository whose `agent.models.coder` is a
 provider model with an image rate and `agent.models.vision` set, and a task whose fixture work involves
@@ -360,9 +370,11 @@ owner's only explanation of a dead run.
 **Level 3. Reviewer tier 3.** It decides which model serves a run's calls and therefore the spend, the
 egress and the credential a stage's code goes out on.
 
-- **Files (7):** `internal/runner/routing.go`, `internal/runner/routing_internal_test.go`,
+- **Files (9):** `internal/runner/routing.go`, `internal/runner/routing_internal_test.go`,
   `internal/runner/policy.go`, `internal/runner/policy_test.go`, `internal/runner/providers.go`,
-  `internal/runner/providers_test.go`, `internal/runner/gateway.go` (the stage spec's own arm).
+  `internal/runner/providers_test.go`, `internal/runner/gateway.go` (the stage spec's own arm),
+  `internal/runner/images.go` and `internal/runner/images_test.go` (the gate, D2017 — V5's own files,
+  one level below).
 - **Interface:** `r.applyVision(prices *pricing.Table) error`, called inside `resolvePolicy` **after**
   `applyRouting` and **before** `resolveLevels` (`internal/runner/policy.go:204`): for each coder-role
   slot whose model's price row has no image rate and with `agent.models.vision` set, it rewrites the
@@ -371,16 +383,28 @@ egress and the credential a stage's code goes out on.
   (`gatewayRoutes`, `providers.go:113`), the priced table and the record all see the vision model
   without a second resolution. A coder whose price row has an image rate is left alone (D2016), and a
   reviewer is never rewritten (D2004).
+- **The gate (D2017, owner 2026-11-26 — this narrows the task as first written).** The rewrite fires
+  for the run that reads a picture and for no other: `r.coderReadsAnImage()` (in `images.go`, beside
+  V5's scan) is the task's text naming an image file (`imageNamesInTask`) or one of the files the
+  launch attached being one (`imageNamesAttached`, `task.Spec.Inputs`), with an artifact run read for
+  its attachments alone — its task text names the file it renders — and a review, report or rebase run
+  for neither. A run that reads no picture keeps the coder's own model on every stage, which is the
+  price the owner pinned the coder for; the read such a run's agent attempts is the one V0's deny rule
+  refuses.
 - **Depends on:** V1 (the slot), V2 (a provider vision model needs the image rate to be priceable) and
   V5, whose check must already know a vision model is set before a run starts rewriting pins for it.
 - **Red step:** `TestACoderWithoutAnImageRateRunsTheVisionModel` fails while nothing rewrites a pin: the
-  gateway admits the coder's model for the stage and an image call still dies (F1, F6).
+  gateway admits the coder's model for the stage and an image call still dies (F1, F6). The gate's own
+  red step is the other direction, `TestACoderWithoutAnImageRateKeepsItsModelForARunThatNamesNoImage`:
+  against the rewrite as first written it fails with the coder moved onto the slot.
 - **Tests:** `TestACoderWithoutAnImageRateRunsTheVisionModel`,
   `TestACoderWithAnImageRateKeepsItsModel`, `TestTheReviewerIsNeverRewritten`,
   `TestAVisionModelIsRoutedAndPriced` (its route is registered: `gatewayRoutes`),
   `TestTheVisionModelIsPinnedForTheStagesItRuns` (`StageTiming.Model` and the request pin),
-  `TestNoVisionModelLeavesTheRunUnchanged`.
-- **Commit:** `runner: the stage that can see images runs the vision model (D2000, D2002, D2004, D2016)`
+  `TestNoVisionModelLeavesTheRunUnchanged`, `TestACoderWithoutAnImageRateKeepsItsModelForARunThatNamesNoImage`
+  (every stage on the coder's model and the coder's own row price), `TestACoderKeepsItsModelForARunThatReadsNoImage`,
+  `TestAnArtifactRunIsReadForItsAttachmentsAlone`.
+- **Commit:** `runner: the stages that read an image run the vision model, and only those (D2000, D2002, D2004, D2016, D2017)`
 
 ## V8. The documents, the skill and the release notes
 

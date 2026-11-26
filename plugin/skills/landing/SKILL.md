@@ -8,7 +8,7 @@ description: "Land a Fugaro pull request — merge it as-is, with the findings i
 
 # Landing a pull request
 
-**To land a pull request is to merge it as-is, with the findings it still carries recorded as follow-up tasks — one line each, concrete enough to be a task — instead of running another fix round.** Landing is an action and not a fifth state: the four states are the `working` skill's, and a landed pull request leaves them. A land never fixes a finding, and it is never the way past a refusal.
+**To land a pull request is to merge it as-is, with the findings it still carries recorded as follow-up tasks — one line each, concrete enough to be a task — instead of running another fix round.** Landing is an action and not a sixth state: the five states are the `working` skill's, and a landed pull request leaves them. A **paused** pull request is nobody's to land: a run suspended itself on it and the orchestrator will resume it at a named time, it needs nothing from a person and it takes no follow-up while the pause stands. A land never fixes a finding, and it is never the way past a refusal.
 
 Ground rules:
 - **You never merge.** A merge call is a person's, at their own hands, in the provider's own interface: `working` says ready is never merged, and landing changes what the person knows before they merge, not who makes the call.

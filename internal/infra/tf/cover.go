@@ -210,6 +210,20 @@ const (
 	// the Terraform suite's TestAllUsersIsRefusedOnEveryOtherResource and
 	// internal/infra/managed are what refuse a second one.
 	toMobile
+	// The history job's own kind (mobile plan task P5.2.7, the row restated
+	// 2026-11-25 for the relay), appended rather than inserted for the reports
+	// job's reason. It is the ONE kind an account of FugaroAccounts also
+	// carries, and HistoryAccountID says why: the sender's signing reach is a
+	// row of its own, so the principal has to be nameable exactly, while every
+	// other row the account holds is an account's row and must go on accepting
+	// it. Exactly one row carries the bit: the push sender's signing role on
+	// the installation's sender key, which pushSignerGrant narrows to that key,
+	// that project and no condition.
+	//
+	// It is the last bit a uint16 holds, and the comment is here rather than in
+	// a note: the next kind widens the type (to uint32, which shifts no bit
+	// above) instead of overflowing.
+	toHistory
 )
 
 // customKey is how grantRules names a custom role of the installation (by its
@@ -871,6 +885,52 @@ const CatalogCheckAccountID = "fugaro-catalog-check"
 // write.
 const ReportsAccountID = "fugaro-reports"
 
+// HistoryAccountID is the history job's account (history.tf): the sweeper
+// P5.2.6 added and the SENDER of P5.2.7's push row, created once per
+// installation and pinned to this ID by the module's own variable validation,
+// the way ReportsAccountID and LicenceAccountID are — a plan cannot hand the
+// account a name this package reads differently.
+//
+// It is the ONE account that is both one of FugaroAccounts and a kind of its
+// own, and the reason is that the two answer different questions. The account
+// holds the roles a job account holds (history.tf's fugaroHistory on the
+// project and objectViewer on the runs bucket), so every toAccounts row must go
+// on accepting it and FugaroAccounts is what says so — a kind of its own with
+// no toAccounts beside it would refuse the module's own two grants to it. And
+// the push sender's signing row must be held to THIS account and to no other
+// account of the installation, which no toAccounts row can say: a row open to
+// accounts accepts a job account, a build account, the scheduler and any
+// account a plan creates beside the grant, and the design refuses exactly that
+// (a run that can sign could name any repository in a title). So the member
+// classifies as toAccounts|toHistory (checkGrant) and the sender's row carries
+// toHistory alone.
+const HistoryAccountID = "fugaro-history"
+
+// PushSignerRole is the sender's signing role (mobile plan task P5.2.7, the
+// row restated 2026-11-25 for the relay): the custom role push_key.tf creates
+// in the installation's project, holding cloudkms.cryptoKeyVersions.useToSign
+// alone and nothing else. It is a role of its own rather than a second binding
+// of the consumer's for mailbox_key.tf's reason and one more: the two keys are
+// read by different verifiers and revoked for different reasons, and a role
+// that reached both would make the relay's trust and the phones' one grant.
+//
+// The ID is a literal in the module and here, like the consumer signer's, and
+// not a names.role_ids entry: nothing outside installation/push_key.tf names
+// it, and RolePermissions pins its list.
+const PushSignerRole = "fugaroPushSigner"
+
+// PushKeyRingName and PushCryptoKeyName are the key ring and the key the
+// installation's sender signs its push requests with (P5.2.7), both literals of
+// push_key.tf, named here for MailboxKeyRingName's reason: pushSignerGrant
+// accepts the sender's account on exactly one crypto key, so a plan that moved
+// the grant to another key of the project — a second key an operator created,
+// or a key of another installation in the same project — is refused rather than
+// covered.
+const (
+	PushKeyRingName   = "fugaro-push"
+	PushCryptoKeyName = "fugaro-push-sender"
+)
+
 // LicenceAccountID is the licence renewal job's account (plan K4.2 of
 // docs/licence-key-v2): the account modules/installation/licence.tf creates in
 // the installation's project and the job runs as, internal/infra.
@@ -1167,8 +1227,11 @@ const (
 // build identity (BuildIdentityAccountID) is not among them for the same
 // reason (toBuildIdentity): its reach is the credentials service's invoker bit
 // and nothing a job of any repository holds.
+//
+// The history account IS among FugaroAccounts (fugaro-history) and is also a
+// kind of its own (toHistory): HistoryAccountID says why both are needed.
 var (
-	FugaroRoles    = []string{"fugaroLauncher", ViewerRole, "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, CredentialsVertexRole, CatalogLeaseRole, WorkspaceReadRole, IntakeSecretsRole, SecretListerRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole, MCPStateReadRole, LicenceRenewalRole, MailboxSignerRole}
+	FugaroRoles    = []string{"fugaroLauncher", ViewerRole, "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, CredentialsVertexRole, CatalogLeaseRole, WorkspaceReadRole, IntakeSecretsRole, SecretListerRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole, MCPStateReadRole, LicenceRenewalRole, MailboxSignerRole, PushSignerRole}
 	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload"}
 )
 
@@ -1904,6 +1967,12 @@ var RolePermissions = map[string][]string{
 	// TestRolePinsAreTheModules holds this list to the module's own, so a later
 	// revision that widened the signer's reach would widen both in one change.
 	MailboxSignerRole: {"cloudkms.cryptoKeyVersions.useToSign"},
+	// The sender's signing role (push_key.tf, P5.2.7): the same one permission,
+	// in a role of its own, for MailboxSignerRole's reasons — the verify half
+	// and the metadata reads are calls nobody of this tree makes with it, and
+	// the two keys are read by different verifiers. TestRolePinsAreTheModules
+	// holds this list to the module's own.
+	PushSignerRole: {"cloudkms.cryptoKeyVersions.useToSign"},
 	// The renewal job's four calls on the installation's renewal container
 	// (licence.tf, plan K4.2, the plan amendment of 2026-11-14). A custom role
 	// rather than a predefined one, and the comment on LicenceRenewalRole says

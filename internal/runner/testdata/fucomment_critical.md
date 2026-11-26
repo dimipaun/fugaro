@@ -59,9 +59,6 @@
 > - what was done: the loop backs off with jitter instead of hammering
 > - what needs a proper fix: the import should report the duplicate
 > - how to verify: the nightly run finished clean
->
-> ## Open questions
-> - is jitter enough, or does the loop need a cap?
 
 Transcripts and verify records: `runs/acme-app/20260927-090000-f001/` in the runs bucket.
 

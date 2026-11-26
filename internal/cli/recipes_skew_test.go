@@ -4628,3 +4628,144 @@ func TestIdentitySinceHasAReleaseBullet(t *testing.T) {
 		}
 	}
 }
+
+// TestLaunchRefusesImageBelowNameFetch is IS2's own gate, read from the
+// launch: a repository whose workflow secrets the flip has taken the mounts of
+// is not launched onto a job image whose runner knows the fetch but asks the
+// version-1 way — by variable, for the container a per-repository record maps
+// it to — because that container is the project copy IS6 stops deriving and
+// IS13 retires and deletes (D3324, D3325), so such a runner reaches bootstrap
+// with nothing to read for a declared secret and the launch is already paid
+// for (D143).
+//
+// The judge is the family's own (checkImageSince, through vaultNameGate) and
+// the rows are its conditions one at a time, with the image boundary at the
+// centre: an image AT the fetch's own release — vaultSince, which vaultGate
+// admits, and which is the oldest runner that fetches at all — is refused
+// here, and the by-name release vaultNameSince is admitted, as is one after
+// it (the comparison is a floor, not an equality).
+//
+// There is no row on the current release, and that is the fact this test
+// exists to hold: this tree's node version answers 0.26.0, which is exactly
+// the fetch's release, so the image a repository has built today is refused
+// until fugaro update rebuilds it at the release that carries the by-name
+// fetch — the sibling test's admitted bottom row is a refused one here.
+//
+// The admitted rows end where they do for that same reason: an image at
+// vaultNameSince is newer than every node this reader reads, so the launch
+// reaches the backend.
+func TestLaunchRefusesImageBelowNameFetch(t *testing.T) {
+	const atFetch = "ghcr.io/dimipaun/fugaro-base:" + vaultSince
+	const atName = "ghcr.io/dimipaun/fugaro-base:" + vaultNameSince
+	for _, tc := range []struct {
+		name    string
+		yaml    string
+		base    string
+		block   string
+		mode    string
+		ready   bool
+		refused bool
+	}{
+		{"a switched repository whose workflow declares a secret, on the image that fetches by container", vaultLaunchYAML, atFetch, proxiedBlock, "enforce", true, true},
+		{"the workflow declares no secret", apiKeyLaunchYAML, atFetch, proxiedBlock, "enforce", true, false},
+		{"the repository's own switch is off", vaultLaunchYAML, atFetch, proxiedBlock, "enforce", false, false},
+		{"the installation carries no credentials service", vaultLaunchYAML, atFetch, "", "enforce", true, false},
+		{"the job image is at the by-name fetch's release", vaultLaunchYAML, atName, proxiedBlock, "enforce", true, false},
+		{"the job image is a release after the by-name fetch's", vaultLaunchYAML, "ghcr.io/dimipaun/fugaro-base:0.31.0", proxiedBlock, "enforce", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLaunchBudget(t, "enforce")
+			if tc.block != "" {
+				f.appendConfig(t, tc.block)
+			}
+			publishPolicy(t, f, cascadePolicyWithMode(tc.mode))
+			projectJobCheckoutYAML(t, tc.yaml)
+			if tc.ready {
+				markRepoCredentialsServiceReady(t, f.cloudFixture)
+			}
+			writeBuildRecord(t, f.cloudFixture, appSlug, "web", tc.base)
+			_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", budgetRun, "Add a feature")
+			switch {
+			case tc.refused && err == nil:
+				t.Fatal("a repository whose workflow secrets are fetched by name was launched onto a job image whose runner asks the version-1 way: the container it names is the project copy this release no longer derives, so the run would stop at bootstrap over a declared secret it has no value for (IS2, D3324)")
+			case tc.refused:
+				for _, want := range []string{vaultNameSince, "brokered by name", "by-name fetch", "fugaro update"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not name %q: %v", want, err)
+					}
+				}
+				if launchedAny(f) {
+					t.Error("the refused launch started an execution")
+				}
+				if storedTaskFor(t, f.cloudFixture, appSlug) {
+					t.Error("the refused launch stored a task")
+				}
+			case !tc.refused && err != nil && imageGateOnly(err, tc.base):
+				return
+			case !tc.refused && err != nil:
+				t.Fatalf("a launch this gate does not judge was refused: %v", err)
+			case !launchedAny(f):
+				t.Error("a launch this gate does not judge started no execution")
+			}
+		})
+	}
+}
+
+// TestVaultNameGateLeavesAReviewLaunchAlone: a review launch is not judged by
+// IS2's gate either, for vaultGate's reason — a review run does not run on the
+// repository's own job at all but on the review-only variant, whose container
+// mounts nothing and is told the service's address by its own deployment (O1).
+// The pair is the same call twice with the mode moved, so the two gates'
+// conditions cannot come apart.
+func TestVaultNameGateLeavesAReviewLaunchAlone(t *testing.T) {
+	const atFetch = "ghcr.io/dimipaun/fugaro-base:" + vaultSince
+	f := newLaunchBudget(t, "enforce")
+	f.appendConfig(t, proxiedBlock)
+	publishPolicy(t, f, cascadePolicyWithMode("enforce"))
+	projectJobCheckoutYAML(t, vaultLaunchYAML)
+	markRepoCredentialsServiceReady(t, f.cloudFixture)
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", atFetch)
+	env := fileEnv(t, f.cloudFixture)
+	slug, spec := appSlug, &task.Spec{Version: 1, RunID: budgetRun, Repo: "acme/app", Ref: "main", Workflow: "web", Task: "Add a feature"}
+	if err := env.vaultNameGate(context.Background(), slug, spec, "", false, io.Discard); err == nil {
+		t.Fatal("the ordinary launch of a switched repository declaring a secret was admitted on an image that fetches by container: this release's job mounts none of the workflow's own secrets and the container a version-1 fetch names is the project copy it no longer derives, so the image has to know the by-name fetch — and the review half below only means anything because this half refuses first")
+	}
+	spec.Mode = recipe.ModeReview
+	if err := env.vaultNameGate(context.Background(), slug, spec, "", false, io.Discard); err != nil {
+		t.Errorf("a review launch of the same repository was refused by the by-name gate: a review run holds no workflow secret of its own and mounts none, so no fetch of one is any part of it (O1): %v", err)
+	}
+}
+
+// TestVaultNameSinceHasAReleaseBullet: vaultNameSince names the release whose
+// runner asks the credentials service for a workflow secret BY NAME — version
+// 2 of the route, answered from the project record out of the fugaro_p_<name>
+// grammar (IS2, C1) — and it is one release after vaultSince because a runner
+// at that first release fetches the version-1 way. The number is pinned to
+// S2 and S3 shipping in one release, which is a fact no code in this tree
+// holds, so docs/release.md's Before-you-tag list is what keeps it on the
+// release actually cut: a value below it admits a launch whose runner asks for
+// a container nobody holds, and one above it refuses an image that works.
+//
+// The pinned phrases are that account: the version of the route by name, the
+// container the version-1 way names, the one-release pair the plan ships, and
+// the "refuses too late" failure a value below the release buys.
+func TestVaultNameSinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `vaultNameSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no vaultNameSince bullet: the checklist is where a release verifies the constant, and this constant names the release the by-name fetch and the flip ship in together")
+	}
+	if !strings.Contains(bullet, "currently `\""+vaultNameSince+"\"`") {
+		t.Errorf("docs/release.md's vaultNameSince bullet does not carry the constant's release (%q)", vaultNameSince)
+	}
+	for _, want := range []string{"version 2 of the route", "IS6 stops deriving and IS13 retires and deletes", "S2 and S3 of that plan ship in one release", "refuses too late"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's vaultNameSince bullet does not say %q", want)
+		}
+	}
+}

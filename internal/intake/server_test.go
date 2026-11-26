@@ -750,6 +750,188 @@ func TestAdminDeletesAnotherOwnersPrefix(t *testing.T) {
 	}
 }
 
+// TestAContributorWithdrawsOnlyTheirOwn: D3194 reverses D1935 by exactly one
+// case — a person contributes their OWN token to a project pool an admin has
+// marked as taking contributions, as a member of that pool (R9). The pool's
+// own container is the marker and only an admin writes it; every other member
+// carries the contributor's own annotations, so it is theirs to write again
+// and theirs to withdraw, and an admin removes any. Nobody writes a token in
+// another person's name, and a pool's member and a project-shared credential
+// are not stored in one another.
+func TestAContributorWithdrawsOnlyTheirOwn(t *testing.T) {
+	f := newFixture(t, []string{testOwnerEmail, testOtherEmail, testAdminEmail}, []access.Admin{{Email: testAdminEmail, Sub: testAdminSub}})
+	memberTok := f.token(t, testOwnerEmail, testOwnerSub)
+	otherTok := f.token(t, testOtherEmail, testOtherSub)
+	adminTok := f.token(t, testAdminEmail, testAdminSub)
+	const pool = "team"
+	contribute := func(name string) string {
+		return `{"scope":"shared","name":"` + name + `","value":"` + b64(testValue) + `","pool":"` + pool + `"}`
+	}
+	withdraw := func(name string) string {
+		return `{"scope":"shared","name":"` + name + `","pool":"` + pool + `"}`
+	}
+	marked := secretname.ProjectPrefix + pool
+	alice := secretname.ProjectPrefix + "alice"
+
+	// Before the marker is there the pool takes no contributions: an admin
+	// makes it, and until then nothing under its members is written.
+	w := f.post(t, CreatePath, memberTok, contribute("alice"))
+	if w.Code != http.StatusBadRequest || errorType(t, w) != ErrorRequestRefused {
+		t.Fatalf("a contribution to an unmarked pool: got %d %s, want 400 %s", w.Code, errorType(t, w), ErrorRequestRefused)
+	}
+	if len(f.store.created) != 0 {
+		t.Fatalf("a refused contribution made the containers %v", f.store.created)
+	}
+	// And the marker is an admin's own: a member naming the pool itself is
+	// refused exactly as any other shared write is.
+	f.lines.Reset()
+	w = f.post(t, CreatePath, memberTok, contribute(pool))
+	if w.Code != http.StatusForbidden || errorType(t, w) != ErrorNotAdmin {
+		t.Fatalf("a member's own mark: got %d %s, want 403 %s", w.Code, errorType(t, w), ErrorNotAdmin)
+	}
+	if len(f.store.created) != 0 {
+		t.Fatalf("a refused mark made the containers %v", f.store.created)
+	}
+
+	// The admin marks the pool, and the marker is the pool's own container: the
+	// label names the pool and it carries no owner's annotations, as every
+	// other shared container does not.
+	f.lines.Reset()
+	w = f.post(t, CreatePath, adminTok, contribute(pool))
+	if w.Code != http.StatusOK {
+		t.Fatalf("the admin's mark: got %d %s", w.Code, w.Body.String())
+	}
+	got := f.store.containers[marked]
+	if got.Labels[LabelPoolContributions] != pool {
+		t.Fatalf("the marker carries %v, want %s=%s", got.Labels, LabelPoolContributions, pool)
+	}
+	if got.Annotations[AnnotationOwnerSub] != "" || got.Annotations[AnnotationOwnerEmail] != "" {
+		t.Fatalf("the marker carries an owner's annotations: %v", got.Annotations)
+	}
+
+	// Now the member contributes their own token, and the container is theirs:
+	// their own account id and address, and the pool's label.
+	f.lines.Reset()
+	w = f.post(t, CreatePath, memberTok, contribute("alice"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("a member's contribution: got %d %s", w.Code, w.Body.String())
+	}
+	got = f.store.containers[alice]
+	if got.Annotations[AnnotationOwnerSub] != testOwnerSub || got.Annotations[AnnotationOwnerEmail] != testOwnerEmail {
+		t.Fatalf("the contribution carries %v, want the contributor's own annotations", got.Annotations)
+	}
+	if got.Labels[LabelPoolContributions] != pool {
+		t.Fatalf("the contribution carries %v, want %s=%s", got.Labels, LabelPoolContributions, pool)
+	}
+	if !slices.Equal(f.store.values[alice], []string{testValue}) {
+		t.Fatalf("the contribution's values are %v", f.store.values[alice])
+	}
+
+	// Nobody writes a token in another person's name (R9): the second member's
+	// write into the first's member is refused, and the value in it is the one
+	// the contributor put there.
+	f.lines.Reset()
+	w = f.post(t, CreatePath, otherTok, contribute("alice"))
+	if w.Code != http.StatusConflict || errorType(t, w) != ErrorForeignContainer {
+		t.Fatalf("another member's write into a contribution: got %d %s, want 409 %s", w.Code, errorType(t, w), ErrorForeignContainer)
+	}
+	if !slices.Equal(f.store.values[alice], []string{testValue}) {
+		t.Fatalf("a refused write reached the contribution: %v", f.store.values[alice])
+	}
+
+	// The two classes of the shared prefix do not hold one another's value: a
+	// project-shared credential is not stored in a pool's member, and a
+	// contribution is not stored in a container that carries no pool.
+	f.lines.Reset()
+	w = f.post(t, CreatePath, adminTok, createBody(ScopeShared, "alice", testValue))
+	if w.Code != http.StatusConflict || errorType(t, w) != ErrorForeignContainer {
+		t.Fatalf("a shared credential into a pool's member: got %d %s, want 409 %s", w.Code, errorType(t, w), ErrorForeignContainer)
+	}
+	f.lines.Reset()
+	w = f.post(t, CreatePath, memberTok, `{"scope":"shared","name":"bob","value":"`+b64(testValue)+`","pool":"`+pool+`"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("a second contribution: got %d %s", w.Code, w.Body.String())
+	}
+	f.lines.Reset()
+	w = f.post(t, CreatePath, adminTok, createBody(ScopeShared, "bob", testValue))
+	if w.Code != http.StatusConflict || errorType(t, w) != ErrorForeignContainer {
+		t.Fatalf("a shared credential into another member: got %d %s, want 409 %s", w.Code, errorType(t, w), ErrorForeignContainer)
+	}
+
+	// The contributor withdraws their own member, and it goes.
+	f.lines.Reset()
+	w = f.post(t, DeletePath, memberTok, withdraw("alice"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("the contributor's withdrawal: got %d %s", w.Code, w.Body.String())
+	}
+	if !slices.Equal(f.store.deleted, []string{alice}) {
+		t.Fatalf("the withdrawal removed %v, want %v", f.store.deleted, []string{alice})
+	}
+
+	// Another member cannot withdraw it, and no member may remove the pool's
+	// marker: removing that is what stops the pool taking contributions, and
+	// both are the admin's (R9).
+	f.lines.Reset()
+	if w := f.post(t, CreatePath, memberTok, contribute("alice")); w.Code != http.StatusOK {
+		t.Fatalf("contributing again: got %d %s", w.Code, w.Body.String())
+	}
+	f.lines.Reset()
+	w = f.post(t, DeletePath, otherTok, withdraw("alice"))
+	if w.Code != http.StatusForbidden || errorType(t, w) != ErrorNotAdmin {
+		t.Fatalf("another member's withdrawal: got %d %s, want 403 %s", w.Code, errorType(t, w), ErrorNotAdmin)
+	}
+	f.lines.Reset()
+	w = f.post(t, DeletePath, memberTok, withdraw(pool))
+	if w.Code != http.StatusForbidden || errorType(t, w) != ErrorNotAdmin {
+		t.Fatalf("a member removing the marker: got %d %s, want 403 %s", w.Code, errorType(t, w), ErrorNotAdmin)
+	}
+	if !slices.Equal(f.store.deleted, []string{alice}) {
+		t.Fatalf("a refused withdrawal removed %v", f.store.deleted)
+	}
+
+	// A withdrawal naming another pool is refused rather than answered: the
+	// container's own label says which pool it is a member of.
+	f.lines.Reset()
+	w = f.post(t, DeletePath, memberTok, `{"scope":"shared","name":"alice","pool":"other"}`)
+	if w.Code != http.StatusConflict || errorType(t, w) != ErrorForeignContainer {
+		t.Fatalf("a withdrawal naming another pool: got %d %s, want 409 %s", w.Code, errorType(t, w), ErrorForeignContainer)
+	}
+	// And a pool is not a per-user container's: the scope is the project's.
+	f.lines.Reset()
+	w = f.post(t, CreatePath, memberTok, `{"scope":"user","name":"alice","value":"`+b64(testValue)+`","pool":"`+pool+`"}`)
+	if w.Code != http.StatusBadRequest || errorType(t, w) != ErrorRequestRefused {
+		t.Fatalf("a contribution under the per-user prefix: got %d %s, want 400 %s", w.Code, errorType(t, w), ErrorRequestRefused)
+	}
+
+	// The admin removes any member of the pool, which is the other half of R9.
+	f.lines.Reset()
+	w = f.post(t, DeletePath, adminTok, withdraw("alice"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("the admin's removal: got %d %s", w.Code, w.Body.String())
+	}
+	if !slices.Equal(f.store.deleted, []string{alice, alice}) {
+		t.Fatalf("the removals are %v", f.store.deleted)
+	}
+	if _, ok := f.store.containers[marked]; !ok {
+		t.Fatal("removing a member removed the pool's marker")
+	}
+	if _, ok := f.store.containers[secretname.ProjectPrefix+"bob"]; !ok {
+		t.Fatal("removing one member removed another")
+	}
+
+	// Every call above wrote one line and no value: the log is the whole of the
+	// calls, and the credential is nowhere in it in either spelling.
+	line := audit(t, f)
+	if line["op"] != OpDelete || line["status"] == "" || line["caller"] == "" {
+		t.Fatalf("the admin's removal's line is %v", line)
+	}
+	for _, secret := range []string{testValue, b64(testValue)} {
+		if strings.Contains(f.lines.String(), secret) {
+			t.Fatalf("the audit lines carry the value: %s", f.lines.String())
+		}
+	}
+}
+
 // TestRefusesContainerItDidNotCreate: a container whose shape is not the
 // intake's own — a TTL, an expiry, a topic, a CMEK, a rotation schedule, or
 // annotations another writer set — is refused before any write, and before it

@@ -2347,7 +2347,7 @@ func TestInitRefusesAProjectJobDeleteWhateverAllowDeleteNames(t *testing.T) {
 	grant := mod + `.google_cloud_run_v2_job_iam_member.launcher["user:launcher@example.com"]`
 	r.setPlan(t, change(grant, "delete"), change(job, "delete", "create"))
 	_, _, err := executeStdin(t, "", "setup", "--allow-delete", job, "--allow-delete", grant)
-	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "retiring a project job is not supported yet") {
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "this run did not retire") {
 		t.Fatalf("exit %d, err %v; want the project-job refusal", ExitCode(err), err)
 	}
 	if len(r.ran(t, "apply")) != 0 {

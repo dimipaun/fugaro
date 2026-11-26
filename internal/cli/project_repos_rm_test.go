@@ -391,7 +391,10 @@ func TestReposRmRemovesTheSixAndNamesTheSixItLeaves(t *testing.T) {
 	if allow := allowReposOf(t, r.db); len(allow) != 1 || allow[0] != rmEntryB {
 		t.Errorf("allow_repos = %v, want [%s]", allow, rmEntryB)
 	}
-	// 2. this machine's repos: entry, and 3. its image_map entry.
+	// 2. this machine's repos: entry, and 3. its repo_images key. The map the
+	// fixture holds is the legacy image_map, so this write is also R13's: it
+	// migrates the map — the other repository keeps its entry, under its
+	// provider — and removes this one's.
 	lc := r.rmLocal(t)
 	if _, ok := lc.Repos[rmRepoA]; ok {
 		t.Errorf("the local config still holds repos.%s: %v", rmRepoA, lc.Repos)
@@ -399,11 +402,14 @@ func TestReposRmRemovesTheSixAndNamesTheSixItLeaves(t *testing.T) {
 	if _, ok := lc.Repos[rmRepoB]; !ok {
 		t.Errorf("the local config lost repos.%s as well: %v", rmRepoB, lc.Repos)
 	}
-	if _, ok := lc.ImageMap[rmRepoA]; ok {
-		t.Errorf("the local config still maps %s: %v", rmRepoA, lc.ImageMap)
+	if _, ok := lc.RepoImages[rmEntryA]; ok {
+		t.Errorf("the local config still maps %s: %v", rmEntryA, lc.RepoImages)
 	}
-	if got := lc.ImageMap[rmRepoB]; got != "base" {
-		t.Errorf("image_map[%s] = %q, want base", rmRepoB, got)
+	if got := lc.RepoImages[rmEntryB]; got != "base" {
+		t.Errorf("repo_images[%s] = %q, want base", rmEntryB, got)
+	}
+	if lc.ImageMap != nil {
+		t.Errorf("the write left the legacy image_map behind: %v", lc.ImageMap)
 	}
 	// 4. the published admission, through the publish's own removal path.
 	if v := r.db.Value(projectpolicy.PathRepo(r.slugA)); v != nil {
@@ -928,7 +934,7 @@ func TestReposRmLeavesAPublishedImageMappingAndNamesACommandThatExists(t *testin
 	})
 
 	out, _ := r.rmOut(t, rmEntryA)
-	const why = "left alone: image_map[" + rmRepoA + "] is the published node's mapping"
+	const why = "left alone: the published node's repository-to-image map (`repo_images`) gives " + rmRepoA + " that entry"
 	line := rmLineWith(out, why)
 	if line == "" {
 		t.Fatalf("the removal does not say the published mapping is left alone:\n%s", out)
@@ -958,6 +964,58 @@ func TestReposRmLeavesAPublishedImageMappingAndNamesACommandThatExists(t *testin
 	}
 	if lc := r.rmLocal(t); lc.ImageMap != nil {
 		t.Errorf("this machine's config gained an image map: %v", lc.ImageMap)
+	}
+}
+
+// TestReposRmRemovesProviderKey is R8: the removal takes the repository's own
+// key out of repo_images — the key under ITS provider — and leaves every other
+// key of the map alone.
+//
+// This is the red the task exists for. Before it, `rm` of the GitHub
+// github/owner/repo-a read the effective map as the legacy image_map, found no
+// such member in a file that names repo_images, and left github/owner/repo-a in
+// the map: the repository stopped running and its mapping stayed.
+func TestReposRmRemovesProviderKey(t *testing.T) {
+	local := strings.Replace(rmRigLocal,
+		"image_map:\n  owner/repo-a: base\n  owner/repo-b: base\n",
+		"repo_images:\n  github/owner/repo-a: base\n  github/owner/repo-b: base\n", 1)
+	if local == rmRigLocal {
+		t.Fatal("the fixture's image_map block was not found")
+	}
+	r := rmRigFor(t, local, rmGone{})
+	out, _ := r.rmOut(t, rmEntryA)
+	if line := rmLineWith(out, "repo_images["+rmEntryA+"]"); line == "" {
+		t.Fatalf("the removal does not name the key it removed:\n%s", out)
+	}
+	lc := r.rmLocal(t)
+	if _, ok := lc.RepoImages[rmEntryA]; ok {
+		t.Errorf("the local config still maps %s: %v", rmEntryA, lc.RepoImages)
+	}
+	if got := lc.RepoImages[rmEntryB]; got != "base" {
+		t.Errorf("repo_images[%s] = %q, want base: the removal took another key with it", rmEntryB, got)
+	}
+	if lc.ImageMap != nil {
+		t.Errorf("the removal left the legacy member behind: %v", lc.ImageMap)
+	}
+}
+
+// TestReposRmMigratesALegacyMapFirst is R13 in `rm`: a file that still holds
+// the old image_map is migrated into repo_images by the same write that removes
+// the repository's key, so every other repository keeps the entry it runs — a
+// write of repo_images over a file still holding image_map would take every
+// other mapping away with it (R2: repo_images wins per member, never per key).
+func TestReposRmMigratesALegacyMapFirst(t *testing.T) {
+	r := rmRigFor(t, "", rmGone{})
+	r.rmOut(t, rmEntryA)
+	lc := r.rmLocal(t)
+	if lc.ImageMap != nil {
+		t.Errorf("the file still holds image_map: %v", lc.ImageMap)
+	}
+	if _, ok := lc.RepoImages[rmEntryA]; ok {
+		t.Errorf("the migrated map still maps %s: %v", rmEntryA, lc.RepoImages)
+	}
+	if got := lc.RepoImages[rmEntryB]; got != "base" {
+		t.Errorf("repo_images[%s] = %q, want base: the other repository's mapping was lost", rmEntryB, got)
 	}
 }
 
@@ -1061,7 +1119,7 @@ func TestReposRmConvergesAHalfDoneRemoval(t *testing.T) {
 	}
 	for _, want := range []string{
 		"left alone: this machine's project config holds no repos: entry for " + rmRepoA,
-		"left alone: this machine's repo-to-image map holds no entry for " + rmRepoA,
+		"left alone: this machine's repository-to-image map (`repo_images`) holds no entry for " + rmRepoA,
 		projectpolicy.PathRepo(r.slugA) + ": already absent",
 		"already absent: " + rmRepoA + " has no Cloud Run job in " + initProject,
 		"already absent: " + rmRepoA + " has no Scheduler job in " + rmSchedulerRegion,

@@ -365,7 +365,7 @@ func reposEnrolmentRow(ctx context.Context, lc *localcfg.Config, db *rtdb.Client
 	if err != nil {
 		return reposViewRepo{}, reposViewAllow{}, nil, err
 	}
-	return reposViewRowOf(ctx, lc, cat, imap, projectBase, canonical, localKey, allow), allow, imap, nil
+	return reposViewRowOf(ctx, lc, cat, imap, projectBase, canonical, localKey, allow), allow, imap.images, nil
 }
 
 // configRepoKey is this machine's own key for the repository, which is the

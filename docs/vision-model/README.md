@@ -5,7 +5,13 @@ release guard, the gateway's refusal, the bootstrap check, the doctor check and 
 coder-role stages); V8, these documents, the working skill and the release notes, is written and in
 review; owner Checks 520 and 521 are named in the plan and in
 [docs/gcp-live-checklist.md](../gcp-live-checklist.md) and have **not been run**;
-[docs/status.md](../status.md) carries the current row.** *The status as first written, kept:*
+[docs/status.md](../status.md) carries the current row.** **Amended 2026-11-26 (owner, D2017): the
+vision slot serves only the runs that read a picture.** The rewrite V7 landed fired on every run of a
+project that set the slot, and the owner ruled that wrong against run `20261126-161059-1506` (25 calls,
+$4.49, no edits, halted at the stage budget: a coder project paying the vision model's price for stages
+that never saw an image). The coder now keeps its own model unless the task names an image or the launch
+attached one, and the slot is a pin of those runs alone; [reconciliation.md](reconciliation.md) §4
+carries the ruling as D2017 and the plan's V7 carries the gate. *The status as first written, kept:*
 **Status: plan only; nothing is implemented; no task is approved.** Spec owner: Dimi Paun. Written
 2026-11-10. **Independent review over these documents has not run.**
 

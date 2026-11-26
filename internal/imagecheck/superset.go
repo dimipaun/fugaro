@@ -59,6 +59,11 @@ func fewerExtras(a, b LockedImage) bool {
 	return a.BuiltAt.After(b.BuiltAt)
 }
 
+// Holds reports whether the image holds the whole of r (§4): the identical
+// base and tools, and every one of r's packages, with as many more as it
+// likes. It is the same question Superset asks of each entry, asked of one.
+func (i LockedImage) Holds(r Resolved) bool { return i.holds(r) }
+
 // holds reports whether the image holds the whole of r: the identical base,
 // the identical tools and every one of r's packages, with as many more as
 // it likes.

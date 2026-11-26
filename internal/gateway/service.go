@@ -235,6 +235,26 @@ const (
 	ReasonStopped     = "stopped"
 )
 
+// The actions an exhausted answer may carry (runstore.PauseAction's three
+// values, mirrored here as the rest of this contract is: this package cannot
+// import internal/credsvc, which imports it). The credentials service decides
+// which one a run takes and the job carries it out (R19); the one rule the
+// runner owns is a hotfix run treating wait and pause as halt (R10). A test
+// pins the three spellings against the runstore ones.
+const (
+	// ActionWait is the in-job wait: the reset is nearer than the service's
+	// own pause.wait_in_job, and the run waits for it as it always has
+	// (D3184).
+	ActionWait = "wait"
+	// ActionPause is the suspension: the run saves itself, tells the service
+	// and ends paused, and the service resumes it later as a new run in the
+	// same chain (D3185).
+	ActionPause = "pause"
+	// ActionHalt is the end: nothing is worth waiting for, and the run stops
+	// with HaltNoCredential.
+	ActionHalt = "halt"
+)
+
 // ReasonBudgetUnavailable is the halt a run that cannot reach the service is
 // recorded with (D143: "the run halts like budget_unavailable"), the same
 // spelling runstore.HaltBudgetUnavailable and budget.ReasonBudgetUnavailable
@@ -404,6 +424,15 @@ type ServiceAnswer struct {
 type Exhausted struct {
 	ResetAt time.Time
 	Tried   []Tried
+	// Action is the action the service decided for this run (C3, R19): one of
+	// ActionWait, ActionPause and ActionHalt, and empty from a service of a
+	// release behind, which the runner waits out as it always has (D3184).
+	Action string
+	// ResumeAt is the instant a pause will be resumed at, zero for the other
+	// two actions. It is the service's own figure and the run only reads it
+	// (R8): pause.json carries no time, and the node the service writes is the
+	// only record of it.
+	ResumeAt time.Time
 }
 
 // Tried is one credential the service considered and did not use
@@ -977,6 +1006,14 @@ type serviceRefusal struct {
 	Message string         `json:"message,omitempty"`
 	ResetAt int64          `json:"reset_at,omitempty"`
 	Tried   []serviceTried `json:"tried,omitempty"`
+	// Action is the action the service decided for the run (C3), one of
+	// ActionWait, ActionPause and ActionHalt, and ResumeAt is the instant a
+	// pause will be resumed at in epoch milliseconds UTC. Both are written
+	// only for a caller that sent the stage header (R24, F57), and a service
+	// of a release behind writes neither: an answer without them is one this
+	// gateway reads as it always has.
+	Action   string `json:"action,omitempty"`
+	ResumeAt int64  `json:"resume_at,omitempty"`
 }
 
 // serviceTried is one entry of a refusal's tried list (credsvc's Tried).
@@ -1128,7 +1165,34 @@ func exhaustedAnswer(e serviceRefusal) (Exhausted, error) {
 	for _, tr := range e.Tried {
 		tried = append(tried, Tried{Name: tr.Name, Tier: tr.Tier, Reason: tr.Reason})
 	}
-	return Exhausted{ResetAt: time.UnixMilli(e.ResetAt).UTC(), Tried: tried}, nil
+	a := Exhausted{ResetAt: time.UnixMilli(e.ResetAt).UTC(), Tried: tried, Action: e.Action}
+	switch e.Action {
+	case "":
+		// A service of a release behind decides no action, and the answer is
+		// the one this contract had before the pause existed: the run waits.
+	case ActionWait, ActionHalt:
+		// Neither is a pause, so neither may carry a resume instant (C3): an
+		// answer that names one is not one this contract wrote, and half of a
+		// pause is not acted on.
+		if e.ResumeAt != 0 {
+			return Exhausted{}, errors.New("only a pause carries a resume instant")
+		}
+	case ActionPause:
+		// The instant the service will resume the run at is the whole of what
+		// a pause tells the job about the future, and it is the service's own
+		// figure: a pause without it names nothing the run could act on.
+		if e.ResumeAt <= 0 {
+			return Exhausted{}, errors.New("the pause answer carries no resume instant")
+		}
+		a.ResumeAt = time.UnixMilli(e.ResumeAt).UTC()
+	default:
+		// An action outside the closed set is a value neither side of this
+		// contract wrote. The run follows the action it is given (R19), so an
+		// answer naming one this gateway cannot place is one it refuses rather
+		// than waits on a guess.
+		return Exhausted{}, errors.New("the exhausted answer names no action this gateway knows")
+	}
+	return a, nil
 }
 
 // serviceAnswer reads what the credentials service said about a call and acts

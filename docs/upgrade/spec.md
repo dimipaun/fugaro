@@ -31,12 +31,12 @@ a converging run into exit 1 for that user was refused by name (D950,
 ## Behaviour
 
 ```
-fugaro update [--check [PATH]]
+fugaro update [--check]
               [--repo [PATH]] [--image-source S] [--expect-digest KIND=sha256:H]...
               [--config F] [--project P] [--gcp-project G] [--region R]
 ```
 
-`PATH` is a checkout and only these two modes read one: `--check` reads the checkout's own files and writes nothing, and `--repo` onboards that checkout's repository instead of converging the installation. **`--repo` takes no value and there is no `--workflow`** — both spellings were the retired command's, whose usage line this block used to be; `fugaro update --help` is the list this door has.
+`PATH` is a checkout and only `--repo` reads one: it onboards that checkout's repository instead of converging the installation. `--check` takes no PATH — it writes nothing and reads the project's own repositories through the credentials service, the same list plain `fugaro update` reads. **`--repo` takes no value and there is no `--workflow`** — both spellings were the retired command's, whose usage line this block used to be; `fugaro update --help` is the list this door has.
 
 `fugaro update` re-converges an installation and the checkout it stands in: it is the same engine and the
 same stages as `fugaro setup`, and what differs is what the two doors may create. It creates nothing — the

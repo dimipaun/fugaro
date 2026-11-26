@@ -1043,6 +1043,10 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		Execution: "projects/p/locations/r/jobs/j/executions/e",
 		Status:    runstore.StatusFailed, Stage: "writeback", Outcome: runstore.OutcomeDraft,
 		Reason: "tests failing on the final commit", Branch: "fugaro/add-a-feature", BaseBranch: "main", HeadSHA: "abcdef1234567",
+		// And the run that stopped on a question its own agent asked (LV5.2,
+		// LD8): a flag beside the draft, additive like the flags around it, so
+		// a schema that did not name it would refuse the runner's own record.
+		NeedsGuidance: true,
 		// The closed cause beside the free text, which is the pair the record
 		// carries from the failure classes on (docs/failure-classes/design.md
 		// §3): the reason stays the sentence a person reads and the class is
@@ -8702,7 +8706,7 @@ func TestSummarySchemaRoundTrip(t *testing.T) {
 		Branch: "fugaro/" + id, BaseBranch: "main",
 		HeadSHA: strings.Repeat("a", 40), PushedHead: strings.Repeat("b", 40),
 		PR:            &runstore.PRRef{Number: 42, URL: "https://example.test/acme/app/pull/42", StatusAt: &statusAt},
-		DraftFallback: true, StartedAt: at, Deadline: &deadline,
+		DraftFallback: true, NeedsGuidance: true, StartedAt: at, Deadline: &deadline,
 		FollowUp:     &runstore.FollowUp{PR: 41, PreviousRun: "20261119-120000-9999", Comments: 2, Session: "fresh"},
 		OAuthAccount: "someone@example.com", Recipe: &runstore.RecipeRecord{Name: "ship", Source: "repo"},
 		ProjectLayer: &runstore.ProjectLayerRecord{SHA256: strings.Repeat("d", 64), Generation: 7, Applied: true},

@@ -2,15 +2,17 @@
 # Tests for scripts/live-checks/check790.sh. NOTHING here is a cloud, a project,
 # an installation or a run: every case builds a REAL local git repository in a
 # temporary directory and drives the check against a fake `gcloud` and a fake
-# `fugaro` on PATH whose answers the case owns — the job's own describe, the
-# installation's own refusal, two launches' answers, the runs listing, the
+# `fugaro` on PATH whose answers the case owns — the installation's own budget
+# state, the job's own describe, two launches' answers, the runs listing, the
 # post-update run's record out of the runs bucket, the update's output and the
 # second installation's config. No case can spend anything, because the only
 # thing that spends is `fugaro run`, and here that is a script in $work.
 #
 # The readings are the point. Check 790 watches ONE upgrade across a run that is
 # already in flight, and the cases that matter are the ones where a reading is
-# bent: an installation already migrated (a premise that must STOP the check), an
+# bent: an installation whose budget database is already there (a premise that
+# must STOP the check at once, before the job is even described, naming the three
+# ways forward), an installation already migrated whose job names the database, an
 # update that fails, an in-flight run the database's rules killed, an execution
 # that still holds a model key, a pre-release runner whose own record names
 # another mode (or names none, or cannot be read), a job the update re-applied
@@ -105,14 +107,16 @@ dir=${FAKE790_DIR:?}
 first=${1:-}
 second=${2:-}
 case "$first" in
-project)
-  # `fugaro project policy show --project <name> --json`: an installation with no
-  # Firebase backend refuses, and that refusal is the premise. A case that wants
-  # the answer of an installation already migrated sets FAKE790_POLICY_STATUS=0,
-  # and one that wants a refusal naming nothing writes its own policy.txt.
-  if [ -f "$dir/policy.txt" ]; then cat "$dir/policy.txt" >&2; fi
-  status=${FAKE790_POLICY_STATUS:-1}
-  if [ "$status" -eq 0 ] && [ -f "$dir/policy.json" ]; then cat "$dir/policy.json"; fi
+budget)
+  # `fugaro budget show --json --project <name>`: the FIRST reading of the
+  # premise, and the one only a budget database can answer. An installation with
+  # none refuses and names the missing backend, and that refusal is what lets the
+  # check go on. A case that wants an installation which ALREADY has its database
+  # sets FAKE790_BUDGET_STATUS=0 (the answer, stop at once), and one that wants a
+  # refusal naming nothing writes its own budget.txt.
+  if [ -f "$dir/budget.txt" ]; then cat "$dir/budget.txt" >&2; fi
+  status=${FAKE790_BUDGET_STATUS:-1}
+  if [ "$status" -eq 0 ] && [ -f "$dir/budget.json" ]; then cat "$dir/budget.json"; fi
   exit "$status"
   ;;
 run)
@@ -282,8 +286,9 @@ open(out, "w").write(json.dumps(doc))
 PY
 }
 
-# case_dir builds one case's own world: a sandbox checkout, a job that starts
-# with no database, a policy that carries no URL, and the fakes' answers.
+# case_dir builds one case's own world: a sandbox checkout, an installation
+# whose budget state refuses for want of a backend, a job that starts with no
+# database, and the fakes' answers.
 case_dir() { # case_dir <name>
   sandbox=$work/$1/repo
   answers=$work/$1/answers
@@ -298,8 +303,14 @@ case_dir() { # case_dir <name>
   job_json "$answers/job-after.json" "us-docker.pkg.dev/p/jobs/app:0.34.0" "FUGARO_BUCKET=b" "FUGARO_RTDB_URL=https://db.invalid" "FUGARO_BUDGET_MODE=observe"
   jobs_json "$answers/operator-jobs.json" "us-docker.pkg.dev/p/jobs/app:0.34.0" "FUGARO_BUCKET=b"
   exec_json "$answers/exec.json" "us-docker.pkg.dev/p/jobs/app:0.34.0" "FUGARO_BUCKET=b" "FUGARO_RTDB_URL=https://db.invalid"
-  printf '{"project":"test","policy":null}' >"$answers/policy.json"
-  printf 'error: project test has no Firebase budget backend (budget.rtdb_url is not set in its project config): an operator runs fugaro update --firebase-project test --name test\n' >"$answers/policy.txt"
+  # The budget state of an installation the release has not reached: the command
+  # that only a database can answer refuses and names the missing backend. The
+  # document beside it is what a case that says the database IS there answers
+  # with — fugaro-dev's own state, a mode and caps set.
+  cat >"$answers/budget.json" <<'JSON'
+{"project":"test","gcp_project":"test-project","mode":"enforce","day":"2026-11-26","max_reserve_usd":null,"global":{"daily_cap_usd":25.0,"per_run_cap_usd":5.0,"counted_usd":1.5,"spent_usd":1.5,"notional_usd":0.0,"leased_usd":0.0,"headroom_usd":23.5,"kill":null},"defaults":{"repo_daily_cap_usd":null,"repo_per_run_cap_usd":null},"repos":[],"running":[],"warnings":[]}
+JSON
+  printf 'error: project test has no Firebase budget backend (budget.rtdb_url is not set in its project config): an operator runs fugaro update --firebase-project test --name test\n' >"$answers/budget.txt"
   printf 'fugaro update: created the budget database at https://db.invalid and re-applied the jobs\n' >"$answers/update.out"
   printf "fugaro update: this installation has no budget database yet, and only a project owner can create it: ask a project owner to run 'fugaro update'\n" >"$answers/operator.out"
   printf 'name: second-install\ngcp_project: second-project\nregion: us-test2\n' >"$answers/operator-config.yaml"
@@ -310,7 +321,7 @@ case_dir() { # case_dir <name>
   FAKE790_UPDATE_REPO_STATUS=0
   FAKE790_OPERATOR_STATUS=0
   FAKE790_RUN_STATUS=0
-  FAKE790_POLICY_STATUS=1
+  FAKE790_BUDGET_STATUS=1
   FAKE790_RECORD_STATUS=0
 }
 
@@ -324,7 +335,7 @@ run790() {
     FAKE790_UPDATE_REPO_STATUS="${FAKE790_UPDATE_REPO_STATUS:-0}" \
     FAKE790_OPERATOR_STATUS="${FAKE790_OPERATOR_STATUS:-0}" \
     FAKE790_RUN_STATUS="${FAKE790_RUN_STATUS:-0}" \
-    FAKE790_POLICY_STATUS="${FAKE790_POLICY_STATUS:-0}" \
+    FAKE790_BUDGET_STATUS="${FAKE790_BUDGET_STATUS:-1}" \
     FAKE790_RECORD_STATUS="${FAKE790_RECORD_STATUS:-0}" \
     CHECK790_POLL_SECONDS=0 \
     ${RUN790_ENV[@]+"${RUN790_ENV[@]}"} \
@@ -348,6 +359,7 @@ test_a_dry_run_calls_nothing() {
   run790 --dry-run
   expect_status "$status" 0 "the plan is not a run"
   expect_contains "$out" "Check 790 plan" "--dry-run prints the plan"
+  expect_contains "$out" "budget show --json" "the plan names the first reading"
   expect_contains "$out" "FUGARO_RTDB_URL" "the plan names what the premise reads"
   expect_contains "$out" "model spend" "the plan says what it costs"
   [ ! -s "$CALLS" ] || fail "a dry run made a call: $(cat "$CALLS")"
@@ -366,6 +378,10 @@ test_the_happy_path_reads_every_row() {
   expect_contains "$out" "old-image" "the pre-release image is a row"
   expect_contains "$out" "operator" "the second installation is a row"
   expect_contains "$out" "CHECK 790 RESULT: PASS (exit 0)" "the verdict is PASS"
+  case "$(cat "$CALLS")" in
+  *"fugaro budget show --json --project test"*) ;;
+  *) fail "the installation's own budget state was not read: $(cat "$CALLS")" ;;
+  esac
   case "$(cat "$CALLS")" in
   *"update --project test"*) ;;
   *) fail "the installation's own update was not run: $(cat "$CALLS")" ;;
@@ -392,24 +408,34 @@ test_an_installation_already_migrated_stops_the_check() {
   esac
 }
 
-test_an_installation_whose_policy_read_answers_stops_the_check() {
-  case_dir policy-migrated
-  # The installation has a backend, so the command that reads its published node
-  # answers instead of refusing: the release has already been here.
-  FAKE790_POLICY_STATUS=0
+test_an_installation_that_already_has_its_database_stops_at_once() {
+  case_dir budget-already-there
+  # The installation already has its budget database — the owner's own
+  # fugaro-dev, mode enforce and caps set — so the upgrade this check watches
+  # cannot happen here. The check must stop on its FIRST reading, before the job
+  # is even described, and name the three ways forward.
+  FAKE790_BUDGET_STATUS=0
   run790
-  expect_status "$status" 2 "a published policy that can be read is the release having arrived"
-  expect_contains "$out" "already has a budget backend" "the premise names what it read"
+  expect_status "$status" 2 "an installation that already has its database is not the one this check can measure"
+  expect_contains "$out" "already has its budget database" "the row names what it read"
+  expect_contains "$out" "mode 'enforce'" "the row names the mode the database answered with"
+  expect_contains "$out" "--installation, --gcp-project" "the first way forward names the flags of the second installation"
+  expect_contains "$out" "waived by the owner in docs/always-a-budget" "the second way forward names the owner's waiver"
+  expect_contains "$out" "fugaro setup" "the third way forward names the fresh scratch project"
+  expect_contains "$err" "already has a budget database" "the stop line says it at once"
   case "$(cat "$CALLS")" in
   *"fugaro run"*) fail "a run was launched on an installation the premise had already refused" ;;
   esac
+  case "$(cat "$CALLS")" in
+  *"jobs describe"*) fail "the job was described on an installation the check should have stopped on at once" ;;
+  esac
 }
 
-test_an_installation_whose_refusal_names_nothing_stops_the_check() {
-  case_dir policy-other-error
+test_a_budget_state_that_cannot_be_read_stops_the_check() {
+  case_dir budget-other-error
   # A premise nobody settled must not be spent on: the refusal is there, but it is
   # not the one an installation with no budget backend prints.
-  printf 'error: project test could not be reached (network unreachable)\n' >"$answers/policy.txt"
+  printf 'error: project test could not be reached (network unreachable)\n' >"$answers/budget.txt"
   run790
   expect_status "$status" 2 "nothing is launched on an installation nobody settled"
   expect_contains "$out" "without naming a missing budget backend" "the premise says what it could not read"
@@ -665,8 +691,8 @@ t test_help
 t test_a_dry_run_calls_nothing
 t test_the_happy_path_reads_every_row
 t test_an_installation_already_migrated_stops_the_check
-t test_an_installation_whose_policy_read_answers_stops_the_check
-t test_an_installation_whose_refusal_names_nothing_stops_the_check
+t test_an_installation_that_already_has_its_database_stops_at_once
+t test_a_budget_state_that_cannot_be_read_stops_the_check
 t test_an_update_that_fails_is_a_finding
 t test_a_repository_update_that_fails_is_a_finding
 t test_a_job_that_never_learned_its_database_is_a_finding

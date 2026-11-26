@@ -12,6 +12,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
@@ -72,6 +74,17 @@ type stepResult struct {
 	code   int    // a failed step's exit code
 }
 
+// checkLocal is the local project config `fugaro update --check` selected, and
+// the one line saying why it selected none (U10, R17). The mode's cloud step
+// reads the project's repositories through it rather than through a checkout
+// (checkCloudStep), and a machine with no config for the checkout it runs in
+// still answers the plugin step and skips the cloud one with why.
+type checkLocal struct {
+	lc   *localcfg.Config
+	path string
+	why  string // one line: no local project config selects a project here
+}
+
 // stepCtx is what a step sees of one checkout.
 type stepCtx struct {
 	cmd   *cobra.Command
@@ -79,6 +92,11 @@ type stepCtx struct {
 	o     stepOptions
 	loc   pluginwire.Location // the checkout's top and its settings file
 	agent string              // the coding agent's marker, "" outside one
+
+	// check is `fugaro update --check`'s own input (U10): set by runUpdateCheck
+	// alone, nil in every other run, where the cloud step is the checkout's or
+	// the view's.
+	check *checkLocal
 
 	// view is the repository a step runs for where the run read it from the
 	// project's own list rather than from a directory (U4): the checkout stage
@@ -126,9 +144,8 @@ var updateCheckReads = map[string]bool{
 
 // refuseConvergeFlags is the flag half of the mode: --check runs none of the
 // converge, so the door's own flags are refused rather than silently dropped.
-// The checkout is the argument (`fugaro update --check [PATH]`), which is why
-// --repo is on the refused side: it says the run onboards the repository of the
-// checkout at PATH, and this run onboards nothing.
+// --repo is on the refused side too: it says the run onboards the repository of
+// a checkout, and this run onboards nothing.
 func refuseConvergeFlags(cmd *cobra.Command) error {
 	inherited := map[string]bool{}
 	cmd.InheritedFlags().VisitAll(func(f *pflag.Flag) { inherited[f.Name] = true })
@@ -144,35 +161,37 @@ func refuseConvergeFlags(cmd *cobra.Command) error {
 	if refused == "" {
 		return nil
 	}
-	return userErr("--%s is the converge's, and --check runs none of it: fugaro update --check reads the checkout's own files, prints what each of its steps would do and writes nothing. Pass --check alone (with the checkout as PATH, and the cloud step's own flags if the deployment is set apart), or drop --check to run the converge", refused)
+	return userErr("--%s is the converge's, and --check runs none of it: fugaro update --check reads this project's own repositories, prints what each of its steps would do and writes nothing. Pass --check alone (with the cloud step's own flags if the deployment is set apart), or drop --check to run the converge", refused)
 }
 
-// runUpdateCheck is the whole of the mode: one checkout, its four steps in
-// check mode, and the exit code their verdicts make.
+// runUpdateCheck is the whole of the mode: the working directory's project, its
+// four steps in check mode, and the exit code their verdicts make. It takes no
+// PATH (U10, R17): the repositories it judges are the project's own, read
+// through C1's view, so there is no checkout to name.
 func runUpdateCheck(cmd *cobra.Command, o *initOptions, args []string) error {
 	if err := refuseConvergeFlags(cmd); err != nil {
 		return err
 	}
+	if len(args) > 0 {
+		return userErr("fugaro update --check takes no PATH: it reads every repository of this project through the credentials service, the same list plain fugaro update reads (fugaro update --check)")
+	}
 	ctx := cmd.Context()
 	w := cmd.OutOrStdout()
-	path := "."
-	if len(args) > 0 {
-		path = args[0]
-	}
 	fmt.Fprintln(w, updateCheckHeader())
-	loc, ok := pluginwire.Locate(path)
+	loc, ok := pluginwire.Locate(".")
 	if !ok {
-		fmt.Fprintf(w, "== %s\n", pluginwire.Printable(path))
 		return checkRefusal(w, "not in a git checkout (or it is your home directory)")
 	}
 	fmt.Fprintf(w, "== %s\n", pluginwire.Printable(loc.Root))
 	if !fugaroCheckout(loc) {
 		return checkRefusal(w, "not a Fugaro checkout: it has no fugaro.yaml (set it up with fugaro setup and /fugaro:setup first)")
 	}
+	fmt.Fprintf(w, "note: %s\n", checkAdmitOnlyCaveat)
 	u := &stepCtx{cmd: cmd, w: w, o: stepOptions{check: true, refresh: refreshOptions{
 		imageSource: o.imageSource, expectDigests: o.expectDigests, cloud: o.cloud,
 		in: cmd.InOrStdin(), out: w}}, loc: loc,
-		agent: agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))}
+		agent: agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())),
+		check: checkLocalOf(ctx, o)}
 	// U11: a development build has no release to install or refresh to, so
 	// every step is skipped and the run exits 0.
 	if releaseVersion() == "" {
@@ -222,6 +241,27 @@ func runUpdateCheck(cmd *cobra.Command, o *initOptions, args []string) error {
 	return nil
 }
 
+// checkLocalOf is the local project config the mode reads the project's
+// repositories through: the working directory's, resolved offline — no shared
+// config, so no bucket (D3349) — and the one line saying why there is none.
+// A machine with no config for the checkout it runs in still answers the plugin
+// step, which is this machine's alone; its cloud step says it read no list.
+func checkLocalOf(ctx context.Context, o *initOptions) *checkLocal {
+	co := o.cloud
+	co.stderr = func() io.Writer { return io.Discard } // the mode prints its own account
+	lc, path, _, err := loadRepoConfigReadOnly(ctx, &initOptions{cloud: co}, ".")
+	if err != nil {
+		return &checkLocal{why: oneLine(err.Error())}
+	}
+	return &checkLocal{lc: lc, path: path}
+}
+
+// checkAdmitOnlyCaveat is the one line the mode prints for the repositories it
+// cannot see: its list is this machine's config's and the published allow-list
+// is not read (D3349), so a repository admitted only by a pattern is not among
+// them — and `--plan-only` reads everything (spec §Interactions).
+const checkAdmitOnlyCaveat = "a repository admitted only by an allow-list pattern is not read by this check: fugaro update --plan-only covers every one of them"
+
 // checkRefusal is the run that never reaches a step: the mode's own line, and
 // the user error a script can act on.
 func checkRefusal(w io.Writer, reason string) error {
@@ -257,7 +297,91 @@ func updateCheckHeader() string {
 	if releaseVersion() == "" {
 		return fmt.Sprintf("fugaro update --check with a development build (%s): there is no release to install or refresh to, so every step is skipped", oneLine(Version))
 	}
-	return fmt.Sprintf("fugaro update --check with fugaro %s: it writes nothing, runs no claude command and makes no cloud call, and it never upgrades fugaro itself: brew upgrade dimipaun/tap/fugaro && fugaro update is the whole sequence", Version)
+	return fmt.Sprintf("fugaro update --check with fugaro %s: it writes nothing, runs no claude command, and it never upgrades fugaro itself: brew upgrade dimipaun/tap/fugaro && fugaro update is the whole sequence", Version)
+}
+
+// checkCloudStep is the cloud step in the mode's own shape (U10, R17): the
+// offline staleness rule (repoCloudCheck, U4's variant that reads no build
+// record) for every repository of the project's own list, read through C1's
+// view rather than from a checkout. It resolves nothing itself — the local
+// config it reads through is the mode's (checkLocalOf), and the project layer
+// the view parses over is the machine's own layer file, so the parse makes no
+// bucket read (R13). It writes nothing, mints no identity of its own and reads
+// no build record, no bucket and no policy.
+//
+// The gates are the checkout stage's own, in the mode's words: a repository the
+// reader could not read is named, never guessed at (R13); one whose fugaro.yaml
+// names another project is not this run's to judge; and the rest get the
+// per-repository verdict. Anything that stops the mode — a real local-file
+// error — fails the step at the same point the apply would.
+func checkCloudStep(ctx context.Context, u *stepCtx) stepResult {
+	c := u.check
+	if c.lc == nil {
+		return stepResult{state: stepSkipped, reason: "no local project config selects a project here, so no repository was read: " + c.why}
+	}
+	layerFile := ""
+	if p, err := localcfg.LayerFile(os.Getenv, c.lc.Name); err == nil {
+		layerFile = p
+	}
+	views, _ := enrolledRepos(ctx, enrolledIn{LC: c.lc, LayerFile: layerFile})
+	if len(views) == 0 {
+		return stepResult{state: stepSkipped, reason: "no repository of this project was read, so there is no job image to judge"}
+	}
+	rerun := u.o.cloudLineView()
+	var stale, unread, skipped []string
+	judged := 0
+	for _, v := range views {
+		switch {
+		case !v.Read():
+			unread = append(unread, pluginwire.Printable(v.Repo)+": "+v.Unread)
+		case !checkReadsProject(c.lc, v):
+			skipped = append(skipped, pluginwire.Printable(v.Repo)+": its fugaro.yaml names another project (or none), so its job images are not judged here")
+		default:
+			judged++
+			switch v := repoCloudCheck(c.lc, c.path, v.Repo, v.Cfg, rerun); v.state {
+			case cloudFailed:
+				return stepResult{state: stepFailed, code: ExitUserError, reason: pluginwire.Printable(v.repo) + ": " + v.reason}
+			case cloudStale, cloudBlocked:
+				stale = append(stale, pluginwire.Printable(v.repo)+": "+v.reason)
+			}
+		}
+	}
+	if judged > 0 {
+		// The note the checkout stage's own check mode prints for a repository
+		// it judged: this mode reads no job either, so the deployed copy of the
+		// local config is exactly as unread here (viewCloudStep's own line).
+		fmt.Fprintf(u.w, "note: %s\n", checkJobCopyCaveat)
+	}
+	summary := fmt.Sprintf("%d %s", len(views), plural(len(views), "repository", "repositories"))
+	if n := len(stale); n > 0 {
+		summary += fmt.Sprintf(": %d stale", n)
+	}
+	if n := len(unread); n > 0 {
+		summary += fmt.Sprintf(": %d unread", n)
+	}
+	if n := len(skipped); n > 0 {
+		summary += fmt.Sprintf(": %d not this project", n)
+	}
+	switch {
+	case len(stale) > 0:
+		// The unread ones are named beside the stale ones: a repository the
+		// check could not read is a gap in it, and a count alone leaves the
+		// reader nothing to act on (R13).
+		return stepResult{state: stepStale, reason: summary + "; " + strings.Join(append(stale, unread...), "; ")}
+	case len(unread) > 0:
+		return stepResult{state: stepSkipped, reason: summary + "; " + strings.Join(unread, "; ")}
+	case len(skipped) > 0:
+		return stepResult{state: stepCurrent, reason: summary + "; " + strings.Join(skipped, "; ")}
+	}
+	return stepResult{state: stepCurrent, reason: "this release's base image is recorded for every workflow's kind, in " + summary + " (--check reads no build record: a build that failed after the base moved shows only when fugaro update runs the cloud step)"}
+}
+
+// checkReadsProject is whether a view's fugaro.yaml names this project: the
+// checkout stage's own rule (thisProject), for a caller that holds the config
+// rather than an engine.
+func checkReadsProject(lc *localcfg.Config, v repoView) bool {
+	p, err := config.ProjectOf(v.YAML)
+	return err == nil && p == lc.Name
 }
 
 // checkPolicyCaveat is what --check says for the step it cannot answer: whether

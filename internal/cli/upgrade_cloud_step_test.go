@@ -878,7 +878,9 @@ func TestUpgradeCheckSeesTheCloudWithoutTouchingIt(t *testing.T) {
 	noRecordReads(t)
 	ran := fakeSteps(t, "", nil)
 	out, _, err := executeStdin(t, "", "update", "--check")
-	if ExitCode(err) != ExitUserError || !strings.Contains(out, "cloud: stale: base images to move: base: none recorded; this release pins it by digest through proj-1234/fugaro-ghcr") {
+	// The step reads the project's own list (U10): one repository here, named
+	// with its own verdict.
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "cloud: stale: 1 repository: 1 stale; acme/app: base images to move: base: none recorded; this release pins it by digest through proj-1234/fugaro-ghcr") {
 		t.Fatalf("exit %d\n%s", ExitCode(err), out)
 	}
 	if len(*ran) != 0 || len(r.calls(t)) != 0 {
@@ -1086,7 +1088,10 @@ func TestUpgradePassesTheCloudFlagsToTheRefresh(t *testing.T) {
 
 // TestUpgradeCheckBlockedIsAFailureWithTheRerunLine: a custom base blocks the
 // refresh, so --check reports it stale (exit 1, never skipped), and the
-// reason carries the command the user ran, --check included.
+// reason carries the command that clears the block. That command is the
+// converge and not `--check` again (U10): the fix is the edit the reason
+// names, which a check writes nothing of, so its rerun line is the plain
+// `fugaro update`.
 // Mutations (run, restore): M15 return stepSkipped for cloudBlocked in the
 // --check switch; M17 pass "" as the rerun in cloudStep's cloudCheck call.
 func TestUpgradeCheckBlockedIsAFailureWithTheRerunLine(t *testing.T) {
@@ -1097,8 +1102,8 @@ func TestUpgradeCheckBlockedIsAFailureWithTheRerunLine(t *testing.T) {
 	if ExitCode(err) != ExitUserError || len(*ran) != 0 || !strings.Contains(out, "cloud: stale:") || strings.Contains(out, "cloud: skipped") {
 		t.Fatalf("exit %d, steps %q\n%s", ExitCode(err), *ran, out)
 	}
-	if again := "fugaro update --check " + root; !strings.Contains(out, again) {
-		t.Fatalf("the reason lacks the rerun line %q:\n%s", again, out)
+	if again := selfCommand() + " update"; !strings.Contains(out, again) || strings.Contains(out, "--check "+root) {
+		t.Fatalf("the reason lacks the rerun line %q, or still names a --check rerun:\n%s", again, out)
 	}
 }
 

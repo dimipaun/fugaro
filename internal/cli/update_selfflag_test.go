@@ -101,12 +101,19 @@ func (p callSnapshot) terraform(t *testing.T, r *initRig) [][]string {
 }
 
 // wroteNothing is the whole of what a run that stops at the head may have done:
-// no cloud write, no project created, and no terraform started. It is the F16
+// no cloud write, no project created, and no terraform started (the toolchain's own version read starts nothing). It is the F16
 // assertion every refusal below makes.
 func wroteNothing(t *testing.T, r *initRig, p callSnapshot, what string) {
 	t.Helper()
-	if calls := p.terraform(t, r); len(calls) != 0 {
-		t.Errorf("%s: terraform ran: %q", what, calls)
+	var started [][]string
+	for _, c := range p.terraform(t, r) {
+		if len(c) > 0 && c[0] == "version" {
+			continue
+		}
+		started = append(started, c)
+	}
+	if len(started) != 0 {
+		t.Errorf("%s: terraform ran: %q", what, started)
 	}
 	for _, req := range p.writes(t, r) {
 		t.Errorf("%s: the run wrote to the project: %s %s", what, req.Method, req.Path)

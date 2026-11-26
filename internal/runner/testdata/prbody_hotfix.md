@@ -20,9 +20,6 @@ Adds feature.txt, and a flag to turn it off.
 - what needs a proper fix: the import should report the duplicate
 - how to verify: the nightly run finished clean
 
-## Open questions
-- should the flag default to off?
-
 [//]: # (fugaro:status begin)
 ### Fugaro status
 **Ready for review** · rigor: hotfix (project) · tests passed on `<sha>` · review: ship in round 1 (recorded: model claude-opus-5, at <sha>) · review levels: level 2: ship in round 1 on `<sha>` · model cost $0.00 · finished <time>

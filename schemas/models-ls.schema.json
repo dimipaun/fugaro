@@ -288,7 +288,7 @@
         },
         "vision": {
           "type": "string",
-          "description": "The file's own agent.models.vision: the model a stage runs instead when its own model cannot read an image (D2000). Absent when the file sets none, which is the slot's unset state and not an inherited model: it is the one pin with no fallback."
+          "description": "The file's own agent.models.vision: the model a run's coder stages run when the task names an image their own model cannot read (D2000, D2017). Absent when the file sets none, which is the slot's unset state and not an inherited model: it is the one pin with no fallback."
         },
         "problems": {
           "type": "array",

@@ -142,10 +142,10 @@ type modelsRepo struct {
 	// actually reach (config.EffectiveBackground) when the two differ.
 	Background          string `json:"background,omitempty"`
 	BackgroundEffective string `json:"background_effective,omitempty"`
-	// Vision is the file's own agent.models.vision: the model a stage runs
-	// instead when its own model cannot read an image (D2000). It is the one
-	// pin with no fallback, so an empty member means the slot is unset rather
-	// than inherited.
+	// Vision is the file's own agent.models.vision: the model a run's coder
+	// stages run when the task names an image their own model cannot read
+	// (D2000, D2017). It is the one pin with no fallback, so an empty member
+	// means the slot is unset rather than inherited.
 	Vision   string   `json:"vision,omitempty"`
 	Problems []string `json:"problems,omitempty"`
 }

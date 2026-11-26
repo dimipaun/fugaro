@@ -8,6 +8,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gateway"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -41,10 +42,19 @@ var credsWait = func(ctx context.Context, d time.Duration) error {
 
 // exhaustedError ends the stage that was running when the credential service
 // answered its typed `exhausted_until` (C1.10). It is not a failure: stage
-// waits for Until and resumes the stage's session.
+// carries out the action the answer names, which is the wait for Until and
+// the resume of the stage's session (D3184).
 type exhaustedError struct {
 	// Until is the earliest reset the service found, in UTC.
 	Until time.Time
+	// Action is the action the service decided for this run (C3, R19): one of
+	// runstore's three, and empty from a service of a release behind, which
+	// the run waits out as it always has.
+	Action runstore.PauseAction
+	// ResumeAt is the instant the service will resume the run at, carried
+	// with a pause and zero for the other two actions. The job reads it and
+	// never chooses it (R8).
+	ResumeAt time.Time
 }
 
 func (e *exhaustedError) Error() string {
@@ -52,19 +62,21 @@ func (e *exhaustedError) Error() string {
 }
 
 // noteExhausted is where the credential service's typed answer arrives, and
-// the only way a stage learns of it. C1.15's upstream calls it from the
-// gateway's request path, where the service's answer to a forwarded call is
-// read (ReadExhaustedUntil); a test drives it through
-// RunHandle.NoteExhausted. Nothing in this release calls it outside tests:
-// C1.15 wires the gateway's answer to it and C1.19 adds the end-to-end test,
-// so until those land a wait can only be reached from a test's own call.
+// the only way a stage learns of it: it ends the stage in flight, which the
+// caller's own loop then answers with the action beside it (followExhaustedAnswer).
+// C1.15's upstream calls it from the gateway's request path, where the
+// service's answer to a forwarded call is read (ReadExhaustedUntil); a test
+// drives it through RunHandle.NoteExhausted. Nothing in this release calls it
+// outside tests: C1.15 wires the gateway's answer to it and C1.19 adds the
+// end-to-end test, so until those land a wait can only be reached from a
+// test's own call.
 //
 // It records nothing and writes nothing: it ends the stage in flight, which
 // is the whole of the runner's reaction, and the answer only ever arrives
 // while a call — and so a stage — is running, so there is no answer to keep
 // for later. A halt recorded first wins, exactly as it does everywhere else:
 // that path cancels the stage itself, and stage's own checks decide.
-func (r *run) noteExhausted(e credsvc.ExhaustedUntil) {
+func (r *run) noteExhausted(e credsvc.ExhaustedUntil, action runstore.PauseAction, resumeAt time.Time) {
 	if e.ResetAt.IsZero() {
 		// ReadExhaustedUntil refuses an answer with no reset instant, so a
 		// zero one is a caller's bug: it is not a reason to end a stage.
@@ -81,7 +93,45 @@ func (r *run) noteExhausted(e credsvc.ExhaustedUntil) {
 		r.d.Log.Warn("the credential service answered exhausted-until between stages; ignoring it")
 		return
 	}
-	stop(&exhaustedError{Until: e.ResetAt.UTC()})
+	stop(&exhaustedError{Until: e.ResetAt.UTC(), Action: action, ResumeAt: resumeAt.UTC()})
+}
+
+// followExhaustedAnswer carries out the action the exhausted answer named, and
+// reports the error that ends the stage when the action is one: nil is the
+// wait, which the caller takes next (D3184).
+//
+// The action is the credentials service's decision and never the runner's
+// (R19): the service weighs the reset against pause.wait_in_job, its own
+// resident orchestrator and the chain's spent pause time, and this is where
+// the answer is acted on. The one rule the runner owns is R10, and it is about
+// the two answers this run may not take: a hotfix never waits and never
+// pauses, because time is the whole of what it has and neither a job spent
+// idling nor a run of tomorrow is open to it. A halt it takes like any other
+// run, which is the answer it would have had anyway.
+//
+// A pause suspends the run (suspend.go, R12): it saves the session, pushes the
+// work in progress, writes pause.json, tells the service it has saved, ends
+// `paused` and releases its lease, and the service resumes the chain later as
+// a new run (D3185). stage and session are what the pause records: the stage a
+// resumed run enters, and the session it restores.
+//
+// An empty action is a service of a release behind, which decides no action
+// and is waited out as it always was, and an action outside the three cannot
+// arrive: the gateway refuses one before it hands an answer over.
+func (r *run) followExhaustedAnswer(ctx context.Context, stage, session string, ex exhaustedError) error {
+	until := ex.Until.UTC().Format(time.RFC3339)
+	if ex.Action != runstore.ActionHalt && r.reachedRigor() == rigor.Hotfix {
+		return r.haltNoCredential(fmt.Sprintf(
+			"a hotfix run never waits for a credential and never pauses: the credential service answered that no credential is usable before %s", until))
+	}
+	switch ex.Action {
+	case runstore.ActionHalt:
+		return r.haltNoCredential(fmt.Sprintf(
+			"the credential service answered that no credential is usable before %s and that this run should end rather than wait for it", until))
+	case runstore.ActionPause:
+		return Suspend(ctx, r, stage, session, ex)
+	}
+	return nil
 }
 
 // unreachableError ends the stage that was running when a call could not reach
@@ -178,11 +228,8 @@ func (r *run) setWaitingUntil(at time.Time) {
 // of idling into a timeout whose message would blame the wrong limit.
 func (r *run) waitForCredential(ctx context.Context, name string, until time.Time) error {
 	if final := r.budget.finalizeAt(); !until.Before(final) {
-		h := runstore.Halt{Reason: runstore.HaltNoCredential, Scope: "run", At: r.d.Now().UTC(),
-			Detail: fmt.Sprintf("no credential was usable before this job's own timeout: the credential service answered that the earliest reset is %s, and this job must be finished by %s (see 'fugaro accounts ls' for the accounts' states; the project policy's credentials.fallback decides whether another tier may be used)",
-				until.UTC().Format(time.RFC3339), final.UTC().Format(time.RFC3339))}
-		r.haltNow(h)
-		return &HaltError{h}
+		return r.haltNoCredential(fmt.Sprintf("no credential was usable before this job's own timeout: the credential service answered that the earliest reset is %s, and this job must be finished by %s (see 'fugaro accounts ls' for the accounts' states; the project policy's credentials.fallback decides whether another tier may be used)",
+			until.UTC().Format(time.RFC3339), final.UTC().Format(time.RFC3339)))
 	}
 	// A halt recorded between the stage's own check and here (a kill switch,
 	// a cap, the backend's grace, all of them other goroutines) ends the wait

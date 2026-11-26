@@ -2787,6 +2787,14 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	if err := env.vaultGate(ctx, slug, spec, kind, clone, warn); err != nil {
 		return config.Inputs{}, err
 	}
+	// And the same run's second half (IS6): the fetch that job depends on is
+	// version 2's, by name, from the project record — a runner that knows the
+	// version-1 way asks for the project copy this release stops deriving. Read
+	// after the gate above and on its own condition, so an image below vaultSince
+	// meets that sentence and one between the two meets this.
+	if err := env.vaultNameGate(ctx, slug, spec, kind, clone, warn); err != nil {
+		return config.Inputs{}, err
+	}
 	if err := checkMaxParallel(ctx, env); err != nil {
 		return config.Inputs{}, err
 	}
@@ -6802,6 +6810,12 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	}
 	svcAuth, deployed := env.repoServiceAuth(ctx, spec, launchWarn)
 	lspec.Env = credentialsServiceLaunchEnv(env.serviceConfig(), jobProfile, spec.Repo, svcAuth, env.policyMode(ctx), deployed, reviewJob)
+	// A launch on a shared project job writes no model environment: the job is
+	// shared by every repository of its profile, so the routes, the prices and
+	// the allow-list a run goes by are the owner's published policy node's, and
+	// the run reads them there (internal/runner's resolvePolicy). A launcher's
+	// own config is not the owner of any of the three — the node is the one
+	// object a launcher cannot write.
 	// The run's slip, asked for exactly where the service's address was just
 	// written: the grant the credentials service keeps for this run, whose id
 	// the job claims at its first call and presents on every call after it
