@@ -123,6 +123,9 @@ type reposEnrolment struct {
 	anchor *anchorEdit
 	// anchorNote is that why, printed under the plan's first step.
 	anchorNote string
+	// starterPR is the pull request this run opened for a missing fugaro.yaml;
+	// the enrolment stops there.
+	starterPR string
 }
 
 // runProjectReposEnroll is the convergent path: read, show, ask once, write.
@@ -172,9 +175,13 @@ func runProjectReposEnroll(cmd *cobra.Command, o *projectReposOptions, arg strin
 	if err := requirePolicyRules(ctx, db, lc); err != nil {
 		return err
 	}
-	plan, err := reposEnrolmentRead(ctx, o, lc, db, arg)
+	plan, err := reposEnrolmentRead(ctx, cmd.OutOrStdout(), o, lc, db, arg)
 	if err != nil {
 		return err
+	}
+	if plan.starterPR != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "fugaro.yaml for %s: pull request %s\nmerge it, then run `fugaro project repos add %s` again to finish\n", pluginwire.Printable(arg), safetext.Field(plan.starterPR), arg)
+		return nil
 	}
 	reposEnrolmentPlan(cmd.OutOrStdout(), lc, plan)
 	// One question for the whole convergence. Nothing on the command line
@@ -195,7 +202,11 @@ func runProjectReposEnroll(cmd *cobra.Command, o *projectReposOptions, arg strin
 // reposEnrolmentRead reads everything the plan is built from. It writes
 // nothing, and that is the order it exists for: every refusal lands before the
 // operator is shown a plan and asked about it.
-func reposEnrolmentRead(ctx context.Context, o *projectReposOptions, lc *localcfg.Config, db *rtdb.Client, arg string) (reposEnrolment, error) {
+//
+// out is the command's own standard output, and the one thing that reaches it
+// from here is the line the starter's Bitbucket token read prints before it
+// reads (enrolOpenStarter); the plan and the report are printed by the caller.
+func reposEnrolmentRead(ctx context.Context, out io.Writer, o *projectReposOptions, lc *localcfg.Config, db *rtdb.Client, arg string) (reposEnrolment, error) {
 	var plan reposEnrolment
 	ownerName, err := reposEnrolmentName(arg)
 	if err != nil {
@@ -215,6 +226,12 @@ func reposEnrolmentRead(ctx context.Context, o *projectReposOptions, lc *localcf
 	if plan.checkout = checkoutRoot(ctx, ownerName); plan.checkout == "" {
 		return plan, userErr("cannot read %s here: this command enrols a repository from its own checkout — its fugaro.yaml is where its workflows and its base branch come from, and its job set is deployed from there too. Run it from a checkout of %s, or write the allow-list entry alone with `fugaro project repos add %s --allow-list-only`",
 			pluginwire.Printable(ownerName), pluginwire.Printable(ownerName), ownerName)
+	}
+	if plan.starterPR, err = enrolOpenStarter(ctx, out, lc, ownerName, plan.checkout, plan.entryNow, plan.entryKnown); err != nil {
+		return plan, err
+	}
+	if plan.starterPR != "" {
+		return plan, nil
 	}
 	provider, err := reposEnrolmentProvider(ctx, ownerName, plan.entryNow, plan.entryKnown)
 	if err != nil {
@@ -1198,7 +1215,7 @@ func reposEnrolmentRunStages(ctx context.Context, cmd *cobra.Command, run *stepR
 	// three of the six this command accounts for, and the closing line is
 	// printed where this command's own run ends.
 	opts.ReportBorrowed = true
-	res, err := initflow.Run(ctx, reposEnrolmentStageList(e), opts)
+	res, err := e.r.runStages(ctx, reposEnrolmentStageList(e), opts)
 	cmd.SetOut(answer)
 	if err != nil {
 		return nil, userErr("%v", err)

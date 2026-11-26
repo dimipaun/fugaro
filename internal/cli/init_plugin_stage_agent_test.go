@@ -42,8 +42,8 @@ import (
 // everything behind it, the repository stage and the checkout's own plugin step
 // included, was blocked. So the plugin stayed on the previous release and
 // nothing local moved. The assertions below are what holds instead: the plugin
-// installs, the repository stage stops needs-you, and the checkout runs past
-// that stop to park its cloud half.
+// installs, the repository stage stops needs-you, and the checkout's own plan
+// names the cloud half it may not build and leaves it for the user (U4).
 func TestInitPluginStageMovesInAgentSessionAheadOfARepositoryStop(t *testing.T) {
 	r := newConvergeRigYAML(t, v7Node(), convergeLegacyYAML)
 	currentRelease(t)
@@ -91,7 +91,7 @@ func TestInitPluginStageMovesInAgentSessionAheadOfARepositoryStop(t *testing.T) 
 	if n := len(r.builder.specs); n != 0 {
 		t.Errorf("%d job image(s) reached Cloud Build from a fugaro.yaml the repository stage did not onboard: %+v\n%s", n, r.builder.specs, out)
 	}
-	if !strings.Contains(out+errOut, "cloud: skipped: a coding agent's session") {
-		t.Errorf("the cloud step was not parked by name:\n%s\n%s", out, errOut)
+	if got := res.state(initflow.Checkout); got == "done" || !strings.Contains(out+errOut, `"repo": "acme/app"`) {
+		t.Errorf("the checkout stage did not park the cloud step for acme/app:\n%s\n%s", out, errOut)
 	}
 }
