@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/infra"
+	managed "github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/testutil"
 	"gocloud.dev/blob/gcsblob"
@@ -509,6 +510,16 @@ func TestRefreshHasNoJSONOrPlanOnly(t *testing.T) {
 func TestRefreshBaseAndReloadShareTheLocalConfigPath(t *testing.T) {
 	useSelf(t)
 	r := newImagesRig(t, "1.2.3")
+	// The project is managed, because this test drives the real step 2 and that
+	// step is fenced (D2217, T7c): a refresh on a project that is not managed is
+	// refused at the head of it, and what this test is about — one local-config
+	// path shared by the base step and the reload — is only reachable on a
+	// project the command is admitted to. The marks are the two the read takes:
+	// the project's own label, and the runs bucket's label with the creation fact
+	// in it.
+	labelled(r.crm, initProject)
+	r.gcs.AddBucket(initRunsBucket, initProjectNumber, map[string]string{gcp.LabelManaged: gcp.ManagedValue})
+	r.gcs.Put(initRunsBucket, managed.MarkerObject, managedAddMarker())
 	t.Chdir(repoCheckout(t, githubOrigin, refreshYAML))
 	r.appendConfig(t, "  acme/app: { provider: github, workflows: [app], github_app_id: \"12345\" }\n")
 	records = map[string]string{}
