@@ -50,8 +50,13 @@ its C1), D3130 twice (round 1 found the roles-and-scopes launch check). D3131 wa
 from review round 4: the orchestrator's launch path was traced and **D3136 amends D3125** (the
 issuer serves it only a recorded, unstarted attempt; D3136 was itself **amended after review**,
 its first question having described the wrong threat), a fourth review round was run on the
-owner's word (D3133), D3126 stands with H1 narrowed (D3134), one fact is settled by LM14's
-first step (D3135), and a roster service account stays unscoped (D3137). Two
+owner's word (D3133), D3126 stands with H1 narrowed (D3134), and a roster service account stays
+unscoped (D3137). **D3135's fact was settled by LM14's first step the way its row said would
+send the question back to the owner — an installation that can launch after always-a-budget can
+have no published policy (U5 is yes) — and the owner answered on 2026-11-26 with the row's own
+alternative: accept the gap.** An installation with no published policy keeps no lever for an
+older CLI, which then meets IAM's 403; `fugaro project policy publish` fixes it by hand, and
+`update` publishes no minimal policy. Two
 answers reach outside this folder: **D3121 amends the rule** that the
 credentials service account's only grant is its database role, and **D3129 holds** everything in
 batch-run-identity that touches its key or its C1 until this plan's LM19, **which puts on hold
