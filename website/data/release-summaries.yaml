@@ -84,4 +84,4 @@ summaries:
   v0.29.1: fugaro update completes on an installation that already runs the orchestrator, which 0.29.0 stopped on.
   v0.29.2: fugaro update builds the job images on an installation whose build identity could not get its token.
   v0.29.3: fugaro update builds every job image, including an entry the image map names nothing for, a long catalog build, and a Bitbucket repository's.
-  v0.29.4: fugaro update builds a Bitbucket repository's job image and a launch is granted its slip, which 0.29.3 could not.
+  v0.29.4: fugaro update builds a Bitbucket repository's job image, which 0.29.3 still could not.
