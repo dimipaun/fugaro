@@ -266,7 +266,7 @@ func launchSpecForPR(ctx context.Context, env *cloudEnv, slug string, pr int, wa
 	// has a launcher label where a brief would be ("periodic run review"), so
 	// reviewing against its text would raise noise and nothing else (R10,
 	// F13): the review is code-only, and says why.
-	if ownStepRecipe(checkoutRoot(ctx, root.Repo), root.Recipe) {
+	if ownStepRecipe(root.Recipe) {
 		return launchSpecNone(launchSpecOwnStep), nil
 	}
 	rs := &task.ReviewSpec{
@@ -332,29 +332,15 @@ func followUpSpecText(fu *task.Spec) string {
 // ownStepRecipe reports whether rcp is a recipe whose first step is one of the
 // runner's own — the digest step or the commit_reports step (recipe.UsesDigest
 // and recipe.UsesCommitReports) — which is the recipe a report run carries
-// (R10, task.RecipeUsesDigest). A repository recipe's task carries its name
-// alone, so its file is read from the checkout; with no checkout, or a file
-// that is not there or does not parse, the answer is no and the run is judged
-// an ordinary one — the run's own recipe read at its ref is what the runner
-// acts on, and this is the launcher's own chance to say so before the job.
-func ownStepRecipe(root string, rcp *task.Recipe) bool {
-	own := func(yaml string) bool {
-		return task.RecipeUsesDigest(yaml) || task.RecipeUsesCommitReports(yaml)
-	}
-	switch {
-	case rcp == nil:
+// (R10, task.RecipeUsesDigest). A repository recipe is the project's copy of
+// it, which the task embeds (D3303), so the text it carries is the whole of
+// what is judged: a task naming a repository recipe — one an older release's
+// launcher wrote — carries none, and answers no.
+func ownStepRecipe(rcp *task.Recipe) bool {
+	if rcp == nil {
 		return false
-	case rcp.Source == string(recipe.SourceRepo):
-		if root == "" {
-			return false
-		}
-		data, found, err := recipe.ReadRepoFile(root, rcp.Name)
-		if err != nil || !found {
-			return false
-		}
-		return own(string(data))
 	}
-	return own(rcp.YAML)
+	return task.RecipeUsesDigest(rcp.YAML) || task.RecipeUsesCommitReports(rcp.YAML)
 }
 
 // clipReviewSpecText clips text to MaxReviewSpecBytes, cutting at a line

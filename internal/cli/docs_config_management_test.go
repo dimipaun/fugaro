@@ -376,9 +376,21 @@ const (
 // the `models` family's, since the layer file is what `fugaro config publish`
 // carries and not the generic path, whose allowlist reaches no key of that
 // family — so the rows without a generic writer move by the one.
+//
+// T0b of docs/image-map-by-provider/ is the last mover, by one row and by none:
+// the local config's repo_images is the repository-to-image map in the form L11
+// gives it (D3370, D3371), one row beside image_map's while both members exist
+// (R15), and its owner is the `image map` family, so no name in the allowlist
+// and no prefix of it reaches the row.
+//
+// PR9 of docs/model-credentials-routing/ is the last mover after it, by three rows
+// and by three: the pause block's in-job floor, its shortest pause and its longest
+// paused time (R11, D3184, D3187, D3190) are three `pause.` rows the generic
+// writer names, so the registry and the named half of the allowlist move together
+// and the rows without a writer stay where they were.
 const (
-	cfmRegistryRows   = 542
-	cfmAllowlistNamed = 122
+	cfmRegistryRows   = 546
+	cfmAllowlistNamed = 125
 )
 
 func TestDocsConfigManagementIsWritten(t *testing.T) {
