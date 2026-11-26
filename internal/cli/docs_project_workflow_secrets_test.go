@@ -845,26 +845,41 @@ func TestDocsProjectWorkflowSecretsReachIsSaidWhereAPersonMeetsIt(t *testing.T) 
 		{"SECURITY.md", []string{
 			// The paragraph D1273 asks for, in the shape the Bitbucket token's
 			// warning already has in this file: the entry decides the reach,
-			// a wildcard reaches what it matches now and later, the value is
-			// what the repository's build and tests read, and a repository's
-			// own copy wins.
+			// a wildcard reaches what it matches now and later, and the value
+			// is what the repository's build and tests read.
 			"A workflow secret's entry is where its reach is decided.",
 			"so the reach of a name like `db-password` is that entry and not the whole installation",
-			"With no entry, or with an entry that lists nothing, the name mounts nowhere and stays a repository copy.",
+			// The reach is the project record the owner's own commands write
+			// (IS11, D3328, F22, F23): the operator's block is the seed, the
+			// record is what the service admits a fetch by, and a name no
+			// entry covers is a run that stops at its start rather than one
+			// served nothing.
+			"`fugaro update` writes that list into the project's own record, which is the list the credentials service admits a fetch by",
+			"`fugaro secrets allow NAME PATTERN...` writes the record directly, and `--all-repos` admits every repository the project admits, whatever its owner",
+			"With no entry, or with an entry that lists nothing, no repository may read the name, and a run whose workflow declares it stops at its start naming the entry to write.",
 			"A wildcard inside a segment (`myworkspace/*`) means every repository it matches **now and later**",
 			"**The value is whatever the repository's build and tests read**",
-			"A repository that stores its own copy keeps it, as every other name does.",
-			// And the two clauses that stopped being true, corrected in place.
+			// A repository's own copy of one is ignored, as every other
+			// repository-level secret is (D2313, IS11): the sentence this
+			// replaces said a repository that stores one keeps it, which the
+			// flip and the disabled class together make false.
+			"A repository's own copy of a workflow secret is ignored, as every other repository-level secret is (D2313)",
+			// And the clauses that stopped being true, corrected in place: a
+			// workflow's own `secrets:` is a project secret now (IS4, IS11),
+			// and the shared class's run carries none at all (D3335).
 			"`workflows.<n>.secrets` **can** be shared this way, through the operator's own `workflow_secrets.<name>` entry",
 			"A **shared project job** never mounts one at all",
-			"A name that has no project-wide meaning (a workflow's own `secrets:` entry that no `workflow_secrets` entry in the operator's local config covers",
+			"a **shared project job's run carries no workflow secret** at all, because the fetch refuses that caller class whole (D3335)",
+			"A workflow's own `secrets:` entry is a project secret too",
 		}, []string{
-			// The two sentences the feature made false. A security page is
-			// where this costs most: the reader acts on it without running
-			// anything, so the old wording may not return as a plausible
-			// paraphrase.
+			// The sentences the feature made false. A security page is where
+			// this costs most: the reader acts on it without running anything,
+			// so the old wording may not return as a plausible paraphrase.
 			"`workflows.<n>.secrets` cannot be shared this way at all",
 			"A name that has no project-wide meaning (a workflow's own `secrets:` entry, or the default Claude account's `claude-oauth-token`) keeps the repository scope it had.",
+			"A name that has no project-wide meaning (a workflow's own `secrets:` entry that no `workflow_secrets` entry in the operator's local config covers",
+			"A repository that stores its own copy keeps it, as every other name does.",
+			"the name mounts nowhere and stays a repository copy",
 		}},
 		{"plugin/skills/setup/SKILL.md", []string{
 			// The skill says it in its own vocabulary — "covered" is what it

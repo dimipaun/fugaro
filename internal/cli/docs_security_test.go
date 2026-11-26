@@ -539,9 +539,11 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"`creds/workflowsecrets/<slug>`",
 		"variable names and container IDs, never a value",
 		// The runner's fetch, and what it is bound to: the verified job
-		// account decides the repository and the workflow, never a header the
-		// run writes (G19).
-		"the service's own route, which binds the repository and the workflow to the **verified** job account",
+		// account decides the repository, never a header the run writes (G19).
+		// Version 2 names the logical secret and not a container (IS11's
+		// reading of IS1 and IS6): the service builds the container from the
+		// name, so the workflow stops being a fact the call carries.
+		"the service's own route, which binds the repository to the **verified** job account",
 		// A mounted value wins, so the flip is a no-op until B3.8 lands it.
 		"**A mounted value always wins:**",
 		// And the run-start dependency S3 adds, with D501's cold start and
@@ -550,12 +552,30 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"pays a **cold start** on a run's own start",
 		"keeps the instance serving it warm while it runs",
 		"no redundancy beyond Cloud Run's own",
-		// The permanent exception D2075 answers: a Batch VM is not a job
-		// account the service admits, so its workflow secrets stay the VM's
-		// own `secretVariables` and S3's fetch never reaches it.
-		"**A repository on `backend: cloud-batch` keeps its workflow secrets on the VM (D2075):**",
-		"a Batch VM is not a job account the service admits",
-		"a permanent listed exception",
+		// The exception D2075 stated, corrected: D3104 supersedes it (D3107,
+		// the owner's ruling of 2026-11-20, docs/batch-run-identity's
+		// reconciliation), so a Batch job mounts nothing at all and its
+		// workflow secrets are fetched from the service like any other
+		// repository's, while a launch the service does not serve is refused
+		// before the job exists. Pinned, because the sentence it replaced
+		// promised a Batch installation a mount it no longer has.
+		"**A repository on `backend: cloud-batch` is served like any other (D3104, D3107):**",
+		"a Batch job mounts nothing at all",
+		"a launch of a repository the service does not serve is refused before the job is created",
+		// The flip itself (IS6, D3324, D3328, D3333), which IS11 states where
+		// a person meets it. Each fact is pinned separately, because each is
+		// one a reader acts on: the mount that is gone, the container the
+		// value now lives in, what admits a fetch, the marker that keeps the
+		// two `fugaro_p_` classes apart, and the class the fetch refuses.
+		"**No job mounts one any more: the value is the project's own container (IS6, D3324).**",
+		"`fugaro_p_<name>`",
+		"serves it only to a repository the project's own record admits",
+		"`fugaro secrets allow` and `deny` write it, and `fugaro update` seeds it from the operator's `workflow_secrets` block, and never from a repository's own `fugaro.yaml`",
+		"a container that does not carry the intake's workflow-secret marker is refused rather than read",
+		"conditioned on the `fugaro_u_` and `fugaro_p_` prefixes",
+		"a shared project job's run, a review job, a launcher and a person are each refused",
+		"a shared job's run carries none at all",
+		"Version 1 of the call",
 		// S4 (B4.6). A build's credential step fetches from the service, and
 		// the claim that matters is D2076's: what moves is where the build
 		// reads the value, not what a Dockerfile can reach — the service
