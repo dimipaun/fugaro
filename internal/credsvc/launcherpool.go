@@ -163,13 +163,14 @@ func poolForLauncher(poolName string, shared *projectpolicy.Policy, principal ro
 // whose principal that account is — the one an admin fills, because a run of a
 // pipeline holds no session to fill its own.
 //
-// The FIRST such pool is the answer where a project publishes several, which is
-// the project's own order: every one of them is that account's by its own
-// statement, so no pool is served that the account's runs may not draw on, and
-// the order the installation wrote is the one an operator can read back. A
-// principal that is not a service account is answered no pool at all: a person's
-// run is resolved from that person's designation and never from a pool that
-// merely names them, which is PL4's rule and stays PL4's.
+// The FIRST such pool is the answer where a project publishes several, in the
+// order the installation wrote them: each is that account's own by its own
+// statement, so none of them is a pool the account's runs may not draw on, and
+// the order is the one an operator can read back.
+//
+// A person is answered no pool here: a person's run is resolved from that
+// person's designation and never from a pool that merely names them, which is
+// PL4's rule and stays PL4's (D3180).
 func poolOfServiceAccount(shared *projectpolicy.Policy, principal routing.Principal) (config.Pool, bool) {
 	if principal.Kind != routing.PrincipalServiceAccount {
 		return config.Pool{}, false
