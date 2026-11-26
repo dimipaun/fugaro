@@ -94,7 +94,7 @@ func PlanModels(p Project, repos []Repo) (Change, error) {
 		chosen[port.key] = v
 	}
 
-	if edit, line := authEdit(p.Layer, reads); edit != nil {
+	if edit, line := authEdit(p, reads); edit != nil {
 		c.LayerEdits = append(c.LayerEdits, *edit)
 		c.Lines = append(c.Lines, line)
 	}
@@ -315,9 +315,13 @@ var authHome = []string{"defaults", "agent", "auth"}
 // repositories write, the most common one and, on a tie, the first by name. The
 // models moved above run through the credential that value names, and a layer
 // without it reads as vertex, which refuses a model that is not Google's.
-func authEdit(layer map[string]any, reads []modelRead) (*LayerEdit, string) {
-	if layerScalar(layer, authHome) != "" {
+func authEdit(p Project, reads []modelRead) (*LayerEdit, string) {
+	if layerScalar(p.Layer, authHome) != "" {
 		return nil, ""
+	}
+	if p.Auth != "" {
+		return &LayerEdit{Path: slices.Clone(authHome), Value: p.Auth},
+			fmt.Sprintf("project: agent.auth -> %s (your choice)", p.Auth)
 	}
 	counts := map[string]int{}
 	for _, rd := range reads {
@@ -484,4 +488,37 @@ func listAt(tree map[string]any, path []string) ([]string, bool) {
 		out = append(out, s)
 	}
 	return out, true
+}
+
+// AuthOptions is the agent.auth values the repositories still to migrate write,
+// most common first and by name on a tie, and nil where the project's layer
+// already sets one: the answer to "do they disagree" is more than one.
+func AuthOptions(p Project, repos []Repo) []string {
+	if layerScalar(p.Layer, authHome) != "" {
+		return nil
+	}
+	counts := map[string]int{}
+	for _, r := range repos {
+		if r.Unreadable != "" {
+			continue
+		}
+		slug, err := task.Slug(r.Provider, r.Repo)
+		if err != nil || p.Migrated[slug] {
+			continue
+		}
+		if f, err := readModelFile(r.Config); err == nil && f.auth != "" {
+			counts[f.auth]++
+		}
+	}
+	out := make([]string, 0, len(counts))
+	for a := range counts {
+		out = append(out, a)
+	}
+	slices.SortFunc(out, func(a, b string) int {
+		if counts[a] != counts[b] {
+			return counts[b] - counts[a]
+		}
+		return strings.Compare(a, b)
+	})
+	return out
 }

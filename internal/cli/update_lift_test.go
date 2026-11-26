@@ -573,3 +573,58 @@ func TestUpdateLiftsEveryKey(t *testing.T) {
 		t.Errorf("the second update changed the layer file:\n%s", again)
 	}
 }
+
+// TestUpdateAskChoosesAuthWhereReposDisagree: update --ask puts one question
+// when the repositories write different agent.auth values, and only then; with
+// nobody to answer it is refused at once.
+func TestUpdateAskChoosesAuthWhereReposDisagree(t *testing.T) {
+	setup := func(t *testing.T) {
+		newLayerRig(t, strings.Replace(testProjectLayer, "  agent: { auth: api-key }\n", "", 1))
+		old := liftRepositories
+		liftRepositories = func(context.Context, *initEngine, *localcfg.Config, []string) ([]lift.Repo, []string, error) {
+			return []lift.Repo{
+				{Repo: "acme/one", Provider: "github", Config: []byte("agent:\n  auth: cascade\n")},
+				{Repo: "acme/two", Provider: "github", Config: []byte("agent:\n  auth: cascade\n")},
+				{Repo: "acme/three", Provider: "github", Config: []byte("agent:\n  auth: api-key\n")},
+			}, nil, nil
+		}
+		t.Cleanup(func() { liftRepositories = old })
+	}
+
+	t.Run("the first no moves to the next value", func(t *testing.T) {
+		setup(t)
+		fakeTerminal(t)
+		out, errOut, err := executeStdin(t, "n\ny\n", "update", "--ask")
+		if err != nil {
+			t.Fatalf("update --ask failed: %v\n%s%s", err, out, errOut)
+		}
+		if text, _ := localLayerText(t); !strings.Contains(text, "auth: api-key") {
+			t.Errorf("the chosen agent.auth is not in the layer file:\n%s", text)
+		}
+	})
+
+	t.Run("no terminal is refused at once", func(t *testing.T) {
+		setup(t)
+		noAgentSession(t)
+		noTerminalHere(t)
+		_, errOut, err := executeStdin(t, "", "update", "--ask")
+		if err == nil || !strings.Contains(err.Error()+errOut, "needs a real terminal") {
+			t.Fatalf("want a refusal naming the terminal, got %v\n%s", err, errOut)
+		}
+		if _, ok := localLayerText(t); ok {
+			t.Error("the layer file was written")
+		}
+	})
+
+	t.Run("without --ask the majority stands and nothing is asked", func(t *testing.T) {
+		setup(t)
+		fakeTerminal(t)
+		out, errOut, err := executeStdin(t, "", "update")
+		if err != nil {
+			t.Fatalf("update failed: %v\n%s%s", err, out, errOut)
+		}
+		if text, _ := localLayerText(t); !strings.Contains(text, "auth: cascade") {
+			t.Errorf("the majority value is not in the layer file:\n%s", text)
+		}
+	})
+}
