@@ -56,6 +56,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -63,6 +64,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/safetext"
+	"github.com/dimipaun/fugaro/internal/secretname"
 )
 
 // intakeServiceName is the Cloud Run service the intake is served from, as the
@@ -680,4 +682,275 @@ func swapServiceLabel(host string) (string, bool) {
 		return "", false
 	}
 	return intakeServiceName + "-" + rest, true
+}
+
+// The pool verbs below are `fugaro accounts pool contribute`, `withdraw` and
+// `rm-member` (PL5, D3194, R9).
+//
+// WHY THEY ARE THE INTAKE'S CLIENT AND NOT THE POOL WRITER'S. A pool's members
+// are the project's own containers, fugaro_p_<member>, and the shared prefix has
+// one writer: the intake. So a contribution is a call to it and not an edit of
+// the config file `accounts pool add` writes, and what an admin marks as taking
+// contributions is a container rather than a config key. The withdrawal and the
+// admin's removal are the SAME call, admitted to different people: the intake
+// decides whose member it is holding, so the two verbs differ in their name and
+// in nothing they send.
+
+// accountsPoolContributeOptions are the flags `accounts pool contribute` takes.
+type accountsPoolContributeOptions struct {
+	cloud  cloudOptions
+	asJSON bool
+	// to is --to: the pool the token is contributed to. It is a flag rather
+	// than the argument because the member follows it, and because the pool's
+	// own member is written by naming no member at all.
+	to string
+	// member is --member: the member the token is stored under, which is the
+	// pool's own when it is left out — the mark an admin writes, and the one
+	// every later contribution is admitted against.
+	member string
+}
+
+func (o *accountsPoolContributeOptions) addFlags(cmd *cobra.Command) {
+	addCloudFlags(cmd, &o.cloud)
+	cmd.Flags().BoolVar(&o.asJSON, "json", false, "print the intake's answer as JSON")
+	cmd.Flags().StringVar(&o.to, "to", "", "the pool to contribute to")
+	cmd.Flags().StringVar(&o.member, "member", "", "the member to contribute under (default: the pool itself, which is the mark that says the pool takes contributions, and only an admin may write it)")
+}
+
+// accountsPoolMemberOptions are the flags the two removal verbs take. The pool
+// is their argument, because a removal names the pool it removes a member from.
+type accountsPoolMemberOptions struct {
+	cloud  cloudOptions
+	asJSON bool
+	member string
+}
+
+func (o *accountsPoolMemberOptions) addFlags(cmd *cobra.Command) {
+	addCloudFlags(cmd, &o.cloud)
+	cmd.Flags().BoolVar(&o.asJSON, "json", false, "print the intake's answer as JSON")
+	cmd.Flags().StringVar(&o.member, "member", "", "the member to remove, which is the name the pool's container carries")
+}
+
+// newAccountsPoolContributeCmd is `fugaro accounts pool contribute --to POOL
+// [--member NAME]`: the one command that writes a member of a project pool
+// without being an admin (D3194, R9).
+func newAccountsPoolContributeCmd() *cobra.Command {
+	var o accountsPoolContributeOptions
+	cmd := &cobra.Command{
+		Use:   "contribute --to POOL [--member NAME]",
+		Short: "Contribute your own token to a pool that takes contributions",
+		Long: `Contribute YOUR OWN token to a project pool that takes contributions, as the
+member --member names: it is stored as a member of that pool, and not as a
+credential of your own.
+
+The token is read from stdin (or a hidden prompt) exactly as fugaro secrets user
+set reads one — never from an argument, a flag or the environment, and never
+printed — and it is written with the account your identity token carries, so it
+is yours to withdraw and an admin's to remove. Nobody contributes a token in
+another person's name: the intake refuses a write into a member that is not the
+caller's own (R9).
+
+The pool must be one an admin has marked as taking contributions. An admin marks
+it by running this command with no --member, which writes the pool's own member
+and only an admin may write it; a contribution to a pool with no such mark is
+refused. An admin removes any member with fugaro accounts pool rm-member.
+
+The call is made with your own Google ID token, which the installation's intake
+verifies, and against the address this project's own config file carries: it is
+run by a person at their own terminal and never inside a coding agent's session
+or a run's own process.`,
+		// A token pasted where a positional argument goes is refused here, and
+		// the sentence is `secrets set`'s own: cobra's own message would quote
+		// the value back.
+		Args: func(_ *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				return userErr("pass the token on stdin, never as an argument: arguments land in shell history and process lists")
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, _ []string) error { return accountsPoolContribute(cmd, o) },
+	}
+	o.addFlags(cmd)
+	// pflag quotes an unknown shorthand cluster, and a token pasted in the wrong
+	// place could be one (`-sk-ant-…`): this verb gets the family's own fixed
+	// message (newSecretsIntakeGroupCmd).
+	cmd.SetFlagErrorFunc(func(*cobra.Command, error) error {
+		return userErr("unknown or malformed flag; accounts pool contribute takes --to, --member, --json, --config, --project, --gcp-project and --region, and never the token")
+	})
+	return cmd
+}
+
+// newAccountsPoolWithdrawCmd is `fugaro accounts pool withdraw POOL --member
+// NAME`: the contributor's own way back from a token they contributed (R9).
+func newAccountsPoolWithdrawCmd() *cobra.Command {
+	var o accountsPoolMemberOptions
+	cmd := &cobra.Command{
+		Use:   "withdraw POOL --member NAME",
+		Short: "Withdraw your own contribution from a pool",
+		Long: `Remove the member NAME from the pool POOL: the container your own contribution
+to that pool is stored in, and the token in it with it.
+
+The intake decides whose member it is: a contributor withdraws their own and is
+refused another's, and an admin removes any. fugaro accounts pool rm-member is
+the same call under the admin's own name.
+
+The call is made with your own Google ID token, which the installation's intake
+verifies, and against the address this project's own config file carries: it is
+run by a person at their own terminal and never inside a coding agent's session
+or a run's own process.`,
+		Args: accountsPoolMemberArgs(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return accountsPoolMemberRemove(cmd, o, args[0], "withdrawn")
+		},
+	}
+	o.addFlags(cmd)
+	return cmd
+}
+
+// newAccountsPoolRmMemberCmd is `fugaro accounts pool rm-member POOL --member
+// NAME`: an admin's removal of any member of a pool (R9).
+func newAccountsPoolRmMemberCmd() *cobra.Command {
+	var o accountsPoolMemberOptions
+	cmd := &cobra.Command{
+		Use:   "rm-member POOL --member NAME",
+		Short: "Remove a member from a pool, as an admin",
+		Long: `Remove the member NAME from the pool POOL, whoever contributed it: this is the
+admin's half of R9, and the intake admits it to a caller on the installation's
+derived admin list.
+
+A contributor withdraws their own with fugaro accounts pool withdraw, which is
+the same call admitted to a different person.
+
+The call is made with your own Google ID token, which the installation's intake
+verifies, and against the address this project's own config file carries: it is
+run by a person at their own terminal and never inside a coding agent's session
+or a run's own process.`,
+		Args: accountsPoolMemberArgs(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return accountsPoolMemberRemove(cmd, o, args[0], "removed")
+		},
+	}
+	o.addFlags(cmd)
+	return cmd
+}
+
+// accountsPoolMemberArgs is the argument rule the two removal verbs share: the
+// pool, named once, and nothing else — a member is --member and never a second
+// argument, so a name typed in the wrong place is refused rather than read as
+// one.
+func accountsPoolMemberArgs() cobra.PositionalArgs {
+	return func(_ *cobra.Command, args []string) error {
+		switch {
+		case len(args) == 0:
+			return userErr("this command needs the POOL to remove the member from")
+		case len(args) > 1:
+			return userErr("this command takes one POOL: name the member with --member")
+		}
+		return nil
+	}
+}
+
+// accountsPoolContribute stores the caller's own token as a member of a pool.
+// The order is secretsIntakeSet's: the refusals, then the two names, then the
+// address (from local config, before a person is ever prompted for a token),
+// then the value, then the call.
+func accountsPoolContribute(cmd *cobra.Command, o accountsPoolContributeOptions) error {
+	ctx := cmd.Context()
+	if err := secretsIntakeRefusal(os.Getenv, "contributed"); err != nil {
+		return err
+	}
+	pool, member, err := accountsPoolMemberNames(o.to, o.member)
+	if err != nil {
+		return err
+	}
+	serviceURL, err := secretsIntakeServiceURL(ctx, o.cloud, "contributed")
+	if err != nil {
+		return err
+	}
+	value, err := readSecret(ctx, cmd.InOrStdin(), cmd.ErrOrStderr(), member, false)
+	if err != nil {
+		return err
+	}
+	var answer intake.SecretAnswer
+	if err := secretsIntakeDo(ctx, serviceURL, secretsIntakeCall{
+		Path: intake.CreatePath,
+		What: "your own token is contributed to a pool",
+		Body: intake.CreateRequest{
+			Scope: intake.ScopeShared,
+			Name:  member,
+			Pool:  pool,
+			Value: base64.StdEncoding.EncodeToString(value),
+		},
+		Out: &answer,
+	}); err != nil {
+		return err
+	}
+	if o.asJSON {
+		return printIntakeAnswer(cmd, answer)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "contributed %s to the pool %s (%s)\n",
+		pluginwire.Printable(member), pluginwire.Printable(pool), dash(answer.ID))
+	return nil
+}
+
+// accountsPoolMemberRemove removes one member of a pool, and it is the whole of
+// both removal verbs: the intake admits the contributor to their own and an
+// admin to any, so the call is one call and `did` is the only word that differs
+// between them.
+func accountsPoolMemberRemove(cmd *cobra.Command, o accountsPoolMemberOptions, pool, did string) error {
+	ctx := cmd.Context()
+	if err := secretsIntakeRefusal(os.Getenv, did); err != nil {
+		return err
+	}
+	// A removal names the member: the pool's own member is the mark an admin
+	// writes, never a member a contributor withdraws, so an omitted --member is
+	// refused rather than resolved to the pool.
+	if o.member == "" {
+		return userErr("this command needs --member: the pool's own member is the mark an admin writes, and a removal names the member it removes")
+	}
+	_, member, err := accountsPoolMemberNames(pool, o.member)
+	if err != nil {
+		return err
+	}
+	serviceURL, err := secretsIntakeServiceURL(ctx, o.cloud, did)
+	if err != nil {
+		return err
+	}
+	var answer intake.DeleteAnswer
+	if err := secretsIntakeDo(ctx, serviceURL, secretsIntakeCall{
+		Path: intake.DeletePath,
+		What: "a member is removed from a pool",
+		Body: intake.DeleteRequest{Scope: intake.ScopeShared, Name: member, Pool: pool},
+		Out:  &answer,
+	}); err != nil {
+		return err
+	}
+	if o.asJSON {
+		return printIntakeAnswer(cmd, answer)
+	}
+	_, err = fmt.Fprintf(cmd.OutOrStdout(), "removed %s from the pool %s\n",
+		pluginwire.Printable(member), pluginwire.Printable(pool))
+	return err
+}
+
+// accountsPoolMemberNames holds the two names a pool's member is made of to
+// their own grammars before anything is read or sent: the pool is a name the
+// project's config resolves (config.ValidCredentialRef, the rule the credentials
+// service's designation route holds a pool to), and the member is the name the
+// pool's container carries (secretname). An omitted member is the pool's own,
+// which is the mark an admin writes.
+func accountsPoolMemberNames(pool, member string) (string, string, error) {
+	if pool == "" {
+		return "", "", userErr("this command needs the pool: name it with --to or as the argument")
+	}
+	if msg := config.ValidCredentialRef(pool); msg != "" {
+		return "", "", userErr("the pool named is not one: %s", msg)
+	}
+	if member == "" {
+		member = pool
+	}
+	if _, err := secretname.Project(member); err != nil {
+		return "", "", userErr("the member named is not one a pool can hold: %v", err)
+	}
+	return pool, member, nil
 }
