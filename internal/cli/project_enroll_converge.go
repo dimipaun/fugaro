@@ -1088,7 +1088,7 @@ func reposEnrolmentRunStages(ctx context.Context, cmd *cobra.Command, run *stepR
 	// three of the six this command accounts for, and the closing line is
 	// printed where this command's own run ends.
 	opts.ReportBorrowed = true
-	res, err := initflow.Run(ctx, reposEnrolmentStageList(e), opts)
+	res, err := e.r.runStages(ctx, reposEnrolmentStageList(e), opts)
 	cmd.SetOut(answer)
 	if err != nil {
 		return nil, userErr("%v", err)

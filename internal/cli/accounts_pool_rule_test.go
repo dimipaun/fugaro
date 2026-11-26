@@ -17,19 +17,17 @@ import (
 	"github.com/dimipaun/fugaro/internal/routing"
 )
 
-// TestAccountsAddMakesAPoolOfOne is the pair the new members are for: a
-// subscription token is put in a pool from the start rather than left a lone
-// credential a launcher's designation has nothing to name (D3176, R26). The
-// pool is the one --pool names and the member is the credential entry this same
-// run declares, so the file that is left names the token once and walks it in
-// one pool.
+// TestAccountsAddPoolHoldsTheAccountAlone: --pool names the pool the token is
+// written into, and a name this config defines no pool of is declared with the
+// credential entry this same run declares as its one member, so the file that
+// is left names the token once and walks it in one pool.
 //
 // The clauses that bound the write: a pool holds a subscription token, so a key
 // credential is refused rather than pooled; the pool joins one the config
 // already defines with its own members and their order kept; and the name is
 // refused where a credential of the same config holds it, unless the pool would
 // walk that credential alone (config.ValidatePools).
-func TestAccountsAddMakesAPoolOfOne(t *testing.T) {
+func TestAccountsAddPoolHoldsTheAccountAlone(t *testing.T) {
 	path := accountsAddFixture(t, accountsAddLocal)
 	ownerAtTheTerminal(t)
 
@@ -57,8 +55,10 @@ func TestAccountsAddMakesAPoolOfOne(t *testing.T) {
 	}
 }
 
-// TestAccountsAddDefaultsToAPoolOfOneNamedAfterTheAccount is PL2's first clause
-// and D3176's shape: with no --pool, a subscription token is put in a pool of
+// TestAccountsAddDefaultsToAPoolOfOneNamedAfterTheAccount is the default this
+// command ships today and D3200 retires (the owner's ruling of 2026-11-26:
+// `accounts add` writes a lone account, and a pool is made with `fugaro
+// accounts pool add`): with no --pool, a subscription token is put in a pool of
 // one named after the account, and a key credential is put in none — no pool
 // walks a provider key.
 //
