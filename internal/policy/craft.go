@@ -15,7 +15,7 @@ import (
 // layer, the local config and the policy node — and what lives here is the one
 // part of it the layers may disagree about, which is why this package carries
 // three fields rather than those types: config imports this one (config's
-// budget mode is this package's ModeOff, its governance block this package's
+// budget mode is this package's Mode, its governance block this package's
 // Governance), so a build of this file that named config.Pool would be an
 // import cycle. The layer builders — internal/runner's policyCeiling and
 // FileLayer, the CLI's own — convert, and they are also what puts the built-in

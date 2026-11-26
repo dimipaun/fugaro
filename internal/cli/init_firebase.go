@@ -571,9 +571,6 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	if err != nil {
 		return err
 	}
-	if mode == "off" {
-		r.warn("--budget-mode off still deployed the database (its rules, mark and project name): jobs just don't use it, and the mode stored in it is unchanged by off")
-	}
 	r.mutate = func(next *localcfg.Config) {
 		b := localcfg.Budget{}
 		if next.Budget != nil {
@@ -600,9 +597,6 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	r.backfillCredentialsServiceReady(ctx, c, spec.StateBucket, lc, outs)
 	if err := r.writeConfig(ctx, lc, spec, outs, path, old, confirmed); err != nil {
 		return err
-	}
-	if lc.BudgetMode() == localcfg.BudgetOff && mode == "" {
-		r.warn("budget.mode is off in the project config, so jobs don't use the backend yet: fugaro update --firebase-project " + fp + " --budget-mode observe turns it on (then fugaro update --repo for each repository)")
 	}
 	// D3027: the budget database and the local config that records it are
 	// written, and only now is the run history reached. Nothing here waits on
@@ -855,11 +849,7 @@ func (r *initRun) openDatabase(ctx context.Context, lc *localcfg.Config, url, mo
 	if err != nil {
 		return nil, err
 	}
-	m := mode
-	if m == "off" {
-		m = ""
-	}
-	return infra.NewDB(cl, lc.Name, lc.GCPProject, m), nil
+	return infra.NewDB(cl, lc.Name, lc.GCPProject, mode), nil
 }
 
 // checkDatabase refuses a database of the Firebase project that holds

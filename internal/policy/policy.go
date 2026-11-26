@@ -135,9 +135,9 @@ const (
 	SourceChain = "chain"
 )
 
-// Budget modes, loosest to strictest.
+// Budget modes, loosest to strictest. There is no off (D3009): a mode left
+// unset is observe, and the word that was a mode lives only in Mode.Removed.
 const (
-	ModeOff     = "off"
 	ModeObserve = "observe"
 	ModeEnforce = "enforce"
 )

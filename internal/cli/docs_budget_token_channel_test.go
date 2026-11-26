@@ -367,8 +367,10 @@ func TestDocsBudgetTokenChannelNamesTheMintingCondition(t *testing.T) {
 		}
 	}
 	// And the mode is not read (AB4): the documents state a condition with no
-	// mode in it, so neither may the two functions that decide it.
-	for _, gone := range []string{"BudgetMode()", "BudgetOff", "ModeOff", "policy.read"} {
+	// mode in it, so neither may the two functions that decide it. The names of
+	// the deleted mode constants are not listed here any more (I1): they exist
+	// nowhere in the tree, and TestNoCodeReadsTheRemovedMode is what keeps it so.
+	for _, gone := range []string{"BudgetMode()", "policy.read"} {
 		if strings.Contains(backendOn+mintOn, gone) {
 			t.Errorf("internal/cli/launch_budget.go still decides the minting condition with %q: %s says a launch mints for a budget database and its signer, whatever the mode is and whether or not a policy was published (AB4)", gone, design)
 		}

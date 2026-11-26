@@ -287,31 +287,21 @@ func TestRoutingInertReasonIsTheLadderTheRunWalks(t *testing.T) {
 		})
 	}
 	// GatewayOn is the other half of the same reading, and the run asks it
-	// through one function: the credential, and nothing else. The mode is
-	// swept here rather than fixed because it is the argument that stopped
-	// being a fact (AB1b, D3009): every credential the gateway carries answers
-	// true whatever the job wrote, including the two strings that used to mean
-	// "no gateway".
+	// through one function: the credential, and nothing else. The mode is not
+	// an argument any more (I1): there is nothing left for a job to write that
+	// could change this answer, so the credential alone decides it.
 	for _, tc := range []struct {
-		auth, mode string
-		want       bool
+		auth string
+		want bool
 	}{
-		{"api-key", policy.ModeEnforce, true},
-		{"api-key", policy.ModeObserve, true},
-		{"api-key", policy.ModeOff, true},
-		{"api-key", "", true},
-		{"vertex", policy.ModeObserve, true},
-		{"vertex", policy.ModeEnforce, true},
-		{"vertex", policy.ModeOff, true},
-		{"vertex", "", true},
-		{config.AuthCascade, policy.ModeOff, true},
-		{config.AuthCascade, "", true},
-		{"oauth", policy.ModeEnforce, false},
-		{"oauth", "", false},
-		{"", policy.ModeObserve, false},
+		{"api-key", true},
+		{"vertex", true},
+		{config.AuthCascade, true},
+		{"oauth", false},
+		{"", false},
 	} {
-		if got := GatewayOn(tc.auth, tc.mode); got != tc.want {
-			t.Errorf("GatewayOn(%q, %q) = %v, want %v", tc.auth, tc.mode, got, tc.want)
+		if got := GatewayOn(tc.auth); got != tc.want {
+			t.Errorf("GatewayOn(%q) = %v, want %v", tc.auth, got, tc.want)
 		}
 	}
 }
@@ -492,22 +482,20 @@ func overridesFor(id string) pricing.Overrides {
 }
 
 // TestGatewayOnForCascade (C1.19, AB1b): a cascade run's calls go through the
-// gateway, which is what carries them to the credentials service. The mode
-// stopped being part of that answer (D3009): a cascade run has no credential of
-// its own at all, so what its gateway stands on is the service, and the job's
-// mode moves nothing.
+// gateway, which is what carries them to the credentials service. The mode is
+// not part of that answer (D3009): a cascade run has no credential of its own
+// at all, so what its gateway stands on is the service, and the job's mode
+// moves nothing.
 //
 // The mutation: leaving cascade out of GatewayOn's list, which would leave a
 // cascade run with no gateway to attach a credential and no way to spend.
 func TestGatewayOnForCascade(t *testing.T) {
-	for _, mode := range []string{policy.ModeObserve, policy.ModeEnforce, string(policy.ModeOff), ""} {
-		if !GatewayOn(config.AuthCascade, mode) {
-			t.Errorf("GatewayOn(cascade, %q) = false, want true: the mode is not a fact of the gateway", mode)
-		}
+	if !GatewayOn(config.AuthCascade) {
+		t.Error("GatewayOn(cascade) = false, want true: a cascade run's calls go through the gateway to the credentials service")
 	}
 	// run.gatewayOn is the same answer for a run that holds the mode.
 	r := cascadeRun(t, nil)
-	for _, mode := range []string{policy.ModeObserve, policy.ModeEnforce, string(policy.ModeOff), ""} {
+	for _, mode := range []string{policy.ModeObserve, policy.ModeEnforce, "off", ""} {
 		r.spend.Mode = mode
 		if !r.gatewayOn() {
 			t.Errorf("a cascade run with the budget mode %q does not route through the gateway", mode)
@@ -1521,7 +1509,7 @@ func TestDiagnosisTakesTheReviewModelPath(t *testing.T) {
 // class never picked.
 func TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn(t *testing.T) {
 	for _, auth := range []string{"api-key", "vertex"} {
-		for _, mode := range []string{policy.ModeEnforce, policy.ModeOff} {
+		for _, mode := range []string{policy.ModeEnforce, "off"} {
 			t.Run(auth+"/"+mode, func(t *testing.T) {
 				r := reviewClassRun(t, auth, mode)
 				err := r.applyRouting(r.projPolicy.policy, true)

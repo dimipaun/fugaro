@@ -389,7 +389,6 @@ func (c *Config) ProjectRigor() rigor.Config {
 
 // Budget modes, as the project config spells them.
 const (
-	BudgetOff     = policy.ModeOff
 	BudgetObserve = policy.ModeObserve
 	BudgetEnforce = policy.ModeEnforce
 )

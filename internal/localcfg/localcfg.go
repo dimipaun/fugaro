@@ -1447,7 +1447,6 @@ func (c *Config) NudgeRecurrence() int {
 
 // Budget modes.
 const (
-	BudgetOff     = policy.ModeOff
 	BudgetObserve = policy.ModeObserve
 	BudgetEnforce = policy.ModeEnforce
 )

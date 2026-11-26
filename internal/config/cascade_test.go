@@ -85,8 +85,8 @@ func TestValidateAcceptsCascade(t *testing.T) {
 // refuse.
 func TestCascadeRefusedWithBudgetOff(t *testing.T) {
 	a := Agent{Auth: AuthCascade}
-	got := problemsText(CheckCascadeGateway(a, BudgetOff))
-	if !strings.Contains(got, "agent.auth") || !strings.Contains(got, BudgetOff) {
+	got := problemsText(CheckCascadeGateway(a, "off"))
+	if !strings.Contains(got, "agent.auth") || !strings.Contains(got, "off") {
 		t.Errorf("the removed word was not refused at the key that carries it: %s", got)
 	}
 	if !strings.Contains(got, policy.ModeOffRefusal) {

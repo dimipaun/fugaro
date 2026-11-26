@@ -364,12 +364,12 @@ func (r *run) reviewClassRun() bool {
 //
 // An oauth run on the switch is the one addition (B2.2, F30): GatewayOn cannot
 // answer for it — an oauth auth is not one the gateway ever carried — so the
-// run's own switch is asked beside it. The mode is no longer a fact of either
-// answer (AB1b, D3009): GatewayOn carries every credential the gateway can
-// carry in every mode, and the budget is accounted for by every run (Spend.On),
-// so what is left here is the credential and the switch.
+// run's own switch is asked beside it. The mode is not a fact of either answer
+// (AB1b, D3009): GatewayOn carries every credential the gateway can carry, and
+// the budget is accounted for by every run (Spend.On), so what is left here is
+// the credential and the switch.
 func (r *run) gatewayOn() bool {
-	return GatewayOn(r.modelAuth(), r.spend.Mode) || r.serviceSwitched()
+	return GatewayOn(r.modelAuth()) || r.serviceSwitched()
 }
 
 // serviceSwitched reports whether this run's model calls go through the
@@ -1801,7 +1801,11 @@ func (r *run) checkProviderModels() error {
 	// the provider coder's, so that CheckPins, CheckAllowed, the gateway's
 	// stage pins and Claude Code's haiku role all see the same one.
 	bg := r.backgroundModel()
-	mode := policy.ModeOff
+	// A provider model needs the gateway (its calls are real dollars the
+	// budget accounts for), so the check is asked as observe wherever this
+	// run has none: an oauth run under an enforcing project still refuses a
+	// provider model, because no gateway it holds could charge for one.
+	mode := policy.ModeObserve
 	if r.gatewayOn() {
 		mode = r.spend.Mode
 	}
