@@ -103,7 +103,14 @@ type ProjectClients struct {
 }
 
 // ProjectEndpoints override the APIs' roots, so fakes can stand in.
-type ProjectEndpoints struct{ ResourceManager, Firebase, Billing string }
+type ProjectEndpoints struct {
+	ResourceManager, Firebase, Billing string
+	// QuotaProject is the project every call is billed to, named by the caller
+	// (an installation's own project). Empty names none: the credentials' own
+	// quota project then applies, which only a call that has no project of its
+	// own yet (the creation of one) may leave to it.
+	QuotaProject string
+}
 
 // NewProjectClients connects with the user's credentials (noAuth: none, for
 // fakes, which then need every endpoint).
@@ -122,6 +129,8 @@ func NewProjectClients(ctx context.Context, e ProjectEndpoints, noAuth bool, hc 
 		}
 		if noAuth {
 			out = append(out, option.WithoutAuthentication())
+		} else if e.QuotaProject != "" {
+			out = append(out, option.WithQuotaProject(e.QuotaProject))
 		}
 		if hc != nil {
 			out = append(out, option.WithHTTPClient(hc))
