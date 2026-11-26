@@ -863,7 +863,7 @@ func TestUpdatePolicyStagePublishesThePauseBlock(t *testing.T) {
 	r := newConvergeRig(t, currentNode())
 	r.appendConfig(t, "pause:\n  wait_in_job: 2m\n  min_pause: 40m\n  max_pause: 8h\n")
 	registerInstallation(t, r.initRig)
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 	p := convergeNode(t, r)
 	if p.Pause == nil {
 		t.Fatal("after one fugaro update, the node carries no pause block: the policy stage did not carry the settings the owner set, and every run of the project is decided on the defaults instead")
@@ -894,7 +894,7 @@ func TestUpdateKeepsAHandWrittenPauseBlock(t *testing.T) {
 	node := currentNode()
 	node["pause"] = map[string]any{"wait_in_job": "2m", "min_pause": "40m", "max_pause": "8h"}
 	r := newConvergeRig(t, node)
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 	p := convergeNode(t, r)
 	if p.Pause == nil {
 		t.Fatal("after one fugaro update, the node carries no pause block: the run rewrote the node without the settings the project was paused by")
