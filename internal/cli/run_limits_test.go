@@ -592,6 +592,70 @@ func TestRunClampedRoundsRefusalNamesTheFigure(t *testing.T) {
 	}
 }
 
+// TestLaunchBudgetUsesTheTighter: the review rounds a launch's budget names
+// for a run are the rounds the run starts from — the file's number where it
+// tightens the mode's row, and the row where the project layer says nothing
+// about the knob and the file's number is below it (R20, RT2). Both readers of
+// that figure answer with it: the refusal a chain limit below one round gets
+// names it, and the preview's knobs carry it.
+func TestLaunchBudgetUsesTheTighter(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		rounds int
+		want   int
+	}{
+		{"a knob under the row takes the row", 2, rigor.DefaultRounds(rigor.Pro).Senior},
+		{"a knob over the row is the run's own", 8, 8},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			baseBranchCheckout(t, limitsRepo, limitsRoundsYAML(tc.rounds), "main")
+			_, _, err := execute(t, "run", "--max-review-rounds", "0", "A task")
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want a user error", err)
+			}
+			want := fmt.Sprintf("A %s run's own review loop starts from %d rounds per run", rigor.Pro, tc.want)
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("err = %v, want the refusal to quote %q", err, want)
+			}
+			if n := len(f.run.RunRequests()); n != 0 {
+				t.Fatalf("%d launches, want none", n)
+			}
+		})
+	}
+
+	t.Run("the preview prices the same figure", func(t *testing.T) {
+		pf := newBudgetFixture(t, "")
+		pf.SetCaps(100, 3, 20, 3)
+		pf.SetSpentToday(0)
+		pf.Checkout(t, "  review_rounds: 2\n")
+		out, _, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "1", "--json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc struct {
+			Knobs struct {
+				FirstLineRounds int `json:"first_line_rounds"`
+				ReviewRounds    int `json:"review_rounds"`
+			} `json:"knobs"`
+		}
+		if err := json.Unmarshal([]byte(out), &doc); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if want := rigor.DefaultRounds(rigor.Pro).Senior; doc.Knobs.ReviewRounds != want {
+			t.Errorf("knobs.review_rounds = %d, want the mode's %d: the file wrote 2 and the project layer says nothing about the knob", doc.Knobs.ReviewRounds, want)
+		}
+	})
+}
+
+// limitsRoundsYAML is limitsYAML with a review-round knob the file wrote: the
+// project layer says nothing about the key, so the number stands only where it
+// tightens the mode's row (R20, RT2).
+func limitsRoundsYAML(rounds int) string {
+	return strings.Replace(limitsYAML, "agent: { max_run_tokens: 900000 }",
+		"agent: { max_run_tokens: 900000, review_rounds: "+fmt.Sprint(rounds)+" }", 1)
+}
+
 // TestRunRefusesAMalformedLimit: the syntax of the four flags is refused
 // before openCloud, so a mistyped number costs no cloud call and no read of
 // the policy — a different refusal from the loosening one, which needs the
