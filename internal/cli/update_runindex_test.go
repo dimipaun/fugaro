@@ -228,7 +228,7 @@ func TestUpdateStandsWhenTheReindexJobStartIsRefused(t *testing.T) {
 
 // TestUpdateReindexWritesNothingOutsideTheUpdateDoor: the step is `fugaro
 // update`'s, and it keeps the fences the steps beside it keep (update.go's
-// writeAdminList, update_prindex.go's backfillPRIndex): `fugaro setup`
+// writeAdminList, update_summary.go's backfillRunSummary): `fugaro setup`
 // converges the same installation through the same hook (init_stages.go's
 // outcome), `--plan-only` writes nothing at all, and a coding agent's session
 // under a marker changes nothing outside this machine unless the managed gate

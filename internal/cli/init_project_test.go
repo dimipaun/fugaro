@@ -1555,3 +1555,23 @@ func TestHeadsUpBeforeCreatingWhenNoBillingAccountWasListed(t *testing.T) {
 		t.Errorf("a heads-up with --link-billing given:\n%s", out.String())
 	}
 }
+
+// Once the project exists the run bills it, and turns on the three APIs that
+// takes first, one line each; nothing is asked.
+func TestCreatedProjectIsEnabledForItsOwnBilling(t *testing.T) {
+	r := newProjectRig(t)
+	out, _, _ := r.run(t, true, "", "--create-project", "--display-name", "Fugaro New")
+	for _, api := range infra.ProjectBillingAPIs {
+		if !strings.Contains(out, "enabled "+api+" in "+newProj+"\n") {
+			t.Errorf("no line for %s:\n%s", api, out)
+		}
+		if !r.su.Enabled(api) {
+			t.Errorf("%s was not enabled", api)
+		}
+	}
+	for _, q := range r.su.Requests() {
+		if strings.HasSuffix(q.Path, ":enable") && !strings.Contains(q.Path, "/projects/"+newProj+"/") {
+			t.Errorf("enable outside the created project: %s", q.Path)
+		}
+	}
+}

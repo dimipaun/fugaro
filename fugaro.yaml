@@ -45,9 +45,6 @@ agent:
   # code, to run the targeted tests by name, to mutation-check a security-sensitive change
   # in a scratch tree, and to report only what must change before this is merged.
   review: .fugaro/review.md
-  models:
-    coder: deepseek/deepseek-v4.1-flash
-    reviewer: claude-opus-5-5
 
 # Follow-ups (fugaro run --pr N) act on PR comments, which on a public repository anyone can
 # write: only the listed GitHub accounts (numeric IDs) are obeyed, and allow_public is the
@@ -91,8 +88,8 @@ workflows:
       # One test is left out with them, and it is the one that made ./scripts too big for
       # this step: TestLiveCheckScripts, which runs the bash tests of scripts/live-checks,
       # each driving a check's own script against fake tools on PATH. It is the bulk of the
-      # package -- 4.6 minutes with it skipped, 13 with it -- and CI runs it on three runners
-      # of its own (scripts-live-0..2). It is timing-sensitive too: beside the whole tree in
+      # package -- 4.6 minutes with it skipped, 13 with it -- and CI runs it on six runners
+      # of its own (scripts-live-0..5). It is timing-sensitive too: beside the whole tree in
       # one invocation its Check 90 stream case failed, and that shard passes alone
       # (CHECK_TEST_SHARD=0/3 bash scripts/live-checks/check90_test.sh). The rest of
       # ./scripts -- the Check 480 and 481 tests, the CI hygiene, contract, deploy, notice

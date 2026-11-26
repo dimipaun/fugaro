@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -214,6 +215,28 @@ func (l *commitReportsLog) String() string {
 	return l.b.String()
 }
 
+// logMessages are the entries the run's own JSON logger wrote, as the product's
+// own log reader prints them: `fugaro logs` projects an entry's message and its
+// stage/stream tags and no attribute, so a name that only an attribute carries
+// is a name no reader of the run's record sees.
+func logMessages(t *testing.T, logs *commitReportsLog) []string {
+	t.Helper()
+	var out []string
+	for _, line := range strings.Split(logs.String(), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var e struct {
+			Message string `json:"message"`
+		}
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Fatalf("the logger wrote a line that is not one entry (%v): %s", err, line)
+		}
+		out = append(out, e.Message)
+	}
+	return out
+}
+
 // TestCommitReportsWritesEachRepositorysReportUnderItsSlug: the step writes
 // every object the launcher handed in at its mirror-relative name under the
 // designated folder -- a repository's report under its own slug, the project's
@@ -360,7 +383,7 @@ func TestCommitReportsLeavesAFileTheStoreDoesNotHold(t *testing.T) {
 	rel := projectpolicy.DefaultReportsCommitDir + "/" + repoSlug + "/" + kept
 	advanceBranch(t, b.remote, "main", map[string]string{rel: keptBy})
 	var logs commitReportsLog
-	b.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	b.deps.Log = runner.NewLogger(&logs)
 
 	rec, err := b.run(t, review("ship", 0))
 	if err != nil || rec.Status != runstore.StatusSucceeded {
@@ -377,8 +400,9 @@ func TestCommitReportsLeavesAFileTheStoreDoesNotHold(t *testing.T) {
 	if !strings.Contains(body, "]("+repoSlug+"/"+kept+")") {
 		t.Errorf("the index does not list the report the folder already held:\n%s", body)
 	}
-	if !strings.Contains(logs.String(), rel) {
-		t.Errorf("the run's record does not name the file it left alone (%s):\n%s", rel, logs.String())
+	named := slices.ContainsFunc(logMessages(t, &logs), func(m string) bool { return strings.Contains(m, rel) })
+	if !named {
+		t.Errorf("the run's record does not name the file it left alone (%s) in the message `fugaro logs` prints:\n%s", rel, logs.String())
 	}
 }
 

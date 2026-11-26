@@ -6,17 +6,20 @@
 # measures no build at all), the installation's Cloud Run jobs and one execution,
 # the service's own log lines and the service's own IAM policy — out of a small
 # project built from the mode it is given, and the fake fugaro answers the
-# published policy node the check reads for its image_map. Both record every
+# published policy node the check reads for its repository-to-image map (the
+# `repo_images` member the release writes, or the legacy `image_map` an
+# installation it has not reached still carries, R2/F35). Both record every
 # argument they are handed, so the tests can assert that the check asked for the
 # sandbox installation's project and nothing else, that a repository's builds are
-# the ones the catalog entry its image_map names gives, that a row it could not
-# measure is never read as a pass, and that nothing secret-shaped ever reaches
-# the block.
+# the ones the catalog entry its own `provider/owner/name` key gives, that a row
+# it could not measure is never read as a pass, and that nothing secret-shaped
+# ever reaches the block.
 #
 # Usage: bash scripts/live-checks/check196_test.sh
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+LIVE_CHECK_LIB=${LIVE_CHECK_LIB:-$here/lib}
 script=$here/check196.sh
 work=$(mktemp -d)
 kept=()
@@ -54,6 +57,8 @@ write_fake_fugaro() { # dir
 #!/usr/bin/env bash
 # A stand-in for `fugaro`, for scripts/live-checks/check196.sh's test only.
 set -euo pipefail
+. "$LIVE_CHECK_LIB/strict.sh"
+strict_fugaro_verify "$@" || exit $?
 printf 'fugaro %s\n' "$*" >>"$FAKE_LOG_DIR/fugaro.calls"
 case "${1:-}" in
 version)
@@ -79,12 +84,16 @@ doctor)
   ;;
 project)
   # `fugaro project policy show --json --project <name>`: the published policy
-  # node, which the check reads for its image_map (D1906) — the map's PUBLISHED
-  # half, since this machine's project config wins where it states one. The
-  # scenario is FAKE_FUGARO_MODE, so a test can pair a published map with the
-  # builds the gcloud fake serves; the default map is the one the default
-  # project's builds carry, because a map naming an entry no build carries
-  # describes a project that cannot exist.
+  # node, which the check reads for its repository-to-image map — the map's
+  # PUBLISHED half, since this machine's project config wins where it states
+  # one. The default is the `repo_images` member the release writes, keyed
+  # `provider/owner/name` (D3371/F35), which is what an installation the release
+  # has reached carries; `map-legacy` is the bare-name `image_map` one the
+  # release has NOT reached still carries, and is read only where no layer
+  # states `repo_images` at all (R2). The scenario is FAKE_FUGARO_MODE, so a test
+  # can pair a published map with the builds the gcloud fake serves; the default
+  # map is the one the default project's builds carry, because a map naming an
+  # entry no build carries describes a project that cannot exist.
   case "$*" in
   *"policy show"*) ;;
   *) exit 1 ;;
@@ -94,10 +103,16 @@ project)
     echo "error: the published policy could not be read (no such object)" >&2
     exit 1
     ;;
-  map-no-repo) printf '{"policy":{"image_map":{"acme/bb-sandbox":"sandbox-bb"}}}\n' ;;
+  map-no-repo) printf '{"policy":{"repo_images":{"bitbucket/acme/bb-sandbox":"sandbox-bb"}}}\n' ;;
   map-empty) printf '{"policy":{}}\n' ;;
-  map-source-elsewhere) printf '{"policy":{"image_map":{"acme/sandbox":"shared-web","acme/bb-sandbox":"sandbox-bb"}}}\n' ;;
-  *) printf '{"policy":{"image_map":{"acme/sandbox":"sandbox-web","acme/bb-sandbox":"sandbox-bb"}}}\n' ;;
+  map-source-elsewhere) printf '{"policy":{"repo_images":{"github/acme/sandbox":"shared-web","bitbucket/acme/bb-sandbox":"sandbox-bb"}}}\n' ;;
+  # The repository is keyed under the OTHER provider: the map really names
+  # `acme/sandbox`, but never as GitHub's, and a check that looked a repository
+  # up by its bare name would find this entry and pass on a map that does not
+  # answer for this repository at all (F35).
+  map-other-provider) printf '{"policy":{"repo_images":{"bitbucket/acme/sandbox":"shared-web","bitbucket/acme/bb-sandbox":"sandbox-bb"}}}\n' ;;
+  map-legacy) printf '{"policy":{"image_map":{"acme/sandbox":"sandbox-web","acme/bb-sandbox":"sandbox-bb"}}}\n' ;;
+  *) printf '{"policy":{"repo_images":{"github/acme/sandbox":"sandbox-web","bitbucket/acme/bb-sandbox":"sandbox-bb"}}}\n' ;;
   esac
   ;;
 *) exit 1 ;;
@@ -156,17 +171,27 @@ def flag(name, default=""):
     return default
 
 
-# Like the real CLI, a flag a subcommand does not have is an error: every
-# subcommand this check calls is listed with the flags it may pass, so a
-# misspelled or invented flag cannot hide in any call.
-ALLOWED = {
-    ("builds", "list"): ("--project", "--region", "--limit", "--format"),
-    ("run", "jobs", "list"): ("--project", "--region", "--format"),
-    ("run", "jobs", "executions", "list"): ("--project", "--region", "--job", "--limit", "--format"),
-    ("logging", "read"): ("--project", "--freshness", "--limit", "--format"),
-    ("run", "services", "get-iam-policy"): ("--project", "--region", "--format"),
-    ("run", "services", "describe"): ("--project", "--region", "--format"),
-}
+# Like the real CLI, a flag a subcommand does not have is an error: the
+# subcommands this check may call, and the flags each may pass, are the short
+# allow-list kept beside this test (scripts/live-checks/lib/allow/
+# check196.gcloud), so a misspelled or invented flag cannot hide in any call.
+# The list is shared with the check's own strict fake, so the two cannot drift:
+# a flag main's catalog-aware reading added (`--region` on every listing) is in
+# it, and one this check stops passing is one the fake stops accepting.
+BASE_FLAGS = {"--help", "-h", "--quiet", "--project", "--format", "--account",
+              "--verbosity", "--log-http"}
+ALLOWED = {}
+ALLOWED_FLAGS = set()
+with open(os.path.join(os.environ["LIVE_CHECK_LIB"], "allow", "check196.gcloud")) as fh:
+    for line in fh:
+        line = line.rstrip("\n")
+        if not line or line.startswith("#"):
+            continue
+        kind, _, rest = line.partition("\t")
+        if kind == "cmd":
+            ALLOWED[tuple(rest.split())] = True
+        elif kind == "flag":
+            ALLOWED_FLAGS.add(rest.strip())
 positionals = [a for a in args if not a.startswith("-")]
 sub = None
 for n in (4, 3, 2):
@@ -177,7 +202,7 @@ if sub is None:
     sys.stderr.write("ERROR: (gcloud) unknown command: %s\n" % " ".join(args))
     sys.exit(2)
 for a in args:
-    if a.startswith("--") and a.split("=")[0] not in ALLOWED[sub]:
+    if a.startswith("--") and a.split("=")[0] not in ALLOWED_FLAGS | BASE_FLAGS:
         sys.stderr.write("ERROR: (gcloud) unrecognized argument: %s\n" % a)
         sys.exit(2)
 
@@ -215,7 +240,8 @@ def slug(provider):
 def build(repo, provider):
     """The CATALOG-ENTRY build of one repository, as it really is since D1900
     (repository-level derived images are disabled) and since IS8 (D3330): the
-    image the repository's image_map names, submitted by `fugaro image build
+    image the repository's own provider key in the map names, submitted by
+    `fugaro image build
     <entry>` or by `fugaro apply`'s owed catalog step, run as the installation's
     build identity, carrying NO secret at all -- the request names no
     availableSecrets and no step names a secretEnv, because the credential step
@@ -229,7 +255,8 @@ def build(repo, provider):
     entry = CATALOG_ENTRY[provider]
     source_repo, source_provider = repo, provider
     if mode == "map-source-elsewhere" and provider == "github":
-        # The served repository is a GitHub one and the entry its image_map names
+        # The served repository is a GitHub one and the entry its key in the map
+        # names
         # is SOURCED from a Bitbucket repository: the build's own `_REPO_URL` is
         # that repository's clone URL, so a match on `_REPO_URL` finds nothing
         # and only the entry the map names can select this build.
@@ -280,7 +307,7 @@ def derived_build(repo, provider):
     2026-11-24, and one nothing builds any more (D1900). It must never be read
     as the repository's image build: its `_IMAGE` names the repository and the
     workflow, not a catalog entry, so it is not the catalog entry the
-    repository's image_map names and this check cannot measure it."""
+    repository's own key in the map names and this check cannot measure it."""
     return {"id": "old-" + repo.split("/")[-1], "status": "SUCCESS",
             "startTime": "2026-11-19T10:00:00Z", "finishTime": "2026-11-19T10:05:00Z",
             "serviceAccount": "projects/fugaro-dev/serviceAccounts/" + account(provider),
@@ -451,8 +478,13 @@ run196() { # dir mode — the script's own arguments are in run_args, extra env 
   local -a runner=(bash)
   if [ -n "${CHECK196_TEST_XTRACE:-}" ]; then runner=(bash -x); fi
   status=0
-  env \
+  # The suite may itself be launched from a coding agent's session, which
+  # --preflight refuses: the markers are dropped here, and the refusal case sets
+  # one again (a variable given as an argument wins over `env -u`).
+  env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_REMOTE \
+    -u CURSOR_AGENT -u AI_AGENT \
     PATH="$dir/bin:$PATH" HOME="$dir/home" XDG_CONFIG_HOME="$dir/home/.config" TMPDIR="$dir/tmp" \
+    LIVE_CHECK_LIB="$LIVE_CHECK_LIB" \
     FAKE_LOG_DIR="$dir/logs" FAKE_GCLOUD_MODE="$mode" \
     CHECK196_REPO=acme/sandbox CHECK196_BITBUCKET=acme/bb-sandbox \
     CHECK196_LOG_WAIT_SECONDS=0 CHECK196_LOG_POLL_SECONDS=0 \
@@ -471,21 +503,26 @@ prepare() { # dir
   write_fake_gcloud "$1"
 }
 
-# write_local_project_config DIR — this machine's own project config for the
-# installation, whose `image_map` block is the map's LOCAL half and wins over the
-# published node's where it states one (localcfg's ImageMapEffective, D1906). The
-# path is the one localcfg's selector reads, under the HOME the harness gives the
-# check. Its map DISAGREES with the fake fugaro's published one on purpose, so a
-# check that read the published map alone would find no build at all.
-write_local_project_config() { # dir
+# write_local_project_config DIR [member] — this machine's own project config for
+# the installation, whose `repo_images` block is the map's LOCAL half and wins
+# over the published node's where it states one. The path is the one localcfg's
+# selector reads, under the HOME the harness gives the check. Its map DISAGREES
+# with the fake fugaro's published one on purpose, so a check that read the
+# published map alone would find no build at all. MEMBER (default `repo_images`)
+# writes the legacy `image_map` instead, whose keys are bare names: that block is
+# read only where no layer states `repo_images` (R2), which is the case the
+# legacy test below pins.
+write_local_project_config() { # dir [member]
+  local member=${2:-repo_images}
   mkdir -p "$1/home/.config/fugaro/projects"
-  cat >"$1/home/.config/fugaro/projects/fugaro.yaml" <<'CFG_EOF'
-project: fugaro
-gcp_project: fugaro-dev
-image_map:
-  acme/sandbox: local-web
-  acme/bb-sandbox: sandbox-bb
-CFG_EOF
+  {
+    printf 'project: fugaro\ngcp_project: fugaro-dev\n%s:\n' "$member"
+    if [ "$member" = repo_images ]; then
+      printf '  github/acme/sandbox: local-web\n  bitbucket/acme/bb-sandbox: sandbox-bb\n'
+    else
+      printf '  acme/sandbox: local-web\n  acme/bb-sandbox: sandbox-bb\n'
+    fi
+  } >"$1/home/.config/fugaro/projects/fugaro.yaml"
 }
 
 # --------------------------------------------------------------- the tests
@@ -511,7 +548,8 @@ test_dry_run() {
 
 # The project this check reads now is one whose builds are CATALOG ENTRIES': the
 # repository's own derived image is disabled (D1900), so the image each sandbox
-# repository builds is the entry its image_map names, submitted as the project's
+# repository builds is the entry its own key in the map names, submitted as the
+# project's
 # build identity, carrying no secret at all (IS8/D3330). Every row of the switch
 # mode is measured, and the whole run ends 0.
 test_happy_path() {
@@ -562,7 +600,7 @@ test_a_project_with_no_build_at_all() {
   expect_contains "$out" "FACT mounts-github: FAIL" "no builds: the mount row is not a pass"
   # The remedy names a command that works: 'fugaro image refresh' is refused
   # (repo-level images are disabled), so the row must not send the owner there,
-  # and it names the entry the repository's image_map gives.
+  # and it names the entry the repository's own key in the map gives.
   expect_contains "$out" "fugaro image build sandbox-web" "no builds: the remedy"
   expect_absent "$out" "Submit one with 'fugaro image refresh'" "no builds: the refused command is not the remedy"
   # The daily check is found by the repository itself, so it is measured too.
@@ -572,7 +610,7 @@ test_a_project_with_no_build_at_all() {
 test_a_project_whose_builds_are_derived_only() {
   # The shape this check read until 2026-11-24: builds that carry a `_SLUG` and
   # a service address and belong to a repository-level image no installation
-  # builds any more. They are not the catalog entry the image_map names, so the
+  # builds any more. They are not the catalog entry the map names, so the
   # build rows are unmeasured rather than read as this repository's image.
   local dir=$work/derived
   prepare "$dir"
@@ -584,7 +622,7 @@ test_a_project_whose_builds_are_derived_only() {
 }
 
 # A repository's builds are the newest whose `_IMAGE` names the CATALOG ENTRY its
-# image_map gives, and the build's own `_REPO_URL` is the ENTRY's source
+# provider key in the map gives, and the build's own `_REPO_URL` is the ENTRY's source
 # repository — not the served repository when one entry serves several. Here a
 # GitHub repository is mapped to an entry sourced from a BITBUCKET repository:
 # only the map can select this build, and the row names the source repository it
@@ -597,7 +635,7 @@ test_a_build_is_found_through_the_map_when_the_source_repository_differs() {
   expect_status "$status" 0 "map source: the verdict"
   expect_contains "$out" "FACT build-github: PASS" "map source: the row"
   expect_contains "$out" "CATALOG ENTRY shared-web" "map source: the entry the map names"
-  expect_contains "$out" "found by the catalog entry shared-web its image_map names" "map source: how it was found"
+  expect_contains "$out" "found by the catalog entry shared-web its repository-to-image map (repo_images) names" "map source: how it was found"
   expect_contains "$out" "bitbucket.org/acme/bb-sandbox.git" "map source: the entry's source repository"
   # The credential shape is the post-IS8 one for this build too: no mount and the
   # service's address, whose entry route is where the credential step fetches the
@@ -619,7 +657,10 @@ test_a_repository_the_map_does_not_name_keeps_the_repourl_match() {
   expect_status "$status" 0 "not in the map: the verdict"
   expect_contains "$out" "FACT build-github: PASS" "not in the map: the row"
   expect_contains "$out" "found by the builds whose _REPO_URL is its own clone URL" "not in the map: how it was found"
-  expect_contains "$out" "does not name an entry for acme/sandbox" "not in the map: the reason"
+  # The repository is named by its OWN provider's key here and not by its bare
+  # name: a row that said `acme/sandbox` would leave the owner looking up a key
+  # the member it read does not have (F35).
+  expect_contains "$out" "does not name an entry for github/acme/sandbox" "not in the map: the reason"
   expect_contains "$out" "FACT build-bitbucket: PASS" "not in the map: the mapped repository"
 }
 
@@ -633,14 +674,14 @@ test_a_repository_the_map_does_not_name_and_has_no_build_says_how_to_map_it() {
   run196 "$dir" no-gh-build
   expect_status "$status" 2 "not in the map, no build: the verdict"
   expect_contains "$out" "FACT build-github: FAIL — no CATALOG-ENTRY build of acme/sandbox" "not in the map, no build: the row"
-  expect_contains "$out" "fugaro image map set acme/sandbox <entry>" "not in the map, no build: the remedy maps it first"
+  expect_contains "$out" "fugaro image map set github/acme/sandbox <entry>" "not in the map, no build: the remedy maps it first, under its own provider's key"
   expect_contains "$out" "fugaro image build <entry>" "not in the map, no build: the remedy builds the entry"
 }
 
-# The local project config's image_map is the map's LOCAL half and wins over the
-# published node's where it states one (localcfg's ImageMapEffective, D1906): the
-# two disagree here and the build carries the local answer, so a check that read
-# the published map alone would find no build at all.
+# The local project config's map is the map's LOCAL half and wins over the
+# published node's where it states one (R2): the two disagree here and the build
+# carries the local answer, so a check that read the published map alone would
+# find no build at all.
 test_the_local_project_configs_map_wins_over_the_published_one() {
   local dir=$work/maplocal
   prepare "$dir"
@@ -649,6 +690,57 @@ test_the_local_project_configs_map_wins_over_the_published_one() {
   expect_status "$status" 0 "local map: the verdict"
   expect_contains "$out" "FACT build-github: PASS" "local map: the row"
   expect_contains "$out" "CATALOG ENTRY local-web" "local map: the entry the local config names"
+  # Both halves are `repo_images`, so both key the repository by its provider:
+  # the row that names where it was found names that member, not the legacy one.
+  expect_contains "$out" "its repository-to-image map (repo_images) names" "local map: the member read"
+}
+
+# F35's own test: the map is looked up under the repository's `provider/owner/name`
+# key in `repo_images`, so a key the SAME owner/name carries under ANOTHER
+# provider is another repository's and answers nothing for this one. A check that
+# looked the repository up by its bare name would take that entry, look for a
+# build of it, find none, and report the GitHub repository as unmeasurable — on a
+# map that is right.
+test_a_key_under_another_provider_is_not_this_repositorys() {
+  local dir=$work/mapother
+  prepare "$dir"
+  run_env=(FAKE_FUGARO_MODE=map-other-provider)
+  run196 "$dir" map-other-provider
+  expect_status "$status" 0 "other provider's key: the verdict"
+  expect_contains "$out" "FACT build-github: PASS" "other provider's key: the row"
+  expect_contains "$out" "CATALOG ENTRY sandbox-web" "other provider's key: the entry its own builds carry"
+  expect_contains "$out" "does not name an entry for github/acme/sandbox" "other provider's key: the lookup was the provider's own"
+  expect_absent "$out" "CATALOG ENTRY shared-web" "other provider's key: the other provider's entry is never this repository's"
+}
+
+# The bare-name `image_map` an installation the release has NOT reached carries is
+# still read — and only where no layer states `repo_images` (R2): this is the one
+# shape whose keys are bare names, and the row names that member rather than
+# reporting the map as unreadable.
+test_a_legacy_image_map_is_still_read_by_bare_name() {
+  local dir=$work/maplegacy
+  prepare "$dir"
+  run_env=(FAKE_FUGARO_MODE=map-legacy)
+  run196 "$dir" ok
+  expect_status "$status" 0 "legacy map: the verdict"
+  expect_contains "$out" "FACT build-github: PASS" "legacy map: the row"
+  expect_contains "$out" "found by the catalog entry sandbox-web its legacy image_map names" "legacy map: the member read"
+  expect_contains "$out" "FACT build-bitbucket: PASS" "legacy map: the Bitbucket row"
+}
+
+# And `repo_images` wins wherever ANY layer states it, so a local legacy block
+# does not take the published `repo_images` away (R2, per member and never per
+# key): the builds here are the ones the published member names, and a check that
+# let the local bare-name block win would look for an entry no build carries.
+test_a_local_legacy_map_does_not_beat_the_published_repo_images() {
+  local dir=$work/maplocallegacy
+  prepare "$dir"
+  write_local_project_config "$dir" image_map
+  run196 "$dir" ok
+  expect_status "$status" 0 "local legacy: the verdict"
+  expect_contains "$out" "FACT build-github: PASS" "local legacy: the row"
+  expect_contains "$out" "CATALOG ENTRY sandbox-web" "local legacy: the published member answers"
+  expect_absent "$out" "CATALOG ENTRY local-web" "local legacy: the bare-name block did not answer"
 }
 
 # A published policy that cannot be read is not a failure of this check: the
@@ -1080,15 +1172,87 @@ test_every_advertised_knob_is_read() {
   local knob
   for knob in CHECK196_REPO CHECK196_BITBUCKET CHECK196_BUILDS CHECK196_LOG_AGE \
     CHECK196_LOG_LIMIT CHECK196_LOG_WAIT_SECONDS CHECK196_LOG_POLL_SECONDS \
-    CHECK196_DRY_RUN CHECK196_KEEP_SCRATCH; do
+    CHECK196_DRY_RUN CHECK196_PREFLIGHT CHECK196_KEEP_SCRATCH; do
     grep -q "\${${knob}:-" "$script" ||
       fail "knobs: $knob is documented in the header and not read"
   done
   # And the header documents every one of them, so a knob cannot be read without
   # being named where the owner reads how to set it.
-  for knob in CHECK196_REPO CHECK196_BITBUCKET CHECK196_BUILDS CHECK196_DRY_RUN CHECK196_KEEP_SCRATCH; do
-    expect_contains "$(sed -n '1,120p' "$script")" "$knob" "knobs: $knob is documented"
+  for knob in CHECK196_REPO CHECK196_BITBUCKET CHECK196_BUILDS CHECK196_DRY_RUN CHECK196_PREFLIGHT CHECK196_KEEP_SCRATCH; do
+    expect_contains "$(sed -n '1,125p' "$script")" "$knob" "knobs: $knob is documented"
   done
+}
+
+# --preflight reads every precondition the check has and prints every blocker
+# with the command that clears it, writing nothing and launching nothing. On a
+# project where every precondition holds it exits 0 and prints no RESULT block.
+test_preflight_passes_and_writes_nothing() {
+  local dir=$work/pfpass
+  prepare "$dir"
+  run_args=(--preflight)
+  run196 "$dir" ok
+  expect_status "$status" 0 "preflight: the verdict"
+  expect_contains "$err" "check196: preflight passed" "preflight: the report"
+  expect_contains "$err" "read: " "preflight: what it read"
+  expect_absent "$out" "CHECK 196 RESULT" "preflight: no RESULT block"
+  # Nothing was written and nothing was launched: every recorded call is a read.
+  local all
+  all=$(cat "$dir/logs/gcloud.calls" "$dir/logs/fugaro.calls")
+  expect_absent "$all" "accounts add" "preflight: no credential was added"
+  expect_absent "$all" "accounts pool add" "preflight: no pool was written"
+  expect_absent "$all" "policy publish" "preflight: no policy was published"
+  expect_absent "$all" "fugaro run" "preflight: no run was launched"
+  expect_absent "$all" "update" "preflight: no update ran"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "delete" "preflight: nothing was deleted"
+  if [ -d "$scratch" ]; then fail "preflight: the scratch directory survived"; fi
+}
+
+# A preflight evaluates every precondition and prints ALL blockers at once, each
+# with a real command and real values. Here the checkout names another project
+# AND the region's builds cannot be listed: both appear, not just the first.
+test_preflight_reports_every_blocker_at_once() {
+  local dir=$work/pfblocked
+  prepare "$dir"
+  run_args=(--preflight)
+  run_env=(FAKE_FUGARO_MODE=other)
+  run196 "$dir" builds-list-fails
+  expect_status "$status" 1 "preflight blocks: the verdict"
+  expect_contains "$err" "found 2 blocker(s)" "preflight blocks: every blocker at once"
+  expect_contains "$err" "BLOCKED installation" "preflight blocks: the installation"
+  expect_contains "$err" "BLOCKED builds" "preflight blocks: the builds"
+  # Every fix is a real command with real values in it, never a placeholder.
+  expect_contains "$err" "fix: fugaro doctor --project fugaro --all" "preflight blocks: the installation fix"
+  expect_contains "$err" "fix: gcloud builds list --project=fugaro-dev --region=us-east5 --limit=50 --format=json" "preflight blocks: the builds fix"
+  expect_absent "$err" "preflight passed" "preflight blocks: not a pass"
+  expect_absent "$out" "CHECK 196 RESULT" "preflight blocks: no RESULT block"
+}
+
+# The inputs are argument validation, the way check630's --sandbox is: a preflight
+# for an owner's own repository stops before any cloud read, as the run itself does.
+test_preflight_refuses_bad_inputs_without_reading() {
+  local dir=$work/pfbelong
+  prepare "$dir"
+  run_args=(--preflight)
+  run_env=(CHECK196_REPO=belong/sandbox)
+  run196 "$dir" ok
+  expect_status "$status" 1 "preflight belong: the verdict"
+  expect_contains "$err" "never belong" "preflight belong: the refusal"
+  if [ -s "$dir/logs/gcloud.calls" ]; then fail "preflight belong: gcloud was called before the guard"; fi
+  expect_absent "$out" "CHECK 196 RESULT" "preflight belong: no RESULT block"
+}
+
+test_preflight_is_refused_for_a_coding_agents_session() {
+  local dir=$work/pfagent
+  prepare "$dir"
+  run_args=(--preflight)
+  run_env=(CLAUDECODE=1)
+  run196 "$dir" ok
+  expect_status "$status" 2 "preflight agent session: the verdict"
+  expect_contains "$err" "a coding agent's session" "preflight agent session: the refusal"
+  if [ -s "$dir/logs/gcloud.calls" ] || [ -s "$dir/logs/fugaro.calls" ]; then
+    fail "preflight agent session: a read was made before the refusal"
+  fi
+  expect_absent "$out" "CHECK 196 RESULT" "preflight agent session: no RESULT block"
 }
 
 test_never_belong() {
@@ -1147,6 +1311,9 @@ t test_a_build_is_found_through_the_map_when_the_source_repository_differs
 t test_a_repository_the_map_does_not_name_keeps_the_repourl_match
 t test_a_repository_the_map_does_not_name_and_has_no_build_says_how_to_map_it
 t test_the_local_project_configs_map_wins_over_the_published_one
+t test_a_key_under_another_provider_is_not_this_repositorys
+t test_a_legacy_image_map_is_still_read_by_bare_name
+t test_a_local_legacy_map_does_not_beat_the_published_repo_images
 t test_a_published_map_that_cannot_be_read_still_measures_the_builds
 t test_the_builds_list_names_the_installation_region
 t test_a_service_that_cannot_be_read_is_unmeasured
@@ -1183,6 +1350,10 @@ t test_the_flip_with_a_build_that_still_mounts_is_a_failure
 t test_the_flip_with_the_check_job_mount_left_is_a_failure
 t test_the_flip_with_a_check_job_that_names_no_service_is_a_failure
 t test_keep_scratch_keeps_the_directory
+t test_preflight_passes_and_writes_nothing
+t test_preflight_reports_every_blocker_at_once
+t test_preflight_refuses_bad_inputs_without_reading
+t test_preflight_is_refused_for_a_coding_agents_session
 t test_every_advertised_knob_is_read
 t test_never_belong
 t test_nothing_secret_shaped_reaches_the_block

@@ -193,10 +193,37 @@ func (s *projectStage) clients(ctx context.Context) error {
 	if s.pc != nil {
 		return nil
 	}
-	ep := s.e.lc.Endpoints
-	pc, err := infra.NewProjectClients(ctx, infra.ProjectEndpoints{ResourceManager: ep.ResourceManager, Firebase: ep.FirebaseManagement, Billing: ep.CloudBilling}, ep.NoAuth, nil)
+	pc, err := s.newClients(ctx, "")
 	if err != nil {
-		return remote(err)
+		return err
+	}
+	s.pc = pc
+	return nil
+}
+
+func (s *projectStage) newClients(ctx context.Context, quota string) (*infra.ProjectClients, error) {
+	ep := s.e.lc.Endpoints
+	pc, err := infra.NewProjectClients(ctx, infra.ProjectEndpoints{ResourceManager: ep.ResourceManager, Firebase: ep.FirebaseManagement, Billing: ep.CloudBilling,
+		ServiceUsage: ep.ServiceUsage, QuotaProject: quota}, ep.NoAuth, nil)
+	if err != nil {
+		return nil, remote(err)
+	}
+	return pc, nil
+}
+
+// billToProject makes the project the quota of every call from here on, once
+// it exists (before that there is no project to bill, and the credentials' own
+// quota project answers). Each API it is billed through is turned on first,
+// one line each.
+func (s *projectStage) billToProject(ctx context.Context) error {
+	pc, err := s.newClients(ctx, s.id)
+	if err != nil {
+		return err
+	}
+	if err := infra.EnableForProject(ctx, pc, s.id, func(api string) {
+		fmt.Fprintf(s.e.r.w, "enabled %s in %s\n", api, s.id)
+	}); err != nil {
+		return s.fail(err)
 	}
 	s.pc = pc
 	return nil
@@ -639,6 +666,11 @@ func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 		}
 		if !ok {
 			return initflow.Outcome{}, s.declined("adding Firebase to project " + s.id)
+		}
+	}
+	if created || s.info.Exists {
+		if err := s.billToProject(ctx); err != nil {
+			return initflow.Outcome{}, err
 		}
 	}
 	if s.adopt {

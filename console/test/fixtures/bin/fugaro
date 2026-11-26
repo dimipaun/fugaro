@@ -73,16 +73,6 @@
 #     about twenty-three: a spec that wants the two sections to land apart gives
 #     the two files different delays. Its answer is a `budget` line in the same
 #     `reads.log`.
-#   * `coordinator status --from-store --all --json --project P` -- the document
-#     in `coordinator-status.json` beside it, which `cliStub.ts` writes from the
-#     committed `test/fixtures/coordinator-status.json` (Bitbucket credentials
-#     T1.2, D364). **No screen makes this read any more** (D3210 retired the
-#     Coordinator tab that did), so the answer is kept only because the console's
-#     spawn row still lists it: the row, this answer and the fixture go together.
-#     It was the read whose argv fixed the most -- `--from-store` and `--all` are
-#     the spawn row's own words, because the retired screen had no control that
-#     turned either off -- so the stub still holds all three flags exactly rather
-#     than answering a question this console should never have been able to ask.
 #   * `models ls --json --project P` -- the document in `models-ls.json` beside
 #     it, which `cliStub.ts`'s `seedModels` writes. This is the read the
 #     **Project** tab's models panel makes (console 0.119.0, contract section
@@ -217,7 +207,7 @@ refuse() {
 # failing spec's message is the only place a reader learns what it would have
 # answered.
 refuse_allowlist() {
-  echo "the stub fugaro answers 'version', 'config list --json', 'plan status --json', 'coordinator status --from-store --all --json', 'doctor --json', 'watch --json', 'report --json', 'budget show --json', 'models ls --json', 'settings --json', 'settings set|unset', 'managed status --json', 'project policy show --json', 'project repos ls --json', 'project repos status --json', 'runs summary --json' and 'run --task-file - --json', and was asked for '$1'" >&2
+  echo "the stub fugaro answers 'version', 'config list --json', 'plan status --json', 'doctor --json', 'watch --json', 'report --json', 'budget show --json', 'models ls --json', 'settings --json', 'settings set|unset', 'managed status --json', 'project policy show --json', 'project repos ls --json', 'project repos status --json', 'runs summary --json' and 'run --task-file - --json', and was asked for '$1'" >&2
   exit 2
 }
 
@@ -436,36 +426,6 @@ case "$command" in
       refuse 'no plan document is seeded beside this stub'
     fi
     cat "${here}/plan-status.json"
-    ;;
-  coordinator)
-    # `coordinator status --from-store --all --json` is the project view's one
-    # read (Bitbucket credentials T1.2, D364): every repository of the
-    # installation, from the view the coordinator's sweep last stored. The three
-    # words are the console's spawn row and not a screen's control, so the stub
-    # holds them exactly -- a console that dropped `--from-store` would be making
-    # a host call this build has no credential for, and the spec would rather see
-    # that here than pass on a document it should never have been able to obtain.
-    if [ "${1:-}" != 'status' ] || [ "${2:-}" != '--from-store' ] || [ "${3:-}" != '--all' ] || [ "${4:-}" != '--json' ]; then
-      refuse "the stub fugaro answers 'coordinator status --from-store --all --json' and was asked for 'coordinator $*'"
-    fi
-    shift 4
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        --project | --config)
-          if [ $# -lt 2 ]; then
-            refuse "'coordinator status' was given '$1' with no value"
-          fi
-          shift 2
-          ;;
-        *)
-          refuse "'coordinator status' was asked for '$1'"
-          ;;
-      esac
-    done
-    if [ ! -f "${here}/coordinator-status.json" ]; then
-      refuse 'no coordinator document is seeded beside this stub'
-    fi
-    cat "${here}/coordinator-status.json"
     ;;
   models)
     # The Project tab's read-only models panel (console 0.119.0, contract

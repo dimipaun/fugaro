@@ -31,7 +31,24 @@ import (
 // proves it: the fakes' project number, and the label the installation puts
 // on it. The writer proves both before it writes, so a rig that wants its
 // list recorded has to seed both.
+//
+// The project is managed, because the list is a leaf of the policy the project
+// publishes and this command is fenced (D2217): a rig without the marks is one
+// whose write the fence refuses, and every test here but the refusal's own
+// writes the list.
 func allowDeleteRig(t *testing.T) *initRig {
+	t.Helper()
+	noAgentSession(t)
+	r := newInitRig(t)
+	markManagedProject(t, r)
+	return r
+}
+
+// allowDeleteUnmanagedRig is the same installation without the marks — every
+// ordinary project — with the bucket the writer proves still seeded, so that
+// what refuses the write is the project and not the bucket
+// (TestAllowDeleteRefusesUnmanaged).
+func allowDeleteUnmanagedRig(t *testing.T) *initRig {
 	t.Helper()
 	noAgentSession(t)
 	r := newInitRig(t)
@@ -297,6 +314,39 @@ func TestAllowDeleteCommandPrintsTheListAndWritesNothing(t *testing.T) {
 	}
 	if after, _ := allowDeleteAt(t, r.gcs, initRunsBucket); after != before {
 		t.Errorf("printing the list changed it: %s → %s", before, after)
+	}
+}
+
+// TestAllowDeleteRefusesUnmanaged: D2217's fence on this command. The delete
+// list is the project's own approval of cloud deletes — a leaf of the policy
+// the project publishes — so the list of a project that is not managed is
+// refused, in the one sentence the fence writes, and nothing reaches the
+// bucket but the reads that answered the question.
+//
+// This is the row T7b's red step is: nothing in this command's path made the
+// managed read, so the list was written on an unmanaged project — an approval
+// recorded in a project nobody flagged, which is the state the fence exists to
+// keep the program out of.
+func TestAllowDeleteRefusesUnmanaged(t *testing.T) {
+	r := allowDeleteUnmanagedRig(t)
+	out, _, err := execute(t, allowDeleteArgs(dataApproval)...)
+	if err == nil {
+		t.Fatalf("the delete list of a project that is not managed was written:\n%s", out)
+	}
+	checkFenceRefusal(t, err, "allow-delete")
+	if got, ok := allowDeleteAt(t, r.gcs, initRunsBucket); ok {
+		t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.AllowDeleteObject, got)
+	}
+	// And the read mode is what the fence is placed behind: printing the list
+	// of a project that is not managed is how its owner reads that nothing is
+	// approved, and a read of an unmanaged project is not this design's to
+	// refuse (A5).
+	out, _, err = execute(t, "allow-delete")
+	if err != nil {
+		t.Errorf("printing the list of a project that is not managed was refused: %v\n%s", err, out)
+	}
+	if got, ok := allowDeleteAt(t, r.gcs, initRunsBucket); ok {
+		t.Errorf("printing the list wrote one: gs://%s/%s = %s", initRunsBucket, managed.AllowDeleteObject, got)
 	}
 }
 

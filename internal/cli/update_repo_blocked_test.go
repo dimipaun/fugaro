@@ -102,7 +102,7 @@ func TestUpdateConvergesPastAnInvalidCheckoutFugaroYAML(t *testing.T) {
 	}
 
 	// And the line the user is stuck on is said after the run, never before it.
-	staleLineWaitsForTheRun(t, errOut)
+	staleLineWaitsForTheRun(t, out+errOut)
 }
 
 // TestUpdateDoesNotBuildFromACheckoutFileTheRunDidNotOnboard (#1836, review):
@@ -321,7 +321,7 @@ func TestUpdatePluginLineDoesNotReadCurrentWhileTheInstallIsBehind(t *testing.T)
 	if got := claudeListVersion(t, r); got != convergeRelease {
 		t.Errorf("Claude Code lists the plugin as %q after the run, want %q\n%s", got, convergeRelease, out)
 	}
-	staleLineWaitsForTheRun(t, errOut)
+	staleLineWaitsForTheRun(t, out+errOut)
 }
 
 // staleLineWaitsForTheRun is #1836b: the staleness line, when the run prints
@@ -331,18 +331,24 @@ func TestUpdatePluginLineDoesNotReadCurrentWhileTheInstallIsBehind(t *testing.T)
 // one line a run could not clear however often it was run. The fixture's fake
 // claude leaves Claude Code's own record alone, so what is left to say at the
 // end is still said: the point of the assertion is when.
-func staleLineWaitsForTheRun(t *testing.T, errOut string) {
+//
+// account is the run whole (its screen and its stderr), and not the stderr
+// alone: the line prints on stderr at the end, and the account of the install
+// it must come after is the run's own, which is stdout's. With the pin left in
+// place (U6a) the line is printed on runs whose account of the plugin is on
+// stdout, which is where the two halves are read together.
+func staleLineWaitsForTheRun(t *testing.T, account string) {
 	t.Helper()
-	line := staleWarnings(errOut)
+	line := staleWarnings(account)
 	if line == "" {
 		return
 	}
-	install := strings.Index(errOut, "installed "+convergeRelease)
+	install := strings.Index(account, "installed "+convergeRelease)
 	if install < 0 {
-		t.Fatalf("the run never said it installed the plugin:\n%s", errOut)
+		t.Fatalf("the run never said it installed the plugin:\n%s", account)
 	}
-	if i := strings.Index(errOut, line); i < install {
-		t.Errorf("fugaro update printed the staleness line before the run that clears it: %q\n%s", line, errOut)
+	if i := strings.Index(account, line); i < install {
+		t.Errorf("fugaro update printed the staleness line before the run that clears it: %q\n%s", line, account)
 	}
 }
 

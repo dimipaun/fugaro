@@ -28,6 +28,7 @@ const (
 	serviceSecretManager    = "secretmanager.googleapis.com"
 	serviceLogging          = "logging.googleapis.com"
 	serviceScheduler        = "cloudscheduler.googleapis.com"
+	serviceCloudBilling     = "cloudbilling.googleapis.com"
 )
 
 // ServiceDisabledError is a call refused because its API is disabled in

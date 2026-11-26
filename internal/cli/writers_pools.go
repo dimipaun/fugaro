@@ -75,6 +75,28 @@ var accountsPoolWriters = []struct {
 		Store:   settings.StoreLocal,
 		Node:    true,
 	}},
+	// The rule R5 adds and the principal D3181 adds: `accounts pool add` takes
+	// one flag for each, the rule in its own member and the principal as the
+	// pair the one flag names (--service-account writes the kind and the
+	// address together, which is what makes the two rows one command line).
+	{"pools.*.rule", settings.Writer{
+		Command: "fugaro accounts pool add",
+		Argv:    []string{"accounts", "pool", "add", "<1>", "--rule", settings.ValuePlaceholder},
+		Store:   settings.StoreLocal,
+		Node:    true,
+	}},
+	{"pools.*.principal.kind", settings.Writer{
+		Command: "fugaro accounts pool add",
+		Argv:    []string{"accounts", "pool", "add", "<1>", "--service-account", settings.ValuePlaceholder},
+		Store:   settings.StoreLocal,
+		Node:    true,
+	}},
+	{"pools.*.principal.id", settings.Writer{
+		Command: "fugaro accounts pool add",
+		Argv:    []string{"accounts", "pool", "add", "<1>", "--service-account", settings.ValuePlaceholder},
+		Store:   settings.StoreLocal,
+		Node:    true,
+	}},
 	{"pools.*.owner", settings.Writer{
 		Command: "fugaro accounts pool add",
 		Argv:    []string{"accounts", "pool", "add", "<1>", "--owner", settings.ValuePlaceholder},

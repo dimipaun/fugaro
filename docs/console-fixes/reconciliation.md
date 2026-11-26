@@ -34,7 +34,7 @@ Build order: `run-index`, `coordinator-graph` and `identity-display` start toget
 | Firestore | Used already: a REST client (`internal/firestore/client.go`, single-range `Query`, `Patch`, `Get`), collections `spendDaily`, `meta` (`internal/budget/rollover.go`), `workspaceAudit` and the key-service ones. No run, task or graph data in it |
 | Per-project summary / counts | RTDB day counters and Firestore `spendDaily`, read by `runs summary` (`internal/cli/runs_summary.go`); the coordinator's stored per-repo view (`ee/coordinator/state.go`); no run or task counts document |
 | An index | runs-ls-speed's GCS pull-request index (`internal/runstore/prindex.go`, `PRIndexPath`, D2961–D2964); the local `runcache` (`internal/runcache`) |
-| Backfill command | Only `fugaro update`'s `initEngine.backfillPRIndex` (`internal/cli/update_prindex.go`), 90 days, idempotent |
+| Backfill command | Only `fugaro update`'s `initEngine.backfillPRIndex` (`internal/cli/update_prindex.go`), 90 days, idempotent — its writers stop with D3204 (the runner's in IR5a, the CLI's in IR5b), the objects left in place |
 | Cursor pagination | `runs ls --limit/--after` (D818, `pageRows`), but the whole window is still read |
 | Lazy-load details | Exists: logs and diagnose load only when a run is opened (`entry.ts` `showRun`); there is no diff read in the console |
 | Coordinator tab | `console/src/renderer/screens/coordinator.ts` (console-coordinator-v2): action queue, totals, per-repository panels, job list, intents transcript; organised by repository, with no notion of an orchestrator |

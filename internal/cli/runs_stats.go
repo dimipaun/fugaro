@@ -67,16 +67,6 @@ const userStatsDefaultSince = "7d"
 // cannot answer the window, one object read per run (readUserStatsRuns).
 const userStatsMaxRuns = 5000
 
-// runIndexReader opens the run index `runs stats` reads its window from. It is
-// the package's stub until I-INDEX wires the real Reader in
-// (internal/cli/runindex_wire.go), and tests replace it. The stub answers an
-// empty page and says the index has never finished a walk, which is what sends
-// the command to the run records (readUserStatsRuns) rather than printing an
-// empty window as the truth.
-var runIndexReader = func(context.Context, *cloudEnv) (runindex.Reader, error) {
-	return runindex.NewStub(), nil
-}
-
 // userStatsByUser is the only breakdown this command publishes. --by names
 // it, so that the day a second one exists it is a value here and not a
 // second command.
@@ -581,10 +571,11 @@ func readRunObjects(ctx context.Context, env *cloudEnv, slugs []string, since, u
 // the runs of the window the walk has not reached would be missing from every
 // figure, and nothing in the document would say which. That is the state every
 // installation is in until the reindex `fugaro update` starts reaches the end of
-// history (RI5), and the state a caller that has wired nothing is in
-// (runindex.NewStub) -- so the command then reads the records exactly as it did
-// before the index existed, one object read per run. `index_complete` in the
-// document says which of the two reads produced the figures.
+// history (RI5), and the state an installation with no index database is in
+// (emptyIndexReader, runindex_wire.go) -- so the command then reads the records
+// exactly as it did before the index existed, one object read per run.
+// `index_complete` in the document says which of the two reads produced the
+// figures.
 //
 // The two reads answer the same question and are not the same read, which is a
 // fact the output must not hide rather than a defect to paper over. The index

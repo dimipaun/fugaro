@@ -744,10 +744,10 @@ function routingMember(factory: ScreenFactory, routing: PolicyRouting | null): S
 /** catalogMember draws the image catalog: each entry's name, the kind of source
  * it is built from, and that source's pointer.
  *
- * A `dockerfile` entry's path is drawn through the `path` class, which this
- * console replaces with its own placeholder: the class exists because a path is
- * where the operator's own machine shows through, and an entry's repository and
- * branch are what a reader needs to find the file. A `dockerfile` entry's
+ * A `dockerfile` entry's path is drawn through the `path` class, which draws it
+ * as it came -- the class no longer masks a path since D3213 (2026-11-21) -- and
+ * an entry's repository and branch are what a reader needs to find the file. A
+ * `dockerfile` entry's
  * `repo` is an `owner/name` and goes through `repository`; an `image` entry's
  * reference goes through **`imageRef`**, the class that holds
  * `internal/config`'s `catalogImageRE` -- `label` drew `ghcr.io/acme/agent:1.2`

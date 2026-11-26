@@ -14,10 +14,13 @@
 #
 #   * the installation the sandbox checkout belongs to (`fugaro doctor --project
 #     <name> --all`, whose `project:` line the `--all` view alone prints);
-#   * **the declaration it found** (`fugaro craft ls --json`, `fugaro accounts
-#     pool ls`, `fugaro accounts ls --json`): the craft whose access the check
-#     takes over for the sandbox run, the access it declared before, and the
-#     pools and credentials the config already holds;
+#   * **the declaration it found** (`fugaro craft ls --json`, the published node
+#     through `fugaro project policy show --json`, `fugaro accounts pool ls`,
+#     `fugaro accounts ls --json`): the craft the sandbox run is served through,
+#     its model and the chain the project's routing table resolves it to, the
+#     access the published node declares for it — the one value this check takes
+#     over and puts back — and the pools and credentials the config already
+#     holds;
 #   * **the refusal in a coding agent's session**: `fugaro accounts add <name>
 #     --type anthropic` run with CLAUDECODE set is refused by name — a session
 #     may write the declaration and never the key — and stores nothing. This
@@ -58,8 +61,16 @@
 # written in no file, and it reaches the command under test on stdin.
 #
 # Usage:      bash scripts/live-checks/check631.sh --sandbox <a sandbox repository checkout> [--project <name>]
+#             bash scripts/live-checks/check631.sh --sandbox <path> --preflight
 #             bash scripts/live-checks/check631.sh --sandbox <path> --dry-run
 #             bash scripts/live-checks/check631.sh --help
+#             --preflight makes the check's own READS and evaluates every
+#             precondition before anything is written or launched (the
+#             installation, the declaration, the craft's chain and the access
+#             the node declares for it, the pool and the two credential names
+#             the check would declare), prints every blocker at once with the
+#             command that clears it, writes nothing and launches nothing, and
+#             exits non-zero when anything blocks.
 # Needs:      bash, mktemp, date, python3, awk, gcloud (authenticated as YOU:
 #             the runs bucket and Cloud Logging) and fugaro (the installed
 #             release, an admin of the project), and YOUR OWN TERMINAL: the two
@@ -88,7 +99,7 @@
 #             1: a criterion did not hold, or a guard stopped the run. 2: the
 #             check could not measure.
 #
-# Knobs (all CHECK631_*): DRY_RUN, KEEP_SCRATCH, SANDBOX, PROJECT, ANTHROPIC
+# Knobs (all CHECK631_*): DRY_RUN, PREFLIGHT, KEEP_SCRATCH, SANDBOX, PROJECT, ANTHROPIC
 # (chk631-anthropic) and OPENROUTER (chk631-openrouter) — the two names the
 # check declares, so the credentials you already have are never touched — POOL
 # (chk631-pool), CRAFT (coder: the craft whose access the sandbox run is served
@@ -144,6 +155,13 @@ on_error() {
   say "an internal error ended this check at line $line"
   exit 2
 }
+
+# The shared `--preflight` driver (scripts/live-checks/lib/preflight.sh).
+live_check_lib_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib
+LIVE_CHECK_LIB=${LIVE_CHECK_LIB:-$live_check_lib_dir}
+# shellcheck source=lib/preflight.sh
+. "$LIVE_CHECK_LIB/preflight.sh"
+PREFLIGHT_TOOL=check631
 
 need_tools() {
   command -v bash >/dev/null 2>&1 || die "Check 631 needs bash"
@@ -265,6 +283,11 @@ elif what == "credentials":
         print("cred\t%s\t%s\t%s" % (
             c.get("name") or "", c.get("type") or "", c.get("serving_path") or ""))
 elif what == "crafts":
+    # Version 2 (RT6, D3170): the chain a craft's model resolves to, in place of
+    # the access, access_from and inert columns the version-1 document carried.
+    # The access this check takes over is not in this document any more — it is
+    # the published node's, read by the `node` branch below, which is the
+    # document a run's access half is read from.
     rows = doc.get("crafts") or []
     print("version=%s" % doc.get("version", ""))
     print("project=%s" % (doc.get("project") or ""))
@@ -272,7 +295,8 @@ elif what == "crafts":
     for r in rows:
         print("craft\t%s\t%s\t%s\t%s\t%s" % (
             r.get("craft") or "", r.get("model") or "", r.get("model_from") or "",
-            r.get("access") or "", r.get("access_from") or ""))
+            ",".join(r.get("chain") or []),
+            "true" if r.get("model_servable") else "false"))
 elif what == "node":
     # `fugaro project policy show --json` prints {"project": ..., "policy": ...}:
     # every block of the node is a member of `policy`, and read at the top level
@@ -494,6 +518,141 @@ version_row() {
   fact "fugaro-version" PASS "${v:-fugaro version printed nothing} (the release whose accounts add and accounts rm this check measures)"
 }
 
+# ---------------------------------------------------------------- preflight
+# step_preflight: --preflight. The reads the check makes before it writes or
+# launches anything — the installation, the declaration (the craft, the pools
+# and the credentials) — with every precondition evaluated and nothing written:
+# no credential declared, no pool written, no node published, no run launched.
+# The two names it would declare and the pool it would write are read for
+# collision, and never written. The two values are not read: a preflight is safe
+# with no terminal.
+step_preflight() {
+  if [ ! -d "$SANDBOX" ]; then
+    die "--sandbox is not a directory: $SANDBOX (pass the checkout of a repository of the sandbox project)"
+  fi
+  if [ ! -f "$SANDBOX/fugaro.yaml" ]; then
+    die "--sandbox carries no fugaro.yaml: $SANDBOX is not a Fugaro repository's checkout, and the credentials, the pool and the run are all read in it"
+  fi
+  local pflag=()
+  [ -z "$PROJECT_ARG" ] || pflag=(--project "$PROJECT_ARG")
+
+  say "preflight: reading the installation: fugaro doctor --all, in ${SANDBOX}"
+  local args=(doctor --all)
+  [ -z "$PROJECT_ARG" ] || args=(doctor --project "$PROJECT_ARG" --all)
+  run_bounded "$DOCTOR_TIMEOUT" pf-doctor "$SANDBOX" "$FUGARO_BIN" "${args[@]}"
+  local line
+  line=$(grep -m1 '^project: ' "$SCRATCH/pf-doctor.out" 2>/dev/null || true)
+  local named_gcp=""
+  if [ -n "$line" ]; then
+    PROJECT=$(printf '%s' "$line" | sed -n 's/^project: \([^ ]*\) .*/\1/p')
+    named_gcp=$(printf '%s' "$line" | sed -n 's/^.*(GCP \([^,]*\),.*/\1/p')
+  fi
+  case "${named_gcp:-$PROJECT}" in
+  *belong*) stop "the checkout at $SANDBOX belongs to ${named_gcp:-$PROJECT}: this check is never run there" ;;
+  esac
+  if [ "$BOUNDED_TIMED_OUT" = yes ] || [ -z "$line" ]; then
+    preflight_block installation \
+      "fugaro ${args[*]} does not answer for $SANDBOX (exit ${BOUNDED_STATUS}), so the installation this check would write to cannot be read" \
+      "cd $SANDBOX && fugaro ${args[*]}"
+  else
+    preflight_note installation "the installation is ${PROJECT:-unknown} (GCP ${named_gcp:-unknown}), read from fugaro ${args[*]} in ${SANDBOX}"
+  fi
+
+  say "preflight: reading the declaration: fugaro craft ls --json, fugaro project policy show --json, fugaro accounts pool ls and fugaro accounts ls --json, in ${SANDBOX}"
+  run_bounded "$CLI_TIMEOUT" pf-crafts "$SANDBOX" "$FUGARO_BIN" craft ls --json ${pflag[@]+"${pflag[@]}"}
+  local crafts_ok=no
+  if [ "$BOUNDED_TIMED_OUT" != yes ] && [ "$BOUNDED_STATUS" = 0 ] &&
+    read_json crafts "$SCRATCH/pf-crafts.out" "$SCRATCH/pf-crafts.txt"; then
+    crafts_ok=yes
+  else
+    preflight_block declaration \
+      "fugaro craft ls --json does not answer in ${SANDBOX} (exit ${BOUNDED_STATUS}), and the craft the sandbox run is served through is in that document" \
+      "cd $SANDBOX && fugaro craft ls --json${PROJECT_ARG:+ --project $PROJECT_ARG}"
+  fi
+  run_bounded "$CLI_TIMEOUT" pf-pools "$SANDBOX" "$FUGARO_BIN" accounts pool ls ${pflag[@]+"${pflag[@]}"}
+  local pools_ok=no
+  if [ "$BOUNDED_TIMED_OUT" != yes ] && [ "$BOUNDED_STATUS" = 0 ]; then
+    pools_ok=yes
+  else
+    preflight_block wiring \
+      "fugaro accounts pool ls does not answer in ${SANDBOX} (exit ${BOUNDED_STATUS}), and the pool this check would declare cannot be read" \
+      "cd $SANDBOX && fugaro accounts pool ls${PROJECT_ARG:+ --project $PROJECT_ARG}"
+  fi
+  run_bounded "$CLI_TIMEOUT" pf-creds "$SANDBOX" "$FUGARO_BIN" accounts ls --json ${pflag[@]+"${pflag[@]}"}
+  local creds_ok=no
+  if [ "$BOUNDED_TIMED_OUT" != yes ] && [ "$BOUNDED_STATUS" = 0 ] &&
+    read_json credentials "$SCRATCH/pf-creds.out" "$SCRATCH/pf-creds.txt"; then
+    creds_ok=yes
+  else
+    preflight_block add-anthropic \
+      "fugaro accounts ls --json does not answer in ${SANDBOX} (exit ${BOUNDED_STATUS}), and whether the two names this check declares are taken is in that document" \
+      "cd $SANDBOX && fugaro accounts ls --json${PROJECT_ARG:+ --project $PROJECT_ARG}"
+  fi
+  run_bounded "$CLI_TIMEOUT" pf-node "$SANDBOX" "$FUGARO_BIN" project policy show --json ${pflag[@]+"${pflag[@]}"}
+  local node_ok=no
+  if [ "$BOUNDED_TIMED_OUT" != yes ] && [ "$BOUNDED_STATUS" = 0 ] &&
+    read_json node "$SCRATCH/pf-node.out" "$SCRATCH/pf-node.txt"; then
+    node_ok=yes
+  else
+    preflight_block declaration \
+      "fugaro project policy show --json does not answer in ${SANDBOX} (exit ${BOUNDED_STATUS}), and the access this check takes over and puts back is the one the published node declares for the craft" \
+      "cd $SANDBOX && fugaro project policy show --json${PROJECT_ARG:+ --project $PROJECT_ARG}"
+  fi
+
+  if [ "$crafts_ok" = yes ] && [ "$node_ok" = yes ]; then
+    local have_craft chain access other target
+    have_craft=$(table_field "$SCRATCH/pf-crafts.txt" craft "$CRAFT" 2)
+    chain=$(table_field "$SCRATCH/pf-crafts.txt" craft "$CRAFT" 5)
+    access=$(table_field "$SCRATCH/pf-node.txt" nodecraft "$CRAFT" 4)
+    other=$(awk -F'\t' '$1 == "craft" { print $2; exit }' "$SCRATCH/pf-crafts.txt" 2>/dev/null || true)
+    target=$(awk -F'\t' '$1 == "cred" { print $2; exit }' "$SCRATCH/pf-creds.txt" 2>/dev/null || true)
+    [ -n "$target" ] || target=$(awk 'NR > 2 && $1 != "" { print $1; exit }' "$SCRATCH/pf-pools.out" 2>/dev/null || true)
+    if [ -z "$have_craft" ]; then
+      preflight_block declaration \
+        "the installation names no craft ${CRAFT}, and the sandbox run is served through a craft's access" \
+        "CHECK631_CRAFT=${other:-$CRAFT} bash scripts/live-checks/check631.sh --sandbox $SANDBOX"
+    elif [ -n "$chain" ]; then
+      preflight_block declaration \
+        "the project's routing table serves ${SANDBOX}: the ${CRAFT} craft's calls go out on its chain (${chain}) and not on the access this check takes over, so the sandbox run would not be served by the credential this check declares" \
+        "cd $SANDBOX && fugaro routing rm <the pattern that matches the ${CRAFT} craft's model>"
+    elif [ -z "$access" ]; then
+      preflight_block declaration \
+        "the craft ${CRAFT} declares no access, and the sandbox run is served by the credential that access names" \
+        "fugaro accounts craft set $CRAFT --access ${target:-$CRAFT}"
+    else
+      preflight_note declaration "the craft ${CRAFT} declares the access ${access} in the published node, which this check takes over for the sandbox run and puts back"
+    fi
+  fi
+
+  if [ "$pools_ok" = yes ]; then
+    local existing
+    existing=$(awk -v p="$POOL" 'NR > 2 && $1 == p { print $0; exit }' "$SCRATCH/pf-pools.out" 2>/dev/null || true)
+    if [ -n "$existing" ]; then
+      preflight_block wiring \
+        "the pool ${POOL} is already declared (${existing}), and this check declares it with its own member" \
+        "fugaro accounts pool rm $POOL"
+    fi
+  fi
+
+  if [ "$creds_ok" = yes ]; then
+    local a_type o_type
+    a_type=$(table_field "$SCRATCH/pf-creds.txt" cred "$ANTHROPIC" 3)
+    o_type=$(table_field "$SCRATCH/pf-creds.txt" cred "$OPENROUTER" 3)
+    if [ -n "$a_type" ]; then
+      preflight_block add-anthropic \
+        "the credential ${ANTHROPIC} is already declared (type ${a_type}), and this check declares it from a value you paste, replacing the one in use" \
+        "fugaro accounts rm $ANTHROPIC"
+    fi
+    if [ -n "$o_type" ]; then
+      preflight_block add-openrouter \
+        "the credential ${OPENROUTER} is already declared (type ${o_type}), and this check declares it from a value pasted at the command's own prompt" \
+        "fugaro accounts rm $OPENROUTER"
+    fi
+    [ -n "$a_type" ] || [ -n "$o_type" ] ||
+      preflight_note add-anthropic "the two names this check declares (${ANTHROPIC} and ${OPENROUTER}) are both free in the config"
+  fi
+}
+
 # ---------------------------------------------------------------- the steps
 step_installation() {
   if [ ! -d "$SANDBOX" ]; then
@@ -535,13 +694,20 @@ step_declaration() {
   fi
   local pflag=()
   [ -z "$PROJECT_ARG" ] || pflag=(--project "$PROJECT_ARG")
-  say "reading the declaration: fugaro craft ls --json, fugaro accounts pool ls and fugaro accounts ls --json, in ${SANDBOX}"
+  say "reading the declaration: fugaro craft ls --json, fugaro project policy show --json, fugaro accounts pool ls and fugaro accounts ls --json, in ${SANDBOX}"
   run_bounded "$CLI_TIMEOUT" crafts "$SANDBOX" "$FUGARO_BIN" craft ls --json ${pflag[@]+"${pflag[@]}"}
   local crafts_problem=""
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
     crafts_problem="fugaro craft ls --json did not answer in ${SANDBOX} (exit ${BOUNDED_STATUS})"
   elif ! read_json crafts "$SCRATCH/crafts.out" "$SCRATCH/crafts.txt"; then
     crafts_problem="fugaro craft ls --json printed a document this check could not read"
+  fi
+  run_bounded "$CLI_TIMEOUT" node-before "$SANDBOX" "$FUGARO_BIN" project policy show --json ${pflag[@]+"${pflag[@]}"}
+  local node_problem=""
+  if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
+    node_problem="fugaro project policy show --json did not answer in ${SANDBOX} (exit ${BOUNDED_STATUS})"
+  elif ! read_json node "$SCRATCH/node-before.out" "$SCRATCH/node-before.txt"; then
+    node_problem="fugaro project policy show --json printed a document this check could not read"
   fi
   run_bounded "$CLI_TIMEOUT" pools "$SANDBOX" "$FUGARO_BIN" accounts pool ls ${pflag[@]+"${pflag[@]}"}
   local pools_problem=""
@@ -556,16 +722,17 @@ step_declaration() {
     creds_problem="fugaro accounts ls --json printed a document this check could not read"
   fi
   local problem="${crafts_problem:-}"
+  if [ -n "$node_problem" ]; then problem="${problem:+$problem; }${node_problem}"; fi
   if [ -n "$pools_problem" ]; then problem="${problem:+$problem; }${pools_problem}"; fi
   if [ -n "$creds_problem" ]; then problem="${problem:+$problem; }${creds_problem}"; fi
   if [ -n "$problem" ]; then
-    unmeasured declaration "${problem}: the craft, the pools and the credentials this check reads before it writes anything are in those answers. What it printed is in $SCRATCH/crafts.out, $SCRATCH/pools.out and $SCRATCH/creds.out"
+    unmeasured declaration "${problem}: the craft, the node that declares its access, the pools and the credentials this check reads before it writes anything are in those answers. What it printed is in $SCRATCH/crafts.out, $SCRATCH/node-before.out, $SCRATCH/pools.out and $SCRATCH/creds.out"
     return 0
   fi
-  PREV_ACCESS=$(table_field "$SCRATCH/crafts.txt" craft "$CRAFT" 5)
-  PREV_ACCESS_FROM=$(table_field "$SCRATCH/crafts.txt" craft "$CRAFT" 6)
-  local have_craft
+  PREV_ACCESS=$(table_field "$SCRATCH/node-before.txt" nodecraft "$CRAFT" 4)
+  local have_craft craft_chain
   have_craft=$(table_field "$SCRATCH/crafts.txt" craft "$CRAFT" 2)
+  craft_chain=$(table_field "$SCRATCH/crafts.txt" craft "$CRAFT" 5)
   local craft_model="" craft_model_from=""
   craft_model=$(table_field "$SCRATCH/crafts.txt" craft "$CRAFT" 3)
   craft_model_from=$(table_field "$SCRATCH/crafts.txt" craft "$CRAFT" 4)
@@ -573,14 +740,18 @@ step_declaration() {
     unmeasured declaration "fugaro craft ls --json in ${SANDBOX} names no craft '${CRAFT}' among the crafts of ${INSTALLATION} (its document is in $SCRATCH/crafts.out): the acceptance's sandbox run is served through a craft's access, so this check has nothing to serve it with. Name another with CHECK631_CRAFT, or declare this one, and run the check again"
     return 0
   fi
+  if [ -n "$craft_chain" ]; then
+    unmeasured declaration "the project's routing table serves ${SANDBOX}: the ${CRAFT} craft's calls go out on its chain (${craft_chain}) and not on the access this check takes over, so the sandbox run would not be served by the credential this check declares. Clear the entry that matches the craft's model with 'fugaro routing rm <the pattern>' and run the check again"
+    return 0
+  fi
   if [ -z "$PREV_ACCESS" ]; then
-    unmeasured declaration "the craft ${CRAFT} of ${INSTALLATION} declares no access (its model is ${craft_model:-none}, from ${craft_model_from:-nowhere}): the sandbox run of this check is served by the credential that access names, and this check puts the access back when it is done, so it only takes one over that is already declared. Declare one with 'fugaro accounts craft set ${CRAFT} --access <a pool or credential of this installation>', then run this check again"
+    unmeasured declaration "the craft ${CRAFT} of ${INSTALLATION} declares no access in the published node (its model is ${craft_model:-none}, from ${craft_model_from:-nowhere}): the sandbox run of this check is served by the credential that access names, and this check puts the access back when it is done, so it only takes one over that is already declared. Declare one with 'fugaro accounts craft set ${CRAFT} --access <a pool or credential of this installation>', then run this check again"
     return 0
   fi
   DECLARED_BEFORE=yes
   local pools_text
   pools_text=$(awk 'NR > 1 { printf "%s ", $0 }' "$SCRATCH/pools.out" 2>/dev/null || true)
-  fact declaration PASS "the craft ${CRAFT} of ${INSTALLATION} declares the access ${PREV_ACCESS} (${PREV_ACCESS_FROM:-no source}), its model is ${craft_model:-none} from ${craft_model_from:-nowhere}, and the installation's pools read ${pools_text:-none}: the craft's access is the one value this check takes over and puts back, and that it is declared is what makes the putting back exact"
+  fact declaration PASS "the craft ${CRAFT} of ${INSTALLATION} declares the access ${PREV_ACCESS} in the published node, its model is ${craft_model:-none} from ${craft_model_from:-nowhere}, and the installation's pools read ${pools_text:-none}: the craft's access is the one value this check takes over and puts back, and that it is declared is what makes the putting back exact"
 }
 
 # step_agent_refusal: the acceptance's clause about a coding agent's session.
@@ -590,15 +761,16 @@ step_agent_refusal() {
     unmeasured agent-refusal "there is no installation to run the CLI against: the row above says why"
     return 0
   fi
-  local pflag=()
-  [ -z "$PROJECT_ARG" ] || pflag=(--project "$PROJECT_ARG")
   # `accounts add` declares no --project (it is a write: the project is the
   # checkout's own fugaro.yaml, which is the directory this runs in), so the act
   # is run without one — passing it would exit 1 with 'unknown flag: --project'
-  # and the refusal this row measures would never be reached. The reads below do
-  # take it, and are given it.
+  # and the refusal this row measures would never be reached. A --project the
+  # owner gave still names the installation, through FUGARO_PROJECT; the reads
+  # below take the flag itself.
+  local penv=()
+  [ -z "$PROJECT_ARG" ] || penv=(FUGARO_PROJECT="$PROJECT_ARG")
   say "reading what a coding agent's session is told: CLAUDECODE=1 fugaro accounts add ${ANTHROPIC} --type anthropic"
-  run_bounded "$CLI_TIMEOUT" add-refused "$SANDBOX" env CLAUDECODE=1 "$FUGARO_BIN" accounts add "$ANTHROPIC" --type anthropic
+  run_bounded "$CLI_TIMEOUT" add-refused "$SANDBOX" env CLAUDECODE=1 ${penv[@]+"${penv[@]}"} "$FUGARO_BIN" accounts add "$ANTHROPIC" --type anthropic
   local out
   out=$(cat "$SCRATCH/add-refused.out" "$SCRATCH/add-refused.err" 2>/dev/null || true)
   if [ "$BOUNDED_TIMED_OUT" = yes ]; then
@@ -869,7 +1041,7 @@ step_serving_path() {
 # in step_declaration and is put back in step_unwiring.
 step_wiring() {
   if [ "$DECLARED_BEFORE" != yes ]; then
-    unmeasured wiring "the craft's access was not read out of ${INSTALLATION}'s config (the declaration row above says why), so this check will not take one over: settle that row and run the check again"
+    unmeasured wiring "the craft's access was not read out of the published node of ${INSTALLATION} (the declaration row above says why), so this check will not take one over: settle that row and run the check again"
     return 0
   fi
   if [ "$ANTHROPIC_DECLARED" != yes ]; then
@@ -1238,6 +1410,12 @@ finish() {
   local status=$?
   trap - EXIT
   trap - ERR
+  if [ "$PREFLIGHT_MODE" = yes ]; then
+    # A preflight wrote nothing and launched nothing: it prints its own lines
+    # and no RESULT block.
+    remove_scratch
+    exit "$status"
+  fi
   CLEANUP_RUNNING=yes
   cleanup
   local facts=$FACTS_CAPTURED
@@ -1271,7 +1449,7 @@ finish() {
 plan() {
   say "CHECK 631 plan (dry run: nothing below is run, and no row in the block was measured)"
   say "  [read] fugaro doctor --project <name> --all in ${SANDBOX} — the project line: which installation this is"
-  say "  [read] fugaro craft ls --json, fugaro accounts pool ls and fugaro accounts ls --json in ${SANDBOX} — the craft, the pools and the credentials as they are"
+  say "  [read] fugaro craft ls --json, fugaro project policy show --json, fugaro accounts pool ls and fugaro accounts ls --json in ${SANDBOX} — the craft, its chain, the access the node declares and the pools and credentials as they are"
   say "  [read] CLAUDECODE=1 fugaro accounts add ${ANTHROPIC} --type anthropic — what a coding agent's session is told"
   say "  [YOU] paste the value for ${ANTHROPIC} at this check's hidden prompt — read with no echo, never printed, never written"
   say "  [write] fugaro accounts add ${ANTHROPIC} --type anthropic (the value on stdin) — the credential, stored under credential-${ANTHROPIC}-key"
@@ -1329,6 +1507,7 @@ on_signal() {
 
 # ---------------------------------------------------------------------- inputs
 DRY_RUN_CLI=""
+PREFLIGHT_CLI=""
 SANDBOX_CLI=""
 PROJECT_CLI=""
 ANTHROPIC_CLI=""
@@ -1382,6 +1561,10 @@ while [ $# -gt 0 ]; do
     RECIPE_CLI=$2
     shift 2
     ;;
+  --preflight)
+    PREFLIGHT_CLI=1
+    shift
+    ;;
   --dry-run)
     DRY_RUN_CLI=1
     shift
@@ -1411,10 +1594,12 @@ ANTHROPIC=${CHECK631_ANTHROPIC:-${ANTHROPIC_CLI:-chk631-anthropic}}
 OPENROUTER=${CHECK631_OPENROUTER:-${OPENROUTER_CLI:-chk631-openrouter}}
 POOL=${CHECK631_POOL:-${POOL_CLI:-chk631-pool}}
 CRAFT=${CHECK631_CRAFT:-${CRAFT_CLI:-coder}}
-PREV_ACCESS_FROM=""
 TASK=${CHECK631_TASK:-${TASK_CLI:-"Reply with the single word ok and change nothing in the repository."}}
 RECIPE=${CHECK631_RECIPE:-${RECIPE_CLI:-}}
 DRY_RUN=${CHECK631_DRY_RUN:-$DRY_RUN_CLI}
+PREFLIGHT=${CHECK631_PREFLIGHT:-$PREFLIGHT_CLI}
+PREFLIGHT_MODE=no
+[ -z "$PREFLIGHT" ] || PREFLIGHT_MODE=yes
 KEEP_SCRATCH=${CHECK631_KEEP_SCRATCH:-}
 VALUE_FILE=${CHECK631_VALUE_FILE:-}
 REGION=${CHECK631_REGION:-us-east5}
@@ -1471,6 +1656,10 @@ main() {
   if [ -n "$DRY_RUN" ]; then
     plan
     return 0
+  fi
+  if [ -n "$PREFLIGHT" ]; then
+    step_preflight
+    preflight_report
   fi
   open_terminal
   if [ -z "$VALUE_FILE" ] && [ "$HAVE_TTY" != yes ]; then
