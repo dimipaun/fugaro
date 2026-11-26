@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -110,6 +112,183 @@ func Retirements(state []string, spec RepoSpec) []Retirement {
 	slices.SortFunc(out, func(a, b Retirement) int { return strings.Compare(a.Address, b.Address) })
 	return slices.CompactFunc(out, func(a, b Retirement) bool { return a.Address == b.Address })
 }
+
+// RootRetiredCause is why a whole repository root is retired, in the user's
+// words: it is one sentence for every row of that set, because one change is
+// why all of them go (M2, D2303).
+const RootRetiredCause = "the repository runs on the project's shared jobs, so its own root is retired and nothing of it is deployed again"
+
+// RootRetirements is the retirement of a WHOLE repository root (M2, D2303):
+// every address the root's state still holds, classified, with the state's own
+// values filled in. It is not the set difference Retirements computes -- that
+// one is a repository whose root stays and whose configuration changed -- and
+// the difference is what this function is:
+//
+//   - the repository root's module is shared with every other repository, so a
+//     root that is retired is not a configuration change at all: the state is
+//     the whole of what says which addresses go, and RepoSpec.Addresses (which
+//     still produces every one of them, from a fugaro.yaml that still declares
+//     its workflows) is not consulted.
+//   - a job of a variant that is still deployed is a "workflow job" here, and
+//     not the "job" the ordinary set difference calls it. That word is what
+//     JobDeleteLabels keys on, and it is right for this set: the variant's job
+//     is going away because the ROOT is, not because the variant left the
+//     configuration, so the Cloud Run API delete is what has to finish a
+//     protected one. In the ordinary set the same address must never be one
+//     (M3: the job of a workflow that is still deployed is the live job of a
+//     live repository).
+//   - the registry is destroyed rather than kept, which is the one place
+//     fugaro's promise about a registry bends, and F18 is why: the module's
+//     check job, build account and registry belong to the same root as its
+//     jobs, and a retired root that left its registry behind would leave a
+//     registry per repository forever. So its row carries no Kept text and is
+//     not Protected: the plan's own delete covers it, and
+//     LiftRegistryPreventDestroy is what makes the plan able to write that
+//     delete at all. What that costs is nothing the repository loses -- its
+//     per-repository images are the rebuilt derived images of a root nothing
+//     applies any more -- and everything in the registry is data nobody reads,
+//     which is why the confirmation that names it is the ordinary flow's typed
+//     one and never the managed gate (tf.RetainedTypes keeps the type for
+//     exactly this reason).
+//   - the secret containers are unchanged: Kept, never destroyed (M1, D2313).
+func RootRetirements(st *tf.State, spec RepoSpec) []Retirement {
+	var rets []Retirement
+	for _, a := range st.Addresses() {
+		rets = append(rets, retirement(a, spec))
+	}
+	slices.SortFunc(rets, byAddress)
+	rets = slices.CompactFunc(rets, func(a, b Retirement) bool { return a.Address == b.Address })
+	FillFromState(st, rets)
+	for i := range rets {
+		rootRetired(&rets[i])
+	}
+	return rets
+}
+
+// rootRetired is what a whole root's rows say that the same rows of the
+// ordinary set difference do not. It runs after FillFromState, which is what
+// decides Protected and the state's own values: the two overrides below are
+// about what this retirement does with an address, not about what the address
+// is.
+func rootRetired(r *Retirement) {
+	r.Cause = RootRetiredCause
+	if r.Kind == "job" {
+		// A job of a workflow variant that is still deployed: the ordinary
+		// set difference leaves it to the plan on purpose (M3), and here the
+		// variant goes with the root, so the API delete is the step that
+		// finishes a protected one.
+		r.Kind = "workflow job"
+	}
+	if typ, name, _ := resourceOf(addressSegments(r.Address)); typ == "google_artifact_registry_repository" && name == "images" {
+		r.Kept = ""
+		r.Protected = false
+	}
+}
+
+// The registry module's prevent_destroy block, byte for byte as
+// deploy/terraform/gcp/modules/repo/registry.tf carries it: the one thing
+// LiftRegistryPreventDestroy takes out, and the thing it insists on finding
+// exactly once.
+const registryPreventDestroy = "\n  lifecycle {\n    prevent_destroy = true\n  }\n"
+
+// LiftRegistryPreventDestroy takes that block out of the workdir's copy of the
+// repository module, so that this one apply may destroy the registry.
+//
+// Why it has to be done this way: lifecycle.prevent_destroy is read from the
+// CONFIGURATION and cannot take an expression, so an apply either sees a block
+// or does not (internal/infra/tf/real_terraform_test.go pins the two
+// behaviours). The two ways to drop one are to remove the block from the file
+// and to remove the resource from the file, and the registry's resource is the
+// only thing that keeps this repository's derived images addressable -- it is
+// not a file fugaro may rewrite into a different configuration. So the block
+// goes, in the workdir's copy, for the length of one apply.
+//
+// Why the workdir's copy is enough, and why nothing here is a permanent
+// change to fugaro's own tree: PrepareWorkdir rewrites the whole embedded tree
+// from the binary on every run, so the next plan of this workdir (the next
+// `fugaro update`) reads the block back. The workdir is the repository root's
+// own ($XDG_STATE_HOME/fugaro/terraform/<project>/repo), whose module tree no
+// other root's apply reads, and this runs only in the whole-root retirement's
+// own flow -- a run that is destroying the registry and nothing else.
+//
+// It refuses rather than guesses: a copy that does not carry the block exactly
+// once is not the tree this function knows, and dropping "whichever lifecycle
+// block is there" would be this program editing a promise it did not read.
+func LiftRegistryPreventDestroy(wd *Workdir) error {
+	path := filepath.Join(filepath.Dir(filepath.Dir(wd.Root)), "modules", "repo", "registry.tf")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("reading the repository module's registry (%s): %w", path, err)
+	}
+	if n := strings.Count(string(b), registryPreventDestroy); n != 1 {
+		return fmt.Errorf("the repository module's registry (%s) carries the prevent_destroy block %d times, want exactly one: this module is not the tree this release was built with, so nothing was rewritten", path, n)
+	}
+	out := strings.Replace(string(b), registryPreventDestroy, "\n", 1)
+	if err := os.WriteFile(path, []byte(out), 0o600); err != nil {
+		return fmt.Errorf("rewriting the repository module's registry (%s): %w", path, err)
+	}
+	return nil
+}
+
+// InFlightJobs is the jobs of a whole-root retirement an execution is still
+// running on (M2, D2303): one row per job, and answered=false for a question
+// that could not be read at all.
+//
+// It is the retirement's "and not before" half, and the reason it is a read of
+// its own rather than a lookup at the point of the delete: deleting a job kills
+// the execution on it, and the run that dies with it is a person's work going
+// away with no report anywhere. So the question is asked before anything is
+// removed from the state, the answer is a fact of the moment it is read (a run
+// launched a second later is out of anything a read can see), and every failing
+// direction holds: a listing that answered nothing, a job the state does not
+// name, and an execution that has not finished are all "do not retire it yet".
+//
+// An execution is in flight unless it has a completion time, which is the same
+// rule stateOf reads for a run's own status: pending (created, not started) is
+// as much a run as running is, and deleting the job under it cancels it.
+// A job that is not there at all is 404 and answers "nothing is running on it",
+// never a failure: the state may outlive a job somebody deleted by hand, and a
+// retirement that could never be made because of one would be worse than the
+// delete it is asking about.
+func InFlightJobs(ctx context.Context, c *Clients, spec RepoSpec, rets []Retirement) (jobs []Retirement, answered bool, warning string) {
+	if c == nil || c.Run == nil {
+		return nil, false, fmt.Sprintf("whether an execution is running on %s's jobs could not be read (%v)", spec.Name, errNoRunClient)
+	}
+	for _, ret := range rets {
+		if ret.Kind != "workflow job" && ret.Kind != "check job" {
+			continue
+		}
+		if ret.Job == "" || ret.Region == "" {
+			// The state's own values carry no name, which is the one shape
+			// retireBlockers refuses a retirement for as well: guessing a
+			// name is forbidden, and a job nobody can name is a job nobody
+			// can ask about.
+			return nil, false, fmt.Sprintf("the Terraform state of %s names no Cloud Run job behind %s, so whether an execution is running on it cannot be read", spec.Name, ret.Address)
+		}
+		parent := "projects/" + spec.GCPProject + "/locations/" + ret.Region + "/jobs/" + ret.Job
+		err := c.Run.Projects.Locations.Jobs.Executions.List(parent).Pages(ctx, func(p *run.GoogleCloudRunV2ListExecutionsResponse) error {
+			for _, e := range p.Executions {
+				if e != nil && e.CompletionTime == "" {
+					return errExecutionRunning
+				}
+			}
+			return nil
+		})
+		switch {
+		case errors.Is(err, errExecutionRunning):
+			jobs = append(jobs, ret)
+		case err != nil && !notFound(err):
+			return nil, false, fmt.Sprintf("whether an execution is running on %s (%s) could not be read: %v. Ask it by hand with `gcloud run jobs executions list --project %s --region %s --job %s`",
+				ret.Job, ret.Address, err, spec.GCPProject, ret.Region, ret.Job)
+		}
+	}
+	return jobs, true, ""
+}
+
+// errExecutionRunning stops the walk over a job's executions: the question is
+// answered by the first one that has not finished, and the rest of the listing
+// is not read.
+var errExecutionRunning = errors.New("an execution is running")
 
 // retirement classifies one address the spec does not produce: what kind of
 // resource it is, and which config change left it behind.

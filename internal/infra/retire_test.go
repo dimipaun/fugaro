@@ -7,6 +7,7 @@ import (
 	"maps"
 	"net/url"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -2029,5 +2030,145 @@ func TestDeployedSecretIDsWithoutAClientWarns(t *testing.T) {
 		if !strings.Contains(warning, "gcloud run jobs list") {
 			t.Errorf("%s: the warning names no way to check by hand: %q", name, warning)
 		}
+	}
+}
+
+// --- RootRetirements (M2, D2303)
+
+// TestRootRetirementsReturnsEveryAddressOfTheRoot: a whole root's retirement is
+// the state's own addresses and nothing else -- the set difference Retirements
+// computes is the wrong question here, because the repository's fugaro.yaml
+// still declares every workflow whose jobs are going (M2, D2303).
+//
+// Four facts are pinned, and the last three are what the flow does with the
+// rows: every address of the state is in the set; a job is a "workflow job"
+// (what the Cloud Run API delete keys on) even though its variant is still
+// deployed, which is exactly the address the ordinary set difference refuses to
+// call one (M3); the registry carries no promise and is not protected, so the
+// plan's own delete covers it; and the secret containers are unchanged, kept
+// and protected, so the state removal takes them out and nothing destroys them.
+func TestRootRetirementsReturnsEveryAddressOfTheRoot(t *testing.T) {
+	spec := originSpec(t, `agent: { auth: api-key }`)
+	st := originState(t)
+	rets := RootRetirements(st, spec)
+	if len(rets) != len(st.Addresses()) {
+		t.Fatalf("RootRetirements returned %d rows for a state of %d addresses", len(rets), len(st.Addresses()))
+	}
+	at := map[string]Retirement{}
+	for _, r := range rets {
+		at[r.Address] = r
+	}
+	for _, a := range st.Addresses() {
+		if _, ok := at[a]; !ok {
+			t.Errorf("the state holds %s and the root's retirement does not name it", a)
+		}
+	}
+	const (
+		registry  = "module.repo.google_artifact_registry_repository.images"
+		container = `module.repo.google_secret_manager_secret.this["claude-oauth-token"]`
+		liveJob   = `module.repo.module.workflow["go"].google_cloud_run_v2_job.this[0]`
+		checkJob  = "module.repo.google_cloud_run_v2_job.check[0]"
+	)
+	for _, a := range []string{liveJob, checkJob} {
+		if got := at[a].Kind; got != "workflow job" && got != "check job" {
+			t.Errorf("%s: Kind = %q, want the kind the API delete keys on", a, got)
+		}
+		if _, ok := JobDeleteLabels(spec, at[a]); !ok {
+			t.Errorf("%s: the API delete has no label set for it, so a protected one would be left alive with nothing managing it", a)
+		}
+	}
+	if r := at[registry]; r.Kept != "" || r.Protected {
+		t.Errorf("the registry row is Kept=%q Protected=%v, want neither: the root's registry is destroyed by the plan", r.Kept, r.Protected)
+	}
+	if r := at[container]; r.Kept != KeptSecret || !r.Protected {
+		t.Errorf("the container row is Kept=%q Protected=%v, want M1's promise and a state removal", r.Kept, r.Protected)
+	}
+	for _, r := range rets {
+		if r.Cause != RootRetiredCause {
+			t.Errorf("%s: Cause = %q, want the one sentence every row of this set carries", r.Address, r.Cause)
+		}
+	}
+	// The removal set is what the flow state-removes before the destroy plan:
+	// the containers and the protected jobs, and NOT the registry, which the
+	// plan has to be able to delete.
+	removals := Removals(st.Addresses(), rets)
+	if !slices.Contains(removals, container) || !slices.Contains(removals, liveJob) {
+		t.Errorf("Removals = %q, want the containers and the protected jobs", removals)
+	}
+	if slices.Contains(removals, registry) {
+		t.Errorf("Removals names the registry (%q): taking it out of the state would leave it alive, unmanaged and undeleted", removals)
+	}
+	// And the split puts the registry and every job where the flow expects
+	// them: the registry in the apply's group, the jobs in the API's.
+	api, apply, kept := RetireSplit(st.Addresses(), spec, rets)
+	for _, want := range []string{liveJob, checkJob} {
+		if !slices.ContainsFunc(api, func(r Retirement) bool { return r.Address == want }) {
+			t.Errorf("%s is not in the API group (%+v)", want, api)
+		}
+	}
+	if !slices.ContainsFunc(apply, func(r Retirement) bool { return r.Address == registry }) {
+		t.Errorf("the registry is not in the apply group: %+v", apply)
+	}
+	if len(kept) != 3 {
+		t.Errorf("kept = %d rows, want the origin's three secret containers", len(kept))
+	}
+}
+
+// TestLiftRegistryPreventDestroyRewritesTheWorkdirCopyOnce: the block goes out
+// of the workdir's copy of the module and nothing else changes, and a tree that
+// does not carry the block exactly once is refused rather than edited.
+//
+// PrepareWorkdir writes the real embedded tree, so this reads the module
+// fugaro ships and not a fixture: what the rewrite is for is that this exact
+// block disappears from this exact resource.
+func TestLiftRegistryPreventDestroyRewritesTheWorkdirCopyOnce(t *testing.T) {
+	wd, err := PrepareWorkdir(t.TempDir(), "repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(filepath.Dir(filepath.Dir(wd.Root)), "modules", "repo", "registry.tf")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(before), registryPreventDestroy) {
+		t.Fatalf("the workdir's copy of the module does not carry the block this function lifts:\n%s", before)
+	}
+	if err := LiftRegistryPreventDestroy(wd); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(after), "prevent_destroy") {
+		t.Errorf("the block is still there:\n%s", after)
+	}
+	// Everything else of the file is byte for byte what it was: the resource,
+	// its cleanup policies and the grants below it.
+	if got, want := strings.Replace(string(before), registryPreventDestroy, "\n", 1), string(after); got != want {
+		t.Errorf("the rewrite changed more than the block:\n--- want ---\n%s\n--- got ---\n%s", want, got)
+	}
+	if !strings.Contains(string(after), `resource "google_artifact_registry_repository" "images"`) {
+		t.Error("the registry resource itself is gone")
+	}
+	// A second call finds no block and refuses: the tree it knows carries one.
+	if err := LiftRegistryPreventDestroy(wd); err == nil {
+		t.Error("lifting the block twice succeeded, want a refusal")
+	}
+}
+
+// TestRootRetirementsIgnoresTheSpecsOwnAddresses is the difference from
+// Retirements, stated as a test: a shared repository's spec still produces
+// every address of its root (its fugaro.yaml declares its workflows), and the
+// whole root is retired anyway -- the state decides, never the difference.
+func TestRootRetirementsIgnoresTheSpecsOwnAddresses(t *testing.T) {
+	spec := originSpec(t, `agent: { auth: api-key }`)
+	st := originState(t)
+	if got := Retirements(st.Addresses(), spec); len(got) == len(st.Addresses()) {
+		t.Fatalf("fixture bug: the spec produces nothing the state holds, so this test cannot tell the two sets apart")
+	}
+	if got := RootRetirements(st, spec); len(got) != len(st.Addresses()) {
+		t.Errorf("RootRetirements = %d rows, want the state's %d addresses whatever the spec produces", len(got), len(st.Addresses()))
 	}
 }
