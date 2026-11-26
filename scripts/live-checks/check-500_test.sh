@@ -185,10 +185,10 @@ JSON
  {"name":"data","tags":["postgres"],"default":false,"source":"inline","description":"the data repositories","digest":"sha256:2222222222"}]}
 JSON
   cat >"$json/survey.json" <<'JSON'
-{"version":1,"project":"fugaro-chk500-test","repos":[
+{"version":2,"project":"fugaro-chk500-test","repos":[
  {"repo":"acme/sandbox","provider":"github","signals":[{"kind":"lockfile","path":"package-lock.json"},{"kind":"version","path":".nvmrc","value":"22"}]},
  {"repo":"acme/data","provider":"github","signals":[{"kind":"dockerfile","path":"Dockerfile"}]}],
- "setup":{"catalog":[{"name":"web"},{"name":"data"}],"image_map":{"acme/sandbox":"web","acme/data":"data"},"bake_repos":true}}
+ "setup":{"catalog":[{"name":"web"},{"name":"data"}],"repo_images":{"github/acme/sandbox":"web","github/acme/data":"data"},"bake_repos":true}}
 JSON
   cat >"$json/launch.json" <<JSON
 {"project":"$project","run":"2000","repo":"acme/sandbox","run_id":"$run_id","branch":"fugaro/20261112-120000-abcd","execution":"exec-1","status":"launched"}
@@ -321,6 +321,7 @@ test_happy_path() {
   expect_contains "$out" "FACT cap: PASS" "happy path: the cap"
   expect_contains "$out" "2 of the four the skill allows (D1903)" "happy path: the number, and whose rule it is"
   expect_contains "$out" "FACT survey: PASS" "happy path: the survey"
+  expect_contains "$out" "2 mapped repositories (setup.repo_images)" "happy path: the map is read from the version-2 member"
   expect_contains "$out" "FACT builds: PASS" "happy path: the builds"
   expect_contains "$out" "built through Cloud Build" "happy path: what was built, and where"
   expect_contains "$out" "FACT digests: PASS" "happy path: the digests"
@@ -552,6 +553,37 @@ PY
   expect_contains "$out" "does not bake (setup.bake_repos is false)" "a project that bakes nothing: the reason"
 }
 
+test_a_legacy_map_is_read_from_its_own_member() {
+  local dir=$work/legacymap
+  prepare "$dir"
+  # A project whose map an update has not migrated yet: `image survey` prints
+  # the bare-name legacy_image_map and no repo_images entry (R4), and the check
+  # has to read the map the document holds rather than report none.
+  cat >"$dir/json/survey.json" <<'JSON'
+{"version":2,"project":"fugaro-chk500-test","repos":[
+ {"repo":"acme/sandbox","provider":"github","signals":[{"kind":"lockfile","path":"package-lock.json"}]}],
+ "setup":{"catalog":[{"name":"web"},{"name":"data"}],"repo_images":{},"legacy_image_map":{"acme/sandbox":"web","acme/data":"data"},"bake_repos":true}}
+JSON
+  run_check "$dir" CHECK500_STALE_REPO="$dir/stale"
+  expect_status "$status" 0 "a legacy map"
+  expect_contains "$out" "2 mapped repositories (setup.legacy_image_map)" "a legacy map: the member read"
+}
+
+test_one_repository_at_two_providers_is_counted_once() {
+  local dir=$work/twoproviders
+  prepare "$dir"
+  # D3373 maps one owner/name at two providers with two keys; the count the
+  # row prints is repositories, so the same name twice is one of them.
+  cat >"$dir/json/survey.json" <<'JSON'
+{"version":2,"project":"fugaro-chk500-test","repos":[
+ {"repo":"acme/sandbox","provider":"github","signals":[{"kind":"lockfile","path":"package-lock.json"}]}],
+ "setup":{"catalog":[{"name":"web"},{"name":"data"}],"repo_images":{"github/acme/sandbox":"web","bitbucket/acme/sandbox":"web","github/acme/data":"data"},"bake_repos":true}}
+JSON
+  run_check "$dir" CHECK500_STALE_REPO="$dir/stale"
+  expect_status "$status" 0 "one repository at two providers"
+  expect_contains "$out" "2 mapped repositories (setup.repo_images)" "one repository at two providers: the keys of one name are one repository"
+}
+
 test_a_missing_warning_is_a_finding() {
   local dir=$work/nowarning
   prepare "$dir"
@@ -646,6 +678,8 @@ t test_a_record_that_cannot_be_read_is_a_finding
 t test_a_record_of_another_run_is_a_finding
 t test_an_image_with_no_baked_checkout_is_a_finding
 t test_a_project_that_bakes_nothing_says_so
+t test_a_legacy_map_is_read_from_its_own_member
+t test_one_repository_at_two_providers_is_counted_once
 t test_a_missing_warning_is_a_finding
 t test_a_warning_without_the_rule_is_a_finding
 t test_a_stale_repo_that_is_not_a_checkout_is_not_measured
