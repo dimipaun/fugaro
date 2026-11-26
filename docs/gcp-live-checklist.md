@@ -27942,3 +27942,64 @@ apart: 891 **PASSES** while the `repository` stage differs, because that stage i
 are accepted, as 891's own header says: Terraform's plan takes the state lock (a `.tflock` object written and
 deleted in the state bucket, once per root it plans), and the run records remembered checkouts in your local
 config. **OWNER-RUN, NOT RUN: no agent runs any step of it.**
+
+## Check 270: a Critical run whose L3 rejects once — L2's head older than L3's, and the three tiers recorded (sandbox installation and sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **X1** of the review-levels work ([`docs/review-levels-ab-jobmax/implementation-plan.md`](review-levels-ab-jobmax/implementation-plan.md), re-planned 2026-11-21 and approved 2026-11-26). The subject is **L4.2**, merged: the runner runs level 3, skips L2 after an L3 bounce, and decides by the highest level (`internal/runner`'s `applyLevels`, `decidingReview` and the `adversarial` stage). It is **OWNER-RUN**: **no agent runs any step of it**, every step is yours. The run is launched with `fugaro run` on the sandbox repository, **not through the orchestrator** — this plan's checks launch no orchestrator task, and the orchestrator's launcher is measured by its own block (Checks 300–305).
+
+**What the check confirms.** One run of the sandbox repository at `rigor: critical` whose adversarial review (level 3) rejects once, after which
+
+- the pull request's body shows **L2's head older than L3's**: the body's per-level lines (`internal/runner/prflow.go`'s `levelsPart`, D727) name the head each level's last round approved, and after the bounce the cheap loop runs and level 2 is never reviewed again — so a run that ships carries a level 2 verdict about an earlier head than the one level 3 shipped;
+- `result.json` records the three tiers — `first`, `senior` and `adversarial` (`runstore.TierFirst`, `TierSenior`, `TierAdversarial`) — so the run's own record shows level 1 advised, level 2 decided and level 3 decided over both.
+
+1. **Cleanup first, and the state the Restore puts back.** In the sandbox checkout record the repository's `fugaro.yaml` — its `rigor:` key and the branch it is committed on. **FACT:** that state.
+
+2. **The run.** Set `rigor: critical` in the sandbox repository's `fugaro.yaml`, **commit and push it to the branch the run will read** — the run fetches the ref from the remote, so an uncommitted edit is not the configuration it runs under. Then one small task whose diff gives the adversarial review something to reject once: `fugaro run --ref <the sandbox's base branch> '<task>'`. **FACT:** `launched` and the run reference it prints, and the rigor mode the run resolved. **If the adversarial review ships in its first round the run is not this check's reading** — L2's and L3's heads then agree and there is nothing to compare — so pick a task that earns one rejection, or run again; the levels' split is only visible after a bounce.
+
+3. **The pull request's body.** **FACT:** the per-level lines — level 2's line naming a head **older** than the head level 3's line names, with each level's verdict beside it.
+
+4. **The record.** `fugaro diagnose RUN --json`, or the same object read directly — `gcloud storage cat "gs://<runs-bucket>/runs/<slug>/<run-id>/result.json"`. **FACT:** the reviews carry tiers `first`, `senior` and `adversarial`, the adversarial tier's first round is a rejection, and its deciding round reads the head the run ships.
+
+5. **Restore.** Close the pull request the run opened and delete its branch (`gh pr close <n> --delete-branch` in the sandbox checkout), put the repository's `rigor:` key back and push.
+
+**Paste back:** every `FACT` line above — the run reference and resolved mode, the per-level lines with their heads, and the record's tiers and rounds. Until this check runs, L4.2's skip and its highest-level verdict are built and **unverified live**. **Never run any step against `belong`**: this is the sandbox installation and the sandbox repository only, and no agent runs any step of it — every step is yours.
+
+## Check 271: a console crash report, scrubbed — type and frames only, and none with the switch off (your own machine, a debug build of the console; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **X1** of the review-levels work, re-worded 2026-11-21 against the console as shipped: the reporter and its per-user switch are **T2.1**, built — `@sentry/electron` pinned, `console/src/main/crash.ts` (the gate and the scrubber), `crash-dsn.ts` (the one embedded public DSN), `crash-electron.ts` and `crashstore.ts` (the switch), wired at startup from `console/src/main/index.ts`. The switch is the owner's ruling of 2026-10-31: per-user and local to the console, one boolean in `<userData>/crash.json` (`CRASH_FILE_NAME`), **off when the file is absent**, moved by the application menu's **Send Crash Reports** item — whose own label says it *applies at the next launch* (`CRASH_SEND_ITEM_LABEL`, `console/src/main/picker.ts`) — and read once, before the app's first `await` (`docs/desktop-console/spec.md` §5.1 rule 10 and §7.4). It is **OWNER-RUN**: **no agent runs any step of it**, every step is yours.
+
+**What the check confirms.** A debug build of the console, crashed once with the debug build's test trigger, and two readings:
+
+- with the switch **on**, the event arrives at Sentry — the console's only crash destination, hosted in the European Union — carrying the exception's **type and frames only**: each frame an app-relative file with its function, line, column and `in_app` flag, the console's version as `release`, and the build's debug images (an image type, a debug id and a path cut at the app root each); and **no message, no path, no user name, no environment and no host name** — the payload is an allow-list (F33), scrubbed before it leaves the process;
+- with the switch **off** — `crash.json` absent, or the menu item turned off and the console relaunched — **none arrives**: the switch is the only gate, and a console that has not read a yes sends nothing.
+
+1. **Cleanup first, and the state the Restore puts back.** Record whether `<userData>/crash.json` exists and what it holds. **FACT:** that state. Build a debug build of the console from the branch under test.
+
+2. **The switch on, and the crash.** Write `true` to `<userData>/crash.json` by hand, or turn the menu's **Send Crash Reports** item on and relaunch — the item writes the file and the reporter reads it at the next launch, not mid-session. Force one crash with the debug build's test trigger. **FACT:** the event arriving at the project's own Sentry: its type and its frames — app-relative file, function, line, column and `in_app` — its `release` and its debug images. **FACT:** the event carries **no message, no path, no user name, no environment and no host name**, and no breadcrumb, session or minidump beside it.
+
+3. **The switch off, and the same crash twice.** Delete `<userData>/crash.json` and relaunch, then force the same crash. **FACT:** no event arrives — the absent file is off, which is the whole of opt-in (D733). Then turn the menu item on, relaunch once so the file exists, turn it **off** again and relaunch, and force the crash a third time. **FACT:** no event arrives — the item's own label is the behaviour: the switch applies at the next launch, and a launch past the off sends nothing.
+
+4. **Restore.** Delete the events this check sent from the Sentry project, and put `<userData>/crash.json` back as step 1 recorded it — absent if it was absent.
+
+**Paste back:** every `FACT` line above — the event's type and frame fields, the absence of the message, path, user, environment and host fields, and the two off readings. Until this check runs, the scrubber's allow-list is built and **unverified live**: the hermetic tests pin what the scrubber drops, and this check is the reading that a real build sends nothing more and, with the switch off, nothing at all. **No agent runs any step of it** — every step is yours.
+
+## Check 272: the app's crash reports before pairing — none sent, and the unsent deleted (a development build of the app, the sandbox project's Firebase console; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **X1** of the review-levels work, re-worded 2026-11-21 against the app as shipped: **T3.1** is merged — the app's one switch is `mobile/src/telemetry/crash.js`, the published policy key `mobile_crash_reports` (`internal/projectpolicy`'s `MobileCrashReportsKey`) reached as `crash_reports` in the pairing session's policy, Analytics is gone from `mobile/package.json` and `mobile/app.config.js`, and `mobile/firebase.json` carries `crashlytics_auto_collection_enabled: false` (D731, D734, D738). It is **OWNER-RUN**: **no agent runs any step of it**, every step is yours.
+
+**What the check confirms, and which half of 272 this is.** This section runs **the unpaired half only**: a development build of the app **before pairing** — no session, so no policy, and the reader fails closed: `crashReportsOf` answers off with reason `no-session` (`CRASH_REASON.NO_SESSION`), because collection is on only for a policy that says `crash_reports: true` in so many words. In that state
+
+- a forced crash sends **no report** to Crashlytics — collection was set off at startup, before anything could be collected for sending; and
+- the reports the SDK collected and never sent are **deleted**: every off reading asks `deleteUnsentReports()` (U2), so a report waiting on the device while the switch is off is not left behind.
+
+**The paired half is a follow-up, not a step — it is not runnable today.** The other half of 272 as re-planned — **after pairing, with the project policy's `mobile_crash_reports` published `false`** — reads the same two facts with the session's policy carrying `crash_reports: false` (reason `policy-off`). The "after pairing" state is one no build on `main` reaches: the app's own pairing flow and session are mobile-identity-pairing's **M2** (`mobile/src/pairing/`, the identity-assertion flow) and **M3** (`mobile/src/session/`, the device-bound session and the hourly refresh), and **neither is merged**. This half is therefore **recorded here and NOT RUN, waiting on M2 and M3**: when those land, run the steps below with the app paired to a project whose published policy sets `mobile_crash_reports: false`, and expect no report and the unsent deleted, exactly as in the unpaired half.
+
+1. **Cleanup first, and the state the Restore puts back.** A development build of the app from the branch under test, installed on one device or emulator, **not paired** — a fresh install is the clean state; an install that was paired is signed out and its session gone, so `crashReportsOf` reads `no-session` and not a policy. Record the sandbox project's Crashlytics dashboard as it stands. **FACT:** that state.
+
+2. **The switch read, at startup.** Launch the app. **FACT:** at startup, with no session, collection is set off — the one call site is `createCrashReports`'s `apply`, which sets `setCrashlyticsCollectionEnabled(false)` and asks `deleteUnsentReports()` on every off reading; say how you read it (the SDK's own debug logging, or a build with a marker on the call).
+
+3. **The crash.** Force one native crash of the app, and relaunch it — Crashlytics reports on the launch after the crash, which is the launch this check reads. **FACT:** **no report arrives** at the sandbox project's Crashlytics: collection was off at both launches, and the auto-collection flag is `false` in `mobile/firebase.json`, so nothing waited to be sent either. **FACT:** the unsent are deleted — the off reading at each launch asks `deleteUnsentReports()`, so even a report the SDK wrote to disk before the switch was read is gone rather than queued.
+
+4. **Restore.** Uninstall the development build or sign it out, and confirm the sandbox project's Crashlytics shows nothing from this check.
+
+**Paste back:** every `FACT` line above — the startup reading and how it was read, the empty Crashlytics after the crash and the relaunch, and the deletion of the unsent. Until this check runs, T3.1's fail-closed switch is built and **unverified live**: the hermetic tests pin the reader's four answers, and this check is the reading that a real build before pairing sends nothing. **No agent runs any step of it** — every step is yours.
