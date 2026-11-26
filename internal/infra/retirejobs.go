@@ -28,11 +28,11 @@ import (
 // itself, and the apply for everything the instance owned beside it — its
 // service account and its grants.
 //
-// Nothing here decides whether a job is quiet: ProjectInFlightJobs does, and
-// retiring a job with an execution on it is what it refuses. Deleting the job
-// cancels that execution, and the run behind it is a person's work going away
-// with no report anywhere (InFlightJobs' own rule, and the reason the
-// question is asked before anything leaves the state).
+// Nothing here decides whether a job is quiet: JobInFlight does, and retiring a
+// job with an execution on it is what it refuses. Deleting the job cancels that
+// execution, and the run behind it is a person's work going away with no report
+// anywhere (InFlightJobs' own rule, and the reason the question is asked before
+// anything leaves the state).
 
 // The two module instances of the installation root that hold one instance
 // per job: the coding jobs, and the review-only variants of CSR7 (the same
@@ -224,37 +224,76 @@ func LiveProjectJobs(ctx context.Context, c *Clients, gcpProject, region string)
 	return jobs, true, ""
 }
 
-// ProjectInFlightJobs is the retired rows an execution is still running on,
-// and answered=false for a question that could not be read at all. It is
-// InFlightJobs' rule for the retirement this file is about, and the reason it
-// exists beside it rather than inside it is the shape of the question: a
-// repository root's jobs are named by a variant the state carries, and a
-// project job is named by its for_each key.
-//
-// The job a row with no name is one nobody can delete and nobody can ask
-// about, and the caller refuses on it exactly as retireBlockers does: a
-// retirement that cannot name the job it is about is not one that may remove
-// the address.
-func ProjectInFlightJobs(ctx context.Context, c *Clients, gcpProject string, rets []Retirement) (jobs []Retirement, answered bool, warning string) {
-	if c == nil || c.Run == nil {
-		return nil, false, fmt.Sprintf("whether an execution is running on this installation's project jobs could not be read (%v)", errNoRunClient)
+// ProjectJobInstanceNames is the job name of every instance rets holds, once
+// each and sorted. The instance's for_each key IS the job's Cloud Run name, and
+// one name answers for both axes — a review-only variant carries its coding
+// job's name (ImplicitReviewJobName) — so the two instances of one name are one
+// entry of this list and one job in the cloud.
+func ProjectJobInstanceNames(rets []Retirement) []string {
+	var out []string
+	for _, r := range rets {
+		if _, key, ok := projectJobKey(addressSegments(r.Address)); ok {
+			out = append(out, key)
+		}
 	}
-	for _, ret := range rets {
-		if ret.Kind != ProjectJobRetiredKind {
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// ProjectJobRetiredRows is the rows of the instances this run retires: rets
+// without the rows of the named instances, which this run leaves exactly as
+// they are. Every row of a kept instance stays, never only the job's own: a
+// state removal is what makes the plan below stop producing the address, and an
+// instance whose job row left while its service account and its grants stayed
+// is an apply that destroys what a run in flight reads and writes through.
+func ProjectJobRetiredRows(rets []Retirement, kept []string) []Retirement {
+	if len(kept) == 0 {
+		return rets
+	}
+	leave := make(map[string]bool, len(kept))
+	for _, n := range kept {
+		leave[n] = true
+	}
+	out := make([]Retirement, 0, len(rets))
+	for _, r := range rets {
+		if _, key, ok := projectJobKey(addressSegments(r.Address)); ok && leave[key] {
 			continue
 		}
-		if ret.Job == "" || ret.Region == "" {
-			return nil, false, fmt.Sprintf("the Terraform state names no Cloud Run job behind %s, so whether an execution is running on it cannot be read", ret.Address)
-		}
-		busy, read, why := JobInFlight(ctx, c, gcpProject, ret.Region, ret.Job)
-		if !read {
-			return nil, false, fmt.Sprintf("whether an execution is running on %s (%s) could not be read: %s", ret.Job, ret.Address, why)
-		}
-		if busy {
-			jobs = append(jobs, ret)
-		}
+		out = append(out, r)
 	}
-	return jobs, true, ""
+	return out
+}
+
+// ProjectJobStateLabels is the label set the state's own row for the shared job
+// named name carries, and nil when the state holds no such row or its row
+// carries none.
+//
+// It is what the Cloud Run API delete of that job checks the live job against
+// (Retirement.Labels). The listing that found the job matched those very labels,
+// so a delete judged by the labels it was found by is judged by nothing, while
+// a job whose labels have moved off the ones the state recorded is not the job
+// this run is finishing — and the API delete is the one call here that nothing
+// takes back.
+//
+// nil is a state that holds no row for the job (an earlier run removed the
+// address and its own delete did not land) or one written before the module
+// labelled its jobs, and the caller then has the marks the listing matched by
+// as the whole of what the delete can check.
+func ProjectJobStateLabels(rets []Retirement, name string) map[string]string {
+	for _, r := range rets {
+		segs := addressSegments(r.Address)
+		if _, key, ok := projectJobKey(segs); !ok || key != name {
+			continue
+		}
+		if typ, _, _ := resourceOf(segs); typ != "google_cloud_run_v2_job" {
+			continue
+		}
+		if len(r.Labels) == 0 {
+			return nil
+		}
+		return r.Labels
+	}
+	return nil
 }
 
 // JobInFlight is whether job has an execution that has not finished, and

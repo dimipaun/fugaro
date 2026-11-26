@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -270,6 +271,84 @@ func TestLiveProjectJobsReadsTheProjectModulesOwnLabels(t *testing.T) {
 	}
 	if _, answered, _ := LiveProjectJobs(context.Background(), nil, "proj-1234", "us-east5"); answered {
 		t.Error("no client answered: a question never asked is not an empty list")
+	}
+}
+
+// TestProjectJobStateLabelsReadsTheStatesOwnRow: the set the API delete of a
+// retired job is checked against is the one the job's own state row carries,
+// and never the one the listing that found the job matched — the listing
+// filtered on those very pairs, so a delete judged by them is judged by
+// nothing. A state row that carries none is nil, which the caller answers with
+// the marks the listing matched by and nothing else.
+func TestProjectJobStateLabelsReadsTheStatesOwnRow(t *testing.T) {
+	rets, err := ProjectJobRetirements([]byte(projectJobsVars), projectJobsStateOf(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := ProjectJobStateLabels(rets, goneJobKey)
+	if got[gcp.LabelProfile] != "standard" || got["fugaro_account"] != "team-a" {
+		t.Errorf("the labels are %v; want the state's own set for the job", got)
+	}
+	// The review variant's row carries none in this fixture, which is the
+	// state of an installation written before the module labelled its jobs.
+	if got := ProjectJobStateLabels(rets, goneReviewJobKey); got != nil {
+		t.Errorf("the labels are %v; want nil for a row that carries none", got)
+	}
+	// A job the retirement does not hold at all: a name nothing answers for.
+	if got := ProjectJobStateLabels(rets, keptJobKey); got != nil {
+		t.Errorf("the labels are %v; want nil for a job no retirement holds", got)
+	}
+}
+
+// TestProjectJobRetiredRowsKeepsAKeptInstancesEveryRow: an instance this run
+// leaves keeps ALL of its rows, never only the job's. A state removal is what
+// makes the plan below stop producing the address, so an instance whose job row
+// left while its service account and its grants stayed is an apply that
+// destroys what a run in flight reads and writes through.
+func TestProjectJobRetiredRowsKeepsAKeptInstancesEveryRow(t *testing.T) {
+	rets, err := ProjectJobRetirements([]byte(projectJobsVars), projectJobsStateOf(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ProjectJobRetiredRows(rets, nil); len(got) != len(rets) {
+		t.Errorf("the rows are %+v; want every row of the retirement when nothing is kept", got)
+	}
+	got := map[string]bool{}
+	for _, r := range ProjectJobRetiredRows(rets, []string{goneJobKey}) {
+		got[r.Address] = true
+	}
+	for _, addr := range []string{goneJobAddr, goneSAAddr, goneIAMAddr} {
+		if got[addr] {
+			t.Errorf("%s is still a row of the retirement: every row of an instance this run keeps stays", addr)
+		}
+	}
+	if !got[goneReviewJobAddr] {
+		t.Errorf("the rows are %v; want the other instance's own row, which is not the one kept", got)
+	}
+}
+
+// TestProjectJobInstanceNamesNamesEveryInstanceOnce: the names a listing that
+// could not be read leaves whole, which is what a carry puts back into the
+// document. The for_each key IS the job's Cloud Run name, and one name answers
+// on both axes, so the two instances of one name are one entry.
+func TestProjectJobInstanceNamesNamesEveryInstanceOnce(t *testing.T) {
+	rets, err := ProjectJobRetirements([]byte(projectJobsVars), projectJobsStateOf(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := ProjectJobInstanceNames(rets)
+	want := []string{goneJobKey, goneReviewJobKey}
+	if !slices.Equal(got, want) {
+		t.Errorf("the names are %v; want %v, once each and sorted: the rows of one instance name one job", got, want)
+	}
+	// A row that is not a module instance's names no job, and one name on both
+	// axes is one job: the review variant of a coding job carries its name.
+	same := []Retirement{{Address: goneJobAddr}, {Address: strings.Replace(goneJobAddr, "module.project[", "module.project_review[", 1)}}
+	if got := ProjectJobInstanceNames(same); !slices.Equal(got, []string{goneJobKey}) {
+		t.Errorf("the names are %v; want %s alone, once", got, goneJobKey)
+	}
+	if got := ProjectJobInstanceNames([]Retirement{{Address: `module.foo.google_cloud_run_v2_job.this`}}); len(got) != 0 {
+		t.Errorf("the names are %v; want none from a row that is not a project module instance", got)
 	}
 }
 
