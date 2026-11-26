@@ -26,7 +26,9 @@ const signConsequence = "can sign sign-in tokens with any claims, i.e. act as an
 // account's minter role, is the real boundary of the budget database's
 // identity. Three kinds of principal are information: the ones the design
 // expects (the Firebase Admin SDK account, the minter role on the signer
-// account alone), Google's own service agents of this project (matched by
+// account alone, and the installation's own operators' token-creator grant on
+// the resident orchestrator's account and on the verifier's, impersonationGrant),
+// Google's own service agents of this project (matched by
 // exact email AND this project's number) and the project owners (the trust
 // root); none is ever given a remove command. The managed deployment's own
 // grants are a warning of their own (token-signers-managed): they are the
@@ -140,7 +142,7 @@ func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service
 		msg += "; the project number could not be read (" + oneLineCLI(nerr.Error()) + "), so no Google service agent is recognised and each is listed as a warning"
 	}
 	if len(expected) > 0 {
-		msg += fmt.Sprintf("; %d principal(s) can sign as designed (the Firebase Admin SDK account; launchers and operators through the minter role on the signer account): %s",
+		msg += fmt.Sprintf("; %d principal(s) can sign as designed (the Firebase Admin SDK account; launchers and operators through the minter role on the signer account; the installation's operators, who mint an ID token as the resident orchestrator's and the verifier's accounts): %s",
 			len(expected), strings.Join(dedupe(expected), ", "))
 	}
 	// The project number unread is an unread state like any other: the line
