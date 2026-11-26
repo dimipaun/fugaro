@@ -54,19 +54,26 @@ type SealKey struct {
 // standing copy in the job resource and widens its audience to the reaper, and
 // the only other one the design allows is its rejected C2 (a per-run Secret
 // Manager secret on a shared per-(profile, account) account). So Batch carries
-// no sealed budget run. **A launch is sealed whenever its installation mints**
-// (internal/cli/launch_budget.go's budgetMintOn), and an installation has one
-// backend, so this is not a per-run fallback: an installation that mints
-// budget tokens cannot launch any run on Batch. The message below says all of
-// that to the operator, and it never quotes the value (LaunchSpec.SecretEnv's
-// own contract: the value leaves the launcher once, as the execution's
-// override member).
+// no sealed budget run.
 //
-// **This is the helper BR1 owns** (D3101, R3): that task wraps the key with
-// the installation's seal key (Options.SealKey), returns the variable the run
-// opens its session from under the name contract C1 fixes, and keeps this
-// refusal for a launch whose block names no key -- with `fugaro update` as the
-// fix. Two things it must hold to, whatever the carrier becomes: the plain
+// **What BR1 changed, and what it left** (D3101 as amended, F21 and F28 of
+// docs/batch-run-identity): a Batch launch does not mint and seal at all any
+// more. Its run's identity is the ticket its launcher asks the installation's
+// credentials service for, with the full name of the job it is about to create
+// (internal/cli's launch_identity.go and launch_batch.go, R1), so a launcher of
+// this release hands a Batch execution a ticket and no seal marker. What this
+// refusal is under, then, is a launch of a release behind or one built by hand
+// -- the carrier it refuses is the same carrier, and the rule it keeps is R5's:
+// the marker's value IS the seal key, and it is never a variable of a Batch
+// job. The message below says all of that to the operator, and it never quotes
+// the value (LaunchSpec.SecretEnv's own contract: the value leaves the launcher
+// once, as the execution's override member).
+//
+// **This is the helper BR1 owns** (D3101, R3): the identity a Batch launch
+// carries is its ticket, and the key it would have carried has no carrier here
+// -- so the whole of this helper's work is the refusal, and the block's seal
+// key (Options.SealKey, whose shape is the key-release contract's and BR23's to
+// retire) has no reader in this file. Two things it must hold to: the plain
 // seal key is never a variable of a Batch job (R5), and a refusal never quotes
 // the key's value (R7).
 func (b *Backend) sealedVars(full string, entries []backend.EnvVar) (map[string]string, error) {
@@ -95,5 +102,5 @@ func (b *Backend) sealedVars(full string, entries []backend.EnvVar) (map[string]
 // somebody owes. entry is the marker's name and never its value: the name is
 // the most an operator may be shown (R7, and the value is the seal key).
 func tokenCarrierRefusal(full, entry string) error {
-	return fmt.Errorf("launching %s: the launch carries %s, and a Batch job has no carrier for the budget token's seal key: a Batch job has no per-execution override, so the only place a launch's variable can go is the job's definition, which every launcher the Fugaro job-name condition admits and the reaper can read back for as long as the job is kept -- a standing copy in the job resource, and the marker's value IS the seal key, so it is never a variable of a Batch job, sealed or plain, and nothing was created; this refusal is deliberate, and it is the documented limit (docs/budget-token-channel/spec.md, \"The Batch backend refuses a sealed launch\"): every launch of an installation that mints is sealed, so an installation that mints budget tokens — one that names a budget database, with the signer account it mints through — cannot launch any run on Batch, and such an installation has to stay on backend: cloud-run", full, entry)
+	return fmt.Errorf("launching %s: the launch carries %s, and a Batch job has no carrier for the budget token's seal key: a Batch job has no per-execution override, so the only place a launch's variable can go is the job's definition, which every launcher the Fugaro job-name condition admits and the reaper can read back for as long as the job is kept -- a standing copy in the job resource, and the marker's value IS the seal key, so it is never a variable of a Batch job, sealed or plain, and nothing was created. A Batch launch carries a ticket and not a seal (docs/batch-run-identity): the identity its run claims is issued by the installation's credentials service, which is asked with the full name of the job this launch is about to create, so a launcher of a release of this one seals nothing here -- what this refuses is a launch of a release behind, or one built by hand -- and its fix is the claim's: opt this installation in, which is the selection that writes and publishes that fact and applies the installation's update; this refusal is deliberate, and it is the documented limit (docs/budget-token-channel/spec.md, \"The Batch backend refuses a sealed launch\")", full, entry)
 }

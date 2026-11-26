@@ -2531,14 +2531,15 @@ func equalJSON(a, b any) bool {
 // object), and the refusal does not quote the value.
 //
 // The refusal is the **owner's answer** and not a waiting state (the compute
-// backend plan's P1, 2026-10-19): Batch runs no sealed budget run, and — the
-// wording the review of this branch corrected — an installation that mints
-// budget tokens **cannot launch any run on Batch**, because minting is the
-// installation's (`internal/cli/launch_budget.go`'s `budgetMintOn`: a budget
-// database with budget mode on, or a published policy) and an installation has
-// one backend. "It runs its budget-on path on Cloud Run" read as though
-// budget-off runs could still go there; none can, since every launch of a
-// minting installation is sealed.
+// backend plan's P1, 2026-10-19): Batch runs no sealed budget run. **What BR1
+// changed here is the sentence and not the rule** (F21 and F28 of
+// docs/batch-run-identity): a launcher of this release asks the installation's
+// credentials service for the run's ticket -- naming the job it is about to
+// create -- and mints nothing, so a Batch launch carries a ticket and not a
+// seal, and the launch that meets this refusal is one of a release behind or
+// one built by hand. The carrier is the same carrier and the rule is the same
+// rule; "an installation that mints budget tokens cannot launch any run on
+// Batch" is no longer what this says, because it is no longer true.
 //
 // The assertions below therefore hold the refusal's whole operator-facing
 // contract — the entry is named, the value is not, **no warning or error
@@ -2608,16 +2609,16 @@ func TestLaunchRefusesASecretEnv(t *testing.T) {
 		t.Errorf("the refusal does not name the entry it refused: %v", err)
 	}
 	// The answer itself, in the operator's words: the reason (a Batch job's
-	// variables are the job's definition), where it is documented, that no run
-	// of a minting installation can go to this backend, and the condition that
-	// makes an installation mint. These phrases are the ones the design
-	// documents carry too, and TestDocsBudgetTokenChannelAnswersTheBatchSeal
-	// holds this file and those documents to the same sentence.
+	// variables are the job's definition), where it is documented, what a Batch
+	// launch carries instead of a seal, and the fix that is the claim's. These
+	// phrases are the ones the design documents carry too, and
+	// TestDocsBudgetTokenChannelAnswersTheBatchSeal holds this file and those
+	// documents to the same sentence.
 	for _, want := range []string{
 		"the job's definition",
 		"docs/budget-token-channel/spec.md",
-		"cannot launch any run on Batch",
-		"one that names a budget database, with the signer account it mints through",
+		"Batch launch carries a ticket and not a seal",
+		"opt this installation in",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: the answer is a documented limit, and a refusal that stops naming its reason, its consequence or the condition sends an operator to provision a backend their project cannot use\n\nmessage: %v", want, err)
