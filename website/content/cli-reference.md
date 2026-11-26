@@ -4104,6 +4104,7 @@ Subcommands:
 - `fugaro image ls` -- List the project's image catalog entries, or the shared-image lock's with --shared
 - `fugaro image map` -- Map a repository to an image catalog entry (the project's image_map)
 - `fugaro image promote` -- Copy a repository's image definition into the catalog and point the repository at it
+- `fugaro image prune` -- Remove the shared images no job points at and no repository has used for images.retention_days
 - `fugaro image refresh` -- Move a repository onto this release's base image: pin it, point the daily image check job at it, rebuild what is stale
 - `fugaro image render` -- Print the Dockerfile that builds the workflow's derived image
 - `fugaro image rm` -- Remove an image catalog entry from this machine's project config
@@ -4404,6 +4405,38 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for promote |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro image prune`
+
+Remove the shared images no job points at and no repository has used for images.retention_days
+
+Remove the installation's shared images nothing needs: an image no job points at
+whose last use is older than images.retention_days (default 30), and the
+per-repository image of a repository that has moved onto a shared one, whose
+build is that old too.
+
+An image a job still points at is never removed, whatever its age, so a pinned
+image stays. --dry-run prints the list and removes nothing.
+
+Nothing is asked: the eligibility is a rule, so read the list with --dry-run and
+then run it.
+
+Usage: `fugaro image prune`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--dry-run` | bool | `false` | no | print what would be removed and remove nothing |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for prune |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 

@@ -30,6 +30,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/orchestrator/service"
@@ -647,6 +648,9 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	}
 
 	o.Checks = append(o.Checks, doctorBaseImage(lc), doctorCosign(lc))
+	if c := doctorSharedImageCap(ctx, lc); c != nil {
+		o.Checks = append(o.Checks, *c)
+	}
 	// The login unit that runs the orchestrator daemon (O9): the one drift
 	// `fugaro update` re-renders in place, reported here like every other
 	// version drift so the person is told to update rather than handed a second
@@ -783,6 +787,37 @@ func doctorBaseImage(lc *localcfg.Config) doctorCheck {
 	return doctorCheck{ID: "base-image", OK: false, Severity: "warning",
 		Problem: "the local config has no base_images.base (" + config.MigrationDoc + ")",
 		Fix:     "fugaro update   # its images stage pins and records this release's base image"}
+}
+
+// doctorSharedImageCap is the image-count cap's warning (design
+// docs/forge-authorship-images/shared-images.md §8): the lock's images pass
+// ImageCap, and the line names the count, the cap and the two remedies. It is
+// a warning and nothing else — nothing is refused and nothing is deleted for
+// being over it — so it fails doctor only under --strict, and an installation
+// under the cap says nothing at all rather than a passing line.
+//
+// It reads the lock, which is the runs bucket's own object, and makes no
+// registry call: whether the registry still holds each entry's digest is §9's
+// other question, and nothing asks it here. The bucket is opened through the
+// seam doctor's other runs-bucket checks use, and skipped when the config's
+// endpoints are fakes, because the gs:// bucket a fake endpoint stands for is
+// not the one a test put the lock in (publishSharedWarn's rule).
+func doctorSharedImageCap(ctx context.Context, lc *localcfg.Config) *doctorCheck {
+	if lc == nil || fakeEndpointsOnGS(lc, lc.BucketURL()) {
+		return nil
+	}
+	b, err := sharedBucketOpener(ctx, lc.BucketURL())
+	if err != nil {
+		return nil
+	}
+	defer b.Close()
+	lock, err := imagecheck.ReadLock(ctx, b)
+	if err != nil || !lock.OverCap() {
+		return nil
+	}
+	return &doctorCheck{ID: "shared-image-cap", OK: false, Severity: "warning",
+		Problem: fmt.Sprintf("this installation's %d shared images are over the cap of %d", len(lock.Images), imagecheck.ImageCap),
+		Fix:     "fugaro image ls lists them; fugaro image prune removes the ones no job uses"}
 }
 
 // doctorOfflineChecks is `fugaro doctor --offline`'s half of the update class:

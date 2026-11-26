@@ -94,6 +94,61 @@ func (r *Registry) Digest(ctx context.Context, ref string) (string, error) {
 	return headManifest(ctx, hc, u, token, ref)
 }
 
+// DeleteManifest removes the manifest ref names from its registry, which is
+// how `fugaro image prune` takes a shared image away (design §9).
+//
+// ref must be pinned by digest — the lock entry's own digest, or a build
+// record's, is what a caller has, and a tag is not what a delete names: the
+// shared image's name is untagged (§2.6) and its only tag is the registry's
+// own moving `latest`, which deleting would leave pointing at nothing.
+//
+// Only Artifact Registry is deleted from, with the ADC client Digest reads
+// with: a shared image and a repository's own image both live in the
+// installation's Artifact Registry, and the anonymous path a public registry
+// is read through carries a pull token, which cannot delete. A registry
+// missing the manifest is ErrManifestUnknown — already gone, which is the
+// state a crash between §9's two deletes leaves and the one a rerun
+// finishes.
+func (r *Registry) DeleteManifest(ctx context.Context, ref string) error {
+	host, name, digest, err := parseImageRef(ref)
+	if err != nil {
+		return err
+	}
+	if !gcp.IsDigest(digest) {
+		return fmt.Errorf("deleting %s: it is not pinned by digest, and a tag is not what an image's removal names", ref)
+	}
+	if !arHostRE.MatchString(host) {
+		return fmt.Errorf("deleting %s: only this installation's Artifact Registry images can be removed", ref)
+	}
+	base := "https://" + host
+	if r.Endpoint != nil {
+		base = strings.TrimSuffix(r.Endpoint(host), "/")
+	}
+	hc, err := r.googleClient(ctx)
+	if err != nil {
+		return err
+	}
+	u := base + "/v2/" + name + "/manifests/" + digest
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, u, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", strings.Join(manifestAccept, ", "))
+	resp, err := hc.Do(req)
+	if err != nil {
+		return fmt.Errorf("deleting %s's manifest: %w", ref, err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
+	switch {
+	case resp.StatusCode == http.StatusAccepted || resp.StatusCode == http.StatusOK:
+		return nil
+	case resp.StatusCode == http.StatusNotFound:
+		return fmt.Errorf("%s: %w", ref, ErrManifestUnknown)
+	}
+	return fmt.Errorf("deleting %s's manifest: HTTP %d", ref, resp.StatusCode)
+}
+
 func (r *Registry) googleClient(ctx context.Context) (*http.Client, error) {
 	if r.Google != nil {
 		return r.Google, nil
