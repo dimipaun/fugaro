@@ -716,13 +716,11 @@ func TestAccountsSwitchAdmitsAJobItCanRetire(t *testing.T) {
 	r := newAddRigWith(t, switchRigLocal)
 	job := gcp.ProjectJobName("standard", "github", "team-a")
 	r.run.AddProjectJob(job, "standard", "github", "team-a", "2", "8Gi")
-	r.run.SetJob(job, map[string]string{
-		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProfile: "standard",
-		"fugaro_provider": "github", "fugaro_account": "team-a",
-	}, "image")
+	r.run.SetJob(job, projectJobStateLabels("standard", "github", "team-a"), "image")
 	done := r.run.Start(job)
 	r.run.SetState(done, backend.StateSucceeded)
-	r.script["show -json@installation"] = map[string]any{"stdout": projectJobStateDoc(t, job)}
+	r.script["show -json@installation"] = map[string]any{"stdout": projectJobStateDoc(t,
+		projectJobState{job, projectJobStateLabels("standard", "github", "team-a")})}
 	r.save(t)
 
 	out, errOut, err := execute(t, "accounts", "switch", "team-a", "team-b", "--yes")
