@@ -332,11 +332,12 @@ func TestReposAddRefusesWithTheFixingCommand(t *testing.T) {
 }
 
 // TestReposAddConvergesTheRepositoryRoot is step 6 where it is real: the plan's
-// last step is the repository's job set and its roles/run.invoker grant, the
-// stage that deploys them is `fugaro update`'s Repository stage, and what says
-// the stage applied rather than stood aside is the anchor it writes into the
-// checkout once the engine has converged it — the one write of that step that
-// lands on this machine.
+// last step is the repository's job set and its roles/run.invoker grant, and the
+// stage that deploys them is `fugaro update`'s Repository stage. What says the
+// stage applied rather than stood aside is the report's own row for it, which is
+// the stage's state: the checkout's anchor used to be the evidence here, and it
+// is step 1's write from U9a on (project_enroll_anchor_test.go), which lands
+// whatever the stage did.
 func TestReposAddConvergesTheRepositoryRoot(t *testing.T) {
 	r := enrolRig(t)
 	if strings.Contains(readFileString(t, enrolCheckoutFile(t)), "gcp_project") {
@@ -346,11 +347,13 @@ func TestReposAddConvergesTheRepositoryRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("project repos add %s: %v\nstdout:\n%s\nstderr:\n%s", enrolRepo, err, out, errOut)
 	}
+	// The stage's own state, and not the anchor: `Changed` is the one state the
+	// report words with this sentence, and it is the stage saying it applied.
 	if !strings.Contains(out, "the checkout's own root was converged and deployed") {
 		t.Errorf("the report does not say the checkout's own root was converged:\n%s", out)
 	}
 	if got := readFileString(t, enrolCheckoutFile(t)); !strings.Contains(got, "gcp_project: proj-1234") {
-		t.Errorf("the repository stage did not write the checkout's anchor, so its engine never converged the root:\n%s", got)
+		t.Errorf("the run did not write the checkout's anchor:\n%s", got)
 	}
 }
 
@@ -391,8 +394,11 @@ func TestReposAddDoesNotReportAnEnrolmentTheRepositoryStageSkipped(t *testing.T)
 	if strings.Contains(out, "fugaro run --repo") {
 		t.Errorf("the run answered that the repository is ready:\n%s", out)
 	}
+	// Step 1's write did not run either (U9a): it lands after the deploy the
+	// run stopped short of, so a run that failed leaves no working-tree edit
+	// behind for the operator to commit or to discard.
 	if strings.Contains(readFileString(t, enrolCheckoutFile(t)), "gcp_project") {
-		t.Errorf("the skipped stage wrote the checkout's anchor:\n%s", readFileString(t, enrolCheckoutFile(t)))
+		t.Errorf("the checkout's anchor was written over an enrolment that was not deployed:\n%s", readFileString(t, enrolCheckoutFile(t)))
 	}
 	// Steps 1 to 4 did land before it, and they are what a rerun resumes from:
 	// the local config and the published list are not rolled back.

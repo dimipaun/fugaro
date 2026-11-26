@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"path/filepath"
 	"regexp"
@@ -199,14 +200,81 @@ func prepareAnchor(lc *localcfg.Config, root string) (*anchorEdit, error) {
 	return &anchorEdit{path: path, id: lc.GCPProject, old: old, out: out, changed: changed}, nil
 }
 
-// writeAnchor is the one write of the line, after the plugin stage's pattern:
-// the diff, then --yes writes, a person at the terminal writes having read the
-// diff, and anything else leaves the file alone and prints the line to add.
-// Nothing is typed for it (T7, docs/no-prompt-policy: the [y/N] this used to
-// ask for is gone, and --ask is the flag that puts the question back).
-// planOnly prints what it would do and writes nothing. It reports whether
-// the file was written; an edit with nothing to change writes nothing and
-// prints nothing.
+// anchorGate is writeAnchor's gate — the one decision about who is there that
+// every door offering the gcp_project line makes — lifted out of initRun
+// because `fugaro project repos add` offers the same edit from a command that
+// holds no initRun of its own (R8, F38 of docs/update-from-anywhere). Every
+// field is the door's own reading of its session, so a door cannot grow a
+// second set of arms: the arms below are the whole of what the doors say.
+type anchorGate struct {
+	// planOnly prints what the edit would do and writes nothing.
+	planOnly bool
+	// managed is the run's gate standing in for the confirmation
+	// (initRun.gateStandsIn): the project's marks answered managed, so the
+	// owner's own terminal is asked nothing.
+	managed bool
+	// person is initflow.PersonAtTheTerminal over the door's own conditions.
+	person bool
+	// yes is the door's own answer standing in for the confirmation.
+	yes bool
+	// interactive is whether anyone is there to answer at all.
+	interactive bool
+	// ask is the door's own confirmation, reached only where the gate leaves a
+	// question: an interactive session the gate does not stand in for and no
+	// flag answers. It is nil where the door asks nothing, and that is
+	// `fugaro project repos add`: the one question that command asks covers the
+	// whole enrolment, so the anchor is offered with no new one (R8), and a
+	// person at the terminal is the whole answer — the arm initRun.confirmNow
+	// takes at a person's own terminal, where it reads nothing.
+	ask func() (bool, error)
+}
+
+// anchorGateWrite is the gate's answer for one edit: whether the file is
+// written, and the line the run owes the screen for the arm it landed on ("" for
+// the arms that print nothing of their own). advise is what a session the gate
+// leaves alone is handed: the line to add by hand, which is what a run with no
+// terminal gets.
+func anchorGateWrite(g anchorGate, advise string) (write bool, note string, err error) {
+	switch {
+	case g.planOnly:
+		return false, "  (plan only: fugaro.yaml is not written)\n", nil
+	case g.managed && g.person:
+		return true, "  " + initflow.OwnerProceeded() + "\n", nil
+	case g.yes:
+		return true, "  confirmed by this run's own answer\n", nil
+	case !g.interactive:
+		return false, advise, nil
+	case g.ask == nil:
+		return true, "", nil
+	}
+	// A person at the terminal is asked nothing (T7): the y/N they used to
+	// type is gone, --ask is the flag that puts the question back, and the
+	// diff above is what they read.
+	ok, err := g.ask()
+	if err != nil {
+		return false, "", err
+	}
+	if !ok {
+		return false, advise, nil
+	}
+	return true, "", nil
+}
+
+// anchorAddLine is the line a session the gate does not write for is handed: the
+// line itself, and what has to be true before it is merged.
+func anchorAddLine(a *anchorEdit) string {
+	return fmt.Sprintf("to let teammates use this installation without setup, add this line to %s: %s (every teammate's CLI and every CI job or pin that runs fugaro against the repository must be on this release before the line is merged: older versions refuse the key as unknown)\n", a.path, a.line())
+}
+
+// writeAnchorEdit is the one write of the line, after the plugin stage's
+// pattern: the diff, then --yes writes, a person at the terminal writes having
+// read the diff, and anything else leaves the file alone and prints the line to
+// add. Nothing is typed for it (T7, docs/no-prompt-policy: the [y/N] this used
+// to ask for is gone, and --ask is the flag that puts the question back).
+// planOnly prints what it would do and writes nothing. It reports whether the
+// file was written; an edit with nothing to change writes nothing and prints
+// nothing. The arms are anchorGateWrite, which every door offering this edit
+// shares.
 //
 // A managed project's own terminal is asked nothing here either (the owner's
 // ruling of 2026-11-06): the diff above is the whole of what the owner reads,
@@ -214,43 +282,42 @@ func prepareAnchor(lc *localcfg.Config, root string) (*anchorEdit, error) {
 // says why. It is read before --yes, so an owner who passed the flag reads the
 // managed sentence rather than a line about a flag the project's marks already
 // answered for. Nothing else moves: a project that is not managed, a mark that
-// did not answer and a coding agent's session keep the arms below exactly as
-// they were.
-func (r *initRun) writeAnchor(a *anchorEdit, env initflow.Env, planOnly bool) (bool, error) {
+// did not answer and a coding agent's session keep the arms exactly as they
+// were.
+func writeAnchorEdit(w io.Writer, a *anchorEdit, g anchorGate) (bool, error) {
 	if !a.changed {
 		return false, nil
 	}
-	fmt.Fprintf(r.w, "%s\n%s", a.path, lineDiff(string(a.old), string(a.out)))
-	addLine := fmt.Sprintf("to let teammates use this installation without setup, add this line to %s: %s (every teammate's CLI and every CI job or pin that runs fugaro against the repository must be on this release before the line is merged: older versions refuse the key as unknown)\n", a.path, a.line())
-	switch {
-	case planOnly:
-		fmt.Fprintln(r.w, "  (plan only: fugaro.yaml is not written)")
+	fmt.Fprintf(w, "%s\n%s", a.path, lineDiff(string(a.old), string(a.out)))
+	write, note, err := anchorGateWrite(g, anchorAddLine(a))
+	if err != nil {
+		return false, err
+	}
+	if note != "" {
+		fmt.Fprint(w, note)
+	}
+	if !write {
 		return false, nil
-	case r.gateStandsIn() && initflow.PersonAtTheTerminal(r.conditions()):
-		fmt.Fprintf(r.w, "  %s\n", initflow.OwnerProceeded())
-	case env.Yes:
-		fmt.Fprintln(r.w, "  confirmed by this run's own answer")
-	case !env.Interactive:
-		fmt.Fprint(r.w, addLine)
-		return false, nil
-	default:
-		// A person at the terminal is asked nothing (T7): the y/N they used
-		// to type is gone, --ask is the flag that puts the question back, and
-		// the diff above is what they read.
-		ok, err := r.confirmNow("write this to " + a.path + "?")
-		if err != nil {
-			return false, err
-		}
-		if !ok {
-			fmt.Fprint(r.w, addLine)
-			return false, nil
-		}
 	}
 	if err := writeFileAtomic(a.path, a.out); err != nil {
 		return false, err
 	}
-	fmt.Fprintf(r.w, "Updated %s with gcp_project. Review it with git diff and commit it like any change. Every teammate's CLI and every CI job or pin that runs fugaro against the repository must be on this release before you merge a change that adds gcp_project: older versions refuse the key as unknown.\n", a.path)
+	fmt.Fprintf(w, "Updated %s with gcp_project. Review it with git diff and commit it like any change. Every teammate's CLI and every CI job or pin that runs fugaro against the repository must be on this release before you merge a change that adds gcp_project: older versions refuse the key as unknown.\n", a.path)
 	return true, nil
+}
+
+// writeAnchor is the initRun doors' offer of the line: `fugaro update --anchor`
+// and, until U9b of docs/update-from-anywhere removes them, the repository
+// stage's calls.
+func (r *initRun) writeAnchor(a *anchorEdit, env initflow.Env, planOnly bool) (bool, error) {
+	return writeAnchorEdit(r.w, a, anchorGate{
+		planOnly:    planOnly,
+		managed:     r.gateStandsIn(),
+		person:      initflow.PersonAtTheTerminal(r.conditions()),
+		yes:         env.Yes,
+		interactive: env.Interactive,
+		ask:         func() (bool, error) { return r.confirmNow("write this to " + a.path + "?") },
+	})
 }
 
 // fugaroYAMLWithoutRemovedMode is a checkout's fugaro.yaml with the word that
@@ -315,6 +382,16 @@ func updateLeavesTheRemoval(ctx context.Context) bool {
 func (s *repositoryStage) anchor(ctx context.Context, env initflow.Env, planOnly bool) error {
 	e, tg := s.e, s.tg
 	if tg == nil || e.lc == nil || e.lc.GCPProject == "" {
+		return nil
+	}
+	// `fugaro project repos add` offers this same line itself, as its own step 1
+	// and once these stages have run (U9a of docs/update-from-anywhere), and its
+	// checks name its own command: this arm would print the same warnings a
+	// second time, pointing at a flag the enrolling operator does not need, and
+	// it would write the line before the run's own step 1 says it does. The door
+	// is read off the run's own options because the engine is that door's. This
+	// goes with the whole call when update stops writing fugaro.yaml (U9b).
+	if e.r.o.door == reposEnrolDoor {
 		return nil
 	}
 	if note := customBucketNote(e.lc); note != "" {
@@ -382,13 +459,25 @@ func reasonRegistryHost(kind string, err error) string {
 	return fmt.Sprintf("the registry host is unknown (%s), so the local config's base image for kind %s cannot be checked", oneLineCLI(err.Error()), kind)
 }
 
+// anchorUpdateDoor is the command `fugaro update`'s own texts name as the one
+// that writes the line. U9b of docs/update-from-anywhere removes the flag and
+// these callers with it; the door that enrols a repository names itself
+// (anchorEnrolDoor).
+const anchorUpdateDoor = "fugaro update --anchor"
+
+// anchorEnrolDoor is the command the enrolling door names as the one that writes
+// the line: `fugaro project repos add`, run in that repository's checkout, which
+// is where the line is offered from once update writes no working tree (R8 of
+// docs/update-from-anywhere).
+func anchorEnrolDoor(repo string) string { return "fugaro project repos add " + repo }
+
 // anchorProblemText is the one text about repo's workflow wf (base kind
 // kind, "" when none is known): its reasons, then one ordered fix: the
 // local config's base entry removed first when it is a custom image
 // (customBase), then fugaro image refresh (or fugaro image build when the
-// kind is unknown, since refresh needs one), then --anchor. lcPath is the
-// local config's file.
-func anchorProblemText(repo, wf, kind, lcPath string, reasons []string, customBase bool) string {
+// kind is unknown, since refresh needs one), then the door that writes the
+// line (door). lcPath is the local config's file.
+func anchorProblemText(door, repo, wf, kind, lcPath string, reasons []string, customBase bool) string {
 	var steps []string
 	if customBase {
 		where := "the local config"
@@ -402,7 +491,7 @@ func anchorProblemText(repo, wf, kind, lcPath string, reasons []string, customBa
 	} else {
 		steps = append(steps, fmt.Sprintf("fugaro image build --repo %s --workflow %s", repo, wf))
 	}
-	steps = append(steps, "fugaro update --anchor")
+	steps = append(steps, door)
 	for i, s := range steps {
 		steps[i] = fmt.Sprintf("(%d) %s", i+1, s)
 	}
@@ -465,18 +554,20 @@ func baseRefReason(ref, kind string) string {
 }
 
 // gcpProjectProblems are the reasons repo's fugaro.yaml may not carry
-// gcp_project yet, one problem per workflow, the one source of the
-// repository stage's warnings and of fugaro update --anchor's checks. bases
-// are the repository's workflows, each with its base kind ("" for none
-// known). For every workflow, its build record in the runs bucket must exist
-// and be readable, name a release at or after gcpProjectFieldSince as the
-// CLI that submitted it, and name a release base image at or after it as the
-// base it was built FROM (the image holds that base's binary); and the
-// local config's base image for its kind, when one is set, must be a
-// release image the converge copied, at or after that release, else the next
-// build regresses. lcPath is the local config's file, for the advice. It
-// reads only the records: no other cloud call.
-func gcpProjectProblems(ctx context.Context, lc *localcfg.Config, lcPath, provider, repo string, bases map[string]string) []anchorProblem {
+// gcp_project yet, one problem per workflow, the one source of the doors'
+// warnings and checks: the repository stage's, fugaro update --anchor's, and
+// `fugaro project repos add`'s. bases are the repository's workflows, each with
+// its base kind ("" for none known). For every workflow, its build record in the
+// runs bucket must exist and be readable, name a release at or after
+// gcpProjectFieldSince as the CLI that submitted it, and name a release base
+// image at or after it as the base it was built FROM (the image holds that
+// base's binary); and the local config's base image for its kind, when one is
+// set, must be a release image the converge copied, at or after that release,
+// else the next build regresses. lcPath is the local config's file, for the
+// advice, and door the command that advice names as the one that writes the
+// line (anchorUpdateDoor, anchorEnrolDoor). It reads only the records: no other
+// cloud call.
+func gcpProjectProblems(ctx context.Context, door string, lc *localcfg.Config, lcPath, provider, repo string, bases map[string]string) []anchorProblem {
 	slug, serr := task.Slug(provider, repo)
 	var b *blobx.Bucket
 	var berr error
@@ -536,7 +627,7 @@ func gcpProjectProblems(ctx context.Context, lc *localcfg.Config, lcPath, provid
 			}
 		}
 		if len(reasons) > 0 {
-			ps = append(ps, anchorProblem{text: anchorProblemText(repo, wf, kind, lcPath, reasons, customBase), remote: remote})
+			ps = append(ps, anchorProblem{text: anchorProblemText(door, repo, wf, kind, lcPath, reasons, customBase), remote: remote})
 		}
 	}
 	return ps
@@ -562,7 +653,7 @@ func workflowBases(cfg *config.Config, extra []string) map[string]string {
 // to be, in the file: the owner merges it only after the rebuild.
 func (s *repositoryStage) warnOldImages(ctx context.Context) {
 	e, tg := s.e, s.tg
-	for _, p := range gcpProjectProblems(ctx, e.lc, e.path, tg.cfg.Git.Provider, tg.repo, workflowBases(tg.cfg, nil)) {
+	for _, p := range gcpProjectProblems(ctx, anchorUpdateDoor, e.lc, e.path, tg.cfg.Git.Provider, tg.repo, workflowBases(tg.cfg, nil)) {
 		e.r.warn(p.text)
 	}
 }

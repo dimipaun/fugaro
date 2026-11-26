@@ -115,7 +115,7 @@ func (r *initRun) runAnchor(ctx context.Context) error {
 		fmt.Fprintf(r.w, "%s already has %s; nothing to write\n", path, edit.line())
 	}
 	remoteFail := false
-	for _, p := range gcpProjectProblems(ctx, lc, sel.Path, cfg.Git.Provider, oi.Repo, workflowBases(cfg, listed)) {
+	for _, p := range gcpProjectProblems(ctx, anchorUpdateDoor, lc, sel.Path, cfg.Git.Provider, oi.Repo, workflowBases(cfg, listed)) {
 		res.Problems = append(res.Problems, p.text)
 		remoteFail = remoteFail || p.remote
 		fmt.Fprintf(r.w, "FAIL: %s\n", p.text)

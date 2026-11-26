@@ -191,7 +191,7 @@ func warnedLine(msg string) string { return "Warning: " + msg + "\n" }
 // stageWarn is the stage's one warning about acme/app's workflow app (the
 // base kind): the same text as fugaro update --anchor's FAIL line.
 func stageWarn(lcPath string, customBase bool, reasons ...string) string {
-	return warnedLine(anchorProblemText("acme/app", "app", "base", lcPath, reasons, customBase))
+	return warnedLine(anchorProblemText(anchorUpdateDoor, "acme/app", "app", "base", lcPath, reasons, customBase))
 }
 
 // A run that carries its own answer (initflow.Env.Yes, what a nested converge

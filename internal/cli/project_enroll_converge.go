@@ -27,6 +27,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -46,6 +47,13 @@ import (
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
 )
+
+// reposEnrolDoor is this command's name as a door: the value the run it builds
+// for the stages carries (reposEnrolmentRunStages), and the one the repository
+// stage reads to keep out of the anchor this command offers itself
+// (repositoryStage.anchor). It is the command as a person writes it, because
+// that is also what the run's own sentences call this door.
+const reposEnrolDoor = "project repos add"
 
 // reposEnrolment is everything the convergence read before it changed
 // anything, and everything the printed plan is built from.
@@ -113,6 +121,21 @@ type reposEnrolment struct {
 	// from it, because its fugaro.yaml is where its workflows and its base
 	// branch come from and a job is deployed from one (D2401).
 	checkout string
+	// anchor is step 1's edit of that checkout's fugaro.yaml — the
+	// gcp_project line the trust anchor is found from — prepared and not yet
+	// written, and nil where this installation offers none (no gcp_project, or
+	// a runs bucket the line is not written for) or where the file's shape
+	// leaves the line to a person. anchorNote is why it is not offered, and
+	// anchorProblems today's checks on the job images (gcpProjectProblems),
+	// which say whether the line is safe to merge yet.
+	anchor         *anchorEdit
+	anchorNote     string
+	anchorProblems []string
+	// anchorState is what step 1 did with the line, said in the report. It is
+	// written by the apply and "" while the plan is still a plan: who wrote the
+	// file is a fact about the run, and the report is read off what happened
+	// rather than off what the plan said would happen.
+	anchorState string
 }
 
 // runProjectReposEnroll is the convergent path: read, show, ask once, write.
@@ -166,7 +189,8 @@ func runProjectReposEnroll(cmd *cobra.Command, o *projectReposOptions, arg strin
 	if err != nil {
 		return err
 	}
-	reposEnrolmentPlan(cmd.OutOrStdout(), lc, plan)
+	reposEnrolmentPlan(cmd.OutOrStdout(), lc, plan, *o.noApply)
+	reposEnrolmentAnchorNotices(cmd.OutOrStdout(), plan)
 	// One question for the whole convergence. Nothing on the command line
 	// answers it — `--yes` is gone (F5, D2403) and `--allow-list-only` takes
 	// the other path entirely — and every refusal above already happened.
@@ -179,7 +203,7 @@ func runProjectReposEnroll(cmd *cobra.Command, o *projectReposOptions, arg strin
 	if err := confirmTyped(cmd, bufio.NewReader(cmd.InOrStdin()), lc, false, reposEnrolmentWhat(lc, plan, *o.noApply)); err != nil {
 		return err
 	}
-	return reposEnrolmentApply(ctx, cmd, o, lc, db, configPath, plan)
+	return reposEnrolmentApply(ctx, cmd, o, lc, db, configPath, &plan)
 }
 
 // reposEnrolmentRead reads everything the plan is built from. It writes
@@ -261,6 +285,13 @@ func reposEnrolmentRead(ctx context.Context, o *projectReposOptions, lc *localcf
 		return plan, userErr("cannot read the image %s's job runs: %s. `fugaro image map set %s <entry>` is how this project maps a repository to an entry it holds; `fugaro project repos add %s --allow-list-only` writes the allow-list entry alone",
 			w.Name, w.State, ownerName, ownerName)
 	}
+	// Step 1's one write (U9a of docs/update-from-anywhere): the checkout's own
+	// gcp_project line, prepared here and offered by the apply below. It is read
+	// in the read half because every refusal precedes the one question, and a
+	// file whose line says another project is one this command will not touch.
+	if err := reposEnrolmentAnchorRead(ctx, lc, &plan, provider); err != nil {
+		return plan, err
+	}
 	plan.entry, err = reposEnrolmentEntry(lc, ownerName, row)
 	if err != nil {
 		return plan, err
@@ -278,6 +309,120 @@ func reposEnrolmentRead(ctx context.Context, o *projectReposOptions, lc *localcf
 	plan.allowWhy = allowStepWhy(allow.Entries, canonical)
 	reposEnrolmentImage(&plan, row, imap)
 	return plan, nil
+}
+
+// reposEnrolmentAnchorRead prepares step 1's edit of the checkout's
+// fugaro.yaml — the gcp_project line, which is how teammates and every run of
+// the repository find the installation — and runs the checks that say whether
+// the line is safe to merge yet. It writes nothing.
+//
+// The line is the one every other door offers (writeAnchor), and this is the
+// door it belongs to from here (R8 of docs/update-from-anywhere): `fugaro
+// update` writes no working tree, and this command already stands in the
+// checkout it deploys the repository's own root from, so the edit has a door
+// without a second copy of the checks or of the gate.
+//
+// Three states leave nothing to offer, each said in its own words and none of
+// them a refusal: an installation with no gcp_project to write, a runs bucket
+// the line is not written for (customBucketNote: teammates find the bucket from
+// the line alone), and a fugaro.yaml whose shape the edit will not touch (a
+// *byHandError, which says the line is the person's to add). A file that
+// already names another project is not one of them: that is setGCPProjectLine's
+// own refusal, and it lands here, before the plan and the one question.
+func reposEnrolmentAnchorRead(ctx context.Context, lc *localcfg.Config, plan *reposEnrolment, provider string) error {
+	if lc.GCPProject == "" {
+		return nil
+	}
+	if note := customBucketNote(lc); note != "" {
+		plan.anchorNote = note
+		return nil
+	}
+	a, err := prepareAnchor(lc, plan.checkout)
+	var bh *byHandError
+	switch {
+	case errors.As(err, &bh):
+		plan.anchorNote = bh.Error()
+		return nil
+	case err != nil:
+		return err
+	}
+	plan.anchor = a
+	// The checks are the ones `fugaro update --anchor` runs before it writes,
+	// read here and printed with the plan: what they say is whether the line is
+	// safe to merge yet, and an operator reads that before answering for it.
+	// The fixes they name are this command's own (anchorEnrolDoor), because
+	// this is where the line is written from.
+	for _, p := range gcpProjectProblems(ctx, anchorEnrolDoor(plan.ownerName), lc, plan.path, provider, plan.ownerName, workflowBases(checkoutConfig(ctx, plan.localKey), workflowNames(plan.row))) {
+		plan.anchorProblems = append(plan.anchorProblems, p.text)
+	}
+	return nil
+}
+
+// reposEnrolmentAnchorStep is step 1's write, through the gate every door
+// offering the line shares (anchorGateWrite), and what the report says of it.
+//
+// The gate's facts are this door's, and the command asks nothing new for the
+// line (R8): the one typed confirmation covered the whole enrolment — and a run
+// with no terminal was refused at that confirmation, so there is always a person
+// behind this — and the gate's answer is a nil ask, the write. A run whose
+// stdin is not a terminal is handed the line to add instead, as `fugaro update
+// --anchor` hands it one. A coding agent's session never reaches here: the
+// command refuses one before it reads anything. The gate's other arms (--yes,
+// the managed project's own sentence, --plan-only) are the update door's, which
+// this command has no flag for.
+func reposEnrolmentAnchorStep(out io.Writer, cmd *cobra.Command, plan *reposEnrolment) error {
+	if plan.anchor == nil {
+		return nil
+	}
+	written, err := writeAnchorEdit(out, plan.anchor, anchorGate{
+		interactive: stdinIsTerminal(cmd.InOrStdin()),
+	})
+	if err != nil {
+		return err
+	}
+	switch {
+	case written:
+		plan.anchorState = ", and its " + plan.anchor.line() + " line was written"
+	case !plan.anchor.changed:
+		plan.anchorState = ", and it already holds " + plan.anchor.line()
+	default:
+		plan.anchorState = ", and the line to add (" + plan.anchor.line() + ") was printed for you"
+	}
+	return nil
+}
+
+// reposEnrolmentAnchorWhy is step 1's own clause: what the line is, and whether
+// the file is written for it. "never written" is the read-and-not-written state
+// this file's own help used to state flatly.
+//
+// deferred is --no-apply, which is the one run that does not write the line
+// here: the deploy that gives the line its meaning is not run, and the same
+// `fugaro apply` runs both — its Repository stage writes the anchor itself.
+func reposEnrolmentAnchorWhy(plan reposEnrolment, deferred bool) string {
+	switch {
+	case plan.anchor != nil && plan.anchor.changed && deferred:
+		return "and written only for the anchor line, " + plan.anchor.line() + ", which the fugaro apply that deploys its root writes"
+	case plan.anchor != nil && plan.anchor.changed:
+		return "and written only for the anchor line, " + plan.anchor.line()
+	case plan.anchor != nil:
+		return "and written only for the anchor line, which it already holds (" + plan.anchor.line() + ")"
+	}
+	return "and never written"
+}
+
+// reposEnrolmentAnchorNotices is what step 1 has to say before the one question:
+// why there is no line to offer, and the checks on the job images that say
+// whether the line is safe to merge yet (gcpProjectProblems). Every line is
+// printed before the question, for the same reason the removal's are: an
+// operator is answering for a write, and what is wrong with it is theirs to
+// read first.
+func reposEnrolmentAnchorNotices(w io.Writer, plan reposEnrolment) {
+	if plan.anchorNote != "" {
+		fmt.Fprintf(w, "note: %s\n", plan.anchorNote)
+	}
+	for _, p := range plan.anchorProblems {
+		fmt.Fprintf(w, "Warning: %s\n", p)
+	}
 }
 
 // reposEnrolmentRow is this repository's row out of the enrolment view (RE0),
@@ -752,10 +897,10 @@ func allowStepWhy(have []string, canonical string) string {
 // It is printed BEFORE the one question and it is the whole of what the
 // question is about: a plan that named fewer steps than the command runs would
 // make the yes it asks for a yes to something else.
-func reposEnrolmentPlan(w io.Writer, lc *localcfg.Config, plan reposEnrolment) {
+func reposEnrolmentPlan(w io.Writer, lc *localcfg.Config, plan reposEnrolment, deferred bool) {
 	fmt.Fprintf(w, "enrolling %s in project %s: this will change\n", pluginwire.Printable(plan.canonical), pluginwire.Printable(lc.Name))
 	lines := []string{
-		"the repository's own fugaro.yaml: read for its workflows (" + enrolListLine(workflowNames(plan.row)) + ") and its base branch (" + safetext.Field(plan.row.BaseBranch) + "), and never written",
+		"the repository's own fugaro.yaml: read for its workflows (" + enrolListLine(workflowNames(plan.row)) + ") and its base branch (" + safetext.Field(plan.row.BaseBranch) + "), " + reposEnrolmentAnchorWhy(plan, deferred),
 		"project config: " + plan.entryWhy,
 		"project config: " + plan.imageWhy,
 		"allow-list: " + plan.allowWhy,
@@ -796,20 +941,22 @@ func reposEnrolmentWhat(lc *localcfg.Config, plan reposEnrolment, noApply bool) 
 		pluginwire.Printable(plan.canonical), pluginwire.Printable(lc.Name), tail)
 }
 
-// reposEnrolmentApply runs the steps the plan printed, in that order. Each is
-// idempotent and each says what it did: a repository already enrolled converges
-// to the same state, and a step with nothing to do says so rather than writing
-// the same bytes again (D2402).
+// reposEnrolmentApply runs the steps the plan printed. Each is idempotent and
+// each says what it did: a repository already enrolled converges to the same
+// state, and a step with nothing to do says so rather than writing the same
+// bytes again (D2402).
 //
-// The first step is the read the plan was built from and has nothing to write;
-// the second and third land in one document; the fourth is the ETag-guarded
-// policy write; and the last two are `fugaro update`'s stages.
-func reposEnrolmentApply(ctx context.Context, cmd *cobra.Command, o *projectReposOptions, lc *localcfg.Config, db *rtdb.Client, configPath string, plan reposEnrolment) error {
+// The first step is the checkout's own gcp_project line, offered through the
+// gate every door offering it shares; the second and third land in one document;
+// the fourth is the ETag-guarded policy write; the last two are `fugaro update`'s
+// stages; and step 1's write lands after them, which is the one place the order
+// of the writes is not the plan's.
+func reposEnrolmentApply(ctx context.Context, cmd *cobra.Command, o *projectReposOptions, lc *localcfg.Config, db *rtdb.Client, configPath string, plan *reposEnrolment) error {
 	out := cmd.OutOrStdout()
-	if err := reposEnrolmentWriteLocal(out, plan); err != nil {
+	if err := reposEnrolmentWriteLocal(out, *plan); err != nil {
 		return err
 	}
-	if err := reposEnrolmentWriteAllow(ctx, out, configPath, lc, db, plan); err != nil {
+	if err := reposEnrolmentWriteAllow(ctx, out, configPath, lc, db, *plan); err != nil {
 		return err
 	}
 	// Steps 5 and 6 are `fugaro update`'s stages, and what they read is this
@@ -845,7 +992,21 @@ func reposEnrolmentApply(ctx context.Context, cmd *cobra.Command, o *projectRepo
 		chainSavedLine(out, names)
 		return nil
 	}
-	return reposEnrolmentStages(ctx, cmd, o, after, plan, queued, names)
+	stages, err := reposEnrolmentStages(ctx, cmd, o, after, *plan, queued, names)
+	if err != nil {
+		return err
+	}
+	// Step 1's write, and the one step that does not land where the plan lists
+	// it: the Repository stage refuses a working tree whose fugaro.yaml is not
+	// the default branch's (resolveRepoTarget), and an anchor written here
+	// before that stage ran is exactly that. So the line lands after the deploy
+	// it belongs to, which is also the order `fugaro update` leaves it in — the
+	// last write of the run, for the person to review and commit.
+	if err := reposEnrolmentAnchorStep(out, cmd, plan); err != nil {
+		return err
+	}
+	reposEnrolmentReport(cmd, lc, *plan, stages)
+	return nil
 }
 
 // reposEnrolmentChanges is the change `project repos add` makes, as apply's
@@ -960,12 +1121,12 @@ func reposEnrolmentWriteAllow(ctx context.Context, out io.Writer, configPath str
 // confirmation is about what it is: `fugaro update --repo` offers the first
 // build behind its own billable confirmation, and a single question about
 // enrolment may not stand for a bill (D2400).
-func reposEnrolmentStages(ctx context.Context, cmd *cobra.Command, o *projectReposOptions, lc *localcfg.Config, plan reposEnrolment, queued *apply.Pending, names []string) error {
+func reposEnrolmentStages(ctx context.Context, cmd *cobra.Command, o *projectReposOptions, lc *localcfg.Config, plan reposEnrolment, queued *apply.Pending, names []string) (map[string]initflow.StageResult, error) {
 	run := stepRunFor(cmd, "project-repos-add", cmd.ErrOrStderr())
 	defer run.close()
 	env, err := openCloudFor(ctx, lc)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer env.Close()
 	stages, err := reposEnrolmentRunStages(ctx, cmd, run, lc, plan.path, plan.old)
@@ -975,11 +1136,11 @@ func reposEnrolmentStages(ctx context.Context, cmd *cobra.Command, o *projectRep
 		// error: a person who reads only the error line would re-run this command,
 		// and the record would read as an enrolment nobody remembers.
 		applyKeptLine(cmd.OutOrStdout(), names)
-		return err
+		return nil, err
 	}
 	if err := reposEnrolmentDeployed(plan, stages); err != nil {
 		applyKeptLine(cmd.OutOrStdout(), names)
-		return err
+		return nil, err
 	}
 	// The chain is settled before the report and not after it: the report's last
 	// line is the claim that `fugaro run --repo …` is ready, and it may not be
@@ -987,10 +1148,9 @@ func reposEnrolmentStages(ctx context.Context, cmd *cobra.Command, o *projectRep
 	// still owed belongs above it, or nowhere (D1563, and the settle is what
 	// clears the record the run above answered).
 	if err := chainSettle(cmd, lc, plan.path, queued, names, stages); err != nil {
-		return err
+		return nil, err
 	}
-	reposEnrolmentReport(cmd, lc, plan, stages)
-	return nil
+	return stages, nil
 }
 
 // reposEnrolmentDeployed refuses a run whose last step did not happen. The
@@ -1039,7 +1199,7 @@ func reposEnrolmentDeployed(plan reposEnrolment, stages map[string]initflow.Stag
 // cmd.OutOrStdout() directly — the policy stage's diff — cannot land on the
 // answer.
 func reposEnrolmentRunStages(ctx context.Context, cmd *cobra.Command, run *stepRun, lc *localcfg.Config, path string, old []byte) (map[string]initflow.StageResult, error) {
-	o := &initOptions{door: "project repos add", yes: true, nonInteractive: true, asJSON: true, noBuild: true}
+	o := &initOptions{door: reposEnrolDoor, yes: true, nonInteractive: true, asJSON: true, noBuild: true}
 	r := newInitRun(cmd, o)
 	// The caller's account, not a second one (CL7a): the stages print one line
 	// each through the reporter this command opened, and the run's own output —
@@ -1108,7 +1268,7 @@ func reposEnrolmentStageList(e *initEngine) []initflow.Stage {
 func reposEnrolmentReport(cmd *cobra.Command, lc *localcfg.Config, plan reposEnrolment, stages map[string]initflow.StageResult) {
 	w := cmd.OutOrStdout()
 	row := func(label, value string) { fmt.Fprintf(w, "%-12s%s\n", label, value) }
-	row("fugaro.yaml", "read from "+safetext.Field(plan.checkout)+": workflows "+enrolListLine(workflowNames(plan.row))+", base branch "+safetext.Field(plan.row.BaseBranch))
+	row("fugaro.yaml", "read from "+safetext.Field(plan.checkout)+": workflows "+enrolListLine(workflowNames(plan.row))+", base branch "+safetext.Field(plan.row.BaseBranch)+plan.anchorState)
 	row("local config", plan.entryWhy)
 	row("image map", plan.imageWhy)
 	row("allow-list", plan.allowWhy)

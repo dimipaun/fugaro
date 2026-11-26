@@ -93,7 +93,7 @@ func putWorkflowRecordFrom(wf, version, base string) {
 // wantFail is the one FAIL line of acme/app's workflow wf (base kind kind),
 // with its reasons and its ordered fix.
 func wantFail(wf, kind, lcPath string, customBase bool, reasons ...string) string {
-	return failText(anchorProblemText("acme/app", wf, kind, lcPath, reasons, customBase))
+	return failText(anchorProblemText(anchorUpdateDoor, "acme/app", wf, kind, lcPath, reasons, customBase))
 }
 
 // untouched asserts the checkout's fugaro.yaml, the terraform log, the
@@ -279,7 +279,7 @@ func TestInitAnchorCustomBaseFails(t *testing.T) {
 
 // A local-config path with a space is quoted in the fix.
 func TestAnchorProblemTextQuotesThePath(t *testing.T) {
-	got := anchorProblemText("acme/app", "app", "go", "/home/me/my configs/aurora.yaml", []string{"x"}, true)
+	got := anchorProblemText(anchorUpdateDoor, "acme/app", "app", "go", "/home/me/my configs/aurora.yaml", []string{"x"}, true)
 	if !strings.Contains(got, "remove base_images.go from '/home/me/my configs/aurora.yaml' (keep a backup)") {
 		t.Errorf("%s", got)
 	}
@@ -319,7 +319,7 @@ func TestGCPProjectProblemsRegistryHostError(t *testing.T) {
 	openRecordBucket = openFakeRecords
 	t.Cleanup(func() { openRecordBucket = prev })
 	putRecordData(t, `{"version":1,"fugaro_version":"0.4.0","base_ref":"`+releaseBase+`"}`)
-	ps := gcpProjectProblems(t.Context(), lc, "", "github", "acme/app", map[string]string{"app": "base"})
+	ps := gcpProjectProblems(t.Context(), anchorUpdateDoor, lc, "", "github", "acme/app", map[string]string{"app": "base"})
 	if len(ps) != 1 || !strings.Contains(ps[0].text, "the registry host is unknown") || strings.Contains(ps[0].text, "remove base_images") {
 		t.Fatalf("%+v", ps)
 	}
@@ -732,7 +732,7 @@ func TestInitRepoEndToEndNotesTheAnchor(t *testing.T) {
 // With no base kind known, fugaro image refresh cannot be named (it needs a
 // kind), so the fix is fugaro image build for the workflow, then --anchor.
 func TestAnchorProblemTextKindUnknownNamesImageBuild(t *testing.T) {
-	got := anchorProblemText("acme/app", "app", "", "", []string{"x"}, false)
+	got := anchorProblemText(anchorUpdateDoor, "acme/app", "app", "", "", []string{"x"}, false)
 	want := "In order: (1) fugaro image build --repo acme/app --workflow app, (2) fugaro update --anchor, before you merge"
 	if !strings.Contains(got, want) || strings.Contains(got, "image refresh") {
 		t.Errorf("%s\nwant it to contain %q and no image refresh", got, want)
