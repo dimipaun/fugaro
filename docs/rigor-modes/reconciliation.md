@@ -2672,6 +2672,25 @@ line should be updated in the same commit that settles it, because a reader who
 greps for `D7` gets this folder's D7 and `docs/windows-cli/`'s D7 and has no way
 to tell them apart except the path.
 
+**Answered by the owner on 2026-11-26: the one sequence.** This folder's
+thirty-two decisions move into the one sequence the register keeps, so its
+folder-local **D1–D32** are the same decisions under the numbers **D3380 onward**
+— the block runs to **D3411**, D1 there and D32 at the end of it. The
+block is read the way this item reads any block, at the base the change lands on
+rather than the base this reconciliation was written from: on `main` today the
+highest decision number written anywhere in `docs/` is **D3379**, which
+`docs/image-map-by-provider/` reserves last (read with a wider pattern than the
+command above, which cannot match a four-digit number). **D221 onward is not that block, and
+this item's recommendation is superseded**: D221 was the next free block at
+`1d325928` (2026-10-20), and it was taken two days later by `docs/mobile-auth/`
+out of its own reading of the same rule (its D221–D236, answered 2026-10-22),
+with `docs/website/zoom-diagrams/` taking the numbers above it — so the range
+this item named belongs to two other works, and taking it would be the collision
+O7 exists to avoid rather than one to walk into. The register carries the row
+(`docs/coordinator/README.md` §"The numbers this work holds"); this folder's
+documents keep writing the decisions **D1–D32**, and renumbering them is
+mechanical and changes nothing but the numbers.
+
 ## 9. UNVERIFIED
 
 Claims that this reconciliation could not check from the tree, with what would be
