@@ -8471,6 +8471,7 @@
         "dist",
         "node_modules",
         "plans",
+        "testdata",
         "vendor"
       ],
       "any": true
@@ -11542,6 +11543,7 @@
         "internal/cli/orchestrator_labels.go",
         "internal/cli/project_enroll.go",
         "internal/cli/project_enroll_converge.go",
+        "internal/cli/project_enroll_starter.go",
         "internal/cli/project_status.go",
         "internal/cli/review.go",
         "internal/cli/reviewverify.go",
