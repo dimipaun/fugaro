@@ -32,7 +32,7 @@ fugaro setup --project <name>
 
 ## 2. Survey the project
 
-Run `fugaro image survey --json`. It reads every repository the project's configuration lists through the code host's file API — nothing is cloned — and reports, per repository, the signals it carries: its lockfiles and version files, a Dockerfile and the base it starts from, its CI file, and the services its compose or Testcontainers files name. Its `setup` member is what this project has **today**: `catalog`, `image_map` and `bake_repos`, the three a rerun compares against.
+Run `fugaro image survey --json`. It reads every repository the project's configuration lists through the code host's file API — nothing is cloned — and reports, per repository, the signals it carries: its lockfiles and version files, a Dockerfile and the base it starts from, its CI file, and the services its compose or Testcontainers files name. Its `setup` member is what this project has **today**: `catalog`, `repo_images` and `bake_repos`, the three a rerun compares against. `repo_images` is keyed by `provider/owner/name`; a project whose map an `update` has not migrated yet reports it as `legacy_image_map`, keyed by bare `owner/name`, instead — read whichever member the document carries.
 
 Read it as evidence:
 - A row with `unread` set is a repository nothing could be read from (no credential for its provider, a provider this build cannot read, a read that failed). Say which repositories those are and why; never infer their signals, and never guess a runtime for one.
@@ -138,7 +138,7 @@ fugaro update
 
 ## Rerunning
 
-A rerun is a comparison, not a new proposal. Run `fugaro image survey --json` again and read its `setup` member — the catalog, the `image_map` and `bake_repos` the project has **today** — against what the repositories now carry. Propose **only what differs**:
+A rerun is a comparison, not a new proposal. Run `fugaro image survey --json` again and read its `setup` member — the catalog, the `repo_images` (or the `legacy_image_map`) and `bake_repos` the project has **today** — against what the repositories now carry. Propose **only what differs**:
 
 - a repository new to the project, and the entry it belongs to
 - a repository that has drifted: a runtime, a lockfile or a service that no entry in the catalog carries

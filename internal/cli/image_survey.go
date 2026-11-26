@@ -23,7 +23,7 @@ import (
 // is only ever added within a version, so a consumer of this one may read a
 // member it knows without a nil check, and a renamed or re-meant member is a
 // new member under a new name.
-const imageSurveyDocVersion = 1
+const imageSurveyDocVersion = 2
 
 // imageSurveyOut is `fugaro image survey --json`: the project's repositories
 // and the image signals each one carries, plus the setup a rerun of the image
@@ -71,11 +71,20 @@ type imageSurveyRepo struct {
 // alike — a project that published nothing and bakes answers the same values as
 // one whose node was not read — so a setup that was not read says so, exactly
 // as a repository row does.
+//
+// The map is two members and never one member under two meanings (R4, Q2):
+// RepoImages holds the provider/owner/name keys and is empty while the
+// project's effective map is still the legacy one, and LegacyImageMap holds the
+// bare-name map exactly in that case and is absent otherwise. A reader of a
+// document an older CLI wrote therefore reads no map rather than reading a
+// provider as an owner. RepoImages names that wire member, not D1900's
+// per-repository image rows (R11).
 type imageSurveySetup struct {
-	Catalog   []catalogEntryRow `json:"catalog"`
-	ImageMap  map[string]string `json:"image_map"`
-	BakeRepos bool              `json:"bake_repos"`
-	Unread    string            `json:"unread,omitempty"`
+	Catalog        []catalogEntryRow `json:"catalog"`
+	RepoImages     map[string]string `json:"repo_images"`
+	LegacyImageMap map[string]string `json:"legacy_image_map,omitempty"`
+	BakeRepos      bool              `json:"bake_repos"`
+	Unread         string            `json:"unread,omitempty"`
 }
 
 // openSurveyProvider is OpenProvider, a seam for the survey's reads: the
@@ -248,7 +257,7 @@ const surveySetupDefaults = ", so the catalog, the repository-to-image map and t
 // these keys has no map and bakes (D1901's default), which is a fact about the
 // project and not a read that failed, so it carries no reason.
 func surveySetup(ctx context.Context, env *cloudEnv, stderr io.Writer) imageSurveySetup {
-	out := imageSurveySetup{Catalog: []catalogEntryRow{}, ImageMap: map[string]string{}, BakeRepos: true}
+	out := imageSurveySetup{Catalog: []catalogEntryRow{}, RepoImages: map[string]string{}, BakeRepos: true}
 	p, found, err := env.policy.read(ctx, env.lc)
 	if err != nil {
 		out.Unread = "the project's published policy node could not be read (" + oneLine(err.Error()) + ")" + surveySetupDefaults
@@ -259,10 +268,9 @@ func surveySetup(ctx context.Context, env *cloudEnv, stderr io.Writer) imageSurv
 		p = nil
 	}
 	var publishedCatalog *config.Catalog
-	var publishedMap map[string]string
 	var publishedBake *bool
 	if p != nil {
-		publishedCatalog, publishedMap, publishedBake = p.ImageCatalog, p.ImageMap, p.BakeRepos
+		publishedCatalog, publishedBake = p.ImageCatalog, p.BakeRepos
 	}
 	if cat := env.lc.ImageCatalogEffective(publishedCatalog); cat != nil {
 		for _, e := range cat.Entries {
@@ -272,12 +280,22 @@ func surveySetup(ctx context.Context, env *cloudEnv, stderr io.Writer) imageSurv
 			})
 		}
 	}
+	// The map is read through the effective reader (R2), so this document and
+	// every other reader of the map agree about which member the project serves.
 	// Both halves of a mapping reach a terminal and an agent's context from
 	// here, and the repository key is a value a person reads back, so both are
 	// printed through pluginwire.Printable as every other value that leaves a
 	// command is.
-	for repo, entry := range env.lc.ImageMapEffective(publishedMap) {
-		out.ImageMap[pluginwire.Printable(repo)] = pluginwire.Printable(entry)
+	images, fromRepoImages := env.lc.RepoImagesEffective(p)
+	for repo, entry := range images {
+		if !fromRepoImages {
+			if out.LegacyImageMap == nil {
+				out.LegacyImageMap = map[string]string{}
+			}
+			out.LegacyImageMap[pluginwire.Printable(repo)] = pluginwire.Printable(entry)
+			continue
+		}
+		out.RepoImages[pluginwire.Printable(repo)] = pluginwire.Printable(entry)
 	}
 	if bake := env.lc.BakeReposEffective(publishedBake); bake != nil {
 		out.BakeRepos = *bake
@@ -329,12 +347,19 @@ func printImageSurvey(w io.Writer, out imageSurveyOut) error {
 		}
 		fmt.Fprintln(w, line)
 	}
-	fmt.Fprintf(w, "image_map:\n")
-	if len(out.Setup.ImageMap) == 0 {
+	// The text form names the member the project actually serves (R4): a map an
+	// update has not migrated yet is printed as legacy_image_map, so the line a
+	// person reads is never a bare name under the new member's name.
+	member, images := "repo_images", out.Setup.RepoImages
+	if len(images) == 0 && out.Setup.LegacyImageMap != nil {
+		member, images = "legacy_image_map", out.Setup.LegacyImageMap
+	}
+	fmt.Fprintf(w, "%s:\n", member)
+	if len(images) == 0 {
 		fmt.Fprintf(w, "  none: fugaro image map set maps a repository to a catalog entry, and fugaro update publishes it\n")
 	}
-	for _, repo := range slices.Sorted(maps.Keys(out.Setup.ImageMap)) {
-		fmt.Fprintf(w, "  %s  %s\n", oneLine(repo), oneLine(out.Setup.ImageMap[repo]))
+	for _, repo := range slices.Sorted(maps.Keys(images)) {
+		fmt.Fprintf(w, "  %s  %s\n", oneLine(repo), oneLine(images[repo]))
 	}
 	fmt.Fprintf(w, "bake_repos: %s\n", presentCell(out.Setup.BakeRepos))
 	return nil
