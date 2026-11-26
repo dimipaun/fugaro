@@ -2056,7 +2056,7 @@ var runAccountGrants = setOf(
 	// role and no actAs or token minting — to an account THIS module creates,
 	// and its target is the service and not the runs bucket. The service's own
 	// class check is what decides what the account is served (B5.1, G21).
-	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.job.credentials_service.name | google_service_account.job.member | for_each= | perms=`,
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=local.credentials_grant.name | google_service_account.job.member | for_each= | perms=`,
 	// Reviewed for CSR14 (the verifier account, D1068): the account's whole
 	// reach, and it is these two rows. The first is the job's row above again —
 	// the same role on the same service, to an account THIS module creates on
@@ -2172,6 +2172,13 @@ var runAccountGrants = setOf(
 	// when M2 retires it; this row is the one that survives, which is why B6
 	// moved it into the installation module.
 	`google_service_account_iam_member | "roles/iam.serviceAccountUser" | service_account_id="projects/${var.project}/serviceAccounts/fugaro-build-identity@${var.project}.iam.gserviceaccount.com" | google_service_account.catalog_check[0].member | for_each= | perms=`,
+	// The identity's own OpenID token minting, on itself and held by itself:
+	// Cloud Build serves a build its ID token from the metadata server only to
+	// the user-specified account that holds iam.serviceAccounts.getOpenIdToken
+	// (without it the endpoint answers 404), and the catalog build's credential
+	// step presents that token to the credentials service. The role is on the
+	// identity's own account and on no other; it reaches no run's record.
+	`google_service_account_iam_member | "roles/iam.serviceAccountOpenIdTokenCreator" | service_account_id="projects/${var.project}/serviceAccounts/fugaro-build-identity@${var.project}.iam.gserviceaccount.com" | google_service_account.build_identity[0].member | for_each= | perms=`,
 	// Reviewed for B6's third review, and these are the identity's last two:
 	// the operators' actAs on it, which is what makes a MANUAL catalog build
 	// possible — `fugaro image build <entry>` submits as the identity

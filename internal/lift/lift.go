@@ -73,6 +73,9 @@ type Project struct {
 	// Migrated is the set of slugs whose migration record already exists
 	// (D3305). A planner acts only on a repository absent from it.
 	Migrated map[string]bool
+	// Auth is the agent.auth the owner chose where the repositories disagree
+	// (update --ask); empty leaves the planner's majority rule.
+	Auth string
 }
 
 // Caps is the budget database's cap nodes as update reads them, the shape the

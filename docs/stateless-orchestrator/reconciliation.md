@@ -477,7 +477,7 @@ merge needs positive evidence (commits, a green CI, **a whole changed-path set i
 security path) and **fails closed** without it — into the **recommend-only** outcome, tried before the two outcomes that act, which merges, cancels and restarts nothing, so an input nobody could
 read is a print and never a cancel (D1245, D1247); and every triage is readable twice — in the audit log (O3) and in the read-only `fugaro runs watch`. All four decisions are the recommendation;
 what the owner ruled on 2026-11-08 are the two defaults the rule rests on: **merge as-is with follow-ups** (D1245) and **split the work into follow-up
-sub-tasks** (D1246). One input is external to this repository: BF1 is not on `main` (U10), and until it lands the triage fails closed on every run.
+sub-tasks** (D1246). One input was external to this repository and is not any more: **BF1's writer landed 2026-11-25** (U10, `internal/runner/findings.go`), so the triage's third read is a read for every run from that release on, and the fail-closed path is left to the run that finalized before it or whose write did not land.
 
 ## 5. UNVERIFIED
 
@@ -509,10 +509,17 @@ sub-tasks** (D1246). One input is external to this repository: BF1 is not on `ma
   uses Electron's `Notification` API. What does exist is the RTDB **mailbox** the phone polls (`mailbox/<mb>/{inbox,outbox,heartbeat}`, every write
   MAC-checked by the rules; pairing D165/D166): a foreground channel, not a push. So "the mobile push the owner already has" is not verifiable from
   this tree and is read as a setup outside it, the way F18 reads the owner's scripts.
-- **U10.** BF1 (D1244's third input): the rule that ends a run "completed with open findings" at 80% of the budget, and the file it writes them to, are
-  not in this tree. `git grep` over this branch's `main` on 2026-11-08 finds no such outcome, no such file name and no 80%-of-budget rule in
-  `internal/runner` or `internal/config`; the brief names BF1 as work in flight beside this one, so the triage's third read is read from the brief's
-  description and not from code. **The triage fails closed without it** — no file, no merge, no cancel and no restart: the recommend-only outcome (D1247), which the fixed order tries before the two outcomes that act — and the task that reads it (O14) says so, including **where the file must come from**: the runner's own finalize artifact for that run, never a path inside the checkout the run can write (open item (7)).
+- **U10.** BF1 (D1244's third input): the rule that ends a run "completed with open findings" at 80% of the budget, and the file it writes them to.
+  `git grep` over this branch's `main` on 2026-11-08 found neither, and the brief named BF1 as work in flight beside this one. **The file half landed
+  2026-11-25**: `internal/runner/findings.go` writes it at finalize, beside the run's record, from the deciding review round the run ended on, so the
+  triage's third read is a read of a file this repository writes — the shape is pinned from both ends by `TestWriteFindingsPinsTheArtifact` (the bytes the
+  runner writes) and `TestTriageReadsTheArtifactTheRunnerWrites` (the daemon's own reader over them). **The triage still fails closed on the file it cannot
+  read** — no file, no merge, no cancel and no restart: the recommend-only outcome (D1247), which the fixed order tries before the two outcomes that act —
+  and the run it cannot read is a run that finalized before that release or whose write did not land, which is why the writer names its own run id and writes
+  an empty list rather than nothing when it has no finding. What stays unverified is the rest of BF1: **no run ends at 80% of its budget with open
+  findings** — there is no such outcome in `internal/runstore` and no budget rule for it in `internal/runner` or `internal/config` — so the file is written
+  by every finalize and read by the triage, but nothing yet produces the long run the rule was designed around. And the task that reads it (O14) still says
+  **where the file comes from**: the runner's own finalize artifact for that run, never a path inside the checkout the run can write (open item (7)).
 
 ## 6. OPEN TENSIONS (reported, not resolved)
 
@@ -634,9 +641,10 @@ run *from* without installing one, a `dev` build wherever it sits and any build 
 `TestUpdateRerendersAUnitThatNamesAnotherPathOfTheSameInstall`, with `TestDocsStatelessOrchestratorUnitRepointRule` holding this paragraph. **The reversal
 is one place**: `unitMayNameThisBinary` in `internal/cli/init_orchestrator_stage.go`, plus this paragraph and that pin.
 
-**Open items BF2's triage rule leaves (2026-11-08; reported, not decided).** (1) **The findings file is BF1's, and BF1 is not on `main`** (U10), so
-the rule's third input does not exist yet: until it lands the triage fails closed on every long run — it cancels nothing, merges nothing and recommends
-only, which is the rule's own fourth outcome (D1247), tried before the two outcomes that act on the run — so the fail-closed reading is the fixed order's, not a promise about them. That is the safe reading, not a working one. (2) **The automatic merge is the first merge this design takes away from a person.** It is bounded
+**Open items BF2's triage rule leaves (2026-11-08; reported, not decided).** (1) **The findings file is BF1's, and the writer half of BF1 landed 2026-11-25**
+(U10, `internal/runner/findings.go`): the rule's third input is a read for every run from that release on, so what remains fail-closed is the run that
+finalized before it or whose write did not land — it cancels nothing, merges nothing and recommends
+only, which is the rule's own fourth outcome (D1247), tried before the two outcomes that act on the run — so the fail-closed reading is the fixed order's, not a promise about them. That is the safe reading, and no longer the only one. The other half of BF1 is still missing: **no run ends at 80% of its budget with open findings**, so no run reaches the file by the route the rule was designed around. (2) **The automatic merge is the first merge this design takes away from a person.** It is bounded
 to a **finished** run (the record's status terminal, never one still in flight) with **a ready pull request** (not a draft), commits, green CI, **a diff wholly inside the routine allowlist**, no critical finding and none high in a security path, but the CI it reads is the check that ran, not the
 review a person would have given: a green build over a diff nobody read is merged by code. That residual is why the escalation cases are code, why the
 diff gate does not rest on the findings file at all (item (6)), and why the audit log carries the reasons. (3) **Two ticks, or two daemons, must not merge twice.** The pull request's own merged state and the `<run>:triage`
@@ -655,7 +663,7 @@ configuration that judges it. The cost is the owner's time on diffs a person wou
 findings file must come from the runner, not from the checkout**: the run being judged shares its container with the coding agent, so a findings file
 at a path in the working tree (or a claim in the pull request's own description) is not evidence — the triage reads **BF1's finalize artifact for that
 run** from the run's own storage, and anything it cannot attribute to the runner's finalize is an unreadable input and so the recommend-only outcome.
-BF1 is not in this tree (U10), so this is a requirement this plan places on it rather than a shape it can check.
+BF1's writer is in this tree as of 2026-11-25 (U10, `internal/runner/findings.go`), so this is now a shape the runner writes and O14's reader is written against, with the round trip pinned in `internal/cli/orchestrator_triage_test.go`.
 
 **Round-3 open items (reported; two of the three are now ruled).** (1) **Answered 2026-11-04 (D1242): no task is gated on the paired-device channel.** It names no gated task because approvals are consumed in O6 and O8 and the terminal Typed confirmation stands for now; the later channel may reshape O0's `Approval`, and nothing here fixes that shape. (2) **Answered 2026-11-04, not the recommendation: the spec's retry row stands — an approval covers the first attempt and at most one automatic retry of the same approved spec.** The owner allowed the retry the spec's table wanted ("Task failed, first time: Code retries"); the plan had made one approval cover one attempt. `spec.md` is not edited; the correction is that one approval can now launch two runs, bounded by the caps, `Precheck` and the kill switch (section 3, "One approval covers the first attempt and at most one automatic retry"). (3) An ambiguous launch error stays in flight up to `ClaimTTL` (10 minutes, `launchRun`'s contract; the runner's `ErrDuplicateExecution` is the second fence), and a daemon's repeated "still in flight" ticks must not count toward the circuit breaker.
 

@@ -20,7 +20,7 @@ const (
 	packCliUpdateLegs      = 1
 	packCliOtherLegs       = 8
 	packScriptsNonliveLegs = 2
-	packScriptsLiveLegs    = 3
+	packScriptsLiveLegs    = 6
 )
 
 // Leg is one entry of the shard matrix a selected run prints. Its names are

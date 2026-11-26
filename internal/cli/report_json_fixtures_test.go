@@ -71,6 +71,16 @@ var jsonCases = map[string]jsonCase{
 			return []string{"accounts", "ls", "--repo", "acme/app"}
 		},
 	},
+	// accounts pool ls reads the selected project's own config, so the fixture
+	// is the pools rig: a project whose config declares pools, which is what
+	// the document lists rather than an empty list.
+	"accounts pool ls": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			accountsPoolHome(t, "")
+			return []string{"accounts", "pool", "ls"}
+		},
+	},
 	// apply is a write verb whose run changes nothing here — this world's
 	// record owes no step — so what the fixture holds to the contract is the
 	// document an owed-nothing run prints. The command's other run arm, a step

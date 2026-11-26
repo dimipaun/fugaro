@@ -41,27 +41,94 @@ func adcWithQuota(t *testing.T, quota string) {
 	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", path)
 }
 
-// Live Check 27: a first run read the new project's billing with the new
-// project as the quota project, and the Cloud Billing API is not enabled on a
-// project that does not exist yet. The billing reads are billed to the
-// quota project of the credentials, whatever the target project is.
-func TestBillingClientUsesTheCredentialsQuotaProject(t *testing.T) {
+// The billing reads are billed to the installation's own project, named
+// explicitly. The credentials' own quota project may belong to another product
+// and is never used.
+func TestBillingClientIsBilledToTheInstallationProject(t *testing.T) {
 	adcWithQuota(t, "adc-quota")
 	var got []string
 	bill := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got = append(got, r.Header.Get("X-Goog-User-Project"))
-		_ = json.NewEncoder(w).Encode(map[string]any{"name": "projects/new-proj/billingInfo", "billingEnabled": true})
+		_ = json.NewEncoder(w).Encode(map[string]any{"name": "projects/fp/billingInfo", "billingEnabled": true})
 	}))
 	t.Cleanup(bill.Close)
-	c, err := NewClients(context.Background(), gcp.Options{GCPProject: "new-proj", Region: "us-east5"}, Endpoints{Billing: bill.URL})
+	c, err := NewClients(context.Background(), gcp.Options{GCPProject: "inst-proj", Region: "us-east5"}, Endpoints{Billing: bill.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.Billing.Projects.GetBillingInfo("projects/new-proj").Context(context.Background()).Do(); err != nil {
+	if _, err := c.Billing.Projects.GetBillingInfo("projects/fp").Context(context.Background()).Do(); err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0] != "adc-quota" {
-		t.Fatalf("billing read sent X-Goog-User-Project %q, want the credentials' adc-quota", got)
+	if len(got) != 1 || got[0] != "inst-proj" {
+		t.Fatalf("billing read sent X-Goog-User-Project %q, want inst-proj and not the credentials' adc-quota", got)
+	}
+}
+
+const billingOffBody = `{"error":{"code":403,"status":"PERMISSION_DENIED","message":"Cloud Billing API has not been used in project 111 before or it is disabled.","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"SERVICE_DISABLED","domain":"googleapis.com","metadata":{"service":"cloudbilling.googleapis.com","consumer":"projects/111"}}]}}`
+
+// billingOffClients builds clients whose billing API answers disabled until the
+// Service Usage fake is asked to enable it; enableCode is that fake's answer.
+func billingOffClients(t *testing.T, enableCode int) (c *Clients, enabled *[]string, quotas *[]string) {
+	t.Helper()
+	adcWithQuota(t, "adc-quota")
+	on := false
+	enabled, quotas = &[]string{}, &[]string{}
+	bill := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*quotas = append(*quotas, r.Header.Get("X-Goog-User-Project"))
+		if !on {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(billingOffBody))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"name": "projects/fp/billingInfo", "billingEnabled": true})
+	}))
+	t.Cleanup(bill.Close)
+	su := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*enabled = append(*enabled, r.URL.Path)
+		if enableCode != http.StatusOK {
+			w.WriteHeader(enableCode)
+			_, _ = w.Write([]byte(`{"error":{"code":403,"status":"PERMISSION_DENIED","message":"denied"}}`))
+			return
+		}
+		on = true
+		_ = json.NewEncoder(w).Encode(map[string]any{"name": "operations/x", "done": true})
+	}))
+	t.Cleanup(su.Close)
+	crm := gcpfake.NewCRM(t)
+	crm.AddProject("fp", 123456789)
+	c, err := NewClients(context.Background(), gcp.Options{GCPProject: "inst-proj", Region: "us-east5"},
+		Endpoints{Billing: bill.URL, ServiceUsage: su.URL + "/", ResourceManager: crm.URL + "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c, enabled, quotas
+}
+
+// A billing API that is off is turned on in the installation's own project, and
+// the read then goes through: the update converges by itself.
+func TestBillingAPIOffIsEnabledInTheInstallationProject(t *testing.T) {
+	c, enabled, quotas := billingOffClients(t, http.StatusOK)
+	if err := CheckFirebaseProject(context.Background(), c, "fp"); err != nil {
+		t.Fatal(err)
+	}
+	if len(*enabled) != 1 || !strings.Contains((*enabled)[0], "/projects/inst-proj/services/cloudbilling.googleapis.com") {
+		t.Fatalf("enable calls = %v, want one for cloudbilling in inst-proj", *enabled)
+	}
+	for _, q := range *quotas {
+		if q != "inst-proj" {
+			t.Fatalf("a billing read was billed to %q: %v", q, *quotas)
+		}
+	}
+}
+
+// An enable that is refused says which project and which command, and never
+// names the credentials' own quota project.
+func TestBillingAPIOffThatCannotBeEnabledNamesTheInstallationProject(t *testing.T) {
+	c, _, _ := billingOffClients(t, http.StatusForbidden)
+	err := CheckFirebaseProject(context.Background(), c, "fp")
+	if err == nil || !strings.Contains(err.Error(), "gcloud services enable cloudbilling.googleapis.com --project inst-proj") ||
+		strings.Contains(err.Error(), "adc-quota") || strings.Contains(err.Error(), "of your credentials") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -74,33 +141,24 @@ func mustPKCS8(t *testing.T, k *rsa.PrivateKey) []byte {
 	return b
 }
 
-// Credentials that name no quota project: the billing read says so and names
-// what to do, and never falls back to the project being set up (no call names
-// it as the quota project).
-func TestBillingWithoutAQuotaProjectIsAClearError(t *testing.T) {
-	adcWithQuota(t, "") // a credential file with no quota_project_id
-	t.Setenv("GOOGLE_CLOUD_QUOTA_PROJECT", "")
-	var quotas []string
-	bill := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		quotas = append(quotas, r.Header.Get("X-Goog-User-Project"))
-		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(`{"error":{"code":403,"status":"PERMISSION_DENIED","message":"Cloud Billing API has not been used in project 764086051850 before or it is disabled.","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"SERVICE_DISABLED","domain":"googleapis.com","metadata":{"service":"cloudbilling.googleapis.com","consumer":"projects/764086051850"}}]}}`))
+// A caller that names a quota project gets it on every project call, whatever
+// quota project the credentials carry.
+func TestProjectClientsNameTheQuotaProjectExplicitly(t *testing.T) {
+	adcWithQuota(t, "adc-quota")
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Header.Get("X-Goog-User-Project"))
+		_ = json.NewEncoder(w).Encode(map[string]any{"name": "projects/p/billingInfo", "billingEnabled": true})
 	}))
-	t.Cleanup(bill.Close)
-	crm := gcpfake.NewCRM(t)
-	crm.AddProject("new-proj", 123456789)
-	c, err := NewClients(context.Background(), gcp.Options{GCPProject: "new-proj", Region: "us-east5"}, Endpoints{Billing: bill.URL, ResourceManager: crm.URL + "/"})
+	t.Cleanup(srv.Close)
+	pc, err := NewProjectClients(context.Background(), ProjectEndpoints{ResourceManager: srv.URL, Firebase: srv.URL, Billing: srv.URL, QuotaProject: "inst-proj"}, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = CheckFirebaseProject(context.Background(), c, "new-proj")
-	if err == nil || !strings.Contains(err.Error(), "name no quota project") || !strings.Contains(err.Error(), "gcloud auth application-default set-quota-project") ||
-		strings.Contains(err.Error(), "services enable") {
-		t.Fatalf("err = %v", err)
+	if _, err := pc.Billing.Projects.GetBillingInfo("projects/p").Context(context.Background()).Do(); err != nil {
+		t.Fatal(err)
 	}
-	for _, q := range quotas {
-		if q == "new-proj" {
-			t.Fatalf("the project being set up was named as the quota project: %v", quotas)
-		}
+	if len(got) != 1 || got[0] != "inst-proj" {
+		t.Fatalf("X-Goog-User-Project = %q, want inst-proj and not adc-quota", got)
 	}
 }

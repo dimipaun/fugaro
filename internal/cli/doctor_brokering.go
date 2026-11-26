@@ -1431,24 +1431,24 @@ func doctorBitbucketDirect(ctx context.Context, lc *localcfg.Config, repo, provi
 // flipServes is the flip's own switch for one repository, judged through the
 // one predicate the plan a re-apply writes is built with
 // (infra.CredentialsServiceServes), so doctor cannot report a stale mount for
-// a repository whose jobs the flip deliberately leaves alone. Two of the
-// switch's three conditions are read here — the local config's per-repository
-// record of a root applied with the service on, and the checkout's agent.auth
-// — and the third, the installation's block, is the caller's own early return:
-// a caller that reached the check at all holds it.
+// a repository whose jobs the flip deliberately leaves alone. The switch's own
+// two conditions are read here — the local config's per-repository record of a
+// root applied with the service on, and the checkout's agent.auth — and the
+// installation's block, which the predicate takes first, is the caller's own
+// early return: a caller that reached the check at all holds it.
 func flipServes(lc *localcfg.Config, repo, auth string) bool {
-	return infra.CredentialsServiceServes(true, lc.Repos[repo].CredentialsServiceOn(), auth, lc.BudgetMode())
+	return infra.CredentialsServiceServes(true, lc.Repos[repo].CredentialsServiceOn(), auth)
 }
 
 // flipNotServed names the condition that holds the switch off, in the words of
 // the state rather than of the predicate: the record first, since a root that
 // was never applied with the service on is the state an operator can act on.
+// The budget mode is no longer one of those conditions (AB15, D3009), so an
+// `api-key` or `oauth` repository reaches this function only with its record
+// off, and the auth the service does not serve at all is the other state here.
 func flipNotServed(lc *localcfg.Config, repo, auth string) string {
 	if !lc.Repos[repo].CredentialsServiceOn() {
 		return "the local config records no apply of its root with the service on"
-	}
-	if auth == config.AuthAPIKey || auth == config.AuthOAuth {
-		return fmt.Sprintf("its agent.auth is %q, which the service serves only under budget.mode observe or enforce, and this project's is %q", auth, lc.BudgetMode())
 	}
 	return fmt.Sprintf("its agent.auth is %q, and the service serves the %q, %q and %q ones", auth, config.AuthCascade, config.AuthAPIKey, config.AuthOAuth)
 }
@@ -1465,10 +1465,11 @@ func flipNotServed(lc *localcfg.Config, repo, auth string) string {
 //
 // The service's half is the SWITCH's own predicate and not the installation's
 // block (B2.2, B2.3, D2071): an `api-key` or `oauth` repository reaches the
-// service only where its budget mode is one the gateway exists in AND the
-// record `fugaro update` left for it says its root was applied with the switch
-// on — which is what a bundle holding the credential its auth needs leaves
-// behind. A switched run's agent environment is built as the cascade's
+// service where the record `fugaro update` left for it says its root was
+// applied with the switch on — which is what a bundle holding the credential
+// its auth needs leaves behind; the budget mode was the second condition there
+// and is none any more (AB15, D3009). A switched run's agent environment is
+// built as the cascade's
 // (runner's servedAuth), so no credential of the job's reaches the agent, and
 // no mount of the two Claude credentials is left for it to read either once the
 // root carrying the switch has been applied since the flip (B2.7, G17).
@@ -1520,7 +1521,7 @@ func doctorModelKeyInAgent(lc *localcfg.Config, rf *resolvedFile, repo string) *
 	needs := "`" + strings.Join(entries, "`, `") + "`"
 	installed := lc.CredentialsService != nil && lc.CredentialsService.URL != ""
 	local, _ := lc.RepoFor(repo)
-	if runner.ServiceSwitchedAuth(auth) && infra.CredentialsServiceServes(installed, local.CredentialsServiceOn(), auth, mode) {
+	if runner.ServiceSwitchedAuth(auth) && infra.CredentialsServiceServes(installed, local.CredentialsServiceOn(), auth) {
 		return nil
 	}
 	var why string
@@ -1532,14 +1533,15 @@ func doctorModelKeyInAgent(lc *localcfg.Config, rf *resolvedFile, repo string) *
 	}
 	// The two routes are the auth's own. An api-key run reaches the service
 	// THROUGH the gateway, so turning the budget on holds the key whether or not
-	// a service is deployed, and the service route needs the same mode; an oauth
-	// run never starts a gateway (F30), so the service is the only route there
-	// and the mode is a condition of reaching it rather than a second way out.
-	route := fmt.Sprintf("put the installation's credentials service in front of it (an ordinary %s update deploys it, and its own %s update --repo switches this repository onto it once the budget mode is observe or enforce and the service's bundle holds %s: %s creds set %s)",
+	// a service is deployed; an oauth run never starts a gateway (F30), so the
+	// service is the only route there. The budget mode is a condition of
+	// neither route to the service (AB15, D3009): what the switch waits for is
+	// the bundle.
+	route := fmt.Sprintf("put the installation's credentials service in front of it (an ordinary %s update deploys it, and its own %s update --repo switches this repository onto it once the service's bundle holds %s: %s creds set %s)",
 		selfCommand(), selfCommand(), needs, selfCommand(), entries[0])
 	fix := "to take it out of the agent's reach, " + route + " — the gateway is no route of its own, because an oauth run never starts one"
 	if auth == "api-key" {
-		fix = "to take it out of the agent's reach, turn the budget on (budget.mode observe or enforce: the gateway holds the key), or " + route + " — the same mode is what the service is reached through"
+		fix = "to take it out of the agent's reach, turn the budget on (budget.mode observe or enforce: the gateway holds the key), or " + route
 	}
 	// The two facts the update record carries beside the switch (KS19) are said
 	// in the line that reports the switch, because a fact the record says is on

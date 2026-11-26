@@ -75,7 +75,7 @@ func Plan(ctx context.Context, run fcli.PlannedRun) (*fcli.Pair, error) {
 	// (PlannedRun.Policy), which is what the runner re-reads at bootstrap.
 	judged := *cfg
 	judged.Agent = launchAgent(*cfg)
-	model, ok, why := Admit(judged, *layer, run.Repo, run.Policy, run.Providers, run.Prices, run.ServiceHeldKey)
+	model, ok, why := Admit(judged, *layer, run.Repo, run.ModelRouting, run.Policy, run.Providers, run.Prices, run.ServiceHeldKey)
 	if !ok {
 		return &fcli.Pair{Skip: why}, nil
 	}

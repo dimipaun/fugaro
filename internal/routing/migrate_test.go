@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/dimipaun/fugaro/internal/config"
 )
 
 // The auth and via values the migration reads, spelled in the tests as the
@@ -807,6 +809,39 @@ func sameSource(a, b Source) bool {
 	slices.Sort(x)
 	slices.Sort(y)
 	return slices.Equal(x, y)
+}
+
+// TestMigratePoolOfOneNamedAfterItsAccountValidates holds the migration's pools
+// to the loader's own rule (config.ValidatePools), which is what MG2 writes a
+// real installation's config through.
+//
+// Every account the migration names gets a pool of one named after it (D3176),
+// and the config that pool lands in declares the account as a credential under
+// the same name — so the pool and the credential share one name by design. The
+// rule admits that collision for exactly this shape: a pool whose only member is
+// the credential of its own name. Without it `fugaro update` would write a
+// config its own next read refuses, which is the broken installation CLAUDE.md's
+// HARD RULE forbids.
+func TestMigratePoolOfOneNamedAfterItsAccountValidates(t *testing.T) {
+	in := Installation{
+		Project:  "proj-1234",
+		Accounts: []Account{{Name: "team-a"}, {Name: "team-b"}},
+	}
+	got := Migrate(in)
+	creds := make([]config.Credential, 0, len(in.Accounts))
+	for _, a := range in.Accounts {
+		creds = append(creds, config.Credential{Name: a.Name, Type: config.CredentialTypeClaudeOAuth})
+	}
+	pools := make([]config.Pool, 0, len(got.Pools))
+	for _, p := range got.Pools {
+		pools = append(pools, config.Pool{Name: p.Name, Members: slices.Clone(p.Members)})
+	}
+	if !slices.ContainsFunc(pools, func(p config.Pool) bool { return len(p.Members) == 1 && p.Members[0] == p.Name }) {
+		t.Fatalf("the migration wrote no pool of one named after an account, so this test proves nothing: %+v", pools)
+	}
+	if ps := config.ValidatePools(pools, creds); len(ps) != 0 {
+		t.Fatalf("the loader refuses the pools the migration writes: %v\npools: %+v", ps, pools)
+	}
 }
 
 // poolString renders a pool for a failure message: the principal's own kind and
