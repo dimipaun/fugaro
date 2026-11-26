@@ -57,9 +57,11 @@ func TestReviewIsRegisteredInTheCoreRoot(t *testing.T) {
 		path  string
 		flags []string
 	}{
-		// The launch: the pull request, the account it runs as, the one
-		// mutation check it may carry, and the machine-readable result.
-		{"review", []string{"pr", "token", "mutate", "json"}},
+		// The launch: the pull request, the one mutation check it may carry,
+		// and the machine-readable result. The account is not a flag here
+		// (CS15): the review job reaches its model by the project's routing
+		// table, so the launch resolves the account itself.
+		{"review", []string{"pr", "mutate", "json"}},
 		// The read of what the job wrote: the artifact's own bytes, or the
 		// rendered review beside them.
 		{"review show", []string{"json"}},

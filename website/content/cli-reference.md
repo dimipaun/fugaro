@@ -62,7 +62,7 @@ Subcommands:
 - `fugaro recipes` -- List, show, validate, publish and remove recipes, the task loop a run follows after implement
 - `fugaro report` -- Report what the project spent, by day, week, month, year, repository, model, person or mode
 - `fugaro restore` -- Rebuild a managed project from zero, into a new GCP project ID, and print what is not restored
-- `fugaro review` -- Review a pull request in a job of its own, on a named account
+- `fugaro review` -- Review a pull request in a job of its own
 - `fugaro rigor` -- Set the rigor mode a project's runs are held to
 - `fugaro routing` -- Show and edit the project's model routing table
 - `fugaro run` -- Launch a task in the cloud; it always ends with a PR
@@ -8191,10 +8191,10 @@ This command has no subcommands.
 
 ## `fugaro review`
 
-Review a pull request in a job of its own, on a named account
+Review a pull request in a job of its own
 
 Launch an independent review of pull request N, in a container the coding
-run never ran in and with the account you name.
+run never ran in.
 
 The review runs in a job of its own and never in the repository's coding job:
 the review-only variant of the repository's shared project job, or, where the
@@ -8206,8 +8206,10 @@ pull request's head, writes its verdict as an artifact (fugaro review show
 RUN prints it) and posts no comment and no review on the pull request: what
 reaches the pull request is the owner's and the coordinator's to decide.
 
-The account is picked as everywhere else: --token, else agent.oauth_token in
-fugaro.yaml at the run's ref, else the project's default_claude_account.
+The account is the repository's own: agent.oauth_token in fugaro.yaml at
+the run's ref, else the project's default_claude_account. It picks the
+review-only job the review runs on; which credential serves its model calls
+is the project's routing table's answer (fugaro routing ls).
 
 A review judges the pull request against the task the run that opened it was
 given, found through the runs bucket alone, and says what it judged against
@@ -8248,7 +8250,6 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--spec` | string | "" | no | review against the task in this FILE instead of the task of the run that opened the pull request: the way to review a pull request no run produced. Its text is redacted like any other a launcher adds, and a file over 16384 bytes is refused with its size. Refused with --code-only |
-| `--token` | string | "" | no | named Claude account (claude_accounts in the local config) this review runs as; default: agent.oauth_token in fugaro.yaml at the run's ref, else the project's default_claude_account |
 
 Subcommands:
 
