@@ -52,7 +52,10 @@ func TestInitHardeningAllowsOnlyTheLauncherGrantDeletes(t *testing.T) {
 	r.stateBucket()
 	r.setPlan(t, grantChange("runs", o, "roles/storage.objectAdmin", "delete"))
 	out, _, err = executeStdin(t, "", args...)
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), `runs["`+o+`"]`) || !strings.Contains(err.Error(), "--operator and --admin") {
+	// The rig's installation is a managed project's, so the refusal is the
+	// owner's own sentence rather than the launcher/operator hint a project
+	// nothing flags gets (TestManagedInitRefusalNamesNoFlag pins that text).
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), `runs["`+o+`"]`) || !strings.Contains(err.Error(), initManagedDeleteAdvice) {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
 	if strings.Contains(out, "bucket access (0.7.0)") {
@@ -186,7 +189,11 @@ func TestInstallationAtThePreviousVersionConvergesIssuesGrant(t *testing.T) {
 			r.script["plan@installation"] = map[string]any{"exit": 2}
 			r.script["show@installation"] = map[string]any{"stdout": planJSON(t, launcherReplaceChange(bucket, a, tc.title, tc.expr))}
 			r.save(t)
-			out, errOut, err := executeStdin(t, "", "update")
+			// --ask puts back the confirmation a managed project's gate
+			// stands in for (U3b): the replace this test is about is a
+			// change the gate admits, and the banner naming the launcher
+			// whose grant is replaced is printed by the confirmation.
+			out, errOut, err := executeStdin(t, askYes, "update", "--ask")
 			if err != nil {
 				t.Fatalf("fugaro update left an installation at the previous version behind: %v\n%s%s", err, out, errOut)
 			}

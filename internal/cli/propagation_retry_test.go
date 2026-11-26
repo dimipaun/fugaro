@@ -48,17 +48,34 @@ const (
 )
 
 // credentialsServiceChanges is the installation root's plan in that failure:
-// the service this apply creates, and the two grants on it.
+// the service this apply creates, the account it runs as, and the two grants
+// on it. The service and the account are the module's own document
+// (installationCredentialsPlan): a managed installation puts this plan in
+// front of the gate (D1016), whose cover refuses a bare change() — one that
+// carries no attributes at all — over a document credentials.tf never writes.
 func credentialsServiceChanges() []planChange {
-	return []planChange{
-		created(credentialsServiceAddr, "google_cloud_run_v2_service",
-			map[string]any{"name": "fugaro-credentials", "location": "us-east5", "project": initProject}),
+	return append(installationCredentialsPlan("create", credentialsServiceImage()),
 		created(invokerGrantAddr, "google_cloud_run_v2_service_iam_member",
 			map[string]any{"name": "fugaro-credentials", "role": "roles/run.invoker", "member": "user:operator@example.invalid"}),
 		created(verifierGrantAddr, "google_cloud_run_v2_service_iam_member",
 			map[string]any{"name": "fugaro-credentials", "role": "roles/run.invoker", "member": "serviceAccount:fugaro-verifier@" + initProject + ".iam.gserviceaccount.com"}),
-	}
+	)
 }
+
+// credentialsServiceImage is the credentials service's released pin read back
+// through the pull-through repository: the one image shape the cover admits
+// for that service (tf.Cover.credentialsImageOK), on the owner the rig's
+// config records (image_source, planted by happyInstallation).
+func credentialsServiceImage() string {
+	return "us-east5-docker.pkg.dev/" + initProject + "/" + infra.GhcrRegistry +
+		"/dimipaun/fugaro-credentials:0.2.0@sha256:" + strings.Repeat("9f", 32)
+}
+
+// credentialsServiceLeftovers is the same plan once the apply that failed had
+// created the service and the account it runs as: what terraform finds left to
+// do on the re-plan is the two grants alone, which is the whole case the
+// second failure is judged against.
+func credentialsServiceLeftovers() []planChange { return credentialsServiceChanges()[2:] }
 
 // created is one planned create with the attributes terraform writes for it:
 // the values the classifier reads to say whether the error names a resource
@@ -155,6 +172,11 @@ func rootSubs(t *testing.T, r *initRig, root string, want ...string) []string {
 // nothing else, is what these tests are about.
 func happyInstallation(t *testing.T, r *initRig, changes ...planChange) {
 	t.Helper()
+	// The credentials plan's image is read against the owner the config
+	// records (baseOwner, tf.Cover.credentialsImageOK), and a rig with no
+	// image_source records none: every plan carrying that service would be
+	// refused, whatever its image.
+	r.appendConfig(t, "image_source: ghcr.io/dimipaun\n")
 	r.script["plan@installation"] = map[string]any{"exit": 2}
 	if len(changes) == 0 {
 		changes = credentialsServiceChanges()
@@ -198,10 +220,19 @@ func TestPropagationRetryRerunsTheInstallationStep(t *testing.T) {
 	}
 	// Two whole cycles of the failed step — and installation-2's own, the
 	// stage that applies the root again for the scheduled jobs (R7), which the
-	// retry neither shares nor disturbs. The show that leads each converge is
-	// the retirement's read of the installation's state (retireProjectJobs): it
-	// runs once before the cycle, and a retry re-plans without it.
-	if got, want := rootSubs(t, r, "installation", "plan", "show", "apply"), []string{"show", "plan", "show", "apply", "plan", "show", "apply", "show", "plan", "show", "apply"}; !slices.Equal(got, want) {
+	// retry neither shares nor disturbs. A cycle of a managed project's step
+	// reads the plan three times: the step's own confirmation, and the gate's
+	// two reads of the same saved file (gateStep). The show that leads each
+	// converge is the retirement's read of the installation's state
+	// (retireProjectJobs): it runs once before the cycle, and a retry re-plans
+	// without it.
+	if got, want := rootSubs(t, r, "installation", "plan", "show", "apply"), []string{
+		"show",
+		"plan", "show", "show", "show", "apply",
+		"plan", "show", "show", "show", "apply",
+		"show",
+		"plan", "show", "show", "show", "apply",
+	}; !slices.Equal(got, want) {
 		t.Errorf("the installation root's plan/show/apply = %q, want the whole cycle again\n%s", got, out)
 	}
 }
@@ -230,7 +261,7 @@ func TestPropagationRetryKeepsRetryingAfterItsOwnApplyCreated(t *testing.T) {
 	r.script["plan@installation"] = map[string]any{"exit": 2}
 	r.script["show@installation"] = []any{
 		map[string]any{"stdout": planJSON(t, credentialsServiceChanges()...)},
-		map[string]any{"stdout": planJSON(t, credentialsServiceChanges()[1:]...)},
+		map[string]any{"stdout": planJSON(t, credentialsServiceLeftovers()...)},
 	}
 	r.script["apply@installation"] = []any{
 		map[string]any{"exit": 1, "stderr": theReported404s},
@@ -257,26 +288,39 @@ func TestPropagationRetryKeepsRetryingAfterItsOwnApplyCreated(t *testing.T) {
 	}
 }
 
-// A retried plan is judged afresh, and in a project that is not managed the
-// guard is the whole of that judgement: the retry re-plans, so a
-// plan the guard refuses is refused before it is applied, and never applied
-// under the confirmation given to a plan that did not hold what it holds. The
-// refusal here is the one only the guard sees -- a delete nobody allowed --
-// because the failure the retry absorbs is an apply that creates: without the
-// guard on the retry's own plan the delete would go through unnamed.
+// A retried plan is judged afresh, and in a managed project the gate is the
+// whole of that judgement -- it runs tf.GuardEntries inside managed.Gate, with
+// the owner's list and no session-supplied address (gateStep's own comment) --
+// so the retry re-plans, and a plan that guard refuses is refused before it is
+// applied, never applied under the admission given to a plan that did not hold
+// what it holds. The refusal here is the one only that guard sees -- a delete
+// nobody allowed -- because the failure the retry absorbs is an apply that
+// creates: without the guard on the retry's own plan the delete would go
+// through unnamed.
 func TestPropagationRetryHoldsTheNewPlanToTheGuard(t *testing.T) {
 	noPropagationWaits(t)
 	fakeTerminal(t)
 	r := updateRig(t)
 	// The first attempt's plan is the reported failure's own, which the guard
-	// admits; the re-plan holds those changes AND a delete nothing allowed.
+	// admits; the re-plan holds those changes AND a delete nothing allowed. One
+	// attempt reads the plan three times -- the step's own confirmation, and
+	// the gate's two reads of the same saved file (gateStep) -- so each
+	// attempt's document is planted three times and the second attempt's is
+	// the re-plan's.
 	const runsBucket = "module.installation.google_storage_bucket.runs"
+	r.appendConfig(t, "image_source: ghcr.io/dimipaun\n")
 	installationStateRead(r)
-	r.script["plan@installation"] = map[string]any{"exit": 2}
-	r.script["show@installation"] = []any{
-		map[string]any{"stdout": planJSON(t, credentialsServiceChanges()...)},
-		map[string]any{"stdout": planJSON(t, append(slices.Clone(credentialsServiceChanges()), change(runsBucket, "delete"))...)},
+	attempts := func(changes []planChange) []any {
+		out := make([]any, 0, 3)
+		for range 3 {
+			out = append(out, map[string]any{"stdout": planJSON(t, changes...)})
+		}
+		return out
 	}
+	r.script["plan@installation"] = map[string]any{"exit": 2}
+	r.script["show@installation"] = append(
+		attempts(credentialsServiceChanges()),
+		attempts(append(slices.Clone(credentialsServiceChanges()), change(runsBucket, "delete")))...)
 	r.script["apply@installation"] = []any{
 		map[string]any{"exit": 1, "stderr": theReported404s},
 		map[string]any{"exit": 0},
@@ -287,8 +331,8 @@ func TestPropagationRetryHoldsTheNewPlanToTheGuard(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a retried plan holding an unallowed delete was applied:\n%s", out)
 	}
-	if said := ErrorText(err); !strings.Contains(said, "the plan would delete or replace 1 resource(s)") || !strings.Contains(said, runsBucket) {
-		t.Errorf("the retry did not stop in the guard's own words about the re-plan: %v\n%s", err, out)
+	if !strings.Contains(out, "refused by guard: delete") {
+		t.Errorf("the retry did not stop in the gate's own words about the delete the re-plan holds:\n%s", out)
 	}
 	if got := rootSubs(t, r, "installation", "apply"); len(got) != 1 {
 		t.Errorf("the installation root applied %d times, want 1: the plan the retry was handed was refused before it reached the apply\n%s", len(got), out)
@@ -580,7 +624,7 @@ func TestPropagationRetryStopsOnAnythingElse(t *testing.T) {
 			// this apply created: there is nothing for the API to catch up with.
 			name:    "a 404 on a grant whose target this apply does not create",
 			stderr:  applyDiagnostic(invokerGrantAddr, invoker404Text),
-			changes: credentialsServiceChanges()[1:],
+			changes: credentialsServiceLeftovers(),
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

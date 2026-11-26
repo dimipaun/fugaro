@@ -61,6 +61,11 @@ func publishServedNode(t *testing.T, db *gcpfake.RTDB, mode string, repos ...str
 func modelFlipRig(t *testing.T, auth, credential, mode string, served bool, addr string) *initRig {
 	t.Helper()
 	r, db := proxiedRepoRig(t)
+	// The rows below are about the path an installation that is NOT managed
+	// takes: the guard's own refusal is the one that names --allow-delete, and in
+	// a managed project the gate answers first with its own sentence and no flag
+	// (D1012).
+	r.unmarkedInstallation(t)
 	// The bundle has to be READABLE for the switch's record to be judged: the
 	// probe takes the block off the installation's outputs (credentialsServiceProbe)
 	// and drops it when the outputs carry no URL, and a repository the probe
