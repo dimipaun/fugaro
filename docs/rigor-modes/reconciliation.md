@@ -2679,7 +2679,8 @@ folder-local **D1–D32** are the same decisions under the numbers **D3380 onwar
 block is read the way this item reads any block, at the base the change lands on
 rather than the base this reconciliation was written from: on `main` today the
 highest decision number written anywhere in `docs/` is **D3379**, which
-`docs/image-map-by-provider/` reserves last. **D221 onward is not that block, and
+`docs/image-map-by-provider/` reserves last (read with a wider pattern than the
+command above, which cannot match a four-digit number). **D221 onward is not that block, and
 this item's recommendation is superseded**: D221 was the next free block at
 `1d325928` (2026-10-20), and it was taken two days later by `docs/mobile-auth/`
 out of its own reading of the same rule (its D221–D236, answered 2026-10-22),
