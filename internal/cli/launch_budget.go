@@ -949,9 +949,9 @@ func (e *cloudEnv) chainRoutingGate(ctx context.Context, spec *task.Spec) error 
 // `--pool` names nothing.
 //
 // `--token`, which the same decision retires, is refused in the account walk
-// itself (claudeAccountChoice), where the flag is read: it is a name the run's
-// own account is resolved from, and the refusal belongs before that resolution
-// rather than beside the table's gates.
+// itself (claudeAccountChoice): it is a name the run's own account is resolved
+// from, so its refusal belongs before that resolution rather than beside the
+// table's gates.
 func (e *cloudEnv) poolGate(ctx context.Context, o *runOptions, spec *task.Spec) error {
 	if e.lc == nil || o.pool == "" {
 		return nil

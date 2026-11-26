@@ -329,9 +329,10 @@ type runOptions struct {
 	// same allow-list, agent.auth and version-gate checks a first run's does.
 	// Either name may be an alias of the owner's local config, and what the
 	// launch resolves it to is account below. It is refused where the
-	// project's routing table serves this repository (poolGate, D3176): such
-	// a run takes its credential from the chain its models' entries name, and
-	// the account a job mounts is the release-1 way of choosing one.
+	// project's routing table serves this repository (claudeAccountChoice,
+	// D3176): such a run takes its credential from the chain its models'
+	// entries name, and the account a job mounts is the release-1 way of
+	// choosing one.
 	token string
 	// pool is --pool: the pool "the launcher's pool" resolves to for this run
 	// (C2's named_pool, D3176). It reorders no chain — it says which pool the
@@ -597,7 +598,7 @@ func newRunCmd() *cobra.Command {
 	f.IntSliceVar(&o.pr, "pr", nil, "continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions); with a mode: review --recipe, review PR N instead (repeatable, 1 to 4, any open PR)")
 	f.StringVar(&o.recipe, "recipe", "", "the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's ("+strings.Join(recipe.CatalogNames(), ", ")+"); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's")
 	f.StringVar(&o.token, "token", "", "named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's). Refused on a project whose routing table serves this repository, where a run takes its credential from the chain: name the pool with --pool")
-	f.StringVar(&o.pool, "pool", "", "the pool \"the launcher's pool\" resolves to for this run (D3176): a pool the launcher owns or is allowed on, where a chain of the run's models names the launcher's pool. It changes no chain, and it is refused where no chain of the run's models names the launcher's pool; without it the service serves the launcher's own designated pool, and a follow-up names its own launcher's pool this way too")
+	f.StringVar(&o.pool, "pool", "", "the pool \"the launcher's pool\" resolves to for this run (D3176): a pool the launcher owns or is allowed on, where a chain of the run's models names the launcher's pool, which the flag never reorders. Refused where no chain of the run's models names it; without it the launcher's own designated pool serves the run, and a follow-up names its own launcher's pool the same way")
 	f.StringArrayVar(&o.attach, "attach", nil, "attach a file to the run: repeatable, uploaded to the run's own inputs/ and downloaded by a mode: artifact run into the checkout's inputs/ (needs a mode: artifact recipe; refused on a run ID that already has a task)")
 	f.BoolVar(&o.commitReports, "commit-reports", false, "hand the project's stored reports (reports/ of the runs bucket) to the run this launch starts: reads them with your own account, uploads every one the checkout's mirror folder does not already hold byte for byte into the run's own reports/, and names them in the task for the commit_reports step to commit. Needs --recipe commit-reports (the step is what reads them), is refused together with --attach, and is refused on a run ID that already has a task")
 	f.StringVar(&o.rigor, "mode", "", "the rigor mode to ask for: "+rigor.RigorList()+"; it is the narrowest rank of the mode's order, so it settles the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) whether it asks for more or for less, and only a floor, outside every layer, holds it back; hotfix is the mode the request takes whole and needs no opt-in anywhere — a first run, a follow-up and a launch from a coding agent's session alike; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps")
@@ -2750,10 +2751,10 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	if err := env.chainRoutingGate(ctx, spec); err != nil {
 		return config.Inputs{}, err
 	}
-	// The table's two names (R21, D3176): a launch whose --pool no chain of its
-	// models resolves is refused, and so is one whose --token a repository the
-	// table serves may not use. Judged beside the gate above, from the same
-	// table and the same models.
+	// The table's own name (R21, D3176): a launch whose --pool no chain of its
+	// models resolves is refused. Judged beside the gate above, from the same
+	// table and the same models (the --token half of the decision is the
+	// account walk's, claudeAccountChoice).
 	if err := env.poolGate(ctx, o, spec); err != nil {
 		return config.Inputs{}, err
 	}
