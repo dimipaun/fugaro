@@ -158,6 +158,10 @@ func TestUpdateConvergesAnInstallationThatHadNoBudget(t *testing.T) {
 // anything (R5).
 func TestUpdateLeavesARunStartedWithoutABudgetRunning(t *testing.T) {
 	r := offLocalConverge(t, currentNode(), apiKeyRepoYAML)
+	// The credential is the one the release behind stored, so the update has no
+	// step left for the person and the run about to go in flight is the only
+	// thing this fixture is about.
+	r.seedProjectKey(t, config.AnthropicSecret)
 	run := startRunInFlight(t, r)
 
 	line := inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"}))
