@@ -7689,6 +7689,7 @@
         "docs/releases/v0.26.0.md",
         "docs/releases/v0.27.0.md",
         "docs/releases/v0.29.0.md",
+        "docs/releases/v0.30.0.md",
         "docs/releases/v0.8.6.md",
         "docs/releases/v0.9.0.md",
         "docs/repo-coupling-audit/**",
@@ -8470,6 +8471,7 @@
         "dist",
         "node_modules",
         "plans",
+        "testdata",
         "vendor"
       ],
       "any": true
