@@ -66,6 +66,13 @@ const pauseAskBudget = 30 * time.Second
 // work the pause would silently lose.
 const pauseLeftover = "fugaro: uncommitted work at pause"
 
+// init answers the seam C3 left for this file (suspend_stub.go). The
+// assignment is here and not left to the stub's guarded one, which runs after
+// this file and only while the seam is still nil — so the stub is the answer
+// until this file exists, and this file is the answer once it does. I2 deletes
+// the stub, and the export with it.
+func init() { Suspend = suspendRun }
+
 // suspendRun is Suspend's implementation: the pause itself (R12, R18).
 //
 // stage is the stage that was running, session the session it ran in, and ex
