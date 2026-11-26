@@ -52,7 +52,7 @@ Weigh the break before you keep it: the pass adds two tasks, so break an edge on
 **By the mode each task resolves.** A repository's level is the project layer's (D3237), so read the project's answer for this repository — its entry in `rigor.repos`, and the project's area rules, whose `members` outrank that entry and whose `match` alone ranks below it (the read prints one entry per `*` row: a project with several rules is in the layer file it names) — and match the tasks' paths against the area patterns:
 
 ```bash
-fugaro settings layer.defaults.rigor.repos layer.defaults.rigor.areas --json
+fugaro settings layer.defaults.rigor.repos layer.defaults.rigor.default layer.defaults.rigor.areas --json
 ```
 
 | Mode | The pass |

@@ -125,7 +125,7 @@ func TestParallelismSkillContractTaskRigor(t *testing.T) {
 	for _, want := range []string{
 		"the highest rigor of the tasks that consume it",
 		"fugaro run --mode",
-		"fugaro settings layer.defaults.rigor.repos layer.defaults.rigor.areas",
+		"fugaro settings layer.defaults.rigor.repos layer.defaults.rigor.default layer.defaults.rigor.areas",
 		`"<owner/name>": "<mode>"`,
 		"outranks the map",
 		"fugaro review --pr",
