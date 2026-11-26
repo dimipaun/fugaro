@@ -155,6 +155,13 @@ func doctorRoutingBundleChecks(ctx context.Context, lc *localcfg.Config, repos [
 		repo       string
 		slug       string
 		credential string
+		// secret is the name `fugaro secrets set` takes for this credential,
+		// which is not the axis the bundle holds it under: a provider's entry is
+		// keyed by the provider's name (credsvc.RepoCredentialKey, the rule the
+		// writer and the loader share) and the command resolves the key by its
+		// own secret's name (config.ProviderBySecret, its .secret). A source
+		// whose secret name this config does not state names no usable command.
+		secret string
 		// named is the credential as a person knows it (the project's Anthropic
 		// key, a provider's key by its name), never the account axis's own value.
 		named  string
@@ -172,12 +179,21 @@ func doctorRoutingBundleChecks(ctx context.Context, lc *localcfg.Config, repos [
 		}
 		for _, e := range lc.ModelRouting {
 			for _, s := range e.Chain {
-				var credential string
+				var credential, secret string
 				switch s.Kind {
 				case routing.KindAnthropic:
 					credential = config.AnthropicKeyAccount
 				case routing.KindProvider:
-					credential = s.Provider
+					p, ok := lc.Providers[s.Provider]
+					if !ok {
+						// The table names a provider this config does not
+						// declare, so there is no key to enter and no name to
+						// enter it under: the table's own check reports that
+						// entry, and a line here would name a command that
+						// cannot be run.
+						continue
+					}
+					credential, secret = s.Provider, p.Secret
 				default:
 					continue
 				}
@@ -185,7 +201,7 @@ func doctorRoutingBundleChecks(ctx context.Context, lc *localcfg.Config, repos [
 					continue
 				}
 				needs = append(needs, need{repo: repo, slug: slug, credential: credential,
-					named: doctorRoutingCredentialName(s), claims: s})
+					secret: secret, named: doctorRoutingCredentialName(s), claims: s})
 			}
 		}
 	}
@@ -239,7 +255,7 @@ func doctorRoutingBundleChecks(ctx context.Context, lc *localcfg.Config, repos [
 		}
 		out = append(out, doctorCheck{ID: doctorRoutingBundleID, Severity: "warning",
 			Problem: fmt.Sprintf("this project's table is served on %s for %s, and this installation's bundle holds no such credential: a run served by that source is served nothing, and the call falls to the chain's next source", n.named, pluginwire.Printable(n.repo)),
-			Fix:     doctorRoutingBundleFix(n.claims, n.repo)})
+			Fix:     doctorRoutingBundleFix(n.claims, n.repo, n.secret)})
 	}
 	if len(out) > 0 {
 		return out
@@ -265,10 +281,13 @@ func doctorRoutingCredentialName(s routing.Source) string {
 // kinds are written by two different writers: a repository's own Anthropic key
 // is copied into the bundle by `fugaro update`, out of the container the key is
 // already stored in, and a provider's key is entered per repository by
-// `fugaro secrets set`.
-func doctorRoutingBundleFix(s routing.Source, repo string) string {
+// `fugaro secrets set`. The name that command takes is the provider's own
+// secret's name and not the provider's (config.ProviderBySecret, which is the
+// lookup its own name check makes), so the line names the secret the config
+// stores that key under rather than a name the command would refuse.
+func doctorRoutingBundleFix(s routing.Source, repo, secret string) string {
 	if s.Kind == routing.KindProvider {
-		return selfCommand() + " secrets set " + quoteWord(s.Provider) + " --repo " + quoteWord(repo)
+		return selfCommand() + " secrets set " + quoteWord(secret) + " --repo " + quoteWord(repo)
 	}
 	return selfCommand() + " update copies the repository's own Anthropic key into the bundle"
 }

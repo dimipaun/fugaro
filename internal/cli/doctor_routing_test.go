@@ -252,7 +252,11 @@ func TestDoctorRouting(t *testing.T) {
 			}
 			for _, want := range []string{
 				"update copies the repository's own Anthropic key",
-				"secrets set openrouter --repo acme/app",
+				// The name `secrets set` takes is the provider's own secret's
+				// name, never the provider entry's: the command resolves the key
+				// through the former (config.ProviderBySecret), so a line naming
+				// `openrouter` would hand the owner a refused command.
+				"secrets set openrouter-api-key --repo acme/app",
 			} {
 				if !strings.Contains(fixes, want) {
 					t.Errorf("the fixes do not carry %q:\n%s", want, fixes)
