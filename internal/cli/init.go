@@ -834,6 +834,13 @@ type initRun struct {
 	// providers every repository may use: the converge's repository stage
 	// runs the repo engine too, and the note belongs once.
 	notedOpenProviders bool
+	// routingMig and routingAsked are the once-per-run guard on the routing
+	// migration (update_routing_migrate.go): its answer is asked for twice — by
+	// the policy stage, which publishes the table, and by the converge's tail,
+	// which writes it into this machine's config — and the report, the warning
+	// and MG1's own computation belong to the run and not to the write.
+	routingMig   *routingMigrationDone
+	routingAsked bool
 	// notedCatalogSecrets is the once-per-run guard on the warning about a
 	// published catalog entry that asks for a secret of its own (D2311): the
 	// fact is the entry's and not a repository's, and a converge that reaches

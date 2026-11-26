@@ -103,7 +103,15 @@ func doctorLayerChecks(ctx context.Context, lc *localcfg.Config, root string, rf
 		// The same node answers the map, and its read error is reported once
 		// (imageCatalogUnreadCheck): a map this machine could not read is the
 		// file's own or none, which is the keep rule's answer for it.
-		imap, _ := effectiveImageMap(ctx, env)
+		mapping, _ := effectiveImageMap(ctx, env)
+		// The repository's provider is what a provider-keyed map is looked up
+		// under (R2): this machine's config first, the checkout's own
+		// git.provider the entry names none, which is the provider this
+		// repository's jobs are slugged with anyway (task.Slug).
+		provider := lc.Repos[repoConfigKey(lc, oi.Repo)].Provider
+		if provider == "" {
+			provider = rf.Cfg.Git.Provider
+		}
 		out = append(out, imageCatalogUnreadCheck(lc, rf.Cfg, catErr)...)
 		// A nil catalog is two states, and the checks below judge a workflow
 		// differently in each: a catalog nobody read leaves the workflows it
@@ -119,9 +127,9 @@ func doctorLayerChecks(ctx context.Context, lc *localcfg.Config, root string, rf
 		// same condition imageCatalogUnreadCheck states, and the two are read
 		// one after the other so they cannot drift.
 		catUnknown := catErr != nil && lc.ImageCatalog == nil
-		out = append(out, imageConfigChecks(ctx, env, rb, oi.Repo, slug, rf.Cfg, rf.Res, cat, imap, catUnknown)...)
+		out = append(out, imageConfigChecks(ctx, env, rb, oi.Repo, slug, rf.Cfg, rf.Res, cat, mapping, provider, catUnknown)...)
 		out = append(out, catalogSecretChecks(ctx, rb, cat)...)
-		out = append(out, catalogImageChecks(ctx, env, rb, oi.Repo, slug, rf.Cfg, cat, imap, catUnknown)...)
+		out = append(out, catalogImageChecks(ctx, env, rb, oi.Repo, slug, rf.Cfg, cat, mapping, provider, catUnknown)...)
 	}
 	return out
 }
@@ -455,14 +463,14 @@ func imageCatalogUnreadCheck(lc *localcfg.Config, cfg *config.Config, catErr err
 // skip for are the checks that exist: the offline run cannot read the record
 // (that is what the skip says), but which workflows have one at all is a fact
 // of the file on disk, and this is where both runs read it.
-func imageConfigWorkflows(cfg *config.Config, cat *config.Catalog, imap map[string]string, catUnknown bool, repo string, be catalog.Backend) []string {
+func imageConfigWorkflows(cfg *config.Config, cat *config.Catalog, mapping imageMapping, provider string, catUnknown bool, repo string, be catalog.Backend) []string {
 	var out []string
 	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
 		w := cfg.Workflows[name]
 		if w.Dockerfile != "" {
 			continue
 		}
-		if _, ok := workflowCatalogEntry(cat, imap, catUnknown, repo, w, be); ok {
+		if _, ok := workflowCatalogEntry(cat, mapping, provider, catUnknown, repo, w, be); ok {
 			continue
 		}
 		out = append(out, name)
@@ -486,22 +494,26 @@ func imageConfigWorkflows(cfg *config.Config, cat *config.Catalog, imap map[stri
 // run may hold. The node's half of the selection is the residual, and it is
 // reported rather than guessed at.
 func offlineImageConfigWorkflows(ctx context.Context, root string, cfg *config.Config, lc *localcfg.Config) []string {
-	cat, imap, be := (*config.Catalog)(nil), map[string]string(nil), catalog.CloudRun
+	cat, mapping, be := (*config.Catalog)(nil), imageMapping{}, catalog.CloudRun
 	if lc != nil {
-		cat, imap, be = lc.ImageCatalogEffective(nil), lc.ImageMapEffective(nil), catalog.Backend(lc.Backend())
+		cat, mapping, be = lc.ImageCatalogEffective(nil), configImageMap(lc, nil), catalog.Backend(lc.Backend())
 	}
 	// The repository's own name is read only for a map that could point at an
 	// entry (the only thing that reads it), and under the guard every other
 	// consumer of it applies (doctorLayerChecks): the checkout's raw
 	// .git/config is not trusted by name, and a name this run cannot establish
 	// leaves the map half unjudged, which keeps the skip.
-	repo := ""
-	if len(imap) > 0 {
+	repo, provider := "", ""
+	if len(mapping.images) > 0 {
 		if oi, ok := readOrigin(ctx, root); ok && !oi.Rewritten {
 			repo = oi.Repo
 		}
+		provider = lc.Repos[repoConfigKey(lc, repo)].Provider
+		if provider == "" {
+			provider = cfg.Git.Provider
+		}
 	}
-	return imageConfigWorkflows(cfg, cat, imap, false, repo, be)
+	return imageConfigWorkflows(cfg, cat, mapping, provider, false, repo, be)
 }
 
 // imageConfigChecks names each workflow (with a generated image) whose build
@@ -527,9 +539,9 @@ func offlineImageConfigWorkflows(ctx context.Context, root string, cfg *config.C
 // the other half of that argument (workflowCatalogEntry): a project with no
 // catalog at all is one whose pinned workflows are compared here, because
 // their jobs run the derived image — so the two nils are not one state.
-func imageConfigChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, repo, slug string, cfg *config.Config, res *config.Resolution, cat *config.Catalog, imap map[string]string, catUnknown bool) []doctorCheck {
+func imageConfigChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, repo, slug string, cfg *config.Config, res *config.Resolution, cat *config.Catalog, mapping imageMapping, provider string, catUnknown bool) []doctorCheck {
 	var out []doctorCheck
-	for _, name := range imageConfigWorkflows(cfg, cat, imap, catUnknown, repo, catalog.Backend(env.lc.Backend())) {
+	for _, name := range imageConfigWorkflows(cfg, cat, mapping, provider, catUnknown, repo, catalog.Backend(env.lc.Backend())) {
 		data, _, err := rb.Read(ctx, imagecheck.RecordKey(slug, name))
 		if err != nil {
 			continue
@@ -574,10 +586,10 @@ func imageConfigChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, rep
 // warning below (catalogEntryRecord). An entry that is a prebuilt image has
 // nothing to build, and what it is judged on instead is the smoke of the
 // reference it names (prebuiltSmokeChecks).
-func catalogImageChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, repo, slug string, cfg *config.Config, cat *config.Catalog, imap map[string]string, catUnknown bool) []doctorCheck {
+func catalogImageChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, repo, slug string, cfg *config.Config, cat *config.Catalog, mapping imageMapping, provider string, catUnknown bool) []doctorCheck {
 	var out []doctorCheck
 	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
-		e, ok := workflowCatalogEntry(cat, imap, catUnknown, repo, cfg.Workflows[name], catalog.Backend(env.lc.Backend()))
+		e, ok := workflowCatalogEntry(cat, mapping, provider, catUnknown, repo, cfg.Workflows[name], catalog.Backend(env.lc.Backend()))
 		if !ok {
 			continue
 		}
@@ -728,14 +740,8 @@ func prebuiltSmokeChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, s
 // and the entry returned is the pin's name by itself (no source) for a pin,
 // and nothing at all for one the catalog would have chosen — the caller judges
 // what it can of that, which is the entry it was given or nothing.
-func workflowCatalogEntry(cat *config.Catalog, imap map[string]string, catUnknown bool, repo string, w config.Workflow, be catalog.Backend) (config.Entry, bool) {
-	sel, err := catalog.JobImage(catalog.ImageRequest{
-		Catalog:   cat,
-		ImageMap:  imap,
-		Canonical: repo,
-		Workflow:  w,
-		Backend:   be,
-	})
+func workflowCatalogEntry(cat *config.Catalog, mapping imageMapping, provider string, catUnknown bool, repo string, w config.Workflow, be catalog.Backend) (config.Entry, bool) {
+	sel, err := catalog.JobImage(mapping.request(cat, repo, provider, w, be))
 	if err == nil && sel.Source == catalog.SourceCatalog {
 		return sel.Entry, true
 	}

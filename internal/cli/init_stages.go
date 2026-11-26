@@ -581,6 +581,14 @@ func (e *initEngine) converge(ctx context.Context) error {
 	// before the first stage for the reason the catalog guard above is — every
 	// stage of this run reads the config this run writes.
 	e.rewriteLocalBudgetMode()
+	// The routing migration's own report, and it is here for the reason the
+	// lines above are: what each repository's runs go out on, and every change
+	// the migration makes, are read before the update makes any of them. It is
+	// asked here rather than by the stage that publishes the table because that
+	// stage is not every run's — a config that names no database runs none at
+	// all — and the tail that writes the table reads the answer this line
+	// computed (update_routing_migrate.go).
+	e.r.routingMigrationFor(e.lc)
 	// The door's note about the runs that are running while it converges, and
 	// the last thing the run prints before its own confirmation and before any
 	// stage writes: a person deciding whether it is safe to update now reads it
@@ -623,6 +631,12 @@ func (e *initEngine) converge(ctx context.Context) error {
 	// no record and the next update migrates the repository again
 	// (update_lift.go, D3305).
 	e.writeLiftRecords(ctx, res)
+	// MG2's own write, and it is here for the reason the records above are not:
+	// the routing table is what a repository's root is applied with, so the run
+	// that migrates may not carry it in the config it plans from. Every stage
+	// that plans an apply is behind this line (update_routing_migrate.go has the
+	// whole argument).
+	e.migrateRouting(res)
 	if err == nil && res != nil && e.r.o.planOnly && res.Failed == nil {
 		e.planOnlyReview(ctx, res.Stages)
 	}

@@ -27,23 +27,27 @@ import (
 // the image, so only the copy says whose checkout is in it.
 
 // bakedOwner is the repository a composed definition bakes, as this machine's
-// project config names it. The marker names the repository's storage slug
-// (imagebake.BakedSlug), which is a hash of the repository and its provider
-// (task.Slug), so the repository is found by deriving the slug of each of the
-// project's repositories the same way. A slug no repository here answers for —
-// a repository the project no longer lists, or one whose provider this config
+// project config names it, and the provider kind that config records for it.
+// The marker names the repository's storage slug (imagebake.BakedSlug), which
+// is a hash of the repository and its provider (task.Slug), so the repository
+// is found by deriving the slug of each of the project's repositories the same
+// way. The provider comes back with the name because it is what tells two
+// repositories of one name apart in a map keyed by provider/owner/name, which
+// is the key the caller compares against. A slug no repository here answers for
+// — a repository the project no longer lists, or one whose provider this config
 // does not record — is reported as unknown and the caller names the path
 // instead, which is what the nightly check does with the same fact.
-func bakedOwner(lc *localcfg.Config, slug string) (string, bool) {
+func bakedOwner(lc *localcfg.Config, slug string) (repo, provider string, known bool) {
 	if lc == nil {
-		return "", false
+		return "", "", false
 	}
 	for _, name := range slices.Sorted(maps.Keys(lc.Repos)) {
-		if s, err := task.Slug(lc.Repos[name].Provider, name); err == nil && s == slug {
-			return name, true
+		p := lc.Repos[name].Provider
+		if s, err := task.Slug(p, name); err == nil && s == slug {
+			return name, p, true
 		}
 	}
-	return "", false
+	return "", "", false
 }
 
 // bakedCheckout names a baked checkout for a person: the repository, when this
@@ -52,7 +56,7 @@ func bakedOwner(lc *localcfg.Config, slug string) (string, bool) {
 // cannot place is the one thing they have left.
 func bakedCheckout(lc *localcfg.Config, slug string) string {
 	dir := imagebake.Root + "/" + slug
-	if name, known := bakedOwner(lc, slug); known {
+	if name, _, known := bakedOwner(lc, slug); known {
 		return "the checkout of " + pluginwire.Printable(name) + " at " + pluginwire.Printable(dir)
 	}
 	return "a checkout at " + pluginwire.Printable(dir)
@@ -90,13 +94,19 @@ func noteBakeDropped(w io.Writer, lc *localcfg.Config, entry, slug string) {
 // of the project alone runs, and a bake lands nowhere else). A refusal here
 // would leave the operator with no way to reach the map the rebuild needs.
 //
+// The map it reads is the effective one, by the member the project serves it
+// from (R2): a provider-keyed map is compared key by key, so the repository the
+// copy bakes is the one its own provider spells — two repositories of one name
+// are two keys there, and a mapping of the other one exposes this checkout just
+// as a mapping of a differently named repository does.
+//
 // The copy is read best effort: a machine that cannot read the runs bucket
 // writes the mapping without the check and says so, and an entry that was never
 // built has no copy to read and nothing to warn about. What the read costs is
 // one object, and what it buys is the only moment this hazard can be named
 // before jobs run on it — the nightly check refuses such a definition only
 // after the fact (internal/cli's catalog check).
-func noteBakedExposure(ctx context.Context, w io.Writer, lc, next *localcfg.Config, entry string) {
+func noteBakedExposure(ctx context.Context, w io.Writer, lc *localcfg.Config, mapping imageMapping, entry string) {
 	if lc == nil || lc.ImageCatalog == nil {
 		return
 	}
@@ -136,10 +146,11 @@ func noteBakedExposure(ctx context.Context, w io.Writer, lc, next *localcfg.Conf
 	if !baked {
 		return
 	}
-	owner, known := bakedOwner(lc, slug)
+	owner, provider, known := bakedOwner(lc, slug)
+	ownerKey := mapName(owner, provider, mapping.byProvider)
 	var exposed []string
-	for _, name := range slices.Sorted(maps.Keys(next.ImageMap)) {
-		if next.ImageMap[name] == entry && (!known || name != owner) {
+	for _, name := range slices.Sorted(maps.Keys(mapping.images)) {
+		if mapping.images[name] == entry && (!known || name != ownerKey) {
 			exposed = append(exposed, name)
 		}
 	}

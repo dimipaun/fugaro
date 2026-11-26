@@ -115,6 +115,10 @@ func doctorSecretManagerChecks(ctx context.Context, lc *localcfg.Config, sm *gcp
 // roles/editor carries no secretmanager.versions.access — so an Editor's
 // container grant is a finding like any other member's.
 //
+// The resident orchestrator's own account is placed on its pairing container
+// and nowhere else (orchestratorPairingMember): that one grant is the design's,
+// and the account is not a reader of anything else.
+//
 // What the sweep advises depends on whose container it is (the owner's ruling
 // of 2026-10-29): a container Fugaro created may be cleaned up, and its
 // readers that Fugaro did not create are removed by hand; a container Fugaro
@@ -172,7 +176,8 @@ func doctorSecretReaderChecks(ctx context.Context, lc *localcfg.Config, sm *gcp.
 			}
 			for _, m := range b.Members {
 				if strings.HasPrefix(m, "deleted:") || known[m] || slices.Contains(owners, m) ||
-					(strings.HasPrefix(s.ID, tf.ManagedPrefix) && managedAccountMember(m, lc.GCPProject)) {
+					(strings.HasPrefix(s.ID, tf.ManagedPrefix) && managedAccountMember(m, lc.GCPProject)) ||
+					orchestratorPairingMember(m, lc, s) {
 					continue
 				}
 				extra = append(extra, m+" ("+b.Role+")")
@@ -358,6 +363,23 @@ func managedAccountMember(member, project string) bool {
 	}
 	id, ok = strings.CutSuffix(id, "@"+project+".iam.gserviceaccount.com")
 	return ok && strings.HasPrefix(id, tf.ManagedPrefix)
+}
+
+// orchestratorPairingMember reports whether member is this installation's
+// resident orchestrator reading the one container Terraform gives it: the
+// pairing key's cloud copy, whose per-secret accessor is the whole of the
+// account's reach on Secret Manager
+// (deploy/terraform/gcp/modules/installation/orchestrator.tf,
+// google_secret_manager_secret_iam_member.orchestrator_pairing_key; the
+// brokering audit's E29). Both names are the installation module's own
+// constants, so the sweep places exactly the reader that grant makes and
+// nothing wider: a grant of the same account on any other container, or of
+// another member on this one, is still a finding.
+func orchestratorPairingMember(member string, lc *localcfg.Config, s gcp.SecretInfo) bool {
+	if s.ID != infra.OrchestratorPairingSecretID {
+		return false
+	}
+	return member == "serviceAccount:"+infra.OrchestratorAccountID+"@"+lc.GCPProject+".iam.gserviceaccount.com"
 }
 
 // fugaroSecretReaderMembers is every IAM member string Fugaro creates for a

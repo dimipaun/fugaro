@@ -1,14 +1,67 @@
 package cli
 
 import (
+	"context"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/task"
 )
+
+// R1's own claim, through the launch: a project that holds a GitHub and a
+// Bitbucket acme/app, each mapped to a different entry, gives each launch its
+// own key (D3370). The project still holds the legacy image_map too — the state
+// an installation is in until `fugaro update` rewrites it — and repo_images wins
+// per member (R2), so the Bitbucket launch is answered by the Bitbucket key
+// rather than by the bare name the old member maps.
+//
+// Mutation (read the map by bare name, as before L11): the Bitbucket launch
+// reads the GitHub key's entry, so the first row is left silent about a job the
+// project does give this repository, and the second admits one it does not.
+func TestLaunchImageByProvider(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		deployed string
+		speaks   bool
+	}{
+		{"the Bitbucket key's entry", "sandbox-svc", true},
+		{"the GitHub key's entry", "sandbox-web", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			launchOutsideAnyCheckout(t)
+			// This machine's acme/app is the Bitbucket repository the launch is
+			// for: the provider the map is read under comes from the local
+			// config's own entry.
+			f.rewriteConfig(t, "  acme/app: { provider: github,", "  acme/app: { provider: bitbucket,")
+			f.appendConfig(t, twoEntryCatalogYAML)
+			f.appendConfig(t, "image_map:\n  acme/app: sandbox-web\n")
+			f.appendConfig(t, "repo_images:\n  bitbucket/acme/app: sandbox-svc\n")
+			env := fileEnv(t, f)
+			env.be = &mappedJob{codec: backend.CloudRunCodec(), image: catalogImageOf(tc.deployed)}
+			slug, err := task.Slug("bitbucket", "acme/app")
+			if err != nil {
+				t.Fatal(err)
+			}
+			spec := &task.Spec{Version: 1, RunID: "20261126-100000-a1b2", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "Add a feature"}
+			entry, speaks, _, err := deployedCatalogEntry(context.Background(), env, slug, spec)
+			if err != nil {
+				t.Fatalf("the launch was refused: %v", err)
+			}
+			if entry.Name != tc.deployed {
+				t.Fatalf("the launch reads the deployed image as entry %q, want %q", entry.Name, tc.deployed)
+			}
+			if speaks != tc.speaks {
+				t.Errorf("the launch of the Bitbucket acme/app speaks for the job = %v, want %v: repo_images gives bitbucket/acme/app the entry sandbox-svc", speaks, tc.speaks)
+			}
+		})
+	}
+}
 
 // The owner's report of 2026-11-24, as the test that pins it: the project's
 // map names a repository's workflows one catalog entry, its deployed job runs
