@@ -52,34 +52,28 @@ func policyNode(t *testing.T, db *gcpfake.RTDB) *projectpolicy.Policy {
 }
 
 // TestUpdateConvergesAnInstallationThatHadNoBudget: an installation at the
-// previous release whose project holds a Realtime Database this machine records
-// none of (F32), whose local config says the word that was a mode, and whose
-// published policy says it too. One `fugaro update` is the whole of the
-// upgrade, and what it leaves is the state the rest of the plan is built on:
-// the database exists and is recorded, both documents say observe, and a run of
-// this installation has an identity to mint with and a gateway in front of the
-// agent.
+// previous release whose Firebase project holds no Realtime Database at all
+// (F3) and whose local config says the word that was a mode. One `fugaro
+// update` is the whole of the upgrade, and what it leaves is the state the rest
+// of the plan is built on: the database is created and recorded, the local
+// config says observe, and a run of this installation has an identity to mint
+// with and a gateway in front of the agent.
 //
 // The red step is the release before this one, in both halves. Its Firebase
-// stage needed --firebase-project to adopt what was there, so an update over
-// this installation recorded no database at all; and with the word off its
-// launch minted no identity and its job mounted the key the gateway would have
-// held, so the environment asserted at the end is one no run of that release
-// ever had.
+// stage was skipped without --firebase-project, so an update over this
+// installation recorded no database and left every run of it keyless; and with
+// the word off its launch minted no identity and its job mounted the key the
+// gateway would have held, so the environment asserted at the end is one no run
+// of that release ever had.
 func TestUpdateConvergesAnInstallationThatHadNoBudget(t *testing.T) {
 	r := alwaysRig(t)
 	mayCreate(t, r)
 	updating(t, r.initRig)
-	// The database the previous release wrote here is this installation's, and
-	// this machine records none of it (F32) — the Firebase state was deleted, or
-	// the config that named it is on another machine. That is the state the
-	// previous release's own door could not converge from without a flag, and
-	// what the update below records again.
-	r.db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
-	r.db.Set(budget.PathProject, initProjectName)
+	// The project has no database, and this machine records none either: this
+	// is the state the previous release's door could not leave without the
+	// flag, and what the update below creates and records (F3, R2).
+	noDatabaseYet(t, r)
 	r.appendConfig(t, offBudgetBlock)
-	r.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.PolicyRulesVersion)
-	r.db.Set(projectpolicy.PathShared(), offNode())
 	fakeTerminal(t)
 
 	out, err := updateRun(t, r.initRig, "update")
@@ -87,31 +81,25 @@ func TestUpdateConvergesAnInstallationThatHadNoBudget(t *testing.T) {
 		t.Fatalf("an update over an installation that had no budget stopped: %v\n%s", err, out)
 	}
 
-	// The database exists, and it is this installation's: the mark and the
-	// project name are the ones the stage writes, and it is the one that was
-	// there rather than a second one (F32, R2).
+	// The database was created, and it is this installation's: the mark and the
+	// project name are the ones the stage writes (F3, R2).
 	if r.db.Value(budget.PathMark) == nil || r.db.Value(budget.PathProject) != initProjectName {
 		t.Errorf("the run left the database with mark %v and project %v, want this installation's:\n%s", r.db.Value(budget.PathMark), r.db.Value(budget.PathProject), out)
 	}
-	// This machine records it, and says observe: the address is the database's,
-	// and the word the file held is rewritten in place rather than left for
-	// every later reader to interpret (AB8b, D3009).
+	// This machine records it, and says observe: the address and the Firebase
+	// project are the database's, and the word the file held is rewritten in
+	// place rather than left for every later reader to interpret (AB8a, D3009).
 	lc := r.localConfig(t)
-	if lc.Budget == nil || lc.Budget.RTDBURL != r.db.URL {
-		t.Fatalf("the local config records budget %+v, want the database this run found (%s)", lc.Budget, r.db.URL)
+	if lc.Budget == nil || lc.Budget.RTDBURL != r.db.URL || lc.Budget.FirebaseProject != fpID {
+		t.Fatalf("the local config records budget %+v, want the database this run made (%s, %s)", lc.Budget, r.db.URL, fpID)
 	}
 	if lc.Budget.Mode != policy.ModeObserve {
 		t.Errorf("the local config's budget.mode is %q, want %q", lc.Budget.Mode, policy.ModeObserve)
 	}
-	// The published policy says observe at its own version: the node was
-	// rewritten in place, not walked forward (R4, D3025), which is what makes
-	// every reader of this release able to read it at all.
-	p := policyNode(t, r.db)
-	if p.Budget.Mode != policy.ModeObserve {
-		t.Errorf("the published policy's budget mode is %q, want %q: the node the previous release published is one no reader of this release serves", p.Budget.Mode, policy.ModeObserve)
-	}
-	if p.Version != projectpolicy.Version {
-		t.Errorf("the published policy is version %d, want this binary's %d: the node's version does not move for the word", p.Version, projectpolicy.Version)
+	// The installation root's switch follows the database into existence (F28):
+	// a database that was made is one every run of the project is bounded by.
+	if v := r.tfvars(t)["enable_budget"]; v != true {
+		t.Errorf("enable_budget is %v, want true once the database exists (F28)", v)
 	}
 	// A new run has a database to mint its identity with — the launch's own
 	// decision, made on the config this run wrote (R3: the mode decides nothing
@@ -124,8 +112,8 @@ func TestUpdateConvergesAnInstallationThatHadNoBudget(t *testing.T) {
 	// here is the one a keyed installation's job carries — the project's key,
 	// mounted for the gateway to hold — and what the agent gets instead is the
 	// token of the gateway this run's database minted for it.
-	const jobKey = "sk-ant-api03-not-a-real-credential"
-	env, _, err := agent.BuildEnv([]string{"ANTHROPIC_API_KEY=" + jobKey}, agent.EnvSpec{
+	const jobCredential = "planted-job-credential-not-a-key"
+	env, _, err := agent.BuildEnv([]string{"ANTHROPIC_API_KEY=" + jobCredential}, agent.EnvSpec{
 		Auth:    config.AuthAPIKey,
 		Gateway: &agent.Gateway{BaseURL: "http://127.0.0.1:1", Token: "per-run-token"},
 	})
@@ -135,7 +123,7 @@ func TestUpdateConvergesAnInstallationThatHadNoBudget(t *testing.T) {
 	if got := envValue(env, "ANTHROPIC_API_KEY"); got != "per-run-token" {
 		t.Errorf("the agent's ANTHROPIC_API_KEY is %q, want the gateway's per-run token", got)
 	}
-	if strings.Contains(strings.Join(env, "\n"), jobKey) {
+	if strings.Contains(strings.Join(env, "\n"), jobCredential) {
 		t.Errorf("the job's own key reaches the agent's environment:\n%s", strings.Join(env, "\n"))
 	}
 }
