@@ -650,15 +650,19 @@ func (r *run) registryEntry() budget.AgentEntry {
 		title = string(runes[:80])
 	}
 	// Auth is the credential this run's model calls go out on, and a run the
-	// routing table serves has none to write: what such a run goes out on is
-	// the table's own answer and arrives per stage as `source` and `fallback`
-	// (chainAnswered), so the runner chooses no whole-run upstream for it
-	// (model-credentials-routing CS6, D3070 — every view prints the dash for an
-	// absent member, CS9). An unmigrated repository keeps its file's auth:
-	// nothing of the table reaches it and its calls are its own, as its file
-	// says (R3).
+	// routing table serves has none of its own to write: what such a run goes
+	// out on is the table's own answer and arrives per stage as `source` and
+	// `fallback` (chainAnswered), so the runner chooses no whole-run upstream
+	// for it (model-credentials-routing CS6, D3070 — every view prints the dash
+	// for an absent member, CS9). An `oauth` run keeps it, and keeps it until
+	// the entry's source can say the same thing: `fugaro watch` and the console
+	// read this member, and only this member, to call the run's spend notional
+	// (watch's RunRow.Notional), so writing nothing here would book a
+	// subscription's list price as billed dollars. An unmigrated repository
+	// keeps its file's auth whatever it is: nothing of the table reaches it and
+	// its calls are its own, as its file says (R3).
 	auth := r.cfg.Agent.Auth
-	if r.serviceModelPath() {
+	if r.serviceModelPath() && auth != config.AuthOAuth {
 		auth = ""
 	}
 	e := budget.AgentEntry{

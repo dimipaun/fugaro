@@ -212,11 +212,20 @@ func TestEveryStageGoesThroughTheChain(t *testing.T) {
 				}
 			}
 
-			// And the entry the run registers with names no auth of its own:
+			// And the entry the run registers with writes no auth of its own:
 			// the table is what says where its calls go, and every view prints
-			// the dash for an absent member (CS9, D3070).
-			if got := r.registryEntry().Auth; got != "" {
-				t.Errorf("a %s run the service serves registers the auth %q, want none", auth, got)
+			// the dash for an absent member (CS9, D3070). An oauth run is the
+			// one exception, and it is the view that makes it: the notional
+			// flag of a live row is read off this member alone, so zeroing it
+			// would book a subscription's list price as billed dollars until
+			// the entry's source can say the same thing (watch's
+			// TestAServedOAuthRowStaysNotional holds the other half).
+			wantAuth := ""
+			if auth == config.AuthOAuth {
+				wantAuth = config.AuthOAuth
+			}
+			if got := r.registryEntry().Auth; got != wantAuth {
+				t.Errorf("a %s run the service serves registers the auth %q, want %q", auth, got, wantAuth)
 			}
 		})
 	}
