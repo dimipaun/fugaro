@@ -88,3 +88,18 @@ func TestPauseCarrierValidatesAtLoad(t *testing.T) {
 		t.Errorf("the loader accepted a block the node's own rule refuses: %v", err)
 	}
 }
+
+// TestPauseIsNeverPublished: the block is this machine's own and never the
+// shared config's — a launcher who could write it into the runs bucket's file
+// would be holding every teammate's runs to their own pause (Shared's own
+// reason, the cascade's one block over). It travels to the policy node
+// instead, which the credentials service reads.
+func TestPauseIsNeverPublished(t *testing.T) {
+	c, err := Parse([]byte(sample + "pause:\n  wait_in_job: 2m\n  min_pause: 40m\n  max_pause: 8h\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if published := c.Shared(); published.Pause != nil {
+		t.Errorf("the published shared config carries the block: %+v", published.Pause)
+	}
+}
