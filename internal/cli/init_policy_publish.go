@@ -279,6 +279,21 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy, identities 
 	if lc.ModelGrades != nil {
 		add("model_grades", publishedModelGrades(lc, p.ModelGrades), p.ModelGrades, false)
 	}
+	// The pause block is the same case one block over (R11 of
+	// docs/model-credentials-routing, D3184, D3187, D3190): the local config is
+	// its carrier, `fugaro settings set` writes it and `fugaro update` is what
+	// carries it to the node the credentials service reads, so a member the
+	// config states and the node does not carry is exactly the gap this stage
+	// exists to close — without the row the operator's own edit would reach no
+	// run until they ran the explicit publish, which is the second command the
+	// HARD RULE forbids. It is compared through the publisher's own merge, the
+	// cascade's reason: a config that states nothing is not reported as a
+	// difference (the merge hands the node's own block back, so the two sides
+	// are one document and the row is silent), while a written block is the
+	// operator's edit and is reported like any other.
+	if pauseStated(lc.Pause) {
+		add("pause", publishedPause(lc, p.Pause), p.Pause, false)
+	}
 	// The triage switch reaches a run off this node too (D1854), so a config
 	// that states it where the node states the other answer is a difference a
 	// publish closes, and it is compared the bake switch's way: the node's value

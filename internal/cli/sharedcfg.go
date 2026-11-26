@@ -403,6 +403,15 @@ type SharedAnchor struct {
 // every teammate's pull requests reviewed against nothing. localcfg.Config.Shared
 // nils it.
 //
+// pause is the cascade's case one block over (R11 of
+// docs/model-credentials-routing, F49): the in-job floor, the shortest pause
+// and the longest one are what every run of the project does when its
+// credentials are exhausted, so a launcher who could write the block into the
+// shared file would be holding every teammate's job open for a reset — a job
+// paid for by the minute — and bounding what a chain of theirs may pause for.
+// localcfg.Config.Shared nils it, and it is published through the policy node
+// instead.
+//
 // locations is the one key here refused for a reason that is not about who may
 // write the runs bucket (LP0 of docs/location-preference/, D3087 as amended):
 // it is one machine's record of where the installation's data already is, read
@@ -410,7 +419,7 @@ type SharedAnchor struct {
 // for it — and a published copy of it would stop every teammate whose Fugaro is
 // older than the release that wrote the key, whose strict decoder refuses a
 // field it does not know. localcfg.Config.Shared nils it.
-var sharedForbidden = []string{"terraform", "backend", "user", "commit_name", "commit_email", "endpoints", "bucket_url", "registry", "providers", "routing", "claude_accounts", "project_secrets", "workflow_secrets", "bitbucket_api_roots", "bitbucket_tokens", "clone_urls", "update_check", "issues", "escalation", "mobile_allow", "secret_rotation_days", "secret_expires", "review_floor", "verifier_accounts", "image_catalog", "image_map", "bake_repos", "triage", "review_against_task", "personal_workspace_tokens", "rigor_pending", "orchestrator", "default_claude_account", "stages", "claude_account_auto", "claude_account_aliases", "credentials", "pools", "subscription_spread", "crafts", "workspace", "workspace_pin", "workspace_members", "workspace_cap", "workspace_shared", "binaries", "reports_commit", "credential_cascade", "model_grades", "node_removals", "locations", "model_routing"}
+var sharedForbidden = []string{"terraform", "backend", "user", "commit_name", "commit_email", "endpoints", "bucket_url", "registry", "providers", "routing", "claude_accounts", "project_secrets", "workflow_secrets", "bitbucket_api_roots", "bitbucket_tokens", "clone_urls", "update_check", "issues", "escalation", "mobile_allow", "secret_rotation_days", "secret_expires", "review_floor", "verifier_accounts", "image_catalog", "image_map", "bake_repos", "triage", "review_against_task", "personal_workspace_tokens", "rigor_pending", "orchestrator", "default_claude_account", "stages", "claude_account_auto", "claude_account_aliases", "credentials", "pools", "subscription_spread", "crafts", "workspace", "workspace_pin", "workspace_members", "workspace_cap", "workspace_shared", "binaries", "reports_commit", "credential_cascade", "model_grades", "node_removals", "locations", "model_routing", "pause"}
 
 // ParseShared validates a published shared config against its anchor and
 // returns it (docs/shared-config/spec.md §5). Anyone holding objectAdmin

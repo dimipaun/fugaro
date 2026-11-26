@@ -187,6 +187,31 @@ var singleMeta = map[string]Meta{
 		Group:       GroupCredentials,
 		Type:        TypeBool,
 	},
+	// The pause block (R11 of docs/model-credentials-routing, D3184, D3187,
+	// D3190): what a run does when every source its chain can reach is
+	// exhausted, one member per moment of the decision. The three are the
+	// credentials group's, because each is a figure the credentials service
+	// holds a run to, and each is a duration with no bound of its own: the
+	// bound they share is the order between them, which the loader refuses to
+	// break rather than a Min or a Max here.
+	"pause.wait_in_job": {
+		Label:       "In-job wait floor",
+		Description: "A reset nearer than this is waited out inside the job, and one beyond it is paused or refused.",
+		Group:       GroupCredentials,
+		Type:        TypeDuration,
+	},
+	"pause.min_pause": {
+		Label:       "Shortest pause",
+		Description: "The shortest a run may be paused for, whatever the reset it waits on says.",
+		Group:       GroupCredentials,
+		Type:        TypeDuration,
+	},
+	"pause.max_pause": {
+		Label:       "Longest pause",
+		Description: "The longest a run may be paused for, and the whole paused time a chain may spend.",
+		Group:       GroupCredentials,
+		Type:        TypeDuration,
+	},
 	"triage": {
 		Label:       "Triage review findings",
 		Description: "Whether a review round's findings are judged by the triage stage.",

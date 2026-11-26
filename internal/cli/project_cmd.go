@@ -1542,10 +1542,12 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	var publishedBinaries *projectpolicy.Binaries
 	var publishedCascade *projectpolicy.Credentials
 	var publishedGrades *config.ModelGrades
+	var publishedPauseNode *projectpolicy.Pause
 	if old != nil {
 		publishedBinaries = old.Binaries
 		publishedCascade = old.Credentials
 		publishedGrades = old.ModelGrades
+		publishedPauseNode = old.Pause
 	}
 	pol.Binaries = lc.BinariesEffective(publishedBinaries)
 	// The credentials block — the cascade's fallback, its threshold, its
@@ -1593,6 +1595,34 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	// "publishing would drop them"), so a drop here would be a loosening this
 	// release introduced.
 	pol.ModelGrades = publishedModelGrades(lc, publishedGrades)
+	// The pause block is merged for the cascade's reason (R11 of
+	// docs/model-credentials-routing, D3184, D3187, D3190): its source is the
+	// file as much as the node, and a publish that dropped a member nobody wrote
+	// about would put the project back on the plan's own figures — a run held
+	// open in the job for a reset the owner meant to pause on.
+	//
+	// The merge is written here and not inside the `old != nil` guard below
+	// because a first publish writes what the file states (publishedPause).
+	pol.Pause = publishedPause(lc, publishedPauseNode)
+	// The merged block is held to the block's own rule, for the reason the
+	// cascade's merge is (ValidCredentials): the merge can hand back a block
+	// neither side held while each side was validated alone — the file at load
+	// (localcfg.validate) and the node at decode (publishedPolicyOf) — and the
+	// rule is about the EFFECTIVE triple, an absent member being its default
+	// (ValidPause). A file that writes only `wait_in_job: 1h` is valid beside a
+	// node holding `min_pause: 30m`, and the merge of the two is a floor at or
+	// over the minimum — a service that would wait in the job for every reset
+	// the block was written to pause on. Left to the node's decode, the operator
+	// would meet it on the next `fugaro update`, in a sentence that names
+	// neither the key they wrote nor the member that came from the node; asked
+	// here, both halves are still in hand and the refusal names the file's key.
+	// A config that states no block is not asked: what it hands back is the
+	// node's own block, which the decode already read.
+	if pauseStated(lc.Pause) {
+		if err := projectpolicy.ValidPause(pol.Pause, "pause"); err != nil {
+			return nil, false, userErr("the pause block this project's local config states, merged with the members the published node holds, is not one the pause can use: %v. A member the file leaves out is the node's (D2607), and the rule is asked of the block as the credentials service would use it — an absent member being its default — so a member that is valid on its own can be refused beside one the node holds: write min_pause beside the floor you raised, or remove the one you wrote", err)
+		}
+	}
 	// The designated repository for committed reports is the owner's own word
 	// about where every report of the project lands (D2750, D2751;
 	// periodic-reviews R14), and the local config is its carrier, the binaries
@@ -2027,6 +2057,53 @@ func publishedCredentials(lc *localcfg.Config, node *projectpolicy.Credentials) 
 		}
 	}
 	return &out
+}
+
+// publishedPause is the pause block the node is written with (R11 of
+// docs/model-credentials-routing, D3184, D3187, D3190): the members this
+// machine's config states, merged into the node's own member by member.
+//
+// The merge is publishedCredentials' exactly: a config that states nothing
+// keeps the node's block whole — a block written with every member absent is no
+// statement at all (pauseStated) — and a config that states a member wins that
+// member and takes the node's for the ones it leaves out. What the merge must
+// never do is drop a member nobody wrote about: the block decides what every
+// run of the project does when its credentials are exhausted, and a publish
+// that wrote a node without the minimum would put a project back on the plan's
+// 30 minutes from a machine whose config merely predates the key — for the runs
+// in flight while `fugaro update` republishes the node, a pause placed on a
+// reset a minute away.
+//
+// A member is a duration and nothing else, so a written one is a written one:
+// there is no zero value that means "the operator said so" here, and the
+// pointer is the whole of the silence (Pause).
+func publishedPause(lc *localcfg.Config, node *projectpolicy.Pause) *projectpolicy.Pause {
+	if !pauseStated(lc.Pause) {
+		return node
+	}
+	out := *lc.Pause
+	if node != nil {
+		if out.WaitInJob == "" {
+			out.WaitInJob = node.WaitInJob
+		}
+		if out.MinPause == "" {
+			out.MinPause = node.MinPause
+		}
+		if out.MaxPause == "" {
+			out.MaxPause = node.MaxPause
+		}
+	}
+	return &out
+}
+
+// pauseStated is whether a pause block states a member at all: a block written
+// with every member absent is no statement, the crafts block's rule ("a block
+// that sets no craft is no block"). It is what keeps a publish from writing an
+// empty member: the database keeps none for an empty object, and a node that
+// carried one would be reported as a difference against the node it has just
+// written on every run after it (the HARD RULE's own loss).
+func pauseStated(p *projectpolicy.Pause) bool {
+	return p != nil && *p != (projectpolicy.Pause{})
 }
 
 // credentialsStated is whether a cascade block states a member at all, one

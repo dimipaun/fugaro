@@ -586,6 +586,12 @@ const (
 	// are the contract's own documents, and the spec is where the block a
 	// person writes is stated.
 	docRouting = "docs/model-credentials-routing/spec.md"
+	// docPause is the document that states the pause block (R11 of
+	// docs/model-credentials-routing, D3184, D3187, D3190): the three settings
+	// the credentials service decides an exhausted chain by. They are named in
+	// the reconciliation's own decision list, which is where the plan settles
+	// each key it adds, so the rows point there for docEscalation's reason.
+	docPause = "docs/model-credentials-routing/reconciliation.md"
 	// docEscalation is the escalation ladder's own document. The two model
 	// grades are stated in the plan rather than in the spec — the spec is the
 	// ladder's design and the plan is where each key it adds is defined (E2,
@@ -1251,6 +1257,19 @@ var localRows = []Row{
 		TypedWhy:   "this lets a run spread a project across two or more Claude OAuth subscriptions, which is the owner's own decision about the terms the subscriptions are held under",
 		RetiredWhy: "the project's pools replace it: which subscriptions a run may spread over is the pool's own rule, and `fugaro update` offers its removal, see docs/model-credentials-routing/spec.md",
 	},
+	// The pause block (R11 of docs/model-credentials-routing, D3184, D3187,
+	// D3190): the three settings the credentials service decides an exhausted
+	// chain by — the in-job floor, the shortest pause and the longest one. The
+	// node's block is the only one a run reads, and this file is its carrier:
+	// `fugaro settings set` writes the member here and `fugaro update` publishes
+	// the block (F49, R21).
+	//
+	// Local-only for the cascade's reason: the three decide what every run of
+	// the project does when its credentials are exhausted, and a run held open
+	// waiting for a reset is a job paid for by the minute.
+	locLocal("pause.wait_in_job", "5m: a reset nearer than this is waited out inside the job, and one beyond it is the service's to pause or halt (projectpolicy.DefaultPauseWaitInJob, D3184)", "settings set", docPause),
+	locLocal("pause.min_pause", "30m: the shortest pause the service may place, whatever the reset says (projectpolicy.DefaultPauseMinPause, D3190)", "settings set", docPause),
+	locLocal("pause.max_pause", "6h: the longest pause, and at once the bound on a chain's whole paused time — a reset beyond it halts the run (projectpolicy.DefaultPauseMaxPause, D3187, D3190)", "settings set", docPause),
 	locLocal("crafts.coder.model", "required: the coder implements, so a run needs its model", "models", docCrafts),
 	locLocal("crafts.coder.access", "required: the coder's calls go out on a credential or a pool", "accounts", docCrafts),
 	locLocal("crafts.review.model", "the coder's model", "models", docCrafts),

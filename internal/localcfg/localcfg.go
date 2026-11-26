@@ -360,6 +360,26 @@ type Config struct {
 	// A pointer for the cascade's reason: silence keeps the node's grades, and
 	// a written block is this machine's statement of them.
 	ModelGrades *config.ModelGrades `yaml:"model_grades,omitempty"`
+	// Pause is the pause block as this file states it (R11 of
+	// docs/model-credentials-routing, D3184, D3187, D3190): the in-job floor,
+	// the shortest pause and the longest one. The block is
+	// projectpolicy.Pause, the node's own type, so the member written here is
+	// the member published there, under the node's own key: `fugaro settings
+	// set pause.min_pause 1h` writes this block, and `fugaro update` publishes
+	// it as the node's `pause` (F49, R21 — a key of its own, because a
+	// release-behind reader refuses the whole node for a member it cannot place
+	// inside a block it decodes strictly).
+	//
+	// It is local-only for the cascade's reason: the three settings decide what
+	// every run of the project does when its credentials are exhausted — a run
+	// held open waiting for a reset is a job paid for by the minute, and the
+	// maximum is what the chain's whole paused time is bounded by — so a
+	// launcher who could write it into the shared file would be choosing that
+	// for every teammate's runs.
+	//
+	// A pointer for the cascade's reason: silence keeps the node's block, and a
+	// written block is this machine's statement of it.
+	Pause *projectpolicy.Pause `yaml:"pause,omitempty"`
 	// NodeRemovals is the explicit-unset record (D2607, F22): the names this
 	// machine has taken out of the published node, per block, because silence
 	// in this file keeps the node's value — so a pool, a craft or a credential
@@ -3454,6 +3474,20 @@ func (c *Config) validate() error {
 	if c.ModelGrades != nil {
 		for _, p := range config.ValidateModelGrades(*c.ModelGrades, "model_grades") {
 			bad("%s: %s", p.Path, p.Message)
+		}
+	}
+	// The pause block is held to the node's own rule for it
+	// (projectpolicy.ValidPause, asked of the node's document at decode and of
+	// the merge at publish), so a file this loader accepts is a block the node
+	// can carry: a member that is not a duration, and a floor over the minimum
+	// it is paired with, are refused here with the key the operator wrote. The
+	// rule is asked of the block as the service would use it — an absent member
+	// being its default — so a file that writes one member is held to the other
+	// two's defaults, and raising the floor over the default minimum means
+	// writing the minimum beside it.
+	if c.Pause != nil {
+		if err := projectpolicy.ValidPause(c.Pause, "pause"); err != nil {
+			bad("%v", err)
 		}
 	}
 	// The explicit-unset record names what is gone, so every entry is held to

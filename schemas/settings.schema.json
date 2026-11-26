@@ -1652,6 +1652,15 @@
         "repos.*.workflows": {
           "default": "unset = every workflow the repository defines"
         },
+        "pause.wait_in_job": {
+          "default": "unset = 5m: a reset nearer than this is waited out inside the job, and one beyond it is the service's to pause or halt (projectpolicy.DefaultPauseWaitInJob, D3184)"
+        },
+        "pause.min_pause": {
+          "default": "unset = 30m: the shortest pause the service may place, whatever the reset says (projectpolicy.DefaultPauseMinPause, D3190)"
+        },
+        "pause.max_pause": {
+          "default": "unset = 6h: the longest pause, and at once the bound on a chain's whole paused time — a reset beyond it halts the run (projectpolicy.DefaultPauseMaxPause, D3187, D3190)"
+        },
         "personal_workspace_tokens": {
           "default": "unset = off: the workspace's service serves this project's people no personal token and its runs are offered the shared entries as before, and a written true turns the personal half on"
         },

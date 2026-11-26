@@ -348,6 +348,17 @@ func (c *Config) Shared() *Config {
 	// under (D1622), and a launcher who could write it into the shared file
 	// could spread a project across subscriptions nobody agreed to spread.
 	s.SubscriptionSpread = nil
+	// The pause block goes with them, for the cascade's reason (R11 of
+	// docs/model-credentials-routing): the three settings are what every run of
+	// the project does when its credentials are exhausted — how long one waits
+	// inside the job it is paying for by the minute, the shortest pause the
+	// service may place and the longest, which is also the bound on a chain's
+	// whole paused time — so a launcher who could write the block into the
+	// shared file would be deciding that for every teammate's runs. It is
+	// published through the policy node instead, and ParseShared refuses the key
+	// besides, because a shared config carrying it was not written by the
+	// converge.
+	s.Pause = nil
 	// The workspace keys are local-only, and the pin is the sharpest of them:
 	// the shared file is written into the runs bucket, which any launcher of
 	// the project can write, so a launcher who could put a workspace_pin there

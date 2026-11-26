@@ -317,7 +317,17 @@ var settingsGenericKeys = map[string]bool{
 	// copies into the member's policy node, and a registry row no list here
 	// names is a switch the member's admin could not set at all — the service
 	// that enforces it reads the node and nothing on the member's disk.
-	"personal_workspace_tokens":       true,
+	"personal_workspace_tokens": true,
+	// The pause block's three members (R11 of docs/model-credentials-routing)
+	// are the switch above by its own reason: they are the machine's own file
+	// and the publish copies them into the project's policy node, and a registry
+	// row no list here names is a setting the operator could not write at all.
+	// They are named one by one rather than through a `pause.` prefix because
+	// the block is closed: a member a later release adds inside it is then a
+	// deliberate decision here rather than a key a typo reaches.
+	"pause.wait_in_job":               true,
+	"pause.min_pause":                 true,
+	"pause.max_pause":                 true,
 	"verifier_accounts":               true,
 	"layer.jobs.reports.paused":       true,
 	"layer.jobs.catalog_check.paused": true,

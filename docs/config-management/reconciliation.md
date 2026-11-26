@@ -19,7 +19,7 @@ project config** — a sentence it prints and exits on — so the figures below
 are counted from the registry in this tree through the same predicate the write path uses, which is
 what the guard at the end of this section re-runs.
 
-- **F1 — the registry is 542 rows and the generic writer carries 237 of them.** 122 by name
+- **F1 — the registry is 545 rows and the generic writer carries 240 of them.** 125 by name
   (`internal/cli/settings_set.go:117`), made of the thirteen §4.4 names (the four budget scalars,
   `base_branch`, `max_parallel`, `update_check`, `commit_name`, `commit_email`, `layer.default_profile`,
   and D873's three account keys — `default_claude_account`, `claude_account_auto` and the wildcard
@@ -30,7 +30,10 @@ what the guard at the end of this section re-runs.
   keys D1179 hands this path, the bake switch D1901 gives it (`bake_repos`, which the setup wizard asks
   and writes through this path), the pools' subscription switch (F22, D1636: `subscription_spread`,
   which the model-crafts work hands this path rather than a second command, so one write path stays
-  one), and the wildcard blocks
+  one) and the pause block's three members (R11 of
+  [model credentials routing](../model-credentials-routing/implementation-plan.md): `pause.wait_in_job`,
+  `pause.min_pause` and `pause.max_pause`, which the credentials service decides an exhausted chain
+  by and the plan hands this path for the same reason), and the wildcard blocks
   D1161 gives it — a repository's 37 `workflows.*` rows and the project layer's 36 `profiles.*` ones;
   the layer's five `ab.*` rows are listed beside them, but the models family owns them, so this count
   does not carry them — and the four `repos.*` rows a person writes, which D1173 hands this path
