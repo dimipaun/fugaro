@@ -285,7 +285,7 @@ func pairRunInvite(ctx context.Context, cmd *cobra.Command, o *pairOptions, ev *
 	// pairing's sake and a value for it is refused rather than dropped.
 	if strings.TrimSpace(o.name) != "" {
 		return pairRefuse(ev, o, pairRefusedInviteName,
-			fmt.Errorf("--name %s names a device, and --email %s is an invitation for somebody else rather than a device being paired now: the phone's device node is written when it pairs, so an invitation carries no device name; name the device at the pairing itself, or drop --name", o.name, req.email))
+			fmt.Errorf("--name %s names a device, and --email %s is an invitation: drop --name", o.name, req.email))
 	}
 	// D2799: the role is refused rather than defaulted for another person.
 	// D226's default is the caller's own role, which is a role for the caller's
@@ -294,14 +294,14 @@ func pairRunInvite(ctx context.Context, cmd *cobra.Command, o *pairOptions, ev *
 	// fall back to.
 	if req.want == mobileauth.RoleNone {
 		return pairRefuse(ev, o, pairRefusedInviteRole,
-			fmt.Errorf("--email %s invites somebody else, and an invitation carries a role: name one with --role (%s), at or below the role the roster grants %s; a device paired under your own address inherits your own role, but another person's role is the roster's to grant, and this command will not default one", req.email, pairRoleNames(), req.email))
+			fmt.Errorf("--email %s invites somebody else and needs a role: run `fugaro pair --email %s --role viewer` (roles: %s)", req.email, req.email, pairRoleNames()))
 	}
 	// D2799 lets AN ADMIN name another member's email. An operator naming one is
 	// refused rather than invited, because the invitation writes a role for
 	// somebody else into the installation's own admin tree.
 	if !req.ownRole.AtLeast(accesslib.RoleAdmin) {
 		return pairRefuse(ev, o, pairRefusedInviteAdmin,
-			fmt.Errorf("--email %s invites another member, which is an admin's act: you hold %s at project scope in %s, and an invitation writes a role for somebody else into the installation's own admin tree; ask an admin of %s to send it, or pair your own address (%s), which this command admits at your own role", req.email, req.ownRole, lc.Name, lc.Name, req.own))
+			fmt.Errorf("--email %s invites another member, which is an admin's act (you hold %s in %s): ask an admin, or pair your own address (%s)", req.email, req.ownRole, lc.Name, req.own))
 	}
 	// O14: membership and role are the roster's. The address must have a grant
 	// at project scope — a device node records a role and no scope, so a
@@ -317,11 +317,11 @@ func pairRunInvite(ctx context.Context, cmd *cobra.Command, o *pairOptions, ev *
 	rosterRole := accesslib.EffectiveAtProject(accesslib.Input{Grants: req.grants}, member)
 	if rosterRole == mobileauth.RoleNone {
 		return pairRefuse(ev, o, pairRefusedInviteMember,
-			fmt.Errorf("the roster grants %s no role at project scope, so there is nothing to invite them to: membership is the roster's (%s), and an invitation writes a role for an address the roster already names; ask an admin of %s to add them with '%s user grant %s --role <role> --scope project', and send the invitation after", req.email, accesslib.PathNode, lc.Name, selfCommand(), req.email))
+			fmt.Errorf("the roster grants %s no role at project scope: ask an admin of %s to run '%s user grant %s --role viewer --scope project'", req.email, lc.Name, selfCommand(), req.email))
 	}
 	if !rosterRole.AtLeast(req.want) {
 		return pairRefuse(ev, o, pairRefusedInviteAbove,
-			fmt.Errorf("--role %s is above the %s the roster grants %s: the role is the roster's (O14) and --role may only lower it, so an invitation cannot put authority on a phone that no grant bounds; name %s or lower, or raise the roster's grant first with '%s user grant %s --role %s --scope project'", req.want, rosterRole, req.email, rosterRole, selfCommand(), req.email, req.want))
+			fmt.Errorf("--role %s is above the %s the roster grants %s: name %s or lower, or run '%s user grant %s --role %s --scope project'", req.want, rosterRole, req.email, rosterRole, selfCommand(), req.email, req.want))
 	}
 
 	// D224, and this is the place the resolution runs, exactly as it does for a
