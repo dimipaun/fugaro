@@ -1868,7 +1868,6 @@ var coordinatorSectionCitationRE = regexp.MustCompile("`(?:([A-Za-z0-9_./-]+\\.m
 // out of a block and into the prose is a failure and not a silence.
 var coordinatorSectionProseCitations = map[string]string{
 	"docs/design/always-on-orchestrator.md": "the Check 110 row names the design claiming that number; the design is in open PR #632 and not on main",
-	"docs/image-map-by-provider/README.md":  "the D-block row reads this tree's highest decision number (D3379) from that work's reserved tail",
 }
 
 // coordinatorUnwrittenRE finds the words that call a range's numbers unspoken for. They are the
