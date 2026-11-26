@@ -1686,12 +1686,12 @@ func ValidPause(p *Pause, at string) error {
 	}
 	min, max := p.MinPauseDuration(), p.MaxPauseDuration()
 	if min > max {
-		return fmt.Errorf("projectpolicy: %s.max_pause: %s is below %s.min_pause (%s): a chain may not stay paused longer in total than one pause of it may last, so every pause this project would start is one it could not finish. The two are compared as they would be used, and an absent member is its default (%s and %s), so a document that writes only one of them is held to the other's default: write a maximum at or above the minimum, or remove the member you wrote",
-			at, max, at, min, DefaultMinPause, DefaultMaxPause)
+		return fmt.Errorf("projectpolicy: %s.max_pause (%s) is below %s.min_pause (%s); an absent member is its default",
+			at, max, at, min)
 	}
 	if wait := p.WaitInJobDuration(); wait > min {
-		return fmt.Errorf("projectpolicy: %s.wait_in_job: %s is above %s.min_pause (%s): a run would wait inside its own job for longer than the project lets a pause last, so the same reset is waited out in a job that holds its compute where a pause would give it up. The two are compared as they would be used, and an absent member is its default (%s and %s), so a document that writes only one of them is held to the other's default: write an in-job wait at or below the minimum pause, or remove the member you wrote",
-			at, wait, at, min, DefaultWaitInJob, DefaultMinPause)
+		return fmt.Errorf("projectpolicy: %s.wait_in_job (%s) is above %s.min_pause (%s); an absent member is its default",
+			at, wait, at, min)
 	}
 	return nil
 }

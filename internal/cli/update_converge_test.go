@@ -900,6 +900,61 @@ func TestUpdateKeepsAHandWrittenPauseBlock(t *testing.T) {
 	}
 }
 
+// TestUpdateRefusesAPauseBlockTheMergeBreaks is the third state of the two
+// tests above: neither half is wrong on its own and the block they make
+// together is. The node's `min_pause` is 15m, which is the shortest pause that
+// project takes and a node its own decode reads — the default 5m floor is under
+// it; the file writes only a 20m in-job floor, which its own load reads — the
+// default 30m minimum is above it. Merged, the floor is above the pause, which
+// the credentials service would refuse every run of the project on.
+//
+// So the publish is where it has to be caught, and the run stops there: the
+// sentence names the member the operator wrote, the file is what they have to
+// change, and the node is left exactly as it was — a publish that wrote the
+// block would leave a node every run of the project fails to read
+// (projectpolicy's decode refuses the block whole).
+func TestUpdateRefusesAPauseBlockTheMergeBreaks(t *testing.T) {
+	node := currentNode()
+	node["pause"] = map[string]any{"min_pause": "15m"}
+	r := newConvergeRig(t, node)
+	r.appendConfig(t, "pause:\n  wait_in_job: 20m\n")
+	registerInstallation(t, r.initRig)
+
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update")
+	s := out + errOut
+	if err == nil {
+		t.Fatalf("an update whose file and node make a pause block no run can use succeeded, want the publish's refusal:\n%s", s)
+	}
+	if stage := stoppedStage(out); stage != initflow.Policy {
+		t.Errorf("the run stopped at %q, want the %s stage: the block is read by the credentials service out of the node, so the merge is refused where the node is written\n%s", stage, initflow.Policy, s)
+	}
+	// The refusal is the publish's own and not the file's: the file's block is
+	// valid on its own (the default 30m minimum is above its 20m floor), so a
+	// sentence about the merge is what says the refusal is where the two halves
+	// met, beside the member the operator has to change.
+	if !strings.Contains(s, "make together is not one a run can use") || !strings.Contains(s, "pause.wait_in_job") {
+		t.Errorf("the refusal does not name pause.wait_in_job and the merge that broke it: %s", s)
+	}
+	p := convergeNode(t, r)
+	if p.Pause == nil {
+		t.Fatal("after the refused update, the node carries no pause block: the node's own block was dropped by a publish that wrote nothing")
+	}
+	for _, tc := range []struct {
+		member string
+		got    time.Duration
+		want   time.Duration
+	}{
+		{"wait_in_job", p.Pause.WaitInJobDuration(), projectpolicy.DefaultWaitInJob},
+		{"min_pause", p.Pause.MinPauseDuration(), 15 * time.Minute},
+		{"max_pause", p.Pause.MaxPauseDuration(), projectpolicy.DefaultMaxPause},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("after the refused update, the node's pause.%s = %s, want %s: the refused merge reached the node, and every run of this project would fail to read it", tc.member, tc.got, tc.want)
+		}
+	}
+}
+
 // TestUpdateConvergesTheCrashReportSwitch is D738's whole update-side claim at
 // the one door the HARD RULE is about: an installation whose published node is
 // the node a release behind wrote — the mobile block as it states it and no

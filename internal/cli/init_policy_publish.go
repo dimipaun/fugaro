@@ -803,7 +803,7 @@ func policyNodeForPublish(ctx context.Context, lc *localcfg.Config, old *project
 	pol.Pause = pauseForPublish(lc, publishedPause)
 	if lc.Pause != nil {
 		if err := projectpolicy.ValidPause(pol.Pause, "pause"); err != nil {
-			return nil, nil, nil, userErr("the pause block this project's local config states, merged with the members the published node holds, is not one the credentials service can use: %v. A member the file leaves out is the node's (D2607), and the rule is asked of the block as the service would read it — an absent member being its default — so a member that is valid on its own can be refused beside one the node holds: write the member in the file too, or remove the one you wrote", err)
+			return nil, nil, nil, userErr("the pause block this config and the published node make together is not one a run can use: %v; write the member in the file too", err)
 		}
 	}
 	if err := policyContextRefusal(pol, imageContextShipped); err != nil {
