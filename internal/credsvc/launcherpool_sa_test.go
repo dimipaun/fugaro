@@ -54,6 +54,10 @@ const (
 	// saOtherPool is a second pool of the same account's, for the one case a
 	// designation decides which of them answers.
 	saOtherPool = "sa-other-pool"
+	// saOtherAccount is ANOTHER of the installation's roster service accounts: a
+	// pool whose principal it is serves its own runs and never this file's
+	// account's, which is the rule that the match is by address and not by class.
+	saOtherAccount = "release-bot@example-project.iam.gserviceaccount.com"
 	// saPersonsPool is a PERSON's pool — its principal is that person's Google
 	// subject — whose display owner is written with the account's address, which
 	// is the mutation D2976 turns on.
@@ -214,6 +218,25 @@ func TestAServiceAccountsPool(t *testing.T) {
 		s := newServiceAccountPools(t, true, lpPools()...)
 		w := s.walk(t, callBody("sa-pool-absent"), lpBinding(saPrincipal(), lpCoverage(), ""))
 		wantFallback(t, w)
+	})
+
+	t.Run("another service account's pool is not this account's", func(t *testing.T) {
+		// The pool's principal is a service account and it is not THIS one, and it
+		// is published FIRST, in front of the account's own: the match is the
+		// account's address and never its class, so the walk reads past a sibling
+		// roster account's pool to the one that is this account's, rather than
+		// taking the first service account it meets (D2976).
+		theirs := lpPool(saOtherPool, saOtherAccount,
+			lpPoolPrincipal(routing.PrincipalServiceAccount, saOtherAccount),
+			testPoolCredential, testSecondPoolCredential)
+		s := newServiceAccountPools(t, true, append(append([]config.Pool{theirs}, lpPools()...), saPool(saOwnPool))...)
+		w := s.walk(t, callBody("sa-sibling-pool"), lpBinding(saPrincipal(), lpCoverage(), ""))
+		wantPool(t, w, saOwnPool)
+		// And where a sibling's pool is the only service account pool the project
+		// publishes, the answer is none and the walk moves on to the source behind
+		// it (D3180).
+		s = newServiceAccountPools(t, true, append(lpPools(), theirs)...)
+		wantFallback(t, s.walk(t, callBody("sa-sibling-only"), lpBinding(saPrincipal(), lpCoverage(), "")))
 	})
 
 	t.Run("the account's pool with no members", func(t *testing.T) {
