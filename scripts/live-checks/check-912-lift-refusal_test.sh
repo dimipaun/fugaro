@@ -195,8 +195,8 @@ chmod +x "$fakebin/fugaro"
 make_checkout() { # make_checkout <checkout> <origin> [--no-lift]
   mkdir -p "$1" "$2"
   git -C "$2" init -q --bare
-  # The origin's own default branch is main: `git init --bare` names master, and
-  # the origin is what the fake `fugaro update` reads a default branch from.
+  # The origin's own default branch is main: a bare repository starts on master,
+  # and the origin is what the fake `fugaro update` reads a default branch from.
   git -C "$2" symbolic-ref HEAD refs/heads/main
   git -C "$1" init -q
   git -C "$1" symbolic-ref HEAD refs/heads/main
