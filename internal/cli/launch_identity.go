@@ -267,16 +267,21 @@ func (u *ticketUnanswered) Unwrap() error { return u.err }
 // service's — asks the same question of the same route with the parts it has.
 // account is the account the execution will run as (runAccount), derived by the
 // caller because the launch's own slip names the same string and the two must
-// not be able to disagree; job is the job the execution will really run on.
-func (e *cloudEnv) launchTicketFor(ctx context.Context, slug string, spec *task.Spec, account string, job *launchProjectJob, reviewJob bool, now time.Time) (launchIdentityAsk, error) {
+// not be able to disagree; job is the job the execution will really run on, and
+// variant is the workflow it is created with — run.go's jobWorkflow of the
+// spec's workflow and its account token, the same string the backend is handed
+// as backend.LaunchSpec.Workflow, derived by the caller for the same reason
+// account is: a Batch job's name must be the one this launch really creates.
+func (e *cloudEnv) launchTicketFor(ctx context.Context, slug string, spec *task.Spec, account, variant string, job *launchProjectJob, reviewJob bool, now time.Time) (launchIdentityAsk, error) {
 	// A Batch launch names its job in the ask, and has to have one to name
-	// (BR1, R1): the name is the launcher's own derivation (batchJobName), it is
-	// what the service writes on the run's issuance record with the ticket, and
-	// the VM that claims the run is held to a job spelled that way (BR17, BR2).
-	// R18's rule that a Cloud Run launch names none is the empty value here.
+	// (BR1, R1): the name is the launcher's own derivation (batchJobName), over
+	// the variant the create is made with, it is what the service writes on the
+	// run's issuance record with the ticket, and the VM that claims the run is
+	// held to a job spelled that way (BR17, BR2). R18's rule that a Cloud Run
+	// launch names none is the empty value here.
 	var batchJob identitywire.JobName
 	if launchBackend(e.be) == backend.CloudBatch {
-		full, err := batchJobName(e.lc, slug, spec)
+		full, err := batchJobName(e.lc, slug, variant, spec)
 		if err != nil {
 			return launchIdentityAsk{}, err
 		}

@@ -6462,7 +6462,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	if err != nil {
 		return res, err
 	}
-	identityAsk, err := env.launchTicketFor(ctx, slug, spec, account, job, reviewJob, now)
+	identityAsk, err := env.launchTicketFor(ctx, slug, spec, account, variant, job, reviewJob, now)
 	if err != nil {
 		return res, err
 	}
@@ -6761,7 +6761,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	// launch fails with nothing recorded — the same cleanup the platform's own
 	// refusal gets above, because the same thing is true: no run of this id
 	// will start.
-	if rerr := registerBatchJob(ctx, env, slug, spec, ref); rerr != nil {
+	if rerr := registerBatchJob(ctx, env, slug, variant, spec, ref); rerr != nil {
 		rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		releaseClaim(rctx, env, s, holder)
 		if minted {

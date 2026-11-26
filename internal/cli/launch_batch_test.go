@@ -301,59 +301,85 @@ func (w *batchLaunchWorld) launch(t *testing.T) ([]gcpfake.BatchCall, error) {
 	return w.bf.Creates(), err
 }
 
-// jobName is the full resource name of the job the world's launch creates:
-// batchJobName's own derivation, read from the config the launch reads it from.
-func (w *batchLaunchWorld) jobName(t *testing.T) identitywire.JobName {
+// variantOf is the workflow a launch creates its job with: run.go's own
+// derivation (jobWorkflow), which is the string the backend is handed as
+// backend.LaunchSpec.Workflow and the one both backends name a job by.
+func variantOf(t *testing.T, spec *task.Spec) string {
 	t.Helper()
-	name, err := batchJobName(w.env.lc, appSlug, w.spec)
-	if err != nil {
-		t.Fatalf("batchJobName: %v", err)
+	v, ok := jobWorkflow(spec.Workflow, spec.OAuthToken)
+	if !ok {
+		t.Fatalf("jobWorkflow(%q, %q) answered no variant", spec.Workflow, spec.OAuthToken)
 	}
-	return name
+	return v
 }
+
+// jobName is the full resource name of the job the world's launch created, read
+// off the Batch fake's own record of the create: the platform's name for the job
+// that really exists, and not the launcher's derivation of it, so an ask or a
+// registration naming some other job cannot agree with this by construction.
+func (w *batchLaunchWorld) jobName(t *testing.T, creates []gcpfake.BatchCall) identitywire.JobName {
+	t.Helper()
+	if len(creates) != 1 {
+		t.Fatalf("jobs.create calls = %d, want 1", len(creates))
+	}
+	return identitywire.JobName("projects/" + w.bf.Project + "/locations/" + w.bf.Region + "/jobs/" + creates[0].JobID)
+}
+
+// batchNamedAccount is the Claude account the named-account launches below run
+// as: a name the account axis accepts, and the reason a workflow's job is the
+// variant <workflow>_<account> rather than the plain workflow.
+const batchNamedAccount = "work"
 
 // TestTheTicketNamesTheJob is R1 and R18 at the launcher: a Batch launch asks
 // for its run's ticket naming the FULL resource name of the job it is about to
 // create, and a Cloud Run launch -- every launch of that backend -- names none.
 //
-// The name is the launcher's own derivation, and the assertion is that the ask
-// carries it under the contract's own field: a launch that asked without it
-// would be issued a record naming no job, and the VM that claims the run is
-// held to a job of that name (BR17, BR2) -- so the run would stop at its claim
-// with a job already created and a launcher long gone.
+// The launch driven here runs on a NAMED Claude account, which is the one axis
+// where the workflow in the task and the workflow the job is created with come
+// apart (gcp.WorkflowVariant): the job that really exists is the variant's, and
+// an ask derived from the plain workflow names a job no create ever makes -- the
+// service issues a ticket for nothing, the id read-back finds no job, and the
+// launch cancels the job it just created. The expectation is the fake's own
+// record of the create and never the launcher's derivation, so the two cannot
+// agree by construction.
+//
+// A launch that asked without a job at all would be issued a record naming
+// none, and the VM that claims the run is held to a job of that name (BR17,
+// BR2) -- so the run would stop at its claim with a job already created and a
+// launcher long gone.
 func TestTheTicketNamesTheJob(t *testing.T) {
 	expires := time.Now().Add(30 * time.Minute)
 	batch := newBatchLaunchWorld(t, batchAnswers(expires))
-	ask, err := batch.env.launchTicketFor(context.Background(), appSlug, batch.spec, batchAskAccount, nil, false, time.Now())
+	batch.spec.OAuthToken = batchNamedAccount
+	creates, err := batch.launch(t)
 	if err != nil {
 		t.Fatalf("a Batch launch of a repository the service serves was refused: %v", err)
 	}
-	if ask.ticket == nil {
-		t.Fatal("the Batch launch holds no ticket: a run of this backend has no identity without one (R18)")
-	}
 	asked := batch.svc.asked()
-	if len(asked) != 1 {
-		t.Fatalf("the service received %d ask(s), want 1", len(asked))
+	if len(asked) == 0 {
+		t.Fatal("the service received no ask: a Batch run's identity is its ticket (R1)")
 	}
 	req := ticketAskOf(t, asked[0])
-	want := batch.jobName(t)
+	want := batch.jobName(t, creates)
 	if string(want) == "" {
-		t.Fatal("the launch's own job name derivation answered nothing")
+		t.Fatal("the Batch fake holds no name for the job the launch created")
 	}
 	if req.Job != want {
 		t.Errorf("the ask names the job %q, want %q: the service writes it on the run's record, and the claiming VM is held to it", req.Job, want)
 	}
-	// The name is the one the job is really created under: the launch's own
-	// creation reads it from the same derivation (internal/backend/batch's
-	// JobID), so an ask that named one job and a create that made another
-	// cannot both pass this.
-	if !strings.HasSuffix(string(want), "/jobs/"+batchpkg.JobID(appSlug, batch.spec.Workflow, batch.spec.RunID)) {
-		t.Errorf("the ask's job name %q is not over the backend's own JobID for this run", want)
+	// The job that exists is the variant's, and the plain workflow's is not it:
+	// this is what makes the assertion above able to fail.
+	variant := variantOf(t, batch.spec)
+	if got := creates[0].JobID; got != batchpkg.JobID(appSlug, variant, batch.spec.RunID) {
+		t.Errorf("the launch created the job %q, want the backend's JobID over the variant %q", got, variant)
+	}
+	if plain := batchpkg.JobID(appSlug, batch.spec.Workflow, batch.spec.RunID); plain == creates[0].JobID {
+		t.Errorf("the launch created the job %q, which is JobID over the PLAIN workflow %q: the run is on the named account %q", creates[0].JobID, batch.spec.Workflow, batchNamedAccount)
 	}
 
 	// R18's other half: a Cloud Run launch names no job at all.
 	run := servedTicketWorld(t, releaseIdentity, ticketAnswers(expires))
-	if _, err := run.env.launchTicketFor(context.Background(), appSlug, run.spec, batchAskAccount, nil, false, time.Now()); err != nil {
+	if _, err := run.env.launchTicketFor(context.Background(), appSlug, run.spec, batchAskAccount, variantOf(t, run.spec), nil, false, time.Now()); err != nil {
 		t.Fatalf("a Cloud Run launch of the same repository was refused: %v", err)
 	}
 	runAsked := run.svc.asked()
@@ -530,8 +556,8 @@ func TestTheJobIsRegisteredAfterTheCreateWithItsId(t *testing.T) {
 	if req.Slug != appSlug || req.Run != w.spec.RunID {
 		t.Errorf("the registration names %s/%s, want %s/%s", req.Slug, req.Run, appSlug, w.spec.RunID)
 	}
-	if req.Job != w.jobName(t) {
-		t.Errorf("the registration names the job %q, want the one the ticket ask named (%q): the two are one job (BR17)", req.Job, w.jobName(t))
+	if req.Job != w.jobName(t, creates) {
+		t.Errorf("the registration names the job %q, want the one this launch created (%q): the two are one job (BR17)", req.Job, w.jobName(t, creates))
 	}
 	if req.JobID != id {
 		t.Errorf("the registration carries the id %q, want the one Batch assigned this job (%q): the name is the launcher's and the id is the platform's (D3108)", req.JobID, id)
@@ -560,8 +586,8 @@ func TestABatchLaunchCarriesTheTicketAndNothingElse(t *testing.T) {
 	if len(asked) == 0 {
 		t.Fatal("the launch asked the service for nothing: a Batch run's identity is its ticket (R1)")
 	}
-	if got := ticketAskOf(t, asked[0]).Job; got != w.jobName(t) {
-		t.Fatalf("the ask names the job %q, want %q: the ticket is issued for the job this launch is about to create", got, w.jobName(t))
+	if got := ticketAskOf(t, asked[0]).Job; got != w.jobName(t, creates) {
+		t.Fatalf("the ask names the job %q, want %q: the ticket is issued for the job this launch is about to create", got, w.jobName(t, creates))
 	}
 	vars := jobObject(t, creates[0].Job, "taskGroups", 0, "taskSpec", "environment", "variables")
 	if got := vars[identitywire.TicketEnv]; got != ticketValue {

@@ -110,19 +110,27 @@ func batchOptInLaunchRefusal(lc *localcfg.Config, spec *task.Spec) error {
 // batchJobName is the full resource name of the Cloud Batch job THIS launch is
 // about to create, which is what the ticket ask names (BR1, R1): JobID over the
 // run's own parts -- the backend's own derivation (internal/backend/batch's
-// names.go, over the same slug, workflow and run id run.go creates the job
-// with) -- under the installation's project and region.
+// names.go) -- under the installation's project and region.
+//
+// variant is the workflow the create is made with, which is not
+// spec.Workflow: run.go hands the backend backend.LaunchSpec.Workflow =
+// jobWorkflow(spec.Workflow, spec.OAuthToken), and a named Claude account joins
+// its token to the workflow there (gcp.WorkflowVariant) -- the string both
+// backends name a job by and label a job with. A name derived from the plain
+// workflow would ask for a ticket for a job this launch never creates, on the
+// one axis where the two differ, and the id read-back that follows would find
+// no job at all.
 //
 // It is computed here, before the create, because the ask precedes the job: the
 // service writes the name on the run's issuance record with the ticket, and the
 // VM that claims the run is held to a job of that name (BR17, BR2). One
 // expression, used by the ask and by the registration that follows the create
-// (batchRegisterJob), so the two cannot name two jobs.
-func batchJobName(lc *localcfg.Config, slug string, spec *task.Spec) (identitywire.JobName, error) {
+// (registerBatchJob), so the two cannot name two jobs.
+func batchJobName(lc *localcfg.Config, slug, variant string, spec *task.Spec) (identitywire.JobName, error) {
 	if lc == nil {
 		return "", userErr("this launch holds no installation config, and a Batch launch's ticket ask names the job it is about to create: nothing was launched")
 	}
-	name := identitywire.JobName("projects/" + lc.GCPProject + "/locations/" + lc.Region + "/jobs/" + batch.JobID(slug, spec.Workflow, spec.RunID))
+	name := identitywire.JobName("projects/" + lc.GCPProject + "/locations/" + lc.Region + "/jobs/" + batch.JobID(slug, variant, spec.RunID))
 	if !name.Valid() {
 		return "", userErr("this launch's Batch job would be named %s, and that is not a Cloud Batch job's full resource name (projects/<project>/locations/<location>/jobs/<job>, [a-z0-9-] throughout, which is what the ticket ask, the registration and the run's claim are all held to): nothing was launched", name)
 	}
@@ -200,7 +208,7 @@ type batchJobIDReader interface {
 // cancelled before the launch fails, and a cancellation that failed is said out
 // loud (launchWarn) with the job's name, because the one thing left is an
 // operator deleting it.
-func registerBatchJob(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, ref backend.ExecutionRef) error {
+func registerBatchJob(ctx context.Context, env *cloudEnv, slug, variant string, spec *task.Spec, ref backend.ExecutionRef) error {
 	if launchBackend(env.be) != backend.CloudBatch {
 		return nil
 	}
@@ -208,7 +216,7 @@ func registerBatchJob(ctx context.Context, env *cloudEnv, slug string, spec *tas
 	if !ok {
 		return userErr("this launch cannot register the Batch job it created: the backend it launched on answers no job id, and BR17's registration is what ties the run to the execution the service serves its identity to. Run '%s update' -- the CLI and the backends it ships are one release -- and launch again", selfCommand())
 	}
-	full, err := batchJobName(env.lc, slug, spec)
+	full, err := batchJobName(env.lc, slug, variant, spec)
 	if err != nil {
 		return err
 	}
