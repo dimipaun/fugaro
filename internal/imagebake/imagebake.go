@@ -126,8 +126,15 @@ const Root = "/work/baked"
 // Repo is one repository a build bakes.
 type Repo struct {
 	// Repo is the repository's canonical name (task.CanonicalRepo), which is
-	// what image_map keys and what a person reads.
+	// what a person reads and what the build's one credential names.
 	Repo string
+	// Key is the repository as the project's repository-to-image map
+	// (`repo_images`) keys it: its provider and its canonical name together
+	// (projectpolicy.Canonical, "github/acme/app"). A repository name carries no
+	// provider of its own, so the key is the only spelling of one repository that
+	// tells a GitHub acme/app from a Bitbucket one — and the map is read by it.
+	// It is "" for a caller that records no provider, which matches no mapping.
+	Key string
 	// Slug is the repository's storage slug (task.Slug): the directory name
 	// under Root. It is the same slug a job's own storage paths are keyed by,
 	// so the path a bake writes and the path IS8's reader opens are one
@@ -154,12 +161,20 @@ type Request struct {
 	// image whatever the map says, and baking it here would bake a checkout no
 	// job of it would read.
 	Reference string
-	// Map is the project's effective repo-to-image map (image_map, D1906), keyed
-	// by canonical repository name. It is what says which repositories the entry
-	// being built serves, and it is the only evidence a build has about any
-	// repository but the build's own — a build reads one repository's config —
-	// so the bake hangs off it: see Decide.
+	// Map is the project's effective repository-to-image map (`repo_images`,
+	// D1906), keyed by provider/owner/name (projectpolicy.Canonical): one key per
+	// repository and provider, so a GitHub and a Bitbucket acme/app are two. It
+	// is what says which repositories the entry being built serves, and it is the
+	// only evidence a build has about any repository but the build's own — a
+	// build reads one repository's config — so the bake hangs off it: see Decide.
 	Map map[string]string
+	// LegacyMap is the map in the old form the member had (image_map, D1906),
+	// keyed by bare canonical repository name and matching every provider. It is
+	// read only while Map is empty (R2), which is a node or a local config
+	// `update` has not rewritten yet: repo_images wins over image_map, per member
+	// and never per key. A caller fills exactly one of the two, from
+	// localcfg.Config.RepoImagesEffective.
+	LegacyMap map[string]string
 	// Repos are the project's repositories, each resolved to where it clones
 	// from — its canonical name, its storage slug, its https URL and its base
 	// branch. A repository the project lists but cannot place (no provider
@@ -278,11 +293,12 @@ func Decide(req Request) Plan {
 	if _, err := Path(req.Repo.Slug); err != nil {
 		return Plan{Notable: true, Asked: asked, Reason: fmt.Sprintf("slug %s is not bakeable: %v", req.Repo.Slug, err)}
 	}
+	own, ownMapped := req.mappedEntry()
 	switch {
 	case req.Reference != "" && req.Reference != req.Entry:
 		return Plan{Asked: asked, Reason: fmt.Sprintf("this repo runs %s", req.Reference)}
-	case req.Reference == "" && req.Map[req.Repo.Repo] != req.Entry:
-		return Plan{Asked: asked, Reason: fmt.Sprintf("the image map doesn't put %s on it", req.Repo.Repo)}
+	case req.Reference == "" && (!ownMapped || own != req.Entry):
+		return Plan{Asked: asked, Reason: fmt.Sprintf("the image map doesn't put %s on it", req.ownName())}
 	}
 	// Only a written false turns the bake off: bake_repos absent and true are
 	// one statement everywhere else that reads the switch
@@ -295,15 +311,42 @@ func Decide(req Request) Plan {
 	// The map is the build's only evidence about any repository but its own, so
 	// where it does not put this repository on this entry there is no bake to
 	// compose: the stage a rebuild of this definition could reproduce is the
-	// build's own checkout, and its jobs never pull this image.
-	if req.Map[req.Repo.Repo] != req.Entry {
-		return Plan{Notable: true, Asked: asked, Reason: fmt.Sprintf("the image map doesn't list %s", req.Repo.Repo), Fix: fmt.Sprintf("To bake: fugaro image map set %s %s", req.Repo.Repo, req.Entry)}
+	// build's own checkout, and its jobs never pull this image. The fix names the
+	// map's own key, and under repo_images that is the repository's provider key:
+	// a bare name is a repository the project may run at either provider.
+	if !ownMapped || own != req.Entry {
+		return Plan{Notable: true, Asked: asked, Reason: fmt.Sprintf("the image map doesn't list %s", req.ownName()), Fix: fmt.Sprintf("To bake: fugaro image map set %s %s", req.ownName(), req.Entry)}
 	}
 	baked, refused := entryRepos(req)
 	if refused != "" {
 		return Plan{Notable: true, Asked: asked, Reason: refused}
 	}
 	return Plan{Baked: baked, Notable: true, Asked: asked}
+}
+
+// ownName is the build's own repository as the map in hand keys it: the
+// provider key under repo_images, the bare name under the legacy map. The two
+// keyspaces are told apart by which field is set and never by the shape of a
+// key (R2), so a message that named the other arm's spelling would name a key
+// the map does not hold and a fix that would not find it.
+func (req Request) ownName() string {
+	if len(req.Map) > 0 {
+		return req.Repo.Key
+	}
+	return req.Repo.Repo
+}
+
+// mappedEntry is the entry the map puts on the build's own repository, and
+// whether the map names it at all. repo_images wins over the legacy map, per
+// member and never per key (R2): a caller fills exactly one of the two, so one
+// that filled Map is answered by it whatever LegacyMap holds.
+func (req Request) mappedEntry() (string, bool) {
+	if len(req.Map) > 0 {
+		name, ok := req.Map[req.Repo.Key]
+		return name, ok && name != ""
+	}
+	name, ok := req.LegacyMap[req.Repo.Repo]
+	return name, ok && name != ""
 }
 
 // entryRepos is the entry's repositories: every repository the project's map
@@ -324,22 +367,39 @@ func Decide(req Request) Plan {
 // the one repository whose clone URL and branch this build holds itself
 // (Request.Repo), so it is admitted by construction, and the project's list
 // answers for the others alone.
+//
+// Under repo_images a key carries a provider, and a key whose provider is not
+// the one this build's own repository is served at is skipped rather than
+// refused (R9): no job of it reads this image — one credential is for one host,
+// so no key of another provider could be cloned here anyway — and refusing
+// would break every bake for a project that maps one name at two providers.
+// That is also the skip an old nested key gets (R10): "acme/team/app" reads as
+// the provider "acme", which serves nothing this build clones from. A key at
+// this build's own provider is held to the project's list as it always was: a
+// repository the list does not answer for is refused, because this build holds
+// no URL and no provider for it and the entry's jobs may well run this image.
 func entryRepos(req Request) ([]Repo, string) {
 	byName := make(map[string]Repo, len(req.Repos))
 	for _, r := range req.Repos {
 		byName[r.Repo] = r
 	}
+	legacy := len(req.Map) == 0
+	mapped := req.Map
+	if legacy {
+		mapped = req.LegacyMap
+	}
 	var names []string
-	for name, entry := range req.Map {
+	for name, entry := range mapped {
 		if entry == req.Entry {
 			names = append(names, name)
 		}
 	}
+	own := req.ownName()
 	// The build's own repository is the last stage, whichever order the map
 	// hands the others in (Plan.Baked).
 	slices.SortFunc(names, func(a, b string) int {
-		if (a == req.Repo.Repo) != (b == req.Repo.Repo) {
-			if a == req.Repo.Repo {
+		if (a == own) != (b == own) {
+			if a == own {
 				return 1
 			}
 			return -1
@@ -354,17 +414,27 @@ func entryRepos(req Request) ([]Repo, string) {
 		// — a build composes the definition of an entry its own checkout may be
 		// missing from the local config of. It is Baked's last, and this is the
 		// element that makes that a fact rather than a sort's side effect.
-		if name == req.Repo.Repo {
+		if name == own {
 			out = append(out, req.Repo)
 			continue
 		}
-		// The map is a config value and a published node, so a key is held to
-		// the shape of a repository name before it reaches a line a person reads
-		// or a command they run.
-		if _, err := task.CanonicalRepo(name); err != nil {
+		repo := name
+		if !legacy {
+			// The map is a config value and a published node, so a key is held to
+			// the shape of a provider-qualified repository name before it reaches a
+			// line a person reads or a command they run.
+			prov, rest, ok := strings.Cut(name, "/")
+			if !ok || !task.ValidProvider(prov) {
+				return nil, fmt.Sprintf("the map names %q, which is not a repository", name)
+			}
+			if prov != req.ownProvider() {
+				continue
+			}
+			repo = rest
+		} else if _, err := task.CanonicalRepo(repo); err != nil {
 			return nil, fmt.Sprintf("the map names %q, which is not a repository", name)
 		}
-		r, admitted := byName[name]
+		r, admitted := byName[repo]
 		if !admitted {
 			return nil, fmt.Sprintf("the map puts %s on it, which is not a repository this project admits", name)
 		}
@@ -376,12 +446,21 @@ func entryRepos(req Request) ([]Repo, string) {
 		// this build asks for: a repository of the entry's that clones from
 		// another host is refused by name rather than composed into a stage whose
 		// clone that credential would not reach.
-		if own, host := urlHost(req.Repo.URL), urlHost(r.URL); own == "" || host != own {
+		if ownHost, host := urlHost(req.Repo.URL), urlHost(r.URL); ownHost == "" || host != ownHost {
 			return nil, fmt.Sprintf("the map puts %s on it, which does not clone from the host this build's one credential is for", name)
 		}
 		out = append(out, r)
 	}
 	return out, ""
+}
+
+// ownProvider is the provider the build's own repository is served at, read off
+// its key ("github" of "github/acme/app"), "" when the caller named none. A
+// caller that cannot name its provider is answered by no entry rather than by
+// the legacy lookup (spec §Readers), so an empty answer bakes nothing else.
+func (req Request) ownProvider() string {
+	prov, _, _ := strings.Cut(req.Repo.Key, "/")
+	return prov
 }
 
 // urlHost is the host a clone URL sends its credential to, lower-cased, or ""
