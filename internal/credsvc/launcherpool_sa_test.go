@@ -133,10 +133,11 @@ func newServiceAccountPools(t *testing.T, storeNet bool, pools ...config.Pool) *
 // of the account's with no member: written onto the DECODED policy and not into
 // the document, because the reader refuses such a pool where it is published (a
 // pool with no members serves nothing) — see lpFixture.withEmptyPool, which is
-// the same state for a person's pool.
+// the same state for a person's pool. It goes into the block the lookup reads
+// (ModelRouting.Pools), for lpPolicyDoc's reason.
 func (f *lpFixture) withEmptyServiceAccountPool(t *testing.T, name string) *lpFixture {
 	t.Helper()
-	f.policy.shared.CraftPools = append(f.policy.shared.CraftPools,
+	f.policy.shared.ModelRouting.Pools = append(f.policy.shared.ModelRouting.Pools,
 		lpPool(name, testRosterServiceAccount,
 			lpPoolPrincipal(routing.PrincipalServiceAccount, testRosterServiceAccount)))
 	return f
