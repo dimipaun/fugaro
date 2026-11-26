@@ -194,6 +194,7 @@ update_access.go	runs migration was not written, so the next fugaro update
 update_budget_mode.go	next fugaro update
 update_check.go	run fugaro update
 update_marker_version.go	next fugaro update
+update_repos_read.go	run fugaro update
 update_selfflag.go	Run fugaro update
 update_selfflag.go	run was given the budget once — a fugaro update
 upgrade_cloud.go	re-run fugaro update

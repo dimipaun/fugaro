@@ -411,8 +411,9 @@ describe('the credentials service state, drawn from doctor’s own line', () => 
   })
 
   it('keeps the remedy: a fix naming a role is drawn character for character', () => {
-    // The free-text `sentence` class draws `roles/run.invoker` as `[redacted]`,
-    // which takes the whole value of the fix away; the refusal door keeps it.
+    // The fix names a role and the whole value of it must survive: the
+    // free-text rule that drew `roles/run.invoker` as `[redacted]` went with
+    // D3213 (2026-11-21), and the refusal door keeps it.
     const root = draw({ raw: report([SERVICE_STATES[5]?.line]) })
     const row = all(root, 'projects-credentials-service-row')[0]
     if (row === undefined) throw new Error('no row')

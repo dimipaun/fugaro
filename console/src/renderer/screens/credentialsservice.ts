@@ -24,14 +24,14 @@
 //
 // **The problem and the fix are the document's own sentences, through the
 // refusal door.** They are what a person acts on, and one of the CLI's fixes
-// names `roles/run.invoker` -- which the free-text `sentence` class draws as
-// `[redacted]`, taking the remedy away. So they go through `sanitizeRefusal`,
-// the door the design keeps for a CLI sentence (`docs/desktop-console/spec.md`
-// section 6.3), exactly as `degraded.ts`, `managed.ts`, `projects.ts` and
-// `accountkeys.ts` draw theirs: a role name, a project and a `fugaro creds set
-// NAME` are left as the CLI printed them, and a credential a child echoed is
-// still redacted. The severity is a word rather than a sentence, so it takes the
-// `label` class through `putText` the way the policy section's rows do.
+// names `roles/run.invoker`, which the sentence must keep. So they go through
+// `sanitizeRefusal`, the door the design keeps for a CLI sentence
+// (`docs/desktop-console/spec.md` section 6.3), exactly as `degraded.ts`,
+// `managed.ts`, `projects.ts` and `accountkeys.ts` draw theirs: a role name, a
+// project and a `fugaro creds set NAME` are left as the CLI printed them -- as
+// any class draws them since D3213 (2026-11-21) -- and a credential a child
+// echoed is still redacted. The severity is a word rather than a sentence, so it
+// takes the `label` class through `putText` the way the policy section's rows do.
 //
 // **An installation whose CLI predates DON7 carries no such check.** The line
 // arrived with DON7 (`internal/cli/doctor_brokering.go`); a console newer than
@@ -240,10 +240,11 @@ function textAt(raw: unknown): string | null {
 }
 
 /** drawnRefusal is the CLI's own refusal sentence, sanitized, or the console's
- * sentence for one it cannot draw. The free-text rules would draw
- * `roles/datastore.viewer` as `[redacted]` and the project as `<project>`, and
- * the remedy is the whole value of a refusal, so this is `sanitizeRefusal` --
- * the one door per screen, as `degraded.ts` and `projects.ts` both say. */
+ * sentence for one it cannot draw. The remedy is the whole value of a refusal,
+ * so this is `sanitizeRefusal` -- the one door per screen, as `degraded.ts` and
+ * `projects.ts` both say -- and what it is still run for is the credential half:
+ * the free-text rules that drew a role as `[redacted]` and a project as
+ * `<project>` went with D3213 (2026-11-21). */
 function drawnRefusal(because: string): string {
   const drawn = sanitizeRefusal(because, 'the reason this section has nothing to draw')
   return drawn.ok ? drawn.text : REFUSAL_UNREADABLE

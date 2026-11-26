@@ -286,6 +286,7 @@ export const WIZARD_KIND_WORDS: Readonly<Record<SetupEvent['type'], string>> = O
   step: 'working',
   stage: 'stage',
   left_for_you: 'for you',
+  notice: 'note',
   done: 'done',
   error: 'failed',
 })
@@ -775,6 +776,31 @@ function drawEvent(
   }
   if (event.type === 'left_for_you') {
     line.append(drawLeftForYou(factory, event, copy))
+    return line
+  }
+  if (event.type === 'notice') {
+    // One line the run reported outside its stages (U13): the step that
+    // reported it, the repository or admit pattern it is about -- a
+    // repository's own text, so it goes through the class every other
+    // document's does -- the state it was left in, and the CLI's sentence.
+    line.append(
+      text(factory, 'span', WIZARD_EVENT_STAGE_CLASS, event.step, 'label', 'the setup step that reported it'),
+    )
+    if (event.repo !== '') {
+      line.append(
+        text(factory, 'span', WIZARD_EVENT_STAGE_CLASS, event.repo, 'label', 'what the step reported on'),
+      )
+    }
+    if (event.state !== '') {
+      line.append(
+        text(factory, 'span', WIZARD_EVENT_STATE_CLASS, event.state, 'label', 'what the step left it'),
+      )
+    }
+    if (event.detail !== '') {
+      line.append(
+        text(factory, 'span', WIZARD_EVENT_TEXT_CLASS, event.detail, 'sentence', 'the setup step’s sentence'),
+      )
+    }
     return line
   }
   if (event.type === 'error') {

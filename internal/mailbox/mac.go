@@ -1,6 +1,7 @@
 package mailbox
 
 import (
+	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -282,20 +283,30 @@ func (s *Signer) Heartbeat(hb Heartbeat) (string, error) {
 // that nothing here mutates it: it is read-only after NewGate, and Verify may
 // be called from anywhere.
 type Gate struct {
-	key keychain.Key
-	now func() time.Time
-	tol time.Duration
+	// key is the pairing's MAC key (D171) and public is the device's own
+	// (O6). Exactly one of the two is set, and which one IS the scheme this
+	// gate accepts: the device node chose it, and a gate cannot be talked out
+	// of it by the record it is handed.
+	key    keychain.Key
+	public ed25519.PublicKey
+	now    func() time.Time
+	tol    time.Duration
 }
 
-// String is what a log line about the gate says: what it is, and never a byte
-// of the key. It is belt and braces over the Key's own redaction — the verbs
-// that reach a struct's fields are already redacted by it — and it is the
-// answer to the one shape they cannot cover: `%s` of the gate itself.
+// String is what a log line about the gate says: what it is, which scheme it
+// takes, and never a byte of the key. It is belt and braces over the Key's own
+// redaction — the verbs that reach a struct's fields are already redacted by it
+// — and it is the answer to the one shape they cannot cover: `%s` of the gate
+// itself. The scheme is named because a log line that said only "mailbox.Gate"
+// would not tell a reader which of the two a refusal came from.
 func (g *Gate) String() string {
 	if g == nil {
 		return "mailbox.Gate(nil)"
 	}
-	return fmt.Sprintf("mailbox.Gate{future tolerance: %s, key: %s}", g.tol, keychain.Redacted)
+	if g.public != nil {
+		return fmt.Sprintf("mailbox.Gate{future tolerance: %s, scheme: device signature}", g.tol)
+	}
+	return fmt.Sprintf("mailbox.Gate{future tolerance: %s, scheme: MAC, key: %s}", g.tol, keychain.Redacted)
 }
 
 // GateOptions tune a Gate; the zero value is the production setting.
@@ -308,19 +319,29 @@ type GateOptions struct {
 	FutureTolerance time.Duration
 }
 
-// NewGate returns the gate a pass verifies its inbox with. The key is the
-// pairing's (D171), read once at startup (M5) — the caller reads it, this does
-// not, and a gate built with no key refuses every message rather than
-// accepting one.
+// NewGate returns the gate a pass verifies its inbox with when the device node
+// holds no public key (D171). The key is the pairing's, read once at startup
+// (M5) — the caller reads it, this does not, and a gate built with no key
+// refuses every message rather than accepting one. NewSignatureGate is O6's
+// other half, and which of the two a pairing gets is the device node's answer.
 func NewGate(key keychain.Key, o GateOptions) *Gate {
-	g := &Gate{key: key, now: o.Now, tol: o.FutureTolerance}
+	g := &Gate{key: key}
+	o.apply(g)
+	return g
+}
+
+// apply fills a gate's clock and tolerance: the zero value of GateOptions is
+// the production setting, and the two constructors share the rule rather than
+// each writing it (a gate whose tolerance defaulted differently by scheme would
+// be two answers to one question).
+func (o GateOptions) apply(g *Gate) {
+	g.now, g.tol = o.Now, o.FutureTolerance
 	if g.now == nil {
 		g.now = func() time.Time { return time.Now().UTC() }
 	}
 	if g.tol <= 0 {
 		g.tol = FutureTolerance
 	}
-	return g
 }
 
 // Verify is §8.1, in §8.1's order: the record is what the schema says a message
@@ -343,6 +364,14 @@ func NewGate(key keychain.Key, o GateOptions) *Gate {
 // the ledger's window are the delivery's (T4), and they are decided by a
 // mailbox that has a ledger to consult; this is the attribution half, and a
 // message that passes here is still refused by those rules.
+//
+// **The scheme is the node's and never the record's** (O6). A gate built on a
+// device node that holds a public key checks a signature and refuses a
+// MAC-tagged record; one built on a pairing's key checks a MAC and refuses a
+// signature. That is the whole of the downgrade fence: a record carrying the
+// other tag is refused rather than tried, so a phone that has dropped its
+// shared key cannot have a message accepted by carrying a tag anyone who ever
+// read that key could have made.
 func (g *Gate) Verify(record Record) (*Message, *Refusal) {
 	// A nil gate has no key, and a gate with no key refuses everything: the
 	// answer is the one M4's availability row gives, not a panic in a loop
@@ -354,14 +383,44 @@ func (g *Gate) Verify(record Record) (*Message, *Refusal) {
 	if refusal != nil {
 		return nil, refusal
 	}
-	// The key is asked for here, per verification, and the copy it answers is
-	// the only one that exists: nothing else in this package holds the
-	// material, so there is nothing else to leak.
-	if ok, err := VerifyMAC(record, g.key.Bytes(), directionInbox); err != nil || !ok {
-		return nil, refuse(CodeBadMAC, "mac")
+	if refusal := g.attribute(record); refusal != nil {
+		return nil, refusal
 	}
 	if at := message.At; at-g.now().UnixMilli() > g.tol.Milliseconds() {
 		return nil, refuse(CodeFutureTimestamp, "at")
 	}
 	return message, nil
+}
+
+// attribute checks the record's one tag the way this gate's device must have
+// written it, and answers the refusal naming the field that was wrong.
+//
+// The MAC key is asked for here, per verification, and the copy it answers is
+// the only one that exists: nothing else in this package holds the material, so
+// there is nothing else to leak. The public key is not a secret and is held for
+// the life of the gate.
+func (g *Gate) attribute(record Record) *Refusal {
+	if g.public != nil {
+		if record.has("mac") {
+			// A MAC-tagged message at a node that holds a public key. The tag
+			// is refused whatever it says: this node's phone does not write one,
+			// and checking it would be checking a scheme the device retired.
+			return refuse(CodeBadMAC, "mac")
+		}
+		if ok, err := VerifySignature(record, g.public, directionInbox); err != nil || !ok {
+			return refuse(CodeBadSig, "sig")
+		}
+		return nil
+	}
+	if record.has("sig") {
+		// The other way round: a signature at a node that holds no public key.
+		// Nothing here could check it, and a node that holds no key is a device
+		// paired the old way — so the signature is refused rather than ignored,
+		// which would be accepting a record on no evidence at all.
+		return refuse(CodeBadSig, "sig")
+	}
+	if ok, err := VerifyMAC(record, g.key.Bytes(), directionInbox); err != nil || !ok {
+		return refuse(CodeBadMAC, "mac")
+	}
+	return nil
 }

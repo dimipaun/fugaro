@@ -321,9 +321,9 @@ describe('the review account keys, drawn from the read the tab already makes', (
     // Design section 6.3: for a refusal the sentence *is* the remedy, so the
     // console shows it unedited. The refusal goes through `sanitizeRefusal`
     // (`drawnRefusal`), which keeps a path and a role as the CLI printed them --
-    // the free-text `sentence` class draws the first `<path>` and the second
-    // `[redacted]`, and the tab's settings panel draws this same `settings.read`
-    // refusal unedited beside this section.
+    // the free-text rules that drew the first `<path>` and the second
+    // `[redacted]` went with D3213 (2026-11-21) -- and the tab's settings panel
+    // draws this same `settings.read` refusal unedited beside this section.
     const refused = section(
       null,
       'settings.read: fugaro settings --json exited 1: cannot read /home/zora/checkout/fugaro.yaml: the caller lacks roles/datastore.viewer',

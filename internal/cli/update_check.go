@@ -80,6 +80,14 @@ type stepCtx struct {
 	loc   pluginwire.Location // the checkout's top and its settings file
 	agent string              // the coding agent's marker, "" outside one
 
+	// view is the repository a step runs for where the run read it from the
+	// project's own list rather than from a directory (U4): the checkout stage
+	// sets one per repository it builds, and its loc is then the zero Location
+	// — no working directory is read for it. Every other caller leaves view nil,
+	// and the checkout loc names the screen (the command's own refresh, `fugaro
+	// update --check`, the plugin stage).
+	view *refreshView
+
 	// detail is where a step's prose goes: the log always, the terminal only
 	// under -v, and w itself where the run has no log to write (detailOut). A
 	// step's own line, the confirmations it asks and everything a person has
@@ -321,6 +329,27 @@ func printStep(w io.Writer, r stepResult) {
 // --repo (checkRepo, init.go) and beside --check (updateCheckReads). Naming one
 // here would print a line that is refused before anything runs.
 func (o stepOptions) again(path string) string {
+	args := o.viewArgs()
+	if !o.check {
+		args = append(args, "--repo")
+	}
+	if strings.HasPrefix(path, "-") {
+		args = append(args, "--")
+	}
+	return strings.Join(append(args, quoteWord(path)), " ")
+}
+
+// againView is again for a step whose screen is the project's own repositories
+// rather than one checkout: this door with this run's flags and no --repo,
+// which is the line that re-reads every repository (U4). A stage that read the
+// repositories itself names this one, so what it prints is a command that runs.
+func (o stepOptions) againView() string { return strings.Join(o.viewArgs(), " ") }
+
+// viewArgs are the words a line that runs this door has whichever screen it is
+// for: the door, a check's own flag, and the deployment flags the run was
+// started with (--image-source and --expect-digest set up the installation and
+// are refused beside --repo and --check both, so neither line names one).
+func (o stepOptions) viewArgs() []string {
 	args := []string{selfCommand(), "update"}
 	if o.check {
 		args = append(args, "--check")
@@ -333,11 +362,5 @@ func (o stepOptions) again(path string) string {
 			args = append(args, "--"+f.name, quoteWord(f.v))
 		}
 	}
-	if !o.check {
-		args = append(args, "--repo")
-	}
-	if strings.HasPrefix(path, "-") {
-		args = append(args, "--")
-	}
-	return strings.Join(append(args, quoteWord(path)), " ")
+	return args
 }

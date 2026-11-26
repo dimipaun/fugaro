@@ -208,7 +208,7 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 	switch {
 	case errors.Is(err, rtdb.ErrPermission):
 		return pairRefuse(ev, o, pairRefusedDatabaseAdmin,
-			fmt.Errorf("%s refused the read: a pairing inherits the pairing user's role at project scope from the grants there, and writes the device node with roles/firebasedatabase.admin on project %s's Firebase project: %w", accesslib.PathNode, lc.Name, err))
+			fmt.Errorf("%s refused the read: pairing needs roles/firebasedatabase.admin on project %s's Firebase project: %w", accesslib.PathNode, lc.Name, err))
 	case err != nil:
 		failed := dbErr(lc, err, false)
 		return pairRefuse(ev, o, pairRefusalCode(failed, pairRefusedUnplaced), failed)
@@ -217,11 +217,11 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 	if ownRole == mobileauth.RoleNone {
 		if !grantsNode.Found {
 			return pairRefuse(ev, o, pairRefusedUnplaced,
-				fmt.Errorf("%s has no grants node yet (%s is absent), so a device paired here would have no role to inherit: run '%s update', which writes that node from the installation's own lists when one of them names a user: member — a group: or domain: member is not an address a grant holds, and lists that name none write no node",
+				fmt.Errorf("%s has no grants node yet (%s is absent), so a device would inherit no role: run '%s update' to write it",
 					lc.Name, accesslib.PathNode, selfCommand()))
 		}
 		return pairRefuse(ev, o, pairRefusedUnplaced,
-			fmt.Errorf("%s holds no role at project scope in %s, so a device it paired would have no role to inherit: a device records a role and no scope, so the role it inherits is the pairing user's highest role at project scope, and a role held only in repositories is not one a device can carry; ask an admin of %s to add you to the installation's project-scope operator grants by naming the whole list with '%s update --operator %s' — that flag writes the list it is given, so every operator who must keep the role is named beside you",
+			fmt.Errorf("%s holds no role at project scope in %s, so a device would inherit none: ask an admin of %s to run '%s update --operator %s' (name every operator)",
 				me, lc.Name, lc.Name, selfCommand(), me))
 	}
 	// The device's role, and the two writers that meet here. `ownRole` is the
@@ -239,7 +239,7 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 				fmt.Errorf("--role %s is not a role: this installation's roles are %s", o.role, pairRoleNames()))
 		case !ownRole.AtLeast(want):
 			return pairRefuse(ev, o, pairRefusedRoleAbove,
-				fmt.Errorf("--role %s is above your own role (%s): a paired device inherits your role and --role may only lower it, so a device like this one cannot be more than you are", want, ownRole))
+				fmt.Errorf("--role %s is above your own role (%s): --role may only lower it", want, ownRole))
 		default:
 			wantRole = want
 		}
@@ -286,7 +286,7 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 	// database URL and the API key from the service on success, so an installation
 	// whose config has no key can still invite (D2799, F4).
 	if strings.TrimSpace(lc.Budget.FirebaseAPIKey) == "" {
-		return pairRefuse(ev, o, pairRefusedAPIKey, fmt.Errorf("project %s has no budget.firebase_api_key: the phone exchanges the pairing token with it, and a code without one scans into a phone that cannot sign in; restore it with 'fugaro update --firebase-project %s', which writes budget.rtdb_url and budget.firebase_api_key", lc.Name, lc.GCPProject))
+		return pairRefuse(ev, o, pairRefusedAPIKey, fmt.Errorf("project %s has no budget.firebase_api_key, so the phone cannot sign in: run 'fugaro update --firebase-project %s'", lc.Name, lc.GCPProject))
 	}
 
 	// D224, and this is the place the resolution runs: once, in the CLI, at the
@@ -412,7 +412,7 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 	}
 	if !token.CompareFingerprint(typed, fingerprint) {
 		return pairRefuse(ev, o, pairRefusedCodeMismatch,
-			fmt.Errorf("the code typed does not match the key written at %s: nothing was written to %s, and this pairing is over rather than retried; a request under a key whose code does not match is what a photographed QR looks like, so scan the code from the screen of the phone you mean to pair", pairPathRequest(uid), lc.Name))
+			fmt.Errorf("the code typed does not match the key written at %s (a photographed QR?): nothing was written to %s; run fugaro pair again", pairPathRequest(uid), lc.Name))
 	}
 
 	// §7.1 steps 6 and 7, M4: the device token is minted and then the node
@@ -429,7 +429,7 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 	if err := db.Patch(ctx, rules.PathDevices, map[string]any{device.UID: node}); err != nil {
 		if errors.Is(err, rtdb.ErrPermission) {
 			return pairRefuse(ev, o, pairRefusedDatabaseAdmin,
-				fmt.Errorf("the write to %s was refused: pairing writes the device node there with roles/firebasedatabase.admin, which this credential does not hold on project %s's Firebase project (its owners and editors hold it, and terraform.budget_admins): %w",
+				fmt.Errorf("the write to %s was refused: pairing needs roles/firebasedatabase.admin on project %s's Firebase project: %w",
 					rules.PathDevices, lc.Name, err))
 		}
 		return pairRefuse(ev, o, pairRefusedUnreachable, dbErr(lc, err, true))
@@ -451,11 +451,11 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 		// keychain item — a refusal with nothing written yet, and not a
 		// keychain failure: no keychain has been asked anything.
 		return pairRefuse(ev, o, pairRefusedKeychain,
-			fmt.Errorf("the keychain item this pairing's MAC key would live at (%s) is not a name a key can be stored under: %v; the item's name carries the project's own name (M5), so a project named otherwise cannot be paired on this machine", pairItemName(lc.Name, device.UID), err))
+			fmt.Errorf("the keychain item name %s is not valid: %v; the project's name cannot be paired on this machine", pairItemName(lc.Name, device.UID), err))
 	}
 	macKey, err := pairStoreMACKey(ctx, pairKeychain(), item)
 	if err != nil {
-		return pairRefuse(ev, o, pairRefusedKeychain, pairRemoveDeviceNode(ctx, db, lc, device.UID, fmt.Errorf("the pairing's MAC key could not be stored in the OS keychain at %s: %w; the device node written a moment ago was removed again, so nothing was delivered and no device is on the allowlist", item.Name(), err)))
+		return pairRefuse(ev, o, pairRefusedKeychain, pairRemoveDeviceNode(ctx, db, lc, device.UID, fmt.Errorf("the MAC key could not be stored in the OS keychain at %s: %w; the device node was removed, nothing was paired", item.Name(), err)))
 	}
 
 	// §4.2 and P5.1e: the same key goes into the installation's own copy, which
@@ -469,7 +469,7 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 	copied, err := pairWriteCloudCopy(ctx, lc, device.UID, macKey)
 	if err != nil {
 		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedCloudKey),
-			pairUndoItemAndNode(ctx, db, lc, device.UID, item, fmt.Errorf("the pairing's MAC key could not be copied into the installation's cloud container %s: %w; the node and the keychain item written a moment ago were removed again, so nothing was delivered and no device is on the allowlist", infra.OrchestratorPairingSecretID, err)))
+			pairUndoItemAndNode(ctx, db, lc, device.UID, item, fmt.Errorf("the MAC key could not be copied to the cloud container %s: %w; the node and keychain item were removed, nothing was paired", infra.OrchestratorPairingSecretID, err)))
 	}
 
 	// §7.1 step 8 and §4.4: the one payload the phone stores — D199's
@@ -503,7 +503,7 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 	if err := db.Patch(ctx, pairPath(uid), map[string]any{"delivery": pairDeliveryNode{V: token.DeliveryEnvelopeVersion, Sealed: token.EncodeKey(sealed)}}); err != nil {
 		if errors.Is(err, rtdb.ErrPermission) {
 			return pairRefuse(ev, o, pairRefusedDatabaseAdmin,
-				pairUndoPairing(ctx, db, lc, device.UID, item, fmt.Errorf("the write to %s was refused: pairing writes the delivery node there with roles/firebasedatabase.admin, which this credential does not hold on project %s's Firebase project (its owners and editors hold it, and terraform.budget_admins): %w", pairPathDelivery(uid), lc.Name, err)))
+				pairUndoPairing(ctx, db, lc, device.UID, item, fmt.Errorf("the write to %s was refused: pairing needs roles/firebasedatabase.admin on project %s's Firebase project: %w", pairPathDelivery(uid), lc.Name, err)))
 		}
 		// The wire code is read off the classified error and not off what rtdb
 		// returned: §4.6's rows are dbErr's classes, so a database that did not
@@ -522,11 +522,11 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 	if err := db.Patch(ctx, "pairing", map[string]any{uid: nil}); err != nil {
 		if errors.Is(err, rtdb.ErrPermission) {
 			return pairRefuse(ev, o, pairRefusedDatabaseAdmin,
-				fmt.Errorf("the deletion of %s was refused: the pairing is done — the delivery is written, the device is paired and its MAC key is in the OS keychain item %s — but the pairing node could not be removed, so the payload stays readable to the pairing token for as long as its ID token lives; deleting it needs roles/firebasedatabase.admin on project %s's Firebase project, and the history sweep deletes that node with the %s Auth user once the pairing is over: %w", pairPath(uid), item.Name(), lc.Name, uid, err))
+				fmt.Errorf("the deletion of %s was refused: the device is paired, but the pairing node needs roles/firebasedatabase.admin on project %s's Firebase project to be removed: %w", pairPath(uid), lc.Name, err))
 		}
 		cause := dbErr(lc, err, true)
 		return pairRefuse(ev, o, pairRefusalCode(cause, pairRefusedDelivery),
-			fmt.Errorf("%w; the pairing is done — the delivery is written, the device is paired and its MAC key is in the OS keychain item %s — but %s could not be removed, so the payload stays readable to the pairing token for as long as its ID token lives; the history sweep deletes that node with the %s Auth user once the pairing is over", cause, item.Name(), pairPath(uid), uid))
+			fmt.Errorf("%w; the device is paired (MAC key in keychain item %s), but %s could not be removed: the history sweep deletes it with the %s Auth user", cause, item.Name(), pairPath(uid), uid))
 	}
 
 	if o.asJSON {
@@ -702,7 +702,7 @@ func pairRemoveCloudCopy(ctx context.Context, lc *localcfg.Config, deviceUID str
 		return fmt.Errorf("%w; the installation's cloud copy of the pairing's key could not be checked either (%v), so it may still be readable there: %s", cause, oneLine(err.Error()), pairCloudCopyName(lc))
 	}
 	if _, err := cloud.Delete(ctx, deviceUID); err != nil {
-		return fmt.Errorf("%w; the installation's cloud copy of the pairing's key (%s) could not be removed either (%v), so it is there with no device behind it: destroy its version by hand, and by hand it has to be a destroy rather than a disable — the design's step 2b says why", cause, pairCloudCopyName(lc), oneLine(err.Error()))
+		return fmt.Errorf("%w; the cloud copy of the key (%s) could not be removed either (%v): destroy its version by hand (destroy, not disable)", cause, pairCloudCopyName(lc), oneLine(err.Error()))
 	}
 	return cause
 }
@@ -715,7 +715,7 @@ func pairRemoveCloudCopy(ctx context.Context, lc *localcfg.Config, deviceUID str
 // a device that fails USER on every request.
 func pairRemoveDeviceNode(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, deviceUID string, cause error) error {
 	if err := db.Patch(ctx, rules.PathDevices, map[string]any{deviceUID: nil}); err != nil {
-		return fmt.Errorf("%w; the device node %s could not be removed either (%v), so it is on the allowlist with no delivery behind it: remove it with `fugaro pair revoke %s`", cause, deviceUID, oneLine(err.Error()), deviceUID)
+		return fmt.Errorf("%w; the device node %s could not be removed either (%v): run `fugaro pair revoke %s`", cause, deviceUID, oneLine(err.Error()), deviceUID)
 	}
 	return cause
 }
@@ -874,7 +874,7 @@ func pairWaitEnded(ctx context.Context, path string, lc *localcfg.Config, timeou
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return fmt.Errorf("%w at %s within %s: nothing was written to %s, and the pairing token the phone was given dies with the wait; run fugaro pair again", errPairNoKey, path, timeout, lc.Name)
 	}
-	return fmt.Errorf("%w while waiting for the phone's key at %s, so this pairing was abandoned by the operator rather than refused by it; run fugaro pair again", errPairInterrupted, path)
+	return fmt.Errorf("%w while waiting for the phone's key at %s; run fugaro pair again", errPairInterrupted, path)
 }
 
 // errPairNoCode is the read's own failure: no line arrived before the wait ran
@@ -923,7 +923,7 @@ func pairReadCode(ctx context.Context, cmd *cobra.Command, asJSON bool) (string,
 		// The same two endings the wait has: the deadline is an operator who
 		// walked away from the prompt, an interrupt is one who stopped it.
 		if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return "", fmt.Errorf("%w while the code the phone shows was being typed, so this pairing was abandoned by the operator rather than refused by it; run fugaro pair again", errPairInterrupted)
+			return "", fmt.Errorf("%w while the code was being typed; run fugaro pair again", errPairInterrupted)
 		}
 		return "", fmt.Errorf("%w: the code the phone shows is read as one line %s, and no line arrived before the wait ran out", errPairNoCode, where)
 	case got := <-read:
@@ -1030,8 +1030,8 @@ func pairTimeoutRefusal(timeout time.Duration) string {
 	case timeout <= 0:
 		return fmt.Sprintf("--timeout %s is not a wait: it must be positive and at most %s", timeout, pairMaxTimeout)
 	case timeout > pairMaxTimeout:
-		return fmt.Sprintf("--timeout %s is above %s: the pairing token's exp is the smaller of %s and the wait plus the %s exchange slack, so a longer wait would outlive the credential the phone holds; use %s or less",
-			timeout, pairMaxTimeout, token.PairingMaxLifetime, token.PairingSlack, pairMaxTimeout)
+		return fmt.Sprintf("--timeout %s is above %s: a longer wait would outlive the phone's token; use %s or less",
+			timeout, pairMaxTimeout, pairMaxTimeout)
 	}
 	return ""
 }
@@ -1099,7 +1099,7 @@ func pairInheritedRole(grants []accesslib.Grant, me string) mobileauth.Role {
 func pairAdministeredEmail(own, typed string) (address string, mine bool, err error) {
 	ownCanonical, err := mobileauth.NormalizeEmail(strings.ToLower(strings.TrimSpace(own)))
 	if err != nil {
-		return "", false, fmt.Errorf("the identity endpoint answered with %q as your verified address, and that is not an address this installation's allowlist can carry (%v): a device node's administered email is what the allowlist resolves a role for, so an entry this build cannot read would refuse every pairing in the installation, and this command will not write one", own, err)
+		return "", false, fmt.Errorf("your verified address %q is not one the allowlist can carry (%v): nothing was written", own, err)
 	}
 	if strings.TrimSpace(typed) == "" {
 		return ownCanonical, true, nil
@@ -1180,7 +1180,7 @@ func pairResolveEntryRole(ctx context.Context, lc *localcfg.Config, db *rtdb.Cli
 		return mobileauth.RoleNone, err
 	}
 	if len(unreadable) > 0 {
-		return mobileauth.RoleNone, fmt.Errorf("%s carries %d device node(s) whose %s child is not a value this build reads (%s): an administered email that cannot be read names nobody, so the role this pairing would write cannot be resolved past it; an admin fixes the node, or takes it off the allowlist with 'fugaro pair revoke', and `fugaro pair ls` prints the uids",
+		return mobileauth.RoleNone, fmt.Errorf("%s carries %d device node(s) whose %s is unreadable (%s): an admin fixes them or runs 'fugaro pair revoke'; 'fugaro pair ls' prints the uids",
 			rules.PathDevices, len(unreadable), mobileauth.NodeFieldEmail, strings.Join(unreadable, ", "))
 	}
 	if !pairAllowlistNames(exact, domains, address) {
@@ -1191,20 +1191,20 @@ func pairResolveEntryRole(ctx context.Context, lc *localcfg.Config, db *rtdb.Cli
 	}
 	role, err := mobileauth.Resolve(exact, domains, address)
 	if err != nil {
-		return mobileauth.RoleNone, fmt.Errorf("the allowlist cannot resolve a role for %s: %w; a device node's role is resolved from the allowlist's entries at the write and nowhere else (D224), so this pairing writes nothing until the entries are repaired — `fugaro pair ls` prints them, and `fugaro pair revoke` deletes a device whose node is the one in the way", address, err)
+		return mobileauth.RoleNone, fmt.Errorf("the allowlist cannot resolve a role for %s: %w; repair the entries (`fugaro pair ls` prints them, `fugaro pair revoke` deletes one)", address, err)
 	}
 	if !own.AtLeast(role) {
-		return mobileauth.RoleNone, fmt.Errorf("%w: %s's entry resolves to %s, above your own role (%s); a device cannot be more than the person pairing it, so ask an admin to write the entry, or pair it as someone who holds %s",
+		return mobileauth.RoleNone, fmt.Errorf("%w: %s's entry resolves to %s, above your own role (%s); ask an admin who holds %s to pair it",
 			errPairResolvedAbove, address, role, own, role)
 	}
 	switch {
 	case want == mobileauth.RoleNone || want == role:
 		return role, nil
 	case role.AtLeast(want):
-		return mobileauth.RoleNone, fmt.Errorf("%w: %s is already an entry with role %s, and this device would carry %s; one address resolves to one role (that is what the entries of an address have to agree about), so pairing a second device of it as %s would leave the two unable to resolve — pair this device as %s, or revoke the device whose entry carries %s first with `fugaro pair revoke`, which `fugaro pair ls` prints",
-			errPairRoleDisagrees, address, role, want, want, role, role)
+		return mobileauth.RoleNone, fmt.Errorf("%w: %s is already an entry with role %s, and this device would carry %s; pair it as %s, or first run `fugaro pair revoke` on the other (see `fugaro pair ls`)",
+			errPairRoleDisagrees, address, role, want, role)
 	default:
-		return mobileauth.RoleNone, fmt.Errorf("%w: --role %s is above the %s %s's entry already resolves to, and a device node carries the role resolved for the administered address; --role may only lower a role no entry has claimed yet, and this address has one",
+		return mobileauth.RoleNone, fmt.Errorf("%w: --role %s is above the %s %s's entry already resolves to; --role cannot raise it",
 			errPairResolvedAbove, want, role, address)
 	}
 }
@@ -1330,7 +1330,7 @@ func pairDatabaseAdminProbe(ctx context.Context, db *rtdb.Client, lc *localcfg.C
 			// %w keeps the sentinel in the chain: the call site tells this
 			// refusal from an unreachable database by errors.Is, and the code it
 			// emits is the one a console switches on.
-			return &ExitError{Code: ExitUserError, Err: fmt.Errorf("%s refused the read: pairing writes the device node there and the delivery node with roles/firebasedatabase.admin, which this credential does not hold on project %s's Firebase project (its owners and editors hold it, and terraform.budget_admins): %w", rules.PathDevices, lc.Name, err)}
+			return &ExitError{Code: ExitUserError, Err: fmt.Errorf("%s refused the read: pairing needs roles/firebasedatabase.admin on project %s's Firebase project: %w", rules.PathDevices, lc.Name, err)}
 		}
 		return dbErr(lc, err, false)
 	}
@@ -1647,7 +1647,7 @@ func pairPushLeftover(err error, deviceUID string) string {
 	if err == nil {
 		return ""
 	}
-	return fmt.Sprintf("; the push node %s could not be deleted either (%v), so the registration the installation made for that account is still there and must be deleted by hand", pairPushPath(deviceUID), oneLine(err.Error()))
+	return fmt.Sprintf("; the push node %s could not be deleted either (%v): delete it by hand", pairPushPath(deviceUID), oneLine(err.Error()))
 }
 
 // pairCloudLeftover is pairPushLeftover's sibling for the third copy, carried by
@@ -1661,7 +1661,7 @@ func pairCloudLeftover(err error, lc *localcfg.Config) string {
 	if err == nil {
 		return ""
 	}
-	return fmt.Sprintf("; the installation's cloud copy of the pairing's key (%s) could not be destroyed either (%v), so it is there with no device behind it and must be destroyed by hand — a destroy, not a disable, which the design's step 2b says is not enough", pairCloudCopyName(lc), oneLine(err.Error()))
+	return fmt.Sprintf("; the cloud copy of the key (%s) could not be destroyed either (%v): destroy it by hand (destroy, not disable)", pairCloudCopyName(lc), oneLine(err.Error()))
 }
 
 // pairRefusalCode is the wire code for a refusal at a call site that can fail

@@ -63,10 +63,11 @@
 // the `SourceRefusal` channel, and both go through `sanitizeRefusal`
 // (`drawnRefusal`) -- the door the design's section 6.3 keeps for it, which
 // leaves a path, a project and a role as the CLI printed them, because for a
-// permission refusal the sentence *is* the remedy. `sentence` would draw
-// `roles/datastore.viewer` as `[redacted]` and the project's own config path as
-// `<path>`; the tab's settings panel would draw the very same `settings.read`
-// refusal unedited beside this one.
+// permission refusal the sentence *is* the remedy. The free-text rules that used
+// to draw `roles/datastore.viewer` as `[redacted]` and the project's own config
+// path as `<path>` went with D3213 (2026-11-21), so what the door is kept for is
+// the credential a child can echo into the sentence; the tab's settings panel
+// would draw the very same `settings.read` refusal unedited beside this one.
 
 import { sanitizeRefusal } from '../../shared/sanitize'
 import { putText } from '../app'
@@ -212,10 +213,9 @@ const ROW_SHAPE_BECAUSE =
 /**
  * drawnRefusal is a reason as a screen may draw it: `sanitizeRefusal` and
  * nothing else, which is the one treatment of the CLI's own refusal sentence
- * (design section 6.3, `src/shared/sanitize.ts`). `sentence` and the other
- * free-text classes run the pattern rules, and two of them eat the remedy -- a
- * role is two long segments around a slash and is drawn `[redacted]`, a path is
- * drawn `<path>` -- while the credential rules still redact a token a child
+ * (design section 6.3, `src/shared/sanitize.ts`). The pattern rules that used to
+ * eat the remedy went with D3213 (2026-11-21) -- a role drawn `[redacted]`, a
+ * path drawn `<path>` -- while the credential rules still redact a token a child
  * echoed into its stderr.
  *
  * Running it here, in the model, is also what keeps the panel's `literal` call

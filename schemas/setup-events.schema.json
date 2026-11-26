@@ -2,11 +2,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/setup-events.schema.json",
   "title": "Fugaro setup --events",
-  "description": "One line of the newline-delimited feed `fugaro setup --events --json` and `fugaro update --events --json` write (docs/console-improvements ST2, D2904): the run `--json` prints as one document, written as one event per line so a surface that drives the CLI draws each stage as it settles instead of holding the whole document before it can draw anything — the console's first-run wizard spawns `setup --plan-only --answers-file - --events --json` and renders the lines as they arrive. The schema is of ONE LINE and not of the feed: a reader validates each line as it reads it, and the feed is the lines in order. The kinds are the console's own closed set (SETUP_EVENT_TYPES, console/src/shared/new-ops.ts, which holds the shape this file and the golden `internal/cli/testdata/setup_events.golden.ndjson` are the authority for): `step` is the run reaching a stage and starting to work on it, `stage` is one stage it settled with the very members the document's `stages` element carries, `left_for_you` is one thing only the user can do — with the step's own line to run, because a surface reading this has no terminal to hand it to — and the last line is `done` with the run's own exit code — including a run that ends with steps left for the user, which is exit 1 and not a failure — or `error` for the run that stopped: the stage it stopped at with the CLI's sentence and fix, or, where it refused before any stage, the refusal itself with `stage` empty. A feed with no last line is an interrupted read, which is the failure a consumer must handle either way — a killed child, a truncated pipe, a cap reached — and no `version` member is carried to answer it: the members here are the contract's own (a version is one the console's copy holds no place for), and a feed's shape changes only by adding a member within it. Members are only ever added for that reason, and no object here is closed: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's feed. Nothing here confirms a step: `--json` confirms none (unconfirmedWhy, internal/cli/init.go), so every step that needs a confirmation arrives as a `left_for_you` line exactly as it is left without the flag, and no member of this feed is a consent — a wizard's yes is its owner's go to run the CLI in their own terminal, never a word the CLI reads.",
+  "description": "One line of the newline-delimited feed `fugaro setup --events --json` and `fugaro update --events --json` write (docs/console-improvements ST2, D2904): the run `--json` prints as one document, written as one event per line so a surface that drives the CLI draws each stage as it settles instead of holding the whole document before it can draw anything — the console's first-run wizard spawns `setup --plan-only --answers-file - --events --json` and renders the lines as they arrive. The schema is of ONE LINE and not of the feed: a reader validates each line as it reads it, and the feed is the lines in order. The kinds are the console's own closed set (SETUP_EVENT_TYPES, console/src/shared/new-ops.ts, which holds the shape this file and the golden `internal/cli/testdata/setup_events.golden.ndjson` are the authority for): `step` is the run reaching a stage and starting to work on it, `stage` is one stage it settled with the very members the document's `stages` element carries, `left_for_you` is one thing only the user can do — with the step's own line to run, because a surface reading this has no terminal to hand it to — `notice` is one line the run reported outside its stages (a step after the stage loop, an admit pattern the reader could not list: R12, R19) and the last line is `done` with the run's own exit code — including a run that ends with steps left for the user, which is exit 1 and not a failure — or `error` for the run that stopped: the stage it stopped at with the CLI's sentence and fix, or, where it refused before any stage, the refusal itself with `stage` empty. A feed with no last line is an interrupted read, which is the failure a consumer must handle either way — a killed child, a truncated pipe, a cap reached — and no `version` member is carried to answer it: the members here are the contract's own (a version is one the console's copy holds no place for), and a feed's shape changes only by adding a member within it. Members are only ever added for that reason, and no object here is closed: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's feed. Nothing here confirms a step: `--json` confirms none (unconfirmedWhy, internal/cli/init.go), so every step that needs a confirmation arrives as a `left_for_you` line exactly as it is left without the flag, and no member of this feed is a consent — a wizard's yes is its owner's go to run the CLI in their own terminal, never a word the CLI reads.",
   "oneOf": [
     { "$ref": "#/$defs/step" },
     { "$ref": "#/$defs/stage" },
     { "$ref": "#/$defs/left_for_you" },
+    { "$ref": "#/$defs/notice" },
     { "$ref": "#/$defs/done" },
     { "$ref": "#/$defs/error" }
   ],
@@ -39,7 +40,7 @@
     "stage": {
       "type": "object",
       "description": "One stage the run settled, with the members the `--json` document's `stages` element carries — so a consumer that read the document whole before the feed existed reads the same stage here, member for member, in the run's own stage order.",
-      "required": ["type", "name", "state", "detail", "after", "undone"],
+      "required": ["type", "name", "state", "detail", "after", "undone", "repos"],
       "properties": {
         "type": {
           "const": "stage",
@@ -58,7 +59,7 @@
         },
         "detail": {
           "type": "string",
-          "description": "The stage's own one-line detail: the document's `stages[].detail`, unchanged — the plan's counts, the reason it was skipped, the sentence it failed with."
+          "description": "The stage's own one-line detail: the document's `stages[].detail`, unchanged — the plan's counts, the reason it was skipped, the sentence it failed with. A stage that reports `repos` says the summary those lines make instead (\"3 repositories: 1 done, 1 needs you, 1 unread\"), which is the same sentence from every directory, where a stage's own reason would name the directory it ran in."
         },
         "after": {
           "type": "string",
@@ -67,6 +68,30 @@
         "undone": {
           "type": "boolean",
           "description": "Whether the stage was skipped without doing its work, as opposed to one that found nothing to do: the document's `stages[].undone`, unchanged."
+        },
+        "repos": {
+          "type": "array",
+          "description": "The lines the stage reported about the repositories it read (C1's RepoLine, U13), in canonical owner/name order: one per repository it has something to say about, with how it left it. Always an array, and `[]` for a stage that reported none, so a consumer reads it without a case for \"absent\". The stage's own `detail` above is the summary these lines make, so what a consumer draws is the same from every directory. It is the same list the --json document's `stages[].repos` carries; a person reading the lines has them ordered with their working directory's repository first, which is the human output's alone.",
+          "items": {
+            "type": "object",
+            "required": ["repo", "state"],
+            "properties": {
+              "repo": {
+                "type": "string",
+                "description": "The repository's canonical owner/name, sanitised before it is written: it is repository-controlled text (C1's newRepoLine, R12)."
+              },
+              "state": {
+                "type": "string",
+                "enum": ["done", "needs you", "unread", "skipped"],
+                "description": "How the stage left this repository (C1's RepoState): `done` for one it converged, `needs you` for one only its owner can take further, `unread` for one it could not read — its detail names the reason and the fix — and `skipped` for one the stage does not apply to.",
+                "$comment": "The members of initflow's RepoState constants."
+              },
+              "detail": {
+                "type": "string",
+                "description": "One line a person reads about this repository, sanitised and bounded (C1's newRepoLine): absent for a line with nothing to say beyond its state."
+              }
+            }
+          }
         }
       }
     },
@@ -100,6 +125,36 @@
           "items": { "type": "string", "minLength": 1 },
           "description": "The complete lines to run, each one whole and in order — never joined by `&&` or `;` — the document's `left_for_you[].commands`. The array is always there and is `[]` for a step with no command (a console step, a refused one), so a consumer reads it without a case for \"absent\".",
           "$comment": "setupEvents.left writes the empty array where initflow.Left.Commands is nil."
+        }
+      }
+    },
+    "notice": {
+      "type": "object",
+      "description": "One line the run reported outside its stages: a step after the stage loop (the fold, the pin, the budget mode), or an admit pattern the reader could not expand into repository names (R12, R19). It is the document's own `notices` entry, written where the run reported it, and it comes before the `done` or `error` line that ends the feed — the account the last line closes holds it.",
+      "required": ["type", "step", "repo", "state", "detail"],
+      "properties": {
+        "type": {
+          "const": "notice",
+          "$comment": "setupEventNotice in internal/cli/setup_events.go."
+        },
+        "step": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The step that reported the line, in the run's own vocabulary. A step after the stage loop has no stage to report under, which is why its own name is here and not a `stage` name: the `notice` line is placed by nothing else. An admit pattern is reported by the step that read the list."
+        },
+        "repo": {
+          "type": "string",
+          "description": "The repository the line is about (its canonical owner/name), or the admit pattern the reader could not list (`github/acme/*`); the empty string for a notice about no repository at all. A repository's own text reaches it, so a consumer draws it as text."
+        },
+        "state": {
+          "type": "string",
+          "enum": ["", "done", "needs you", "unread", "skipped"],
+          "description": "How the step left it (C1's RepoState), or the empty string for a notice about no repository.",
+          "$comment": "The members of initflow's RepoState constants, plus the empty string."
+        },
+        "detail": {
+          "type": "string",
+          "description": "The one line a person reads, sanitised by C1's newRepoLine before it was recorded (R12): a repository name or a provider's own sentence can reach it."
         }
       }
     },

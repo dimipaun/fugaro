@@ -616,6 +616,16 @@ var prFlags = []string{"ref", "workflow"}
 
 func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	ctx := cmd.Context()
+	// One document read per command, installed over the whole of it rather than
+	// by each shape below: not every reader of a launch's document sits under
+	// the cache finishLaunch installs any more, because the recipe a first run
+	// resolves is one of them (agent.recipe, read from the ref where the
+	// working tree cannot give a document) and it is resolved before that. A
+	// read mint is an act the credentials service audits, so the recipe, the
+	// gates and the job decision share the one (D904). Idempotent, so the
+	// installs runAttempts and runChangeSet make for their own launches change
+	// nothing.
+	ctx = withServiceReadCache(ctx)
 	attemptsSet := cmd.Flags().Changed("attempts")
 	if attemptsSet {
 		if o.attempts < 2 || o.attempts > 4 {
@@ -857,14 +867,14 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 				}
 			}
 			o.repo = repo
-			// Checked before resolveRecipe (review finding E, the same
-			// ordering newSpec/prSpec already enforce internally):
-			// resolveRecipe can read a project or catalog recipe from the
-			// bucket, a network call a disallowed --token should never
-			// trigger. reviewSpec repeats this same check once a review
-			// recipe is confirmed below (it is pure and local, so doing it
-			// twice costs nothing); this call is what stops the read
-			// itself from ever running for a refused account.
+			// Checked before the read below (review finding E, the same
+			// ordering newSpec/prSpec already enforce internally): resolving
+			// the name can read a project or catalog recipe from the bucket,
+			// a network call a disallowed --token should never trigger.
+			// reviewSpec repeats this same check once a review recipe is
+			// confirmed below (it is pure and local, so doing it twice costs
+			// nothing); this call is what stops the read itself from ever
+			// running for a refused account.
 			// The ref is not known yet here (--pr's follow-up path takes it
 			// from the previous run): the account is resolved from the flag
 			// and the checkout's own value, and reviewSpec resolves it again
@@ -872,7 +882,14 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 			if _, err := claudeAccountFor(ctx, env, repo, o.token, "", o.ref, checkoutOf(ctx, repo)(), nameWritten); err != nil {
 				return err
 			}
-			rr, rerr := resolveRecipe(ctx, env, checkoutRoot(ctx, repo), o.recipe, time.Now(), false)
+			// The launch's own way (resolveLaunchRecipe), as every other
+			// recipe a launch runs: the store's copy of the name first, then
+			// the catalog, and the checkout's .fugaro/recipes/ on no path
+			// (D3237). Reading the folder here, which is what this did, wrote
+			// a task naming a repository recipe, which the release-A runner
+			// refuses at bootstrap (D3304) after the run was paid for.
+			provider := env.repoProvider(repo, checkoutOf(ctx, repo)())
+			rr, rerr := resolveLaunchRecipe(ctx, env, provider, repo, o.recipe, time.Now())
 			switch {
 			case rerr == nil && rr.Recipe.Mode == recipe.ModeReview:
 				if cmd.Flags().Changed("review-run") {
@@ -3334,7 +3351,7 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 	// the plan's own pair, which is one account for all of them.
 	o.account = launchAccount{Name: account, Alias: alias}
 	root := checkoutRoot(ctx, repo)
-	rcp, mode, err := chooseRecipe(ctx, env, o.recipe, checkout, root, warn, forAttempts)
+	rcp, mode, err := chooseRecipe(ctx, env, repo, ref, o.recipe, checkout, warn, forAttempts)
 	if err != nil {
 		return nil, err
 	}
@@ -4752,27 +4769,49 @@ func claudeAccountMembership(env *cloudEnv, repo, name string) error {
 	return nil
 }
 
-// chooseRecipe is the recipe of a new first run: --recipe, else the
-// checkout's agent.recipe, else default, resolved over the checkout at root,
-// the project and the catalog. With no flag and no checkout it resolves
-// default (a project default included), and a catalog default leaves the
-// choice to the runner, which reads agent.recipe at the task's ref.
+// chooseRecipe is the recipe of a new first run: --recipe, else the launch
+// document's agent.recipe, else default, resolved over the project and the
+// catalog (resolveLaunchRecipe). With no flag and no document it resolves
+// default (the repository's own copy of it included), and a catalog default
+// leaves the choice to the runner, which reads agent.recipe at the task's ref.
 // forAttempts gives a mode: review refusal that fits runAttempts's caller
 // (--attempts refuses --pr, so the plain launch's "add --pr" advice would be
 // wrong there).
-func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func() *config.Config, root string, warn io.Writer, forAttempts bool) (*task.Recipe, string, error) {
+//
+// The document is the checkout's, or — for a launch from a machine that holds
+// no checkout of the repository — the ref's own fugaro.yaml, read at the forge
+// as the operator themselves (launchDocumentAtTheRef, source 3, spec.md §2).
+// It is asked here rather than read a second way so that the recipe, the job
+// and the gates are judged by one file and the launch costs one read (D901,
+// D909). The recipe is a question of its own, though, and is not read behind
+// the two facts that answer the job (launchConfigWhereTheTreeGivesNone): a
+// project that published no profile decides no job from the document, and its
+// ref's file still names agent.recipe, whose copy the task has to carry or the
+// runner resolves it over the catalog instead (R7, D3304).
+func chooseRecipe(ctx context.Context, env *cloudEnv, repo, ref, flag string, checkout func() *config.Config, warn io.Writer, forAttempts bool) (*task.Recipe, string, error) {
 	name, explicit := flag, flag != ""
+	root := checkoutRoot(ctx, repo)
 	var cfg *config.Config
 	if c := checkout(); c != nil {
 		cfg = c
-		if name == "" && c.Agent.Recipe != "" {
-			name, explicit = c.Agent.Recipe, true
+	} else if name == "" && root == "" {
+		// The read's own error is not this call's refusal: where the job is
+		// decided from this document the decision refuses it in its own words a
+		// gate later, and where it is not the launcher holds nothing to read
+		// one with — so the recipe falls back to default, which is what a
+		// launch with no document gets anyway.
+		if c, err := env.launchDocumentAtTheRef(ctx, &task.Spec{Repo: repo, Ref: ref}); err == nil {
+			cfg = c
 		}
+	}
+	if name == "" && cfg != nil && cfg.Agent.Recipe != "" {
+		name, explicit = cfg.Agent.Recipe, true
 	}
 	if name == "" {
 		name = recipe.DefaultName
 	}
-	rr, err := resolveRecipe(ctx, env, root, name, time.Now(), false)
+	provider := env.repoProvider(repo, cfg)
+	rr, err := resolveLaunchRecipe(ctx, env, provider, repo, name, time.Now())
 	if err != nil {
 		return nil, "", err
 	}
@@ -4785,7 +4824,7 @@ func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func
 	// A mode: artifact launch carries its mode in the task, and the runner
 	// selects the run's shape from that field before it resolves the recipe
 	// itself. So the launcher may only write it when it is sure of the
-	// recipe the run will get: resolveRecipe has paths where what it
+	// recipe the run will get: the resolution has paths where what it
 	// returned is NOT that recipe (a project layer this launcher may not
 	// read, a stale cached project recipe standing in for an unreachable
 	// bucket), and on those the mode would stay empty for a recipe that is
@@ -4818,9 +4857,17 @@ func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func
 		return nil, "", userErr("recipe %s writes this repository's run reports, and a repository has one report run at a time; --attempts launches a batch of runs at once and cannot use it", rr.Name)
 	}
 	printRecipeNote(warn, rr, explicit)
+	// The leftover folder's removal, the diff validate prints (D3296), offered
+	// on the launch too and to the same channel the other launch notes go to:
+	// nothing is deleted and nothing is asked, and a launch with no checkout
+	// (or none whose store can be read) is offered nothing rather than a line
+	// about a folder that is not there.
+	for _, p := range launchRecipeCleanupLines(ctx, env, provider, repo, root) {
+		io.WriteString(warn, noteLine(p))
+	}
 	// An explicit --recipe default overrides agent.recipe, which applies when
-	// the checkout sets it, or when there is no checkout and the runner reads
-	// it at the ref: then the default is carried in the task.
+	// the launch document sets it, or when there is no document and the runner
+	// reads it at the ref: then the default is carried in the task.
 	override := flag == recipe.DefaultName && (cfg == nil || cfg.Agent.Recipe != "")
 	mode := ""
 	// The two modes whose shape the runner selects from the spec: mode:
@@ -4831,6 +4878,50 @@ func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func
 		mode = rr.Recipe.Mode
 	}
 	return rr.taskRecipeEmbedding(override), mode, nil
+}
+
+// resolveLaunchRecipe is the recipe a launch of repository repo runs under
+// name, whichever path named it: --recipe, the launch document's agent.recipe,
+// a follow-up's inherited recipe, or the default fallback. The name resolves
+// where a name resolves now (D3303) — recipe.LookupOrder: this repository's own
+// copy in the project store first, then the name itself — and the catalog after
+// both.
+//
+// The checkout's .fugaro/recipes/ is read on no path (D3237, B16): a
+// repository's recipe lives in the project, the folder is a leftover the launch
+// offers to delete, and the release-A runner refuses a task that leaves its
+// recipe to it. So what this returns is always embedded — the project's copy or
+// the catalog's text — which is what makes no task this launcher writes name a
+// repository recipe (R7).
+// The repository and its provider kind are the caller's to name, because a
+// launch knows which repository it launches (--repo, the pull request's chain)
+// even where the directory it runs in is not a checkout of it; the checkout of
+// repo is looked up here for the one thing the resolution needs it for, the
+// refusal of a repository still holding its own .fugaro/recipes/<name>.yaml
+// with no migration record (D3308, refuseUnmigratedFolderRecipe).
+func resolveLaunchRecipe(ctx context.Context, env *cloudEnv, provider, repo, name string, now time.Time) (*resolvedRecipe, error) {
+	return resolveRecipeFor(ctx, env, repo, provider, checkoutRoot(ctx, repo), name, now, false)
+}
+
+// launchRecipeCleanupLines is recipesCleanupLines for a launch: the lines
+// validate prints for a checkout that still holds .fugaro/recipes/, as the
+// plain sentences noteLine escapes.
+//
+// It reads nothing for a launch with no checkout of the repository (root ==
+// "", where the folder of whatever directory the command runs in is not this
+// repository's), and nothing for an installation whose runs bucket is not the
+// one project recipes live in (projectRecipesNote: the store would be read
+// from a bucket that does not hold it, and every file would be told it has no
+// copy).
+func launchRecipeCleanupLines(ctx context.Context, env *cloudEnv, provider, repo, root string) []string {
+	if root == "" || projectRecipesNote(env.lc) != "" {
+		return nil
+	}
+	var out []string
+	for _, p := range recipesCleanupLines(root, recipesStoreOf(ctx, env, provider, repo, root)) {
+		out = append(out, p.Path+" "+p.Message)
+	}
+	return out
 }
 
 // printRecipeNote prints rr's note when the user chose the recipe by name
@@ -7141,6 +7232,7 @@ func slipGrantOverService(ctx context.Context, serviceURL string, req credsvc.Sl
 	hreq.Header.Set("Content-Type", "application/json")
 	hreq.Header.Set("Accept", "application/json")
 	hreq.Header.Set("Authorization", "Bearer "+identity)
+	hreq.Header.Set(credsvc.HeaderPersonIdentity, identity)
 	resp, err := slipClient().Do(hreq)
 	if err != nil {
 		return credsvc.SlipGrantResponse{}, errors.New("the installation's credentials service could not be reached")
