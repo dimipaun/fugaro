@@ -1305,7 +1305,7 @@ func (r *initRun) gateDeleteLeft(reason string, doc []byte, verdict managedmode.
 // plan, which the step passes to the gate as Spec.Upgrade's addresses beside
 // the launcher upgrade's replaces. A plan that carries one DID have a delete
 // the guard admitted, so the guard's own sentence above is false of it as well
-// — the two lists are read together for that sentence and named apart in the
+// — the lists are read together for that sentence and named apart in the
 // rules, because a minter row's delete is not a replace of a grant and the
 // sentence that says it was would be one the owner cannot check.
 //
@@ -1319,7 +1319,7 @@ func (r *initRun) gateDeleteLeft(reason string, doc []byte, verdict managedmode.
 // the verdict's own answer and never a caller's preference, and the rules that
 // fired are the record's warnings beside it.
 func admittedRules(upgrade, identity, retired []string, warned bool) []string {
-	own := len(upgrade) > 0 || len(identity) > 0
+	own := len(upgrade) > 0 || len(identity) > 0 || len(retired) > 0
 	guard := "the guard refused no delete and no replace, so the plan removes nothing of fugaro's own (the owner's delete list admits no removal in the embedded roots)"
 	cover := "the cover of the embedded roots admitted every change in the plan"
 	costs := "the cost list blocked no attribute of the plan"
