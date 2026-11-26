@@ -13,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -52,12 +53,13 @@ type sharedRetireOpts struct {
 	// noState is a repository with no state object of its own: the repository
 	// that was never applied has no root to retire.
 	noState bool
-	// noImage is an installation whose project image does not resolve: the
-	// repository would have nowhere to run.
-	noImage bool
 	// runningOn is a job an execution is still executing on: deleting it would
 	// kill a person's run.
 	runningOn string
+	// emptyState is a root whose state object is there and manages nothing:
+	// what a first shared run that stopped between its destroy and its forget
+	// leaves behind.
+	emptyState bool
 	// unprotected is a state whose jobs say deletion_protection = false: the
 	// plan deletes them and no API delete is owed.
 	unprotected bool
@@ -93,9 +95,6 @@ func newSharedRetireRig(t *testing.T, o sharedRetireOpts) *sharedRetireRig {
 	t.Cleanup(func() { infra.SharedJobBaked = false })
 	r, db := proxiedConvergeRig(t)
 	noProjectLayer(t)
-	if o.noImage {
-		withoutBaseImage(t, r)
-	}
 	canonical := proxiedRepoCanonical(t)
 	publishMigratedNode(t, db, o.nodeVersion, o.proxy, canonical)
 
@@ -107,7 +106,10 @@ func newSharedRetireRig(t *testing.T, o sharedRetireOpts) *sharedRetireRig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !o.noState {
+	switch {
+	case o.emptyState:
+		writeRepoStateObject(t, r, slug, emptyStateDoc)
+	case !o.noState:
 		writeRepoStateObject(t, r, slug, sharedRootStateDoc(t, o))
 	}
 	if o.forget {
@@ -119,7 +121,11 @@ func newSharedRetireRig(t *testing.T, o sharedRetireOpts) *sharedRetireRig {
 
 	// Both of the repository root's reads, scripted apart: "show -json" with no
 	// plan file is the state the retirement reads, and "show" is the plan.
-	state := map[string]any{"stdout": sharedRootStateDoc(t, o)}
+	doc := sharedRootStateDoc(t, o)
+	if o.emptyState {
+		doc = emptyStateDoc
+	}
+	state := map[string]any{"stdout": doc}
 	if o.forget {
 		// The second read is forgetRetiredRoot's, after the apply: the state of
 		// a root whose every address is gone.
@@ -188,26 +194,6 @@ func noProjectLayer(t *testing.T) {
 	dir := t.TempDir()
 	layerBucketOpener = func(ctx context.Context, _ string) (*blobx.Bucket, error) {
 		return blobx.Open(ctx, "file://"+dir)
-	}
-}
-
-// withoutBaseImage takes the base image out of the rig's local config: an
-// installation whose project image does not resolve (infra.ProjectJobImage).
-func withoutBaseImage(t *testing.T, r *initRig) {
-	t.Helper()
-	b, err := os.ReadFile(r.cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var kept []string
-	for _, line := range strings.Split(string(b), "\n") {
-		if strings.HasPrefix(line, "base_images:") {
-			continue
-		}
-		kept = append(kept, line)
-	}
-	if err := os.WriteFile(r.cfg, []byte(strings.Join(kept, "\n")), 0o600); err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -305,6 +291,15 @@ func (r *sharedRetireRig) update(t *testing.T) (string, error) {
 	return out + errOut, err
 }
 
+// updateReadOnly is the same door with --plan-only: it writes the workdir, reads
+// the state and prints the summary, and retires nothing — the one run that can
+// tell a workdir's own file from what the binary ships.
+func (r *sharedRetireRig) updateReadOnly(t *testing.T) (string, error) {
+	t.Helper()
+	out, errOut, err := executeStdin(t, "", "update", "--repo", "--no-build", "--plan-only")
+	return out + errOut, err
+}
+
 // workdirFile is a path under the repository root's own workdir, which
 // PrepareWorkdir rebuilds from the binary on every run.
 func (r *sharedRetireRig) workdirFile(t *testing.T, name string) string {
@@ -322,6 +317,18 @@ func (r *sharedRetireRig) workdirFile(t *testing.T, name string) string {
 func (r *sharedRetireRig) registryTF(t *testing.T) string {
 	t.Helper()
 	return r.workdirFile(t, filepath.Join("modules", "repo", "registry.tf"))
+}
+
+// stateObjects is what the installation's state bucket holds under this
+// repository's prefix: the root that is still there, and nothing once the
+// retirement has forgotten it.
+func (r *sharedRetireRig) stateObjects(t *testing.T) []string {
+	t.Helper()
+	names, err := infra.RepoStateObjects(t.Context(), retireClients(t, r.initRig), initStateBucket, r.slug)
+	if err != nil {
+		t.Fatalf("listing the repository's state objects: %v", err)
+	}
+	return names
 }
 
 // retireCalls is the terraform subcommands the run made, one line each, with
@@ -416,6 +423,271 @@ func TestUpdateRetiresTheRepoJobsOfAMigratedRepo(t *testing.T) {
 func callsPlanDestroy(calls [][]string) bool {
 	for _, c := range calls {
 		if len(c) > 0 && c[0] == "plan" && slices.Contains(c, "-destroy") {
+			return true
+		}
+	}
+	return false
+}
+
+// TestUpdateRetiringARootLeavesItsSecretContainers: the containers hold the
+// values a returning repository-level secrets feature will want (M1, D2313),
+// so the retirement takes them out of the root's state and destroys nothing:
+// they are in the summary's KEPT list, the state removal names them, no plan
+// deletes them, and Secret Manager is untouched afterwards.
+func TestUpdateRetiringARootLeavesItsSecretContainers(t *testing.T) {
+	r := newSharedRetireRig(t, sharedRetireOpts{proxy: true})
+	id := gcp.SecretID(r.slug, sharedOAuthName)
+	r.sm.Seed(id, map[string]string{gcp.LabelManaged: gcp.ManagedValue}, []byte(tokenValue))
+	out, err := r.update(t)
+	if err != nil {
+		t.Fatalf("the update did not retire the root: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "KEPT — Fugaro never deletes a secret or a secret version:") {
+		t.Errorf("the retirement does not say what it keeps:\n%s", out)
+	}
+	if !strings.Contains(out, "leaves Terraform's state, unmanaged; Secret Manager is untouched") {
+		t.Errorf("a secret container is not in the KEPT list, so the retirement claims to destroy one:\n%s", out)
+	}
+	var removed []string
+	for _, call := range r.ran(t, "state rm") {
+		removed = append(removed, call[len(call)-1])
+	}
+	if !slices.Contains(removed, sharedSecretAddr) {
+		t.Errorf("the state removal does not name %s, so the container is left in the state of a root nothing applies any more: %v", sharedSecretAddr, removed)
+	}
+	// The value is readable as it was: a container this run had destroyed would
+	// answer nothing, and a version it had destroyed would be gone.
+	if got := string(r.sm.Latest(id)); got != tokenValue {
+		t.Errorf("the container's version reads %q after the retirement, want the value it held: Secret Manager is not this step's to write", got)
+	}
+	for _, gone := range r.sm.Destroyed() {
+		t.Errorf("%s was destroyed by the retirement, which never deletes a secret version", gone)
+	}
+	if gone := r.sm.Deleted(); len(gone) != 0 {
+		t.Errorf("the retirement deleted the secret container(s) %v, and Fugaro never deletes one (M1, D2313)", gone)
+	}
+}
+
+// TestUpdateRetiringARootLiftsTheRegistryGuardForThatApplyOnly: the whole root
+// is destroyed, the registry with it (F18: a retired root that left its
+// registry behind would leave one per repository forever), and the module's
+// lifecycle.prevent_destroy is what stands in the way — lifted in the workdir's
+// copy of the module for this one apply, and read back by the next run, which
+// rewrites that copy from the binary (PrepareWorkdir).
+func TestUpdateRetiringARootLiftsTheRegistryGuardForThatApplyOnly(t *testing.T) {
+	const guard = "prevent_destroy"
+	r := newSharedRetireRig(t, sharedRetireOpts{proxy: true, forget: true})
+	out, err := r.update(t)
+	if err != nil {
+		t.Fatalf("the update did not retire the root: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "the apply destroys its image registry and every image in it") {
+		t.Errorf("the retirement does not name the registry it destroys:\n%s", out)
+	}
+	// The retiring run wrote the module's own copy at its start (PrepareWorkdir)
+	// and lifted the block out of it for the plan and the apply, so the file left
+	// on disk is the lifted one — the only way a plan could carry the registry's
+	// delete at all.
+	path := r.registryTF(t)
+	if b, err := os.ReadFile(path); err != nil {
+		t.Fatal(err)
+	} else if strings.Contains(string(b), guard) {
+		t.Errorf("%s still carries %s after the retiring apply, so the plan could not have destroyed the registry: the lift is the whole reason the apply can write that delete\ncalls:\n%s\nout:\n%s", path, guard, strings.Join(r.retireCalls(t), "\n"), out)
+	}
+	// The next update of the same workdir reads the block back, because
+	// PrepareWorkdir writes the module from the binary at the start of every run:
+	// the lift is one apply's, never a change to fugaro's own tree. Nothing of
+	// the root is left to retire — the state object went with it — so this run
+	// reaches terraform not at all.
+	before := len(r.calls(t))
+	if out, err := r.update(t); err != nil {
+		t.Fatalf("the second update failed: %v\n%s", err, out)
+	}
+	if b, err := os.ReadFile(path); err != nil {
+		t.Fatal(err)
+	} else if !strings.Contains(string(b), guard) {
+		t.Errorf("%s lost its %s for good: the guard is lifted in the workdir's copy for one apply, and PrepareWorkdir writes the module back on every run", path, guard)
+	}
+	if calls := r.calls(t)[before:]; callsHave(calls, "plan") || callsHave(calls, "apply") || callsHave(calls, "state") {
+		t.Errorf("a run over a retired root reached terraform, and nothing of that repository is left to plan: %q", calls)
+	}
+}
+
+// TestUpdateDoesNotRetireBeforeThePrecondition: the acceptance's structural
+// precondition, and the mutation check the review asks for — with a fact of the
+// world missing, the update says why and leaves the repository's jobs exactly
+// where they are. The two facts this flow judges before it asks about
+// executions are the project's image for its shared jobs, which a repository
+// would have nowhere to run without, and the Bitbucket proxy, without which no
+// shared job can clone the repository. The third — an execution running on a
+// job — is the test below.
+func TestUpdateDoesNotRetireBeforeThePrecondition(t *testing.T) {
+	// The proxy: a whole update over a repository whose token the installation
+	// does not forward. Nothing of the root goes, and the run goes on to do the
+	// rest of the update — a hold is a note, never a failure.
+	t.Run("the Bitbucket proxy is off", func(t *testing.T) {
+		r := newSharedRetireRig(t, sharedRetireOpts{})
+		out, err := r.update(t)
+		if err != nil {
+			t.Fatalf("the update failed over a repository it may not retire: %v\n%s", err, out)
+		}
+		want := "note: acme/sandbox's own root is not retired here: the Bitbucket proxy is off; a later update retires it once that holds"
+		if !strings.Contains(out, want) {
+			t.Errorf("the run does not say %q:\n%s", want, out)
+		}
+		for _, sub := range []string{"state rm", "apply"} {
+			if got := r.ran(t, sub); len(got) != 0 {
+				t.Errorf("terraform %s ran for a held retirement: %q", sub, got)
+			}
+		}
+		if callsPlanDestroy(r.calls(t)) {
+			t.Errorf("the run planned the destroy of a root it may not retire: %q", r.retireCalls(t))
+		}
+		for _, job := range []string{sharedWorkflowJobName, sharedCheckJobName} {
+			if !r.run.HasJob(job) {
+				t.Errorf("%s is gone: a held retirement deletes no job", job)
+			}
+		}
+		if len(r.run.JobDeletes()) != 0 {
+			t.Errorf("the run deleted %v through the API", r.run.JobDeletes())
+		}
+		if names := r.stateObjects(t); len(names) == 0 {
+			t.Errorf("the state object is gone, so the next update has nothing to retire")
+		}
+	})
+	// The image: an installation whose config names no base image and whose
+	// catalog marks no default. No checkout this program loads can reach that
+	// state — a config that names a base image is what an installation is
+	// written with (D2305), and a project layer that stopped naming one is
+	// refused before any repository is — so the precondition is asked here, of
+	// the hold itself. A repository whose shared job would run the empty image
+	// has no shared job at all, which is the whole reason the hold is asked.
+	t.Run("the project's image does not resolve", func(t *testing.T) {
+		e, out := stageEngine(t, "", nil)
+		lc := &localcfg.Config{Name: "aurora", GCPProject: "proj-1234", Region: sharedRegion}
+		spec := infra.RepoSpec{Name: "acme/sandbox", Provider: "bitbucket", BitbucketProxied: true}
+		holds, err := e.r.rootRetireHolds(t.Context(), nil, lc, spec, nil)
+		if err != nil {
+			t.Fatalf("the precondition's read failed: %v", err)
+		}
+		if holds {
+			t.Fatalf("the retirement went ahead with no image for the project's shared jobs: the repository would have nowhere to run")
+		}
+		want := "note: acme/sandbox's own root is not retired here: the project's image for its shared jobs does not resolve; a later update retires it once that holds"
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the hold does not say %q:\n%s", want, out.String())
+		}
+	})
+}
+
+// TestUpdateDoesNotRetireAJobWithARunningExecution: a job an execution is
+// running on is a person's work, and deleting the job kills the run with it
+// (infra.InFlightJobs). The update names the job and leaves the whole root
+// alone — the later update retires it once that run has finished.
+func TestUpdateDoesNotRetireAJobWithARunningExecution(t *testing.T) {
+	r := newSharedRetireRig(t, sharedRetireOpts{proxy: true, runningOn: sharedWorkflowJobName})
+	out, err := r.update(t)
+	if err != nil {
+		t.Fatalf("the update failed over a repository whose job is running a run: %v\n%s", err, out)
+	}
+	want := "note: acme/sandbox's own root is not retired here: a run is executing on " + sharedWorkflowJobName + "; a later update retires it once that run has finished"
+	if !strings.Contains(out, want) {
+		t.Errorf("the run does not say %q:\n%s", want, out)
+	}
+	if callsPlanDestroy(r.calls(t)) || len(r.ran(t, "state rm")) != 0 || len(r.ran(t, "apply")) != 0 {
+		t.Errorf("the retirement ran over a job with a run in flight: %q", r.retireCalls(t))
+	}
+	for _, job := range []string{sharedWorkflowJobName, sharedCheckJobName} {
+		if !r.run.HasJob(job) {
+			t.Errorf("%s is gone, and deleting it takes the execution running on it with it", job)
+		}
+	}
+	if len(r.run.JobDeletes()) != 0 {
+		t.Errorf("the update deleted %v through the API", r.run.JobDeletes())
+	}
+}
+
+// TestUpdateRepairsAFailedFirstSharedRun: a first shared run that stopped
+// between its destroy and its forget leaves a state object that manages
+// nothing. The next update finishes the job: the emptied object goes, so the
+// repository is left the way one that was never applied is and the door's note
+// about the runs in flight stops naming a retirement it does not owe. Nothing
+// else is touched — there is nothing of the root left to take apart, and a job
+// delete is not this step's.
+func TestUpdateRepairsAFailedFirstSharedRun(t *testing.T) {
+	r := newSharedRetireRig(t, sharedRetireOpts{proxy: true, emptyState: true, forget: true})
+	out, err := r.update(t)
+	if err != nil {
+		t.Fatalf("the update did not repair a run that stopped mid-retirement: %v\n%s", err, out)
+	}
+	if names := r.stateObjects(t); len(names) != 0 {
+		t.Errorf("the emptied state object %v is still in gs://%s, so the next update reads the repository as one with a root to retire", names, initStateBucket)
+	}
+	for _, sub := range []string{"state rm", "plan", "apply"} {
+		if got := r.ran(t, sub); len(got) != 0 {
+			t.Errorf("terraform %s ran over a root whose state manages nothing: %q", sub, got)
+		}
+	}
+	if got := r.run.JobDeletes(); len(got) != 0 {
+		t.Errorf("the repair deleted %v through the Cloud Run API, and a root with no state left is not a root to take apart", got)
+	}
+	for _, job := range []string{sharedWorkflowJobName, sharedCheckJobName} {
+		if !r.run.HasJob(job) {
+			t.Errorf("%s is gone", job)
+		}
+	}
+}
+
+// TestUpdatePreviousVersionConvergesToSharedJobs: the installation the release
+// behind left — a node written one version back that admits this repository,
+// the per-repository root still deployed — converges in ONE update, which is
+// the HARD RULE: the node's version is read carried forward (repoPolicyRead),
+// so the same run that enrols the repository also takes its old root apart. The
+// second update has nothing left to do about it.
+func TestUpdatePreviousVersionConvergesToSharedJobs(t *testing.T) {
+	r := newSharedRetireRig(t, sharedRetireOpts{proxy: true, nodeVersion: projectpolicy.Version - 1, forget: true})
+	out, err := r.update(t)
+	if err != nil {
+		t.Fatalf("one update did not converge an installation at the previous version: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"This is the repository's whole root: the apply destroys its image registry and every image in it, its jobs, its accounts and its grants.",
+		"deleted the orphaned Cloud Run job " + sharedWorkflowJobName,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the run does not say %q:\n%s", want, out)
+		}
+	}
+	if n := len(r.ran(t, "apply")); n != 1 {
+		t.Errorf("apply ran %d time(s), want the retirement's one: %q", n, r.retireCalls(t))
+	}
+	if names := r.stateObjects(t); len(names) != 0 {
+		t.Errorf("the retired repository still holds %v in gs://%s", names, initStateBucket)
+	}
+	// The repository is enrolled by the same run: the local config is the record
+	// of that (M7), and the second update is the one that must find nothing to
+	// do.
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := lc.Repos["acme/sandbox"]; len(got.Workflows) != 1 || got.Workflows[0] != "app" {
+		t.Errorf("the local config records %+v, want the repository this run enrolled", got)
+	}
+	before := len(r.calls(t))
+	if out, err := r.update(t); err != nil {
+		t.Fatalf("the second update failed: %v\n%s", err, out)
+	}
+	if calls := r.calls(t)[before:]; callsPlanDestroy(calls) || callsHave(calls, "state rm") {
+		t.Errorf("the second update retired something: %q", calls)
+	}
+}
+
+// callsHave is whether the run made a terraform subcommand: the same reading
+// ran does, over a slice of calls a test has already taken.
+func callsHave(calls [][]string, sub string) bool {
+	for _, c := range calls {
+		if len(c) > 0 && c[0] == sub {
 			return true
 		}
 	}

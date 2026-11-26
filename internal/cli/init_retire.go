@@ -809,7 +809,12 @@ func (r *initRun) forgetRetiredRoot(ctx context.Context, c *infra.Clients, t *tf
 // keeps for the same reason.
 func (r *initRun) rootRetireHolds(ctx context.Context, c *infra.Clients, lc *localcfg.Config, spec infra.RepoSpec, rets []infra.Retirement) (bool, error) {
 	why := ""
-	if _, err := infra.ProjectJobImage(lc); err != nil {
+	// An image that resolved to nothing is one that does not resolve: the
+	// resolver answers ("", nil) for an installation whose config names no base
+	// image and no catalog default, and a job with an empty image is a
+	// repository with no job at all -- the whole reason this precondition is
+	// asked.
+	if img, err := infra.ProjectJobImage(lc); err != nil || img == "" {
 		why = "the project's image for its shared jobs does not resolve"
 	}
 	if why == "" && spec.Provider == "bitbucket" && !spec.BitbucketProxied {
