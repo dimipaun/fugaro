@@ -1928,8 +1928,8 @@ func TestUpdatePolicyMigrationRewritesAnOffModeInPlace(t *testing.T) {
 		nodeCeiling    float64
 	}{
 		{name: policy.ModeObserve, fileMode: policy.ModeObserve, nodeCeiling: 5},
-		{name: config.BudgetOff, fileMode: config.BudgetOff, nodeCeiling: 5},
-		{name: config.BudgetOff + " with a member the publish half writes", fileMode: config.BudgetOff, nodeCeiling: 7},
+		{name: "off", fileMode: "off", nodeCeiling: 5},
+		{name: "off" + " with a member the publish half writes", fileMode: "off", nodeCeiling: 7},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newProjectFixture(t, "")
@@ -1937,7 +1937,7 @@ func TestUpdatePolicyMigrationRewritesAnOffModeInPlace(t *testing.T) {
 				return strings.Replace(s, "budget: { mode: enforce,", "budget: { mode: "+tc.fileMode+",", 1)
 			})
 			node := currentPolicyNode()
-			node["budget"] = map[string]any{"mode": config.BudgetOff, "per_run_usd": tc.nodeCeiling}
+			node["budget"] = map[string]any{"mode": "off", "per_run_usd": tc.nodeCeiling}
 			f.db.Set(projectpolicy.PathShared(), node)
 			h := newMigrationRig(t, f, &initOptions{})
 
@@ -1970,7 +1970,7 @@ func TestUpdatePolicyMigrationRewritesAnOffModeInPlace(t *testing.T) {
 			}
 			// The step's own line, and not a version move: the numbers a walk
 			// reports would say the node went from a version to itself.
-			if !strings.Contains(out, fmt.Sprintf("the budget mode: %s -> %s", config.BudgetOff, policy.ModeObserve)) {
+			if !strings.Contains(out, fmt.Sprintf("the budget mode: %s -> %s", "off", policy.ModeObserve)) {
 				t.Errorf("the diff does not say what the mode became, in the step's own words:\n%s", out)
 			}
 			if strings.Contains(out, fmt.Sprintf("%d to %d:", projectpolicy.Version, projectpolicy.Version)) {
