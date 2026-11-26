@@ -1352,7 +1352,7 @@ step_layer() {
     fi
   fi
   LAYER_OK=yes
-  fact layer PASS "the published project layer (${where:-unknown}, generation $(field "$SCRATCH/layer.txt" generation), sha256 $(field "$SCRATCH/layer.txt" sha256)) sets ab.rate: ${rate}, names ${count} challenger(s) — ${challengers:-none} — and names the judge model ${JUDGE_MODEL}. This is a text read of the layer's own ab: block — no command in this release prints an effective ab.rate — and the sandbox repository's fugaro.yaml carries no opt-out${LAYER_SET:+}. This check SET IT UP first: ${LAYER_SET}. It copied ${LAYER_FILE} (sha256 ${LAYER_HEAD}) before it wrote, and the Restore puts those bytes back and publishes them again}"
+  fact layer PASS "the published project layer (${where:-unknown}, generation $(field "$SCRATCH/layer.txt" generation), sha256 $(field "$SCRATCH/layer.txt" sha256)) sets ab.rate: ${rate}, names ${count} challenger(s) — ${challengers:-none} — and names the judge model ${JUDGE_MODEL}. This is a text read of the layer's own ab: block — no command in this release prints an effective ab.rate — and the sandbox repository's fugaro.yaml carries no opt-out${LAYER_SET:+. This check SET IT UP first: ${LAYER_SET}. It copied ${LAYER_FILE} (sha256 ${LAYER_HEAD}) before it wrote, and the Restore puts those bytes back and publishes them again}"
 }
 
 # step_route: the plan's own words for this check are "a pair whose challenger

@@ -1270,6 +1270,9 @@ test_happy_path() {
   expect_contains "$out" "belongs to ${project}, and its origin is acme/sandbox" "happy path: what the sandbox row read"
   expect_contains "$out" "FACT layer: PASS" "happy path: the premise"
   expect_contains "$out" "names the judge model ${judge_model}" "happy path: the judge model it read"
+  # The layer already carries the premise, so this run wrote nothing into it and
+  # the row may not claim otherwise.
+  expect_absent "$out" "SET IT UP" "happy path: the layer row claims no write this run did not make"
   expect_contains "$out" "FACT route: PASS" "happy path: the challenger is a routed provider model"
   expect_contains "$out" "every challenger the layer names is a provider model routed for acme/sandbox" "happy path: what the route row read"
   expect_contains "$out" "${challenger_model} on openrouter (openrouter.ai, allow_data_to acme/sandbox)" "happy path: the route it resolved"

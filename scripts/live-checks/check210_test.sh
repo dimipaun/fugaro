@@ -1036,6 +1036,9 @@ test_happy_path() {
   expect_contains "$out" "belongs to ${project}" "happy path: the project it read"
   expect_contains "$out" "FACT layer: PASS" "happy path: the premise"
   expect_contains "$out" "sets ab.rate: 0.1 and names 1 challenger(s): ${challenger_model}" "happy path: what the premise read"
+  # The layer already carries the premise, so this run wrote nothing into it and
+  # the row may not claim otherwise.
+  expect_absent "$out" "SET IT UP" "happy path: the layer row claims no write this run did not make"
   expect_contains "$out" "FACT pair: PASS" "happy path: the launch that sampled"
   expect_contains "$out" "pair pair-$(run_of 1) on batch ab-pair-$(run_of 1)" "happy path: the pair it sampled"
   expect_contains "$out" "FACT arms: PASS" "happy path: the two arms"
