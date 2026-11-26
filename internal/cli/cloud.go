@@ -80,6 +80,14 @@ type cloudEnv struct {
 	// the launcher's own token (D3142). It is read where the grant would be
 	// asked for (run_personal.go) and nowhere else.
 	noPersonalToken bool
+	// namedPool is --pool: the pool "the launcher's pool" resolves to for this
+	// launch's runs (C2's named_pool, D3176), "" when the launch named none. It
+	// is written by the one launcher that reads the flag (runRun) and read
+	// where the run's grant is asked for (runSlipEnv), so the flag and the
+	// grant request cannot disagree about the name. It is not the pool a launch
+	// designated: the service resolves that from the launcher's own
+	// designation, and a run that names none is served from it.
+	namedPool string
 	// policy is the project's published policy, read at most once per run
 	// through the operator's own credentials (policyReadOnce.read): the launch
 	// gate reads it before anything of the launch exists, and the mint

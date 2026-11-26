@@ -934,6 +934,51 @@ func (e *cloudEnv) chainRoutingGate(ctx context.Context, spec *task.Spec) error 
 	return nil
 }
 
+// poolGate refuses the launch whose --pool names a pool no chain of the run's
+// models resolves, before the claim and the task like every gate here. It is
+// asked beside chainRoutingGate and reads the same two things: the project's
+// table and the models the rungs can choose.
+//
+// `--pool` names the pool "the launcher's pool" resolves to for this run
+// (D3176), and the name resolves only where an entry some model of this run
+// matches has a chain naming the launcher's pool: a launch whose models name
+// none would carry a name no chain reads, which is a run served from a pool its
+// own project does not route — refused with the fix rather than started. A
+// project that publishes no table is the same answer, and it is the one the
+// release-1 bridge gets (O7, R25): nothing names the launcher's pool there, so
+// `--pool` names nothing.
+//
+// `--token`, which the same decision retires, is refused in the account walk
+// itself (claudeAccountChoice), where the flag is read: it is a name the run's
+// own account is resolved from, and the refusal belongs before that resolution
+// rather than beside the table's gates.
+func (e *cloudEnv) poolGate(ctx context.Context, o *runOptions, spec *task.Spec) error {
+	if e.lc == nil || o.pool == "" {
+		return nil
+	}
+	// A run whose models this launcher cannot name — the container resolves
+	// them from the recipe and the project's layers itself — is not judged here,
+	// exactly as the gate beside it does not judge it: --pool travels to the
+	// service, which is where the launcher's entitlement to the name is checked
+	// (PL4) and where the chain is resolved at the call.
+	models := launchRunModels(ctx, e, spec)
+	if len(models) == 0 {
+		return nil
+	}
+	for _, model := range models {
+		entry, err := routing.Resolve(e.lc.ModelRouting, model)
+		if err != nil {
+			continue
+		}
+		for _, source := range entry.Chain {
+			if source.Kind == routing.KindLauncherPool && infra.ChainSourceServes(source, spec.Repo) {
+				return nil
+			}
+		}
+	}
+	return userErr("--pool %s: no chain of this run's models names the launcher's pool, so the name resolves to nothing: add launcher-pool with fugaro routing set", oneLineCLI(o.pool))
+}
+
 // switchedServiceAuth is the auth a switched repository's run reaches the
 // credentials service for its model calls under, "" where this launch's run is
 // not one: the document's auth is one the flip list carries
