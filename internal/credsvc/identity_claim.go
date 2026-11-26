@@ -419,7 +419,7 @@ func (s *Server) identityClaim(ctx context.Context, w http.ResponseWriter, r *ht
 			"the run's issuance record is not the one this claim read: it was replaced under the claim, so the ticket, the account it expects, the claims it holds or the job it names are not the ones this claim was checked against, and the run must be launched again")
 		return
 	}
-	signer, err := identitySignerFor(ctx, s.cfg.Identity.Signer)
+	signer, err := IdentitySignerFor(ctx, s.cfg.Identity.Signer)
 	if err != nil {
 		s.log.Error("credsvc: the runs' signer could not be built", "signer", s.cfg.Identity.Signer, "error", err)
 		s.refuseIdentityCall(ctx, w, run, slug, StatusUnavailable, ErrorStateUnavailable,

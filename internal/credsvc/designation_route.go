@@ -137,7 +137,13 @@ func (s *Server) poolDesignate(ctx context.Context, w http.ResponseWriter, r *ht
 		s.refuseDesignate(ctx, w, caller.Account, StatusUnavailable, ErrorStateUnavailable, "the installation's own project could not be read")
 		return
 	}
-	pool, ok := namedPool(req.Pool, shared)
+	// The pool is read the way the lookup that reads this record back reads it
+	// (namedLauncherPool): a designation names a pool of the block that carries
+	// a pool's principal. `craft_pools` is the block every publish strips that
+	// member out of, so a route reading it here would refuse every honest
+	// designation on a real installation while passing on a fixture that writes
+	// the principal where no publish does.
+	pool, ok := namedLauncherPool(req.Pool, shared)
 	if !ok {
 		s.refuseDesignate(ctx, w, caller.Account, StatusRequestRefused, ErrorRequestRefused, requestRefused+designationNoSuchPool)
 		return

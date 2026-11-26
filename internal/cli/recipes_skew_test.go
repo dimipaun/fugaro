@@ -3187,7 +3187,7 @@ func TestReviewAgainstTaskKeyGatedOnImage(t *testing.T) {
 		setBaseImage(t, shiftRelease(t, reviewSpecSince, -1))
 		projectJobCheckoutYAML(t, strings.Replace(projectJobOAuthRepoYAML,
 			"  auth: oauth\n", "  auth: oauth\n  review_against_task: false\n", 1))
-		_, _, err := reviewCLI(t, "--pr", "7", "--token", "acme-personal")
+		_, _, err := reviewCLI(t, "--pr", "7")
 		if ExitCode(err) != ExitUserError {
 			t.Fatalf("err = %v, want the review launch refused", err)
 		}

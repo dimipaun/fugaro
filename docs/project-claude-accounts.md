@@ -882,7 +882,7 @@ alias once nothing names it. `fugaro accounts rm <account>` is refused the same 
 stands for the account, naming the `alias set` that moves it (D2101).
 
 **What may name an alias (D2091):** `default_claude_account`, every `stages.<stage>.claude_account`
-(§8), and `fugaro run --token` / `fugaro review --token`. Nothing else does: a committed
+(§8), and `fugaro run --token`. Nothing else does: a committed
 `agent.oauth_token` in `fugaro.yaml` names an account and never an alias, because a repository's own
 file may not depend on a name only your config holds, and neither may the lists that decide which jobs
 exist — `profiles.<p>.claude_accounts` and `job_profiles.*.claude_accounts`.

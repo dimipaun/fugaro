@@ -6,7 +6,7 @@ by the owner on 2026-11-15, and D2448–D2449 after the third review round the s
 
 ## Assumptions
 
-- **A1.** "status.md" is `docs/status.md`, and "spec" means a row in one of its four tables. Some
+- **A1.** "status.md" is `docs/status.md`, and "spec" means a row in one of its five tables. Some
   rows are not specs (F6). The matrix classifies every row.
 - **A2.** "Release" means a CLI release (`vX.Y.Z`, `scripts/release.sh`). The console
   (`console-vX.Y.Z`) and the mobile app (`mobile-vX.Y.Z`) release on their own streams
