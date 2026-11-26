@@ -8470,6 +8470,7 @@
         "dist",
         "node_modules",
         "plans",
+        "testdata",
         "vendor"
       ],
       "any": true
@@ -17104,12 +17105,17 @@
       "reads": [
         "**",
         "brand/*.png",
+        "go.mod",
         "internal/**",
         "internal/policy/**",
         "internal/recipe/catalog/**",
         "internal/rigor/personas/**",
         "website/public/**"
-      ]
+      ],
+      "ignores": [
+        ".git"
+      ],
+      "any": true
     },
     {
       "package": "./internal/preflight",

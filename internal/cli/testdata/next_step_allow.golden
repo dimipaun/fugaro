@@ -96,7 +96,6 @@ init_anchor.go	rerun fugaro update
 init_anchor.go	run fugaro update
 init_anchor.go	then rerun fugaro update
 init_firebase.go	next fugaro update
-init_firebase.go	then fugaro update
 init_firebase.go	then run fugaro update
 init_images.go	then fugaro update
 init_images_catalog.go	Run each command below in the checkout it names, then fugaro update
