@@ -322,7 +322,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### PL2: the account commands keep every token in a pool
 
 - Module: `pools`.
-- Acceptance: `fugaro accounts add` writes a lone account, and `--pool` names a pool the config already defines, which the token joins — a pool is made with `fugaro accounts pool add` (D3200, the owner's ruling of 2026-11-26); `fugaro accounts pool add` takes `--rule` and a service-account principal; `fugaro accounts rm` of a pool's last member removes the pool or refuses with the fix; `fugaro accounts pool ls --json` prints the shape of C2's contract; none asks a question.
+- Acceptance: `fugaro accounts add` writes a lone account, and `--pool` names a pool the config already defines, which the token joins — a pool is made with `fugaro accounts pool add` (D3198, the owner's ruling of 2026-11-26); `fugaro accounts pool add` takes `--rule` and a service-account principal; `fugaro accounts rm` of a pool's last member removes the pool or refuses with the fix; `fugaro accounts pool ls --json` prints the shape of C2's contract; none asks a question.
 - Files: `internal/cli/accounts_add.go`, `internal/cli/accounts_pool.go`, `internal/cli/accounts_rm.go`, `internal/cli/accounts_pool_rule_test.go` (new), `schemas/accounts-pool-ls.schema.json` (new), `website/content/cli-reference.md`.
 - Interfaces: Consumes PL1's fields and C2's JSON shape. Produces the commands PL5 extends and the JSON VS2 reads.
 - Tests: `TestAccountsAddWritesALoneAccount`, `TestAccountsAddPoolJoinsOneThatExists`, `TestPoolAddTakesARule`, `TestPoolLsJSONHasNoValue`.
