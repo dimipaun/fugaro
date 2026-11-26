@@ -72,6 +72,12 @@ variable "job" {
       name   = string
       region = string
     }))
+    # The same service for every shared job, switched or not: grants the
+    # invoker role and drops no mount.
+    credentials_service_grant = optional(object({
+      name   = string
+      region = string
+    }))
   })
 
   validation {

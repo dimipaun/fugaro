@@ -232,18 +232,28 @@ func (r *run) stagePool(ctx context.Context, stage string) (config.Pool, []confi
 }
 
 // poolMemberAdmits is F10's rule for one member: whether the repository may be
-// served by it at all. admittedAccounts is this stage's own walk over the
-// owner's accounts (stageAccountCandidates), which is the same list — the
-// accounts whose own allow_repos admits this repository — asked of a pool
-// member rather than of the walk itself, so the two cannot disagree about
-// which accounts this repository may use.
-func (r *run) poolMemberAdmits(m config.PoolMember, admittedAccounts []string) (bool, string) {
+// served by it at all.
+//
+// A Claude OAuth member is judged by its own admission — the account's
+// allow_repos against this run's repository, asked here (accountAdmitsRepo) and
+// never through the account walk's list (stageAccountCandidates): the walk
+// chose a credential for a stage, and it is gone where the credentials service
+// serves the run (D3171), while a pool member is named by the owner's craft and
+// its admission is the account's own (R20, D3182). A member the walk would have
+// held for another reason — the run holds it, a review-class job was built for
+// it — is admitted here on the same rule as any other: the repository's being
+// one the account's token may be used by.
+func (r *run) poolMemberAdmits(ctx context.Context, m config.PoolMember) (bool, string, error) {
 	switch m.Type {
 	case config.CredentialTypeClaudeOAuth:
-		if !slices.Contains(admittedAccounts, m.Name) {
-			return false, poolSkipNotAdmitted
+		admits, err := r.accountAdmitsRepo(ctx, m.Name)
+		if err != nil {
+			return false, "", err
 		}
-		return true, ""
+		if !admits {
+			return false, poolSkipNotAdmitted, nil
+		}
+		return true, "", nil
 	case config.CredentialTypeOpenRouter:
 		// The job's providers are the ones the repository is admitted to: the
 		// environment carries the owner's providers narrowed to the
@@ -252,19 +262,48 @@ func (r *run) poolMemberAdmits(m config.PoolMember, admittedAccounts []string) (
 		// member this repository may not be given, and one whose provider is
 		// here has already been admitted.
 		if _, ok := r.modelProviders()[m.Name]; !ok {
-			return false, poolSkipNotAdmitted
+			return false, poolSkipNotAdmitted, nil
 		}
-		return true, ""
+		return true, "", nil
 	case config.CredentialTypeVertex:
 		// The built-in credential is the project's own GCP service (D1624):
 		// there is no provider to be admitted to and no secret to hand over.
-		return true, ""
+		return true, "", nil
 	}
 	// A member of a type this path cannot place is not admitted, and the path
 	// that would judge it is the one that serves it: an Anthropic key is the
 	// credentials service's (D1634, MC6), whose own admission rule is that
 	// service's.
-	return false, "no path this run serves admits this member's type"
+	return false, "no path this run serves admits this member's type", nil
+}
+
+// accountAdmitsRepo reports whether the published policy defines an account by
+// this name and admits this run's repository to it (allow_repos): the one
+// admission rule a Claude OAuth credential has (F10, R20, D3182). An account
+// the policy does not define, a repository this run cannot name the way the
+// policy writes repositories (canonicalRepo), and a policy this run cannot read
+// are all "no": the member is skipped rather than used on an admission this run
+// cannot read.
+func (r *run) accountAdmitsRepo(ctx context.Context, name string) (bool, error) {
+	p, found, err := r.projectPolicy(ctx)
+	if err != nil {
+		return false, err
+	}
+	if !found || p == nil {
+		return false, nil
+	}
+	acct, ok := p.Accounts[name]
+	if !ok {
+		return false, nil
+	}
+	canonical, err := r.canonicalRepo()
+	if err != nil {
+		return false, err
+	}
+	if canonical == "" {
+		return false, nil
+	}
+	return projectpolicy.AdmitRepo(acct.AllowRepos, canonical), nil
 }
 
 // poolMemberHeld reports whether this job can serve the stage's calls with
@@ -323,31 +362,20 @@ func (r *run) poolMember(ctx context.Context, stage string, pool config.Pool, cr
 	spread := r.subscriptionSpread(ctx)
 	var served []config.PoolMember
 	var skipped []poolSkip
-	// The accounts a pool's subscription members are judged against are read
-	// only when the pool actually lists one whose admission this path asks
-	// about: a pool of this path's own kinds is answered without the account
-	// walk, and the list is read once however many members ask for it.
-	var admittedAccounts []string
-	accountsRead := false
 	for _, m := range config.PoolMembers(pool, creds) {
 		// The subscription member of a pool that is not all subscriptions
 		// (D1622's wholly-inert pool is refused before this is asked): while
 		// the switch is off the owner has not agreed to spread a run across
 		// subscriptions, and the member is stepped over rather than used.
-		if m.Type == config.CredentialTypeClaudeOAuth {
-			if !spread {
-				skipped = append(skipped, poolSkip{m, poolSkipSubscription})
-				continue
-			}
-			if !accountsRead {
-				accountsRead = true
-				var err error
-				if admittedAccounts, err = r.stageAccountCandidates(ctx); err != nil {
-					return config.PoolMember{}, nil, err
-				}
-			}
+		if m.Type == config.CredentialTypeClaudeOAuth && !spread {
+			skipped = append(skipped, poolSkip{m, poolSkipSubscription})
+			continue
 		}
-		if admits, why := r.poolMemberAdmits(m, admittedAccounts); !admits {
+		admits, why, err := r.poolMemberAdmits(ctx, m)
+		if err != nil {
+			return config.PoolMember{}, nil, err
+		}
+		if !admits {
 			skipped = append(skipped, poolSkip{m, why})
 			continue
 		}

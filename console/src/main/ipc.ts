@@ -93,7 +93,7 @@ import { invisibleRe, isInvisibleCodePoint, isSeparatorCodePoint } from '../shar
 import { REDUCED_VIEWS, hidesView, unreadableCompatibility } from '../shared/version'
 import type { CliCompatibility, ReducedView } from '../shared/version'
 import { APP_ENTRY_URL, APP_HOST, APP_SCHEME } from './protocol'
-import { PULL_REQUEST_PROVIDERS, pullRequestUrl, validateExternalUrl } from './window'
+import { validateExternalUrl } from './window'
 import { checkLaunchPlanTask, checkLaunchTask, checkLaunchTitle } from './launchrules'
 import { MAX_LICENCE_KEY_LENGTH } from './licence'
 
@@ -517,14 +517,6 @@ const MAX_ROADMAP_RELEASE_LENGTH = 64
  *   - `pullRequest` -- a pull request number, a positive integer;
  *   - `flag` -- a boolean, for the flags the allow-list admits;
  *   - `link` -- the one URL, and it must pass `validateExternalUrl`;
- *   - `gitProvider` -- the closed set of two words the coordinator stores a
- *     repository's host as, in the stored view's own `provider` field
- *     (`github`, `bitbucket`: `PULL_REQUEST_PROVIDERS`, `src/main/window.ts`).
- *     It is read from the builder's own table rather than spelled again here,
- *     so a provider the schema admits is one `pullRequestUrl` has a host for.
- *     It is the one kind whose value is a document field rather than a CLI
- *     flag's, and it exists because the pull request link is **built** from
- *     that field instead of read out of the document's `url` (D814, D815);
  *   - `installationName` -- one installation's project name, the handle the CLI
  *     itself printed for it (`isProjectName`, `src/main/installations.ts`): not
  *     empty, at most `MAX_INSTALLATION_NAME_LENGTH`, no whitespace, no control
@@ -602,7 +594,6 @@ export type ArgumentKind =
   | 'pullRequest'
   | 'flag'
   | 'link'
-  | 'gitProvider'
   | 'installationName'
   | 'installationCheckout'
   | 'launchTask'
@@ -811,9 +802,15 @@ export const LAUNCH_PAYLOAD_WIDTH =
   LAUNCH_TASK_RAW_LIMIT + LAUNCH_TITLE_RAW_LIMIT + LAUNCH_PLAN_TASK_RAW_LIMIT + 4096
 
 /**
- * CONSOLE_OPERATIONS is the whole surface. Fifty-seven operations, and the table
+ * CONSOLE_OPERATIONS is the whole surface. Fifty-three operations, and the table
  * is the reviewable artifact: a new read is a new entry here, with its argument
- * schema, and an entry is the only way anything becomes reachable.
+ * schema, and an entry is the only way anything becomes reachable. **The
+ * console-fixes plan's I-ORCH removed four** -- `link.openPullRequest`,
+ * `coordinator.status`, `coordinator.show` and `coordinator.intents`, none of
+ * which any screen reaches since the Coordinator tab became the map -- and an
+ * operation removed from here takes its spawn row, its preload row and its
+ * bridge method with it: a surface left half in place is one every reader still
+ * sees.
  *
  * **The two enrolment reads are this surface's forty-first and forty-second
  * operations** (the repos-management plan's RE5, D2413): `repos.ls` and
@@ -853,13 +850,6 @@ export const LAUNCH_PAYLOAD_WIDTH =
  * leaving the screen, which the renderer states with the one argument of this
  * surface that reaches no argv at all.
  *
- * **T1.2's `coordinator status --from-store --all --json` is this surface's
- * fifteenth argv** (Bitbucket credentials T1.2, D364): the project view, read
- * from the coordinator's stored view, which is the one read here that needs no
- * credential of the host's. Its own comment below says why `--from-store` and
- * `--all` are fixed words of its argv rather than arguments, and
- * `console/docs/json-contract.md` §6.13 describes its document.
- *
  * **`runs summary --json` is this surface's nineteenth argv** (console
  * 0.119.0's jobs-free totals read; the CLI half is B4, #1580, and
  * `console/docs/json-contract.md` §6.17 describes its document). It is the one
@@ -897,15 +887,12 @@ export const LAUNCH_PAYLOAD_WIDTH =
  *
  * The thirteenth **operation** (the row, not an argv) is the startup
  * handshake's answer (`startup.compatibility`, the console's own state, which
- * no CLI command can be asked for). **The two `link.` operations are the ones
- * that are no command at all, and together they are the whole way out of the
- * console.** `openExternal` is handed a URL, which goes through
- * `validateExternalUrl` -- `https:` only, no credentials, no port, host on
- * `ALLOWED_EXTERNAL_HOSTS` -- so the renderer can open a link the console would
- * have opened anyway. `openPullRequest` (K2a, D814/D815) is handed **no URL at
- * all**: three fields of a document, from which the main process builds the
- * link itself, so the first gate is a build rather than a check and a `url`
- * field a job wrote has nowhere to enter. `installation.current` is the dashboard's
+ * no CLI command can be asked for). **`link.openExternal` is the one operation
+ * that is no command at all, and it is the whole way out of the console**:
+ * it is handed a URL, which goes through `validateExternalUrl` -- `https:`
+ * only, no credentials, no port, host on `ALLOWED_EXTERNAL_HOSTS` -- so the
+ * renderer can open a link the console would have opened anyway.
+ * `installation.current` is the dashboard's
  * read of the installation the operator chose, or D13's no-installation state;
  * its handler is `handlersFor`'s **optional** `installation` dep, so a build
  * without a store answers it with that state rather than failing to register.
@@ -1045,37 +1032,43 @@ export const CONSOLE_OPERATIONS = [
         why: 'the design allow-list admits `--all` on this command.',
       },
       // The page and its cursor (D818, the console coordinator-v2 plan's C2).
-      // They are the two arguments the job list was waiting for: the read is
-      // about 248 KB for a day of runs, so the screen asks for a page and walks
-      // it with the cursor rather than holding a window it cannot draw.
+      // They are the two arguments the run list is read in pages with: the read
+      // is about 248 KB for a day of runs, so the screen asks for a page and
+      // walks it with the cursor rather than holding a window it cannot draw.
       //
-      // **A page shrinks the bytes and not the seconds.** Since #1545 `--limit`
-      // cuts what is *printed*: the command still reads the whole window it
-      // prints from, so a day of runs costs its six seconds whether the screen
-      // asks for fifty rows or all of them. What the page buys is a document
-      // the console can hold and a first row it can draw -- the six seconds are
-      // the read's and are paid either way. Both words are emitted as one
+      // The caller is the Live list's "Load older" (the console-fixes plan's
+      // IR7, `live.ts`): it is the one read that goes **past** the window the
+      // first read was given, which is why the `--after` below is gated on a
+      // newer floor than the words themselves need.
+      //
+      // **A page cuts what is printed, and on a CLI without the run index that
+      // is all it cuts.** Since #1545 `--limit` cuts after the sort: the
+      // bucket read still reads the whole window it prints from, so a day of
+      // runs costs its six seconds whether the screen asks for fifty rows or
+      // all of them, and what the page buys is a document the console can hold
+      // and a first row it can draw. The index read (IR1) is what makes the
+      // page a bound on the read as well. Both words are emitted as one
       // `=`-form word each (`spawn.ts`), which is what keeps a value from ever
       // reading as a flag.
       //
       // **`--limit`'s ceiling is the console's** (`RUNS_LIST_MAX_LIMIT`) and
       // not the CLI's: the command takes any count it can parse, and a
       // renderer that could ask for more than the cap could ask for the window
-      // under another name. `--after` is the id the same read printed, held to
-      // the run id's own grammar; an id the window does not hold is the CLI's
-      // refusal and not this one's, because only the CLI can know what the
-      // window held.
+      // under another name. `--after` is the id the read before it printed,
+      // held to the run id's own grammar; a page that names an id the CLI
+      // cannot place is the CLI's refusal and not this one's, because only the
+      // CLI can know what its own listing held.
       {
         key: 'limit',
         kind: 'runLimit',
         required: false,
-        why: 'the design allow-list admits `--limit=N` on this command: the newest N rows of the window, at most RUNS_LIST_MAX_LIMIT. It needs CLI 0.16.0, the release that carries #1545: in the 0.15 line `--limit` means "read only the newest N", so its totals are the page’s and not the window’s. The caller is the Coordinator screen’s job list (`showCoordinator`, `src/renderer/entry.ts`), which passes it only above `RUNS_LIST_PAGE_CLI_FLOOR`; the queue’s own runs part passes neither word.',
+        why: 'the design allow-list admits `--limit=N` on this command: the newest N rows of the listing, at most RUNS_LIST_MAX_LIMIT. It needs CLI 0.16.0, the release that carries #1545: in the 0.15 line `--limit` means "read only the newest N", so its totals are the page’s and not the window’s. The caller is the Live list’s "Load older" (`live.ts`, driven from `src/renderer/entry.ts`), which passes it only above `RUNS_LIST_PAGE_CLI_FLOOR`.',
       },
       {
         key: 'after',
         kind: 'runAfter',
         required: false,
-        why: 'the design allow-list admits `--after=RUN-ID` on this command: the cursor pages on the row’s own run_id. It needs CLI 0.16.0, the release that carries #1545: a 0.15.x CLI refuses the word outright. The caller is the Coordinator screen’s job list (`showCoordinator`, `src/renderer/entry.ts`), which sends the last row it drew and only above `RUNS_LIST_PAGE_CLI_FLOOR`.',
+        why: 'the design allow-list admits `--after=RUN-ID` on this command: the cursor pages on the row’s own run_id. It needs CLI 0.16.0, the release that carries #1545: a 0.15.x CLI refuses the word outright, and below the release that carries the run index the cursor is only a position inside the window the read was given. The caller is the Live list’s "Load older" (`live.ts`, driven from `src/renderer/entry.ts`), which sends the last row it drew and only above `RUNS_LIST_OLDER_CLI_FLOOR`.',
       },
     ],
   },
@@ -1739,150 +1732,6 @@ export const CONSOLE_OPERATIONS = [
         why: 'the design’s validated external link: `https:` only, no credentials, no port, host on the allow-list. It spawns nothing.',
       },
     ],
-  },
-  // The clickable pull request number (Coordinator v2 K2a, D814 and D815).
-  //
-  // **This operation takes no URL, and that is its whole design.** A pull
-  // request document carries a `url` field, and no field of any document ever
-  // reaches this operation: it takes the three fields the URL is *built* from
-  // -- the repository's provider, its slug and the number -- and the main
-  // process builds the link itself with `pullRequestUrl` (`src/main/window.ts`),
-  // which is the first gate rule 2 asks for. What is built is then handed to
-  // `openExternalValidated`, the console's one call to `shell.openExternal` and
-  // its second gate, so the host allow-list is applied to a URL this process
-  // spelled rather than to a string a job wrote. A `null` build -- an unknown
-  // provider, a slug that is not `owner/name`, a number that is not a positive
-  // integer -- is a refusal that opens nothing and shows the number as text.
-  //
-  // It is a second operation rather than a second argument kind on
-  // `link.openExternal` because the two are two different things to say: that
-  // operation hands over a URL the console was given, and this one takes fields
-  // and has no way to express a URL at all. The three keys are closed like
-  // every other schema's, and the two providers are the builder's own set
-  // rather than a list spelled here.
-  {
-    name: 'link.openPullRequest',
-    method: 'openPullRequest',
-    command: null,
-    flags: [],
-    summary: 'a pull request number as a link: the URL is built here, from three fields, and never read',
-    args: [
-      {
-        key: 'provider',
-        kind: 'gitProvider',
-        required: true,
-        why: 'the host the link is built on, one of the two the builder knows. It is a word from the coordinator’s stored view (C1’s additive `provider` field), never an inference from a URL a job wrote (D814).',
-      },
-      {
-        key: 'repo',
-        kind: 'repository',
-        required: true,
-        why: 'the repository the pull request belongs to, as the CLI’s own canonical `owner/name`. The narrower pattern the link may be built from — exactly two segments, no `..`, no third `/` — is `pullRequestUrl`’s, and a value that only passes this kind is still refused there.',
-      },
-      {
-        key: 'number',
-        kind: 'pullRequest',
-        required: true,
-        why: 'the pull request number, a positive integer. It is a segment of the path the main process spells, so it can never carry one.',
-      },
-    ],
-  },
-  // The project view (Bitbucket credentials T1.2, D364). `fugaro coordinator
-  // status --from-store --all --json` is the one read that answers for **every
-  // repository of the installation at once**, and it is the console's only read
-  // that needs no credential of the host's: the coordinator's stored view is the
-  // caller's own database read (`roles/firebasedatabase.viewer`), so the console
-  // asks it with no App key, no Bitbucket credential and no host read. A
-  // repository the coordinator has never reconciled answers the runs half with
-  // `"stored": false` rather than refusing, which is what makes this read safe
-  // on an installation whose coordinator was never turned on.
-  //
-  // **`--from-store` and `--all` are fixed, and they are not arguments.** `--all`
-  // is the wrapper the document's `repos` array needs: without it the read
-  // answers one repository's view, and refuses when the local config lists none
-  // or several -- neither of which is the question a project view asks. Both are
-  // words of the argv rather than an argument schema because the screen has no
-  // control that would turn either off, which is the same reason
-  // `installation.list` fixes `--json`.
-  //
-  // **`--repo` is deliberately no part of this operation.** The read is about the
-  // project's whole repository set, and a renderer that could name one repository
-  // could ask a question this screen does not draw. `--since` is absent for the
-  // reason the screen claims no age: the stored view is a document that has
-  // already been written, so a window would filter a figure nothing recomputes.
-  {
-    name: 'coordinator.status',
-    method: 'coordinatorStatus',
-    command: 'coordinator status',
-    flags: ['--from-store', '--all', '--json'],
-    summary: 'every repository of the installation, from the coordinator’s stored view',
-    args: [],
-  },
-  // The pull request read (coordinator v2 C3, D816): `fugaro coordinator show
-  // --repo <owner/name> --pr <n> --json`, one pull request as the host has it
-  // **with its description**, which the stored view above drops by design (a
-  // body is unbounded text written by whoever opened the pull request, and one
-  // per record would ride in the document every reader of the view fetches).
-  //
-  // **It is the second operation here whose child mints a credential of the
-  // host's.** The first is `run.launch` above, and the two are not alike: a
-  // launched run holds the App's private key and mints installation tokens that
-  // carry `contents: write` and `pull_requests: write`, because it pushes and
-  // opens the pull request (`internal/gitprov/github/apptoken.go`), while the set
-  // this operation's child mints is the read-only one: contents read, pull
-  // requests read and metadata read, no `write` of any kind — the credentials
-  // service's person read set (`github.PersonReadTokenPermissions`) — minted
-  // for the one repository and revoked when the command is done. That is why the two arguments below are
-  // the whole of what a renderer can influence about this argv: there is no key
-  // for a token, a host, a path, an endpoint or a flag, and the row in
-  // `src/main/spawn.ts` declares the same two keys and no other word. A project
-  // that publishes no credentials service is one whose host read is refused --
-  // the read resolves the service from the project's own published block and
-  // from nothing else -- which the screen draws as its own refusal.
-  {
-    name: 'coordinator.show',
-    method: 'coordinatorShow',
-    command: 'coordinator show',
-    flags: ['--json'],
-    summary: 'one pull request as the host has it, the description included',
-    args: [
-      {
-        key: 'repo',
-        kind: 'repository',
-        required: true,
-        why: 'the repository the pull request is in, as the CLI’s own canonical `owner/name`. The read resolves the repository’s provider from it — the local config’s entry, else the checkout’s own config file, the same resolution the stored view above makes — and mints the installation token for it, so it is the one word that decides whose credential is used. It is a repository, never a host, a URL or a path.',
-      },
-      {
-        key: 'pr',
-        kind: 'pullRequest',
-        required: true,
-        why: 'the pull request number, a positive integer, which the CLI’s `IntVar --pr` reads as digits. A pull request the host does not have is the host’s own failure and reaches the screen as a refusal, never as an empty document.',
-      },
-    ],
-  },
-  // The declarations read (coordinator v2 C4, D827): `fugaro coordinator intents
-  // --all --json`, what the fleet's writers have stored, newest first.
-  //
-  // **It has no argument at all**, which is the strongest form of this file's
-  // rule: the whole argv is the row's own words (`src/main/spawn.ts`), so there
-  // is no field a renderer could fill and no way to steer the child anywhere.
-  // `--all` is fixed rather than a control, the way `coordinator status`'s two
-  // are: the screen draws every repository the local config lists, and no
-  // control turns that off.
-  //
-  // Like the stored view beside it, this read asks nothing of the host: the
-  // declarations are the caller's own database node (`roles/firebasedatabase.
-  // viewer`), so no App key is read, no installation token is minted, no
-  // provider is opened and no host is reached. `declared_by` is a *declaration*
-  // -- the string a writer put in its own record -- and never an identity the
-  // host or this console establishes (`src/shared/schema.ts`).
-  {
-    name: 'coordinator.intents',
-    method: 'coordinatorIntents',
-    command: 'coordinator intents',
-    flags: ['--all', '--json'],
-    summary: 'what the fleet’s writers have declared, newest first',
-    args: [],
   },
   // The orchestrator map (the console-fixes plan's CG7a; C-ORCH's document,
   // `internal/orchestrator/mapdoc.go`; D3221): `fugaro orchestrator map --json`,
@@ -2769,15 +2618,12 @@ export const CONSOLE_OPERATION_NAMES: readonly OperationName[] = Object.freeze(
 
 /** ALLOWED_OPERATION_FLAGS is the whole of what an operation may fix. `--json`
  * asks for the document the console draws; `--url` is `logs RUN --url`, which is
- * its own argv; `--from-store` is `coordinator status`'s, and `--all` is the
- * project-wide wrapper that read fixes together with it and that
- * `coordinator intents` fixes on its own -- in both cases no screen control
- * turns it off. Anything else an operation might want
- * to fix is on `NEVER_REACHABLE`'s flag rows. */
+ * its own argv; `--all` is the project-wide wrapper a read fixes as a word of
+ * its row, where no screen control turns it off. Anything else an operation
+ * might want to fix is on `NEVER_REACHABLE`'s flag rows. */
 export const ALLOWED_OPERATION_FLAGS: readonly string[] = Object.freeze([
   '--json',
   '--url',
-  '--from-store',
   '--all',
 ])
 
@@ -3660,9 +3506,6 @@ export function isNeverReachable(operation: {
 // leading segment cannot be `.` or `..`, which the grammar refuses by requiring
 // an alphanumeric first character.
 const REPOSITORY_RE = /^[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)+$/
-/** MAX_PROVIDER_LENGTH bounds the `gitProvider` kind before its membership
- * check runs, and it is the longest word the builder's own set carries. */
-const MAX_PROVIDER_LENGTH = Math.max(...PULL_REQUEST_PROVIDERS.map((name) => name.length))
 const RUN_ID_RE = /^\d{8}-\d{6}-[0-9a-f]{4,16}$/
 const DAY_RE = /^(\d{4})-(\d{2})-(\d{2})$/
 // The two `--since` flags are two different grammars, and each one is written
@@ -4340,15 +4183,6 @@ function validateValue(
       if (!decision.ok) return refuse(`${spec.key} ${decision.reason}`)
       return { ok: true, value: decision.url }
     }
-    case 'gitProvider':
-      // A closed set of two words and nothing else: this is the value the
-      // *builder* keys its host table by, so a provider it does not know is a
-      // link that cannot be built and a refusal here rather than a `null` one
-      // step later.
-      if (!PULL_REQUEST_PROVIDERS.includes(value)) {
-        return refuse(`${spec.key} must be one of ${PULL_REQUEST_PROVIDERS.join(', ')}`)
-      }
-      return { ok: true, value }
     case 'installationName':
       // `isProjectName` (`src/main/installations.ts`), spelled here for the
       // reason the two bounds above give: the store's own rule, which is what
@@ -4595,13 +4429,6 @@ function kindLimit(kind: ArgumentKind): number {
       return 12
     case 'link':
       return MAX_URL_LENGTH
-    case 'gitProvider':
-      // The longest word in the closed set, and a bound rather than a grammar:
-      // membership is what decides, so a hostile payload cannot make the check
-      // work on a long string. It is read off the set rather than spelled as a
-      // digit, so a third provider longer than these two cannot be refused by
-      // the bound before its own grammar sees it.
-      return MAX_PROVIDER_LENGTH
     case 'modelId':
       // The grammar's own bound: `MODEL_ID_RE` admits at most 128 characters, so
       // a longer word is refused before the expression runs.
@@ -4929,41 +4756,6 @@ export function readStoredCompatibility(value: unknown): CliCompatibility {
  */
 export function startupCompatibility(read: () => unknown): ConsoleHandler {
   return () => readStoredCompatibility(read())
-}
-
-/**
- * openPullRequestHandler is `link.openPullRequest`'s implementation, and it
- * lives here for the same reason `startupCompatibility` does: it is not a read
- * of the CLI, so it is not a row of `handlersFor`, and the entry point -- which
- * cannot be imported under a test, because it loads Electron's runtime -- is
- * not the place a rule this security-sensitive is written.
- *
- * The opener is an argument rather than a call to `shell.openExternal` so that
- * what the handler does with a hostile triple is a thing a test can watch: the
- * only way to reach the browser from here is to call `open`, and the handler
- * calls it **only** with a URL `pullRequestUrl` built. A `null` build returns
- * without calling it at all, which is the refusal D815 asks for -- nothing
- * opens, and the number stays text.
- *
- * The three fields are narrowed to their types before the builder sees them,
- * the way `openExternalFromShell` narrows its one argument: the validator has
- * already refused anything that is not a string or a number, so this is a
- * narrowing and not a second check, and a value that is somehow neither is a
- * refusal rather than a build from something the schema did not describe.
- */
-export function openPullRequestHandler(open: (url: string) => Promise<unknown>): ConsoleHandler {
-  return async (args) => {
-    const provider = args['provider']
-    const repo = args['repo']
-    const number = args['number']
-    if (typeof provider !== 'string' || typeof repo !== 'string' || typeof number !== 'number') {
-      return null
-    }
-    const url = pullRequestUrl(provider, repo, number)
-    if (url === null) return null
-    await open(url)
-    return null
-  }
 }
 
 /** ConsoleReply is what every operation answers with: the document, or the

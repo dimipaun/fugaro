@@ -156,10 +156,8 @@ const WINDOWS_PATH = 'C:\\Windows\\System32;C:\\Windows'
  * operations `addCloudFlags` gives `--project` to (`internal/cli/cloud.go:51`,
  * called from each of those constructors), including the two log operations
  * that share the `logs` command -- console L5b's `runs.stats` is the eleventh,
- * plan GV2.1's `plan.status` the twelfth, Bitbucket credentials T1.2's
- * `coordinator.status` the thirteenth, the console's one write, V2.5.1a's
- * `run.launch`, the fourteenth, coordinator v2 C3's `coordinator.show` the
- * fifteenth, coordinator v2 C4's `coordinator.intents` the sixteenth, and
+ * plan GV2.1's `plan.status` the twelfth, the console's one write, V2.5.1a's
+ * `run.launch`, the fourteenth, and
  * console 0.119.0's jobs-free totals read, `runs.summary`, the seventeenth, and
  * console 0.119.0's read-only models panel, `models.list`, the eighteenth, and
  * the settings read, `settings.read`, the nineteenth, and the settings write,
@@ -199,7 +197,7 @@ const WINDOWS_PATH = 'C:\\Windows\\System32;C:\\Windows'
  * and `image add`), each a dry run and the write that dry run is of. The
  * console-fixes plan's CG7a adds the forty-first, `orchestrator.map`: `fugaro
  * orchestrator map --json` resolves the installation whose active orchestrators
- * it reads, through the same cloud flags `coordinator intents` takes, so it is a
+ * it reads, through the same cloud flags every project read here takes, so it is a
  * row of this list like every other project read -- and the one whose command no
  * release carries yet, which is why the read itself sits behind
  * `ORCHESTRATOR_MAP_CLI_FLOOR` (`src/shared/version.ts`).
@@ -244,9 +242,6 @@ const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
   'settings.read',
   'settings.edit',
   'environment.report',
-  'coordinator.status',
-  'coordinator.show',
-  'coordinator.intents',
   // The orchestrator map (the console-fixes plan's CG7a, D3221): `fugaro
   // orchestrator map --json` resolves the installation whose active
   // orchestrators, connections and coordinator heartbeat it reads, through the
@@ -627,23 +622,18 @@ describe('the spawn table and the argv it builds', () => {
     }).toThrow(/does not start with config list/)
   })
 
-  it('fixes the design allow-list exactly: forty-five argvs, thirty-two commands, forty-one of them with --project', () => {
+  it('fixes the design allow-list exactly: forty-two argvs, twenty-nine commands, thirty-eight of them with --project', () => {
     // The design's §5.1 rule 6 table is the whole allow-list, argv for argv:
     // the rail's read (`config list --json`, the case above) used to be the
     // picker's own row in a second table until the owner's ruling of 2026-10-25,
     // plan GV2.1's `plan status --json` is the fourteenth -- and the graph
     // plan's `graph --json` (CG9a) sits beside it, the graph screen's other
     // read, whose one declared argument is the scope and nothing else, and
-    // whose every word is otherwise the row's own -- and Bitbucket
-    // credentials T1.2's `coordinator status --from-store --all --json` the
-    // fifteenth, V2.5.1a's launch the sixteenth -- the one row here that is a
+    // whose every word is otherwise the row's own -- and V2.5.1a's launch the
+    // sixteenth -- the one row here that is a
     // write, and the one whose words carry `--task-file -` (the literal word
-    // `-` puts the task on the child's stdin) -- coordinator v2 C3's pull
-    // request read the seventeenth, whose two arguments (the repository and the
-    // number) are filled by the caller and so are not words of this list -- and
-    // coordinator v2 C4's declared intents the eighteenth, whose `--all` and
-    // `--json` are the row's own two words, exactly as `coordinator status`'s
-    // are, console 0.119.0's models read the nineteenth, whose whole argv is
+    // `-` puts the task on the child's stdin) -- and
+    // console 0.119.0's models read the nineteenth, whose whole argv is
     // its own three words -- the group's one reachable word -- and the settings
     // read the twentieth, whose whole argv is its own two words and the
     // installation's, no argument a renderer can fill -- and the settings write
@@ -741,12 +731,9 @@ describe('the spawn table and the argv it builds', () => {
       'version',
       'doctor --json',
       'config list --json',
-      'coordinator status --from-store --all --json',
-      'coordinator show --json',
-      'coordinator intents --all --json',
       // The orchestrator map (the console-fixes plan's CG7a, D3221; C-ORCH's
       // document, `internal/orchestrator/mapdoc.go`): the Coordinator tab's map
-      // of the project's active orchestrators, which is `coordinator intents`'
+      // of the project's active orchestrators, which is the declarations read's
       // shape -- the whole argv is the row's own words and there is no argument
       // a caller can fill. The command is registered from `ee/` and no release
       // carries it yet, so the read sits behind `ORCHESTRATOR_MAP_CLI_FLOOR`
@@ -818,7 +805,7 @@ describe('the spawn table and the argv it builds', () => {
       'setup --answers-file - --events --json',
     ])
     // The rows that take the flag (addCloudFlags, internal/cli/cloud.go:51) are
-    // forty-one rows over thirty-two commands -- the wizard's two rows are
+    // thirty-eight rows over twenty-nine commands -- the wizard's two rows are
     // not among them, and that is the one place the console leaves a flag of a
     // command it drives alone: `setup` *has* `--project`, and passing it would
     // aim the run at the installation it exists to create
@@ -859,9 +846,6 @@ describe('the spawn table and the argv it builds', () => {
         'image add',
         'settings',
         'doctor',
-        'coordinator status',
-        'coordinator show',
-        'coordinator intents',
         // The orchestrator map (CG7a): the second row of the Coordinator tab's
         // own family, and a command no release carries yet.
         'orchestrator map',
@@ -883,7 +867,7 @@ describe('the spawn table and the argv it builds', () => {
         'recipes ls',
       ]),
     )
-    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(41)
+    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(38)
     // ...and the table's own flags agree with the list the tests above use.
     for (const row of SPAWN_COMMANDS) {
       expect(row.takesProject, row.operation).toBe(COMMANDS_TAKING_PROJECT.includes(row.operation))
@@ -1515,94 +1499,6 @@ describe('the spawn table and the argv it builds', () => {
         '--project',
       ])
     }
-  })
-
-  it('spawns `coordinator show` with the repository, the number and nothing else', () => {
-    // **C3's row, word for word** (coordinator v2 C3, D816; the design
-    // allow-list's `coordinator show --json --repo <owner/name> --pr <n>`). The
-    // child this argv starts mints a credential of the host's -- the
-    // coordinator's own read-only installation token -- so what the console may
-    // put in the argv is the whole question, and it is written out here rather
-    // than read off the row. The order is `argvFor`'s for every row: the row's
-    // fixed words, then the arguments the schema declares, then `--project`.
-    expect(
-      argvFor('coordinator.show', { repo: 'acme/app', pr: 1458 }, safeContext({ project: 'chosen' })),
-    ).toEqual([
-      'coordinator',
-      'show',
-      '--json',
-      '--repo',
-      'acme/app',
-      '--pr',
-      '1458',
-      '--project',
-      'chosen',
-    ])
-    // Both arguments are the operation's own and both are required by its
-    // schema (`src/main/ipc.ts`; the argument-schema case there pins the two).
-    // What this row adds is the argv spelling: the repository as the CLI's own
-    // `owner/name`, and the number as the digits `IntVar --pr` reads. So a
-    // number that is not a pull request number is refused here rather than
-    // spelled into argv, which is the whole of what the `pullRequest` kind buys
-    // on a row whose child mints a credential.
-    expect(() => argvFor('coordinator.show', { repo: 'acme/app', pr: 0 }, safeContext())).toThrow(
-      /not a pull request number/,
-    )
-    expect(() => argvFor('coordinator.show', { repo: 'acme/app', pr: 1.5 }, safeContext())).toThrow(
-      /not a pull request number/,
-    )
-    // ...and a key the row does not declare never reaches an element, which is
-    // the rule that keeps a payload from smuggling a flag in.
-    expect(() => argvFor('coordinator.show', { repo: 'acme/app', pr: 1, token: 'x' }, safeContext())).toThrow(
-      /does not declare/,
-    )
-    // **No token, no host and no path**, in any position: the credential is the
-    // child's own and nothing a renderer sends may name one. The flags the argv
-    // carries are exactly the schema's two plus the console's own.
-    const argv = argvFor('coordinator.show', { repo: 'acme/app', pr: 1458 }, safeContext())
-    expect(argv.filter((word) => word.startsWith('--'))).toEqual([
-      '--json',
-      '--repo',
-      '--pr',
-      '--project',
-    ])
-  })
-
-  it('spawns `coordinator intents` with `--all`, `--json` and nothing else', () => {
-    // **C4's row, word for word** (coordinator v2 C4, D827; the design
-    // allow-list's `coordinator intents --all --json`). It is the project view's
-    // shape again -- the argv is the row's own words and the caller fills none
-    // of them -- and the read is the caller's own database node: it mints no
-    // credential of the host's, opens no provider and reaches no host, which is
-    // what its empty argument schema buys (`src/main/ipc.ts`). Spelled out here
-    // rather than read off the row, so a change to the row is a failing test.
-    expect(argvFor('coordinator.intents', {}, safeContext({ project: 'chosen' }))).toEqual([
-      'coordinator',
-      'intents',
-      '--all',
-      '--json',
-      '--project',
-      'chosen',
-    ])
-    // `--all` is a fixed word and not a control: the screen draws every
-    // repository the local config lists, so there is no argument that turns the
-    // project-wide wrapper off -- and `--repo`/`--since`, which the CLI does
-    // have, are on no row here.
-    const row = SPAWN_COMMANDS.find((candidate) => candidate.operation === 'coordinator.intents')
-    expect(row?.args).toEqual([])
-    expect(row?.dirFlag).toBe(false)
-    // A key the row does not declare never reaches an element, which is the
-    // rule that keeps a payload from smuggling a flag in -- and the two flags
-    // the command owns but no row declares are refused like any other word.
-    expect(() => argvFor('coordinator.intents', { repo: 'acme/app' }, safeContext())).toThrow(/does not declare/)
-    expect(() => argvFor('coordinator.intents', { since: '3d' }, safeContext())).toThrow(/does not declare/)
-    expect(() => argvFor('coordinator.intents', { all: true }, safeContext())).toThrow(/does not declare/)
-    expect(() => argvFor('coordinator.intents', { token: 'x' }, safeContext())).toThrow(/does not declare/)
-    expect(() => argvFor('coordinator.intents', { json: true }, safeContext())).toThrow(/does not declare/)
-    // The argv's whole flag list is the row's two words plus the console's own
-    // `--project`: no credential, no host, no path and no other command's flag.
-    const argv = argvFor('coordinator.intents', {}, safeContext({ project: 'chosen' }))
-    expect(argv.filter((word) => word.startsWith('--'))).toEqual(['--all', '--json', '--project'])
   })
 
   it('spawns the two managed reads as their command, `--json` and nothing else', () => {

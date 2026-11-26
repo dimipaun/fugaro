@@ -464,10 +464,18 @@ func ClassOf(rec *runstore.Record) failure.Class {
 // It is asked of the *record*, so the status a row derives over such a record
 // — a preemption, a lost execution — never reaches it: that derivation is the
 // read side's, and the record recorded no ending at all.
+//
+// A paused run is in neither set (contract-pause, R15): it stopped its own
+// execution to be resumed by its chain, so it did not fail and it did not
+// succeed, and it carries no class. It is named here rather than left to the
+// return below so the word is answered rather than assumed, and so the next
+// status added is a decision someone makes in this switch.
 func failedStatus(status runstore.Status) bool {
 	switch status {
 	case runstore.StatusFailed, runstore.StatusUnreviewed, runstore.StatusHalted, runstore.StatusInfraError, runstore.StatusCancelled:
 		return true
+	case runstore.StatusPaused:
+		return false
 	}
 	return false
 }

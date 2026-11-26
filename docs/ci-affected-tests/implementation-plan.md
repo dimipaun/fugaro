@@ -73,7 +73,7 @@ Each of CS1, CS2a, CS3 and CS4 owns the types it declares; CS4 composes the othe
 - Owner-run: no.
 
 ### CS3: timings and the packer
-- Acceptance: `Pack(chosenPackages, timings, maxLegs)` returns legs by longest-first greedy, keeps the `internal/cli` update and other families whole as `Only: update|other` legs (F4), splits a chosen `./scripts` into its `nonlive` leg and its live legs (`Only: live` with the `LIVE_CHECK_SHARD` index and count, as today's three), reads timings from `test-times` TSV text, and with none returns equal weights; the `Leg` field names are pinned by a list in its own test, not read from `ci.yml`.
+- Acceptance: `Pack(chosenPackages, timings, maxLegs)` returns legs by longest-first greedy, keeps the `internal/cli` update and other families whole as `Only: update|other` legs (F4), splits a chosen `./scripts` into its `nonlive` leg and its live legs (`Only: live` with the `LIVE_CHECK_SHARD` index and count, as today's six), reads timings from `test-times` TSV text, and with none returns equal weights; the `Leg` field names are pinned by a list in its own test, not read from `ci.yml`.
 - Files: `internal/ciselect/pack.go` (new), `internal/ciselect/pack_test.go` (new).
 - Interfaces: declares `Leg` and `Pack`; produces the legs CS4 prints.
 - Tests: `TestPackIsLongestFirst`, `TestPackKeepsTheCliFamiliesWhole`, `TestPackSplitsScriptsIntoLiveAndNonlive`, `TestPackWithoutTimingsIsEqualWeight`, `TestLegFieldNamesArePinned`.

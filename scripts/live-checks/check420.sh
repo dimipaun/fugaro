@@ -13,8 +13,8 @@
 #     (`fugaro craft ls`, `fugaro accounts pool ls`, `fugaro project policy
 #     show`, `fugaro creds ls`). A build without it stops here rather than
 #     measuring a pool that cannot exist;
-#   * the premise, from the installation's own words: the coder craft's
-#     effective access names a POOL (`fugaro craft ls --json`), that pool is a
+#   * the premise, from the installation's own words: the coder craft's chain
+#     names a POOL (`fugaro craft ls --json`), that pool is a
 #     failover pool of two or more members the CREDENTIALS SERVICE serves
 #     (`fugaro project policy show --json` — the node the service itself reads),
 #     every member is in the service's bundle (`fugaro creds ls --json`), and a
@@ -145,7 +145,7 @@ CLEANUP_RUNNING=no
 RESTORE_VERDICT=""
 RESTORE_NOTE=""
 PROJECT=""
-CRAFT_ACCESS=""
+CRAFT_POOL=""
 CRAFT_MODEL=""
 POOL_NAME=""
 POOL_MEMBERS=""
@@ -229,12 +229,11 @@ elif what == "crafts":
     for problem in doc.get("problems") or []:
         print("problem\t%s" % flat(problem))
     for row in doc.get("crafts") or []:
-        print("craft\t%s\t%s\t%s\t%s\t%s" % (
+        print("craft\t%s\t%s\t%s\t%s" % (
             row.get("craft") or "",
             flat(row.get("model")),
             flat(row.get("model_from")),
-            flat(row.get("access")),
-            yes(row.get("inert")),
+            ",".join(row.get("chain") or []),
         ))
 elif what == "policy":
     pol = doc.get("policy")
@@ -328,6 +327,26 @@ field() { # field FILE KEY — the value of one `key=value` line, "" when absent
 # craft_field FILE CRAFT COLUMN — one column of a `craft\t<name>\t...` row.
 craft_field() { # craft_field FILE NAME COLUMN
   awk -F'\t' -v name="$2" -v col="$3" '$1 == "craft" && $2 == name { print $col; exit }' "$1" 2>/dev/null || true
+}
+
+# chain_pool CHAIN — the name of the pool a craft's chain goes out on, from the
+# `chain` column of a `craft ls --json` row (RT6, D3170): the first source
+# spelled `pool:<name>`, with the `@MODEL` a written downgrade appends cut off.
+# Every other kind — launcher-pool, anthropic, provider:<name>, vertex — names no
+# pool, and neither does an empty chain (a project that publishes no routing
+# table, whose calls go out the release-1 way): both answer "" and the caller
+# reports what it read.
+chain_pool() { # chain_pool CHAIN
+  local source pool
+  for source in $(printf '%s' "$1" | tr ',' ' '); do
+    case "$source" in
+    pool:*)
+      pool=${source#pool:}
+      printf '%s' "${pool%@*}"
+      return 0
+      ;;
+    esac
+  done
 }
 
 # pool_field FILE POOL COLUMN — one column of a `pool\t<name>\t...` row.
@@ -486,16 +505,17 @@ step_sandbox() {
   fact sandbox PASS "${SANDBOX} is a Fugaro repository's checkout, and it belongs to ${PROJECT}: the check launches from this checkout and reads its record in this project's bucket"
 }
 
-# step_crafts: the coder craft's effective access, from the command that answers
-# "which credential or pool, and from where". The access has to be SET and to
-# name something other than the built-in vertex, because the run below is a
-# reading of a pool and a craft that resolves to the default credential has no
-# pool in play.
+# step_crafts: the chain the coder craft's calls go out on, from the command
+# that answers "where do this craft's calls go out, and what model is it". The
+# chain has to name a POOL, because the run below is a reading of a pool failing
+# over: a chain of launcher-pool, anthropic, provider or vertex has no pool in
+# play, and neither has an empty one — a project that publishes no routing
+# table, whose calls go out the release-1 way (D3170).
 step_crafts() {
   say "reading the crafts: fugaro craft ls --json, in ${SANDBOX}"
   run_bounded "$CLI_TIMEOUT" crafts "$SANDBOX" "$FUGARO_BIN" craft ls --json
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
-    unmeasured crafts "fugaro craft ls --json did not answer in ${SANDBOX} (exit ${BOUNDED_STATUS}): the coder craft's access is the pool this check reads the failover on, and without it there is nothing to look the pool up by. Its output is in $SCRATCH/crafts.out and $SCRATCH/crafts.err"
+    unmeasured crafts "fugaro craft ls --json did not answer in ${SANDBOX} (exit ${BOUNDED_STATUS}): the coder craft's chain is what names the pool this check reads the failover on, and without it there is nothing to look the pool up by. Its output is in $SCRATCH/crafts.out and $SCRATCH/crafts.err"
     return 0
   fi
   if ! read_json crafts "$SCRATCH/crafts.out" "$SCRATCH/crafts.txt"; then
@@ -508,17 +528,14 @@ step_crafts() {
     fact crafts FAIL "fugaro craft ls --json reports ${problems} problem(s): $(awk -F'\t' '$1 == "problem" { printf "%s; ", $2 }' "$SCRATCH/crafts.txt")— a craft list with problems on it is one where an access may not be the access a run would use, and the run below would be a reading of something this check cannot name. Settle them ('fugaro craft ls' prints the same problems as prose) and run this check again"
     return 0
   fi
-  CRAFT_ACCESS=$(craft_field "$SCRATCH/crafts.txt" coder 5)
+  CRAFT_CHAIN=$(craft_field "$SCRATCH/crafts.txt" coder 5)
   CRAFT_MODEL=$(craft_field "$SCRATCH/crafts.txt" coder 3)
-  if [ -z "$CRAFT_ACCESS" ]; then
-    fact crafts FAIL "the coder craft resolves to no access at all (model=${CRAFT_MODEL:-none}): every craft that sets no access anywhere resolves to the project's default credential, which is the built-in vertex and not a pool, so the run below would measure nothing about failover. Declare the pool and point the craft at it ('fugaro accounts pool add <name> <member> <member>' then set agent.crafts.coder.access to that name) and run this check again"
+  CRAFT_POOL=$(chain_pool "$CRAFT_CHAIN")
+  if [ -z "$CRAFT_POOL" ]; then
+    fact crafts FAIL "the coder craft's chain names no pool (chain: ${CRAFT_CHAIN:-none}, model ${CRAFT_MODEL:-none}): Check 420 measures a pool moving off an exhausted member, and a chain of launcher-pool, anthropic, provider or vertex — or no chain at all, which is a project that publishes no routing table — has no pool to read. Point the craft's model at the failover pool ('fugaro routing set <model> pool:<name>') and run this check again"
     return 0
   fi
-  if [ "$CRAFT_ACCESS" = vertex ]; then
-    fact crafts FAIL "the coder craft's access is the built-in vertex credential: vertex is the project's own GCP service and no pool of it exists, so a run here measures nothing about failover. Point the craft at the pool you declared and run this check again"
-    return 0
-  fi
-  fact crafts PASS "the coder craft's access is '${CRAFT_ACCESS}' (model ${CRAFT_MODEL:-none}, from $(craft_field "$SCRATCH/crafts.txt" coder 4)): the run below goes out on this access, and the rows that follow read the pool it names"
+  fact crafts PASS "the coder craft's chain is '${CRAFT_CHAIN}' (model ${CRAFT_MODEL:-none}, from $(craft_field "$SCRATCH/crafts.txt" coder 4)): the run below goes out on its first source, and the rows that follow read the pool the chain names"
 }
 
 # step_pool: the premise, from the published node — the document the credentials
@@ -533,8 +550,8 @@ step_crafts() {
 # (D1622, D1626: with it off a subscription member inside a mixed pool is
 # stepped over, and the pool is left with fewer candidates than it lists).
 step_pool() {
-  if [ -z "$CRAFT_ACCESS" ]; then
-    unmeasured pool "there is no access to look a pool up by: the row above says why"
+  if [ -z "$CRAFT_POOL" ]; then
+    unmeasured pool "there is no pool to look up: the chain the row above read names none"
     return 0
   fi
   say "reading the published policy: fugaro project policy show --json"
@@ -553,19 +570,19 @@ step_pool() {
   fi
   local node_access strategy members first second spread typ
   node_access=$(craft_field "$SCRATCH/policy.txt" coder 4)
-  strategy=$(pool_field "$SCRATCH/policy.txt" "$CRAFT_ACCESS" 3)
-  members=$(pool_field "$SCRATCH/policy.txt" "$CRAFT_ACCESS" 4)
+  strategy=$(pool_field "$SCRATCH/policy.txt" "$CRAFT_POOL" 3)
+  members=$(pool_field "$SCRATCH/policy.txt" "$CRAFT_POOL" 4)
   spread=$(field "$SCRATCH/policy.txt" spread)
   if [ -z "$members" ] && [ -z "$strategy" ]; then
-    typ=$(cred_type "$SCRATCH/policy.txt" "$CRAFT_ACCESS")
+    typ=$(cred_type "$SCRATCH/policy.txt" "$CRAFT_POOL")
     if [ -n "$typ" ]; then
-      fact pool FAIL "the coder craft's access '${CRAFT_ACCESS}' is a CREDENTIAL of type ${typ} and not a pool: a single credential has nothing to fail over TO, which is the whole of what this check measures. Declare a pool of two or more members ('fugaro accounts pool add <name> <member> <member>') and point the craft at the pool, then run this check again"
+      fact pool FAIL "the chain the coder craft goes out on names the pool '${CRAFT_POOL}', and the published node holds that name as a CREDENTIAL of type ${typ} and not as a pool: a single credential has nothing to fail over TO, which is the whole of what this check measures. Declare a pool of two or more members ('fugaro accounts pool add <name> <member> <member>') and route the craft's model through it, then run this check again"
       return 0
     fi
-    fact pool FAIL "the coder craft's access '${CRAFT_ACCESS}' is neither a pool nor a credential the published node holds: the node's crafts name ${node_access:-nothing} for the coder, and a name the node does not hold is one no run can resolve. Re-publish the node ('fugaro project publish') and run this check again"
+    fact pool FAIL "the chain the coder craft goes out on names the pool '${CRAFT_POOL}', and the published node holds neither a pool nor a credential of that name: the node's crafts name ${node_access:-nothing} for the coder, and a name the node does not hold is one no run can resolve. Re-publish the node ('fugaro project publish') and run this check again"
     return 0
   fi
-  POOL_NAME=$CRAFT_ACCESS
+  POOL_NAME=$CRAFT_POOL
   POOL_MEMBERS=$members
   if [ "$strategy" != failover ]; then
     fact pool FAIL "the pool '${POOL_NAME}' walks its members with strategy '${strategy:-none}' (members: ${members}): Check 420 is about FAILOVER — a pool that moves to the next member when one is exhausted — and a round-robin pool shares the load out instead, which is Check 421's reading. Write the pool with --strategy failover and run this check again"
@@ -945,7 +962,7 @@ plan() {
   say "CHECK 420 plan (dry run: nothing below is run, and no row in the block was measured)"
   say "  [offline] fugaro craft ls --help, accounts pool ls --help, project policy show --help, creds ls --help — the model-crafts vocabulary must be in the build"
   say "  [network, read] fugaro doctor --json in ${SANDBOX} — the project this checkout belongs to"
-  say "  [read] fugaro craft ls --json — the coder craft's effective access"
+  say "  [read] fugaro craft ls --json — the chain the coder craft's calls go out on, and the pool it names"
   say "  [network, read] fugaro project policy show --json — the published node: the pool's members and strategy, and subscription_spread"
   say "  [network, read] fugaro creds ls --json — the credential names the service's bundle holds (never a value)"
   say "  [network, BILLABLE] fugaro run --repo ${SANDBOX}${RECIPE:+ --recipe ${RECIPE}} --json \"${TASK}\" — ONE sandbox run, followed with fugaro runs ls --json until it is terminal"

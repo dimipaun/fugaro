@@ -533,10 +533,43 @@ type Policy struct {
 	// member existed.
 	ImageCatalog *ImageCatalog `json:"image_catalog,omitempty"`
 
-	// ImageMap is the project's repo-to-image map (D1906): the catalog entry
-	// each repository's jobs run, keyed by the repository's canonical name
-	// ("acme/app" — the spelling a --repo reads as and task.CanonicalRepo
-	// lower-cases, and the one every image_map key is held to). It is written
+	// RepoImages is the project's repository-to-image map, keyed by the
+	// repository's canonical name ("<provider>/<owner>/<name>", Canonical —
+	// "github/acme/app"). It is ImageMap's successor (D3371): the map must tell
+	// a GitHub acme/app and a Bitbucket acme/app apart, which a bare owner/name
+	// key cannot, so it is a *new member* rather than the old one with new keys
+	// — a key that meant owner/name would otherwise start meaning
+	// provider/owner/name under the same name, and an older reader would read a
+	// provider as an owner and map the wrong repository, silently. A reader of
+	// the release behind sees no map here and refuses loudly instead (R4).
+	//
+	// It travels ImageMap's road and for its reason: a map that names an image
+	// decides what code a job executes, so it is the owner's policy — written by
+	// `fugaro image map set` in the local config and published by `fugaro
+	// update` — and never a key of the shared config in the runs bucket, which
+	// any launcher can write. Refusing the key there (R7) and nil-ing it out of
+	// the shared config are T0c's and T0b's; until they land, this reader takes
+	// the member wherever it is written.
+	//
+	// ImageMap stays BESIDE it until a step after the credentials service is
+	// redeployed removes it (D3376 as amended): `update` builds images before it
+	// rewrites the policy, so a node that still holds the old member is read as
+	// it is read today, and the old service never meets a node without a map it
+	// knows. While both members are there, this one wins (EffectiveRepoImages,
+	// R2).
+	//
+	// A map with no entry is nil, so a project that maps nothing writes no
+	// member and its node is byte for byte what it was before this member
+	// existed.
+	RepoImages RepoImages `json:"repo_images,omitempty"`
+
+	// ImageMap is the project's repo-to-image map in its old form (D1906): the
+	// catalog entry each repository's jobs run, keyed by the repository's
+	// canonical name ("acme/app" — the spelling a --repo reads as and
+	// task.CanonicalRepo lower-cases, and the one every image_map key is held
+	// to). It is read until `update` has rewritten it (D3372) and removed by
+	// the step after the credentials service (D3376 as amended); RepoImages
+	// above is where the map lives from L11 on. It is written
 	// here rather than in each repository's fugaro.yaml because a project's
 	// repositories are mapped together: fifty repositories are one change
 	// rather than fifty, and the map is the project's own decision about which
@@ -771,6 +804,29 @@ type Policy struct {
 	// default.
 	MobileCrashReports *bool `json:"mobile_crash_reports,omitempty"`
 
+	// MobileCompactionThreshold is how full the context may grow, as a whole
+	// percent, before this project's phones compact it without being asked
+	// (Z2 of docs/mobile-identity-pairing): the app's automatic compaction,
+	// read off the session policy's `compact_threshold_percent` and never off
+	// this node, because `config/policy/**` is not in the paired device's read
+	// set. No key, and a written 0, both mean the project compacts nothing
+	// automatically (MobileCompactionThresholdPercent).
+	//
+	// **It is a top-level key of the node and deliberately not a member of the
+	// mobile block above**, for the reason MobileCrashReports is not one: the
+	// block decodes strictly, so a member added inside it makes every reader of
+	// the release behind refuse the WHOLE policy, and the node is re-read while
+	// runs are in flight (docs/design/update-in-flight.md). An unknown
+	// top-level key is listed in UnknownKeys and tolerated (P8), so a CLI or a
+	// runner of the release behind reads every key it knows and keeps serving.
+	//
+	// It is a pointer because the absent key and a written one are two
+	// statements the node makes differently — nothing said, and "no automatic
+	// compaction" said — and only a publish that keeps a written 0 can put the
+	// second on a node. The two mean the same thing to every reader
+	// (MobileCompactionThresholdPercent answers 0 for both).
+	MobileCompactionThreshold *int `json:"mobile_compaction_threshold,omitempty"`
+
 	// ModelRouting is the project's routing table, published: where each model
 	// is reached, which repositories each credential may serve, and the pools in
 	// the shape C2 gives them (docs/model-credentials-routing, RT4, R21, F49).
@@ -817,7 +873,12 @@ var knownTopLevelKeys = map[string]bool{
 	"bitbucket_token": true, "bitbucket_tokens": true, "bitbucket_api_roots": true,
 	"review_floor": true, "verifier_accounts": true,
 	"image_catalog": true,
-	"image_map":     true, "bake_repos": true, "image_services": true,
+	// The repository-to-image map's two members (D3371): repo_images is the
+	// new one and image_map the old, which stays until a step after the
+	// credentials service removes it. Both are top-level keys, so a reader of
+	// the release behind lists the new one in UnknownKeys and reads the rest
+	// of the policy (R4).
+	"repo_images": true, "image_map": true, "bake_repos": true, "image_services": true,
 	"default_claude_account": true, "claude_account_stages": true,
 	"crafts": true, "craft_credentials": true, "craft_pools": true,
 	"model_grades":        true,
@@ -854,6 +915,14 @@ var knownTopLevelKeys = map[string]bool{
 	// reader of the release behind, which is what update must never do. Read by
 	// MobileCrashReportsOn, which answers an absent key off.
 	"mobile_crash_reports": true,
+	// The phone's automatic compaction threshold (Z2 of
+	// docs/mobile-identity-pairing): a top-level key BESIDE the mobile block and
+	// not a member of it, for the reason the switch above is one — the block
+	// decodes strictly, so a member added inside it is refused by every reader
+	// of the release behind, which is what update must never do. Read by
+	// MobileCompactionThresholdPercent, which answers an absent key with no automatic
+	// compaction.
+	"mobile_compaction_threshold": true,
 	// The project's routing table (RT4 of docs/model-credentials-routing): a
 	// top-level key and not a member of any block, for the reason every key
 	// above is one — a reader of the release behind lists it in UnknownKeys and
@@ -2091,6 +2160,19 @@ func decodePolicy(raw []byte, keys map[string]bool, strict bool) (*Policy, bool,
 			return nil, true, fmt.Errorf("projectpolicy: mobile_crash_reports: %w", err)
 		}
 	}
+	// The phone's automatic compaction threshold, read on its own for the same
+	// reason: one whole percent beside the block, so that a reader of the
+	// release behind lists it in UnknownKeys and keeps reading the whole policy
+	// (F46). A written null is the absent key, which is no automatic compaction
+	// (MobileCompactionThresholdPercent).
+	if traw, ok := doc["mobile_compaction_threshold"]; ok && !IsNull(traw) {
+		if err := json.Unmarshal(traw, &p.MobileCompactionThreshold); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: mobile_compaction_threshold: %w", err)
+		}
+		if err := validMobileCompactionThreshold(*p.MobileCompactionThreshold); err != nil {
+			return nil, true, err
+		}
+	}
 	if vraw, ok := doc["verifier_accounts"]; ok && !IsNull(vraw) {
 		if err := json.Unmarshal(vraw, &p.VerifierAccounts); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: verifier_accounts: %w", err)
@@ -2105,6 +2187,22 @@ func decodePolicy(raw []byte, keys map[string]bool, strict bool) (*Policy, bool,
 			return nil, true, err
 		}
 		p.ImageCatalog = catalog
+	}
+	if rraw, ok := doc["repo_images"]; ok && !IsNull(rraw) {
+		// The block's own rules — the escaped keys, no repository twice — are
+		// RepoImages' decode, which this call is, and the keys and values are
+		// held to ValidRepoImages. A provider this release does not serve is
+		// deliberately not refused here (R10): a later release's provider must
+		// not brick an older reader of the node.
+		if err := json.Unmarshal(rraw, &p.RepoImages); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: repo_images: %w", err)
+		}
+		if err := ValidRepoImages(p.RepoImages); err != nil {
+			return nil, true, err
+		}
+		if len(p.RepoImages) == 0 {
+			p.RepoImages = nil
+		}
 	}
 	if mraw, ok := doc["image_map"]; ok && !IsNull(mraw) {
 		// The block's own rules — the escaped keys, no name twice, no two keys

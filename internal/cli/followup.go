@@ -554,34 +554,6 @@ func prSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, tota
 	return slug, spec, false, err
 }
 
-// writePRIndex records a `--pr` launch's run in the pull-request index, so
-// `runs ls --pr N` finds the runs of a pull request without scanning the
-// repository (design docs/runs-ls-speed, D2962).
-//
-// The launcher writes this beside the runner's own write of the same run
-// because the job's image may predate the index: a follow-up started on one
-// writes nothing itself, and the run would stay invisible to `--pr N` until
-// the backfill. Both writes are create-if-absent and per run, so whichever
-// lands first stands and neither can replace the other.
-//
-// It is best effort and never a refusal, and it never waits: the index is a
-// hint, and a reader checks every run it names against that run's own
-// records before it shows a row (D2963), so a write that fails is a warning
-// on the launch's stderr and the launch goes on.
-func writePRIndex(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, now time.Time, warn io.Writer) {
-	if spec.PR < 1 {
-		return
-	}
-	e := runstore.PRIndexEntry{RunID: spec.RunID, Slug: slug, PR: spec.PR, Kind: runstore.PRIndexFollowed, At: now.UTC()}
-	if err := runstore.PutPRIndex(ctx, env.bucket.Bucket, e); err != nil {
-		// The run by its ending, as a person reads one (spec.md §1): the launch
-		// has just named the repository, and the ending is what tells this run
-		// from the next one.
-		fmt.Fprintf(warn, "warning: no pull-request index entry was written for run %s in %s, so runs ls --pr %d may have to scan for it: %s\n",
-			task.ShortRun(spec.RunID), oneLine(slug), spec.PR, oneLine(err.Error()))
-	}
-}
-
 // repeatOverrides is the overrides a repeat of this launch must find stored,
 // built the way the launch writes them rather than as an echo of the flags:
 // createTask compares the whole task, so every field the launcher derives has

@@ -8,9 +8,9 @@ package cli
 // skill that does not carry them leaves a reader — an agent in a session, most
 // of all — reading the slow listing as the only one there is, or reading the
 // one line the fallback prints as a failure. So the three sentences are pinned
-// where they live: the residual of D2964 in the design of record, the row the
-// backfill added to the in-flight audit now that its reader exists, the two
-// skills' own words, and the release the whole thing ships in.
+// where they live: the residual of D2964 in the design of record, the in-flight
+// audit's table (its index row went with the step, D3204), the two skills' own
+// words, and the release the whole thing ships in.
 
 import (
 	"os"
@@ -76,23 +76,22 @@ func TestDocsBucketIAMNamesThePRIndexResidual(t *testing.T) {
 	}
 }
 
-// TestDocsUpdateInFlightIndexRowIsCurrent: RL2B added the backfill's row to the
-// audit, and its exposure sentence said no run read the index yet. The release
-// that carries RL3 is the one that makes a run read it, so the row is rewritten
-// in the same sweep (the plan's RL5: "docs/design/update-in-flight.md is
-// current after RL2B"). What the row must keep saying is the half that matters:
-// the index is a hint a reader falls back from, so the backfill's timing is
-// never something a run waits for.
-func TestDocsUpdateInFlightIndexRowIsCurrent(t *testing.T) {
+// TestDocsUpdateInFlightIndexRowIsGone: RL2B added the backfill's row to the
+// audit, and D3204 retired the step — `runs ls --pr N` reads the live index
+// (IR1, I-INDEX), the writers stopped (IR5a, IR5b), and the objects a run
+// already left stay where they are for the reader that falls back to them. The
+// document's table is one row per `initStages` step, so the row goes with the
+// step: a page that still carried it would tell a reader that `fugaro update`
+// backfills a prefix nothing writes.
+func TestDocsUpdateInFlightIndexRowIsGone(t *testing.T) {
 	doc := flattenDoc(readDoc(t, runsLsSpeedUpdateInFlight))
-	for _, want := range []struct{ phrase, why string }{
-		{"the pull-request index (D2965)", "the backfill's row is gone from the step table"},
-		{"the index is a hint a reader falls back from and never waits for",
-			"the row does not say what the index is to a reader, which is the reason the step can be safe for a run in flight at all (D2964)"},
-	} {
-		if !strings.Contains(doc, want.phrase) {
-			t.Errorf("%s does not say %q: %s", runsLsSpeedUpdateInFlight, want.phrase, want.why)
+	for _, phrase := range []string{"the pull-request index (D2965)", "backfillPRIndex", "pr-index"} {
+		if strings.Contains(doc, phrase) {
+			t.Errorf("%s still carries %q: the step is gone (D3204), and the audit's table is one row per step", runsLsSpeedUpdateInFlight, phrase)
 		}
+	}
+	if _, err := os.Stat("update_prindex.go"); err == nil {
+		t.Errorf("internal/cli/update_prindex.go is back: the row this pin removed describes a step that writes runs/<slug>/pr-index/ for the runs of an installation's window")
 	}
 }
 

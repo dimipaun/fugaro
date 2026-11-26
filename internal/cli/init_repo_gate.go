@@ -360,10 +360,10 @@ func onboardLeft(o originInfo, door string) initflow.Left {
 // an argument is what keeps the sentence from naming a route this run does not
 // have (W5.1).
 //
-// It is unknownBecause plus the one clause only the repository's own stage may
-// say: the plugin stage's pin reads the same gate, and there the repository
-// stage is behind it in the same run and says it itself
-// (init_plugin_stage.go's pinGate).
+// It is unknownBecause plus the one clause only a stage that runs before the
+// repository's own may say: it is the stage that would have answered about this
+// repository, and this run did not reach it (init_repo_stage.go,
+// initsecrets.go).
 func unknownDetail(project string, o originInfo, optIn string) string {
 	return unknownBecause(project, o, optIn) + "; the repository stage was not reached"
 }

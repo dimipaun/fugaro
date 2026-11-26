@@ -1,0 +1,1710 @@
+# fugaro's own command surface, generated from cli.NewRootCmd().
+# Regenerate: go test ./scripts -run TestLiveCheckCLISurface -update-live-check-surface
+cmd	ab
+cmd	account
+cmd	accounts
+cmd	accounts add
+cmd	accounts alias
+cmd	accounts alias rm
+cmd	accounts alias set
+cmd	accounts allow
+cmd	accounts cascade
+cmd	accounts cascade set
+cmd	accounts clear
+cmd	accounts craft
+cmd	accounts craft rm
+cmd	accounts craft set
+cmd	accounts deny
+cmd	accounts grade
+cmd	accounts grade set
+cmd	accounts ls
+cmd	accounts pool
+cmd	accounts pool add
+cmd	accounts pool ls
+cmd	accounts pool rm
+cmd	accounts repo
+cmd	accounts repo add
+cmd	accounts rm
+cmd	accounts switch
+cmd	allow-delete
+cmd	apply
+cmd	artifacts
+cmd	artifacts get
+cmd	artifacts ls
+cmd	backend
+cmd	backends
+cmd	backends ls
+cmd	backends use
+cmd	backlog
+cmd	backlog add
+cmd	backlog index
+cmd	backlog list
+cmd	budget
+cmd	budget chain
+cmd	budget chain raise
+cmd	budget kill
+cmd	budget preview
+cmd	budget prices
+cmd	budget reconcile
+cmd	budget resume
+cmd	budget set
+cmd	budget show
+cmd	cancel
+cmd	config
+cmd	config example
+cmd	config init
+cmd	config layer
+cmd	config list
+cmd	config publish
+cmd	config show
+cmd	coordinator
+cmd	craft
+cmd	craft ls
+cmd	creds
+cmd	creds ls
+cmd	creds set
+cmd	diagnose
+cmd	doctor
+cmd	escalation
+cmd	escalation ls
+cmd	escalation show
+cmd	estimate
+cmd	followups
+cmd	graph
+cmd	help
+cmd	image
+cmd	image add
+cmd	image build
+cmd	image check
+cmd	image ls
+cmd	image map
+cmd	image map set
+cmd	image promote
+cmd	image refresh
+cmd	image render
+cmd	image rm
+cmd	image status
+cmd	image survey
+cmd	issue
+cmd	issue dismiss
+cmd	issue list
+cmd	issue mine
+cmd	issue show
+cmd	issue submit
+cmd	issue sync
+cmd	logs
+cmd	mailbox
+cmd	managed
+cmd	managed apply
+cmd	managed flag
+cmd	managed status
+cmd	managed unflag
+cmd	models
+cmd	models add
+cmd	models ls
+cmd	models price
+cmd	models price set
+cmd	models provider
+cmd	models provider rm
+cmd	models provider set
+cmd	models rm
+cmd	models search
+cmd	models use
+cmd	orchestrator
+cmd	orchestrator events
+cmd	orchestrator import
+cmd	orchestrator install
+cmd	orchestrator ls
+cmd	orchestrator patch
+cmd	orchestrator run
+cmd	orchestrator state
+cmd	orchestrator status
+cmd	orchestrator uninstall
+cmd	pair
+cmd	pair ls
+cmd	pair revoke
+cmd	plan
+cmd	plan graph
+cmd	plan status
+cmd	project
+cmd	project binaries
+cmd	project binaries allow
+cmd	project binaries deny
+cmd	project binaries max-bytes
+cmd	project clone-url
+cmd	project clone-url ls
+cmd	project clone-url rm
+cmd	project clone-url set
+cmd	project clone-url show
+cmd	project policy
+cmd	project policy publish
+cmd	project policy show
+cmd	project profile
+cmd	project profile add
+cmd	project profile ls
+cmd	project profile rm
+cmd	project profile set
+cmd	project profile show
+cmd	project repos
+cmd	project repos add
+cmd	project repos ls
+cmd	project repos rm
+cmd	project repos set
+cmd	project repos status
+cmd	project routing
+cmd	project routing set
+cmd	project routing show
+cmd	project routing unset
+cmd	project show
+cmd	project sync
+cmd	reaper
+cmd	recipe
+cmd	recipes
+cmd	recipes ls
+cmd	recipes publish
+cmd	recipes rm
+cmd	recipes show
+cmd	recipes validate
+cmd	report
+cmd	restore
+cmd	review
+cmd	review show
+cmd	rigor
+cmd	rigor floor
+cmd	rigor floor set
+cmd	rigor floor show
+cmd	rigor floor unset
+cmd	rigor security
+cmd	rigor security add
+cmd	rigor security rm
+cmd	rigor set
+cmd	routing
+cmd	routing ls
+cmd	routing rm
+cmd	routing set
+cmd	run
+cmd	runs
+cmd	runs digest
+cmd	runs ls
+cmd	runs reindex
+cmd	runs reports
+cmd	runs show
+cmd	runs stats
+cmd	runs summary
+cmd	runs watch
+cmd	seats
+cmd	secret
+cmd	secrets
+cmd	secrets allow
+cmd	secrets deny
+cmd	secrets ls
+cmd	secrets rm
+cmd	secrets set
+cmd	secrets shared
+cmd	secrets shared ls
+cmd	secrets shared rm
+cmd	secrets shared set
+cmd	secrets user
+cmd	secrets user ls
+cmd	secrets user rm
+cmd	secrets user set
+cmd	security
+cmd	security paths
+cmd	settings
+cmd	settings get
+cmd	settings set
+cmd	settings unset
+cmd	setup
+cmd	stats
+cmd	stats runs
+cmd	tell
+cmd	troubleshoot
+cmd	update
+cmd	update-skills
+cmd	user
+cmd	user add
+cmd	user grant
+cmd	user ls
+cmd	user offboard
+cmd	user revoke
+cmd	user rm
+cmd	validate
+cmd	verify
+cmd	version
+cmd	watch
+cmd	workflow
+cmd	workflow add
+cmd	workflow rm
+cmd	workspace
+cmd	workspace add
+cmd	workspace cap
+cmd	workspace cap set
+cmd	workspace domains
+cmd	workspace domains add
+cmd	workspace domains ls
+cmd	workspace domains rm
+cmd	workspace init
+cmd	workspace login
+cmd	workspace ls
+cmd	workspace project
+cmd	workspace project add
+cmd	workspace project link
+cmd	workspace project ls
+cmd	workspace project reconcile
+cmd	workspace project rm
+cmd	workspace project save
+cmd	workspace project status
+cmd	workspace project unlink
+cmd	workspace rm
+cmd	workspace share
+cmd	workspace show
+cmd	workspace unshare
+cmd	workspace user
+cmd	workspace user add
+cmd	workspace user grant
+cmd	workspace user ls
+cmd	workspace user revoke
+cmd	workspace user rm
+flag		bool	-h	--help
+flag		bool	-v	--verbose
+flag		bool	-v	--version
+flag	ab	bool	-h	--help
+flag	account	bool	-h	--help
+flag	accounts	bool	-h	--help
+flag	accounts	bool	-v	--verbose
+flag	accounts add	bool		--ask
+flag	accounts add	bool		--claude
+flag	accounts add	bool	-h	--help
+flag	accounts add	value		--pool
+flag	accounts add	value		--profile
+flag	accounts add	value		--repos
+flag	accounts add	value		--type
+flag	accounts alias	bool	-h	--help
+flag	accounts alias	bool	-v	--verbose
+flag	accounts alias rm	bool		--yes
+flag	accounts alias rm	bool	-h	--help
+flag	accounts alias set	bool		--yes
+flag	accounts alias set	bool	-h	--help
+flag	accounts allow	bool	-h	--help
+flag	accounts cascade	bool	-h	--help
+flag	accounts cascade	bool	-v	--verbose
+flag	accounts cascade set	bool		--stop-after-exhaustion-per-window
+flag	accounts cascade set	bool	-h	--help
+flag	accounts cascade set	value		--backoff-cap
+flag	accounts cascade set	value		--backoff-initial
+flag	accounts cascade set	value		--concurrency-per-token
+flag	accounts cascade set	value		--fallback
+flag	accounts cascade set	value		--layer
+flag	accounts cascade set	value		--wait-threshold
+flag	accounts clear	bool	-h	--help
+flag	accounts clear	value		--config
+flag	accounts clear	value		--gcp-project
+flag	accounts clear	value		--project
+flag	accounts clear	value		--region
+flag	accounts craft	bool	-h	--help
+flag	accounts craft	bool	-v	--verbose
+flag	accounts craft rm	bool	-h	--help
+flag	accounts craft rm	value		--layer
+flag	accounts craft set	bool	-h	--help
+flag	accounts craft set	value		--access
+flag	accounts craft set	value		--layer
+flag	accounts deny	bool	-h	--help
+flag	accounts grade	bool	-h	--help
+flag	accounts grade	bool	-v	--verbose
+flag	accounts grade set	bool	-h	--help
+flag	accounts grade set	value		--access
+flag	accounts grade set	value		--layer
+flag	accounts ls	bool		--json
+flag	accounts ls	bool	-h	--help
+flag	accounts ls	value		--config
+flag	accounts ls	value		--gcp-project
+flag	accounts ls	value		--project
+flag	accounts ls	value		--region
+flag	accounts ls	value		--repo
+flag	accounts pool	bool	-h	--help
+flag	accounts pool	bool	-v	--verbose
+flag	accounts pool add	bool	-h	--help
+flag	accounts pool add	value		--allow-user
+flag	accounts pool add	value		--layer
+flag	accounts pool add	value		--owner
+flag	accounts pool add	value		--rule
+flag	accounts pool add	value		--service-account
+flag	accounts pool add	value		--strategy
+flag	accounts pool ls	bool		--json
+flag	accounts pool ls	bool	-h	--help
+flag	accounts pool ls	value		--config
+flag	accounts pool ls	value		--gcp-project
+flag	accounts pool ls	value		--project
+flag	accounts pool ls	value		--region
+flag	accounts pool rm	bool	-h	--help
+flag	accounts pool rm	value		--layer
+flag	accounts repo	bool	-h	--help
+flag	accounts repo	bool	-v	--verbose
+flag	accounts repo add	bool	-h	--help
+flag	accounts repo add	value		--layer
+flag	accounts rm	bool		--no-apply
+flag	accounts rm	bool	-h	--help
+flag	accounts rm	value		--profile
+flag	accounts switch	bool		--dry-run
+flag	accounts switch	bool		--yes
+flag	accounts switch	bool	-h	--help
+flag	allow-delete	bool	-h	--help
+flag	allow-delete	value		--config
+flag	allow-delete	value		--gcp-project
+flag	allow-delete	value		--project
+flag	allow-delete	value		--region
+flag	apply	bool		--json
+flag	apply	bool		--status
+flag	apply	bool	-h	--help
+flag	apply	value		--config
+flag	apply	value		--project
+flag	artifacts	bool	-h	--help
+flag	artifacts	bool	-v	--verbose
+flag	artifacts get	bool		--force
+flag	artifacts get	bool	-h	--help
+flag	artifacts get	value		--config
+flag	artifacts get	value		--gcp-project
+flag	artifacts get	value		--out
+flag	artifacts get	value		--project
+flag	artifacts get	value		--region
+flag	artifacts get	value		--repo
+flag	artifacts ls	bool		--json
+flag	artifacts ls	bool	-h	--help
+flag	artifacts ls	value		--config
+flag	artifacts ls	value		--gcp-project
+flag	artifacts ls	value		--project
+flag	artifacts ls	value		--region
+flag	artifacts ls	value		--repo
+flag	backend	bool	-h	--help
+flag	backends	bool	-h	--help
+flag	backends	bool	-v	--verbose
+flag	backends ls	bool		--json
+flag	backends ls	bool	-h	--help
+flag	backends ls	value		--config
+flag	backends ls	value		--gcp-project
+flag	backends ls	value		--project
+flag	backends ls	value		--region
+flag	backends use	bool	-h	--help
+flag	backends use	value		--config
+flag	backends use	value		--project
+flag	backlog	bool	-h	--help
+flag	backlog	bool	-v	--verbose
+flag	backlog add	bool	-h	--help
+flag	backlog add	value		--brief-file
+flag	backlog add	value		--config
+flag	backlog add	value		--gcp-project
+flag	backlog add	value		--project
+flag	backlog add	value		--region
+flag	backlog add	value		--repo
+flag	backlog add	value		--title
+flag	backlog index	bool	-h	--help
+flag	backlog index	value		--dir
+flag	backlog list	bool		--json
+flag	backlog list	bool	-h	--help
+flag	backlog list	value		--config
+flag	backlog list	value		--gcp-project
+flag	backlog list	value		--project
+flag	backlog list	value		--region
+flag	budget	bool	-h	--help
+flag	budget	bool	-v	--verbose
+flag	budget chain	bool	-h	--help
+flag	budget chain	bool	-v	--verbose
+flag	budget chain raise	bool	-h	--help
+flag	budget chain raise	value		--config
+flag	budget chain raise	value		--gcp-project
+flag	budget chain raise	value		--max-review-rounds
+flag	budget chain raise	value		--max-time
+flag	budget chain raise	value		--max-tokens
+flag	budget chain raise	value		--max-usd
+flag	budget chain raise	value		--project
+flag	budget chain raise	value		--reason
+flag	budget chain raise	value		--region
+flag	budget chain raise	value		--repo
+flag	budget kill	bool		--all
+flag	budget kill	bool	-h	--help
+flag	budget kill	value		--config
+flag	budget kill	value		--gcp-project
+flag	budget kill	value		--project
+flag	budget kill	value		--reason
+flag	budget kill	value		--region
+flag	budget kill	value		--repo
+flag	budget kill	value		--workspace
+flag	budget preview	bool		--json
+flag	budget preview	bool	-h	--help
+flag	budget preview	value		--config
+flag	budget preview	value		--gcp-project
+flag	budget preview	value		--mode
+flag	budget preview	value		--project
+flag	budget preview	value		--recipe
+flag	budget preview	value		--region
+flag	budget preview	value		--repo
+flag	budget preview	value		--runs
+flag	budget prices	bool		--json
+flag	budget prices	bool	-h	--help
+flag	budget prices	value		--config
+flag	budget prices	value		--gcp-project
+flag	budget prices	value		--project
+flag	budget prices	value		--region
+flag	budget reconcile	bool		--all
+flag	budget reconcile	bool		--json
+flag	budget reconcile	bool	-h	--help
+flag	budget reconcile	value		--config
+flag	budget reconcile	value		--from
+flag	budget reconcile	value		--gcp-project
+flag	budget reconcile	value		--project
+flag	budget reconcile	value		--region
+flag	budget reconcile	value		--repo
+flag	budget reconcile	value		--to
+flag	budget resume	bool		--all
+flag	budget resume	bool	-h	--help
+flag	budget resume	value		--config
+flag	budget resume	value		--gcp-project
+flag	budget resume	value		--project
+flag	budget resume	value		--reason
+flag	budget resume	value		--region
+flag	budget resume	value		--repo
+flag	budget resume	value		--workspace
+flag	budget set	bool		--ask
+flag	budget set	bool		--clear
+flag	budget set	bool		--defaults
+flag	budget set	bool		--global
+flag	budget set	bool	-h	--help
+flag	budget set	value		--config
+flag	budget set	value		--daily
+flag	budget set	value		--gcp-project
+flag	budget set	value		--max-reserve
+flag	budget set	value		--mode
+flag	budget set	value		--per-run
+flag	budget set	value		--project
+flag	budget set	value		--region
+flag	budget set	value		--repo
+flag	budget show	bool		--all
+flag	budget show	bool		--compute
+flag	budget show	bool		--json
+flag	budget show	bool		--stream
+flag	budget show	bool	-h	--help
+flag	budget show	value		--config
+flag	budget show	value		--gcp-project
+flag	budget show	value		--project
+flag	budget show	value		--region
+flag	budget show	value		--repo
+flag	cancel	bool		--json
+flag	cancel	bool		--now
+flag	cancel	bool	-h	--help
+flag	cancel	value		--config
+flag	cancel	value		--finalize-wait
+flag	cancel	value		--gcp-project
+flag	cancel	value		--grace
+flag	cancel	value		--grace-floor
+flag	cancel	value		--poll
+flag	cancel	value		--project
+flag	cancel	value		--region
+flag	config	bool	-h	--help
+flag	config	bool	-v	--verbose
+flag	config example	bool	-h	--help
+flag	config init	bool	-h	--help
+flag	config init	value		--base-branch
+flag	config init	value		--config
+flag	config init	value		--gcp-project
+flag	config init	value		--profile
+flag	config init	value		--project
+flag	config init	value		--region
+flag	config layer	bool		--json
+flag	config layer	bool	-h	--help
+flag	config list	bool		--json
+flag	config list	bool	-h	--help
+flag	config publish	bool		--executable-changes
+flag	config publish	bool	-h	--help
+flag	config publish	value		--config
+flag	config publish	value		--gcp-project
+flag	config publish	value		--project
+flag	config publish	value		--region
+flag	config show	bool		--json
+flag	config show	bool		--offline
+flag	config show	bool	-h	--help
+flag	config show	value		--project-layer
+flag	config show	value		--workflow
+flag	coordinator	bool	-h	--help
+flag	craft	bool	-h	--help
+flag	craft	bool	-v	--verbose
+flag	craft ls	bool		--json
+flag	craft ls	bool	-h	--help
+flag	craft ls	value		--config
+flag	craft ls	value		--gcp-project
+flag	craft ls	value		--project
+flag	craft ls	value		--region
+flag	creds	bool	-h	--help
+flag	creds	bool	-v	--verbose
+flag	creds ls	bool		--json
+flag	creds ls	bool	-h	--help
+flag	creds ls	value		--config
+flag	creds ls	value		--gcp-project
+flag	creds ls	value		--project
+flag	creds ls	value		--region
+flag	creds set	bool		--generate
+flag	creds set	bool		--json
+flag	creds set	bool	-h	--help
+flag	creds set	value		--config
+flag	creds set	value		--coverage
+flag	creds set	value		--expires
+flag	creds set	value		--gcp-project
+flag	creds set	value		--project
+flag	creds set	value		--project-key
+flag	creds set	value		--project-uuid
+flag	creds set	value		--region
+flag	creds set	value		--type
+flag	diagnose	bool		--json
+flag	diagnose	bool	-h	--help
+flag	diagnose	value		--config
+flag	diagnose	value		--gcp-project
+flag	diagnose	value		--project
+flag	diagnose	value		--region
+flag	doctor	bool		--all
+flag	doctor	bool		--check-bitbucket-token
+flag	doctor	bool		--check-github-app
+flag	doctor	bool		--json
+flag	doctor	bool		--offline
+flag	doctor	bool		--plugin
+flag	doctor	bool		--security
+flag	doctor	bool		--strict
+flag	doctor	bool	-h	--help
+flag	doctor	value		--config
+flag	doctor	value		--dir
+flag	doctor	value		--gcp-project
+flag	doctor	value		--project
+flag	doctor	value		--region
+flag	escalation	bool	-h	--help
+flag	escalation	bool	-v	--verbose
+flag	escalation ls	bool		--json
+flag	escalation ls	bool	-h	--help
+flag	escalation ls	value		--config
+flag	escalation ls	value		--gcp-project
+flag	escalation ls	value		--name
+flag	escalation ls	value		--project
+flag	escalation ls	value		--region
+flag	escalation show	bool		--json
+flag	escalation show	bool	-h	--help
+flag	escalation show	value		--config
+flag	escalation show	value		--gcp-project
+flag	escalation show	value		--name
+flag	escalation show	value		--project
+flag	escalation show	value		--region
+flag	estimate	bool		--json
+flag	estimate	bool	-h	--help
+flag	estimate	value		--config
+flag	estimate	value		--gcp-project
+flag	estimate	value		--model
+flag	estimate	value		--pr
+flag	estimate	value		--project
+flag	estimate	value		--region
+flag	estimate	value		--repo
+flag	estimate	value		--run
+flag	estimate	value		--since
+flag	followups	bool		--json
+flag	followups	bool		--launch
+flag	followups	bool	-h	--help
+flag	followups	value		--config
+flag	followups	value		--gcp-project
+flag	followups	value		--max
+flag	followups	value		--project
+flag	followups	value		--region
+flag	graph	bool	-h	--help
+flag	help	bool	-h	--help
+flag	image	bool	-h	--help
+flag	image	bool	-v	--verbose
+flag	image add	bool		--default
+flag	image add	bool		--dry-run
+flag	image add	bool		--json
+flag	image add	bool		--no-apply
+flag	image add	bool	-h	--help
+flag	image add	value		--branch
+flag	image add	value		--config
+flag	image add	value		--description
+flag	image add	value		--dockerfile
+flag	image add	value		--gcp-project
+flag	image add	value		--image
+flag	image add	value		--inline
+flag	image add	value		--project
+flag	image add	value		--region
+flag	image add	value		--tags
+flag	image build	bool		--json
+flag	image build	bool		--local
+flag	image build	bool		--no-smoke
+flag	image build	bool		--no-wait
+flag	image build	bool	-h	--help
+flag	image build	value		--base
+flag	image build	value		--config
+flag	image build	value		--gcp-project
+flag	image build	value		--platform
+flag	image build	value		--project
+flag	image build	value		--region
+flag	image build	value		--repo
+flag	image build	value		--tag
+flag	image build	value		--workflow
+flag	image check	bool		--catalog
+flag	image check	bool		--dry-run
+flag	image check	bool		--force
+flag	image check	bool		--job
+flag	image check	bool		--json
+flag	image check	bool	-h	--help
+flag	image check	value		--config
+flag	image check	value		--gcp-project
+flag	image check	value		--project
+flag	image check	value		--region
+flag	image check	value		--workflow
+flag	image ls	bool		--json
+flag	image ls	bool		--shared
+flag	image ls	bool	-h	--help
+flag	image ls	value		--config
+flag	image ls	value		--gcp-project
+flag	image ls	value		--project
+flag	image ls	value		--region
+flag	image map	bool	-h	--help
+flag	image map	bool	-v	--verbose
+flag	image map set	bool	-h	--help
+flag	image map set	value		--config
+flag	image map set	value		--gcp-project
+flag	image map set	value		--project
+flag	image map set	value		--region
+flag	image promote	bool	-h	--help
+flag	image promote	value		--config
+flag	image promote	value		--gcp-project
+flag	image promote	value		--project
+flag	image promote	value		--region
+flag	image refresh	bool		--ask
+flag	image refresh	bool	-h	--help
+flag	image refresh	value		--config
+flag	image refresh	value		--expect-digest
+flag	image refresh	value		--gcp-project
+flag	image refresh	value		--image-source
+flag	image refresh	value		--project
+flag	image refresh	value		--region
+flag	image refresh	value		--repo
+flag	image refresh	value		--workflow
+flag	image render	bool	-h	--help
+flag	image render	value		--cloud-outputs
+flag	image render	value		--key
+flag	image render	value		--layer-bucket
+flag	image render	value		--layer-sha256
+flag	image render	value		--layer-slug
+flag	image render	value		--workflow
+flag	image rm	bool		--no-apply
+flag	image rm	bool	-h	--help
+flag	image rm	value		--config
+flag	image rm	value		--gcp-project
+flag	image rm	value		--project
+flag	image rm	value		--region
+flag	image status	bool		--json
+flag	image status	bool	-h	--help
+flag	image status	value		--config
+flag	image status	value		--gcp-project
+flag	image status	value		--project
+flag	image status	value		--region
+flag	image status	value		--repo
+flag	image survey	bool		--json
+flag	image survey	bool	-h	--help
+flag	image survey	value		--config
+flag	image survey	value		--gcp-project
+flag	image survey	value		--project
+flag	image survey	value		--region
+flag	issue	bool	-h	--help
+flag	issue	bool	-v	--verbose
+flag	issue dismiss	bool	-h	--help
+flag	issue list	bool		--all
+flag	issue list	bool		--json
+flag	issue list	bool		--mine
+flag	issue list	bool	-h	--help
+flag	issue mine	bool		--all
+flag	issue mine	bool		--json
+flag	issue mine	bool	-h	--help
+flag	issue show	bool		--json
+flag	issue show	bool	-h	--help
+flag	issue submit	bool		--ask
+flag	issue submit	bool	-h	--help
+flag	issue sync	bool	-h	--help
+flag	logs	bool		--json
+flag	logs	bool		--url
+flag	logs	bool	-f	--follow
+flag	logs	bool	-h	--help
+flag	logs	value		--config
+flag	logs	value		--gcp-project
+flag	logs	value		--project
+flag	logs	value		--region
+flag	mailbox	bool		--json
+flag	mailbox	bool		--no-heartbeat
+flag	mailbox	bool		--once
+flag	mailbox	bool	-h	--help
+flag	mailbox	bool	-v	--verbose
+flag	mailbox	value		--config
+flag	mailbox	value		--gcp-project
+flag	mailbox	value		--interval
+flag	mailbox	value		--project
+flag	mailbox	value		--region
+flag	managed	bool	-h	--help
+flag	managed	bool	-v	--verbose
+flag	managed apply	bool	-h	--help
+flag	managed apply	value		--config
+flag	managed apply	value		--gcp-project
+flag	managed apply	value		--project
+flag	managed apply	value		--region
+flag	managed flag	bool	-h	--help
+flag	managed flag	value		--budget
+flag	managed flag	value		--budget-currency
+flag	managed flag	value		--config
+flag	managed flag	value		--gcp-project
+flag	managed flag	value		--project
+flag	managed flag	value		--region
+flag	managed status	bool		--json
+flag	managed status	bool	-h	--help
+flag	managed status	value		--config
+flag	managed status	value		--gcp-project
+flag	managed status	value		--project
+flag	managed status	value		--region
+flag	managed unflag	bool	-h	--help
+flag	managed unflag	value		--config
+flag	managed unflag	value		--gcp-project
+flag	managed unflag	value		--project
+flag	managed unflag	value		--region
+flag	models	bool	-h	--help
+flag	models	bool	-v	--verbose
+flag	models add	bool		--dry-run
+flag	models add	bool		--json
+flag	models add	bool		--no-apply
+flag	models add	bool	-h	--help
+flag	models add	value		--config
+flag	models add	value		--price-in
+flag	models add	value		--price-out
+flag	models add	value		--project
+flag	models add	value		--route
+flag	models ls	bool		--json
+flag	models ls	bool	-h	--help
+flag	models ls	value		--config
+flag	models ls	value		--gcp-project
+flag	models ls	value		--project
+flag	models ls	value		--region
+flag	models price	bool	-h	--help
+flag	models price	bool	-v	--verbose
+flag	models price set	bool	-h	--help
+flag	models price set	value		--cache-read
+flag	models price set	value		--cache-write-1h
+flag	models price set	value		--cache-write-5m
+flag	models price set	value		--input-per-m
+flag	models price set	value		--layer
+flag	models price set	value		--output-per-m
+flag	models price set	value		--web-search-per-1k
+flag	models provider	bool	-h	--help
+flag	models provider	bool	-v	--verbose
+flag	models provider rm	bool	-h	--help
+flag	models provider rm	value		--layer
+flag	models provider set	bool		--require-zdr
+flag	models provider set	bool	-h	--help
+flag	models provider set	value		--allow-data-to
+flag	models provider set	value		--auth
+flag	models provider set	value		--base-url
+flag	models provider set	value		--kind
+flag	models provider set	value		--layer
+flag	models provider set	value		--price-policy
+flag	models provider set	value		--route-fee-pct
+flag	models provider set	value		--secret
+flag	models rm	bool		--no-apply
+flag	models rm	bool	-h	--help
+flag	models search	bool		--json
+flag	models search	bool	-h	--help
+flag	models search	value		--config
+flag	models search	value		--gcp-project
+flag	models search	value		--project
+flag	models search	value		--region
+flag	models use	bool	-h	--help
+flag	models use	value		--layer
+flag	orchestrator	bool	-h	--help
+flag	orchestrator	bool	-v	--verbose
+flag	orchestrator events	bool		--json
+flag	orchestrator events	bool	-h	--help
+flag	orchestrator events	value		--config
+flag	orchestrator events	value		--gcp-project
+flag	orchestrator events	value		--name
+flag	orchestrator events	value		--project
+flag	orchestrator events	value		--region
+flag	orchestrator events	value		--since
+flag	orchestrator import	bool		--json
+flag	orchestrator import	bool	-h	--help
+flag	orchestrator import	value		--config
+flag	orchestrator import	value		--gcp-project
+flag	orchestrator import	value		--name
+flag	orchestrator import	value		--plan
+flag	orchestrator import	value		--project
+flag	orchestrator import	value		--region
+flag	orchestrator import	value	-f	--file
+flag	orchestrator install	bool	-h	--help
+flag	orchestrator install	value		--name
+flag	orchestrator ls	bool		--json
+flag	orchestrator ls	bool	-h	--help
+flag	orchestrator ls	value		--config
+flag	orchestrator ls	value		--gcp-project
+flag	orchestrator ls	value		--project
+flag	orchestrator ls	value		--region
+flag	orchestrator patch	bool		--json
+flag	orchestrator patch	bool	-h	--help
+flag	orchestrator patch	value		--config
+flag	orchestrator patch	value		--gcp-project
+flag	orchestrator patch	value		--name
+flag	orchestrator patch	value		--project
+flag	orchestrator patch	value		--region
+flag	orchestrator patch	value	-f	--file
+flag	orchestrator run	bool		--decide
+flag	orchestrator run	bool		--once
+flag	orchestrator run	bool	-h	--help
+flag	orchestrator run	value		--binary
+flag	orchestrator run	value		--config
+flag	orchestrator run	value		--gcp-project
+flag	orchestrator run	value		--interval
+flag	orchestrator run	value		--name
+flag	orchestrator run	value		--project
+flag	orchestrator run	value		--region
+flag	orchestrator state	bool		--brief
+flag	orchestrator state	bool		--json
+flag	orchestrator state	bool		--offline
+flag	orchestrator state	bool	-h	--help
+flag	orchestrator state	value		--config
+flag	orchestrator state	value		--gcp-project
+flag	orchestrator state	value		--name
+flag	orchestrator state	value		--project
+flag	orchestrator state	value		--region
+flag	orchestrator status	bool	-h	--help
+flag	orchestrator status	value		--name
+flag	orchestrator uninstall	bool	-h	--help
+flag	orchestrator uninstall	value		--name
+flag	pair	bool		--json
+flag	pair	bool	-h	--help
+flag	pair	bool	-v	--verbose
+flag	pair	value		--config
+flag	pair	value		--email
+flag	pair	value		--gcp-project
+flag	pair	value		--name
+flag	pair	value		--project
+flag	pair	value		--region
+flag	pair	value		--role
+flag	pair	value		--timeout
+flag	pair ls	bool		--json
+flag	pair ls	bool	-h	--help
+flag	pair ls	value		--config
+flag	pair ls	value		--gcp-project
+flag	pair ls	value		--project
+flag	pair ls	value		--region
+flag	pair revoke	bool		--json
+flag	pair revoke	bool	-h	--help
+flag	pair revoke	value		--config
+flag	pair revoke	value		--gcp-project
+flag	pair revoke	value		--name
+flag	pair revoke	value		--project
+flag	pair revoke	value		--region
+flag	pair revoke	value		--uid
+flag	plan	bool	-h	--help
+flag	plan	bool	-v	--verbose
+flag	plan graph	bool		--json
+flag	plan graph	bool	-h	--help
+flag	plan graph	value		--done
+flag	plan graph	value		--plan
+flag	plan status	bool		--all
+flag	plan status	bool		--json
+flag	plan status	bool		--no-merges
+flag	plan status	bool	-h	--help
+flag	plan status	value		--config
+flag	plan status	value		--gcp-project
+flag	plan status	value		--project
+flag	plan status	value		--region
+flag	project	bool	-h	--help
+flag	project	bool	-v	--verbose
+flag	project binaries	bool	-h	--help
+flag	project binaries	bool	-v	--verbose
+flag	project binaries allow	bool	-h	--help
+flag	project binaries deny	bool	-h	--help
+flag	project binaries max-bytes	bool	-h	--help
+flag	project clone-url	bool	-h	--help
+flag	project clone-url	bool	-v	--verbose
+flag	project clone-url ls	bool		--json
+flag	project clone-url ls	bool	-h	--help
+flag	project clone-url rm	bool	-h	--help
+flag	project clone-url set	bool	-h	--help
+flag	project clone-url show	bool	-h	--help
+flag	project policy	bool	-h	--help
+flag	project policy	bool	-v	--verbose
+flag	project policy publish	bool		--delete
+flag	project policy publish	bool		--remove-routing
+flag	project policy publish	bool		--seed-repos
+flag	project policy publish	bool	-h	--help
+flag	project policy publish	value		--config
+flag	project policy publish	value		--gcp-project
+flag	project policy publish	value		--project
+flag	project policy publish	value		--region
+flag	project policy show	bool		--json
+flag	project policy show	bool	-h	--help
+flag	project policy show	value		--config
+flag	project policy show	value		--gcp-project
+flag	project policy show	value		--project
+flag	project policy show	value		--region
+flag	project profile	bool	-h	--help
+flag	project profile	bool	-v	--verbose
+flag	project profile add	bool	-h	--help
+flag	project profile add	value		--cpu
+flag	project profile add	value		--memory
+flag	project profile add	value		--provider
+flag	project profile add	value		--timeout-class
+flag	project profile ls	bool		--json
+flag	project profile ls	bool	-h	--help
+flag	project profile rm	bool	-h	--help
+flag	project profile set	bool	-h	--help
+flag	project profile show	bool		--json
+flag	project profile show	bool	-h	--help
+flag	project repos	bool	-h	--help
+flag	project repos	bool	-v	--verbose
+flag	project repos add	bool		--allow-list-only
+flag	project repos add	bool		--no-apply
+flag	project repos add	bool	-h	--help
+flag	project repos add	value		--config
+flag	project repos add	value		--gcp-project
+flag	project repos add	value		--project
+flag	project repos add	value		--region
+flag	project repos ls	bool		--json
+flag	project repos ls	bool	-h	--help
+flag	project repos ls	value		--config
+flag	project repos ls	value		--gcp-project
+flag	project repos ls	value		--project
+flag	project repos ls	value		--region
+flag	project repos rm	bool	-h	--help
+flag	project repos rm	value		--config
+flag	project repos rm	value		--gcp-project
+flag	project repos rm	value		--project
+flag	project repos rm	value		--region
+flag	project repos set	bool		--ask
+flag	project repos set	bool		--no-apply
+flag	project repos set	bool	-h	--help
+flag	project repos set	value		--allow-repos
+flag	project repos set	value		--claude-accounts
+flag	project repos set	value		--config
+flag	project repos set	value		--cpu
+flag	project repos set	value		--job-profile
+flag	project repos set	value		--memory
+flag	project repos set	value		--project
+flag	project repos set	value		--provider
+flag	project repos set	value		--secrets
+flag	project repos set	value		--timeout-class
+flag	project repos set	value		--workflows
+flag	project repos status	bool		--json
+flag	project repos status	bool	-h	--help
+flag	project repos status	value		--config
+flag	project repos status	value		--gcp-project
+flag	project repos status	value		--project
+flag	project repos status	value		--region
+flag	project routing	bool	-h	--help
+flag	project routing	bool	-v	--verbose
+flag	project routing set	bool	-h	--help
+flag	project routing set	value		--models
+flag	project routing set	value		--via
+flag	project routing show	bool		--json
+flag	project routing show	bool	-h	--help
+flag	project routing unset	bool	-h	--help
+flag	project show	bool		--json
+flag	project show	bool	-h	--help
+flag	project show	value		--config
+flag	project show	value		--gcp-project
+flag	project show	value		--project
+flag	project show	value		--region
+flag	project sync	bool		--check
+flag	project sync	bool		--github-app-key
+flag	project sync	bool	-h	--help
+flag	project sync	value		--bitbucket
+flag	project sync	value		--bitbucket-project
+flag	project sync	value		--config
+flag	project sync	value		--gcp-project
+flag	project sync	value		--github-app-id
+flag	project sync	value		--project
+flag	project sync	value		--region
+flag	reaper	bool		--dry-run
+flag	reaper	bool	-h	--help
+flag	reaper	value		--config
+flag	reaper	value		--gcp-project
+flag	reaper	value		--project
+flag	reaper	value		--region
+flag	recipe	bool	-h	--help
+flag	recipes	bool	-h	--help
+flag	recipes	bool	-v	--verbose
+flag	recipes ls	bool		--json
+flag	recipes ls	bool	-h	--help
+flag	recipes ls	bool	-v	--verbose
+flag	recipes ls	value		--config
+flag	recipes ls	value		--gcp-project
+flag	recipes ls	value		--project
+flag	recipes ls	value		--region
+flag	recipes publish	bool	-h	--help
+flag	recipes publish	value		--config
+flag	recipes publish	value		--gcp-project
+flag	recipes publish	value		--project
+flag	recipes publish	value		--region
+flag	recipes rm	bool	-h	--help
+flag	recipes rm	value		--config
+flag	recipes rm	value		--gcp-project
+flag	recipes rm	value		--project
+flag	recipes rm	value		--region
+flag	recipes show	bool		--json
+flag	recipes show	bool	-h	--help
+flag	recipes show	value		--config
+flag	recipes show	value		--gcp-project
+flag	recipes show	value		--project
+flag	recipes show	value		--region
+flag	recipes validate	bool		--json
+flag	recipes validate	bool	-h	--help
+flag	report	bool	-h	--help
+flag	restore	bool	-h	--help
+flag	restore	value		--billing-account
+flag	restore	value		--budget
+flag	restore	value		--budget-currency
+flag	restore	value		--config
+flag	restore	value		--display-name
+flag	restore	value		--gcp-project
+flag	restore	value		--parent
+flag	restore	value		--project
+flag	restore	value		--region
+flag	review	bool		--code-only
+flag	review	bool		--json
+flag	review	bool	-h	--help
+flag	review	bool	-v	--verbose
+flag	review	value		--config
+flag	review	value		--gcp-project
+flag	review	value		--mutate
+flag	review	value		--pr
+flag	review	value		--project
+flag	review	value		--region
+flag	review	value		--spec
+flag	review	value		--token
+flag	review show	bool		--json
+flag	review show	bool	-h	--help
+flag	review show	value		--config
+flag	review show	value		--gcp-project
+flag	review show	value		--project
+flag	review show	value		--region
+flag	rigor	bool	-h	--help
+flag	rigor	bool	-v	--verbose
+flag	rigor floor	bool	-h	--help
+flag	rigor floor	bool	-v	--verbose
+flag	rigor floor set	bool	-h	--help
+flag	rigor floor set	value		--config
+flag	rigor floor set	value		--project
+flag	rigor floor show	bool		--json
+flag	rigor floor show	bool	-h	--help
+flag	rigor floor show	value		--config
+flag	rigor floor show	value		--project
+flag	rigor floor unset	bool	-h	--help
+flag	rigor floor unset	value		--config
+flag	rigor floor unset	value		--project
+flag	rigor security	bool	-h	--help
+flag	rigor security	bool	-v	--verbose
+flag	rigor security add	bool		--always-level-3
+flag	rigor security add	bool		--ask
+flag	rigor security add	bool	-h	--help
+flag	rigor security add	value		--category
+flag	rigor security add	value		--config
+flag	rigor security add	value		--layer
+flag	rigor security add	value		--match
+flag	rigor security add	value		--name
+flag	rigor security add	value		--project
+flag	rigor security add	value		--repo
+flag	rigor security rm	bool		--always-level-3
+flag	rigor security rm	bool		--ask
+flag	rigor security rm	bool	-h	--help
+flag	rigor security rm	value		--config
+flag	rigor security rm	value		--layer
+flag	rigor security rm	value		--name
+flag	rigor security rm	value		--project
+flag	rigor security rm	value		--repo
+flag	rigor set	bool		--ask
+flag	rigor set	bool	-h	--help
+flag	rigor set	value		--area
+flag	rigor set	value		--config
+flag	rigor set	value		--layer
+flag	rigor set	value		--name
+flag	rigor set	value		--project
+flag	rigor set	value		--repo
+flag	routing	bool	-h	--help
+flag	routing	bool	-v	--verbose
+flag	routing ls	bool		--json
+flag	routing ls	bool	-h	--help
+flag	routing ls	value		--config
+flag	routing ls	value		--gcp-project
+flag	routing ls	value		--project
+flag	routing ls	value		--region
+flag	routing rm	bool	-h	--help
+flag	routing set	bool	-h	--help
+flag	run	bool		--allow-duplicate
+flag	run	bool		--change-set
+flag	run	bool		--code-only
+flag	run	bool		--commit-reports
+flag	run	bool		--json
+flag	run	bool		--no-budget-check
+flag	run	bool		--no-compression
+flag	run	bool		--no-personal-token
+flag	run	bool		--promote
+flag	run	bool		--security
+flag	run	bool	-h	--help
+flag	run	value		--attach
+flag	run	value		--attempts
+flag	run	value		--batch
+flag	run	value		--config
+flag	run	value		--context
+flag	run	value		--continues
+flag	run	value		--gcp-project
+flag	run	value		--max-review-rounds
+flag	run	value		--max-time
+flag	run	value		--max-tokens
+flag	run	value		--max-usd
+flag	run	value		--mode
+flag	run	value		--owner-ruled
+flag	run	value		--path
+flag	run	value		--plan-task
+flag	run	value		--pr
+flag	run	value		--project
+flag	run	value		--recipe
+flag	run	value		--ref
+flag	run	value		--region
+flag	run	value		--repo
+flag	run	value		--retry
+flag	run	value		--review-levels
+flag	run	value		--review-run
+flag	run	value		--run-id
+flag	run	value		--spec
+flag	run	value		--task-file
+flag	run	value		--tier
+flag	run	value		--title
+flag	run	value		--token
+flag	run	value		--total-timeout
+flag	run	value		--used-review-rounds
+flag	run	value		--used-time
+flag	run	value		--used-tokens
+flag	run	value		--used-usd
+flag	run	value		--workflow
+flag	runs	bool	-h	--help
+flag	runs	bool	-v	--verbose
+flag	runs digest	bool		--due
+flag	runs digest	bool		--json
+flag	runs digest	bool		--stdout
+flag	runs digest	bool		--submit-draft
+flag	runs digest	bool	-h	--help
+flag	runs digest	value		--config
+flag	runs digest	value		--date
+flag	runs digest	value		--dir
+flag	runs digest	value		--gcp-project
+flag	runs digest	value		--period
+flag	runs digest	value		--project
+flag	runs digest	value		--region
+flag	runs digest	value		--repo
+flag	runs digest	value		--stored
+flag	runs ls	bool		--all
+flag	runs ls	bool		--debt
+flag	runs ls	bool		--json
+flag	runs ls	bool		--mine
+flag	runs ls	bool		--no-cache
+flag	runs ls	bool		--stream
+flag	runs ls	bool		--watch
+flag	runs ls	bool	-h	--help
+flag	runs ls	value		--after
+flag	runs ls	value		--batch
+flag	runs ls	value		--config
+flag	runs ls	value		--gcp-project
+flag	runs ls	value		--group-by
+flag	runs ls	value		--interval
+flag	runs ls	value		--limit
+flag	runs ls	value		--pr
+flag	runs ls	value		--project
+flag	runs ls	value		--region
+flag	runs ls	value		--repo
+flag	runs ls	value		--since
+flag	runs ls	value		--state
+flag	runs reindex	bool	-h	--help
+flag	runs reindex	value		--config
+flag	runs reindex	value		--gcp-project
+flag	runs reindex	value		--project
+flag	runs reindex	value		--region
+flag	runs reports	bool		--job
+flag	runs reports	bool	-h	--help
+flag	runs show	bool		--json
+flag	runs show	bool	-h	--help
+flag	runs show	value		--config
+flag	runs show	value		--gcp-project
+flag	runs show	value		--project
+flag	runs show	value		--region
+flag	runs show	value		--repo
+flag	runs stats	bool		--all
+flag	runs stats	bool		--all-users
+flag	runs stats	bool		--json
+flag	runs stats	bool	-h	--help
+flag	runs stats	value		--by
+flag	runs stats	value		--config
+flag	runs stats	value		--gcp-project
+flag	runs stats	value		--max-runs
+flag	runs stats	value		--project
+flag	runs stats	value		--region
+flag	runs stats	value		--repo
+flag	runs stats	value		--since
+flag	runs summary	bool		--json
+flag	runs summary	bool	-h	--help
+flag	runs summary	value		--config
+flag	runs summary	value		--gcp-project
+flag	runs summary	value		--project
+flag	runs summary	value		--region
+flag	runs summary	value		--repo
+flag	runs summary	value		--since
+flag	runs watch	bool		--all
+flag	runs watch	bool		--json
+flag	runs watch	bool		--mine
+flag	runs watch	bool	-h	--help
+flag	runs watch	value		--batch
+flag	runs watch	value		--config
+flag	runs watch	value		--gcp-project
+flag	runs watch	value		--project
+flag	runs watch	value		--region
+flag	runs watch	value		--repo
+flag	runs watch	value		--since
+flag	seats	bool		--json
+flag	seats	bool	-h	--help
+flag	seats	value		--config
+flag	seats	value		--gcp-project
+flag	seats	value		--project
+flag	seats	value		--region
+flag	secret	bool	-h	--help
+flag	secrets	bool	-h	--help
+flag	secrets	bool	-v	--verbose
+flag	secrets allow	bool		--all-repos
+flag	secrets allow	bool		--proxy
+flag	secrets allow	bool	-h	--help
+flag	secrets deny	bool	-h	--help
+flag	secrets ls	bool		--json
+flag	secrets ls	bool		--project-wide
+flag	secrets ls	bool	-h	--help
+flag	secrets ls	value		--config
+flag	secrets ls	value		--gcp-project
+flag	secrets ls	value		--project
+flag	secrets ls	value		--region
+flag	secrets ls	value		--repo
+flag	secrets rm	bool		--dry-run
+flag	secrets rm	bool		--json
+flag	secrets rm	bool	-h	--help
+flag	secrets rm	value		--config
+flag	secrets rm	value		--gcp-project
+flag	secrets rm	value		--project
+flag	secrets rm	value		--region
+flag	secrets set	bool		--dry-run
+flag	secrets set	bool		--json
+flag	secrets set	bool		--project-wide
+flag	secrets set	bool		--proxy
+flag	secrets set	bool	-h	--help
+flag	secrets set	value		--allow-data-to
+flag	secrets set	value		--bitbucket-api-root
+flag	secrets set	value		--config
+flag	secrets set	value		--expires
+flag	secrets set	value		--gcp-project
+flag	secrets set	value		--layer
+flag	secrets set	value		--project
+flag	secrets set	value		--region
+flag	secrets set	value		--remove-bitbucket-api-root
+flag	secrets set	value		--repo
+flag	secrets set	value		--rotation-days
+flag	secrets shared	bool	-h	--help
+flag	secrets shared	bool	-v	--verbose
+flag	secrets shared ls	bool		--json
+flag	secrets shared ls	bool	-h	--help
+flag	secrets shared ls	value		--config
+flag	secrets shared ls	value		--gcp-project
+flag	secrets shared ls	value		--project
+flag	secrets shared ls	value		--region
+flag	secrets shared rm	bool		--json
+flag	secrets shared rm	bool	-h	--help
+flag	secrets shared rm	value		--config
+flag	secrets shared rm	value		--gcp-project
+flag	secrets shared rm	value		--project
+flag	secrets shared rm	value		--region
+flag	secrets shared set	bool		--json
+flag	secrets shared set	bool	-h	--help
+flag	secrets shared set	value		--config
+flag	secrets shared set	value		--gcp-project
+flag	secrets shared set	value		--project
+flag	secrets shared set	value		--region
+flag	secrets user	bool	-h	--help
+flag	secrets user	bool	-v	--verbose
+flag	secrets user ls	bool		--json
+flag	secrets user ls	bool	-h	--help
+flag	secrets user ls	value		--config
+flag	secrets user ls	value		--gcp-project
+flag	secrets user ls	value		--project
+flag	secrets user ls	value		--region
+flag	secrets user rm	bool		--json
+flag	secrets user rm	bool	-h	--help
+flag	secrets user rm	value		--config
+flag	secrets user rm	value		--gcp-project
+flag	secrets user rm	value		--project
+flag	secrets user rm	value		--region
+flag	secrets user set	bool		--json
+flag	secrets user set	bool	-h	--help
+flag	secrets user set	value		--config
+flag	secrets user set	value		--gcp-project
+flag	secrets user set	value		--project
+flag	secrets user set	value		--region
+flag	security	bool	-h	--help
+flag	security	bool	-v	--verbose
+flag	security paths	bool		--json
+flag	security paths	bool	-h	--help
+flag	security paths	value		--check
+flag	settings	bool		--all-repos
+flag	settings	bool		--changed
+flag	settings	bool		--json
+flag	settings	bool		--offline
+flag	settings	bool		--why
+flag	settings	bool	-h	--help
+flag	settings	bool	-v	--verbose
+flag	settings	value		--config
+flag	settings	value		--grep
+flag	settings	value		--layer
+flag	settings	value		--project
+flag	settings	value		--repo
+flag	settings get	bool		--json
+flag	settings get	bool	-h	--help
+flag	settings get	value		--config
+flag	settings get	value		--project
+flag	settings get	value		--repo
+flag	settings set	bool		--ask
+flag	settings set	bool		--dry-run
+flag	settings set	bool		--executable-changes
+flag	settings set	bool		--json
+flag	settings set	bool		--no-apply
+flag	settings set	bool	-h	--help
+flag	settings set	value		--add
+flag	settings set	value		--add-entry
+flag	settings set	value		--config
+flag	settings set	value		--layer
+flag	settings set	value		--project
+flag	settings set	value		--remove
+flag	settings set	value		--remove-entry
+flag	settings set	value		--repo
+flag	settings unset	bool		--ask
+flag	settings unset	bool		--dry-run
+flag	settings unset	bool		--executable-changes
+flag	settings unset	bool		--json
+flag	settings unset	bool		--no-apply
+flag	settings unset	bool	-h	--help
+flag	settings unset	value		--config
+flag	settings unset	value		--layer
+flag	settings unset	value		--project
+flag	settings unset	value		--repo
+flag	setup	bool		--allow-job-delete
+flag	setup	bool		--anchor
+flag	setup	bool		--ask
+flag	setup	bool		--bake-repos
+flag	setup	bool		--check
+flag	setup	bool		--check-github-app
+flag	setup	bool		--config-only
+flag	setup	bool		--coordinator
+flag	setup	bool		--create-project
+flag	setup	bool		--events
+flag	setup	bool		--forget
+flag	setup	bool		--json
+flag	setup	bool		--managed
+flag	setup	bool		--no-build
+flag	setup	bool		--no-log-isolation
+flag	setup	bool		--plan-only
+flag	setup	bool		--print-vars
+flag	setup	bool		--provision-batch
+flag	setup	bool		--publish-config
+flag	setup	bool		--repo
+flag	setup	bool		--retire
+flag	setup	bool	-h	--help
+flag	setup	value		--admin
+flag	setup	value		--alert-email
+flag	setup	value		--allow-delete
+flag	setup	value		--answers-file
+flag	setup	value		--base
+flag	setup	value		--base-image
+flag	setup	value		--billing-account
+flag	setup	value		--budget
+flag	setup	value		--budget-admin
+flag	setup	value		--budget-currency
+flag	setup	value		--budget-mode
+flag	setup	value		--config
+flag	setup	value		--display-name
+flag	setup	value		--expect-digest
+flag	setup	value		--firebase-project
+flag	setup	value		--gcp-project
+flag	setup	value		--github-app-id
+flag	setup	value		--image-source
+flag	setup	value		--link-billing
+flag	setup	value		--location
+flag	setup	value		--name
+flag	setup	value		--onboard-repo
+flag	setup	value		--operator
+flag	setup	value		--parent
+flag	setup	value		--project
+flag	setup	value		--region
+flag	setup	value		--registry-cleanup
+flag	setup	value		--replace-image
+flag	setup	value		--rigor
+flag	setup	value		--runs-bucket
+flag	setup	value		--scheduler-region
+flag	setup	value		--state-bucket
+flag	stats	bool	-h	--help
+flag	stats	bool	-v	--verbose
+flag	stats runs	bool		--json
+flag	stats runs	bool	-h	--help
+flag	stats runs	value		--config
+flag	stats runs	value		--gcp-project
+flag	stats runs	value		--min-runs
+flag	stats runs	value		--project
+flag	stats runs	value		--region
+flag	stats runs	value		--since
+flag	tell	bool		--json
+flag	tell	bool		--now
+flag	tell	bool		--wrap-up
+flag	tell	bool	-h	--help
+flag	tell	value		--config
+flag	tell	value		--gcp-project
+flag	tell	value		--project
+flag	tell	value		--region
+flag	troubleshoot	bool		--json
+flag	troubleshoot	bool	-h	--help
+flag	troubleshoot	value		--max-budget-usd
+flag	troubleshoot	value		--max-turns
+flag	update	bool		--allow-job-delete
+flag	update	bool		--anchor
+flag	update	bool		--ask
+flag	update	bool		--bake-repos
+flag	update	bool		--check
+flag	update	bool		--check-github-app
+flag	update	bool		--config-only
+flag	update	bool		--coordinator
+flag	update	bool		--create-project
+flag	update	bool		--events
+flag	update	bool		--forget
+flag	update	bool		--json
+flag	update	bool		--managed
+flag	update	bool		--no-build
+flag	update	bool		--no-log-isolation
+flag	update	bool		--plan-only
+flag	update	bool		--print-vars
+flag	update	bool		--provision-batch
+flag	update	bool		--publish-config
+flag	update	bool		--repo
+flag	update	bool		--retire
+flag	update	bool	-h	--help
+flag	update	value		--admin
+flag	update	value		--alert-email
+flag	update	value		--allow-delete
+flag	update	value		--answers-file
+flag	update	value		--base
+flag	update	value		--base-image
+flag	update	value		--billing-account
+flag	update	value		--budget
+flag	update	value		--budget-admin
+flag	update	value		--budget-currency
+flag	update	value		--budget-mode
+flag	update	value		--config
+flag	update	value		--display-name
+flag	update	value		--expect-digest
+flag	update	value		--firebase-project
+flag	update	value		--gcp-project
+flag	update	value		--github-app-id
+flag	update	value		--image-source
+flag	update	value		--link-billing
+flag	update	value		--location
+flag	update	value		--name
+flag	update	value		--onboard-repo
+flag	update	value		--operator
+flag	update	value		--parent
+flag	update	value		--project
+flag	update	value		--region
+flag	update	value		--registry-cleanup
+flag	update	value		--replace-image
+flag	update	value		--rigor
+flag	update	value		--runs-bucket
+flag	update	value		--scheduler-region
+flag	update	value		--state-bucket
+flag	update-skills	bool		--check
+flag	update-skills	bool		--json
+flag	update-skills	bool	-h	--help
+flag	update-skills	value		--dir
+flag	user	bool	-h	--help
+flag	user	bool	-v	--verbose
+flag	user add	bool	-h	--help
+flag	user add	value		--config
+flag	user add	value		--gcp-project
+flag	user add	value		--project
+flag	user add	value		--region
+flag	user add	value		--role
+flag	user grant	bool	-h	--help
+flag	user grant	value		--config
+flag	user grant	value		--gcp-project
+flag	user grant	value		--project
+flag	user grant	value		--region
+flag	user grant	value		--role
+flag	user grant	value		--scope
+flag	user ls	bool		--json
+flag	user ls	bool		--me
+flag	user ls	bool	-h	--help
+flag	user ls	value		--config
+flag	user ls	value		--gcp-project
+flag	user ls	value		--project
+flag	user ls	value		--region
+flag	user ls	value		--repo
+flag	user offboard	bool	-h	--help
+flag	user offboard	value		--config
+flag	user offboard	value		--gcp-project
+flag	user offboard	value		--project
+flag	user offboard	value		--region
+flag	user revoke	bool	-h	--help
+flag	user revoke	value		--config
+flag	user revoke	value		--gcp-project
+flag	user revoke	value		--project
+flag	user revoke	value		--region
+flag	user revoke	value		--role
+flag	user revoke	value		--scope
+flag	user rm	bool	-h	--help
+flag	user rm	value		--config
+flag	user rm	value		--gcp-project
+flag	user rm	value		--project
+flag	user rm	value		--region
+flag	user rm	value		--role
+flag	validate	bool		--json
+flag	validate	bool		--offline
+flag	validate	bool	-h	--help
+flag	validate	value		--project-layer
+flag	verify	bool		--rerun-failed
+flag	verify	bool	-h	--help
+flag	version	bool	-h	--help
+flag	watch	bool		--all
+flag	watch	bool		--ascii
+flag	watch	bool		--json
+flag	watch	bool		--no-color
+flag	watch	bool		--no-pr-state
+flag	watch	bool		--once
+flag	watch	bool		--plain
+flag	watch	bool		--poll
+flag	watch	bool	-h	--help
+flag	watch	value		--config
+flag	watch	value		--gcp-project
+flag	watch	value		--interval
+flag	watch	value		--keep
+flag	watch	value		--keep-count
+flag	watch	value		--project
+flag	watch	value		--region
+flag	watch	value		--repo
+flag	workflow	bool	-h	--help
+flag	workflow	bool	-v	--verbose
+flag	workflow add	bool		--ask
+flag	workflow add	bool		--executable-changes
+flag	workflow add	bool	-h	--help
+flag	workflow add	value		--config
+flag	workflow add	value		--project
+flag	workflow add	value		--repo
+flag	workflow add	value		--set
+flag	workflow rm	bool		--ask
+flag	workflow rm	bool		--executable-changes
+flag	workflow rm	bool	-h	--help
+flag	workflow rm	value		--config
+flag	workflow rm	value		--project
+flag	workflow rm	value		--repo
+flag	workspace	bool	-h	--help
+flag	workspace	bool	-v	--verbose
+flag	workspace add	bool	-h	--help
+flag	workspace add	value		--assertion-key
+flag	workspace add	value		--firebase-project
+flag	workspace add	value		--issuer
+flag	workspace add	value		--service-account
+flag	workspace add	value		--service-address
+flag	workspace cap	bool	-h	--help
+flag	workspace cap	bool	-v	--verbose
+flag	workspace cap set	bool		--no-apply
+flag	workspace cap set	bool	-h	--help
+flag	workspace cap set	value		--monthly
+flag	workspace cap set	value		--workspace
+flag	workspace domains	bool	-h	--help
+flag	workspace domains	bool	-v	--verbose
+flag	workspace domains add	bool	-h	--help
+flag	workspace domains add	value		--workspace
+flag	workspace domains ls	bool	-h	--help
+flag	workspace domains ls	value		--workspace
+flag	workspace domains rm	bool	-h	--help
+flag	workspace domains rm	value		--workspace
+flag	workspace init	bool	-h	--help
+flag	workspace login	bool		--json
+flag	workspace login	bool	-h	--help
+flag	workspace ls	bool		--json
+flag	workspace ls	bool	-h	--help
+flag	workspace project	bool	-h	--help
+flag	workspace project	bool	-v	--verbose
+flag	workspace project add	bool		--external
+flag	workspace project add	bool		--no-apply
+flag	workspace project add	bool	-h	--help
+flag	workspace project add	value		--database-region
+flag	workspace project add	value		--exchange-url
+flag	workspace project add	value		--firebase-project
+flag	workspace project add	value		--fp
+flag	workspace project add	value		--job-repos
+flag	workspace project add	value		--job-service-account
+flag	workspace project add	value		--repo
+flag	workspace project add	value		--workspace
+flag	workspace project link	bool	-h	--help
+flag	workspace project link	value		--config
+flag	workspace project link	value		--gcp-project
+flag	workspace project link	value		--project
+flag	workspace project link	value		--region
+flag	workspace project ls	bool		--json
+flag	workspace project ls	bool	-h	--help
+flag	workspace project ls	value		--config
+flag	workspace project ls	value		--gcp-project
+flag	workspace project ls	value		--project
+flag	workspace project ls	value		--region
+flag	workspace project reconcile	bool		--dry-run
+flag	workspace project reconcile	bool	-h	--help
+flag	workspace project rm	bool		--no-apply
+flag	workspace project rm	bool		--no-save-state
+flag	workspace project rm	bool	-h	--help
+flag	workspace project save	bool		--audit
+flag	workspace project save	bool	-h	--help
+flag	workspace project status	bool		--check-credentials
+flag	workspace project status	bool		--json
+flag	workspace project status	bool	-h	--help
+flag	workspace project status	value		--config
+flag	workspace project status	value		--gcp-project
+flag	workspace project status	value		--project
+flag	workspace project status	value		--region
+flag	workspace project unlink	bool	-h	--help
+flag	workspace project unlink	value		--config
+flag	workspace project unlink	value		--gcp-project
+flag	workspace project unlink	value		--project
+flag	workspace project unlink	value		--region
+flag	workspace rm	bool	-h	--help
+flag	workspace share	bool		--all-members
+flag	workspace share	bool		--no-apply
+flag	workspace share	bool	-h	--help
+flag	workspace share	value		--covers
+flag	workspace share	value		--projects
+flag	workspace share	value		--workspace
+flag	workspace show	bool		--json
+flag	workspace show	bool	-h	--help
+flag	workspace unshare	bool		--no-apply
+flag	workspace unshare	bool	-h	--help
+flag	workspace unshare	value		--workspace
+flag	workspace user	bool	-h	--help
+flag	workspace user	bool	-v	--verbose
+flag	workspace user add	bool		--admin
+flag	workspace user add	bool		--external
+flag	workspace user add	bool	-h	--help
+flag	workspace user add	value		--kind
+flag	workspace user add	value		--role
+flag	workspace user add	value		--workspace
+flag	workspace user grant	bool	-h	--help
+flag	workspace user grant	value		--scope
+flag	workspace user ls	bool		--json
+flag	workspace user ls	bool	-h	--help
+flag	workspace user ls	value		--workspace
+flag	workspace user revoke	bool	-h	--help
+flag	workspace user revoke	value		--scope
+flag	workspace user rm	bool		--admin
+flag	workspace user rm	bool	-h	--help
+flag	workspace user rm	value		--workspace

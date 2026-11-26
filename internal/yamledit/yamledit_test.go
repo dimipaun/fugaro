@@ -1381,6 +1381,32 @@ func TestRefusals(t *testing.T) {
 			},
 			yamledit.ReasonReplacesCollection,
 		},
+		{
+			"a flow mapping where a mapping-valued field would be written",
+			"pools:\n  - name: paid\n    principal: {kind: person, id: subject-1}\n",
+			func(d []byte) ([]byte, error) {
+				return yamledit.UpsertSeqItemMapByKey(d, []string{"pools"}, "name", "paid", "principal",
+					map[string]string{"kind": "project", "id": "workspace-a"})
+			},
+			yamledit.ReasonFlowCollection,
+		},
+		{
+			"a list where a mapping-valued field would be written",
+			"pools:\n  - name: paid\n    principal:\n      - person\n",
+			func(d []byte) ([]byte, error) {
+				return yamledit.UpsertSeqItemMapByKey(d, []string{"pools"}, "name", "paid", "principal",
+					map[string]string{"kind": "project", "id": "workspace-a"})
+			},
+			yamledit.ReasonReplacesCollection,
+		},
+		{
+			"a mapping-valued field with no keys",
+			"pools:\n  - name: paid\n",
+			func(d []byte) ([]byte, error) {
+				return yamledit.UpsertSeqItemMapByKey(d, []string{"pools"}, "name", "paid", "principal", nil)
+			},
+			yamledit.ReasonEmptyList,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := tc.op([]byte(tc.doc))
@@ -1498,6 +1524,13 @@ func TestEveryOperationKeepsTheCommentsAroundIt(t *testing.T) {
 					[]string{"owner/repo-a", "owner/repo-c"})
 			},
 		},
+		{
+			"UpsertSeqItemMapByKey", []string{"rigor", "areas"},
+			func(d []byte) ([]byte, error) {
+				return yamledit.UpsertSeqItemMapByKey(d, []string{"rigor", "areas"}, "name", "two", "principal",
+					map[string]string{"kind": "service-account", "id": "run@proj.iam.gserviceaccount.com"})
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			doc := readFixture(t, "commented-project.yaml")
@@ -1587,6 +1620,102 @@ func TestUpsertSeqItemListByKeyKeepsTheCommentsAroundTheField(t *testing.T) {
 		"    strategy: failover   # keep this comment\n"
 	if string(got) != belowWant {
 		t.Fatalf("got %q, want %q", got, belowWant)
+	}
+	reparses(t, got)
+}
+
+// TestUpsertSeqItemMapByKeyWritesAndReplacesAMapping holds the mapping writer to
+// the list writer's promise on the shape a pool's principal is written in: the
+// item keeps its place and its other fields, the field keeps the comment above
+// its key and the comment beside it, and only the mapping's own lines change.
+func TestUpsertSeqItemMapByKeyWritesAndReplacesAMapping(t *testing.T) {
+	principal := map[string]string{"kind": "service-account", "id": "run@proj.iam.gserviceaccount.com"}
+
+	// The item does not carry the field yet: it is appended under the item, with
+	// the fields the item already has untouched above it.
+	const absent = "pools:\n" +
+		"  - name: paid\n" +
+		"    members:\n" +
+		"      - oauth-one\n"
+	got, err := yamledit.UpsertSeqItemMapByKey([]byte(absent), []string{"pools"}, "name", "paid", "principal", principal)
+	if err != nil {
+		t.Fatalf("UpsertSeqItemMapByKey: %v", err)
+	}
+	const absentWant = "pools:\n" +
+		"  - name: paid\n" +
+		"    members:\n" +
+		"      - oauth-one\n" +
+		"    principal:\n" +
+		"      id: run@proj.iam.gserviceaccount.com\n" +
+		"      kind: service-account\n"
+	if string(got) != absentWant {
+		t.Fatalf("got %q, want %q", got, absentWant)
+	}
+	reparses(t, got)
+
+	// The field is there: its entries are replaced and no more. The comment above
+	// its key, the comment beside it and the field written below it all stay, and
+	// so does the text trailing the mapping's last line — a comment above all,
+	// which lands beside the new last entry exactly as the list writer leaves a
+	// trailing comment beside its new last item.
+	const present = "pools:\n" +
+		"  - name: paid\n" +
+		"    # who this pool belongs to\n" +
+		"    principal:   # verified by the service\n" +
+		"      kind: person\n" +
+		"      id: subject-1  # a person\n" +
+		"    rule: ordered\n"
+	got, err = yamledit.UpsertSeqItemMapByKey([]byte(present), []string{"pools"}, "name", "paid", "principal", principal)
+	if err != nil {
+		t.Fatalf("UpsertSeqItemMapByKey (a field already there): %v", err)
+	}
+	const presentWant = "pools:\n" +
+		"  - name: paid\n" +
+		"    # who this pool belongs to\n" +
+		"    principal:   # verified by the service\n" +
+		"      id: run@proj.iam.gserviceaccount.com\n" +
+		"      kind: service-account  # a person\n" +
+		"    rule: ordered\n"
+	if string(got) != presentWant {
+		t.Fatalf("got %q, want %q", got, presentWant)
+	}
+	reparses(t, got)
+
+	// A bare key: the mapping goes in under the key the document already has, and
+	// the comment beside that key stays where it was.
+	const bare = "pools:\n" +
+		"  - name: paid\n" +
+		"    principal:   # verified by the service\n"
+	got, err = yamledit.UpsertSeqItemMapByKey([]byte(bare), []string{"pools"}, "name", "paid", "principal",
+		map[string]string{"kind": "project", "id": "workspace-a"})
+	if err != nil {
+		t.Fatalf("UpsertSeqItemMapByKey (a bare key): %v", err)
+	}
+	const bareWant = "pools:\n" +
+		"  - name: paid\n" +
+		"    principal:   # verified by the service\n" +
+		"      id: workspace-a\n" +
+		"      kind: project\n"
+	if string(got) != bareWant {
+		t.Fatalf("got %q, want %q", got, bareWant)
+	}
+	reparses(t, got)
+
+	// The item is not there yet: the whole item is written, key field first.
+	const noItem = "pools:\n  - name: team-a\n"
+	got, err = yamledit.UpsertSeqItemMapByKey([]byte(noItem), []string{"pools"}, "name", "paid", "principal",
+		map[string]string{"kind": "project", "id": "workspace-a"})
+	if err != nil {
+		t.Fatalf("UpsertSeqItemMapByKey (an item that is not there): %v", err)
+	}
+	const noItemWant = "pools:\n" +
+		"  - name: team-a\n" +
+		"  - name: paid\n" +
+		"    principal:\n" +
+		"      id: workspace-a\n" +
+		"      kind: project\n"
+	if string(got) != noItemWant {
+		t.Fatalf("got %q, want %q", got, noItemWant)
 	}
 	reparses(t, got)
 }

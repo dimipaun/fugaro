@@ -564,8 +564,73 @@ func TestJobImageUsesImageMap(t *testing.T) {
 	missing.ImageMap = map[string]string{"acme/api": "nowhere"}
 	if _, err := JobImage(missing); err == nil {
 		t.Fatal("a map entry no catalog holds was accepted")
-	} else if !strings.Contains(err.Error(), "image_map") {
-		t.Fatalf("the refusal of an unknown mapped entry is %q, want it to name the image_map", err)
+	} else if !strings.Contains(err.Error(), "repo_images") {
+		t.Fatalf("the refusal of an unknown mapped entry is %q, want it to name the repository-to-image map (repo_images)", err)
+	}
+}
+
+// TestMappedEntryByProvider is the red step of T0: a GitHub and a Bitbucket
+// acme/app mapped to two entries are two answers, where the bare-name lookup
+// gave both repositories whichever key it happened to find — the collision RC51
+// found in real data.
+//
+// Mutation (read the map by the bare repository name): both repositories below
+// resolve the same entry, and the second half of this test fails.
+func TestMappedEntryByProvider(t *testing.T) {
+	cat := testCatalog()
+	imgs := map[string]string{
+		"github/acme/app":    "backend",
+		"bitbucket/acme/app": "data",
+	}
+	req := func(provider, canonical string) ImageRequest {
+		return ImageRequest{
+			Catalog: &cat, RepoImages: imgs, Provider: provider, Canonical: canonical,
+			Workflow: config.Workflow{Checkout: config.CheckoutBaked}, Backend: CloudRun,
+		}
+	}
+	if got := mustImage(t, req("github", "acme/app")).Entry.Name; got != "backend" {
+		t.Errorf("github/acme/app resolved %q, want backend", got)
+	}
+	if got := mustImage(t, req("bitbucket", "acme/app")).Entry.Name; got != "data" {
+		t.Errorf("bitbucket/acme/app resolved %q, want data: the two repositories of one name are two keys (D3370)", got)
+	}
+	// The key is read under the repository's canonical name, whatever case the
+	// caller spells it in — the same half ValidRepoImages validates.
+	if got := mustImage(t, req("github", "Acme/APP")).Entry.Name; got != "backend" {
+		t.Errorf("a repository spelled Acme/APP resolved %q, want backend", got)
+	}
+	// A provider the map does not name for this repository gives it no entry at
+	// all: it is never answered by the other provider's key, and the catalog
+	// holds no default to fall to, so the repository keeps its own image.
+	if sel := mustImage(t, req("gitlab", "acme/app")); sel.Source != SourceRepo {
+		t.Errorf("gitlab/acme/app resolved %+v, want the repository's own image: a repository the map does not name at its provider is unmapped (R10)", sel)
+	}
+}
+
+// TestMappedEntryLegacyMap is R2's read of the old member: the legacy map is
+// looked up by bare repository name and matches every provider, as it does
+// today, and it is read only where RepoImages is not set — a caller that filled
+// RepoImages is never answered by a legacy key, because a per-key fallback would
+// let a map written by a CLI from before L11 revive the collision (F16).
+func TestMappedEntryLegacyMap(t *testing.T) {
+	cat := testCatalog()
+	req := ImageRequest{
+		Catalog: &cat, LegacyMap: map[string]string{"acme/app": "data"}, Provider: "bitbucket", Canonical: "acme/app",
+		Workflow: config.Workflow{Checkout: config.CheckoutBaked}, Backend: CloudRun,
+	}
+	if got := mustImage(t, req).Entry.Name; got != "data" {
+		t.Errorf("acme/app on the legacy map resolved %q, want data: a bare name matches every provider, as it does today", got)
+	}
+
+	// The same repository under RepoImages, which does not name it at this
+	// provider: the legacy key beside it is not read.
+	req.RepoImages = map[string]string{"github/acme/app": "backend"}
+	if sel := mustImage(t, req); sel.Source != SourceRepo {
+		t.Errorf("acme/app resolved %+v, want the repository's own image: repo_images wins per member, so the legacy map is not read at all (R2)", sel)
+	}
+	req.Provider = "github"
+	if got := mustImage(t, req).Entry.Name; got != "backend" {
+		t.Errorf("github/acme/app resolved %q, want backend", got)
 	}
 }
 

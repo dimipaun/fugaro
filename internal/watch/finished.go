@@ -42,10 +42,18 @@ func cleanURL(url string) string {
 // unreviewed are not failures: a cancelled run was withdrawn, not botched,
 // and an unreviewed run finished its loop and pushed what nobody read, so its
 // draft is a thing to look at rather than an outage (spec §8.4, D996).
+//
+// A paused run is not one either (contract-pause, R15): it stopped its own
+// execution to be resumed by its chain, so it is listed — the row's own word
+// for it is PAUSED, which is neither a failure nor a success — and it is named
+// here rather than left to the return below so the word is answered rather
+// than assumed.
 func isFailure(status string) bool {
 	switch status {
 	case string(runstore.StatusFailed), string(runstore.StatusHalted), string(runstore.StatusInfraError):
 		return true
+	case string(runstore.StatusPaused):
+		return false
 	}
 	return false
 }

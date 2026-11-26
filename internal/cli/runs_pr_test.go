@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/runindex"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -155,10 +156,9 @@ func seedFinishedReview(t *testing.T, f *cloudFixture, id string, pr int) {
 // recent window and it is not going, so the index is the one thing that can
 // tell a --pr listing it exists -- and its row is a row the scan prints, since
 // the artifact stage writes the pull request into the review's record (onPR).
-// The entry is seeded rather than written by the runner, which is the writer's
-// own test (internal/runner's TestReviewWritesThePullRequestIndexEntry) — the
-// walk that writes the same entry for an installation behind is
-// TestBackfillIndexEqualsScan's.
+// The entry is seeded rather than written by the runner, whose writers stopped
+// with D3204 (IR5a, IR5b); the objects an installation holds are what the
+// listing reads.
 //
 // The scan is the same listing with the index emptied: the runs are all there,
 // which is what the installation this sped up looks like. The clock is pinned
@@ -236,58 +236,6 @@ func TestPRIndexLiveReviewOlderThanTheRecentWindow(t *testing.T) {
 	}
 	if read := d.keysRead(); !slices.Contains(read, "runs/"+appSlug+"/"+review+"/task.json") {
 		t.Errorf("the review going on pull request 7 was not read (%v): the runs of the live set are read beside the index's and the window's", read)
-	}
-}
-
-// TestBackfillIndexEqualsScan: the index `fugaro update` writes is read by
-// `runs ls --pr N` and gives the rows the scan gives, field for field — with
-// every entry written by the walk and none seeded by hand, which is the
-// difference between this test and TestPRIndexEqualsScan's.
-//
-// The finished review is the row that matters: it is 25 days old and it is not
-// going, so neither the recent window nor the live set can name it, and its row
-// is a row the scan prints, the number the artifact stage wrote into its record
-// being what puts it on the pull request (runs.go's onPR). The walk reads the
-// same two objects the row reader reads and writes it as `reviewed`; a walk
-// that left review runs out would leave the index listing less than the scan
-// does (D2964).
-//
-// Mutation caught: prIndexOfRun answering 0 for every review run — the index
-// then lists four rows where the scan lists five.
-func TestBackfillIndexEqualsScan(t *testing.T) {
-	defer func(old func() time.Time) { lsNow = old }(lsNow)
-	at := time.Now().UTC()
-	lsNow = func() time.Time { return at }
-	f := newCloudFixture(t)
-	w := seedPRRuns(t, f)
-	review := runIDAt(25, "120000", "1234")
-	seedFinishedReview(t, f, review, 7)
-
-	b := openPRIndexBucket(t, f)
-	if n, err := backfillPRIndexIn(context.Background(), b, at, nil); err != nil || n != 5 {
-		t.Fatalf("the backfill wrote %d entries (%v), want the five runs whose records name a pull request, the review among them", n, err)
-	}
-
-	indexed, errOut := lsJSON(t, "--pr", "7")
-	if strings.Contains(errOut, "pull-request index") {
-		t.Errorf("stderr = %q, want no fallback note: the walk wrote the index", errOut)
-	}
-	if want := []string{w.fu2, w.fu1, review, w.root}; !slices.Equal(runIDs(indexed.Runs), want) {
-		t.Fatalf("ls --pr 7 = %v, want %v: the index the walk wrote lists the review's row, as the scan prints it", runIDs(indexed.Runs), want)
-	}
-
-	// The same listing with the index emptied: the scan, which is what the
-	// index has to agree with.
-	dropPRIndex(t, f, 7)
-	scan, scanErr := lsJSON(t, "--pr", "7")
-	if !strings.Contains(scanErr, "no pull-request index") {
-		t.Errorf("stderr = %q, want the one line saying the listing fell back to the window", scanErr)
-	}
-	if jsonRows(t, indexed.Runs) != jsonRows(t, scan.Runs) {
-		t.Errorf("the index reads %s, the scan %s", jsonRows(t, indexed.Runs), jsonRows(t, scan.Runs))
-	}
-	if a, b := jsonDoc(t, indexed.Totals), jsonDoc(t, scan.Totals); a != b {
-		t.Errorf("the index totals %s, the scan %s", a, b)
 	}
 }
 
@@ -519,5 +467,40 @@ func TestPRFallbackNoteNotInJSON(t *testing.T) {
 	// the run whose result.json is unreadable has always shown.
 	if !strings.Contains(errOut, "result.json is unreadable") {
 		t.Errorf("stderr = %q, want the run read by the window and warned about", errOut)
+	}
+}
+
+// TestLaunchPRReadsTheRunIndex: the launch gate reads the run index, which is
+// what lets `fugaro run --pr N` find the run that opened the pull request now
+// that the runners write no entry of their own (IR5a, D3204).
+//
+// The pull request's index in the bucket is the shape a `--pr` launch leaves
+// behind: the launcher's own entry for a follow-up started on it, and none for
+// the opener. It is non-empty, so the window fallback never fires, and the run
+// that pushed is in neither it nor the recent window -- a gate reading the
+// bucket alone refuses the launch of a pull request whose own opener is right
+// there in the index.
+//
+// Mutation caught: gating prRefs' run index read on lsFilter.indexNote, which
+// is what left the launch deciding from the bucket's index alone.
+func TestLaunchPRReadsTheRunIndex(t *testing.T) {
+	f := newCloudFixture(t)
+	idx := &indexFake{}
+	lsIndex(t, idx)
+	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+	// A follow-up of the pull request that never pushed, with the launcher's
+	// entry for it and no entry for the opener.
+	stalled := wallRunIDAt(3, "100000", "beef")
+	seedFollowUp(t, f, stalled, rootID, rootID, time.Now().Add(-72*time.Hour), runstore.StatusFailed, false)
+	seedPRIndexEntry(t, f, stalled, 7, runstore.PRIndexFollowed)
+	idx.entries = append(idx.entries, runindex.Entry{RunID: rootID, Slug: appSlug, Repo: "acme/app",
+		UpdatedAt: time.Now().UTC().Add(-72 * time.Hour), Status: runstore.StatusFailed, Workflow: "web", PR: 7})
+
+	args := []string{"run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--json", "also rename x"}
+	if _, _, err := execute(t, args...); err != nil {
+		t.Fatalf("the launch of PR 7's follow-up was refused (%v): the index names the opener %s, which the bucket's index does not hold", err, rootID)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want the follow-up started", n)
 	}
 }
