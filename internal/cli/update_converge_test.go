@@ -271,7 +271,15 @@ func seedAppSecret(t *testing.T, r *initRig, logical string) {
 // records it at, so a repository that moves wants its secrets there.
 func seedRepoSecret(t *testing.T, r *initRig, provider, logical string) {
 	t.Helper()
-	slug, err := task.Slug(provider, "acme/app")
+	seedNamedRepoSecret(t, r, provider, "acme/app", logical)
+}
+
+// seedNamedRepoSecret is seedRepoSecret for any repository: the secrets stage
+// reads every repository the project lists, so a sibling with none stored
+// leaves the update needing its owner.
+func seedNamedRepoSecret(t *testing.T, r *initRig, provider, repo, logical string) {
+	t.Helper()
+	slug, err := task.Slug(provider, repo)
 	if err != nil {
 		t.Fatal(err)
 	}

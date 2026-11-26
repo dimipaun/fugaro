@@ -207,11 +207,18 @@ killed=0
 run "the fresh-id guard (an id already minted is refused)" \
   "    if (minted.has(id)) return refuse(CLIENT_CODES.ID_CONFLICT, 'newId');" ""
 run "the direction the phone signs for" \
-  "const tag = await withKey((key) => macOf(base, key, WRITE_DIRECTION));" \
-  "const tag = await withKey((key) => macOf(base, key, 'outbox'));"
+  "      const tag = await withKey((key) => macOf(base, key, WRITE_DIRECTION));" \
+  "      const tag = await withKey((key) => macOf(base, key, 'outbox'));"
 run "the tag is the keyed one, not a placeholder" \
-  "    const record = Object.freeze({ ...base, mac: tag.result });" \
-  "    const record = Object.freeze({ ...base, mac: 'f'.repeat(64) });"
+  "    const record = Object.freeze({ ...base, [tag.name]: tag.value });
+    const valid = validateMessage(record);" \
+  "    const record = Object.freeze({ ...base, mac: 'f'.repeat(64) });
+    const valid = validateMessage(record);"
+run "the registration's tag is the keyed one too" \
+  "    const record = Object.freeze({ ...base, [tag.name]: tag.value });
+    // The same line \`send\` holds, and for the same reason" \
+  "    const record = Object.freeze({ ...base, mac: 'f'.repeat(64) });
+    // The same line \`send\` holds, and for the same reason"
 run "the text is redacted before it is signed and written" \
   "      ? { id, sender: from, text: body.text, at, kind: 'action', action: opts.action }
       : { id, sender: from, text: body.text, at });" \

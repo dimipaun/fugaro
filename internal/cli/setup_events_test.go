@@ -1,13 +1,16 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -321,11 +324,11 @@ func TestSetupEventsRefusalEndsError(t *testing.T) {
 	}
 }
 
-// TestSetupEventsSchema holds the published contract and the feed to each
-// other: the schema is what the console reads against — its copy of this
-// contract is compared with the golden by I-OPS — and every line a run writes
-// validates against it.
-func TestSetupEventsSchema(t *testing.T) {
+// setupEventsSchema compiles the published contract, and hands back the object
+// it was read from as well: a test validating a line uses the first, and one
+// reading the kinds it declares uses the second.
+func setupEventsSchema(t *testing.T) (*jsonschema.Schema, map[string]any) {
+	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "schemas", "setup-events.schema.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -350,6 +353,70 @@ func TestSetupEventsSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return schema, body
+}
+
+// TestSetupEventsNotice: the lines a run reports outside its stages are lines
+// of the feed, under a step's own name — the document's `notices` entry, and
+// the same line a surface reading the feed draws — and they come before the
+// line that ends the feed (R12, R19).
+//
+// The producer is the step, not the loop: a step after the stage loop has no
+// stage to report under, so its lines reach the feed through the result the
+// command ended with (its `notices` member), which is why the writing is
+// finished in finish.
+func TestSetupEventsNotice(t *testing.T) {
+	schema, _ := setupEventsSchema(t)
+	var buf bytes.Buffer
+	events := newSetupEvents(&buf)
+	events.notice(initflow.Notice{
+		Step: "notices", Repo: "github/acme/*", State: initflow.RepoNeedsYou,
+		Detail: "admitted by pattern, not listed: add the repository by name with `fugaro project repos add`",
+	})
+	events.finish(&initResult{Notices: []initflow.Notice{{
+		Step: "pin", Detail: "the pin in this checkout's fugaro.yaml is not there any more",
+	}}}, nil)
+
+	feed := setupFeed(t, buf.String())
+	if len(feed) != 3 {
+		t.Fatalf("the feed carries %d lines, want the notice, the result's notice and the done line:\n%s", len(feed), buf.String())
+	}
+	n := feed[0]
+	if n.Type != setupEventNotice {
+		t.Fatalf("the first line is a %q line, want notice", n.Type)
+	}
+	if n.str("step") != "notices" || n.str("repo") != "github/acme/*" || n.str("state") != "needs you" {
+		t.Errorf("the notice line is %+v, want the step's own name, the pattern and the state it was reported with", n.Raw)
+	}
+	if !strings.Contains(n.str("detail"), "fugaro project repos add") {
+		t.Errorf("the notice line's detail is %q, want the line the step reported", n.str("detail"))
+	}
+	// A notice about no repository carries both members as the empty string and
+	// not a guess at one.
+	second := feed[1]
+	if second.Type != setupEventNotice || second.str("repo") != "" || second.str("state") != "" || second.str("step") != "pin" {
+		t.Errorf("the second line is %+v, want a notice under the pin step with no repository", second.Raw)
+	}
+	if last := feed[2]; last.Type != setupEventDone {
+		t.Errorf("the feed ends with %+v, want the done line behind the notices", last.Raw)
+	}
+	for i, l := range feed {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(l.Text))
+		if err != nil {
+			t.Fatalf("line %d is not JSON (%v): %s", i+1, err, l.Text)
+		}
+		if err := schema.Validate(inst); err != nil {
+			t.Errorf("line %d does not validate against the published schema (%v):\n%s", i+1, err, l.Text)
+		}
+	}
+}
+
+// TestSetupEventsSchema holds the published contract and the feed to each
+// other: the schema is what the console reads against — its copy of this
+// contract is compared with the golden by I-OPS — and every line a run writes
+// validates against it.
+func TestSetupEventsSchema(t *testing.T) {
+	schema, body := setupEventsSchema(t)
 
 	// Every line of both feeds the CLI writes in these tests validates, member
 	// for member.
@@ -387,8 +454,10 @@ func TestSetupEventsSchema(t *testing.T) {
 		for name, line := range map[string]string{
 			"an unknown kind":             `{"type":"progress","stage":"installation"}`,
 			"a stage with none":           `{"type":"stage"}`,
-			"a state no stage has":        `{"type":"stage","name":"installation","state":"maybe","detail":"","after":"","undone":false}`,
+			"a state no stage has":        `{"type":"stage","name":"installation","state":"maybe","detail":"","after":"","undone":false,"repos":[]}`,
+			"a stage with no repos":       `{"type":"stage","name":"installation","state":"done","detail":"","after":"","undone":false}`,
 			"a left with no command list": `{"type":"left_for_you","stage":"secrets","kind":"command","text":"run this"}`,
+			"a notice with no step":       `{"type":"notice","repo":"","state":"","detail":"something happened"}`,
 			"a done with no code":         `{"type":"done"}`,
 			"an error with no sentence":   `{"type":"error","stage":"installation","fix":"","exit_code":2}`,
 		} {
@@ -404,13 +473,52 @@ func TestSetupEventsSchema(t *testing.T) {
 		}
 	})
 
+	// A stage that does per-repository work carries its lines (U13): the lines
+	// themselves and the summary they make as the stage's detail, which is what
+	// a surface draws per stage. The member is in the schema — a consumer
+	// reading the contract has it — and the golden's own lines carry it, which
+	// the golden test compares.
+	t.Run("a stage with repositories", func(t *testing.T) {
+		defs, _ := body["$defs"].(map[string]any)
+		stageDef, _ := defs["stage"].(map[string]any)
+		props, _ := stageDef["properties"].(map[string]any)
+		if _, ok := props["repos"]; !ok {
+			t.Errorf("the schema's stage kind declares no repos member: a stage's own lines are part of the contract (U13)")
+		}
+		required, _ := stageDef["required"].([]any)
+		if !slices.Contains(required, "repos") {
+			t.Errorf("the schema's stage kind does not require repos: a reader takes the member as always there, an empty array for a stage that reports none (required: %v)", required)
+		}
+		line := `{"type":"stage","name":"secrets","state":"changed","detail":"3 repositories: 1 done, 1 needs you, 1 unread","after":"","undone":false,` +
+			`"repos":[{"repo":"acme/app","state":"done","detail":"stored 1 (git credential)"},{"repo":"acme/web","state":"needs you"},{"repo":"acme/old","state":"unread","detail":"the repository is gone (404)"}]}`
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(line))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := schema.Validate(inst); err != nil {
+			t.Errorf("the schema refused a stage line that carries its repositories (%v):\n%s", err, line)
+		}
+		for _, bad := range []string{
+			`{"type":"stage","name":"secrets","state":"changed","detail":"","after":"","undone":false,"repos":[{"repo":"acme/app","state":"half-way"}]}`,
+			`{"type":"stage","name":"secrets","state":"changed","detail":"","after":"","undone":false,"repos":[{"state":"done"}]}`,
+		} {
+			inst, err := jsonschema.UnmarshalJSON(strings.NewReader(bad))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := schema.Validate(inst); err == nil {
+				t.Errorf("the schema accepted a repository line the contract has no shape for: %s", bad)
+			}
+		}
+	})
+
 	// The kinds are the console's closed set (SETUP_EVENT_TYPES, new-ops.ts)
 	// and the writer's own: a kind added here without one there is a line the
 	// console drops.
-	t.Run("the kinds are the five", func(t *testing.T) {
+	t.Run("the kinds are the six", func(t *testing.T) {
 		one, _ := body["oneOf"].([]any)
-		if len(one) != 5 {
-			t.Errorf("the schema has %d line kinds, want the five the feed writes", len(one))
+		if len(one) != 6 {
+			t.Errorf("the schema has %d line kinds, want the six the feed writes", len(one))
 		}
 	})
 }
@@ -426,8 +534,11 @@ func TestSetupEventsSchema(t *testing.T) {
 // which is the only end that is an `error` line. The second and the third are
 // here because the first cannot carry more than two of the five kinds — a
 // plan-only run works on no stage and leaves nothing — and a golden a decoder
-// is compared against is worth as much as the kinds it exercises. Every kind
-// the contract has is in the file, which the test below checks.
+// is compared against is worth as much as the kinds it exercises. The five
+// kinds these runs write are in the file, which the test below checks; the
+// sixth, a `notice`, is not, because no step reports one yet: until one does it
+// is TestSetupEventsNotice that holds that line's shape. A `repos` member is on
+// every stage line, empty, for the same reason.
 //
 // It is regenerated with -update-setup-events, and the one fact it normalises
 // is the run's own temp directory (the config a stage's detail names, which is

@@ -295,12 +295,12 @@ function textAt(raw: unknown): string | null {
  * drawnRefusal is a reason as a screen may draw it: `sanitizeRefusal` and
  * nothing else, which is the one treatment of a sentence this console did not
  * compose (design section 6.3, `src/shared/sanitize.ts`). The CLI's refusals
- * name buckets, projects and roles, so they take this door and not the free-text
- * rules -- which would draw `roles/datastore.viewer` as `[redacted]` and eat the
- * remedy -- while a credential a child echoed is still redacted. A sentence too
- * long for the console to read is `REFUSAL_UNREADABLE` (`./degraded`, the
- * console's one word for it) rather than a cell the operator reads as the
- * refusal.
+ * name buckets, projects and roles, and a refusal is the whole of a remedy, so
+ * they take this door -- which redacts a credential a child echoed and nothing
+ * else since D3213 (2026-11-21) left the free-text rules credential-only. A
+ * sentence too long for the console to read is `REFUSAL_UNREADABLE`
+ * (`./degraded`, the console's one word for it) rather than a cell the operator
+ * reads as the refusal.
  */
 function drawnRefusal(because: string): string {
   const drawn = sanitizeRefusal(because, 'the reason this section has to draw')

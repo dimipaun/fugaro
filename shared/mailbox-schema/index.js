@@ -232,6 +232,18 @@ export const SHA_MAX = 64;
 export const MAC_MAX = 64;
 
 /**
+ * The length of a device signature in unpadded base64url characters: 64 bytes
+ * of Ed25519 (O6), which is C1's `DeviceSignatureSize` and the same fixed
+ * length the database rules pin (J5r). A length is what makes a signature an
+ * identity of one shape rather than a body.
+ */
+export const SIG_CHARS = 86;
+
+/** The bytes `SIG_CHARS` characters are the one spelling of: an Ed25519
+ * signature (O6, C1's `DeviceSignatureSize`). */
+const SIG_BYTES = 64;
+
+/**
  * The length of a boot id, in UTF-16 code units: D117's bound in
  * `shared/presence`, repeated here rather than imported because this module is
  * the phone's lowest layer (plan P0.2 is level 1, P1.4 is level 2) and a
@@ -370,6 +382,7 @@ export const FIELDS = Object.freeze([
   'text',
   'at',
   'mac',
+  'sig',
   'acked',
   'agent',
   'kind',
@@ -381,8 +394,15 @@ export const FIELDS = Object.freeze([
   'prefs',
 ]);
 
-/** The fields a message must have, in the order they are checked. */
-export const REQUIRED_FIELDS = Object.freeze(['id', 'sender', 'text', 'at', 'mac']);
+/**
+ * The fields a message must have, in the order they are checked. The tag is
+ * not among them: a record carries exactly one of `mac` and `sig` — D171's MAC
+ * or O6's device signature — so "the tag is there" is a rule about the pair
+ * rather than about one name, and `tagFields` checks it after these. A record
+ * with neither is still refused at `mac`, the field a phone paired the old way
+ * writes, which is the shape the vectors pin.
+ */
+export const REQUIRED_FIELDS = Object.freeze(['id', 'sender', 'text', 'at']);
 
 /**
  * The fields each kind may carry beyond the shared ones, and the ones it must
@@ -465,8 +485,8 @@ const RUN_TARGET_FIELDS = Object.freeze(['run']);
 const REPO_TARGET_FIELDS = Object.freeze(['repo', 'pr']);
 
 /** A heartbeat's fields, exactly, and the ones it must have (`agents` is optional). */
-const HEARTBEAT_FIELDS = Object.freeze(['at', 'boot', 'agents', 'mac']);
-const HEARTBEAT_REQUIRED = Object.freeze(['at', 'boot', 'mac']);
+const HEARTBEAT_FIELDS = Object.freeze(['at', 'boot', 'agents', 'mac', 'sig']);
+const HEARTBEAT_REQUIRED = Object.freeze(['at', 'boot']);
 
 /** An advertised agent's fields, exactly. */
 const AGENT_FIELDS = Object.freeze(['id', 'name']);
@@ -515,6 +535,13 @@ export const REFUSALS = Object.freeze({
   BAD_WINDOW: 'bad-window',
   /** A mac is not 64 lowercase hex characters: a 32-byte HMAC-SHA-256 tag. */
   BAD_MAC: 'bad-mac',
+  /** A sig is not 86 characters of unpadded base64url: one 64-byte Ed25519
+   * signature (O6) in the one spelling this protocol uses. */
+  BAD_SIG: 'bad-sig',
+  /** A record carries both tags. One record has exactly one scheme — D171's
+   * MAC or O6's device signature — and a reader that accepted both would have
+   * to choose which one it believed. */
+  BAD_TAG: 'bad-tag',
   /** A list names the same id or option twice, so a choice by name or
    * position has two answers. */
   DUPLICATE_ENTRY: 'duplicate-entry',
@@ -562,15 +589,15 @@ export function validateMessage(value) {
   if (text.bad) return text.bad;
   const at = timestampField(value.at, 'at');
   if (at.bad) return at.bad;
-  const mac = macField(value.mac);
-  if (mac.bad) return mac.bad;
+  const tags = tagFields(value, 'mac');
+  if (tags.bad) return tags.bad;
 
   const message = {
     id: id.value,
     sender: sender.value,
     text: text.value,
     at: at.value,
-    mac: mac.value,
+    ...(tags.mac !== undefined ? { mac: tags.mac } : { sig: tags.sig }),
   };
 
   let kind = DEFAULT_KIND;
@@ -690,10 +717,14 @@ export function validateHeartbeat(value) {
   if (at.bad) return at.bad;
   const boot = identityField(value.boot, 'boot', BOOT_MAX);
   if (boot.bad) return boot.bad;
-  const mac = macField(value.mac);
-  if (mac.bad) return mac.bad;
+  const tags = tagFields(value, 'mac');
+  if (tags.bad) return tags.bad;
 
-  const heartbeat = { at: at.value, boot: boot.value, mac: mac.value };
+  const heartbeat = {
+    at: at.value,
+    boot: boot.value,
+    ...(tags.mac !== undefined ? { mac: tags.mac } : { sig: tags.sig }),
+  };
   if (Object.hasOwn(value, 'agents')) {
     const agents = agentsField(value.agents);
     if (agents.bad) return agents.bad;
@@ -758,14 +789,17 @@ export function canonicalBytes(record, direction) {
   if (Object.hasOwn(record, DIRECTION_FIELD)) {
     throw new TypeError('canonicalBytes: a record may not carry its own direction; the reader supplies it');
   }
-  // `mac` is the tag itself, and `acked` is the phone's write after the tag was
-  // made (§3.5). Every other field is covered, including one a later protocol
-  // version adds: absent fields are omitted, so an unknown field signs as itself
-  // rather than being silently outside the bytes. The copy has no prototype, so
-  // an own `__proto__` key stays a field.
+  // The tag itself is not covered — `mac` or `sig`, and both are dropped rather
+  // than only the one this record carries, because a record with both is
+  // refused before anything is signed and the bytes must not depend on which
+  // scheme the writer used — and neither is `acked`, the phone's write after
+  // the tag was made (§3.5). Every other field is covered, including one a
+  // later protocol version adds: absent fields are omitted, so an unknown field
+  // signs as itself rather than being silently outside the bytes. The copy has
+  // no prototype, so an own `__proto__` key stays a field.
   const covered = Object.create(null);
   for (const key of Object.keys(record)) {
-    if (key !== 'mac' && key !== 'acked') covered[key] = record[key];
+    if (key !== 'mac' && key !== 'sig' && key !== 'acked') covered[key] = record[key];
   }
   covered[DIRECTION_FIELD] = direction;
   return serialiseObject(covered);
@@ -1232,6 +1266,78 @@ function macField(value) {
   return { value };
 }
 
+// sigField validates a device signature's shape: 86 characters of unpadded
+// base64url, which is exactly 64 bytes (O6, C1's `DeviceSignatureSize`). Length
+// and character set share one code because they are one question — is this a
+// signature? — and the canonical spelling is required for the reason the mac's
+// lowercase is: base64url's last character of a 64-byte value carries two bits
+// the encoding discards, so three other strings decode to the same signature
+// and a verifier that accepted them would read a value the signer never wrote.
+// Whether the signature is the RIGHT one needs the device's public key, and
+// that is the gate's question, not the schema's.
+function sigField(value) {
+  if (typeof value !== 'string') return { bad: refuse(REFUSALS.WRONG_TYPE, 'sig') };
+  if (value === '') return { bad: refuse(REFUSALS.EMPTY_STRING, 'sig') };
+  if (value.length !== SIG_CHARS) return { bad: refuse(REFUSALS.BAD_SIG, 'sig') };
+  if (!BASE64URL_PATTERN.test(value)) return { bad: refuse(REFUSALS.BAD_SIG, 'sig') };
+  if (!isCanonicalBase64url(value, SIG_BYTES)) {
+    return { bad: refuse(REFUSALS.BAD_SIG, 'sig') };
+  }
+  return { value };
+}
+
+// isCanonicalBase64url reports whether s is the one spelling of exactly `bytes`
+// bytes: every character in the alphabet, and the bits the encoding discards
+// zero. A 64-byte signature is 86 characters whose last one carries four
+// significant bits and two this encoding throws away, so three other last
+// characters decode to the same 64 bytes — four spellings of one signature,
+// which is what `mobile/src/pairing/base64url.js`'s NOT_CANONICAL refusal and
+// `DecodeConsumerPublicKey`'s strict decoder both refuse. The rule is the same
+// one here, because the two ends must refuse the same strings: a phone that
+// accepted a non-canonical spelling would sign bytes no verifier ever hashed.
+function isCanonicalBase64url(s, bytes) {
+  let acc = 0;
+  let bits = 0;
+  let decoded = 0;
+  for (let i = 0; i < s.length; i++) {
+    acc = (acc << 6) | BASE64URL_ALPHABET.indexOf(s[i]);
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      decoded += 1;
+      acc &= (1 << bits) - 1;
+    }
+  }
+  return acc === 0 && decoded === bytes;
+}
+
+// tagFields reads a record's one tag: D171's `mac` or O6's `sig`, exactly one
+// of the two. The name is the field a record with neither is refused at, which
+// is `mac` on both records that carry a tag — the vectors' "unsigned message"
+// and "unsigned heartbeat" both pin that code and field, and a phone paired the
+// old way is the caller that meets it.
+//
+// The two are read together rather than one after the other because the rule is
+// about the pair: a record carrying both is refused before either shape is
+// judged, since a reader that checked the first and stopped would be choosing a
+// scheme on the writer's behalf.
+function tagFields(value, field) {
+  const hasMAC = Object.hasOwn(value, 'mac');
+  const hasSig = Object.hasOwn(value, 'sig');
+  if (hasMAC && hasSig) return { bad: refuse(REFUSALS.BAD_TAG, 'sig') };
+  if (hasMAC) {
+    const mac = macField(value.mac);
+    if (mac.bad) return mac;
+    return { mac: mac.value };
+  }
+  if (hasSig) {
+    const sig = sigField(value.sig);
+    if (sig.bad) return sig;
+    return { sig: sig.value };
+  }
+  return { bad: refuse(REFUSALS.MISSING_FIELD, field) };
+}
+
 // hasLoneSurrogate reports whether s contains an unpaired surrogate: half of
 // a character that JSON cannot encode, so a value carrying one cannot be
 // written at all. A paired pair (an emoji) is a character and is fine.
@@ -1433,3 +1539,9 @@ const ZONE_PATTERN = /^[A-Za-z][A-Za-z0-9._+-]*(\/[A-Za-z0-9._+-]*[A-Za-z0-9_+-]
 
 /** Lowercase hexadecimal, which is the one spelling a tag or a SHA has here. */
 const HEX_PATTERN = /^[0-9a-f]+$/;
+
+/** Unpadded base64url's alphabet, and the pattern that recognises it. The
+ * alphabet is a string as well as a pattern because the canonical check reads
+ * each character's value back out of it. */
+const BASE64URL_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;

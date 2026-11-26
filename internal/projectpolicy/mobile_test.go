@@ -626,3 +626,158 @@ func TestProjectPolicyMobileProviderNamesAreTheIdentityProviders(t *testing.T) {
 		}
 	}
 }
+
+// TestProjectPolicyMobileCompactionThresholdHoldsTheThreshold pins Z2's
+// top-level key: the whole percent at which a project's phones compact their
+// context without being asked, and the three states it has —
+//
+//   - a written percent, which is the project's own answer and travels to the
+//     phone as the session policy's `compact_threshold_percent`;
+//   - no key at all, and a written null, which are the absent threshold: no
+//     automatic compaction, which is what the app must do when it was told
+//     nothing (C2's `compaction_threshold` is null for the same state);
+//   - a nil Policy, because the pairing route asks before it has read anything.
+//
+// The value rules are here too: a percent above the highest the phone's own
+// comparison accepts, a negative one and a value that is not a number are each
+// a load error, because a threshold the app refuses at pairing is a session a
+// phone cannot mount and the node would look as if it had one.
+func TestProjectPolicyMobileCompactionThresholdHoldsTheThreshold(t *testing.T) {
+	if MobileCompactionThresholdKey != "mobile_compaction_threshold" {
+		t.Fatalf("MobileCompactionThresholdKey = %q: the key's spelling is the node's, and this test writes nodes with it", MobileCompactionThresholdKey)
+	}
+	thresholdNode := func(key string) []byte {
+		return []byte(`{"version": 10, "budget": {"mode": "observe"}, "mobile": {"enabled": true}, "mobile_compaction_threshold": ` + key + `}`)
+	}
+	for _, tc := range []struct {
+		name string
+		key  string
+		want int
+	}{
+		{name: "a written percent", key: "40", want: 40},
+		{name: "the highest the phone's port mounts", key: "99", want: 99},
+		{name: "written off", key: "0", want: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, found, err := Decode(thresholdNode(tc.key))
+			if err != nil || !found || p == nil {
+				t.Fatalf("Decode = (%v, %v, %v), want the node read", p, found, err)
+			}
+			if len(p.UnknownKeys) != 0 {
+				t.Errorf("UnknownKeys = %v, want none: the key is this Fugaro's own", p.UnknownKeys)
+			}
+			if got := p.MobileCompactionThresholdPercent(); got != tc.want {
+				t.Errorf("MobileCompactionThresholdPercent() = %d for a key written %s, want %d", got, tc.key, tc.want)
+			}
+		})
+	}
+	// A node that carries no key at all, and one whose value is null: both are
+	// the absent threshold, and both mean no automatic compaction — the
+	// default, not a value this Fugaro invented.
+	for _, node := range []string{
+		`{"version": 10, "budget": {"mode": "observe"}, "mobile": {"enabled": true}}`,
+		`{"version": 10, "budget": {"mode": "observe"}, "mobile": {"enabled": true}, "mobile_compaction_threshold": null}`,
+	} {
+		p, found, err := Decode([]byte(node))
+		if err != nil || !found || p == nil {
+			t.Fatalf("Decode(%s) = (%v, %v, %v), want the node read", node, p, found, err)
+		}
+		if p.MobileCompactionThreshold != nil {
+			t.Errorf("the threshold of %s decoded to %v, want nil: neither state is an answer", node, p.MobileCompactionThreshold)
+		}
+		if got := p.MobileCompactionThresholdPercent(); got != DefaultMobileCompactionThreshold {
+			t.Errorf("MobileCompactionThresholdPercent() = %d for %s, want %d: a project that set no threshold compacts nothing automatically", got, node, DefaultMobileCompactionThreshold)
+		}
+	}
+	// The pairing route asks before it has read anything.
+	var none *Policy
+	if got := none.MobileCompactionThresholdPercent(); got != DefaultMobileCompactionThreshold {
+		t.Errorf("MobileCompactionThresholdPercent() = %d for a nil Policy, want %d", got, DefaultMobileCompactionThreshold)
+	}
+	// A threshold the app cannot mount and a value that is not a whole percent
+	// are refused: 100 is a full window, and the fraction the phone compares
+	// with must be above zero and below one, so the node would read as a project
+	// that compacts and the phone would refuse the session it carries.
+	for _, tc := range []struct{ name, key string }{
+		{name: "a full window", key: "100"},
+		{name: "above the highest", key: "101"},
+		{name: "negative", key: "-1"},
+		{name: "a fractional percent", key: "40.5"},
+		{name: "a string", key: `"40"`},
+		{name: "a bool", key: "true"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if p, _, err := Decode(thresholdNode(tc.key)); err == nil {
+				t.Fatalf("a key written %s was read: %+v", tc.key, p.MobileCompactionThreshold)
+			}
+		})
+	}
+}
+
+// intPtr is a written whole number: the threshold's own member is a pointer so
+// that the absent key and a written 0 are told apart, and a test that states one
+// has to take a variable's address for it (boolPtr does the same for the switch
+// beside it).
+func intPtr(v int) *int { return &v }
+
+// TestProjectPolicyMobileCompactionThresholdToleratedByAReaderThatPredatesIt is
+// the second half of the reason the key is not a member of the mobile block: the
+// node a publish writes decodes with the release behind's key set, so a run in
+// flight on the previous image — and a CLI of the previous release — reads the
+// whole policy it is served after one `fugaro update`
+// (docs/design/update-in-flight.md).
+//
+// The reader modelled here is the release just before the key: this Fugaro's own
+// list with the threshold removed, which is exactly what a reader of that age
+// carries. The mobile block stays the seven members that release decodes, so the
+// key is the only thing it does not know, and it lists the key rather than
+// refusing the node.
+func TestProjectPolicyMobileCompactionThresholdToleratedByAReaderThatPredatesIt(t *testing.T) {
+	raw, err := json.Marshal(&Policy{
+		Version:                   Version,
+		Budget:                    Budget{Mode: "observe"},
+		Mobile:                    MobileForPublish(nil),
+		MobileCompactionThreshold: intPtr(40),
+	})
+	if err != nil {
+		t.Fatalf("marshalling the node a publish writes: %v", err)
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("the node a publish writes is not a document: %v", err)
+	}
+	block, ok := doc["mobile"]
+	if !ok {
+		t.Fatal("the node a publish writes carries no mobile block")
+	}
+	names, err := objectMemberNames(block)
+	if err != nil {
+		t.Fatalf("the block is not an object: %v", err)
+	}
+	if slices.Contains(names, MobileCompactionThresholdKey) {
+		t.Errorf("the mobile block a publish writes names %q, which is a top-level key: a member beside the block's seven is refused by the release behind's decodeMobile, which returns that error for the whole policy", MobileCompactionThresholdKey)
+	}
+	if err := checkMemberNames("mobile", names, mobileMembers); err != nil {
+		t.Errorf("the block a publish writes is refused by this Fugaro's own member set: %v", err)
+	}
+
+	preKey := make(map[string]bool, len(knownTopLevelKeys))
+	for k, v := range knownTopLevelKeys {
+		preKey[k] = v
+	}
+	delete(preKey, MobileCompactionThresholdKey)
+	q, found, err := decodeWithKeys(raw, preKey)
+	if err != nil || !found || q == nil {
+		t.Fatalf("the reader that predates the key refused the node a publish writes: (%v, %v, %v)", q, found, err)
+	}
+	if want := []string{MobileCompactionThresholdKey}; !slices.Equal(q.UnknownKeys, want) {
+		t.Errorf("the reader that predates the key lists UnknownKeys = %v, want %v: that is the node a CLI of that age refuses at publish time and a runner of it logs", q.UnknownKeys, want)
+	}
+	// A reader of that age has no member for the key, so the threshold it hands
+	// a phone is none (the release behind's session policy carries no percent
+	// for it): a project that sets one compacts automatically again once the
+	// installation is updated, and never while the agent is busy either way.
+	if !q.MobileEnabled() {
+		t.Error("the reader that predates the key reads the mobile block as disabled: the block it knows is there, and only the new key is unknown")
+	}
+}

@@ -12,10 +12,15 @@
 //     its write (D113b): it only reads it.
 //   * it reads **its own outbox and the heartbeat**, under the (b1) grant, and
 //     nothing else.
-//   * **every message it writes carries a `mac`** over P6.3's canonical bytes,
-//     made with D171's per-pairing key, read from platform secure storage
-//     through `SecretStore.use` for the duration of one call and never held,
-//     logged or stored in the clear (D111).
+//   * **every message it writes carries a tag** over P6.3's canonical bytes, and
+//     which tag is the WIRING's answer and not the message's (O6): a client
+//     given a `session` signs with the device key through C2's `signMessage` and
+//     writes `sig`, and a client without one writes D171's per-pairing `mac`,
+//     read from platform secure storage through `SecretStore.use` for the
+//     duration of one call and never held, logged or stored in the clear (D111).
+//     The consumer's device node is what decides which of the two it accepts --
+//     a node holding a public key takes signatures only -- so a phone that could
+//     pick per message would be a phone that could downgrade itself.
 //   * it **verifies the tag of every outbox message and of the heartbeat**
 //     before it speaks a word or acks (the tension (b) resolution): a message
 //     whose tag does not verify is dropped, never spoken and never acked, and
@@ -135,6 +140,7 @@ import { SECURE_STORE_CODES } from '../accounts/secure-store.js';
 import { UNENFORCED_LICENCE, lapseRefusalAt, licenceSpeech, writeOf } from '../licence/state.js';
 import { jobWrite } from '../../../shared/command/index.js';
 import {
+  SIG_CHARS,
   TEXT_MAX,
   canonicalBytes,
   validateHeartbeat,
@@ -148,7 +154,7 @@ import {
 } from '../../../shared/presence/index.js';
 import { UNWIRED_CONNECTION } from './connection.js';
 import { evaluateConnection, evaluateGate, offlineSpeech } from './gate.js';
-import { macOf, verifyMac } from './mac.js';
+import { macOf, sigOf, verifyMac } from './mac.js';
 import { isDatabaseKey, mailboxPaths } from './paths.js';
 import { outboundRedactor } from './redact.js';
 import { STORE_CODES } from './store.js';
@@ -202,13 +208,21 @@ export const REGISTRATION_TEXT = 'register this phone';
 
 /**
  * A well-formed MAC, used for exactly one thing: validating a record's other
- * fields BEFORE its real tag exists. P6.3 requires a `mac` on every message and
+ * fields BEFORE its real tag exists. P6.3 requires a tag on every message and
  * the tag covers every other field, so a placeholder lets `validateMessage`
  * judge what the caller handed in -- its own code, its own dotted field -- while
  * the account's key is still untouched. No such record is ever written: the tag
  * is attached by `macOf` over the canonical bytes of the same fields.
  */
 const MAC_PLACEHOLDER = '0'.repeat(64);
+
+/**
+ * The same placeholder for the other scheme (O6): a well-formed device
+ * signature -- `SIG_CHARS` characters of unpadded base64url -- used only to have
+ * a record judged before its real signature exists. `A` is the alphabet's zero,
+ * so this is the canonical spelling of 64 zero bytes and the schema accepts it.
+ */
+const SIG_PLACEHOLDER = 'A'.repeat(SIG_CHARS);
 
 /** The refusal codes this module adds to the schema's, the store's and P1.4's. */
 export const CLIENT_CODES = Object.freeze({
@@ -453,6 +467,13 @@ function readOutbox(value) {
  *   `isOnline()`. **Optional, and the default refuses**: a client built without
  *   one uses `UNWIRED_CONNECTION` and answers `no-connection`, because the
  *   unsafe default is the one that sends into the SDK's queue
+ * @param {object} [options.session] C2's session port (O6), for the `signMessage`
+ *   it carries. **Optional, and it chooses the scheme**: a client given one
+ *   signs every record it writes with the device key and writes `sig`, and a
+ *   client without one writes D171's `mac` from the keychain. Both are real
+ *   pairings -- an older phone is paired the old way -- so the absence of a
+ *   session is not a fault and does not throw; a session that IS given must be
+ *   able to sign
  * @param {object} options.speaker the audio port (P3.6's stub of P3.4):
  *   `speak(text, speech?)`, where the optional second argument is the client's
  *   word on what it is saying -- see `REFUSAL_SPEECH`
@@ -492,6 +513,7 @@ export function createMailboxClient(options = {}) {
     store,
     connection = UNWIRED_CONNECTION,
     licence = UNENFORCED_LICENCE,
+    session = null,
     speaker,
     now,
     newId,
@@ -513,6 +535,14 @@ export function createMailboxClient(options = {}) {
   // still a bug -- it would refuse nothing at all, silently.
   if (licence === null || typeof licence !== 'object' || typeof licence.at !== 'function') {
     throw new TypeError('createMailboxClient: a licence must carry at() when one is given');
+  }
+  // O6's port, with the same rule and a different default: a client with no
+  // session is a phone paired the OLD way (D171's MAC), which is a real state
+  // and not a hole -- but a session that is given and cannot sign would write
+  // records no consumer can verify, so it is a wiring bug.
+  if (session !== null
+    && (typeof session !== 'object' || typeof session.signMessage !== 'function')) {
+    throw new TypeError('createMailboxClient: a session must carry signMessage() when one is given');
   }
   if (speaker === null || typeof speaker !== 'object' || typeof speaker.speak !== 'function') {
     throw new TypeError('createMailboxClient: a speaker with speak() is required');
@@ -573,6 +603,46 @@ export function createMailboxClient(options = {}) {
 
   /** The material is used inside the callback and never comes back out. */
   const withKey = (fn) => keys.use(accountId, MAC_KEY_ITEM, fn);
+
+  /**
+   * The tag one record carries, and the field it is written in: `sig` from the
+   * session's device key when this phone was paired the new way (O6), `mac`
+   * from the pairing's key otherwise (D171).
+   *
+   * The scheme is decided ONCE, at the wiring, from whether there is a session
+   * -- never per record: the consumer's device node is what says which tag it
+   * accepts, and a client that could choose would be a client that could fall
+   * back to the scheme O6 retires.
+   *
+   * A session that cannot sign is the same fault the Keychain's is -- this
+   * machine holds signing material for the pairing and could not use it -- so
+   * it is the same code, and the field says which material it was. Nothing is
+   * written, and nothing is queued.
+   *
+   * The refusal comes back finished, in this module's own words: the caller has
+   * nothing left to translate, and the field it names (`keys` or `session`) is
+   * what tells the owner which pairing to look at.
+   *
+   * @returns {Promise<{ok: true, name: 'mac'|'sig', value: string}
+   *   | {ok: false, code: string, field: string|null}>} frozen
+   */
+  async function tagOf(base) {
+    if (session === null) {
+      const tag = await withKey((key) => macOf(base, key, WRITE_DIRECTION));
+      return tag.ok ? Object.freeze({ ok: true, name: 'mac', value: tag.result }) : keyRefusal(tag);
+    }
+    try {
+      const value = await sigOf(base, (bytes) => session.signMessage(bytes), WRITE_DIRECTION);
+      return Object.freeze({ ok: true, name: 'sig', value });
+    } catch {
+      return refuse(CLIENT_CODES.KEY_UNREADABLE, 'session');
+    }
+  }
+
+  /** The placeholder tag a record is judged with before its real one is made:
+   * the scheme's own shape, so `validateMessage` judges the caller's fields and
+   * not this client's choice of tag. */
+  const placeholderTag = () => (session === null ? { mac: MAC_PLACEHOLDER } : { sig: SIG_PLACEHOLDER });
 
   // keyRefusal turns the store's answer about the key into this module's:
   // `absent` is "this phone is not paired", and everything else is "the key is
@@ -736,9 +806,9 @@ export function createMailboxClient(options = {}) {
     const id = newId();
     if (!isDatabaseKey(id)) return refuse(CLIENT_CODES.BAD_ID, 'newId');
 
-    // `mac` is outside the bytes it covers, so the tag is made over the record
-    // without it and attached after: one definition of the signed bytes, the
-    // schema's.
+    // The tag -- `mac` or `sig`, whichever scheme this client signs under -- is
+    // outside the bytes it covers, so it is made over the record without it and
+    // attached after: one definition of the signed bytes, the schema's.
     const base = Object.freeze(isAction
       ? { id, sender: from, text: body.text, at, kind: 'action', action: opts.action }
       : { id, sender: from, text: body.text, at });
@@ -759,17 +829,18 @@ export function createMailboxClient(options = {}) {
     // key, the schema, the gate -- leaves the id free rather than burning it.
     if (minted.has(id)) return refuse(CLIENT_CODES.ID_CONFLICT, 'newId');
 
-    const tag = await withKey((key) => macOf(base, key, WRITE_DIRECTION));
-    if (!tag.ok) return keyRefusal(tag);
-    const record = Object.freeze({ ...base, mac: tag.result });
+    const tag = await tagOf(base);
+    if (!tag.ok) return tag;
+    const record = Object.freeze({ ...base, [tag.name]: tag.value });
     const valid = validateMessage(record);
     if (!valid.ok) return refuse(valid.code, valid.field);
 
     // **The gate is asked AGAIN here, at the write** (the PR #663 review's M1).
     // The check at the top of `send` is what keeps the id, the tag and the store
-    // call from happening at all, and it is not the last word: the `withKey`
-    // await above is a Keychain, which on a device is a prompt and can take
-    // seconds, and a connection can go while it is up. A write handed over after
+    // call from happening at all, and it is not the last word: the tag's own
+    // await above is a Keychain read or a session round trip, which on a device
+    // is a prompt and can take seconds, and a connection can go while it is up.
+    // A write handed over after
     // that is a write the SDK HOLDS and sends on reconnect -- the one thing D167
     // rules out -- so the gate is asked once more where it decides anything:
     // immediately before the write. Presence is re-judged too, at the write-time
@@ -931,14 +1002,14 @@ export function createMailboxClient(options = {}) {
     if (Object.hasOwn(opts, 'platform')) base.platform = opts.platform;
     if (Object.hasOwn(opts, 'prefs')) base.prefs = opts.prefs;
 
-    const fields = validateMessage({ ...base, mac: MAC_PLACEHOLDER });
+    const fields = validateMessage({ ...base, ...placeholderTag() });
     if (!fields.ok) return refuse(fields.code, fields.field);
     const unsignable = unsignableField(base);
     if (unsignable !== null) return refuse(CLIENT_CODES.UNSIGNABLE, unsignable);
 
-    const tag = await withKey((key) => macOf(base, key, WRITE_DIRECTION));
-    if (!tag.ok) return keyRefusal(tag);
-    const record = Object.freeze({ ...base, mac: tag.result });
+    const tag = await tagOf(base);
+    if (!tag.ok) return tag;
+    const record = Object.freeze({ ...base, [tag.name]: tag.value });
     // The same line `send` holds, and for the same reason: nothing reaches the
     // store that `validateMessage` has not accepted, whatever the tag's own
     // shape was -- and the tag is checked HERE since the placeholder above was
