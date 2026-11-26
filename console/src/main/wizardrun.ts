@@ -407,15 +407,18 @@ export function setupFeedFailure(lines: readonly JSONObject[]): string | null {
 
 /**
  * setupAnswersForCli is the answers **as this CLI can read them**: everything
- * the operator answered, less the one member an older CLI would refuse.
+ * the operator answered, less the one member a CLI below the floor would stop
+ * on.
  *
- * `budget` arrived after the answers file did (D2210, task T2b) and the CLI
- * decodes the document strictly -- a member it does not know is refused by name
- * and the whole plan or apply fails -- so a version below
- * `SETUP_BUDGET_CLI_FLOOR` (`src/shared/version.ts`) is sent the answers the
- * file has always carried, and the run records its own default amount instead
- * (D2212). The question is still asked and still shown: what the operator
- * answered is dropped from the bytes, never from the form.
+ * The console answers the amount and never `budget_currency` (D2211), and before
+ * `0.29.0` nothing wrote the currency the document left out back from the
+ * default: the amount alone reached the run's own trio rule and the whole setup
+ * -- the plan as much as the apply -- ended there (the tag-by-tag reading is
+ * `SETUP_BUDGET_CLI_FLOOR`'s in `src/shared/version.ts`). So a version below the
+ * floor is sent the answers the file has always carried, and the run records its
+ * own default amount instead (D2212). The question is still asked and still
+ * shown: what the operator answered is dropped from the bytes, never from the
+ * form.
  *
  * It is a function of the answers and the version line and nothing else, which
  * is why it is exported: `wizard-main.test.ts` drives the branch a release
@@ -795,14 +798,14 @@ export function createSetupWizard(deps: SetupWizardDeps): SetupWizard {
       // answer may not be replaced, because the bytes the window showed are the
       // bytes the operator agreed to.
       if (held !== null && held.outcome === null) throw new SourceRefusal(SETUP_PLAN_PENDING_REFUSAL)
-      // **The one member an older CLI refuses goes out only to a CLI that takes
-      // it** (D2210): `budget` is newer than the answers file, the CLI decodes
-      // the document strictly, and a member it does not know fails the whole run
-      // -- so a version below `SETUP_BUDGET_CLI_FLOOR` is sent the answers the
-      // file has always carried and the run records its own default amount. The
-      // gate runs **before** the serialiser, so the bytes, the digest and the
-      // answers the window shows are one document: what an operator reads is
-      // what the child gets.
+      // **The one member a CLI below the floor stops on goes out only to a CLI
+      // that takes it** (D2210): the console answers an amount and never its
+      // currency, and before `0.29.0` the amount alone met the run's own trio
+      // rule and failed the whole run -- so a version below
+      // `SETUP_BUDGET_CLI_FLOOR` is sent the answers the file has always carried
+      // and the run records its own default amount. The gate runs **before** the
+      // serialiser, so the bytes, the digest and the answers the window shows are
+      // one document: what an operator reads is what the child gets.
       const sent = setupAnswersForCli(answers, deps.cliVersion)
       const bytes = serialise(sent)
       const shownDigest = digest(bytes)

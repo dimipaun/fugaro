@@ -643,14 +643,17 @@ describe('the console improvements’ floors', () => {
 // ---------------------------------------------------------------------------
 
 describe('setupBudgetSupported', () => {
-  it('is the release that ships the answers file’s budget member, and no earlier one', () => {
-    // `budget` is a member of the document `fugaro setup` decodes, and the CLI
-    // decodes it **strictly**: an older CLI refuses a member it does not know by
-    // name and the whole plan or apply fails. So the floor is the first release
-    // whose CLI carries it (T2b), and this is that number rather than a `null`:
-    // the member is in a tagged release, so a floor that refused every version
-    // would drop an answer the operator gave from a CLI that reads it perfectly
-    // well (`console/docs/json-contract.md` §6.32).
+  it('is the release that accepts the amount without its currency, and no earlier one', () => {
+    // The console answers `budget` and never `budget_currency` (D2211), and the
+    // member alone is not what the floor is about: `budget` has been in the
+    // document since 0.28.0 and no release refuses it by name, but before 0.29.0
+    // nothing wrote the currency the document left out back from the default, so
+    // the amount reached the run's own trio rule and the whole plan or apply
+    // ended there. The floor is the first release that reads a half-answered pair
+    // as a whole one, and this is that number rather than a `null`: 0.29.0 reads
+    // an amount on its own perfectly well, so a floor that refused every version
+    // would drop an answer the operator gave (`console/docs/json-contract.md`
+    // §6.32).
     expect(SETUP_BUDGET_CLI_FLOOR).toBe('0.29.0')
     expect(setupBudgetSupported('0.29.0')).toBe(true)
     expect(setupBudgetSupported('0.29.1')).toBe(true)

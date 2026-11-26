@@ -657,13 +657,15 @@ describe('the bytes the child is given', () => {
     expect(unanswered).not.toHaveProperty('budget')
   })
 
-  it('sends no budget to a CLI older than the release that carries the member', () => {
-    // `budget` arrived after the answers file did (D2210, task T2b) and the CLI
-    // decodes the document **strictly**: a member it does not know is refused by
-    // name and the whole plan or apply fails. So a CLI below the release that
-    // ships it is sent the answers the file has always carried, and the run
-    // records its own default amount (D2212) -- the question was still asked and
-    // still shown, and what is dropped is the bytes and never the form.
+  it('sends no budget to a CLI below the release that takes an amount without its currency', () => {
+    // The console answers an amount and never `budget_currency` (D2211), and
+    // before 0.29.0 nothing wrote the currency the document left out back from
+    // the default: the amount alone reached the run's own trio rule and the whole
+    // plan or apply ended there. So a CLI below the release that reads a
+    // half-answered pair as a whole one is sent the answers the file has always
+    // carried, and the run records its own default amount (D2212) -- the question
+    // was still asked and still shown, and what is dropped is the bytes and never
+    // the form.
     for (const version of ['0.28.9', '0.29.0-rc.1', 'dev', '']) {
       expect(
         setupAnswersForCli(answers, version).budget,

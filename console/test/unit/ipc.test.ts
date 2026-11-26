@@ -2567,10 +2567,11 @@ describe('the argument schemas', () => {
     // main's to add and not a question a renderer answers.
     expect(refused({ ...answers, version: 1 })).toContain('version')
     expect(refused({ ...answers, answers_file: '/tmp/wizard.json' })).toContain('answers_file')
-    // A question that is missing is not defaulted: every one of the five the
-    // wizard draws a value for is required, which is what keeps a half-answered
-    // wizard off the child. `budget` is the one that may be **absent** -- an
-    // empty field is an answer, and main writes no member for it (D2210).
+    // A question that is missing is not defaulted: five of the six questions the
+    // wizard draws are required here, which is what keeps a half-answered wizard
+    // off the child -- `budget` is the sixth and the only one that may be
+    // **absent**: an empty field is an answer, and main writes no member for it
+    // (D2210).
     expect(refused({ gcp_project: 'aurora-prod' })).toContain('region')
     // The budget is a whole amount inside the alert's own bounds, and nothing
     // else: a string, a fraction and a zero are all refused by name.

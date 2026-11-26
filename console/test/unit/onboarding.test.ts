@@ -199,13 +199,15 @@ describe('the budget question', () => {
     expect(declared.indexOf('budget')).toBe(declared.indexOf('rigor') + 1)
   })
 
-  it('is sent only to a CLI that reads it, and dropped for one that does not', () => {
-    // The member is newer than the answers file it travels in (T2b), and the CLI
-    // decodes that document strictly: a `budget` an older CLI is handed fails
-    // the whole plan by name. So the floor is the first release that reads it,
-    // and a line below it is sent the document without the member -- absent,
-    // which is the answer an operator who never touched the field gave and the
-    // CLI's own default of 100.
+  it('is sent only to a CLI that reads an amount without its currency, and dropped for one that does not', () => {
+    // The console answers an amount and never its currency (D2211), and before
+    // 0.29.0 nothing wrote the currency the document left out back from the
+    // default: the amount alone met the run's own trio rule ("a budget needs
+    // --budget (more than 0) and --budget-currency together") and the whole plan
+    // failed with it. So the floor is the first release that reads a
+    // half-answered pair as a whole one, and a line below it is sent the document
+    // without the member -- absent, which is the answer an operator who never
+    // touched the field gave and the CLI's own default of 100.
     expect(SETUP_BUDGET_CLI_FLOOR).toMatch(/^\d+\.\d+\.\d+$/)
     const answers: SetupAnswersHeld = Object.freeze({
       gcp_project: 'a-project',

@@ -13,10 +13,10 @@
 // nothing away.** Where there is no installation at all, the screen below still
 // ends in the one command -- and the console may now also offer the **setup
 // wizard** in front of it (SW3a/SW3b/SW3c): the wizard collects `fugaro
-// setup`'s five answers (project, region, name, rigor, bake) and sends them to
-// the main process, which shows them in the confirmation window beside their
-// SHA-256 and runs, on the operator's yes, exactly what a `setup --json` run
-// applies. What the amendment does **not** change is what this ruling is about:
+// setup`'s six answers (project, region, name, rigor, budget, bake) and sends
+// them to the main process, which shows them in the confirmation window beside
+// their SHA-256 and runs, on the operator's yes, exactly what a `setup --json`
+// run applies. What the amendment does **not** change is what this ruling is about:
 //
 //   - **no secret value is ever asked for in the console.** Creating the GCP
 //     project, linking its billing account and every secret are steps a person
