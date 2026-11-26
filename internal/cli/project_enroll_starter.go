@@ -3,8 +3,6 @@ package cli
 import (
 	"context"
 	"errors"
-	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -28,15 +26,19 @@ func enrolStarterYAML(project, gcp, provider, baseBranch string) string {
 	return text + "git:\n  provider: " + provider + "\n"
 }
 
-// enrolWriteStarter writes the starter fugaro.yaml into the checkout when it
-// has none, the way `fugaro config init` does: a repository file left in the
-// working tree to review and commit, never pushed. It reports whether it wrote.
-// Nothing is written when the project publishes no layer for the file to
-// resolve against.
-func enrolWriteStarter(ctx context.Context, w io.Writer, lc *localcfg.Config, ownerName, checkout string, entry localcfg.Repo, known bool) (bool, error) {
-	path := filepath.Join(checkout, "fugaro.yaml")
-	if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
-		return false, nil
+// enrolStarterHosts opens the host the starter's pull request goes through: the
+// workspace snapshot's own repository-write path (stateHostsFor), a var so a
+// test injects a host.
+var enrolStarterHosts stateHostFor = stateHostsFor("")
+
+// enrolOpenStarter opens a pull request that adds the starter fugaro.yaml when
+// the checkout has none, and answers its URL ("" when the checkout has one).
+// The branch is never the default one and nothing is written into the checkout:
+// the enrolment goes on once the pull request is merged. Nothing is opened when
+// the project publishes no layer for the file to resolve against.
+func enrolOpenStarter(ctx context.Context, lc *localcfg.Config, ownerName, checkout string, entry localcfg.Repo, known bool) (string, error) {
+	if _, err := os.Lstat(filepath.Join(checkout, "fugaro.yaml")); !errors.Is(err, fs.ErrNotExist) {
+		return "", nil
 	}
 	provider := ""
 	if known && entry.Provider != "" {
@@ -45,7 +47,7 @@ func enrolWriteStarter(ctx context.Context, w io.Writer, lc *localcfg.Config, ow
 		provider = p
 	}
 	if provider == "" {
-		return false, nil
+		return "", nil
 	}
 	base := "main"
 	if ref := defaultBranchRef(ctx, checkout); strings.HasPrefix(ref, "origin/") {
@@ -57,17 +59,28 @@ func enrolWriteStarter(ctx context.Context, w io.Writer, lc *localcfg.Config, ow
 	text := enrolStarterYAML(lc.Name, lc.GCPProject, provider, base)
 	rf, err := resolveFugaroYAML(ctx, []byte(text), lc, layerOptions{})
 	if err != nil {
-		return false, err
+		return "", err
 	}
 	if rf.Layer.Layer == nil {
-		return false, userErr("%s has no fugaro.yaml and project %s publishes no layer for a starter to resolve against: write one with /fugaro:setup, or use `fugaro project repos add %s --allow-list-only`", pluginwire.Printable(ownerName), pluginwire.Printable(lc.Name), ownerName)
+		return "", userErr("%s has no fugaro.yaml and project %s publishes no layer for a starter to resolve against: write one with /fugaro:setup, or use `fugaro project repos add %s --allow-list-only`", pluginwire.Printable(ownerName), pluginwire.Printable(lc.Name), ownerName)
 	}
 	if len(rf.Problems) > 0 {
-		return false, userErr("the starter fugaro.yaml would not resolve against project %s's layer: %s", pluginwire.Printable(lc.Name), pluginwire.Printable(layerProblemsText(rf.Problems)))
+		return "", userErr("the starter fugaro.yaml would not resolve against project %s's layer: %s", pluginwire.Printable(lc.Name), pluginwire.Printable(layerProblemsText(rf.Problems)))
 	}
-	if err := writeMinimalFugaroYAML(path, text); err != nil {
-		return false, userErr("%v", err)
+	host, err := enrolStarterHosts(provider)
+	if err != nil {
+		return "", err
 	}
-	fmt.Fprintf(w, "fugaro.yaml written for %s\n", pluginwire.Printable(ownerName))
-	return true, nil
+	url, err := host.Publish(ctx, statePublish{
+		Repo:    ownerName,
+		File:    "fugaro.yaml",
+		Branch:  "fugaro/starter-fugaro-yaml",
+		Bytes:   []byte(text),
+		Subject: "Add the starter fugaro.yaml",
+		Body:    "The minimal fugaro.yaml for project " + lc.Name + ", opened by `fugaro project repos add`.",
+	})
+	if err != nil {
+		return "", userErr("opening the pull request for %s's fugaro.yaml: %v", pluginwire.Printable(ownerName), err)
+	}
+	return url, nil
 }

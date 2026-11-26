@@ -215,6 +215,10 @@ REFUSAL
 add_cmd() { # add_cmd ARGS...
   [ -f "$state/add.exit" ] && exit "$(cat "$state/add.exit")"
   local r=$4 n steps=6
+  if [ -f "$state/git.noyaml" ]; then
+    printf 'fugaro.yaml for %s: pull request https://github.com/%s/pull/1\nmerge it, then run `fugaro project repos add %s` again to finish\n' "$r" "$r" "$r"
+    exit 0
+  fi
   steps=$(knob add.steps 6)
   printf '%s\n' "enrolling github/$r in project $installation: this will change the repository's own root, this machine's config, the published allow-list and the project's jobs"
   local i=1
@@ -895,13 +899,14 @@ test_a_key_file_that_is_not_a_pem_is_not_measured() {
   expect_row app-key "does not begin with a PEM header" "a key file that is not a PEM: the row"
 }
 
-test_a_checkout_without_a_fugaro_yaml_goes_on() {
+test_a_repository_without_a_fugaro_yaml_stops_at_its_pull_request() {
   local dir=$work/no-yaml
   prepare "$dir"
   : >"$dir/state/git.noyaml"
   run_check "$dir"
-  expect_contains "$err" "enrolling dimipaun/fugarosandbox in project" "a checkout with no fugaro.yaml: the enrolment still runs"
-  expect_absent "$err" "carries no fugaro.yaml" "a checkout with no fugaro.yaml: no refusal"
+  expect_status "$status" 1 "a repository with no fugaro.yaml"
+  expect_contains "$err" "merge it, then run this check again" "a repository with no fugaro.yaml: the stop"
+  expect_absent "$err" "this will change" "a repository with no fugaro.yaml: nothing else is enrolled"
 }
 
 test_a_clone_that_refuses_stops() {
@@ -1448,7 +1453,7 @@ t test_a_key_file_that_is_not_there_is_not_measured
 t test_a_key_file_that_is_not_0600_is_not_measured
 t test_an_empty_key_file_is_not_measured
 t test_a_key_file_that_is_not_a_pem_is_not_measured
-t test_a_checkout_without_a_fugaro_yaml_goes_on
+t test_a_repository_without_a_fugaro_yaml_stops_at_its_pull_request
 t test_a_clone_that_refuses_stops
 t test_a_doctor_that_does_not_answer_is_not_measured
 t test_a_doctor_that_finds_a_problem_but_prints_its_document_is_read

@@ -7405,7 +7405,7 @@ from the project's other repositories. It prints the whole list of what it
 will change, asks once for the project's name, and then does each step as
 far as it can:
 
-  1. the repository's own fugaro.yaml: read (a checkout with none gets the starter `config init` writes, left to commit)
+  1. the repository's own fugaro.yaml: read (a repository with none gets a pull request for the starter; merge it, run again)
   2. this machine's project config: the repository's repos: entry (and, when
      its fugaro.yaml names a Claude account by agent.oauth_token, the
      repository in that one account's allow_data_to, which the next

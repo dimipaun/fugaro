@@ -803,6 +803,9 @@ step_enrol() {
   if [ "$status" != 0 ]; then
     stop "'fugaro project repos add $REPO --project $INSTALLATION' exited $status: $(last_lines "$out") — the enrolment is the whole of this check's first step, and the rest of the block would be about a repository nothing enrolled"
   fi
+  if grep -q 'merge it, then run' "$out" 2>/dev/null; then
+    stop "$REPO had no fugaro.yaml, so the enrolment opened a pull request for it: $(last_lines "$out") — merge it, then run this check again"
+  fi
   local numbered want missing=""
   numbered=$(grep -c '^  [0-9]\. ' "$out" 2>/dev/null || true)
   for want in \

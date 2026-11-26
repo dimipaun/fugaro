@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,48 +21,80 @@ func publishedLayerAt(t *testing.T, r *addRig, text string) {
 	}
 }
 
-// A checkout with no fugaro.yaml gets the minimal one `fugaro config init`
-// writes, in the working tree and nowhere else, and the enrolment goes on; a
-// checkout that has one is left as it is.
-func TestReposAddWritesTheStarterFugaroYAML(t *testing.T) {
+// starterHost records the one publish a starter makes.
+type starterHost struct{ got []statePublish }
+
+func (h *starterHost) Visibility(context.Context, string) (stateVisibility, error) {
+	return stateVisibilityPrivate, nil
+}
+
+func (h *starterHost) Publish(_ context.Context, p statePublish) (string, error) {
+	h.got = append(h.got, p)
+	return "https://github.com/" + p.Repo + "/pull/7", nil
+}
+
+func useStarterHost(t *testing.T) *starterHost {
+	t.Helper()
+	h := &starterHost{}
+	old := enrolStarterHosts
+	enrolStarterHosts = func(string) (stateHost, error) { return h, nil }
+	t.Cleanup(func() { enrolStarterHosts = old })
+	return h
+}
+
+// A repository with no fugaro.yaml gets a pull request for the minimal one and
+// the enrolment stops there, writing nothing; one that has a file is enrolled
+// as before and no pull request is opened.
+func TestReposAddOpensAPullRequestForTheStarterFugaroYAML(t *testing.T) {
 	t.Run("none", func(t *testing.T) {
 		r := enrolRig(t)
 		publishedLayerAt(t, r, testProjectLayer)
+		host := useStarterHost(t)
 		file := enrolCheckoutFile(t)
 		if err := os.Remove(file); err != nil {
 			t.Fatal(err)
 		}
+		before := readFileString(t, r.cfg)
 		out, errOut, err := r.enrol(t, enrolRepo)
-		// The starter is uncommitted, so the job step waits for it to reach the
-		// default branch: the enrolment's other steps are written all the same.
-		if err != nil && !strings.Contains(err.Error(), "git switch") {
+		if err != nil {
 			t.Fatalf("project repos add %s: %v\nstdout:\n%s\nstderr:\n%s", enrolRepo, err, out, errOut)
 		}
-		if want := "fugaro.yaml written for " + enrolRepo + "\n"; !strings.Contains(out, want) {
-			t.Errorf("the output lacks %q:\n%s", want, out)
+		if len(host.got) != 1 {
+			t.Fatalf("publishes = %d, want 1", len(host.got))
 		}
-		if got := readFileString(t, file); !strings.HasPrefix(got, minimalAnchored) || strings.Contains(got, "agent") {
-			t.Errorf("fugaro.yaml = %q, want the minimal file and no model keys", got)
+		p := host.got[0]
+		if p.Repo != enrolRepo || p.Path() != "fugaro.yaml" || p.Branch == "main" || !strings.HasPrefix(string(p.Bytes), minimalAnchored) || strings.Contains(string(p.Bytes), "agent") {
+			t.Errorf("publish = %+v, want the minimal file on a branch of %s", p, enrolRepo)
 		}
-		if got := readFileString(t, r.cfg); !strings.Contains(got, enrolRepo) {
-			t.Errorf("the repository was not enrolled:\n%s", got)
+		for _, want := range []string{"pull request https://github.com/" + enrolRepo + "/pull/7", "merge it, then run `fugaro project repos add " + enrolRepo + "` again"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("the output lacks %q:\n%s", want, out)
+			}
+		}
+		if strings.Contains(out, "⚠ CONFIRM") {
+			t.Errorf("the run asked the confirmation:\n%s", out)
+		}
+		if _, err := os.Stat(file); !os.IsNotExist(err) {
+			t.Errorf("the checkout was written to: %v", err)
+		}
+		if got := readFileString(t, r.cfg); got != before {
+			t.Errorf("the local config changed:\n%s", got)
 		}
 	})
 
 	t.Run("one", func(t *testing.T) {
 		r := enrolRig(t)
 		publishedLayerAt(t, r, testProjectLayer)
-		file := enrolCheckoutFile(t)
+		host := useStarterHost(t)
 		out, errOut, err := r.enrol(t, enrolRepo)
 		if err != nil {
 			t.Fatalf("project repos add %s: %v\nstdout:\n%s\nstderr:\n%s", enrolRepo, err, out, errOut)
 		}
-		if strings.Contains(out, "fugaro.yaml written") {
-			t.Errorf("a repository with a fugaro.yaml had one written:\n%s", out)
+		if len(host.got) != 0 {
+			t.Errorf("a repository with a fugaro.yaml had a pull request opened: %+v", host.got)
 		}
-		// The Repository stage adds the gcp_project anchor to any file; nothing else moves.
-		if got := strings.Replace(readFileString(t, file), "gcp_project: proj-1234\n", "", 1); got != enrolCheckoutYAML {
-			t.Errorf("the repository's own fugaro.yaml changed: %q", got)
+		if !strings.Contains(out, "⚠ CONFIRM") {
+			t.Errorf("the enrolment did not run:\n%s", out)
 		}
 	})
 }
