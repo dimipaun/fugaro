@@ -151,6 +151,30 @@ func TestReposAddAnchorRefusedForAnAgent(t *testing.T) {
 	}
 }
 
+// TestReposAddAnchorLandsUnderNoApply is the anchor on the one path that runs
+// no stage: the plan prints the line before the question either way, so the run
+// that answered it makes the edit either way. --no-apply saves the publish and
+// the deploy, which are the two steps that are `fugaro update`'s, and the
+// anchor is not one of them — a person who enrolled with the flag and then ran
+// `fugaro apply` would otherwise hold the enrolment and not the line.
+func TestReposAddAnchorLandsUnderNoApply(t *testing.T) {
+	r := enrolRig(t)
+	out, errOut, err := r.enrol(t, "--no-apply", enrolRepo)
+	if err != nil {
+		t.Fatalf("project repos add %s --no-apply: %v\nstdout:\n%s\nstderr:\n%s", enrolRepo, err, out, errOut)
+	}
+	if !strings.Contains(out, "writes gcp_project: "+initProject) {
+		t.Errorf("the plan under --no-apply does not print the line:\n%s", out)
+	}
+	got := readFileString(t, enrolCheckoutFile(t))
+	if !strings.Contains(got, "gcp_project: "+initProject+"\n") {
+		t.Errorf("--no-apply left the checkout without the line its plan printed:\n%s", got)
+	}
+	if owed := pendingSteps(record(t)); len(owed) == 0 {
+		t.Errorf("--no-apply ran the steps it saves for fugaro apply instead of leaving them owed")
+	}
+}
+
 // enrolAnchorLocal is the machine's config as the door holds it when the anchor
 // step runs, read back through the loader the command reads it with.
 func enrolAnchorLocal(t *testing.T, cfg string) *localcfg.Config {

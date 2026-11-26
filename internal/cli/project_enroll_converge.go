@@ -863,6 +863,10 @@ func reposEnrolmentWhat(lc *localcfg.Config, plan reposEnrolment, noApply bool) 
 // The first step is the read the plan was built from and has nothing to write;
 // the second and third land in one document; the fourth is the ETag-guarded
 // policy write; and the last two are `fugaro update`'s stages.
+//
+// The anchor is not a step of that numbered list: it is the file edit step 1
+// prints, so both paths make it — after the converge where one runs, and before
+// the return where --no-apply saves the stages for `fugaro apply` instead.
 func reposEnrolmentApply(ctx context.Context, cmd *cobra.Command, o *projectReposOptions, lc *localcfg.Config, db *rtdb.Client, configPath string, plan reposEnrolment) error {
 	out := cmd.OutOrStdout()
 	if err := reposEnrolmentWriteLocal(out, plan); err != nil {
@@ -902,6 +906,14 @@ func reposEnrolmentApply(ctx context.Context, cmd *cobra.Command, o *projectRepo
 	}
 	if *o.noApply {
 		chainSavedLine(out, names)
+		// The anchor is not one of the stages, so --no-apply does not save it for
+		// `fugaro apply`: the file edit the plan promised is made here, and it is
+		// the line the whole enrolment exists to add. Nothing is deployed from
+		// this checkout under the flag, so the order the stage path needs
+		// (reposEnrolmentStages) has nothing to guard here.
+		if err := reposEnrolmentAnchorWrite(ctx, cmd, after, plan); err != nil {
+			return fmt.Errorf("the enrolment is saved for fugaro apply; only the gcp_project line of its fugaro.yaml was not written (%w)", err)
+		}
 		return nil
 	}
 	return reposEnrolmentStages(ctx, cmd, o, after, plan, queued, names)
