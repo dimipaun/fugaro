@@ -196,9 +196,12 @@ unsigned or wrongly signed heartbeat is one the phone treats as **offline**, and
 advertised agent list it ignores, because that list is what "list agents" reads out and
 what D163 defaults to.
 
-The tag covers **every field except `mac` and `acked`** — `acked` because the phone
-writes it after the fact on an outbox message — **plus the direction**, over the
-canonical bytes below.
+The tag covers **every field except the one it is written in — `mac` or `sig`, and
+neither covers itself — and `acked`** — `acked` because the phone writes it after the
+fact on an outbox message — **plus the direction**, over the canonical bytes below.
+Which of the two names a record's tag **is the device node's answer and not the
+sender's** (O6): a record carries exactly one of them, and the node's public key —
+present or absent — is what decides which (D171).
 
 ### The direction is inside the bytes (owner ruling, 2026-10-18)
 
@@ -329,8 +332,9 @@ is a failing test rather than a discovery a bundler makes on a phone.
 
 ### P6.3 is a breaking change to P0.2's messages
 
-`mac` is **required**, so every message P0.2's schema accepted — `{id, sender, text,
-at}` with an optional `acked` — is now refused as `missing-field` `mac`. That is
+a tag is **required**, so every message P0.2's schema accepted — `{id, sender, text,
+at}` with an optional `acked` — is now refused as `missing-field` `mac` (the field a
+record with neither tag is refused at, whichever scheme it was meant for). That is
 intended (§3.5: no unsigned message, of any kind, in either direction) and there is no
 compatibility path: nothing has shipped that writes a mailbox message (P3.6 and P4.1
 are not built), and the project's own rule is no backward compatibility before release.
@@ -418,14 +422,16 @@ assuming it:
 - **Not the rules.** The schema is what P2.1's template must agree with — the same
   fields, the byte-for-byte key rule on the id, `text`'s bound at `TEXT_MAX` — but who
   may write a message, and the ack's own fence, are the rules' business. **P6.3 changed
-  the schema and P6.4 has since carried it into the template**: the mailbox subtree now
-  gates this field set — `mac` required on every message of every kind and on the
-  heartbeat, with `agent`, `kind`, `options`, `reply_to` and the action record beside it,
-  and the (kind, field) table's per-kind clauses — and
+  the schema, P6.4 carried it into the template and J5r (O6) carried the second tag
+  in**: the mailbox subtree now gates this field set — a tag on every message of every
+  kind and on the heartbeat, exactly one of `mac` and `sig`, with `agent`, `kind`,
+  `options`, `reply_to` and the action record beside it, and the (kind, field) table's
+  per-kind clauses — and
   `TestMailboxRulesAgreeWithTheSharedSchema` asserts the two lists against each other,
   bound by bound. The rules also apply this module's own patterns (`HEX_PATTERN`,
-  `IDENTITY_PATTERN`, `RUN_PATTERN`, `REPO_PATTERN`) to a `mac`, a head SHA, an agent or
-  boot id and a target, held byte for byte by `TestMailboxRulesCheckTheSchemasCharacters`.
+  `IDENTITY_PATTERN`, `RUN_PATTERN`, `REPO_PATTERN`, `BASE64URL_PATTERN`) to a `mac`, a
+  `sig`, a head SHA, an agent or boot id and a target, held byte for byte by
+  `TestMailboxRulesCheckTheSchemasCharacters`.
   They stay looser in one direction and it is stated there: the key rule on an id and the
   control characters of free text are this module's alone. What the rules never do is
   verify a tag — they hold no key (P6.7 does, over `verifyMac`).

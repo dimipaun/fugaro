@@ -205,7 +205,7 @@ func TestUpdateSkipsPRIndexBackfill(t *testing.T) {
 		t.Fatalf("the fixture's index holds %v, want the entry the installation already had: the comparison below is about what an update adds to it", before)
 	}
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if strings.Contains(out, "pull-request index") {
 		t.Errorf("the update still backfills the pull-request index:\n%s", out)

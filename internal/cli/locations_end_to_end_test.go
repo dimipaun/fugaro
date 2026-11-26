@@ -65,7 +65,7 @@ func TestAnInstallationFromBeforeTheRecordConverges(t *testing.T) {
 		t.Fatalf("the fixture already carries a record, so this is not an installation from before it: %s", c.Problem)
 	}
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	// The record, read back the way the door reads the file (the strict
 	// loader), so a block this release would refuse cannot pass for a record.
@@ -137,7 +137,7 @@ func TestTheRecordsWriteKeepsWhatTheRepositoryStageWrote(t *testing.T) {
 	r := newConvergeRig(t, v3Node(nil))
 	previousVersionInstallation(t, r)
 
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	lc := updatedConfig(t)
 	if lc.Locations == nil {

@@ -148,7 +148,11 @@ func newProjectReposAddCmd() *cobra.Command {
 			"will change, asks once for the project's name, and then does each step as\n" +
 			"far as it can:\n" +
 			"\n" +
-			"  1. the repository's own fugaro.yaml: read, never written\n" +
+			"  1. the repository's own fugaro.yaml: read for its workflows and its\n" +
+			"     base branch, and written only for the anchor line, through the gate,\n" +
+			"     in that repository's own checkout (a repository with none gets a pull\n" +
+			"     request for the starter on a branch of its own; merge it, run again:\n" +
+			"     until it is merged a second run finds that pull request, writes nothing)\n" +
 			"  2. this machine's project config: the repository's repos: entry (and, when\n" +
 			"     its fugaro.yaml names a Claude account by agent.oauth_token, the\n" +
 			"     repository in that one account's allow_data_to, which the next\n" +
@@ -172,6 +176,12 @@ func newProjectReposAddCmd() *cobra.Command {
 			"map the published node holds, so enrolling one repository cannot take\n" +
 			"another's mapping away. Nothing here asks a run to finish, and nothing\n" +
 			"rewrites what a run in flight holds.\n" +
+			"\n" +
+			"On Bitbucket the starter's pull request is opened with the installation's own\n" +
+			"bitbucket-token secret — the repository's own container, or the project-wide\n" +
+			"copy an owner stored and allow-listed — read with your credentials and never\n" +
+			"printed or logged; a machine that holds neither is refused with the command\n" +
+			"that stores one.\n" +
 			"\n" +
 			"--allow-list-only writes the published allow-list entry and nothing else,\n" +
 			"as this command did before the enrolment converged: it is what * needs, and\n" +

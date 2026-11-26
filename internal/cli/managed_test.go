@@ -802,7 +802,7 @@ var inlineAgentSites = []inlineAgentSite{
 		l := onboardLeft(originInfo{Repo: "acme/app", Host: "github.com"}, "setup")
 		return l.Kind == initflow.LeftCommand && strings.Contains(l.Text, "--onboard-repo")
 	}},
-	{"initsecrets.go Left", "initsecrets.go Left (the wording of the secrets route)", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
+	{"initsecrets.go leftText", "initsecrets.go leftText (the wording of the secrets route)", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
 		l := (&secretsStage{e: e, tg: &secretTarget{repo: "acme/app", wanted: []string{"API_KEY"}}}).Left()
 		return !strings.Contains(l.Text, "not through a coding agent")
 	}},
@@ -1293,7 +1293,7 @@ func TestManagedPluginStageThroughTheLoopAppliesUnderEachMarker(t *testing.T) {
 // loop's own LocalUnderAgent gate is what applies the stage in a coding agent's
 // session rather than leaving it for the user. The loop is still its only
 // caller (newPluginStage is built in initEngine.converge alone and handed to
-// initflow.Run with initEngine.options).
+// the loop with initEngine.options).
 //
 // What this test records is the rest of that picture: Apply called directly
 // with Env.Yes installs under every marker state, and the checkout's file comes
@@ -1330,8 +1330,8 @@ func TestManagedPluginStageApplyIsTheInstallUnderEveryMarker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(src), "newPluginStage(e), e.repo)") || !strings.Contains(string(src), "initflow.Run(ctx, stages, e.options())") {
-		t.Error("init_stages.go no longer hands the plugin stage to initflow.Run with e.options(): re-check what gates its Apply")
+	if !strings.Contains(string(src), "newPluginStage(e), e.repo)") || !strings.Contains(string(src), "e.r.runStages(ctx, stages, e.options())") {
+		t.Error("init_stages.go no longer hands the plugin stage to the loop with e.options(): re-check what gates its Apply")
 	}
 	for _, path := range mustGlob(t, "*.go") {
 		if strings.HasSuffix(path, "_test.go") || path == "init_stages.go" || path == "init_plugin_stage.go" {

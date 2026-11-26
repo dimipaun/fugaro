@@ -239,7 +239,7 @@ func newSecretsRig(t *testing.T, origin string, in io.Reader, opts ...func(*init
 
 func (r *secretsRig) run(t *testing.T) (*initflow.Result, error) {
 	t.Helper()
-	return initflow.Run(context.Background(), []initflow.Stage{r.stage}, r.e.options())
+	return r.e.r.runStages(context.Background(), []initflow.Stage{r.stage}, r.e.options())
 }
 
 // noLeak fails when any of texts holds value, or its base64 or JSON form,

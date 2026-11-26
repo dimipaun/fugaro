@@ -1036,8 +1036,9 @@ func TestAttachOnAFollowUpWithAnArtifactDefaultRecipeIsRefused(t *testing.T) {
 // on the task's OWN mode is gated the same way, and for the same reason — no
 // follow-up is ever an artifact run. The mode is only reachable here from a
 // spec this CLI did not build (a stored task re-launched, or a forged one:
-// resolveFollowUp writes no mode, and both ways a follow-up could pick one are
-// refused by refuseFollowUpArtifactMode and refuseFollowUpRepoRecipe), which
+// resolveFollowUp writes no mode, and the two refusals that keep a follow-up
+// from inheriting one — refuseFollowUpArtifactMode and
+// refuseFollowUpReportMode, both reached through followUpRecipeOfName), which
 // is exactly why the gate has to be on the check and not on the writer.
 //
 // Mutation (restore `spec.Mode == recipe.ModeArtifact` as the early return,

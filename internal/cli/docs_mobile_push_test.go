@@ -1449,3 +1449,68 @@ func TestDocsMobilePushBranchOnlyCitationsAreAttributed(t *testing.T) {
 		}
 	}
 }
+
+// TestCheck88RegisterCarriesTheRelayRestatement: the owner's Q7 answer of
+// 2026-11-21 is a relay the publisher holds, not direct FCM, and P5.2.7's row
+// was restated for it on 2026-11-25 — the FCM permission and the FCM API
+// enablement are empty and are not that row's. Check 88's register text is read
+// against that row, and this guard is the finding a review left behind when only
+// half of it moved: a Restore bullet still listing "the FCM permission grant, the
+// FCM API enablement" as the check's cloud effects, under a guard that no longer
+// names them. So the row says the push service is FCM reached through the relay,
+// the guard clears only when a relay client has replaced the sender's direct-FCM
+// provider, and the Restore names what the check leaves behind — the app build
+// and P5.2.7's relay identity — rather than a permission the row no longer holds.
+func TestCheck88RegisterCarriesTheRelayRestatement(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+
+	start := strings.Index(doc, "## Check 88:")
+	if start < 0 {
+		t.Fatalf("%s carries no `## Check 88:` section: the check is written into the register or this guard has nothing to read", path)
+	}
+	section := doc[start:]
+	if end := strings.Index(section, "\n## Check "); end >= 0 {
+		section = section[:end]
+	}
+	flat := normSpace(section)
+
+	row := ""
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "| 88 |") {
+			row = line
+			break
+		}
+	}
+	if row == "" {
+		t.Fatalf("%s has no `| 88 |` row: the check is in the register's index or it is not in the register", path)
+	}
+	if !strings.Contains(row, "reached through the publisher's relay") {
+		t.Errorf("%s's row 88 does not say the real push service is FCM reached through the publisher's relay, so the row reads as a direct-FCM check again — the channel P5.2.7 was restated away from (Q7, 2026-11-21)", path)
+	}
+
+	if !strings.Contains(section, "grep -q 'fcmSender' \"$ROOT/internal/cli/push.go\"") {
+		t.Errorf("%s's Check 88 guard no longer stops while the sender still calls FCM directly (`grep -q 'fcmSender'`): that stop is kind-independent — a relay client replacing the provider clears it whatever the relay turns out to be, where a stop on one relay kind's file would not", path)
+	}
+	if !strings.Contains(flat, "a sender that reaches the publisher's relay rather than FCM") {
+		t.Errorf("%s's Check 88 guard block no longer says it waits for a sender that reaches the publisher's relay rather than FCM, so it does not say what the stop above clears on", path)
+	}
+
+	for _, stale := range []string{"firebasecloudmessaging", "FCM permission", "FCM API"} {
+		if strings.Contains(flat, stale) {
+			t.Errorf("%s's Check 88 still carries %q as this path's: the restated row grants no FCM permission and enables no FCM API, the relay holds FCM's reach once, and a check that lists them as its own cloud effects sends the owner looking for a grant this work never makes", path, stale)
+		}
+	}
+
+	restoreAt := strings.Index(section, "**Restore.**")
+	if restoreAt < 0 {
+		t.Fatalf("%s's Check 88 carries no `**Restore.**` bullet: the check's own cloud effects are listed there, and this guard reads that list", path)
+	}
+	restoreFlat := normSpace(section[restoreAt:])
+	if !strings.Contains(restoreFlat, "**P5.2.7**'s sender identity") {
+		t.Errorf("%s's Check 88 Restore does not name P5.2.7's sender identity (the Cloud KMS key and its one grant) as what the check leaves behind: the Restore is where the check's own cloud effects are listed, and the relay restatement is what they moved to", path)
+	}
+	if !strings.Contains(restoreFlat, "The relay itself is the publisher's") {
+		t.Errorf("%s's Check 88 Restore does not say the relay is the publisher's and outside this repository, so a reader cannot tell that the message path's provider half is not this check's to undo", path)
+	}
+}

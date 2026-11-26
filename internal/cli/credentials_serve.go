@@ -1155,6 +1155,15 @@ func credentialsWorkspaceService(ctx context.Context, workspace string, env map[
 		return credentialsWorkspaceDeployment{}, err
 	}
 	credsvc.PersonScopeConfigForServe = person
+	// The switch this process reads a member's personal half with (R9, C1's
+	// PersonSwitchReader): WC6's reading of the MEMBER the call is under, taken
+	// from the call's own scope at the moment it is asked (credsvc.ScopePersonSwitch).
+	// It is assigned here and nowhere else, and it is the line that makes the
+	// personal half serve a token at all: the variable's own default answers OFF
+	// for every project, so a workspace whose half IS wired would refuse every
+	// call whose slip names a personal token with the sentence R11 reserves for a
+	// member who turned the switch off.
+	credsvc.PersonSwitchForServe = credsvc.ScopePersonSwitch()
 	build := credsvc.NewWorkspaceScopeResolver
 	if credentialsWorkspaceTest != nil {
 		build = credentialsWorkspaceTest

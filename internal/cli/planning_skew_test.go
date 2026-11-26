@@ -381,7 +381,7 @@ func TestValidateWarnsWhenTheProjectLayerSetsPlanning(t *testing.T) {
 // user is told to run may not be two.
 func TestUpdateConvergesFromThePreviousVersionWithPlanningKey(t *testing.T) {
 	r := newConvergeRigYAML(t, v7Node(), refreshYAML+"planning: { decoupling: false }\n")
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 }
 
 // predatePlanning puts the installation's recorded base image one release below
@@ -440,7 +440,7 @@ func TestUpdateConvergesFromABaseImageThatPredatesPlanning(t *testing.T) {
 		t.Fatalf("the installation records the base image %s, want the release before the key, %s: this is not the installation the test is about", got, want)
 	}
 
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if got, want := projectConfigOf(t, r).BaseImages["base"], r.pinnedBase("base", convergeRelease); got != want {
 		t.Errorf("after the update the installation records the base image %s, want this release's %s: the images stage is what moves it before the repository stage's planning gate reads the config", got, want)
