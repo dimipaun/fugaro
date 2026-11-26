@@ -259,18 +259,20 @@ func (s *checkoutStage) repositoryStopped() string {
 // detail is the stage's one line, in both the read-only view and the plan: the
 // repositories it refreshes, and the ones it does not, with the reason.
 func (s *checkoutStage) detail(places []repoPlace) string {
-	runs := make([]string, 0, len(places))
+	runs, skipped := make([]string, 0, len(places)), make([]string, 0, len(places))
 	for _, p := range places {
-		if p.skip == "" {
-			runs = append(runs, pluginwire.Printable(p.repo()))
+		if p.skip != "" {
+			skipped = append(skipped, pluginwire.Printable(p.repo())+": "+p.step.name+" ("+p.skip+")")
+			continue
 		}
+		runs = append(runs, pluginwire.Printable(p.repo()))
 	}
 	line := "moves this project's job images to this release"
 	if len(runs) > 0 {
 		line += ": " + places[0].step.name + " for " + strings.Join(runs, ", ")
 	}
-	if tail := skippedHere(places); tail != "" {
-		line += "; " + tail
+	if len(skipped) > 0 {
+		line += "; skipped here: " + strings.Join(skipped, "; ")
 	}
 	return line
 }
