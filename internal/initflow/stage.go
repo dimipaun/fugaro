@@ -1014,11 +1014,12 @@ func GateProceeded() string {
 // gate does NOT judge document by document — the Terraform state bucket, an
 // image copy that only adds a tag, the local config — and which the run's own
 // review announced instead. It says what is true of it and no more: the plan
-// the step prints is the plan it applies, a person is at the terminal, and the
-// confirmation a managed project does not ask for is the one they asked not to
-// see. Saying GateProceeded's words here would claim a verdict for a document
-// no rule read, which is the direction every other sentence in this file
-// refuses to take.
+// the step prints is the plan it applies, the marks were read, and the
+// confirmation a managed project does not ask for is the one the person at the
+// terminal asked not to see — or, where nobody is at the session, the one no
+// person could have given (check 292). Saying GateProceeded's words here would
+// claim a verdict for a document no rule read, which is the direction every
+// other sentence in this file refuses to take.
 func GateOrdinary() string {
 	return "this project is managed and the run announced this step: the marks were read, so nothing is confirmed here"
 }
