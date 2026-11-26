@@ -232,6 +232,15 @@ func TestAServiceAccountsPool(t *testing.T) {
 		s := newServiceAccountPools(t, true, append(append([]config.Pool{theirs}, lpPools()...), saPool(saOwnPool))...)
 		w := s.walk(t, callBody("sa-sibling-pool"), lpBinding(saPrincipal(), lpCoverage(), ""))
 		wantPool(t, w, saOwnPool)
+		// The entitlement refuses it from both seats, because one service account
+		// is not another however the pool is reached: naming the sibling's pool
+		// with `--pool` answers none, and so does a designation of this account's
+		// that names it — neither a name nor the account's own statement may put
+		// its runs on another roster account's tokens (R21).
+		w = s.walk(t, callBody("sa-sibling-named"), lpBinding(saPrincipal(), lpCoverage(), saOtherPool))
+		wantFallback(t, w)
+		s.designates(t, saPrincipal(), testProject, saOtherPool)
+		wantFallback(t, s.walk(t, callBody("sa-sibling-designated"), lpBinding(saPrincipal(), lpCoverage(), "")))
 		// And where a sibling's pool is the only service account pool the project
 		// publishes, the answer is none and the walk moves on to the source behind
 		// it (D3180).
