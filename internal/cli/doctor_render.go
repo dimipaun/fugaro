@@ -228,9 +228,9 @@ var doctorMeasureIDs = map[string]bool{
 	// The update lookup did not answer. Nothing about this installation is
 	// wrong, and the newer-release case is the warning variant of the same ID.
 	"cli-version": true,
-	// pluginwire's one remaining "never a failure" state: cannot compare, which
-	// a development build or an unreadable install record leaves. "not
-	// installed" and "installed differs" are warnings since D942 (U3 of
+	// pluginwire's "cannot compare", which a development build or an unreadable
+	// install record leaves: never a failure, whichever machine reads it.
+	// "not installed" and "installed differs" are warnings since D942 (U3 of
 	// docs/plugin-user-scope/implementation-plan.md), and the class of both is
 	// update — the plugin on this machine is what `fugaro update` installs.
 	"plugin-install": true,

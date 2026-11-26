@@ -2260,12 +2260,13 @@ func authOf(rf *resolvedFile) string {
 	return rf.Cfg.Agent.Auth
 }
 
-// pluginDoctorChecks turns a plugin report's states into doctor checks.
+// pluginDoctorChecks turns a plugin report's states into doctor checks: the
+// install, and the two wiring states that are not a pin's version.
 //
-// It is the one check of the report: the pin's own line is gone with the pin
-// (U6b of docs/update-from-anywhere, R15 — a leftover pin is a repository's own
-// line to delete now, repo-plugin-pin), so what is left to say about the wiring
-// is the install.
+// The pin's own line is gone with the pin (U6b of docs/update-from-anywhere,
+// R15): a leftover pin is a repository's own line to delete now
+// (repo-plugin-pin, in doctor_repo_notices.go), so comparing a pin with this
+// binary is no longer a question doctor asks.
 //
 // plugin-install asks the checkout's own question where the checkout carries a
 // release-tag pin — the install that applies there, against the ref the

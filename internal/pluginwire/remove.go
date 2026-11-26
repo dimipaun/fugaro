@@ -15,10 +15,11 @@ import (
 // failure, it is a sentence beside the caller's own line (spec §8).
 //
 // Since U6a no command writes a pin out: `fugaro update` reads one and answers
-// with a notice (PlanRemovalBytes, for its Changed alone). So PlanRemoval and
-// Removal.Apply — the write path — are the tests' alone, kept until U6b
-// (doctor's checkout check and the staleness warning) says whether a checkout's
-// pin is written out again.
+// with a notice (PlanRemovalBytes, for its Changed alone), and U6b's doctor
+// check reads the same file and prints the same sentence without writing to it.
+// So PlanRemoval and Removal.Apply — the write path — are the tests' alone: a
+// checkout that still carries a pin is now the repository's own change to make,
+// and no command takes it out.
 
 // Removal is a planned removal of the plugin's two entries from one settings
 // file: the plan is computed from the file as it is, and Apply writes it.
