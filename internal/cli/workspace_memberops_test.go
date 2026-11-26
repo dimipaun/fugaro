@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"reflect"
 	"slices"
 	"testing"
@@ -693,5 +694,49 @@ func TestMemberAuditCreateOnly(t *testing.T) {
 	}
 	if r.db.Value(workspace.PathMemberAudit+"/"+other.ID) != nil {
 		t.Error("a refused create left an entry behind")
+	}
+}
+
+// TestWorkspaceMemberRefusesUnmanaged is D1541's fence on this file (T7c): the
+// workspace's own installation writes into its members' projects, and a member
+// write on an installation that is not managed is refused (D2217).
+//
+// The fence is in NewWorkspaceMemberOps' own cloud opener, which is the one door
+// every method of this file reaches a member's project through, so the refusal
+// comes before a client exists — and it is keyed on the command the run is
+// serving, as openCloudFor is: the commands this family only reads with, and the
+// exempt ones, are answered without a read at all (TestExemptCommandsWriteNothing
+// is the other half of that, over the whole tree).
+//
+// The red step is what stands behind the door: without the fence this call opens
+// the member's state bucket to derive its database address and writes the roster
+// node into the member's own database, which is a write to a project nobody
+// declared managed. Both are asserted at zero here, over the fixtures of two
+// worlds: the installation's own fakes (nothing but the fence's read reached
+// them) and the member's (nothing reached them at all).
+func TestWorkspaceMemberRefusesUnmanaged(t *testing.T) {
+	fugaroAtItsOwnName(t)
+	r := newManagedFenceRig(t)
+	w := wu4New(t)
+	// The member's world carries the writes the fixture itself made, so the
+	// assertion below is about what THIS call did and not about the world.
+	before := len(w.gcs.Requests())
+	ops := NewWorkspaceMemberOps(r.lc, wu4WorkspaceIAM)
+	cmd := managedFencedCommand(t, "workspace user grant")
+	ctx := withManagedCommand(t.Context(), cmd)
+
+	err := ops.WriteGrants(ctx, w.m, workspace.MemberDoc{},
+		wu4Grants(t, wu4Grant(wu4Person, accesslib.RoleViewer, wu4ProjectScope())))
+	checkFenceRefusal(t, err, "workspace user grant")
+	for _, req := range r.requests() {
+		if req.Method != http.MethodGet {
+			t.Errorf("the refused member write went through the fence: %s %s", req.Method, req.Path)
+		}
+	}
+	if got := w.gcs.Requests()[before:]; len(got) != 0 {
+		t.Errorf("the member's own buckets were reached on a project that is not managed: %v", got)
+	}
+	if got := w.db.Value(accesslib.PathNode); got != nil {
+		t.Errorf("the refused roster write landed in the member's database: %v", got)
 	}
 }

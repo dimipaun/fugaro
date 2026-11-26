@@ -472,8 +472,9 @@ func CatalogBuildRequest(project string, s CatalogBuildSpec) (*cloudbuild.Build,
 		return nil, fmt.Errorf("%w: %w", ErrBadBuildSpec, err)
 	}
 	// The repositories the request names for the credential: the one this build
-	// clones, in the canonical spelling the service's image map keys an entry's
-	// repositories by (rule 8, config.ValidImageMap).
+	// clones, in the canonical spelling the service compares against. The
+	// project's repository-to-image map (`repo_images`) puts that spelling under
+	// a provider to key a repository (rule 8, projectpolicy.ValidRepoImages).
 	repos, err := catalogEntryRepos(s)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrBadBuildSpec, err)
@@ -602,9 +603,10 @@ const catalogCredentialTTLSeconds = 3600
 // catalogEntryRepos is the repositories a catalog build names for its
 // credential: the one its source is, which is the only repository this build
 // clones (catalogCloneStep). The name is task.CanonicalRepo's spelling and not
-// the URL's, because that is the service's key space — the published image map
-// keys an entry's repositories by it (config.ValidImageMap), and it is what the
-// route compares the request against before it mints anything (D1906).
+// the URL's, because that is the service's key space — the published
+// repository-to-image map (`repo_images`) keys a repository by that spelling
+// under its provider (projectpolicy.ValidRepoImages) — and it is what the route
+// compares the request against before it mints anything (D1906).
 //
 // It is one name and not the entry's whole map: what a build asks for has to be
 // what the build really clones, and the route answers a repository the request

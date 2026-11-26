@@ -517,8 +517,10 @@ func TestBridgeWithoutTheRowRefusesWithTheFix(t *testing.T) {
 // because the ticket is what makes the gate apply (R7) and what a run on the
 // bridge is not judged by.
 func TestLaunchWithATicketRefusesAnOlderImage(t *testing.T) {
-	// The fixture's own build record is a release older than the claim.
-	r := servedTicketWorld(t, releasePolicy, ticketAnswers(time.Now().Add(30*time.Minute)))
+	// The fixture's own build record is a release older than the claim — one
+	// below identitySince, and not the node's own release, which is newer than
+	// the claim now the policy version moves with it (LM21).
+	r := servedTicketWorld(t, "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, identitySince, -1), ticketAnswers(time.Now().Add(30*time.Minute)))
 	executed, err := r.launch(t)
 	if err == nil {
 		t.Fatal("a launch holding a ticket was admitted on a runner that knows no claim: it would stop at bootstrap with no identity")

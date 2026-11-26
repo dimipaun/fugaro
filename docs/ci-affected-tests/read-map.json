@@ -9482,6 +9482,7 @@
       "reads": [
         "cmd/fugaro/**",
         "deploy/terraform/**",
+        "docs/gcp-live-checklist.md",
         "docs/plans/*",
         "docs/release-streams.yaml",
         "ee/ab/**",

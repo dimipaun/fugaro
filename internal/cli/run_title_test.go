@@ -634,7 +634,7 @@ func TestCreateTaskRefusesASpecWithNoTitle(t *testing.T) {
 func TestReviewLaunchWithNoTitleIsNamedAfterThePR(t *testing.T) {
 	f := newReviewFixture(t)
 	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
-	if _, _, err := reviewCLI(t, "--pr", "7", "--token", "acme-personal"); err != nil {
+	if _, _, err := reviewCLI(t, "--pr", "7"); err != nil {
 		t.Fatal(err)
 	}
 	slug, id, err := parseRunRef(storedRunRef(t, f.cloudFixture))

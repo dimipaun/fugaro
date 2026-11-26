@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/dimipaun/fugaro/internal/policy"
 )
 
 // Sources of a resolved value (Resolution.SourceOf).
@@ -49,6 +51,20 @@ type Resolution struct {
 	// the repository wrote and a run no longer honours (S2, S5); a key here is
 	// in no Sources entry, because a dropped key is set by no layer.
 	Lifted []RetiredKeyNote
+	// Ignored is every tighten-only value (B4, spec §5.2) the repository's
+	// file wrote that did not tighten the project's, in path order, in the
+	// shape policy.Effective.Ignored uses: Key is the path, Value the text the
+	// repository wrote, Effective the project's, and Source is always
+	// SourceProject — the layer the value that stands comes from. The dropped
+	// key is in Sources with that same source, so a reader can tell "the
+	// project's value stands" from "nothing set it" (S2 prints these).
+	Ignored []policy.Ignored
+	// Unchecked is every tighten-only key the repository's file wrote where
+	// the project layer sets no value, in path order: the repository's value
+	// stands unjudged, and the places that apply the run's mode take the
+	// tighter of it and the mode's own (R3, RT2). The arm with no project
+	// layer marks every one of them.
+	Unchecked []string
 }
 
 // listIndexRE is a list index in a path (cache[0].key).
@@ -133,7 +149,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 		out := dropped
 		applyDefaults(out)
 		setRepoOwn(out, dropped, droppedTree, tree)
-		res := &Resolution{Sources: map[string]string{}, Lifted: lifted}
+		res := &Resolution{Sources: map[string]string{}, Lifted: lifted, Unchecked: uncheckedIn(droppedTree)}
 		markLeaves(droppedTree, "", SourceRepo, res.Sources)
 		res.ConfigSHA256 = out.SHA256()
 		return out, res, nil
@@ -142,7 +158,8 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 		return nil, nil, ps
 	}
 	res := &Resolution{Sources: map[string]string{}, LayerSHA256: l.SHA256, Lifted: lifted}
-	merged, profileOf, ps := layerMerge(tree, repo, l, res.Sources)
+	m := &mergeState{sources: res.Sources}
+	merged, profileOf, ps := layerMerge(tree, repo, l, m)
 	if len(ps) > 0 {
 		return nil, nil, ps
 	}
@@ -162,13 +179,16 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 	if ps := Validate(c); len(ps) > 0 {
 		return nil, nil, annotate(ps, res, profileOf)
 	}
+	res.Ignored, res.Unchecked = m.record()
 	out := c
 	if len(lifted) > 0 {
 		// The config a run carries: the same merge over the file the drop
 		// left, whose sources are this config's — a dropped key is in no
-		// Sources entry, and no reader downstream sees a lifted value.
-		sources := map[string]string{}
-		droppedMerged, _, ps := layerMerge(droppedTree, dropped, l, sources)
+		// Sources entry, and no reader downstream sees a lifted value. Its
+		// tighten record is this merge's too, since a lifted key is one the
+		// repository's file wrote and the carried config does not honour.
+		m = &mergeState{sources: map[string]string{}}
+		droppedMerged, _, ps := layerMerge(droppedTree, dropped, l, m)
 		if len(ps) > 0 {
 			return nil, nil, ps
 		}
@@ -176,12 +196,21 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 			return nil, nil, ps
 		}
 		out.Layer = l
-		res.Sources = sources
+		res.Sources = m.sources
+		res.Ignored, res.Unchecked = m.record()
 	}
 	setRepoOwn(out, dropped, droppedTree, tree)
 	applyDefaults(out)
+	tightenFocus(out, tree, layerDefaults(l))
 	res.ConfigSHA256 = out.SHA256()
 	return out, res, nil
+}
+
+// layerDefaults is the project layer's defaults block, nil without one: the
+// tree the focus merge reads a layer's own text from.
+func layerDefaults(l *ProjectLayer) map[string]any {
+	d, _ := l.tree["defaults"].(map[string]any)
+	return d
 }
 
 // layerMerge is Resolve's layer arm's merge: the project layer's defaults with
@@ -191,16 +220,16 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 // the file the drop left, which is the config a run carries — and tree and the
 // decode the workflows read are the two calls' only difference: they are one
 // file, as written and as the drop left it.
-func layerMerge(tree map[string]any, repo *Config, l *ProjectLayer, src map[string]string) (map[string]any, map[string]string, []Problem) {
+func layerMerge(tree map[string]any, repo *Config, l *ProjectLayer, m *mergeState) (map[string]any, map[string]string, []Problem) {
 	merged := map[string]any{}
 	if d, ok := l.tree["defaults"].(map[string]any); ok {
-		overlay(merged, d, "", SourceProject, src)
+		overlay(merged, d, "", SourceProject, m)
 	}
 	top := maps1(tree)
 	delete(top, "workflows")
-	overlay(merged, top, "", SourceRepo, src)
-	dropLayerRigorRepos(merged, src)
-	wfs, profileOf, ps := resolveWorkflows(tree, repo, l, src)
+	overlay(merged, top, "", SourceRepo, m)
+	dropLayerRigorRepos(merged, m.sources)
+	wfs, profileOf, ps := resolveWorkflows(tree, repo, l, m)
 	if len(ps) > 0 {
 		return nil, nil, ps
 	}
@@ -285,7 +314,7 @@ func anchorProblems(c *Config, l *ProjectLayer) []Problem {
 
 // resolveWorkflows builds the merged workflows: and says which profile
 // each workflow took ("" for none).
-func resolveWorkflows(tree map[string]any, repo *Config, l *ProjectLayer, src map[string]string) (map[string]any, map[string]string, []Problem) {
+func resolveWorkflows(tree map[string]any, repo *Config, l *ProjectLayer, m *mergeState) (map[string]any, map[string]string, []Problem) {
 	profiles, _ := l.tree["profiles"].(map[string]any)
 	names := strings.Join(sortedKeys(profiles), ", ")
 	profileTree := func(name string) (map[string]any, bool) {
@@ -313,9 +342,9 @@ func resolveWorkflows(tree map[string]any, repo *Config, l *ProjectLayer, src ma
 		}
 		path := "workflows." + ImplicitWorkflow
 		w := map[string]any{}
-		overlay(w, p, path, SourceProfile(name), src)
+		overlay(w, p, path, SourceProfile(name), m)
 		w["profile"] = name
-		src[path+".profile"] = from
+		m.sources[path+".profile"] = from
 		out[ImplicitWorkflow], profileOf[ImplicitWorkflow] = w, name
 		return out, profileOf, nil
 	}
@@ -343,20 +372,21 @@ func resolveWorkflows(tree map[string]any, repo *Config, l *ProjectLayer, src ma
 			if repo.Workflows[name].Dockerfile != "" {
 				delete(p, "image")
 			}
-			overlay(w, p, path, SourceProfile(pname), src)
+			overlay(w, p, path, SourceProfile(pname), m)
 			profileOf[showKey(name)] = pname
 		}
-		overlay(w, rw, path, SourceRepo, src)
+		overlay(w, rw, path, SourceRepo, m)
 		out[name] = w
 	}
 	return out, profileOf, ps
 }
 
 // overlay merges src into dst at path: maps key by key, anything else
-// replaced whole; a null in src sets nothing. sources records the leaves
-// src set. A review level is the one block whose merge is not always key by
+// replaced whole; a null in src sets nothing. m records the leaves src set,
+// and what the tighten rule (B4) did with the ones the repository's layer
+// wrote. A review level is the one block whose merge is not always key by
 // key, and mergeLevel says why.
-func overlay(dst, src map[string]any, path string, source string, sources map[string]string) {
+func overlay(dst, src map[string]any, path string, source string, m *mergeState) {
 	for _, k := range sortedKeys(src) {
 		v := src[k]
 		if v == nil {
@@ -369,20 +399,23 @@ func overlay(dst, src map[string]any, path string, source string, sources map[st
 		if sm, ok := v.(map[string]any); ok {
 			// Both layers decode into the same typed Config, so a key is a
 			// map in both or a map in neither.
-			dm, ok := dst[k].(map[string]any)
-			if !ok {
+			dm, set := dst[k].(map[string]any)
+			if !set {
 				dm = map[string]any{}
 				dst[k] = dm
 			}
 			if isLevelPath(p) {
-				mergeLevel(dm, sm, p, source, sources)
+				mergeLevel(dm, sm, p, source, m, set)
 				continue
 			}
-			overlay(dm, sm, p, source, sources)
+			overlay(dm, sm, p, source, m)
+			continue
+		}
+		if !m.tightenLeaf(dst, k, v, p, source) {
 			continue
 		}
 		dst[k] = v // a leaf is a node, which nothing changes
-		sources[p] = source
+		m.sources[p] = source
 	}
 }
 
@@ -404,26 +437,55 @@ func isLevelPath(path string) bool {
 // a layer writing any other key is turning the level back on, so an inherited
 // switch is cleared instead of merged into the level it contradicts. Both
 // directions are one rule — the switch is the level's own, not one of its
-// settings — and they are what lets a repository turn off a level the project
-// set, and turn one the project turned off back on.
-func mergeLevel(dm, sm map[string]any, path string, source string, sources map[string]string) {
+// settings — and they are what lets a repository turn on a level the project
+// turned off, and turn off one the project left to the layers below it.
+//
+// B4 narrows that rule for the repository's layer (spec §5.2): a level on
+// beats off, so the repository's off is kept only where the project's block
+// sets no level at all — where it is the repository's own answer, marked
+// unchecked (R3) — and dropped where the project turns the level on, recorded
+// like any other value that did not tighten. projectSet is whether the project
+// layer wrote this level's block.
+func mergeLevel(dm, sm map[string]any, path string, source string, m *mergeState, projectSet bool) {
 	off, wrote := levelNone(sm)
 	if levelModelNone(sm) {
 		off, wrote = true, true
 	}
+	if off && source == SourceRepo {
+		switch {
+		case !projectSet:
+			m.unchecked = append(m.unchecked, path+".none")
+		case levelTreeOff(dm):
+			// The project says the level does not run and so does the
+			// repository: the repository adds nothing, so nothing is dropped.
+			sm = withoutKeys(sm, "none", "model")
+			off, wrote = false, false
+		default:
+			m.ignored = append(m.ignored, policy.Ignored{Key: path + ".none", Value: "true", Effective: "false", Source: SourceProject})
+			sm = withoutKeys(sm, "none", "model")
+			off, wrote = false, false
+		}
+	}
 	switch {
 	case off:
 		clear(dm)
-		dropSources(sources, path)
+		dropSources(m.sources, path)
 	case wrote || writesAKey(sm):
 		delete(dm, "none")
-		delete(sources, path+".none")
+		delete(m.sources, path+".none")
 		if levelModelNone(dm) {
 			delete(dm, "model")
-			delete(sources, path+".model")
+			delete(m.sources, path+".model")
 		}
 	}
-	overlay(dm, sm, path, source, sources)
+	overlay(dm, sm, path, source, m)
+}
+
+// levelTreeOff is whether a level block says the level does not run, in
+// either spelling: `none: true`, or its model named none (NoneModel).
+func levelTreeOff(m map[string]any) bool {
+	off, _ := levelNone(m)
+	return off || levelModelNone(m)
 }
 
 // levelNone reads a level block's `none`: whether it is true, and whether the

@@ -1404,6 +1404,15 @@ func (s *policyMigrateStage) plan(ctx context.Context) (*policyMigration, bool, 
 		if sw != nil {
 			lc = sw.lc
 		}
+		// The routing migration reaches the node here and not through the
+		// config the run holds (update_routing_migrate.go's routingForPublish):
+		// the table the migration answers for this installation is published by
+		// this stage, RT4's publisher builds `model_routing` from the config it
+		// is given, and the config the run holds may not carry it — a local
+		// config that did would change the infra plan of the very update that
+		// migrates (ChainPlanFor reads it). The copy is built once per run and
+		// the run's own config is left as it is.
+		lc = s.e.r.routingForPublish(lc)
 		m, published, err := policyMigrationForIn(ctx, lc, s.e.path)
 		if sw != nil && err == nil && m != nil && m.generations != nil {
 			// The node has moved past the generation this machine's config was

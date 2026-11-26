@@ -1371,7 +1371,11 @@ func TestSharedConfigRefusesEveryForbiddenSection(t *testing.T) {
 	// choice into the shared file would move every teammate with no local
 	// config onto VMs with a block that same launcher chose and no check ever
 	// saw.
-	for _, k := range []string{"image_map", "bake_repos", "triage", "rigor_pending", "backend"} {
+	//
+	// `repo_images` joins the map's reason one member over (R7 of
+	// docs/image-map-by-provider/): it names the image each repository's jobs
+	// execute, so the key is the map's own case in the spelling L11 gives it.
+	for _, k := range []string{"image_map", "repo_images", "bake_repos", "triage", "rigor_pending", "backend"} {
 		if !slices.Contains(sharedForbidden, k) {
 			t.Errorf("sharedForbidden does not name %s, so a published %s would be read", k, k)
 		}
@@ -1388,6 +1392,7 @@ func TestSharedConfigRefusesEveryForbiddenSection(t *testing.T) {
 func TestSharedNeverPublishedCatchesTheDecodedSections(t *testing.T) {
 	for _, tc := range []struct{ name, yaml string }{
 		{"image_map", "image_map:\n    acme/app: tools\n"},
+		{"repo_images", "repo_images:\n    github/acme/app: tools\n"},
 		{"bake_repos", "bake_repos: false\n"},
 		{"triage", "triage: false\n"},
 		{"review_against_task", "review_against_task: false\n"},

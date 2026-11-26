@@ -23,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -249,29 +250,22 @@ func effectiveCatalog(ctx context.Context, env *cloudEnv) (*config.Catalog, erro
 // when nothing is published, with the error a node this machine cannot read
 // is.
 func publishedCatalog(ctx context.Context, env *cloudEnv) (*config.Catalog, error) {
-	p, found, err := env.policy.read(ctx, env.lc)
+	p, err := publishedNode(ctx, env)
 	if err != nil {
 		return nil, err
 	}
-	if !found || p == nil {
+	if p == nil {
 		return nil, nil
 	}
 	return p.ImageCatalog, nil
 }
 
-// effectiveImageMap is the repo-to-image map the project has: this machine's
-// project config when it states one, the published node's otherwise
-// (localcfg's keep rule, D1906), with the published node's read error. It is
-// effectiveCatalog's sibling, read the same way and for the same reason.
-func effectiveImageMap(ctx context.Context, env *cloudEnv) (map[string]string, error) {
-	published, err := publishedImageMap(ctx, env)
-	return env.lc.ImageMapEffective(published), err
-}
-
-// publishedImageMap is the map in the project's published policy node, nil
-// when nothing is published, with the error a node this machine cannot read
-// is.
-func publishedImageMap(ctx context.Context, env *cloudEnv) (map[string]string, error) {
+// publishedNode is the project's published policy node, nil when nothing is
+// published, with the error a node this machine cannot read is. It is the one
+// read of the node the catalog's and the map's effective readers share, so a
+// command that asks both (doctor does) reads it once per question and not
+// twice.
+func publishedNode(ctx context.Context, env *cloudEnv) (*projectpolicy.Policy, error) {
 	p, found, err := env.policy.read(ctx, env.lc)
 	if err != nil {
 		return nil, err
@@ -279,7 +273,94 @@ func publishedImageMap(ctx context.Context, env *cloudEnv) (map[string]string, e
 	if !found || p == nil {
 		return nil, nil
 	}
-	return p.ImageMap, nil
+	return p, nil
+}
+
+// imageMapping is the project's effective repository-to-image map, with the
+// member it was read from (R2): repo_images, keyed by provider/owner/name
+// (projectpolicy.Canonical), or the legacy image_map, keyed by bare repository
+// name.
+//
+// It is the pair catalog.ImageRequest is filled from — exactly one of
+// RepoImages and LegacyMap — so no reader decides for itself which member the
+// project serves, and no lookup guesses a keyspace from the shape of a key
+// (the resolver's own rule, R2).
+type imageMapping struct {
+	// images is the map itself, nil when the project maps nothing.
+	images map[string]string
+	// byProvider says which keyspace images is in: the provider-qualified keys
+	// of repo_images when it is true, the bare names of the legacy map
+	// otherwise. An empty provider-keyed map is a file that takes the node's
+	// map away on purpose, and it is still RepoImages that is filled — the
+	// resolver reads no legacy map then, which is what "the old member never
+	// comes back" means.
+	byProvider bool
+}
+
+// request is the question a job of repo at provider asks the resolver, with the
+// map read the way the project serves it: repo_images under
+// Canonical(provider, repo), the legacy map by bare name. A caller that cannot
+// name a provider therefore reads no entry of a provider-keyed map — the
+// refusal an empty answer leads to, and never a fallback to the other
+// keyspace.
+func (m imageMapping) request(cat *config.Catalog, repo, provider string, w config.Workflow, be catalog.Backend) catalog.ImageRequest {
+	req := catalog.ImageRequest{Catalog: cat, Canonical: repo, Workflow: w, Backend: be}
+	if m.byProvider {
+		req.RepoImages, req.Provider = m.images, provider
+		return req
+	}
+	req.LegacyMap = m.images
+	return req
+}
+
+// effectiveImageMap is the repository-to-image map the project has, and which
+// member it was read from (R2): this machine's config's repo_images first, then
+// the published node's, then the legacy image_map, this file's before the
+// node's (localcfg.RepoImagesEffective, which is R2 written once), with the
+// published node's read error. It is effectiveCatalog's sibling, read the same
+// way and for the same reason.
+func effectiveImageMap(ctx context.Context, env *cloudEnv) (imageMapping, error) {
+	node, err := publishedNode(ctx, env)
+	if err != nil {
+		return imageMapping{}, err
+	}
+	return configImageMap(env.lc, node), nil
+}
+
+// configImageMap is the map a project config serves on its own: its repo_images
+// when the file writes one, the legacy image_map otherwise — and the node's
+// otherwise still, when the file is silent about both (R2). The node is nil for
+// a caller holding a file the node cannot change the answer of, which is a
+// command about to write the map itself: a written map wins over the published
+// one under the keep rule.
+func configImageMap(lc *localcfg.Config, node *projectpolicy.Policy) imageMapping {
+	images, byProvider := lc.RepoImagesEffective(node)
+	return imageMapping{images: images, byProvider: byProvider}
+}
+
+// mapName is a repository as the map being read spells it, for a sentence that
+// names it: the canonical provider/owner/name a provider-keyed map is keyed by
+// (repo_images), the bare name the legacy map is keyed by (R2). The sentence
+// names the key because that is where the person's fix is. A repository whose
+// provider this machine cannot name keeps the name it has, because no key of a
+// provider-keyed map is it.
+func mapName(repo, provider string, byProvider bool) string {
+	if !byProvider {
+		return repo
+	}
+	canonical, err := projectpolicy.Canonical(provider, repo)
+	if err != nil {
+		return repo
+	}
+	return canonical
+}
+
+// mapClaim is what a removal says about a repository the project's map gives
+// the entry it is removing: the sentence names the map, which is where the
+// person's fix is, under the name every command of this release writes it by
+// whatever member the project still holds (R11).
+func mapClaim(repo string) string {
+	return fmt.Sprintf("the job of %s (this project's repository-to-image map (`repo_images`) gives it that entry)", pluginwire.Printable(repo))
 }
 
 // catalogEntryDigest is the digest of the image the last build of entry
@@ -762,11 +843,11 @@ func runImageRm(cmd *cobra.Command, o cloudOptions, name string, noApply bool) e
 	// default and remove an entry a job runs; a node this machine cannot read
 	// is refused rather than read as an empty map, because failing open here
 	// deletes something a job may be running.
-	imap, err := effectiveImageMap(ctx, &cloudEnv{lc: onDisk})
+	mapping, err := effectiveImageMap(ctx, &cloudEnv{lc: onDisk})
 	if err != nil {
 		return remote(policyReadErr(err))
 	}
-	who, unasked, err := catalogPointedAt(ctx, onDisk, cat, imap, name)
+	who, unasked, err := catalogPointedAt(ctx, onDisk, cat, mapping, name)
 	if err != nil {
 		return err
 	}
@@ -875,21 +956,32 @@ func catalogConfig(ctx context.Context, o cloudOptions) (string, *localcfg.Confi
 // repos: key is the operator's spelling, so the two name the same repository in
 // two ways (D1906).
 //
+// A provider-keyed map spells a repository as provider/owner/name, so "this
+// config lists it" is two questions and not one (R2): the repository the key
+// names, at the provider the key names. Two repositories of one name are two
+// keys there, and the config lists at most one of them — the other is still the
+// node's claim about a job the resolver above could not answer for, and it is
+// named as its key spells it.
+//
 // A job the resolver gives no entry to is not one of them: it runs no catalog
 // image at all, and a removal cannot leave it on an entry it never had.
-func catalogPointedAt(ctx context.Context, lc *localcfg.Config, cat *config.Catalog, imap map[string]string, entry string) (string, []string, error) {
+func catalogPointedAt(ctx context.Context, lc *localcfg.Config, cat *config.Catalog, mapping imageMapping, entry string) (string, []string, error) {
 	var unasked []string
 	for _, repo := range slices.Sorted(maps.Keys(lc.Repos)) {
 		cfg := checkoutConfig(ctx, repo)
+		// The repository's provider is what a provider-keyed map is looked up
+		// under (R1's order): this machine's config first, the checkout's own
+		// git.provider the entry names none — the provider a job of it is
+		// slugged with anyway (task.Slug).
+		provider := lc.Repos[repo].Provider
+		if provider == "" && cfg != nil {
+			provider = cfg.Git.Provider
+		}
+		name := mapName(repo, provider, mapping.byProvider)
 		if cfg == nil {
-			sel, err := catalog.JobImage(catalog.ImageRequest{
-				Catalog:   cat,
-				ImageMap:  imap,
-				Canonical: repo,
-				Backend:   catalog.Backend(lc.Backend()),
-			})
+			sel, err := catalog.JobImage(mapping.request(cat, repo, provider, config.Workflow{}, catalog.Backend(lc.Backend())))
 			if err == nil && sel.Source == catalog.SourceCatalog && sel.Reference && sel.Entry.Name == entry {
-				return fmt.Sprintf("the job of %s (this project's image_map gives it that entry)", pluginwire.Printable(repo)), nil, nil
+				return mapClaim(name), nil, nil
 			}
 			unasked = append(unasked, repo)
 			continue
@@ -900,17 +992,11 @@ func catalogPointedAt(ctx context.Context, lc *localcfg.Config, cat *config.Cata
 		// is built from, so a stale list in the local config could not answer
 		// the question anyway.
 		for _, n := range slices.Sorted(maps.Keys(cfg.Workflows)) {
-			sel, err := catalog.JobImage(catalog.ImageRequest{
-				Catalog:   cat,
-				ImageMap:  imap,
-				Canonical: repo,
-				Workflow:  cfg.Workflows[n],
-				Backend:   catalog.Backend(lc.Backend()),
-			})
+			sel, err := catalog.JobImage(mapping.request(cat, repo, provider, cfg.Workflows[n], catalog.Backend(lc.Backend())))
 			if err != nil || sel.Source != catalog.SourceCatalog || sel.Entry.Name != entry {
 				continue
 			}
-			return fmt.Sprintf("the workflow %s of %s", pluginwire.Printable(n), pluginwire.Printable(repo)), unasked, nil
+			return fmt.Sprintf("the workflow %s of %s", pluginwire.Printable(n), pluginwire.Printable(name)), unasked, nil
 		}
 	}
 	// The map names repositories this config need not: the node is the
@@ -926,16 +1012,36 @@ func catalogPointedAt(ctx context.Context, lc *localcfg.Config, cat *config.Cata
 	// node's canonical one and the repos: key is the operator's spelling:
 	// reading the map directly would call a listed repository unlisted over a
 	// capital letter.
-	for _, repo := range slices.Sorted(maps.Keys(imap)) {
-		if imap[repo] != entry {
+	for _, repo := range slices.Sorted(maps.Keys(mapping.images)) {
+		if mapping.images[repo] != entry {
 			continue
 		}
-		if _, listed := lc.RepoFor(repo); listed {
+		if mapping.byProvider {
+			if listedAtProvider(lc, repo) {
+				continue
+			}
+		} else if _, listed := lc.RepoFor(repo); listed {
 			continue
 		}
-		return fmt.Sprintf("the job of %s (this project's image_map gives it that entry)", pluginwire.Printable(repo)), nil, nil
+		return mapClaim(repo), nil, nil
 	}
 	return "", unasked, nil
+}
+
+// listedAtProvider reports whether this machine's config lists the repository a
+// provider-keyed key names, at that key's provider: the two halves of "a
+// repository this config lists is answered about above and not read as a
+// claim". A repository the config lists at another provider, or with no
+// provider recorded, is not the repository this key names — the key is the
+// node's own claim about a job this machine could not resolve — so it stays in
+// the sweep.
+func listedAtProvider(lc *localcfg.Config, key string) bool {
+	provider, repo, ok := strings.Cut(key, "/")
+	if !ok {
+		return false
+	}
+	r, listed := lc.RepoFor(repo)
+	return listed && r.Provider == provider
 }
 
 // catalogUnfetchable refuses a dockerfile source whose repository is on a

@@ -119,6 +119,37 @@ func TestCatalogCheckAssignsAnInlineEntryToTheRepositoryThatRunsIt(t *testing.T)
 	}
 }
 
+// A repo_images key is read by the provider it names: an inline entry's rebuild
+// account is the repository whose key serves it, and a key at a provider this
+// installation does not have that repository on serves nothing (R9), so it is
+// skipped rather than assigning the entry to a repository that would run the
+// rebuild as an account that does not reach the checkout the definition bakes.
+func TestCatalogCheckInlineEntryByProvider(t *testing.T) {
+	_, spec := catalogCheckJob(t, catalogCheckLocal+"repo_images:\n  github/acme/other: scratch\n")
+	app, other := repoOf(t, spec, "acme/app"), repoOf(t, spec, "acme/other")
+	if want := []string{"tools", "prebuilt"}; !slices.Equal(app.Entries, want) {
+		t.Errorf("acme/app builds %v, want %v: the repo_images key puts scratch on acme/other", app.Entries, want)
+	}
+	if want := []string{"runtime", "scratch"}; !slices.Equal(other.Entries, want) {
+		t.Errorf("acme/other builds %v, want %v: github/acme/other is the key its rebuild runs as", other.Entries, want)
+	}
+}
+
+// acme/app is this installation's Bitbucket repository, so a github/acme/app key
+// serves nothing, and acme/other's own GitHub key is the one that answers. The
+// unserved key sorts first, so an implementation that read it would assign
+// scratch to acme/app — a build submitted as an account that cannot reach the
+// checkout scratch bakes.
+func TestCatalogCheckSkipsUnservedKey(t *testing.T) {
+	_, spec := catalogCheckJob(t, catalogCheckLocal+"repo_images:\n  github/acme/app: scratch\n  github/acme/other: scratch\n")
+	if want := []string{"tools", "prebuilt"}; !slices.Equal(repoOf(t, spec, "acme/app").Entries, want) {
+		t.Errorf("acme/app builds %v, want %v: github/acme/app serves nothing, so it names no rebuild account", repoOf(t, spec, "acme/app").Entries, want)
+	}
+	if want := []string{"runtime", "scratch"}; !slices.Equal(repoOf(t, spec, "acme/other").Entries, want) {
+		t.Errorf("acme/other builds %v, want %v: its own key is the one that answers", repoOf(t, spec, "acme/other").Entries, want)
+	}
+}
+
 func TestCatalogCheckAssignsEveryEntry(t *testing.T) {
 	cc, spec := catalogCheckJob(t, catalogCheckLocal)
 	if spec.Version != CatalogCheckSpecVersion {

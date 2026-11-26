@@ -575,7 +575,7 @@ processor (O4). No agent edits the Terms.
 
 ### X1 Checks 270–272, written into the register
 
-**Re-planned 2026-11-21 (the owner's instruction) and NOT APPROVED: it waits on the owner's review of this re-plan before anything launches from it.** The task keeps its slot, its file and its three check numbers. Two of the three checks are re-worded against the console and the app as built; the third is unchanged. It is still **OWNER-RUN** and still writes nothing until its three dependencies are built.
+**Re-planned 2026-11-21 (the owner's instruction) and APPROVED 2026-11-26 (the owner: "unblock review-levels-ab-jobmax X1, jobmax"). T3.1 is merged; the run writes 270, 271 and 272's unpaired half now, and 272's paired half ("after pairing") waits on mobile-identity-pairing M2 and M3 and is a follow-up.** The task keeps its slot, its file and its three check numbers. Two of the three checks are re-worded against the console and the app as built; the third is unchanged. It is still **OWNER-RUN** and still writes nothing until its three dependencies are built.
 
 - **Files:** `docs/gcp-live-checklist.md` (the one writer of that file at this task's level; no other task in this plan writes it now that X2 is closed).
 - **The checks:**

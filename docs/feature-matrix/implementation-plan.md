@@ -97,7 +97,7 @@ The owner's answers that shaped the plan (2026-11-15):
 - **Files:** `website/src/lib/feature-matrix.mjs` (new), `website/test/feature-matrix.mjs` (new),
   `website/test/fixtures/feature-matrix/status.md` (new).
 - Interfaces: consumes C1's shapes and produces the real `buildSnapshot` with the stub's
-  signature. It parses the four tables by heading ("Nearly There (NT)", "Work in progress (WIP)",
+  signature. It parses the five tables by heading ("UAT", "Nearly There (NT)", "Work in progress (WIP)",
   "To do or parked", "Done"), and splits a first cell on commas. A spec is started when it is in
   NT, WIP or Done, or when its To do State cell reports merged tasks; it is parked when that State
   cell says "parked by the owner". The Done table has no Merged column and needs none.

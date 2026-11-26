@@ -583,37 +583,63 @@ func initOnTTY(t *testing.T, asJSON bool) {
 	}
 }
 
-// The update door takes the value it read about: C1's stand-in answers
-// `fugaro update` with the working directory's checkout, and for the name the
-// node covers and this machine's config cannot store, that checkout's prompt
-// is the only step that does -- the door's own line would leave the run asking
-// itself, and `fugaro update` has always asked here (R18, R21).
-func TestUpdateAsksTheCheckoutItRead(t *testing.T) {
-	f := newTTY(t)
-	r := newSecretsRig(t, bitbucketOrigin, f.tty, func(o *initOptions) { o.door = updateDoor.name })
-	r.e.lc.ProjectSecrets = map[string]config.ProjectSecret{
-		"claude-oauth-token": {AllowDataTo: []string{"acme/app"}},
-	}
-	readNodeFrom(r, bitbucketTokenNode(t, "bitbucket/acme/app"))
-	r.store.seedProject(r.e.lc.Name, "claude-oauth-token", tokenValue)
-	done := r.start(context.Background())
-	r.answer(t, f, "bitbucket-token (input hidden)", 1, "bb-secret-value-EXAMPLE\n")
-	lr := waitLoop(t, done)
-	if lr.err != nil || lr.res.Failed != nil {
-		t.Fatalf("%v, %+v: the update door did not ask for the token it read about (stderr %q)", lr.err, lr.res, r.errOut.String())
-	}
-	if got := stateOf(lr.res, initflow.Secrets); got != initflow.Changed {
-		t.Fatalf("state = %q, want changed: the value was taken at the prompt", got)
-	}
-	// The prompt's own decision, which is the checkout door's: the name the
-	// node makes project-wide is stored in the installation's own container.
-	if got := r.store.latestProject(r.e.lc.Name, "bitbucket-token"); got != "bb-secret-value-EXAMPLE" {
-		t.Fatalf("the project's copy = %q, want the value the prompt took", got)
-	}
-	for _, l := range lr.res.Left {
-		if strings.Contains(strings.Join(l.Commands, "\n"), "fugaro update") {
-			t.Fatalf("the run left its own door for a value it took: %v", l.Commands)
+// The update door asks for a value only under --ask (D3347, R18). C1's
+// stand-in answers `fugaro update` with the working directory's checkout, and
+// for the name the node covers and this machine's config cannot store, that
+// checkout's prompt is the only step that takes it — but the flag is what turns
+// the prompt on here, where every other door asks at any real terminal. Without
+// it the stage asks nothing and leaves the `fugaro secrets set` line; with it,
+// at the owner's own terminal, it asks and stores where projectScope decides.
+func TestUpdateAsksValuesOnlyUnderAsk(t *testing.T) {
+	rig := func(t *testing.T, f *ttyFixture) *secretsRig {
+		t.Helper()
+		r := newSecretsRig(t, bitbucketOrigin, f.tty, func(o *initOptions) { o.door = updateDoor.name })
+		r.e.lc.ProjectSecrets = map[string]config.ProjectSecret{
+			"claude-oauth-token": {AllowDataTo: []string{"acme/app"}},
 		}
+		readNodeFrom(r, bitbucketTokenNode(t, "bitbucket/acme/app"))
+		r.store.seedProject(r.e.lc.Name, "claude-oauth-token", tokenValue)
+		return r
 	}
-	noLeak(t, "bb-secret-value-EXAMPLE", tokenValue, resultJSON(t, lr.res), r.out.String(), r.errOut.String())
+
+	t.Run("without --ask the value is left, never prompted for", func(t *testing.T) {
+		f := newTTY(t)
+		r := rig(t, f)
+		lr := waitLoop(t, r.start(context.Background()))
+		if got := stateOf(lr.res, initflow.Secrets); got != initflow.NeedsYou {
+			t.Fatalf("state = %q, want needs you: a value is missing and the flag was not passed", got)
+		}
+		if strings.Contains(r.errOut.String(), "(input hidden)") {
+			t.Fatalf("the update door prompted without --ask: %q", r.errOut.String())
+		}
+		if got := r.store.latestProject(r.e.lc.Name, "bitbucket-token"); got != "" {
+			t.Fatalf("a value was stored without --ask: %q", got)
+		}
+	})
+
+	t.Run("with --ask it asks and stores the value it read about", func(t *testing.T) {
+		f := newTTY(t)
+		r := rig(t, f)
+		r.e.r.o.ask = true
+		done := r.start(context.Background())
+		r.answer(t, f, "bitbucket-token (input hidden)", 1, "bb-secret-value-EXAMPLE\n")
+		lr := waitLoop(t, done)
+		if lr.err != nil || lr.res.Failed != nil {
+			t.Fatalf("%v, %+v: the update door did not ask for the token it read about (stderr %q)", lr.err, lr.res, r.errOut.String())
+		}
+		if got := stateOf(lr.res, initflow.Secrets); got != initflow.Changed {
+			t.Fatalf("state = %q, want changed: the value was taken at the prompt", got)
+		}
+		// The prompt's own decision, which is the checkout door's: the name the
+		// node makes project-wide is stored in the installation's own container.
+		if got := r.store.latestProject(r.e.lc.Name, "bitbucket-token"); got != "bb-secret-value-EXAMPLE" {
+			t.Fatalf("the project's copy = %q, want the value the prompt took", got)
+		}
+		for _, l := range lr.res.Left {
+			if strings.Contains(strings.Join(l.Commands, "\n"), "fugaro update") {
+				t.Fatalf("the run left its own door for a value it took: %v", l.Commands)
+			}
+		}
+		noLeak(t, "bb-secret-value-EXAMPLE", tokenValue, resultJSON(t, lr.res), r.out.String(), r.errOut.String())
+	})
 }
