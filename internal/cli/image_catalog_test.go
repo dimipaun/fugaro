@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/imagebake"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -377,21 +378,121 @@ func publishedMapFixture(t *testing.T) (*cloudFixture, *gcpfake.RTDB) {
 // about the node's own claim either way.
 func publishedMapNodesFixture(t *testing.T, imap projectpolicy.ImageMap) (*cloudFixture, *gcpfake.RTDB) {
 	t.Helper()
+	return publishedBlockFixture(t, &projectpolicy.Policy{ImageMap: imap})
+}
+
+// publishedBlockFixture is the catalog fixture with the policy node stated by
+// the test, so a test can publish whichever member of the map it is about —
+// repo_images, whose keys are provider-qualified, or the legacy image_map. It
+// returns the database, so a test can break the node the map is read from.
+//
+// The node is published for its image map, so its budget block is the one every
+// published block has to carry: a block that names no mode is refused by the
+// node's own reader (projectpolicy.validBudget). observe is the mode that asks
+// the run for nothing, and the installation's own config is where this
+// machine's budget lives — off is not a mode this release has (D3009).
+func publishedBlockFixture(t *testing.T, block *projectpolicy.Policy) (*cloudFixture, *gcpfake.RTDB) {
+	t.Helper()
 	f := catalogFixture(t)
 	db := gcpfake.NewRTDB(t)
 	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
-	// The node is published for its image map, so its budget block is the one
-	// every published block has to carry: a block that names no mode is refused
-	// by the node's own reader (projectpolicy.validBudget). observe is the mode
-	// that asks the run for nothing, and the installation's own config is where
-	// this machine's budget lives — off is not a mode this release has (D3009).
-	db.Set(projectpolicy.PathShared(), &projectpolicy.Policy{
-		Version:  projectpolicy.Version,
-		Budget:   projectpolicy.Budget{Mode: "observe"},
-		ImageMap: imap,
-	})
+	block.Version, block.Budget = projectpolicy.Version, projectpolicy.Budget{Mode: "observe"}
+	db.Set(projectpolicy.PathShared(), block)
 	f.appendConfig(t, "budget: { mode: observe, rtdb_url: "+db.URL+" }\n")
 	return f, db
+}
+
+// TestCatalogPointedAtByProvider: a repository and its provider are what a
+// repo_images key names, so one name at two providers is two repositories and
+// the guard a removal runs has to answer about each of them (R2). Read as the
+// legacy map's bare name, neither key is a repository this project has: the
+// guard saw no mapping, fell back to the catalog's default and removed an entry
+// both jobs run — the state TestImageRmRefusesAnEntryThePublishedMapPointsAt
+// describes, reached from the new member.
+func TestCatalogPointedAtByProvider(t *testing.T) {
+	for _, tc := range []struct{ name, key string }{
+		{"the provider this machine records", "github/acme/app"},
+		{"the other provider of the same name", "bitbucket/acme/app"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			publishedBlockFixture(t, &projectpolicy.Policy{RepoImages: projectpolicy.RepoImages{tc.key: "tools"}})
+			// No checkout of anything: what makes the mapping a claim is the
+			// node's key, and the repository this config lists is acme/app at
+			// GitHub — which is the first key and not the second.
+			path := os.Getenv("FUGARO_CONFIG")
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			_, _, err = execute(t, "image", "rm", "tools")
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("exit %d, err %v, want the removal refused: the node's repo_images gives %s the entry", ExitCode(err), err, tc.key)
+			}
+			for _, want := range []string{"tools", "repo_images", tc.key} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal %v lacks %q", err, want)
+				}
+			}
+			after, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(before) != string(after) {
+				t.Error("a refused rm still wrote the config")
+			}
+
+			// The control: the entry no key of the map names is still
+			// removable, so what refuses above is the mapping.
+			if _, _, err := execute(t, "image", "rm", "base", "--no-apply"); err != nil {
+				t.Fatalf("removing the entry no mapping names: %v", err)
+			}
+		})
+	}
+}
+
+// TestBakeNoteByProvider: the note `fugaro image map set` prints about a copy
+// that still bakes a checkout is about who the map puts on that image, and a
+// repo_images key names a repository at a provider — so the repository the copy
+// bakes is the one its own provider spells. A read that compared the key by
+// bare name would take the GitHub key for the Bitbucket repository of that
+// name, or warn about the baked repository's own key, and the sentence the
+// operator acts on would name the wrong jobs either way.
+func TestBakeNoteByProvider(t *testing.T) {
+	slug := mustSlug(gitprov.KindGitHub, "acme/app")
+	baked, err := imagebake.Append([]byte("FROM example.invalid/base\n"), imagebake.Plan{Baked: []imagebake.Repo{{
+		Repo: "acme/app", Slug: slug, URL: "https://github.com/acme/app.git", Branch: "main",
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, images, exposed string
+	}{
+		{"the provider the checkout belongs to", "  github/acme/app: tools\n", ""},
+		{"the other provider of the same name", "  bitbucket/acme/app: tools\n", "bitbucket/acme/app"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			f.appendConfig(t, catalogYAML)
+			f.appendConfig(t, "repo_images:\n"+tc.images)
+			writeCatalogCopy(t, f, "tools", baked)
+
+			_, errOut, err := execute(t, "image", "map", "set", "acme/app", "tools")
+			if err != nil {
+				t.Fatalf("image map set: %v\n%s", err, errOut)
+			}
+			if tc.exposed == "" {
+				if strings.Contains(errOut, "could read it") {
+					t.Errorf("stderr = %q, want no note: the map puts that image on the repository whose checkout the copy already bakes", errOut)
+				}
+				return
+			}
+			if !strings.Contains(errOut, tc.exposed) {
+				t.Errorf("stderr = %q, want it to name %s, whose jobs this mapping puts on the baked image", errOut, tc.exposed)
+			}
+		})
+	}
 }
 
 // TestImageRmRefusesAnEntryThePublishedMapPointsAt: the map that gives a
@@ -474,7 +575,7 @@ func TestImageRmRefusesAnEntryTheMapPointsAtWithoutACheckout(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v, want the removal refused: the published map points acme/app at the entry, and a checkout here is not what makes that true", ExitCode(err), err)
 	}
-	for _, want := range []string{"tools", "acme/app", "image_map"} {
+	for _, want := range []string{"tools", "acme/app", "repo_images"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal %v lacks %q", err, want)
 		}
@@ -522,7 +623,7 @@ func TestImageRmRefusesAnEntryTheMapGivesARepositoryThisMachineDoesNotList(t *te
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v, want the removal refused: the published map gives acme/other the entry, and whether this machine lists that repository is not what makes it a claim", ExitCode(err), err)
 	}
-	for _, want := range []string{"tools", "acme/other", "image_map"} {
+	for _, want := range []string{"tools", "acme/other", "repo_images"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal %v lacks %q", err, want)
 		}

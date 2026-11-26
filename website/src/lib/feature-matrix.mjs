@@ -3,10 +3,10 @@
 // the spec as docs/feature-matrix/reconciliation.md amends it, with the owner's answers
 // D2443–D2445).
 //
-// **What it reads.** status.md's four tables, found by heading, and the Spec cell of every row of
+// **What it reads.** status.md's five tables, found by heading, and the Spec cell of every row of
 // them, split on commas: a name in one of those cells is a spec, and a spec sits in one table.
 // The state a row gives its spec comes from the table — Nearly There and Work in progress have
-// started, Done is done — and, in "To do or parked", from the State cell: a cell that says the
+// started, UAT and Done are done (UAT is built and waits for the owner's acceptance) — and, in "To do or parked", from the State cell: a cell that says the
 // owner parked the spec parks it (and a parked spec keeps its merged count, so it is read before
 // the count is); a cell that opens with a merged count above zero means the spec has started; and
 // a cell that says neither leaves it not started, because a row in that table with no count on it
@@ -39,10 +39,11 @@ import { PLANS, readSnapshotBlock, validateMapping, validateSnapshot } from './f
 const STATUS_FILE = 'docs/status.md'
 
 /**
- * The four tables, in the page's own words, with the columns each carries and whether its rows
+ * The five tables, in the page's own words, with the columns each carries and whether its rows
  * carry a spec that has started, a spec that is done, or the State cell this module reads.
  */
 const SECTIONS = [
+  { heading: 'UAT', columns: ['Spec', 'Merged', 'Left'], kind: 'done' },
   { heading: 'Nearly There (NT)', columns: ['Spec', 'Merged', 'Left'], kind: 'started' },
   { heading: 'Work in progress (WIP)', columns: ['Spec', 'Merged', 'Left'], kind: 'started' },
   { heading: 'To do or parked', columns: ['Spec', 'State'], kind: 'todo' },
@@ -119,11 +120,11 @@ function readStatus(markdown) {
   for (const section of sections) {
     if (!SECTIONS.some((known) => known.heading === section.heading)) {
       throw new Error(
-        `${where(section.line)}: ${JSON.stringify(section.heading)} is not one of the four sections the builder reads (${SECTIONS.map((known) => JSON.stringify(known.heading)).join(', ')}); a status page that gained or renamed a section is one it has not been taught, and it stops rather than guessing at it (F8)`,
+        `${where(section.line)}: ${JSON.stringify(section.heading)} is not one of the five sections the builder reads (${SECTIONS.map((known) => JSON.stringify(known.heading)).join(', ')}); a status page that gained or renamed a section is one it has not been taught, and it stops rather than guessing at it (F8)`,
       )
     }
     if (found.has(section.heading)) {
-      throw new Error(`${where(section.line)}: ${JSON.stringify(section.heading)} is the second section with that heading; the builder reads the four tables by heading, and two of them cannot be told apart`)
+      throw new Error(`${where(section.line)}: ${JSON.stringify(section.heading)} is the second section with that heading; the builder reads the five tables by heading, and two of them cannot be told apart`)
     }
     found.set(section.heading, section)
   }
@@ -131,7 +132,7 @@ function readStatus(markdown) {
   for (const known of SECTIONS) {
     if (!found.has(known.heading)) {
       throw new Error(
-        `${STATUS_FILE} carries no ${JSON.stringify(known.heading)} section: the builder reads the four tables by heading, and a table it cannot find is one it will not guess at (F8, R3)`,
+        `${STATUS_FILE} carries no ${JSON.stringify(known.heading)} section: the builder reads the five tables by heading, and a table it cannot find is one it will not guess at (F8, R3)`,
       )
     }
   }
@@ -152,7 +153,7 @@ function readTable(known, section, lines, specs) {
     const line = lines[i]
     if (line.startsWith('|')) {
       if (ended) {
-        throw new Error(`${where(i)}: a second table under ${JSON.stringify(known.heading)}; a section carries one table, and this module reads the four it knows`)
+        throw new Error(`${where(i)}: a second table under ${JSON.stringify(known.heading)}; a section carries one table, and this module reads the five it knows`)
       }
       if (header === -1) header = i
       else if (separator === -1) separator = i
@@ -163,7 +164,7 @@ function readTable(known, section, lines, specs) {
   }
 
   if (header === -1) {
-    throw new Error(`${where(section.line)}: the ${JSON.stringify(known.heading)} section carries no table; the four tables are how this module reads the page (F8)`)
+    throw new Error(`${where(section.line)}: the ${JSON.stringify(known.heading)} section carries no table; the five tables are how this module reads the page (F8)`)
   }
 
   const cells = rowOf(lines, header)

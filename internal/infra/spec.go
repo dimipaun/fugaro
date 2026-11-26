@@ -1523,33 +1523,46 @@ func (c *repoCtx) effectiveCatalog() *config.Catalog {
 	return c.lc.ImageCatalogEffective(published)
 }
 
-// effectiveImageMap is the repo-to-image map the repository's specs are
-// computed from: the local configuration's when it states one, the published
-// project node's otherwise (localcfg's keep rule, D1906), and nil when the
-// project maps none.
-func (c *repoCtx) effectiveImageMap() map[string]string {
-	var published map[string]string
-	if c.in.Policy != nil {
-		published = c.in.Policy.ImageMap
+// effectiveRepoImages is the repository-to-image map the repository's specs are
+// computed from, split into the two fields catalog.ImageRequest holds it in
+// (R2): exactly one of the answers is non-nil, and which one says which
+// keyspace the map is in — repo_images' provider-qualified keys, or the legacy
+// image_map's bare repository names.
+//
+// It is the project's effective map, this machine's configuration first and the
+// published node's otherwise (localcfg.RepoImagesEffective, D1906), and both
+// halves are nil when the project maps none.
+func (c *repoCtx) effectiveRepoImages() (byProvider, byName map[string]string) {
+	images, fromRepoImages := c.lc.RepoImagesEffective(c.in.Policy)
+	if fromRepoImages {
+		return images, nil
 	}
-	return c.lc.ImageMapEffective(published)
+	return nil, images
 }
 
 // imageRequest is the question this repository's workflows are resolved with:
-// the project's effective catalog and map, this repository, the workflow and
-// the installation's backend.
+// the project's effective catalog and map, this repository's provider, the
+// repository, the workflow and the installation's backend.
+//
+// The provider is the one this repository's jobs are planned on (repoCtx.
+// provider, from git.provider), and it is what the map is read under: a project
+// that holds a GitHub and a Bitbucket repository of one name gives each its own
+// key, so the lookup cannot be made without it (D3370).
 //
 // The backend is the installation's own, read from the config and not written
 // as a constant: the docker rule is a rule about the backend the job will run
 // on (D1149), and an installation that names cloud-batch is judged by the rule
 // for the backend it actually runs on rather than by Cloud Run's.
 func (c *repoCtx) imageRequest(w config.Workflow) catalog.ImageRequest {
+	byProvider, byName := c.effectiveRepoImages()
 	return catalog.ImageRequest{
-		Catalog:   c.effectiveCatalog(),
-		ImageMap:  c.effectiveImageMap(),
-		Canonical: c.in.Repo,
-		Workflow:  w,
-		Backend:   catalog.Backend(c.lc.Backend()),
+		Catalog:    c.effectiveCatalog(),
+		Provider:   c.provider,
+		RepoImages: byProvider,
+		LegacyMap:  byName,
+		Canonical:  c.in.Repo,
+		Workflow:   w,
+		Backend:    catalog.Backend(c.lc.Backend()),
 	}
 }
 

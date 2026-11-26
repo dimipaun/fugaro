@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -370,7 +371,7 @@ func TestSurveySetupIsTheProjectOwnOrSaysWhyNot(t *testing.T) {
 	if doc.Setup.Unread != "" {
 		t.Errorf("a project that published no policy node is reported unread: %q", doc.Setup.Unread)
 	}
-	if len(doc.Setup.ImageMap) != 0 || !doc.Setup.BakeRepos {
+	if len(doc.Setup.RepoImages) != 0 || doc.Setup.LegacyImageMap != nil || !doc.Setup.BakeRepos {
 		t.Errorf("setup = %+v, want the empty map and bake_repos true", doc.Setup)
 	}
 
@@ -381,7 +382,7 @@ func TestSurveySetupIsTheProjectOwnOrSaysWhyNot(t *testing.T) {
 	if doc.Setup.Unread != "" {
 		t.Errorf("a policy node that was read is reported unread: %q", doc.Setup.Unread)
 	}
-	if got := doc.Setup.ImageMap["acme/app"]; got != "go" || doc.Setup.BakeRepos {
+	if got := doc.Setup.LegacyImageMap["acme/app"]; got != "go" || doc.Setup.BakeRepos {
 		t.Errorf("setup = %+v, want the node's own map and bake setting", doc.Setup)
 	}
 
@@ -406,7 +407,7 @@ func TestSurveySetupIsTheProjectOwnOrSaysWhyNot(t *testing.T) {
 	if !strings.Contains(doc.Setup.Unread, "are this machine's own rather than what this project published") {
 		t.Errorf("setup.unread = %q, and a reader has to be told what the members are then", doc.Setup.Unread)
 	}
-	if got := doc.Setup.ImageMap["acme/app"]; got != "local" || doc.Setup.BakeRepos {
+	if got := doc.Setup.LegacyImageMap["acme/app"]; got != "local" || doc.Setup.BakeRepos {
 		t.Errorf("an unread setup answers %+v, want this machine's own map and switch", doc.Setup)
 	}
 	// And the terminal says it too, before the members it is about.
@@ -557,6 +558,70 @@ func TestSurveyJSONMatchesSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
+	validateSurveySchema(t, out)
+
+	// The document is only worth validating while it carries the members the
+	// schema closes over: a fixture that stopped producing a repository row, a
+	// signal and the setup would leave those branches unchecked and still
+	// green.
+	var decoded struct {
+		Version int `json:"version"`
+		Repos   []struct {
+			Repo    string `json:"repo"`
+			Signals []struct {
+				Kind string `json:"kind"`
+			} `json:"signals"`
+		} `json:"repos"`
+		Setup struct {
+			Catalog        []any             `json:"catalog"`
+			RepoImages     map[string]string `json:"repo_images"`
+			LegacyImageMap map[string]string `json:"legacy_image_map"`
+			BakeRepos      *bool             `json:"bake_repos"`
+		} `json:"setup"`
+	}
+	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Version != 2 {
+		t.Errorf("version = %d, and repo_images made the document version 2 (R4)", decoded.Version)
+	}
+	if len(decoded.Repos) < 2 {
+		t.Errorf("the document carries %d repository rows, and the fixture lists two", len(decoded.Repos))
+	}
+	kinds := map[string]bool{}
+	for _, r := range decoded.Repos {
+		for _, s := range r.Signals {
+			kinds[s.Kind] = true
+		}
+	}
+	for _, want := range []string{imagesurvey.KindDockerfile, imagesurvey.KindCompose, imagesurvey.KindVersion} {
+		if !kinds[want] {
+			t.Errorf("no row carries a %q signal, so the schema's enum branch for it is unchecked", want)
+		}
+	}
+	// A project that has published no catalog is the document's own empty
+	// catalog, which is what the schema's array branch is validated on here —
+	// and the map and the switch are the members the setup's own branches are
+	// validated on, so a fixture that stopped producing them cannot leave those
+	// unchecked and still be green.
+	if decoded.Setup.Catalog == nil {
+		t.Errorf("setup = %+v, want the catalog member the schema closes over", decoded.Setup)
+	}
+	if decoded.Setup.RepoImages == nil {
+		t.Errorf("setup = %+v, want the repo_images member the schema closes over", decoded.Setup)
+	}
+	if decoded.Setup.BakeRepos == nil {
+		t.Errorf("setup = %+v, want the bake_repos member the schema closes over", decoded.Setup)
+	}
+}
+
+// validateSurveySchema validates one survey document against
+// schemas/image-survey.schema.json, the contract a consumer reads it by
+// (D784). The two tests below validate the document each member makes: a
+// provider-keyed map is the repo_images branch, and a legacy one is the
+// legacy_image_map branch, which no other document here carries.
+func validateSurveySchema(t *testing.T, out string) {
+	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "schemas", "image-survey.schema.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -584,57 +649,89 @@ func TestSurveyJSONMatchesSchema(t *testing.T) {
 	if err := sch.Validate(inst); err != nil {
 		t.Fatalf("the document does not match schemas/image-survey.schema.json: %v\n%s", err, out)
 	}
+}
 
-	// The document is only worth validating while it carries the members the
-	// schema closes over: a fixture that stopped producing a repository row, a
-	// signal and the setup would leave those branches unchecked and still
-	// green.
-	var decoded struct {
-		Version int `json:"version"`
-		Repos   []struct {
-			Repo    string `json:"repo"`
-			Signals []struct {
-				Kind string `json:"kind"`
-			} `json:"signals"`
-		} `json:"repos"`
-		Setup struct {
-			Catalog   []any             `json:"catalog"`
-			ImageMap  map[string]string `json:"image_map"`
-			BakeRepos *bool             `json:"bake_repos"`
-		} `json:"setup"`
+// surveyDocOf runs `fugaro image survey --json`, validates the document
+// against the schema and decodes it. It is what a test that is about the
+// document's own shape uses: surveyDoc answers the struct too, but not the
+// bytes the schema is validated on.
+func surveyDocOf(t *testing.T, args ...string) (imageSurveyOut, string) {
+	t.Helper()
+	out, _, err := execute(t, append([]string{"image", "survey", "--json"}, args...)...)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
 	}
-	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
-		t.Fatal(err)
+	validateSurveySchema(t, out)
+	var doc imageSurveyOut
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("%v\n%s", err, out)
 	}
-	if decoded.Version != 1 {
-		t.Errorf("version = %d, and the document's first version is 1 (D784)", decoded.Version)
+	return doc, out
+}
+
+// TestImageSurveyRepoImagesV2: `image survey --json` is version 2, and the map
+// it reports is the provider-keyed repo_images — one key per provider, so a
+// GitHub and a Bitbucket acme/app are two (R4, D3370) — with legacy_image_map
+// absent, so nothing ever reads a bare name under the new member's name. The
+// text form prints the same keys under the same member.
+func TestImageSurveyRepoImagesV2(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	surveyStub(t, map[string]map[string]string{"acme/app": {"Dockerfile": "FROM node:20\n"}})
+	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":9,"repo_images":{"github/acme/app":"go","bitbucket/acme/app":"data"}}`))
+
+	doc, raw := surveyDocOf(t)
+	if doc.Version != 2 {
+		t.Errorf("version = %d, want 2: the map is repo_images now (R4)", doc.Version)
 	}
-	if len(decoded.Repos) < 2 {
-		t.Errorf("the document carries %d repository rows, and the fixture lists two", len(decoded.Repos))
+	if got, want := doc.Setup.RepoImages, map[string]string{"github/acme/app": "go", "bitbucket/acme/app": "data"}; !maps.Equal(got, want) {
+		t.Errorf("setup.repo_images = %v, want %v", got, want)
 	}
-	kinds := map[string]bool{}
-	for _, r := range decoded.Repos {
-		for _, s := range r.Signals {
-			kinds[s.Kind] = true
+	if doc.Setup.LegacyImageMap != nil {
+		t.Errorf("setup.legacy_image_map = %v, and a provider-keyed map is never reported under the bare-name member", doc.Setup.LegacyImageMap)
+	}
+	if strings.Contains(raw, "legacy_image_map") {
+		t.Errorf("the document carries the legacy member:\n%s", raw)
+	}
+	out, _, err := execute(t, "image", "survey")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, want := range []string{"repo_images:\n", "github/acme/app  go", "bitbucket/acme/app  data"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the text report does not carry %q:\n%s", want, out)
 		}
 	}
-	for _, want := range []string{imagesurvey.KindDockerfile, imagesurvey.KindCompose, imagesurvey.KindVersion} {
-		if !kinds[want] {
-			t.Errorf("no row carries a %q signal, so the schema's enum branch for it is unchecked", want)
-		}
+}
+
+// TestImageSurveyLegacyMapV2: a project whose effective map is still the
+// legacy one — an update has not migrated it — reports the bare-name map under
+// legacy_image_map and leaves repo_images empty (R4, F29). The two members are
+// told apart by which one carries a value, never by the shape of a key.
+func TestImageSurveyLegacyMapV2(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	surveyStub(t, map[string]map[string]string{"acme/app": {"Dockerfile": "FROM node:20\n"}})
+	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":9,"image_map":{"acme/app":"go"}}`))
+
+	doc, _ := surveyDocOf(t)
+	if doc.Version != 2 {
+		t.Errorf("version = %d, want 2: the version moves with the member, whatever a project still holds (R4)", doc.Version)
 	}
-	// A project that has published no catalog is the document's own empty
-	// catalog, which is what the schema's array branch is validated on here —
-	// and the map and the switch are the members the setup's own branches are
-	// validated on, so a fixture that stopped producing them cannot leave those
-	// unchecked and still be green.
-	if decoded.Setup.Catalog == nil {
-		t.Errorf("setup = %+v, want the catalog member the schema closes over", decoded.Setup)
+	if len(doc.Setup.RepoImages) != 0 {
+		t.Errorf("setup.repo_images = %v, want it empty while the effective map is the legacy one", doc.Setup.RepoImages)
 	}
-	if decoded.Setup.ImageMap == nil {
-		t.Errorf("setup = %+v, want the image_map member the schema closes over", decoded.Setup)
+	if got, want := doc.Setup.LegacyImageMap, map[string]string{"acme/app": "go"}; !maps.Equal(got, want) {
+		t.Errorf("setup.legacy_image_map = %v, want %v", got, want)
 	}
-	if decoded.Setup.BakeRepos == nil {
-		t.Errorf("setup = %+v, want the bake_repos member the schema closes over", decoded.Setup)
+	out, _, err := execute(t, "image", "survey")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "legacy_image_map:\n") || !strings.Contains(out, "acme/app  go") {
+		t.Errorf("the text report does not carry the legacy map:\n%s", out)
+	}
+	if strings.Contains(out, "repo_images:") {
+		t.Errorf("the text report names the provider-keyed member for a map that is not one:\n%s", out)
 	}
 }

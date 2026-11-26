@@ -4,7 +4,7 @@
 
 **Status as of 2026-11-21: 12/24 merged, 2 closed as superseded (E0, by
 [docs/roles-scopes](../roles-scopes/); B2, by [docs/outer-loop-escalation](../outer-loop-escalation/)'s
-**E8** — the owner's ruling of 2026-11-21), 10 open — C8's C8a built; C8b/C8c stay parked; see
+**E8** — the owner's ruling of 2026-11-21), 10 open — C8's C8a built; C8b and C8c unparked and approved by the owner on 2026-11-26 (D650 amended); see
 [docs/status.md](../status.md) for the current table.** **B3 (GitLab) left this plan on 2026-11-25
 for [docs/gitlab-support](../gitlab-support/), parked by the owner until a named need.** Every task below carries a **State** line
 from [reconciliation-image-setup.md](reconciliation-image-setup.md), which checked each one against
@@ -320,7 +320,7 @@ the stage runs (Constraint 1). Commits are now born stamped.
   `ErrChecksPermission` on an installation that has not granted both. They stay the **owner's** and
   nobody's built task: Check 231 remains in the register, NOT RUN, and a task that next widens
   `tokenPermissions` takes it. The bullet list below is the task as it was planned, kept as the
-  record. C8b/C8c stay parked (D650). See
+  record. C8b/C8c were unparked on 2026-11-26 (D650 amended). See
   [reconciliation-image-setup.md](reconciliation-image-setup.md) §2.
 
 - **Files:** `internal/gitprov/gitprov.go` (`Checks(ctx, sha) ([]CheckState, error)`),
@@ -550,8 +550,9 @@ behaviour (C8). C8 may start once the owner gives the go; T6 is no longer a gate
 #### C8. Build, lock, proposal and job update for shared images (after C7; the owner's go)
 
 - **State:** Kept — **C8a is merged** (`imagecheck.Key`, `imagecheck.ParseLock`/`ReadLock`/`Update`,
-  `imagecheck.Superset`, `schemas/image-lock.schema.json`); **C8b/C8c are not, and stay parked**
-  (D650, answered 2026-11-16: keep them, unscheduled): there is no
+  `imagecheck.Superset`, `schemas/image-lock.schema.json`); **C8b/C8c are not built, and the owner unparked and approved them on 2026-11-26**
+  (D650 amended; D653 holds: a shared image is a catalog entry keyed by the dependency set, and the
+  commands read `repo_images` by provider, not `image_map`; C8c waits for C8b): there is no
   `internal/cli/image_ls.go`, `image_proposal.go` or `image_prune.go`, and
   `config.SharedCheckoutRefusal` refuses `checkout: shared` until a release ships the images. Whether
   image-setup's catalog-first direction closes them is

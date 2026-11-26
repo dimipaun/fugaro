@@ -43,13 +43,11 @@ const poolWithoutLauncherTableYAML = `model_routing:
 // default names one this test cannot spell, and every arm below would read an
 // empty model set.
 //
-// agent.model is a lifted key (R1, D3237) and a repository's file no longer
-// decides its own (S1, config.Resolve): the pin the file writes is published as
-// the project layer the run resolves over (poolFixture, publishFilePins), which
-// is where a launch reads a repository's models now. The file keeps the key it
-// wrote, and the arms move the fixture's base image to l8Since, the release
-// where the runner honours it: a repository's own model on an older image is
-// L8's own refusal, which is not the refusal these tests read.
+// agent.model is a lifted key (R1, D3237), and the arms therefore move the
+// fixture's base image to l8Since, the release that stops reading it: a
+// repository's own model on an older image is L8's own refusal, which is not
+// the refusal these tests read. The model is the project layer's (S1, D3237),
+// so poolFixture publishes it there and keeps the key in the file.
 const poolModelRepoYAML = `version: 1
 project: aurora
 git:
@@ -143,29 +141,36 @@ func TestTokenFlagIsRejectedWithTheFix(t *testing.T) {
 	})
 }
 
-// TestReviewLaunchKeepsTheTokenFlag: `fugaro review --token NAME` is not
-// refused where the table names the launcher's pool. The review job's account
-// is CS15's subject, and the guard that exempts `recipe.ModeReview` from the
-// retirement is what keeps the command the plugin and `cli-reference.md`
-// document working until that task lands: without it a review launch on a
-// switched installation is refused exactly like a run's, and the account the
-// review job must run as has no way to be named at all.
+// TestReviewRecipeLaunchRefusesTheTokenFlag: a review-mode launch reached
+// through `fugaro run` is refused over `--token` exactly like any other run
+// where the table names the launcher's pool. CS12 exempted `recipe.ModeReview`
+// from the retirement because `fugaro review --token` was the only way to name
+// the account the review job ran as, and CS15 took that flag away: the review
+// job reaches its model by the table and its account is the repository's own,
+// so no launch of a review recipe has an account to name either.
 //
 // The fixture is the review one with a table that names the launcher's pool in
-// a chain matching every model — the world where the guard is the only thing
-// standing between `fugaro review --token` and the refusal, since the run arms
-// above read the same table and are refused. Mutation (verified, run and
-// restored): dropping `spec.Mode != recipe.ModeReview` from poolGate's token
-// arm fails this test.
-func TestReviewLaunchKeepsTheTokenFlag(t *testing.T) {
+// a chain matching every model, so this launch reads the same table the arms
+// above do and is refused by the same sentence.
+func TestReviewRecipeLaunchRefusesTheTokenFlag(t *testing.T) {
 	f := newReviewFixture(t)
 	f.appendConfig(t, poolEveryModelTableYAML)
 	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
-	if _, _, err := reviewCLI(t, "--pr", "7", "--token", "acme-personal"); err != nil {
-		t.Fatalf("a review of PR #7 on acme-personal where the table names the launcher's pool: %v: the review job's account is named with --token until CS15 retires it", err)
+	// The recipe is spelled out rather than taken from reviewOnlyRecipe: the
+	// runid guard reads a review-mode launch out of the literal name
+	// (runid_test.go's reviewModePR), and this launch reads no recency window.
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261126-090004-c512",
+		"--recipe", "review-only", "--pr", "7", "--token", "acme-personal")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("a review-mode launch naming an account where the table names the launcher's pool: err = %v, want the retirement of the flag", err)
 	}
-	if n := len(f.run.Executions()); n != 1 {
-		t.Fatalf("the review launch started %d executions, want 1: the guard keeps the launch, it does not merely keep the command silent", n)
+	for _, want := range []string{"--token", "--pool"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("the refused launch started %d executions, want none: the gate runs before the claim", n)
 	}
 }
 

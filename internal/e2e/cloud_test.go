@@ -28,6 +28,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/followup"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -75,6 +76,7 @@ type cloudRig struct {
 	fugaro     string
 	claude     string
 	cfg        string // the project config, under xdgConfig
+	layer      string // the project layer the fixture's pins moved to, beside cfg
 	xdgConfig  string // the CLI's XDG_CONFIG_HOME
 	bucket     string // file:// URL
 	remote     string
@@ -141,7 +143,7 @@ func newCloudRig(t *testing.T, claudeScript string, cancelPoll time.Duration, op
 	// Registered after the fakes, so it runs before they close: no
 	// execution outlives the test.
 	t.Cleanup(r.wait)
-	r.remote = testutil.NewRemote(t, pricedFixtureFiles(t))
+	r.seedRemote(pricedFixtureFiles(t))
 	r.claude = testutil.FakeClaude(t, claudeScript)
 	dir := t.TempDir()
 	r.dir = dir
@@ -206,12 +208,21 @@ func newCloudRig(t *testing.T, claudeScript string, cancelPoll time.Duration, op
 	if err := os.MkdirAll(filepath.Dir(r.cfg), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	cfg := "version: 1\nname: " + cloudProjectName + "\ngcp_project: " + cloudProject + "\nregion: " + cloudRegion + "\nruns_bucket: unused-bucket\n" +
+	cfg := "version: 1\nname: " + cloudProjectName + "\ngcp_project: " + cloudProject + "\nregion: " + cloudRegion + "\nruns_bucket: fugaro-runs-" + cloudProject + "\n" +
 		"bucket_url: '" + r.bucket + "'\nuser: someone@example.com\n" + r.budget.ConfigBlock() +
 		"endpoints:\n  run: '" + r.run.URL + "/'\n  logging: '" + r.logging.URL + "/'\n  iam_credentials: '" + r.iam.URL + "/'\n  no_auth: true\n" +
 		"repos:\n  acme/app: { provider: " + cloudProvider + ", base_branch: main, workflows: [" + cloudWorkflow + "] }\n"
 	if err := os.WriteFile(r.cfg, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
+	}
+	if r.layer != "" {
+		p := filepath.Join(bucket, filepath.FromSlash(config.LayerKey))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(r.layer), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	r.job = gcp.JobName(cloudSlug, cloudWorkflow)
 	r.run.AddJob(r.job, "4", "8Gi")
@@ -1206,28 +1217,20 @@ func pricedFixtureFiles(t *testing.T) map[string]string {
 func gatewayRig(upstream, mode, capUSD string) rigOption {
 	return func(r *cloudRig) {
 		r.gatewayUpstream, r.budgetMode, r.budgetCap = upstream, mode, capUSD
-		r.remote = testutil.NewRemote(r.t, pricedFixtureFiles(r.t))
+		r.seedRemote(pricedFixtureFiles(r.t))
 	}
 }
 
-// criticalRigor pins the rig's repository to Critical with a commit on
-// main. An unconfigured repository resolves Pro, which scales the deployed
+// criticalRigor pins the rig's repository to Critical in the project layer
+// (rigor.default is a lifted key, S1, D3237). An unconfigured repository resolves Pro, which scales the deployed
 // cap; Critical keeps the ceiling exactly the deployed cap, as the runner's
 // twin tests do with critRigor (docs/rigor-modes D16, plan T6.1).
 func criticalRigor(r *cloudRig) {
 	r.t.Helper()
-	clone := filepath.Join(r.t.TempDir(), "clone")
-	testutil.Git(r.t, filepath.Dir(clone), "clone", "--quiet", "--branch", "main", r.remote, clone)
-	path := filepath.Join(clone, "fugaro.yaml")
-	cfg, err := os.ReadFile(path)
-	if err != nil {
-		r.t.Fatal(err)
+	if !strings.Contains(r.layer, "\ndefaults:\n") || !strings.HasSuffix(r.layer, "\n") {
+		r.t.Fatalf("the rig's project layer has no defaults block to carry the rigor default:\n%s", r.layer)
 	}
-	if err := os.WriteFile(path, append(cfg, []byte("rigor:\n  default: critical\n")...), 0o644); err != nil {
-		r.t.Fatal(err)
-	}
-	testutil.Git(r.t, clone, "commit", "--quiet", "-am", "Pin the rigor mode")
-	testutil.Git(r.t, clone, "push", "--quiet", "origin", "HEAD:refs/heads/main")
+	r.layer += "  rigor:\n    default: critical\n"
 }
 
 // pricedUpstream is a fake model upstream that answers every call as a small

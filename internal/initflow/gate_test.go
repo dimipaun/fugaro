@@ -353,31 +353,44 @@ func TestManagedAskTakesTheGateOutOfTheDecision(t *testing.T) {
 }
 
 // TestAskDecisionIsTheFlagsWholeRule enumerates the decision, by hand: the
-// no-op line wherever the marks did not answer "managed" (and a refusal
-// nowhere), the refusal wherever a managed project's run cannot prompt, and
-// the restored line for the owner who can. The rows are written out rather
-// than derived, so a rule that answered a line and a refusal at once, or
-// answered a managed project's terminal with a refusal, is a failure here.
+// no-op line wherever the marks did not answer "managed" and the flag turns no
+// value entry on (and a refusal nowhere there), the restored line for the
+// owner who can and the refusal wherever a managed project's run cannot
+// prompt, and, for the update door whose --ask also asks for values, the
+// AskValues line at a terminal and its refusal where nobody can answer one.
+// The rows are written out rather than derived, so a rule that answered a line
+// and a refusal at once, or answered a managed project's terminal with a
+// refusal, is a failure here.
 func TestAskDecisionIsTheFlagsWholeRule(t *testing.T) {
 	for _, c := range allConditions() {
 		canPrompt := c.Agent == "" && c.Terminal && !c.NonInteractive && !c.JSON
 		for _, managed := range []bool{false, true} {
-			line, refusal := AskDecision(c, managed)
-			switch {
-			case !managed:
-				if refusal != "" || line != AskUnmanaged() {
-					t.Errorf("AskDecision(%s, managed=false) = %q, %q, want the no-op line and no refusal", conditionsName(c), line, refusal)
-				}
-			case canPrompt:
-				if refusal != "" || line != AskRestored() {
-					t.Errorf("AskDecision(%s, managed=true) = %q, %q, want the restored line and no refusal", conditionsName(c), line, refusal)
-				}
-			default:
-				if line != "" || refusal != AskRefusal(c) {
-					t.Errorf("AskDecision(%s, managed=true) = %q, %q, want the refusal and no line", conditionsName(c), line, refusal)
-				}
-				if !strings.Contains(refusal, askNobody(c)) {
-					t.Errorf("AskDecision(%s, managed=true) refuses with %q, which does not say why nobody can answer it (%q)", conditionsName(c), refusal, askNobody(c))
+			for _, values := range []bool{false, true} {
+				line, refusal := AskDecision(c, managed, values)
+				switch {
+				case managed && canPrompt:
+					if refusal != "" || line != AskRestored() {
+						t.Errorf("AskDecision(%s, managed=true, values=%v) = %q, %q, want the restored line and no refusal", conditionsName(c), values, line, refusal)
+					}
+				case managed:
+					if line != "" || refusal != AskRefusal(c) {
+						t.Errorf("AskDecision(%s, managed=true, values=%v) = %q, %q, want the refusal and no line", conditionsName(c), values, line, refusal)
+					}
+					if !strings.Contains(refusal, askNobody(c)) {
+						t.Errorf("AskDecision(%s, managed=true) refuses with %q, which does not say why nobody can answer it (%q)", conditionsName(c), refusal, askNobody(c))
+					}
+				case !values:
+					if refusal != "" || line != AskUnmanaged() {
+						t.Errorf("AskDecision(%s, managed=false, values=false) = %q, %q, want the no-op line and no refusal", conditionsName(c), line, refusal)
+					}
+				case canPrompt:
+					if refusal != "" || line != AskValues() {
+						t.Errorf("AskDecision(%s, managed=false, values=true) = %q, %q, want the values line and no refusal", conditionsName(c), line, refusal)
+					}
+				default:
+					if line != "" || refusal != "" {
+						t.Errorf("AskDecision(%s, managed=false, values=true) = %q, %q, want nothing from the flag where no terminal can ask a value", conditionsName(c), line, refusal)
+					}
 				}
 			}
 		}
@@ -387,12 +400,18 @@ func TestAskDecisionIsTheFlagsWholeRule(t *testing.T) {
 	// it is the session's own advice (the person's terminal), the way every
 	// refusal for a session nobody can ask is.
 	for _, c := range []Conditions{{Agent: "CLAUDECODE"}, {JSON: true}, {}, {Terminal: true, JSON: true}} {
-		_, refusal := AskDecision(c, true)
+		_, refusal := AskDecision(c, true, false)
 		if !strings.Contains(refusal, "nothing is applied") {
 			t.Errorf("the refusal for %s does not say that nothing is applied: %q", conditionsName(c), refusal)
 		}
 		if !strings.Contains(refusal, AgentAdvice) {
 			t.Errorf("the refusal for %s does not carry the way out that every refusal for a session nobody can ask carries: %q", conditionsName(c), refusal)
+		}
+		// The update door's value entry is not this refusal: where no terminal
+		// can ask a value the flag prints and refuses nothing, and the stage
+		// leaves its own `fugaro secrets set` lines instead (D1540).
+		if line, vr := AskDecision(c, false, true); line != "" || vr != "" {
+			t.Errorf("the update door's value entry answered %q, %q where no terminal can ask a value, want nothing from the flag", line, vr)
 		}
 	}
 }

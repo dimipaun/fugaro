@@ -784,3 +784,48 @@ func TestImageRefreshManagedOwnerTerminalAsksNoBasePinQuestion(t *testing.T) {
 		})
 	}
 }
+
+// TestImageRefreshRefusesUnmanaged is D1541's fence on this command (T7c): the
+// refresh pins, rebuilds and re-points the project's own images, so a project
+// that is not managed is refused at the head of its first step, before the base
+// stage opens a registry to copy into.
+//
+// The red step is the stage itself, and the whole command is driven for it: on
+// a world whose marks are absent the real refresh would finish step 1, print
+// its plan, and run the base stage — which copies the release images into the
+// installation's own registry (r.built, r.dst.puts) and pins the new base in
+// the local config. Every one of those is a write this command may not make
+// until its project is managed, and each is asserted at zero here.
+//
+// The command opens its clients through the init engine rather than through the
+// two seams the fence is free at, so it asks for itself (requireManaged), and
+// the refusal is the whole of what the owner reads: refusedAsIs keeps the stop
+// message's "stopped at step 2 (base)" tail off it, because that tail would
+// account for a run that never started.
+func TestImageRefreshRefusesUnmanaged(t *testing.T) {
+	fugaroAtItsOwnName(t)
+	useSelf(t)
+	r := newImagesRig(t, "1.2.3")
+	r.appendConfig(t, "  acme/app: { provider: github, workflows: [app], github_app_id: \"12345\" }\n")
+	t.Chdir(repoCheckout(t, githubOrigin, refreshYAML))
+	records = map[string]string{}
+	prevOpen := openRecordBucket
+	openRecordBucket = openFakeRecords
+	t.Cleanup(func() { openRecordBucket = prevOpen })
+	fakeTerminal(t)
+
+	out, _, err := executeStdin(t, "", "image", "refresh")
+	checkFenceRefusal(t, err, "image refresh")
+	if said := out + err.Error(); strings.Contains(said, "stopped at step") {
+		t.Errorf("the refusal carries the stop message's tail, which accounts for a run that never started:\n%s", said)
+	}
+	if r.built != 0 {
+		t.Errorf("the base stage ran on a project that is not managed: it mirrored %d image(s)", r.built)
+	}
+	if r.dst.puts != 0 {
+		t.Errorf("the refused refresh wrote %d tag(s) to the installation's own registry", r.dst.puts)
+	}
+	if got := r.localConfig(t).BaseImages["base"]; got != "" {
+		t.Errorf("the refused refresh pinned base in the local config: %q", got)
+	}
+}

@@ -36,13 +36,12 @@ package credsvc
 // (slip_test.go states the same rule for the slip's store, which is the real
 // one over the fake database).
 //
-// The handlers are called DIRECTLY, and that is a fact of this release and not
-// a shortcut: until I1 binds the door (identity_stub.go), every identity path
-// answers "not served" through ServeHTTP whatever the configuration holds, so a
-// call over the socket could not reach either route. The door's own property —
-// that these paths are answered ahead of the shared parse — is asserted where
-// it is written (scope_installation_test.go walks the five paths) and again
-// here for the two this file is about.
+// The handlers are called DIRECTLY: each case builds exactly the dependencies
+// it is about (a signer over the fake IAM endpoint, a scope that answers one
+// way), which is the whole of what a case here decides. The door's own property
+// — that these paths are answered ahead of the shared parse — is asserted where
+// it is written (scope_installation_test.go walks the five paths) and end to
+// end in identity_e2e_test.go, which drives both routes over the socket.
 
 import (
 	"context"
@@ -253,13 +252,13 @@ func newClaimFixture(t *testing.T, operators ...string) *claimFixture {
 	// token.IAMSigner) pointed at the fake endpoint: what a test replaces is
 	// where the service's own credential comes from, and everything above it —
 	// the claims' checks, the payload, token.MintAt's re-read — is the real code.
-	old := identitySignerFor
-	identitySignerFor = func(_ context.Context, email string) (token.Signer, error) {
+	old := IdentitySignerFor
+	IdentitySignerFor = func(_ context.Context, email string) (token.Signer, error) {
 		return token.NewIAMSigner(email,
 			oauth2.StaticTokenSource(&oauth2.Token{AccessToken: testClaimCredential}),
 			token.WithIAMEndpoint(iam.URL))
 	}
-	t.Cleanup(func() { identitySignerFor = old })
+	t.Cleanup(func() { IdentitySignerFor = old })
 	return &claimFixture{svc: s, issuance: issuance, iam: iam}
 }
 

@@ -32,10 +32,10 @@ from any directory.
 
 ## Scope
 
-Plain `fugaro update`, `update --check`, and the `gcp_project` anchor edit. Not in scope:
-`update --repo` and the per-repository roots (L2, which L5 waits on), catalog entries built by
-another repository's account (L3), credential records (L4), workflow-secret records and the
-GitHub App (L6).
+Plain `fugaro update`, `update --check`, and the `gcp_project` anchor edit. `update --repo` is out
+of scope until U11, and goes in U12 (the owner's ruling of 2026-11-26, D3353). Not in scope: the
+per-repository roots (L2, which L5 waits on), catalog entries built by another repository's
+account (L3), credential records (L4), workflow-secret records and the GitHub App (L6).
 
 ## The enrolled list
 
