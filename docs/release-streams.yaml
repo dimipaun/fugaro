@@ -25,7 +25,7 @@ streams:
     # The last CLI release, v0.21.2 "Rhino two"; 0.22.0 "Sloth" is next (the
     # field below stays at the version main carries: a hotfix is cut from its
     # own branch and is never merged back).
-    current: "0.29.4"
+    current: "0.29.5"
     next: Zebra
     tag_prefix: v
 
