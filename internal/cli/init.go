@@ -3457,6 +3457,32 @@ func (r *initRun) managedScope(ctx context.Context, c *infra.Clients) (bool, err
 // because two of the three callers have no client to read the published node
 // with: the rollback passes nil with asFound, so the block is carried exactly as found, and --print-vars passes the config's own answer.
 func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, verifiers []string, asFound bool) (map[string]string, error) {
+	// The switch that moves the minter grant is read BEFORE the document is
+	// built, and from the two documents below, because it is the one key whose
+	// VALUE this spec must carry and not one a carry can add afterwards: the
+	// module reads var.people_minter, and the guard reads the same value out of
+	// the plan (infra.PeopleMinter, infra.IdentityAllowDelete). A run that lost
+	// it would hand the root its default — on — and plan the people's rows back
+	// on an installation whose credentials service has already been proved to
+	// sign as the runs' signer (LM14, R8). The spec's own answer stands where it
+	// has one: LM14's stage is the only run that sets it, and it sets it off.
+	now, err := wd.Vars()
+	if err != nil {
+		return nil, userErr("reading the installation's tfvars: %v", err)
+	}
+	if spec.PeopleMinter == nil {
+		for _, prev := range [][]byte{wd.PrevVars, now} {
+			off, err := infra.PeopleMinterOff(prev)
+			if err != nil {
+				return nil, userErr("reading the installation's tfvars: %v", err)
+			}
+			if off {
+				wasOff := false
+				spec.PeopleMinter = &wasOff
+				break
+			}
+		}
+	}
 	vars, err := infra.InstallationVars(spec)
 	if err != nil {
 		return nil, err
@@ -3481,10 +3507,6 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 	//     document without the block and plan the service away — a plan
 	//     the bundle container's prevent_destroy refuses, so the run would
 	//     fail after the service had been deployed.
-	now, err := wd.Vars()
-	if err != nil {
-		return nil, userErr("reading the installation's tfvars: %v", err)
-	}
 	documents := [][]byte{wd.PrevVars, now}
 	if spec.CredentialsService == nil {
 		// The credentials service's block is written by the installation

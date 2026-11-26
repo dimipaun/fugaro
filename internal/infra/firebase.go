@@ -302,6 +302,15 @@ type FirebaseSpec struct {
 	// root: set (to SharedAPIs) only when the Firebase project is the
 	// installation's own project, and left out of the tfvars otherwise.
 	SkipAPIs []string `json:"skip_apis,omitempty"`
+	// PeopleMinter is the launcher-does-not-mint switch (LM11, LM12, LM14):
+	// the root's var.people_minter, which keeps the people's minter rows
+	// (modules/firebase/iam.tf's google_service_account_iam_member.minter)
+	// while it is on. It is a POINTER for the reason InstallationSpec's is:
+	// nil is the key's absence and the root's default (on), and only `false`
+	// is ever written. nil on every run that is not the one moving the grant,
+	// and set from the document the Firebase workdir already held when the
+	// switch is off (initFirebase's carry).
+	PeopleMinter *bool `json:"people_minter,omitempty"`
 }
 
 // SharedAPIs are the APIs both the installation module and the Firebase
@@ -358,6 +367,12 @@ type FirebaseInputs struct {
 	// names its member as a literal plan string (issuerMinterGrant is what
 	// holds it to that account of a run whose plans name it at all).
 	IssuerAccount string
+	// PeopleMinter is the launcher-does-not-mint switch as the caller knows
+	// it (LM14): nil is the key's absence and the root's default (on), and
+	// only `false` is ever passed. It is what the run that moves the grant
+	// hands over, and the carry of the document the workdir already held
+	// otherwise.
+	PeopleMinter *bool
 }
 
 // Firebase is the Firebase root's spec for the installation spec, which
@@ -408,6 +423,7 @@ func Firebase(inst InstallationSpec, in FirebaseInputs) (FirebaseSpec, error) {
 		BudgetAdmins:            sortedUnique(in.BudgetAdmins),
 		HistoryAccount:          history,
 		CoordinatorAccount:      coordinator,
+		PeopleMinter:            in.PeopleMinter,
 	}
 	// The workspace's account is the member's own pin and needs no rule of
 	// this root's to exist (it is not created here, and it is not on the

@@ -200,14 +200,23 @@ func (r *initRun) applyRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd 
 		}
 		r.planBlock(plan)
 		counts := infra.CountPlan(plan)
+		// The minter rows this root's own switch-off removes (LM14, F32): the
+		// people's rows in this root, named only when the plan itself says the
+		// launcher-does-not-mint switch is off, so the guard and the managed
+		// gate judge them exactly as they did before this list existed — with
+		// the switch on, the same delete is a member dropped from the roster,
+		// which is never this binary's own removal. It is computed here and not
+		// handed in: this is the root the rows live in, and its plan is the only
+		// one that can name them.
+		identity := infra.IdentityAllowDelete(plan, infra.PeopleMinter(plan))
 		// The managed gate first, and the guard and the confirmation only when it
 		// does not admit this plan (D1016, update_managed.go).
-		gated, err := r.gateStep(ctx, t, imports, r.coverOfFirebase(), nil, nil)
+		gated, err := r.gateStep(ctx, t, imports, r.coverOfFirebase(), nil, identity)
 		if err != nil {
 			return plan, err
 		}
 		if !gated {
-			if err := r.guard(ctx, c, plan, r.o.allowDelete); err != nil {
+			if err := r.guard(ctx, c, plan, append(slices.Clone(r.o.allowDelete), identity...)); err != nil {
 				return plan, err
 			}
 			if r.o.planOnly {
@@ -412,8 +421,9 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	// database's own — answers false here, and false is the last thing the tfvars
 	// may say for an installation that already has the indexes: an empty for_each
 	// is a plan to destroy them. That case is decided from the Firebase state,
-	// further down (runIndexIndexesManaged).
-	dbExists := fsStep.DatabaseExists()
+	// further down (runIndexIndexesManaged), and dbKnown is what tells the apply
+	// which of the two it is.
+	dbExists, dbKnown := fsStep.DatabaseExists(), fsStep.DatabaseKnown()
 
 	// 1. The installation root.
 	outs, stop, err := r.installRoot(ctx, c, t, wd, lc, spec)
@@ -449,107 +459,12 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	}
 
 	// 2. The Firebase root.
-	fdir, err := infra.FirebaseWorkdir(os.Getenv, lc.GCPProject)
-	if err != nil {
-		return userErr("%v", err)
-	}
-	fwd, ft, err := r.terraform(bin, fdir, "firebase")
-	if err != nil {
-		return err
-	}
-	fspec, err := infra.Firebase(spec, infra.FirebaseInputs{FP: fp, Admins: admins, BudgetAdmins: r.budgetAdmins(lc), HistoryAccount: outs.HistoryServiceAccount, CoordinatorAccount: outs.CoordinatorServiceAccount, WorkspaceServiceAccount: lc.WorkspacePin.ServiceAccount, IssuerAccount: issuer, FirestoreDatabaseExists: dbExists})
-	if err != nil {
-		return initErr(err)
-	}
-	backend, err := fwd.WriteBackend(spec.StateBucket, infra.StatePrefixFirebase)
-	if err != nil {
-		return userErr("%v", err)
-	}
-	// No imports.tf.json is here yet: PrepareWorkdir (r.terraform) rebuilt
-	// the root's tree, so only this run's discovery writes it, below, and a
-	// refusal leaves none.
-	if err := ft.Init(ctx, backend); err != nil {
-		return remote(err)
-	}
-	// The state is read before discovery. terraform init and show read the
-	// installation's state bucket, and on a first run Terraform's GCS
-	// backend may create an EMPTY state object there (taking and releasing
-	// its lock); nothing is written to the Firebase project. What the state
-	// manages is Terraform's already, so discovery neither vets nor imports
-	// it, and the plan, the guard and the confirmation handle it as they
-	// always have. A first run has no state ({"format_version":"1.0"}, no
-	// values), which manages nothing; a state that cannot be read stops the
-	// run.
-	st, err := ft.ShowState(ctx)
-	if err != nil {
-		return remote(err)
-	}
-	managed := map[string]bool{}
-	for _, a := range st.Addresses() {
-		managed[a] = true
-	}
-	// The run index's gate (RI2), decided here because this is where the state is
-	// known — and the tfvars are written here, and not before the state was read,
-	// for that reason: nothing in between reads the file (terraform init and show
-	// take no variables) and the plan below does. The plan above answers only when
-	// its read of the database answered at all; when it did not, the tfvars must
-	// not say there is no database, because the module's for_each would then plan
-	// away the composite indexes an installation already has. A state that manages
-	// one is an installation that has them, and it keeps them. A state that
-	// manages none keeps the plan's false, which is the direction that costs a
-	// read and never a failed apply.
-	if !fsStep.DatabaseKnown() {
-		fspec.FirestoreDatabaseExists = runIndexIndexesManaged(managed)
-	}
-	vars, err := infra.FirebaseVars(fspec)
-	if err != nil {
-		return err
-	}
-	if err := fwd.WriteVars(vars); err != nil {
-		return userErr("writing the Firebase tfvars: %v", err)
-	}
-	// Read-only discovery of the Firebase project's own singletons that the
-	// state does not manage: a look-alike is refused before any plan or
-	// apply and before imports.tf.json is written. The Firebase project
-	// pays for these reads, as the root's provider does.
-	dc, err := r.discoveryClients(ctx, c, lc, fp)
-	if err != nil {
-		return err
-	}
-	im, err := infra.DiscoverFirebase(ctx, dc, fspec, managed)
-	if err != nil {
-		return initErr(err)
-	}
-	for _, n := range im.Notes {
-		r.warn(n)
-	}
-	// The file is written on every run, empty when there is nothing to
-	// import.
-	if err := infra.WriteImports(fwd.Root, im); err != nil {
-		return userErr("writing the Firebase imports: %v", err)
-	}
-	what := fmt.Sprintf("to the Firebase project %s (the Realtime Database, a restricted web API key, the token signer and the grants on it)", fp)
-	if names := adoptedNames(im); names != "" {
-		what = fmt.Sprintf("to the Firebase project %s (adopting the existing %s; the Realtime Database, a restricted web API key, the token signer and the grants on it)", fp, names)
-	}
-	applied, stop, err := r.applyRoot(ctx, c, ft, fwd, "firebase", what, im.Keys())
+	fo, stop, err := r.applyFirebaseRoot(ctx, c, bin, lc, spec, firebaseRootInputs{
+		fp: fp, admins: admins, outs: outs, issuer: issuer, dbExists: dbExists, dbKnown: dbKnown,
+	})
 	if err != nil || stop {
 		return err
 	}
-	r.res.Applied = r.res.Applied || applied
-	raw, err := ft.Output(ctx)
-	if err != nil {
-		return remote(err)
-	}
-	fo, err := infra.DecodeFirebaseOutputs(raw)
-	if err != nil {
-		return remote(err)
-	}
-	if fo.FirebaseProject != fp {
-		return remote(fmt.Errorf("the Firebase root's firebase_project output is %s, not %s", fo.FirebaseProject, fp))
-	}
-	r.fb = &fo
-	r.res.Firebase, r.res.RTDBURL = fp, fo.RTDBURL
 
 	// 3. The database, then the local config.
 	db, err := r.openDatabase(ctx, lc, fo.RTDBURL, mode)
@@ -604,6 +519,167 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	// and creates it there with nothing asked, in every session this stage may
 	// run in (D3090).
 	return r.deployFirestore(ctx, fsStep)
+}
+
+// firebaseRootInputs is what the Firebase root's apply needs that its own
+// caller has already read: the project, the admins, the installation's outputs,
+// the credentials service's account, whether the Firestore database's existence
+// was read, and the launcher-does-not-mint switch when the caller is the run
+// that turns it off.
+//
+// dbKnown is the caller saying its read of the database answered
+// (FirestoreStep.DatabaseKnown) and dbExists the answer it gave
+// (FirestoreStep.DatabaseExists). dbKnown false means the state decides the
+// root's run-index gate instead (runIndexIndexesManaged), which is the direction
+// that never plans an installation's indexes away.
+//
+// peopleMinter nil is "compose it as this root always has", and the carry below
+// is what fills it: the document the workdir held before this run rebuilt the
+// tree. LM14's stage is the one caller that passes it, and it passes false.
+type firebaseRootInputs struct {
+	fp           string
+	admins       []string
+	outs         infra.InstallationOutputs
+	issuer       string
+	dbExists     bool
+	dbKnown      bool
+	peopleMinter *bool
+}
+
+// applyFirebaseRoot builds the Firebase project's tfvars and applies the
+// Firebase root: discovery of the project's own singletons, the imports, the
+// plan, the gate and the guard, the apply, and the outputs read back into
+// r.fb and the run's result.
+//
+// It is the root's own stage body, split out so that LM14's stage can apply this
+// root a second time in the one run that turns the launcher-does-not-mint switch
+// off (R8): that stage has already applied the installation root and created the
+// database, and what it owes is exactly this apply and nothing else — no
+// discovery of the database again, no Identity Platform, no rules deploy.
+//
+// stop is the caller's own "nothing more to do in this stage": --plan-only, or a
+// plan with no changes under it. The caller returns on it as it did when this
+// body stood in initFirebase.
+func (r *initRun) applyFirebaseRoot(ctx context.Context, c *infra.Clients, bin string, lc *localcfg.Config, spec infra.InstallationSpec, in firebaseRootInputs) (fo infra.FirebaseOutputs, stop bool, err error) {
+	fdir, err := infra.FirebaseWorkdir(os.Getenv, lc.GCPProject)
+	if err != nil {
+		return fo, false, userErr("%v", err)
+	}
+	fwd, ft, err := r.terraform(bin, fdir, "firebase")
+	if err != nil {
+		return fo, false, err
+	}
+	fspec, err := infra.Firebase(spec, infra.FirebaseInputs{FP: in.fp, Admins: in.admins, BudgetAdmins: r.budgetAdmins(lc), HistoryAccount: in.outs.HistoryServiceAccount, CoordinatorAccount: in.outs.CoordinatorServiceAccount, WorkspaceServiceAccount: lc.WorkspacePin.ServiceAccount, IssuerAccount: in.issuer, FirestoreDatabaseExists: in.dbExists, PeopleMinter: in.peopleMinter})
+	if err != nil {
+		return fo, false, initErr(err)
+	}
+	// The launcher-does-not-mint switch, carried forward from the document the
+	// workdir held before this run rebuilt the tree: the one run that turns it
+	// off is LM14's own stage, and every later run of this root that lost the
+	// key would hand the module its default and plan the people's rows back
+	// (infra.CarriedPeopleMinter's own note). The document read is PrevVars and
+	// not Vars(): PrepareWorkdir has already deleted the tree, so the workdir
+	// holds no tfvars at this point.
+	if fspec.PeopleMinter == nil {
+		off, err := infra.PeopleMinterOff(fwd.PrevVars)
+		if err != nil {
+			return fo, false, userErr("reading the Firebase tfvars: %v", err)
+		}
+		if off {
+			wasOff := false
+			fspec.PeopleMinter = &wasOff
+		}
+	}
+	backend, err := fwd.WriteBackend(spec.StateBucket, infra.StatePrefixFirebase)
+	if err != nil {
+		return fo, false, userErr("%v", err)
+	}
+	// No imports.tf.json is here yet: PrepareWorkdir (r.terraform) rebuilt
+	// the root's tree, so only this run's discovery writes it, below, and a
+	// refusal leaves none.
+	if err := ft.Init(ctx, backend); err != nil {
+		return fo, false, remote(err)
+	}
+	// The state is read before discovery. terraform init and show read the
+	// installation's state bucket, and on a first run Terraform's GCS
+	// backend may create an EMPTY state object there (taking and releasing
+	// its lock); nothing is written to the Firebase project. What the state
+	// manages is Terraform's already, so discovery neither vets nor imports
+	// it, and the plan, the guard and the confirmation handle it as they
+	// always have. A first run has no state ({"format_version":"1.0"}, no
+	// values), which manages nothing; a state that cannot be read stops the
+	// run.
+	st, err := ft.ShowState(ctx)
+	if err != nil {
+		return fo, false, remote(err)
+	}
+	managed := map[string]bool{}
+	for _, a := range st.Addresses() {
+		managed[a] = true
+	}
+	// The run index's gate (RI2), decided here because this is where the state is
+	// known — and the tfvars are written here, and not before the state was read,
+	// for that reason: nothing in between reads the file (terraform init and show
+	// take no variables) and the plan below does. The plan above answers only when
+	// its read of the database answered at all; when it did not, the tfvars must
+	// not say there is no database, because the module's for_each would then plan
+	// away the composite indexes an installation already has. A state that manages
+	// one is an installation that has them, and it keeps them. A state that
+	// manages none keeps the plan's false, which is the direction that costs a
+	// read and never a failed apply.
+	if !in.dbKnown {
+		fspec.FirestoreDatabaseExists = runIndexIndexesManaged(managed)
+	}
+	vars, err := infra.FirebaseVars(fspec)
+	if err != nil {
+		return fo, false, err
+	}
+	if err := fwd.WriteVars(vars); err != nil {
+		return fo, false, userErr("writing the Firebase tfvars: %v", err)
+	}
+	// Read-only discovery of the Firebase project's own singletons that the
+	// state does not manage: a look-alike is refused before any plan or
+	// apply and before imports.tf.json is written. The Firebase project
+	// pays for these reads, as the root's provider does.
+	dc, err := r.discoveryClients(ctx, c, lc, in.fp)
+	if err != nil {
+		return fo, false, err
+	}
+	im, err := infra.DiscoverFirebase(ctx, dc, fspec, managed)
+	if err != nil {
+		return fo, false, initErr(err)
+	}
+	for _, n := range im.Notes {
+		r.warn(n)
+	}
+	// The file is written on every run, empty when there is nothing to
+	// import.
+	if err := infra.WriteImports(fwd.Root, im); err != nil {
+		return fo, false, userErr("writing the Firebase imports: %v", err)
+	}
+	what := fmt.Sprintf("to the Firebase project %s (the Realtime Database, a restricted web API key, the token signer and the grants on it)", in.fp)
+	if names := adoptedNames(im); names != "" {
+		what = fmt.Sprintf("to the Firebase project %s (adopting the existing %s; the Realtime Database, a restricted web API key, the token signer and the grants on it)", in.fp, names)
+	}
+	applied, stop, err := r.applyRoot(ctx, c, ft, fwd, "firebase", what, im.Keys())
+	if err != nil || stop {
+		return fo, stop, err
+	}
+	r.res.Applied = r.res.Applied || applied
+	raw, err := ft.Output(ctx)
+	if err != nil {
+		return fo, false, remote(err)
+	}
+	fo, err = infra.DecodeFirebaseOutputs(raw)
+	if err != nil {
+		return fo, false, remote(err)
+	}
+	if fo.FirebaseProject != in.fp {
+		return fo, false, remote(fmt.Errorf("the Firebase root's firebase_project output is %s, not %s", fo.FirebaseProject, in.fp))
+	}
+	r.fb = &fo
+	r.res.Firebase, r.res.RTDBURL = in.fp, fo.RTDBURL
+	return fo, false, nil
 }
 
 // runIndexIndexesManaged reports whether the Firebase root's state manages any
