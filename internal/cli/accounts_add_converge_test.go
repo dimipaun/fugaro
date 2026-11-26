@@ -254,12 +254,24 @@ func TestAccountsAddReplacesTheTokenOnRerun(t *testing.T) {
 	if got := lc.Profiles["standard"].ClaudeAccounts; !slices.Equal(got, []string{"team-a"}) {
 		t.Errorf("profiles.standard.claude_accounts = %v after the rotation, want one entry", got)
 	}
-	// A rotation of a name this project already declares changes no key, so the
-	// file is not rewritten at all: the second run reads the config, stores the
-	// value and converges. (The confirmation's own rotation sentence, which a
-	// widening re-run prints, is A1's — accounts_add_test.go.)
+	// A rotation writes no pool (the owner's ruling of 2026-11-25): the pool of
+	// one belongs to a NEW account, so a replace of a name that is already an
+	// account leaves pools alone and the run reports no change.
+	if _, ok := accountsPoolOf(lc, "team-a"); ok {
+		t.Errorf("the rotation wrote a pool of one for %s: %+v", "team-a", lc.Pools)
+	}
 	if !strings.Contains(out, ": no change") {
-		t.Errorf("the second run rewrote the config although the declaration in it is the one that is there:\n%s", out)
+		t.Errorf("the second run reported a change although a rotation writes no key:\n%s", out)
+	}
+	// And a third run changes no key at all either: it reads the
+	// config, stores the value and converges. (The confirmation's own rotation
+	// sentence, which a widening re-run prints, is A1's — accounts_add_test.go.)
+	third, _, err := executeStdin(t, rotated+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a")
+	if err != nil {
+		t.Fatalf("the third run: %v\n%s", err, third)
+	}
+	if !strings.Contains(third, ": no change") {
+		t.Errorf("the third run rewrote the config although every key in it is the one that is there:\n%s", third)
 	}
 }
 

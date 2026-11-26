@@ -224,7 +224,7 @@ func ReviewerArm(ctx context.Context, run fcli.PlannedRun, champion fcli.RunReco
 	}
 	judged := *cfg
 	judged.Agent = launchAgent(*cfg)
-	model, ok, why := admitAgainst(judged, pair, run.Repo, run.Policy, run.Providers, run.Prices, run.ServiceHeldKey, variedModel)
+	model, ok, why := admitAgainst(judged, pair, run.Repo, run.ModelRouting, run.Policy, run.Providers, run.Prices, run.ServiceHeldKey, variedModel)
 	if !ok {
 		return nil, why, nil
 	}

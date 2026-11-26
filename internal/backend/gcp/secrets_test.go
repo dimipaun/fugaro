@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"maps"
+	"net/http"
 	"os"
 	"slices"
 	"strings"
@@ -282,5 +284,57 @@ func TestSecretsAccess(t *testing.T) {
 	}
 	if a := sm.Accessed(); len(a) != 1 || a[0] != "has-1" {
 		t.Errorf("accessed = %v", a)
+	}
+}
+
+// SetLabels is the retirement's own write (D3325, IS13): a project copy is
+// marked retired by taking fugaro_secret OFF it, which is the label
+// internal/infra's discovery adopts a project-wide container by, and a label
+// the map no longer holds is a label the API's labels mask removes. The
+// container's versions are not part of it.
+func TestSecretsSetLabelsReplacesTheWholeMap(t *testing.T) {
+	ctx := context.Background()
+	s, sm := newTestSecrets(t)
+	id := ProjectSecretID("acme", "npm-token")
+	sm.Seed(id, map[string]string{LabelManaged: ManagedValue, LabelProject: "acme", LabelSecret: "npm-token"}, []byte("the-value"))
+
+	retired := map[string]string{LabelManaged: ManagedValue, LabelProject: "acme", LabelRetired: "npm-token"}
+	if err := s.SetLabels(ctx, id, retired); err != nil {
+		t.Fatalf("SetLabels: %v", err)
+	}
+	got := sm.Labels(id)
+	if _, ok := got[LabelSecret]; ok {
+		t.Fatalf("labels = %v: fugaro_secret is still on the container, so discovery still adopts it", got)
+	}
+	if !maps.Equal(got, retired) {
+		t.Fatalf("labels = %v, want exactly %v", got, retired)
+	}
+	if v := sm.Latest(id); string(v) != "the-value" {
+		t.Fatalf("the container's value is %q: a label write took a version with it", v)
+	}
+	if p := sm.LabelPatches(); len(p) != 1 || p[0] != id {
+		t.Fatalf("label patches = %v", p)
+	}
+	if d := sm.Deleted(); len(d) != 0 {
+		t.Fatalf("SetLabels deleted %v", d)
+	}
+	var patch *gcpfake.Request
+	for _, r := range sm.Requests() {
+		if r.Method == http.MethodPatch {
+			patch = &r
+		}
+	}
+	if patch == nil {
+		t.Fatal("no patch was made")
+	}
+	if patch.Path != "/v1/projects/proj-1234/secrets/"+id || !strings.Contains(patch.Query, "updateMask=labels") {
+		t.Fatalf("the patch was %s?%s, want the labels mask on the one container", patch.Path, patch.Query)
+	}
+
+	// A container that is not there is the API's refusal, not a silent success:
+	// the caller read the container before it marked it, so a 404 here is a
+	// container that went away between the two calls.
+	if err := s.SetLabels(ctx, "sev-missing", map[string]string{LabelRetired: "x"}); err == nil {
+		t.Fatal("SetLabels on an absent container succeeded")
 	}
 }

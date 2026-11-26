@@ -175,7 +175,7 @@ func Find(lookPath func(string) (string, error)) (string, error) {
 // Runner runs claude at Bin with Dir as its working directory.
 type Runner struct {
 	Bin string    // absolute, from Find
-	Dir string    // absolute: the checkout's top, where no call runs any more (needsCheckout)
+	Dir string    // absolute: the working directory a call that acts on a checkout would get; no call is one any more (needsCheckout)
 	Out io.Writer // what a change prints goes here, made safe
 }
 

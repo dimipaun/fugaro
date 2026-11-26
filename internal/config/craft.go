@@ -513,7 +513,11 @@ func CredentialNamed(creds []Credential, name string) (Credential, bool) {
 //
 // A pool and a credential share one namespace, because a craft's access names
 // either without saying which: a pool whose name is a credential's would leave
-// that name meaning two things.
+// that name meaning two things. The one collision the rule admits is the pool
+// of one named after its only member (D3176): the name means that credential
+// and the pool that walks it and nothing else, so a craft's access that speaks
+// it has one thing to resolve — which is the shape `fugaro accounts add` writes
+// for a subscription token and `fugaro update` writes for every lone account.
 //
 // What this does NOT refuse is the release-1 bridge of D3176: a subscription
 // token that no pool lists is left alone. `fugaro update` wraps each lone
@@ -542,7 +546,7 @@ func ValidatePools(pools []Pool, creds []Credential) []Problem {
 		switch {
 		case p.Name != "" && poolNames[p.Name]:
 			ps = append(ps, Problem{Path: at, Message: "this name is defined twice; a pool is named once per block"})
-		case p.Name != "" && defined[p.Name]:
+		case p.Name != "" && defined[p.Name] && !PoolMayTakeItsOnlyMembersName(p, creds):
 			ps = append(ps, Problem{Path: at, Message: "a credential of this name is defined in the same block: a craft's access names a credential or a pool and does not say which, so one name may mean only one of them — rename the pool or the credential"})
 		default:
 			if msg := credentialNameProblem(p.Name); msg != "" {
@@ -576,6 +580,32 @@ func ValidatePools(pools []Pool, creds []Credential) []Problem {
 		ps = append(ps, poolAccessProblems(at, p)...)
 	}
 	return ps
+}
+
+// PoolMayTakeItsOnlyMembersName reports whether a pool's name is the one
+// collision the namespace rule admits with the credentials block: the pool
+// walks exactly one credential, the one the block defines under the pool's own
+// name, and nothing else (D3176). It is the state `fugaro accounts add` writes
+// for a subscription token and `fugaro update` writes for every lone account.
+//
+// It is exported because the rule it answers is asked of a second document:
+// `fugaro project policy publish` builds the node's two blocks from two sources
+// and refuses a name both of them mean (craftNamespaceClash), and a pool of one
+// named after its own credential is the one collision that document admits
+// too.
+//
+// The credential has to be the block's OWN: the built-in vertex is a name a
+// reference may carry and a definition never does (ValidateCredentials), so a
+// pool named after it would be a pool of a credential the document does not
+// hold — which the name rule refuses, as it always did.
+func PoolMayTakeItsOnlyMembersName(p Pool, creds []Credential) bool {
+	if len(p.Members) != 1 || p.Members[0] != p.Name {
+		return false
+	}
+	if _, ok := CredentialNamed(creds, p.Name); !ok {
+		return false
+	}
+	return credentialNameProblem(p.Name) == ""
 }
 
 // ValidateCascadePools reports the rules a pool carrying the cascade's marker

@@ -288,7 +288,12 @@ type runOptions struct {
 	commitReports bool
 	asJSON        bool
 	noBudgetCheck bool
-	recipe        string
+	// noPersonalToken is --no-personal-token: this launch asks the workspace
+	// for no grant, so its runs draw on the shared entries rather than on the
+	// launcher's own token (D3142). It is read where the grant would be asked
+	// for (run_personal.go) and changes nothing else about the run.
+	noPersonalToken bool
+	recipe          string
 	// attempts is --attempts: 2 to 4 launches a best-of-N batch of
 	// independent runs of the same task, workflow, ref and recipe (G13).
 	// It is refused together with --pr, --run-id, --retry or a
@@ -598,6 +603,7 @@ func newRunCmd() *cobra.Command {
 	f.BoolVar(&o.noCompression, "no-compression", false, "turn agent.compression off for this run only, overriding fugaro.yaml; there is no flag to turn it on, which is a reviewed fugaro.yaml change")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 	f.BoolVar(&o.noBudgetCheck, "no-budget-check", false, "skip the launch pre-check of the budget (kill switches, missing caps, no headroom); the run is held to the same limits when it starts")
+	f.BoolVar(&o.noPersonalToken, "no-personal-token", false, "launch without asking the workspace for your own token: this run draws on the shared entries, as every run did before the personal half existed (D3142)")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
@@ -813,6 +819,7 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	}
 	defer env.Close()
 	env.noBudgetCheck = o.noBudgetCheck
+	env.noPersonalToken = o.noPersonalToken
 
 	// --repo, resolved once for every launch shape below and written back, so
 	// that a path (`.`, a subdirectory, an absolute one) is the owner/name of
@@ -1660,11 +1667,21 @@ func plannedRun(ctx context.Context, env *cloudEnv, o *runOptions, slug string, 
 	// (credentialsServiceLaunchEnv, proxiedRepo's last question too); its own
 	// warning is the launch's to word, later and once.
 	auth, deployed := env.repoServiceAuth(ctx, spec, io.Discard)
+	// The project's routing table where it publishes one (D3170): a planner
+	// judges a challenger by the chain that matches its model. An installation
+	// that has not migrated has none, and a machine with no local config at all
+	// has none either — both are the release-1 bridge, and the planner answers
+	// as it always has.
+	var table routing.Table
+	if env.lc != nil {
+		table = env.lc.ModelRouting
+	}
 	run := PlannedRun{
 		Slug: slug, Repo: spec.Repo, Commit: launchCommit(ctx, spec.Repo, spec.Ref),
 		Spec: copied, Chosen: o.runID != "", Config: cfg,
 		Providers:      mixRoutes(env, spec.Repo, cfg),
 		Prices:         prices,
+		ModelRouting:   table,
 		ServiceHeldKey: len(credentialsServiceLaunchEnv(env.lc, "", spec.Repo, auth, env.policyMode(ctx), deployed, false)) > 0,
 	}
 	eff, _ := chainLimitPolicyOf(ctx, env, spec, cfg).merge(o.limits.layer())
@@ -6670,6 +6687,16 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		if url, ok := credentialsServiceURLOf(lspec.Env); ok {
 			lspec.Env = append(lspec.Env, runSlipEnv(hctx, env, spec, slug, account, url)...)
 		}
+		// The person's own token at the workspace (D3141, D3142, R8): asked for
+		// where this repository's own route record says the workspace serves its
+		// model kind and the member's published policy turns the switch on, and
+		// handed to the job under C1's own name, which the run claims at
+		// bootstrap (WC8). It is a SECOND entry beside the member's slip and not
+		// the same one: the two are served by two services and are not
+		// interchangeable (creds.PersonSlipEnv).
+		if !env.noPersonalToken {
+			lspec.Env = append(lspec.Env, runPersonalEnv(hctx, env, spec, slug, account)...)
+		}
 	}
 	// The services the job's own catalog entry declares, on EVERY launch and
 	// empty where the deployed image is no catalog entry (backend.ServicesEnv
@@ -6726,12 +6753,6 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		return res, remote(fmt.Errorf("launching %s: the outcome is unknown (%w); don't relaunch before %s: fugaro run --retry %s launches the task only if it never started, and refuses with nothing launched, naming the run's pull request, if it did",
 			res.Run, err, now.Add(claimTTL).UTC().Format(time.RFC3339), res.Run))
 	}
-	// The pull-request index entry of a `--pr` launch, written here: the run
-	// really exists from the line above, and a follow-up started on a job
-	// image older than the index writes none of its own (followup.go's
-	// writePRIndex). The runner's own write of the same run is a no-op
-	// against this one, whichever lands first.
-	writePRIndex(ctx, env, slug, spec, now, launchWarn)
 	// The backend the launch actually used, from the seam, as above: the
 	// launch succeeded on env.be, so env.be's codec is what names it.
 	l := &runstore.Launch{Version: 1, RunID: spec.RunID, Backend: launchBackend(env.be), Execution: ref.Name, Job: ref.Job, LogURL: ref.LogURL, LaunchedBy: spec.RequestedBy, PlanTask: spec.PlanTask, LaunchedAt: now.UTC()}
@@ -6838,7 +6859,7 @@ func servicesLaunchEnv(entry config.Entry) string {
 // config's repository entry and published with the rest of it, so a teammate's
 // `fugaro run` on a machine that never ran the update reads it too,
 // internal/localcfg/shared.go) — and this repository's agent.auth, read live,
-// is one the service serves under the mode the published node carries. All of
+// is one the service serves. All of
 // them, because the URL is not a hint: the same variable is what opens the git
 // provider keyless (internal/gitprov/providers/providers.go), which reads no
 // App key at all once it is set, and what makes a Bitbucket repository a
@@ -6849,16 +6870,6 @@ func servicesLaunchEnv(entry config.Entry) string {
 // That is the answer for a repository's OWN job. A launch on a shared project
 // job is judged on its PROFILE (below), because that is the switch its mounts
 // were taken on.
-//
-// mode is the budget mode the published node carries, read by the launcher
-// (policyMode) and handed in: it is the switch's fourth condition for an
-// `api-key` or `oauth` repository alone (D2071), because the gateway the
-// service is reached through exists only in `observe` and `enforce`. A
-// repository on a project whose mode is `off` gets no address at all and keeps
-// the mounts it has. A read that found no node answers "", which is that same
-// held-off answer — the fail-closed direction — while the repository's own
-// record and tfvars remain the two answers a launch without a document
-// decides on (below).
 //
 // The config is the published shared one where this machine has no local
 // config of its own (localcfg.Select), and the URL in it is the installation's
@@ -6967,6 +6978,10 @@ func servicesLaunchEnv(entry config.Entry) string {
 // it is read for a repository's own job alone: a shared job's grant is the
 // installation root's, made from the same record wherever that root was applied.
 //
+// mode is this launch's reading of the published node's budget mode, and
+// nothing here reads it: the switch stopped taking a mode (AB15, D3009), and
+// the argument stays until I1 drops it with the constants.
+//
 // review says this launch runs on a shared job's review-only variant
 // (spec.Mode's review mode), which the caller resolves before it calls this:
 // such a launch is told nothing, whatever the job and the config say.
@@ -7011,7 +7026,7 @@ func credentialsServiceLaunchEnv(lc *localcfg.Config, sharedProfile, repo, auth,
 	// service serves on its own identity (D3174) — and a repository the bridge
 	// would serve keeps its answer.
 	ready := local.CredentialsServiceOn()
-	serves := infra.CredentialsServiceServes(installed, ready, auth, mode) ||
+	serves := infra.CredentialsServiceServes(installed, ready, auth) ||
 		infra.CredentialsServiceServesChains(installed, ready, infra.ChainPlanFor(lc, repo))
 	if auth == "" && !serves {
 		// No document this launcher could read, so the switch's third
@@ -7126,6 +7141,7 @@ func slipGrantOverService(ctx context.Context, serviceURL string, req credsvc.Sl
 	hreq.Header.Set("Content-Type", "application/json")
 	hreq.Header.Set("Accept", "application/json")
 	hreq.Header.Set("Authorization", "Bearer "+identity)
+	hreq.Header.Set(credsvc.HeaderPersonIdentity, identity)
 	resp, err := slipClient().Do(hreq)
 	if err != nil {
 		return credsvc.SlipGrantResponse{}, errors.New("the installation's credentials service could not be reached")

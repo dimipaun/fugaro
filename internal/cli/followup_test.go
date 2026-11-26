@@ -3,10 +3,12 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -132,25 +134,38 @@ func TestRunPRLaunchesFollowUp(t *testing.T) {
 	}
 }
 
-// indexEntriesOf is the pull-request index entries of PR n of appSlug's
-// repository, failing on an object the reader had to skip.
-func indexEntriesOf(t *testing.T, b *blob.Bucket, n int) []runstore.PRIndexEntry {
+// prIndexObjects is every object under one pull request's index in the
+// fixture's runs bucket, and fails on none: it is read after a launch that must
+// have written nothing there, and "nothing" is what it has to be able to say.
+func prIndexObjects(t *testing.T, b *blob.Bucket, n int) []string {
 	t.Helper()
-	out, err := runstore.ListPRIndex(context.Background(), b, appSlug, n, func(f string, a ...any) {
-		t.Errorf("skipped an index object: "+f, a...)
-	})
-	if err != nil {
-		t.Fatal(err)
+	prefix := "runs/" + appSlug + "/" + runstore.PRIndexDir + "/" + strconv.Itoa(n) + "/"
+	var out []string
+	for it := b.List(&blob.ListOptions{Prefix: prefix}); ; {
+		obj, err := it.Next(context.Background())
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !obj.IsDir {
+			out = append(out, obj.Key)
+		}
 	}
 	return out
 }
 
-// TestLauncherWritesEntryForFollowUp: `fugaro run --pr N` writes the run's
-// pull-request index entry itself (RL2W, D2962), so a follow-up started on a
-// job image older than the index — which writes none of its own — is still
-// found by `runs ls --pr N`. The entry is per run and create-if-absent: a
-// repeat of the same launch, which starts nothing, leaves it as it stands.
-func TestLauncherWritesEntryForFollowUp(t *testing.T) {
+// TestRunWritesNoPRIndex: `fugaro run --pr N` writes no pull-request index entry
+// (IR5b, D3204). The launcher wrote one for a follow-up it started, so a run
+// whose job image predated the index was still found by `runs ls --pr N`; that
+// listing reads the live index now, and the bucket's index is left as the
+// objects it already holds.
+//
+// Mutation caught: writePRIndex called from launchRun again — the launch leaves
+// an entry under the pull request's prefix, and the repeat below rewrites
+// nothing because the first one is already there.
+func TestRunWritesNoPRIndex(t *testing.T) {
 	f := newCloudFixture(t)
 	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
 	args := []string{"run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--json", "also rename x"}
@@ -162,16 +177,15 @@ func TestLauncherWritesEntryForFollowUp(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer b.Close()
-	got := indexEntriesOf(t, b, 7)
-	if len(got) != 1 || got[0].RunID != fuID || got[0].Kind != runstore.PRIndexFollowed ||
-		got[0].PR != 7 || got[0].Slug != appSlug || got[0].At.IsZero() {
-		t.Fatalf("entries = %+v, want one followed entry for %s on PR 7", got, fuID)
+	if got := prIndexObjects(t, b, 7); len(got) != 0 {
+		t.Errorf("the launch wrote %v: `runs ls --pr N` reads the live index, and the bucket's entries are the objects older releases left", got)
 	}
+	// The repeat of the launch, which starts nothing, writes none either.
 	if _, _, err := execute(t, args...); err != nil {
 		t.Fatal(err)
 	}
-	if after := indexEntriesOf(t, b, 7); len(after) != 1 || !after[0].At.Equal(got[0].At) {
-		t.Fatalf("the repeat changed the entry: %+v → %+v", got, after)
+	if got := prIndexObjects(t, b, 7); len(got) != 0 {
+		t.Errorf("the repeat wrote %v", got)
 	}
 }
 

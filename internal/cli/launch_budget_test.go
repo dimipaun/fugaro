@@ -1469,13 +1469,14 @@ func TestLaunchRefusesProxiedRunOnBatch(t *testing.T) {
 // does not serve keeps every mount and is judged by every gate it always was
 // (G9, G17).
 //
-// The switch's fourth condition — a published node whose budget mode is off,
-// the mode that left a cascade run without a gateway — is the one row that
-// cannot reach this gate at all any more: off is not a mode this release has
-// (D3009), so the node's own reader refuses it with the one text every door
-// refuses the word with (D3022, AB2) and the launch stops there. The row holds
-// that refusal instead of this gate's admission, and `fugaro update` is what
-// rewrites such a node (AB8b, F26).
+// The row that carries a published node whose budget mode is off — the mode
+// that left a cascade run without a gateway — is the one that stops at the
+// node's own reader rather than here: the mode is no condition of the switch
+// any more (AB15), but off is not a mode this release has (D3009), so the
+// node's reader refuses it with the one text every door refuses the word with
+// (D3022, AB2). It therefore runs on the current release, where no *Since gate
+// stands in the way, and the fix it names is the update's rewrite of the node
+// (AB8b, F26).
 //
 // The admitted rows end at policyImageGate rather than at the launch, the way
 // TestLaunchRefusesProxiedRunOnOldImage's do and for the same reason: every
@@ -1502,7 +1503,7 @@ func TestLaunchRefusesASwitchedAPIKeyRunOnAnOldImage(t *testing.T) {
 		{"a switched oauth repository on an image below the flip", oauthLaunchYAML, config.AuthOAuth, old, proxiedBlock, "enforce", true, true},
 		{"the repository's own switch is off", apiKeyLaunchYAML, "", old, proxiedBlock, "enforce", false, false},
 		{"the installation carries no credentials service", apiKeyLaunchYAML, "", old, "", "enforce", true, false},
-		{"the published node still says the removed budget mode", apiKeyLaunchYAML, "", old, proxiedBlock, "off", true, false},
+		{"the published node still says the removed budget mode", apiKeyLaunchYAML, "", releasePolicy, proxiedBlock, "off", true, false},
 		{"the job image is at the flip's release", apiKeyLaunchYAML, "", atFlip, proxiedBlock, "enforce", true, false},
 		{"the job image is the current release", apiKeyLaunchYAML, "", releasePolicy, proxiedBlock, "enforce", true, false},
 	} {
@@ -1595,10 +1596,11 @@ workflows:
 // to the flip, and each is judged by every gate it always was (G9, G17).
 //
 // The row that carries a published node whose budget mode is off is the one
-// that stops at the node's own reader rather than here: off is not a mode this
-// release has (D3009), so the launch is refused with the one text every door
-// refuses the word with (D3022, AB2) and the fix is the update's rewrite of the
-// node (AB8b, F26).
+// that stops at the node's own reader rather than here: the mode is no
+// condition of the switch any more (AB15), but off is not a mode this release
+// has (D3009), so the launch is refused with the one text every door refuses
+// the word with (D3022, AB2), and the fix is the update's rewrite of the node
+// (AB8b, F26).
 //
 // The admitted rows end at policyImageGate rather than at the launch, the way
 // TestLaunchRefusesASwitchedAPIKeyRunOnAnOldImage's do and for the same reason:
@@ -1625,7 +1627,7 @@ func TestLaunchRefusesAVaultRunOnAnOldImage(t *testing.T) {
 		{"the workflow declares no secret", apiKeyLaunchYAML, old, proxiedBlock, "enforce", true, false},
 		{"the repository's own switch is off", vaultLaunchYAML, old, proxiedBlock, "enforce", false, false},
 		{"the installation carries no credentials service", vaultLaunchYAML, old, "", "enforce", true, false},
-		{"the published node still says the removed budget mode", vaultLaunchYAML, old, proxiedBlock, "off", true, false},
+		{"the published node still says the removed budget mode", vaultLaunchYAML, releasePolicy, proxiedBlock, "off", true, false},
 		{"the job image is at the fetch's release", vaultLaunchYAML, atFetch, proxiedBlock, "enforce", true, false},
 		{"the job image is the current release", vaultLaunchYAML, releasePolicy, proxiedBlock, "enforce", true, false},
 	} {
