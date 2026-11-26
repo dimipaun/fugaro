@@ -427,12 +427,27 @@ var (
 // configuration, with the rest of a valid fugaro.yaml around it: the mode's
 // configuration comes from the base branch (D25), so the block has to be in
 // the remote's fugaro.yaml rather than in a layer a test hands the run.
-func raisedBase(t *testing.T, block string) string {
+// raisedBase is the remote such a run clones and the project layer that carries
+// what the repository's file may no longer decide: `block` is a rigor: block as
+// a test writes it, and since S1 (D3237) the level and the areas are the
+// project's, so the block moves into the layer and the file is written without
+// it (testutil.FixturePins).
+func raisedBase(t *testing.T, block string) (remote, layer string) {
 	t.Helper()
 	testutil.IsolateGit(t)
 	const head = "version: 1\nproject: aurora\ngit: { provider: github }\n"
 	const tail = "workflows:\n  server: { commands: { build: make, test: make test } }\n"
-	return testutil.NewRemote(t, map[string]string{"README.md": "hello\n", "fugaro.yaml": head + block + tail})
+	file, layer := testutil.FixturePins(head+block+tail, config.LiftedKeyPaths())
+	return testutil.NewRemote(t, map[string]string{"README.md": "hello\n", "fugaro.yaml": file}), layer
+}
+
+// rigorLayerSpec is a task carrying the layer a fixture's lifted keys moved to
+// (testutil.FixturePins): nil for a fixture that named none of them.
+func rigorLayerSpec(spec *task.Spec, layer string) *task.Spec {
+	if layer != "" {
+		spec.ProjectLayer = &task.ProjectLayer{SHA256: config.LayerSum([]byte(layer)), YAML: layer}
+	}
+	return spec
 }
 
 // raisedCase is one run's inputs: the repository's rigor block, the paths the
@@ -457,7 +472,7 @@ type raisedCase struct {
 // the round Decide reads.
 func raisedRun(t *testing.T, tc raisedCase) *run {
 	t.Helper()
-	remote := raisedBase(t, tc.block)
+	remote, layer := raisedBase(t, tc.block)
 	testutil.IsolateGit(t)
 	ctx := context.Background()
 	repo, err := gitops.OpenOrClone(ctx, filepath.Join(t.TempDir(), "work"), remote, gitops.IdentityEnv())
@@ -470,7 +485,8 @@ func raisedRun(t *testing.T, tc raisedCase) *run {
 	cfg := &config.Config{}
 	cfg.Git.BaseBranch = "main"
 	r := &run{
-		repo: repo, cfg: cfg, spec: &task.Spec{RequestedBy: "person-1", Paths: tc.declared},
+		repo: repo, cfg: cfg,
+		spec: rigorLayerSpec(&task.Spec{RequestedBy: "person-1", Paths: tc.declared}, layer),
 		rec: &runstore.Record{
 			Version: 1, RunID: "20261024-120000-abcd", Branch: "fugaro/x", BaseBranch: "main",
 			Status: runstore.StatusRunning, Outcome: runstore.OutcomeNone,

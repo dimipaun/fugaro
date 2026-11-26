@@ -7,6 +7,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/routing"
@@ -133,6 +134,12 @@ func (r *run) stageTiming(name string, started time.Time, claudeUSD float64, sub
 // stage is a fallback stage once ANY of its calls came from a source that is
 // not the chain's first, and the source is the last answered call's, which is
 // the one the stage ended on.
+//
+// The same two facts reach the live registry entry from here (CS9, D3070), so
+// that a run in flight shows what its calls go out on: `source` as the views
+// spell it and `fallback` as the stage's own. chainStage clears them, so the
+// entry and the record never name different stages.
+//
 // The hook's shape is the contract's: held here at compile time, so a change to
 // C1's ChainAnswerFunc fails in this package rather than in the wiring that
 // hands the run's hook to its gateway.
@@ -145,7 +152,21 @@ func (r *run) chainAnswered(a gateway.ChainAnswer) {
 	if a.Fallback {
 		r.chainFallback = true
 	}
+	text, fallback := chainSourceText(source), r.chainFallback
 	r.mu.Unlock()
+	r.noteRegistry(func(e *budget.AgentEntry) { e.Source, e.Fallback = text, fallback })
+}
+
+// chainSourceText is a routing.SourceName as the live registry entry and
+// `fugaro watch --json` spell it: the kind, and the name after a colon when the
+// kind names one (`pool:team`, `anthropic`; contract-table.md). The record's
+// own member keeps the object shape routing.SourceName declares; this is the
+// one string a row prints.
+func chainSourceText(s routing.SourceName) string {
+	if s.Name == "" {
+		return string(s.Kind)
+	}
+	return string(s.Kind) + ":" + s.Name
 }
 
 // chainStage is what the service's answers said about the stage that has just
@@ -162,9 +183,15 @@ func (r *run) chainAnswered(a gateway.ChainAnswer) {
 // against dropping a stage's source altogether.
 func (r *run) chainStage() (source *routing.SourceName, fallback bool) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	source, fallback = r.chainSource, r.chainFallback
 	r.chainSource, r.chainFallback = nil, false
+	r.mu.Unlock()
+	// The live entry is cleared with them and for the same reason: the stage
+	// they were folded over is the one whose row has just been built, and an
+	// entry that kept its source would draw this stage's answer beside the next
+	// stage's own. An absent member is "not recorded", which is what a stage
+	// that has answered nothing yet is.
+	r.noteRegistry(func(e *budget.AgentEntry) { e.Source, e.Fallback = "", false })
 	return source, fallback
 }
 

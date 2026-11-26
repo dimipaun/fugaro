@@ -158,8 +158,9 @@ func recipeCheckout(t *testing.T, f *cloudFixture, agentLines string, extra map[
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
-	files := map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nagent:\n  auth: api-key\n" + agentLines +
-		"workflows:\n  svc: { commands: { build: sh build.sh, test: sh test.sh } }\n"}
+	body := "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nagent:\n  auth: api-key\n" + agentLines +
+		"workflows:\n  svc: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+	files := map[string]string{"fugaro.yaml": publishFilePins(t, f, body)}
 	for k, v := range extra {
 		files[k] = v
 	}

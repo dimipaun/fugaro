@@ -49,7 +49,8 @@ had for them (`init_stages.go`). Each checkout runs four steps in order and stop
 fails. The **pin** step the retired command used to run first is gone: nothing merges the plugin's marketplace and enablement into `.claude/settings.json` any more (D949, answered 2026-11-04; U2 of
 [plugin-user-scope/implementation-plan.md](../plugin-user-scope/implementation-plan.md)), so
 `update-skills` and this command's plugin step install the plugin on the machine instead and leave that file
-as it is. A checkout still carrying a pin is offered its removal, as the migration below says.
+as it is. A repository whose default branch still carries a pin gets a notice naming the file and the line to
+delete, as the migration below says.
 
 1. **plugin**: the **plugin stage** (`internal/cli/init_plugin_stage.go`), which installs or updates the
    plugin in Claude Code through the `claude` CLI on `PATH`. Nothing it writes is in the checkout — every
@@ -62,8 +63,8 @@ as it is. A checkout still carrying a pin is offered its removal, as the migrati
    - When everything is current, it makes no change call.
 
    It then lists the installs again and compares the result with this binary. The output says that running Claude Code sessions must be restarted to apply it. Without `claude` on `PATH`, the step prints the slash commands to type in Claude Code instead.
-   - The **install half needs neither the checkout's repository nor `authState`** (D955, U8): a machine's own plugin concerns no repository, and the gate that asks whether the checkout's repository is in this machine's config belongs to the pin's write, not to this one.
-   - A pin the stage **cannot** move — a fork's marketplace, a foreign marketplace, a file that is not valid JSON — is not a failure: the file is left exactly as it is, with the refusal text, the outcome is `left for you`, and the run continues to the next stage (F25, U8). §8's migration below is the shape.
+   - The **install half needs neither the checkout's repository nor `authState`** (D955, U8): a machine's own plugin concerns no repository, and the gate that asks whether the checkout's repository is in this machine's config belonged to the pin's write, which this release no longer makes — a leftover pin is a notice after the loop (`repo_notices.go`), and this stage reads one nowhere.
+   - The stage reads no pin at all, so one that is not fugaro's — a fork's marketplace, a foreign marketplace, a file that is not valid JSON — is no notice and is left exactly as it is, with the run going on to the next stage (F25, U8). §8's migration below is the shape.
 2. **cloud**: the **checkout stage**'s cloud step (`internal/cli/init_checkout_upgrade.go`): `fugaro image refresh` for the checkout's repository. The refresh runs in the same process, through `runImageRefresh`; it is not a shell-out, and the refresh asks for its own confirmation at the terminal `fugaro update` requires.
 
    The step is **skipped**, with the reason shown, when:
@@ -89,7 +90,7 @@ It cannot see a build that failed after the base moved, because build records li
 
 **The skill `/fugaro:update`** works through the upgrade in this order:
 1. It runs `fugaro version` and `fugaro update --check`, then explains in plain words what is stale and why.
-2. It shows the diff of the checkout's own change it may make — under D943 that is the removal of a leftover pin, and in a session it prints the diff and writes nothing — and says a restart of Claude Code is needed once the plugin moved.
+2. It shows the notice for a leftover pin — under D943 that is one line naming the file and the line to delete, and nothing is written — and says a restart of Claude Code is needed once the plugin moved.
 3. It checks again with `fugaro update --check`.
 4. It hands the user one command for their own terminal, in a `user-runs` block: `fugaro update` — the whole upgrade, so the installation and the checkout it runs in both reach this release in one run. It says why: a coding agent's session cannot apply cloud changes, by design, and it never looks for a way around that refusal.
 
@@ -134,18 +135,17 @@ The paths whose gate was `checkDBProject` rather than the mark are **PRE-EXISTIN
 
 **What is left of slice 2**, and each is marked above: the coordinator's **sweep**, its own name-only read of `/fugaro/project`, and the **credentials service**. They are not this slice's to change: the sweep reads a name before it opens anything, and the credentials service is another service. This audit said the coordinator held the name check on the way in, which was wrong — the two writers held none — and that part of the correction is in the code now, with the two writers' tests.
 
-## Migration: a checkout that still carries an old pin (D943)
+## Migration: a repository that still carries an old pin (D943)
 
 A repository wired by an earlier Fugaro carries a `fugaro@fugaro` pin in a committed
 `.claude/settings.json`. Under D949 nothing in the tree writes one any more, so that file is a leftover, and
-this is the only thing `fugaro update` does with it: the plugin stage prints the two entries it would take
-out (the `fugaro` marketplace and `enabledPlugins["fugaro@fugaro"]`) as a diff, says in one sentence what the
-repository loses, and removes them. It **never commits** — the change is the working tree's, and the user
-reviews it with `git diff`. A terminal confirms it. **In a coding agent's session the diff is printed and nothing is written**, and the stage says the exact line to run in the user's own
-terminal; `fugaro` never unsets the marker that says the session is one, and no flag or environment variable gets around the refusal. A pin that is not removable — a file that is not valid JSON, a
-fork's marketplace, a ref that is not a release tag — is left exactly as it is, with the existing refusal
-text, and the run continues to the next stage. Nothing is removed twice: the offer fires while the entries are
-there and stops when they are gone.
+this is the only thing `fugaro update` does with it: it reads the repository's default branch and prints one
+notice line — the repository, `needs you`, the file, and the exact edit: delete the `fugaro` entry from
+`extraKnownMarketplaces` and the `fugaro@fugaro` entry from `enabledPlugins`. **Nothing is written**: `update`
+reads no working tree, the change is the repository's own to make and to commit or not, and `doctor` reports
+the same finding with the same text and a fix. A pin that is not fugaro's — a file that is not valid JSON, a
+fork's marketplace, a ref that is not a release tag — is no notice, and the file is left exactly as it is.
+Nothing is named twice: the notice fires while the entries are there and stops when they are gone.
 
 ## Safety
 
@@ -156,7 +156,7 @@ there and stops when they are gone.
 - **Output.** At most 40 lines of `claude`'s output are printed, each one passed through `pluginwire.Printable`.
 - **The marketplace already on the machine.** A `fugaro` marketplace on this machine that names another repository (or is not a GitHub one) is never replaced: it is left as it is, printed, and `left for you`, and the run goes on (F25, U8). A marketplace from **our** repository at another ref is the one thing the step does declare again, and the clear that takes is the one the bullet below puts back.
 - **What a stopped step leaves behind.** The declaration the add is refused by is cleared first, and claude's removal takes every install of the marketplace with it, so nothing after that clear may cost the user their marketplace or their plugin: before the step reports a failure — the add's, any later call's, or the check after the calls' — it declares the old source again and installs the plugin from it (the pair, in that order — an install with no marketplace to come from would fail), and the install is at user scope, which is where fugaro installs the plugin and never a scope the checkout commits. Both are best effort, and the output says so when one fails: once this release's tag is declared, claude refuses the name at the source it had, and the install from the declaration that stands is what puts the plugin back. Only claude's own refusal of the declaration — its message says the name is declared for it from a different source, and the clear fugaro ran did not change that — is reported and carried on from. Every other failure of the add (a clone that failed, a network that is down) fails the step.
-- **Writes by Claude Code itself.** Every `claude` call runs at user scope in a fresh empty directory, so no call can touch a checkout's `.claude/settings.json`. The checkout's own file is written by the migration alone, and only at a terminal, under D943.
+- **Writes by Claude Code itself.** Every `claude` call runs at user scope in a fresh empty directory, so no call can touch a checkout's `.claude/settings.json`, and no step of this command writes that file either: a leftover pin is a notice (§8), and the edit is the repository's own.
 - **Credentials.** `--check` needs no credentials and makes no cloud call. The tests pin this with a credentials path that does not exist, and with a build-record reader that fails the test if anything calls it.
 
 ## Non-goals

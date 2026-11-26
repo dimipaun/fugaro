@@ -901,9 +901,9 @@ func TestCredentialsServiceOrchestratorClassReachesTheAuthenticator(t *testing.T
 
 // TestCredentialsServeReadsTheIdentityEnv is LM22's reading end (D3121, D3123,
 // F29/R16): the three names of the identity half are read out of the
-// deployment's environment into C1's configuration, and NOTHING USES THEM YET.
+// deployment's environment into C1's configuration.
 //
-// The three are the values the issuer will be configured with — the account a
+// The three are the values the issuer is configured with — the account a
 // run's identity is signed as, the roster's `serviceAccount:` entries and the
 // implicit admins the CLI's own gate reads out of its configuration — and each
 // is read here as an OPTIONAL value, because the module that renders them is
@@ -911,14 +911,10 @@ func TestCredentialsServiceOrchestratorClassReachesTheAuthenticator(t *testing.T
 // service it always did, on the bridge the identity routes answer "not served"
 // from (R7), rather than refuse to bind a port.
 //
-// Nothing serves a caller by these values yet, and the test says so by what it
-// does NOT assert: the configuration is built and the service starts with a
-// signer set, and no route reads it — the five identity routes answer the
-// contract's "not served" whatever this holds until I1 wires the issuer in and
-// deletes credsvc's identity stub. What is pinned here is the read, which is
-// the whole of what this task produces: the values arrive in the fields
-// credsvc.IdentityConfig names for them (I1 hands them to the routes), and a
-// deployment that is wrong is refused by name and never by value.
+// What is pinned here is the read and not what the routes do with it: the
+// values arrive in the fields credsvc.IdentityConfig names for them, and a
+// deployment that is wrong is refused by name and never by value. Which route
+// reads which field is credsvc's own (LM3, LM4) and is asserted there.
 //
 // Mutation (verified, run and restored): change credentialsServiceSigner's last
 // line to return the empty string — the first half below fails with an empty
@@ -949,7 +945,7 @@ func TestCredentialsServeReadsTheIdentityEnv(t *testing.T) {
 		t.Fatalf("credentialsServiceConfig with the identity half set: %v", err)
 	}
 	if cfg.Identity.Signer != signer {
-		t.Errorf("the configuration's signer is %q, want the address %s carries: a service that dropped it would serve an installation with no issuer once I1 wires the routes", cfg.Identity.Signer, envSignerAccount)
+		t.Errorf("the configuration's signer is %q, want the address %s carries: a service that dropped it would serve an installation with no issuer", cfg.Identity.Signer, envSignerAccount)
 	}
 	if !slices.Equal(cfg.Identity.ServiceAccounts, []string{ci}) {
 		t.Errorf("the configuration's service accounts are %q, want %q: %s is the roster's one serviceAccount: entry", cfg.Identity.ServiceAccounts, []string{ci}, envRosterServiceAccounts)
@@ -986,7 +982,7 @@ func TestCredentialsServeReadsTheIdentityEnv(t *testing.T) {
 	// value. The signer is held to one address — the coordinator's own rule,
 	// because a single value is not a document: what is refused is a space or
 	// a control byte around the address and not its spelling, which is left to
-	// whoever consumes it (I1) — and the two lists to the array every class
+	// whoever consumes it — and the two lists to the array every class
 	// list is read as, which refuses a quoted string, a row and any element
 	// that is not one.
 	for _, tc := range []struct {
