@@ -288,7 +288,16 @@ func (r *initRun) retireSummary(w io.Writer, spec infra.RepoSpec, rets []infra.R
 		n, plural(n, "address", "addresses"), plural(n, "it", "them"))
 	fmt.Fprintln(w, "  2. plan, show the plan's own counts and its full delete list, and ask again — answered by the person at a real terminal.")
 	fmt.Fprintf(w, "  3. apply, then delete the %d orphaned Cloud Run %s through the API.\n", len(api), plural(len(api), "job", "jobs"))
-	fmt.Fprintln(w, "\nNext command:\n  fugaro update --repo . --retire")
+	// A whole root is retired by the update that enrols the repository (M2):
+	// the flow runs inside `fugaro update` itself and asks its confirmations
+	// there, so naming --retire would send the reader to a flag they do not
+	// need and -- on the shared path, where no plan of the repository's own
+	// runs -- to a command that is not what retires it.
+	next := retireNextCommand
+	if r.retireWholeRoot {
+		next = "fugaro update --repo ."
+	}
+	fmt.Fprintf(w, "\nNext command:\n  %s\n", next)
 }
 
 // retireRows writes one of the summary's lists: at most max of its rows (0 for
@@ -463,7 +472,22 @@ func (r *initRun) retirePlan(ctx context.Context, c *infra.Clients, t *tf.TF, wd
 	}
 
 	// 3. The plan that could not run before, and the guard that always runs.
-	changed, err := t.Plan(ctx, infra.PlanFile)
+	//    A whole root's retirement plans the destruction of everything the
+	//    state holds (M2): an ordinary plan of this root would CREATE the jobs
+	//    the repository no longer wants, because the module a migrated
+	//    repository's spec still feeds declares them. The registry's own
+	//    prevent_destroy is lifted first, for this plan and this apply alone --
+	//    Terraform reads the block from the CONFIGURATION, so a destroy plan of
+	//    a tree that still carries it aborts (infra.LiftRegistryPreventDestroy).
+	var changed bool
+	if r.retireWholeRoot {
+		if err := infra.LiftRegistryPreventDestroy(wd); err != nil {
+			return leftover(userErr("%v", err))
+		}
+		changed, err = t.PlanDestroy(ctx, infra.PlanFile)
+	} else {
+		changed, err = t.Plan(ctx, infra.PlanFile)
+	}
 	if err != nil {
 		return leftover(remote(err))
 	}
@@ -497,7 +521,12 @@ func (r *initRun) retirePlan(ctx context.Context, c *infra.Clients, t *tf.TF, wd
 	// 4. The real plan, in front of the user, and a second typed
 	//    confirmation that --yes, --json, a pipe and an agent cannot give.
 	r.planBlock(plan)
-	fmt.Fprintln(r.w, im.Bindings.String())
+	if !r.retireWholeRoot {
+		// A whole root's retirement has nothing to adopt: the addresses a
+		// discovery would count are the ones this plan destroys, and the
+		// caller passes no imports at all (retireSharedRoot).
+		fmt.Fprintln(r.w, im.Bindings.String())
+	}
 	if err := r.guard(ctx, c, plan, retireAllowDelete(plan, rets, r.o.allowDelete)); err != nil {
 		return leftover(err)
 	}
@@ -570,6 +599,198 @@ func (r *initRun) retireManaged(ctx context.Context, c *infra.Clients, t *tf.TF,
 		return true, err
 	}
 	return true, nil
+}
+
+// retireSharedRoot is M2 (D2303): the retirement of the WHOLE root of a
+// repository a deployed profile admits, made by the update that enrols it.
+//
+// Why the whole root and not the set difference: the repository root's module
+// is shared with every repository, so no change of this repository's own config
+// stops producing its addresses -- a migrated repository's fugaro.yaml still
+// declares its workflows, and an ordinary plan of that root would CREATE the
+// jobs the repository no longer wants. What says which addresses go is the
+// state alone (infra.RootRetirements), and what removes them is a destroy plan
+// (tf.PlanDestroy) behind the retirement's own typed confirmations, with the
+// registry's lifecycle.prevent_destroy lifted from the workdir's copy of the
+// module for that one plan and apply (infra.LiftRegistryPreventDestroy).
+//
+// It runs inside `fugaro update` and asks its confirmations there: CLAUDE.md's
+// HARD RULE is that the one documented command is the whole upgrade, and the
+// acceptance is explicit that the confirmation this retirement needs is never a
+// second command. `--retire` keeps its meaning on this path too -- the flag
+// that makes a run take the retirement rather than report it -- so a person who
+// reads the summary can type the command the summary names.
+//
+// What it deliberately does not do:
+//
+//   - a repository with no state object of its own has no root to retire: one
+//     GCS listing answers that before terraform runs at all, which keeps a
+//     repository that was never applied away from the binary and off a state
+//     read of a root that does not exist (M7's enrolment is apply-free, and
+//     stays so).
+//   - nothing is retired before M2's structural precondition holds: the profile
+//     admitted the repository (this flow's own entry condition, RepoSpec.Shared,
+//     M6's mark read from the published node), the project's image for its
+//     shared jobs resolves, the proxy is on for a Bitbucket repository, and no
+//     execution is running on a job about to be deleted. A job with a run in
+//     flight is retired by a later update.
+//   - nothing is retired on a run's own reading: a run that cannot put a typed
+//     confirmation to a person (--yes, --json, --non-interactive, a pipe, a
+//     coding agent's session) prints one line and leaves the retirement to the
+//     next update, exactly as retireManaged refuses to retire for the same
+//     reason.
+func (r *initRun) retireSharedRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, lc *localcfg.Config, spec infra.RepoSpec, stateBucket, slug string, opts infra.RepoRootOptions) error {
+	names, err := infra.RepoStateObjects(ctx, c, stateBucket, slug)
+	if err != nil {
+		if r.o.retire {
+			// --retire acts on the set, so it may not act on a set it could
+			// not read -- readRetirements' own rule for a state that would
+			// not open.
+			return remote(err)
+		}
+		r.warn(fmt.Sprintf("could not list %s's Terraform state in gs://%s (%v), so nothing is retired here; a later update retires it once that read answers", spec.Name, stateBucket, err))
+		return nil
+	}
+	if len(names) == 0 {
+		if r.o.retire {
+			fmt.Fprintf(r.w, "Nothing to retire: %s has no Terraform state of its own in gs://%s, so it has no repository root to retire.\n", oneLineCLI(spec.Name), stateBucket)
+		}
+		r.retireLooked = true
+		r.retireNone = true
+		r.recordRetiredNothing(ctx, lc)
+		return nil
+	}
+	// The plan of a root nobody has planned yet in this run: its tfvars, its
+	// backend and its state read. The ordinary path does the same three in
+	// planRepo, and this is the shared path's own because no repository-level
+	// Terraform runs there at all (M7).
+	vars, err := infra.RepoRootVars(spec, opts)
+	if err != nil {
+		return initErr(err)
+	}
+	if err := wd.WriteVars(vars); err != nil {
+		return userErr("writing the tfvars: %v", err)
+	}
+	backend, err := wd.WriteBackend(stateBucket, infra.RepoStatePrefix(slug))
+	if err != nil {
+		return userErr("%v", err)
+	}
+	if err := t.Init(ctx, backend); err != nil {
+		return remote(err)
+	}
+	st, err := t.ShowState(ctx)
+	if err != nil {
+		return remote(err)
+	}
+	r.retireLooked = true
+	r.retireState = st.Addresses()
+	rets := infra.RootRetirements(st, spec)
+	if len(rets) == 0 {
+		// The object is there and holds no resource: nothing of this
+		// repository's own is deployed, which settles the record exactly as
+		// an empty read of a real root does.
+		r.retireNone = true
+		r.recordRetiredNothing(ctx, lc)
+		return nil
+	}
+	r.retired = true
+	r.retireSet = rets
+	r.res.Retire = rets
+	// Set before the summary, which reads it for the command it names, and for
+	// the confirmation's own banner (retireWhat).
+	r.retireWholeRoot = true
+	if err := r.printRetirements(spec, rets); err != nil {
+		return err
+	}
+	if r.o.planOnly {
+		// A reading run: the summary above is the whole of what --plan-only
+		// has to say about the retirement, and the command it names is the
+		// one that makes it.
+		return nil
+	}
+	holds, err := r.rootRetireHolds(ctx, c, lc, spec, rets)
+	if err != nil {
+		return err
+	}
+	if !holds {
+		return nil
+	}
+	if !r.o.retire && !r.canType() {
+		// A run that cannot ask: --yes is not an answer to a retirement, and
+		// neither is --json, a pipe, --non-interactive or an agent's session
+		// (retireConfirm's own rule, asked here so that nothing is removed
+		// from the state before the run knows it can ask).
+		r.noteRootRetireHold(spec, "no confirmation can be asked in this session", "run fugaro update at a terminal to retire it")
+		return nil
+	}
+	if err := r.retirePlan(ctx, c, t, wd, spec, rets, opts, infra.Imports{}); err != nil {
+		return err
+	}
+	r.recordUpdate(ctx, lc, rets)
+	return r.retireDelete(ctx, c, spec)
+}
+
+// rootRetireHolds is M2's structural precondition, and it prints the one line
+// that says why the root is not retired here when it does not hold.
+//
+// Four facts, and every one of them is about the repository having somewhere to
+// run once its own root is gone:
+//
+//   - the project's image for its shared jobs resolves (S10, D2305), asked of
+//     the single resolver the deployer, the launcher and doctor ask
+//     (infra.ProjectJobImage). A project whose image cannot be resolved would
+//     leave the repository with no job at all.
+//   - the proxy is on for a Bitbucket repository (S6, D2306): a shared job
+//     clones a Bitbucket repository through the credentials service, so a
+//     proxied repository whose switch is off has no shared job that can clone
+//     it, and the per-repository job is the only one it has.
+//   - no execution is running on any job about to be deleted
+//     (infra.InFlightJobs): deleting a job kills the run executing on it, and
+//     that is a person's work, so a job with a run in flight is retired by a
+//     later update.
+//   - the profile admitted the repository, which is this flow's own entry
+//     condition: a repository no deployed profile admits never reaches here,
+//     because repoEngine takes the ordinary path and plans its own root
+//     (M6's mark is read from the published node and from nowhere else).
+//
+// The reads fail closed. A listing that could not be made, and a state that
+// names no job to ask about, hold the retirement and say so -- on a run without
+// --retire, which is the run that must go on to do the rest of the update. With
+// --retire the read's failure is the run's failure, the rule readRetirements
+// keeps for the same reason.
+func (r *initRun) rootRetireHolds(ctx context.Context, c *infra.Clients, lc *localcfg.Config, spec infra.RepoSpec, rets []infra.Retirement) (bool, error) {
+	why := ""
+	if _, err := infra.ProjectJobImage(lc); err != nil {
+		why = "the project's image for its shared jobs does not resolve"
+	}
+	if why == "" && spec.Provider == "bitbucket" && !spec.BitbucketProxied {
+		why = "the Bitbucket proxy is off"
+	}
+	if why != "" {
+		r.noteRootRetireHold(spec, why, "a later update retires it once that holds")
+		return false, nil
+	}
+	jobs, answered, warning := infra.InFlightJobs(ctx, c, spec, rets)
+	if !answered {
+		if r.o.retire {
+			return false, remote(errors.New(warning))
+		}
+		r.noteRootRetireHold(spec, "whether a run is executing on its jobs could not be read", "a later update retires it once that read answers")
+		fmt.Fprintf(r.stageDetail(), "%s\n", warning)
+		return false, nil
+	}
+	if len(jobs) > 0 {
+		r.noteRootRetireHold(spec, "a run is executing on "+jobs[0].Job, "a later update retires it once that run has finished")
+		return false, nil
+	}
+	return true, nil
+}
+
+// noteRootRetireHold is the one line an update prints when it leaves the
+// repository's whole-root retirement to a later one: what it did not do, why,
+// and what does it.
+func (r *initRun) noteRootRetireHold(spec infra.RepoSpec, why, next string) {
+	r.warn(fmt.Sprintf("note: %s's own root is not retired here: %s; %s", oneLineCLI(spec.Name), why, next))
 }
 
 // retireConsent is the retirement's permission step, at each of the three
@@ -888,6 +1109,15 @@ func (r *initRun) retireWhat(spec infra.RepoSpec, rets []infra.Retirement) strin
 	}
 	for _, a := range api {
 		fmt.Fprintf(&b, " Delete %s (%s, %s).", a.Job, a.Region, a.Address)
+	}
+	if r.retireWholeRoot {
+		// The one destruction no plan of this root ever showed before M2, and
+		// the one fugaro's "never deletes a registry" promise bends for: the
+		// repository's whole root goes, its image registry and the images in
+		// it included, because a registry per retired repository is a registry
+		// forever (F18). It is named here, in the words of what it is, rather
+		// than left to the plan's delete list.
+		b.WriteString(" This is the repository's whole root: the apply destroys its image registry and every image in it, its jobs, its accounts and its grants.")
 	}
 	if secrets := keptSecrets(kept); len(secrets) > 0 {
 		b.WriteString(" Fugaro deletes no secret, so these leave Terraform's state and stay in Secret Manager if they are still there:")

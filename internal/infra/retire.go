@@ -230,6 +230,66 @@ func LiftRegistryPreventDestroy(wd *Workdir) error {
 	return nil
 }
 
+// InFlightJobs is the jobs of a whole-root retirement an execution is still
+// running on (M2, D2303): one row per job, and answered=false for a question
+// that could not be read at all.
+//
+// It is the retirement's "and not before" half, and the reason it is a read of
+// its own rather than a lookup at the point of the delete: deleting a job kills
+// the execution on it, and the run that dies with it is a person's work going
+// away with no report anywhere. So the question is asked before anything is
+// removed from the state, the answer is a fact of the moment it is read (a run
+// launched a second later is out of anything a read can see), and every failing
+// direction holds: a listing that answered nothing, a job the state does not
+// name, and an execution that has not finished are all "do not retire it yet".
+//
+// An execution is in flight unless it has a completion time, which is the same
+// rule stateOf reads for a run's own status: pending (created, not started) is
+// as much a run as running is, and deleting the job under it cancels it.
+// A job that is not there at all is 404 and answers "nothing is running on it",
+// never a failure: the state may outlive a job somebody deleted by hand, and a
+// retirement that could never be made because of one would be worse than the
+// delete it is asking about.
+func InFlightJobs(ctx context.Context, c *Clients, spec RepoSpec, rets []Retirement) (jobs []Retirement, answered bool, warning string) {
+	if c == nil || c.Run == nil {
+		return nil, false, fmt.Sprintf("whether an execution is running on %s's jobs could not be read (%v)", spec.Name, errNoRunClient)
+	}
+	for _, ret := range rets {
+		if ret.Kind != "workflow job" && ret.Kind != "check job" {
+			continue
+		}
+		if ret.Job == "" || ret.Region == "" {
+			// The state's own values carry no name, which is the one shape
+			// retireBlockers refuses a retirement for as well: guessing a
+			// name is forbidden, and a job nobody can name is a job nobody
+			// can ask about.
+			return nil, false, fmt.Sprintf("the Terraform state of %s names no Cloud Run job behind %s, so whether an execution is running on it cannot be read", spec.Name, ret.Address)
+		}
+		parent := "projects/" + spec.GCPProject + "/locations/" + ret.Region + "/jobs/" + ret.Job
+		err := c.Run.Projects.Locations.Jobs.Executions.List(parent).Pages(ctx, func(p *run.GoogleCloudRunV2ListExecutionsResponse) error {
+			for _, e := range p.Executions {
+				if e != nil && e.CompletionTime == "" {
+					return errExecutionRunning
+				}
+			}
+			return nil
+		})
+		switch {
+		case errors.Is(err, errExecutionRunning):
+			jobs = append(jobs, ret)
+		case err != nil && !notFound(err):
+			return nil, false, fmt.Sprintf("whether an execution is running on %s (%s) could not be read: %v. Ask it by hand with `gcloud run jobs executions list --project %s --region %s --job %s`",
+				ret.Job, ret.Address, err, spec.GCPProject, ret.Region, ret.Job)
+		}
+	}
+	return jobs, true, ""
+}
+
+// errExecutionRunning stops the walk over a job's executions: the question is
+// answered by the first one that has not finished, and the rest of the listing
+// is not read.
+var errExecutionRunning = errors.New("an execution is running")
+
 // retirement classifies one address the spec does not produce: what kind of
 // resource it is, and which config change left it behind.
 func retirement(addr string, spec RepoSpec) Retirement {
