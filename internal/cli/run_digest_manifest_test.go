@@ -27,7 +27,8 @@ const digestLaunchImage = releaseL8
 const digestOldImage = "ghcr.io/dimipaun/fugaro-base:0.12.0"
 
 // digestRepoRecipe is a repository's own report recipe: the digest step
-// first, which is all digestRecipe reads to call a launch a report run.
+// first, which is what makes the project's copy of it a report recipe for the
+// launch that embeds it (D3303).
 const digestRepoRecipe = "version: 1\nname: report\ndescription: This repository's own run report recipe.\n" +
 	"use_when: A scheduled run review only, launched by the repository's own routine.\n" +
 	"steps:\n  - digest: {}\n  - review:\n      max_rounds: 1\n"
@@ -35,9 +36,10 @@ const digestRepoRecipe = "version: 1\nname: report\ndescription: This repository
 // reportRecipeCheckout makes the working directory a checkout of acme/app
 // carrying digestRepoRecipe as .fugaro/recipes/report.yaml. A launch resolves
 // that recipe as the project's copy of it (D3303), so the arms below that
-// launch one publish the copy (repoRecipeCopy); the file is still what the
-// launcher's repository-recipe readers read for a task an older release
-// wrote, digestRecipe's among them.
+// launch one publish the copy (repoRecipeCopy); the file is what the
+// launcher's remaining repository-recipe reader reads — run.go's
+// repoRecipeFrom, which judges a task an older release wrote by the image
+// gates — and no reader judges a report run or a review by it any more.
 func reportRecipeCheckout(t *testing.T) {
 	t.Helper()
 	testutil.IsolateGit(t)
@@ -404,7 +406,9 @@ func TestDigestFollowUpRefused(t *testing.T) {
 // would cover records that have moved on. The task says it is a report run
 // two ways, and both are refused: the manifest it carries (digest_runs is
 // accepted under no other recipe, task.Validate) and the recipe itself, for a
-// report run whose manifest came out empty.
+// report run whose manifest came out empty. A task naming a repository recipe
+// is a third shape, and one no launcher of this release writes (R7): the
+// launcher judges the text a task carries, so it is the runner's to refuse.
 //
 // Mutation (drop the retry refusal from retrySpec): both arms launch a job.
 func TestDigestRetryRefused(t *testing.T) {
@@ -420,7 +424,6 @@ func TestDigestRetryRefused(t *testing.T) {
 	}{
 		{"its manifest", []string{manifestRunID(time.Now().Add(-2 * time.Hour))}, report},
 		{"its recipe, with a manifest that came out empty", nil, report},
-		{"its recipe, a repository one", nil, &task.Recipe{Name: "report", Source: string(recipe.SourceRepo)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := digestFixture(t)
@@ -428,11 +431,7 @@ func TestDigestRetryRefused(t *testing.T) {
 			spec := firstRunSpec(id)
 			spec.Recipe, spec.DigestRuns = tc.recipe, tc.runs
 			seedSpec(t, f, spec, false)
-			if tc.recipe.Source == string(recipe.SourceRepo) {
-				reportRecipeCheckout(t)
-			} else {
-				t.Chdir(t.TempDir())
-			}
+			t.Chdir(t.TempDir())
 			_, _, err := execute(t, "run", "--retry", appSlug+"/"+id)
 			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "is a report run") {
 				t.Fatalf("--retry: err = %v, want the report run's refusal", err)
