@@ -235,7 +235,7 @@ func TestAdmitSkipsChampionModel(t *testing.T) {
 // refuses: observe never refuses a call, and a provider's calls are real
 // dollars.
 func TestAdmitNeedsEnforceForProvider(t *testing.T) {
-	for _, mode := range []string{"", policy.ModeOff, policy.ModeObserve} {
+	for _, mode := range []string{"", "off", policy.ModeObserve} {
 		eff := admitPolicy()
 		eff.Mode = mode
 		if model, ok, why := admit(admitConfig(), admitLayer(admitChallenger), eff, admitProviders(), admitPrices()); ok || model != "" || why != ReasonNeedsEnforce {
@@ -260,9 +260,10 @@ func TestAdmitNeedsEnforceForProvider(t *testing.T) {
 func TestAdmitReadsAnEmptyModeAsObserve(t *testing.T) {
 	for _, tc := range []struct{ mode, want string }{
 		{"", policy.ModeObserve},
-		// The word that was a mode is named through the constant and never as
-		// a literal of its own (docs/always-a-budget/contract-mode.md §3).
-		{policy.ModeOff, policy.ModeObserve},
+		// The word that was a mode is a literal here: the constants that named
+		// it are deleted (I1, D3009), and what this row holds it to is the
+		// reading the vocabulary gives it (C1).
+		{"off", policy.ModeObserve},
 		{policy.ModeObserve, policy.ModeObserve},
 		{policy.ModeEnforce, policy.ModeEnforce},
 	} {

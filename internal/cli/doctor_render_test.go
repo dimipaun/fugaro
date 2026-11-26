@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // doctorOwnerCase is the state the owner pasted on 2026-10-30: "fugaro doctor
@@ -24,7 +25,9 @@ import (
 // about fifteen informational lines, several of them sentences of six hundred
 // characters. The IDs, severities and Problems here are the ones the checks
 // themselves emit for that state, so a rendering change is measured against
-// what a person actually saw.
+// what a person actually saw — except plugin-pin, which U6b retired with the
+// checkout it read (R15): its row is left as the owner pasted it, so the screen
+// this measures is the one that was actually on their terminal.
 //
 // The sweep's lines are built by the checks that emit them — selfCheck and
 // tokenGrantUnchecked for the bucket, doctorTokenSigners for the signers —
@@ -729,7 +732,7 @@ func TestDoctorAllPrintsEveryCheck(t *testing.T) {
 // lost: --all and --json still carry it.
 func TestDoctorUpdateItemsAreOneCommand(t *testing.T) {
 	updateIDs := []string{
-		"cli-version", "plugin-pin", "base-image", "image-config-web",
+		"cli-version", "base-image", "image-config-web",
 		"policy-rules-skew", "policy-vs-jobs", "policy-older-than-binary",
 	}
 	for _, id := range updateIDs {
@@ -741,9 +744,8 @@ func TestDoctorUpdateItemsAreOneCommand(t *testing.T) {
 		}
 		line := doctorItemLine(t, c)
 		// The line names `fugaro update` and what makes it do the work: the
-		// upgrade before it (cli-version), or the repository the checkout
-		// runs in (plugin-pin). A check here that carries no line of its own
-		// gets the class's one command, whole.
+		// upgrade before it (cli-version). A check here that carries no line of
+		// its own gets the class's one command, whole.
 		if !strings.Contains(line, "`fugaro update") {
 			t.Errorf("%s's line does not name the fugaro update command: %q", id, line)
 		}
@@ -950,26 +952,12 @@ func TestDoctorNeverHidesAFinding(t *testing.T) {
 		}
 	}
 
-	// plugin-pin joined the allow-list with D942 (U3 of
-	// docs/plugin-user-scope/implementation-plan.md): the state it measures is
-	// the un-wired checkout, which is the normal one now that the merge which
-	// wrote a pin is deleted (D949). Filed as audit it was counted by the
-	// default view's pointer line, so the one screen the owner reads most said
-	// "1 more finding" over a checkout with nothing wrong with it. Its finding
-	// states are the update class — a pin this binary does not match, a foreign
-	// wiring — which is what keeps them on that screen, so the two ends are
-	// pinned together here.
-	pin := doctorCheck{ID: "plugin-pin", Severity: "info", Problem: "no fugaro marketplace in .claude/settings.json"}
-	if got := doctorClassOf(pin); got != doctorClassMeasure {
-		t.Errorf("the un-wired plugin-pin is %q, want %q: it is the normal state, not a finding (D942)", got, doctorClassMeasure)
-	}
-	if out := doctorDefaultOutput(t, []doctorCheck{pin}); strings.Contains(out, "more finding") || strings.Contains(out, "plugin-pin") {
-		t.Errorf("the un-wired checkout is printed or counted by the default view:\n%s", out)
-	}
-	stale := doctorCheck{ID: "plugin-pin", Severity: "warning", Problem: "the plugin is pinned at fugaro@0.1.0, and this fugaro is 0.2.0", Fix: "run `fugaro update`"}
-	if got := doctorClassOf(stale); got != doctorClassUpdate {
-		t.Errorf("a pin this binary does not match is %q, want %q: nothing acts on it otherwise", got, doctorClassUpdate)
-	}
+	// The two arms that stood here were plugin-pin's (D942, U3 of
+	// docs/plugin-user-scope/implementation-plan.md): an un-wired checkout was
+	// a measurement and a pin this binary did not match was the update class.
+	// U6b retires the ID with the checkout it read (R15), and a pin is now a
+	// per-repository notice the owner deletes — one class, the actionable one,
+	// pinned by that task's own tests (doctor_repo_notices_test.go).
 
 	// The per-instance IDs of those same sweeps are findings: runs-bucket-iam-1
 	// is one grant doctor could not place, and its summary line is the
@@ -1213,7 +1201,12 @@ func secretCleanRig(t *testing.T) (*doctorRig, string) {
 	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".claude", "settings.json"), []byte(wiredAt("v0.2.0")), 0o644); err != nil {
+	// A wiring with no pin in it: this checkout is one the reader can read at
+	// its default branch, and since U6b any fugaro pin here is a finding the
+	// owner deletes (R15, U6a's text), whatever release it names. What the
+	// plugin's own state is read from is the install this machine has (D942),
+	// which this rig has at this release.
+	if err := os.WriteFile(filepath.Join(root, ".claude", "settings.json"), []byte("{}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return doctorCleanState(t, r, root), root
@@ -1273,13 +1266,16 @@ func TestDoctorRealFindingPrintsItAndThePointer(t *testing.T) {
 		r.withRunsBucket(t, g, "", gcpfake.Binding{Role: "roles/storage.objectAdmin",
 			Members: []string{"user:x@example.com"}})
 	})
-	// The plugin is pinned behind this binary: a warning the reader fixes.
-	settings := filepath.Join(root, ".claude", "settings.json")
-	if err := os.WriteFile(settings, []byte(wiredAt("v0.1.0")), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	// The plugin is pinned behind this binary: a warning the reader fixes, and
+	// since U6b the item that carries it is the per-repository notice check
+	// (R15), whose own text is U6a's. The check reads every enrolled
+	// repository's default branch, so the pin goes into a checkout this reader
+	// can read — the rig's own is not one — and doctor runs in it.
+	root = checkoutWith(t, map[string]string{"fugaro.yaml": cliMinimalYAML})
+	testutil.Git(t, root, "remote", "set-url", "origin", githubOrigin)
+	checkoutFile(t, filepath.Join(root, repoNoticePinFile), wiredAt("v0.1.0"))
 	out, _, _ := execute(t, "doctor", "--dir", root)
-	if !strings.Contains(out, "warning plugin-pin: ") {
+	if !strings.Contains(out, "warning "+repoPluginPinCheckID+": ") {
 		t.Errorf("the default view does not print the real item:\n%s", out)
 	}
 	if !strings.Contains(out, "1 security finding: `fugaro doctor --security`") {

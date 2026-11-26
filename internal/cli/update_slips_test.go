@@ -108,7 +108,7 @@ func TestUpdateConvergesFromPreviousInstallation(t *testing.T) {
 	})}
 	r.save(t)
 
-	out := convergeOn(t, r, []string{"policy-older-than-binary", "policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-older-than-binary", "policy-rules-skew", "repo-plugin-pin"})
 
 	// The intake, which no release before this one deployed and nothing else in
 	// the tree can: the block the module's whole file is gated on, in the tfvars
@@ -192,7 +192,7 @@ func TestUpdateAsksNoRunToFinish(t *testing.T) {
 	r.save(t)
 	run := startRunInFlight(t, r)
 
-	out := convergeOn(t, r, []string{"policy-older-than-binary", "policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-older-than-binary", "policy-rules-skew", "repo-plugin-pin"})
 
 	line := inFlightLine(t, out)
 	if !strings.Contains(line, "update waits for none") {

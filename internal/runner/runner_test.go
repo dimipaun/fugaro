@@ -80,7 +80,9 @@ func (a *scriptedAgent) Run(ctx context.Context, req agent.Request) (agent.Resul
 
 type harness struct {
 	files map[string]string
-	deps  runner.Deps
+	// noHandBack leaves the agent's hand-back as the step wrote it.
+	noHandBack bool
+	deps       runner.Deps
 	// budget is the fake budget database this run's job carries: the address
 	// and the key its environment names, the harness's own unless a test asked
 	// for none (noBudget). Deps.Backend stays zero here and is a test's own
@@ -413,8 +415,51 @@ func filterEnv(env []string, key string) []string {
 // reaches (below).
 func (h *harness) run(t *testing.T, steps ...step) (*runstore.Record, error) {
 	t.Helper()
-	h.agent.steps = append(slices.Clone(steps), h.escalationRound())
+	steps = slices.Clone(steps)
+	if len(steps) > 0 {
+		steps[0] = h.owingHandBack(steps[0])
+	}
+	h.agent.steps = append(steps, h.escalationRound())
 	return runner.Run(context.Background(), h.deps)
+}
+
+// owingHandBack gives a run's first step the hand-back its level owes
+// (LV5.1): a fixture about something else than the account writes none, or
+// none with the sections a level stands on, and a run without them is not
+// ready. A section a step wrote itself is kept, and so is a hand-back left
+// out by a harness that says so (h.noHandBack).
+func (h *harness) owingHandBack(s step) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		res, err := s(t, ctx, req)
+		if h.noHandBack {
+			return res, err
+		}
+		name := "pr.md"
+		if spec, rerr := h.store.ReadTask(ctx); rerr == nil && spec.PreviousRun != "" {
+			name = "followup.md"
+		}
+		p := filepath.Join(envValue(req.Env, "FUGARO_STATE_DIR"), name)
+		body, rerr := os.ReadFile(p)
+		if rerr != nil && !os.IsNotExist(rerr) {
+			t.Fatal(rerr)
+		}
+		text := string(body)
+		if text == "" && name == "pr.md" {
+			text = "# Add feature\n\nAdds feature.txt.\n"
+		}
+		if text == "" {
+			text = "Done.\n"
+		}
+		for _, sec := range []string{"Verification", "Open risks", "Revert plan", "Morning note"} {
+			if !strings.Contains(text, "## "+sec) {
+				text += "\n## " + sec + "\n\n- Nothing to add.\n"
+			}
+		}
+		if werr := os.WriteFile(p, []byte(text), 0o644); werr != nil {
+			t.Fatal(werr)
+		}
+		return res, err
+	}
 }
 
 // escalationRound is the step every fixture's script ends with: the review

@@ -42,7 +42,7 @@ func TestTheSwitchNoLongerReadsTheMode(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, mode := range []string{config.BudgetOff, ""} {
+			for _, mode := range []string{"off", ""} {
 				on := repoRootServed(t, tc.agent, tc.lc, mode)
 				if on.Installation.CredentialsService == nil {
 					t.Errorf("with the published mode %q the repository root carries no credentials service, want the block: the mode is not a condition of the switch, so a repository whose auth the service serves and whose bundle the record vouches for is served whatever the node says (AB15, D3009)", mode)

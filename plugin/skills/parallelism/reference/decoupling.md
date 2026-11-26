@@ -39,13 +39,13 @@ A contract over credentials, authentication, IAM or a wire format is the one pla
 
 ## The mode a task resolves
 
-No command answers which mode a task resolves, because a mode resolves from concrete paths and a graph's footprints are patterns. Read the settings and match them yourself, naming the repository whose plan you are planning: a read that names none covers the installation's own scopes and never opens the repository's `fugaro.yaml`, where the repository's own rigor is written, so it answers with a mode that repository's runs do not resolve.
+No command answers which mode a task resolves, because a mode resolves from concrete paths and a graph's footprints are patterns. A repository's level is the project layer's (D3237) — its own `fugaro.yaml` states neither key — so read the project's answer for the repository whose plan you are planning:
 
 ```bash
-fugaro settings rigor.default rigor.areas --repo <owner/name> --json
+fugaro settings layer.defaults.rigor.repos layer.defaults.rigor.default layer.defaults.rigor.areas --json
 ```
 
-`--repo` takes that repository's `owner/name` or a path inside its checkout, and the rows it adds carry `"scope": "repo:<owner/name>"`: those are the values a run in that repository resolves, the project layer's own defaults already merged in. `rigor.areas` holds each area's `match` and its `mode`, in the order the settings document prints them. Match a task's `footprint.paths` against those `match` patterns and you have the mode the pass runs at for that task. What each one does:
+`layer.defaults.rigor.repos` is the project's map of per-repository levels, one entry per repository it names: this repository's entry, `"<owner/name>": "<mode>"`, is the level its runs start from, and a repository the map leaves out takes `layer.defaults.rigor.default`. The rules of `layer.defaults.rigor.areas` each carry a `match` glob, a level and their `members`: a rule whose `members` name this repository answers for it and outranks the map, while one in effect through its `match` alone ranks below it (D3294). The read steps into the first entry of each `*` row, so a project carrying several rules is read from the layer file the read's `sources` names. Match a task's `footprint.paths` against the `match` patterns and you have the mode the pass runs at for that task. What each one does:
 
 | Mode | The pass |
 | --- | --- |

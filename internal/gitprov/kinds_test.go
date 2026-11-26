@@ -66,6 +66,7 @@ var forgeKindGoSites = map[string]string{
 	"internal/cli/review.go":                   "the kind the App-ID gate a refusal names belongs to: the one provider whose implicit review-only job is composed only with an App ID recorded",
 	"internal/cli/project_status.go":           "the two enrolment rows only a GitHub repository has: the App installation read and the `github-app-key` container's version, which a Bitbucket repository answers with its workspace token instead",
 	"internal/cli/project_enroll_converge.go":  "the kind the enrolment reads off a repository's origin remote, and the GitHub-only App ID its repos: entry is built with",
+	"internal/cli/project_enroll_starter.go":   "the starter fugaro.yaml's pull request: the one kind the CLI opens it for itself, reading the installation's own token, because it has no CLI to lean on (a save's host reads the same one, workspace_state.go)",
 	"internal/cli/reviewverify.go":             "reading a pull request's head per provider",
 	"internal/cli/run.go":                      "the kind a launch resolves for the slug it runs on, refused for a read-only context repository the credentials service cannot fetch",
 	"internal/cli/update_proxy_switch.go":      "the project's own repositories the update's Bitbucket proxy switch has to reach, and the workspace they are all in (D2306, D2314)",

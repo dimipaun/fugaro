@@ -32,7 +32,7 @@
 //     feed that stops without one is a read the console ended -- a cap, a killed
 //     child, a lost channel -- and it is drawn as an interrupted read with
 //     Retry, never as a complete list that happens to be short (RS2, R1).
-//   - **an answers object never names a file.** `setup.plan` carries the five
+//   - **an answers object never names a file.** `setup.plan` carries the six
 //     answers and `setup.apply` carries nothing at all; main serialises them
 //     into bytes it holds in memory and hands those bytes to the child on stdin
 //     (`--answers-file -`). A path in either payload is a file a hostile process
@@ -231,27 +231,42 @@ export type NewOperationRequest = {
 // The setup answers.
 // ---------------------------------------------------------------------------
 
-/** SETUP_ANSWER_KEYS is the five questions `fugaro setup` asks
- * (`internal/cli/setup.go`, `setupQuestions`), in the order it asks them. These
- * are what the wizard collects and what the renderer sends; **`version` is not
- * one of them** -- it is the answers file's own schema version, which main adds
- * when it serialises the file. */
+/** SETUP_ANSWER_KEYS is the six questions `fugaro setup` asks
+ * (`internal/cli/setup.go`, `setupQuestions`; `budget` is added by
+ * `setupAnswerQuestions` for D2210), in the order it asks them. These are what
+ * the wizard collects and what the renderer sends; **`version` is not one of
+ * them** -- it is the answers file's own schema version, which main adds when it
+ * serialises the file -- and neither is `budget_currency`, which the CLI
+ * defaults to USD (D2211) and this console sends nothing for. */
 export const SETUP_ANSWER_KEYS: readonly string[] = Object.freeze([
   'gcp_project',
   'region',
   'name',
   'rigor',
+  'budget',
   'bake_repos',
 ])
 
 /** SETUP_ANSWERS_FILE_KEYS is every key of the file the CLI decodes
- * (`schemas/setup-answers.json`, ST1): the five answers, and the schema's
+ * (`schemas/setup-answers.json`, ST1): the six answers, and the schema's
  * `version` in front of them. Named here so the difference between what the
  * renderer sends and what the child reads is one place and not two. */
 export const SETUP_ANSWERS_FILE_KEYS: readonly string[] = Object.freeze([
   'version',
   ...SETUP_ANSWER_KEYS,
 ])
+
+/** SETUP_BUDGET_MIN and SETUP_BUDGET_MAX are the bounds of the `budget` answer,
+ * and they are the CLI's own rule rather than this console's: the amount is the
+ * installation's monthly budget **alert** threshold, and `managed.Budget.Check`
+ * (`internal/infra/managed/marker.go`) refuses a marker outside
+ * `MinBudgetAmount` to `MaxBudgetAmount` -- one to ten million whole units of
+ * the currency -- so a document answering outside them would be refused by the
+ * installation later rather than by whoever typed it. The answers file's schema
+ * states the same two numbers (`schemas/setup-answers.schema.json`), which is
+ * where `new-ops.test.ts` reads them. */
+export const SETUP_BUDGET_MIN = 1
+export const SETUP_BUDGET_MAX = 10_000_000
 
 /** SetupRigor is the rigor mode as the wire spells it: the five modes of
  * `docs/rigor-modes`. It has no default and the setup file requires it, which is
@@ -276,6 +291,11 @@ export interface SetupAnswers {
   readonly region: string
   readonly name: string
   readonly rigor: SetupRigor
+  /** `budget` is the monthly budget alert the CLI's own question suggests
+   * (D2210) and is **absent** for a field left empty: the answers file's member
+   * is optional, so sending nothing is how the operator takes the CLI's default
+   * of 100 USD (D2212) rather than how they ask for no budget at all. */
+  readonly budget?: number
   readonly bake_repos: boolean
 }
 

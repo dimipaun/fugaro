@@ -11,8 +11,8 @@
 // the operator reads is testable under plain Node.
 //
 // **What it carries is decided in `wizardrun.ts`, and this module only spells
-// it.** The five answers **as main parsed them** (never as the renderer sent
-// them), the SHA-256 of the exact bytes the child is given on its stdin, the two
+// it.** The answers **as main parsed them** (never as the renderer sent them),
+// the SHA-256 of the exact bytes the child is given on its stdin, the two
 // command lines field by field, and the four sentences below. Nothing here
 // computes a value, compares anything or decides anything: a second spelling of
 // these fields would be a second thing to keep in step with the flow that holds
@@ -108,13 +108,16 @@ export const SETUP_BAKE_DEFAULT = 'not answered: the CLI bakes'
  * which matters most for the digest: a window that could rewrite it would be a
  * window whose yes is checked against nothing.
  *
- * The five answers are the ones main **parsed and validated** (`wizardrun.ts`),
- * and not the object the renderer sent: a row drawn from the renderer's own
+ * The answers are the ones main **parsed and validated** (`wizardrun.ts`), and
+ * not the object the renderer sent: a row drawn from the renderer's own
  * spelling would be a window that shows what was asked for rather than what will
  * happen, and the whole point of this window is that the operator reads the
- * second. `planArgv` and `applyArgv` are the two commands field by field,
- * program word included, so the window shows what is spawned and not a summary
- * of it (rule 11's own promise).
+ * second. This window carries five of the six answers main parses: the budget
+ * alert (D2210) is asked, parsed and sent, and has no row here yet, so what it
+ * is set to is drawn in the form and in the digest rather than in the window.
+ * `planArgv` and `applyArgv` are the two commands field by field, program word
+ * included, so the window shows what is spawned and not a summary of it (rule
+ * 11's own promise).
  */
 export interface SetupView {
   /** the union's discriminant, for `ConfirmView`'s reason: the window is one
@@ -136,11 +139,11 @@ export interface SetupView {
   readonly notes: readonly string[]
 }
 
-/** SetupViewFields is what `setupView` is built from: the five answers main
- * parsed, the digest of the held bytes, and the two command lines. It is an
- * argument object rather than six positional parameters because a mis-ordered
- * pair of strings here is a window that names the wrong project with no way to
- * see it. */
+/** SetupViewFields is what `setupView` is built from: the answer rows it draws
+ * -- five of the six main parsed (above) -- the digest of the held bytes, and
+ * the two command lines. It is an argument object rather than eight positional
+ * parameters because a mis-ordered pair of strings here is a window that names
+ * the wrong project with no way to see it. */
 export interface SetupViewFields {
   readonly project: string
   readonly region: string

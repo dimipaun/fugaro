@@ -3710,14 +3710,14 @@ so, and a bucket read that does not answer leaves its image line out instead
 of failing the command.
 
 --plugin checks only the plugin's wiring: offline, no credentials, safe for
-CI. --strict makes a stale, unpinned or foreign plugin fail the command. A
-checkout that never opted in to the pin is informational rather than a
-failure, because nothing in the tree writes a pin any more and that checkout is
-the normal one; "cannot compare" — a development build, an unreadable install
-record — is informational too. "not installed" is a warning, because the
-plugin on this machine is what carries the skills. A repository's CI runs
-fugaro doctor --plugin --strict; with --strict the install on the machine is
-not evaluated at all, because a runner has no Claude Code.
+CI. "cannot compare" — a development build, an unreadable install record — is
+informational. "not installed" is a warning, because the plugin on this
+machine is what carries the skills, and --strict is what fails on it. A
+runner has no Claude Code, so with --strict no install is evaluated at all.
+What a repository's own tree still pins, or still says budget.mode: off, is
+no longer this mode's to report: repo-plugin-pin and repo-budget-mode read
+every enrolled repository's default branch, and this mode reports both as not
+read.
 
 --offline checks the update class and nothing else, and it makes no cloud call,
 no network call and no secret read: the plugin's wiring and the install on this
@@ -3769,7 +3769,7 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--security` | bool | `false` | no | also print the IAM and security sweep (who may read a credential, who may sign a budget token, what a launcher may start) |
-| `--strict` | bool | `false` | no | fail on a stale, unpinned or foreign plugin (CI mode); an un-wired checkout is information, not a failure |
+| `--strict` | bool | `false` | no | fail the command on a warning, not only an error: the plugin this machine does not have, a run that launched without the project layer (CI mode) |
 
 Subcommands:
 
@@ -7405,7 +7405,11 @@ from the project's other repositories. It prints the whole list of what it
 will change, asks once for the project's name, and then does each step as
 far as it can:
 
-  1. the repository's own fugaro.yaml: read (a repository with none gets a pull request for the starter; merge it, run again)
+  1. the repository's own fugaro.yaml: read for its workflows and its
+     base branch, and written only for the anchor line, through the gate,
+     in that repository's own checkout (a repository with none gets a pull
+     request for the starter on a branch of its own; merge it, run again:
+     until it is merged a second run finds that pull request, writes nothing)
   2. this machine's project config: the repository's repos: entry (and, when
      its fugaro.yaml names a Claude account by agent.oauth_token, the
      repository in that one account's allow_data_to, which the next
@@ -7429,6 +7433,12 @@ is mapped and never built — the first image build is billable and it is
 map the published node holds, so enrolling one repository cannot take
 another's mapping away. Nothing here asks a run to finish, and nothing
 rewrites what a run in flight holds.
+
+On Bitbucket the starter's pull request is opened with the installation's own
+bitbucket-token secret — the repository's own container, or the project-wide
+copy an owner stored and allow-listed — read with your credentials and never
+printed or logged; a machine that holds neither is refused with the command
+that stores one.
 
 --allow-list-only writes the published allow-list entry and nothing else,
 as this command did before the enrolment converged: it is what * needs, and

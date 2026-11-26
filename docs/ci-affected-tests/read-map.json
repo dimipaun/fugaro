@@ -8471,6 +8471,7 @@
         "dist",
         "node_modules",
         "plans",
+        "testdata",
         "vendor"
       ],
       "any": true
@@ -9538,6 +9539,7 @@
         "internal/credsvc/**",
         "internal/diagnoseagent/**",
         "internal/digest/**",
+        "internal/e2e/**",
         "internal/escalation/**",
         "internal/estimate/**",
         "internal/failure/**",
@@ -11542,6 +11544,7 @@
         "internal/cli/orchestrator_labels.go",
         "internal/cli/project_enroll.go",
         "internal/cli/project_enroll_converge.go",
+        "internal/cli/project_enroll_starter.go",
         "internal/cli/project_status.go",
         "internal/cli/review.go",
         "internal/cli/reviewverify.go",
@@ -17106,12 +17109,17 @@
       "reads": [
         "**",
         "brand/*.png",
+        "go.mod",
         "internal/**",
         "internal/policy/**",
         "internal/recipe/catalog/**",
         "internal/rigor/personas/**",
         "website/public/**"
-      ]
+      ],
+      "ignores": [
+        ".git"
+      ],
+      "any": true
     },
     {
       "package": "./internal/preflight",

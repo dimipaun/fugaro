@@ -4303,10 +4303,11 @@ new flags is unchanged, and its one `--json` document is unchanged too**: the
 feed takes that document's place on stdout, the run's progress stays on stderr
 where `--json` already puts it, and the final exit code is the run's own.
 
-**`--answers-file -` is the wizard's other half.** The five questions
-(`gcp_project`, `region`, `name`, `rigor`, `bake` — `setupQuestions`, and the
-bake switch is `--bake-repos` beside the file) arrive as one JSON document with
-its own `version`; `-` means **stdin**, and the console passes the dash and never
+**`--answers-file -` is the wizard's other half.** The six questions
+(`gcp_project`, `region`, `name`, `rigor`, `budget`, `bake` — `setupQuestions`,
+whose place row the file answers as `region`, and the bake switch is
+`--bake-repos` beside the file) arrive as one JSON document with its own
+`version`; `-` means **stdin**, and the console passes the dash and never
 a path — the document reaches the child on its stdin as bytes main holds in
 memory, so no file exists for another process of the same user to change between
 main's validation and the CLI's read, and no word of the argv is a path. A flag
@@ -4639,7 +4640,7 @@ and **not** off this document or the design:
 | `image ls` | yes (`newImageLsCmd`, §6.30) — the project's image catalog, and with `--shared` the installation's shared-image lock. **It is offline** and writes nothing, and the group's writers — `image add`, `image rm`, `image promote`, `image build`, `image refresh` — are the never table's as commands and as words of `image`, **save the add §6.34 documents, whose two operations that same rule grants the console by name** — so this read is not quite the group's whole reach any more, and the write's own two rows are the other half of it |
 | `recipes ls` | yes (`newRecipesLsCmd`, §6.31) — the recipes in force, one winner per name. **It is offline** and writes nothing, and `recipes publish` and `recipes validate` are the never table's as words of `recipes` (`publish` as a command too) |
 | `apply --status` | yes (`newApplyCmd`, §6.28) — **the third row here that writes**, and the only one with a read arm: `fugaro apply` runs the follow-up steps a management command saved for later (the composite-commands plan's D1560). The console is admitted to `apply --status --json` and nothing else (D1569, design §5.1 rule 6): the bare `apply` is a row of that table the console does not spawn yet, and the read costs no cloud, so the pair here is what aims it at an installation |
-| `setup` | yes (`newSetupCmd`, §6.32) — **the first row here whose argv arrives partly on stdin as a document rather than as a word**: `--answers-file -` is the wizard's five answers, which the console passes as `-` and never a path. With `--plan-only` the row reads and creates nothing (the console's `setup.plan`), and without it the row is `setup.apply`, **the fourth row here that writes** (design §5.1 rule 5) and the console's fourth write overall. **The console gives both of the command's rows no project selection at all** — no `--project`, no `--config` and no `FUGARO_PROJECT` — because the answers name the project the run creates (§6.32) |
+| `setup` | yes (`newSetupCmd`, §6.32) — **the first row here whose argv arrives partly on stdin as a document rather than as a word**: `--answers-file -` is the wizard's six answers, which the console passes as `-` and never a path. With `--plan-only` the row reads and creates nothing (the console's `setup.plan`), and without it the row is `setup.apply`, **the fourth row here that writes** (design §5.1 rule 5) and the console's fourth write overall. **The console gives both of the command's rows no project selection at all** — no `--project`, no `--config` and no `FUGARO_PROJECT` — because the answers name the project the run creates (§6.32) |
 | **`run`** | yes (`newRunCmd`, §6.14) — **the first row here that writes**: the launch (design §5.1 rule 11) is cut for a project like every cloud command, so it carries `--project` and `--config` too, and the task itself arrives on stdin rather than as a flag |
 
 So the console passes `--project <name>` (and `--config <path>` when the

@@ -74,7 +74,7 @@ const (
 // pin. The published node is version 7, one below this binary's, so the same
 // run's policy stage carries it forward — and that is the write the reconcile
 // rides on.
-var nodeReconcileStale = []string{"policy-rules-skew", "plugin-pin"}
+var nodeReconcileStale = []string{"policy-rules-skew", "repo-plugin-pin"}
 
 // nodeReconcileRig is the installation the release behind left: the converge rig
 // over the fixture's node, with the fixture's local config appended to the
