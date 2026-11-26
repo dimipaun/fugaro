@@ -6753,6 +6753,23 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		return res, remote(fmt.Errorf("launching %s: the outcome is unknown (%w); don't relaunch before %s: fugaro run --retry %s launches the task only if it never started, and refuses with nothing launched, naming the run's pull request, if it did",
 			res.Run, err, now.Add(claimTTL).UTC().Format(time.RFC3339), res.Run))
 	}
+	// The job exists from here, and a Batch launch owes the service one more
+	// word: the id the platform gave it, written on the run's issuance record
+	// through BR17's route, before this launch records anything of its own
+	// (launch_batch.go's registerBatchJob, BR1, R1). A job that cannot be
+	// registered is one nothing can ever claim, so it is stopped and this
+	// launch fails with nothing recorded — the same cleanup the platform's own
+	// refusal gets above, because the same thing is true: no run of this id
+	// will start.
+	if rerr := registerBatchJob(ctx, env, slug, spec, ref); rerr != nil {
+		rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		releaseClaim(rctx, env, s, holder)
+		if minted {
+			env.dropBudgetToken(rctx, slug, spec.RunID) // nothing will start, so nothing will take it
+		}
+		rcancel()
+		return res, rerr
+	}
 	// The backend the launch actually used, from the seam, as above: the
 	// launch succeeded on env.be, so env.be's codec is what names it.
 	l := &runstore.Launch{Version: 1, RunID: spec.RunID, Backend: launchBackend(env.be), Execution: ref.Name, Job: ref.Job, LogURL: ref.LogURL, LaunchedBy: spec.RequestedBy, PlanTask: spec.PlanTask, LaunchedAt: now.UTC()}
