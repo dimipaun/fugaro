@@ -43,6 +43,15 @@ func TestUpdateMessagesAreLaconic(t *testing.T) {
 		"access migrated":         accessMigratedNoGrants,
 		"access mark needs admin": accessMarkNeedsAdmin,
 		"reindex not marked":      fmt.Sprintf(reindexNotMarked, "the budget database could not be opened: firestore 404"),
+		// The routing migration's own lines (MG2), named with one repository,
+		// one pool and one short error, which is the shape each is read in.
+		"routing no checkout": fmt.Sprintf(routingNoCheckoutWarn, "acme/api, acme/web"),
+		"routing unwritten":   fmt.Sprintf(routingUnwrittenWarn, "invalid_credentials"),
+		"routing unreadable":  fmt.Sprintf(routingUnreadableWarn, "/home/u/.config/fugaro/projects/aurora.yaml", "permission denied"),
+		"routing write failed": fmt.Sprintf(routingWriteFailedWarn,
+			"/home/u/.config/fugaro/projects/aurora.yaml", "permission denied"),
+		"routing unpublished": fmt.Sprintf(routingUnpublishedWarn, "team"),
+		"routing fallback":    routingFallbackAutoLine,
 	}
 	for name, msg := range msgs {
 		if msg == "" {
