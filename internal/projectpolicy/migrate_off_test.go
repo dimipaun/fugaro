@@ -15,14 +15,15 @@ import (
 // node keeps its version (R4, D3025), and the `fugaro update` that runs it is
 // the one command the upgrade is (CLAUDE.md).
 //
-// Every node here is one an installation can hold: a version-10 node an older
-// CLI published, or one an administrator edited by hand, and — one version
-// behind — a node the walk carries over before the same step reads it.
+// Every node here is one an installation can hold: a version-11 node this
+// release's own CLI published and an administrator edited by hand, and — one
+// version behind — a version-10 node the walk carries over before the same step
+// reads it.
 
 // offNode is such a node, written with the spacing and the members a published
 // node carries: the block no release of this CLI models is there so the step's
 // byte-for-byte promise can be pinned rather than argued.
-const offNode = `{"version": 10, "budget": {"mode": "off", "per_run_usd": 5}, "allow_repos": ["github/owner/repo-a"], "future_release_block": {"escaped": "a & b <c>"}}`
+const offNode = `{"version": 11, "budget": {"mode": "off", "per_run_usd": 5}, "allow_repos": ["github/owner/repo-a"], "future_release_block": {"escaped": "a & b <c>"}}`
 
 // TestThePolicyMigrationRewritesOffInPlace: a published node that says the word
 // is the node of F22 — the migration used to key on the version, so nothing
@@ -139,7 +140,7 @@ func TestAMigratedNodeIsAValidVersion10Node(t *testing.T) {
 // member and nothing beside it: a migration that re-derived a budget block would
 // be writing a policy the owner did not publish.
 func TestAnOffNodeStillLoadsForTheMigration(t *testing.T) {
-	raw := []byte(`{"version": 10, "budget": {"mode": "off", "per_run_usd": 5, "allowed_models": ["claude-sonnet-5"]}, "allow_repos": ["github/owner/repo-a"]}`)
+	raw := []byte(`{"version": 11, "budget": {"mode": "off", "per_run_usd": 5, "allowed_models": ["claude-sonnet-5"]}, "allow_repos": ["github/owner/repo-a"]}`)
 
 	migrated, changes, err := Migrate(raw)
 	if err != nil {

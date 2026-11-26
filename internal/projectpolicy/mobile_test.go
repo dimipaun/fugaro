@@ -17,7 +17,7 @@ import (
 // node the runs and the pairing route read, so every fixture here is a node and
 // not a bare block.
 func mobileNode(block string) []byte {
-	return []byte(`{"version": 10, "budget": {"mode": "observe"}, "mobile": ` + block + `}`)
+	return []byte(`{"version": 11, "budget": {"mode": "observe"}, "mobile": ` + block + `}`)
 }
 
 // TestProjectPolicyMobileDefaults pins the value `fugaro update` publishes when
@@ -433,8 +433,8 @@ func TestProjectPolicyMobileCrashReportsToleratedByAReaderThatPredatesIt(t *test
 // (P8), which is what keeps an update safe with runs in flight
 // (docs/design/update-in-flight.md).
 func TestProjectPolicyMobileToleratedByAReaderThatPredatesIt(t *testing.T) {
-	if Version != 10 {
-		t.Fatalf("the policy Version is %d, and this test's node is written for 10: update both together, deliberately", Version)
+	if Version != 11 {
+		t.Fatalf("the policy Version is %d, and this test's node is written for 11: update both together, deliberately", Version)
 	}
 	raw := mobileNode(`{"enabled": true, "strict_new_device": true, "max_auth_age": "6h"}`)
 	p, found, err := Decode(raw)
