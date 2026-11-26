@@ -1071,11 +1071,11 @@ func publishedPool(pools []config.Pool, name string) (config.Pool, bool) {
 // credential's: D3176's pool of one named after its only member is the one
 // collision config.ValidatePools admits, and the published node with it
 // (config.PoolMayTakeItsOnlyMembersName), so a pool's own name is a member of
-// that pool alone — and the first test above is what answers it. What the second
-// half matches is a name of the grammar, fugaro_p_<name>, and no pool is named in
-// it: a pool's name is spelled in the credential charset, which holds no
-// underscore, so no one grant name is both a pool's own name and a member's
-// shared one.
+// that pool alone, and such a name is a plain one — what the first half matches.
+// What the second half matches is a name of the grammar, fugaro_p_<name>, and no
+// pool is named in it: a pool's name is spelled in the credential charset, which
+// holds no underscore, so no one grant name is both a pool's own name and a
+// member's shared one.
 //
 // A plain credential name a pool lists as a member, and that no pool is named
 // after, is NOT looked up here. The policy's own decision about a craft
