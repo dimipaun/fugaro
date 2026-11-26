@@ -62,9 +62,10 @@ import { isMarkerText, sanitizeText } from '../../shared/sanitize'
 import { displayRuns, shortRun } from '../../shared/shortid'
 import type { RunRef } from '../../shared/shortid'
 import { PAUSED_STATUS, authModeOf } from '../../shared/schema'
-import type { BurnView, FinishedView, KillView, LiveDocument, RunView, TotalsView } from '../../shared/schema'
+import type { BurnView, FinishedView, KillView, LiveDocument, RunsListRow, RunView, TotalsView } from '../../shared/schema'
 import { putReading, putText } from '../app'
 import type { ElementLike } from '../app'
+import { BUSY_SLOT_CLASS } from '../section'
 import { disabledWrite } from '../writes'
 
 // ---------------------------------------------------------------------------
@@ -1034,6 +1035,15 @@ export interface LiveModel {
    * then draws no banner and no timestamp, which is every drawing the earlier
    * tests and the goldens were taken from. */
   readonly feed: FeedHealth | null
+  /** older is the history the operator asked for past the 24-hour window
+   * (`LiveOlder`, IR7): the pages this console has read, the cursor the next
+   * one starts after, and the section's own busy state and refusal. It is a
+   * field of its own because **it is not a reading of the document**: the frame
+   * carries the day's runs and nothing older, so every row here came from a
+   * second read (`runs ls --json --limit=50 --after=<run id>`) that the entry
+   * made when the operator pressed. A caller that has read no page passes
+   * nothing and the section is not drawn at all. */
+  readonly older: LiveOlder
 }
 
 /**
@@ -1349,6 +1359,14 @@ const NO_RIGOR: ReadonlyMap<string, RigorView> = new Map()
  * no chip -- which is the same cell a run with no block draws, and the reason
  * the parameter is a map rather than a reason string: the screen is not
  * degraded by a join it does not have, it simply says less.
+ *
+ * `older` is the pages past the window the operator asked for (`LiveOlder`),
+ * and it is **a value the caller keeps rather than anything this function
+ * derives**: the cursor is a run id the pages themselves answered, and the
+ * section's `reading` and `because` are the caller's own read's state. It
+ * defaults to the section that draws nothing, which is every caller with no
+ * page read and every drawing the earlier tests and the goldens were taken
+ * from.
  */
 export function buildLiveModel(
   document: LiveDocument,
@@ -1356,6 +1374,7 @@ export function buildLiveModel(
   feed: FeedHealth | null = null,
   rigor: ReadonlyMap<string, RigorView> = NO_RIGOR,
   hours: HourHistory = new HourHistory(),
+  older: LiveOlder = NO_OLDER,
 ): LiveModel {
   // Every run row is built once and the row lists and the fleet's counts are
   // both read off these, so the panel counts exactly the runs the screen draws:
@@ -1502,6 +1521,7 @@ export function buildLiveModel(
     paused,
     queuedNote: document.queuedNote,
     feed,
+    older,
   }
 }
 
@@ -1544,6 +1564,203 @@ export function capsWithheld(model: LiveModel): LiveModel {
     total: { ...model.total, maxParallel: hidden },
     fleet: { ...model.fleet, rate: hidden, redZone: hidden, concurrent: hidden },
   }
+}
+
+// ---------------------------------------------------------------------------
+// Older history on demand (IR7, F4).
+// ---------------------------------------------------------------------------
+
+/**
+ * LIVE_OLDER_PAGE is the page size one press of "Load older" asks for:
+ * `runs ls --limit=50`.
+ *
+ * **The section is the Live list's way past the 24-hour window**, and it is one
+ * read at a time rather than a wider window: the window is what keeps the first
+ * paint cheap, and older history is what the operator asks for when they want
+ * it. The read is `runs.list`'s **existing argv**, the page and the cursor it
+ * has had since C2 -- `runs ls --json --limit=50 --after=<last run id>` -- so
+ * no new operation, no new word and no new allow-list row: what this adds is a
+ * caller for the two arguments the Coordinator's job list used to be the only
+ * one to pass. The cursor is a **run id** and not an instant, because that is
+ * what the wire keeps (`contract-index.md`: "`runs ls --after` stays a run
+ * id"), so the page after this one is asked for by naming the last run this one
+ * drew.
+ *
+ * **The page size is under the ceiling and not at it.** `RUNS_LIST_MAX_LIMIT`
+ * (`src/main/ipc.ts`, 200) is the console's own bound on what a renderer may
+ * ask `runs ls` for, and the renderer may not import main, so the two are held
+ * together by `live.test.ts` rather than by an import: this constant is a page
+ * size choice (fifty rows is one screenful), and the ceiling is the bound that
+ * must not be crossed.
+ */
+export const LIVE_OLDER_PAGE = 50
+
+/**
+ * LIVE_OLDER_WORD, LIVE_OLDER_BUSY and LIVE_OLDER_TITLE are the section's own
+ * three words, declared once each: the control's label, the label it wears
+ * while its read is out, and the heading the section carries so that a reader
+ * who arrives at it hears what it is (the console rule of 2026-10-31: a busy
+ * mark names what is being read).
+ */
+export const LIVE_OLDER_WORD = 'Load older'
+
+export const LIVE_OLDER_BUSY = 'Reading older runs…'
+
+export const LIVE_OLDER_TITLE = 'Older runs'
+
+/** LiveOlderRow is one older run as this section draws it: the id its cell
+ * opens, the repository it is in, its title and the CLI's own status word. The
+ * row is **narrower than `LiveRunRow` on purpose and not by omission**: a
+ * `runs ls --json` row carries the record's own facts (id, repository, status,
+ * title) and none of the frame's live readings (stage, round, models, spend,
+ * age, health), so a row drawn from it says what that document says and never a
+ * value borrowed from a live run.
+ *
+ * **The halt is the status word and not a second mark.** A halted run's status
+ * *is* `halted` (`runstore.StatusHalted`), so a row drawing both would say the
+ * same word twice; the reason a run halted is not in this document at all
+ * (`RunView`'s own `halt` is the frame's), and a mark with nothing behind it
+ * would be a claim this read cannot support. */
+export interface LiveOlderRow {
+  readonly run: string
+  readonly repo: string
+  readonly title: string
+  readonly status: string
+}
+
+/**
+ * LiveOlder is the whole section as data: whether this console may ask for a
+ * page at all, the rows the pages it has read drew, the cursor the next page
+ * starts after, and the section's own two states.
+ *
+ * `more` is whether another page may follow. **A page shorter than
+ * `LIVE_OLDER_PAGE` is the end of the list** -- that is the whole of what this
+ * console can know about a history it cannot count, and the alternative (an
+ * empty page) is a read whose answer is one round trip of nothing -- and the
+ * initial state is `true` because nothing has been read to say otherwise.
+ *
+ * `reading` and `because` are **this section's own** (F4): one read at a time
+ * with its own busy mark, and the CLI's sentence in its own place when a page's
+ * read was refused -- the rows already drawn stay under it, because a page that
+ * could not be read is not a page that said the older runs are gone.
+ */
+export interface LiveOlder {
+  readonly supported: boolean
+  readonly rows: readonly LiveOlderRow[]
+  readonly cursor: string | null
+  readonly more: boolean
+  readonly reading: boolean
+  readonly because: string | null
+}
+
+/** LiveOlderRequest is one page as `runs.list` takes it: the page size, and the
+ * run id the page starts after. `limit` is `LIVE_OLDER_PAGE` and `after` is the
+ * cursor, both of them the numbers and words the allow-list already admits. */
+export interface LiveOlderRequest {
+  readonly limit: number
+  readonly after: string
+}
+
+/**
+ * NO_OLDER is the section a caller that has not asked the floor passes: no
+ * rows, no cursor, no control. It is what every drawing taken before this
+ * section existed is drawn with (a golden, a test), and it is the truth about a
+ * console that has not asked its CLI's version -- the section is drawn by
+ * `renderLive` and this state draws nothing at all.
+ */
+const NO_OLDER: LiveOlder = Object.freeze({
+  supported: false,
+  rows: Object.freeze([]),
+  cursor: null,
+  more: true,
+  reading: false,
+  because: null,
+})
+
+/**
+ * liveOlderOf is the caller's empty section: `supported` is the answer
+ * `runsListOlderSupported` gave for the CLI this console is driving, and
+ * `cursor` is **the oldest run the Live list already drew** -- the bottom of
+ * the window on screen, which is where the older history begins.
+ *
+ * **It is the oldest and not the newest**, and that is `runs ls`'s own order:
+ * the listing prints newest first and `--after=<run id>` continues *after* that
+ * run's position in it, so naming the oldest run drawn asks for the runs older
+ * than it -- naming the newest would hand back the rows already on screen. The
+ * Live list's own rows are the frame's, which `buildLiveModel` leaves in the
+ * document's order (earliest start first), so a caller reading them takes the
+ * **first** row; a caller reading a `runs ls` page, whose order is newest
+ * first, takes its last (`olderPageOf`).
+ *
+ * There is no control without a cursor: a window that drew no run has no row to
+ * page after, and a read that named no run at all would hand back the day's
+ * rows a second time.
+ */
+export function liveOlderOf(supported: boolean, cursor: string | null): LiveOlder {
+  return { supported, rows: [], cursor, more: true, reading: false, because: null }
+}
+
+/** liveOlderReading is the section while a page's read is out: its own busy
+ * mark, and no refusal left over from the page before it. */
+export function liveOlderReading(page: LiveOlder): LiveOlder {
+  return { ...page, reading: true, because: null }
+}
+
+/** liveOlderRefused is the section after a read was refused: the rows and the
+ * cursor it already held stay, and the CLI's own sentence is drawn beside the
+ * control -- which stays, because the operator's press is the remedy. */
+export function liveOlderRefused(page: LiveOlder, sentence: string): LiveOlder {
+  return { ...page, reading: false, because: sentence }
+}
+
+/**
+ * olderPageOf folds one page into the section: its rows are appended to the
+ * ones already drawn (the CLI prints newest first, and the pages arrive in that
+ * order), and the cursor becomes **the last run id of the page just read**,
+ * which is what the next page is asked after.
+ *
+ * **A page's rows are appended and never sorted.** The listing is the CLI's
+ * order -- `runs ls` sorts newest first and `--after` continues from a run id's
+ * own position (IR1) -- so a console that re-sorted could only move a row away
+ * from where the CLI put it, and the same reasoning `buildLiveModel` states for
+ * the frame's order.
+ *
+ * A page's rows are **not de-duplicated against the rows already drawn**: the
+ * cursor is exclusive (`--after` starts *after* that run), so the first row of
+ * a page is the run after the one the last page ended on, and two pages that
+ * shared a row would mean the CLI handed back a run the cursor had already
+ * passed.
+ */
+export function olderPageOf(runs: readonly RunsListRow[], previous: LiveOlder): LiveOlder {
+  const rows = runs.map(olderRowOf)
+  const last = rows[rows.length - 1]
+  return {
+    ...previous,
+    rows: [...previous.rows, ...rows],
+    cursor: last === undefined ? previous.cursor : last.run,
+    more: runs.length >= LIVE_OLDER_PAGE,
+    reading: false,
+    because: null,
+  }
+}
+
+/** olderRowOf is one `runs ls --json` row as the section draws it. */
+function olderRowOf(row: RunsListRow): LiveOlderRow {
+  return { run: row.run, repo: row.repo, title: row.title, status: row.status }
+}
+
+/**
+ * olderRequest is the page to ask `runs.list` for, or `null` when there is
+ * none: the section is not allowed to ask, a page is already being read, the
+ * last page was short, or nothing has said which run the page starts after.
+ *
+ * It is the caller's guard as well as its argv: a press that arrives while a
+ * read is out asks for nothing, so one read is in flight at a time and the
+ * section's busy mark is the truth about what it is doing.
+ */
+export function olderRequest(page: LiveOlder): LiveOlderRequest | null {
+  if (!page.supported || page.reading || !page.more || page.cursor === null) return null
+  return { limit: LIVE_OLDER_PAGE, after: page.cursor }
 }
 
 // ---------------------------------------------------------------------------
@@ -3041,6 +3258,133 @@ function reviewRow(factory: ScreenFactory, row: LiveReviewRow, ending: string): 
   return element
 }
 
+/** OLDER_HEAD is the column the rows' own run ids sit under, and OLDER_FIELD is
+ * the wire path this section's strings come from. **It is not a key of the
+ * frame's document**: these rows are a `runs ls --json` page, and the field
+ * names the read that answered rather than a slot in the feed -- which is what
+ * the sanitizer's refusal sentence is for, and what the control's press asks
+ * for.
+ *
+ * The control's own class is `live-older-load`: it is the hook the entry finds
+ * the button by (`classed`) to put the operator's press on it, and the only
+ * door this section has. */
+const OLDER_HEAD = 'RUN'
+const OLDER_FIELD = 'runs ls --json'
+
+/**
+ * olderSection draws the history past the window: the rows the pages have
+ * answered with, the control that asks for the next one, and -- when a page's
+ * read was refused -- the CLI's own sentence about it.
+ *
+ * **It is drawn only where there is something to say.** A console whose CLI is
+ * below the floor (`older.supported`) draws nothing at all: not a disabled
+ * control, and not an empty section. Below the floor the CLI refuses an
+ * `--after` outside the window it was given, so a control there would be a
+ * control whose press is a refusal, and the operator would be told about this
+ * console's version rather than about their runs. A window that drew no run at
+ * all is the other empty case -- nothing on screen, no run id to page after --
+ * and it is the same nothing.
+ *
+ * **The section's busy state is its own** (F4): `reading` is this read's, not
+ * the feed's, and it is drawn in the frame the press happened in -- the label
+ * the control wears while its page is out, and the section's own `aria-busy`.
+ * The busy slot is the section's first child, for `graph.ts`'s reason: the mark
+ * `sectionRead` puts up goes at the top of this section rather than under rows
+ * nobody has scrolled to, and one read's mark cannot take another's down.
+ *
+ * **The rows already drawn stay under a refusal.** A page that could not be
+ * read is not a page that said the older runs are gone, and the control stays
+ * where it was: the operator's press is the remedy.
+ */
+function olderSection(factory: LiveFactory, older: LiveOlder): ScreenElement | null {
+  if (!older.supported) return null
+  if (older.cursor === null && older.rows.length === 0 && !older.reading && older.because === null) return null
+  const element = make(factory, 'section', 'live-older')
+  element.setAttribute('aria-label', LIVE_OLDER_TITLE)
+  if (older.reading) {
+    element.setAttribute('data-busy', 'true')
+    element.setAttribute('aria-busy', 'true')
+  }
+  cell(element, factory, 'div', BUSY_SLOT_CLASS)
+  literal(cell(element, factory, 'h2', 'live-older-title'), LIVE_OLDER_TITLE)
+
+  const table = make(factory, 'table', 'live-table')
+  const head = cell(table, factory, 'thead')
+  const headRow = cell(head, factory, 'tr')
+  // Four calls rather than a loop over a list: every argument a screen hands
+  // `literal` is the console's own word, and a loop variable is a string the
+  // scan in `screen-literals.test.ts` cannot see the origin of.
+  literal(cell(headRow, factory, 'th', 'live-table-head'), OLDER_HEAD)
+  literal(cell(headRow, factory, 'th', 'live-table-head'), 'TASK')
+  literal(cell(headRow, factory, 'th', 'live-table-head'), 'PROJECT')
+  literal(cell(headRow, factory, 'th', 'live-table-head'), 'STATUS')
+  const body = cell(table, factory, 'tbody')
+  // The endings are computed over **the pages drawn so far** and not per page:
+  // the rows are one table on screen, and the collision rule is a property of
+  // what is printed together (`runEndings`, F15). A page read later can only
+  // lengthen the endings it shares with the rows above it, which is the rule
+  // working rather than a row changing under the reader.
+  const endings = runEndings(
+    older.rows.map((row) => ({ slug: row.repo, run: row.run })),
+    OLDER_FIELD,
+  )
+  older.rows.forEach((row, at) => body.append(olderRow(factory, row, endings[at] ?? shortRun(row.run))))
+  element.append(table)
+
+  if (older.because !== null) {
+    // The CLI's own sentence, in the console's `sentence` class and never in the
+    // control's label: what failed is the read of one page, and the rows above
+    // are still the pages that answered.
+    putText(cell(element, factory, 'p', 'live-older-refusal'), older.because, 'sentence', OLDER_FIELD)
+  }
+
+  if (older.more && (older.reading || olderRequest(older) !== null)) {
+    const control = make(factory, 'button', 'live-older-load')
+    control.setAttribute('type', 'button')
+    // A control that may not ask says so rather than disappearing: while its
+    // page is out it is the operator's own read that is running, and at the end
+    // of the list (`more` false) it is not drawn at all -- there is nothing
+    // older to ask for, and a button saying "no more" is a sentence about a
+    // history this console cannot count.
+    if (olderRequest(older) === null) control.setAttribute('aria-disabled', 'true')
+    // Two calls rather than one ternary: the label is the console's own word
+    // either way, and each of the two is a module constant the scan in
+    // `screen-literals.test.ts` reads by name.
+    if (older.reading) literal(control, LIVE_OLDER_BUSY)
+    else literal(control, LIVE_OLDER_WORD)
+    element.append(control)
+  }
+  return element
+}
+
+/** olderRow draws one older run: its id as the door to Run detail (`putRunId`,
+ * as every other row on this screen draws its own), its title, its repository
+ * and the CLI's own status word.
+ *
+ * **The row is narrower than a live row on purpose** (`LiveOlderRow`): a
+ * `runs ls --json` row carries the record's own facts and none of the frame's
+ * live readings, so these are the cells -- and no stage, round, models, spend
+ * or age, which the document this row came from never had.
+ */
+function olderRow(factory: ScreenFactory, row: LiveOlderRow, ending: string): ScreenElement {
+  const element = make(factory, 'tr', 'live-older-row')
+  putRunId(cell(element, factory, 'td', 'live-older-run-id'), row.run, ending, OLDER_FIELD)
+  textCell(element, factory, 'td', row.title, 'sentence', `${OLDER_FIELD}.title`, 'live-older-run-title')
+  // The repository is drawn as `reviewRow` draws one: the slash decides the
+  // text class, and a slug is not a repository name.
+  textCell(
+    element,
+    factory,
+    'td',
+    row.repo,
+    row.repo.includes('/') ? 'repository' : 'slug',
+    `${OLDER_FIELD}.repo`,
+    'live-older-repo',
+  )
+  putText(cell(element, factory, 'td', 'live-older-status'), row.status, 'label', `${OLDER_FIELD}.status`)
+  return element
+}
+
 /**
  * pausedSection draws the runs that suspended themselves, one row each, in the
  * document's own order.
@@ -3158,6 +3502,14 @@ export function renderLive(factory: LiveFactory, model: LiveModel, theme: LiveTh
     const orphans = cell(root, factory, 'div', 'live-orphans')
     orphans.append(runTable(factory, drawn.orphans))
   }
+
+  // Older history goes **directly under the tables it continues**: it is the
+  // same listing, one page back, and a control that reached the day before
+  // yesterday from below the review inbox would be a second list rather than the
+  // way past this one's window (IR7). It draws nothing when there is no page to
+  // show and nothing to ask for -- see `olderSection`.
+  const older = olderSection(factory, drawn.older)
+  if (older !== null) root.append(older)
 
   // The paused runs come next, and only when there are any: a chain that is
   // suspended is not spending and not over, so it belongs under the tables and
