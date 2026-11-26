@@ -627,10 +627,10 @@ func layerWord(src string) string {
 }
 
 // chainRoundCeiling is the rounds one run of mode m starts its review loop
-// from, as the run itself reads them (internal/runner's planAgent): the
-// repository's own number where it tightens the mode's senior row, and the row
-// where it does not — a value the project layer says nothing about stands only
-// where it is the tighter of the two (R3, R20, RT2) — held inside the recipe's
+// from, as the run itself reads them (internal/runner's planAgent): the file's
+// own number where it stands — the project layer states it, or it tightens the
+// mode's senior row — and that row where it does not stand, which is a silent
+// project and a number below the row (R3, R20, RT2), held inside the recipe's
 // bound (internal/runner's setRounds, recipe.MaxReviewRounds).
 //
 // It is the figure a refusal about the review-round dimension quotes, and it
@@ -644,7 +644,9 @@ func layerWord(src string) string {
 // the recipe's bound is the only ceiling it is held under.
 func chainRoundCeiling(cfg *config.Config, m rigor.Rigor) int {
 	row := rigor.DefaultRounds(m).Senior
-	row = max(config.TightenRounds(cfg, "agent.review_rounds", cfg.Agent.ReviewRounds, row), row)
+	if n := config.TightenRounds(cfg, "agent.review_rounds", cfg.Agent.ReviewRounds, row); n > 0 {
+		row = n
+	}
 	return min(row, recipe.MaxReviewRounds)
 }
 
