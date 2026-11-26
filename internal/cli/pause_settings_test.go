@@ -89,9 +89,11 @@ func TestPublishWritesAndKeepsThePauseSettings(t *testing.T) {
 	// A written member wins and the node fills the rest, member by member: the
 	// node's floor and maximum stand beside the minimum the file states, because
 	// a file that writes `min_pause` has said nothing about the other two.
+	rewriteProjectConfig(t, f, "pause:\n  min_pause: 1h\n")
 	f.db.Set(projectpolicy.PathShared(), map[string]any{
-		"version": projectpolicy.Version,
-		"pause":   map[string]any{"wait_in_job": "4m", "max_pause": "2h"},
+		"version":     projectpolicy.Version,
+		"allow_repos": []string{"github/acme/app"},
+		"pause":       map[string]any{"wait_in_job": "4m", "max_pause": "2h"},
 	})
 	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
 		t.Fatal(err)
@@ -106,8 +108,9 @@ func TestPublishWritesAndKeepsThePauseSettings(t *testing.T) {
 	// with the file's key in the sentence, while both halves are still in hand.
 	g := newProjectFixture(t, "pause:\n  wait_in_job: 25m\n")
 	g.db.Set(projectpolicy.PathShared(), map[string]any{
-		"version": projectpolicy.Version,
-		"pause":   map[string]any{"min_pause": "20m"},
+		"version":     projectpolicy.Version,
+		"allow_repos": []string{"github/acme/app"},
+		"pause":       map[string]any{"min_pause": "20m"},
 	})
 	_, _, err := execute(t, "project", "policy", "publish")
 	if err == nil {
@@ -141,8 +144,9 @@ func TestPublishWritesAndKeepsThePauseSettings(t *testing.T) {
 func TestPublishRefusesAPauseBlockTheNodeCannotCarry(t *testing.T) {
 	f := newProjectFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), map[string]any{
-		"version": projectpolicy.Version,
-		"pause":   map[string]any{"wait_in_job": "1h"},
+		"version":     projectpolicy.Version,
+		"allow_repos": []string{"github/acme/app"},
+		"pause":       map[string]any{"wait_in_job": "1h"},
 	})
 	_, _, err := execute(t, "project", "policy", "publish")
 	if err == nil {
