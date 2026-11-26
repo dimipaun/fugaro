@@ -832,6 +832,28 @@ for e in sorted(seen):
     print(e)
 PY
 }
+# submitted_linger: the life the check gives a job's own container after its
+# reads, read out of the configuration the fake kept — the seconds the container
+# sleeps. It is not the CHK830_LINGER_A knob: the life a submit uses is the
+# linger raised past the wait for its lines, and the dry run has to print the
+# same number, or the plan tells the owner the container dies long before it
+# does.
+submitted_linger() { # submitted_linger JOB
+  python3 - "$dir/state/submits" "$1" <<'PY' 2>/dev/null || true
+import json, os, sys
+d, job = sys.argv[1], sys.argv[2]
+for f in sorted(os.listdir(d)):
+    if not f.endswith("-" + job + ".json"):
+        continue
+    obj = json.load(open(os.path.join(d, f)))
+    for tg in obj.get("taskGroups", []):
+        env = (tg.get("taskSpec", {}).get("environment", {}) or {}).get("variables", {}) or {}
+        life = env.get("FUGARO_CHK830_LINGER")
+        if life:
+            print(life)
+            sys.exit(0)
+PY
+}
 # write_default_case: the platform answers most cases start from. Both jobs ran;
 # the probe's VM carries Batch's OWN job-uid label, which is the Google-made fact
 # u1-link is about and the field a forge would have to reproduce, and its own
@@ -1105,6 +1127,29 @@ test_dry_run() {
   expect_contains "$err" "gcloud batch jobs submit ${job_a}" "dry run: the plan names the job it would submit"
   expect_contains "$err" "gcloud compute instances create ${handmade}" "dry run: the plan names the plain VM for O8"
   expect_no_cloud "dry run"
+}
+
+# The plan claims to print every command a real run would run, so the life it
+# prints for the probe's container has to be the life the submit gives it — the
+# linger raised past the wait for its lines, never the CHK830_LINGER_A knob
+# alone. The knob is set below the wait here, so a plan that regressed to
+# printing it would print 30s where the configuration it would submit says 60s.
+test_the_plan_prints_the_life_the_submit_uses() {
+  setup_case plan-life
+  write_default_case "$dir"
+  run_check CHK830_LINGER_A=30
+  expect_status "$status" 0 "plan-life: the run"
+  local life
+  life=$(submitted_linger "$job_a")
+  [ "$life" = "60" ] \
+    || fail "plan-life: the probe job's configuration gives its container '${life}' seconds, want the linger raised past the wait (60)"
+
+  setup_case plan-life-dry
+  run_check CHK830_LINGER_A=30 -- --dry-run
+  expect_status "$status" 0 "plan-life: the dry run"
+  expect_contains "$err" "container alive ${life}s after its reads" \
+    "plan-life: the plan prints the life the submit uses (${life}s), not the 30s linger knob"
+  expect_no_cloud "plan-life: the dry run"
 }
 
 # The happy path: the platform answers as the model of it does, so every row is
@@ -1799,6 +1844,7 @@ t() {
 
 t test_help
 t test_dry_run
+t test_the_plan_prints_the_life_the_submit_uses
 t test_happy_path
 t test_the_forge_attempt_is_what_makes_the_row
 t test_a_second_job_that_reproduces_the_field_fails_u1_forge
