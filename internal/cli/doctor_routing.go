@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/orchestrator/service"
@@ -58,7 +59,7 @@ func doctorModelRoutingChecks(ctx context.Context, cmd *cobra.Command, lc *local
 	}
 	var out []doctorCheck
 	out = append(out, doctorRoutingTableChecks(cmd, lc, repos)...)
-	out = append(out, doctorRoutingSourceSecretChecks(ctx, lc)...)
+	out = append(out, doctorRoutingSourceSecretChecks(ctx, lc, repos)...)
 	out = append(out, doctorRoutingLauncherPoolChecks(lc)...)
 	out = append(out, doctorPauseWithoutOrchestrator(lc)...)
 	return out
@@ -116,12 +117,12 @@ func routingTableFix() string {
 }
 
 // doctorRoutingSourceSecretChecks reports a source whose credential the
-// credentials service's bundle does not hold: a pool source whose pool lists a
-// member the document has no entry for, or a source naming the project's
-// Anthropic key or a provider key the document does not carry. A chain that
-// reaches such a source is a call the service cannot serve, and the walk skips
-// it — so a chain of one is a run that cannot start, and a chain of several is
-// a fallback the person who wrote it does not have.
+// credentials service's bundle does not hold, so that the service's own walk
+// skips it: a pool source whose member the document holds no entry for, or a
+// source of kind anthropic or provider on a repository whose own entries the
+// document holds none of. A chain reached by one of them is a call the service
+// cannot serve — so a chain of one is a run that cannot start, and a chain of
+// several is a fallback the person who wrote it does not have.
 //
 // The bundle is the ONE document the credentials service reads
 // (credsvc.BundleSecretID, written by `fugaro creds set`), and it is read here
@@ -129,22 +130,25 @@ func routingTableFix() string {
 // ever printed: whether the document holds a credential is what this check
 // answers, and a value never enters a message.
 //
-// The names are the ones the service's own walk looks up for a source
-// (internal/credsvc's chain planSource): a pool's members, the project's
-// Anthropic key for a source of kind anthropic, and the provider's own name for
-// a source of kind provider. The launcher's pool names nothing here — which
-// pool it is is the designation record's, and its absence is
-// doctorRoutingLauncherPoolChecks' — and Vertex is reached through the
-// installation's service account, so there is no entry of the document to hold.
+// Every ask is the lookup the service's own walk makes for that source
+// (internal/credsvc's chain planSource), so that doctor cannot report a
+// credential the service would have found, and cannot miss one it looks up: a
+// pool's members through the bundle's name index, with the tier the walk
+// selects on, and the three single-credential kinds through the repository's
+// own entries of C1's family (credsvc.ReadProviderKey). The launcher's pool
+// names nothing here — which pool it is is the designation record's, and its
+// absence is doctorRoutingLauncherPoolChecks' — and Vertex is reached through
+// the installation's service account, so there is no entry of the document to
+// hold.
 //
 // A bundle that could not be read is an unknown and never a pass, and an
 // installation that has not opted into the credentials service is told so in
 // one line: it is the state an installation with no service is in, and a
 // warning about every credential of its table would be doctor inventing a
 // finding out of a shape the installation never had.
-func doctorRoutingSourceSecretChecks(ctx context.Context, lc *localcfg.Config) []doctorCheck {
+func doctorRoutingSourceSecretChecks(ctx context.Context, lc *localcfg.Config, repos []string) []doctorCheck {
 	const id = "routing-source-secret"
-	asks := routingChainCredentialAsks(lc)
+	asks := routingChainCredentialAsks(lc, repos)
 	if len(asks) == 0 {
 		return nil
 	}
@@ -180,63 +184,162 @@ func doctorRoutingSourceSecretChecks(ctx context.Context, lc *localcfg.Config) [
 	}
 	var out []doctorCheck
 	for _, a := range asks {
-		if _, ok := b.Lookup(a.name); ok {
+		if a.held(b) {
 			continue
 		}
 		out = append(out, doctorCheck{
 			ID:       fmt.Sprintf("%s-%d", id, len(out)+1),
 			Severity: "warning",
-			Problem: fmt.Sprintf("the source %s names the credential %s, and the service's bundle %s holds no entry for it: a call the chain reaches there is skipped, and a chain that names nothing else serves no run",
-				a.at, pluginwire.Printable(a.name), pluginwire.Printable(store.id)),
-			Fix: selfCommand() + " creds set " + config.CredentialSecret(a.name),
+			Problem:  fmt.Sprintf(a.problem, pluginwire.Printable(store.id)),
+			Fix:      selfCommand() + " creds set " + a.key,
 		})
 	}
 	return out
 }
 
-// routingCredentialAsk is one credential a chain's source needs from the
-// bundle: the name the service looks up, and where in the table it is named.
+// routingCredentialAsk is one entry a chain's source needs the bundle to hold,
+// and the lookup that answers whether it does: the key a person reads, the
+// document key the write enters it under, and the service's own question about
+// the document.
 type routingCredentialAsk struct {
-	at   string
-	name string
+	// repo is the repository the entry is that repository's own for, and empty
+	// for a credential the project holds once. It is what tells two asks of one
+	// credential for two repositories apart, and it is printed in the message
+	// of the two repo-scoped kinds.
+	repo string
+	// key is the document key `fugaro creds set` enters the credential under,
+	// which is the fix's own argument.
+	key string
+	// problem is the finding, with one %s where the bundle's container goes: the
+	// container's name is only known once the store has been read.
+	problem string
+	// held is the lookup the service's walk makes for this source
+	// (planSource), so that a document the service would serve this source from
+	// is never reported as one it could not.
+	held func(*credsvc.Bundle) bool
 }
 
-// routingChainCredentialAsks is every credential the table's sources need from
-// the bundle, in the table's own order, one entry per (source, credential)
-// pair. A source of a kind that names no bundle entry — the launcher's pool,
-// Vertex — asks nothing, and neither does a pool source naming a pool the
-// project does not declare: RT3's own undeclared problem is that finding, and a
-// member list doctor invented from a pool that is not there would be a second,
-// wrong one.
-func routingChainCredentialAsks(lc *localcfg.Config) []routingCredentialAsk {
+// routingChainCredentialAsks is every credential the table's sources need the
+// bundle to hold, in the table's own order, one entry per (source, credential,
+// repository) state that is a hole when the document holds it not. A source of
+// a kind that names no bundle entry — the launcher's pool, Vertex — asks
+// nothing, and neither does a pool source naming a pool the project does not
+// declare: RT3's own undeclared problem is that finding, and a member list
+// doctor invented from a pool that is not there would be a second, wrong one.
+//
+// A member the service's pool walk skips is skipped here too, and for the same
+// reasons: a runner-path key and the built-in Vertex credential are served
+// outside the document, and a subscription member is not selectable at all
+// while the spread switch is off (D1622) — a missing entry is not what holds
+// either of them back, and reporting one would be a finding nobody can act on.
+func routingChainCredentialAsks(lc *localcfg.Config, repos []string) []routingCredentialAsk {
 	var out []routingCredentialAsk
-	add := func(at, name string) {
-		if name == "" {
+	seen := make(map[string]bool)
+	add := func(a routingCredentialAsk) {
+		k := a.repo + "\x00" + a.key
+		if seen[k] {
 			return
 		}
-		if slices.ContainsFunc(out, func(a routingCredentialAsk) bool { return a.at == at && a.name == name }) {
-			return
-		}
-		out = append(out, routingCredentialAsk{at: at, name: name})
+		seen[k] = true
+		out = append(out, a)
 	}
 	for i, e := range lc.ModelRouting {
 		for j, s := range e.Chain {
 			at := fmt.Sprintf("model_routing[%d].chain[%d]", i, j)
 			switch s.Kind {
 			case routing.KindPool:
-				if pool, ok := routingPoolNamed(lc.Pools, s.Pool); ok {
-					for _, member := range pool.Members {
-						add(at, member)
-					}
+				pool, ok := routingPoolNamed(lc.Pools, s.Pool)
+				if !ok {
+					continue
 				}
-			case routing.KindAnthropic:
-				add(at, config.AnthropicSecret)
-			case routing.KindProvider:
-				add(at, s.Provider)
+				for _, member := range pool.Members {
+					typ, declared := routingMemberType(lc, member)
+					if !declared || config.CredentialServingPath(typ) != config.CredentialPathCredsvc {
+						continue
+					}
+					if typ == config.CredentialTypeClaudeOAuth && !routingSpreadOn(lc) {
+						continue
+					}
+					name, poolName := member, s.Pool
+					add(routingCredentialAsk{
+						key: accountsAddSecretName(name, typ),
+						problem: fmt.Sprintf("the source %s reaches the pool %s, and the service's bundle %%s holds no entry for its member %s: that member serves nothing, and a pool with no other member serves none of this entry's calls",
+							at, pluginwire.Printable(poolName), pluginwire.Printable(name)),
+						held: func(b *credsvc.Bundle) bool {
+							m, ok := b.Lookup(name)
+							return ok && m.Kind == credsvc.KindModel && (m.Tier == creds.TierA || m.Tier == creds.TierB)
+						},
+					})
+				}
+			case routing.KindAnthropic, routing.KindProvider:
+				// Both are the repository's own entries of C1's family — the
+				// repository's Anthropic key and the provider's key for that
+				// repository — so the ask is per repository, and only for the
+				// repositories this source admits (an empty admit list admits
+				// nobody, which is inert rather than a hole).
+				for _, repo := range repos {
+					if !slices.Contains(s.Admit, repo) {
+						continue
+					}
+					slug, err := providerKeyRepoSlug(lc, repo)
+					if err != nil {
+						// A repository whose slug cannot be derived is one
+						// whose entries cannot be named at all: no ask, rather
+						// than a finding about an entry no one could write.
+						continue
+					}
+					repo := repo
+					if s.Kind == routing.KindAnthropic {
+						add(routingCredentialAsk{
+							repo: repo,
+							key:  config.AnthropicSecret,
+							problem: fmt.Sprintf("the source %s is the Anthropic key, and the service's bundle %%s holds neither the project's %s nor %s's own entry: the source serves nothing",
+								at, pluginwire.Printable(config.AnthropicSecret), pluginwire.Printable(repo)),
+							held: func(b *credsvc.Bundle) bool {
+								if _, ok := b.Lookup(config.AnthropicSecret); ok {
+									return true
+								}
+								_, ok := credsvc.ReadProviderKey(b, slug, config.AnthropicKeyAccount)
+								return ok
+							},
+						})
+						continue
+					}
+					provider := s.Provider
+					add(routingCredentialAsk{
+						repo: repo,
+						key:  config.CredentialSecret(provider),
+						problem: fmt.Sprintf("the source %s is the provider key %s, and the service's bundle %%s holds no entry of it for %s: the source serves nothing",
+							at, pluginwire.Printable(provider), pluginwire.Printable(repo)),
+						held: func(b *credsvc.Bundle) bool {
+							if _, ok := credsvc.ReadProviderKey(b, slug, provider); ok {
+								return true
+							}
+							_, ok := b.Lookup(config.ProviderKeySecret)
+							return ok
+						},
+					})
+				}
 			}
 		}
 	}
 	return out
+}
+
+// routingMemberType is a pool member's declared credential type: the block the
+// loader already held the member against (config.ValidatePools), and false for
+// a name no block defines, which is the built-in Vertex credential no
+// installation writes down (D1624).
+func routingMemberType(lc *localcfg.Config, member string) (string, bool) {
+	c, ok := config.CredentialNamed(lc.Credentials, member)
+	return c.Type, ok
+}
+
+// routingSpreadOn is whether a run may spread across two or more subscriptions
+// (D1622), the switch that decides whether a Claude OAuth member is selectable
+// at all: a pool it holds back is not a pool with a credential missing.
+func routingSpreadOn(lc *localcfg.Config) bool {
+	return lc.SubscriptionSpread != nil && *lc.SubscriptionSpread
 }
 
 // routingPoolNamed is the project's pool by the name a source of kind pool
