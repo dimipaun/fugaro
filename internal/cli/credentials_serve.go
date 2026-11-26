@@ -372,8 +372,8 @@ const (
 	// renders the ones this installation holds here; an installation whose
 	// roster names none renders no entry and must start, which is why it is read
 	// as an OPTIONAL value like every other class list. It is credsvc's
-	// IdentityConfig.ServiceAccounts, and nothing serves a caller by it until
-	// the issuer is wired in (I1).
+	// IdentityConfig.ServiceAccounts, the roster the ticket route admits the
+	// launcher class from (LM3).
 	envRosterServiceAccounts = "FUGARO_ROSTER_SERVICE_ACCOUNTS"
 	// envImplicitAdmins is the implicit admins of this installation (F29, R16):
 	// a JSON array of bare addresses, which is what the module renders from the
@@ -384,7 +384,7 @@ const (
 	// not on it, for the gate's own reason: a member the gate cannot match
 	// against a caller is not one it can place. It is credsvc's
 	// IdentityConfig.ImplicitAdmins, read as an OPTIONAL value like the lists
-	// above and used by nothing yet (LM23 judges with it).
+	// above, and the launch scope is built from it (LM23, LM24).
 	envImplicitAdmins = "FUGARO_IMPLICIT_ADMINS"
 )
 
@@ -716,11 +716,9 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 	// The identity half's three values (LM22): the signer a run's identity is
 	// signed as (D3121), the roster's service accounts (D3123) and the implicit
 	// admins the CLI's own gate reads (F29, R16). They are read here into C1's
-	// configuration and NOTHING USES THEM YET: the five identity routes answer
-	// the contract's "not served" whatever this configuration holds, because the
-	// issuer is not wired in (credsvc's identity stub, which I1 deletes), and
-	// the store, the scope check and the ticket's bound on a run's runtime are
-	// LM1's, LM23's and LM24's. Each is read as an OPTIONAL value by the rules
+	// configuration, and the issuer's own four parts are built from them below:
+	// the store (LM1), the scope check (LM23, LM24) and the ticket's bound on a
+	// run's runtime. Each is read as an OPTIONAL value by the rules
 	// above -- the module that renders them is LM12, so an installation whose
 	// module does not render one yet must start the service it always did --
 	// while a value that is present and is not the document the module renders
@@ -1591,9 +1589,9 @@ func credentialsServiceOrchestrators(raw string) ([]string, error) {
 // because the entry arrives with the module LM12 renders next, so a service
 // deployed by a release before it must start the same service it always did —
 // with no signer, which is an installation that has no issuer and whose
-// identity routes answer the contract's "not served" (R7, I1) — while a value
+// identity routes answer the contract's "not served" (R7) — while a value
 // that is present and is not one address is a deployment that is wrong. And
-// whether the value is an ADDRESS at all is left to whoever consumes it (I1),
+// whether the value is an ADDRESS at all is left to whoever consumes it,
 // which is the coordinator's own rule: this reader holds it to the shape the
 // module renders and decides nothing about the account.
 //
@@ -1623,9 +1621,8 @@ func credentialsServiceSigner(raw string) (string, error) {
 // that is wrong. The refusal names the variable and never an entry, because the
 // entries are service accounts of the installation's own project.
 //
-// The list is not a class of its own at this end yet: nothing serves a caller
-// by it until the issuer is wired in (I1), and it is read here into
-// credsvc.IdentityConfig.ServiceAccounts, which no route reads. A `group:` or
+// It is read here into credsvc.IdentityConfig.ServiceAccounts, the roster the
+// ticket route admits the launcher class from (LM3). A `group:` or
 // `domain:` roster entry is deliberately not on it — an address that holds no
 // token to present is one no caller can be — which is LM12's and the update's
 // to say, not this reader's.
@@ -1658,8 +1655,8 @@ func credentialsServiceRosterServiceAccounts(raw string) ([]string, error) {
 //
 // A `group:` or `domain:` member is not on the list by the gate's own rule: a
 // member the gate cannot match against a caller is not one it can place. The
-// value is read into credsvc.IdentityConfig.ImplicitAdmins and used by nothing
-// yet (LM23 judges with it).
+// value is read into credsvc.IdentityConfig.ImplicitAdmins, and the launch
+// scope is built from it (LM23, LM24).
 func credentialsServiceImplicitAdmins(raw string) ([]string, error) {
 	if raw == "" {
 		return nil, nil

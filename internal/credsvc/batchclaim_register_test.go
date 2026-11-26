@@ -500,7 +500,7 @@ func TestTheRegistrationRouteAnswersNotServedUntilItIsWired(t *testing.T) {
 // The wiring itself is two of the cases — a service with no issuer and one
 // whose store cannot register — because a caller HAS been verified by the time
 // either is reached, and the line is owed for them too (the door's own answer,
-// made before any caller is verified, writes none: identity_stub.go's rule).
+// made before any caller is verified, writes none: identity_mount.go's rule).
 func TestEachRegistrationRefusalWritesOneAuditLine(t *testing.T) {
 	const missing = `"a_field_no_type_here_has":1`
 
