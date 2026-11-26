@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -504,27 +505,25 @@ func runGitCredentialForEntry(cmd *cobra.Command, o gitCredentialOptions) error 
 		// be the reach this contract exists to bound (B1, C2).
 		return remote(err)
 	}
-	return writeBuildToken(o.out, o.provider, resp)
+	return writeBuildToken(o.out, o.provider, repos, resp)
 }
 
-// writeBuildToken writes the credential the build route answered with, or
-// refuses the answer.
+// writeBuildToken writes what the build route answered with, or refuses the
+// answer.
 //
-// Only the GitHub half is a credential this step can write: the answer's token
-// is written for the one host the answer itself names, held to the provider's
-// own host, and nothing else of the answer reaches the file. A Bitbucket build
-// is answered a proxy grant and no token (R6), and there is nothing here to
-// write for it — a grant is spent by a clone that rewrites its own git traffic
-// to the proxy, which this build's clone step does not — so a grant is refused
-// rather than turned into a credential file that would hold a placeholder. An
-// answer that is neither, or both, is refused: the contract says exactly one,
-// and a step that guessed would be the widening it exists to prevent.
-func writeBuildToken(out, provider string, resp buildtoken.Response) error {
+// A GitHub build's answer is a token, written for the one host the answer itself
+// names, held to the provider's own host. A Bitbucket build's answer is a proxy
+// grant (R6): it holds no token, and what is written for it is the one git
+// config line that rewrites the clone's traffic to the proxy the grant names
+// (writeBuildGrant). An answer that is neither, both, or the other provider's
+// shape is refused: the contract says exactly one, and a step that guessed would
+// be the widening it exists to prevent.
+func writeBuildToken(out, provider string, repos []string, resp buildtoken.Response) error {
 	switch {
 	case resp.Token != nil && resp.Proxy != nil:
 		return userErr("the credentials service answered a token and a proxy grant, and the contract says exactly one")
 	case resp.Proxy != nil:
-		return userErr("the credentials service answered this Bitbucket build a proxy grant and no token, and a token is all this step writes: a grant is spent by rewriting the clone's git traffic to the proxy it names and presenting the build's own identity there, and this build's generated clone step does neither. Nothing is written, so the clone that follows fails and this build is refused rather than cloning with a credential this step invented")
+		return writeBuildGrant(out, provider, repos, resp.Proxy)
 	case resp.Token == nil:
 		return userErr("the credentials service answered neither a token nor a proxy grant")
 	}
@@ -637,4 +636,46 @@ func credentialLanded(path, line string) error {
 		return userErr("the git credential %s holds no credential after writing it: a build mounting it would clone with none", path)
 	}
 	return nil
+}
+
+// buildGrantOrigin is the one origin a Bitbucket build's git traffic is rewritten
+// from: the host the entry's repositories are cloned at, as the run's own
+// forwarder rewrites it.
+const buildGrantOrigin = "https://bitbucket.org/"
+
+// writeBuildGrant writes the proxy grant a Bitbucket build was answered, as the
+// one git config section that sends the clone's traffic to the proxy: the clone
+// step adds the build identity's ID token to it, and nothing else of the answer
+// reaches the file.
+//
+// The reading is the narrowest one, and every point it does not settle is a
+// refusal: the grant is for a Bitbucket build and no other provider's; its URL
+// is exactly this installation's credentials service with the proxy route's
+// prefix, so the build identity's token is never offered to another host; the
+// repositories it pairs are exactly the ones this step asked for; and it has not
+// already ended.
+func writeBuildGrant(out, provider string, repos []string, g *buildtoken.ProxyGrant) error {
+	if provider != gitprov.KindBitbucket {
+		return userErr("the credentials service answered a proxy grant to a build whose provider is %s, and only a Bitbucket build is answered one", provider)
+	}
+	service, err := checkBuildServiceURL(os.Getenv(envCredentialsServiceURL))
+	if err != nil {
+		return userErr("%s: %v", envCredentialsServiceURL, err)
+	}
+	if want := service + credsvc.BitbucketProxyPrefix; g.URL != want {
+		return userErr("the proxy grant names a proxy that is not this installation's credentials service: the build's identity is offered there alone")
+	}
+	for _, r := range g.URL {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune(":/.-_", r)) {
+			return userErr("the proxy grant's address holds a character a git config line cannot carry safely")
+		}
+	}
+	got := slices.Compact(slices.Sorted(slices.Values(g.Repositories)))
+	if !slices.Equal(got, repos) {
+		return userErr("the proxy grant pairs %d repositories and this build asked for %d: it is held to exactly the ones asked for", len(got), len(repos))
+	}
+	if !g.ExpiresAt.After(time.Now()) {
+		return userErr("the proxy grant has already ended")
+	}
+	return writeCredential(out, "[url \""+g.URL+"\"]\n\tinsteadOf = "+buildGrantOrigin+"\n")
 }

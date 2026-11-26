@@ -21,7 +21,7 @@ section below states. **O2, the `orchestrator/` subtree, its rules and the `fuga
 **BF2 (2026-11-08) adds one task to this plan: O14, the long-run triage rule, with the decisions D1244-D1247 in the reconciliation.** It is **design
 only** — no code, no approval — and it is written here at **level 7**, one past the plan's deepest task, because it regenerates the same generated
 `website/content/cli-reference.md` the later command tasks write (below); its rule needs no model call and no task after O8. Its third input, BF1's
-open-findings file, is **outside this repository** (reconciliation U10), and the rule fails closed without it.
+open-findings file, **landed 2026-11-25**: `internal/runner/findings.go` writes it at finalize, beside the run's record, and the rule's read of it is a read run rather than the `findings_absent` every long run used to be (reconciliation U10).
 
 *The status as first written, kept:* **Status: plan only; nothing is implemented; no task approved.** Written 2026-11-04 against `origin/main` at `5998d67c7`. **Rounds 1 and 2 of the independent
 security review (verdict "fix first") are applied in this revision** (round 2: the launch claim is per run id and is the fence, an approval covered one attempt only (**superseded below by the owner's 2026-11-04 retry ruling**: one approval covers the first attempt and at most one automatic retry), the Routine allowlist, the lease versus the state compare-and-swap; the round-1 corrections follow): the corrections are in reconciliation section 3 (the rules do not bind a person's
@@ -93,8 +93,8 @@ rollback is the manual one the owner ruled). **T6 — Q2's offer against the man
 of the HARD RULE that answer left behind — was ruled on 2026-11-05, and not the recommendation: `fugaro update` re-renders an installed unit when the
 rendered template changed, so the HARD RULE is literally true and no second operator command is ever needed** (O9, G11). **No question of 2026-11-04 to 2026-11-08 is left
 open; the pass of 2026-11-10 that made O16 and O19 tasks put three new ones to the owner, D2020-D2022, answered the same day, all the
-recommendation** (section 8). **BF1 is not a tension but an external input**: the triage rule BF2 adds (O14) reads the findings file BF1's runner writes when it finalizes at
-80% of the budget, BF1 is not on `main` (reconciliation U10), and O14 fails closed without it.
+recommendation** (section 8). **BF1 is not a tension but an external input**: the triage rule BF2 adds (O14) reads the findings file BF1's runner writes when it
+finalizes, **and that writer landed 2026-11-25** — `internal/runner/findings.go`, the run's open findings beside its record (reconciliation U10) — where the plan first read it as outside this repository and failing closed for every long run.
 
 ## 2. Conventions
 
@@ -720,16 +720,17 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   version** (a key is deliberately not an enum there), so **no format version bumps and nothing is retyped**: the settings schema gains one key, and the run
   record, task and CLI wire shapes are untouched. `gitprov.Provider` gains the CI
   read — **not `Merge`, which is that plan's E8's**, per the note above (Go interface additions; no run record, task or CLI wire shape changes — a provider's CI answer is a run-time read, never stored). The run
-  record gains **nothing**: BF1's outcome and its findings file are BF1's, and the triage reads that file from **the run's own storage — the runner's
-  finalize artifact** — never from a path in the checkout the run itself can write.
+  record gains **nothing**: BF1's 80%-of-budget outcome is not this task's, the findings file is the runner's own (`internal/runner/findings.go`), and the
+  triage reads it from **the run's own storage — the runner's finalize artifact** — never from a path in the checkout the run itself can write.
 - **Tests:** `TestTriageNeverCallsAModel` (the package's imports carry no agent package), `TestTriageMergesOnlyWithGreenCIAndANonCriticalFindingSet`,
-  `TestTriageFailsClosedWithoutAFindingsFile`, `TestTriageFailsClosedOnAnUnknownSeverity`, `TestTriageUsesThePathClassifierForSecurity` (one high
+  `TestTriageFailsClosedWithoutAFindingsFile`, `TestTriageReadsTheArtifactTheRunnerWrites` (the daemon's own reader over the bytes `internal/runner`
+  writes at finalize, `TestWriteFindingsPinsTheArtifact`'s counterpart), `TestTriageFailsClosedOnAnUnknownSeverity`, `TestTriageUsesThePathClassifierForSecurity` (one high
   finding, two paths: merge for the non-security one, escalate for the security one), `TestTriageEscalatesOnACriticalFinding`, `TestTriageRestartsOnNoCommits`,
   `TestTriageRestartsOnNoProgress`, `TestTriageRestartsOnALoopingFinding`, `TestTriageIgnoresARunUnderTheThreshold`,
   `TestTriageThresholdMustBeUnderTheRunBudget`, `TestTriageIsWrittenToTheAuditLog`, `TestTriageAppendsOnceAcrossTicks`,
   `TestTriageReadsCIThroughTheProvider` (the CI answer is the provider's and the rule never invents one), `TestTriageFailsClosedWithoutACIAnswer`
   (the read errors), `TestTriageNeverMergesWhileCIIsPending`, `TestTriageRecommendsOnlyWhenAnInputCannotBeRead` (each unreadable input, one at a time,
-  produces `RecommendOnly` and no action), `TestTriageNeverCancelsOnAnUnreadableFindingsFile` (the absent file BF1 has not written yet, on a run whose record alone
+  produces `RecommendOnly` and no action), `TestTriageNeverCancelsOnAnUnreadableFindingsFile` (an absent findings file — a run that finalized before the runner wrote one, or whose write did not land — on a run whose record alone
   would be a restart: the fail-closed outcome is tried before the two that act, so an unreadable input is never a cancel), `TestTriageBlocksTheMergeOnASensitiveChangedPath` (a `.github/workflows/` or `internal/creds` diff with a clean findings file and green CI is never merged),
   `TestTriageNeverMergesATruncatedPathSet` (200 paths and `Truncated: true`), `TestTriageReadsTheFindingsFileFromTheRunsArtifactNotTheCheckout` (a findings
   file inside the checkout is not evidence), `TestTriageRefusesAnUnknownSeverityWithoutCancelling`, `TestTriageNeverMergesAnInFlightRun` (the record's status is
@@ -746,8 +747,8 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
 - **Command:** `go test ./internal/orchestrator/ ./internal/cli/ ./internal/localcfg/ ./internal/policy/ ./internal/projectpolicy/ ./schemas/ ./internal/gitprov/... -run 'Triage|RunsWatch|Merge|SettingsSchema|Orchestrator' -count=1`
 - **Depends on:** O0, O1, O3, O7, O8 — whose deepest is level 3 — **and O9, O11 and O13, which write the same generated
   `website/content/cli-reference.md`, which is what puts it at level 7**: the rule itself waits on none of them. **Externally: BF1**, the runner change
-  that finalizes with its open findings at 80% of the budget and writes the file this rule's third input comes from; it is **not on `main`**
-  (reconciliation U10), and without it the triage takes the **recommend-only** outcome on every long run. **Level 7.**
+  that writes the file this rule's third input comes from, **landed 2026-11-25** (`internal/runner/findings.go`, the run's open findings beside its
+  record), so the third read is a read of a file this repository writes (reconciliation U10) rather than the `findings_absent` every long run used to be. **Level 7.**
 - **Commit:** `feat(orchestrator): triage a long run, and print it read-only (O14)`
 - **Red step:** `TestTriageMergesOnlyWithGreenCIAndANonCriticalFindingSet` fails to build, then fails when a run with a critical finding is merged;
   `TestTriageFailsClosedWithoutAFindingsFile` fails when an absent file is read as an empty (therefore non-critical) finding set;
@@ -1202,8 +1203,9 @@ follows the ruling through O9, G11 and the conventions above.
   **recommend only** — the fail-closed outcome for an input nobody could read (no CI answer, an absent or unattributable findings file, an unknown severity,
   a truncated path set, an unreadable record): nothing is merged, cancelled or restarted, and the print says what could not be read. Every
   triage goes to the audit log under `<run>:triage` and `fugaro runs watch` prints the same triage read-only. **Open, and reported rather than decided**
-  (reconciliation section 6): BF1 is not in this repository, so the rule's third input does not exist yet and every long run takes the recommend-only outcome
-  until it lands; the automatic merge is the first merge this design takes away from a person, bounded by the evidence above; and the routine-allowlist diff
+  (reconciliation section 6): BF1's writer landed 2026-11-25 (`internal/runner/findings.go`), so the rule's third input is a read rather than the
+  `findings_absent` of every run before it, while the 80%-of-budget outcome that would produce the long run the rule was designed around is still not
+  in the tree; the automatic merge is the first merge this design takes away from a person, bounded by the evidence above; and the routine-allowlist diff
   gate makes that merge rarer than the owner's answer sounds, because a code change is never merged by code (D1234's allowlist, not a denylist).
 
 ## 7. UNVERIFIED added by this plan
@@ -1216,11 +1218,14 @@ follows the ruling through O9, G11 and the conventions above.
 - **P3.** Whether a new top-level RTDB subtree needs a `RulesVersion` bump or a marker of its own: this plan recommends the marker (the credentials cascade
   precedent) and O2's red step confirms it against `internal/projectpolicy/version.go`.
 - **P4.** Everything reconciliation U1-U8 carries stays open; in particular the cost of a cycle (U4) is measured only by Check 303.
-- **P5 (BF2).** BF1's open-findings file, O14's third input: not in this repository. `git grep` over this branch's `main` on 2026-11-08 finds no
+- **P5 (BF2).** BF1's open-findings file, O14's third input: **the writer landed 2026-11-25** — `internal/runner/findings.go`, `WriteFindings` at the
+  runner's own finalize step — so this is no longer a file outside the repository. `git grep` over this branch's `main` on 2026-11-08 found no
   "completed with open findings" outcome, no findings file under the runs bucket and no 80%-of-budget rule in `internal/runner` or `internal/config`
-  (reconciliation U10). O14 is therefore written against the brief's description of BF1 and **follows it rather than leads it**: the findings file's own
-  shape is BF1's to fix, and until it does, the triage's read of it is a shape this plan does not own. What it does own is the behaviour without it — the
+  (reconciliation U10); **the file is written now and the outcome is still not**, which is what stays open here. The writer follows the reader rather than
+  the other way round — the shape is `triageFindingsObject` in `internal/cli/orchestrator_triage.go`, and the runner writes exactly it — so the round trip
+  is pinned from both ends (`TestWriteFindingsPinsTheArtifact`, `TestTriageReadsTheArtifactTheRunnerWrites`) instead of the reader resting on the brief's
+  description of a file nobody wrote. What stays true either way is the behaviour without the file — the
   rule **fails closed**, reading an absent or unattributable file as an **unreadable input**, which is the **recommend-only** outcome: nothing merged,
   cancelled or restarted (D1247). It is never an empty (therefore non-critical) finding set, which would let the merge through, and **never a critical
-  one**: the fixed order tries `Escalate` first, so a "critical" reading of a file nobody wrote would cancel every long run while BF1 is missing. That is
-  what its red step proves.
+  one**: the fixed order tries `Escalate` first, so a "critical" reading of an absent file would cancel a long run instead of printing what could not be
+  read. That is what its red step proves.

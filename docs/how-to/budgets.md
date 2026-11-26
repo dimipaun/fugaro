@@ -1,4 +1,4 @@
-# Budgets on and off
+# Budgets
 
 Two budgets exist here, and neither one is the other.
 
@@ -17,16 +17,16 @@ The amount, the currency and the account are recorded nowhere, so **pass the sam
 
 ## The model budget
 
-**Per installation, then per repository.** It is off until you turn it on.
+**Per installation, then per repository.** Every installation has one: `fugaro update` creates its database, and a mode left unset is `observe`.
 
-1. `fugaro setup --firebase-project <gcp-project-id> --budget-mode observe`, or on an installation that already exists `fugaro update --firebase-project <gcp-project-id> --budget-mode observe`. `--firebase-project`'s value is the installation's own GCP project id, and any other id is refused. The run builds the backend — the database, its rules and its mark, the history account and its job — and records it in the project config with `budget.mode: observe`. A development build warns that the history image does not exist and prints the two commands that build and push it: run them and the command again.
+1. `fugaro update` (or `fugaro setup`) creates the backend — the database, its rules and its mark, the history account and its job — and records it in the project config with `budget.mode: observe`. `--budget-mode observe|enforce` seeds the mode, and an absent one is seeded `observe`. A development build warns that the history image does not exist and prints the two commands that build and push it: run them and the command again.
 2. **Per repository:** `fugaro update --repo` in each checkout. The jobs then carry the backend, and a run opens a budget session.
 3. **Let it run for a week.** In `observe` a run counts its spend and refuses nothing; `fugaro budget show` prints today's counted, spent and notional dollars, the caps and the runs in flight. That week is what calibrates the cap.
 4. **Set the caps** from what you saw: `fugaro budget set --global --daily 150 --per-run 20`, `fugaro budget set --defaults --daily 60`, and `fugaro budget set --repo owner/name --daily 150` for one repository.
-5. **Enforce.** Set `budget.per_run_usd` (more than 0) in the project config — it is the per-run cap the jobs enforce, and `--budget-mode enforce` is refused without it — then run `fugaro update --firebase-project <gcp-project-id> --budget-mode enforce`, then `fugaro update --repo` in each repository. A run halts when its next call's worst case would pass the cap: it pushes what it has, opens a draft PR and ends `halted`. **A halted run exits 0**, so Cloud Run shows the execution as succeeded and the "execution failed" alert never fires for it: `fugaro runs ls` shows the status.
+5. **Enforce.** Set `budget.per_run_usd` (more than 0) in the project config — it is the per-run cap the jobs enforce, and a mode of `enforce` is refused without it — then raise the mode: `fugaro budget set --global --mode enforce`, or `fugaro update --firebase-project <the installation's own GCP project id> --budget-mode enforce` for the jobs' own — that flag is required with `--budget-mode` — then `fugaro update --repo` in each repository. A run halts when its next call's worst case would pass the cap: it pushes what it has, opens a draft PR and ends `halted`. **A halted run exits 0**, so Cloud Run shows the execution as succeeded and the "execution failed" alert never fires for it: `fugaro runs ls` shows the status.
 
 Day to day: `fugaro budget show`, `fugaro budget preview --recipe <name> --runs N`, `fugaro watch`, `fugaro budget kill --all` (the emergency stop) and `fugaro budget resume --all`.
 
-**Off again:** `fugaro update --firebase-project <gcp-project-id> --budget-mode off`, then `fugaro update --repo` in each repository. The jobs stop opening a budget session; the backend's address and key stay in every job, so a run can still read a published project policy, and the data stays.
+**There is no off.** Every job carries the backend and every run opens a session, so to stop refusing calls set the mode back to `observe`; the database, its data and the caps stay.
 
 Detail, and what the guard does and does not protect against: [project-layer.md](../project-layer.md) §5, [m9-budget-and-dashboard/spec.md](../m9-budget-and-dashboard/spec.md).

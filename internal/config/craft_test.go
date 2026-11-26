@@ -179,6 +179,45 @@ func poolMembers() []Credential {
 	return []Credential{{Name: "oauth-one", Type: CredentialTypeClaudeOAuth}}
 }
 
+// TestPoolMayTakeItsOnlyMembersName is the one collision ValidatePools admits
+// between a pool's name and a credential's, and the boundary the rule draws.
+//
+// A pool of one named after its only member is the shape every subscription
+// token is written in (D3176): `fugaro accounts add` writes it for a new token
+// and `fugaro update` migrates every lone account into one, so the config that
+// holds a token would be a config its own next read refuses if the namespace
+// rule did not admit the pair. What is still refused is every pool that would
+// leave the name meaning more than that one credential: a second member, or a
+// member that is another credential under the shared name.
+func TestPoolMayTakeItsOnlyMembersName(t *testing.T) {
+	creds := []Credential{{Name: "team-a", Type: CredentialTypeClaudeOAuth}}
+	if ps := ValidatePools([]Pool{{Name: "team-a", Members: []string{"team-a"}}}, creds); len(ps) != 0 {
+		t.Errorf("a pool of one named after its only member is refused: %v", ps)
+	}
+	for _, bad := range []Pool{
+		{Name: "team-a", Members: []string{"team-a", CredentialVertex}},
+		{Name: "team-a", Members: []string{CredentialVertex, "team-a"}},
+		{Name: "team-a", Members: []string{CredentialVertex}},
+	} {
+		ps := ValidatePools([]Pool{bad}, creds)
+		if len(ps) == 0 {
+			t.Errorf("%+v is written and nothing refuses the name it shares with a credential", bad)
+			continue
+		}
+		if !strings.Contains(ps[0].Message, "a credential of this name is defined in the same block") {
+			t.Errorf("%+v is refused with %q, want the namespace rule's own sentence", bad, ps[0].Message)
+		}
+	}
+	// The built-in vertex is a name a reference may carry and a definition
+	// never does, so a pool named after it is no pool of the block's own
+	// credential and the name rule refuses it as it always did.
+	for _, members := range [][]string{{CredentialVertex}, {"team-a", CredentialVertex}} {
+		if ps := ValidatePools([]Pool{{Name: CredentialVertex, Members: members}}, creds); len(ps) == 0 {
+			t.Errorf("a pool named %s with members %v is written and nothing refuses it", CredentialVertex, members)
+		}
+	}
+}
+
 // TestNewPoolWithoutOwnerRefused: a pool written at the version that gives
 // pools an owner names one (D1936), and the rule is the PUBLISHED node's alone.
 // Two documents carry a pool and they are not the same thing: the policy node

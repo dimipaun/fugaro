@@ -14,6 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -795,4 +796,69 @@ func (a anyCallFails) Merge(context.Context, int, string) error {
 func (a anyCallFails) MarkReady(context.Context, int, string) error {
 	a.t.Error("the cycle marked a pull request ready, and this outcome acts on nothing")
 	return nil
+}
+
+// TestTriageReadsTheArtifactTheRunnerWrites (BF1, U10): the file the runner
+// leaves under the run's own prefix at finalize is the file this daemon's
+// reader takes — written by internal/runner's own writer and read back through
+// the seam the daemon reads — so the rule's third input is a read run rather
+// than the findings_absent every long run used to be.
+//
+// The severities are the review's own words, carried through unmapped: the two
+// vocabularies are not one (a review writes blocker, high, medium, low and nit;
+// the rule knows critical, high, medium and low), and a word the rule does not
+// know is refused rather than read as low. That disagreement is reported in the
+// pull request and not settled here, on either side.
+func TestTriageReadsTheArtifactTheRunnerWrites(t *testing.T) {
+	f := newTriageFixture(t, green())
+	findings := []runner.Finding{{
+		Severity: "medium", Class: "maintainability", File: "docs/design/sweep.md",
+		Summary: "a stale sentence", Likelihood: 2, Impact: 2, FixCost: 1,
+	}}
+	if err := runner.WriteFindings(context.Background(), f.store(t), triageRunID, findings); err != nil {
+		t.Fatalf("writing the run's findings: %v", err)
+	}
+	in := f.input(t)
+	if in.Findings.Read != orchestrator.FindingsReadable {
+		t.Fatalf("the read reports the runner's artifact as %q, want readable", in.Findings.Read)
+	}
+	if len(in.Findings.List) != 1 {
+		t.Fatalf("the read reports %d findings, want the runner's one", len(in.Findings.List))
+	}
+	got := in.Findings.List[0]
+	if got.Severity != orchestrator.Severity(findings[0].Severity) || got.Path != findings[0].File || got.Key == "" {
+		t.Fatalf("the read reports the finding as %+v, want the severity, path and key the runner wrote", got)
+	}
+	// The rule reads it end to end: this run is over, routine and green, so an
+	// artifact it can read with no critical finding on it is the merge gate's
+	// evidence — the outcome that was unreachable while nothing wrote the file.
+	if out := triageOf(t, in); out.Kind != orchestrator.MergeAsIs {
+		t.Fatalf("the rule reads the runner's artifact as %s, want %s", out.Kind, orchestrator.MergeAsIs)
+	}
+
+	// A severity the review writes and the rule does not know reads as an
+	// unreadable input, never as a clean one: the artifact is readable, and the
+	// word in it is the input the rule names.
+	g := newTriageFixture(t, green())
+	if err := runner.WriteFindings(context.Background(), g.store(t), triageRunID, []runner.Finding{{
+		Severity: "blocker", File: "docs/design/sweep.md", Summary: "the worst word a review writes",
+	}}); err != nil {
+		t.Fatalf("writing the run's findings: %v", err)
+	}
+	gin := g.input(t)
+	if gin.Findings.Read != orchestrator.FindingsReadable {
+		t.Fatalf("the read reports the runner's artifact as %q, want readable", gin.Findings.Read)
+	}
+	if out := triageOf(t, gin); out.Kind != orchestrator.RecommendOnly || out.Unreadable != orchestrator.InputFindings {
+		t.Fatalf("a severity the rule does not know reads as %s/%s, want %s/%s",
+			out.Kind, out.Unreadable, orchestrator.RecommendOnly, orchestrator.InputFindings)
+	}
+}
+
+// triageOf is the rule over one gathered reading of the fixture's run.
+func triageOf(t *testing.T, in orchestrator.TriageInput) orchestrator.TriageOutcome {
+	t.Helper()
+	in.Elapsed, in.Threshold = triageAge, orchestrator.TriageAfter(rigor.Default)
+	in.Record = triageRecord()
+	return orchestrator.Triage(in)
 }

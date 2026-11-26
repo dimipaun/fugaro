@@ -241,8 +241,9 @@ export interface ProjectsPanel {
    *     carrying the CLI's own sentence when the child printed one (`absent`).
    *     It goes through `sanitizeRefusal`: the credential rules and this
    *     layer's own, so a token echoed into stderr is redacted and the CLI's
-   *     remedy -- `roles/datastore.viewer` -- is *not* drawn as `[redacted]`,
-   *     which is what design section 6.3 requires ("the console shows that text
+   *     remedy -- `roles/datastore.viewer` -- is *not* drawn as `[redacted]`
+   *     (the free-text rule that did that went with D3213, 2026-11-21), which is
+   *     what design section 6.3 requires ("the console shows that text
    *     unedited").
    *   - `document` -- a string a **document** wrote (`accounts`' `note`). Task
    *     2.0's rule applies to it unchanged: it goes through `putText` with its
@@ -773,12 +774,12 @@ function refusalSentence(cause: unknown): string {
  * where the reason is **built** rather than where it is drawn.
  *
  * Review round 5 of PR 478: this screen drew the CLI's refusal sentence through
- * `putText`, so a refusal naming `roles/datastore.viewer` was drawn
- * `[redacted]` here while the refused-read screen drew it verbatim -- one
- * channel, two treatments, and this one lost the remedy design section 6.3
- * requires ("the console shows that text unedited"). Now both screens run the
- * same pass: the credential rules and this layer's own, never the pattern
- * classes that eat a role name. A document's own string never reaches this
+ * `putText`, so a refusal naming `roles/datastore.viewer` was drawn `[redacted]`
+ * here while the refused-read screen drew it verbatim -- one channel, two
+ * treatments, and this one lost the remedy design section 6.3 requires ("the
+ * console shows that text unedited"). Now both screens run the same pass: the
+ * credential rules and this layer's own, and the pattern rule that ate the role
+ * name went with D3213 (2026-11-21). A document's own string never reaches this
  * function; the accounts panel's `note` is drawn through `putText` like every
  * other document string (`becauseKind`).
  *
@@ -1736,8 +1737,9 @@ function panelShell(factory: ScreenFactory, panel: ProjectsPanel): ScreenElement
   // `literal` call is honest here; a `document` reason -- the accounts panel's
   // own `note` -- goes through `putText` with its wire class, like every other
   // document string. Review round 5 of PR 478: this cell used to send *both*
-  // through `putText`, which drew the CLI's remedy as `[redacted]` while the
-  // refused-read screen drew it verbatim.
+  // through `putText`, which drew the CLI's remedy as `[redacted]` (the rule
+  // that did so went with D3213, 2026-11-21) while the refused-read screen drew
+  // it verbatim.
   if (panel.because !== null) {
     if (panel.becauseKind === 'document') {
       textCell(element, factory, 'p', panel.because, 'sentence', 'because', 'projects-because')
@@ -2138,13 +2140,10 @@ export function fillProjectsModels(factory: ScreenFactory, model: ProjectsModels
  *
  * **The key is drawn `branch`, and the class is a shape rather than a claim
  * about what a key is.** A key is a dotted identifier (`agent.models.coder`,
- * `agent.levels.l1.model`, `rigor.areas.0.name`), and `label`'s free-text pass
- * reads a three-label dotted name as a machine name: it would draw the key of
- * the coder's model, and the key of every level's model, as `<host>` -- a
- * placeholder for a value the row is the one place to name. `branch` is the
- * class whose grammar admits a dotted identifier whole (`WHOLE_BRANCH_RE`),
- * which is the shape a key has, and the same reading the contract already gives
- * two identifiers that are not branches either (`revision` and `base`,
+ * `agent.levels.l1.model`, `rigor.areas.0.name`), and `branch` is the class
+ * whose grammar admits a dotted identifier whole (`WHOLE_BRANCH_RE`), which is
+ * the shape a key has -- the same reading the contract already gives two
+ * identifiers that are not branches either (`revision` and `base`,
  * `src/shared/schema.ts`). Its one loss is the recorder's own `<branch>` marker
  * for a key that is credential-shaped, which the CLI's registry has none of.
  *

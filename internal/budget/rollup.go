@@ -21,7 +21,13 @@ const UnknownPerson = "unknown"
 const maxPersonBytes = 200
 
 // The outcome statuses a DayRecord counts; any other status counts as
-// "other" so a hostile or new status is visible, never dropped.
+// "other" so a hostile or new status is visible, never dropped. A paused run
+// counts in "other" (model-credentials-routing PR11): it is neither a failure
+// nor a success, and the day's figures name no state of their own for it —
+// a seventh key would move the shape of every document already stored, which
+// the prune reads back against its own derivation and never rewrites once it
+// is final. So the word is met here by the bucket that holds it, visible and
+// never dropped, rather than by a count nothing could retire.
 var outcomeKeys = []string{"succeeded", "failed", "halted", "cancelled", "infra_error", "other"}
 
 // slugSafe is what a slug must match to be part of a document ID.

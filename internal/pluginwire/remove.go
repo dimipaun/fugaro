@@ -8,12 +8,17 @@ import (
 
 // The removal of the plugin's two entries (U5 of
 // docs/plugin-user-scope/implementation-plan.md, D943): the inverse of the
-// merge this package used to make, and — with the merge deleted (D949) — the
-// only thing in the tree that touches a pin at all. It takes
+// merge this package used to make (deleted outright, D949). It takes
 // extraKnownMarketplaces.fugaro and enabledPlugins["fugaro@fugaro"] out of a
 // checkout's .claude/settings.json, keeps every other key and the file itself,
 // and leaves a pin it cannot call its own exactly as it is: that is not a
 // failure, it is a sentence beside the caller's own line (spec §8).
+//
+// Since U6a no command writes a pin out: `fugaro update` reads one and answers
+// with a notice (PlanRemovalBytes, for its Changed alone). So PlanRemoval and
+// Removal.Apply — the write path — are the tests' alone, kept until U6b
+// (doctor's checkout check and the staleness warning) says whether a checkout's
+// pin is written out again.
 
 // Removal is a planned removal of the plugin's two entries from one settings
 // file: the plan is computed from the file as it is, and Apply writes it.
@@ -44,6 +49,21 @@ func PlanRemoval(path string) (*Removal, error) {
 	if err != nil {
 		return nil, err
 	}
+	return planRemoval(path, before, existed, perm)
+}
+
+// PlanRemovalBytes is PlanRemoval over a settings file's own bytes, for a
+// reader that holds the file and no path it may read: `fugaro update`'s notice
+// reads every enrolled repository's default branch (U6a of
+// docs/update-from-anywhere). path is the file's name — the repository-relative
+// .claude/settings.json — and nothing is read from it, so the path is not
+// checked the way a write's is. A removal planned here is for its Changed
+// alone: it carries no mode and Apply is never called on it.
+func PlanRemovalBytes(path string, before []byte) (*Removal, error) {
+	return planRemoval(path, before, len(before) > 0, 0)
+}
+
+func planRemoval(path string, before []byte, existed bool, perm fs.FileMode) (*Removal, error) {
 	rem := &Removal{Path: path, Before: before, After: before, existed: existed, perm: perm}
 	if !existed || strings.TrimSpace(string(before)) == "" {
 		return rem, nil
