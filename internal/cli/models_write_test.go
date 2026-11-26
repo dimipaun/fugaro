@@ -144,7 +144,11 @@ func modelsWriteCheckout(t *testing.T, home, repo, fugaroYAML string) string {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "fugaro.yaml")
-	if err := os.WriteFile(path, []byte(fugaroYAML), 0o600); err != nil {
+	// The models the file writes are lifted (S1, D3237): config.Resolve drops
+	// them, so they are published as aurora's project layer — the copy these
+	// reads load (modelsLayer) — and the file is anchored to the project it
+	// names, which is what makes it apply.
+	if err := os.WriteFile(path, []byte(publishFilePinsHere(t, fugaroYAML)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := localcfg.RecordCheckout(os.Getenv, "aurora",

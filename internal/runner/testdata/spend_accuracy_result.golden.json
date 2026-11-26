@@ -102,7 +102,12 @@
     "source": "catalog",
     "sha256": "0c42726a0cc37a5415cfac83a74d25cfc041eb1d5a52a7d0533fcdcffb5202fc"
   },
-  "config_sha256": "692ff053e0bb1ae788ffc36517aa2a754bcdb0d8b727bcfe556ab3be6ba7b8b1",
+  "project_layer": {
+    "sha256": "7ee2c2af274eef17bf7e324b18a89f18f4925b52a1c433e5cee0220c3efb0ca6",
+    "generation": 3,
+    "applied": true
+  },
+  "config_sha256": "58ed9682e0d5abc9ad8c1daeb22dbb7adc8791507caac6881f5119eabae9e291",
   "changed_files": {
     "paths": [
       "feature.txt"

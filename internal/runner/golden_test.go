@@ -113,6 +113,13 @@ func oldFlow(cfg string) string {
 // the configuration that names pins at all: the price rule (CheckPins) refuses
 // a run behind a gateway that names none, so the file the harness commits
 // names them.
+//
+// Re-recorded once more when a repository's file stopped deciding the pins at
+// all (S1, lift L8, D3237): the keys the fixture's file wrote move to a project
+// layer (testutil.FixturePins), the record therefore carries the layer that
+// priced the run in project_layer, and config_sha256 is the hash of the file
+// with those keys dropped. The run itself is the same one: no policy, no budget
+// key, no policy env.
 func TestNoPolicyIsM9aBehaviour(t *testing.T) {
 	h := newHarness(t, oldFlowCfg(t), nil)
 	checkGolden(t, h, "nopolicy", false)

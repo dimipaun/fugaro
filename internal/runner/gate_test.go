@@ -747,6 +747,7 @@ func (h *fuHarness) followUpWithRecipe(t *testing.T, id, previous, text string, 
 	t.Helper()
 	spec := &task.Spec{Version: 1, RunID: id, Repo: "acme/app", Ref: "main", Task: text,
 		Branch: "fugaro/" + runID, PR: 1, PreviousRun: previous, Workflow: h.first.Workflow, Recipe: rcp}
+	h.taskWithLayer(spec)
 	store := runstore.Open(h.bucket, repoSlug, id)
 	if err := store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)

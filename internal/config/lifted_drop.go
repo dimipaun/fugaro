@@ -6,6 +6,21 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// LiftedKeyPaths is the path of every lifted key, in path order: LiftedKeys'
+// own list as a caller that has no use for the homes and the sentences needs
+// it, which is a fixture moving a repository's file's own keys into a project
+// layer (internal/testutil's pins) rather than a reader of the contract.
+//
+// The slice is built per call and shared with no one: a caller may keep it, and
+// nothing here hands out LiftedKeys itself.
+func LiftedKeyPaths() []string {
+	paths := make([]string, 0, len(LiftedKeys))
+	for _, k := range LiftedKeys {
+		paths = append(paths, k.Key)
+	}
+	return paths
+}
+
 // dropLiftedKeys is tree with every lifted key a repository's file writes
 // removed, and the note of each (config.LiftedKeys, R2 of
 // docs/repo-override-rulings/reconciliation.md, D3237). It is the one drop:

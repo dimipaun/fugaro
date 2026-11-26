@@ -118,7 +118,7 @@ func judgeBlocked(t *testing.T, reason, blocker string) agent.Result {
 func judgeRun(t *testing.T, g *gw, brief []byte, stage step) (*runstore.Record, error) {
 	t.Helper()
 	ctx := context.Background()
-	if err := g.store.WriteTask(ctx, judgeSpec(t)); err != nil {
+	if err := g.store.WriteTask(ctx, g.taskWithLayer(judgeSpec(t))); err != nil {
 		t.Fatal(err)
 	}
 	if err := g.store.PutFile(ctx, runstore.MergeJudgeInputName, brief, "application/json"); err != nil {
@@ -821,7 +821,7 @@ func TestMergeJudgeLaunchWithoutABriefIsRefused(t *testing.T) {
 	// The launcher's own task, and nothing else: the brief is what this launch
 	// does not leave (judgeRun, which writes both, is every other case here).
 	ctx := context.Background()
-	if err := g.store.WriteTask(ctx, judgeSpec(t)); err != nil {
+	if err := g.store.WriteTask(ctx, g.taskWithLayer(judgeSpec(t))); err != nil {
 		t.Fatal(err)
 	}
 	// No stage is scripted: a call is the unexpected call the scripted agent

@@ -918,8 +918,15 @@ func jsonCheckout(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	isolateProjects(t, dir)
-	writeProject(t, "aurora", "proj-1234")
+	// The project the checkout's own anchor names, and the layer its lifted
+	// model keys moved to (S1, D3237, the shape checkoutsFixture uses): a
+	// config whose gcp_project disagreed would leave findLayer no bucket but
+	// the real gs:// one, which the test seam refuses.
+	writeProject(t, "aurora", "aurora-gcp")
 	enrollRepo(t, "aurora", "acme/app")
+	if pins := pinsLayer(checkoutsYAML); pins != "" {
+		attachLayerHere(t, "aurora", pins)
+	}
 	co := checkoutsAt(t, filepath.Join(dir, "src", "app"), checkoutsYAML, "https://github.com/acme/app.git")
 	t.Chdir(co)
 	return co
