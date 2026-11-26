@@ -329,7 +329,22 @@ type runOptions struct {
 	// same allow-list, agent.auth and version-gate checks a first run's does.
 	// Either name may be an alias of the owner's local config, and what the
 	// launch resolves it to is account below.
+	//
+	// It is retired where the project's routing table serves this run's models
+	// (D3176 as amended, CS12): such a run's calls go out on the table's
+	// chains, so the account this flag names is one no stage of it holds. The
+	// refusal is the launch's own gate (poolGate), and an installation that has
+	// not migrated keeps the flag it always had (R25, D3196).
 	token string
+	// pool is --pool: the pool "the launcher's pool" resolves to for this run,
+	// which the launcher carries on the run's grant as C2's `named_pool` and
+	// the credentials service holds the launcher's entitlement to (D3176 as
+	// amended, CS12). It reorders no chain: a chain of the run's models that
+	// names no launcher-pool source is refused by poolGate, and a chain that
+	// does still walks its own sources in its own order. A follow-up (--pr)
+	// names its own pool or none — the pool the paused run's launch named is
+	// kept by a resume, and by nothing else (D3191).
+	pool string
 	// account is what the launch resolved its own Claude account to and the
 	// alias it read it through, set by the spec builder at the one place the
 	// resolution happens (claudeAccountChoice): the pair the launch's own
@@ -583,7 +598,8 @@ func newRunCmd() *cobra.Command {
 	addChainContinueFlags(cmd, &o)
 	f.IntSliceVar(&o.pr, "pr", nil, "continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions); with a mode: review --recipe, review PR N instead (repeatable, 1 to 4, any open PR)")
 	f.StringVar(&o.recipe, "recipe", "", "the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's ("+strings.Join(recipe.CatalogNames(), ", ")+"); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's")
-	f.StringVar(&o.token, "token", "", "named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's)")
+	f.StringVar(&o.token, "token", "", "retired: name the pool this run should draw on with --pool. It still names the Claude account a workflow whose agent.auth is oauth runs as on an installation whose published routing table does not serve this repository, and is refused where the table does; default: agent.oauth_token in fugaro.yaml, else the repository's default account, and a follow-up (--pr) keeps its previous run's account unless this is given explicitly")
+	f.StringVar(&o.pool, "pool", "", "the pool \"the launcher's pool\" resolves to for this run, from a pool you own or are allowed on (`fugaro accounts pool ls` lists them): the run's grant carries the name and the credentials service holds it to the pools you are entitled to. Refused where no chain of the run's models names the launcher's pool; a follow-up (--pr) names its own pool, and only a resume keeps the pool its launch named")
 	f.StringArrayVar(&o.attach, "attach", nil, "attach a file to the run: repeatable, uploaded to the run's own inputs/ and downloaded by a mode: artifact run into the checkout's inputs/ (needs a mode: artifact recipe; refused on a run ID that already has a task)")
 	f.BoolVar(&o.commitReports, "commit-reports", false, "hand the project's stored reports (reports/ of the runs bucket) to the run this launch starts: reads them with your own account, uploads every one the checkout's mirror folder does not already hold byte for byte into the run's own reports/, and names them in the task for the commit_reports step to commit. Needs --recipe commit-reports (the step is what reads them), is refused together with --attach, and is refused on a run ID that already has a task")
 	f.StringVar(&o.rigor, "mode", "", "the rigor mode to ask for: "+rigor.RigorList()+"; it is the narrowest rank of the mode's order, so it settles the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) whether it asks for more or for less, and only a floor, outside every layer, holds it back; hotfix is the mode the request takes whole and needs no opt-in anywhere — a first run, a follow-up and a launch from a coding agent's session alike; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps")
@@ -820,6 +836,7 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	defer env.Close()
 	env.noBudgetCheck = o.noBudgetCheck
 	env.noPersonalToken = o.noPersonalToken
+	env.runPool = o.pool
 
 	// --repo, resolved once for every launch shape below and written back, so
 	// that a path (`.`, a subdirectory, an absolute one) is the owner/name of
@@ -2733,6 +2750,16 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	// to be served from — it is refused here, before the claim and before the
 	// task, rather than by the run that cannot start.
 	if err := env.chainRoutingGate(ctx, spec); err != nil {
+		return config.Inputs{}, err
+	}
+	// The launcher's pool (CS12, D3176 as amended): `--token` is retired and
+	// `--pool` needs a chain that names the launcher's pool for the run to be
+	// served from, so both are judged here with the table's own gate and after
+	// it — a model the table does not route is that gate's refusal, and every
+	// model left has a chain this one can look for a launcher-pool source in.
+	// It covers every launch shape, --pr and --retry included, because they all
+	// pass here (freshLaunchGates).
+	if err := env.poolGate(ctx, o, spec); err != nil {
 		return config.Inputs{}, err
 	}
 	// The workflow secrets' gate (B3.8, G17): a run of a switched repository
@@ -7252,6 +7279,12 @@ func runSlipEnv(ctx context.Context, env *cloudEnv, spec *task.Spec, slug, accou
 	// installation's grant is byte for byte the one it always was.
 	if env.lc != nil && len(env.lc.ModelRouting) > 0 {
 		req.Sources = chainGrantSources(env.lc.ModelRouting, launchRunModels(ctx, env, spec), spec.Repo)
+		// The pool the launch named with --pool (C2's named_pool, D3176 as
+		// amended), in the same breath as the sources: a service this new is the
+		// one that knows both members (CS14), and a launch that named no pool
+		// sends the member not at all (omitempty), exactly as a release-behind
+		// launcher's grant is byte for byte the one it always was.
+		req.NamedPool = env.runPool
 	}
 	sctx, cancel := context.WithTimeout(ctx, slipGrantTimeout)
 	defer cancel()
@@ -7461,6 +7494,75 @@ func chainGrantSources(table routing.Table, models []string, repo string) []cred
 		}
 	}
 	return out
+}
+
+// chainNamesTheLaunchersPool reports whether a chain of one of the models this
+// run can call names the launcher's pool: the question `--pool` asks, read from
+// the same walk the launch's grant is read from (chainGrantSources), so the
+// name a launch carries and the chain the service walks cannot disagree about
+// whether the pool is in it.
+//
+// It is asked of the grant's own sources and not of the table's entries
+// directly, because the pool kinds serve every repository (infra.ChainSourceServes)
+// and only the launcher's pool is the one the flag speaks for.
+//
+// A run whose models the launcher could read none of — a repository whose file
+// names no model, the installation's default filling in at run time — is judged
+// against every chain that may serve the repository instead: the same question
+// read conservatively, so only a table that names the launcher's pool nowhere
+// refuses the name, and a file that happens to name no model is not a launch
+// nobody may name a pool for.
+func chainNamesTheLaunchersPool(table routing.Table, models []string, repo string) bool {
+	if len(models) == 0 {
+		for _, entry := range table {
+			for _, source := range entry.Chain {
+				if source.Kind == routing.KindLauncherPool && infra.ChainSourceServes(source, repo) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return slices.Contains(chainGrantSources(table, models, repo), creds.GrantSource{Kind: string(routing.KindLauncherPool)})
+}
+
+// poolGate is the two refusals this flag change makes (CS12, D3176 as amended).
+//
+// `--token` is retired where the project's table serves this run: naming a
+// Claude account by hand is what the launcher's pool does now, and the pool the
+// run names takes its place. Where no table serves the run the flag keeps its
+// old meaning, because the release-1 bridge is what such a run goes out on
+// (R25, D3196) and refusing the flag there would refuse a configuration no
+// migration has reached — the plan's own reason for reporting a lone token in
+// release 1 rather than refusing it. A review launch keeps it until CS15
+// retires it: the review job's account is that task's subject, not this one's.
+//
+// `--pool` needs a chain to resolve in. Where no chain of the run's models
+// names the launcher's pool the name resolves to nothing, so the launch is
+// refused with the fix rather than started on a pool no chain holds
+// (contract-pools, D3176); the entitlement to the name is the service's, and
+// never a question this launcher answers.
+//
+// It runs after chainRoutingGate, which refuses a model no entry of the table
+// matches: the two read one table and one set of models (launchRunModels), so
+// every model left here has a chain, and a chain that names no launcher-pool
+// source is the flag's own answer and not a gap in the table.
+func (e *cloudEnv) poolGate(ctx context.Context, o *runOptions, spec *task.Spec) error {
+	if o == nil || (o.token == "" && o.pool == "") {
+		return nil
+	}
+	served := e.lc != nil && infra.ChainPlanFor(e.lc, spec.Repo).Serves
+	var table routing.Table
+	if served {
+		table = e.lc.ModelRouting
+	}
+	if o.token != "" && served && spec.Mode != recipe.ModeReview {
+		return userErr("--token is retired: name the pool this run should draw on with --pool")
+	}
+	if o.pool != "" && !chainNamesTheLaunchersPool(table, launchRunModels(ctx, e, spec), spec.Repo) {
+		return userErr("--pool %s: no chain of this run's models names the launcher's pool, so the name resolves to nothing: add a %s source to the chain with fugaro routing set", oneLineCLI(o.pool), routing.KindLauncherPool)
+	}
+	return nil
 }
 
 // slipRunTime is how long this run asks to be served for: the run's own
