@@ -5301,10 +5301,11 @@ func TestBuildAccountInvokesOnlyTheService(t *testing.T) {
 	}
 	body := blocks[0].body
 	for _, want := range []string{
-		// Null is the switch's own answer on this side, and the whole of it:
-		// an installation that has not opted in plans no binding at all, and
-		// one that has plans this one.
-		"count = var.installation.credentials_service == null || !var.installation.credentials_service_serves ? 0 : 1",
+		// The address is the switch's own answer on this side, and the whole of
+		// it: an installation that has not opted in plans no binding at all, and
+		// one that has plans this one — the `vertex` repository included, whose
+		// build fetches where a served one's does (IS6).
+		"count = var.installation.credentials_service == null ? 0 : 1",
 		// The service's own name and the region it runs in: the two values
 		// internal/infra writes (infra.CredentialsServiceName and the
 		// installation's region), and never a URL.
@@ -7918,11 +7919,11 @@ func TestBuildServedClassesMatchTheModule(t *testing.T) {
 		}
 		return squash(found[1])
 	}
-	if got, want := local("build_mounts_served"), `var.installation.credentials_service != null && var.installation.credentials_service_serves && contains(local.build_served_secret_classes, "build")`; got != want {
-		t.Errorf("%s: build_mounts_served = %s, want %s: the accessor list leaves with the class \"build\" (D2077), for a repository the service serves alone (G9, D147)", path, got, want)
+	if got, want := local("build_mounts_served"), `var.installation.credentials_service != null && contains(local.build_served_secret_classes, "build")`; got != want {
+		t.Errorf("%s: build_mounts_served = %s, want %s: the accessor list leaves with the class \"build\" (D2077), for a repository whose build carries the service's address (IS6)", path, got, want)
 	}
-	if got, want := local("check_mount_served"), `var.installation.credentials_service != null && var.installation.credentials_service_serves && length(local.build_served_secret_classes) > 0`; got != want {
-		t.Errorf("%s: check_mount_served = %s, want %s: the check job's mount leaves with either class — it mounts the git credential, whose accessor is the build account's own — and for a repository the service serves alone (C2.3, G9)", path, got, want)
+	if got, want := local("check_mount_served"), `var.installation.credentials_service != null && length(local.build_served_secret_classes) > 0`; got != want {
+		t.Errorf("%s: check_mount_served = %s, want %s: the check job's mount leaves with either class — it mounts the git credential, whose accessor is the build account's own — and for a repository whose build carries the service's address (C2.3, IS6)", path, got, want)
 	}
 
 	// Both clauses, and each is read through one of those gates: the accessor

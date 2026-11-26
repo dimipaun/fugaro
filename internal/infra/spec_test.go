@@ -2845,12 +2845,14 @@ func TestRepoAddressesMatchTheVertexGolden(t *testing.T) {
 
 // IS9's fixture pins the one branch no other golden can: the installation has
 // the credentials service and the repository is a `vertex` one, so the root
-// carries the block — the address every job account is granted
-// roles/run.invoker on — while nothing of the repository's is dropped (D3326
-// as amended by F17, G7). A real plan is what makes the second half mean
-// something: the address and the drop hang on two different inputs, and a
-// module that read one for the other would show here as a missing accessor or
-// a missing grant.
+// carries the block — the address every job account and the build account are
+// granted roles/run.invoker on — while nothing of the repository's is dropped
+// but the FETCHED class (D3326 as amended by F17, G7): the service-held half
+// stays, because the service serves it nothing, and the workflow secrets and
+// the build's own accessors go, because those are fetched over the address
+// (IS6). A real plan is what makes the second half mean something: the address
+// and the drops hang on two different inputs, and a module that read one for
+// the other would show here as a missing accessor or a missing grant.
 func TestRepoAddressesMatchTheVertexServedGolden(t *testing.T) {
 	spec := repoRootFixtureSpec(t, "repo_root_vertex_served")
 	want := addressesGolden(t, "repo_root_vertex_served")
@@ -2875,21 +2877,31 @@ func TestRepoAddressesMatchTheVertexServedGolden(t *testing.T) {
 			t.Errorf("the vertex repository's addresses are missing %s, which a real plan of its root has: the address is handed without the service-held half being dropped (D3326, G7)", want)
 		}
 	}
-	// The fetched class is the one thing the address DOES take away, and this
-	// is the repository that makes the two gates tell apart (IS6, D3324,
-	// D3326): a vertex job is served nothing and keeps every accessor the
-	// service-held half would drop, and gives up the workflow secret the run
-	// fetches from the service over the same address.
+	// The FETCHED classes are what the address takes away, and this is the
+	// repository that makes the two gates tell apart (IS6, D3324, D3326): a
+	// vertex job is served nothing and keeps every accessor the service-held
+	// half would drop, and gives up the workflow secret the run fetches from the
+	// service over the same address.
 	if slices.Contains(got, `module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["npm-token"]`) {
 		t.Error("the vertex repository's job account holds an accessor on npm-token, which a real plan of its root does not: the flip is the ADDRESS's and not the service's, so the job gives up the workflow secret the run fetches even where the service serves it nothing (IS6, D3326)")
 	}
+	if slices.Contains(got, `module.repo.google_secret_manager_secret_iam_member.build["npm-token"]`) {
+		t.Error("the vertex repository's build account holds an accessor on npm-token, which a real plan of its root does not: its build request names no secret at all, because the container it would name is the retired project copy (IS6, D3324, D2077)")
+	}
 	for _, unwanted := range []string{
-		"google_cloud_run_v2_service_iam_member.build_credentials",
 		"google_secret_manager_secret_iam_member.service[",
 	} {
 		if slices.ContainsFunc(got, func(a string) bool { return strings.Contains(a, unwanted) }) {
-			t.Errorf("the vertex repository's addresses name %s, which a real plan of its root does not: the service serves this repository nothing, so it is granted none of its containers and its build account is handed no address (D3326, F17)", unwanted)
+			t.Errorf("the vertex repository's addresses name %s, which a real plan of its root does not: the service serves this repository nothing, so it is granted none of its containers (D3326, F17)", unwanted)
 		}
+	}
+	// And the build account's own invoker grant is there (IS6): the vertex
+	// repository's build request names no secret either, because the container
+	// it would otherwise name is the installation's fugaro_p_<name> copy, which
+	// this release stopped deriving (D3324), so its build fetches at the address
+	// exactly as a served repository's does.
+	if want := `module.repo.google_cloud_run_v2_service_iam_member.build_credentials[0]`; !slices.Contains(got, want) {
+		t.Errorf("the vertex repository's addresses are missing %s, which a real plan of its root has: its build names no secret of its own, so its credential step fetches at the service's address (IS6, B4.5)", want)
 	}
 }
 
@@ -3681,10 +3693,14 @@ func TestWorkflowSecretsServedForVertex(t *testing.T) {
 			t.Errorf("the vertex repository's addresses are missing %s: without the invoker grant the job account holds no roles/run.invoker on the service the launcher hands it the address of, and the run's own fetch is refused at the service's door (D3326, F17)", want)
 		}
 	}
-	// And the address is the whole of what this repository gained: every other
-	// address, and every job's mounts, are the ones it has with no service at
-	// all. That is G7's "model mounts and accessors are unchanged", asserted as
-	// a set difference rather than mount by mount.
+	// And the address is nearly the whole of what this repository gained: every
+	// job address and every model mount of it is the one the same repository has
+	// with no service at all (G7's "model mounts and accessors are unchanged",
+	// asserted as a set difference rather than address by address), and the two
+	// things that DO move are the build's — its accessors leave and its own
+	// invoker grant arrives (IS6). The workflow secrets' own job mounts leave
+	// with the fetched class beside them, which is IS9's half and not this
+	// test's.
 	offIn := in
 	offIn.Installation.CredentialsService = nil
 	off, err := Repo(offIn)
@@ -3701,9 +3717,30 @@ func TestWorkflowSecretsServedForVertex(t *testing.T) {
 	for _, key := range slices.Sorted(maps.Keys(on.Workflows)) {
 		wantGained = append(wantGained, `module.repo.module.workflow[`+strconv.Quote(key)+`].`+invoker)
 	}
+	// And the build account's own invoker grant on the same service (IS6): the
+	// vertex repository's build request names no secret either — the container
+	// it would otherwise name is the installation's fugaro_p_<name> copy, which
+	// this release stopped deriving (D3324) — so its credential step fetches at
+	// the address exactly as a served repository's does, and an account that
+	// could not call the service is a build whose clone step has no credential.
+	if config.BuildServesClass(config.BuildSecretClassBuild) {
+		wantGained = append(wantGained, `module.repo.google_cloud_run_v2_service_iam_member.build_credentials[0]`)
+	}
 	slices.Sort(wantGained)
 	if !slices.Equal(gained, wantGained) {
-		t.Errorf("the vertex repository's root gained %v over the same repository with no service (missing: %v), want exactly the job invoker grants %v: the address is the one thing D3326 adds, and a vertex run reads no credential of the service's so nothing of its may move (F17, G7)", gained, missingFrom(wantGained, gained), wantGained)
+		t.Errorf("the vertex repository's root gained %v over the same repository with no service (missing: %v), want exactly the job invoker grants and the build account's own %v: those are the ones D3326's address adds, and a vertex run reads no credential of the service's so nothing else of its may move (F17, G7, IS6)", gained, missingFrom(wantGained, gained), wantGained)
+	}
+	// The other direction, and the half IS6 adds: the build account's own
+	// secret-level accessors leave with the address, while the same repository
+	// with no service keeps every one of them.
+	const buildAccessor = `module.repo.google_secret_manager_secret_iam_member.build[`
+	if !slices.ContainsFunc(off.Addresses(), func(a string) bool { return strings.Contains(a, buildAccessor) }) {
+		t.Fatal("the unswitched fixture names no build accessor: there would be none for the address to take away, and the assertion below would hold for the wrong reason")
+	}
+	for _, a := range on.Addresses() {
+		if strings.Contains(a, buildAccessor) {
+			t.Errorf("the vertex repository's root still names the build account's accessor %s: its build request names no secret at all, because the container behind that accessor is the installation's fugaro_p_<name> copy, which this release stopped deriving (IS6, D3324, D2077)", a)
+		}
 	}
 	if slices.ContainsFunc(on.Addresses(), func(a string) bool {
 		return strings.Contains(a, "google_secret_manager_secret_iam_member.service[")

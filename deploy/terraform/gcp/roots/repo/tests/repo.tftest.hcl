@@ -2447,12 +2447,16 @@ run "build_account_invokes_the_service" {
   }
 }
 
-# D3326 (IS9): the address without the service. A vertex repository's job
-# accounts are granted the invoker (checked in the workflow module run above,
-# where that binding lives) while the repository's BUILD account is granted
-# nothing: its builds read what they mount, they fetch no workflow secret, and
-# the one account the acceptance names is the job's.
-run "vertex_repo_build_account_gets_no_invoker" {
+# D3326 (IS9) as IS6 widens it: the address without the service. A vertex
+# repository's job accounts are granted the invoker (checked in the workflow
+# module run above, where that binding lives) and so is its BUILD account, which
+# fetches the git credential and its workflow secrets at the service exactly as
+# a served repository's does — the container its request would otherwise name is
+# the installation's fugaro_p_<name> copy, which Go stopped deriving (D3324), so
+# a request still naming it is one Cloud Build refuses. What the serves fact
+# keeps for this repository is the SERVICE's own accessors on the job's
+# containers (D2074, the workflow run above): the build account keeps none.
+run "vertex_repo_build_account_invokes_the_service" {
   command = plan
 
   module {
@@ -2471,8 +2475,17 @@ run "vertex_repo_build_account_gets_no_invoker" {
   }
 
   assert {
-    condition     = length(google_cloud_run_v2_service_iam_member.build_credentials) == 0
-    error_message = "a vertex repository is handed the address for its runs, not for its builds: the build account is granted no invoker binding"
+    condition     = length(google_cloud_run_v2_service_iam_member.build_credentials) == 1
+    error_message = "a vertex repository's build account must invoke the installation's credentials service: its build request names no secret, so the credential step fetches at the address (IS6)"
+  }
+  assert {
+    condition     = length(google_secret_manager_secret_iam_member.build) == 0
+    error_message = "a vertex repository's build account holds no secretAccessor: its request names none of these secrets (IS6, D2076, D2077), the accessors going with the address the way a served repository's do"
+  }
+  assert {
+    condition = length([for e in google_cloud_run_v2_job.check[0].template[0].template[0].containers[0].env : e
+    if length(e.value_source) > 0]) == 0
+    error_message = "a vertex repository's daily check job mounts no secret: it runs as the build account, which holds no accessor (C2.3), and reads its git credential from the service instead"
   }
 }
 
