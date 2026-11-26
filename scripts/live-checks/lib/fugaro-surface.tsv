@@ -80,6 +80,7 @@ cmd	image ls
 cmd	image map
 cmd	image map set
 cmd	image promote
+cmd	image prune
 cmd	image refresh
 cmd	image render
 cmd	image rm
@@ -671,6 +672,12 @@ flag	image promote	value		--config
 flag	image promote	value		--gcp-project
 flag	image promote	value		--project
 flag	image promote	value		--region
+flag	image prune	bool		--dry-run
+flag	image prune	bool	-h	--help
+flag	image prune	value		--config
+flag	image prune	value		--gcp-project
+flag	image prune	value		--project
+flag	image prune	value		--region
 flag	image refresh	bool		--ask
 flag	image refresh	bool	-h	--help
 flag	image refresh	value		--config
