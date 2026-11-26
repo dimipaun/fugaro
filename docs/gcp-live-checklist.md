@@ -25507,7 +25507,8 @@ saying which.
 
 **Restore.** The check creates **one** Cloud Run job (`fugaro-chk840-probe`) and **one** execution of it,
 both its own, and deletes the job at the end — including on a Ctrl-C — then reads the deletion back with a
-describe that must answer `NOT_FOUND`. If a job of that name is **already** there, the check refuses before
+describe that must say the job is gone — gcloud answers a missing job with `Cannot find job [NAME]`. If a job
+of that name is **already** there, the check refuses before
 creating anything and deletes nothing: it never adopts a job it did not make. **U3's exchange creates a
 Firebase Auth user too**: signing in with a custom token is what makes the account, under the run-shaped
 uid the check minted. The check deletes it through the project's own Identity Toolkit (`accounts:delete`)
