@@ -233,19 +233,21 @@ func TestSlipIDNotInTaskFile(t *testing.T) {
 
 // TestTheGrantCallAsksTheGrantRoute: the call itself, against a service a test
 // runs: the grant route's own path, the launcher's own Google ID token as the
-// bearer, and the id the service answers handed back. A service that does not
-// serve the route is the version skew and not a refusal (DS1.4), which is what
-// the launch's fallback is judged on.
+// bearer AND in the person header — Cloud Run's front end rewrites
+// Authorization, so the header is what the service reads a person's token from
+// — and the id the service answers handed back. A service that does not serve
+// the route is the version skew and not a refusal (DS1.4), which is what the
+// launch's fallback is judged on.
 func TestTheGrantCallAsksTheGrantRoute(t *testing.T) {
 	var (
-		path, auth string
-		body       credsvc.SlipGrantRequest
-		status     int
-		answer     credsvc.SlipGrantResponse
+		path, auth, person string
+		body               credsvc.SlipGrantRequest
+		status             int
+		answer             credsvc.SlipGrantResponse
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
-		path, auth = r.URL.Path, r.Header.Get("Authorization")
+		path, auth, person = r.URL.Path, r.Header.Get("Authorization"), r.Header.Get(credsvc.HeaderPersonIdentity)
 		_ = json.Unmarshal(raw, &body)
 		if status != 0 && status != http.StatusOK {
 			w.WriteHeader(status)
@@ -275,6 +277,9 @@ func TestTheGrantCallAsksTheGrantRoute(t *testing.T) {
 	}
 	if auth != "Bearer "+fakeLauncherToken {
 		t.Errorf("the grant call presented %q, want the launcher's own Google ID token: the service's launcher class verifies that token and no other identity", auth)
+	}
+	if person != fakeLauncherToken {
+		t.Errorf("the grant call presented %s %q, want the same token: Cloud Run's front end rewrites Authorization on the way to the service, so the bearer alone never reaches it with the token the person minted", credsvc.HeaderPersonIdentity, person)
 	}
 	if body.Slug != req.Slug || body.Run != req.Run || body.Account != req.Account || body.MaxRuntimeSeconds != req.MaxRuntimeSeconds || !slices.Equal(body.Credentials, req.Credentials) {
 		t.Errorf("the grant call sent %+v, want the request it was given (%+v)", body, req)

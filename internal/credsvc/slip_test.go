@@ -1111,6 +1111,74 @@ func TestJobRefusedOnGrantAndLauncherOnClaim(t *testing.T) {
 	}
 }
 
+// TestTheGrantIsAdmittedOnThePersonHeader: Cloud Run's front end rewrites the
+// Authorization header on the way to a Cloud Run service, so a person's gcloud
+// token never arrives as a bearer there and every launcher's grant answered 403
+// (2026-11-25). The launcher sends the same token in HeaderPersonIdentity and
+// this route reads it AHEAD of the bearer, which is the half that makes the fix
+// hold: a rewritten Authorization must not decide who the caller is.
+//
+// The second call is that shape — the person's token in the header and a job's
+// bearer beside it — and it is granted too, so the precedence is pinned rather
+// than the header merely being read.
+func TestTheGrantIsAdmittedOnThePersonHeader(t *testing.T) {
+	s := newSlips(t, testLauncherAccount)
+	body := grantBody(t, s.slug, s.run, testJobSA, 3600, testSlipCredential)
+
+	resp, b := s.slipPost(t, SlipPath, body, func(r *http.Request) {
+		r.Header.Set(HeaderPersonIdentity, s.launcherToken())
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("a grant presenting its token in %s alone is answered %d, want 200: %s", HeaderPersonIdentity, resp.StatusCode, b)
+	}
+	var ans SlipGrantResponse
+	if err := json.Unmarshal(b, &ans); err != nil || ans.Slip == "" {
+		t.Fatalf("the answer is %s, want a slip id: %v", b, err)
+	}
+	if owner := s.slip(t, ans.Slip).Owner; owner != testLauncherSub {
+		t.Errorf("the slip's owner is %q, want the launcher token's own sub (%q): the header names the verified caller and not the call's own text", owner, testLauncherSub)
+	}
+
+	resp, b = s.slipPost(t, SlipPath, body, func(r *http.Request) {
+		r.Header.Set(HeaderPersonIdentity, s.launcherToken())
+		r.Header.Set("Authorization", "Bearer "+s.jobToken())
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("a grant whose Authorization was rewritten is answered %d, want 200: %s", resp.StatusCode, b)
+	}
+}
+
+// TestAGrantWithNoReadableTokenSaysWhy: the one refusal of this route that
+// writes no audit line is the one before its caller is verified, which is the
+// bare 403 an operator saw with nothing beside it (2026-11-25). Its warning is
+// the whole of what the log says, so it must name the header whose token could
+// not be read — and nothing of the token itself.
+func TestAGrantWithNoReadableTokenSaysWhy(t *testing.T) {
+	s := newSlips(t, testLauncherAccount)
+	body := grantBody(t, s.slug, s.run, testJobSA, 3600, testSlipCredential)
+
+	resp, b := s.slipPost(t, SlipPath, body)
+	wantRefusal(t, resp, b, StatusUnverified, ErrorUnverifiedJobIdentity)
+	line := s.logs.String()
+	if !strings.Contains(line, "a slip grant carried no readable token") || !strings.Contains(line, "Authorization") {
+		t.Errorf("the refusal of a call with no token left %q, want a warning naming the header it could not read", line)
+	}
+
+	tok := fakeCred(t, "person-token")
+	resp, b = s.slipPost(t, SlipPath, body, func(r *http.Request) {
+		r.Header.Add(HeaderPersonIdentity, tok)
+		r.Header.Add(HeaderPersonIdentity, tok)
+	})
+	wantRefusal(t, resp, b, StatusUnverified, ErrorUnverifiedJobIdentity)
+	line = s.logs.String()
+	if !strings.Contains(line, "a slip grant carried no readable token") || !strings.Contains(line, HeaderPersonIdentity) {
+		t.Errorf("the refusal of two %s values left %q, want a warning naming that header", HeaderPersonIdentity, line)
+	}
+	if strings.Contains(line, tok) {
+		t.Errorf("the warning repeats the token it refused: %q", line)
+	}
+}
+
 // TestClaimExecutionIsOneCleanValue: the execution name a claim reports is the
 // one free-text value either route carries, and it is the one value of them
 // that is not a name of this service's own grammar — it is the caller's own
