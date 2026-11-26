@@ -1020,6 +1020,57 @@ func writeCatalogRecordAs(t *testing.T, f *cloudFixture, slug, entry, ref string
 	writeBucketFile(t, f, key, string(data))
 }
 
+// TestDoctorNamesBothMembers: a project config file that holds repo_images and
+// the legacy image_map beside it is read from repo_images and image_map is
+// ignored (R2), so nothing a job runs is wrong — but the legacy member is dead
+// weight the next `fugaro update` takes away, and the file is the one place it
+// can be named. A file that names one member is not this state, and the check
+// reads no bucket, so it is reported on the path where the network is gone.
+//
+// Mutation (verified, run and restored): drop imageMapMembersCheck from
+// localFileChecks and the first half finds no line at all.
+func TestDoctorNamesBothMembers(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	dir := layerCheckout(t, f, minimalAnchored)
+	f.appendConfig(t, "image_map:\n  acme/app: base\nrepo_images:\n  github/acme/app: base\n")
+	lc := fileEnv(t, f).lc
+	ctx := context.Background()
+	rf := resolvedLayerFixture(t, ctx, lc, dir)
+
+	cs := doctorLayerChecks(ctx, lc, dir, rf)
+	c := layerCheck(cs, "image-map-both-members")
+	if c == nil {
+		t.Fatalf("a file holding both members is not named: %+v", cs)
+	}
+	if c.Severity != "warning" || !strings.Contains(c.Problem, os.Getenv("FUGARO_CONFIG")) {
+		t.Errorf("the line does not name the file and warn: %+v", c)
+	}
+	if !strings.Contains(c.Problem, "repo_images") || !strings.Contains(c.Problem, "image_map") {
+		t.Errorf("the line does not name the two members: %q", c.Problem)
+	}
+	if c.Fix != selfCommand()+" update" {
+		t.Errorf("fix = %q, want the one command that removes it", c.Fix)
+	}
+	if got := doctorClassOf(*c); got != doctorClassActionable {
+		t.Errorf("the check is classed %q, want %q", got, doctorClassActionable)
+	}
+
+	// A file that names one member is not this state, whichever member it is.
+	const both = "image_map:\n  acme/app: base\nrepo_images:\n  github/acme/app: base\n"
+	for _, only := range []string{
+		"image_map:\n  acme/app: base\n",
+		"repo_images:\n  github/acme/app: base\n",
+	} {
+		f.rewriteConfig(t, both, only)
+		if c := layerCheck(doctorLayerChecks(ctx, fileEnv(t, f).lc, dir, rf), "image-map-both-members"); c != nil {
+			t.Errorf("a file holding only %q is reported: %+v", strings.TrimSpace(only), c)
+		}
+		f.rewriteConfig(t, only, both)
+	}
+}
+
 // TestPrebuiltEntrySmokedReportsInDoctor: the entry a prebuilt image answers is
 // never built, so nothing of a build can say whether the image its jobs start
 // on is one a job can start on. What says it is the smoke-only Cloud Build run
