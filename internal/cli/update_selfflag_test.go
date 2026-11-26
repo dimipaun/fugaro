@@ -27,19 +27,18 @@ import (
 // process are different markers set by different hands (F20).
 //
 // The two rigs are the update door's: managedUpdateRig is the installation
-// these steps act on, and unmanagedUpdateRig is the same world with the
-// project's own half of the managed fact taken back out.
+// these steps act on — the default newInitRig marks managed — and
+// unmanagedUpdateRig is the same world with the project's own half of the
+// managed fact taken back out.
 
-// managedUpdateRig is the update door's rig on a managed installation: the two
-// marks, the creation fact this release's own creation writes, and the
-// credentials the gate's own record is written with. It is this file's and not
-// newInitRig's (U3 of docs/managed-flag-ergonomics): a rig is a project, not
-// necessarily a managed one, and marking every rig managed opens the managed
-// gate for every test in this package.
+// managedUpdateRig is the update door's rig on a managed installation, with the
+// credentials the gate's own record is written with. The two marks are the
+// fixture's (newInitRig's managedInstallation); what is added here is
+// isolateGateCredentials, which a test that reaches the gate needs and which
+// no shared fixture may stub for the whole package.
 func managedUpdateRig(t *testing.T) *initRig {
 	t.Helper()
 	r := updateRig(t)
-	r.managedInstallation(t)
 	isolateGateCredentials(t)
 	return r
 }

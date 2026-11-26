@@ -74,14 +74,11 @@ const (
 // is a fact of its own under the count's line.
 func TestUpdateLeavesARunInFlightRunning(t *testing.T) {
 	r := newConvergeRig(t, v3Node(nil))
-	// The installation is a managed one: TN1's stop refuses the update of a
-	// project the managed read answers is not managed (T3 of
-	// docs/managed-flag-ergonomics), and this run is a converge of a project
-	// that is. The credentials the gate's own record is written with come with
-	// it, as they do in managedUpdateRig (update_selfflag_test.go) — the two
-	// marks are this test's own and not newInitRig's, because a rig is a
-	// project and not necessarily a managed one.
-	r.managedInstallation(t)
+	// The rig's project is a managed one (newInitRig's own marks, and the
+	// reason TN1's stop — T3 of docs/managed-flag-ergonomics — lets this update
+	// through), and the credentials the gate's own record is written with are
+	// this test's to stub: no shared fixture stubs the person's identity for
+	// the whole package.
 	isolateGateCredentials(t)
 	// IS5's step is one of the writes this run makes while the run is going, so
 	// the fixture carries what it acts on: the operator's workflow_secrets

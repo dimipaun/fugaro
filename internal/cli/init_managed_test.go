@@ -562,15 +562,24 @@ func (r *initRig) managedRuns(t *testing.T, name, gcp string) {
 	}
 }
 
-// managedInstallation is a rig's project as the installation this release's own
-// creation writes it: the two marks the managed read requires — the project's
-// fugaro_managed label and, in its runs bucket, the creation fact (version 4,
+// managedInstallation is the default of every rig: the two marks a managed
+// installation carries — the project's own fugaro_managed label and, in its
+// runs bucket, the creation fact this release's own creation writes (version 4,
 // carrying the amount D2211 defaults to) — together with the bucket's own
 // labels and policy.
 //
-// A test that means an installation the read answers is NOT managed takes the
-// project's half back out and says so (removeManagedInstallation); one about the
-// fact's own bytes writes its own (managedRuns, seedFlagFact).
+// It is the default because both front doors stop on an installation the
+// managed read answers is not managed (TN1's stop, T3 of
+// docs/managed-flag-ergonomics), and a rig is a project a Fugaro run created.
+// A test about a project that is not managed takes the marks back out and says
+// so (removeManagedInstallation); one about the fact's own bytes writes its own
+// (managedRuns, seedFlagFact).
+//
+// It is the marks alone: the gate's own credentials are NOT stubbed here. They
+// are what a run that reaches the gate is answered with, and a rig that stubs
+// authenticatedUser for every test in this package is a rig no test of a
+// person's own identity can share (isolateGateCredentials, which the gate's own
+// tests call for themselves).
 func (r *initRig) managedInstallation(t *testing.T) {
 	t.Helper()
 	body, err := managed.Marker{
@@ -584,9 +593,10 @@ func (r *initRig) managedInstallation(t *testing.T) {
 	r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
 	r.gcs.SetBucketPolicy(initRunsBucket, gcpfake.ConvenienceBindings(initProject))
 	labelled(r.crm, initProject)
-	if err := r.gcs.Bucket(t, initRunsBucket).Bucket.WriteAll(context.Background(), managed.MarkerObject, body, nil); err != nil {
-		t.Fatal(err)
-	}
+	// Seeded without a request (Put): the fixture's own object is not something
+	// the run did, and a test that counts what a run sent to the runs bucket
+	// must not count it.
+	r.gcs.Put(initRunsBucket, managed.MarkerObject, body)
 }
 
 // removeManagedInstallation takes the default's verdict out of the world: the
