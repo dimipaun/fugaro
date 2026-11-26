@@ -293,7 +293,8 @@ Resolutions (one defensible answer, stated rather than asked):
   The code stays, as D1900 rules.
 - O1. **Closed 2026-11-23.** The owner ruled on B1–B19 (D3237) and on the lift order (D3238, amended), and rescoped L5 (D3239).
 - O2. **Closed 2026-11-23.** The owner ran Checks 890–892 on `fugaro`; report §1's "Live result"
-  records them, and F21 what they found.
+  records them, and F21 what they found. Check 890 was re-run on 2026-11-26 (0.29.5) and passes:
+  every repo-keyed path it listed is a row now that RC106 is one.
 - O3. `docs/status.md` gets this spec's row when the plan merges, as for every spec folder before
   it; this pull request does not touch it.
 - O4. `config.RepoCraftsNodePrefix` (`config/policy/repocrafts/<slug>`) is a constant with no
