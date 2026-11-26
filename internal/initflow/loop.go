@@ -480,7 +480,8 @@ func (l *loop) emitRepos(r StageResult) {
 // repositories it read (RepoReporter, C1): the lines themselves, and the
 // summary built from them as the stage's own detail — what a reader of the
 // document and of the feed gets is then the same from every directory, which
-// the stage's own reason, naming the run's working directory, would not be.
+// the stage's own reason, naming the run's working directory, would not be —
+// and the one line the stage has of its own where it has one (StageNote).
 //
 // The lines are redacted like every other line that reaches the document or
 // the screen (F6), and a stage that reported none — one that does no
