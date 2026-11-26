@@ -115,46 +115,31 @@ func TestPromoteReachesTheAgentTheRecordAndTheReader(t *testing.T) {
 	}
 }
 
-// promoteRuleCfg is promoteAreaCfg with the area's own rule written one level
-// below the one the run is asked for, and spread over three lines so the agent's
-// raise is one substitution: the state the raise item 12b asks for exists in.
-func promoteRuleCfg(t *testing.T) string {
-	t.Helper()
-	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "agent:\n",
-		"rigor:\n  default: poc\n  areas:\n    - name: payments\n      match: \"internal/payments/**\"\n      level: poc\nagent:\n", 1)
-	if !strings.Contains(cfg, "level: poc") {
-		t.Fatal("the fixture's config names no agent block to put the area rule above")
-	}
-	return cfg
-}
-
-// TestPromoteRaisesTheRepositorysOwnRule is item 12b's other half end to end: a
-// repository whose own rule sits below the level the run is asked for is
-// told to raise that rule in the same pull request, and the status section says
-// the branch did — read from the branch's own fugaro.yaml at HEAD, which is what
-// a reader of the pull request sees. A level the file does not carry is one the
-// next run of this repository resolves as the old one, so the raise is the whole
-// of whether the level outlives the run.
+// TestPromoteAsksForNoRaiseARepositoryNoLongerDeclares: a repository's own
+// `rigor.areas` rule is a lifted key (L8, D3237), so S1 drops it from the file
+// before the merge and the area a promote run works on is the project layer's
+// (promoteAreaCfg, testutil.FixturePins). The pass therefore has no rule of this
+// repository's to raise and says nothing about one: the brief carries no RAISE
+// THE RULE TOO clause, and the status section carries no raise line.
 //
-// Mutation (drop the promoteDeclared call in readPromote, or read the working
-// tree's file instead of HEAD): the section reports the rule still at poc and
-// the row below fails.
-func TestPromoteRaisesTheRepositorysOwnRule(t *testing.T) {
-	h := newHarnessFiles(t, promoteRuleCfg(t), promoteTask(), map[string]string{
+// Item 12b's raise — the repository's own rule, edited in this pull request —
+// is unreachable until the areas move to the layer's per-repository entries
+// (RG1–RG3), and a brief that asked for the edit would send an agent to change a
+// line the level is no longer read from.
+func TestPromoteAsksForNoRaiseARepositoryNoLongerDeclares(t *testing.T) {
+	h := newHarnessFiles(t, promoteAreaCfg(t), promoteTask(), map[string]string{
 		"internal/payments/charge.go":          "package payments\n\nfunc Charge() error { return nil }\n",
 		backlog.Dir + "/20261118-01-charge.md": promoteItem("open"),
 	})
 	raise := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
-		if !strings.Contains(req.AppendSystemPrompt, "RAISE THE RULE TOO") ||
-			!strings.Contains(req.AppendSystemPrompt, "Set that rule's `level:` to `startup`") {
-			t.Errorf("the brief does not ask for the repository's own rule to be raised:\n%s", req.AppendSystemPrompt)
+		if strings.Contains(req.AppendSystemPrompt, "RAISE THE RULE TOO") {
+			t.Errorf("the brief asks for a rule this run no longer reads from the file:\n%s", req.AppendSystemPrompt)
 		}
-		shell(t, req, "perl -pi -e 's/^      level: poc$/      level: startup/' fugaro.yaml"+
-			" && echo '// raised' >> internal/payments/charge.go"+
-			" && git add -A && git commit -qm 'Raise the payments rule'")
+		shell(t, req, "echo '// retried' >> internal/payments/charge.go"+
+			" && git add -A && git commit -qm 'Pay down the charge item'")
 		verifyTest(t, ctx, req)
 		pr := filepath.Join(envValue(req.Env, "FUGARO_STATE_DIR"), "pr.md")
-		if err := os.WriteFile(pr, []byte("# Raise the payments area\n\nRaised the rule the level is read from."), 0o644); err != nil {
+		if err := os.WriteFile(pr, []byte("# Raise the payments area\n\nPay down the item on the charge call; it is left open for the next run on this pull request to close."), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		return agent.Result{CostUSD: 1}, nil
@@ -164,8 +149,12 @@ func TestPromoteRaisesTheRepositorysOwnRule(t *testing.T) {
 		t.Fatalf("rec = %+v, err = %v", rec.Outcome, err)
 	}
 	got := onlyPR(t, h.provider).Body
-	if want := "- the repository's own `rigor.areas` rule for the area was raised to startup in this pull request"; !strings.Contains(got, want) {
-		t.Errorf("the section does not report the raise (%q):\n%s", want, got)
+	if !strings.Contains(got, "**Promote: the payments area at startup**") ||
+		!strings.Contains(got, "- left open 20261118-01: no retry on the charge call") {
+		t.Errorf("the pass did not read the area's own item:\n%s", got)
+	}
+	if strings.Contains(got, "item 12b") {
+		t.Errorf("the section reports a raise no repository declares (the areas are lifted, S1):\n%s", got)
 	}
 }
 
@@ -260,7 +249,10 @@ func TestPromoteFollowUpClosesWhatTheEarlierRunPaidDown(t *testing.T) {
 		testutil.Git(t, seed, "add", "-A")
 		testutil.Git(t, seed, "commit", "--quiet", "-m", "record the area's debt")
 		testutil.Git(t, seed, "push", "--quiet", "origin", "HEAD:refs/heads/main")
-		if err := h.store.WriteTask(context.Background(), promoteTask()); err != nil {
+		// The task carries the harness's layer (taskWithLayer): a repository's
+		// file names no model any more (S1, D3237), and a task the run reads
+		// without the layer has none to price its stages by.
+		if err := h.store.WriteTask(context.Background(), h.taskWithLayer(promoteTask())); err != nil {
 			t.Fatal(err)
 		}
 	}, payDownKeepOpen, review("ship", 0))

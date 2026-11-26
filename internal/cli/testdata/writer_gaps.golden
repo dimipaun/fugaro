@@ -295,6 +295,7 @@ providers.conformance.secret	open:writer-unproven
 region	label:plumbing
 registry	label:file
 registry_host	label:plumbing
+repo_images	open:no-writer
 reports_commit.dir	open:no-writer
 reports_commit.repo	open:no-writer
 repos.acme/web.claude_accounts	open:writer-unproven

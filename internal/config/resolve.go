@@ -1,7 +1,6 @@
 package config
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -43,6 +42,13 @@ type Resolution struct {
 	LayerSHA256 string
 	// ConfigSHA256 is the resolved config's (Config.SHA256).
 	ConfigSHA256 string
+	// Lifted is every lifted key the repository's file wrote, in path order,
+	// each with the sentence a person reads (config.LiftedKeys): the keys
+	// release A drops and names rather than refuses. The drop is in every
+	// resolution, both arms and every ref, so this is where a caller finds what
+	// the repository wrote and a run no longer honours (S2, S5); a key here is
+	// in no Sources entry, because a dropped key is set by no layer.
+	Lifted []RetiredKeyNote
 }
 
 // listIndexRE is a list index in a path (cache[0].key).
@@ -100,6 +106,22 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 	if len(ps) > 0 {
 		return nil, nil, ps
 	}
+	// The lifted keys go before anything reads the tree, in both arms: the
+	// merge, the repository's own flags and the config a run carries see a
+	// file without them, and the notes of what was dropped travel in the
+	// resolution (R2, contract-lift-keys.md). The drop takes a copy: the file
+	// itself is read as written and stays read as written — release A reads a
+	// lifted key and does not honour it, so a repository is never refused for
+	// one until release B (spec §4) — and both arms judge the problems below on
+	// the file as its author wrote it, while what they hand back comes from the
+	// file the drop left.
+	droppedTree, lifted := dropLiftedKeys(tree)
+	dropped := repo
+	if len(lifted) > 0 {
+		if dropped, ps = decodeTree(droppedTree); len(ps) > 0 {
+			return nil, nil, ps
+		}
+	}
 	if l == nil {
 		if ps := layerlessProblems(repo); len(ps) > 0 {
 			return nil, nil, ps
@@ -108,89 +130,112 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 		if ps := Validate(repo); len(ps) > 0 {
 			return nil, nil, noLayerHint(repo, ps)
 		}
-		repo.RepoRigor = repo.Rigor
-		repo.RepoRigorSet = setsRigor(tree)
-		repo.RepoRigorLevelSet = setsRigorLevel(tree)
-		repo.RepoRigorScalarSet = setsRigorScalar(tree)
-		repo.RepoGovernanceSet = setsGovernance(tree)
-		repo.RepoGitAuthorSet = setsGitAuthor(tree)
-		repo.RepoSecuritySet = setsSecurity(tree)
-		repo.RepoLevelsNoneModelSet = setsLevelsNoneModel(tree)
-		repo.RepoPlanningSet = setsPlanning(tree)
-		repo.RepoStopFractionSet = setsStopFraction(tree)
-		repo.RepoWorkspaceBeatSet = setsWorkspaceBeat(tree)
-		repo.RepoTriageSet = setsTriage(tree)
-		repo.RepoReviewAgainstTaskSet = setsReviewAgainstTask(tree)
-		repo.RepoModelGradesSet = setsModelGrades(tree)
-		repo.RepoVisionSet = setsVision(tree)
-		repo.RepoMergeJudgeCraftSet = setsMergeJudgeCraft(tree)
-		repo.RepoWorkflowABSet = setsWorkflowAB(tree)
-		res := &Resolution{Sources: map[string]string{}}
-		markLeaves(tree, "", SourceRepo, res.Sources)
-		res.ConfigSHA256 = repo.SHA256()
-		return repo, res, nil
+		out := dropped
+		applyDefaults(out)
+		setRepoOwn(out, dropped, droppedTree, tree)
+		res := &Resolution{Sources: map[string]string{}, Lifted: lifted}
+		markLeaves(droppedTree, "", SourceRepo, res.Sources)
+		res.ConfigSHA256 = out.SHA256()
+		return out, res, nil
 	}
 	if ps := anchorProblems(repo, l); len(ps) > 0 {
 		return nil, nil, ps
 	}
-	res := &Resolution{Sources: map[string]string{}, LayerSHA256: l.SHA256}
-	merged := map[string]any{}
-	if d, ok := l.tree["defaults"].(map[string]any); ok {
-		overlay(merged, d, "", SourceProject, res.Sources)
-	}
-	top := maps1(tree)
-	delete(top, "workflows")
-	overlay(merged, top, "", SourceRepo, res.Sources)
-	dropLayerRigorRepos(merged, res.Sources)
-	wfs, profileOf, ps := resolveWorkflows(tree, repo, l, res.Sources)
+	res := &Resolution{Sources: map[string]string{}, LayerSHA256: l.SHA256, Lifted: lifted}
+	merged, profileOf, ps := layerMerge(tree, repo, l, res.Sources)
 	if len(ps) > 0 {
 		return nil, nil, ps
 	}
-	merged["workflows"] = wfs
-	out, err := yaml.Marshal(merged)
-	if err != nil {
-		return nil, nil, []Problem{{Message: "resolving: " + err.Error()}}
-	}
-	var c Config
-	dec := yaml.NewDecoder(bytes.NewReader(out))
-	dec.KnownFields(true)
-	if err := dec.Decode(&c); err != nil {
-		// Both layers decoded on their own, so this is not expected; the
-		// merged text's line numbers are no line of either file.
-		ps := yamlProblems(err)
-		for i := range ps {
-			ps[i].Line, ps[i].Message = 0, "resolving: "+ps[i].Message
-		}
+	c, ps := decodeTree(merged)
+	if len(ps) > 0 {
 		return nil, nil, ps
 	}
 	c.Layer = l
 	// The repository's own rigor: block, kept beside the merged one: the
 	// project layer's area rules stay in effect next to the repository's
 	// rather than being replaced by them (D20c), so a consumer that resolves
-	// a mode needs both (Config.RigorConfig).
+	// a mode needs both (Config.RigorConfig). Validation judges the file as
+	// written, so the block standing here is the one the file wrote; the
+	// config handed back carries the block the drop left (R2).
 	c.RepoRigor = repo.Rigor
-	c.RepoRigorSet = setsRigor(tree)
-	c.RepoRigorLevelSet = setsRigorLevel(tree)
-	c.RepoRigorScalarSet = setsRigorScalar(tree)
-	c.RepoGovernanceSet = setsGovernance(tree)
-	c.RepoGitAuthorSet = setsGitAuthor(tree)
-	c.RepoSecuritySet = setsSecurity(tree)
-	c.RepoLevelsNoneModelSet = setsLevelsNoneModel(tree)
-	c.RepoPlanningSet = setsPlanning(tree)
-	c.RepoStopFractionSet = setsStopFraction(tree)
-	c.RepoWorkspaceBeatSet = setsWorkspaceBeat(tree)
-	c.RepoTriageSet = setsTriage(tree)
-	c.RepoReviewAgainstTaskSet = setsReviewAgainstTask(tree)
-	c.RepoModelGradesSet = setsModelGrades(tree)
-	c.RepoVisionSet = setsVision(tree)
-	c.RepoMergeJudgeCraftSet = setsMergeJudgeCraft(tree)
-	c.RepoWorkflowABSet = setsWorkflowAB(tree)
-	applyDefaults(&c)
-	if ps := Validate(&c); len(ps) > 0 {
+	applyDefaults(c)
+	if ps := Validate(c); len(ps) > 0 {
 		return nil, nil, annotate(ps, res, profileOf)
 	}
-	res.ConfigSHA256 = c.SHA256()
-	return &c, res, nil
+	out := c
+	if len(lifted) > 0 {
+		// The config a run carries: the same merge over the file the drop
+		// left, whose sources are this config's — a dropped key is in no
+		// Sources entry, and no reader downstream sees a lifted value.
+		sources := map[string]string{}
+		droppedMerged, _, ps := layerMerge(droppedTree, dropped, l, sources)
+		if len(ps) > 0 {
+			return nil, nil, ps
+		}
+		if out, ps = decodeTree(droppedMerged); len(ps) > 0 {
+			return nil, nil, ps
+		}
+		out.Layer = l
+		res.Sources = sources
+	}
+	setRepoOwn(out, dropped, droppedTree, tree)
+	applyDefaults(out)
+	res.ConfigSHA256 = out.SHA256()
+	return out, res, nil
+}
+
+// layerMerge is Resolve's layer arm's merge: the project layer's defaults with
+// tree over them, the repository's own ab: repos gone and the workflows
+// resolved. The arm takes it twice where the file wrote a lifted key — once
+// over the file as written, whose problems are the ones judged, and once over
+// the file the drop left, which is the config a run carries — and tree and the
+// decode the workflows read are the two calls' only difference: they are one
+// file, as written and as the drop left it.
+func layerMerge(tree map[string]any, repo *Config, l *ProjectLayer, src map[string]string) (map[string]any, map[string]string, []Problem) {
+	merged := map[string]any{}
+	if d, ok := l.tree["defaults"].(map[string]any); ok {
+		overlay(merged, d, "", SourceProject, src)
+	}
+	top := maps1(tree)
+	delete(top, "workflows")
+	overlay(merged, top, "", SourceRepo, src)
+	dropLayerRigorRepos(merged, src)
+	wfs, profileOf, ps := resolveWorkflows(tree, repo, l, src)
+	if len(ps) > 0 {
+		return nil, nil, ps
+	}
+	merged["workflows"] = wfs
+	return merged, profileOf, nil
+}
+
+// setRepoOwn fills the fields a resolved config carries about the repository's
+// own file: the rigor block kept beside the merged one, and the flags that
+// answer what that file writes. The four a lifted key decides — the rigor
+// block, its two spellings and its areas, and a review level's `none` literal,
+// which is agent.levels.lN.model and so a lifted key too — are read from the file the
+// drop left, because a run resolves no lifted value and the gates that read
+// them judge the configuration a run would (R2); every other flag answers its
+// own question about the text as its author wrote it, which the lift leaves
+// alone. dropped is that file decoded (own) and as a tree, written the file as
+// written.
+func setRepoOwn(c *Config, own *Config, dropped, written map[string]any) {
+	c.RepoRigor = own.Rigor
+	c.RepoRigorSet = setsRigor(dropped)
+	c.RepoRigorLevelSet = setsRigorLevel(dropped)
+	c.RepoRigorScalarSet = setsRigorScalar(dropped)
+	c.RepoLevelsNoneModelSet = setsLevelsNoneModel(dropped)
+	c.RepoGovernanceSet = setsGovernance(written)
+	c.RepoGitAuthorSet = setsGitAuthor(written)
+	c.RepoSecuritySet = setsSecurity(written)
+	c.RepoPlanningSet = setsPlanning(written)
+	c.RepoStopFractionSet = setsStopFraction(written)
+	c.RepoWorkspaceBeatSet = setsWorkspaceBeat(written)
+	c.RepoTriageSet = setsTriage(written)
+	c.RepoReviewAgainstTaskSet = setsReviewAgainstTask(written)
+	c.RepoModelGradesSet = setsModelGrades(written)
+	c.RepoVisionSet = setsVision(written)
+	c.RepoMergeJudgeCraftSet = setsMergeJudgeCraft(written)
+	c.RepoWorkflowABSet = setsWorkflowAB(written)
 }
 
 // layerlessProblems are the keys that need a project layer when there is

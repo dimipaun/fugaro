@@ -87,6 +87,36 @@ func TestWatchPrintsADashForAuth(t *testing.T) {
 	}
 }
 
+// TestAServedOAuthRowStaysNotional (model-credentials-routing CS6): a run the
+// routing table serves writes no auth of its own, with one exception — an
+// `oauth` run keeps it — and this test is why. A live row's notional flag is
+// read off that member and nothing else, so a served subscription run whose
+// member was written as nothing would be drawn as paying billed dollars for
+// every call, with no error and no dash to explain it. The exception goes when
+// the entry's source, which is what the run really goes out on, can say the
+// same thing.
+//
+// Mutation (the runner writes nothing for a served oauth run): the row below
+// loses its flag and its spent dollars read as billed.
+func TestAServedOAuthRowStaysNotional(t *testing.T) {
+	s := newState(t)
+	put(t, s, SrcAgents, "/", `{"acme%2Fapp":{
+	 "r1":`+agent("acme/app", "a served oauth run", `,"auth":"oauth","source":"anthropic","spent":2000000`)+`,
+	 "r2":`+agent("acme/app", "a served key run", `,"source":"pool:team","spent":2000000`)+`}}`, t0)
+	v := Build(s, t0, Config{})
+
+	rows := map[string]RunRow{}
+	for _, r := range v.Repos[0].Runs {
+		rows[r.Run] = r
+	}
+	if !rows["r1"].Notional || rows["r1"].Auth != "oauth" || rows["r1"].Source != "anthropic" {
+		t.Fatalf("r1 = %+v, want the oauth member kept beside the source it goes out on", rows["r1"])
+	}
+	if rows["r2"].Notional || rows["r2"].Auth != "-" {
+		t.Fatalf("r2 = %+v, want no auth and no notional for a served run that is not oauth", rows["r2"])
+	}
+}
+
 // TestWatchShowsANonEntryRunsSourceAsAbsent: the rows that are not registry
 // entries — a queued run nothing has written yet, a finished one whose entry is
 // gone — have no routing answer to report, and they show the dash the rest of

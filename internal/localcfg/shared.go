@@ -280,6 +280,12 @@ func (c *Config) Shared() *Config {
 	// teammate's runs execute. ParseShared refuses the key besides, because a
 	// shared config carrying it was not written by the converge.
 	s.ImageMap = nil
+	// RepoImages is dropped here for ImageMap's reason, one member over: a map
+	// that names the image each repository runs is the same choice the catalog
+	// is, made per repository, so a launcher who could write it into the runs
+	// bucket's shared file would be choosing what code a teammate's runs
+	// execute.
+	s.RepoImages = nil
 	// BakeRepos is dropped here for the catalog's reason too: whether a
 	// repository is baked into its image is the owner's decision about every
 	// repository of the project, and a launcher who could write it into the
