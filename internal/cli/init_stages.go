@@ -703,13 +703,12 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	e.noticeRepoValues(ctx)
 	// And D1543's: the creation fact a release behind left at version 3 carries
 	// the image build count this one no longer bounds a build by, and a fact is
-	// migrated where it was written (update_marker_version.go). It is after the
-	// self-flag above for the reason that step has: a run which flags an
-	// installation writes the version this build writes, so the two together
-	// converge any installation the update reaches, and the step itself does
-	// nothing where the fact is already this release's. Like the two above it
-	// returns no error — a fact left behind is one this build still reads — and
-	// it is before printResult for the same reason.
+	// migrated where it was written (update_marker_version.go). It converges
+	// the installation this run reaches — nothing marks a project here any more
+	// (TN1) — and the step itself does nothing where the fact is already this
+	// release's. Like the two above it returns no error — a fact left behind is
+	// one this build still reads — and it is before printResult for the same
+	// reason.
 	e.convergeMarkerVersion(ctx)
 	// And D1940's: the roster's project-scoped admins, published for the intake
 	// that admits a caller to the shared prefix and may hold no database role

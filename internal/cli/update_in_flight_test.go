@@ -200,6 +200,30 @@ func TestUpdateLeavesARunInFlightRunning(t *testing.T) {
 			projectpolicy.DefaultProfileName, pr)
 	}
 
+	// TN1's stop over the same two runs (T3), and the reason it is placed here:
+	// the installation's own half of the managed fact is taken out of the world
+	// — the project's label — and the same `fugaro update` is refused at the
+	// head while both runs are still in flight. A run in flight is not a reason
+	// to converge a project nobody declared, and the stop is a negative: it asks
+	// neither run to finish first (it is before the first stage, so the note
+	// above is not even reached) and it takes nothing they hold. The writes
+	// below are the two runs' own, made after this refusal as well as after the
+	// update, which is what makes them the reading of both.
+	r.removeManagedInstallation(t)
+	refused, refusedErr, err := executeStdin(t, "aurora\n", "update")
+	if err == nil {
+		t.Fatalf("fugaro update converged an installation that is not managed with runs in flight:\n%s\n%s", refused, refusedErr)
+	}
+	refusal := refused + refusedErr + ErrorText(err)
+	for _, want := range []string{initProject + " is not managed", "fugaro managed flag"} {
+		if !strings.Contains(refusal, want) {
+			t.Errorf("the refusal over the runs in flight does not say %q:\n%s", want, refusal)
+		}
+	}
+	if strings.Contains(refusal, "runs in flight") {
+		t.Errorf("the stop spoke about the runs in flight, and it asks none of them to finish and changes nothing they hold:\n%s", refusal)
+	}
+
 	run.laterWrites(t, r)
 
 	// And the paused run is where the update left it: nothing it holds was
