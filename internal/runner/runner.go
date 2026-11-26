@@ -3934,6 +3934,10 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// whatever its environment holds.
 		ImageEnv: r.imageEnv(secretEnvs, wfSecretEnvs),
 		Gateway:  r.gateway(), Compression: r.compression,
+		// The credentials service serves this run's calls, which is the fact
+		// the gateway's own options are built from (chainServed, gateway.go):
+		// the environment is then the cascade's whatever the file's auth says.
+		ChainServed: r.chainServed(),
 		// Docker stays false here, so the agent's environment has no
 		// DOCKER_HOST: nothing yet tells this runner that its workflow asked
 		// for `docker: true` (the workflow field and the runner's copy of it

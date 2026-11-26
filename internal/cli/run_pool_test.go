@@ -46,7 +46,8 @@ const poolWithoutLauncherTableYAML = `model_routing:
 // agent.model is a lifted key (R1, D3237), and the arms therefore move the
 // fixture's base image to l8Since, the release that stops reading it: a
 // repository's own model on an older image is L8's own refusal, which is not
-// the refusal these tests read.
+// the refusal these tests read. The model is the project layer's (S1, D3237),
+// so poolFixture publishes it there and keeps the key in the file.
 const poolModelRepoYAML = `version: 1
 project: aurora
 git:
@@ -73,6 +74,7 @@ workflows:
 func poolFixture(t *testing.T, table string) *projectJobFixture {
 	t.Helper()
 	f := newCascadeProjectJobFixture(t, poolModelRepoYAML)
+	projectJobCheckoutYAML(t, publishFilePins(t, f.cloudFixture, poolModelRepoYAML))
 	f.rewriteConfig(t, "fugaro-base/fugaro-base:"+nodeRelease, "fugaro-base/fugaro-base:"+l8Since)
 	f.appendConfig(t, table)
 	f.appendConfig(t, "credentials_service:\n  url: "+credentialsServiceFixtureURL+"\n")

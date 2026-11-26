@@ -1006,6 +1006,21 @@ func (r *initRun) backfillCredentialsServiceReady(ctx context.Context, c *infra.
 			// read that failed.
 			continue
 		}
+		if on && lc.Repos[key].Vertex {
+			// The grant is the ADDRESS, and a vertex repository is the one
+			// repository whose root plans it without serving its credentials
+			// (D3326, infra.CredentialsServiceAddress): the state answers that
+			// the root was applied with the block on, which for a vertex root
+			// is the workflow-secret fetch's address and not the model switch
+			// this record is about. Writing the reading over such an entry
+			// would record `ready` for a repository whose jobs kept every
+			// model mount the module drops for a served one. The entry is
+			// answered as the repository door answers it — the switch's own
+			// reading for this auth, which is false for vertex by construction
+			// (CredentialsServiceServes) — so the two doors agree and neither
+			// oscillates.
+			on = false
+		}
 		if on {
 			switched = append(switched, key)
 			continue

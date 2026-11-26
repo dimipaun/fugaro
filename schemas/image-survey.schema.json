@@ -12,7 +12,7 @@
   ],
   "properties": {
     "version": {
-      "const": 1,
+      "const": 2,
       "$comment": "imageSurveyDocVersion in internal/cli/image_survey.go."
     },
     "project": {
@@ -100,10 +100,10 @@
       "type": "object",
       "required": [
         "catalog",
-        "image_map",
+        "repo_images",
         "bake_repos"
       ],
-      "description": "What a rerun of the setup compares against: the catalog, the repository-to-image map and the bake switch the project has today (F16, D1901/D1906). Each is the effective one — this machine's own project config when it states it, the published policy node's otherwise (D1140) — because that is what a build and a run would use, and each is read through projectpolicy's own typed fields rather than as a document; unread is why they are then this machine's own rather than the project's.",
+      "description": "What a rerun of the setup compares against: the catalog, the repository-to-image map and the bake switch the project has today (F16, D1901/D1906). Each is the effective one — this machine's own project config when it states it, the published policy node's otherwise (D1140) — because that is what a build and a run would use, and each is read through projectpolicy's own typed fields rather than as a document; unread is why they are then this machine's own rather than the project's. The map is one member of two, never one member under two meanings: repo_images when the project's effective map is provider-keyed, legacy_image_map while it is still the bare-name map (R4, Q2).",
       "properties": {
         "catalog": {
           "type": "array",
@@ -112,9 +112,17 @@
             "$ref": "#/$defs/catalogEntry"
           }
         },
-        "image_map": {
+        "repo_images": {
           "type": "object",
-          "description": "The repository-to-image map the project has today, owner/name to the catalog entry that builds it: this machine's own when its config states one, the published node's otherwise. Empty on a project that maps nothing, which is a setting and not an unread one.",
+          "description": "The repository-to-image map the project has today, provider/owner/name to the catalog entry that builds it (projectpolicy.Canonical's form): this machine's own when its config states one, the published node's otherwise. Empty on a project that maps nothing and on a project whose effective map is still legacy_image_map, which is a setting and not an unread one.",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "legacy_image_map": {
+          "type": "object",
+          "description": "The project's bare-name map, owner/name to the catalog entry that builds it, and present only while the effective map is the legacy one an update has not migrated yet (R2, R4). Absent on every project whose map is provider-keyed and on one that maps nothing, so no bare name is ever read under repo_images' name.",
           "additionalProperties": {
             "type": "string",
             "minLength": 1

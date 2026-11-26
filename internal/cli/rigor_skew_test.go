@@ -283,7 +283,18 @@ func configSkewCheckout(t *testing.T, f *cloudFixture, repoYAML string) string {
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
-	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": repoYAML, "build.sh": "true\n", "test.sh": "true\n"})
+	body := anchoredText(repoYAML)
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": body, "build.sh": "true\n", "test.sh": "true\n"})
+	// The fixture layer prices the run — its agent block names the three roles
+	// (S1, D3237: a repository's file may decide no model) — and carries no
+	// other lifted key. The keys these tests write in the file are not
+	// published with it: a launch gate names the source that wrote one, and a
+	// key written in both places is named as both, where a test asserts the
+	// file's own (RepoVisionSet and its four siblings read the file as written,
+	// so the file's side of the gate is what these tests are about).
+	if pinsLayer(body) != "" {
+		publishedLayer(t, f, testProjectLayer)
+	}
 	commitRef(t, dir, "develop")
 	t.Chdir(dir)
 	return dir
@@ -683,8 +694,9 @@ func TestRigorSpellingSkewNamesTheFileThatWroteIt(t *testing.T) {
 
 // TestRepoEngineRefusesTheNewRigorSpellingsOnAnOlderBaseImage is the gate at
 // its call site, before the plan or the apply, for both places a spelling can
-// be written: the repository's own fugaro.yaml (the area key, and the scalar
-// shorthand) and the project layer the checkout resolves over (the area key).
+// be written: the repository's own fugaro.yaml (the scalar shorthand, which
+// the lift leaves there) and the project layer the checkout resolves over (the
+// area key, which S1 lifts out of the file — D3237, R2).
 // The base image is one release below the constant and still newer than
 // rigorSince, which is the whole point: the rigor: key gate above passes it.
 func TestRepoEngineRefusesTheNewRigorSpellingsOnAnOlderBaseImage(t *testing.T) {
@@ -692,11 +704,9 @@ func TestRepoEngineRefusesTheNewRigorSpellingsOnAnOlderBaseImage(t *testing.T) {
 	base := "base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:" + below + "}\n"
 	const wf = "workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 	const head = "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: bitbucket }\n"
-	const area = "rigor:\n  areas:\n    - {name: db, match: \"db/*\", level: pro}\n"
 	for _, c := range []struct {
 		name, yaml, layer, subject string
 	}{
-		{"the file's area key", head + area + wf, "", "fugaro.yaml's rigor area rule `level:` key of"},
 		{"the file's shorthand", head + "rigor: pro\n" + wf, "", "fugaro.yaml's scalar `rigor:` shorthand of"},
 		{"the layer's area key", head + wf, "version: 1\nproject: aurora\ngcp_project: proj-1234\ndefaults:\n  rigor:\n    areas:\n      - {name: db, match: \"db/*\", level: pro}\n", "the project layer's rigor area rule `level:` key"},
 	} {
@@ -745,19 +755,28 @@ func TestRepoEngineRefusesTheNewRigorSpellingsOnAnOlderBaseImage(t *testing.T) {
 // per-workflow image gate is: without it a launch from a checkout whose file
 // writes either spelling starts a paid job that dies at bootstrap. A file that
 // writes the released key on the same image still launches.
+//
+// The area key's half is the project layer's (S1, D3237: rigor.areas is lifted
+// out of a repository's file, so a file writing it reports nothing and the
+// layer is where the spelling is judged — R2); the shorthand is not lifted and
+// is still the file's.
 func TestRunRefusesTheNewRigorSpellingsOnAnOlderBaseImage(t *testing.T) {
 	below := shiftRelease(t, rigorSpellingSince, -1)
 	for _, c := range []struct {
 		name    string
 		rigor   string
+		layer   string
 		subject string
 	}{
-		{"the area key", "rigor:\n  areas:\n    - {name: db, match: \"db/*\", level: pro}\n", "fugaro.yaml's rigor area rule `level:` key of acme/other"},
-		{"the shorthand", "rigor: pro\n", "fugaro.yaml's scalar `rigor:` shorthand of acme/other"},
+		{"the area key", "", "version: 1\nproject: aurora\ngcp_project: proj-1234\ndefaults:\n  rigor:\n    areas:\n      - {name: db, match: \"db/*\", level: pro}\n", "the project layer's rigor area rule `level:` key (read for acme/other)"},
+		{"the shorthand", "rigor: pro\n", "", "fugaro.yaml's scalar `rigor:` shorthand of acme/other"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f := newCloudFixture(t)
 			configSkewCheckout(t, f, configSkewHead+c.rigor+configSkewWorkflow)
+			if c.layer != "" {
+				publishedLayer(t, f, c.layer)
+			}
 			writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:"+below)
 			_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
 			if ExitCode(err) != ExitUserError {
