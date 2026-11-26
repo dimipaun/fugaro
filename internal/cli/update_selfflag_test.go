@@ -26,20 +26,34 @@ import (
 // have a test each because a coding agent's session and a Fugaro run's own
 // process are different markers set by different hands (F20).
 //
-// The fixture is the update door's, managed by default and unmanaged where a
-// test says so (newInitRig, removeManagedInstallation): a rig is a project a
-// Fugaro run created, and a project with no label is the state one test names.
+// The two rigs are the update door's: managedUpdateRig is the installation
+// these steps act on, and unmanagedUpdateRig is the same world with the
+// project's own half of the managed fact taken back out.
 
-// unmanagedUpdateRig is the update door's rig on an installation the managed
-// read answers is not managed: the default's label is gone (the read answers
-// from the label alone, read.go), and the runs bucket still holds the creation
-// fact the fixture wrote. That is the state a project whose label write failed
+// managedUpdateRig is the update door's rig on a managed installation: the two
+// marks, the creation fact this release's own creation writes, and the
+// credentials the gate's own record is written with. It is this file's and not
+// newInitRig's (U3 of docs/managed-flag-ergonomics): a rig is a project, not
+// necessarily a managed one, and marking every rig managed opens the managed
+// gate for every test in this package.
+func managedUpdateRig(t *testing.T) *initRig {
+	t.Helper()
+	r := updateRig(t)
+	r.managedInstallation(t)
+	isolateGateCredentials(t)
+	return r
+}
+
+// unmanagedUpdateRig is the same rig on an installation the managed read
+// answers is not managed: the project's label is gone (the read answers from
+// the label alone, read.go), and the runs bucket still holds the creation fact
+// of managedUpdateRig. That is the state a project whose label write failed
 // is really in, and the one D1541's refusal is written about.
 func unmanagedUpdateRig(t *testing.T) *initRig {
 	t.Helper()
 	noAgentSession(t)
 	noRunSession(t)
-	r := updateRig(t)
+	r := managedUpdateRig(t)
 	r.removeManagedInstallation(t)
 	return r
 }
@@ -216,7 +230,7 @@ func unreadableRead(r *initRig) {
 // is really about (exit 2, not exit 1): a read that failed never becomes the
 // managed sentence.
 func TestUpdateManagedReadFailsWarns(t *testing.T) {
-	r := updateRig(t)
+	r := managedUpdateRig(t)
 	noAgentSession(t)
 	noRunSession(t)
 	unreadableRead(r)
@@ -297,7 +311,7 @@ func TestUpdateReadFailureNeverAdmitsTheGate(t *testing.T) {
 // prints both figures, the one the fact held and the one it holds afterwards,
 // because the object is what every later apply reads.
 func TestUpdateExplicitBudgetRewrites(t *testing.T) {
-	r := updateRig(t)
+	r := managedUpdateRig(t)
 	noAgentSession(t)
 	noRunSession(t)
 	before, ok := managedFlagAt(t, r.gcs, initRunsBucket)
@@ -338,7 +352,7 @@ func TestUpdateExplicitBudgetRewrites(t *testing.T) {
 // (recordedCurrency, init.go) because it reads the fact at the head of the
 // engine, whatever its own flags.
 func TestUpdateRewriteKeepsRecordedCurrency(t *testing.T) {
-	r := updateRig(t)
+	r := managedUpdateRig(t)
 	noAgentSession(t)
 	noRunSession(t)
 	seedFlagFact(t, r, managed.Marker{
@@ -370,7 +384,7 @@ func TestUpdateRewriteKeepsRecordedCurrency(t *testing.T) {
 // change what a project's runs are judged by on a command that says nothing
 // about budgets.
 func TestUpdateKeepsARecordedAmountWithoutBudget(t *testing.T) {
-	r := updateRig(t)
+	r := managedUpdateRig(t)
 	noAgentSession(t)
 	noRunSession(t)
 	before, ok := managedFlagAt(t, r.gcs, initRunsBucket)
@@ -400,7 +414,7 @@ func TestUpdateKeepsARecordedAmountWithoutBudget(t *testing.T) {
 // saying one thing and the installation's alert another — and nothing is
 // written on the way: no rewrite, and no terraform.
 func TestUpdateRewriteRefusalEndsTheRun(t *testing.T) {
-	r := updateRig(t)
+	r := managedUpdateRig(t)
 	noAgentSession(t)
 	noRunSession(t)
 	t.Setenv(agentenv.Markers[0], "1")
@@ -426,7 +440,7 @@ func TestUpdateRewriteRefusalEndsTheRun(t *testing.T) {
 // the one the run was given, and the command the owner runs at their own
 // terminal instead.
 func TestUpdateRewriteRefusedInAgentSession(t *testing.T) {
-	r := updateRig(t)
+	r := managedUpdateRig(t)
 	noAgentSession(t)
 	noRunSession(t)
 	t.Setenv(agentenv.Markers[0], "1")
@@ -461,7 +475,7 @@ func TestUpdateRewriteRefusedInAgentSession(t *testing.T) {
 func TestUpdateRewriteRefusedInsideAFugaroRun(t *testing.T) {
 	for _, marker := range managedFlagRunMarkers {
 		t.Run(marker, func(t *testing.T) {
-			r := updateRig(t)
+			r := managedUpdateRig(t)
 			noAgentSession(t)
 			noRunSession(t)
 			t.Setenv(marker, "x")

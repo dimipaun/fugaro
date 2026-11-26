@@ -553,20 +553,24 @@ func noMarker(t *testing.T, g *gcpfake.GCS, bucket string) {
 func (r *initRig) managedRuns(t *testing.T, name, gcp string) {
 	t.Helper()
 	r.markedRuns(t, name, gcp)
-	r.managedMarker(t, gcp)
+	// The project's own half of the fact (Task 3.0): a world with the object
+	// and no label is not managed, so a test that means "managed" needs both.
+	labelled(r.crm, gcp)
+	body := fmt.Sprintf(`{"version":1,"gcp_project":%q}`, gcp)
+	if err := r.gcs.Bucket(t, initRunsBucket).Bucket.WriteAll(context.Background(), managed.MarkerObject, []byte(body), nil); err != nil {
+		t.Fatal(err)
+	}
 }
 
-// managedInstallation is the default of every rig: the two marks a managed
-// installation carries — the project's own fugaro_managed label and, in its
-// runs bucket, the creation fact this release's creation writes (version 4,
-// carrying the amount D2211 defaults to).
+// managedInstallation is a rig's project as the installation this release's own
+// creation writes it: the two marks the managed read requires — the project's
+// fugaro_managed label and, in its runs bucket, the creation fact (version 4,
+// carrying the amount D2211 defaults to) — together with the bucket's own
+// labels and policy.
 //
-// It is the default because both front doors stop on an installation the
-// managed read answers is not managed (TN1's stop, T3 of
-// docs/managed-flag-ergonomics), and a rig is a project a Fugaro run created.
-// A test about a project that is not managed takes the marks back out and says
-// so (removeManagedInstallation), and one about the fact's own bytes writes its
-// own (managedMarker, seedFlagFact).
+// A test that means an installation the read answers is NOT managed takes the
+// project's half back out and says so (removeManagedInstallation); one about the
+// fact's own bytes writes its own (managedRuns, seedFlagFact).
 func (r *initRig) managedInstallation(t *testing.T) {
 	t.Helper()
 	body, err := managed.Marker{
@@ -604,30 +608,6 @@ func (r *initRig) managedInstallation(t *testing.T) {
 func (r *initRig) removeManagedInstallation(t *testing.T) {
 	t.Helper()
 	r.crm.SetLabels(initProject, map[string]string{managed.ProjectLabelKey: ""})
-}
-
-// managedMarker is managedRuns' second half: the two marks the managed read
-// requires and nothing else. It is what a fixture that means "this installation
-// is managed" seeds where markedRuns' state bucket is not what the test is
-// about — the update door's own stop reads the marks and not the state, and a
-// test of an installation whose state is not there is still a managed one
-// (T3 of docs/managed-flag-ergonomics, update_selfflag.go's
-// requireManagedInstallation).
-func (r *initRig) managedMarker(t *testing.T, gcp string) {
-	t.Helper()
-	// The bucket, numbered and labelled as the installation's own, because the
-	// read proves it against the project's number before it believes anything
-	// in it (read.go): a bucket a fixture only Put an object into has no
-	// metadata, and the read answers "not managed" for it.
-	r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
-	r.gcs.SetBucketPolicy(initRunsBucket, gcpfake.ConvenienceBindings(initProject))
-	// The project's own half of the fact (Task 3.0): a world with the object
-	// and no label is not managed, so a test that means "managed" needs both.
-	labelled(r.crm, gcp)
-	body := fmt.Sprintf(`{"version":1,"gcp_project":%q}`, gcp)
-	if err := r.gcs.Bucket(t, initRunsBucket).Bucket.WriteAll(context.Background(), managed.MarkerObject, []byte(body), nil); err != nil {
-		t.Fatal(err)
-	}
 }
 
 // stubManagedFact makes init's creation-fact read answer ok and err for this

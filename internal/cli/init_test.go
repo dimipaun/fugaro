@@ -131,8 +131,6 @@ func newInitRig(t *testing.T) *initRig {
 	r.sm.AllowAccess()
 	r.crm.AddProject(initProject, initProjectNumber)
 	r.gcs.AddProject(initProject, initProjectNumber)
-	r.managedInstallation(t)
-	isolateGateCredentials(t)
 	for _, k := range []string{"XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "HOME"} {
 		t.Setenv(k, filepath.Join(r.dir, strings.ToLower(k)))
 	}
