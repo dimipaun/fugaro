@@ -650,7 +650,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// is worded for the door that reads it — setup declares it, hides it and
 	// refuses it by name (setupDoor.foreign), the shape --forget has on that
 	// door.
-	f.BoolVar(&o.checkOnly, "check", false, "read-only: write nothing, run no claude command and make no cloud call, print what each step of "+d.name+" would do from this checkout's own files, and exit 1 when anything is stale. The checkout is PATH ("+d.name+" --check [PATH]); the converge's own flags are refused rather than ignored, because this mode runs none of them. The rules and the policy steps are skipped with a note naming the command that answers them: the deployed rules generation and the published policy node live in the cloud, and reading either is the call this flag promises not to make")
+	f.BoolVar(&o.checkOnly, "check", false, "read-only: write nothing, run no claude command and read each repository through the credentials service, print what each step of "+d.name+" would do, and exit 1 when anything is stale. fugaro "+d.name+" --check takes no PATH, and the converge's own flags are refused rather than ignored, because this mode runs none of them. The rules and the policy steps are skipped with a note naming the command that answers them: the deployed rules generation and the published policy node live in the cloud, and reading either is the call this flag does not make")
 	f.BoolVar(&o.planOnly, "plan-only", false, "stop after showing the plan (it creates nothing)")
 	f.BoolVar(&o.printVars, "print-vars", false, "print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates)")
 	f.BoolVar(&o.configOnly, "config-only", false, "only write the local config, from the installation's outputs (else the flags)")
@@ -6408,7 +6408,22 @@ const printVarsNoBudget = "the budget alert this installation holds is not in th
 // --gcp-project and --region applied. The checkout that selects it is
 // dir's, the one being onboarded, not the working directory's.
 func loadRepoConfig(ctx context.Context, o *initOptions, dir string) (lc *localcfg.Config, path string, old []byte, err error) {
-	co, err := checkoutProject(ctx, dir)
+	return loadRepoConfigAt(ctx, o, dir, checkoutProject)
+}
+
+// loadRepoConfigReadOnly is loadRepoConfig for the one caller that must write
+// nothing — `fugaro update --check` (U10): the checkout is resolved, so
+// looking at it does not remember it (checkoutProject's one side effect),
+// which is the same split the reader that must not write takes
+// (config list --json, resolveCheckout).
+func loadRepoConfigReadOnly(ctx context.Context, o *initOptions, dir string) (lc *localcfg.Config, path string, old []byte, err error) {
+	return loadRepoConfigAt(ctx, o, dir, resolveCheckout)
+}
+
+// loadRepoConfigAt is both of them: at is the checkout the selection is
+// resolved through, and its only difference is the writing.
+func loadRepoConfigAt(ctx context.Context, o *initOptions, dir string, at func(context.Context, string) (*localcfg.Checkout, error)) (lc *localcfg.Config, path string, old []byte, err error) {
+	co, err := at(ctx, dir)
 	if err != nil {
 		return nil, "", nil, err
 	}
