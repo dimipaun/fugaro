@@ -709,11 +709,21 @@ func policyMapBlockOn(t *testing.T, m any) map[string]any {
 // without a provider in it reaches no repository this release looks up. Before
 // this, such a node matched the file read as the file's own map, so the check
 // answered done and the map was never rewritten.
+//
+// The file records the generation of the node above it, which is what the
+// red-step assertion needs: without it the check answers todo over the record
+// alone (the drift is never consulted), so the test would pass on the code
+// before this change for the wrong reason. The file is silent about the map
+// itself — the node is the only place it is stated, which is the reading this
+// pins: a run that took the map off the file alone would leave this node on the
+// old member forever.
 func TestPolicyStageImageMapIsDrift(t *testing.T) {
 	f := newProjectFixture(t, "")
 	node := currentPolicyNode()
 	node["image_map"] = policyMapBlockOn(t, projectpolicy.ImageMap{"acme/app": "universal"})
 	f.db.Set(projectpolicy.PathShared(), node)
+	gen := nodeETag(t, f)
+	setConfig(t, f, func(s string) string { return s + "policy_generation: " + gen + "\n" })
 	h := newMigrationRig(t, f, &initOptions{})
 
 	st, err := h.s.Check(context.Background())
@@ -722,6 +732,9 @@ func TestPolicyStageImageMapIsDrift(t *testing.T) {
 	}
 	if st.State != initflow.Todo {
 		t.Fatalf("a node whose map is the old member reads %s %q, want it left to do: the map has to reach the node as repo_images, with the provider in every key", st.State, st.Detail)
+	}
+	if !strings.Contains(st.Detail, "repo_images") {
+		t.Errorf("the check leaves the map to do without naming the member it has to reach the node as: %q", st.Detail)
 	}
 }
 
