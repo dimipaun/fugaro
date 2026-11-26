@@ -11,8 +11,9 @@ each: `poc`, `startup`, `pro`, `critical` and `hotfix`.
 
 The default is `pro`, for every repository that configures nothing. It is a
 default and not a floor: the narrowest layer that sets a mode wins, and one line
-in a `fugaro.yaml` asks for another — `rigor: { default: critical }` carries the
-whole per-run cap and blocks on every finding.
+asks for another — `rigor: critical` in a `fugaro.yaml`, or
+`defaults.rigor.default` in the project layer — which carries the whole per-run
+cap and blocks on every finding.
 
 One bound is worth meeting before the table, because it is the difference between
 a mode being resolved and a mode being applied: the mode's blocking rule runs for
@@ -206,7 +207,9 @@ repository is a project area with a member naming it: `fugaro rigor set MODE
 rule whose `members` entry is `{repo: <owner/name>, paths: [GLOB]}`. A
 repository's own `rigor.default` and `rigor.areas` in its `fugaro.yaml` are
 dropped and named at launch, with that command as the fix: the project layer is
-where a repository's mode is stated now. A rule applies to a run whose touched
+where a repository's mode is stated now. The one form a repository's file still
+sets is the scalar shorthand `rigor: critical`, which is not lifted and says what
+a block carrying only `default` says. A rule applies to a run whose touched
 paths match it; the paths are the ones `--path` declared at launch, the run's own
 diff after each review round, and the paths it changed before the pull request is
 marked ready — so a rule that matches only at the end still decides the run's
@@ -345,11 +348,12 @@ ask for `hotfix` exactly as the person at the terminal may, and nothing in that
 path refuses it. What a session is still refused is `fugaro rigor set` itself —
 the layer write — and never the run.
 
-`hotfix` also resolves like any other mode value: `rigor: { default: hotfix }` in
-a `fugaro.yaml`, or an `areas` rule whose `mode` is `hotfix`, in either layer, is
-honoured, and both stay reachable by hand. `fugaro rigor set` still refuses to
-**write** it in any form (D834): a mode a command writes is a mode every run of
-the project takes, and `hotfix` is a choice about one run.
+`hotfix` also resolves like any other mode value: the scalar `rigor: hotfix` in a
+`fugaro.yaml`, a `defaults.rigor.default` of `hotfix`, or a project area rule
+whose `mode` is `hotfix`, is honoured, and each stays reachable by hand. `fugaro
+rigor set` still refuses to **write** it in any form (D834): a mode a command
+writes is a mode every run of the project takes, and `hotfix` is a choice about
+one run.
 
 Treat a hotfix run as a mode with almost no gates: `hotfix` tolerates everything
 but an exploitable weakness, spends one round, takes the smallest share of the cap
