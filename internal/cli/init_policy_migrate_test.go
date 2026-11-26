@@ -773,6 +773,59 @@ func TestPolicyStageMigratesImageMap(t *testing.T) {
 	}
 }
 
+// TestUpdateConvergesAStaleGenerationWithAnImageMap is the migration beside
+// D854: the file's recorded generation is older than the node's — another
+// machine or a person published after this file was written — and the map is
+// still the old member on both sides. The generation refusal is about an older
+// FILE replacing a newer node, and this file carries nothing the node does not:
+// the map the run publishes is the node's own, in the member L11 renames, so one
+// `update` writes it and the installation is done. Before this, the migration's
+// own row was read as a difference like any other, the re-seed was offered for a
+// member the node has no value of, and every later update refused the same file.
+func TestUpdateConvergesAStaleGenerationWithAnImageMap(t *testing.T) {
+	f := newProjectFixture(t, imageMapConfigYAML)
+	node := currentPolicyNode()
+	node["image_map"] = policyMapBlockOn(t, projectpolicy.ImageMap{"acme/app": "universal"})
+	f.db.Set(projectpolicy.PathShared(), node)
+	setConfig(t, f, func(s string) string { return s + "policy_generation: etag-from-an-earlier-publish\n" })
+	h := newMigrationRig(t, f, &initOptions{})
+
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("a file behind the node's generation whose map is the node's own was refused: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "re-seed") {
+		t.Errorf("the run offered to re-seed a file whose only difference is the map's own migration:\n%s", out)
+	}
+	if got := publishedPolicy(t, f).RepoImages["github/acme/app"]; got != "universal" {
+		t.Errorf("the published node maps github/acme/app to %q, want the entry the file names: %+v", got, publishedPolicy(t, f).RepoImages)
+	}
+	lc, err := localcfg.Load(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lc.ImageMap != nil {
+		t.Errorf("the local config still states image_map: %v", lc.ImageMap)
+	}
+	if got := lc.RepoImages["github/acme/app"]; got != "universal" {
+		t.Errorf("the local config's repo_images maps github/acme/app to %q, want universal: %v", got, lc.RepoImages)
+	}
+	if want := nodeETag(t, f); lc.PolicyGeneration != want {
+		t.Errorf("policy_generation = %q, want the generation of the node this run wrote (%q)", lc.PolicyGeneration, want)
+	}
+
+	// One update is the whole of it: the installation as the next run reads it
+	// has nothing left to do.
+	again := newMigrationRig(t, f, &initOptions{})
+	st, err := again.s.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Done {
+		t.Fatalf("the installation reads %s %q after one update, want it done", st.State, st.Detail)
+	}
+}
+
 // TestUpdatePublishesTheFirstPolicyNodeForTheBakeSwitch is the same member
 // class for the switch (D1901): what a run does with a repository's clone is
 // read off the node, so a project whose owner had written `bake_repos: false`

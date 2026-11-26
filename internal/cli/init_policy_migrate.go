@@ -118,6 +118,13 @@ type policyMigration struct {
 	// nothing is lost by leaving it out. It is printed with the diff, so a
 	// person reads what the write drops before confirming it.
 	dropped []string
+	// migratedMap is whether this run's file states the map in the new member
+	// because of the migration (U1b, R14), rather than because the operator wrote
+	// it there: its drift row is then this run's own upgrade of the member and
+	// not a difference between the file and the node, which is what the
+	// generation refusal has to read (migratesTheNodesOwnMap) and what a re-seed
+	// has no value of the node's to write for (reseedDrift).
+	migratedMap bool
 
 	// importCloneURLs is the published node's clone_urls block, when this
 	// machine's file states none of its own and there is a file to write it
@@ -307,7 +314,7 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 		// member, and the write below is the one that takes it out.
 		pub := *next
 		pub.ImageMap = lc.ImageMap
-		lc, m.lc, m.next, m.dropped = &pub, &pub, next, dropped
+		lc, m.lc, m.next, m.dropped, m.migratedMap = &pub, &pub, next, dropped, true
 	}
 	m.importCloneURLs = cloneURLsToImport(lc, old, configPath)
 	m.drift = policyConfigDrift(lc, old, identities)
@@ -642,6 +649,12 @@ func firstPolicyPublish(ctx context.Context, db *rtdb.Client, lc *localcfg.Confi
 // The refusal is the answer to a drift that is not this run's own: the node was
 // moved by another machine (or by a hand edit) after this file was written from
 // it, so publishing would replace an operator's newer node with an older file.
+// The map's own migration is the exception, and the one this stage adds: a file
+// behind the node's generation whose map is the node's own, in the old member,
+// has nothing the refusal protects — the publish writes that same map back, with
+// the provider in every key (migratesTheNodesOwnMap) — and refusing it would
+// leave `fugaro update` stuck on the member L11 renames.
+//
 // It is a question and not a wall — the stage prints the three-way state and
 // asks for the re-seed, which writes the file and never the node — and it is
 // asked before the publish is built, so nothing of this run's own edit is
@@ -654,7 +667,7 @@ func publishPlanFor(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, m
 	if m.path == "" {
 		return nil
 	}
-	if lc.PolicyGeneration != "" && lc.PolicyGeneration != m.etag {
+	if lc.PolicyGeneration != "" && lc.PolicyGeneration != m.etag && !m.migratesTheNodesOwnMap() {
 		m.generations = &policyGenerationState{recorded: lc.PolicyGeneration, published: m.etag}
 		return nil
 	}
@@ -665,6 +678,48 @@ func publishPlanFor(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, m
 	m.pub = &policyPublish{body: body, pol: pol, drift: m.drift, sources: sources,
 		adopted: lc.PolicyGeneration == ""}
 	return nil
+}
+
+// migratesTheNodesOwnMap is whether the only thing this run has left to do is
+// the node's own repository-to-image map in its new form (U1b, R14): the map
+// this file serves is the block the node carries, and the member the migration
+// plans to write is that same map with the provider in every key (R1).
+//
+// It is what keeps the map's migration out of the generation refusal (D854),
+// which exists to stop an older file replacing a newer node: there is no such
+// file here — every member the file and the node share agrees, and the map's
+// own migration is this run's upgrade of the member rather than a value of the
+// file's — so the run publishes the map it was going to publish anyway, and
+// `fugaro update` converges instead of refusing this file on every later run.
+// Anything else the node and the file differ on leaves the refusal in place.
+//
+// The node must carry the map in the OLD member alone, and the file must state
+// no other block: a node that serves repo_images already decides that member
+// itself, and the file's map is then a value of the file's the generation
+// refusal is about.
+func (m *policyMigration) migratesTheNodesOwnMap() bool {
+	return m.migratedMap && len(m.drift) == 1 && m.drift[0].Member == "repo_images" &&
+		m.node != nil && m.node.ImageMap != nil && m.node.RepoImages == nil
+}
+
+// reseedDrift is m.drift without the row the map's own migration added (U1b,
+// R14): this run's file states the new member because the migration is about to
+// write it there, and a re-seed writes the published node's values into the file
+// — there is no value of the node's for this member, and the run that carries
+// the migration out is the one that publishes it. Naming it would send the
+// operator to a hand edit for a splice there is nothing to make.
+func (m *policyMigration) reseedDrift() []policyDrift {
+	if !m.migratedMap {
+		return m.drift
+	}
+	out := make([]policyDrift, 0, len(m.drift))
+	for _, d := range m.drift {
+		if d.Member == "repo_images" {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
 }
 
 // policyMigrationRefusal is Migrate's own refusal with the remedy that fits
@@ -1163,7 +1218,7 @@ func (m *policyMigration) confirmReseed(ctx context.Context, cmd *cobra.Command,
 			return err
 		}
 	}
-	written, err := applyPolicyReseed(cmd, m.path, m.lc, m.node, m.drift)
+	written, err := applyPolicyReseed(cmd, m.path, m.lc, m.node, m.reseedDrift())
 	if err != nil {
 		return err
 	}
