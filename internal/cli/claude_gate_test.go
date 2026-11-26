@@ -14,6 +14,12 @@ import (
 // not-run one: the refusal stays, and the two surfaces that can see the whole
 // project name every repository whose runs it stops, with the fix.
 //
+// The models are the project layer's in every fixture here, because since S1
+// (D3237) a repository's file may name none — config.Resolve drops the lifted
+// keys — and the pins the gate stops are the ones a run of the repository
+// carries. The last case under the positive one is the file that writes a
+// lifted pin anyway: it earns the lifted-key note and no line here.
+//
 // The positive case drives the whole command — doctor's row and the update's
 // line for one repository, in the same words — and the cases under it hold the
 // predicate down: a pin the gate does not stop earns no line, in either
@@ -26,14 +32,23 @@ const (
 	gatePinOtherModel = "deepseek/deepseek-v4.1"
 )
 
-// claudeGateYAML is a repository the gate stops: an enforcing budget, an
-// api-key run (the two states a call reaches a provider key in at all), and a
-// coder pinned to the Claude ID the route below claims.
-func claudeGateYAML(models string) string {
-	return "version: 1\nproject: aurora\ngit: { provider: github }\n" +
+// claudeGateYAML is a repository the gate judges: an enforcing budget and an
+// api-key run (the two states a call reaches a provider key in at all), its
+// workflows, and the anchor its project layer is matched by. It names no model
+// — that is the layer's (claudeGateLayer).
+func claudeGateYAML() string {
+	return "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: github }\n" +
 		"budget: { mode: enforce, per_run_usd: 10 }\n" +
-		"agent: { auth: api-key, models: {" + models + "} }\n" +
+		"agent: { auth: api-key }\n" +
 		"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+}
+
+// claudeGateLayer is the project layer the gate reads a repository's models
+// from: the roles it names, over the fixture layer's own defaults. Every role
+// models does not name runs the provider's own model, so a case that pins one
+// role earns exactly one pin.
+func claudeGateLayer(models string) string {
+	return layerWithAgent("auth: api-key, model: " + gatePinOtherModel + ", models: {" + models + "}")
 }
 
 // claudeGateRoutes is the machine's own side: the owner's providers block,
@@ -69,7 +84,17 @@ func claudeGateRoute(allow ...string) map[string]config.ModelProvider {
 func TestDoctorNamesARepositoryTheGateWillStop(t *testing.T) {
 	r := newDoctorRig(t)
 	addLocalLines(t, r, claudeGateRoutes(`["acme/app"]`))
-	root := repoCheckout(t, githubOrigin, claudeGateYAML("coder: "+gatePinModel+", reviewer: "+gatePinOtherModel))
+	// The layer is where the repository's models are (S1, D3237), and it is
+	// the copy both surfaces read: attachLayerHere publishes it in the bucket
+	// findLayer reads and in this machine's cache, which is what the gate
+	// resolves the repository's file over.
+	//
+	// The bucket_url keeps doctor's own layer reads (layerDrift) local: the
+	// rig's config names the real gs://fugaro-runs-proj-1234, and a layer that
+	// applies would open it for real.
+	addLocalLines(t, r, "bucket_url: file://"+t.TempDir()+"\n")
+	attachLayerHere(t, "aurora", claudeGateLayer("coder: "+gatePinModel))
+	root := repoCheckout(t, githubOrigin, claudeGateYAML())
 	t.Chdir(root)
 
 	checks := repoNoticeDoctorChecks(t, root)
@@ -120,32 +145,49 @@ func TestDoctorNamesARepositoryTheGateWillStop(t *testing.T) {
 	}
 
 	// A repository the gate does not stop earns no line at all, which is what
-	// keeps the finding from reading as a warning about every Claude pin.
+	// keeps the finding from reading as a warning about every Claude pin. The
+	// view carries the config a reader hands doctor beside the bytes — its own
+	// file resolved over no layer, which is the shape doctor's read has, since
+	// it passes the reader none — and that config names no model at all: the
+	// gate must read the layer, not this.
 	for _, tc := range []struct {
 		name      string
 		lc        *localcfg.Config
+		layer     string
 		yaml      string
 		wantLines int
 		wantPath  string
 	}{
 		{"a provider's own model under the same route", claudeGateLC(claudeGateRoute("acme/app")),
-			claudeGateYAML("coder: " + gatePinOtherModel), 0, ""},
+			claudeGateLayer("coder: " + gatePinOtherModel), claudeGateYAML(), 0, ""},
 		{"a Claude pin no provider claims", claudeGateLC(nil),
-			claudeGateYAML("coder: " + gatePinModel), 0, ""},
+			claudeGateLayer("coder: " + gatePinModel), claudeGateYAML(), 0, ""},
 		{"a Claude pin the route does not claim", claudeGateLC(map[string]config.ModelProvider{"openrouter": {
 			Models: []string{"deepseek/*"}, AllowDataTo: []string{"acme/app"}}}),
-			claudeGateYAML("coder: " + gatePinModel), 0, ""},
+			claudeGateLayer("coder: " + gatePinModel), claudeGateYAML(), 0, ""},
 		{"a route that does not admit this repository", claudeGateLC(claudeGateRoute("acme/other")),
-			claudeGateYAML("coder: " + gatePinModel), 0, ""},
+			claudeGateLayer("coder: " + gatePinModel), claudeGateYAML(), 0, ""},
 		{"an observing budget", claudeGateLC(claudeGateRoute("acme/app")),
-			strings.Replace(claudeGateYAML("coder: "+gatePinModel), "mode: enforce", "mode: observe", 1), 0, ""},
+			claudeGateLayer("coder: " + gatePinModel),
+			strings.Replace(claudeGateYAML(), "mode: enforce", "mode: observe", 1), 0, ""},
 		{"a run that reaches no service", claudeGateLC(claudeGateRoute("acme/app")),
-			strings.Replace(claudeGateYAML("coder: "+gatePinModel), "auth: api-key", "auth: oauth", 1), 0, ""},
+			claudeGateLayer("coder: " + gatePinModel),
+			strings.Replace(claudeGateYAML(), "auth: api-key", "auth: oauth", 1), 0, ""},
 		{"a level pinned to the routed Claude ID", claudeGateLC(claudeGateRoute("acme/app")),
-			strings.Replace(claudeGateYAML("coder: "+gatePinOtherModel), "agent: {", "agent: { levels: { l1: { model: "+gatePinModel+" } },", 1), 1, "agent.levels.l1.model"},
+			layerWithRoles("levels: { l1: { model: " + gatePinModel + " } }"), claudeGateYAML(), 1, "agent.levels.l1.model"},
+		// The pin a repository's file still writes is dropped before the merge
+		// (S1, D3237): it is the lifted-key note S2 and S5 print, and the gate
+		// reads the layer's model instead — here the provider's own.
+		{"a file that writes the pin itself", claudeGateLC(claudeGateRoute("acme/app")),
+			claudeGateLayer("coder: " + gatePinOtherModel),
+			strings.Replace(claudeGateYAML(), "agent: { auth: api-key }",
+				"agent: { auth: api-key, models: { coder: "+gatePinModel+" } }", 1), 0, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			lines := claudeGateLines(tc.lc, []repoView{{Repo: "acme/app", Provider: "github", Cfg: viewCfg(t, tc.yaml)}})
+			cacheLayerNow(t, "aurora", tc.layer)
+			yaml := []byte(tc.yaml)
+			cfg, _, _ := config.Resolve(yaml, nil)
+			lines := claudeGateLines(tc.lc, []repoView{{Repo: "acme/app", Provider: "github", YAML: yaml, Cfg: cfg}})
 			if len(lines) != tc.wantLines {
 				t.Fatalf("%s earns %d lines, want %d: %+v", tc.name, len(lines), tc.wantLines, lines)
 			}

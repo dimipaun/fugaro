@@ -30,7 +30,13 @@ import (
 // Both read C1's enrolled list (enrolledRepos), so the repositories they name
 // are the ones every stage of the update reads, and neither reads the cloud:
 // whether the gate stops a repository is a fact about the project's provider
-// table and that repository's own fugaro.yaml.
+// table and the models a run of that repository carries.
+//
+// The models are the project layer's, not the repository's file's: since S1
+// (D3237) config.Resolve drops every lifted key a file still writes, so a run
+// reads its coder and its levels off the layer the file resolves over, and so
+// does this (claudeGateCfg). A file that writes a lifted pin anyway is the
+// note S2 and S5 print and not a gate stop (R1).
 
 // claudeGateCheckID is doctor's row, and claudeGateStep the name the update
 // reports the same finding under. They are the same string because they are
@@ -142,13 +148,21 @@ type claudeGateLine struct {
 // takes them out of the gate's way. A repository the reader could not read
 // earns no line — the reader's own unread line is where that is said — and so
 // does one whose pins reach no provider.
+//
+// The pins are read from the config a run of the repository carries rather than
+// from the view's own resolution, because the two are not always the same
+// document: a caller that hands the reader no layer (doctor's, and the
+// update's own C1 read) gets views resolved over nothing, in which every model
+// a file writes has already been dropped (S1, D3237). The layer here is the one
+// this machine last read, which is the same one both surfaces hold.
 func claudeGateLines(lc *localcfg.Config, views []repoView) []claudeGateLine {
+	layer := claudeGateProjectLayer(lc)
 	var out []claudeGateLine
 	for _, v := range views {
 		if !v.Read() {
 			continue
 		}
-		pins := claudeGatePins(lc, v.Cfg, v.Repo)
+		pins := claudeGatePins(lc, claudeGateCfg(v, layer), v.Repo)
 		if len(pins) == 0 {
 			continue
 		}
@@ -162,6 +176,29 @@ func claudeGateLines(lc *localcfg.Config, views []repoView) []claudeGateLine {
 		})
 	}
 	return out
+}
+
+// claudeGateProjectLayer is the project layer every repository's file is read
+// over: the one this machine last read (modelsLayer), which is where a
+// project's models live now that a repository's file may name none (S1,
+// D3237). A machine that has read no layer resolves the file alone, in which
+// no repository names a model at all — a launch of one is refused before the
+// gate could stop it.
+func claudeGateProjectLayer(lc *localcfg.Config) *config.ProjectLayer {
+	if lc == nil || lc.Name == "" {
+		return nil
+	}
+	return modelsLayer(lc.Name)
+}
+
+// claudeGateCfg is the config a run of one repository carries: the repository's
+// own bytes resolved over the project layer, as a launch resolves them. A file
+// the resolution refuses answers no config, and a repository with no config
+// earns no pins — the gate has nothing to judge, and the refusal is its own
+// line elsewhere.
+func claudeGateCfg(v repoView, layer *config.ProjectLayer) *config.Config {
+	cfg, _, _ := config.Resolve(v.YAML, layer)
+	return cfg
 }
 
 // claudeGateProblem is the finding as doctor prints it: the lead, the count,
