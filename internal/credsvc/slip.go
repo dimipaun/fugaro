@@ -1067,16 +1067,22 @@ func publishedPool(pools []config.Pool, name string) (config.Pool, bool) {
 // name a pool governs may not carry a second one past the pools that govern that
 // second name (grantPool).
 //
-// The two halves are disjoint by construction and cannot be confused:
-// config.ValidatePools refuses a name defined as both a credential and a pool, so
-// a pool's own name is no member of any pool, and a member is no pool's name.
+// The two halves cannot be confused, though a name CAN be both a pool's and a
+// credential's: D3176's pool of one named after its only member is the one
+// collision config.ValidatePools admits, and the published node with it
+// (config.PoolMayTakeItsOnlyMembersName), so a pool's own name is a member of
+// that pool alone — and the first test above is what answers it. What the second
+// half matches is a name of the grammar, fugaro_p_<name>, and no pool is named in
+// it: a pool's name is spelled in the credential charset, which holds no
+// underscore, so no one grant name is both a pool's own name and a member's
+// shared one.
 //
-// A plain credential name that a pool happens to list is NOT looked up here. The
-// policy's own decision about a craft credential — that `access` names it, that
-// the bundle serves it — is the path that serves it today, and a grant naming it
-// directly names no pool (R9: the path that names no pool keeps serving what it
-// served). What a pool does govern is the pool itself and the shared secrets
-// under it.
+// A plain credential name a pool lists as a member, and that no pool is named
+// after, is NOT looked up here. The policy's own decision about a craft
+// credential — that `access` names it, that the bundle serves it — is the path
+// that serves it today, and a grant naming it directly names no pool (R9: the
+// path that names no pool keeps serving what it served). What a pool does govern
+// is the pool itself and the shared secrets under it.
 func poolGovernsName(pool config.Pool, name string) bool {
 	if name == pool.Name {
 		return true
