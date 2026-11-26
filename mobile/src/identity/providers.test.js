@@ -216,3 +216,16 @@ test('claimsOf reads the payload of a JWT-shaped token and refuses anything else
   // An array is JSON and is not a claims set.
   assert.equal(claimsOf(`a.${Buffer.from('[]').toString('base64url')}.c`), null);
 });
+
+test('a payload is read with no browser global: the phone\'s engine need not have `atob`', () => {
+  // `src/pairing/base64url.js` documents `atob` as a global Hermes does not
+  // guarantee. A decode that reached for it would refuse every sign-in on such
+  // an engine, so the reading is held to the alphabet this module carries.
+  const saved = globalThis.atob;
+  try {
+    delete globalThis.atob;
+    assert.deepEqual(claimsOf(fakeToken({ auth_time: 1764000000 })), { auth_time: 1764000000 });
+  } finally {
+    globalThis.atob = saved;
+  }
+});

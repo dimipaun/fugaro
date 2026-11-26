@@ -414,3 +414,27 @@ test('a removal whose session delete fails keeps the record, so it can be retrie
   assert.equal((await store.list()).identities.length, 1, 'the record stays while its item may still be there');
   assert.deepEqual(secrets.keys(), [`fugaro.identity-session.${idOf(GOOGLE)}`]);
 });
+
+test('a settings object that is not a port is refused at construction, not at every call', () => {
+  const sessions = () => new IdentitySessionStore(new MemorySecureStore());
+  for (const missing of ['getItem', 'setItem', 'deleteItem']) {
+    const port = { async getItem() { return null; }, async setItem() {}, async deleteItem() {} };
+    delete port[missing];
+    assert.throws(
+      () => new IdentityStore({ settings: port, sessions: sessions(), apiKey: 'synthetic-api-key' }),
+      TypeError,
+      missing,
+    );
+  }
+  // The app's own `SettingsStore` is an object too (`get`/`set`/`delete`), and
+  // a store built over it would answer `store-failed` to every caller instead
+  // of saying so here.
+  assert.throws(
+    () => new IdentityStore({
+      settings: { async get() {}, async set() {}, async delete() {} },
+      sessions: sessions(),
+      apiKey: 'synthetic-api-key',
+    }),
+    TypeError,
+  );
+});

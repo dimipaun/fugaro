@@ -107,11 +107,46 @@ export function isRelayAddress(email) {
 
 const decoder = new TextDecoder();
 
-/** `part`, the base64url of one JWT segment, as text. */
+/** The base64url alphabet, and the value of each character, built once. */
+const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+const VALUES = (() => {
+  const table = new Int8Array(128).fill(-1);
+  for (let i = 0; i < ALPHABET.length; i += 1) table[ALPHABET.charCodeAt(i)] = i;
+  return table;
+})();
+
+/**
+ * `part`, the base64url of one JWT segment, as text -- or null for a character
+ * outside the alphabet.
+ *
+ * **Written out rather than reached for.** `atob` is a browser global that
+ * React Native's Hermes does not guarantee (`src/pairing/base64url.js` and
+ * `spike/src/identity/provider-token.js` say the same thing), and it decodes
+ * the padded standard alphabet rather than this one; an engine without it
+ * would refuse *every* sign-in here instead of reading a token. `TextDecoder`
+ * is used because this tree's code already relies on it
+ * (`src/pairing/delivery.js`, `src/voice-switch/hop.js`).
+ */
 function base64UrlText(part) {
-  const padded = part.replace(/-/g, '+').replace(/_/g, '/');
-  const text = atob(padded + '='.repeat((4 - (padded.length % 4)) % 4));
-  const bytes = Uint8Array.from(text, (character) => character.charCodeAt(0));
+  const bytes = new Uint8Array(Math.floor((part.length * 6) / 8));
+  let acc = 0;
+  let bits = 0;
+  let at = 0;
+  for (let i = 0; i < part.length; i += 1) {
+    const code = part.charCodeAt(i);
+    const value = code < 128 ? VALUES[code] : -1;
+    if (value < 0) return null;
+    acc = (acc << 6) | value;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      bytes[at] = (acc >> bits) & 0xff;
+      at += 1;
+      // Only the bits no byte has taken yet are kept: `<<` truncates to 32
+      // bits, and a real payload is hundreds of characters long.
+      acc &= (1 << bits) - 1;
+    }
+  }
   return decoder.decode(bytes);
 }
 
@@ -127,8 +162,10 @@ export function claimsOf(idToken) {
   if (typeof idToken !== 'string') return null;
   const parts = idToken.split('.');
   if (parts.length !== 3 || parts[1] === '') return null;
+  const text = base64UrlText(parts[1]);
+  if (text === null) return null;
   try {
-    const claims = JSON.parse(base64UrlText(parts[1]));
+    const claims = JSON.parse(text);
     // An array is JSON and is not a claims set: a payload that decodes to `[]`
     // is a token this module read nothing out of.
     if (claims === null || typeof claims !== 'object' || Array.isArray(claims)) return null;

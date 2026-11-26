@@ -122,10 +122,14 @@ function readRecord(value) {
 /**
  * The identities the phone holds.
  *
- * Constructed over the ports rather than making them, as the account store is:
- * `new IdentityStore({ settings, sessions, apiKey, signIn, refresh })`. The
- * two exchanges default to `providers.js` and are injectable so that a test
- * (and the plan's own flows) need no network.
+ * Constructed over the ports rather than making them: `new IdentityStore({
+ * settings, sessions, apiKey, signIn, refresh })`, where `settings` is a raw
+ * key/value port (`getItem`/`setItem`/`deleteItem`, the shape
+ * `MemorySettingsStore` has) and `sessions` is an `IdentitySessionStore` over
+ * the secure-store one. The three methods are required at construction, as
+ * `src/licence/store.js` requires its port's. The two exchanges default to
+ * `providers.js` and are injectable so that a test (and the plan's own flows)
+ * need no network.
  */
 export class IdentityStore {
   #settings;
@@ -146,6 +150,14 @@ export class IdentityStore {
 
   constructor({ settings, sessions, apiKey, signIn, refresh, now }) {
     if (settings === null || typeof settings !== 'object') throw new TypeError('a settings port is required');
+    // The three methods are required here, as `src/licence/store.js` requires
+    // its port's: the app's other settings object (`SettingsStore`, which
+    // validates values and exposes `get`/`set`) is an object this constructor
+    // would otherwise accept and then answer `store-failed` on every call --
+    // a failure nobody sees until a screen asks.
+    for (const method of ['getItem', 'setItem', 'deleteItem']) {
+      if (typeof settings[method] !== 'function') throw new TypeError(`the settings port must provide ${method}`);
+    }
     if (sessions === null || typeof sessions !== 'object') throw new TypeError('an identity session store is required');
     if (typeof apiKey !== 'string' || apiKey === '') throw new TypeError('the identity project\'s API key is required');
     this.#settings = settings;
