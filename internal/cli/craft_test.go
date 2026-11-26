@@ -107,6 +107,17 @@ var craftLsLayer = strings.Replace(craftProjectLayer,
 	"      review: {model: claude-sonnet-5-5}\n",
 	"      review: {model: claude-sonnet-5-5}\n      security-review: {model: claude-opus-4-1}\n", 1)
 
+// craftLayerCoderModel is craftProjectLayer with the coder's craft — the
+// security review's model beside it — set to model: the document a run's crafts
+// are read over, since a repository's file may not name one (S1, D3237). The
+// access is not written here: config.Scopes refuses a craft's access in a
+// project layer, because anyone who can write the runs bucket can write it.
+func craftLayerCoderModel(model string) string {
+	return strings.Replace(craftLsLayer,
+		"      review: {model: claude-sonnet-5-5}\n",
+		"      review: {model: claude-sonnet-5-5}\n      coder: {model: "+model+"}\n", 1)
+}
+
 // craftLocalCoderModel rewrites the installation's own answer for the coder —
 // a craft's model is the narrowest layers' to name, and the project layer
 // answers the others — to model. A repository's file may not name a craft's
