@@ -548,7 +548,7 @@ func (r *initRun) gateNamesAnIAMCall(bucket string) string {
 // Firebase root — whose own plan drops a member's row for a reason that is not
 // the switch — passes nil here, and LM14 gives that root's guard the list at its
 // level (F32).
-func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey, cover managedmode.Cover, upgrade, identity []string) (bool, error) {
+func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey, cover managedmode.Cover, upgrade, identity, retired []string) (bool, error) {
 	g := r.gate
 	if g == nil || !g.managed {
 		return false, nil
@@ -572,7 +572,7 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 	}
 	verdict, err := managedmode.Gate(ctx, infra.PlanFile, managedmode.Spec{
 		Project: r.projectName, GCPProject: r.gcpProject,
-		Cover: cover, Imports: imports, TF: t, Upgrade: append(slices.Clone(upgrade), identity...),
+		Cover: cover, Imports: imports, TF: t, Upgrade: append(append(slices.Clone(upgrade), identity...), retired...),
 	})
 	if err != nil {
 		// A plan terraform cannot read is never admitted (managed.Gate's own
@@ -621,9 +621,9 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 	case !verdict.OK:
 		conv = managedmode.ConvergeRefusedWithWarnings(doc, managedmode.RuleLines(verdict.Refusals), warnings)
 	case len(warnings) == 0:
-		conv = managedmode.ConvergeAdmitted(doc, admittedRules(upgrade, identity, false))
+		conv = managedmode.ConvergeAdmitted(doc, admittedRules(upgrade, identity, retired, false))
 	default:
-		conv = managedmode.ConvergeWarned(doc, admittedRules(upgrade, identity, true), warnings)
+		conv = managedmode.ConvergeWarned(doc, admittedRules(upgrade, identity, retired, true), warnings)
 	}
 	m, err := g.g.admit(ctx, conv)
 	if err != nil {
@@ -1313,7 +1313,7 @@ func (r *initRun) gateDeleteLeft(reason string, doc []byte, verdict managedmode.
 // cannot check against the plan is worse than no rule — so this parameter is
 // the verdict's own answer and never a caller's preference, and the rules that
 // fired are the record's warnings beside it.
-func admittedRules(upgrade, identity []string, warned bool) []string {
+func admittedRules(upgrade, identity, retired []string, warned bool) []string {
 	own := len(upgrade) > 0 || len(identity) > 0
 	guard := "the guard refused no delete and no replace, so the plan removes nothing of fugaro's own (the owner's delete list admits no removal in the embedded roots)"
 	cover := "the cover of the embedded roots admitted every change in the plan"
@@ -1345,6 +1345,9 @@ func admittedRules(upgrade, identity []string, warned bool) []string {
 	}
 	if len(identity) > 0 {
 		rules = append(rules, "the rows this binary's own update removes were named out of this plan (infra.IdentityAllowDelete's minter rows, infra.BuildIdentityAccessorAllowDelete's catalog build identity accessors): "+safetext.FieldListLine(identity))
+	}
+	if len(retired) > 0 {
+		rules = append(rules, "the addresses of the project jobs this run retired are its own removals: the instances left Terraform's state before this plan, the jobs themselves were deleted through the Cloud Run API (a job with a run in flight is never destroyed), and what is left here is what they owned beside them (infra.ProjectJobRetirements): "+safetext.FieldListLine(retired))
 	}
 	return rules
 }

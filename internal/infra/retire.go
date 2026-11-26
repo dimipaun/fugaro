@@ -40,6 +40,14 @@ type Retirement struct {
 	Region    string `json:"region,omitempty"`    // its region, "" otherwise
 	Protected bool   `json:"protected"`           // whether an ordinary apply can delete this address at all
 
+	// Labels is a job's own label set as the state carries it, which is what
+	// the API delete checks before it runs: the cloud, not this program, is
+	// the record of who wrote a job. A project job's labels name the
+	// (profile, provider, account) it was deployed for and nothing else -- it
+	// carries no repository's name -- so leaving them out of the JSON this
+	// file renders keeps a run's own record to the retirement's addresses.
+	Labels map[string]string `json:"-"`
+
 	// Protected is NOT implied by the address alone: it is true for a
 	// secret container (and for the registry, which carries prevent_destroy
 	// too), and for a job whose state says deletion_protection = true. A job
@@ -265,21 +273,12 @@ func InFlightJobs(ctx context.Context, c *Clients, spec RepoSpec, rets []Retirem
 			// can ask about.
 			return nil, false, fmt.Sprintf("the Terraform state of %s names no Cloud Run job behind %s, so whether an execution is running on it cannot be read", spec.Name, ret.Address)
 		}
-		parent := "projects/" + spec.GCPProject + "/locations/" + ret.Region + "/jobs/" + ret.Job
-		err := c.Run.Projects.Locations.Jobs.Executions.List(parent).Pages(ctx, func(p *run.GoogleCloudRunV2ListExecutionsResponse) error {
-			for _, e := range p.Executions {
-				if e != nil && e.CompletionTime == "" {
-					return errExecutionRunning
-				}
-			}
-			return nil
-		})
-		switch {
-		case errors.Is(err, errExecutionRunning):
+		busy, read, why := JobInFlight(ctx, c, spec.GCPProject, ret.Region, ret.Job)
+		if !read {
+			return nil, false, fmt.Sprintf("whether an execution is running on %s (%s) could not be read: %s", ret.Job, ret.Address, why)
+		}
+		if busy {
 			jobs = append(jobs, ret)
-		case err != nil && !notFound(err):
-			return nil, false, fmt.Sprintf("whether an execution is running on %s (%s) could not be read: %v. Ask it by hand with `gcloud run jobs executions list --project %s --region %s --job %s`",
-				ret.Job, ret.Address, err, spec.GCPProject, ret.Region, ret.Job)
 		}
 	}
 	return jobs, true, ""
@@ -567,10 +566,11 @@ func fillFromValues(r *Retirement, kind string, values json.RawMessage) {
 		return
 	}
 	var v struct {
-		Name               *string `json:"name"`
-		Location           *string `json:"location"`
-		SecretID           *string `json:"secret_id"`
-		DeletionProtection *bool   `json:"deletion_protection"`
+		Name               *string           `json:"name"`
+		Location           *string           `json:"location"`
+		SecretID           *string           `json:"secret_id"`
+		DeletionProtection *bool             `json:"deletion_protection"`
+		Labels             map[string]string `json:"labels"`
 	}
 	if err := json.Unmarshal(values, &v); err != nil {
 		return
@@ -580,6 +580,7 @@ func fillFromValues(r *Retirement, kind string, values json.RawMessage) {
 		if v.Name != nil {
 			r.Job = *v.Name
 		}
+		r.Labels = v.Labels
 		if v.Location != nil {
 			r.Region = *v.Location
 		}

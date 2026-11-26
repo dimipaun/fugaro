@@ -161,6 +161,13 @@ func runAccountsSwitch(cmd *cobra.Command, from, to string, o accountsSwitchOpti
 			sel.Path, settingsEditDiff(old, next), command, sel.Path)
 		return nil
 	}
+	// The jobs this switch stops declaring, asked of the installation before a
+	// byte is written: a job a run is in flight on cannot be retired, and the
+	// write may not land before that is known (issue #3686's own failure, and
+	// update_retire_jobs.go's accountsSwitchJobRefusal).
+	if err := accountsSwitchJobRefusal(cmd.Context(), lc, keys, from, command); err != nil {
+		return err
+	}
 	if err := applySettingsEdit(cmd, lc, settingsEdit{
 		Path:    sel.Path,
 		Old:     old,
