@@ -286,10 +286,13 @@ func (e *cloudEnv) launchTicketFor(ctx context.Context, slug string, spec *task.
 	// sealed object a bridged launch hands over (internal/backend/batch's
 	// sealedVars refuses it), so a Batch launch with no ticket is a run that
 	// could hold no identity at all, and it is refused here rather than left to
-	// stop at its claim with the launcher long gone.
-	bridged := func(bridge string) (launchIdentityAsk, error) {
+	// stop at its claim with the launcher long gone. reason is the service's
+	// own answer where there was one — C1's code, never its free text — because
+	// a person sent to the service's log by nothing is a person who cannot tell
+	// an installation to update from one to opt in (O15).
+	bridged := func(bridge, reason string) (launchIdentityAsk, error) {
 		if launchBackend(e.be) == backend.CloudBatch {
-			return launchIdentityAsk{}, batchTicketRefusal(bridge, spec)
+			return launchIdentityAsk{}, batchTicketRefusal(bridge, reason, spec)
 		}
 		return launchIdentityAsk{bridge: bridge}, nil
 	}
@@ -298,7 +301,7 @@ func (e *cloudEnv) launchTicketFor(ctx context.Context, slug string, spec *task.
 		// R7's first answer. The launch signs locally as it did before the
 		// service existed, and nothing here is judged: an installation with no
 		// service has no ticket route to be a release behind.
-		return bridged(bridgeNoService)
+		return bridged(bridgeNoService, "")
 	}
 	served, err := e.executionServesTheService(ctx, slug, spec, job, reviewJob)
 	if err != nil {
@@ -311,7 +314,7 @@ func (e *cloudEnv) launchTicketFor(ctx context.Context, slug string, spec *task.
 		// is off, a `vertex` repository), so the job kept every mount it had and
 		// a ticket would be an identity the run cannot claim (it reads the
 		// address to claim at). The launch signs locally, exactly as main did.
-		return bridged(bridgeNoService)
+		return bridged(bridgeNoService, "")
 	}
 	if err := checkSlipServiceURL(service); err != nil {
 		// The rule is asked again because what is presented to this URL is a
@@ -327,9 +330,9 @@ func (e *cloudEnv) launchTicketFor(ctx context.Context, slug string, spec *task.
 	ans, err := launchAskTicket(ctx, i, req)
 	switch {
 	case errors.Is(err, errLaunchTicketNotServed):
-		return bridged(bridgeNotServed)
+		return bridged(bridgeNotServed, identitywire.RefusalNotServed)
 	case errors.Is(err, errLaunchTicketReleaseBehind):
-		return bridged(bridgeReleaseBehind)
+		return bridged(bridgeReleaseBehind, bridgeReleaseBehind)
 	case err != nil:
 		return launchIdentityAsk{}, err
 	}

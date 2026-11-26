@@ -103,8 +103,8 @@ func batchOptInLaunchRefusal(lc *localcfg.Config, spec *task.Spec) error {
 	if lc == nil || lc.Batch.OptedIn() {
 		return nil
 	}
-	return userErr("a run of %s cannot be launched on cloud-batch: %s. %s -- and a Batch run's identity is a ticket the installation's credentials service issues, so there is no launch to make without the fact and nothing was created",
-		spec.Repo, batchOptInRefusal(lc), batchOptInFix(lc))
+	return userErr("a run of %s cannot be launched on cloud-batch: %s. %s -- and a Batch run's identity is a ticket the installation's credentials service issues, so there is no launch to make without the fact and nothing was created; the selection publishes the fact, and '%s update' applies the compute root and deploys the service with it on (R2, R17)",
+		spec.Repo, batchOptInRefusal(lc), batchOptInFix(lc), selfCommand())
 }
 
 // batchJobName is the full resource name of the Cloud Batch job THIS launch is
@@ -145,19 +145,29 @@ func batchJobName(lc *localcfg.Config, slug string, spec *task.Spec) (identitywi
 // The three answers are told apart because an operator acts on them
 // differently: an installation with no service has to be given one (and opted
 // in), and one whose service holds no issuer or is a release behind is an
-// installation to update.
-func batchTicketRefusal(bridge string, spec *task.Spec) error {
+// installation to update. reason is the service's own answer where it gave one
+// -- C1's refusal code for the two the service answers, R7's own name for the
+// route it does not serve, and "" where no service was reached at all -- and it
+// is printed because a refusal that named no reason would send an operator to
+// the service's log for a fact the service already told this machine (O15). It
+// is the code and never the service's free text: that text is another writer's
+// (launchTicketRefusal's own rule).
+func batchTicketRefusal(bridge, reason string, spec *task.Spec) error {
 	fix := "'" + selfCommand() + " update' converges the whole installation -- the CLI, the service it runs and the policy the service reads -- and launch again"
+	said := ""
+	if reason != "" {
+		said = " The service answered " + safetext.Field(reason) + "."
+	}
 	switch bridge {
 	case bridgeNoService:
 		return userErr("a run of %s cannot be launched on cloud-batch with no identity: this machine reaches no credentials service for its runs, and a Batch run's identity is a ticket that service issues -- a Batch job has no carrier for the sealed identity an older launcher mints here, so there is nothing else this launch could hand the run. An operator opts the installation in with '%s backends use cloud-batch' and then '%s update' deploys the service and applies the compute root with it on",
 			spec.Repo, selfCommand(), selfCommand())
 	case bridgeNotServed:
-		return userErr("a run of %s cannot be launched on cloud-batch: this installation's credentials service is deployed and its revision holds no issuer, so it would issue no ticket -- and a Batch job has no carrier for the sealed identity an older launcher mints here. "+fix+" (if the refusal stays, '%s doctor' reads the service the installation runs)",
-			spec.Repo, selfCommand())
+		return userErr("a run of %s cannot be launched on cloud-batch: this installation's credentials service is deployed and its revision holds no issuer, so it would issue no ticket -- and a Batch job has no carrier for the sealed identity an older launcher mints here.%s "+fix+" (if the refusal stays, '%s doctor' reads the service the installation runs)",
+			spec.Repo, said, selfCommand())
 	default:
-		return userErr("a run of %s cannot be launched on cloud-batch: this installation's credentials service is a release behind and does not serve the ticket route, so it would issue no ticket -- and a Batch job has no carrier for the sealed identity an older launcher mints here. "+fix,
-			spec.Repo)
+		return userErr("a run of %s cannot be launched on cloud-batch: this installation's credentials service is a release behind and does not serve the ticket route, so it would issue no ticket -- and a Batch job has no carrier for the sealed identity an older launcher mints here.%s "+fix,
+			spec.Repo, said)
 	}
 }
 

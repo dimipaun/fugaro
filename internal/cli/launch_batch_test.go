@@ -2,11 +2,54 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend"
+	batchpkg "github.com/dimipaun/fugaro/internal/backend/batch"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/gitops"
+	"github.com/dimipaun/fugaro/internal/identitywire"
+	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/runner"
+	"github.com/dimipaun/fugaro/internal/task"
 )
+
+// batchAnswers is what a Batch launch's world is answered with: the ticket
+// route minting, and the registration route BR17's second call reaches --
+// without which every world here would meet a 404 on the registration and fail
+// for a reason it is not about. An override replaces one route's answer.
+func batchAnswers(expires time.Time, override ...any) map[string]ticketAnswer {
+	ans := ticketAnswers(expires)
+	ans[identitywire.JobPath] = ticketAnswer{Status: http.StatusOK, Body: `{}`}
+	if len(override) == 2 {
+		ans[override[0].(string)] = override[1].(ticketAnswer)
+	}
+	return ans
+}
+
+// jobObject reads one created Batch job's document by the path provider
+// blocks nest by (locations_end_to_end_test.go's at), and fails the test where
+// the path is not there: the variables a launch's entries land in are nested
+// inside the task group's own spec.
+func jobObject(t *testing.T, v any, path ...any) map[string]any {
+	t.Helper()
+	m, ok := at(v, path...).(map[string]any)
+	if !ok {
+		t.Fatalf("the created job has no %v: %v", path, v)
+	}
+	return m
+}
+
+// batchAskAccount is the account a Batch launch's ask names (runAccount): the
+// string is carried to the service and judged there, and these tests never sign
+// as it.
+const batchAskAccount = "launch-account@proj-1234.iam.gserviceaccount.com"
 
 // batchBlockForLaunch is the `batch:` block an installation that selected the
 // backend carries (init_compute writes it on a provisioning apply), enough of
@@ -23,6 +66,11 @@ const batchBlockForLaunch = "backend: cloud-batch\n" +
 	"  network: projects/proj-1234/global/networks/fugaro\n" +
 	"  subnetwork: projects/proj-1234/regions/us-east5/subnetworks/fugaro\n" +
 	"  service_account: fugaro-runs@proj-1234.iam.gserviceaccount.com\n"
+
+// batchBlockOptedIn is the same block with the opt-in fact on it (BR1, R3,
+// D3110): the launch gate reads the fact from the block this machine holds, and
+// a launch on this backend proceeds only where it is `in`.
+const batchBlockOptedIn = batchBlockForLaunch + "  opt_in: in\n"
 
 // TestAnUnservedRepositoryIsRefusedOnBatchWithItsFix is BR11's launcher half
 // (D3104): a Batch job mounts nothing, so a launch on the Batch backend whose
@@ -57,9 +105,9 @@ func TestAnUnservedRepositoryIsRefusedOnBatchWithItsFix(t *testing.T) {
 		be       backend.Codec
 		refused  bool
 	}{
-		{"an installation that carries no credentials service, on Batch", "", true, backend.BatchCodec(), true},
-		{"a repository whose record says its root was not applied with the switch on, on Batch", proxiedBlock, false, backend.BatchCodec(), true},
-		{"a repository the service serves, on Batch", proxiedBlock, true, backend.BatchCodec(), false},
+		{"an installation that carries no credentials service, on Batch", batchBlockOptedIn, true, backend.BatchCodec(), true},
+		{"a repository whose record says its root was not applied with the switch on, on Batch", batchBlockOptedIn + proxiedBlock, false, backend.BatchCodec(), true},
+		{"a repository the service serves, on Batch", batchBlockOptedIn + proxiedBlock, true, backend.BatchCodec(), false},
 		{"the same unserved repository, on Cloud Run", "", true, backend.CloudRunCodec(), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -124,5 +172,405 @@ func TestTheRefusalComesBeforeTheMint(t *testing.T) {
 	}
 	if storedTask(t, f.cloudFixture) {
 		t.Error("the refused launch stored a task")
+	}
+}
+
+// TestABatchLaunchWithoutTheOptInIsRefusedWithItsFix is BR1's gate at the
+// launcher (R3, R17, O15): a launch on this backend whose block carries no
+// opt-in fact, or carries the written withdrawal, is refused before anything is
+// created -- and the fix names the write that publishes the fact and the
+// `fugaro update` that applies the installation to it.
+//
+// The three states are one row each, because they are one refusal with one fix
+// and the sentence has to name the state it found: an installation that never
+// opted in is not one an operator opted out, and a person told "not opted in"
+// by an installation that recorded the withdrawal would not know the fact had
+// ever been written.
+//
+// The rows are judged on a repository the credentials service really serves
+// (the block and the repository's own record are the admitted pair), so what
+// refuses is the fact alone: drop the gate and the first two rows are launches
+// this installation would make.
+func TestABatchLaunchWithoutTheOptInIsRefusedWithItsFix(t *testing.T) {
+	withdrawn := &localcfg.Batch{OptIn: localcfg.BatchOptInWithdrawn}
+	for _, tc := range []struct {
+		name    string
+		fact    *localcfg.Batch
+		be      backend.Codec
+		refused bool
+	}{
+		{"an installation whose block carries no opt-in fact", nil, backend.BatchCodec(), true},
+		{"an installation whose block records the withdrawal", withdrawn, backend.BatchCodec(), true},
+		{"an installation that opted in", &localcfg.Batch{OptIn: localcfg.BatchOptInOn}, backend.BatchCodec(), false},
+		{"the same installation with no fact, on Cloud Run", nil, backend.CloudRunCodec(), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLaunchBudget(t, "enforce")
+			addProxiedRepo(t, f, releasePolicy, proxiedBlock, true)
+			publishPolicy(t, f, proxiedPolicy)
+			_, spec := proxiedLaunchSpec()
+			env := fileEnv(t, f.cloudFixture)
+			env.be = backendNamed{codec: tc.be}
+			env.lc.Batch = tc.fact
+			err := batchLaunchRefusal(context.Background(), env, spec)
+			switch {
+			case tc.refused && err == nil:
+				t.Fatal("a Batch launch of an installation that has not opted in was admitted: the run it starts holds no identity, since the ticket is what the service issues and the fact is what puts the service there (R3, R17)")
+			case tc.refused:
+				if ExitCode(err) != ExitUserError {
+					t.Errorf("the refusal is not a user error: %v", err)
+				}
+				for _, want := range []string{"batch.opt_in", spec.Repo, backend.CloudBatch, selfCommand() + " update", "backends use cloud-batch", "nothing was created"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not name %q: %v", want, err)
+					}
+				}
+				state := "absent"
+				if tc.fact != nil {
+					state = "withdrawn"
+				}
+				if !strings.Contains(err.Error(), state) {
+					t.Errorf("the refusal does not say the fact is %s: %v", state, err)
+				}
+			case err != nil:
+				t.Fatalf("a launch the installation opted in for, or one on another backend, was refused: %v", err)
+			}
+		})
+	}
+}
+
+// batchLaunchWorld is one launch on an installation that selected the Batch
+// backend: the fixture, the Cloud Batch fake its job is created on, the
+// credentials service that issues the ticket, and the environment the launch
+// runs in. It is ticketWorld's shape for the other backend.
+type batchLaunchWorld struct {
+	f    *launchBudgetFixture
+	bf   *gcpfake.Batch
+	svc  *launchService
+	env  *cloudEnv
+	spec *task.Spec
+}
+
+// newBatchLaunchWorld builds it: the installation's config selects the
+// backend, carries the opt-in fact and names the service, and the backend the
+// launch runs on is the real one, opened from that config against the fakes --
+// so what a launch does here is what a launch does.
+func newBatchLaunchWorld(t *testing.T, answers map[string]ticketAnswer) *batchLaunchWorld {
+	t.Helper()
+	bf := gcpfake.NewBatch(t)
+	bf.Project, bf.Region = "proj-1234", "us-east5"
+	f := &launchBudgetFixture{cloudFixture: newCloudFixture(t, "batch: "+bf.URL+"/")}
+	f.db, f.iam = f.cloudFixture.budget.DB, f.cloudFixture.iam
+	f.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5, firebase_project: proj-1234, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
+		", firebase_api_key: "+settingsFakeAPIKey+" }\n")
+	f.db.Set("fugaro/project", "aurora")
+	f.db.Set(budget.PathMark, auroraMark())
+	f.db.Set("config/mode", "enforce")
+	seedLaunchCaps(f.db)
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", releaseIdentity)
+	// The service that issues the ticket, and the two facts that make this
+	// repository one it serves: the installation's block addresses it, and the
+	// repository's own record says its root was applied with the switch on.
+	svc := newLaunchService(t, answers)
+	f.appendConfig(t, batchBlockOptedIn+"credentials_service:\n  url: "+svc.serviceURL()+"\n")
+	markRepoCredentialsServiceReady(t, f.cloudFixture)
+
+	env := fileEnv(t, f.cloudFixture)
+	be, err := backend.Open(context.Background(), backend.CloudBatch, cloudOpeners(env.lc, gcp.Options{}))
+	if err != nil {
+		t.Fatalf("opening the Batch backend the world's config selects: %v", err)
+	}
+	env.be = be
+	prevIdentity, prevSelf := launchIdentity, selfCommand
+	prevAsk := launchAskTicket
+	launchAskTicket = func(ctx context.Context, i *launchIssuer, req identitywire.TicketRequest) (identitywire.TicketResponse, error) {
+		return i.askRetry(ctx, req)
+	}
+	launchIdentity = func(context.Context, string) (string, error) { return ticketIdentity, nil }
+	selfCommand = func() string { return "fugaro" }
+	t.Cleanup(func() {
+		launchIdentity, selfCommand, launchAskTicket = prevIdentity, prevSelf, prevAsk
+	})
+	return &batchLaunchWorld{f: f, bf: bf, svc: svc, env: env, spec: raceSpec(t, env)}
+}
+
+// launch runs the world's launch, answering what the Batch fake was asked.
+func (w *batchLaunchWorld) launch(t *testing.T) ([]gcpfake.BatchCall, error) {
+	t.Helper()
+	_, err := launchRun(context.Background(), w.env, appSlug, w.spec, time.Now())
+	return w.bf.Creates(), err
+}
+
+// jobName is the full resource name of the job the world's launch creates:
+// batchJobName's own derivation, read from the config the launch reads it from.
+func (w *batchLaunchWorld) jobName(t *testing.T) identitywire.JobName {
+	t.Helper()
+	name, err := batchJobName(w.env.lc, appSlug, w.spec)
+	if err != nil {
+		t.Fatalf("batchJobName: %v", err)
+	}
+	return name
+}
+
+// TestTheTicketNamesTheJob is R1 and R18 at the launcher: a Batch launch asks
+// for its run's ticket naming the FULL resource name of the job it is about to
+// create, and a Cloud Run launch -- every launch of that backend -- names none.
+//
+// The name is the launcher's own derivation, and the assertion is that the ask
+// carries it under the contract's own field: a launch that asked without it
+// would be issued a record naming no job, and the VM that claims the run is
+// held to a job of that name (BR17, BR2) -- so the run would stop at its claim
+// with a job already created and a launcher long gone.
+func TestTheTicketNamesTheJob(t *testing.T) {
+	expires := time.Now().Add(30 * time.Minute)
+	batch := newBatchLaunchWorld(t, batchAnswers(expires))
+	ask, err := batch.env.launchTicketFor(context.Background(), appSlug, batch.spec, batchAskAccount, nil, false, time.Now())
+	if err != nil {
+		t.Fatalf("a Batch launch of a repository the service serves was refused: %v", err)
+	}
+	if ask.ticket == nil {
+		t.Fatal("the Batch launch holds no ticket: a run of this backend has no identity without one (R18)")
+	}
+	asked := batch.svc.asked()
+	if len(asked) != 1 {
+		t.Fatalf("the service received %d ask(s), want 1", len(asked))
+	}
+	req := ticketAskOf(t, asked[0])
+	want := batch.jobName(t)
+	if string(want) == "" {
+		t.Fatal("the launch's own job name derivation answered nothing")
+	}
+	if req.Job != want {
+		t.Errorf("the ask names the job %q, want %q: the service writes it on the run's record, and the claiming VM is held to it", req.Job, want)
+	}
+	// The name is the one the job is really created under: the launch's own
+	// creation reads it from the same derivation (internal/backend/batch's
+	// JobID), so an ask that named one job and a create that made another
+	// cannot both pass this.
+	if !strings.HasSuffix(string(want), "/jobs/"+batchpkg.JobID(appSlug, batch.spec.Workflow, batch.spec.RunID)) {
+		t.Errorf("the ask's job name %q is not over the backend's own JobID for this run", want)
+	}
+
+	// R18's other half: a Cloud Run launch names no job at all.
+	run := servedTicketWorld(t, releaseIdentity, ticketAnswers(expires))
+	if _, err := run.env.launchTicketFor(context.Background(), appSlug, run.spec, batchAskAccount, nil, false, time.Now()); err != nil {
+		t.Fatalf("a Cloud Run launch of the same repository was refused: %v", err)
+	}
+	runAsked := run.svc.asked()
+	if len(runAsked) != 1 {
+		t.Fatalf("the Cloud Run service received %d ask(s), want 1", len(runAsked))
+	}
+	if got := ticketAskOf(t, runAsked[0]).Job; got != "" {
+		t.Errorf("a Cloud Run launch names the job %q: that backend's launches name none (R18)", got)
+	}
+}
+
+// TestTheLaunchNamesTheServicesReason is O15 at the launcher: where the ticket
+// cannot be obtained, the refusal prints the reason the SERVICE gave -- C1's own
+// code -- and never the service's free text, which is another writer's.
+//
+// The reasons are the four the route answers with, and the fix each carries is
+// the operator's: a service whose revision holds no issuer, or one of a release
+// behind, is an installation to update (and on this backend it is a refusal,
+// not R7's bridge: a Batch job has no carrier for the sealed identity a bridged
+// launch would hand over). A caller the roster does not admit, or a repository
+// it may not launch from, is a fact about the roster `fugaro update` renders.
+func TestTheLaunchNamesTheServicesReason(t *testing.T) {
+	// freeText is what the service says beside the code: it must not travel.
+	const freeText = "a message this CLI must never repeat"
+	for _, tc := range []struct {
+		name string
+		ans  ticketAnswer
+		code string
+	}{
+		{"a revision whose identity half is not configured", ticketNotServed, identitywire.RefusalNotServed},
+		{"a caller the roster does not admit", ticketAnswer{Status: http.StatusForbidden, Body: `{"error":"` + identitywire.RefusalCallerNotAdmitted + `","message":"` + freeText + `"}`}, identitywire.RefusalCallerNotAdmitted},
+		{"a repository this caller may not launch", ticketAnswer{Status: http.StatusForbidden, Body: `{"error":"` + identitywire.RefusalNoLaunchScope + `","message":"` + freeText + `"}`}, identitywire.RefusalNoLaunchScope},
+		{"an identity the run's record cannot take", ticketAnswer{Status: http.StatusForbidden, Body: `{"error":"` + identitywire.RefusalIdentityRefused + `","message":"` + freeText + `"}`}, identitywire.RefusalIdentityRefused},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newBatchLaunchWorld(t, batchAnswers(time.Now().Add(30*time.Minute), identitywire.TicketPath, tc.ans))
+			_, err := w.launch(t)
+			if err == nil {
+				t.Fatal("a Batch launch whose ticket the service refused was admitted: the run it would start holds no identity (R18)")
+			}
+			if !strings.Contains(err.Error(), tc.code) {
+				t.Errorf("the refusal does not print the reason the service gave (%s): %v", tc.code, err)
+			}
+			if strings.Contains(err.Error(), freeText) {
+				t.Errorf("the refusal repeats the service's own text, which this CLI never does: %v", err)
+			}
+			if !strings.Contains(err.Error(), selfCommand()) {
+				t.Errorf("the refusal names no fix: %v", err)
+			}
+			if n := len(w.bf.Creates()); n != 0 {
+				t.Errorf("a refused launch created %d job(s): the refusal is before the create", n)
+			}
+		})
+	}
+}
+
+// TestAFailedTicketCreatesNothing is BR1's ordering at its hardest (R17, O15):
+// a Batch launch whose ticket cannot be obtained is refused before ANYTHING is
+// created -- no job on the backend, no execution, no stored task, and no budget
+// token minted, since this machine's own signer is never asked. The run such a
+// launch would start would hold no identity, and the launcher is the last place
+// that can be said while a person is watching.
+func TestAFailedTicketCreatesNothing(t *testing.T) {
+	w := newBatchLaunchWorld(t, batchAnswers(time.Now().Add(30*time.Minute), identitywire.TicketPath, ticketRefused))
+	if _, err := w.launch(t); err == nil {
+		t.Fatal("a Batch launch whose ticket the service refused was admitted")
+	}
+	if n := len(w.bf.IDs()); n != 0 {
+		t.Errorf("the refused launch left %d job(s) on the backend: %v", n, w.bf.IDs())
+	}
+	if launchedAny(w.f) {
+		t.Error("the refused launch started an execution")
+	}
+	if storedTask(t, w.f.cloudFixture) {
+		t.Error("the refused launch stored a task")
+	}
+	if tok := readToken(t, w.f.cloudFixture, w.spec.RunID); tok != "" {
+		t.Error("the refused launch minted a budget token")
+	}
+	if n := len(w.f.iam.SignCalls()); n != 0 {
+		t.Errorf("the refused launch reached the signer %d time(s): nothing of this run was created, so nothing was minted", n)
+	}
+}
+
+// TestTheTicketIsRedactedAndNotRecorded is R7 and D3115 at the launcher: the
+// ticket a Batch launch holds reaches the job and nothing else -- it is on the
+// job's own variables under the name the run claims it by, it is in no run
+// record, and this launch writes no sealed object for it either (a launch that
+// holds a ticket signs nothing locally and writes no token object).
+//
+// The record is read back as bytes because that is what a reader outside this
+// binary consumes: a field a launcher added would travel there, and the ticket
+// is a one-time secret of one execution.
+func TestTheTicketIsRedactedAndNotRecorded(t *testing.T) {
+	w := newBatchLaunchWorld(t, batchAnswers(time.Now().Add(30*time.Minute)))
+	creates, err := w.launch(t)
+	if err != nil {
+		t.Fatalf("a Batch launch of a repository the service serves was refused: %v", err)
+	}
+	if len(creates) != 1 {
+		t.Fatalf("jobs.create calls = %d, want 1", len(creates))
+	}
+	vars := jobObject(t, creates[0].Job, "taskGroups", 0, "taskSpec", "environment", "variables")
+	if got := vars[identitywire.TicketEnv]; got != ticketValue {
+		t.Errorf("the job's %s = %v, want the ticket the service issued: it is what the run claims its identity with", identitywire.TicketEnv, got)
+	}
+	// The job carries no sealed entry and never the marker: those are the
+	// budget token's, and this backend refuses both (BR1, F21, R8).
+	env := jobObject(t, creates[0].Job, "taskGroups", 0, "taskSpec", "environment")
+	for _, field := range []string{"secretVariables", "encryptedVariables"} {
+		if got, ok := env[field]; ok {
+			t.Errorf("the job carries %v under %s: a Batch job's only secret carrier is its own definition, which BR1's launch puts the ticket in as a plain variable", got, field)
+		}
+	}
+	if _, ok := vars[gitops.BudgetTokenEnv]; ok {
+		t.Errorf("the job's variables carry %s: the marker's value is the seal key and it is never a job variable (R5)", gitops.BudgetTokenEnv)
+	}
+	if tok := ticketObject(t, w.env, w.spec.RunID); tok != "" {
+		t.Error("a launch that holds a ticket wrote a sealed token object into the bucket (R7)")
+	}
+	rec, ok := ticketLaunchRecord(t, w.env, w.spec.RunID)
+	if !ok {
+		t.Fatal("the launch recorded nothing: every run has a launch record")
+	}
+	raw, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatalf("marshal the launch record: %v", err)
+	}
+	for _, secret := range []string{ticketValue, ticketIdentity} {
+		if strings.Contains(string(raw), secret) {
+			t.Errorf("the run's launch record carries %q: the ticket is a one-time secret of one execution and it is in no record (D3115): %s", secret, raw)
+		}
+	}
+}
+
+// TestTheJobIsRegisteredAfterTheCreateWithItsId is BR1's second call at the
+// launcher (R1, BR17): after the create returned, the job is registered with
+// the service by its own full name and the id the platform assigned it -- the
+// write that lets the VM claiming this run be held to this execution.
+//
+// The registration is read off the service's own calls, because that is what
+// the contract is: one POST to the registration route, carrying the run, the
+// job and the id. The id compared is the one the Batch fake assigned the job it
+// really created, so a launcher that registered a name, a zero value or a
+// second derivation fails here.
+func TestTheJobIsRegisteredAfterTheCreateWithItsId(t *testing.T) {
+	w := newBatchLaunchWorld(t, batchAnswers(time.Now().Add(30*time.Minute)))
+	creates, err := w.launch(t)
+	if err != nil {
+		t.Fatalf("a Batch launch of a repository the service serves was refused: %v", err)
+	}
+	if len(creates) != 1 {
+		t.Fatalf("jobs.create calls = %d, want 1", len(creates))
+	}
+	id, _ := w.bf.JobJSON("proj-1234", "us-east5", creates[0].JobID)["uid"].(string)
+	if id == "" {
+		t.Fatal("the fake holds no id for the job the launch created: the registration below has nothing to be checked against")
+	}
+	var seen []identitywire.JobRequest
+	for _, call := range w.svc.asked() {
+		if call.Path != identitywire.JobPath {
+			continue
+		}
+		var req identitywire.JobRequest
+		if err := json.Unmarshal([]byte(call.Body), &req); err != nil {
+			t.Fatalf("the registration the service received is not this contract's: %v (%q)", err, call.Body)
+		}
+		seen = append(seen, req)
+	}
+	if len(seen) != 1 {
+		t.Fatalf("the service received %d registration(s), want 1: a launch that created a job owes the service its id, and a second write is refused by the record's own fence", len(seen))
+	}
+	req := seen[0]
+	if req.Slug != appSlug || req.Run != w.spec.RunID {
+		t.Errorf("the registration names %s/%s, want %s/%s", req.Slug, req.Run, appSlug, w.spec.RunID)
+	}
+	if req.Job != w.jobName(t) {
+		t.Errorf("the registration names the job %q, want the one the ticket ask named (%q): the two are one job (BR17)", req.Job, w.jobName(t))
+	}
+	if req.JobID != id {
+		t.Errorf("the registration carries the id %q, want the one Batch assigned this job (%q): the name is the launcher's and the id is the platform's (D3108)", req.JobID, id)
+	}
+}
+
+// TestABatchLaunchCarriesTheTicketAndNothingElse is BR1's acceptance at the
+// launcher, seen whole: a launch on an installation whose block carries the
+// opt-in fact asks for the run's ticket naming the job it is about to create,
+// puts it on that job under identitywire.TicketEnv, and the job carries nothing
+// else of this launch's secrets.
+//
+// The red step is the marker among the job's variables and the ticket set
+// without the job's name: neither can pass here, because the job's variables
+// are read back from the fake's own record of the create.
+func TestABatchLaunchCarriesTheTicketAndNothingElse(t *testing.T) {
+	w := newBatchLaunchWorld(t, batchAnswers(time.Now().Add(30*time.Minute)))
+	creates, err := w.launch(t)
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if len(creates) != 1 {
+		t.Fatalf("jobs.create calls = %d, want 1", len(creates))
+	}
+	asked := w.svc.asked()
+	if len(asked) == 0 {
+		t.Fatal("the launch asked the service for nothing: a Batch run's identity is its ticket (R1)")
+	}
+	if got := ticketAskOf(t, asked[0]).Job; got != w.jobName(t) {
+		t.Fatalf("the ask names the job %q, want %q: the ticket is issued for the job this launch is about to create", got, w.jobName(t))
+	}
+	vars := jobObject(t, creates[0].Job, "taskGroups", 0, "taskSpec", "environment", "variables")
+	if got := vars[identitywire.TicketEnv]; got != ticketValue {
+		t.Fatalf("the job's %s = %v, want the ticket the service issued", identitywire.TicketEnv, got)
+	}
+	delete(vars, identitywire.TicketEnv)
+	for _, reserved := range []string{gitops.BudgetTokenEnv, runner.BudgetTokenEnv, "FUGARO_SLIP"} {
+		if _, ok := vars[reserved]; ok {
+			t.Errorf("the job's variables carry %s: the only thing a Batch launch adds to them is the ticket", reserved)
+		}
 	}
 }
