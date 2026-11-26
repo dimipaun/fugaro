@@ -31,6 +31,10 @@ import (
 //   - the caller's own class, for the two routes whose caller is a launcher
 //     (LM3): the ticket ask and the registration it is the first half of.
 //   - the runs' signer, for the two routes that mint a phone's token (LM4).
+//   - the refusal of a path the contract admits and this switch does not name:
+//     this service and the contract disagreeing, which is this service's own
+//     failure and never an empty answer, and never the contract's "not served"
+//     (a launcher would read that as the bridge, R7).
 //
 // Nothing of the contract is decided here. Every refusal past the caller's
 // verification is the handler's (refuseTicket, refuseRegister), which is what
@@ -64,6 +68,16 @@ func (s *Server) identityRoute(ctx context.Context, w http.ResponseWriter, r *ht
 			return
 		}
 		s.identityJobRegister(ctx, w, caller, r)
+	default:
+		// A path identitywire.RouteFor admits and this switch names nowhere is
+		// this build and the contract disagreeing — a route added to the wire
+		// and mounted by nobody here. Falling through would leave the caller an
+		// empty 200, which is no answer of any contract; answering "not served"
+		// would send a launcher back to the bridge after the installation moved
+		// its grant (R7). No audit line: no caller was verified.
+		s.log.Error("credsvc: the identity door was reached at a path it serves nowhere", "path", r.URL.Path)
+		s.refuse(w, StatusUnavailable, ErrorStateUnavailable,
+			"no answer of the identity contract is served at this path by this deployment of the service")
 	}
 }
 

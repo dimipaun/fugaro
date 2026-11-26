@@ -26,6 +26,7 @@ import (
 	secretmanager "google.golang.org/api/secretmanager/v1"
 
 	accesslib "github.com/dimipaun/fugaro/internal/access"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
@@ -1673,14 +1674,19 @@ func credentialsServiceImplicitAdmins(raw string) ([]string, error) {
 // refuses an ask beyond it rather than clamping it, so this is the one place a
 // deployment's answer to "how long may a run's identity live" is stated, and
 // it is a constant of the process rather than a variable of the installation:
-// every installation asks for the same thing — a run's own window, which is its
-// repository's timeouts.total plus the queue its execution may wait in — and a
-// day is above every window an installation could honour, because that is the
-// longest either platform a run runs on holds a job's execution at all (Cloud
-// Run jobs and Cloud Batch both cap a task at 24 hours). A maximum of zero,
-// which is the fail-closed reading of an installation that stated none, would
-// refuse every launch there is.
-const identityMaxRuntime = 24 * time.Hour
+// every installation asks for the same thing, and it is the greater of the
+// deployed job's own task timeout — the repository's timeouts.total plus
+// backend.TaskTimeoutSlack, which internal/infra deploys — and --total-timeout
+// plus the same slack, and both are held at or below Cloud Run's ceiling, by
+// internal/projectpolicy for the class and by parseTotalTimeout for the flag
+// (launchIdentityWindow). So the platform's own ceiling is the only bound that
+// admits every ask a launch may legitimately make, and a smaller one is not a
+// tighter policy but a launch that cannot work: the route refuses rather than
+// clamps, so a repository whose timeouts.total is longer would be refused at
+// the ticket route, with advice to launch a run the service refuses again.
+// A maximum of zero, which is the fail-closed reading of an installation that
+// stated none, would refuse every launch there is.
+const identityMaxRuntime = gcp.MaxTaskTimeout
 
 // credentialsIdentityScope builds the ticket route's launch-scope check (R16):
 // the CLI gate's own judgement recomputed on the service's side of the wire,

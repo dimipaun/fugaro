@@ -45,6 +45,8 @@ import (
 	"golang.org/x/oauth2"
 	secretmanager "google.golang.org/api/secretmanager/v1"
 
+	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -227,6 +229,15 @@ func TestLaunchToSessionThroughTheIssuer(t *testing.T) {
 	// (ticketRunEnded, maxRunDays), and LM6's own run id is fixed in the past
 	// because its scripted service answers whatever it is asked.
 	r.spec = raceSpecAt(t, r.env, time.Now().UTC().Format("20060102-150405")+"-abcd")
+	// The job's task timeout is set above a day on purpose. The launcher asks the
+	// run's own window as the deployed job holds it — the repository's
+	// timeouts.total plus backend.TaskTimeoutSlack — and Cloud Run's ceiling is
+	// what an installation may reach (internal/projectpolicy), so a deployment
+	// whose identity ceiling were lower would refuse exactly this launch: the
+	// route refuses an ask beyond the ceiling rather than clamping it, and the
+	// repository could not be launched at all (identityMaxRuntime).
+	launchJob := gcp.JobName(appSlug, "web")
+	r.f.run.SetJobTimeout(launchJob, 72*time.Hour+backend.TaskTimeoutSlack)
 
 	executed, err := r.launch(t)
 	// The red step first (LM6): a launch that minted its run's identity locally
@@ -262,6 +273,11 @@ func TestLaunchToSessionThroughTheIssuer(t *testing.T) {
 	}
 	if rec.Claims.Branch != "fugaro/"+r.spec.RunID || rec.Claims.Slug != appSlug || rec.Claims.Run != r.spec.RunID {
 		t.Fatalf("the record's claims name %+v, want this run on its own branch", rec.Claims)
+	}
+	// The identity lives as long as the run it is for, and that is the deployed
+	// job's window and not a day: a ceiling below it would have refused this ask.
+	if left := time.Until(rec.Claims.FX); left <= 24*time.Hour {
+		t.Fatalf("the run's identity dies in %s, want the job's own window (about 72h): an installation that could not issue one for a run longer than a day would refuse a launch it must serve", left)
 	}
 
 	// The claim, as the run makes it at bootstrap: the job's own Google ID token
