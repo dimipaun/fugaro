@@ -27,11 +27,11 @@ package credsvc
 //
 // # What is not here
 //
-// The mount. Verifying the caller, and answering the contract's "not served"
-// where the installation has no issuer, are I1's — identity_stub.go answers
-// every identity path today, and this file changes not one line of it. What
-// this task adds at the door is the PATH (server.go's servedRoute and the 404's
-// sentence), which is what makes the route reachable at all.
+// The mount: verifying the caller, and answering the contract's "not served"
+// where the installation has no issuer, are identity_mount.go's (I1), and this
+// file changes not one line of it. What this task adds at the door is the PATH
+// (server.go's servedRoute and the 404's sentence), which is what makes the
+// route reachable at all.
 //
 // The opt-in fact is BR22's, on this file: where the installation has not opted
 // in, a ticket that names a job and a registration are both refused, and the

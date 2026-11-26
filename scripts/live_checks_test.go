@@ -728,6 +728,15 @@ import (
 // mount, what the service served a run and its review, what an unlisted
 // repository was refused with, and that a catalog build resolves no accessor
 // for the build identity.
+// Checks 910 to 912 are the repo-override-rulings work's owner-run checks (CK1
+// and CK2). 910's and 911's fakes are a fake `fugaro` whose `config list`,
+// `settings`, `recipes` and `update --plan-only` the case owns, over real git
+// checkouts with a bare origin of their own, so a case says which of the ref's
+// values the record holds and whether a value that moved was named by the
+// update. 912's is a fake `fugaro` that refuses a lifted key on the default
+// branch, names it on any other ref and refuses it in the plan, over real git
+// checkouts likewise, so a case says which of the three readings a bent answer
+// breaks and that the checkout is left exactly as it was.
 // Checks 136 and 341 to 343 are the periodic-reviews work's owner-run checks
 // (P8), and they drive the strict-fakes harness the other checks' libs carry:
 // the fake `fugaro` validates every command and flag against the real CLI's
@@ -840,6 +849,7 @@ var liveCheckScripts = []struct {
 	{"check-501.sh", "check-501_test.sh"},
 	{"check-580.sh", "check-580_test.sh"},
 	{"check-581.sh", "check-581_test.sh"},
+	{"check-582.sh", "check-582_test.sh"},
 	{"check-411.sh", "check-411_test.sh"},
 	{"check-412.sh", "check-412_test.sh"},
 	{"check-c0.sh", "check-c0_test.sh"},
@@ -934,6 +944,7 @@ var liveCheckScripts = []struct {
 	{"check-821.sh", "check-821_test.sh"},
 	{"check-910-lift-snapshot.sh", "check-910-lift-snapshot_test.sh"},
 	{"check-911-lift-compare.sh", "check-911-lift-compare_test.sh"},
+	{"check-912-lift-refusal.sh", "check-912-lift-refusal_test.sh"},
 	{"check940.sh", "check940_test.sh"},
 	{"check-850.sh", "check-850_test.sh"},
 	{"check-851.sh", "check-851_test.sh"},

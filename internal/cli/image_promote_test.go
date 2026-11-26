@@ -208,9 +208,12 @@ func TestImagePromoteIsNeverAutomatic(t *testing.T) {
 
 	// And the commands a person runs against a checkout do not touch it: a
 	// repository with an image: block keeps it, and the project gains no
-	// catalog entry.
-	newCloudFixture(t)
-	dir := catalogCheckout(t, promoteYAML)
+	// catalog entry. The file's own pins are lifted (S1, D3237):
+	// config.Resolve drops them, so they are published as the project layer
+	// the file is anchored to, which is where a real installation keeps them,
+	// and `validate` then resolves the three models a priced run needs.
+	f := newCloudFixture(t)
+	dir := catalogCheckout(t, publishFilePins(t, f, promoteYAML))
 	yamlPath := filepath.Join(dir, "fugaro.yaml")
 	before, err := os.ReadFile(yamlPath)
 	if err != nil {

@@ -74,6 +74,7 @@ func admissionRunCfg(t *testing.T, kind, slugRepo, mode, capUSD, cfg, policy str
 	b.deps.Execution = cloudRunExecution(gcp.JobName(slug, gcp.WorkflowVariant(workflow, "")))
 	store := runstore.Open(b.harness.bucket, slug, runID)
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: workflow, Task: "Add a feature"}
+	b.taskWithLayer(spec)
 	if err := store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)
 	}

@@ -111,8 +111,12 @@ func projectRunCfg(t *testing.T, job projectJob, cfg, mode, capUSD, policy strin
 	b.deps.Execution = cloudRunExecution(gcp.ProjectJobName(job.profile, job.provider, job.account))
 	if slug != repoSlug || job.specRepo != "acme/app" {
 		store := runstore.Open(b.harness.bucket, slug, runID)
-		spec := &task.Spec{Version: 1, RunID: runID, Repo: job.specRepo, Ref: "main",
-			Workflow: "app", Task: "Add a feature"}
+		// The project layer travels with the task, as it does at a launch: it
+		// is the installation's own and names the models a repository's file
+		// may no longer name (S1, D3237), so a task written without it is a
+		// run with nothing to price.
+		spec := b.harness.taskWithLayer(&task.Spec{Version: 1, RunID: runID, Repo: job.specRepo, Ref: "main",
+			Workflow: "app", Task: "Add a feature"})
 		if err := store.WriteTask(context.Background(), spec); err != nil {
 			t.Fatal(err)
 		}
