@@ -746,7 +746,7 @@ describe('both document shapes decode', () => {
     expect(result.value.runs[0]?.run).toBe('20261015-120000-aa01')
     expect(result.value.runs[0]?.requestedBy).toBe('redacted@example.invalid')
     // `launched_by` is decoded now, whole (owner request 2026-10-18): the
-    // Started-by column's short form is the screen's cut, not the model's.
+    // Started-by column draws that same whole value, cut nowhere (D3213).
     expect(result.value.runs[0]?.launchedBy).toBe('redacted@example.invalid')
     // GV2.5's `pr_number` is read on a live row as it is on a finished one: the
     // number, where the key is absent it is `null` (the record above).

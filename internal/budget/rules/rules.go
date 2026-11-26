@@ -1243,8 +1243,8 @@ const (
 // patternSignature is the character set of a device signature: unpadded
 // base64url, which is how a pairing key already travels in this tree
 // (internal/budget/token's base64.RawURLEncoding). It is this package's own,
-// like patternPublicKey and patternZone: the shared schema does not model the
-// signature until mobile plan task J5b.
+// like patternPublicKey and patternZone: the shared schema's own is
+// BASE64URL_PATTERN, which mobile plan task J5b added and its test reads.
 const patternSignature = `/^[A-Za-z0-9_-]+$/`
 
 // macOK and sigOK are one tag's shape at one snapshot: a string of exactly n

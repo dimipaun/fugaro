@@ -933,6 +933,14 @@ function cancelRecord(run) {
   return { id: 'a-7', verb: 'cancel', target: { run }, confirmation: 'confirm' };
 }
 
+// A typed start as J5a's schema has it (O10): the mode it would start in, the
+// repository alone, and no confirmation -- a launch needs none, and a costly one
+// is refused by the consumer instead. The module checks the mode and the
+// repository and leaves the rest to the schema.
+function launchRecord(repo, mode = 'implement') {
+  return { id: 'a-9', verb: 'launch', mode, target: { repo } };
+}
+
 test('the closed verb set is exactly a start and a cancel', () => {
   assert.deepEqual(JOB_VERBS, ['launch', 'cancel']);
   assert.equal(Object.isFrozen(JOB_VERBS), true);
@@ -974,19 +982,49 @@ test('maySend answers false for everything the question can be malformed with', 
   assert.equal(maySend(OPERATOR, '__proto__'), false);
 });
 
-test('a start composes one plain message, classified as a launch', () => {
-  // D162: a launch travels as an ordinary message carrying the owner's words,
-  // with no record and no confirmation. `options.verb` is the classification the
-  // write path hands the lapse check (S6.3) -- the bytes are a message's either
-  // way, and only the label tells a lapsed launch from a lapsed question.
-  const result = jobWrite(OPERATOR, { verb: 'launch', text: 'fix the flaky test' });
+test('a start composes a typed launch action, unchanged', () => {
+  // D162 as O10 amended it: a start is a typed `launch` action carrying the mode
+  // it would start in and the repository it starts in, so the consumer can refuse
+  // a costly mode without a confirmation. The record is the caller's -- the app's
+  // start button, which is the only place that knows the repository -- and it
+  // travels as `options.action`, uncopied, as a cancel's does.
+  const record = launchRecord('belong');
+  const result = jobWrite(OPERATOR, { verb: 'launch', text: 'fix the flaky test', record });
 
   assert.equal(result.ok, true);
   assert.equal(result.verb, 'launch');
   assert.equal(result.text, 'fix the flaky test');
-  assert.deepEqual(result.options, { verb: 'launch' });
+  assert.equal(result.options.action, record, 'the record travels as it was built');
+  assert.deepEqual(result.options.action.target, { repo: 'belong' });
   assert.equal(Object.isFrozen(result), true);
   assert.equal(Object.isFrozen(result.options), true);
+});
+
+test('a start without a launch action, or with one that is not a launch, is refused', () => {
+  // O10 typed the start, so there is no plain-message launch left: a start that
+  // carries no record is a caller that never built the action, and the module
+  // says so rather than sending bytes the consumer would read as a question.
+  const record = launchRecord('belong');
+  for (const bad of [
+    undefined,
+    null,
+    'launch belong',
+    record.id,
+    { ...record, verb: 'cancel' },
+    { ...record, verb: 'merge' },
+    { ...record, mode: '' },
+    { ...record, mode: 7 },
+    { ...record, target: { repo: '' } },
+    { ...record, target: {} },
+    { ...record, target: 'belong' },
+    { ...record, target: { run: 'run-7' } },
+  ]) {
+    const result = jobWrite(OPERATOR, { verb: 'launch', text: 'fix the flaky test', record: bad });
+
+    assert.equal(result.ok, false, JSON.stringify(bad));
+    assert.equal(result.code, JOB_CODES.BAD_RECORD);
+    assert.ok(result.field.startsWith('record'));
+  }
 });
 
 test('a cancel carries the machine’s action record, unchanged', () => {
@@ -1060,8 +1098,8 @@ test('a session the role cannot be read from is refused, and says which way', ()
 
 test('a request with a field this module does not read is refused', () => {
   assert.equal(jobWrite(OPERATOR, { verb: 'launch', text: 'x', run: 'run-7' }).code, JOB_CODES.UNKNOWN_FIELD);
-  assert.equal(jobWrite(OPERATOR, { verb: 'launch', text: 'x', record: cancelRecord('run-7') }).code, JOB_CODES.UNKNOWN_FIELD,
-    'a start carries no record: it is D162’s plain message');
+  assert.equal(jobWrite(OPERATOR, { verb: 'launch', text: 'x', launch: launchRecord('belong') }).code,
+    JOB_CODES.UNKNOWN_FIELD, 'the record is `record`, and a misspelling is refused rather than ignored');
   assert.equal(jobWrite(OPERATOR, []).code, JOB_CODES.UNKNOWN_FIELD);
   assert.equal(jobWrite(OPERATOR, 7).code, JOB_CODES.UNKNOWN_FIELD);
 });

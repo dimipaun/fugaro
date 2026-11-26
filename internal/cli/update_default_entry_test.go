@@ -72,6 +72,10 @@ func onlyRepos(t *testing.T, r *convergeRig, extra ...string) {
 		repos[name] = localcfg.Repo{Provider: "github", Workflows: []string{"app"}, GitHubAppID: "12345"}
 	}
 	rewriteRigConfig(t, r.imagesRig, func(lc *localcfg.Config) { lc.Repos = repos })
+	for _, name := range extra {
+		seedNamedRepoSecret(t, r.initRig, "github", name, "github-app-key")
+		seedNamedRepoSecret(t, r.initRig, "github", name, "claude-oauth-token")
+	}
 	registerInstallation(t, r.initRig)
 }
 

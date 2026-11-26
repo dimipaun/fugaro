@@ -111,14 +111,17 @@ func TestAModeArtifactLaunchRefusesWhenTheRecipeCannotBeRead(t *testing.T) {
 	// A stale cache entry of this project's bucket, as a successful read two
 	// days ago would have left: the entry is too old to answer on its own
 	// (decision D9), so a readable bucket would be read strictly — and this
-	// env's bucket is down, so the entry stands in with a note.
+	// env's bucket is down, so the entry stands in with a note. It is the
+	// repository's own copy that is cached, because that is the name a launch of
+	// acme/app reads first (recipe.LookupOrder).
+	copied := recipe.CopyName("sizzle", "github", "acme/app")
 	stale := localcfg.SharedCacheEntry{GCPProject: "proj-1234", Bucket: "fugaro-runs-proj-1234",
-		CheckedAt: time.Now().Add(-48 * time.Hour), YAML: projectSizzle}
-	if err := localcfg.SaveRecipeCache(os.Getenv, "aurora", "sizzle", stale); err != nil {
+		CheckedAt: time.Now().Add(-48 * time.Hour), YAML: strings.Replace(projectSizzle, "name: sizzle", "name: "+copied, 1)}
+	if err := localcfg.SaveRecipeCache(os.Getenv, "aurora", copied, stale); err != nil {
 		t.Fatal(err)
 	}
 	down := unreachableEnv(t, env)
-	_, _, err := chooseRecipe(ctx, down, "sizzle", noCheckoutConfig, "", io.Discard, false)
+	_, _, err := chooseRecipe(ctx, down, "acme/app", "main", "sizzle", noCheckoutConfig, io.Discard, false)
 	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "cached project recipe sizzle") ||
 		!strings.Contains(err.Error(), "the launch is refused") {
 		t.Fatalf("err = %v", err)
@@ -126,10 +129,10 @@ func TestAModeArtifactLaunchRefusesWhenTheRecipeCannotBeRead(t *testing.T) {
 	// The same resolution with a readable bucket carries no note and launches
 	// with its mode, so the refusal is about the unread recipe and not about
 	// the recipe being mode: artifact.
-	if err := localcfg.DropRecipeCache(os.Getenv, "aurora", "sizzle"); err != nil {
+	if err := localcfg.DropRecipeCache(os.Getenv, "aurora", copied); err != nil {
 		t.Fatal(err)
 	}
-	_, mode, err := chooseRecipe(ctx, env, "sizzle", noCheckoutConfig, "", io.Discard, false)
+	_, mode, err := chooseRecipe(ctx, env, "acme/app", "main", "sizzle", noCheckoutConfig, io.Discard, false)
 	if err != nil || mode != recipe.ModeArtifact {
 		t.Fatalf("mode = %q, err = %v", mode, err)
 	}
@@ -140,8 +143,11 @@ func TestAModeArtifactLaunchRefusesWhenTheRecipeCannotBeRead(t *testing.T) {
 // with DisallowUnknownFields), so an artifact launch must not reach such a job
 // at all. It fires for an artifact recipe launched with nothing attached just
 // as much as for one launched with --attach (Task 6's launch of the same
-// recipe). Two gates can carry it, and both are asserted because which one
-// fires depends on what the launcher could embed:
+// recipe). Both subtests are judged by checkRecipeImage, on the text the task
+// carries — against artifactsSince, since a mode: artifact recipe is a 0.8.0
+// construct — and differ in the name that text reached the task under: a
+// project recipe by its own name, a repository's own recipe as the copy the
+// project store holds for it (D3303, R7).
 //
 //   - a recipe the launcher resolves itself (a project or catalog one) is
 //     embedded in the task, so checkRecipeImage judges it — against
@@ -201,10 +207,14 @@ func cloneCheckout(t *testing.T, f *cloudFixture, base, agentLines string, extra
 }
 
 // TestAnArtifactRecipeOnACloneWorkflowGatesOnTheCloneImage is the clone half
-// of TestAnArtifactLaunchGatesOnTheImageThatKnowsMode, and each subtest pins
-// one of the two ways a clone launch of an artifact recipe is judged (a
-// clone workflow has no build record: checkCloneImageSince reads the
-// installation's own base image instead):
+// of TestAnArtifactLaunchGatesOnTheImageThatKnowsMode: a clone workflow has no
+// build record, so checkCloneImageSince reads the installation's own base image
+// instead. Both subtests reach checkCloneRecipeImage and recipeSinceFor, whose
+// UsesV08 arm raises the threshold to artifactsSince — without it the 0.7.5
+// image passes and the spec.Mode gate below refuses instead, with the other
+// gate's message — and differ in the name the task carries the recipe under: a
+// project recipe by its own name, a repository's own recipe as the project's
+// copy of it (D3303, R7).
 //
 //   - a recipe the launcher embeds (here a project one, the same as in the
 //     baked test) reaches checkCloneRecipeImage and recipeSinceFor, whose
@@ -243,11 +253,12 @@ func TestAnArtifactRecipeOnACloneWorkflowGatesOnTheCloneImage(t *testing.T) {
 	})
 }
 
-// appRepoCheckout is a working directory whose origin is acme/app: the
-// checkout a follow-up is launched FROM, and the only place the launcher can
-// read a repository recipe it inherits by name (the runner reads it at the
-// task's base, in the cloud, where the launcher cannot look). It is
-// secrets_test.go's appCheckout with files of the caller's own.
+// appRepoCheckout is a working directory whose origin is acme/app, with files
+// of the caller's own: a launcher to be run from a checkout of that
+// repository. It is secrets_test.go's appCheckout with extra files. It is no
+// longer where a repository recipe is read — the launch reads the project's
+// copy of one (D3237) — so a test that wants a recipe in play publishes it
+// (projectRecipesFixture, publishCopy).
 func appRepoCheckout(t *testing.T, files map[string]string) {
 	t.Helper()
 	testutil.IsolateGit(t)
@@ -263,25 +274,22 @@ func appRepoCheckout(t *testing.T, files map[string]string) {
 }
 
 // TestAFollowUpLaunchRefusesAModeItInheritsByRepoName: a follow-up does not
-// choose its recipe, it keeps the previous run's, and a REPOSITORY recipe is
-// kept as a name with no text (taskRecipe, recipes_resolve.go), so neither
-// follow-up refusal that reads recipe text can judge it. Left there, the
-// launch carries a name whose mode only the runner sees — the runner refuses
-// it (internal/runner/runner.go), but not before a job starts and clones.
-// The two modes a follow-up cannot run are mode: artifact (nothing to
+// choose its recipe, it keeps the previous run's, and a repository recipe is
+// inherited as a NAME — the previous task's task.Recipe, or the record of the
+// recipe the runner chose, both of which the follow-up resolves and embeds
+// (D3303, R7). The resolution is the launcher's, so the refusal judges the copy
+// the project holds rather than leaving the mode to the runner: the runner
+// refuses it too (internal/runner/runner.go), but not before a job starts and
+// clones. The two modes a follow-up cannot run are mode: artifact (nothing to
 // continue) and mode: review (a review run never continues one either). Three
-// arms: the two inheritance paths that carry a name that way — the previous
-// task's own recipe, and the recipe the runner chose for it
-// (carryChosenRecipe) — and the second refusal, which shares the path. The
-// name a task written before D3303 carries is a repository-sourced one, and
-// what the launcher judges under it is the project's copy of that name, which
-// is where a repository's own recipe lives now (refuseFollowUpRepoRecipe); the
-// runner stays the backstop for a name no copy answers.
+// arms: the two inheritance paths that inherit a name — the previous task's own
+// recipe, and the recipe the runner chose for it (carryChosenRecipe) — and the
+// second refusal, which shares the path.
 //
 // Mutation (drop the `else if rcp != nil` branch of newFollowUpSpec): the
-// first arm launches a job; mutation (drop the refuseFollowUpRepoRecipe call
-// from carryChosenRecipe): the second arm launches one. Both fail
-// wantRefused on the execution count as well as the missing refusal.
+// first arm launches a job; mutation (drop the followUpRecipeOfName call from
+// carryChosenRecipe): the second arm launches one. Both fail wantRefused on the
+// execution count as well as the missing refusal.
 func TestAFollowUpLaunchRefusesAModeItInheritsByRepoName(t *testing.T) {
 	t.Run("the previous task's recipe", func(t *testing.T) {
 		f := newCloudFixture(t)

@@ -2003,11 +2003,31 @@ func TestDeployedSecretIDsReadsEveryJobsMounts(t *testing.T) {
 	f.run.AddJob("fugaro-acme-api-api", "2", "4Gi")
 	f.run.SetJobEnv("fugaro-acme-api-api", map[string]string{"OTHER": "a-value"})
 
-	ids, warning := DeployedSecretIDs(context.Background(), f.c, spec)
+	ids, answered, warning := DeployedSecretIDs(context.Background(), f.c, spec)
 	if warning != "" {
 		t.Fatalf("the read answered %q for a listing that worked", warning)
 	}
+	if !answered {
+		t.Fatalf("the read answered %v for a listing that worked, want the IDs to be the installation's own mounts", ids)
+	}
 	if len(ids) != 1 || !ids[copyID] {
 		t.Fatalf("ids = %v, want exactly %s", ids, copyID)
+	}
+}
+
+// TestDeployedSecretIDsWithoutAClientWarns: no client is a question that was
+// never asked, so it answers like a refused listing — no IDs and the warning —
+// and never the empty set a caller reads as "nothing names it" before deleting
+// a container.
+func TestDeployedSecretIDsWithoutAClientWarns(t *testing.T) {
+	spec := InstallationSpec{Project: "proj-1234", FugaroProject: "acme", Region: "us-east5"}
+	for name, c := range map[string]*Clients{"no clients": nil, "no run client": {}} {
+		ids, answered, warning := DeployedSecretIDs(context.Background(), c, spec)
+		if answered || len(ids) != 0 || warning == "" {
+			t.Fatalf("%s answered %v with warning %q, want no IDs and the warning", name, ids, warning)
+		}
+		if !strings.Contains(warning, "gcloud run jobs list") {
+			t.Errorf("%s: the warning names no way to check by hand: %q", name, warning)
+		}
 	}
 }
