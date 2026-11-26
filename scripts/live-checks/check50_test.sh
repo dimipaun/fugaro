@@ -14,7 +14,10 @@
 # policy publish` rebuilds the node out of that config (and REFUSES when the
 # switch names a model no provider entry of it claims), `update`
 # writes FUGARO_MODEL_PRICES into the job's environment, `secrets versions
-# disable/enable` move one version, and `run` writes a record and the reviewer's
+# disable/enable` move one version of the container the job is fed
+# ANTHROPIC_API_KEY from — and answer NOT_FOUND for any other name, the logical
+# `anthropic-api-key` included, which is what the real `gcloud` does — and `run`
+# writes a record and the reviewer's
 # own `model call` lines for the mode that launch was given. The cases that
 # matter are the ones where that model is bent: a priced pin that RUNS, a
 # validate that accepts one, a safeguard that names no switch or another one, a
@@ -61,6 +64,11 @@ slug=edgeappinc-fugarosandbox-9f8e7d6c
 origin=https://github.com/edgeappinc/fugarosandbox.git
 claim=anthropic/claude-sonnet-5.5
 version=3
+# The container the job is fed ANTHROPIC_API_KEY from: the key's secret is
+# derived per scope (gcp.SecretID), so this readable stem and its hash are the
+# only name `gcloud secrets versions` answers for — the logical
+# `anthropic-api-key` names no container on this installation.
+anthropic_secret=fugaro-edgeappinc-fugarosandbox-anthropic-api-key-71102c59f2b0e1e9
 
 # ----------------------------------------------------------------- statectl
 # The mutable state behind the fakes, one file per thing the check reads or
@@ -709,6 +717,11 @@ json=$FAKE_JSON_DIR
 state=$FAKE_STATE_DIR
 
 secret_state() { cat "$state/secret-state" 2>/dev/null || echo ENABLED; }
+# The one container this installation has: the derived name the job is fed from
+# (FAKE_ANTHROPIC_SECRET names another when a case overrides it). Anything else,
+# the logical `anthropic-api-key` included, is a secret that does not exist, and
+# the fake answers NOT_FOUND the way the real `gcloud` does.
+want_secret=${FAKE_ANTHROPIC_SECRET:-fugaro-edgeappinc-fugarosandbox-anthropic-api-key-71102c59f2b0e1e9}
 
 case "${1:-}" in
 config)
@@ -722,12 +735,27 @@ run)
   fi
   ;;
 secrets)
+  got=""
+  for arg in "$@"; do
+    case "$arg" in
+    --secret=*) got=${arg#--secret=} ;;
+    esac
+  done
+  [ -n "$got" ] || got=${4:-}
+  if [ "$got" != "$want_secret" ]; then
+    printf 'ERROR: (gcloud.secrets.versions.%s) NOT_FOUND: Secret [%s] not found or has no versions.\n' "${3:-list}" "$got" >&2
+    exit 1
+  fi
   case "${3:-}" in
   list)
-    printf '[{"name":"projects/p/secrets/anthropic-api-key/versions/3","state":"%s"}]\n' "$(secret_state)"
+    if [ "$mode" = no-versions ]; then
+      printf '[]\n'
+      exit 0
+    fi
+    printf '[{"name":"projects/p/secrets/%s/versions/3","state":"%s"}]\n' "$want_secret" "$(secret_state)"
     ;;
   describe)
-    printf '{"name":"projects/p/secrets/anthropic-api-key/versions/3","state":"%s"}\n' "$(secret_state)"
+    printf '{"name":"projects/p/secrets/%s/versions/3","state":"%s"}\n' "$want_secret" "$(secret_state)"
     ;;
   disable)
     case "$mode" in
@@ -737,7 +765,7 @@ secrets)
       ;;
     esac
     printf 'DISABLED' >"$state/secret-state"
-    printf 'Disabled version [3] of secret [anthropic-api-key].\n'
+    printf 'Disabled version [3] of secret [%s].\n' "$want_secret"
     ;;
   enable)
     case "$mode" in
@@ -747,7 +775,7 @@ secrets)
       ;;
     esac
     printf 'ENABLED' >"$state/secret-state"
-    printf 'Enabled version [3] of secret [anthropic-api-key].\n'
+    printf 'Enabled version [3] of secret [%s].\n' "$want_secret"
     ;;
   esac
   ;;
@@ -856,6 +884,42 @@ JSON
   printf 'unclaimed\nno-key\nclaim\nrepo\n' >"$json/validate-modes"
 }
 
+# job_doc [SECRET] [PLAIN] [SHAPE]: the repository's job as `gcloud run jobs
+# list` carries it, with the two env entries this check reads — FUGARO_REMOTE,
+# which matches the job to the repository, and the ANTHROPIC_API_KEY entry,
+# whose secretRef name is the container step 1 resolves the secret from. An
+# empty SECRET writes a job with no such entry, which is the case the check
+# cannot name a secret on; a PLAIN value writes the entry as a plain variable
+# instead of a mount, which is the shape whose value is a credential and not a
+# name.
+#
+# A mount is written in one of the two spellings the APIs carry it in, and both
+# are fixtures because the check reads both: SHAPE `v1`, the default, is what
+# `gcloud run jobs …` answers with — run/v1's EnvVarSource, `valueFrom
+# .secretKeyRef.{name,key}`, which check197, check330, check611 and check-lc4 all
+# read off a real project — and SHAPE `v2` is the API's own shape, `valueSource
+# .secretKeyRef.{secret,version}`, which the job module writes and `doctor` reads
+# back (internal/cli/doctor_job_mounts.go). Reading one spelling only would stop
+# the check on a job that does mount the key.
+job_doc() { # job_doc [anthropic-secret] [plaintext] [v1|v2]
+  local secret=${1-$anthropic_secret} plain=${2-} shape=${3-v1} mount="" key=
+  if [ "$shape" = v2 ]; then key=",{\"name\":\"FUGARO_FIREBASE_API_KEY\",\"valueSource\":{\"secretKeyRef\":{\"secret\":\"fb-key\",\"version\":\"latest\"}}}"
+  else key=",{\"name\":\"FUGARO_FIREBASE_API_KEY\",\"valueFrom\":{\"secretKeyRef\":{\"name\":\"fb-key\",\"key\":\"latest\"}}}"
+  fi
+  if [ -n "$plain" ]; then
+    mount=",{\"name\":\"ANTHROPIC_API_KEY\",\"value\":\"$plain\"}"
+  elif [ -n "$secret" ]; then
+    if [ "$shape" = v2 ]; then
+      mount=",{\"name\":\"ANTHROPIC_API_KEY\",\"valueSource\":{\"secretKeyRef\":{\"secret\":\"$secret\",\"version\":\"latest\"}}}"
+    else
+      mount=",{\"name\":\"ANTHROPIC_API_KEY\",\"valueFrom\":{\"secretKeyRef\":{\"name\":\"$secret\",\"key\":\"latest\"}}}"
+    fi
+  fi
+  cat <<JSON
+[{"metadata":{"name":"fugaro-run-9f8e7d6c","labels":{"fugaro_repo":"$slug"},"updateTime":"2026-11-20T15:00:00Z"},"spec":{"template":{"spec":{"template":{"spec":{"containers":[{"image":"img","env":[{"name":"FUGARO_REMOTE","value":"$origin"}$key$mount]}]}}}}}}]
+JSON
+}
+
 # The operator's project config, a repository checkout and the job list: the
 # state the check finds before it writes anything. The word names what the
 # published NODE reads, which is what step 7 branches on, and the config written
@@ -878,9 +942,7 @@ JSON
   *) printf '{"sources":["environment"],"budget":{"mode":"enforce"}}\n' >"$dir/state/policy.json" ;;
   esac
   printf '{"project":"fugaro","runs":[],"totals":{"runs":0},"warnings":[]}\n' >"$dir/state/runs.json"
-  cat >"$dir/state/jobs.json" <<JSON
-[{"metadata":{"name":"fugaro-run-9f8e7d6c","labels":{"fugaro_repo":"$slug"},"updateTime":"2026-11-20T15:00:00Z"},"spec":{"template":{"spec":{"template":{"spec":{"containers":[{"image":"img","env":[{"name":"FUGARO_REMOTE","value":"$origin"},{"name":"FUGARO_FIREBASE_API_KEY","valueSource":{"secretKeyRef":{"name":"fb-key"}}}]}]}}}}}}]
-JSON
+  job_doc "$anthropic_secret" >"$dir/state/jobs.json"
   if [ "$word" = policy-routing ]; then
     cat >"$dir/home/.config/fugaro/projects/fugaro.yaml" <<JSON
 project: fugaro
@@ -1040,7 +1102,11 @@ test_happy_path() {
   expect_contains "$fugaro_calls" "fugaro project routing set claude --via openrouter --models claude-sonnet-5-5" "the happy path: the switch is written through the CLI"
   expect_contains "$fugaro_calls" "fugaro models add $claim --route openrouter" "the happy path: the claim is written through the CLI"
   expect_contains "$fugaro_calls" "fugaro models provider set openrouter --allow-data-to edgeappinc/fugarosandbox" "the happy path: the safeguard is written through the CLI"
-  expect_contains "$gcloud_calls" "versions enable 3" "the happy path: the version is enabled again"
+  expect_contains "$gcloud_calls" "versions enable 3 --secret=$anthropic_secret" "the happy path: the version is enabled again"
+  # The derived container, not the logical name: `fugaro-<slug>-anthropic-api-key-<hash>`
+  # is the only secret the job is fed from, and the one whose version moves.
+  expect_contains "$gcloud_calls" "versions list $anthropic_secret" "the happy path: the versions are read from the container the job mounts"
+  expect_absent "$gcloud_calls" "--secret=anthropic-api-key " "the happy path: the logical name is never used as a secret"
   expect_contains "$fugaro_calls" "fugaro update --repo . --project fugaro" "the happy path: the job's environment is put back"
   assert_config_restored "$dir" "the happy path"
   [ "$(cat "$dir/state/secret-state")" = ENABLED ] || fail "the happy path: the key version was left disabled"
@@ -1206,6 +1272,61 @@ test_a_version_that_is_not_enabled_to_begin_with_is_not_measured() {
   expect_contains "$out" "FACT state-before: FAIL" "a version that is not enabled to begin with: the row"
   expect_contains "$out" "not one this check may move" "a version that is not enabled to begin with: why"
   expect_absent "$gcloud_calls" "versions disable" "a version that is not enabled to begin with: nothing is disabled"
+}
+
+test_a_job_that_mounts_no_key_is_not_measured() {
+  local dir=$work/no-key-mount
+  prepare "$dir"
+  job_doc "" >"$dir/state/jobs.json"
+  run_check "$dir"
+  expect_status "$status" 2 "a job with no key mount"
+  expect_contains "$out" "FACT state-before: FAIL" "a job with no key mount: the row"
+  expect_contains "$out" "mounts no ANTHROPIC_API_KEY" "a job with no key mount: why"
+  expect_contains "$out" "CHECK50_ANTHROPIC_SECRET=<the secret>" "a job with no key mount: the one-line fix"
+  expect_absent "$gcloud_calls" "versions list" "a job with no key mount: no secret is read"
+  expect_absent "$gcloud_calls" "versions disable" "a job with no key mount: nothing is moved"
+}
+
+test_a_v2_shaped_mount_is_read_too() {
+  local dir=$work/v2-shape
+  prepare "$dir"
+  job_doc "$anthropic_secret" "" v2 >"$dir/state/jobs.json"
+  run_check "$dir"
+  expect_status "$status" 0 "a job whose mount is spelled the v2 way"
+  expect_contains "$gcloud_calls" "versions list $anthropic_secret" "a v2 mount: the container is read out of secretKeyRef.secret"
+  expect_contains "$gcloud_calls" "versions enable 3 --secret=$anthropic_secret" "a v2 mount: the version moved is that container's"
+}
+
+test_a_key_written_into_the_job_is_not_a_secret_name() {
+  local dir=$work/plain-key
+  prepare "$dir"
+  job_doc "" "plain-value-not-a-key" >"$dir/state/jobs.json"
+  run_check "$dir"
+  expect_status "$status" 2 "a job carrying the key as a plain value"
+  expect_contains "$out" "mounts no ANTHROPIC_API_KEY" "a plain value: the row reads it as no mount at all"
+  expect_absent "$out" "plain-value-not-a-key" "a plain value: the value is never printed for the owner to paste back"
+  expect_absent "$gcloud_calls" "plain-value-not-a-key" "a plain value: the value is never an argument of gcloud"
+  expect_absent "$gcloud_calls" "versions list" "a plain value: no secret is read from it"
+}
+
+test_the_override_names_the_key_container_by_hand() {
+  local dir=$work/override
+  prepare "$dir"
+  local other=fugaro-edgeappinc-fugarosandbox-anthropic-api-key-0000aaaa1111bbbb
+  run_check "$dir" CHECK50_ANTHROPIC_SECRET="$other" FAKE_ANTHROPIC_SECRET="$other"
+  expect_status "$status" 0 "the override"
+  expect_contains "$gcloud_calls" "versions list $other" "the override: the versions are read from the secret it names"
+  expect_contains "$gcloud_calls" "versions enable 3 --secret=$other" "the override: the version it moved is that secret's"
+}
+
+test_a_key_container_with_no_version_is_not_measured() {
+  local dir=$work/no-version
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=no-versions
+  expect_status "$status" 2 "a key container with no version"
+  expect_contains "$out" "FACT state-before: FAIL" "a key container with no version: the row"
+  expect_contains "$out" "lists no version of the secret $anthropic_secret" "a key container with no version: the row names the container it read"
+  expect_absent "$gcloud_calls" "versions disable" "a key container with no version: nothing is disabled"
 }
 
 test_the_no_policy_arm_refuses_without_a_terminal() {
@@ -1447,6 +1568,11 @@ t test_a_publish_that_accepts_the_switch_without_the_claim_is_a_finding
 t test_a_repository_config_that_tolerates_a_routing_key_is_a_finding
 t test_a_key_version_that_cannot_be_re_enabled_is_a_finding
 t test_a_version_that_is_not_enabled_to_begin_with_is_not_measured
+t test_a_job_that_mounts_no_key_is_not_measured
+t test_a_v2_shaped_mount_is_read_too
+t test_a_key_written_into_the_job_is_not_a_secret_name
+t test_the_override_names_the_key_container_by_hand
+t test_a_key_container_with_no_version_is_not_measured
 t test_the_no_policy_arm_refuses_without_a_terminal
 t test_the_no_policy_arm_deletes_when_it_may
 t test_the_policy_routing_arm_republishes
