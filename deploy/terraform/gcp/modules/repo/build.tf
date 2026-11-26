@@ -21,26 +21,27 @@ locals {
   # it is what the release before this one planned: with it empty both gates
   # below are false whatever Go wrote, so this file plans exactly what it
   # planned before it knew about the service. Filled, what it moves is one
-  # accessor list and one check mount, and only for a repository the service
-  # serves — the gate below reads credentials_service_serves, which is false
-  # for every repository the block is absent for and for the one handed the
-  # address without being served, a `vertex` one (G9, D147, D3326) — whose
-  # build fetches both credentials at the address Go writes into its request
-  # (B4.5, D2076).
+  # accessor list and one check mount, and only for a repository the block is
+  # present for — the gate below reads credentials_service, whose presence is
+  # the service's address, so a `vertex` repository's build fetches both
+  # credentials at that address too (G9, D147, D3326): the container its
+  # request would otherwise name is the installation's fugaro_p_<name> copy,
+  # which Go stopped deriving (D3324) and the next update retires, so a
+  # request still naming it is one Cloud Build refuses.
   build_served_secret_classes = ["git", "build"]
 
   # The build's own mounts leave with the class "build" (D2077): the build
   # account's accessor list, the request's availableSecrets and the build
   # step's secrets all go together, and the request carries no secret ID the
   # account may no longer read.
-  build_mounts_served = var.installation.credentials_service != null && var.installation.credentials_service_serves && contains(local.build_served_secret_classes, "build")
+  build_mounts_served = var.installation.credentials_service != null && contains(local.build_served_secret_classes, "build")
 
   # The check job's mount leaves with EITHER class: the job runs as the build
   # account and mounts the repository's git credential (the class "git"), and
   # that credential's accessor is the build account's own, which the class
   # "build" takes away with the rest of the list — a job that mounted a secret
   # its account may not read is a job Cloud Run refuses to create (C2.3).
-  check_mount_served = var.installation.credentials_service != null && var.installation.credentials_service_serves && length(local.build_served_secret_classes) > 0
+  check_mount_served = var.installation.credentials_service != null && length(local.build_served_secret_classes) > 0
 }
 
 resource "google_service_account" "build" {
@@ -54,8 +55,8 @@ resource "google_service_account" "build" {
 # name Readiness resolved to a project-wide container grants the build
 # account access to that same container (design §5).
 #
-# The list goes whole once the service serves this repository's builds (B4.9,
-# D2076, D2077): the request names none of these secrets any more, so an
+# The list goes whole once this repository's builds carry the service's address
+# (B4.9, D2076, D2077): the request names none of these secrets any more, so an
 # accessor kept here would be one nothing reads, and the check job's own mount
 # leaves with it (check.tf).
 resource "google_secret_manager_secret_iam_member" "build" {
@@ -133,14 +134,18 @@ resource "google_project_iam_member" "build" {
 # served, and with what, is the service's own ID-token check (Q6): IAM says who
 # may call it, the service says who is answered.
 #
-# It is granted on the DROP and not on the address (credentials_service_serves):
-# a build fetches the credentials from the service exactly where this file took
-# its accessors away, so the one repository handed the address without a drop —
-# a `vertex` one — plans no grant here and its build reads what it mounts
-# (D3326). The workflow module's own invoker grant reads the address instead,
-# which is that repository's whole reason for carrying the block.
+# It is granted on the ADDRESS (credentials_service present) and not on the
+# serves fact: a build fetches the credentials from the service exactly where
+# this file took its accessors away, and the accessors go with the address —
+# the `vertex` repository included, whose build fetches where a served one's
+# does (IS6). An account that could not invoke the service is a build whose
+# clone step has no credential left at all. The serves fact gates what the
+# SERVICE holds for this repository's job (D2074), which is not this resource.
+# The workflow module's own invoker grant reads the address too, and every
+# other account allowed to call the service is judged by the service's own
+# ID-token check.
 resource "google_cloud_run_v2_service_iam_member" "build_credentials" {
-  count = var.installation.credentials_service == null || !var.installation.credentials_service_serves ? 0 : 1
+  count = var.installation.credentials_service == null ? 0 : 1
 
   project  = var.project
   location = var.installation.credentials_service.region

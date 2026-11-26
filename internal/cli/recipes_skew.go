@@ -269,6 +269,37 @@ func (e *cloudEnv) identityGate(ctx context.Context, slug string, spec *task.Spe
 // *Since constants.
 const vaultSince = "0.26.0"
 
+// vaultNameSince is the first fugaro release whose runner asks the credentials
+// service for a workflow secret BY NAME — version 2 of the route, answered from
+// the project record out of the fugaro_p_<name> grammar (IS2, C1, D3324,
+// D3333) — and it is the second constant the flip's own gate is judged on.
+//
+// It is one release after vaultSince and not a second reading of it: an image
+// at vaultSince knows the fetch but asks the version-1 way, naming the variable
+// and reading the container the per-repository record maps it to. That
+// container is the project copy IS6 stops deriving and IS13 retires and
+// deletes, so a job of this release — which mounts none of its workflow's
+// secrets — leaves such a runner with nothing to read and it stops at bootstrap
+// over a declared secret (the same failure vaultSince refuses one release
+// earlier). It names 0.30.0, the release this plan's S2 and S3 ship in
+// together, the same number l8Since carries for that reason, and
+// docs/release.md's Before-you-tag list is what holds it to the release
+// actually cut — TestVaultNameSinceHasAReleaseBullet is the test that reads
+// that bullet. The direction to fear is the same one: a value below the release
+// that carries IS2 admits a launch whose runner cannot fetch by name.
+const vaultNameSince = "0.30.0"
+
+// vaultNameSubject and vaultNameKnows are this gate's two names in the
+// family's sentence (checkImageSince): what is refused (a launch whose run
+// fetches its workflow secrets by name) and what its job image's runner has to
+// know (the by-name fetch, version 2 of the route). The refusal carries no alt:
+// the name is the whole of what the fetch travels on, so there is no other way
+// for an older image to be given one.
+const (
+	vaultNameSubject = "a run of a repository whose workflow secrets are brokered by name (the job mounts none of them, and the run asks the installation's credentials service for each declared secret's own name rather than for the container a record maps its variable to)"
+	vaultNameKnows   = "the by-name fetch (version 2 of the credentials service's workflow-secrets route, answered from the project record out of the fugaro_p_ grammar)"
+)
+
 // policySince is the first fugaro release whose launcher and runner read the
 // project's policy (the release phase 1 of the project-centric model ships
 // in, R4). Like cloneSince and unlike the policy's own integer `version` or

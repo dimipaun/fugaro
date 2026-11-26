@@ -968,9 +968,10 @@ func VaultAccessorAllowDelete(p *tf.Plan, spec RepoSpec) []string {
 // The filter is the drop's own gate and the repository's own declarations,
 // because a served spec records no build list at all: RepoSpec.BuildMountsServed
 // is the same answer modules/repo/build.tf's local.build_mounts_served computes
-// (the class "build" of config.BuildServedSecretClasses, on a repository the
-// service serves — G9), and under it the module declares no accessor of this
-// resource, so every delete of one the plan carries is the flip's. spec.Secrets
+// (the class "build" of config.BuildServedSecretClasses, on a repository whose
+// build carries the credentials service's address — IS6), and under it the
+// module declares no accessor of this resource, so every delete of one the plan
+// carries is the flip's. spec.Secrets
 // is what says the name is still this repository's: it holds every logical name
 // the root still declares (the mounts SecretMounts produced before the flips
 // took them off the spec), so the accessor of a secret the configuration has

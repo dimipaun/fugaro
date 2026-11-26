@@ -239,7 +239,9 @@ type InstallationSpec struct {
 	// docs/project-secrets/spec.md §4). Installation() fills it from the
 	// local config's eligibility; DiscoverInstallation then unions in every
 	// correctly-labelled container that already exists, so a config edit
-	// can never shrink the module's for_each (N3).
+	// can never shrink the module's for_each (N3). A workflow-secret name is
+	// no longer eligible (IS6/D3324, projectSecretContainers); a live container
+	// for one the record does not mark copied stays in the union.
 	ProjectSecrets map[string]string `json:"project_secrets,omitempty"`
 	// OwnGitSecrets is set by LiveGitSecrets and read only by
 	// WithPlannedProjectSecrets; it never reaches tfvars.
@@ -3024,10 +3026,20 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 // project_secrets entry with a non-empty allow_data_to, every provider's own
 // key unconditionally (§3a: a provider's key is eligible for project storage
 // whether or not its allow_data_to list exists, and an absent list is a
-// valid "every repository" state, not a reason to leave the container out),
-// every named Claude account with a non-empty allow_data_to, and every
-// workflow_secrets entry with a non-empty allow_data_to (D1263). A reserved
-// name with no project_secrets entry has no container at all.
+// valid "every repository" state, not a reason to leave the container out)
+// and every named Claude account with a non-empty allow_data_to (D1263). A
+// reserved name with no project_secrets entry has no container at all.
+//
+// A workflow_secrets entry is no longer one of them (IS6, D3324): its value
+// lives in the installation's own fugaro_p_<name> copy from the update that
+// copied it (IS5/D3325), and the fetch reads it there, so a second container
+// under the project-secret spelling is one no job mounts and no run asks for.
+// Nothing here reads the project record — the installation root is applied
+// before any repository is — but a name whose copy the record does not mark
+// yet keeps its live container anyway: DiscoverInstallation unions the live
+// containers in before the map reaches Terraform (N3), and that is what keeps
+// a skipped name's mount, grants and copy standing until a later update copies
+// it.
 //
 // This is only the config half: DiscoverInstallation unions the live
 // containers in before the map reaches Terraform (N3).
@@ -3047,11 +3059,6 @@ func projectSecretContainers(lc *localcfg.Config) map[string]string {
 		if len(lc.ClaudeAccounts[name].AllowDataTo) > 0 {
 			s := config.ClaudeAccountSecret(name)
 			out[s] = gcp.ProjectSecretID(lc.Name, s)
-		}
-	}
-	for _, name := range slices.Sorted(maps.Keys(lc.WorkflowSecrets)) {
-		if len(lc.WorkflowSecrets[name].AllowDataTo) > 0 {
-			out[name] = gcp.ProjectSecretID(lc.Name, name)
 		}
 	}
 	return out
