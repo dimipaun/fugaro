@@ -289,31 +289,49 @@ func TestImageSinceKeepsTheFileDecidingWithACheckout(t *testing.T) {
 	}
 }
 
-// mappedEntryName reads the map under the repository's canonical form, which
-// is the form the map's keys are validated in and the form the resolver looks
-// a repository up by: a `--repo` spelled in another case must reach the same
-// entry, and an empty name is no mapping.
+// mappedEntryName reads the map the way the resolver does: under
+// Canonical(provider, repo) when the project's effective map is repo_images,
+// which is the form its keys are validated in, and under the repository's
+// canonical form when it is the legacy image_map. A `--repo` spelled in another
+// case must reach the same entry, two providers of one name must reach two
+// entries, and an empty name is no mapping.
 func TestMappedEntryNameReadsTheMapCanonically(t *testing.T) {
-	m := map[string]string{"acme/app": "sandbox-web", "acme/blank": ""}
+	byProvider := map[string]string{
+		"github/acme/app":    "sandbox-web",
+		"bitbucket/acme/app": "sandbox-svc",
+		"github/acme/blank":  "",
+	}
+	byName := map[string]string{"acme/app": "sandbox-web", "acme/blank": ""}
 	for _, tc := range []struct {
-		name, repo string
-		want       string
-		ok         bool
+		name           string
+		provider       string
+		images         map[string]string
+		fromRepoImages bool
+		repo           string
+		want           string
+		ok             bool
 	}{
-		{"as the map is written", "acme/app", "sandbox-web", true},
-		{"in another case", "Acme/App", "sandbox-web", true},
-		{"not in the map", "acme/other", "", false},
-		{"a name that is no repository", "not a repo", "", false},
-		{"a blank name is no mapping", "acme/blank", "", false},
+		{"repo_images as written", "github", byProvider, true, "acme/app", "sandbox-web", true},
+		{"the other provider's key", "bitbucket", byProvider, true, "acme/app", "sandbox-svc", true},
+		{"repo_images in another case", "github", byProvider, true, "Acme/App", "sandbox-web", true},
+		{"repo_images with no key for this repository", "bitbucket", byProvider, true, "acme/other", "", false},
+		{"the legacy map by bare name", "", byName, false, "acme/app", "sandbox-web", true},
+		{"the legacy map in another case", "", byName, false, "Acme/App", "sandbox-web", true},
+		{"not in the map", "", byName, false, "acme/other", "", false},
+		{"a name that is no repository", "", byName, false, "not a repo", "", false},
+		{"a blank name is no mapping", "", byName, false, "acme/blank", "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := mappedEntryName(m, tc.repo)
+			got, ok := mappedEntryName(tc.provider, tc.images, tc.fromRepoImages, tc.repo)
 			if got != tc.want || ok != tc.ok {
-				t.Errorf("mappedEntryName(%v, %q) = %q, %v; want %q, %v", m, tc.repo, got, ok, tc.want, tc.ok)
+				t.Errorf("mappedEntryName(%q, %v, %v, %q) = %q, %v; want %q, %v", tc.provider, tc.images, tc.fromRepoImages, tc.repo, got, ok, tc.want, tc.ok)
 			}
 		})
 	}
-	if _, ok := mappedEntryName(nil, "acme/app"); ok {
+	if _, ok := mappedEntryName("github", nil, true, "acme/app"); ok {
+		t.Error("a project that maps nothing named an entry")
+	}
+	if _, ok := mappedEntryName("", nil, false, "acme/app"); ok {
 		t.Error("a project that maps nothing named an entry")
 	}
 }
