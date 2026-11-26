@@ -16,14 +16,10 @@ import (
 
 // model_grades_skew_test.go is E2's half of the plan's second Convention: a key
 // a strict decoder refuses on an older runner needs its "Needs fugaro X.Y.Z"
-// gate in the release that adds it. The two model grades have two homes — a
-// repository's own fugaro.yaml and the project layer's defaults.model_grades —
-// so the gates are planningSince's: both halves judged, from the key being
-// written rather than the grade it holds.
-//
-// The repository's half is gated although the merge drops and records what it
-// writes (G3): what an older runner refuses is the line, not the grade, and the
-// line is the operator's.
+// gate in the release that adds it. The two model grades have one home now —
+// the project layer's defaults.model_grades, a repository's own grade models
+// having left its file (config.LiftedKeys) — so the gate is judged from the key
+// being written rather than the grade it holds.
 
 // gradesLayerParsed parses a layer that writes defaults.model_grades, the way
 // repoEngine's resolution parses one.
@@ -93,16 +89,15 @@ func TestModelGradesSinceHasAReleaseBullet(t *testing.T) {
 }
 
 // TestUpdateRepoRefusesModelGradesOnAnOlderBaseImage is modelGradesSince's gate
-// in fugaro update --repo, the same shape as planningSince's: both files are
-// decoded with KnownFields by every release, so a runner older than the key dies
-// at bootstrap on it, and the gate refuses to deploy a job that would. The
-// boundary is the constant's own: one release below is refused, the constant and
-// one above pass, a base that is not a release only warns, and no base at all
-// passes.
+// in fugaro update --repo: the layer is decoded with KnownFields by every
+// release, so a runner older than the key dies at bootstrap on it, and the gate
+// refuses to deploy a job that would. The boundary is the constant's own: one
+// release below is refused, the constant and one above pass, a base that is not
+// a release only warns, and no base at all passes.
 //
 // The judged half is the key being written and not the grade it holds: a
-// `model_grades:` with nothing under it, one grade and two are the same line to
-// an older runner's decoder.
+// defaults.model_grades with nothing under it, one grade and two are the same
+// line to an older runner's decoder.
 func TestUpdateRepoRefusesModelGradesOnAnOlderBaseImage(t *testing.T) {
 	below, above := shiftRelease(t, modelGradesSince, -1), shiftRelease(t, modelGradesSince, 1)
 	lc := func(ref string) *localcfg.Config {
@@ -118,47 +113,37 @@ func TestUpdateRepoRefusesModelGradesOnAnOlderBaseImage(t *testing.T) {
 	r := &initRun{o: &initOptions{}, cmd: cmd, w: &out}
 
 	older := "ghcr.io/dimipaun/fugaro-base:" + below
-	for _, cfg := range []*config.Config{
-		{RepoModelGradesSet: true},
-		{RepoModelGradesSet: true, Layer: gradesLayerParsed(t)},
-		{Layer: gradesLayerParsed(t)},
-	} {
-		err := r.gateModelGrades(r.o, "acme/app", lc(older), cfg)
-		if err == nil || ExitCode(err) != ExitUserError {
-			t.Fatalf("%+v: err = %v, want refused", cfg, err)
-		}
-		for _, want := range []string{"fugaro " + modelGradesSince + " or later", older + ", release " + below, "fugaro update --base base"} {
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("%+v: %v lacks %q", cfg, err, want)
-			}
-		}
-		if errOut.Len() != 0 {
-			t.Errorf("stderr = %q, want none (refused, not warned)", errOut.String())
+	cfg := &config.Config{Layer: gradesLayerParsed(t)}
+	err := r.gateModelGrades(r.o, "acme/app", lc(older), cfg)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("%+v: err = %v, want refused", cfg, err)
+	}
+	for _, want := range []string{"fugaro " + modelGradesSince + " or later", older + ", release " + below, "fugaro update --base base", "the project layer's defaults.model_grades (read for acme/app)"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%v lacks %q", err, want)
 		}
 	}
-	if err := r.gateModelGrades(r.o, "acme/app", lc(older), &config.Config{RepoModelGradesSet: true, Layer: gradesLayerParsed(t)}); !strings.Contains(err.Error(), "fugaro.yaml's model_grades: block and the project layer's defaults.model_grades of acme/app") {
-		t.Errorf("both files: %v does not name both", err)
-	}
-	if err := r.gateModelGrades(r.o, "acme/app", lc(older), &config.Config{Layer: gradesLayerParsed(t)}); !strings.Contains(err.Error(), "the project layer's defaults.model_grades (read for acme/app)") {
-		t.Errorf("the layer alone: %v does not name the layer", err)
+	if errOut.Len() != 0 {
+		t.Errorf("stderr = %q, want none (refused, not warned)", errOut.String())
 	}
 
 	for _, ref := range []string{"ghcr.io/dimipaun/fugaro-base:" + modelGradesSince, "ghcr.io/dimipaun/fugaro-base:" + above, ""} {
 		var warn bytes.Buffer
-		if err := refuseModelGradesSkew("acme/app", true, false, ref, &warn); err != nil || warn.Len() != 0 {
+		if err := refuseModelGradesSkew("acme/app", true, ref, &warn); err != nil || warn.Len() != 0 {
 			t.Errorf("%q: err = %v, warn = %q, want neither", ref, err, warn.String())
 		}
 	}
 	var warn bytes.Buffer
-	if err := refuseModelGradesSkew("acme/app", true, false, "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c", &warn); err != nil {
+	if err := refuseModelGradesSkew("acme/app", true, "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c", &warn); err != nil {
 		t.Errorf("dev base: err = %v, want a warning only", err)
 	}
 	if !strings.Contains(warn.String(), "not a release base image") || !strings.Contains(warn.String(), "is not checked") {
 		t.Errorf("dev base: warn = %q", warn.String())
 	}
 
-	// A configuration that writes no model_grades asks nothing of the image,
-	// in either home.
+	// A configuration that writes no defaults.model_grades asks nothing of the
+	// image, and neither does a repository's own block: the key left its file
+	// (config.LiftedKeys), so nothing the file writes is gated on an image.
 	for _, cfg := range []*config.Config{nil, {}, {Layer: &config.ProjectLayer{}}} {
 		if err := r.gateModelGrades(r.o, "acme/app", lc(older), cfg); err != nil {
 			t.Errorf("%+v: err = %v, want none", cfg, err)
@@ -168,13 +153,13 @@ func TestUpdateRepoRefusesModelGradesOnAnOlderBaseImage(t *testing.T) {
 	// --forget and --plan-only deploy nothing, so neither is refused;
 	// --print-vars is judged like a deploy and writes nothing to stdout.
 	for _, o := range []*initOptions{{planOnly: true}, {forget: true}} {
-		if err := (&initRun{o: o, cmd: cmd, w: &out}).gateModelGrades(o, "acme/app", lc(older), &config.Config{RepoModelGradesSet: true}); err != nil {
+		if err := (&initRun{o: o, cmd: cmd, w: &out}).gateModelGrades(o, "acme/app", lc(older), &config.Config{Layer: gradesLayerParsed(t)}); err != nil {
 			t.Errorf("%+v: err = %v, want none", o, err)
 		}
 	}
 	out.Reset()
 	pv := &initOptions{printVars: true}
-	if err := (&initRun{o: pv, cmd: cmd, w: io.Discard}).gateModelGrades(pv, "acme/app", lc(older), &config.Config{RepoModelGradesSet: true}); err == nil {
+	if err := (&initRun{o: pv, cmd: cmd, w: io.Discard}).gateModelGrades(pv, "acme/app", lc(older), &config.Config{Layer: gradesLayerParsed(t)}); err == nil {
 		t.Fatal("--print-vars: want refused")
 	}
 	if out.Len() != 0 {
@@ -182,11 +167,12 @@ func TestUpdateRepoRefusesModelGradesOnAnOlderBaseImage(t *testing.T) {
 	}
 }
 
-// TestRunRefusesModelGradesOnAnOlderBaseImage is modelGradesSince's launch gate
-// for the repository's own half: the judge is the workflow's build record, as it
-// is for every other per-workflow image gate (checkImageSince), and the boundary
-// is the constant's own. The workflow here is a base-kind one, so the record is
-// what the gate reads.
+// TestRunRefusesModelGradesOnAnOlderBaseImage is modelGradesSince's launch gate:
+// the judge is the workflow's build record, as it is for every other
+// per-workflow image gate (checkImageSince), and the boundary is the constant's
+// own. The key has one home now — the project layer's defaults.model_grades, a
+// repository's own grade models having left its file (config.LiftedKeys) — so
+// the layer is what the gate reads.
 func TestRunRefusesModelGradesOnAnOlderBaseImage(t *testing.T) {
 	below, above := shiftRelease(t, modelGradesSince, -1), shiftRelease(t, modelGradesSince, 1)
 	for _, c := range []struct {
@@ -199,9 +185,12 @@ func TestRunRefusesModelGradesOnAnOlderBaseImage(t *testing.T) {
 	} {
 		t.Run(c.rel, func(t *testing.T) {
 			f := newCloudFixture(t)
-			configSkewCheckout(t, f, configSkewHead+
-				"model_grades:\n  strong: { model: anthropic/claude-sonnet-5.5, access: ai-gateway-main }\n"+configSkewWorkflow)
-			writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:"+c.rel)
+			isolateCache(t)
+			publishedLayer(t, f, layerWithDefaults("  model_grades:\n    strong: { model: anthropic/claude-sonnet-5.5 }\n"))
+			dir := layerCheckout(t, f, minimalAnchored)
+			registerOtherLocally(t, f)
+			commitRef(t, dir, "main")
+			writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, "ghcr.io/dimipaun/fugaro-base:"+c.rel)
 			_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
 			if !c.refused {
 				if err != nil {
@@ -213,12 +202,12 @@ func TestRunRefusesModelGradesOnAnOlderBaseImage(t *testing.T) {
 				t.Fatalf("err = %v, want the launch refused", err)
 			}
 			for _, want := range []string{
-				"fugaro.yaml's model_grades: block of acme/other",
-				"knows the model_grades: block",
+				"the project layer's defaults.model_grades (read for acme/other)",
+				"knows the project layer's defaults.model_grades",
 				"fugaro " + modelGradesSince + " or later",
 				"ghcr.io/dimipaun/fugaro-base:" + c.rel + ", release " + c.rel,
 				imageGateRemedy,
-				"; or remove the model_grades: block from fugaro.yaml",
+				"; or remove defaults.model_grades from the project layer",
 			} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("%v lacks %q", err, want)
@@ -231,25 +220,28 @@ func TestRunRefusesModelGradesOnAnOlderBaseImage(t *testing.T) {
 	}
 }
 
-// TestRunRefusesANullGradesBlockOnAnOlderBaseImage: `model_grades:` with nothing
-// under it writes the key and decodes to no grades at all, so the gate judges
-// the key and not the value — an older runner's KnownFields reader refuses the
-// whole file either way, and a gate that read the resolved block alone would
-// launch a run that dies at bootstrap on a line the operator did write.
+// TestRunRefusesANullGradesBlockOnAnOlderBaseImage: `defaults.model_grades: {}`
+// writes the key and holds no grade at all, so the gate judges the key and not
+// the value — an older runner's KnownFields reader refuses the layer either way,
+// and a gate that read the resolved block alone would launch a run that dies at
+// bootstrap on a line the operator did write. The layer's own validator refuses
+// a null block ("must be a mapping"), so the empty mapping is what this can be.
 func TestRunRefusesANullGradesBlockOnAnOlderBaseImage(t *testing.T) {
 	f := newCloudFixture(t)
-	configSkewCheckout(t, f, configSkewHead+"model_grades:\n"+configSkewWorkflow)
-	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, modelGradesSince, -1))
-	wantRefused(t, f, "fugaro.yaml's model_grades: block of acme/other needs a job image whose runner knows the model_grades: block (fugaro "+modelGradesSince+" or later)",
+	isolateCache(t)
+	publishedLayer(t, f, layerWithDefaults("  model_grades: {}\n"))
+	dir := layerCheckout(t, f, minimalAnchored)
+	registerOtherLocally(t, f)
+	commitRef(t, dir, "main")
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, modelGradesSince, -1))
+	wantRefused(t, f, "the project layer's defaults.model_grades (read for acme/other) needs a job image whose runner knows the project layer's defaults.model_grades (fugaro "+modelGradesSince+" or later)",
 		"run", "--run-id", "20261008-100000-abcd", "A task")
 }
 
-// TestRunRefusesTheLayersModelGradesOnAnOlderBaseImage: the other file the key
-// can come from is the project layer's defaults.model_grades, and the subject
-// says so — that block is the operator's to remove and publishing it again fixes
-// every repository it reaches, while a repository's own file says nothing about
-// it. The workflow is a checkout: clone one, so the layer's half is judged
-// against the installation's own base image too.
+// TestRunRefusesTheLayersModelGradesOnAnOlderBaseImage is the same gate's
+// message: the subject says which file wrote the key, because that block is the
+// operator's to remove and publishing the layer again fixes every repository it
+// reaches, while a repository's own file says nothing about it.
 func TestRunRefusesTheLayersModelGradesOnAnOlderBaseImage(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
@@ -301,37 +293,26 @@ func validateGrades(t *testing.T, gradesBlock string) (validateOutput, error) {
 	return doc, err
 }
 
-// TestValidateWarnsThatModelGradesNeedEveryJobImage: the file is valid — the
-// skew is the installation's, not the file's — so validate warns rather than
-// refusing, the shape planningImageWarnings has, and names both ways to move an
-// image. Every spelling of the key counts, since it is the key an older runner
-// refuses, and a file that writes none is warned about nothing. A grade that
-// names no model is a Problem and not a warning, which is the other half: the
-// key is admitted, its value is still held to the craft rules.
-func TestValidateWarnsThatModelGradesNeedEveryJobImage(t *testing.T) {
+// TestValidateDoesNotGateARepositorysGradesOnAnImage: a repository's own grade
+// models left its file (config.LiftedKeys), so validate warns about the job
+// images for the layer's key alone (the test below) — every spelling of the key
+// in the file, since it is the key an older runner refuses, is warned about
+// nothing here. A grade that names no
+// model is a Problem and not a warning, which is the other half: the key is
+// admitted, its value is still held to the craft rules.
+func TestValidateDoesNotGateARepositorysGradesOnAnImage(t *testing.T) {
 	for _, block := range []string{
 		"model_grades:\n  strong: { model: anthropic/claude-sonnet-5.5 }\n",
 		"model_grades:\n  strong: { model: anthropic/claude-sonnet-5.5, access: ai-gateway-main }\n",
 		"model_grades:\n",
 	} {
-		doc, err := validateGrades(t, block)
-		if err != nil {
-			t.Fatalf("%q: err = %v, want a valid file", block, err)
-		}
-		if !has(doc.Warnings, "model_grades", "needs fugaro "+modelGradesSince) {
-			t.Errorf("%q: warnings = %+v, want the grades warning", block, doc.Warnings)
-		}
-		for _, want := range []string{"fugaro update --base base", "fugaro image refresh"} {
-			if !has(doc.Warnings, "model_grades", want) {
-				t.Errorf("%q: the warning does not name %q: %+v", block, want, doc.Warnings)
-			}
-		}
-		if has(doc.Problems, "model_grades", "") {
-			t.Errorf("%q: the key was refused, and the file is valid: %+v", block, doc.Problems)
+		doc, _ := validateGrades(t, block)
+		if has(doc.Warnings, "model_grades", "needs fugaro "+modelGradesSince) {
+			t.Errorf("%q: warnings = %+v, want no grades warning: the key is the layer's", block, doc.Warnings)
 		}
 	}
-	if doc, err := validateGrades(t, ""); err != nil || has(doc.Warnings, "model_grades", "") {
-		t.Errorf("a file that writes no model_grades was warned about: %+v, %v", doc.Warnings, err)
+	if doc, _ := validateGrades(t, ""); has(doc.Warnings, "model_grades", "") {
+		t.Errorf("a file that writes no model_grades was warned about: %+v", doc.Warnings)
 	}
 	doc, _ := validateGrades(t, "model_grades:\n  strong: {}\n")
 	if !has(doc.Problems, "model_grades.strong.model", "names the model") {
@@ -367,11 +348,12 @@ func TestValidateWarnsWhenTheProjectLayerSetsModelGrades(t *testing.T) {
 // stage has to carry it forward as well as move the rules generation, the base
 // image and the plugin.
 //
-// The gate judges the base image the installation recorded (the previous
-// release's, 1.2.2, which is newer than modelGradesSince) and lets the run
-// through: writing the key costs no second command. The other reading is the
-// point — a gate that refused here would make writing the key an operator step,
-// and `fugaro update` is the one command the user is told to run.
+// Nothing gates the file's key: a repository's own grade models are dropped and
+// named by the lift (DK1, config.LiftedKeys), and the gate judges the project
+// layer's defaults.model_grades, which this fixture's layer writes none of. The
+// other reading is the point — a gate that refused here would make writing the
+// key an operator step, and `fugaro update` is the one command the user is told
+// to run.
 func TestPolicyPreviousVersionConverges(t *testing.T) {
 	r := newConvergeRigYAML(t, v7Node(), refreshYAML+
 		"model_grades:\n  strong: { model: anthropic/claude-sonnet-5.5, access: ai-gateway-main }\n")
@@ -391,14 +373,14 @@ func TestPolicyPreviousVersionConverges(t *testing.T) {
 // than modelGradesSince, which is what a person upgrading from the release
 // before the key has, in a checkout whose fugaro.yaml writes model_grades.
 // TestPolicyPreviousVersionConverges records 1.2.2, above the constant, so it
-// would pass whether or not the gate was ever reached.
+// would pass whether or not the images stage had moved it.
 //
-// `fugaro update` still converges in one run, and the second assertion is why:
-// the images stage moves the base image onto this release before the repository
-// stage reads the config its gate judges (repoEngine's loadRepoConfig, after the
-// images stage in initflow's order), so the gate is handed this release's image.
-// A gate that judged the config as the run found it would refuse here and turn
-// writing the key into an operator step.
+// `fugaro update` still converges in one run, and nothing in the repository
+// stage refuses the file's key on the way: a repository's own grade models are
+// dropped and named by the lift (DK1, config.LiftedKeys) and the grades gate
+// judges the project layer, which this fixture writes none of. The second
+// assertion is the images stage's own: a predated base image is moved onto this
+// release, never a refusal.
 func TestPolicyConvergesFromABaseImageThatPredatesGrades(t *testing.T) {
 	r := newConvergeRigYAML(t, v7Node(), refreshYAML+
 		"model_grades:\n  strong: { model: anthropic/claude-sonnet-5.5 }\n")

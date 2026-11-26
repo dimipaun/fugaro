@@ -6328,9 +6328,9 @@ func (r *initRun) gatePlanning(o *initOptions, repo string, lc *localcfg.Config,
 
 // gateModelGrades is fugaro update --repo's gate for modelGradesSince:
 // refuseModelGradesSkew, with gateRigor's escapes and for its reason, and
-// gatePlanning's shape: the key has two homes — the repository's own file and
-// the project layer's defaults.model_grades — so both halves are judged, each
-// by the key being written rather than the grade it holds.
+// gateWorkflowAB's one-file shape: the key is the project layer's
+// defaults.model_grades, since a repository's own grade models left its file
+// (config.LiftedKeys).
 func (r *initRun) gateModelGrades(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
 	if o.forget || o.planOnly || cfg == nil {
 		return nil
@@ -6339,7 +6339,7 @@ func (r *initRun) gateModelGrades(o *initOptions, repo string, lc *localcfg.Conf
 	if o.printVars {
 		w = r.cmd.ErrOrStderr()
 	}
-	return refuseModelGradesSkew(repo, cfg.RepoModelGradesSet, cfg.Layer.SetsModelGrades(), lc.BaseImage(config.BaseKind), w)
+	return refuseModelGradesSkew(repo, cfg.Layer.SetsModelGrades(), lc.BaseImage(config.BaseKind), w)
 }
 
 // gateWorkflowAB is fugaro update --repo's gate for workflowABSince:
