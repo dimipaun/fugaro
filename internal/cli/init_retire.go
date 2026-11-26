@@ -725,7 +725,7 @@ func (r *initRun) retireSharedRoot(ctx context.Context, c *infra.Clients, t *tf.
 		// neither is --json, a pipe, --non-interactive or an agent's session
 		// (retireConfirm's own rule, asked here so that nothing is removed
 		// from the state before the run knows it can ask).
-		r.noteRootRetireHold(spec, "no confirmation can be asked in this session", "run fugaro update at a terminal to retire it")
+		r.noteRootRetireHold(spec, "no confirmation can be asked in this session", "a later update at a terminal retires it")
 		return nil
 	}
 	if err := r.retirePlan(ctx, c, t, wd, spec, rets, opts, infra.Imports{}); err != nil {

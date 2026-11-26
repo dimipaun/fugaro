@@ -59,6 +59,7 @@ var forgeKindGoSites = map[string]string{
 	"internal/cli/init_credentials.go":         "the git credential the switch's record requires of a GitHub repository's bundle, the App key, since the URL it hands out opens that far without one",
 	"internal/cli/init_firebase.go":            "the Firebase init's GitHub repositories",
 	"internal/cli/init_repo_target.go":         "init's GitHub App check on the provider a repository already names",
+	"internal/cli/init_retire.go":              "the Bitbucket repository whose shared job clones through the proxy alone: the retirement of its whole root waits for the switch (M2, D2306)",
 	"internal/cli/launch_budget.go":            "the proxied-Bitbucket read a launch makes",
 	"internal/cli/orchestrator_issuesync.go":   "the kind the repository an issue is read and opened on: the issue route reads and opens GitHub issues alone, so a repository this installation records as another kind is refused rather than reached for (B4, D2439)",
 	"internal/cli/orchestrator_labels.go":      "the kind the repository an item is on is labelled through: a GitHub one is refused without the App ID the credentials service signs its write with, and a Bitbucket one gets the client whose Supported is false (D2436)",
