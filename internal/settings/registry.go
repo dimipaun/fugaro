@@ -223,7 +223,7 @@ var yamlMeta = map[string]Row{
 	// every repository of it.
 	"agent.models.vision": {
 		Owner:   "models",
-		Default: unset("none: every stage keeps the coder's own model"),
+		Default: unset("none: refused where the coder cannot read an image and the task names one"),
 		Doc:     docVision,
 	},
 	// The diagnose slot (D1607) is the model `fugaro troubleshoot` runs on,
@@ -815,7 +815,7 @@ var layerRows = []Row{
 	// repository of the project, and a layer that leaves it out leaves each
 	// repository's own row to decide — including the empty answer, which is
 	// the one slot whose empty answer is not the layer's model.
-	layerRow("defaults.agent.models.vision", "none: every stage keeps the coder's own model", "models", docVision),
+	layerRow("defaults.agent.models.vision", "none: refused where the coder cannot read an image and the task names one", "models", docVision),
 	// The diagnose slot's layer row (D1607): the layer sets the local
 	// diagnosis's model for every repository of the project, and a layer that
 	// states nothing leaves Fugaro's own choice to the command.

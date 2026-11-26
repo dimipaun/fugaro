@@ -46,7 +46,7 @@ The remote agent cannot see this conversation, your files or the user's machine:
 
 ## A task that names a picture
 
-A task naming an image file (`docs/shot.png`, "the golden PNG") is refused at bootstrap, before any stage spends, when the coder model has no image rate and no model for images covers it; the sentence names the fix — `agent.models.vision` in the project layer, priced through `model_prices`' `image_tokens` — which is the user's config, not a retry. Where the slot is set, the coder-role stages of a run that names an image run that model — every other run keeps the coder's own model — and the reviewer keeps its own.
+A task naming an image file (`docs/shot.png`, "the golden PNG") is refused at bootstrap, before any stage spends, when the coder model has no image rate and no model for images covers it; the sentence names the fix — `agent.models.vision` in the project layer, priced through `model_prices`' `image_tokens` — which is the user's config, not a retry. Where the slot is set, only a run naming an image runs it; the reviewer keeps its own.
 
 ## Runs on a long-lived branch
 
