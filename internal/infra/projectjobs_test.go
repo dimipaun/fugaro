@@ -2388,14 +2388,14 @@ return string(got.Payload.Data), nil
 	}
 }
 
-// Retiring a project job is deferred (plan task 3.2's fix round, review item
-// 4): the module protects the job from deletion and has no allow_job_delete,
-// unlike the workflow module. A profile removed, or one whose secrets change
-// its account and so its job's name, plans the old module instance's delete;
-// the guard refuses it without --allow-delete, and with it the apply would
-// destroy the launchers' grants on the job and then fail on the deletion
-// protection. So the delete of a project job is refused before the apply
-// whatever --allow-delete names, with the way back and the reason.
+// The delete of a project job is refused before the apply whatever
+// --allow-delete names, with the run that settles it named (plan task 3.2's
+// fix round, review item 4; issue #3686 made `fugaro update` retire such a job
+// before the plan, so what reaches this refusal is a job THIS run did not
+// retire — an init, a --plan-only, a state removal that failed). The module
+// protects the job from deletion and has no allow_job_delete, unlike the
+// workflow module: an apply let through would destroy the launchers' grants on
+// the job and then fail on the deletion protection.
 //
 // The review-only variant of a project job is refused with it (the owner's
 // ruling of 2026-11-04): it is the same module instance over the same axis
@@ -2407,7 +2407,7 @@ return string(got.Payload.Data), nil
 // the "module.project_review[" prefix from installation.go's hints — the
 // variant's branches below fail (the refusal does not fire, or the delete
 // comes back with no hint at all).
-func TestProjectJobDeletesAreRefusedUntilRetirementExists(t *testing.T) {
+func TestProjectJobDeletesThisRunDidNotRetireAreRefused(t *testing.T) {
 	coding := `module.project["` + gcp.ProjectJobName("standard", "github", "") + `"].google_cloud_run_v2_job.this`
 	variant := `module.project_review["` + credsvc.ReviewJobName("standard", "github", config.DefaultClaudeAccount) + `"].google_cloud_run_v2_job.this`
 	for _, job := range []string{coding, variant} {
@@ -2417,7 +2417,7 @@ func TestProjectJobDeletesAreRefusedUntilRetirementExists(t *testing.T) {
 			if err == nil {
 				t.Fatalf("%v of %s is not refused", acts, job)
 			}
-			for _, want := range []string{job, "retiring a project job is not supported yet", "deletion protection", "restore the profile"} {
+			for _, want := range []string{job, "this run did not retire", "fugaro update", "no profile, provider and account names"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("%v: err = %v, want it to name %q", acts, err, want)
 				}

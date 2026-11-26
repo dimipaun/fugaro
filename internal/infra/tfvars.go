@@ -2251,10 +2251,11 @@ func CarriedProjectJobs(vars, prev []byte, profiles []string) ([]byte, error) {
 	for _, p := range profiles {
 		want[p] = true
 	}
-	return carriedProjectJobs(vars, prev, func(job map[string]any) bool {
+	next, _, err := carriedProjectJobs(vars, prev, func(_ string, job map[string]any) bool {
 		profile, _ := job["profile"].(string)
 		return want[profile]
 	})
+	return next, err
 }
 
 // CarriedProjectJobAccounts returns vars with every shared job of the named
@@ -2311,36 +2312,77 @@ func CarriedProjectJobAccounts(vars, prev []byte, accounts []ProjectJobAccount) 
 	for _, a := range accounts {
 		want[a] = true
 	}
-	return carriedProjectJobs(vars, prev, func(job map[string]any) bool {
+	next, _, err := carriedProjectJobs(vars, prev, func(_ string, job map[string]any) bool {
 		profile, _ := job["profile"].(string)
 		provider, _ := job["provider"].(string)
 		account, _ := job["account"].(string)
 		return want[ProjectJobAccount{Profile: profile, Provider: provider, Account: account}]
 	})
+	return next, err
 }
 
-// carriedProjectJobs is the walk the two carries above share: every entry of
+// CarriedProjectJobNames returns vars with the named shared jobs that the
+// document prev carries and vars lack, taken whole from prev — the coding job
+// of each name (ProjectJobsKey) and its review-only variant
+// (ProjectReviewJobsKey) — and the names it took, in order.
+//
+// It is the carry for the instances a retirement KEEPS because a run is on them
+// or because whether one is could not be read (internal/cli's retireProjectJobs,
+// issue #3686). Such an instance is left exactly as it is, and the job's name is
+// exactly what the document this run composes does not carry — that is what
+// makes the instance a retirement at all — so a state row left in place without
+// the record's own entry beside it is a plan that destroys the job a run is on,
+// and with it the service account and the grants that run's later calls reach
+// through. Putting the record's entry back is what leaves the instance whole,
+// and the name is the module's for_each key, so nothing is derived here: the job
+// carried is the job the run that deployed it wrote (S10's own rule for the
+// image beside it).
+//
+// The caller names only the instances the run keeps, and nothing else: a job
+// the configuration no longer declares and no run is on is one this run
+// retires, and carrying it back would put a job with nothing to manage it into
+// the document, whose plan then creates it again.
+//
+// prev is the installation's tfvars as this machine held it before the run
+// (infra.Workdir.PrevVars): a machine that has never planned this installation
+// holds none, and a name it does not answer for is one the caller is told about
+// rather than one silently carried as nothing.
+func CarriedProjectJobNames(vars, prev []byte, names []string) ([]byte, []string, error) {
+	if len(names) == 0 {
+		return vars, nil, nil // nothing to carry
+	}
+	want := make(map[string]bool, len(names))
+	for _, n := range names {
+		want[n] = true
+	}
+	return carriedProjectJobs(vars, prev, func(name string, _ map[string]any) bool { return want[name] })
+}
+
+// carriedProjectJobs is the walk the three carries above share: every entry of
 // the document prev that want accepts, and that vars lack, taken whole from
-// prev — from the coding set and from the review-only variants, by job name.
+// prev — from the coding set and from the review-only variants, by job name —
+// and the names it took, sorted.
 //
 // want reads a carried entry as the record states it, never as this release
-// would compose it: what the two carries answer for is a job an installation
-// holds, and the record is the only thing that says which jobs those are.
-func carriedProjectJobs(vars, prev []byte, want func(job map[string]any) bool) ([]byte, error) {
+// would compose it: what the carries answer for is a job an installation
+// holds, and the record is the only thing that says which jobs those are. The
+// name it is handed is the entry's key in the document, which is the module's
+// for_each key and therefore the job's Cloud Run name.
+func carriedProjectJobs(vars, prev []byte, want func(name string, job map[string]any) bool) ([]byte, []string, error) {
 	if prev == nil {
-		return vars, nil // no workdir held one: nothing to carry
+		return vars, nil, nil // no workdir held one: nothing to carry
 	}
 	previous, err := varsDoc(prev)
 	if err != nil {
 		// A tfvars that cannot be read is not a reason to write a plan that
 		// deletes the job: fail rather than carry nothing forward.
-		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+		return nil, nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
 	}
 	doc, err := varsDoc(vars)
 	if err != nil {
-		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+		return nil, nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
 	}
-	added := false
+	var added []string
 	for _, key := range []string{ProjectJobsKey, ProjectReviewJobsKey} {
 		carried, _ := previous[key].(map[string]any)
 		if len(carried) == 0 {
@@ -2352,7 +2394,7 @@ func carriedProjectJobs(vars, prev []byte, want func(job map[string]any) bool) (
 			if !ok {
 				continue
 			}
-			if !want(m) {
+			if !want(name, m) {
 				continue
 			}
 			if _, ok := jobs[name]; ok {
@@ -2362,16 +2404,22 @@ func carriedProjectJobs(vars, prev []byte, want func(job map[string]any) bool) (
 				jobs = make(map[string]any, 1)
 			}
 			jobs[name] = job
-			added = true
+			added = append(added, name)
 		}
 		if jobs != nil {
 			doc[key] = jobs
 		}
 	}
-	if !added {
-		return vars, nil
+	if len(added) == 0 {
+		return vars, nil, nil
 	}
-	return sortedJSON(doc)
+	slices.Sort(added)
+	added = slices.Compact(added)
+	next, err := sortedJSON(doc)
+	if err != nil {
+		return nil, nil, err
+	}
+	return next, added, nil
 }
 
 // ManagedDeployerScopedKey is the module's own variable name for the deployer's
