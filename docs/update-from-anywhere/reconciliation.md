@@ -257,6 +257,7 @@ to D3343 and D3347 were answered on 2026-11-24. All are as recommended.
 | D3350 | Does a published admit count as enrolled for secrets, builds and the fold? (F17) | Yes: the list is the project's own, not a directory's, so the hostile-checkout gate has nothing to guard in `update`'s stages | **As recommended (2026-11-24).** Whoever can publish the allow-list can direct a value into that repository's secrets. The gate stays for `setup --repo` and `--onboard-repo`. This is the owner's go for the cloud writes it widens (F41, R20) |
 | D3351 | Does `setup --anchor` go too? (F20) | Remove it from both; the anchor lives in `project repos add` alone | **As recommended (2026-11-24).** → R14 |
 | D3352 | In a coding agent's session, do L5's reads mint the operator's identity? (F44) | No, as D902: every repository reads as unread with one line, "run fugaro update from your own terminal", and the stages that need repositories say needs-you | **As recommended (2026-11-24).** An agent-run update converges only the project-wide parts. → R1 |
+| D3353 | Does `update --repo` go once plain `update` covers every repository? | Out of scope (spec) | **The owner's ruling (2026-11-26):** yes. U12 removes the flag and every instruction to run it per checkout, after U11 and U9d. Until U11 merges nothing changes. |
 
 ## Resolutions
 
