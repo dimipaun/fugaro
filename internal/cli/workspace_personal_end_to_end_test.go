@@ -369,11 +369,7 @@ func startE2EPersonalWorkspaceService(t *testing.T, s *e2eService, st *e2ePerson
 	t.Cleanup(func() {
 		credsvc.PersonScopeConfigForServe, credsvc.PersonSwitchForServe = prevPerson, prevSwitch
 	})
-	credsvc.PersonScopeConfigForServe = credsvc.PersonScopeConfig{
-		Roster:    roster,
-		Launchers: launchers,
-		Slips:     &creds.RTDBStore{DB: st.ws},
-	}
+	credsvc.PersonScopeConfigForServe = e2ePersonScopeConfig(roster, launchers, st.ws)
 	credsvc.PersonSwitchForServe = credsvc.ScopePersonSwitch()
 	resolver, err := credsvc.NewWorkspaceScopeResolver(credsvc.WorkspaceScopeConfig{
 		Workspace: w,
@@ -389,6 +385,20 @@ func startE2EPersonalWorkspaceService(t *testing.T, s *e2eService, st *e2ePerson
 		t.Fatalf("the workspace's service could not be built: %v", err)
 	}
 	s.answers(srv)
+}
+
+// e2ePersonScopeConfig is C2's configuration as the serve path hands it on: the
+// roster's reader, the launcher class and the slip store, all three over the
+// workspace's own database. It is a function of its own for the same reason
+// credentialsWorkspacePerson is one — the store leaves this file through the
+// service's own value and is never held here (internal/creds'
+// TestBoundaryAllowsSlipsOnlyViaService).
+func e2ePersonScopeConfig(roster credsvc.RosterReader, launchers credsvc.LauncherVerifier, db *rtdb.Client) credsvc.PersonScopeConfig {
+	return credsvc.PersonScopeConfig{
+		Roster:    roster,
+		Launchers: launchers,
+		Slips:     &creds.RTDBStore{DB: db},
+	}
 }
 
 // e2ePersonalLaunch runs the shipped launch side for one person and answers the
