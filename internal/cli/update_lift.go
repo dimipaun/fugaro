@@ -97,8 +97,7 @@ const liftKeyRead = "fugaro update"
 
 // liftPlanners and liftRepositories are the two things the stage reads the
 // world through, and both are seams for the same reason: a test has neither a
-// registered planner that produces a change (the six items of C2 are their own
-// tasks, and internal/lift still registers the stubs) nor an account to read a
+// registered planner that produces a change (a fixture decides what each says) nor an account to read a
 // repository with. Production reads the registry and repofiles.Read.
 var (
 	liftPlanners     = lift.Planners
