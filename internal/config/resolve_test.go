@@ -64,10 +64,13 @@ func TestResolveTable(t *testing.T) {
 		want map[string]want
 	}{
 		{
+			// review_rounds is a tighten-only key (B4): a repository's value
+			// beats the project's where it raises it, and is dropped where it
+			// lowers it (TestTightenOnly).
 			name: "a repository scalar beats the project",
-			repo: minimalRepo + "agent:\n  review_rounds: 1\n",
+			repo: minimalRepo + "agent:\n  review_rounds: 9\n",
 			get:  map[string]func(*Config) string{"agent.review_rounds": func(c *Config) string { return itoa(c.Agent.ReviewRounds) }},
-			want: map[string]want{"agent.review_rounds": {"1", SourceRepo}},
+			want: map[string]want{"agent.review_rounds": {"9", SourceRepo}},
 		},
 		{
 			name: "false beats a project true, and the project's false beats the default",
@@ -329,7 +332,7 @@ const literalsRepo = minimalRepo + `git:
 agent:
   model: 0x10
   review_rounds: !!int |-
-    2
+    9
 workflows:
   api:
     commands: { build: 1e3, test: 010 }
