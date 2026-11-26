@@ -87,15 +87,15 @@ import type { TextClass } from './sanitize'
  * before it is drawn.
  *
  * A screen draws a key in the class this map gives it (`app.ts`'s `putText`),
- * **with one deliberate exception, and it is `launched_by`**: the Live and
- * Projects rows draw its *short form* -- the CLI's own cut, the part before an
- * address's first `@` (`shared/launcher.ts`) -- through the `label` class. The
- * class below is a validating one and refuses a dotted local part
- * (`dana.lopez@example.com`, the commonest corporate shape) along with every
- * display name, so the column the owner asked for on 2026-10-18 would read `n/a`
- * for most of the people who use it. The **whole** recorded value is drawn in
- * the Run screen's header, in `person`, exactly as this map says -- so no
- * address is drawn anywhere. `console/README.md`'s class table and
+ * **with one deliberate exception, and it is `launched_by`**: the Live row draws
+ * it through the `label` class. The class below is a validating one and refuses
+ * a dotted local part (`dana.lopez@example.com`, the commonest corporate shape)
+ * along with every display name, so the column the owner asked for on 2026-10-18
+ * would read `n/a` for most of the people who use it. `label` is what a table
+ * cell needs -- one line, the 200-character bound, a refusal rather than a clip
+ * where `person` clips at 512 -- and both classes draw the **whole** recorded
+ * value: since D3213 (2026-11-21) this console cuts no launcher at its first `@`
+ * and masks no identity. `console/README.md`'s class table and
  * `docs/desktop-console/spec.md` §6.2 record the decision; `launcher.ts` is
  * the module and carries the reasoning.
  */
@@ -890,10 +890,10 @@ export interface RunView {
   readonly workflow: string
   readonly requestedBy: string
   /** launchedBy is who started the run, as its own `launch.json` recorded the
-   * launcher (0.9.0). It is the **whole** recorded value and not the short form
-   * a column has room for: the cut belongs to the screen that draws a column
-   * (`shared/launcher.ts`), so the document's own text stays whole for the Run
-   * screen and for a reader of the model. */
+   * launcher (0.9.0). It is the **whole** recorded value: the model carries it
+   * as the record holds it, and every screen that draws it -- the Live row's BY
+   * column and the Run screen's header -- draws it whole (D3213, 2026-11-21;
+   * `shared/launcher.ts` is the module). */
   readonly launchedBy: string
   /** prNumber is the pull request number the run has recorded, once it has one
    * (`pr_number`, GV2.5): a draft PR opens early in a run, so a live row
@@ -1399,8 +1399,8 @@ export const FINISHED_KEYS = [
  * launcher -- which is every launched run. This is `title`'s omission again,
  * and it fails the same way: a list without the key refuses a real
  * `runs ls --json` document whole, as `runs[0].launched_by`. **It is read
- * now** -- the Run screen's header draws it and the Projects job row draws its
- * short form (`shared/launcher.ts`, owner request 2026-10-18) -- and it is
+ * now** -- the Run screen's header and the Live row's BY column draw it whole
+ * (`shared/launcher.ts`, owner request 2026-10-18) -- and it is
  * classified as a person's text in `WIRE_TEXT_CLASSES`, the class `requested_by`
  * carries and the class the recorder already gives it by its `_by` suffix.
  *

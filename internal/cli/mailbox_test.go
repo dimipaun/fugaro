@@ -223,7 +223,7 @@ func (f *mailboxFixture) consumer(t *testing.T, holder string) *mailboxConsumer 
 	if err != nil {
 		t.Fatal(err)
 	}
-	pairings, err := mailboxKeyring(ctx, lc, mailboxClock(db))
+	pairings, err := mailboxKeyring(ctx, db, lc, mailboxClock(db))
 	if err != nil {
 		t.Fatal(err)
 	}

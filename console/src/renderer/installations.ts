@@ -289,13 +289,14 @@ export const UNDRAWABLE = 'a line the console will not draw'
  * whose stderr the picker draws -- `doctor`'s pairing refusal, verbatim.
  *
  * The pass is `sanitizeRefusal` and not `sanitizeText`, for the reason that
- * function's own doc gives: the `sentence` and `path` classes **replace** a path
- * with `<path>`, and a row exists so the operator can recognise the installation
- * they chose. `sanitizeRefusal` keeps a path, a project and a role as they were
- * written while redacting a credential-shaped run, dropping the invisible
- * characters a value can be made to misspell with, and folding the whole to one
- * bounded line. The operator's own paths are exactly the strings this window is
- * for, and a token-shaped run inside one is exactly what must not be drawn.
+ * function's own doc gives: a row exists so the operator can recognise the
+ * installation they chose, and this door keeps a path, a project and a role as
+ * they were written while redacting a credential-shaped run, dropping the
+ * invisible characters a value can be made to misspell with, and folding the
+ * whole to one bounded line. (The classes replaced a path with `<path>` until
+ * D3213, 2026-11-21, removed every non-secret mask; the door's own half is the
+ * credential one.) The operator's own paths are exactly the strings this window
+ * is for, and a token-shaped run inside one is exactly what must not be drawn.
  */
 export function drawn(raw: string, field: string): string {
   const result = sanitizeRefusal(raw, field)

@@ -16,15 +16,17 @@ import (
 // `setup --plan-only --answers-file - --events --json` and renders the lines as
 // they arrive).
 //
-// The five kinds are the console's own closed set (SETUP_EVENT_TYPES in the
+// The six kinds are the console's own closed set (SETUP_EVENT_TYPES in the
 // console's copy of this contract, on the other side of the boundary this
 // module keeps: no Go file here names a path under the console), and the feed
 // is the --json document split
 // into lines: `step` is the run reaching a stage, `stage` is a stage it
 // settled, `left_for_you` is one thing only the user can do — with the step's
 // own line to run, because a surface reading this has no terminal to hand it
-// to — and the last line is `done` with the run's own exit code, or `error`
-// naming the stage the run stopped at. A run that ends with steps left for the
+// to — `notice` is one line the run reported outside its stages (the steps
+// after the stage loop, the admit patterns: R12, R19) — and the last line is
+// `done` with the run's own exit code, or `error` naming the stage the run
+// stopped at. A run that ends with steps left for the
 // user ends `done` with exit 1 and not `error`: it did not fail, the steps are
 // the lines above it, and a surface draws its hand-off off that distinction.
 // A feed with no last line is an interrupted read, and that is the failure a
@@ -55,6 +57,7 @@ const (
 	setupEventStep       = "step"
 	setupEventStage      = "stage"
 	setupEventLeftForYou = "left_for_you"
+	setupEventNotice     = "notice"
 	setupEventDone       = "done"
 	setupEventError      = "error"
 )
@@ -85,6 +88,24 @@ type setupStageEvent struct {
 	Detail string `json:"detail"`
 	After  string `json:"after"`
 	Undone bool   `json:"undone"`
+	// Repos are the stage's own lines about the repositories it read (C1's
+	// RepoLine, U13), always an array — `[]` for a stage that reports none,
+	// which is every stage today — so a consumer reads it without a case for
+	// "absent".
+	Repos []initflow.RepoLine `json:"repos"`
+}
+
+// setupNoticeEvent is one line the run reported outside its stages: a step
+// after the stage loop, or an admit pattern the reader could not expand into
+// names (R12, R19). step is the step's own name — a step after the loop has no
+// stage to report under — and repo and state are empty for a notice that is
+// about no repository at all.
+type setupNoticeEvent struct {
+	Type   string `json:"type"`
+	Step   string `json:"step"`
+	Repo   string `json:"repo"`
+	State  string `json:"state"`
+	Detail string `json:"detail"`
 }
 
 // setupLeftForYouEvent is one thing only the user can do: the --json
@@ -162,9 +183,21 @@ func (e *setupEvents) step(stage string) {
 
 // stage is the loop's OnStage.
 func (e *setupEvents) stage(r initflow.StageResult) {
+	repos := r.Repos
+	if repos == nil {
+		repos = []initflow.RepoLine{}
+	}
 	e.line(setupStageEvent{
 		Type: setupEventStage, Name: r.Name, State: string(r.State),
-		Detail: r.Detail, After: r.After, Undone: r.Undone,
+		Detail: r.Detail, After: r.After, Undone: r.Undone, Repos: repos,
+	})
+}
+
+// notice is one line the run reported outside its stages, written as the
+// document's own `notices` entry.
+func (e *setupEvents) notice(n initflow.Notice) {
+	e.line(setupNoticeEvent{
+		Type: setupEventNotice, Step: n.Step, Repo: n.Repo, State: string(n.State), Detail: n.Detail,
 	})
 }
 
@@ -202,6 +235,14 @@ func (e *setupEvents) left(lf initflow.Left) {
 func (e *setupEvents) finish(res *initResult, err error) {
 	if e == nil {
 		return
+	}
+	if res != nil {
+		// The lines the run reported outside its stages — the steps after the
+		// loop and the admit patterns (R12, R19) — go out before the line that
+		// ends the feed: they are part of the account the last line closes.
+		for _, n := range res.Notices {
+			e.notice(n)
+		}
 	}
 	exit := ExitCode(err)
 	var leftForYou *notFinished

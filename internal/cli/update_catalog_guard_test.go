@@ -373,7 +373,7 @@ func TestUpdateConvergesWithACatalog(t *testing.T) {
 	stubCatalogCredential(t)
 	stubGuardRepository(t, guardState())
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if n := strings.Count(out, "image catalog:"); n != 1 {
 		t.Errorf("the run printed %d guard line(s), want the one the stale pin gets:\n%s", n, out)

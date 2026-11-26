@@ -13,19 +13,26 @@ package runner_test
 // job run (Local false, the platform's own execution of this repository's job,
 // the project's policy and the budget backend's fakes) whose job carries the
 // credentials service's URL, so its model path is the service and its declared
-// secrets are fetched from it. The service itself is a stand-in: the
-// workflow-secrets route answered from a table, and every other path relayed to
-// the model upstream's own stand-in, exactly as the real service carries both.
+// secrets are fetched from it. The service itself is a stand-in for the
+// deployment and NOT for the route: the workflow-secrets route answered here is
+// the real one (credsvc.NewServer, IS1's code) over two readers this file
+// supplies — the records and the containers — and every other path is relayed
+// to the model upstream's own stand-in, exactly as the real service carries
+// both. What the runner reads is therefore the shipped reader of the shipped
+// contract, and the plan's stub (credsvc.WorkflowSecretsStub, which I1 deletes)
+// is gone from this package's runs too.
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -34,11 +41,13 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -101,22 +110,20 @@ type secretsCall struct {
 }
 
 // secretsService is the credentials service's stand-in: the workflow-secrets
-// route (B3.2's contract) answered from names, version 2 by logical name and
-// version 1 by variable, and every other path relayed to upstream, the model
-// upstream's own stand-in -- the real service carries a run's model calls too,
-// and a stand-in that refused them would turn a stray call into a mystery.
+// route (B3.2's contract) served by the SHIPPED route over the two tables
+// below -- names, which version 2 asks by logical name, and envs, which
+// version 1 asks by variable -- and every other path relayed to upstream, the
+// model upstream's own stand-in. The real service carries a run's model calls
+// too, and a stand-in that refused them would turn a stray call into a mystery.
 //
-// The two served cases are C1's own stub (credsvc.WorkflowSecretsStub), so the
-// shape, the echo and version 2's "not in the record" refusal are held to one
-// implementation rather than to two readers agreeing with a comment (the
-// plan's stub, which I1 deletes when the route itself lands).
-//
-// status, body and malformed are the three ways a call is not served: a typed
-// refusal with status, a 200 whose body is not this contract's, and (with no
-// value under what the call asked for) the refusal the stub writes for a
-// record that holds nothing there. answerAs is the fourth, the one the contract
-// itself forbids: a 200 that names some other secret than the one the call
-// asked for.
+// All four ways a call is not served are OVERRIDES of the real route and not a
+// second reader of the contract: status and body answer a typed refusal with
+// status, malformed answers a 200 whose body is not this contract's, and
+// answerAs answers a 200 that names some other secret than the one the call
+// asked for -- the one the contract itself forbids. Each is a service
+// MISBEHAVING, which is what the runner's own reading of an answer is tested
+// against; the served case and the record's own refusals ("no value under what
+// the call asked for") are the real route's.
 type secretsService struct {
 	mu        sync.Mutex
 	names     map[string]string
@@ -127,6 +134,9 @@ type secretsService struct {
 	malformed string
 	answerAs  string
 	upstream  string
+	// route is the shipped workflow-secrets route (credsvc.NewServer, IS1) over
+	// this service's own two tables, built by newSecretsRoute.
+	route http.Handler
 }
 
 func (s *secretsService) serve(w http.ResponseWriter, r *http.Request) {
@@ -141,7 +151,7 @@ func (s *secretsService) serve(w http.ResponseWriter, r *http.Request) {
 		env: req.Env, name: req.Name, version: req.VersionOf(), header: r.Header.Clone(), body: string(raw),
 	})
 	status, refusal, malformed, answerAs := s.status, s.body, s.malformed, s.answerAs
-	stub := credsvc.WorkflowSecretsStub{Values: s.names, Envs: s.envs}
+	route := s.route
 	s.mu.Unlock()
 	switch {
 	case malformed != "":
@@ -161,10 +171,10 @@ func (s *secretsService) serve(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
 	default:
-		// The stub reads the body it is handed, and the call above has already
+		// The route reads the body it is handed, and the call above has already
 		// read it: it is handed the same bytes again.
 		r.Body = io.NopCloser(bytes.NewReader(raw))
-		stub.ServeHTTP(w, r)
+		route.ServeHTTP(w, r)
 	}
 }
 
@@ -224,6 +234,189 @@ func (s *secretsService) callsOf() []secretsCall {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]secretsCall(nil), s.calls...)
+}
+
+// The fixture's repository as the service's own tables spell it: the slug the
+// run identity carries (repoSlug) and the canonical name the published policy
+// speaks, which is what version 2's allow-list is checked against
+// (workflowsecrets.go's ownerName strips the provider).
+const (
+	secretsSlug         = "github/acme/app"
+	secretsJobAccount   = "run-job@proj-1234.iam.gserviceaccount.com"
+	secretsProjectOwner = "acme/app"
+)
+
+// newSecretsRoute is the shipped workflow-secrets route (B3.2, IS1) over one
+// service's two tables: the record `fugaro update` writes (version 1: the
+// variable, read out of the container the record names) and the project record
+// `fugaro secrets allow` writes (version 2: the logical name, read out of the
+// grammar's own container, and only for a repository the record admits).
+//
+// Everything a deployment wires is wired here, and every reader the route does
+// not need for these two answers is a production-shaped store over the fake
+// database the harness already holds: a route stood up with a nil Slips or a
+// nil State would be refused at construction, and one stood up with a stand-in
+// for the record would be testing a second reader of the contract rather than
+// the shipped one.
+func newSecretsRoute(t *testing.T, svc *secretsService) http.Handler {
+	t.Helper()
+	bdb := testutil.NewBudget(t)
+	client, err := rtdb.New(bdb.URL(), rtdb.Auth{IDToken: func() string { return "" }})
+	if err != nil {
+		t.Fatalf("the fake database's client: %v", err)
+	}
+	srv, err := credsvc.NewServer(credsvc.Config{
+		Auth:            secretsRouteVerifier{},
+		Bundles:         &credsvc.BundleLoader{Source: secretsRouteSource{svc: svc}},
+		Policy:          secretsRoutePolicy{},
+		State:           &creds.RTDBStore{DB: client},
+		Kills:           secretsRouteKills{},
+		DB:              client,
+		Probes:          client,
+		Slips:           &creds.RTDBStore{DB: client},
+		WorkflowSecrets: secretsRouteRecords{svc: svc},
+		ProjectSecrets:  secretsRouteProjectRecord{svc: svc},
+		AuditLog:        slog.NewJSONHandler(io.Discard, nil),
+		Log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
+		JobAccounts: []credsvc.JobAccount{{
+			Email:    secretsJobAccount,
+			Slug:     repoSlug,
+			Repo:     secretsSlug,
+			Workflow: "app",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("the workflow-secrets route would not start: %v", err)
+	}
+	return srv
+}
+
+// secretsRouteVerifier is the service's front door for these runs: the identity
+// the runner presents is the fixture's own job, so the verifier answers it
+// whole rather than reading a token the fakes cannot sign (the fake signer is
+// an HMAC and the shipped authenticator verifies a Google key set).
+type secretsRouteVerifier struct{}
+
+func (secretsRouteVerifier) Verify(context.Context, credsvc.Request) (credsvc.Identity, error) {
+	return credsvc.Identity{
+		Slug:       repoSlug,
+		Run:        runID,
+		Project:    "aurora",
+		Job:        fixtureJob(),
+		JobAccount: secretsJobAccount,
+		JobClass:   credsvc.ClassRepository,
+	}, nil
+}
+
+var errNoSecretsRouteClass = errors.New("this test's credentials service serves no caller of that class")
+
+func (secretsRouteVerifier) VerifyVerifier(context.Context, string) (string, error) {
+	return "", errNoSecretsRouteClass
+}
+func (secretsRouteVerifier) VerifyReadCaller(context.Context, string) (string, error) {
+	return "", errNoSecretsRouteClass
+}
+func (secretsRouteVerifier) VerifyPersonCaller(context.Context, string) (string, error) {
+	return "", errNoSecretsRouteClass
+}
+func (secretsRouteVerifier) VerifyOrchestrator(context.Context, string) (string, error) {
+	return "", errNoSecretsRouteClass
+}
+func (secretsRouteVerifier) VerifyLauncher(context.Context, string) (credsvc.LauncherCaller, error) {
+	return credsvc.LauncherCaller{}, errNoSecretsRouteClass
+}
+func (secretsRouteVerifier) VerifyBuildCaller(context.Context, string) (string, error) {
+	return "", errNoSecretsRouteClass
+}
+func (secretsRouteVerifier) VerifyRepoBuild(context.Context, string) (credsvc.RepoBuildAccount, error) {
+	return credsvc.RepoBuildAccount{}, errNoSecretsRouteClass
+}
+
+// secretsRoutePolicy is the published policy, which the workflow-secrets route
+// reads none of (workflowsecrets.go's own account): an installation with no
+// node published is the state a deployment that has never published one is in.
+type secretsRoutePolicy struct{}
+
+func (secretsRoutePolicy) Shared(context.Context) (*projectpolicy.Policy, bool, error) {
+	return nil, false, nil
+}
+func (secretsRoutePolicy) Admissions(context.Context, string) (*projectpolicy.RepoPolicy, bool, error) {
+	return nil, false, nil
+}
+
+// secretsRouteKills is the operator's stop switches, both off: a stopped
+// service serves nothing, which is not what these runs are about.
+type secretsRouteKills struct{}
+
+func (secretsRouteKills) Stop(context.Context, string) (bool, string, error) { return false, "", nil }
+
+// secretsRouteRecords is version 1's record for the fixture's repository: one
+// workflow, its declared variables, and the container each is read from. The
+// container of a variable is the variable itself, which is a secret ID the
+// grammar admits -- the point here is which variable is served which value, not
+// which ID an installation happens to derive.
+type secretsRouteRecords struct{ svc *secretsService }
+
+func (r secretsRouteRecords) Read(_ context.Context, slug string) (creds.WorkflowSecrets, bool, error) {
+	r.svc.mu.Lock()
+	defer r.svc.mu.Unlock()
+	if slug != repoSlug {
+		return creds.WorkflowSecrets{}, false, nil
+	}
+	var rows []creds.WorkflowSecret
+	for env := range r.svc.envs {
+		rows = append(rows, creds.WorkflowSecret{Env: env, ID: env})
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Env < rows[j].Env })
+	if len(rows) == 0 {
+		return creds.WorkflowSecrets{}, false, nil
+	}
+	return creds.WorkflowSecrets{
+		Version:   creds.WorkflowSecretsVersion,
+		Workflows: map[string][]creds.WorkflowSecret{"app": rows},
+	}, true, nil
+}
+
+// secretsRouteProjectRecord is version 2's record: every name the service was
+// seeded with, admitted to the fixture's repository and to no other. A name the
+// tables do not hold is absent, which is the refusal the runner falls back to
+// version 1 on -- and a record with no name at all is present and admits
+// nobody rather than being absent, because an installation whose owner has
+// allow-listed nothing is not an installation with no record.
+type secretsRouteProjectRecord struct{ svc *secretsService }
+
+func (r secretsRouteProjectRecord) Read(context.Context) (creds.ProjectSecrets, bool, error) {
+	r.svc.mu.Lock()
+	defer r.svc.mu.Unlock()
+	rules := map[string]creds.ProjectSecretRule{}
+	for name := range r.svc.names {
+		rules[name] = creds.ProjectSecretRule{Repos: []string{secretsProjectOwner}}
+	}
+	return creds.ProjectSecrets{Version: creds.ProjectSecretsVersion, Secrets: rules}, true, nil
+}
+
+// secretsRouteSource is the containers: the bundle document the loader parses
+// (none: this installation holds no bundle secret these runs read), the value
+// of one container, and the marker the intake writes on a `fugaro_p_` one
+// (F18, G2). Both tables are the same service's, so a value the route serves is
+// the value the test seeded under the name or the variable it asked for.
+type secretsRouteSource struct{ svc *secretsService }
+
+func (secretsRouteSource) Latest(context.Context) ([]byte, error) { return []byte("{}"), nil }
+
+func (s secretsRouteSource) Value(_ context.Context, secretID string) (string, bool, error) {
+	s.svc.mu.Lock()
+	defer s.svc.mu.Unlock()
+	if name, isProject := strings.CutPrefix(secretID, "fugaro_p_"); isProject {
+		value, found := s.svc.names[name]
+		return value, found, nil
+	}
+	value, found := s.svc.envs[secretID]
+	return value, found, nil
+}
+
+func (secretsRouteSource) Marked(_ context.Context, secretID string) (bool, error) {
+	return strings.HasPrefix(secretID, "fugaro_p_"), nil
 }
 
 // secretsConfig is the fixture's configuration on the switch: its agent on the
@@ -333,6 +526,10 @@ func secretsRunConfig(t *testing.T, cfg string, spec *task.Spec, svc *secretsSer
 		return rep
 	}
 	svc.upstream = up.URL
+	// The route the calls are served by is the shipped one (newSecretsRoute),
+	// so a case whose service is not misbehaving reads the contract's own
+	// answers.
+	svc.route = newSecretsRoute(t, svc)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == credsvc.WorkflowSecretsPath {
 			svc.serve(w, r)

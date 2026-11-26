@@ -1219,6 +1219,9 @@ probe account carries predefined grants only).
 | 820 | **A first installation in the EU, read back from the cloud** ([`docs/location-preference/`](location-preference/implementation-plan.md), its task **LP13**, which settles the reconciliation's **U1**, **U2** and **U6** and records **U8**, under **D3080**–**D3086**): a first `fugaro setup --location eu` in a scratch project leaves **every** located thing in `europe-west1` — the `(default)` Firestore database (**U1**), the default Realtime Database instance and the host its URL carries (**U2**), every bucket, every Artifact Registry repository, every `fugaro=managed` secret container **user-managed** and none automatic (**D3092**), and the installation's own run log bucket — the locations record `fugaro doctor` reads back must say so, and a run must launch, lease budget and write its history, which is a job in the region reading the region's own secret container (**U6**); the three Realtime Database hosts' answers for a database that lives in the EU are **recorded** (**U8**, **LP15**) | See "Check 820" below; **you** run it, in **a scratch project of your own** that exists and holds nothing of Fugaro's — **never `belong`**, because a project with an installation is not one a first `setup` runs in — and at **a real terminal**, where you answer the setup's own confirmations: `bash scripts/live-checks/check-820.sh <project>` (`--dry-run` first; the whole sequence is in [location-preference/check820-steps.md](location-preference/check820-steps.md)), with the hermetic test that drives it against fake `gcloud`, `curl` and `fugaro`, `scripts/live-checks/check-820_test.sh` (run by `go test ./scripts`). **No agent runs any step of it.** | A scratch project, billing for the day, a **permanent** Firestore database and a default Realtime Database, and one run's model spend: everything the setup creates stays — the check **deletes nothing**, and the block names `gcloud projects delete` for you. **PASS** (exit 0) is every located thing in the EU and the run's record whole; **FAIL** (exit 1) is one that did not hold; exit **2** is stopped before its last step; exit **3** is a row **UNVERIFIED**. **OWNER-RUN, NOT RUN.** |
 | 821 | **`fugaro update` on the dogfood installation, with a run in flight** ([`docs/location-preference/`](location-preference/implementation-plan.md), its task **LP13**, which reads **LP12**'s locations record (**D3087**), settles the reconciliation's **U9**, and takes the owner's requirement of 2026-11-09 that an update is safe while runs are in flight): the record reads what that installation really has — Firestore `us-east5`, the Realtime Database `us-central1`, Google's **automatic** replication for the secret containers, a **`global`** run log bucket; `fugaro update --plan-only` straight after the converge plans **no change** to any root (**U9**); **nothing is asked** during the update (**D3090**, `docs/no-prompt-policy` **T7**); and a run launched **before** the update finishes with its record whole | See "Check 821" below; **you** run it, from the checkout of installation `fugaro` only (the checkout's own doctor answer must read region `us-east5` — another installation stops the check by name, and a new EU installation is Check 820's): `bash scripts/live-checks/check-821.sh` (`--dry-run` first; the whole sequence is in [location-preference/check821-steps.md](location-preference/check821-steps.md)), with the hermetic test that drives it against a fake `fugaro`, `scripts/live-checks/check-821_test.sh` (run by `go test ./scripts`). **No agent runs any step of it.** | It **converges the installation** — a real `fugaro update`, Terraform's own applies — and launches **one throwaway run**, whose model calls are billable and whose branch and pull request, if it makes one, stay on the repository for you to settle. It creates no cloud resource of its own and writes no record. **PASS** (exit 0) is the four locations, a plan with every count zero, no question asked and the run finished; **FAIL** (exit 1) names what did not hold; exit **2** is stopped before its last step; exit **3** is a row **UNVERIFIED** (a step left for you, a plan that only imports, a run that was not in flight). **OWNER-RUN, NOT RUN.** |
 
+| 870 | **The run index's three reads, timed warm on a project of yours** ([`docs/console-fixes/`](console-fixes/implementation-plan.md), its task **T-CHK** and its own **Check 870**, the first half of the pair that plan takes against **D3205**): on ONE project you name, `fugaro runs ls --json`, `fugaro plan status --json --all` (in your checkout) and `fugaro graph --json` each answer **once warm** and are then timed **three** times, and the **median** of each is judged against **1000 ms** — the plan's "under 1 s each" (I-INDEX, RI1 to RI6: the three reads that used to walk the runs bucket read `runIndex/<run id>` and `runIndexMeta/summary` instead). It reads nothing else, and `plan status` is called with `--no-merges`, so the `gh` lookups — network, not index — stay out of the figure | See "Check 870" below; **one command**, run by **you**, on a project of your own (**never** `belong`): `bash scripts/check-870-run-index-timings.sh <fugaro-project>`, with the hermetic test that drives it against fake tools, `scripts/check-870-run-index-timings_test.sh`. **No agent runs any step of it.** | It **only reads**: three `fugaro` reads per sample, a few requests each; no run is launched, no model is called, no bucket object is written, and nothing is written outside its own scratch directory. It refuses to start in a coding agent's session and in a traced shell. **PASS** (exit 0) is all three medians under the bound; **FAIL** (exit 1) is a median at or over it, or a read that did not answer; exit **2** is stopped before it could judge; exit **3** is nothing to judge at all (**UNVERIFIED**): a build whose `graph` is the Subscription Edition stub, a checkout no run joins, or an index that holds no run. **OWNER-RUN, NOT RUN.** |
+| 871 | **The run index's three reads at 100x, on a scratch project of yours** ([`docs/console-fixes/`](console-fixes/implementation-plan.md), its task **T-CHK** and its own **Check 871**, the second half of that pair, after **870**): it seeds a **throwaway** installation that holds no run with **350,000** synthetic runs — three objects per run (`task.json`, `launch.json`, `result.json`) under `runs/<slug>/<run id>/`, then `fugaro runs reindex`, which is the history job's reindex mode (RI5: the reset, then one execution of the job that walks the bucket into the index) — waits for that walk to reach the end of history, times the same three reads **870** times and by the same bound (**1000 ms** on the median of three), and removes everything it wrote | See "Check 871" below; **one command**, run by **you**, after **870**, on a **throwaway** project (**never** `belong`): `bash scripts/check-871-run-index-100x.sh --scratch <project>`, with the hermetic test that drives it against fakes on `PATH` and a local HTTP server, `scripts/check-871-run-index-100x_test.sh`. **No agent runs any step of it.** | It **writes only that project**, under names of its own (`runs/<slug>/<run id>/` and `runIndex/<run id>`), and it refuses to start unless the project holds no run at all — which is what makes the slug it seeds under and the index it writes into its own to remove. **Not small**: about 1.05M object writes and as many deletes in the runs bucket, 350,000 index documents written and deleted, and the history job's executions that walk them — roughly ten dollars of GCS and Firestore operations and **hours** of wall clock. **PASS** (exit 0) is the walk reached the end of history, all three medians under the bound and everything removed; **FAIL** (exit 1) is a median at or over it, a read that did not answer, a seed that failed or a cleanup that did not land; exit **2** is stopped before it could judge; exit **3** is nothing to measure (**UNVERIFIED**): a walk that had not reached the end of history, a build with no graph, or an index that does not carry the seeded runs. **OWNER-RUN, NOT RUN.** |
+
 For check 13, `TestLiveSandboxRun` checks the following:
 
 - `run --total-timeout 15m --json` reports `launched`, run `<slug>/<id>` and
@@ -1811,11 +1814,11 @@ fugaro doctor --project fugaro --all 2>/dev/null | grep -q "(GCP ${P:?}," \
 
 **B. The plugin wiring and the four spikes (no cloud).** In a clean clone of `R` with a release `fugaro`:
 
-5. `fugaro update-skills --check` says `not wired` and exits **0** — the state a checkout nothing pins is in, informational rather than a failure since D942 (U3 of [plugin-user-scope/implementation-plan.md](plugin-user-scope/implementation-plan.md)), because the normal repository is the one nothing pins: the merge that wrote `extraKnownMarketplaces.fugaro` (`dimipaun/fugaro`, `ref` equal to `v` plus the binary's version) and `enabledPlugins["fugaro@fugaro"]: true` into a repository's `.claude/settings.json` is deleted (D949, U2 of [plugin-user-scope/implementation-plan.md](plugin-user-scope/implementation-plan.md)), and this command installs the plugin in **your own Claude Code** at user scope instead. Put `{"permissions":{"allow":["Bash(ls)"]}}` in `.claude/settings.json`, then `fugaro update-skills`: expect **no diff in the checkout** — that file is byte for byte as you left it, `permissions` intact, `git diff` empty — and the plugin installed or updated at user scope, so `claude plugin list` shows `fugaro@fugaro` from the marketplace declared at this binary's tag and its `~/.claude/plugins/installed_plugins.json` entry carries `"scope": "user"`. A second run changes nothing. `fugaro doctor --plugin --strict` exits 0 beside it, with `plugin-pin` at `info` saying the checkout is not wired: that is U3's change (D942), and the state a repository that never opted in is in.
+5. `fugaro update-skills --check` says `not wired` and exits **0** — the state a checkout nothing pins is in, informational rather than a failure since D942 (U3 of [plugin-user-scope/implementation-plan.md](plugin-user-scope/implementation-plan.md)), because the normal repository is the one nothing pins: the merge that wrote `extraKnownMarketplaces.fugaro` (`dimipaun/fugaro`, `ref` equal to `v` plus the binary's version) and `enabledPlugins["fugaro@fugaro"]: true` into a repository's `.claude/settings.json` is deleted (D949, U2 of [plugin-user-scope/implementation-plan.md](plugin-user-scope/implementation-plan.md)), and this command installs the plugin in **your own Claude Code** at user scope instead. Put `{"permissions":{"allow":["Bash(ls)"]}}` in `.claude/settings.json`, then `fugaro update-skills`: expect **no diff in the checkout** — that file is byte for byte as you left it, `permissions` intact, `git diff` empty — and the plugin installed or updated at user scope, so `claude plugin list` shows `fugaro@fugaro` from the marketplace declared at this binary's tag and its `~/.claude/plugins/installed_plugins.json` entry carries `"scope": "user"`. A second run changes nothing. `fugaro doctor --plugin --strict` exits 0 beside it, and reads no repository: since R15 what a checkout still pins is `repo-plugin-pin`, read off every repository's default branch, which this mode reports as `not read (offline)` — that is U3's change (D942), and the state a repository that never opted in is in.
 6. **V1.** Commit that file. With a clean config (`CLAUDE_CONFIG_DIR=$(mktemp -d) claude` in the checkout), trust the folder. **Verified live 2026-10-04 (Claude Code 2.1.289):** the plugin installs automatically, with no separate install prompt, and the trust dialog does not mention it (it lists only pre-approved permissions). Record again only if the Claude Code version changed.
 7. **V4.** Clone the committed repository to a new directory and open Claude Code (first with a clean config, then with one that already caches the marketplace). Trust it. **Verified live 2026-10-04:** the skills are available in the first session, no restart.
 8. **V2.** Edit the `ref` in `settings.json` to another existing tag, or `main`, and restart Claude Code. **Verified live 2026-10-04:** Claude Code reports the new version, but the plugin shows "not cached" and its skills disappear until `/plugin marketplace update fugaro` is run in Claude Code (same session, no restart); `update-skills` and `doctor` say so. To re-check, record whether the installed plugin follows (read the `fugaro@fugaro` entry of `~/.claude/plugins/installed_plugins.json`: `version`, `scope`, `projectPath`, and the commit), which refresh step it needs (`/plugin marketplace update fugaro`, a restart, `claude plugin update fugaro@fugaro`), and what `fugaro update-skills --check` says (`installed differs`?).
-9. **The pin states, read and never moved.** A pin an older Fugaro left in the checkout is what these commands read, and none of them moves it. With the ref lowered to an older tag: `fugaro validate` prints one stderr line naming both versions, stdout untouched; `fugaro doctor --plugin --strict` exits 1 (`outdated`); `fugaro update-skills` writes no file and leaves the entry where it is — the migration that removes a leftover pin is the plan's U5 of [plugin-user-scope/implementation-plan.md](plugin-user-scope/implementation-plan.md), so until it lands taking one out is an edit of `.claude/settings.json` by hand. Point the marketplace at another repository by hand: `doctor --plugin --strict` exits 1 (`foreign`) and `update-skills` warns and leaves it — `--allow-fork` went with the merge, so a marketplace that is not Fugaro's own is never blessed and never rewritten. Decline the plugin in a fresh Claude Code config: `fugaro doctor --plugin --strict` still exits 0, and now for a different reason — `--strict` does not evaluate the install on the machine at all, because a runner has none, while `not installed` is a warning in an ordinary run (D942). `FUGARO_NO_SKILL_WARNING=1` silences the line.
+9. **The pin states, read and never moved.** A pin an older Fugaro left in the checkout is what these commands read, and none of them moves it. With the ref lowered to an older tag: `fugaro validate` prints one stderr line naming both versions, stdout untouched; `fugaro doctor` reports it as `repo-plugin-pin`, a warning naming the line to delete (R15, D3340), where `doctor --plugin --strict` exits 0 and reads no repository; `fugaro update-skills` writes no file and leaves the entry where it is — the migration that removes a leftover pin is the plan's U5 of [plugin-user-scope/implementation-plan.md](plugin-user-scope/implementation-plan.md), so until it lands taking one out is an edit of `.claude/settings.json` by hand. Point the marketplace at another repository by hand: `fugaro doctor` says nothing — a marketplace that is not Fugaro's own is not read (R15, D949) — and `update-skills` warns and leaves it, because `--allow-fork` went with the merge. Decline the plugin in a fresh Claude Code config: `fugaro doctor --plugin --strict` still exits 0, and now for a different reason — `--strict` does not evaluate the install on the machine at all, because a runner has none, while `not installed` is a warning in an ordinary run (D942). `FUGARO_NO_SKILL_WARNING=1` silences the line.
 10. **V3, in the real container.** In the sandbox's base image (the `base_images` entry of your local config, Claude Code 2.1.283), in a directory holding the committed snippet, run as the runner does (same user and home): `docker run --rm -it --entrypoint sh -v "$PWD:/scratch" -w /scratch <base-image>`, then `ANTHROPIC_API_KEY=not-a-key ANTHROPIC_BASE_URL=http://127.0.0.1:9 claude -p --output-format stream-json --verbose hello | head -1` (no model call can succeed). Expect the first line (the `init` event) to list no Fugaro plugin or skill, and `ls ~/.claude/plugins` to show no marketplace clone. Record what `~/.claude.json` holds about trust. **Verified live 2026-10-04 (base image `ghcr.io/dimipaun/fugaro-web-node:0.1.0`, Claude Code 2.1.283):** headless `claude -p` in an untrusted workspace ignores the project's `.claude/settings.json` ("this workspace has not been trusted"), fetches no marketplace and installs no plugin; the runner sets no `hasTrustDialogAccepted`, `enabledPlugins` or marketplace. **Residual assumption:** if a future runner or base image pre-trusts the workspace, wired repositories would load the plugin in cloud runs; the plan's V3 fallback (not built) would then be needed.
 
 **C. A clean `setup` from nothing.** In the sandbox checkout (a fresh clone, `fugaro.yaml` not yet on the default branch). Steps 11 to 15 are the same converge steps 1 to 4 run, kept here because each carries a probe of its own — the dry run's flag count, the flag path to the billing link beside the picker's, the mirror's digests, and the default accounts — and because the recorded run below was made with **these** commands.
@@ -2043,7 +2046,7 @@ Expect the four addresses under `module.firebase.`.
 3. Run the converge in the checkout, in your own terminal — `cd <checkout> && fugaro update`. The `plugin` stage is this check's, and its lines are `  using claude at <absolute path>`, each `  running: <claude> <args>` line, and `plugin: done: installed <version>; restart running Claude Code sessions to apply it`, beside the converge's other stages (the `cloud:` one among them). **`fugaro update --repo <checkout>` is not this step's command**: it runs one stage, the repository's (`internal/cli/init.go`'s `runInitRepo`, `repoEngine`), and never reaches the plugin stage, whose only caller is the converge's own stage list (`internal/cli/init_stages.go`, `newPluginStage`). Where the plugin half alone is what you want, `fugaro update-skills --dir <checkout>` runs the same function (`internal/cli/updateskills.go`) and prints the same `using claude at` and `running:` lines, then its result bare — `installed <version>; restart running Claude Code sessions to apply it`, with no `plugin:` prefix. The install is at user scope, so `claude plugin list --json` shows the version this release publishes and no project-scoped install, and `git diff` in the checkout holds nothing but a pin removal, when step 1 found a pin to remove (step 4).
 4. **FACT:** whether any `claude plugin` call changed the checkout's `.claude/settings.json` (the step says `claude changed`); whether `claude plugin update --scope project` (run only if a project-scope install exists) rewrote it; and what a pin the checkout already carried made the run print (the removal's diff, and the sentence naming what the repository loses) — nothing here commits it.
 5. Run step 3 again: expect `plugin: current: installed <version>`. The step is current, so it makes no change call and no `running:` line appears — what `claude` is asked is only the two reads, the marketplace list and the install list. (`fugaro update-skills --dir <checkout>` prints the same line bare, without the `plugin: ` prefix.)
-6. In a Claude Code session in the checkout, ask the agent to run `fugaro update`: expect the plugin stage to apply there — every write it makes is this machine's — the cloud half left for you with the command that runs it (`cloud: skipped: a coding agent's session`), exit 1, and nothing in Cloud Build or the check job's revisions.
+6. In a Claude Code session in the checkout, ask the agent to run `fugaro update`: expect the plugin stage to apply there — every write it makes is this machine's — the cloud half left for you with the command that runs it, named per repository — `cloud: skipped: <owner/name>: a coding agent's session (…)` — exit 1, and nothing in Cloud Build or the check job's revisions.
 
 **Paste back:** each step's result, and the exact text of every unexpected message (no token, no key).
 
@@ -21181,7 +21184,10 @@ which no hermetic test can settle because it is about money.
   that says so.
 
 **What has to exist before it runs.** The release carrying **SA2.1** and **SA3.1** installed on the **dogfood
-installation `fugaro`** (**A4**: route `openrouter`, `route_fee_pct: 5.5`), with **a week of runs on that
+installation `fugaro`** (**A4**: route `openrouter`, `route_fee_pct: 5.5`), whose **budget mode is `enforce`**
+— a mode left unset is `observe`, and `observe` never refuses a call, so step 2's run would pass its cap with a
+warning and a bill rather than end `halted (run_cap)`; `fugaro budget show --json`'s `mode` is the reading, and
+`fugaro budget set --global --mode enforce` is the raise — with **a week of runs on that
 route recorded under those rules** — a window holding no OpenRouter run compares two figures that are not
 about each other, and the row records that rather than passing — and **OR1 done**: the dogfood
 `cache_read: 0.0042` override deleted by hand and the policy node republished by `fugaro update` (D2645),
@@ -21193,6 +21199,7 @@ run, so what the halt costs is a sandbox task's own spend. **Never `belong`.**
 
 ```sh
 fugaro budget prices                                  # the row and its checked_at, recorded with the totals
+fugaro budget show --json                             # the mode: enforce, or step 2's halt does not happen
 fugaro budget reconcile --all --from <the week's first UTC day> --to <its last> --json
 fugaro run --repo <a sandbox repository> --max-usd <below the task's expected cost> "<a small task>"
 fugaro runs show <the halted run>                     # the chain's limits: the figure, what is used, what is left
@@ -25805,7 +25812,8 @@ number is reused.
 **What it settles.** Six readings of the four verbs as shipped, each taken from the outside and nowhere else:
 
 - **The enrolment's six steps, in the order it printed them** (step 1). `fugaro project repos add <repo>
-  --project <installation>` is run on a **fresh throwaway checkout** and the check reads its own output: one
+  --project <installation>` is run on a **fresh throwaway checkout** (a repository with no `fugaro.yaml` gets a pull
+  request for the starter instead, and the check stops: merge it, then run the check again) and the check reads its own output: one
   numbered line per step — the repository's own `fugaro.yaml`, this machine's config entry, its image map, the
   allow-list, the publish and the job with its `roles/run.invoker` grant — the sentence that names the first image
   build as **billable and not part of it**, the question it asks for the project's name, and the closing
@@ -27221,3 +27229,132 @@ back. Its last line is the verdict and the exit status:
 **OWNER-RUN: no agent runs any step of it.** Its own automated proof is
 `scripts/live-checks/check-821_test.sh`, which drives it against a fake `fugaro` (no cloud, no update, no run) and
 is run by `go test ./scripts`.
+
+## Check 870: the run index's three reads, timed warm (a project of yours, never `belong`; run by you; NOT RUN)
+
+**NOT RUN. It is your own reading of your own project, and it is the "before" half of the pair that
+[docs/console-fixes/implementation-plan.md](console-fixes/implementation-plan.md) takes (**D3205**): the same three
+reads Check 871 below times at 100x.**
+Written by that plan's task **T-CHK**. It **only reads**; **no agent runs any step of it**.
+
+**What it measures.** The index ([internal/runindex](../internal/runindex)) is what makes a listing cost a handful of
+requests however much history an installation has (RI1 to RI6): `runs ls`, `plan status` and `graph` read
+`runIndex/<run id>` and `runIndexMeta/summary` instead of walking the runs bucket. This check measures what that
+costs on a real project, and nothing else — `fugaro runs ls --json`, `fugaro plan status --json --all` and `fugaro
+graph --json`.
+
+Each read answers **once to warm it** and is then timed `CHECK870_REPEATS` times (3), and the figure judged is the
+**median**, in milliseconds, against `CHECK870_BOUND_MS` (1000): the plan's "under 1 s each". Warm is the point — a
+read that has already answered once measures the index rather than a cold start.
+
+**The command.**
+
+```sh
+bash scripts/check-870-run-index-timings.sh <fugaro-project>
+```
+
+`plan status` reads the directory it is run in and refuses one named elsewhere, so the check `cd`s into
+`CHECK870_CHECKOUT` (default `.`) and runs it there, once per task of the plans under `docs/` it finds. It calls it
+with `--no-merges`: the plan's own reading is `plan status --json --all`, and `--no-merges` leaves out only the `gh`
+lookups, which cost the network rather than the index and would put a figure this check is not about into the reading
+(`CHECK870_MERGES=yes` takes it the plan's literal way). `CHECK870_FUGARO` names the binary when it is not `fugaro`.
+It needs `bash`, `mktemp`, `python3`, `perl` and a `fugaro` on `PATH`. It refuses to start in a coding agent's session
+and in a traced shell, and **never `belong`**: a project whose name, and a config whose own members, carry it are
+refused by name before a single call. Every call runs with stdin closed, and nothing is written outside its own
+scratch directory.
+
+**Reading the result.** Progress goes to stderr; ONE block on stdout, headed `CHECK 870 RESULT`, is what you copy
+back. Its rows are `key state detail`, and its last line is the verdict and the exit status:
+
+- **PASS** (exit 0): all three medians are under the bound. The rows beside them say what they covered — `listing`
+  (the rows in the page and the read's own totals), `join` (the plans and tasks the checkout's plans carry, and one
+  query per task to the index), `scopes` (the graph's scopes), `index` (`index_complete`, and how far the index has
+  folded) and `scale` (how many runs the figures cover).
+- **FAIL** (exit 1): a median is at or over the bound, or a read did not answer.
+- **INCOMPLETE** (exit 2): the run stopped before it could judge — a guard refused it, a tool is missing, a flag that
+  is not a number.
+- **INCOMPLETE** (exit 3): it ran to the end and a read it needed could not be measured here (**UNVERIFIED**): this
+  build answers `graph` with the Subscription Edition stub (the timeable graph is `ee/`'s), the checkout joins no run
+  at all (so the plan join measured nothing), or the index holds no run (a figure under the bound there measures
+  nothing). Nothing is concluded on it, and a PASS is never read out of one.
+
+**OWNER-RUN, NOT RUN: no agent runs any step of it.** Its own automated proof is
+`scripts/check-870-run-index-timings_test.sh`, which drives every case of it against a fake `fugaro` on `PATH` (no
+cloud, no project, no checkout) — a fast project that passes, the **median** being the middle sample, a slow read that
+fails, the bound and the repeats as asked for, an empty index and an unfinished one, a core build's `graph` stub, a
+checkout that joins no run, a read that exits non-zero, only the reads being called, the plan join running in the
+checkout, closed stdin, a `--dry-run` that calls nothing, and the refusals (a coding agent's session, a traced shell,
+the owner's own installation, a bad argument, a checkout that is not there) — and is run by
+`go test ./scripts/runindexchecks` (`TestCheck870Script`).
+
+## Check 871: the run index's three reads at 100x (a scratch project of yours, never `belong`; run by you; NOT RUN)
+
+**NOT RUN. It is your own reading of a throwaway installation you seed, and it is the second half of the pair that
+[docs/console-fixes/implementation-plan.md](console-fixes/implementation-plan.md) takes (**D3205**) — run it after
+Check 870 above.**
+Written by that plan's task **T-CHK**. It **writes, and then removes what it wrote**, in the project you name and
+nowhere else; **no agent runs any step of it**.
+
+**What it measures.** The same three reads as Check 870, where the index carries **350,000** runs rather than yours:
+the plan's 100x, against the 3,500 runs of a real installation. It seeds them through the **product's own path** —
+three objects per run (`task.json`, `launch.json`, `result.json`) under `runs/<slug>/<run id>/`, then `fugaro runs
+reindex`, which is the history job's reindex mode (RI5: the reset that marks the walk owed, then one execution of the
+history job that walks the bucket into the index) — waits for that walk to reach the end of history, and times the
+reads the way Check 870 does. The run ids are minted one second apart from one base moment, so the walk lists them
+the way it lists history, and the plan task each seeded launch records is one of the tasks **this checkout's own
+plans** carry (read from `fugaro plan status --json --all` itself), so the plan join reads entries that really join
+rather than entries that match nothing.
+
+**The command.**
+
+```sh
+bash scripts/check-871-run-index-100x.sh --scratch <project>
+```
+
+Point it at a **throwaway** installation: it refuses to start unless the project holds no run at all, which is what
+makes the slug it seeds under and the index it writes into its own to remove. `CHECK871_RUNS` changes the seed
+(default 350000), `CHECK871_CHECKOUT` names the checkout the plan join runs in (default `.`), `CHECK871_SLUG` seeds
+under a slug you name when `fugaro image status --json` cannot supply it, and `CHECK871_BOUND_MS` (1000),
+`CHECK871_REPEATS` (3), `CHECK871_PARALLEL` (32), `CHECK871_TASKS` (8), `CHECK871_WAIT_SECONDS` (10800),
+`CHECK871_POLL_SECONDS` (15), `CHECK871_CLEAN_WAIT_SECONDS` (1800), `CHECK871_CLEAN_ROUNDS` (3), `CHECK871_CALL_SECONDS`
+(1800) and `CHECK871_MERGES` are the rest. It needs `bash`, `mktemp`, `python3`, `perl`, `gcloud`, `curl` and a
+`fugaro` on `PATH`. It refuses to start in a coding agent's session and in a traced shell, and **never `belong`**, by
+the same guards Check 870 carries. Every call runs with stdin closed; the access token goes into a 0600 curl config
+file and into the seeder's own environment in a 0700 scratch directory the exit trap removes, and is never printed or
+put on an argv.
+
+**What it writes, and what it removes.** Only the scratch project, and only under names of its own:
+`runs/<slug>/<run id>/` with those three objects, and `runIndex/<run id>` in that project's index. Its cleanup
+deletes the objects, deletes the index documents it seeded — the index has no prune, so a walk alone would leave them
+— and runs `fugaro runs reindex` once more, so the summary is recomputed over an index that no longer holds them. A
+seed left behind by a stop is removed on the way out too, and `CHECK871_KEEP_CLOUD=yes` leaves it there and says so
+(they are then yours to remove).
+
+**Cost.** The scratch project's own, and it is not small: about 1.05M object writes and as many deletes in the runs
+bucket, 350,000 index documents written and deleted, and the history job's executions that walk them — roughly ten
+dollars of GCS and Firestore operations, and **hours** of wall clock, not minutes.
+
+**Reading the result.** Progress goes to stderr; ONE block on stdout, headed `CHECK 871 RESULT`, is what you copy
+back. Its rows are `key state detail`, and its last line is the verdict and the exit status:
+
+- **PASS** (exit 0): the walk reached the end of history over the seeded runs, all three medians are under the bound,
+  and everything the check wrote was removed. `scale` says how many runs the index carries beside how many were
+  seeded, and `clean` that the objects and the index documents are gone.
+- **FAIL** (exit 1): a median is at or over the bound, a read did not answer, the listing read the window rather than
+  the index (so the seeded runs are not in an index at all), the seed failed, or the cleanup did not land.
+- **INCOMPLETE** (exit 2): the run stopped before it could judge.
+- **INCOMPLETE** (exit 3): it ran to the end and something it needed was not there to measure (**UNVERIFIED**): a walk
+  that had not reached the end of history (the walk is resumable and is carried by the history job's sweeps, so an
+  unfinished one is reported rather than failed), this build's `graph` stub, or an index that does not carry the
+  seeded runs. Nothing is concluded on it.
+
+**OWNER-RUN, NOT RUN: no agent runs any step of it.** Its own automated proof is
+`scripts/check-871-run-index-100x_test.sh`, which drives every case of it against fakes on `PATH` and a **loopback
+HTTP server** standing in for the GCS and Firestore REST APIs (no cloud, no bucket, no account) — the seed and its
+own cleanup (the objects, the index documents and a summary recomputed to nothing), the walk being waited for, the
+median being the middle sample, a slow read failing, a read that exits non-zero, a core build's `graph` stub, a
+project that already holds a run refused, a config without a repository and a missing one refused, the slug from the
+product and one given, a checkout with no plan task refused, only the needed commands being called (`fugaro` and the
+check's own `cd` per call), the access token never reaching an argv, `--dry-run` calling nothing, the kept scratch and
+the kept cloud, and the refusals (a coding agent's session, a traced shell, the owner's own installation, a bad
+argument) — and is run by `go test ./scripts/runindexchecks` (`TestCheck871Script`).
