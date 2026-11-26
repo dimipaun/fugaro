@@ -1,6 +1,7 @@
 package gcp
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -51,18 +52,21 @@ func catalogCloneStepOf(t *testing.T, s CatalogBuildSpec) *cloudbuild.BuildStep 
 // beside it.
 func catalogCloneFile(t *testing.T, st *cloudbuild.BuildStep, marker string) string {
 	t.Helper()
-	script := strings.Join(st.Args, "\n")
-	open := "<<'" + marker + "'\n"
-	i := strings.Index(script, open)
-	if i < 0 {
-		t.Fatalf("the clone step does not write %s: %q", marker, script)
+	if len(st.Args) < 5 {
+		t.Fatalf("the clone step carries no file text: %q", st.Args)
 	}
-	rest := script[i+len(open):]
-	j := strings.Index(rest, "\n"+marker+"\n")
-	if j < 0 {
-		t.Fatalf("the clone step's %s heredoc is not closed: %q", marker, rest)
+	nd, err := strconv.Atoi(st.Args[3])
+	if err != nil || nd < 1 || 4+nd > len(st.Args) {
+		t.Fatalf("the clone step's Dockerfile chunk count is %q of %d arguments", st.Args[3], len(st.Args))
 	}
-	return rest[:j+1]
+	switch marker {
+	case "FUGARO_DOCKERFILE":
+		return strings.Join(st.Args[4:4+nd], "")
+	case "FUGARO_SCRIPT":
+		return strings.Join(st.Args[4+nd:], "")
+	}
+	t.Fatalf("the clone step writes no file called %s", marker)
+	return ""
 }
 
 // catalogCloneDockerfileOf and catalogCloneScriptOf are the two generated files
@@ -187,7 +191,11 @@ func TestCloneStepIsGeneratedAndSeparateFromTheEntryBuild(t *testing.T) {
 			// The script's credential is where BuildKit mounts the secret inside
 			// its build container, which is not the file the step's volume holds
 			// (that path is the --secret src on the docker build line).
-			want := "set -eu\nexport LC_ALL=C\nCRED=/run/secrets/git-credentials\nCOVERED=''\n" + catalogCloneScriptHelpers + catalogCloneScriptOwn
+			helpers := catalogCloneScriptHelpers
+			if tc.spec.GitProvider == gitprov.KindBitbucket {
+				helpers = strings.Replace(helpers, catalogCloneGitxStore, catalogCloneGitxGrant, 1)
+			}
+			want := "set -eu\nexport LC_ALL=C\nCRED=/run/secrets/git-credentials\nCOVERED=''\n" + helpers + catalogCloneScriptOwn
 			if tc.spec.GitProvider == gitprov.KindGitHub {
 				want += catalogCloneRevoke
 			}
@@ -1232,5 +1240,218 @@ func TestBakedCloneRefusesASubmoduleTheCredentialDoesNotCover(t *testing.T) {
 	}
 	if !strings.Contains(string(r.out0), "github.com/acme/[31mzzz") {
 		t.Errorf("the clone refused without naming the repository:\n%s", r.out0)
+	}
+}
+
+// runCatalogGrantStep runs the part of a Bitbucket build's clone step that
+// spends the proxy grant, against a credential file whose first line is first,
+// a metadata server that answers curl's output with idToken and exit status
+// code, and the credentials service address svc. It returns the file as the
+// step left it and the step's verdict.
+func runCatalogGrantStep(t *testing.T, svc, first, idToken string, code int) (string, []byte, error) {
+	t.Helper()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("no bash")
+	}
+	ws := t.TempDir()
+	bin := filepath.Join(ws, "bin")
+	testutil.WriteFiles(t, bin, map[string]string{
+		"curl": fmt.Sprintf("#!/bin/sh\nprintf '%%s' '%s'\nexit %d\n", idToken, code),
+	})
+	cred := filepath.Join(ws, "git-credentials")
+	testutil.WriteFiles(t, ws, map[string]string{"git-credentials": first + "\n\tinsteadOf = https://bitbucket.org/\n"})
+	script := strings.ReplaceAll(catalogCloneGrantStep, catalogCloneCredential, cred)
+	cmd := exec.Command(bash, "-c", "set -eu\n"+script)
+	cmd.Env = []string{"PATH=" + bin + ":" + os.Getenv("PATH"), "CREDENTIALS_SERVICE_URL=" + svc, "BUILD_ID=3a67fac5-e201-46ce-88e3-6437cf2e0e11"}
+	out, err := cmd.CombinedOutput()
+	got, rerr := os.ReadFile(cred)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	return string(got), out, err
+}
+
+// TestCatalogGrantStepPresentsTheBuildIdentityAtTheGrantsProxy is R6's build half
+// (rule 9): a Bitbucket build's clone step appends the header that presents the
+// build identity's ID token at the proxy the credential step's grant names, and
+// nothing else, and it fails closed at each point it can see — a grant that is
+// not this installation's proxy, a service that is not https, a metadata server
+// that fails, and a token that is not one clean value of a token's characters.
+//
+// Mutation (verified, run and restored): drop the first-line check and the
+// "another proxy" case passes the build identity to the wrong host; widen the
+// token's case pattern and the "newline in the token" case writes a second
+// header line.
+func TestCatalogGrantStepPresentsTheBuildIdentityAtTheGrantsProxy(t *testing.T) {
+	const (
+		svc   = "https://creds.example"
+		proxy = svc + "/v1/bitbucket/proxy/"
+		first = `[url "` + proxy + `"]`
+		token = "eyJhbGciOi.eyJhdWQi.c2ln-bmF_0dXJl"
+	)
+	t.Run("the grant of this installation is spent", func(t *testing.T) {
+		got, out, err := runCatalogGrantStep(t, svc, first, token, 0)
+		if err != nil {
+			t.Fatalf("the step refused its own installation's grant: %v\n%s", err, out)
+		}
+		want := first + "\n\tinsteadOf = https://bitbucket.org/\n[http \"" + proxy + "\"]\n\textraHeader = Authorization: Bearer " + token + "\n\textraHeader = X-Fugaro-Build: 3a67fac5-e201-46ce-88e3-6437cf2e0e11\n"
+		if got != want {
+			t.Errorf("the credential file is %q, want %q", got, want)
+		}
+		if strings.Contains(string(out), token) {
+			t.Errorf("the step printed the token: %q", out)
+		}
+	})
+	for _, c := range []struct {
+		name, svc, first, token string
+		code                    int
+		want                    string
+	}{
+		{"another proxy", svc, `[url "https://evil.example/v1/bitbucket/proxy/"]`, token, 0, "not this installation's proxy"},
+		{"no section at all", svc, "x", token, 0, "not this installation's proxy"},
+		{"a service that is not https", "http://creds.example", first, token, 0, "not https"},
+		{"a metadata server that fails", svc, first, "", 22, "could not be read"},
+		{"no token", svc, first, "", 0, "not one clean value"},
+		{"a newline in the token", svc, first, "a.b\nc", 0, "not one clean value"},
+		{"a space in the token", svc, first, "a.b c", 0, "not one clean value"},
+		{"a quote in the token", svc, first, `a.b"c`, 0, "not one clean value"},
+	} {
+		t.Run("refuses "+c.name, func(t *testing.T) {
+			got, out, err := runCatalogGrantStep(t, c.svc, c.first, c.token, c.code)
+			if err == nil {
+				t.Fatalf("the step went on:\n%s", got)
+			}
+			if !strings.Contains(string(out), c.want) {
+				t.Errorf("the refusal is %q, want it to say %q", out, c.want)
+			}
+			if strings.Contains(got, "Authorization") {
+				t.Errorf("a refused step wrote the header: %q", got)
+			}
+		})
+	}
+}
+
+// TestCatalogCloneBitbucketHoldsNoStoreCredential: a Bitbucket build's generated
+// clone script reads no credential store and no token — its git wrapper is the
+// one that reads the grant's config file — while a GitHub build's is unchanged;
+// and only the Bitbucket step is handed the service's address.
+func TestCatalogCloneBitbucketHoldsNoStoreCredential(t *testing.T) {
+	for _, kind := range []string{gitprov.KindBitbucket, gitprov.KindGitHub} {
+		s := catalogContextSpec(t)
+		s.GitProvider = kind
+		s.GitHubAppID = "12345"
+		if kind == gitprov.KindGitHub {
+			s.RepoURL = "https://github.com/acme/app.git"
+		}
+		b, err := CatalogBuildRequest("proj-1234", s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		st := step(t, b, catalogCloneStepID)
+		cs := catalogCloneScriptOf(t, st)
+		script := strings.Join(st.Args, "\n")
+		hasGrant := strings.Contains(cs, "GIT_CONFIG_GLOBAL=\"$CRED\"")
+		hasStore := strings.Contains(cs, "credential.helper=store")
+		hasStep := strings.Contains(script, "bitbucket/proxy/")
+		hasEnv := slices.Contains(st.Env, "CREDENTIALS_SERVICE_URL=${_CREDENTIALS_SERVICE_URL}") && slices.Contains(st.Env, "BUILD_ID=$BUILD_ID")
+		if bb := kind == gitprov.KindBitbucket; hasGrant != bb || hasStore == bb || hasStep != bb || hasEnv != bb {
+			t.Errorf("%s: grant wrapper %v, store wrapper %v, grant step %v, service env %v", kind, hasGrant, hasStore, hasStep, hasEnv)
+		}
+	}
+}
+
+// manyBakedSpec is the spec of an entry that bakes n repositories: every one adds
+// its own lines to the clone script.
+func manyBakedSpec(t *testing.T, n int) CatalogBuildSpec {
+	t.Helper()
+	s := catalogGitHubSpec(t)
+	for i := 0; i < n; i++ {
+		name := "repo-" + strconv.Itoa(i)
+		s.Baked = append(s.Baked, imagebake.Repo{Repo: "acme/" + name, Slug: name + "-1111aaaa", URL: "https://github.com/acme/" + name + ".git", Branch: "main"})
+	}
+	s.Baked = append(s.Baked, imagebake.Repo{Repo: "acme/app", Slug: "app-1234abcd", URL: s.RepoURL, Branch: "main"})
+	return s
+}
+
+// TestNoStepArgumentIsOverCloudBuildsLimit: Cloud Build refuses a step argument of
+// more than 10000 characters ("invalid .steps field: build step 3 arg 1 too
+// long"), which `image build sandbox-web-gh` met once its entry baked a
+// checkout. Every argument of every step is held under it, for the entries that
+// bake as many repositories as a project serves.
+func TestNoStepArgumentIsOverCloudBuildsLimit(t *testing.T) {
+	cases := append(catalogCloneSpecs(t),
+		struct {
+			name string
+			spec CatalogBuildSpec
+		}{"github", catalogGitHubSpec(t)},
+		struct {
+			name string
+			spec CatalogBuildSpec
+		}{"baked", catalogBakedSpec(t)},
+		struct {
+			name string
+			spec CatalogBuildSpec
+		}{"baked many", manyBakedSpec(t, 40)},
+	)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := CatalogBuildRequest("proj-1234", tc.spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, st := range b.Steps {
+				for i, arg := range st.Args {
+					if len(arg) > 10000 {
+						t.Errorf("step %s arg %d is %d characters, over Cloud Build's 10000", st.Id, i, len(arg))
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestCloneStepWritesTheFilesItWasGiven runs the step's own shell up to the
+// files and reads them back: chunked across arguments, the Dockerfile and the
+// script are still exactly the text this package generated.
+func TestCloneStepWritesTheFilesItWasGiven(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("no bash")
+	}
+	for _, tc := range []struct {
+		name string
+		spec CatalogBuildSpec
+	}{{"baked", catalogBakedSpec(t)}, {"baked many", manyBakedSpec(t, 40)}} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := catalogCloneStepOf(t, tc.spec)
+			dir := t.TempDir()
+			shell := strings.ReplaceAll(st.Args[1], "$$", "$")
+			head, _, ok := strings.Cut(shell, "set --\n")
+			if !ok {
+				t.Fatalf("the clone step's shell has no file writes: %q", shell)
+			}
+			head = strings.ReplaceAll(head+"set --\n", catalogCloneWork, filepath.Join(dir, "clone"))
+			head = strings.ReplaceAll(head, catalogCloneCredential, filepath.Join(dir, "credential"))
+			args := []string{"-c", head, st.Args[2]}
+			for _, a := range st.Args[3:] {
+				args = append(args, strings.ReplaceAll(a, "$$", "$"))
+			}
+			if out, err := exec.Command(bash, args...).CombinedOutput(); err != nil {
+				t.Fatalf("the files were not written: %v\n%s", err, out)
+			}
+			for file, want := range map[string]string{
+				"Dockerfile": catalogCloneDockerfileOf(t, st),
+				"clone.sh":   catalogCloneScriptOf(t, st),
+			} {
+				got, err := os.ReadFile(filepath.Join(dir, "clone", file))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(got) != want {
+					t.Errorf("%s differs from the generated text (%d bytes written, %d generated)", file, len(got), len(want))
+				}
+			}
+		})
 	}
 }

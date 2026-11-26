@@ -358,7 +358,7 @@ func TestUpdateSummaryLeavesRunInFlight(t *testing.T) {
 
 // TestUpdateSummaryWritesNothingOutsideTheUpdateDoor: the step is `fugaro
 // update`'s, and it keeps the fences the steps beside it keep (update.go's
-// writeAdminList, update_prindex.go's backfillPRIndex): `fugaro setup` converges
+// writeAdminList, update_runindex.go's reindexRunIndex): `fugaro setup` converges
 // the same installation through the same hook (init_stages.go's outcome),
 // `--plan-only` writes nothing at all, and a coding agent's session under a
 // marker changes nothing outside this machine unless the managed gate is the
@@ -384,7 +384,7 @@ func TestUpdateSummaryWritesNothingOutsideTheUpdateDoor(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			e, _, opened := prIndexStepEngine(t)
+			e, opened := updateStepEngine(t)
 			c.fence(t, e)
 			e.backfillRunSummary(context.Background())
 			if *opened != c.opened {
@@ -397,7 +397,7 @@ func TestUpdateSummaryWritesNothingOutsideTheUpdateDoor(t *testing.T) {
 // TestUpdateSummaryConvergedHistoryReadsNoRun: an installation that has
 // converged keeps converging on every later `fugaro update`, and the price of
 // that must not be one object read a run. Which runs hold a summary comes from
-// ONE listing of the repository (indexedRuns' shape), so a history of a
+// ONE listing of the repository, so a history of a
 // thousand runs that all hold one is read by the walk without opening a single
 // run; only the runs a summary is missing are read, and each of those is read
 // for its record and its task.

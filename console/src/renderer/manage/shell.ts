@@ -402,10 +402,11 @@ function becauseOf(error: unknown): string | null {
 /**
  * refusalSentence is what a refused kind says. The CLI's own sentence is the
  * remedy the operator acts on, so it is drawn when there is one, sanitized
- * through `sanitizeRefusal` -- the one door for a refusal, which keeps the
- * console's own placeholder rules from redacting an address or a repository name
- * out of the line that says how to fix it. When there is none, the console says
- * the one thing it knows, naming the read.
+ * through `sanitizeRefusal` -- the one door for a refusal, which redacts a
+ * credential a child may have echoed and leaves the remedy as the CLI wrote it
+ * (the placeholder rules that used to redact an address or a repository name out
+ * of one went with D3213, 2026-11-21). When there is none, the console says the
+ * one thing it knows, naming the read.
  *
  * The refusal **never carries a value the read refused**: a sentence with
  * nothing readable in it is replaced wholesale rather than patched.

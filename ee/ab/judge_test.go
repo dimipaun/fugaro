@@ -976,7 +976,7 @@ func TestJudgeAdmitsItsModel(t *testing.T) {
 		{name: "a provider call under a mode that is not enforce", cfg: admitConfig(), layer: config.AB{JudgeModel: judgeModel}, eff: observe, providers: judgeProviders(), prices: judgePrices(), want: ReasonNeedsEnforce},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			model, ok, why := JudgeAdmit(tc.cfg, tc.layer, admitRepo, tc.eff, tc.providers, tc.prices)
+			model, ok, why := JudgeAdmit(tc.cfg, tc.layer, admitRepo, nil, tc.eff, tc.providers, tc.prices)
 			if tc.want == "" {
 				if !ok || model != judgeModel || why != "" {
 					t.Errorf("JudgeAdmit = %q %v %q, want %q admitted", model, ok, why, judgeModel)

@@ -78,8 +78,10 @@ const (
 	// ReasonSecurityHighFinding is a high finding whose own file the path
 	// classifier does not call Routine.
 	ReasonSecurityHighFinding TriageReason = "security_high_finding"
-	// ReasonFindingsAbsent is a findings file that is not there at all —
-	// which is every run until BF1 lands (U10).
+	// ReasonFindingsAbsent is a findings file that is not there at all: a
+	// run that finalized before the runner wrote one (BF1, U10), or one
+	// whose write did not land. It is not a run that ended with no finding,
+	// which is an empty file and reads as evidence.
 	ReasonFindingsAbsent TriageReason = "findings_absent"
 	// ReasonFindingsUnattributable is findings the rule cannot attribute to
 	// the runner's own finalize artifact for this run: a file inside the
@@ -197,7 +199,7 @@ const (
 	// FindingsReadable is the run's own finalize artifact, read.
 	FindingsReadable FindingsRead = "readable"
 	// FindingsAbsent is no artifact for this run: a run that finalized
-	// before BF1, or one whose artifact was never written.
+	// before the runner wrote one, or one whose write did not land.
 	FindingsAbsent FindingsRead = "absent"
 	// FindingsUnattributable is a file the reader found but cannot call the
 	// runner's own finalize artifact for this run — a file inside the

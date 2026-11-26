@@ -175,8 +175,8 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 	for _, want := range []string{
 		"the job holds no App key",
 		"a run identity for repository X cannot mint for Y",
-		"**NOT RUN.**",
-		"**No step of it has been run, and nothing here is a claim that it works.**",
+		"**RUN 2026-11-26: PASSED.**",
+		"**Nothing below, before the run above, was a claim that it works.**",
 		"never `belong`",
 		// The mint is the service's, for the calling account's repository, with the
 		// run's permissions — the three mechanisms behind the second claim.

@@ -81,9 +81,9 @@
 // value. The window's **argv is not one of those strings**: it is the console's
 // own command line, whose first word is the CLI's own path, and rule 12's
 // promise is that the window shows what is spawned rather than a summary of it
-// -- a class that draws a path as `<path>` would break exactly that promise, the
-// way `sanitizeRefusal`'s own doc says of the CLI's refusal sentences. So the
-// argv reaches the screen as it does today, for both halves.
+// -- a class that masked the path would break exactly that promise, the way
+// `sanitizeRefusal`'s own doc says of the CLI's refusal sentences. So the argv
+// reaches the screen as it does today, for both halves.
 //
 // The keyboard is the one place this view is stricter than it looks. The main
 // process already declines Enter and Escape (`before-input-event` in

@@ -85,10 +85,6 @@ func (r *run) notePR(ctx context.Context, pr gitprov.PR) {
 	}
 	r.rec.PR = &runstore.PRRef{Number: pr.Number, URL: pr.URL, Desc: r.pr.desc}
 	r.save(ctx)
-	// The run has opened this pull request: the index entry goes in now, the
-	// moment the number is known, so `runs ls --pr N` finds the run while it
-	// is still going (prindex.go).
-	r.writePRIndex(ctx, pr.Number, runstore.PRIndexOpened)
 	r.noteRegistryPRURL(r.rec.PR.URL)
 	r.noteChangeSetMember(ctx, pr)
 }

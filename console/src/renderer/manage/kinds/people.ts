@@ -119,12 +119,11 @@ const SCOPE_PLACEHOLDER = 'SCOPE'
  * - A **scope** is `scope`, and no other class of the set holds it: a stored
  *   scope is one string that may be the word `project`, the word `all-repos`, or
  *   a comma-separated list of canonical repository patterns. `repoPattern`
- *   refuses `project`, and `label`, which drew this column before, runs the
- *   free-text rules whose path rule draws `github/acme/app` as `github<path>` --
- *   a redaction the grants node does not carry, and for the scopes the
- *   Copy-command cannot carry (`*` and `,` are not characters the builder copies)
- *   the only place the value appears at all. So `sanitize.ts` gained the class,
- *   and it holds `ParseScope`'s grammar.
+ *   refuses `project`, and `label`, which drew this column before, is a free-text
+ *   class with no grammar of its own -- so `sanitize.ts` gained the class, and it
+ *   holds `ParseScope`'s grammar. For the scopes the Copy-command cannot carry
+ *   (`*` and `,` are not characters the builder copies) this cell is the only
+ *   place the value appears at all.
  */
 const MEMBER_COLUMN: ManageColumn = { key: 'member', title: 'Member', class: 'person' }
 const ROLES_COLUMN: ManageColumn = { key: 'roles', title: 'Roles', class: 'label' }

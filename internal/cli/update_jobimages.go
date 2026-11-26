@@ -39,7 +39,7 @@ var openRepoJobFiles = OpenProvider
 // roots stay the --repo engine's, and this step is what makes a deployed job
 // agree with the images the project's map now names.
 //
-// It is a best-effort step of the converge's tail, beside backfillPRIndex and
+// It is a best-effort step of the converge's tail, beside backfillRunSummary and
 // reindexRunIndex, and it never fails an update (the HARD RULE): a repository
 // nobody could read, a spec that cannot be resolved, a job that is not
 // deployed, an API call the project refuses — each is one line, and the next
@@ -56,7 +56,7 @@ var openRepoJobFiles = OpenProvider
 // it.
 func (e *initEngine) reconcileRepoJobs(ctx context.Context) {
 	r, o := e.r, e.r.o
-	// The door first, as in backfillPRIndex and reindexRunIndex: this is the
+	// The door first, as in backfillRunSummary and reindexRunIndex: this is the
 	// upgrade's step, and the hook the doors share is the end of the converge
 	// (init_stages.go's outcome). `fugaro setup` creates an installation, and
 	// an installation it has just created has no repository job anywhere.

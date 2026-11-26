@@ -15,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -282,6 +283,14 @@ type PlannedRun struct {
 	Policy    policy.Effective
 	Providers map[string]config.ModelProvider
 	Prices    *pricing.Table
+	// ModelRouting is the project's routing table, which is how this
+	// installation's runs reach their models (docs/model-credentials-routing,
+	// D3170). It is nil where the project publishes none, and a planner then
+	// answers from the facts above as it always has — the release-1 bridge. It
+	// is the table and not the plan (infra.ChainPlanFor), because a planner
+	// judges one model at a time and the entry that matches it is the answer
+	// (routing.Resolve).
+	ModelRouting routing.Table
 	// ServiceHeldKey is whether the credentials service holds this
 	// installation's provider key, so that the job it starts opens the
 	// provider keyless. It is the same switch that decides whether the job is
