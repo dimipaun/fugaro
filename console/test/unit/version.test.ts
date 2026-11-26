@@ -56,6 +56,7 @@ import {
   REDUCED_VIEWS,
   RUNS_LIST_PAGE_CLI_FLOOR,
   RUNS_STREAM_CLI_FLOOR,
+  SETUP_BUDGET_CLI_FLOOR,
   SETUP_CLI_FLOOR,
   SPEND_STREAM_CLI_FLOOR,
   SKEW_HEADLINES,
@@ -73,6 +74,7 @@ import {
   parseCliVersion,
   planStatusNoMergesSupported,
   renderVersionSkew,
+  setupBudgetSupported,
   runsListPageSupported,
   SEATS_CLI_FLOOR,
   seatsSupported,
@@ -632,6 +634,48 @@ describe('the console improvements’ floors', () => {
     }
     for (const line of ['0.27.0', '0.27.1', '0.28.0', '1.0.0', '0.27.0+build.7']) {
       expect(meetsCliFloor(line, floor), line).toBe(true)
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The setup answers file's budget member (D2210, task T6).
+// ---------------------------------------------------------------------------
+
+describe('setupBudgetSupported', () => {
+  it('is the release that ships the answers file’s budget member, and no earlier one', () => {
+    // `budget` is a member of the document `fugaro setup` decodes, and the CLI
+    // decodes it **strictly**: an older CLI refuses a member it does not know by
+    // name and the whole plan or apply fails. So the floor is the first release
+    // whose CLI carries it (T2b), and this is that number rather than a `null`:
+    // the member is in a tagged release, so a floor that refused every version
+    // would drop an answer the operator gave from a CLI that reads it perfectly
+    // well (`console/docs/json-contract.md` §6.32).
+    expect(SETUP_BUDGET_CLI_FLOOR).toBe('0.29.0')
+    expect(setupBudgetSupported('0.29.0')).toBe(true)
+    expect(setupBudgetSupported('0.29.1')).toBe(true)
+    expect(setupBudgetSupported('0.30.0')).toBe(true)
+    for (const line of ['0.28.9', '0.29.0-rc.1', 'dev', '']) {
+      expect(setupBudgetSupported(line), line).toBe(false)
+    }
+  })
+
+  it('is the patch comparison every other floor is, and a `null` floor refuses everything', () => {
+    // The rule is `meetsCliFloor`'s rather than a seventh copy of it: below the
+    // floor is a refusal however close, the floor itself and everything above it
+    // are not, and a line that cannot be placed at all is a refusal. The floor is
+    // driven as an argument -- which is what that parameter is for -- and a
+    // `null` is the state a console would be in before the release exists, which
+    // is a refusal for every line.
+    const floor = '0.31.0'
+    for (const line of ['0.30.9', '0.31.0-rc.1', 'dev', '']) {
+      expect(setupBudgetSupported(line, floor), line).toBe(false)
+    }
+    for (const line of ['0.31.0', '0.31.1', '1.0.0', '0.31.0+build.7']) {
+      expect(setupBudgetSupported(line, floor), line).toBe(true)
+    }
+    for (const line of ['0.29.0', '99.99.99', 'dev']) {
+      expect(setupBudgetSupported(line, null), line).toBe(false)
     }
   })
 })

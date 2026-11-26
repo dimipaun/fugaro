@@ -677,6 +677,55 @@ export const BUDGET_STREAM_CLI_FLOOR: string | null = null
 export const SETUP_CLI_FLOOR: string | null = null
 
 /**
+ * SETUP_BUDGET_CLI_FLOOR is the oldest CLI that **accepts `budget` in the
+ * answers file** the first-run wizard writes: the monthly budget alert the
+ * wizard's own question answers (D2210), which `setupAnswerQuestions`
+ * (`internal/cli/setup_answers.go`) reads as an optional member of 1 to
+ * 10,000,000 with a default of 100 USD (D2212, `internal/infra/managed`'s
+ * `DefaultBudgetAmount`).
+ *
+ * **The member is newer than the file**, which is why it has a floor of its own
+ * beside `SETUP_CLI_FLOOR`: the CLI decodes the document strictly, so a CLI
+ * older than this release refuses a `budget` member **by name** and the whole
+ * plan or apply fails. Below the floor the console asks the question and sends
+ * nothing, and the CLI's own default records the amount -- which is what the
+ * field says it will do.
+ *
+ * **`0.29.0` is the release that carries it**: T2b added the member to a file
+ * `--answers-file` already reads (`internal/cli/setup_answers.go`), on `main`
+ * before the 0.29.0 tag was cut (`docs/status.md`'s release line: the tag went
+ * at the green tip of 2026-11-25, after the bump `#3969`), and
+ * `docs/release-streams.yaml` names `0.29.0` as the CLI's own `current`. The
+ * release that first carries a **retyped or removed** member would be a new
+ * constant, not a moved one: this one answers for the member's addition only.
+ */
+export const SETUP_BUDGET_CLI_FLOOR: string | null = '0.29.0'
+
+/**
+ * setupBudgetSupported answers whether one version line may be sent the
+ * wizard's `budget` answer, by comparing the line against
+ * `SETUP_BUDGET_CLI_FLOOR` at the patch level.
+ *
+ * **Its caller is the wizard's own plan** (`src/main/wizardrun.ts`,
+ * `createSetupWizard`): the answers are gated **before** they are serialised,
+ * so the bytes the child reads, the bytes the digest is taken of and the
+ * answers the confirmation window shows are one document -- a `budget` an
+ * older CLI would refuse is dropped from all three rather than from the wire
+ * alone.
+ *
+ * `floor` is the constant by default and an argument only so that the branch a
+ * later release takes can be tested; a `null` floor refuses every version, the
+ * idiom `licenceKeySupported` and `noApplySupported` follow.
+ */
+export function setupBudgetSupported(
+  version: string,
+  floor: string | null = SETUP_BUDGET_CLI_FLOOR,
+): boolean {
+  if (floor === null) return false
+  return meetsCliFloor(version, floor)
+}
+
+/**
  * IMAGE_CATALOG_CLI_FLOOR and RECIPES_CLI_FLOOR are the oldest CLIs that carry
  * `image ls --json` and `recipes ls --json`: the Code tab's two reads (the
  * console improvements plan's AL).

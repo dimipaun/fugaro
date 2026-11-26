@@ -26,8 +26,8 @@
 // holds the answers, so a renderer cannot change them between the plan the
 // operator read and the run they agreed to.
 //
-// **What the renderer may send is an object of five answers and nothing else.**
-// No path, no flag, no `version`, no sixth key: `validateSetupAnswers` refuses
+// **What the renderer may send is an object of six answers and nothing else.**
+// No path, no flag, no `version`, no seventh key: `validateSetupAnswers` refuses
 // each of those by name, and the grammars it holds the two identifiers to are
 // the CLI's own (`infra.ValidProjectID`'s 6-to-30 project ID, `regionRE`'s
 // `us-east5` shape, `config.ProjectNameRE`'s name, and the four rigor modes the
@@ -76,13 +76,15 @@ import { LAPSE_REFUSAL } from './licence-state'
 import {
   SETUP_ANSWER_KEYS,
   SETUP_ANSWERS_FILE_KEYS,
+  SETUP_BUDGET_MAX,
+  SETUP_BUDGET_MIN,
   SETUP_RIGOR_MODES,
 } from '../shared/new-ops'
 import type { SetupRigor } from '../shared/new-ops'
 import { NEW_READ_BOUNDS, throughClasses } from '../source/new-reads'
 import type { NewReadBounds } from '../source/new-reads'
 import { SourceRefusal } from '../source/source'
-import { UNREADABLE_VERSION, meetsCliFloor } from '../shared/version'
+import { UNREADABLE_VERSION, meetsCliFloor, setupBudgetSupported } from '../shared/version'
 
 // ---------------------------------------------------------------------------
 // The two names, and the floor.
@@ -166,6 +168,12 @@ export const SETUP_NAME_REFUSAL = `the project name is not a project name (${SET
  * with. */
 export const SETUP_BAKE_REFUSAL = 'the bake switch is not a yes or a no'
 
+/** SETUP_BUDGET_REFUSAL is what a `budget` outside the amount's own bounds is
+ * refused with. The rule is the CLI's (`managed.Budget.Check`), and the sentence
+ * carries the two numbers rather than the value it refused: a screen draws a
+ * sentence about the field, not the figure somebody typed. */
+export const SETUP_BUDGET_REFUSAL = `the monthly budget alert is not a whole number of dollars between ${SETUP_BUDGET_MIN} and ${SETUP_BUDGET_MAX}`
+
 /** SETUP_RIGOR_LAYER_WORD is the four modes the answers file's schema accepts.
  * `hotfix` is deliberately not among them: it is an operator's own per-run mode
  * and no layer sets it (D834, `schemas/setup-answers.schema.json`). The wizard's
@@ -198,7 +206,7 @@ function refuseAnswers(sentence: string): never {
 }
 
 /**
- * SetupAnswersHeld is the answers **as main holds them**: the five questions
+ * SetupAnswersHeld is the answers **as main holds them**: the six questions
  * `SetupAnswers` names (the wire type the renderer sends, `../shared/new-ops`),
  * with `bake_repos` in **three** states rather than the wire's two. `undefined` is a question nobody answered, and the CLI's rule for
  * that field is that an absent key means **yes**: only a written `false` turns
@@ -217,13 +225,18 @@ export interface SetupAnswersHeld {
   readonly region: string
   readonly name: string
   readonly rigor: SetupRigor
+  /** the monthly budget alert, in **three** states like the bake switch:
+   * `undefined` is a field the operator left empty, which the CLI answers with
+   * its own default of 100 USD (D2212) -- not with no alert at all, which is not
+   * a thing this document can say. */
+  readonly budget: number | undefined
   readonly bake_repos: boolean | undefined
 }
 
 /**
  * validateSetupAnswers reads the object a renderer sent as the answers, and it
  * is **strict in both directions**: a member this console does not send is
- * refused by name (`SETUP_ANSWER_KEYS`, the five questions, and no `version`,
+ * refused by name (`SETUP_ANSWER_KEYS`, the six questions, and no `version`,
  * which main adds when it serialises), and a required question that is missing
  * or outside its grammar is refused with the CLI's own rule.
  *
@@ -277,11 +290,30 @@ export function validateSetupAnswers(raw: unknown): SetupAnswersHeld {
   if (bake !== undefined && bake !== null && typeof bake !== 'boolean') {
     refuseAnswers(SETUP_BAKE_REFUSAL)
   }
+  const budget = record['budget']
+  // An **absent** budget is a field nobody answered, which is not a malformed
+  // one: the answers file's member is optional and a document that leaves it out
+  // answers the run's own default (D2212). What is refused is a budget that is
+  // there and outside the amount's bounds, which is the CLI's own rule
+  // (`managed.Budget.Check`) -- checked here so the refusal is the console's
+  // sentence about the field rather than a run that fails after the operator
+  // confirmed it.
+  if (budget !== undefined && budget !== null) {
+    if (
+      typeof budget !== 'number' ||
+      !Number.isInteger(budget) ||
+      budget < SETUP_BUDGET_MIN ||
+      budget > SETUP_BUDGET_MAX
+    ) {
+      refuseAnswers(SETUP_BUDGET_REFUSAL)
+    }
+  }
   const answers: SetupAnswersHeld = {
     gcp_project: project,
     region,
     name: typeof name === 'string' ? name : '',
     rigor: rigor as SetupRigor,
+    budget: typeof budget === 'number' ? budget : undefined,
     bake_repos: typeof bake === 'boolean' ? bake : undefined,
   }
   return Object.freeze(answers)
@@ -374,9 +406,33 @@ export function setupFeedFailure(lines: readonly JSONObject[]): string | null {
 // ---------------------------------------------------------------------------
 
 /**
+ * setupAnswersForCli is the answers **as this CLI can read them**: everything
+ * the operator answered, less the one member an older CLI would refuse.
+ *
+ * `budget` arrived after the answers file did (D2210, task T2b) and the CLI
+ * decodes the document strictly -- a member it does not know is refused by name
+ * and the whole plan or apply fails -- so a version below
+ * `SETUP_BUDGET_CLI_FLOOR` (`src/shared/version.ts`) is sent the answers the
+ * file has always carried, and the run records its own default amount instead
+ * (D2212). The question is still asked and still shown: what the operator
+ * answered is dropped from the bytes, never from the form.
+ *
+ * It is a function of the answers and the version line and nothing else, which
+ * is why it is exported: `wizard-main.test.ts` drives the branch a release
+ * takes without spawning a child.
+ */
+export function setupAnswersForCli(
+  answers: SetupAnswersHeld,
+  version: string,
+): SetupAnswersHeld {
+  if (answers.budget === undefined || setupBudgetSupported(version)) return answers
+  return Object.freeze({ ...answers, budget: undefined })
+}
+
+/**
  * serialiseSetupAnswers writes the answers file the CLI decodes
  * (`schemas/setup-answers.schema.json`, ST1): the schema's `version` first, then
- * the five answers in the order `SETUP_ANSWERS_FILE_KEYS` names them. A member
+ * the six answers in the order `SETUP_ANSWERS_FILE_KEYS` names them. A member
  * with no answer is left out rather than written empty -- an empty `name` is
  * read as unanswered by the CLI either way (`setupAnswers.answer`), and the
  * schema's `name` is optional, so the key is omitted rather than written blank:
@@ -399,6 +455,12 @@ export function serialiseSetupAnswers(answers: SetupAnswersHeld): Uint8Array {
   }
   if (answers.name !== '') document['name'] = answers.name
   document['rigor'] = answers.rigor
+  // The budget is written **only when it was answered**, exactly like the name
+  // above and for its own version of the same reason: the schema's member is
+  // optional, and omitting it is how the file says "take the run's default of
+  // 100 USD" (D2212). A written `0` would be an amount the installation refuses
+  // later, and there is no spelling of "no alert" in this document at all.
+  if (typeof answers.budget === 'number') document['budget'] = answers.budget
   // **A written no has to be written.** `bake_repos` omitted means *yes* to
   // every reader of the field (`internal/imagebake`'s plan, `localcfg`'s
   // `BakeReposEffective`, `projectpolicy`'s `BakesRepos`), so omitting it for an
@@ -733,7 +795,16 @@ export function createSetupWizard(deps: SetupWizardDeps): SetupWizard {
       // answer may not be replaced, because the bytes the window showed are the
       // bytes the operator agreed to.
       if (held !== null && held.outcome === null) throw new SourceRefusal(SETUP_PLAN_PENDING_REFUSAL)
-      const bytes = serialise(answers)
+      // **The one member an older CLI refuses goes out only to a CLI that takes
+      // it** (D2210): `budget` is newer than the answers file, the CLI decodes
+      // the document strictly, and a member it does not know fails the whole run
+      // -- so a version below `SETUP_BUDGET_CLI_FLOOR` is sent the answers the
+      // file has always carried and the run records its own default amount. The
+      // gate runs **before** the serialiser, so the bytes, the digest and the
+      // answers the window shows are one document: what an operator reads is
+      // what the child gets.
+      const sent = setupAnswersForCli(answers, deps.cliVersion)
+      const bytes = serialise(sent)
       const shownDigest = digest(bytes)
       const directory = makeDirectory()
       let planPlan: SpawnPlan
@@ -749,11 +820,11 @@ export function createSetupWizard(deps: SetupWizardDeps): SetupWizard {
         // The answers **as main parsed them**, which is the whole point of the
         // view: the renderer's own object reaches no row.
         view: setupView({
-          project: answers.gcp_project,
-          region: answers.region,
-          name: answers.name,
-          rigor: answers.rigor,
-          bakeRepos: answers.bake_repos,
+          project: sent.gcp_project,
+          region: sent.region,
+          name: sent.name,
+          rigor: sent.rigor,
+          bakeRepos: sent.bake_repos,
           digest: shownDigest,
           planArgv: planPlan.argv,
           applyArgv: applyPlan.argv,
