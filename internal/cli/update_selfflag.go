@@ -89,14 +89,22 @@ func (e *initEngine) requireManagedInstallation() error {
 }
 
 // convergesAnInstallation is whether this run converges an installation that is
-// already there rather than creating one: the two doors that do — `fugaro
-// update`, and `fugaro setup` on a project an earlier run installed (R8) — and
-// not a run that creates the project (T2a's markCreated is that run's, and a
-// project this run creates is one it marks itself) and not `fugaro apply`,
-// whose own steps are fenced by the command that saved them.
+// already there rather than creating one: `fugaro update`, which does whatever
+// its first run is, and `fugaro setup` on an installation this machine already
+// has (R8) — a setup with a project config, which is update's stage set and
+// update's own stage for the project it never creates. A first run of setup
+// creates the installation (setupCreates): its project stage is registered, it
+// marks the project itself (markCreated, T2a), and it is not this stop's. Nor
+// is `fugaro apply`, whose own steps are fenced by the command that saved them.
 func (e *initEngine) convergesAnInstallation() bool {
 	o := e.r.o
-	return !o.createProject && (o.door == updateDoor.name || o.door == setupDoor.name)
+	if o.createProject {
+		return false
+	}
+	if o.door == updateDoor.name {
+		return true
+	}
+	return o.door == setupDoor.name && !e.firstRun()
 }
 
 // settleExplicitBudget is D2215's rewrite and R6's currency with it, called by
