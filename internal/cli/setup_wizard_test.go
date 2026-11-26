@@ -909,7 +909,7 @@ func TestSetupUpdateConvergesBake(t *testing.T) {
 			t.Fatalf("the fixture's node already carries bake_repos = %v: it is not an installation from before the key", p.BakeRepos)
 		}
 
-		out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+		out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 		if strings.Contains(out, bakeQuestion.label) {
 			t.Errorf("the update door asked the bake question:\n%s", out)
 		}

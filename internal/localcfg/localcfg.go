@@ -1445,9 +1445,9 @@ func (c *Config) NudgeRecurrence() int {
 	return *c.Issues.NudgeRecurrence
 }
 
-// Budget modes.
+// Budget modes. Two, since the word that was the third is not a mode any more
+// (D3009).
 const (
-	BudgetOff     = policy.ModeOff
 	BudgetObserve = policy.ModeObserve
 	BudgetEnforce = policy.ModeEnforce
 )

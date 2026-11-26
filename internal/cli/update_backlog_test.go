@@ -141,7 +141,7 @@ func TestUpdateFoldsOpenBacklogOnce(t *testing.T) {
 	node = append(node, archivedBacklogOps("20261021-04", "a thing folded here and finished since")...)
 	seedBacklogNode(t, r.db, orchestrator.Actor{Class: orchestrator.Daemon, Name: "daemon", Now: orchestratorTestNow}, node...)
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if !strings.Contains(out, "folded 1") || !strings.Contains(out, backlog.Dir) {
 		t.Errorf("the run does not print the count of what it folded, and the folder it folded it from (D2716):\n%s", out)

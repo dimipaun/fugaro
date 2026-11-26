@@ -584,7 +584,7 @@ func TestUpdateConvergesPreviousInstallation(t *testing.T) {
 	// FUGARO_CONFIG, so the local config `fugaro update` reads and writes is the
 	// one this rig left in the XDG projects directory.
 	registerInstallation(t, r.initRig)
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	written := parseLocalConfigBytes(t, readFile(t, installationConfigPath()))
 	for _, name := range []string{"team-a", "team-b"} {
@@ -633,7 +633,7 @@ func TestUpdateIsIdempotent(t *testing.T) {
 	// FUGARO_CONFIG, so the local config `fugaro update` reads and writes is the
 	// one this rig left in the XDG projects directory.
 	registerInstallation(t, r.initRig)
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	written := parseLocalConfigBytes(t, readFile(t, installationConfigPath()))
 	credentials, crafts := slices.Clone(written.Credentials), written.Crafts
@@ -669,7 +669,7 @@ func TestUpdateReportsTheKeysItCannotConvert(t *testing.T) {
 	// The note and the write it belongs to are the run's own account of the
 	// file it converged, so both are in the log beside the screen (stageDetail),
 	// and the order between them is the log's.
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"}) + newestLog(t, "update")
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"}) + newestLog(t, "update")
 
 	note := "note: crafts.coder:"
 	if !strings.Contains(out, note) {
@@ -984,7 +984,7 @@ func TestUpdateSplitsACrossPathPool(t *testing.T) {
 	// FUGARO_CONFIG, so the local config `fugaro update` reads and writes is the
 	// one this rig left in the XDG projects directory.
 	registerInstallation(t, r.initRig)
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	written := parseLocalConfigBytes(t, readFile(t, installationConfigPath()))
 	claude, ok := poolNamed(written, "mixed-claude")
@@ -1021,7 +1021,7 @@ func TestUpdateIsIdempotentForTheSplit(t *testing.T) {
 	r := newConvergeRig(t, v7NodeWithAccounts())
 	r.appendConfig(t, crossedPoolInstallation+crossedPoolCrafts)
 	registerInstallation(t, r.initRig)
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	written := parseLocalConfigBytes(t, readFile(t, installationConfigPath()))
 	once, err := written.Marshal()

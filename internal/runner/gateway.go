@@ -369,7 +369,7 @@ func (r *run) reviewClassRun() bool {
 // carry in every mode, and the budget is accounted for by every run (Spend.On),
 // so what is left here is the credential and the switch.
 func (r *run) gatewayOn() bool {
-	return GatewayOn(r.modelAuth(), r.spend.Mode) || r.serviceSwitched()
+	return GatewayOn(r.modelAuth()) || r.serviceSwitched()
 }
 
 // serviceSwitched reports whether this run's model calls go through the
@@ -1801,9 +1801,13 @@ func (r *run) checkProviderModels() error {
 	// the provider coder's, so that CheckPins, CheckAllowed, the gateway's
 	// stage pins and Claude Code's haiku role all see the same one.
 	bg := r.backgroundModel()
-	mode := policy.ModeOff
+	// The check below is a question about an enforcing budget, and a run with
+	// no gateway is under none: an oauth run's mode binds nothing, and the
+	// answer a run without a gateway gets is observe (C1, R3), which the check
+	// refuses a provider pin under exactly as the word that was a mode did.
+	mode := policy.ModeObserve
 	if r.gatewayOn() {
-		mode = r.spend.Mode
+		mode = policy.Mode(r.spend.Mode).Effective()
 	}
 	if ps := r.checkModels(func(a config.Agent) []config.Problem {
 		return config.CheckProviderGateway(a, bg, r.modelProviders(), mode)

@@ -126,7 +126,7 @@ func TestUpdateAddsTheImplicitReviewJobAndLeavesARunInFlightRunning(t *testing.T
 
 	run := startRunInFlight(t, r)
 
-	convergeOn(t, r, []string{"policy-rules-skew", "policy-older-than-binary", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "policy-older-than-binary", "repo-plugin-pin"})
 
 	// One `fugaro update` and the job is in the document every stage of the run
 	// plans the installation root from, which is what terraform is handed: the
