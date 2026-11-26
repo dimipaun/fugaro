@@ -122,7 +122,7 @@ A member joins the workspace's table with `fugaro workspace project add`, but th
 
 `fugaro workspace user grant` lands the grant in the member's own roster, and the binding it means appears at that member's own `fugaro update`, which `fugaro workspace project status` reports as still pending (D2801). The member list a workspace mirrors into a member's database is advisory, because that member's own database admin can rewrite it, so the fence is drift, read against the workspace's own record (D2813). And neither audit trail is tamper-proof: each is written with the permission the roster write itself needs (D2811).
 
-**A person's own Claude token is the workspace's personal half (D3148).** They store it once with `fugaro secrets user set claude-oauth-token --project <the workspace's project>`, at their own terminal and never yours, and their runs in that workspace's members draw on it ahead of the shared entries; `fugaro run --no-personal-token` launches one that does not.
+**A person's own Claude token is the workspace's personal half (D3148).** They store it once with `fugaro secrets user set claude-oauth-token --config <the config file the workspace's owner sends>`, at their own terminal and never yours, and their runs in that workspace's members draw on it ahead of the shared entries; `fugaro run --no-personal-token` launches one that does not.
 
 ## What dogfooding taught
 
