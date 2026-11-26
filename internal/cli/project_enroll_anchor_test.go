@@ -40,9 +40,9 @@ func TestReposAddPrintsTheAnchorLine(t *testing.T) {
 	if plan := out[:conf]; !strings.Contains(plan, "\n     "+want+"\n") {
 		t.Errorf("the plan's first step does not carry the anchor line %q:\n%s", want, plan)
 	}
-	// The plan's own line is the one the gate writes, and nothing else writes it:
-	// a fixture that read the line out of the command's output rather than out of
-	// the file would pass over an edit that never happened.
+	// The first run leaves the line in the working tree, which is a checkout the
+	// Repository stage of a second run refuses: landing it is the operator's own
+	// step between the two, exactly as the note the write prints says.
 	enrolLanded(t)
 	second, errOut, err := r.enrol(t, enrolRepo)
 	if err != nil {
