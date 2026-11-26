@@ -103,7 +103,6 @@ func suspendRun(ctx context.Context, r *run, stage, session string, ex exhausted
 		"the credential service answered that this run should be suspended until %s; the run saved its session and pushed its work at %s, and the service resumes it then",
 		ex.ResumeAt.UTC().Format(time.RFC3339), shortSHA(sha)))
 	r.skipPR = true
-	r.save(ctx)
 	r.d.Log.Info("the run suspended itself", "stage", stage, "session", work, "checkpoint", shortSHA(sha),
 		"resume_at", ex.ResumeAt.UTC().Format(time.RFC3339))
 	// The ending's own writes, as every ending that does not reach finalize
