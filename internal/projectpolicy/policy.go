@@ -804,6 +804,29 @@ type Policy struct {
 	// default.
 	MobileCrashReports *bool `json:"mobile_crash_reports,omitempty"`
 
+	// MobileCompactionThreshold is how full the context may grow, as a whole
+	// percent, before this project's phones compact it without being asked
+	// (Z2 of docs/mobile-identity-pairing): the app's automatic compaction,
+	// read off the session policy's `compact_threshold_percent` and never off
+	// this node, because `config/policy/**` is not in the paired device's read
+	// set. No key, and a written 0, both mean the project compacts nothing
+	// automatically (MobileCompactionThresholdPercent).
+	//
+	// **It is a top-level key of the node and deliberately not a member of the
+	// mobile block above**, for the reason MobileCrashReports is not one: the
+	// block decodes strictly, so a member added inside it makes every reader of
+	// the release behind refuse the WHOLE policy, and the node is re-read while
+	// runs are in flight (docs/design/update-in-flight.md). An unknown
+	// top-level key is listed in UnknownKeys and tolerated (P8), so a CLI or a
+	// runner of the release behind reads every key it knows and keeps serving.
+	//
+	// It is a pointer because the absent key and a written one are two
+	// statements the node makes differently — nothing said, and "no automatic
+	// compaction" said — and only a publish that keeps a written 0 can put the
+	// second on a node. The two mean the same thing to every reader
+	// (MobileCompactionThresholdPercent answers 0 for both).
+	MobileCompactionThreshold *int `json:"mobile_compaction_threshold,omitempty"`
+
 	// ModelRouting is the project's routing table, published: where each model
 	// is reached, which repositories each credential may serve, and the pools in
 	// the shape C2 gives them (docs/model-credentials-routing, RT4, R21, F49).
@@ -892,6 +915,14 @@ var knownTopLevelKeys = map[string]bool{
 	// reader of the release behind, which is what update must never do. Read by
 	// MobileCrashReportsOn, which answers an absent key off.
 	"mobile_crash_reports": true,
+	// The phone's automatic compaction threshold (Z2 of
+	// docs/mobile-identity-pairing): a top-level key BESIDE the mobile block and
+	// not a member of it, for the reason the switch above is one — the block
+	// decodes strictly, so a member added inside it is refused by every reader
+	// of the release behind, which is what update must never do. Read by
+	// MobileCompactionThresholdPercent, which answers an absent key with no automatic
+	// compaction.
+	"mobile_compaction_threshold": true,
 	// The project's routing table (RT4 of docs/model-credentials-routing): a
 	// top-level key and not a member of any block, for the reason every key
 	// above is one — a reader of the release behind lists it in UnknownKeys and
@@ -2127,6 +2158,19 @@ func decodePolicy(raw []byte, keys map[string]bool, strict bool) (*Policy, bool,
 	if craw, ok := doc["mobile_crash_reports"]; ok && !IsNull(craw) {
 		if err := json.Unmarshal(craw, &p.MobileCrashReports); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: mobile_crash_reports: %w", err)
+		}
+	}
+	// The phone's automatic compaction threshold, read on its own for the same
+	// reason: one whole percent beside the block, so that a reader of the
+	// release behind lists it in UnknownKeys and keeps reading the whole policy
+	// (F46). A written null is the absent key, which is no automatic compaction
+	// (MobileCompactionThresholdPercent).
+	if traw, ok := doc["mobile_compaction_threshold"]; ok && !IsNull(traw) {
+		if err := json.Unmarshal(traw, &p.MobileCompactionThreshold); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: mobile_compaction_threshold: %w", err)
+		}
+		if err := validMobileCompactionThreshold(*p.MobileCompactionThreshold); err != nil {
+			return nil, true, err
 		}
 	}
 	if vraw, ok := doc["verifier_accounts"]; ok && !IsNull(vraw) {
