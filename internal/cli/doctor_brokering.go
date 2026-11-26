@@ -1446,11 +1446,19 @@ func flipServes(lc *localcfg.Config, repo, auth string) bool {
 // The budget mode is no longer one of those conditions (AB15, D3009), so an
 // `api-key` or `oauth` repository reaches this function only with its record
 // off, and the auth the service does not serve at all is the other state here.
+//
+// The auth MODE is deliberately not printed (RT7 of
+// docs/model-credentials-routing): which of the four spellings a repository's
+// fugaro.yaml carries is that repository's own decision and not a fact about
+// this installation, and doctor reporting it made a line about the brokering
+// flip read as a line about the repository's configuration. Its caller says
+// the service does not serve this repository, which is the fact the switch
+// turns on.
 func flipNotServed(lc *localcfg.Config, repo, auth string) string {
 	if !lc.Repos[repo].CredentialsServiceOn() {
 		return "the local config records no apply of its root with the service on"
 	}
-	return fmt.Sprintf("its agent.auth is %q, and the service serves the %q, %q and %q ones", auth, config.AuthCascade, config.AuthAPIKey, config.AuthOAuth)
+	return fmt.Sprintf("the service carries no credential for a repository whose agent.auth is not one of the %q, %q and %q it serves", config.AuthCascade, config.AuthAPIKey, config.AuthOAuth)
 }
 
 // doctorModelKeyInAgent is doctor's "model-key-in-agent" check: a model
