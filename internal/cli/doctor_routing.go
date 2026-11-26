@@ -71,7 +71,11 @@ const (
 // unrouted from a table that never answered for it. An installation that
 // publishes no table at all is the same answer and stays silent, which is what
 // doctor has always done for it.
-func doctorRoutingTableChecks(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config) []doctorCheck {
+//
+// checkBitbucketToken is `--check-bitbucket-token`, the flag doctor already
+// reads the bundle behind: the one report that opens the document takes it, and
+// every other report here is answered from this machine's own files.
+func doctorRoutingTableChecks(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config, checkBitbucketToken bool) []doctorCheck {
 	if lc == nil {
 		return nil
 	}
@@ -103,7 +107,7 @@ func doctorRoutingTableChecks(ctx context.Context, cmd *cobra.Command, lc *local
 			Problem: oneLine(w.Message),
 			Fix:     doctorRoutingFix(w)})
 	}
-	out = append(out, doctorRoutingBundleChecks(ctx, lc, repos)...)
+	out = append(out, doctorRoutingBundleChecks(ctx, lc, repos, checkBitbucketToken)...)
 	out = append(out, doctorRoutingLauncherPoolChecks(lc)...)
 	out = append(out, doctorRoutingPauseChecks(lc)...)
 	return out
@@ -136,31 +140,34 @@ func doctorRoutingFix(p routing.Problem) string {
 // unexported: re-deriving it here would be a second reading of what a bundle key
 // means, which is the one thing this check may not add.
 //
-// The bundle document is read, and that read is a person's. It is the container
-// the service serves every credential of a run out of, so asking which entries
-// are present means opening it, and the refusal that guards every other reader
-// of it is the one this check makes: a coding agent's session and a Fugaro run's
-// own process do not open it, and the line they get says so rather than
-// answering. No value is printed, put in an error or written anywhere: what the
-// check compares is names, and what its lines carry is names.
+// The bundle document is read, and that read is a person's, opt-in and named:
+// it is the flag doctor already reads it behind (`--check-bitbucket-token`,
+// refused in a coding agent's session before anything is opened), and a run
+// without it gets the unread line that names the flag rather than an answer
+// nobody asked for. That container is the service's every credential, so
+// opening it on an ordinary run would be a read the owner never opted into;
+// what the check compares is names, and what its lines carry is names — no
+// value is printed, put in an error or written anywhere.
 //
 // A source whose entry is missing is not an error of the config: the source is
 // inert for that repository — it serves nothing and the call falls to the
 // chain's next source (D3180) — which is exactly what an owner cannot see from
 // either side alone, and why the report is a warning rather than a measurement.
-func doctorRoutingBundleChecks(ctx context.Context, lc *localcfg.Config, repos []string) []doctorCheck {
+func doctorRoutingBundleChecks(ctx context.Context, lc *localcfg.Config, repos []string, optedIn bool) []doctorCheck {
 	// need is one source of the table, over one repository it admits, with the
 	// entry the bundle has to hold for it.
 	type need struct {
 		repo       string
 		slug       string
 		credential string
-		// secret is the name `fugaro secrets set` takes for this credential,
-		// which is not the axis the bundle holds it under: a provider's entry is
-		// keyed by the provider's name (credsvc.RepoCredentialKey, the rule the
-		// writer and the loader share) and the command resolves the key by its
-		// own secret's name (config.ProviderBySecret, its .secret). A source
-		// whose secret name this config does not state names no usable command.
+		// secret is the name `fugaro secrets set` takes for this credential —
+		// a provider's own `.secret`, the project's key secret
+		// (config.AnthropicSecret) for the Anthropic kind — which is not the
+		// axis the bundle holds it under: a provider's entry is keyed by the
+		// provider's name (credsvc.RepoCredentialKey, the rule the writer and
+		// the loader share) and the command resolves the key by its own
+		// secret's name (config.ProviderBySecret, its .secret). A source whose
+		// secret name this config does not state names no usable command.
 		secret string
 		// named is the credential as a person knows it (the project's Anthropic
 		// key, a provider's key by its name), never the account axis's own value.
@@ -182,7 +189,7 @@ func doctorRoutingBundleChecks(ctx context.Context, lc *localcfg.Config, repos [
 				var credential, secret string
 				switch s.Kind {
 				case routing.KindAnthropic:
-					credential = config.AnthropicKeyAccount
+					credential, secret = config.AnthropicKeyAccount, config.AnthropicSecret
 				case routing.KindProvider:
 					p, ok := lc.Providers[s.Provider]
 					if !ok {
@@ -209,17 +216,26 @@ func doctorRoutingBundleChecks(ctx context.Context, lc *localcfg.Config, repos [
 		return nil
 	}
 	what := fmt.Sprintf("the table goes out on %d credential(s) of one repository each", len(needs))
-	unreadable := func(why string) []doctorCheck {
+	unreadable := func(why, fix string) []doctorCheck {
 		return []doctorCheck{{ID: doctorRoutingBundleID, Severity: "info", unread: true,
 			Problem: fmt.Sprintf("%s, and %s: whether this installation's bundle holds them could not be checked", what, why),
-			Fix:     "rerun doctor at your own terminal, with the bundle's accessor available, or read the document's names yourself: " + selfCommand() + " creds ls"}}
+			Fix:     fix}}
+	}
+	readWhat := "or read the document's names yourself: " + selfCommand() + " creds ls"
+	// The document is opened only where a person asked for it: an ordinary run
+	// reads no bundle at all, and says which flag answers the question.
+	if !optedIn {
+		return unreadable("the bundle is read only where a person asks for it, and this run did not",
+			"rerun doctor at your own terminal with "+checkBitbucketTokenFlag+" to read it, "+readWhat)
 	}
 	if err := credsOwnerOnly(os.Getenv, "read"); err != nil {
-		return unreadable("the bundle was not read (" + oneLineCLI(err.Error()) + ")")
+		return unreadable("the bundle was not read ("+oneLineCLI(err.Error())+")",
+			"rerun doctor at your own terminal, with the bundle's accessor available, "+readWhat)
 	}
 	store, err := openBundleStore(ctx, lc)
 	if err != nil {
-		return unreadable("the bundle (" + oneLineCLI(err.Error()) + ")")
+		return unreadable("the bundle ("+oneLineCLI(err.Error())+")",
+			"rerun doctor at your own terminal, with the bundle's accessor available, "+readWhat)
 	}
 	if err := store.check(ctx); err != nil {
 		return []doctorCheck{{ID: doctorRoutingBundleID, Severity: "warning",
@@ -233,7 +249,8 @@ func doctorRoutingBundleChecks(ctx context.Context, lc *localcfg.Config, repos [
 			Problem: fmt.Sprintf("%s, and this installation's bundle (%s) holds no version: every one of those sources is served nothing, and the call falls to the chain's next source", what, pluginwire.Printable(store.id)),
 			Fix:     selfCommand() + " creds set NAME (the bundle's only writer: no update writes a credential)"}}
 	case err != nil:
-		return unreadable("the bundle's newest version (" + oneLineCLI(err.Error()) + ")")
+		return unreadable("the bundle's newest version ("+oneLineCLI(err.Error())+")",
+			"rerun doctor at your own terminal, with the bundle's accessor available, "+readWhat)
 	}
 	if meta.state != "ENABLED" {
 		return []doctorCheck{{ID: doctorRoutingBundleID, Severity: "warning",
@@ -242,11 +259,13 @@ func doctorRoutingBundleChecks(ctx context.Context, lc *localcfg.Config, repos [
 	}
 	doc, err := store.access(ctx, meta.number)
 	if err != nil {
-		return unreadable("the bundle's document (" + oneLineCLI(err.Error()) + ")")
+		return unreadable("the bundle's document ("+oneLineCLI(err.Error())+")",
+			"rerun doctor at your own terminal, with the bundle's accessor available, "+readWhat)
 	}
 	b, err := credsvc.ParseBundle(doc.raw)
 	if err != nil {
-		return unreadable("the document is not one the service accepts: " + oneLineCLI(err.Error()))
+		return unreadable("the document is not one the service accepts: "+oneLineCLI(err.Error()),
+			"rerun doctor at your own terminal, with the bundle's accessor available, "+readWhat)
 	}
 	var out []doctorCheck
 	for _, n := range needs {
@@ -278,18 +297,22 @@ func doctorRoutingCredentialName(s routing.Source) string {
 
 // doctorRoutingBundleFix is the command that puts one source's credential into
 // the bundle, which is the fix for the state the line above it reports. The two
-// kinds are written by two different writers: a repository's own Anthropic key
-// is copied into the bundle by `fugaro update`, out of the container the key is
-// already stored in, and a provider's key is entered per repository by
-// `fugaro secrets set`. The name that command takes is the provider's own
-// secret's name and not the provider's (config.ProviderBySecret, which is the
-// lookup its own name check makes), so the line names the secret the config
-// stores that key under rather than a name the command would refuse.
+// kinds are written by two different writers, and each line names the one that
+// writes it: a provider's key is entered per repository by `fugaro secrets set`,
+// and a repository's own Anthropic key is copied into the bundle by `fugaro
+// update` — out of the repository's OWN container and no other
+// (copyRepositoryKeys), so an update copies nothing for a repository that holds
+// no key of its own and the line has to name storing one first. The name
+// `secrets set` takes is the provider's own secret's name and not the
+// provider's (config.ProviderBySecret, which is the lookup its own name check
+// makes), so the line names the secret the config stores that key under rather
+// than a name the command would refuse.
 func doctorRoutingBundleFix(s routing.Source, repo, secret string) string {
+	set := selfCommand() + " secrets set " + quoteWord(secret) + " --repo " + quoteWord(repo)
 	if s.Kind == routing.KindProvider {
-		return selfCommand() + " secrets set " + quoteWord(secret) + " --repo " + quoteWord(repo)
+		return set
 	}
-	return selfCommand() + " update copies the repository's own Anthropic key into the bundle"
+	return set + " stores this repository's own key, and then " + selfCommand() + " update copies it into the bundle"
 }
 
 // doctorRoutingLauncherPoolChecks is a chain that goes out on the launcher's

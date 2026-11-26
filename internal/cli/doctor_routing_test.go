@@ -143,9 +143,9 @@ func doctorRoutingOrchestratorRig(t *testing.T, lines string) *doctorRig {
 
 // doctorRoutingOutput runs doctor over the rig's installation and answers the
 // parsed document beside the bytes it read, so a failure can print the run.
-func doctorRoutingOutput(t *testing.T) (doctorOutput, string) {
+func doctorRoutingOutput(t *testing.T, args ...string) (doctorOutput, string) {
 	t.Helper()
-	out, _, _ := execute(t, "doctor", "--json", "--dir", t.TempDir())
+	out, _, _ := execute(t, append([]string{"doctor", "--json", "--dir", t.TempDir()}, args...)...)
 	var o doctorOutput
 	if err := json.Unmarshal([]byte(out), &o); err != nil {
 		t.Fatalf("doctor --json is not JSON: %v\n%s", err, out)
@@ -223,8 +223,38 @@ func TestDoctorRouting(t *testing.T) {
 	})
 
 	// The bundle's half: whether this installation holds the secret each source
-	// of the table is served by.
+	// of the table is served by. The document is the service's every credential,
+	// so it is read only where a person asks for it: every sub-test that wants
+	// an answer passes the flag the read is behind.
 	t.Run("source_missing_from_the_bundle", func(t *testing.T) {
+		t.Run("without the flag the bundle is not read", func(t *testing.T) {
+			r := doctorRoutingRig(t, doctorRoutingSources)
+			id := bundleFixtureFor(t, r.sm, "aurora", []byte(config.BitbucketSecret+": "+credsValue(t, "token")+"\n"))
+
+			o, out := doctorRoutingOutput(t)
+			cs := checksByID(o, doctorRoutingBundleID)
+			if len(cs) != 1 || cs[0].Severity != "info" {
+				t.Fatalf("routing-bundle-source = %+v, want one unread line:\n%s", cs, out)
+			}
+			// The unread marker's own class: the line is a read that did not
+			// answer, so it is counted as the audit line it is rather than
+			// dropped as a silent pass.
+			if cs[0].Class != doctorClassAudit {
+				t.Errorf("the unread line is filed as %q, and a read that did not answer is an audit line: %+v", cs[0].Class, cs[0])
+			}
+			if !strings.Contains(cs[0].Fix, checkBitbucketTokenFlag) {
+				t.Errorf("the line does not name the flag that reads the bundle: %q", cs[0].Fix)
+			}
+			if checksFail(cs, true) {
+				t.Errorf("a bundle nobody asked to read fails doctor under --strict: %+v", cs)
+			}
+			for _, got := range r.sm.Accessed() {
+				if got == id {
+					t.Error("the bundle's value was read without --check-bitbucket-token")
+				}
+			}
+		})
+
 		t.Run("the bundle holds neither", func(t *testing.T) {
 			r := doctorRoutingRig(t, doctorRoutingSources)
 			// A bundle that holds a credential of the project and neither of
@@ -232,7 +262,7 @@ func TestDoctorRouting(t *testing.T) {
 			// either side alone.
 			bundleFixtureFor(t, r.sm, "aurora", []byte(config.BitbucketSecret+": "+credsValue(t, "token")+"\n"))
 
-			o, out := doctorRoutingOutput(t)
+			o, out := doctorRoutingOutput(t, checkBitbucketTokenFlag)
 			cs := checksByID(o, doctorRoutingBundleID)
 			if len(cs) != 2 {
 				t.Fatalf("routing-bundle-source emitted %d check(s), want one per source of the chain:\n%s", len(cs), out)
@@ -251,7 +281,12 @@ func TestDoctorRouting(t *testing.T) {
 				}
 			}
 			for _, want := range []string{
-				"update copies the repository's own Anthropic key",
+				// An update copies a repository's OWN Anthropic key and no
+				// other (copyRepositoryKeys), so the line has to name storing
+				// one before it: with only the project's key stored, the copy
+				// writes nothing and the warning would survive the update.
+				"secrets set anthropic-api-key --repo acme/app",
+				"then " + selfCommand() + " update copies it into the bundle",
 				// The name `secrets set` takes is the provider's own secret's
 				// name, never the provider entry's: the command resolves the key
 				// through the former (config.ProviderBySecret), so a line naming
@@ -275,7 +310,7 @@ func TestDoctorRouting(t *testing.T) {
 				copyEntryDoc(doctorRoutingEntry(t, slug, "openrouter"), credsValue(t, "provider"), "https://openrouter.ai/api", providerAuthBearer, credsvc.ProviderKeySource{})
 			bundleFixtureFor(t, r.sm, "aurora", []byte(doc))
 
-			o, out := doctorRoutingOutput(t)
+			o, out := doctorRoutingOutput(t, checkBitbucketTokenFlag)
 			cs := checksByID(o, doctorRoutingBundleID)
 			if len(cs) != 1 || !cs[0].OK || cs[0].Severity != "info" {
 				t.Fatalf("routing-bundle-source = %+v, want one measurement:\n%s", cs, out)

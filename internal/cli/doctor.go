@@ -611,10 +611,11 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// The project's own routing table (RT7): the checks' answer for the table
 	// itself, and the states around it a run meets before a launch does — a
 	// subscription token in no pool, a source whose secret this installation's
-	// bundle does not hold, a chain that goes out on the launcher's pool where
-	// the project declares none, and a table that can pause on an installation
-	// with no resident orchestrator.
-	o.Checks = append(o.Checks, doctorRoutingTableChecks(ctx, cmd, lc)...)
+	// bundle does not hold (read behind --check-bitbucket-token, like the
+	// bundle's own checks above), a chain that goes out on the launcher's pool
+	// where the project declares none, and a table that can pause on an
+	// installation with no resident orchestrator.
+	o.Checks = append(o.Checks, doctorRoutingTableChecks(ctx, cmd, lc, checkBitbucketToken)...)
 	// The workspace this project is in, or the one it is (WS14, F20): the
 	// workspace's own three lines on the machine that deploys and publishes it,
 	// a member's pin and the credential route each of this project's
