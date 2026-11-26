@@ -45,8 +45,8 @@ func TestReviewAgainstTaskEndToEnd(t *testing.T) {
 	seedLaunchRootSpec(t, f.cloudFixture, plan, 7, time.Now().Add(-72*time.Hour))
 	seedLaunchFollowUp(t, f.cloudFixture, reviewAgainstFollowUp, rootID, "Also rename the widget", time.Now().Add(-48*time.Hour))
 
-	if _, _, err := reviewCLI(t, "--pr", "7", "--token", "acme-personal"); err != nil {
-		t.Fatalf("a review of PR #7 on acme-personal: %v", err)
+	if _, _, err := reviewCLI(t, "--pr", "7"); err != nil {
+		t.Fatalf("a review of PR #7: %v", err)
 	}
 	slug, id, err := parseRunRef(storedRunRef(t, f.cloudFixture))
 	if err != nil {
