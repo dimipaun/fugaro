@@ -45,9 +45,15 @@ type accountsAddOptions struct {
 	// lone token is (PL2, D3176), so this is the flag that keeps a new
 	// subscription token in one from the start, and it joins the pool it names
 	// when the config already defines one.
-	pool   string
-	claude bool
-	yes    bool
+	pool string
+	// personal is --personal (PL9): with --pool, the token is stored in the
+	// caller's OWN container of this project through the intake and the pool is
+	// one the caller keeps for themselves at the installation's credentials
+	// service — no config is written and no credential is declared. It is
+	// refused without --pool and beside every flag of the config half.
+	personal bool
+	claude   bool
+	yes      bool
 	// ask is --ask (the owner's rule of 2026-11-04, and --yes's symmetric
 	// half): in a project whose marks say it is managed the declaration and
 	// the converge below are written on the gate's verdict with no prompt, and
@@ -151,6 +157,7 @@ step no plan admits.`,
 	f.BoolVar(&o.claude, "claude", false, "run Anthropic's own claude setup-token login on this terminal first, then paste the token at the hidden prompt")
 	f.StringVar(&o.typ, "type", "", "declare the name as a typed credential too, so a craft or a pool may spend it: claude-oauth (this command's OAuth token step), or a key type (openrouter or anthropic), whose value is read the same way and stored under the credential's own derived secret name (without it, the name is declared in claude_accounts alone, as it always was)")
 	f.StringVar(&o.pool, "pool", "", "put the token in the named pool: declare the pool with this account's credential as its one member, or join the members it already has. Requires --type claude-oauth; without the flag a subscription token goes in a pool of one named after the account, and a key credential in none. The name may not be one a credential of this config holds, unless the pool walks that credential alone")
+	f.BoolVar(&o.personal, "personal", false, "with --pool: keep the token in a pool of YOUR OWN, stored in your own container of this project through the intake rather than declared in the config (fugaro accounts pool add --personal declares the pool). Refuses --repos, --profile, --type, --ask and --yes")
 	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmation this declaration would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed")
 	return cmd
 }
@@ -185,6 +192,13 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	sel, lc, err := settingsSelection()
 	if err != nil {
 		return err
+	}
+	// --personal is the other document entirely (PL9): nothing below is written
+	// for it — no config, no credential, no admission — so it is answered here,
+	// before the gate that guards a project-wide declaration, because a pool of
+	// one's own is exactly the act a NON-admin member makes.
+	if o.personal {
+		return runAccountsAddPersonal(cmd, name, o, lc)
 	}
 	// An account is the project's — what it may be mounted for is a
 	// project-wide list (F19) — so it is declared by a project admin and by

@@ -299,6 +299,21 @@ func secretsIntakeRefusal(getenv func(string) string, did string) error {
 	return refuseHTTP2Debug(getenv)
 }
 
+// secretsIntakeStore is the one value-write of this family: the intake's create
+// route, the caller's own ID token and an answer read strictly. The three callers
+// — `secrets user set`, `accounts pool contribute` and a token added to a pool of
+// one's own (PL9) — differ in the request they build and in nothing else.
+func secretsIntakeStore(ctx context.Context, serviceURL string, req intake.CreateRequest, what string) (intake.SecretAnswer, error) {
+	var answer intake.SecretAnswer
+	err := secretsIntakeDo(ctx, serviceURL, secretsIntakeCall{
+		Path: intake.CreatePath,
+		What: what,
+		Body: req,
+		Out:  &answer,
+	})
+	return answer, err
+}
+
 // secretsIntakeSet stores one value through the intake. The order is the whole
 // of its safety: the refusals, then the address (from local config, before a
 // person is ever prompted for a credential), then the value, then the call.
@@ -319,13 +334,10 @@ func secretsIntakeSet(cmd *cobra.Command, o secretsIntakeOptions, scope intake.S
 	if err != nil {
 		return err
 	}
-	var answer intake.SecretAnswer
-	if err := secretsIntakeDo(ctx, serviceURL, secretsIntakeCall{
-		Path: intake.CreatePath,
-		What: "a secret of yours is stored",
-		Body: intake.CreateRequest{Scope: scope, Name: name, Value: base64.StdEncoding.EncodeToString(value)},
-		Out:  &answer,
-	}); err != nil {
+	answer, err := secretsIntakeStore(ctx, serviceURL,
+		intake.CreateRequest{Scope: scope, Name: name, Value: base64.StdEncoding.EncodeToString(value)},
+		"a secret of yours is stored")
+	if err != nil {
 		return err
 	}
 	if o.asJSON {
@@ -877,18 +889,13 @@ func accountsPoolContribute(cmd *cobra.Command, o accountsPoolContributeOptions)
 	if err != nil {
 		return err
 	}
-	var answer intake.SecretAnswer
-	if err := secretsIntakeDo(ctx, serviceURL, secretsIntakeCall{
-		Path: intake.CreatePath,
-		What: "your own token is contributed to a pool",
-		Body: intake.CreateRequest{
-			Scope: intake.ScopeShared,
-			Name:  member,
-			Pool:  pool,
-			Value: base64.StdEncoding.EncodeToString(value),
-		},
-		Out: &answer,
-	}); err != nil {
+	answer, err := secretsIntakeStore(ctx, serviceURL, intake.CreateRequest{
+		Scope: intake.ScopeShared,
+		Name:  member,
+		Pool:  pool,
+		Value: base64.StdEncoding.EncodeToString(value),
+	}, "your own token is contributed to a pool")
+	if err != nil {
 		return err
 	}
 	if o.asJSON {
