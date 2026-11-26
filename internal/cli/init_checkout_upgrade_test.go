@@ -450,6 +450,7 @@ func TestUpdateLocalStepsRunInAgentSession(t *testing.T) {
 	if len(f.Changes(t)) == 0 {
 		t.Errorf("the plugin was not installed in an agent's session\n%s", out)
 	}
+	// No reader may take a half-done checkout for done, which is why this test exists.
 	// What a session leaves is the cloud half alone, and it names no checkout (againView, U4): the plugin stage's own
 	// step is the machine's install, which a session applies, and the pin's
 	// removal — the other step a session handed back — is a notice the run
