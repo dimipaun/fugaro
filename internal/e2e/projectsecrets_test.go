@@ -6,12 +6,11 @@ package e2e
 //
 // Three runs of the sandbox's own repository, all hermetic:
 //
-//   - TestProjectSecretFetchedEndToEnd: the owner runs `fugaro secrets allow`
-//     (IS3, which writes the project record the service admits a version-2
-//     fetch by), `fugaro update --repo` writes the version-1 record, the name's
-//     `fugaro_p_` container holds the copied value, and the run's fetch reads it
-//     -- the value lands in the file the declaration asked for and the agent
-//     stage sees the path.
+//   - TestProjectSecretFetchedEndToEnd: the installation's own converge copies
+//     the name into the `fugaro_p_` grammar and records it (IS5), `fugaro update
+//     --repo` writes the version-1 record, and the run's fetch reads the
+//     grammar's copy -- the value lands in the file the declaration asked for
+//     and the agent stage sees the path.
 //   - TestUnlistedRepositoryRefusedEndToEnd: the record admits another
 //     repository, so version 2 refuses, version 1 has no record to read, and the
 //     run stops before any agent call.
