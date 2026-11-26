@@ -364,7 +364,7 @@ names one.
 
 ## Decisions
 
-All answered by the owner on 2026-11-21.
+All answered by the owner on 2026-11-21; D3200 on 2026-11-26.
 
 | # | Module | Question | Recommendation | Answer |
 | --- | --- | --- | --- | --- |
@@ -396,6 +396,7 @@ All answered by the owner on 2026-11-21.
 | D3195 | pause-resume | The word for a pull request whose chain is paused (O14) | Live | **Not the recommendation: a fifth word, `paused`.** A new pull-request state beside live, ready, stalled and orphan. My reading, not his words: the chain still counts as in flight to the guards, so a duplicate launch or a follow-up is refused while the pause stands (F64) |
 | D3196 | migration | What `update` does with a configuration that migrates to a table the checks refuse (O15) | Leave that entry on the release-1 bridge, name it, converge | **As recommended** |
 | D3197 | pause-resume | May a project admin cancel another person's paused run (O16)? | Not in this plan | **As recommended.** Only the launcher cancels; D143 stands |
+| D3200 | pools | Does `fugaro accounts add` put a new subscription token in a pool of one named after the account (PL2)? | No: the command writes a lone account, and a pool is made with `fugaro accounts pool add` | **The owner's ruling of 2026-11-26** (run 4d2e's review decision): `accounts add` keeps writing a lone account, `--pool` names a pool the config already defines which the token joins, and a pool and a credential stay disjoint names (`config.ValidatePools`, `accountsAddPoolNameHeld`), so a pool of one named after its own credential cannot hold. Retires PL2's first clause; the shipped command still writes `pools.<name>` for a new `--type claude-oauth` account, so PL2's rework owes the change |
 
 D3198 and D3199 are reserved and unused.
 
