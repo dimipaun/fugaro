@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
@@ -16,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // update_in_flight.go is what the update door says, and does not do, about the
@@ -433,6 +436,10 @@ func (e *initEngine) inFlightSteps(ctx context.Context, db *rtdb.Client) []inFli
 	if e.retireTakesExecutions(isManaged) {
 		steps = append(steps, inFlightStep{
 			line: "retirement: deletes an orphaned job and the executions on it"})
+	}
+	if e.sharedRootRetires(ctx) {
+		steps = append(steps, inFlightStep{
+			line: "retirement: takes a migrated repository's root apart; a job with a run waits"})
 	}
 	return steps
 }
@@ -979,4 +986,62 @@ func (e *initEngine) retireTakesExecutions(managed bool) bool {
 		return true
 	}
 	return managed
+}
+
+// sharedRootRetires is M2's own retirement: whether this update can take a
+// migrated repository's whole root apart — its jobs, its registry, its build
+// account and its check job — which a plain `fugaro update`, with no flag at
+// all, does for a repository a deployed profile admits whose root is still
+// deployed (retireSharedRoot, init_retire.go; D2303).
+//
+// It is the one fact of that retirement the door can read before the repository
+// stage runs: the state object under the repository's own prefix is the root
+// that is still there, and the destroy plan itself — and so whether the state
+// holds anything at all — is the stage's. The structural precondition the
+// retirement holds on is not asked here: the project's image, the Bitbucket
+// proxy and an execution running on a job are what the stage's own hold reads,
+// and the line names the step this run can take rather than promising it lands.
+//
+// The walk is doctorBitbucketSharedRepos' own: every repository this machine's
+// config lists, its provider, and whether a profile of the published node admits
+// it (M7's infra.SharedRepo, which a nil policy answers "no"). A root already
+// retired leaves no state object, and this clause goes quiet for it: the line is
+// about a retirement that is still owed, and a shared project whose root is gone
+// must not name one on every update after it.
+//
+// A read that could not be made at all — no clients, no node this binary can
+// read, a listing that failed — names no line. Every other clause here errs the
+// other way, because what it would name is a step that may do nothing, while
+// what this one would name is a repository a person is asked about on every
+// update of a project whose retirement the door cannot see. The step's own hold
+// is where a failure to read is said, and it says it with the fix.
+func (e *initEngine) sharedRootRetires(ctx context.Context) bool {
+	lc := e.lc
+	if lc == nil || len(lc.Repos) == 0 || e.c == nil || e.c.Storage == nil {
+		return false
+	}
+	node, found, readErr := repoPolicyRead(ctx, lc)
+	policy := repoPolicyInput(lc, node, found, readErr)
+	if policy == nil {
+		return false
+	}
+	bucket := infra.StateBucketName(e.r.o.stateBucket, lc)
+	// The state object's own read is what says the root is still there, and it
+	// is one listing per admitted repository: a project whose repositories no
+	// profile admits — the ordinary project of every release before this one —
+	// makes no call at all.
+	for _, name := range slices.Sorted(maps.Keys(lc.Repos)) {
+		provider := lc.Repos[name].Provider
+		if provider == "" || !infra.SharedRepo(policy, provider, name) {
+			continue
+		}
+		slug, err := task.Slug(provider, name)
+		if err != nil {
+			continue
+		}
+		if objects, err := infra.RepoStateObjects(ctx, e.c, bucket, slug); err == nil && len(objects) > 0 {
+			return true
+		}
+	}
+	return false
 }

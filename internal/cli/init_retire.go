@@ -688,9 +688,14 @@ func (r *initRun) retireSharedRoot(ctx context.Context, c *infra.Clients, t *tf.
 	if len(rets) == 0 {
 		// The object is there and holds no resource: nothing of this
 		// repository's own is deployed, which settles the record exactly as
-		// an empty read of a real root does.
+		// an empty read of a real root does -- and the emptied document goes
+		// too, which is what a run that stopped between its destroy and here
+		// leaves.
 		r.retireNone = true
 		r.recordRetiredNothing(ctx, lc)
+		if !r.o.planOnly {
+			r.forgetRetiredRoot(ctx, c, t, spec, stateBucket, slug)
+		}
 		return nil
 	}
 	r.retired = true
@@ -727,7 +732,51 @@ func (r *initRun) retireSharedRoot(ctx context.Context, c *infra.Clients, t *tf.
 		return err
 	}
 	r.recordUpdate(ctx, lc, rets)
-	return r.retireDelete(ctx, c, spec)
+	if err := r.retireDelete(ctx, c, spec); err != nil {
+		return err
+	}
+	r.forgetRetiredRoot(ctx, c, t, spec, stateBucket, slug)
+	return nil
+}
+
+// forgetRetiredRoot deletes the retired root's state objects once they hold
+// nothing, so that the repository is left the way a repository that was never
+// applied is: one listing in the state bucket, and the door's note about the
+// runs in flight names the retirement while that object is there
+// (sharedRootRetires, update_in_flight.go). A run is not fully retired until it
+// is, and the next update would otherwise name a retirement it does not make.
+//
+// The read is what decides, not the run's own bookkeeping: a state that manages
+// anything keeps its object and its addresses, and the run leaves them alone --
+// a residue a failed job delete left is managed by nobody and named by the
+// retirement's own residue report, which is not this step's to second-guess.
+//
+// A bucket that keeps no noncurrent versions keeps the object as it is
+// (ForgetRepoState's own rule, forgetRepo): the emptied document is recoverable
+// data, and the price of keeping it is a line in the next update's note rather
+// than a deletion nobody could undo. Every bucket fugaro creates is versioned,
+// and a managed project's must be, so this is the state a hand-made bucket is
+// in. Nothing here fails the update: a deletion that could not be made is one
+// line, and the next update tries again.
+func (r *initRun) forgetRetiredRoot(ctx context.Context, c *infra.Clients, t *tf.TF, spec infra.RepoSpec, stateBucket, slug string) {
+	st, err := t.ShowState(ctx)
+	if err != nil {
+		r.warn(fmt.Sprintf("%s's retired root leaves its state object in gs://%s (%v)", oneLineCLI(spec.Name), stateBucket, err))
+		return
+	}
+	if st.Managed() {
+		return
+	}
+	switch versioned, err := infra.StateBucketVersioned(ctx, c, stateBucket); {
+	case err != nil:
+		r.warn(fmt.Sprintf("%s's retired root leaves its state object in gs://%s (%v)", oneLineCLI(spec.Name), stateBucket, err))
+	case !versioned:
+		r.warn(fmt.Sprintf("%s's root is retired; its emptied state object stays in gs://%s, which keeps no noncurrent versions", oneLineCLI(spec.Name), stateBucket))
+	default:
+		if _, err := infra.ForgetRepoState(ctx, c, stateBucket, slug); err != nil {
+			r.warn(fmt.Sprintf("%s's retired root leaves its state object in gs://%s (%v)", oneLineCLI(spec.Name), stateBucket, err))
+		}
+	}
 }
 
 // rootRetireHolds is M2's structural precondition, and it prints the one line
