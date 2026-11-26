@@ -4,15 +4,18 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/craft"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/runner"
 )
 
@@ -48,21 +51,22 @@ import (
 func newCraftCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "craft",
-		Short: "Show the model and the credential or pool each craft runs on",
+		Short: "Show the model each craft runs and the chain it goes out on",
 		Long: `Show the crafts: the coder, the first-line review, the senior review,
 the security review and the merge judge.
 
-Each craft runs a model and sends its calls out on a credential or a pool, and
-the two halves inherit separately: the first-line review and the merge judge
-follow the coder, and the security review follows the senior review, so a craft
-that sets only one half keeps the other half it follows. A craft that sets no
-access anywhere resolves to the project's default credential.
+Each craft runs a model, and the chain the project's routing table resolves that
+model to is where its calls go out: the sources of the entry that matches it, in
+order, first usable one wins. A model no entry matches has no chain and no run
+can call it. A project that publishes no routing table is served the release-1
+way, so its crafts have no chain to show.
 
-Every half names where it came from: the layer that wrote it (repo, local or
-project), the craft it was inherited from, or default when nothing set it. A
-pool holding two or more Claude OAuth credentials serves nothing until the
-project's subscription-spread switch is on — the switch this machine's own
-config writes — and the row says so.
+A craft's model inherits separately from the chain: the first-line review and
+the merge judge follow the coder, and the security review follows the senior
+review, so a craft that names only a model keeps the model of the craft it
+follows. The model names where it came from — the layer that wrote it (repo,
+local or project), the craft it was inherited from, or default when nothing set
+it. The chain is the project's and comes from no layer of a craft.
 
 The read is offline: it reads this checkout's fugaro.yaml, the installation's
 own config and the project layer file the last cloud read cached, and reaches
@@ -72,10 +76,13 @@ no bucket, no database and no host.`,
 	return cmd
 }
 
-// craftLsDocVersion is the document's first version, and the number a member
-// added later keeps: schemas/craft-ls.schema.json pins it. The document is
-// versioned from its first release because the console reads it (F16).
-const craftLsDocVersion = 1
+// craftLsDocVersion is the document's second version: RT6 replaced each row's
+// access, the layer it came from and its inert flag with the chain the craft's
+// model resolves to in the project's routing table (D3170), and a removed
+// member is what bumps a version rather than a name reused (D1667, CLAUDE.md).
+// schemas/craft-ls.schema.json pins it. The document is versioned from its
+// first release because the console reads it (F16).
+const craftLsDocVersion = 2
 
 type craftLsOptions struct {
 	cloud cloudOptions
@@ -87,7 +94,7 @@ func newCraftLsCmd() *cobra.Command {
 	var o craftLsOptions
 	cmd := &cobra.Command{
 		Use:   "ls",
-		Short: "Show each craft's effective model and access, and where each came from",
+		Short: "Show each craft's effective model, the chain it goes out on, and where the model came from",
 		Args:  cobra.NoArgs,
 		RunE:  func(cmd *cobra.Command, _ []string) error { return runCraftLs(cmd, &o) },
 	}
@@ -127,16 +134,23 @@ type craftLsRow struct {
 	// "local", "project"), the craft it was inherited from ("inherited from
 	// coder"), or "default" when nothing set it.
 	ModelFrom string `json:"model_from"`
-	// Access is the credential or pool this craft's calls go out on. It is
-	// never empty: an access no layer sets is the project's default
-	// credential.
-	Access string `json:"access"`
-	// AccessFrom is where Access came from, as ModelFrom is where Model did.
-	AccessFrom string `json:"access_from"`
-	// Inert is whether Access names a pool that serves nothing yet: a pool of
-	// two or more Claude OAuth credentials while the project's
-	// subscription-spread switch is off (D1622).
-	Inert bool `json:"inert"`
+	// Chain is where this craft's calls go out: the sources of the entry the
+	// project's routing table resolves Model to, in the order the project wrote
+	// them, first usable one wins, each spelled the way `fugaro routing ls`
+	// spells a source (RT5). It is written on every row, empty included, so a
+	// consumer reads one without a nil check. A project whose table does not
+	// serve this repository -- none published, or one whose every source is
+	// admitted to another (D3182) -- routes its calls the release-1 way (D3170,
+	// O7, R25, D3196), so every row of one has an empty chain and no
+	// ChainProblem.
+	Chain []string `json:"chain"`
+	// ChainProblem is why Model resolves to no chain, in one sentence: no entry
+	// of the table matches it, two entries claim it with one pattern
+	// (routing.Resolve's two refusals, RT1), or the entry that wins names no
+	// source. Absent when Chain is not empty, for a craft that names no model
+	// -- which is served by the role slot below it and has no chain to miss
+	// (F17) -- and for every row of a repository the table does not serve.
+	ChainProblem string `json:"chain_problem,omitempty"`
 	// Servable is whether a run can serve Model: the project's allow-list
 	// admits it, a route claims it and a price row covers it -- MC15's verdict
 	// (D1665), asked here so a reader sees the refusal before a run pays for
@@ -175,12 +189,17 @@ func runCraftLs(cmd *cobra.Command, o *craftLsOptions) error {
 	eff, ps := craft.Resolve(craftLsLayers(files), craftLsSpread(lc))
 	serves := craftLsServes(cmd, files)
 	doc := craftLsDoc{Version: craftLsDocVersion, Project: project}
+	var table routing.Table
+	if lc != nil {
+		table = lc.ModelRouting
+	}
 	for _, name := range config.CraftNames {
 		e := eff[name]
 		why := serves.modelProblem(name, e.Model)
+		chain, chainWhy := craftLsChain(table, serves.repo, e.Model)
 		doc.Crafts = append(doc.Crafts, craftLsRow{
 			Craft: name, Model: e.Model, ModelFrom: e.ModelFrom,
-			Access: e.Access, AccessFrom: e.AccessFrom, Inert: e.Inert,
+			Chain: chain, ChainProblem: chainWhy,
 			Servable: why == "", ModelProblem: why,
 		})
 	}
@@ -348,6 +367,10 @@ type craftLsServe struct {
 	// run is accounted for now, and the price of a craft's model is what says
 	// a run of that craft can be.
 	priced bool
+	// repo is the repository these runs are for: the checkout's origin, "" when
+	// it names none. It is read once, here, because the routes and the chain
+	// below are both answered for it.
+	repo string
 }
 
 // craftLsServes assembles them from the documents the read already resolved.
@@ -390,6 +413,7 @@ func craftLsServes(cmd *cobra.Command, f craftLsFiles) craftLsServe {
 	if err != nil {
 		repo = ""
 	}
+	s.repo = repo
 	_, claimed, _ := layerRoutes(f.lc, f.layer, repo)
 	s.routes = runner.ProvidersFor(claimed, repo)
 	if ov, err := f.lc.Overrides(); err == nil {
@@ -424,6 +448,45 @@ func (s craftLsServe) modelProblem(craft, model string) string {
 	return ""
 }
 
+// craftLsChain is the chain one craft's model resolves to: the entry RT5's own
+// resolver picks, and its sources, in order.
+//
+// The winner is routingWinner's answer and not this read's, because a second
+// reading of D3172's precedence would be free to disagree with `fugaro routing
+// ls` about which entry serves a model — and its sentence about why none does
+// is the fix a reader needs. A craft that names no model has no chain and no
+// problem: it runs the model of the slot it follows (F17).
+//
+// A table that does not serve this repository has no chain and no problem
+// either: a project that publishes none and one whose every source is admitted
+// to another repository are one answer (infra.ChainServes, the walk
+// chainRoutingGate makes through ChainPlanFor(...).Serves and ee/ab's admission
+// makes on its own), and such a repository's calls go out the release-1 way, on
+// the access its crafts resolve to (D3170, O7, R25, D3196). Every reader of the
+// table in this release asks this question the same way (`validate`'s
+// modelRoutingProblems, the launch's gate, doctor's read), and asking it here as
+// well is what keeps `craft ls` from reporting every craft of a repository the
+// table does not govern as unserved — the sentence routingWinner gives a model
+// no entry matches is the launch gate's refusal, written for a run the table
+// really governs.
+func craftLsChain(table routing.Table, repo, model string) (chain []string, problem string) {
+	if model == "" || !infra.ChainServes(table, repo) {
+		return []string{}, ""
+	}
+	entry, why := routingWinner(table, model)
+	if entry.Match == "" {
+		return []string{}, why
+	}
+	chain = make([]string, 0, len(entry.Chain))
+	for _, s := range entry.Chain {
+		chain = append(chain, routingSourceString(s))
+	}
+	if len(chain) == 0 {
+		return chain, fmt.Sprintf("the entry %s matches names no source, so no call can go out: write one with `fugaro routing set %s <source>...`", entry.Match, entry.Match)
+	}
+	return chain, ""
+}
+
 // craftLsModelKey is the key the checks above are asked about: the
 // repository's own agent.crafts.<craft>.model. The row carries the sentence and
 // not the path -- which document wrote the model is what model_from says -- so
@@ -436,25 +499,35 @@ func craftLsModelKey(craft string) string { return "agent.crafts." + craft + ".m
 func writeCraftLs(cmd *cobra.Command, doc craftLsDoc) error {
 	w := cmd.OutOrStdout()
 	if doc.Project == "" {
-		fmt.Fprintln(w, "crafts: no project config selected, so the default credential and no model")
+		fmt.Fprintln(w, "crafts: no project config selected, so no craft has a model and there is no table")
 	} else {
 		fmt.Fprintf(w, "crafts for project %s (offline)\n", oneLine(doc.Project))
 	}
 	fmt.Fprintln(w)
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "CRAFT\tMODEL\tMODEL FROM\tACCESS\tACCESS FROM\tSERVES")
+	fmt.Fprintln(tw, "CRAFT\tMODEL\tMODEL FROM\tCHAIN\tSERVES")
 	for _, r := range doc.Crafts {
 		model := r.Model
 		if model == "" {
 			model = "—"
 		}
-		serves := "yes"
-		if r.Inert {
-			serves = "no: the subscription-spread switch is off"
+		chain := "—"
+		if len(r.Chain) > 0 {
+			chain = strings.Join(r.Chain, " → ")
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
+		// SERVES is the whole verdict and not the model's half of it: a craft
+		// whose model is priced and routed nowhere is served by no run either,
+		// and the chain is the half this read now answers (D3170).
+		serves := "yes"
+		switch {
+		case r.ChainProblem != "":
+			serves = "no: " + r.ChainProblem
+		case r.ModelProblem != "":
+			serves = "no: " + r.ModelProblem
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
 			cellOneLine(r.Craft), cellOneLine(model), cellOneLine(r.ModelFrom),
-			cellOneLine(r.Access), cellOneLine(r.AccessFrom), serves)
+			cellOneLine(chain), oneLine(serves))
 	}
 	if err := tw.Flush(); err != nil {
 		return err

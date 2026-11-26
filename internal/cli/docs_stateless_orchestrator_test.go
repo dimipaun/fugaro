@@ -493,6 +493,15 @@ func TestDocsStatelessOrchestratorLongRunTriageIsFollowedThrough(t *testing.T) {
 			}
 		}
 	}
+	// BF1's writer landed on 2026-11-25, so the rule's third input is a file
+	// this repository writes: each document names it instead of carrying the
+	// "not in this tree" it read before, and the reader's shape stays the
+	// writer's to follow.
+	for _, f := range []struct{ name, text string }{{soPlan, plan}, {soReconciled, rec}, {soReadme, readme}} {
+		if !strings.Contains(f.text, "internal/runner/findings.go") {
+			t.Errorf("%s: the runner's findings writer is not named", f.name)
+		}
+	}
 	for _, want := range []string{
 		"### O14. The long-run triage rule and `fugaro runs watch` (BF2, slice 1)",
 		"**Level 7.**",
@@ -519,6 +528,7 @@ func TestDocsStatelessOrchestratorLongRunTriageIsFollowedThrough(t *testing.T) {
 		"`gitprov.Provider.CI(ctx, number) (CIState, error)`",
 		"CIUnknown",
 		"TestTriageFailsClosedWithoutAFindingsFile",
+		"TestTriageReadsTheArtifactTheRunnerWrites",
 		"TestTriageFailsClosedOnAnUnknownSeverity",
 		"TestTriageRecommendsOnlyWhenAnInputCannotBeRead",
 		"TestTriageNeverCancelsOnAnUnreadableFindingsFile",

@@ -142,7 +142,7 @@
         "other": {
           "type": "integer",
           "minimum": 0,
-          "description": "Every run whose outcome node or history document names a status outside this vocabulary: a status another release wrote is visible here rather than dropped or given a key of its own. All six keys are always present, zero included, so a consumer reads a count without a nil check."
+          "description": "Every run whose outcome node or history document names a status outside this vocabulary, and a run that suspended itself to be resumed by its chain: a paused run is neither a failure nor a success, it is terminal for its own execution, and the run that resumes it is another run counted on the day it ends (contract-pause, R15). A status another release wrote is visible here rather than dropped or given a key of its own. All six keys are always present, zero included, so a consumer reads a count without a nil check."
         }
       }
     },

@@ -376,10 +376,11 @@ func newSlipID() (string, error) {
 // credential to read and no admission to consult; the policy is read for its
 // pools and for nothing else.
 func (s *Server) slipGrant(ctx context.Context, w http.ResponseWriter, r *http.Request) {
-	tok, err := bearerFromHTTP(r)
+	tok, err := personBearerFromHTTP(r)
 	if err != nil {
 		// No line: the call is refused before its caller was verified, which is
 		// the one refusal on this route with nothing to name.
+		s.log.Warn("credsvc: a slip grant carried no readable token", "reason", err.Error())
 		s.refuse(w, StatusUnverified, ErrorUnverifiedJobIdentity, err.Error())
 		return
 	}
@@ -1066,16 +1067,22 @@ func publishedPool(pools []config.Pool, name string) (config.Pool, bool) {
 // name a pool governs may not carry a second one past the pools that govern that
 // second name (grantPool).
 //
-// The two halves are disjoint by construction and cannot be confused:
-// config.ValidatePools refuses a name defined as both a credential and a pool, so
-// a pool's own name is no member of any pool, and a member is no pool's name.
+// The two halves cannot be confused, though a name CAN be both a pool's and a
+// credential's: D3176's pool of one named after its only member is the one
+// collision config.ValidatePools admits, and the published node with it
+// (config.PoolMayTakeItsOnlyMembersName), so a pool's own name is a member of
+// that pool alone, and such a name is a plain one — what the first half matches.
+// What the second half matches is a name of the grammar, fugaro_p_<name>, and no
+// pool is named in it: a pool's name is spelled in the credential charset, which
+// holds no underscore, so no one grant name is both a pool's own name and a
+// member's shared one.
 //
-// A plain credential name that a pool happens to list is NOT looked up here. The
-// policy's own decision about a craft credential — that `access` names it, that
-// the bundle serves it — is the path that serves it today, and a grant naming it
-// directly names no pool (R9: the path that names no pool keeps serving what it
-// served). What a pool does govern is the pool itself and the shared secrets
-// under it.
+// A plain credential name a pool lists as a member, and that no pool is named
+// after, is NOT looked up here. The policy's own decision about a craft
+// credential — that `access` names it, that the bundle serves it — is the path
+// that serves it today, and a grant naming it directly names no pool (R9: the
+// path that names no pool keeps serving what it served). What a pool does govern
+// is the pool itself and the shared secrets under it.
 func poolGovernsName(pool config.Pool, name string) bool {
 	if name == pool.Name {
 		return true
@@ -1188,6 +1195,7 @@ func (s *Server) refuseGrant(ctx context.Context, w http.ResponseWriter, caller 
 // unreadable). It is refuseVerifier's mapping and not a second one, because the
 // two classes refuse for the same reasons.
 func (s *Server) refuseLauncher(w http.ResponseWriter, err error) {
+	s.log.Warn("credsvc: a slip grant's caller was refused", "reason", err.Error())
 	switch {
 	case errors.Is(err, ErrUnverifiedJob):
 		s.refuse(w, StatusUnverified, ErrorUnverifiedJobIdentity, err.Error())

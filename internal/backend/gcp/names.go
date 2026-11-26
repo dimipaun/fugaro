@@ -59,6 +59,15 @@ const (
 	LabelRepo     = "fugaro_repo"
 	LabelWorkflow = "fugaro_workflow"
 	LabelSecret   = "fugaro_secret"
+	// LabelRetired marks a project-wide container whose value has moved into
+	// the fugaro_p_<name> grammar (D3325): it carries the logical name in place
+	// of LabelSecret, and it carries no LabelSecret at all, which is what takes
+	// the container out of discovery's live read of the module's for_each
+	// (internal/infra's liveProjectSecrets skips a listed secret with no
+	// fugaro_secret). The mark is what keeps a retired copy from being adopted
+	// back by the plan that dropped it, and what tells a later run that the
+	// container is neither a foreign one nor an orphan of this repository.
+	LabelRetired = "fugaro_retired"
 	// LabelRole marks a repository's image check job, which carries it
 	// (with RoleCheck) in place of LabelWorkflow.
 	LabelRole = "fugaro_role"

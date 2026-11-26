@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -113,6 +114,31 @@ func newManagedAddRig(t *testing.T, local string, marks managedAddMarks) *addRig
 func ordinaryInstallationRig(t *testing.T, local string) *addRig {
 	t.Helper()
 	return newAddRigMarks(t, local, false)
+}
+
+// withoutABudgetURL takes the fake budget database's address out of the rig's
+// config: the installation whose `fugaro update --firebase-project` has not run
+// yet, or whose file was written by hand. The access gate reads its roster out
+// of that database, so without an address it has no roster to read and answers
+// before it opens anything (accessJudge's own return) — which leaves D2217's
+// fence as the only refusal between these commands and their write.
+func withoutABudgetURL(t *testing.T, path string) {
+	t.Helper()
+	cfg := readFileString(t, path)
+	head, after, ok := strings.Cut(cfg, ", rtdb_url: ")
+	if !ok {
+		t.Fatalf("the rig's config carries no rtdb_url to take out:\n%s", cfg)
+	}
+	_, tail, ok := strings.Cut(after, " }")
+	if !ok {
+		t.Fatalf("the budget block does not end after its rtdb_url:\n%s", cfg)
+	}
+	if err := os.WriteFile(path, []byte(head+" }"+tail), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := localcfg.Load(path); err != nil {
+		t.Fatalf("the config without a budget database does not load: %v", err)
+	}
 }
 
 // managedAddMarks is which of the two marks a rig's project carries. The
@@ -549,6 +575,56 @@ func TestAccountsAddManagedRecordsNothingWhenThereIsNoWrite(t *testing.T) {
 // that FAILS is the other half of this row and is not an answer: it warns and
 // goes on, and the sentence is this command's own again
 // (TestAccountsAddManagedUnreadMarksKeepTheRefusal).
+//
+// Two tests, because the fence is about the project and not the session: this
+// one runs at the owner's own terminal, and
+// TestAccountsAddUnmanagedKeepsTheRefusalInAnAgentSession runs the same world
+// in a coding agent's session and reads the same sentence.
+func TestAccountsManagedRefusesUnmanaged(t *testing.T) {
+	r := newManagedAddRig(t, addRigLocal, addMarksNone)
+	before := readFileString(t, r.cfg)
+
+	out, _, err := executeStdin(t, "", "accounts", "add", "team-a", "--repos", "owner/repo-a")
+	if err == nil {
+		t.Fatalf("the declaration of a project that is not managed was written:\n%s", out)
+	}
+	checkFenceRefusal(t, err, "accounts add")
+	if after := readFileString(t, r.cfg); after != before {
+		t.Errorf("a refused declaration changed the file:\n%s", after)
+	}
+	if recs := r.audits(t); len(recs) != 0 {
+		t.Errorf("an unmanaged project filed %+v, want no record at all (D1025)", recs)
+	}
+}
+
+// The same refusal on the installation whose config names no budget database,
+// where the access gate cannot judge anything: the fence is asked by this
+// command itself (runAccountsAdd), so the declaration is still refused in the
+// fence's sentence, with nothing written. Left to the gate, this state writes
+// the file and meets the fence at the cloud client the converge opens, which is
+// the state the installation is left in rather than the state it is refused in.
+func TestAccountsManagedRefusesUnmanagedWithoutABudgetURL(t *testing.T) {
+	r := newManagedAddRig(t, addRigLocal, addMarksNone)
+	withoutABudgetURL(t, r.cfg)
+	before := readFileString(t, r.cfg)
+
+	out, _, err := executeStdin(t, "", "accounts", "add", "team-a", "--repos", "owner/repo-a")
+	if err == nil {
+		t.Fatalf("the declaration of a project that is not managed was written:\n%s", out)
+	}
+	checkFenceRefusal(t, err, "accounts add")
+	if after := readFileString(t, r.cfg); after != before {
+		t.Errorf("a refused declaration changed the file:\n%s", after)
+	}
+	if recs := r.audits(t); len(recs) != 0 {
+		t.Errorf("an unmanaged project filed %+v, want no record at all (D1025)", recs)
+	}
+}
+
+// The same installation in a coding agent's session, and the same refusal
+// (D2217): the fence is asked at the access gate, before the token step and
+// before this command's own session fence, so what the session reads is the
+// sentence about the project rather than this command's own.
 func TestAccountsAddUnmanagedKeepsTheRefusalInAnAgentSession(t *testing.T) {
 	r := newManagedAddRig(t, addRigLocal, addMarksNone)
 	before := readFileString(t, r.cfg)

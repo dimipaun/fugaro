@@ -265,9 +265,11 @@ func servedRoute(r *http.Request) bool {
 	switch r.URL.Path {
 	case MessagesPath, CountTokensPath, ProviderRoutePath, ProviderCountTokensPath, MintPath, ContextTokenPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, IssuePath, SlipPath, SlipClaimPath, WorkflowSecretsPath, BuildTokenPath, BuildCredentialsPath:
 		return true
-	// The five identity routes (C1, R2): a run's identity is issued here, with
-	// every one of them answered ahead of the shared parse below.
-	case identitywire.TicketPath, identitywire.ClaimPath, identitywire.PairingPath, identitywire.DevicePath, identitywire.ProbePath:
+	// The six identity routes (C1, R2): a run's identity is issued here, with
+	// every one of them answered ahead of the shared parse below. The
+	// registration (BR17) is the sixth: the launcher's second call, made after
+	// the create returned and before the run claims.
+	case identitywire.TicketPath, identitywire.ClaimPath, identitywire.PairingPath, identitywire.DevicePath, identitywire.ProbePath, identitywire.JobPath:
 		return true
 	}
 	return false
@@ -1229,7 +1231,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// "no admin endpoint" is kept by there being nothing to reach rather
 		// than by a check inside a handler.
 		s.refuse(w, http.StatusNotFound, "not_found",
-			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+ProviderRoutePath+", "+ProviderCountTokensPath+", "+MintPath+", "+ContextTokenPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+LabelPath+", "+IssuePath+", "+SlipPath+", "+SlipClaimPath+", "+WorkflowSecretsPath+", "+BuildTokenPath+", "+BuildCredentialsPath+", "+identitywire.TicketPath+", "+identitywire.ClaimPath+", "+identitywire.PairingPath+", "+identitywire.DevicePath+" and "+identitywire.ProbePath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
+			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+ProviderRoutePath+", "+ProviderCountTokensPath+", "+MintPath+", "+ContextTokenPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+LabelPath+", "+IssuePath+", "+SlipPath+", "+SlipClaimPath+", "+WorkflowSecretsPath+", "+BuildTokenPath+", "+BuildCredentialsPath+", "+identitywire.TicketPath+", "+identitywire.ClaimPath+", "+identitywire.PairingPath+", "+identitywire.DevicePath+", "+identitywire.ProbePath+" and "+identitywire.JobPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
 		return
 	}
 	// The scope this call is served under (R1, C1), asked once and before any

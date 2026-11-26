@@ -58,12 +58,15 @@ func NewIssuanceStore(db creds.DB) IssuanceStore { return rtdbIssuanceStore{db: 
 // Replacing is R6: before the ticket is claimed, the same caller asking again
 // for the same slug and run gets a new ticket and the old one dies, and the old
 // ticket dies because the node now holds the digest of the new one — nothing
-// else remembers a ticket, so nothing else has to be unwound.
+// else remembers a ticket, so nothing else has to be unwound. The re-ask stops
+// at the registration (BR17, R19): it writes a whole new record, and the record
+// it would replace carries the job's id, which is written once.
 //
-// It refuses ANOTHER caller's record itself (identity_config.go's contract), and
-// a record whose ticket is claimed: whose record it is, and whether it is still
-// claimable, is what the compare-and-set reads, so the answer is made from the
-// value that is there rather than from a read the route made earlier (R5).
+// It refuses ANOTHER caller's record itself (identity_config.go's contract), a
+// record whose ticket is claimed, and a record whose job is registered: whose
+// record it is, whether it is still claimable and whether its id was already
+// written is what the compare-and-set reads, so the answer is made from the
+// value that is there rather than from a read the route made earlier (R5, R19).
 func (s rtdbIssuanceStore) Put(ctx context.Context, slug, run string, rec identitywire.Record) error {
 	path, err := issuancePath(slug, run)
 	if err != nil {
@@ -84,6 +87,15 @@ func (s rtdbIssuanceStore) Put(ctx context.Context, slug, run string, rec identi
 			// re-issue fence of R5 read the other way round: the caller on the
 			// record is the only one it may be re-issued to.
 			return cur, false, identitywire.ErrAnotherCaller
+		case cur.JobID != "":
+			// A registered job's id is written once and never overwritten
+			// (BR17, R19), and this ask would overwrite it with nothing: the
+			// record below is a whole new one (identity_ticket.go) that carries
+			// no id, so serving the re-ask would wipe the registration and let
+			// the next registration write a different id under the same run id.
+			// Once the job is registered the record is past the point of a
+			// re-ask, exactly as it is past the claim.
+			return cur, false, ErrJobAlreadyRegistered
 		}
 		return rec, true, nil
 	})

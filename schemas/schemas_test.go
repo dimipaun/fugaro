@@ -7226,8 +7226,10 @@ func TestSummarySchema(t *testing.T) {
 	}
 	// The counts are keyed by runstore's statuses, spelled as the wire names
 	// the run record and the outcome nodes use, plus the bucket a status from
-	// another release lands in. All six are required: a consumer adding them up
-	// reads a key whether or not the window had such a run.
+	// another release lands in, a paused run included (its count is the bucket's,
+	// not a key of its own: internal/budget's day records name six states). All
+	// six are required: a consumer adding them up reads a key whether or not the
+	// window had such a run.
 	states := stringsOf(t, doc, "$defs", "states", "required")
 	for _, key := range []string{"succeeded", "failed", "halted", "cancelled", "infra_error", "other"} {
 		if !slices.Contains(states, key) {

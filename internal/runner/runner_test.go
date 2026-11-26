@@ -657,6 +657,9 @@ func TestDecideToleratedRoundOpensAReadyPR(t *testing.T) {
 		return agent.Result{}, nil
 	}
 	tolerated := reviewScored("changes", map[string]any{"summary": "fix it", "likelihood": 2, "impact": 2, "fix_cost": 1, "class": "correctness"})
+	// implement's pr.md carries no sections at all, which is what makes this
+	// the case for Startup's own row: the file is what the level owes, and an
+	// empty deferred list is an honest one (LV5.1).
 	rec, err := h.run(t, implement("feature"), tolerated, fix, tolerated)
 	if err != nil {
 		t.Fatal(err)
@@ -709,7 +712,10 @@ func TestDecideToleratedHotfixRoundFilesNothing(t *testing.T) {
 	// what would make the fix wrong or unsafe, so this is one it tolerates and
 	// an unscored or catastrophic finding would not be.
 	tolerated := reviewScored("changes", map[string]any{"summary": "fix it", "likelihood": 1, "impact": 1, "fix_cost": 1, "class": "correctness"})
-	rec, err := h.run(t, implement("feature"), tolerated, fix, tolerated)
+	// The agent's hand-back carries Hotfix's two sections: this case is about
+	// what the tolerated round files, and a run that owed the reader its revert
+	// plan and morning note would be a draft for that instead (LV5.1).
+	rec, err := h.run(t, commitHandBack(handBackPR), tolerated, fix, tolerated)
 	if err != nil {
 		t.Fatal(err)
 	}

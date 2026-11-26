@@ -1295,18 +1295,10 @@ func schemaCatalog(t *testing.T) (consts map[string]int64, fields, required, kin
 	return consts, fields, required, kinds
 }
 
-// rulesOnlyFields are the fields the rules gate that the shared schema does not
-// name — the one licence this test gives the rules to lead the schema by, and
-// it is a named field rather than a blanket tolerance. `sig` is the whole of
-// it: mobile plan task J5r (O6) makes the document accept a signed message
-// before the phone can write one, and J5b is the task that adds the field to
-// shared/mailbox-schema. A second entry here is a decision, which is what the
-// map's shape is for.
-var rulesOnlyFields = map[string]bool{"sig": true}
-
-// withoutTag is the schema's required-field list minus the tag, which the
-// message's own validator states beside it as TAGOK rather than in the list
-// (J5r): `mac` is the schema's name for a tag it does not yet call one.
+// withoutTag is a required-field list minus the tag, which the message's own
+// validator states beside it as TAGOK rather than in the list (J5r). J5b (O6)
+// makes the tag one of two members, so the schema's own list no longer names it
+// and only the generation-3 list below still carries `mac`.
 func withoutTag(required []string) []string {
 	out := make([]string, 0, len(required))
 	for _, f := range required {
@@ -1382,6 +1374,9 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 		want int64
 	}{
 		{"MaxMacLength", MaxMacLength, consts["MAC_MAX"]},
+		// J5b's own: J5r wrote the signature's length into the rules while the
+		// shared schema did not model one, and the schema models it now (O6).
+		{"MaxSigLength", MaxSigLength, consts["SIG_CHARS"]},
 		{"MaxAgentLength", MaxAgentLength, consts["AGENT_MAX"]},
 		{"MaxAgentNameLength", MaxAgentNameLength, consts["AGENT_NAME_MAX"]},
 		{"MaxAgents", MaxAgents, consts["AGENTS_MAX"]},
@@ -1400,10 +1395,13 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 			t.Errorf("%s = %d, the schema's own bound = %d", c.what, c.got, c.want)
 		}
 	}
-	if want := []string{"id", "sender", "text", "at", "mac"}; !slices.Equal(required, want) {
+	// J5b (O6) makes the tag one of two members: `sig` joins the field set, and
+	// `mac` leaves the required list, because a message carries exactly one of
+	// them and which one is the device node's answer rather than the schema's.
+	if want := []string{"id", "sender", "text", "at"}; !slices.Equal(required, want) {
 		t.Errorf("the schema's REQUIRED_FIELDS = %v, want %v", required, want)
 	}
-	if want := []string{"id", "sender", "text", "at", "mac", "acked", "agent", "kind", "options", "reply_to", "action", "token", "platform", "prefs"}; !slices.Equal(fields, want) {
+	if want := []string{"id", "sender", "text", "at", "mac", "sig", "acked", "agent", "kind", "options", "reply_to", "action", "token", "platform", "prefs"}; !slices.Equal(fields, want) {
 		t.Errorf("the schema's FIELDS = %v, want %v", fields, want)
 	}
 
@@ -1580,7 +1578,7 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 		}
 		for _, field := range got {
 			gated[field] = true
-			if !slices.Contains(fields, field) && !rulesOnlyFields[field] {
+			if !slices.Contains(fields, field) {
 				t.Errorf("/%s gates %q, which the shared schema does not name: the rules may gate fewer fields than the schema, never one it does not have", c.path, field)
 			}
 		}
@@ -1787,7 +1785,7 @@ func schemaPatterns(t *testing.T) map[string]string {
 		t.Fatalf("reading the shared schema: %v", err)
 	}
 	out := map[string]string{}
-	for _, m := range regexp.MustCompile(`(?m)^const ([A-Z_]+_PATTERN) = (/.*/);$`).FindAllStringSubmatch(string(b), -1) {
+	for _, m := range regexp.MustCompile(`(?m)^const ([A-Z0-9_]+_PATTERN) = (/.*/);$`).FindAllStringSubmatch(string(b), -1) {
 		out[m[1]] = m[2]
 	}
 	return out
@@ -1809,6 +1807,9 @@ func TestMailboxRulesCheckTheSchemasCharacters(t *testing.T) {
 		{"RUN_PATTERN", patternRun},
 		{"REPO_PATTERN", patternRepo},
 		{"ZONE_PATTERN", patternZone},
+		// J5b gives the schema the signature's own characters, which is the one
+		// pattern the rules carried with no schema to agree with (O6).
+		{"BASE64URL_PATTERN", patternSignature},
 	} {
 		if want, ok := pats[c.name]; !ok {
 			t.Errorf("the shared schema no longer defines %s: the rules' copy has nothing to agree with", c.name)
@@ -1823,9 +1824,9 @@ func TestMailboxRulesCheckTheSchemasCharacters(t *testing.T) {
 			{m + `/mac`, ".matches(" + patternHex + ")"},
 			// J5r's signature: the other scheme's tag, at its own length and in
 			// its own character set (unpadded base64url), and the launch's mode
-			// as a bounded identity string. The signature has no pattern in the
-			// schema yet — J5b is the task that gives it one — so these are the
-			// rules' own numbers, pinned here rather than read from the schema.
+			// as a bounded identity string. J5b gives the schema both of the
+			// signature's numbers, so the two table rows above are what holds
+			// them together and these fragments are the rules' copy.
 			{m + `/sig`, ".matches(" + patternSignature + ")"},
 			{m + `/sig`, "newData.val().length == " + strconv.Itoa(MaxSigLength)},
 			{m + `/action/mode`, "newData.parent().child('verb').val() == 'launch'"},

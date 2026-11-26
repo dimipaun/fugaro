@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -136,9 +137,9 @@ func updateStages(t *testing.T, e *initEngine, names ...string) *initflow.Result
 // base image: `fugaro update` runs the checkout's own steps for it, so the
 // plugin goes into Claude Code through the plugin stage (which took the step
 // over, U1) and the job images through the checkout stage's refresh. The pin an
-// older fugaro left in the checkout comes out of the same run: the merge that
-// wrote it is gone (U2) and the plugin stage takes the two entries it left out
-// of the checkout's settings (U5).
+// older fugaro left in the checkout is neither taken out nor rewritten: since
+// U6a it is a notice the run prints after the loop, naming the file and the
+// exact edit, and the checkout's own file is the repository's to change.
 func TestUpdateRunsThePluginAndImages(t *testing.T) {
 	_, root := upgradeRig(t)
 	settings := filepath.Join(root, ".claude", "settings.json")
@@ -161,16 +162,14 @@ func TestUpdateRunsThePluginAndImages(t *testing.T) {
 	if got := stateOf(res, string(initflow.Plugin)); got != initflow.Changed {
 		t.Errorf("the plugin stage is %q, want %q: the machine's install is its step (U1)\n%s", got, initflow.Changed, out)
 	}
-	// The checkout the run writes into comes out of it unpinned: the two
-	// entries an older fugaro left are the whole of what the run takes out of
-	// the file, and nothing puts a pin back (U2, U5).
-	if got := convergeRead(t, settings); got != "{}\n" {
-		t.Errorf("the checkout's settings after the run:\n%s\nwant the pin an older fugaro left taken out, and nothing else in the file:\n%s", got, "{}\n")
+	// The checkout the run stands in is not written at all: the pin an older
+	// fugaro left is the repository's own change to make, and the run names it
+	// as a notice rather than taking it out (U6a, D3340).
+	if got := convergeRead(t, settings); got != wiredAt("v0.5.0") {
+		t.Errorf("the checkout's settings after the run:\n%s\nwant the file exactly as the run found it, pin included:\n%s", got, wiredAt("v0.5.0"))
 	}
-	for _, want := range []string{"removed the fugaro@fugaro pin from", removalLoss()} {
-		if !strings.Contains(out.String(), want) {
-			t.Errorf("the run does not say %q about the pin it took out:\n%s", want, out)
-		}
+	if seen := out.String(); strings.Contains(seen, "removed the "+pluginwire.PluginID+" pin from") {
+		t.Errorf("the run takes the pin out of the checkout, which U6a made a notice:\n%s", seen)
 	}
 	if len(f.Changes(t)) == 0 {
 		t.Errorf("the plugin was not installed in Claude Code\n%s", out)
@@ -246,14 +245,15 @@ func TestUpdateRunsTheCheckoutTheCloudStepCannotSee(t *testing.T) {
 		if len(*ran) != 0 {
 			t.Errorf("a checkout already at this release refreshed its job images: %q\n%s", *ran, out)
 		}
-		// The leftover pin is the whole of what the run has to do here: the
-		// plugin stage takes it out and installs nothing, because the machine
-		// already has this release's plugin (U5).
-		if got := stateOf(res, string(initflow.Plugin)); got != initflow.Changed {
-			t.Errorf("the plugin stage is %q on a checkout still carrying the pin an older fugaro left, want %q\n%s", got, initflow.Changed, out)
+		// The leftover pin is nothing this run does: since U6a the plugin stage
+		// installs the machine's plugin and leaves the checkout alone, and the
+		// pin is a notice the run prints (repo_notices.go). The machine already
+		// has this release's plugin, so the stage has nothing to do at all.
+		if got := stateOf(res, string(initflow.Plugin)); got != initflow.Done {
+			t.Errorf("the plugin stage is %q on a checkout still carrying the pin an older fugaro left, want %q\n%s", got, initflow.Done, out)
 		}
-		if got := convergeRead(t, settings); got != "{}\n" {
-			t.Errorf("the checkout's settings after the run:\n%s\nwant the leftover pin taken out:\n%s", got, "{}\n")
+		if got := convergeRead(t, settings); got != wiredAt("v0.5.1") {
+			t.Errorf("the checkout's settings after the run:\n%s\nwant the leftover pin left alone (U6a):\n%s", got, wiredAt("v0.5.1"))
 		}
 		if len(f.Changes(t)) != 0 {
 			t.Errorf("a run whose machine already has this release's plugin reinstalled it: %q\n%s", f.Changes(t), out)
@@ -285,11 +285,11 @@ func TestUpdateRunsTheCheckoutTheCloudStepCannotSee(t *testing.T) {
 		if res.Failed != nil || len(res.Left) != 0 {
 			t.Fatalf("a current checkout was not done: failed %+v, left %+v\n%s", res.Failed, res.Left, out)
 		}
-		// The plugin stage writes the leftover pin out (U5); the behind
-		// project-scope install is not what it reads for the machine's own, so
-		// the checkout is still done and nothing is built.
-		if got := stateOf(res, string(initflow.Plugin)); got != initflow.Changed {
-			t.Errorf("the plugin stage is %q beside a behind project install, want %q: the install it maintains is current and the pin is the run's own write\n%s", got, initflow.Changed, out)
+		// The plugin stage writes nothing here (U6a): the install it maintains
+		// is current, the leftover pin is a notice, and the behind project-scope
+		// install is not what it reads for the machine's own.
+		if got := stateOf(res, string(initflow.Plugin)); got != initflow.Done {
+			t.Errorf("the plugin stage is %q beside a behind project install, want %q: the install it maintains is current and the pin is not this run's write\n%s", got, initflow.Done, out)
 		}
 		if got := stateOf(res, checkoutStageName); got != initflow.Done {
 			t.Errorf("the checkout stage is %q, want %q: the run has nothing to move\n%s", got, initflow.Done, out)
@@ -297,12 +297,12 @@ func TestUpdateRunsTheCheckoutTheCloudStepCannotSee(t *testing.T) {
 		if len(*ran) != 0 {
 			t.Errorf("a checkout already at this release refreshed its job images: %q\n%s", *ran, out)
 		}
-		if got := convergeRead(t, settings); got != "{}\n" {
-			t.Errorf("the checkout's settings after the run:\n%s\nwant the leftover pin taken out:\n%s", got, "{}\n")
+		if got := convergeRead(t, settings); got != wiredAt("v0.5.1") {
+			t.Errorf("the checkout's settings after the run:\n%s\nwant the leftover pin left alone (U6a):\n%s", got, wiredAt("v0.5.1"))
 		}
 		// The record is Claude Code's own, and the project-scope entry in it is
-		// the trusted folder's install, not this run's to move: taking the pin
-		// out of the checkout leaves it exactly as it was (D949, U2).
+		// the trusted folder's install, not this run's to move: the pin the
+		// checkout carries is not written out any more either (D949, U2, U6a).
 		if got := convergeRead(t, record); !strings.Contains(got, `{"scope":"project","version":"0.5.0","projectPath":"`+root+`"}`) {
 			t.Errorf("the run rewrote Claude Code's record of the project-scope install:\n%s", got)
 		}
@@ -413,8 +413,9 @@ func agentCheckout(t *testing.T) (string, *testutil.ClaudePluginFake, *[]string)
 
 // leftCommand reports whether the run left the user a step of stage st that
 // names cmd: a session's left-for-you is identified by the step and the command
-// it hands back, never by a count alone — the plugin stage leaves the pin's
-// removal there (U5) beside the cloud half.
+// it hands back, never by a count alone. Since U6a the only step there is the
+// checkout's cloud half — the plugin stage's pin removal, which a session also
+// handed back, is deleted — so the count is one.
 func leftCommand(res *initflow.Result, stage, cmd string) bool {
 	for _, l := range res.Left {
 		if l.Stage == stage && slices.Contains(l.Commands, cmd) {
@@ -449,12 +450,11 @@ func TestUpdateLocalStepsRunInAgentSession(t *testing.T) {
 	if len(f.Changes(t)) == 0 {
 		t.Errorf("the plugin was not installed in an agent's session\n%s", out)
 	}
-	// What a session leaves is the two checkout writes: the pin's removal,
-	// whose route is the door it is in (U5), and the cloud half — which is the
-	// project's now, every repository of it, so the line names no checkout
-	// (againView, U4).
-	if len(res.Left) != 2 || res.ExitCode() != 1 ||
-		!leftCommand(res, initflow.Plugin, selfCommand()+" update") ||
+	// What a session leaves is the cloud half alone, and it names no checkout (againView, U4): the plugin stage's own
+	// step is the machine's install, which a session applies, and the pin's
+	// removal — the other step a session handed back — is a notice the run
+	// prints now (U6a).
+	if len(res.Left) != 1 || res.ExitCode() != 1 ||
 		!leftCommand(res, checkoutStageName, selfCommand()+" update") {
 		t.Fatalf("an agent's session reported the checkout done with the images untouched: left %+v, exit %d\n%s", res.Left, res.ExitCode(), out)
 	}
@@ -478,8 +478,7 @@ func TestUpdateCloudWritesRefusedInAgentSessionEvenWithYes(t *testing.T) {
 	if !strings.Contains(out.String(), "cloud: skipped: acme/app: a coding agent's session") {
 		t.Errorf("the cloud step was not refused by name:\n%s", out)
 	}
-	if len(res.Left) != 2 || res.ExitCode() != 1 ||
-		!leftCommand(res, initflow.Plugin, selfCommand()+" update") ||
+	if len(res.Left) != 1 || res.ExitCode() != 1 ||
 		!leftCommand(res, checkoutStageName, selfCommand()+" update") {
 		t.Fatalf("the cloud half was not left for the user: left %+v, exit %d\n%s", res.Left, res.ExitCode(), out)
 	}
@@ -563,9 +562,10 @@ func TestUpdateAgentSessionRunsThePluginBeforeTheCheckout(t *testing.T) {
 	}
 	// The install is not handed back to the user: `fugaro update-skills`, the
 	// machine-side route a session that left it would name, is not what this run
-	// leaves. The stage's one step that IS left is the pin's removal, whose route
-	// is the door the checkout's write is in — `fugaro update` (U5) — and the
-	// test below reads that step for what it is.
+	// leaves. Since U6a the plugin stage leaves nothing at all — the pin's
+	// removal, the one step a session handed back here, is a notice now — and
+	// the checkout's cloud half, which the test below reads, is the run's only
+	// parked step.
 	for _, l := range res.Left {
 		if l["stage"] != initflow.Plugin {
 			continue
@@ -573,18 +573,9 @@ func TestUpdateAgentSessionRunsThePluginBeforeTheCheckout(t *testing.T) {
 		if slices.Contains(strings.Split(l["commands"], "\n"), selfCommand()+" update-skills") {
 			t.Errorf("the plugin install is left for the user (%q), want it applied in a coding agent's session\n%s", l["text"], out)
 		}
-	}
-	// The checkout's write is, with the command that makes it: nothing unsets
-	// the marker, and --yes does not stand in for the session's own decision
-	// (U5, spec §8).
-	removal := false
-	for _, l := range res.Left {
-		if l["stage"] == initflow.Plugin && slices.Contains(strings.Split(l["commands"], "\n"), selfCommand()+" update") {
-			removal = true
+		if slices.Contains(strings.Split(l["commands"], "\n"), selfCommand()+" update") {
+			t.Errorf("the plugin stage leaves %q for the user, want nothing: the pin is a notice (U6a)\n%s", l["text"], out)
 		}
-	}
-	if !removal {
-		t.Errorf("the pin a coding agent's session may not take out is not left for the user:\n%s", out)
 	}
 	// The stage behind it is reached, and it is the checkout whose cloud half
 	// this session may not take: its own line is done with what this session
@@ -718,8 +709,7 @@ func TestUpdateLocalStepsRunInAgentSessionWithoutAYes(t *testing.T) {
 	if len(*ran) != 0 {
 		t.Errorf("the session reached the cloud without --yes: steps %q\n%s", *ran, out)
 	}
-	if len(res.Left) != 2 || res.ExitCode() != 1 ||
-		!leftCommand(res, initflow.Plugin, selfCommand()+" update") ||
+	if len(res.Left) != 1 || res.ExitCode() != 1 ||
 		!leftCommand(res, checkoutStageName, selfCommand()+" update") {
 		t.Fatalf("the cloud half was not left for the user: left %+v, exit %d\n%s", res.Left, res.ExitCode(), out)
 	}

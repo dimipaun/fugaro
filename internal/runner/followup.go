@@ -236,11 +236,6 @@ func (r *run) checkPullRequest(ctx context.Context) error {
 	r.rec.PR = &runstore.PRRef{Number: n, URL: pr.URL}
 	r.rec.FollowUp = &runstore.FollowUp{PR: n, PreviousRun: r.spec.PreviousRun, StartSHA: r.follow.startSHA}
 	r.save(ctx)
-	// This run has started on a pull request that already existed: its index
-	// entry goes in here, where the provider has confirmed the pull request
-	// and the run is really on it, so `runs ls --pr N` finds the run while it
-	// is still going (prindex.go).
-	r.writePRIndex(ctx, n, runstore.PRIndexFollowed)
 	r.noteRegistryPRURL(pr.URL)
 	return nil
 }

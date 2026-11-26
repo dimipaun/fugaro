@@ -287,7 +287,7 @@ write_docs() { # dir
   local dir=$1 json=$1/json
   mkdir -p "$json"
   write_doctor "$dir"
-  write_crafts "$dir" "$coder_model" "$pool" ""
+  write_crafts "$dir" "$coder_model" "pool:$pool" ""
   write_policy "$dir" failover
   write_creds "$dir" both
   cat >"$json/launch.json" <<JSON
@@ -305,17 +305,23 @@ write_doctor() { # write_doctor DIR
 JSON
 }
 
-# write_crafts DIR MODEL ACCESS PROBLEMS: `craft ls --json`'s document, with the
-# coder row the check reads and the other crafts beside it (so a case that names
-# the wrong craft reads a list that is not empty).
-write_crafts() { # write_crafts DIR MODEL ACCESS PROBLEMS
-  local model=$2 access=$3 problems=${4:-[]} rows
+# write_crafts DIR MODEL SOURCE PROBLEMS: `craft ls --json`'s document as
+# version 2 writes it (RT6, D3170: the row carries the chain the craft's model
+# resolves to in place of the access, and the layer it came from), with the coder
+# row the check reads and the other crafts beside it (so a case that names the
+# wrong craft reads a list that is not empty). SOURCE is the one source of the
+# coder's chain, spelled the way `fugaro routing ls` spells it (`pool:<name>`,
+# `vertex`, ...) and "" for the empty chain a project that publishes no routing
+# table gets.
+write_crafts() { # write_crafts DIR MODEL SOURCE PROBLEMS
+  local model=$2 source=$3 problems=${4:-[]} rows chain
+  if [ -z "$source" ]; then chain='[]'; else chain="[\"$source\"]"; fi
   rows=$(cat <<JSON
-{"craft":"coder","model":"$model","model_from":"repo","access":"$access","access_from":"repo","inert":false}
+{"craft":"coder","model":"$model","model_from":"repo","chain":$chain,"model_servable":true}
 JSON
 )
   cat >"$1/json/crafts.json" <<JSON
-{"version":1,"project":"chk420","crafts":[$rows],"problems":$problems}
+{"version":2,"project":"chk420","crafts":[$rows],"problems":$problems}
 JSON
 }
 
@@ -578,8 +584,8 @@ test_happy_path() {
   expect_contains "$out" "FACT features: PASS" "happy path: the build carries the vocabulary"
   expect_contains "$out" "FACT sandbox: PASS" "happy path: the checkout and its project"
   expect_contains "$out" "belongs to ${project}" "happy path: the project it read"
-  expect_contains "$out" "FACT crafts: PASS" "happy path: the coder craft's access"
-  expect_contains "$out" "the coder craft's access is '${pool}'" "happy path: the access it read"
+  expect_contains "$out" "FACT crafts: PASS" "happy path: the coder craft's chain"
+  expect_contains "$out" "the coder craft's chain is 'pool:${pool}'" "happy path: the chain it read"
   expect_contains "$out" "FACT pool: PASS" "happy path: the premise"
   expect_contains "$out" "is a failover pool of ${first_member}, ${second_member}" "happy path: the members it read"
   expect_contains "$out" "FACT bundle: PASS" "happy path: the members are in the bundle"
@@ -716,7 +722,7 @@ test_a_doctor_that_is_not_a_document_is_not_measured() {
 }
 
 test_a_craft_that_resolves_to_no_pool_is_a_finding() {
-  # The default credential is the built-in vertex, and no pool of it exists: a run
+  # The coder's chain names the built-in vertex, and no pool of it exists: a run
   # here would measure nothing about failover.
   local dir=$work/nopool
   prepare "$dir"
@@ -724,14 +730,29 @@ test_a_craft_that_resolves_to_no_pool_is_a_finding() {
   run_check "$dir"
   expect_status "$status" 1 "a craft on the built-in credential"
   expect_contains "$out" "FACT crafts: FAIL" "a craft on the built-in credential: the row"
-  expect_contains "$out" "the built-in vertex credential" "a craft on the built-in credential: what it means"
+  expect_contains "$out" "names no pool (chain: vertex" "a craft on the built-in credential: what it read"
   assert_no_run "$dir" "a craft on the built-in credential"
+}
+
+test_a_project_with_no_routing_table_is_a_finding() {
+  # A project that publishes no routing table serves its calls the release-1 way
+  # and `craft ls` writes an empty chain for it (RT6, D3170): there is no pool to
+  # look the failover up by, and the row says so rather than reporting the crafts
+  # as unrouted.
+  local dir=$work/notable
+  prepare "$dir"
+  write_crafts "$dir" "$coder_model" "" ""
+  run_check "$dir"
+  expect_status "$status" 1 "a project that publishes no routing table"
+  expect_contains "$out" "FACT crafts: FAIL" "a project with no table: the row"
+  expect_contains "$out" "names no pool (chain: none" "a project with no table: what it read"
+  assert_no_run "$dir" "a project with no table"
 }
 
 test_a_craft_list_with_problems_is_a_finding() {
   local dir=$work/problems
   prepare "$dir"
-  write_crafts "$dir" "$coder_model" "$pool" '["agent.crafts.coder.access: no credential of this name is defined"]'
+  write_crafts "$dir" "$coder_model" "pool:$pool" '["agent.crafts.coder.access: no credential of this name is defined"]'
   run_check "$dir"
   expect_status "$status" 1 "a craft list with problems"
   expect_contains "$out" "FACT crafts: FAIL" "a craft list with problems: the row"
@@ -800,7 +821,7 @@ test_a_pool_the_node_does_not_hold_is_a_finding() {
   run_check "$dir"
   expect_status "$status" 1 "a pool the node does not hold"
   expect_contains "$out" "FACT pool: FAIL" "a pool the node does not hold: the row"
-  expect_contains "$out" "neither a pool nor a credential the published node holds" "a pool the node does not hold: what it found"
+  expect_contains "$out" "the published node holds neither a pool nor a credential of that name" "a pool the node does not hold: what it found"
   assert_no_run "$dir" "a pool the node does not hold"
 }
 
@@ -809,7 +830,7 @@ test_a_craft_on_a_single_credential_is_a_finding() {
   prepare "$dir"
   # The craft read and the node have to agree, or the check would be reading a
   # name the node does not hold at all rather than a credential instead of a pool.
-  write_crafts "$dir" "$coder_model" "$second_member" ""
+  write_crafts "$dir" "$coder_model" "pool:$second_member" ""
   write_policy_single_credential "$dir"
   run_check "$dir"
   expect_status "$status" 1 "a craft on a single credential"
@@ -1093,6 +1114,7 @@ t test_a_build_without_the_crafts_vocabulary_is_refused
 t test_a_doctor_that_cannot_be_read_is_not_measured
 t test_a_doctor_that_is_not_a_document_is_not_measured
 t test_a_craft_that_resolves_to_no_pool_is_a_finding
+t test_a_project_with_no_routing_table_is_a_finding
 t test_a_craft_list_with_problems_is_a_finding
 t test_a_pool_of_one_member_is_a_finding
 t test_a_round_robin_pool_is_a_finding
