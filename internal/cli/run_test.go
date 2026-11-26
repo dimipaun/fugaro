@@ -2184,11 +2184,11 @@ func TestALaunchTheResolverRefusesIsRefused(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "fugaro update") {
 			t.Fatalf("err = %v, want a refusal naming fugaro update", err)
 		}
-		if !strings.Contains(err.Error(), "image_map") {
-			t.Errorf("err = %v: the refusal does not name the map, which is where this person's fix is", err)
+		if !strings.Contains(err.Error(), "repo_images") {
+			t.Errorf("err = %v: the refusal does not name the repository-to-image map (repo_images), which is where this person's fix is", err)
 		}
 		if startedAny(f) {
-			t.Fatal("a job was started for a run the project's image_map points at no entry")
+			t.Fatal("a job was started for a run the project's repository-to-image map (repo_images) points at no entry")
 		}
 	})
 	// A pin the catalog holds and the job does not run: the workflow names

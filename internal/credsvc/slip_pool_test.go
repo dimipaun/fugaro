@@ -16,6 +16,9 @@ package credsvc
 //
 //   - the pool's own name, which is what a craft's `access` writes when a craft
 //     runs on a pool (config.Craft.Access names a credential or a pool);
+//   - the bare name of the credential a pool of one is named after, D3176's
+//     shape, where the one name means the credential and the pool that walks it
+//     and nothing else (TestPoolOfOneGovernsItsOwnName);
 //   - a shared token, `fugaro_p_<name>`, whose credential the pool lists as one
 //     of its members: sharing is a project-shared secret under a pool's allowed
 //     users (R11, G8);
@@ -265,6 +268,43 @@ func TestOwnerOnlyByDefault(t *testing.T) {
 		body := grantBody(t, s.slug, s.run, testJobSA, 3600, shared)
 		resp, answer := s.grantAs(t, testSecondLauncherAccount, testSecondLauncherSub, body)
 		wantOneGrantRefusal(t, s, resp, answer, testSecondLauncherAccount, shared, testPoolCredential, slipTestPoolName)
+	})
+}
+
+// TestPoolOfOneGovernsItsOwnName: D3176's pool of one named after its only
+// member — the shape `fugaro accounts add` writes for a subscription token and
+// `fugaro update` for every lone account — governs that bare name, so a grant
+// asking for it is decided by the pool's roster and is not the ungoverned name
+// R9 serves as it was.
+//
+// The name is the one both a pool's and a credential's, which is the case
+// poolGovernsName's two halves could be confused over: the pool's own name is
+// what answers the grant, and its members are not consulted for a name that
+// spells no grammar.
+func TestPoolOfOneGovernsItsOwnName(t *testing.T) {
+	pool := config.Pool{
+		Name:    testPoolCredential,
+		Owner:   testLauncherAccount,
+		Members: []string{testPoolCredential},
+	}
+
+	t.Run("the owner is granted the name the pool and the credential share", func(t *testing.T) {
+		s := slipPoolSvc(t, pool)
+		ans := s.grantOK(t, grantBody(t, s.slug, s.run, testJobSA, 3600, testPoolCredential))
+		sl := s.slip(t, ans.Slip)
+		if sl.Pool != testPoolCredential {
+			t.Errorf("the slip records the pool %q, want %q: the pool of one walks that credential", sl.Pool, testPoolCredential)
+		}
+		if !slices.Contains(sl.Allowed, testPoolCredential) {
+			t.Errorf("the slip permits %v, want the name the grant asked for", sl.Allowed)
+		}
+	})
+
+	t.Run("a person the pool does not name is refused", func(t *testing.T) {
+		s := slipPoolSvc(t, pool)
+		body := grantBody(t, s.slug, s.run, testJobSA, 3600, testPoolCredential)
+		resp, answer := s.grantAs(t, testThirdLauncherAccount, testThirdLauncherSub, body)
+		wantOneGrantRefusal(t, s, resp, answer, testThirdLauncherAccount, testPoolCredential)
 	})
 }
 

@@ -576,81 +576,168 @@ func newMailboxCmd() *cobra.Command {
 type mailboxPairing struct {
 	uid  string
 	item string
-	// revoked is a configured pairing whose keychain item holds no key: the
-	// state a `fugaro pair revoke` leaves. It is served by no pass — its gate
-	// and its signers are nil — and the pass it gets is the one that drops the
-	// prompts it was holding. **Its key being gone is also what refuses every
-	// message signed with it**: verification is per pairing, so a record signed
-	// with the revoked key is not a message this consumer can attribute, and the
-	// gate of the pairing whose inbox it sits in answers `bad-mac`.
+	// publicKey is the public key the device node carries when the phone was
+	// paired the new way (O6, P3's MobileDeviceNode). **The node is what chooses
+	// the scheme**, so a non-empty value here means a gate that takes signatures
+	// only — a MAC-tagged message is refused rather than checked — and no MAC
+	// signer: this consumer's own key for that pairing's replies and its
+	// heartbeat is J5c's KMS signer, and until it is wired a pairing of this
+	// shape is verified and takes no lease (M4b's row).
+	publicKey string
+	// revoked is a pairing whose keychain item holds no key and whose device
+	// node holds no public key either: the state a `fugaro pair revoke` leaves.
+	// It is served by no pass — its gate and its signers are nil — and the pass
+	// it gets is the one that drops the prompts it was holding. **Its key being
+	// gone is also what refuses every message signed with it**: verification is
+	// per pairing, so a record signed with the revoked key is not a message this
+	// consumer can attribute, and the gate of the pairing whose inbox it sits in
+	// answers `bad-mac`.
 	revoked   bool
 	gate      *mailbox.Gate
 	signer    mailbox.ReplySigner
 	heartbeat mailbox.LeaseSigner
 }
 
-// mailboxKeyring reads one key per configured pairing, once, at startup (M5),
-// and builds the gate each mailbox's messages are verified with and the signers
-// its replies and its heartbeat are signed with.
+// mailboxKeyring reads, once, at startup (M5), everything a pass serves a
+// pairing with: the keychain key each MAC pairing is verified and signed with,
+// and the public key each device node holds (O6). It is the **union** of the two
+// things that name a pairing — the project config's `mailbox.keychain_item` and
+// the device nodes under rules.PathDevices — because a phone paired from the app
+// has no keychain item at all: it signs with its own key, so its device node is
+// the only thing on this machine that names it.
 //
-// A pairing whose item holds no key is **not served and is reported**: a config
-// entry survives the `pair revoke` that deletes the item — revoke edits no
-// config — so refusing to start over one would leave the consumer unable to
-// serve any other phone on the machine. It comes back from here as a pairing of
-// its own with `revoked` set, so that the pass it is given is the one that drops
-// the prompts nobody can answer any more, and it is a pass **in its sorted
-// place** beside the served ones rather than a footnote on another pass. When no
-// configured pairing has a key there is nothing to serve at all, and that is
-// §8.3's availability row: exit 1, no pass run, nothing written. A keychain that
-// cannot be used at all is the keychain package's backend failure, and it is
-// exit 2 (§4.4).
-func mailboxKeyring(ctx context.Context, lc *localcfg.Config, now func() time.Time) ([]mailboxPairing, error) {
-	m := lc.Mailbox
-	if m == nil || len(m.KeychainItem) == 0 {
-		return nil, userErr("project %s has no mailbox configured: its project config has no mailbox.keychain_item block, so there is no pairing whose key this command could read; run `fugaro pair` and record the item name it prints as mailbox.keychain_item[<device uid>]", lc.Name)
+// **The device node chooses the scheme, and this is where the choice is made.** A
+// node that holds a public key is served by a signature gate and by no MAC
+// signer; a node that holds none is served by the MAC gate and the signers the
+// keychain key builds. A node whose public key cannot be read is a refusal to
+// start and never a fallback to the MAC — a fallback would accept exactly the tag
+// O6 retires — and a pairing with no signer takes no lease, which is M4b's row.
+//
+// A pairing whose item holds no key and whose node holds no public key is **not
+// served and is reported**: a config entry survives the `pair revoke` that
+// deletes the item — revoke edits no config — so refusing to start over one
+// would leave the consumer unable to serve any other phone on the machine. It
+// comes back from here as a pairing of its own with `revoked` set, so that the
+// pass it is given is the one that drops the prompts nobody can answer any more,
+// and it is a pass **in its sorted place** beside the served ones rather than a
+// footnote on another pass. When nothing is served at all there is nothing to
+// serve, and that is §8.3's availability row: exit 1, no pass run, nothing
+// written. A keychain that cannot be used at all is the keychain package's
+// backend failure, and it is exit 2 (§4.4).
+func mailboxKeyring(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, now func() time.Time) ([]mailboxPairing, error) {
+	devices, err := mailboxDeviceKeys(ctx, db, lc)
+	if err != nil {
+		return nil, err
 	}
-	store := mailboxKeychain()
-	uids := make([]string, 0, len(m.KeychainItem))
-	for uid := range m.KeychainItem {
+	configured := map[string]string{}
+	if lc.Mailbox != nil {
+		configured = lc.Mailbox.KeychainItem
+	}
+	if len(configured) == 0 && len(devices) == 0 {
+		return nil, userErr("project %s has no mailbox configured: its project config has no mailbox.keychain_item block and no device node under %s holds a public key, so there is no pairing whose messages this command could verify; run `fugaro pair` for a phone paired from this machine and record the item name it prints, or pair from the app", lc.Name, rules.PathDevices)
+	}
+	uids := make([]string, 0, len(configured)+len(devices))
+	for uid := range configured {
 		uids = append(uids, uid)
+	}
+	for uid := range devices {
+		if _, ok := configured[uid]; !ok {
+			uids = append(uids, uid)
+		}
 	}
 	// Sorted, so several pairings are served in one order on every run and a
 	// document's place in the output is a fact about the config rather than
 	// about Go's map order.
 	sort.Strings(uids)
 
+	store := mailboxKeychain()
 	pairings := make([]mailboxPairing, 0, len(uids))
 	served := 0
 	for _, uid := range uids {
-		item, err := keychain.ParseItem(m.KeychainItem[uid], lc.Name)
-		if err != nil {
-			return nil, userErr("mailbox.keychain_item.%s: %v; the item's name is what the key is read from, so a pairing with no readable name is a config the operator fixes", uid, err)
+		pairing := mailboxPairing{uid: uid, publicKey: devices[uid]}
+		if name, ok := configured[uid]; ok {
+			item, err := keychain.ParseItem(name, lc.Name)
+			if err != nil {
+				return nil, userErr("mailbox.keychain_item.%s: %v; the item's name is what the key is read from, so a pairing with no readable name is a config the operator fixes", uid, err)
+			}
+			pairing.item = item.Name()
+			key, err := store.Key(ctx, item)
+			switch {
+			case errors.Is(err, keychain.ErrNoKey):
+				// The state `pair revoke` leaves: nothing to read here. The device
+				// node decides below, because a node that holds a public key is
+				// served whether or not this machine kept a key for it.
+			case err != nil:
+				return nil, remote(fmt.Errorf("reading this machine's keychain item %s for pairing %s: %w", item.Name(), uid, err))
+			case pairing.publicKey == "":
+				// The key is captured once and only inside these three values: the
+				// gate holds it and asks for its bytes per verification, and each
+				// signer does the same per tag.
+				pairing.gate = mailbox.NewGate(key, mailbox.GateOptions{Now: now})
+				pairing.signer = mailboxOutboxSigner(key)
+				pairing.heartbeat = mailboxHeartbeatSigner(key)
+			}
 		}
-		key, err := store.Key(ctx, item)
 		switch {
-		case err == nil:
-		case errors.Is(err, keychain.ErrNoKey):
-			pairings = append(pairings, mailboxPairing{uid: uid, item: item.Name(), revoked: true})
-			continue
-		default:
-			return nil, remote(fmt.Errorf("reading this machine's keychain item %s for pairing %s: %w", item.Name(), uid, err))
+		case pairing.publicKey != "":
+			gate, err := mailbox.NewSignatureGate(pairing.publicKey, mailbox.GateOptions{Now: now})
+			if err != nil {
+				return nil, userErr("the device node for pairing %s holds a public_key this command cannot read (%v); that key is what verifies its messages, so the pairing is re-paired rather than served on a weaker scheme", uid, err)
+			}
+			pairing.gate = gate
+		case pairing.gate == nil:
+			pairing.revoked = true
 		}
-		// The key is captured once and only inside these three values: the gate
-		// holds it and asks for its bytes per verification, and each signer does
-		// the same per tag.
-		pairings = append(pairings, mailboxPairing{
-			uid:       uid,
-			item:      item.Name(),
-			gate:      mailbox.NewGate(key, mailbox.GateOptions{Now: now}),
-			signer:    mailboxOutboxSigner(key),
-			heartbeat: mailboxHeartbeatSigner(key),
-		})
-		served++
+		if pairing.gate != nil {
+			served++
+		}
+		pairings = append(pairings, pairing)
 	}
 	if served == 0 {
-		return nil, userErr("no pairing key is readable at the keychain items project %s names (%s), so there is no message this command could verify and no reply it could sign: run `fugaro pair` for the phone that is missing and record the item name it prints; the key itself is never printed and is never in the project config", lc.Name, strings.Join(mailboxRevokedNames(pairings), ", "))
+		return nil, userErr("no pairing key is readable at the keychain items project %s names (%s) and no device node under %s holds a public key, so there is no message this command could verify and no reply it could sign: run `fugaro pair` for the phone that is missing and record the item name it prints; the key itself is never printed and is never in the project config", lc.Name, strings.Join(mailboxRevokedNames(pairings), ", "), rules.PathDevices)
 	}
 	return pairings, nil
+}
+
+// mailboxDeviceKeys reads the device nodes once, at startup, and answers the
+// public key of every node that holds one: the uid the pairing minted and the
+// key the phone signs with (O6, P3's MobileDeviceNode).
+//
+// A node with no `public_key` is a device paired the old way — `fugaro pair`
+// writes the node and no key on it — and it is not in the answer: its scheme is
+// the MAC, and its key is the keychain's. A node that is not an object is
+// skipped rather than refused, as `pairDeviceRowFrom` skips one: a device node's
+// existence is the allowlist (D166), and a reader that refused a row would hide
+// a phone that is on it.
+func mailboxDeviceKeys(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) (map[string]string, error) {
+	var nodes map[string]json.RawMessage
+	found, err := db.Get(ctx, rules.PathDevices, &nodes)
+	if err != nil {
+		return nil, dbErr(lc, err, false)
+	}
+	keys := map[string]string{}
+	if !found {
+		return keys, nil
+	}
+	for uid, raw := range nodes {
+		if key := deviceNodePublicKey(raw); key != "" {
+			keys[uid] = key
+		}
+	}
+	return keys, nil
+}
+
+// deviceNodePublicKey reads one device node's `public_key` — the spelling
+// `internal/credsvc`'s MobileDeviceNode writes it with — and answers "" for a
+// node that carries none and for one that is not an object.
+func deviceNodePublicKey(raw json.RawMessage) string {
+	var node struct {
+		PublicKey string `json:"public_key"`
+	}
+	if err := json.Unmarshal(raw, &node); err != nil {
+		return ""
+	}
+	return node.PublicKey
 }
 
 // mailboxRevokedNames is the item names of the pairings whose key is gone: the
@@ -689,7 +776,7 @@ func runMailbox(cmd *cobra.Command, o *mailboxOptions) error {
 		return userErr("%v", err)
 	}
 	defer func() { _ = stateLock.Release() }()
-	pairings, err := mailboxKeyring(ctx, lc, mailboxClock(db))
+	pairings, err := mailboxKeyring(ctx, db, lc, mailboxClock(db))
 	if err != nil {
 		return err
 	}
@@ -979,7 +1066,24 @@ func (c *mailboxConsumer) pass(ctx context.Context, pairing mailboxPairing) (mai
 		notes:   []string{},
 	}
 	if pairing.revoked {
-		return c.drop(ctx, pairing, pass)
+		return c.drop(ctx, pairing, pass, fmt.Sprintf("pairing %s has no key at keychain item %s, so no message signed with it can be verified and no reply signed with it can be written; it is not served, and the prompts it was holding are dropped", pairing.uid, pairing.item))
+	}
+	if pairing.publicKey != "" {
+		// O6: **deleting the device node ends acceptance at once**, read where it
+		// can be read. The gate was built from the node's key at startup (M5's
+		// snapshot, which is about the keys and not about the node), and this is
+		// the node read again before the pass acts on anything, so a node deleted
+		// while this consumer runs ends that pairing's acceptance at its next
+		// pass rather than at its next start. A node whose key has changed is the
+		// same answer: the key the gate holds is the one a message must be signed
+		// with.
+		live, err := c.deviceHoldsKey(ctx, pairing)
+		if err != nil {
+			return pass, err
+		}
+		if !live {
+			return c.drop(ctx, pairing, pass, fmt.Sprintf("the device node for pairing %s no longer holds the public key its gate was built from, so no message signed with that key is accepted and no reply is owed; it is not served, and the prompts it was holding are dropped", pairing.uid))
+		}
 	}
 	now := c.now()
 	pass.at = time.UnixMilli(now).UTC().Format(time.RFC3339)
@@ -994,11 +1098,14 @@ func (c *mailboxConsumer) pass(ctx context.Context, pairing mailboxPairing) (mai
 
 	run, err := c.leaseFor(ctx, pairing, now)
 	switch {
-	case errors.Is(err, mailbox.ErrUnsignable):
+	case errors.Is(err, mailbox.ErrUnsignable), errors.Is(err, mailbox.ErrLeaseNoSigner):
 		// M4b's per-write refusal, seen here because the heartbeat write IS the
 		// lease: no signed heartbeat, no write, no lease — and a consumer with
 		// no lease acts on nothing. Nothing is recorded for it, so the next pass
-		// tries again and the exit is 0 (§4.4).
+		// tries again and the exit is 0 (§4.4). The second error is a pairing
+		// this machine holds no signing key for at all: a phone paired the new
+		// way (O6) is verified by its node's public key, and the consumer's own
+		// key for its replies and its heartbeat is J5c's KMS signer.
 		pass.lease = mailboxLease{State: string(mailbox.LeaseLost)}
 		pass.notes = append(pass.notes, fmt.Sprintf("the heartbeat for %s could not be signed, so no lease was taken and nothing was acted on", pairing.uid))
 		return pass, nil
@@ -1035,16 +1142,18 @@ func (c *mailboxConsumer) pass(ctx context.Context, pairing mailboxPairing) (mai
 	return pass, nil
 }
 
-// drop is a revoked pairing's pass: no lease is asked for and nothing is read,
-// because there is no key to verify a message with or to sign a reply with, and
-// the prompts that pairing was holding are dropped with the answer each is owed
-// handed over **once**. The lease state is `none`, which is the module's own
-// word for a mailbox this consumer holds nothing on — the pass really did take
-// no lease — and the reason it is a note rather than a state of its own is that
+// drop is a pairing this consumer cannot serve a pass for: no lease is asked
+// for and nothing is read, because there is no key to verify a message with or
+// to sign a reply with, and the prompts that pairing was holding are dropped
+// with the answer each is owed handed over **once**. `note` is why — a revoked
+// pairing's keychain item, or a device node that no longer holds the key its
+// gate was built from. The lease state is `none`, which is the module's own word
+// for a mailbox this consumer holds nothing on — the pass really did take no
+// lease — and the reason it is a note rather than a state of its own is that
 // §4.3's lease block carries the module's vocabulary, not this file's.
-func (c *mailboxConsumer) drop(ctx context.Context, pairing mailboxPairing, pass mailboxPass) (mailboxPass, error) {
+func (c *mailboxConsumer) drop(ctx context.Context, pairing mailboxPairing, pass mailboxPass, note string) (mailboxPass, error) {
 	pass.at = time.UnixMilli(c.now()).UTC().Format(time.RFC3339)
-	pass.notes = append(pass.notes, fmt.Sprintf("pairing %s has no key at keychain item %s, so no message signed with it can be verified and no reply signed with it can be written; it is not served, and the prompts it was holding are dropped", pairing.uid, pairing.item))
+	pass.notes = append(pass.notes, note)
 	dropped, err := c.memory.DropPrompts(pairing.uid, c.now())
 	if err != nil {
 		return pass, userErr("this machine's prompt memory could not be written (%v); the revoked pairing's prompts are left as they are and the answer they are owed is still owed", err)
@@ -1658,6 +1767,22 @@ func (c *mailboxConsumer) pairedDevice(ctx context.Context, uid string) (bool, e
 		return false, dbErr(c.lc, err, false)
 	}
 	return found, nil
+}
+
+// deviceHoldsKey answers whether the device node still holds the public key this
+// pairing's gate was built from, which is what a phone paired the new way is
+// accepted by (O6). An absent node and a node whose key has changed are one
+// answer: the key the gate holds is the one a message must be signed with, so
+// either way nothing that pairing's phone writes is a message this consumer can
+// attribute. A read that is refused is `pairedDevice`'s refusal, at the same
+// exit code.
+func (c *mailboxConsumer) deviceHoldsKey(ctx context.Context, pairing mailboxPairing) (bool, error) {
+	var node json.RawMessage
+	found, err := c.db.Get(ctx, rules.PathDevices+"/"+pairing.uid, &node)
+	if err != nil {
+		return false, dbErr(c.lc, err, false)
+	}
+	return found && deviceNodePublicKey(node) == pairing.publicKey, nil
 }
 
 // mailboxPrefsNode is §3.8's switch state as the push node holds it, under the
