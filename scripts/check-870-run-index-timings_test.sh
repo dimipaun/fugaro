@@ -282,7 +282,7 @@ test_a_slow_read_fails() {
 
 test_the_bound_and_the_repeats_are_asked_for() {
   case_dir bound
-  FAKE870_SLEEPS="runs=10,300,300"
+  FAKE870_SLEEPS="runs=10,100,100"
   CHECK870_BOUND_MS=500
   CHECK870_REPEATS=1
   run870 fugaro
