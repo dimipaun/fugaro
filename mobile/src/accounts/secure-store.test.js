@@ -28,10 +28,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  IDENTITY_SESSION_PREFIX,
+  IdentitySessionStore,
   MemorySecureStore,
   SECRET_KEY_PREFIX,
   SECURE_STORE_CODES,
   SecretStore,
+  identitySessionKey,
   secretKey,
 } from './secure-store.js';
 import { SECRET_ITEMS, Secret, secret } from './secret.js';
@@ -389,4 +392,99 @@ test('use on an item the platform cannot read is that refusal, not a silent empt
   await odd.setItem(keyOf('laptop', 'macKey'), '   ');
   const unreadable = await new SecretStore(odd).use('laptop', 'macKey', () => 'never called');
   assert.equal(unreadable.code, SECURE_STORE_CODES.UNREADABLE);
+});
+
+// **The identity session store (task M1; D2790, D2793).** One item per
+// signed-in identity, under the contract's `fugaro.identity-session.` prefix:
+// the provider session's durable half (the identity project's refresh token)
+// and never a project credential. The rules are the account store's own,
+// restated for a key that is an identity id rather than an account id and an
+// item: the id is validated before a key is composed, a malformed value is
+// refused rather than written, and a read of something this module could not
+// have written is `unreadable`.
+
+const REFRESH = 'synthetic-identity-refresh-token';
+const GOOGLE_ID = 'google.com.synthetic-sub-1';
+const APPLE_ID = 'apple.com.synthetic.apple.sub';
+
+/** An identity session store over a fresh memory port. */
+function makeSessionStore() {
+  const port = new MemorySecureStore();
+  return { port, store: new IdentitySessionStore(port) };
+}
+
+test('the identity session key is the contract\'s prefix and a validated identity id', () => {
+  assert.equal(IDENTITY_SESSION_PREFIX, 'fugaro.identity-session.');
+  assert.equal(identitySessionKey(GOOGLE_ID), `fugaro.identity-session.${GOOGLE_ID}`);
+  // A dot inside a part is fine -- an Apple subject id has them -- and the
+  // policy's provider spellings carry one too.
+  assert.equal(identitySessionKey(APPLE_ID), `fugaro.identity-session.${APPLE_ID}`);
+  assert.throws(() => identitySessionKey(''), TypeError);
+  assert.throws(() => identitySessionKey('a/b'), TypeError, 'a byte the keychain throws on is refused first');
+  assert.throws(() => identitySessionKey('a:b'), TypeError);
+  assert.throws(() => identitySessionKey(7), TypeError);
+});
+
+test('an identity session is written under its own key and read back verbatim', async () => {
+  const { port, store } = makeSessionStore();
+  assert.deepEqual(await store.put(GOOGLE_ID, REFRESH), { ok: true });
+  assert.deepEqual(port.keys(), [`fugaro.identity-session.${GOOGLE_ID}`]);
+  const read = await store.get(GOOGLE_ID);
+  assert.equal(read.ok, true);
+  assert.equal(read.token, REFRESH);
+
+  // A second identity is a second key, and neither reads the other's.
+  await store.put(APPLE_ID, 'synthetic-other-refresh-token');
+  assert.deepEqual(port.keys(), [`fugaro.identity-session.${APPLE_ID}`, `fugaro.identity-session.${GOOGLE_ID}`]);
+  assert.equal((await store.get(APPLE_ID)).token, 'synthetic-other-refresh-token');
+
+  const gone = await store.delete(GOOGLE_ID);
+  assert.equal(gone.ok, true);
+  assert.deepEqual(port.keys(), [`fugaro.identity-session.${APPLE_ID}`]);
+  assert.equal((await store.get(GOOGLE_ID)).code, SECURE_STORE_CODES.ABSENT);
+});
+
+test('a bad id, a bad value and a value this module did not write are each refused', async () => {
+  const { port, store } = makeSessionStore();
+  for (const bad of ['', 'a b', 'a/b', 'a:b', 'x'.repeat(201), null, 7]) {
+    assert.equal((await store.put(bad, REFRESH)).code, SECURE_STORE_CODES.BAD_IDENTITY, JSON.stringify(bad));
+    assert.equal((await store.get(bad)).code, SECURE_STORE_CODES.BAD_IDENTITY, JSON.stringify(bad));
+    assert.equal((await store.delete(bad)).code, SECURE_STORE_CODES.BAD_IDENTITY, JSON.stringify(bad));
+  }
+  for (const [name, value] of [
+    ['empty', ''],
+    ['longer than the platform\'s ceiling', 'x'.repeat(2049)],
+    ['not printable ASCII', 'line one\nline two'],
+    ['not a string', 7],
+  ]) {
+    const refused = await store.put(GOOGLE_ID, value);
+    assert.equal(refused.code, SECURE_STORE_CODES.BAD_VALUE, name);
+    // The empty value has nothing to carry, and an empty needle is in every
+    // haystack: only the values with characters are searched for.
+    if (typeof value === 'string' && value !== '') {
+      assert.equal(JSON.stringify(refused).includes(value), false, 'the refusal never carries the value');
+    }
+  }
+  assert.deepEqual(port.keys(), [], 'nothing refused was written');
+
+  // A stored value this module could not have written is unreadable, not repaired.
+  await port.setItem(`fugaro.identity-session.${GOOGLE_ID}`, 'not printable\n');
+  assert.equal((await store.get(GOOGLE_ID)).code, SECURE_STORE_CODES.UNREADABLE);
+});
+
+test('a platform failure is a loud refusal, and a delete is never gated on a read', async () => {
+  const failing = {
+    async getItem() { throw new Error('locked'); },
+    async setItem() { throw new Error('full'); },
+    async deleteItem() { throw new Error('locked'); },
+  };
+  const store = new IdentitySessionStore(failing);
+  assert.equal((await store.put(GOOGLE_ID, REFRESH)).code, SECURE_STORE_CODES.STORE_FAILED);
+  assert.equal((await store.get(GOOGLE_ID)).code, SECURE_STORE_CODES.STORE_FAILED);
+  assert.equal((await store.delete(GOOGLE_ID)).code, SECURE_STORE_CODES.STORE_FAILED);
+
+  // Deleting an item that is not there is a no-op, as the account store's is:
+  // a locked phone must not leave a credential with no owner.
+  const { store: empty } = makeSessionStore();
+  assert.deepEqual(await empty.delete(GOOGLE_ID), { ok: true });
 });

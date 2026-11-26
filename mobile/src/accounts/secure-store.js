@@ -34,6 +34,7 @@
 // key is also the thing a settings write must never be able to collide with,
 // which `settings.js` enforces by refusing the prefix.
 
+import { SECURE_STORE_ITEMS } from '../../../shared/mobile-session/index.js';
 import { isAccountId } from './account.js';
 import { SECRET_ITEMS, SECRET_VALUE_MAX, isSecret, isSecretItem, secret } from './secret.js';
 
@@ -49,6 +50,10 @@ export const SECURE_STORE_CODES = Object.freeze({
   ABSENT: 'absent',
   UNREADABLE: 'unreadable',
   STORE_FAILED: 'store-failed',
+  /** An identity id that could not name a keychain item (M1). */
+  BAD_IDENTITY: 'bad-identity',
+  /** An identity session value that is not one this module may write (M1). */
+  BAD_VALUE: 'bad-value',
   /** `use` was given something that is not a callback (P3.6). */
   NOT_A_CALLBACK: 'not-a-callback',
   /** The callback threw. What it threw is never carried: it may quote the material. */
@@ -386,4 +391,143 @@ function carries(value, material, depth = 0) {
     if (carries(value[key], material, depth + 1)) return true;
   }
   return false;
+}
+
+/**
+ * **The identity session item (task M1; D2790).** One per signed-in identity,
+ * under the contract's prefix, holding the durable half of that identity's
+ * provider session -- the identity project's refresh token. It is not one of
+ * D111's two items and not a project credential: D2790 amends D232 to put a
+ * provider session in platform secure storage, and the item name is C1's
+ * (`SECURE_STORE_ITEMS.IDENTITY_SESSION`, read rather than spelled again, so
+ * the app and the service cannot disagree about where a session lives).
+ *
+ * **The key is a prefix and an identity id, and the id is validated first.**
+ * `IdentityID(provider, sub)` joins the two with a dot, and `expo-secure-store`
+ * *throws* on a key outside its alphabet rather than returning a miss -- so an
+ * id is checked as a whole here (`isIdentitySessionId`) before a key is
+ * composed from it, exactly as `secretKey` checks an account id. The id is
+ * **compared and never taken apart**, as the contract says: a provider part may
+ * carry dots of its own, so there is no split that could say which dot is the
+ * separator.
+ *
+ * **A bare string, and why that is not D111 undone.** The value is the refresh
+ * token as the exchange parsed it, and there is no `Secret` wrapper: `Secret`
+ * is D111's two items and `secret.js` refuses a third name, while this item is
+ * a different decision (D2790). What keeps it off a screen is that the app has
+ * no logger at all (the boundary scan forbids `console.` outright) and that no
+ * refusal in this module or in `src/identity/store.js` carries a value --
+ * `secure-store.test.js` and `store.test.js` each assert that of the refusals
+ * they can provoke. The write rules are the same the two items get: printable
+ * ASCII, no newline, and inside `expo-secure-store`'s ceiling, so a value that
+ * would be truncated or would turn one log line into two cannot be written.
+ */
+
+/** The prefix every identity session key carries. */
+export const IDENTITY_SESSION_PREFIX = SECURE_STORE_ITEMS.IDENTITY_SESSION;
+
+/**
+ * The longest identity id. The contract bounds nothing (`IdentityID` joins two
+ * keychain-safe parts), so this is the app's own fence: a `sub` is the
+ * provider's, and an id long enough to matter is one whose key the platform
+ * may refuse for its length rather than its bytes. It is generous -- a Google
+ * subject is a score of digits and an Apple one is a short opaque string --
+ * and it is a refusal with a code here rather than a throw from the Keychain.
+ */
+export const IDENTITY_ID_MAX = 200;
+
+/** The bytes `expo-secure-store` accepts in a key (the contract's own rule). */
+const IDENTITY_ID_RE = new RegExp(`^[A-Za-z0-9_.-]{1,${IDENTITY_ID_MAX}}$`);
+
+/** The characters an identity session value may carry: printable ASCII, no space. */
+const PRINTABLE_ASCII_RE = /^[\x21-\x7e]+$/;
+
+/** Is `id` an identity id a keychain item can be named for? */
+export function isIdentitySessionId(id) {
+  return typeof id === 'string' && IDENTITY_ID_RE.test(id);
+}
+
+/**
+ * The key one identity's session lives under. Throws on an id it cannot
+ * compose, for the reason `secretKey` does: a key built from an unchecked id
+ * is a key that points at another identity's session, and there is no safe
+ * fallback for that.
+ */
+export function identitySessionKey(id) {
+  if (!isIdentitySessionId(id)) throw new TypeError('not an identity id');
+  return `${IDENTITY_SESSION_PREFIX}${id}`;
+}
+
+/** The refusal of a value this module may not write, or null when it may. */
+function judgeSessionValue(token) {
+  if (typeof token !== 'string' || token.length === 0) return refuse(SECURE_STORE_CODES.BAD_VALUE, 'token');
+  // The ceiling first, so an enormous value is refused without being walked.
+  // It is a code-unit count and the value is printable ASCII, so it is also
+  // the byte count `expo-secure-store` measures.
+  if (token.length > SECRET_VALUE_MAX) return refuse(SECURE_STORE_CODES.BAD_VALUE, 'token');
+  if (!PRINTABLE_ASCII_RE.test(token)) return refuse(SECURE_STORE_CODES.BAD_VALUE, 'token');
+  return null;
+}
+
+/**
+ * One identity's provider session, in platform secure storage.
+ *
+ * The port is the same three-method one `SecretStore` takes, and this store
+ * never touches the account namespace: it addresses exactly the items named by
+ * identity ids, so one identity's session is reached by its own id or by
+ * nothing. A `get` re-applies the write's rules to what came back, because a
+ * stored value this module could not have written is not repaired into one.
+ */
+export class IdentitySessionStore {
+  #port;
+
+  constructor(port) {
+    if (port === null || typeof port !== 'object') throw new TypeError('a secure-store port is required');
+    this.#port = port;
+  }
+
+  /** Write one identity's session value. */
+  async put(id, token) {
+    if (!isIdentitySessionId(id)) return refuse(SECURE_STORE_CODES.BAD_IDENTITY, 'identityId');
+    const bad = judgeSessionValue(token);
+    if (bad !== null) return bad;
+    try {
+      await this.#port.setItem(identitySessionKey(id), token);
+    } catch {
+      // Loud, and what the platform said is not carried: it may quote the value.
+      return refuse(SECURE_STORE_CODES.STORE_FAILED, 'token');
+    }
+    return Object.freeze({ ok: true });
+  }
+
+  /** Read one identity's session value back. */
+  async get(id) {
+    if (!isIdentitySessionId(id)) return refuse(SECURE_STORE_CODES.BAD_IDENTITY, 'identityId');
+    let stored;
+    try {
+      stored = await this.#port.getItem(identitySessionKey(id));
+    } catch {
+      return refuse(SECURE_STORE_CODES.STORE_FAILED, 'token');
+    }
+    if (stored === null || stored === undefined) return refuse(SECURE_STORE_CODES.ABSENT, 'token');
+    if (judgeSessionValue(stored) !== null) return refuse(SECURE_STORE_CODES.UNREADABLE, 'token');
+    return Object.freeze({ ok: true, token: stored });
+  }
+
+  /**
+   * Forget one identity's session. **The delete is never gated on a read**, for
+   * the reason `SecretStore.forget` gives: a read fails exactly when the device
+   * is locked, and skipping then would leave a credential with no owner. A
+   * delete that fails is a `store-failed` refusal, and the caller keeps the
+   * record so the removal can be run again.
+   */
+  async delete(id) {
+    if (!isIdentitySessionId(id)) return refuse(SECURE_STORE_CODES.BAD_IDENTITY, 'identityId');
+    try {
+      await this.#port.deleteItem(identitySessionKey(id));
+    } catch {
+      return refuse(SECURE_STORE_CODES.STORE_FAILED, 'token');
+    }
+    return Object.freeze({ ok: true });
+  }
 }
