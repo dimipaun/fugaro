@@ -201,8 +201,10 @@ Check 913 plan (nothing is called: no gcloud, no read)
    live in.
 2. gcloud run jobs list --project <gcp> --region <region> --format=json
    — every job of the installation, and the image its template is deployed with.
-3. gcloud run jobs executions list --job <job> ... --limit=$LIMIT, per job
-   — every execution of it; the RUNNING ones are those whose status carries no
+3. gcloud run jobs executions list --job <job> ... --sort-by='~metadata.creationTimestamp'
+   --limit=$LIMIT, per job — every execution of it, NEWEST FIRST, so the window
+   fills with the newest and a running execution cannot be cut off behind a
+   job's old sweeps; the RUNNING ones are those whose status carries no
    completionTime.
 4. gcloud artifacts docker images describe <ref> --format=json, once per distinct
    image reference that is a tag — the digest it resolves to now. A reference an
@@ -604,7 +606,8 @@ while IFS='|' read -r job image; do
   JOBS_READ=$((JOBS_READ + 1))
   rc=0
   read_call run jobs executions list --job="$job" --project="$GCP" --region="$REGION" \
-    --limit="$LIMIT" --format=json >"$SCRATCH/execs-$job.json" 2>"$SCRATCH/execs-$job.err" || rc=$?
+    --sort-by='~metadata.creationTimestamp' --limit="$LIMIT" --format=json \
+    >"$SCRATCH/execs-$job.json" 2>"$SCRATCH/execs-$job.err" || rc=$?
   if [ "$rc" != 0 ]; then
     say "gcloud run jobs executions list --job $job exited $rc"
     printf 'job|UNVERIFIED|%s\n' "the executions of the job $job could NOT be read: gcloud exited $rc ($(tr '\n' ' ' <"$SCRATCH/execs-$job.err" 2>/dev/null | tr -s ' ' | head -c 200)). A job whose executions were not read is not a job with none running, and a running execution of it could be the one a retry took the rebuilt image into" >>"$SCRATCH/job-rows"

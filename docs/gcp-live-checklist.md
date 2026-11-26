@@ -27459,8 +27459,10 @@ session by name and refuses a shell started with `-x`. The script is
   can meet this run. **THE SAME with no retry is UNVERIFIED**: nothing then says whether the job's image moved under the
   execution at all — that is the reading of a run started after the update, or of an update that rebuilt nothing.
 - **job**: one row per job whose executions could **not** be read, or whose listing came back with **exactly the window
-  asked for** (`CHECK913_LIMIT`), so a running execution of it may sit outside the window. **UNVERIFIED**: a job whose
-  executions were not read is not a job with none running.
+  asked for** (`CHECK913_LIMIT`), so a running execution of it may sit outside the window. The window is read **newest
+  first** (`--sort-by='~metadata.creationTimestamp'`, the Check 680 pattern), so a job whose window fills with its own
+  old sweeps — the reaper's, on a real installation — cannot hide the running execution this check is about behind
+  them. **UNVERIFIED**: a job whose executions were not read is not a job with none running.
 - **writes**: every call this check made was a **read** (the list is in the row). `gcloud auth` is never called, so no
   token is read and none is on an argv, and every call runs with stdin closed.
 - **restore**: the scratch directory is gone.

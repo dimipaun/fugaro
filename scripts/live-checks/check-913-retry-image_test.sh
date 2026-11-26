@@ -233,6 +233,10 @@ test_the_happy_path() {
   calls=$(cat "$CALLS")
   expect_calls "$calls" "run jobs list --project=demo-project --region=us-east5" 1 "the job listing"
   expect_calls "$calls" "run jobs executions list --job=$JOB --project=demo-project --region=us-east5" 1 "the executions listing"
+  # Newest first: a job whose window fills with its own old sweeps would
+  # otherwise cut off the running execution this check is about (check680's
+  # pattern).
+  expect_calls "$calls" "--sort-by=~metadata.creationTimestamp --limit=" 1 "the executions listing is read newest first"
   expect_calls "$calls" "artifacts docker images describe $REGISTRY:latest --project=demo-project" 1 "the registry read"
   expect_calls "$calls" "auth" 0 "no gcloud auth at all"
   expect_not_contains "$calls" "stdin=tty" "every call ran with stdin off the terminal"
