@@ -704,6 +704,14 @@ func TestAccountsSwitchRefusesWhenTheInstallationsJobsCannotBeRead(t *testing.T)
 // of the profile this switch moves, with nothing running on it, is a job the
 // converge retires by itself, and the switch goes through. Without this case a
 // refusal that fired on every live job would read as the feature.
+//
+// The converge has to retire it and not merely tolerate it: the switch's own
+// run applies the installation root, and an instance the document no longer
+// declares is a plan that deletes a job the module protects — the refusal that
+// leaves the config half-written when it lands after the write. So the fixture
+// is the installation the issue is about (the state still manages the instance
+// of the triple the profile served, the cloud still runs its job) and the
+// assertion is on the delete.
 func TestAccountsSwitchAdmitsAJobItCanRetire(t *testing.T) {
 	r := newAddRigWith(t, switchRigLocal)
 	job := gcp.ProjectJobName("standard", "github", "team-a")
@@ -714,6 +722,8 @@ func TestAccountsSwitchAdmitsAJobItCanRetire(t *testing.T) {
 	}, "image")
 	done := r.run.Start(job)
 	r.run.SetState(done, backend.StateSucceeded)
+	r.script["show -json@installation"] = map[string]any{"stdout": projectJobStateDoc(t, job)}
+	r.save(t)
 
 	out, errOut, err := execute(t, "accounts", "switch", "team-a", "team-b", "--yes")
 	if err != nil {
@@ -721,5 +731,8 @@ func TestAccountsSwitchAdmitsAJobItCanRetire(t *testing.T) {
 	}
 	if got := r.addLocal(t).Profiles["standard"].ClaudeAccounts; !slices.Equal(got, []string{"team-b"}) {
 		t.Errorf("profiles.standard.claude_accounts = %v, want [team-b]", got)
+	}
+	if d := r.run.JobDeletes(); !slices.Contains(d, job) {
+		t.Errorf("deleted jobs = %v; want %s: the switch's own converge retires the job of the account it moved off", d, job)
 	}
 }
