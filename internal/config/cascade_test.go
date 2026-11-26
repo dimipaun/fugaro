@@ -57,7 +57,7 @@ func TestValidateAcceptsCascade(t *testing.T) {
 	}
 }
 
-// TestCascadeRefusedWith"off" is the gateway rule a cascade workflow is
+// TestCascadeRefusedWithBudgetOff is the gateway rule a cascade workflow is
 // held to: its calls are made by the gateway, so the mode the run has to be one
 // this release accounts under, and a word that is not is refused, naming what
 // it read. observe and enforce both pass: the cascade needs the gateway to be

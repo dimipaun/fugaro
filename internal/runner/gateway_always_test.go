@@ -26,9 +26,10 @@ var allModes = []string{"", "off", policy.ModeObserve, policy.ModeEnforce}
 
 // TestTheGatewayNoLongerReadsTheMode (AB1b, D3009, F15): there is always a
 // budget, so whether a run has a gateway is a fact about its credential and
-// nothing else. GatewayOn keeps the mode argument its CLI callers still pass
-// and ignores it, and a run whose job names no mode at all — the state the
-// suite's own harness is in — starts its gateway like any other.
+// nothing else. GatewayOn takes the credential alone — I1 dropped the mode
+// argument its CLI callers used to pass it, which it ignored — and a run whose
+// job names no mode at all — the state the suite's own harness is in — starts
+// its gateway like any other.
 //
 // Red step: with an unset mode (and with the word off) GatewayOn answered
 // false, so the run had no gateway and agent.BuildEnv's api-key arm mounted the
@@ -36,10 +37,10 @@ var allModes = []string{"", "off", policy.ModeObserve, policy.ModeEnforce}
 // the predicate answers true for every mode, and the stage's environment
 // carries the gateway's per-run token where the key used to be.
 //
-// Hand mutation this fails on: restoring the mode as a condition
-// (`auth == "api-key" && mode != "" && mode != "off"`), which leaves the
-// harness's own runs — and every job of an installation whose mode is unset —
-// keyless and gateway-less again.
+// Hand mutation this fails on: giving GatewayOn its mode parameter back and
+// conditioning on the run's raw mode (`auth == "api-key" && mode != "" && mode
+// != "off"`), which leaves the harness's own runs — and every job of an
+// installation whose mode is unset — keyless and gateway-less again.
 func TestTheGatewayNoLongerReadsTheMode(t *testing.T) {
 	// The predicate itself is the credential's, and I1 dropped the mode it used
 	// to be asked with (AB1b, D3009): there is no argument left for a run's own
