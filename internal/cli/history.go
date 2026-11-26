@@ -253,8 +253,10 @@ func runHistorySweep(ctx context.Context, cmd *cobra.Command, getenv func(string
 	// runs': an entry the sweep just removed was a run that ended, and a run
 	// that ended is not an event. Every failure it has is a warning rather than
 	// the job's exit code, because the mailbox is authoritative and the push is
-	// the doorbell (§6): alerts failing must never stop the sweep, and the FCM
-	// permission itself arrives with P5.2.7.
+	// the doorbell (§6): alerts failing must never stop the sweep, and the
+	// identity that would let one through arrives with P5.2.7 — the sender's
+	// identity toward the relay, not an FCM grant — and the client that would
+	// call it is no task's.
 	push := &pushSender{
 		db: db, project: env[envFirebaseFP], now: now,
 		send: fcmSender{project: env[envFirebaseFP], url: fcmRoot, http: authHTTP}.send,

@@ -986,22 +986,25 @@ func mobileDeviceUIDValid(uid string) error {
 }
 
 // mobileSessionPolicy is the project's policy as the phone's screens decide with
-// it (C1's SessionPolicy): the costly modes and the biometric switch P6 holds,
-// and no more. Every one of them is a display input and never an enforcement —
-// what a mode or a switch permits is decided at the consumer (D2791) — so this
-// answer carries the project's own values and no judgement about them.
+// it (C1's SessionPolicy): the costly modes, the biometric switch and the
+// compaction threshold P6 and Z2 hold, and no more. Every one of them is a
+// display input and never an enforcement — what a mode or a threshold permits is
+// decided at the consumer (D2791) — so this answer carries the project's own
+// values and no judgement about them.
 //
-// The compaction threshold is left at its zero value, which C1 defines as "the
-// project set no automatic compaction": the threshold arrives with Z2, which adds
-// it to the policy this reads.
+// The threshold is the node's own whole percent (D2789), and a node that
+// carries no key answers the contract's zero, which is "this project set no
+// automatic compaction": the phone's automatic compaction fires on it or, at
+// zero, never fires by itself.
 func mobileSessionPolicy(pol *projectpolicy.Policy) mobilesession.SessionPolicy {
 	modes := make([]string, 0, len(pol.MobileCostlyModes()))
 	for _, m := range pol.MobileCostlyModes() {
 		modes = append(modes, string(m))
 	}
 	return mobilesession.SessionPolicy{
-		CostlyModes:       modes,
-		BiometricOnCostly: pol.MobileBiometricOnCostly(),
+		CostlyModes:             modes,
+		BiometricOnCostly:       pol.MobileBiometricOnCostly(),
+		CompactThresholdPercent: pol.MobileCompactionThresholdPercent(),
 	}
 }
 

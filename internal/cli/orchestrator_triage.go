@@ -37,13 +37,15 @@ import (
 )
 
 // triageFindingsObject is the runner's finalize artifact the rule's third
-// input comes from (BF1, U10), under the run's own prefix in the runs bucket.
+// input comes from (BF1, U10), under the run's own prefix in the runs bucket:
+// internal/runner writes it beside the run's record, at finalize, from the
+// review round the run ended on (internal/runner/findings.go).
 //
-// BF1 has not landed, so this name and the shape below are this slice's own:
-// they follow the plan's description of that artifact rather than a file that
-// exists, and the reader fails closed on anything that is not exactly it. The
-// name is deliberately not the record's: a run's record is the runner's account
-// of how the run went, and this file is the open findings it ended with.
+// The shape below is the writer's, and this reader fails closed on anything
+// that is not exactly it. The name is deliberately not the record's: a run's
+// record is the runner's account of how the run went, and this file is the open
+// findings it ended with — the one reading of them the rule will take, because
+// a file the run wrote inside its own checkout is the run describing itself.
 const triageFindingsObject = "findings.json"
 
 // triageFindingsVersion is the one version of that artifact this reader knows.

@@ -2310,7 +2310,15 @@ func TestCoverRefusesAnOrchestratorTickThatIsNotTheModules(t *testing.T) {
 		plan    func() *Plan
 		covered bool
 	}{
-		"the apply that creates the service":  {create, true},
+		"the apply that creates the service": {create, true},
+		// An update of the service makes its uri known only after apply, so the
+		// tick of an installation that already has the service is planned with
+		// the URL unknown (0.29.0's first update refused it).
+		"the apply that updates the service": {func() *Plan {
+			s := svc()
+			s.Change.Actions = []string{"update"}
+			return &Plan{ResourceChanges: []ResourceChange{orchestratorTick("", "", sched), s, orchestratorAccount("create")}}
+		}, true},
 		"a later apply, the URL read back":    {func() *Plan { return later(orchestratorTick(orchestratorTickURL, orchestratorTickOrigin, sched)) }, true},
 		"the audience written with the route": {func() *Plan { return later(orchestratorTick(orchestratorTickURL, orchestratorTickURL, sched)) }, false},
 		// The URL Cloud Run's own uri attribute returns, <service>-<hash>-<region

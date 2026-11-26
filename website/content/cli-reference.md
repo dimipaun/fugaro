@@ -38,7 +38,7 @@ Subcommands:
 - `fugaro completion` -- Generate the autocompletion script for the specified shell
 - `fugaro config` -- Work with fugaro.yaml
 - `fugaro coordinator` -- The coordinator's project view: what is in flight, and what collides
-- `fugaro craft` -- Show the model and the credential or pool each craft runs on
+- `fugaro craft` -- Show the model each craft runs and the chain it goes out on
 - `fugaro creds` -- Set and list the credentials service's one bundle secret (the owner)
 - `fugaro diagnose` -- Explain how a run went: status, tests, review findings, the agent's last word, logs
 - `fugaro doctor` -- Check that Fugaro is set up and ready, without changing anything
@@ -236,6 +236,20 @@ and a run serves it once that half ships. Without the flag nothing but
 claude_accounts and the profile is written, which is what this command has
 always done.
 
+--pool NAME puts the token in the named pool: the pool is declared with this
+account's credential as its one member where the config defines no pool of that
+name, and the credential joins the members the pool already has where it does.
+A subscription token lives in a pool (a single token is a pool of one), and a
+pool is what a craft's access, a launcher's designation and a run's --pool name,
+so this is the flag that makes a new account usable by them. Without it a
+subscription token is put in a pool of one named after the account, and a key
+credential is put in none. It is refused without --type claude-oauth — a key
+credential is not a subscription token, and no pool walks one — and it is
+refused for a name a credential of this config already holds, because a craft's
+access names a credential or a pool and does not say which: the two may share a
+name only where the pool is that credential's own pool of one, and any other
+pool of that name must be called something else.
+
 Then it converges, in one command and behind the one sentence it prints: the
 value is stored project-wide as a new version of the secret the name derives
 (the account's own Claude OAuth token, or, with --type, the credential's own
@@ -274,6 +288,7 @@ Flags:
 | `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this declaration would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed |
 | `--claude` | bool | `false` | no | run Anthropic's own claude setup-token login on this terminal first, then paste the token at the hidden prompt |
 | `-h`, `--help` | bool | `false` | no | help for add |
+| `--pool` | string | "" | no | put the token in the named pool: declare the pool with this account's credential as its one member, or join the members it already has. Requires --type claude-oauth; without the flag a subscription token goes in a pool of one named after the account, and a key credential in none. The name may not be one a credential of this config holds, unless the pool walks that credential alone |
 | `--profile` | string | "" | no | the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one); refused for a key credential, which is added to no profile's list |
 | `--repos` | string | "" | no | the repositories the token may be used by, as owner/name,owner/name (default: this checkout's origin) |
 | `--type` | string | "" | no | declare the name as a typed credential too, so a craft or a pool may spend it: claude-oauth (this command's OAuth token step), or a key type (openrouter or anthropic), whose value is read the same way and stored under the credential's own derived secret name (without it, the name is declared in claude_accounts alone, as it always was) |
@@ -893,6 +908,18 @@ that names both is left as it is and declared beside, not rewritten here.
 --strategy failover (the default) or round-robin. A pool that already exists
 keeps the strategy it has when the flag is left out.
 
+--rule ordered, round-robin or failover is how the service picks among the
+members the pool can use (docs/model-credentials-routing/contract-pools.md):
+ordered takes the first usable member in the order written, and the other two
+keep the meanings the strategies of those names have. A pool that names no rule
+is served by its strategy and, where it names neither, by failover, so a pool
+written before rules existed moves only where its owner writes one.
+
+--service-account ADDRESS names the service account this pool belongs to: the
+address its runs' tokens carry, written as the pool's principal. It is the
+enforcing half of who the pool's tokens are handed to and is not read off
+--owner, which stays an email address and keeps its meaning.
+
 --owner EMAIL names the person the pool is served to, and --allow-user EMAIL,
 which may be repeated, names the others. The owner is required of a pool that is
 published to the policy node, and it is what a craft's access is checked
@@ -917,6 +944,8 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for add |
 | `--layer` | string | "" | no | the layer to write (local, project, repo) |
 | `--owner` | string | "" | no | the person the pool is served to, by email: the owner a craft's access is checked against. Left out, a pool that exists keeps the owner it has |
+| `--rule` | string | "" | no | how the service picks among the members the pool can use (ordered, round-robin, failover). Left out, a pool that exists keeps the rule it has and is served by its strategy |
+| `--service-account` | string | "" | no | the address of the service account this pool belongs to, written as the pool's principal |
 | `--strategy` | string | "" | no | how the pool walks its members: failover (the default: try them in order) or round-robin (share the load). Left out, a pool that exists keeps the strategy it has |
 
 Subcommands:
@@ -942,6 +971,15 @@ each craft's access name the one its stages need.
 The read is offline: it reads the selected project's config file and reaches no
 bucket, no database and no host.
 
+--json prints the document the console's pools screen reads
+(docs/model-credentials-routing/contract-pools.md): the project, its pools and
+each pool's members, with the state, the next reset, the usage and the headroom
+of each member. This command prints the shape with the figures absent — the
+state is what nothing-holding-a-member means, "available", and the reset, the
+usage and the headroom are null — because the usage is a service's to count and
+that half does not ship yet. No token, no key and no secret appears in the
+document, for anyone: it carries names and figures and never a value (F19).
+
 Usage: `fugaro accounts pool ls`
 
 Flags:
@@ -951,6 +989,7 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print the machine-readable document instead of the table: the project, its pools, and each pool's members with their state, next reset, usage and headroom (never a value) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
@@ -1278,9 +1317,12 @@ cp) or unset its agent marker and run this command itself. The refusal below is 
 an agent that uses the program, not a boundary against one that goes around it
 (SECURITY.md records the wider Owner/Editor bypass).
 
-On a project that is not managed, this writes an object nothing reads: the
-check below is that the bucket is the project's own runs bucket, which every
-installation has, not that the project is Fugaro-managed.
+On a project that is not managed, printing the list is admitted — it is a read,
+and it is how you read what is approved — and writing it is refused, naming
+fugaro managed flag: the list is a leaf of the policy the project publishes,
+so the mark that command writes is what makes a project one whose deletes this
+program approves. The bucket check stands either way: the list lives in the
+project's own runs bucket and no other.
 
 The list is read fail-closed: an absent object, an empty one, one naming
 another project, one written by an older Fugaro (its addresses carry no
@@ -3314,22 +3356,23 @@ This command has no subcommands.
 
 ## `fugaro craft`
 
-Show the model and the credential or pool each craft runs on
+Show the model each craft runs and the chain it goes out on
 
 Show the crafts: the coder, the first-line review, the senior review,
 the security review and the merge judge.
 
-Each craft runs a model and sends its calls out on a credential or a pool, and
-the two halves inherit separately: the first-line review and the merge judge
-follow the coder, and the security review follows the senior review, so a craft
-that sets only one half keeps the other half it follows. A craft that sets no
-access anywhere resolves to the project's default credential.
+Each craft runs a model, and the chain the project's routing table resolves that
+model to is where its calls go out: the sources of the entry that matches it, in
+order, first usable one wins. A model no entry matches has no chain and no run
+can call it. A project that publishes no routing table is served the release-1
+way, so its crafts have no chain to show.
 
-Every half names where it came from: the layer that wrote it (repo, local or
-project), the craft it was inherited from, or default when nothing set it. A
-pool holding two or more Claude OAuth credentials serves nothing until the
-project's subscription-spread switch is on — the switch this machine's own
-config writes — and the row says so.
+A craft's model inherits separately from the chain: the first-line review and
+the merge judge follow the coder, and the security review follows the senior
+review, so a craft that names only a model keeps the model of the craft it
+follows. The model names where it came from — the layer that wrote it (repo,
+local or project), the craft it was inherited from, or default when nothing set
+it. The chain is the project's and comes from no layer of a craft.
 
 The read is offline: it reads this checkout's fugaro.yaml, the installation's
 own config and the project layer file the last cloud read cached, and reaches
@@ -3345,11 +3388,11 @@ Flags:
 
 Subcommands:
 
-- `fugaro craft ls` -- Show each craft's effective model and access, and where each came from
+- `fugaro craft ls` -- Show each craft's effective model, the chain it goes out on, and where the model came from
 
 ## `fugaro craft ls`
 
-Show each craft's effective model and access, and where each came from
+Show each craft's effective model, the chain it goes out on, and where the model came from
 
 Usage: `fugaro craft ls`
 
@@ -7362,7 +7405,7 @@ from the project's other repositories. It prints the whole list of what it
 will change, asks once for the project's name, and then does each step as
 far as it can:
 
-  1. the repository's own fugaro.yaml: read, never written
+  1. the repository's own fugaro.yaml: read (a repository with none gets a pull request for the starter; merge it, run again)
   2. this machine's project config: the repository's repos: entry (and, when
      its fugaro.yaml names a Claude account by agent.oauth_token, the
      repository in that one account's allow_data_to, which the next
@@ -8835,6 +8878,7 @@ Flags:
 | `--mode` | string | "" | no | the rigor mode to ask for: poc, startup, pro, critical, hotfix; it is the narrowest rank of the mode's order, so it settles the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) whether it asks for more or for less, and only a floor, outside every layer, holds it back; hotfix is the mode the request takes whole and needs no opt-in anywhere — a first run, a follow-up and a launch from a coding agent's session alike; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps |
 | `--no-budget-check` | bool | `false` | no | skip the launch pre-check of the budget (kill switches, missing caps, no headroom); the run is held to the same limits when it starts |
 | `--no-compression` | bool | `false` | no | turn agent.compression off for this run only, overriding fugaro.yaml; there is no flag to turn it on, which is a reviewed fugaro.yaml change |
+| `--no-personal-token` | bool | `false` | no | launch without asking the workspace for your own token: this run draws on the shared entries, as every run did before the personal half existed (D3142) |
 | `--owner-ruled` | string | "" | no | the repository owner's ruling on the findings a run on this PR left for them (OD1): either the text itself, a file, or - for stdin. A follow-up on a pull request whose last run stopped waiting on owner decisions is refused without it, and one whose last run left no such decisions is refused with it: the ruling answers what that run left, and nothing else; it is appended to this run's brief verbatim and recorded in the run |
 | `--path` | stringArray | `[]` | no | declare a path this run will touch, matched against the rigor.areas rules in effect (the repository's, and the project layer's beside them): repeatable; a run that declares none matches no area rule |
 | `--plan-task` | string | "" | no | record the plan task this run works on, as <plan>/<task> (for example setup-wizard/W1.3): the id the console's graph joins this run to a node by; it changes nothing about what the run does, and a follow-up (--pr) records one only when given. A plan task that a run in flight, or a pull request a run of it left behind, already holds is refused (--allow-duplicate launches it anyway) |

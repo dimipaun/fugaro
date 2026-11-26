@@ -24,6 +24,8 @@ package rules
 
 import (
 	"encoding/json"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -190,6 +192,84 @@ func TestRunTokenCannotWriteTheCredsRulesMarkers(t *testing.T) {
 		h.mustDeny(c, "a run writing "+p, map[string]any{p: CredsRulesVersion})
 		h.mustDeny(c, "a run deleting "+p, map[string]any{p: nil})
 		h.rawDenied(claims{slug: "aurora", run: "r1"}, "PUT", p, "1")
+	}
+}
+
+// TestNoTokenHolderWritesTheRegistration: the registration — the id of the
+// Batch job a launch created, written on the run's issuance record (BR17, R19,
+// D3108) — is the credentials service's write, over IAM, and no token the rules
+// admit reaches the node it writes.
+//
+// The record's path is under /creds, whose own `.read: false, .write: false` is
+// the whole of the denial (F26, LM5): BR17 adds no rule, moves no version and
+// generates nothing, and this case is what pins that. The node is seeded as the
+// service writes it, so a read that came back empty because there was nothing
+// to read would not pass for a denial — every assertion is a permission error —
+// and the generated document is asked for a rule of its own for the record's
+// family, which it must not have.
+//
+// Mutation: add an `issuance` child to the template's creds node with a read or
+// a write grant; the holders below reach the node and the document's own
+// assertion fails.
+func TestNoTokenHolderWritesTheRegistration(t *testing.T) {
+	h := newHarness(t)
+	// The path is spelled the way the store builds it (identitywire.PathRecord),
+	// which for this slug and run needs no escaping.
+	const record = "creds/issuance/aurora/r1"
+	h.set(record, map[string]any{
+		"caller": "launcher-1@example.invalid",
+		"job":    "projects/aurora-fp/locations/europe-west1/jobs/fb-1",
+		"job_id": "job-1",
+	})
+
+	holders := map[string]*rtdb.Client{
+		"this run":                       h.run("aurora", "r1"),
+		"another run of this repository": h.run("aurora", "rB"),
+		"another repository's run":       h.run("other", "r1"),
+		"the phone":                      h.phone("mb-1"),
+		"an unpaired phone":              h.unpaired("mb-2"),
+		"the consumer":                   h.consumer("mb-1"),
+		"the pairing session":            h.pairing("p~abc"),
+	}
+	for name, c := range holders {
+		h.mustReadDenied(c, record)
+		h.mustReadDenied(c, "creds/issuance/aurora")
+		h.mustDeny(c, name+" writing the registration", map[string]any{record: map[string]any{"job_id": "job-2"}})
+		h.mustDeny(c, name+" writing one field of it", map[string]any{record + "/job_id": "job-2"})
+		h.mustDeny(c, name+" deleting it", map[string]any{record: nil})
+	}
+	// The two shapes a multi-path update does not make: a DELETE carries no body
+	// for the rules to validate, and a PUT at the node is what the service's own
+	// write is — both asked with the token of the run the node belongs to, which
+	// is the identity nearest to it.
+	h.rawDenied(claims{slug: "aurora", run: "r1"}, "DELETE", record, "")
+	h.rawDenied(claims{slug: "aurora", run: "r1"}, "PUT", record, `{"job_id":"job-2"}`)
+
+	// No token at all is the floor under every case above: the database refuses
+	// an unauthenticated write before any rule of the document is read.
+	before := h.snapshot()
+	req, _ := http.NewRequest(http.MethodPut, emuURL+"/"+record+".json", strings.NewReader(`{"job_id":"job-2"}`))
+	resp, err := h.hc.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("a PUT of the registration with no token is answered %d, want 401", resp.StatusCode)
+	}
+	if after := h.snapshot(); after != before {
+		t.Error("the unauthenticated PUT changed the database")
+	}
+
+	// And the denial is /creds': the generated document carries no rule of its
+	// own for the record's family, so a task that gave one a grant fails here
+	// rather than quietly opening the node.
+	doc, err := Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(doc), "issuance") {
+		t.Errorf("the generated rules carry a node for the issuance record: the registration is the service's write over IAM, and the record is closed by /creds' own false/false (F26)")
 	}
 }
 

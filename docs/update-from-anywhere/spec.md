@@ -52,9 +52,11 @@ config lacks is still covered, so two admins' machines do the same work.
 listings through `gitprov.TreeReader`). It reads at the default branch: `fugaro.yaml`, and
 `.claude/settings.json` for the plugin pin. Until the fold retires, it also lists `docs/backlog/`.
 
-- **Cost.** About three API calls per repository per run, with bounded parallelism. That is 150
-  calls for 50 repositories, far below GitHub's hourly limit. Reads are memoized per run, as
-  `defaultBranchParse` is today (`checkoutParseCache`).
+- **Cost.** About three API calls per repository per run, one repository at a time. That is 150
+  calls for 50 repositories, far below GitHub's hourly limit, and the plan declines a bound of
+  concurrency for the read (§Considered and declined): it buys seconds and adds a second thing per
+  repository that can fail. Reads are memoized per run, as `defaultBranchParse` is today
+  (`checkoutParseCache`).
 - **Why not a clone.** A clone of each repository costs disk, time and network for three small
   files. A remembered local checkout (`recordCheckout`) is not used either: it is as fresh as its
   last fetch and exists on one machine only, which brings the machine dependence back.

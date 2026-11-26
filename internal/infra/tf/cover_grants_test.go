@@ -119,6 +119,8 @@ func grantAccountFor(typ, role string) string {
 		// grant name two projects — which is exactly what issuerMinterGrant and
 		// orchestratorMinterGrant read, since both are this run's projects.
 		return "projects/fp-2/serviceAccounts/fugaro-token-signer@fp-2.iam.gserviceaccount.com"
+	case "roles/iam.serviceAccountOpenIdTokenCreator":
+		return "projects/proj-1/serviceAccounts/" + BuildIdentityAccountID + "@proj-1.iam.gserviceaccount.com"
 	}
 	return ""
 }
@@ -805,6 +807,9 @@ func TestCredentialsAccountIsItsOwnPrincipalKind(t *testing.T) {
 				after["service_account_id"] = acct
 			}
 			withCondFor(after, typ, role, false)
+			if acct := grantAccountFor(typ, role); acct != "" {
+				after["service_account_id"] = acct
+			}
 			ch := rc(typ, after, map[string]any{}, "create")
 			got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil)
 			want := allowed[typ][mustRoleKey(t, role)]
@@ -1087,6 +1092,10 @@ func TestBuildIdentityIsItsOwnPrincipalKind(t *testing.T) {
 			"roles/storage.objectViewer": true,
 		},
 		"google_secret_manager_secret_iam_member": {"roles/secretmanager.secretAccessor": true},
+		// The OpenID token of the account itself (buildIdentityOpenIDGrant holds it to
+		// that account): Cloud Build serves a build its ID token only to an account
+		// that holds iam.serviceAccounts.getOpenIdToken.
+		"google_service_account_iam_member": {"roles/iam.serviceAccountOpenIdTokenCreator": true},
 	}
 	for typ, row := range grantRules {
 		for key, w := range row {
@@ -1118,6 +1127,9 @@ func TestBuildIdentityIsItsOwnPrincipalKind(t *testing.T) {
 	for typ, list := range roles {
 		for _, role := range slices.Sorted(slices.Values(list)) {
 			after := map[string]any{"member": build, "role": role, "bucket": "fugaro-runs-proj-1"}
+			if acct := grantAccountFor(typ, role); acct != "" {
+				after["service_account_id"] = acct
+			}
 			withCondFor(after, typ, role, false)
 			ch := rc(typ, after, map[string]any{}, "create")
 			got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil)
@@ -3125,5 +3137,38 @@ func TestMobileAccountIsItsOwnPrincipalKind(t *testing.T) {
 		if got := listed.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) == 0 {
 			t.Errorf("listed on the review screen: %s to the public mobile service's account: NotCovered = %q, want it refused — the account is never a member of var.launchers", role, got)
 		}
+	}
+}
+
+// A build's ID token comes from Cloud Build's metadata server only to an
+// account holding iam.serviceAccounts.getOpenIdToken, so the build identity
+// holds roles/iam.serviceAccountOpenIdTokenCreator ON ITSELF. The row opens by
+// member and role; buildIdentityOpenIDGrant closes it to the account.
+func TestBuildIdentityOpenIDTokenIsOnItselfAlone(t *testing.T) {
+	const (
+		role     = "roles/iam.serviceAccountOpenIdTokenCreator"
+		member   = "serviceAccount:" + BuildIdentityAccountID + "@proj-1.iam.gserviceaccount.com"
+		self     = "projects/proj-1/serviceAccounts/" + BuildIdentityAccountID + "@proj-1.iam.gserviceaccount.com"
+		runner   = "projects/proj-1/serviceAccounts/fugaro-job-abc@proj-1.iam.gserviceaccount.com"
+		creds    = "projects/proj-1/serviceAccounts/fugaro-credentials@proj-1.iam.gserviceaccount.com"
+		otherPrj = "projects/fp-2/serviceAccounts/" + BuildIdentityAccountID + "@fp-2.iam.gserviceaccount.com"
+	)
+	for name, tc := range map[string]struct {
+		change  ResourceChange
+		covered bool
+	}{
+		"on itself":                               {grantOnAccount("google_service_account_iam_member", member, role, self), true},
+		"on a job account":                        {grantOnAccount("google_service_account_iam_member", member, role, runner), false},
+		"on the credentials service's account":    {grantOnAccount("google_service_account_iam_member", member, role, creds), false},
+		"on another project's own":                {grantOnAccount("google_service_account_iam_member", member, role, otherPrj), false},
+		"on no account named":                     {grant("google_service_account_iam_member", member, role), false},
+		"a job account holds it on itself":        {grantOnAccount("google_service_account_iam_member", "serviceAccount:fugaro-job-abc@proj-1.iam.gserviceaccount.com", role, runner), false},
+		"a person holds it on the build identity": {grantOnAccount("google_service_account_iam_member", "user:me@example.com", role, self), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{tc.change}}, nil); (len(got) == 0) != tc.covered {
+				t.Fatalf("NotCovered = %q, covered want %v", got, tc.covered)
+			}
+		})
 	}
 }

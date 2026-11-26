@@ -74,18 +74,41 @@ func ChainPlanFor(lc *localcfg.Config, repo string) ChainPlan {
 	if !plan.Migrated {
 		return plan
 	}
+	plan.Serves = ChainServes(lc.ModelRouting, repo)
 	for _, entry := range lc.ModelRouting {
 		for _, s := range entry.Chain {
 			if !ChainSourceServes(s, repo) {
 				continue
 			}
-			plan.Serves = true
 			if chainSourceReachesVertex(s, lc.Pools, lc.Credentials) {
 				plan.Vertex = true
 			}
 		}
 	}
 	return plan
+}
+
+// ChainServes is ChainPlanFor's Serves half on its own: whether some source of
+// some entry admits repo, which is a caller holding the table and no config to
+// plan from.
+//
+// It is exported for the reason ChainSourceServes is. The A/B admission (ee/ab)
+// judges a challenger by the chain only where the table governs the
+// repository's runs, and that is this answer: a repository no source admits is
+// on the release-1 bridge (R25), the same repository the run's own gate leaves
+// alone (internal/cli's chainRoutingGate asks ChainPlanFor(...).Serves), and a
+// second walk there would be free to disagree with the plan about whether a
+// table is in force — the difference between a challenger judged by its chain
+// and one judged by the credentials it is really served by.
+func ChainServes(table routing.Table, repo string) bool {
+	for _, entry := range table {
+		for _, s := range entry.Chain {
+			if ChainSourceServes(s, repo) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ChainsNameVertex reports whether any chain of any entry names Vertex,

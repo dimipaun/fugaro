@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"text/tabwriter"
@@ -9,8 +10,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/settings"
 	"github.com/dimipaun/fugaro/internal/yamledit"
 )
@@ -56,6 +59,11 @@ func newAccountsPoolCmd() *cobra.Command {
 // command reads. The writes below take none of them.
 type accountsPoolReadOptions struct {
 	cloud cloudOptions
+	// json is --json: the document of C2's contract
+	// (docs/model-credentials-routing/contract-pools.md), which the console's
+	// pools screen draws (VS2) and whose figures PL10 counts. It carries names
+	// and figures and never a value (F19).
+	json bool
 }
 
 // accountsPoolWriteOptions are the flags the two pool writes take, registered
@@ -75,11 +83,20 @@ type accountsPoolReadOptions struct {
 // that grandfathers such a pool is its only writer. A creation flag for it would
 // let a person declare a pool with no owner and no boundary at all.
 type accountsPoolWriteOptions struct {
-	strategy   string
-	owner      string
-	allowUsers []string
-	layer      string
-	yes        bool
+	strategy string
+	// rule is --rule: the pool's own rule (PL1's member, R5). It is written
+	// beside --strategy and never instead of it: `strategy` keeps its meaning
+	// for a pool that names one (R21), and RuleOrDefault reads the rule first.
+	rule string
+	// serviceAccount is --service-account: the address of the service account
+	// the pool belongs to, written as the pool's principal (config.PoolPrincipal,
+	// kind service-account). It is the enforcing half of a pool's ownership, the
+	// one a run's verified principal is matched against (D3181, R7).
+	serviceAccount string
+	owner          string
+	allowUsers     []string
+	layer          string
+	yes            bool
 }
 
 func newAccountsPoolLsCmd() *cobra.Command {
@@ -100,11 +117,21 @@ names both is refused when it is declared. Name two pools, one per half, and let
 each craft's access name the one its stages need.
 
 The read is offline: it reads the selected project's config file and reaches no
-bucket, no database and no host.`,
+bucket, no database and no host.
+
+--json prints the document the console's pools screen reads
+(docs/model-credentials-routing/contract-pools.md): the project, its pools and
+each pool's members, with the state, the next reset, the usage and the headroom
+of each member. This command prints the shape with the figures absent — the
+state is what nothing-holding-a-member means, "available", and the reset, the
+usage and the headroom are null — because the usage is a service's to count and
+that half does not ship yet. No token, no key and no secret appears in the
+document, for anyone: it carries names and figures and never a value (F19).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runAccountsPoolLs(cmd, o) },
 	}
 	addCloudFlags(cmd, &o.cloud)
+	cmd.Flags().BoolVar(&o.json, "json", false, "print the machine-readable document instead of the table: the project, its pools, and each pool's members with their state, next reset, usage and headroom (never a value)")
 	return cmd
 }
 
@@ -122,7 +149,45 @@ func runAccountsPoolLs(cmd *cobra.Command, o accountsPoolReadOptions) error {
 	if lc != nil {
 		pools, creds = lc.Pools, lc.Credentials
 	}
+	if o.json {
+		return writeAccountsPoolLsJSON(cmd.OutOrStdout(), lc, pools)
+	}
 	return writeAccountsPoolLs(cmd.OutOrStdout(), lc, pools, creds)
+}
+
+// writeAccountsPoolLsJSON is the document C2's contract declares
+// (routing.PoolListDoc): the project, its pools and each pool's members, so that
+// three sides print, fill and read one shape rather than three. The figures are
+// absent and not invented — a member's state is the word a member nothing holds
+// has (creds.StateAvailable), and its next reset, its usage and its headroom are
+// null, because the usage is a service's to count (PL10) and this command reaches
+// no store. A project with no pool prints an empty list and never a null
+// (PoolListDoc.MarshalJSON says why).
+func writeAccountsPoolLsJSON(w io.Writer, lc *localcfg.Config, pools []config.Pool) error {
+	doc := routing.PoolListDoc{Project: "", Pools: []routing.PoolEntry{}}
+	if lc != nil {
+		doc.Project = lc.Name
+	}
+	for _, p := range pools {
+		entry := routing.PoolEntry{
+			Name:      p.Name,
+			Rule:      routing.Rule(p.Rule),
+			Members:   []routing.PoolMember{},
+			Threshold: nil,
+		}
+		if p.Principal != nil {
+			entry.Principal = routing.Principal{Kind: routing.PrincipalKind(p.Principal.Kind), ID: p.Principal.ID}
+		}
+		if p.Threshold != nil {
+			t := routing.Threshold(*p.Threshold)
+			entry.Threshold = &t
+		}
+		for _, m := range p.Members {
+			entry.Members = append(entry.Members, routing.PoolMember{Name: m, State: string(creds.StateAvailable)})
+		}
+		doc.Pools = append(doc.Pools, entry)
+	}
+	return writeJSON(w, doc)
 }
 
 func writeAccountsPoolLs(w interface {
@@ -210,6 +275,18 @@ that names both is left as it is and declared beside, not rewritten here.
 --strategy failover (the default) or round-robin. A pool that already exists
 keeps the strategy it has when the flag is left out.
 
+--rule ordered, round-robin or failover is how the service picks among the
+members the pool can use (docs/model-credentials-routing/contract-pools.md):
+ordered takes the first usable member in the order written, and the other two
+keep the meanings the strategies of those names have. A pool that names no rule
+is served by its strategy and, where it names neither, by failover, so a pool
+written before rules existed moves only where its owner writes one.
+
+--service-account ADDRESS names the service account this pool belongs to: the
+address its runs' tokens carry, written as the pool's principal. It is the
+enforcing half of who the pool's tokens are handed to and is not read off
+--owner, which stays an email address and keeps its meaning.
+
 --owner EMAIL names the person the pool is served to, and --allow-user EMAIL,
 which may be repeated, names the others. The owner is required of a pool that is
 published to the policy node, and it is what a craft's access is checked
@@ -230,6 +307,8 @@ spent and whose key they may carry, so a coding agent's session is refused.`,
 	}
 	f := cmd.Flags()
 	f.StringVar(&o.strategy, "strategy", "", "how the pool walks its members: failover (the default: try them in order) or round-robin (share the load). Left out, a pool that exists keeps the strategy it has")
+	f.StringVar(&o.rule, "rule", "", "how the service picks among the members the pool can use ("+strings.Join(config.PoolRules, ", ")+"). Left out, a pool that exists keeps the rule it has and is served by its strategy")
+	f.StringVar(&o.serviceAccount, "service-account", "", "the address of the service account this pool belongs to, written as the pool's principal")
 	f.StringVar(&o.owner, "owner", "", "the person the pool is served to, by email: the owner a craft's access is checked against. Left out, a pool that exists keeps the owner it has")
 	f.StringArrayVar(&o.allowUsers, "allow-user", nil, "another person the pool is served to, by email; repeat the flag for each. Left out, a pool that exists keeps the users it has")
 	f.StringVar(&o.layer, "layer", "", "the layer to write ("+strings.Join(settingsWriteLayers, ", ")+")")
@@ -271,6 +350,20 @@ func runAccountsPoolAdd(cmd *cobra.Command, name string, members []string, o acc
 	}
 	if o.strategy != "" {
 		pool.Strategy = o.strategy
+	}
+	// --rule and --strategy are two spellings of one decision (R21): the rule
+	// is the pool's own and the strategy is what a pool that names no rule is
+	// served by, so a command that wrote both would leave a person reading the
+	// file two answers to one question. The rule is the one to keep — it is the
+	// spelling this release writes and the one a reader resolves first.
+	if o.rule != "" {
+		if o.strategy != "" {
+			return userErr("--rule and --strategy decide the same thing, and a pool keeps one answer to it: --rule %s is the spelling this release writes and the one a reader resolves first, so drop --strategy; nothing was written", pluginwire.Printable(o.rule))
+		}
+		pool.Rule = o.rule
+	}
+	if o.serviceAccount != "" {
+		pool.Principal = &config.PoolPrincipal{Kind: config.PrincipalServiceAccount, ID: o.serviceAccount}
 	}
 	if o.owner != "" {
 		pool.Owner = o.owner
@@ -347,6 +440,18 @@ func accountsPoolAddEdit(old []byte, name string, members []string, o accountsPo
 			return nil, userErr("pools.%s.members: %v", pluginwire.Printable(name), err)
 		}
 	}
+	if o.rule != "" {
+		if next, err = yamledit.UpsertSeqItemByKey(next, []string{"pools"}, "name", name,
+			map[string]string{"rule": o.rule}); err != nil {
+			return nil, userErr("pools.%s.rule: %v", pluginwire.Printable(name), err)
+		}
+	}
+	if o.serviceAccount != "" {
+		if next, err = yamledit.UpsertSeqItemMapByKey(next, []string{"pools"}, "name", name, "principal",
+			map[string]string{"kind": config.PrincipalServiceAccount, "id": o.serviceAccount}); err != nil {
+			return nil, userErr("pools.%s.principal: %v", pluginwire.Printable(name), err)
+		}
+	}
 	if o.owner != "" {
 		if next, err = yamledit.UpsertSeqItemByKey(next, []string{"pools"}, "name", name,
 			map[string]string{"owner": o.owner}); err != nil {
@@ -398,6 +503,12 @@ func accountsPoolAddWhat(pool config.Pool, o accountsPoolWriteOptions) string {
 		what += ", strategy " + o.strategy
 	} else {
 		what += ", keeping the strategy the pool has (failover when it is new)"
+	}
+	if o.rule != "" {
+		what += ", rule " + o.rule
+	}
+	if o.serviceAccount != "" {
+		what += ", principal service-account " + pluginwire.Printable(o.serviceAccount)
 	}
 	if o.owner != "" {
 		what += ", owner " + pluginwire.Printable(o.owner)
@@ -599,6 +710,12 @@ func accountsPoolAddCommand(name string, members []string, o accountsPoolWriteOp
 	}
 	if o.strategy != "" {
 		parts = append(parts, "--strategy", quoteWord(o.strategy))
+	}
+	if o.rule != "" {
+		parts = append(parts, "--rule", quoteWord(o.rule))
+	}
+	if o.serviceAccount != "" {
+		parts = append(parts, "--service-account", quoteWord(o.serviceAccount))
 	}
 	if o.owner != "" {
 		parts = append(parts, "--owner", quoteWord(o.owner))

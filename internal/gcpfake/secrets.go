@@ -17,9 +17,9 @@ import (
 
 // Secrets is a stateful fake of the Secret Manager v1 calls Fugaro makes:
 // secrets get, create, list (with a filter of labels.k=v terms joined by
-// " AND "), delete, getIamPolicy, addVersion and versions list, disable,
-// enable, delete and destroy, and the value read at `latest` or at a numbered
-// version.
+// " AND "), delete, getIamPolicy, a labels-only patch, addVersion and versions
+// list, disable, enable, delete and destroy, and the value read at `latest` or
+// at a numbered version.
 // It has no access call unless a test allows it (AllowAccess): the CLI reads a
 // value back only where the work cannot be done without it — the GitHub App
 // pre-check, a catalog build's copy of a repository-sourced entry and
@@ -110,15 +110,16 @@ type Secrets struct {
 	// owes when the delete fails.
 	OnDelete func(id string)
 
-	mu          sync.Mutex
-	secrets     map[string]*fakeSecret // by ID
-	allowAccess bool
-	accessed    []string // the secret IDs whose latest version was read
-	deletes     []string // the secret IDs a delete removed, in order
-	destroys    []string // the version names a destroy or a version delete took
-	disables    []string // the version names a versions/N:disable took, in order
-	enables     []string // the version names a versions/N:enable took, in order
-	versionList int      // the version lists served, successful or failed
+	mu           sync.Mutex
+	secrets      map[string]*fakeSecret // by ID
+	allowAccess  bool
+	accessed     []string // the secret IDs whose latest version was read
+	deletes      []string // the secret IDs a delete removed, in order
+	labelPatches []string // the secret IDs a labels-only patch rewrote, in order
+	destroys     []string // the version names a destroy or a version delete took
+	disables     []string // the version names a versions/N:disable took, in order
+	enables      []string // the version names a versions/N:enable took, in order
+	versionList  int      // the version lists served, successful or failed
 	// versionLists is the same count per secret ID: VersionsListCalls answers
 	// for the whole run, which cannot say whether ONE container was listed —
 	// a run lists the versions of many — and a test asking whether a secret
@@ -296,6 +297,28 @@ func (f *Secrets) Deleted() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.deletes...)
+}
+
+// LabelPatches lists the IDs of the containers a labels-only patch rewrote, in
+// order: what a test asserts a retirement's mark with (the container is
+// relabelled and never deleted).
+func (f *Secrets) LabelPatches() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.labelPatches...)
+}
+
+// Labels answers secret id's labels as the last write left them, or nil when
+// the container is not there. It is how a test reads back the mark a patch
+// wrote — a key the patch left out is gone, as the API's labels mask means.
+func (f *Secrets) Labels(id string) map[string]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	s := f.secrets[id]
+	if s == nil {
+		return nil
+	}
+	return maps.Clone(s.labels)
 }
 
 // Destroyed lists the versions a destroy or a version delete took, in order
@@ -518,6 +541,33 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 			}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"permissions": held})
+	case r.Method == http.MethodPatch && secretPathRE.MatchString(p):
+		m := secretPathRE.FindStringSubmatch(p)
+		s := f.secrets[m[2]]
+		if s == nil {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "not found")
+			return
+		}
+		if !strings.Contains(r.URL.Query().Get("updateMask"), "labels") {
+			// Only the one update Fugaro makes is served. A patch of anything
+			// else fails the test rather than quietly succeeding: no caller
+			// changes an installation's container beside its labels.
+			f.t.Errorf("gcpfake: a client patched secret %s with updateMask=%q", m[2], r.URL.Query().Get("updateMask"))
+			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "the fake patches labels only")
+			return
+		}
+		var in struct {
+			Labels map[string]string `json:"labels"`
+		}
+		if err := json.Unmarshal(body, &in); err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "bad body")
+			return
+		}
+		// The whole map is the new one, as the API's labels mask means: a key
+		// left out is removed.
+		s.labels = maps.Clone(in.Labels)
+		f.labelPatches = append(f.labelPatches, m[2])
+		writeJSON(w, http.StatusOK, s.json(m[1], m[2]))
 	case r.Method == http.MethodDelete && secretPathRE.MatchString(p):
 		m := secretPathRE.FindStringSubmatch(p)
 		if f.secrets[m[2]] == nil {
