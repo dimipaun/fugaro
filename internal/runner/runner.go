@@ -4361,6 +4361,13 @@ func (r *run) agentLoop(ctx context.Context) {
 			// on top of the autofix commit the gate already made; only a
 			// first run (nothing else asked of it) skips straight to review.
 			if r.follow == nil {
+				// No coder stage will run, so the hand-back the run's level
+				// owes is the runner's to write: readiness asks for a file no
+				// agent on this path could have written (writeGateHandBack,
+				// the owner's ruling of 2026-11-26).
+				if err := r.writeGateHandBack(ctx); err != nil {
+					r.d.Log.Warn("writing the check gate's hand-back failed; the run will hand none back", "err", r.redact(err.Error()))
+				}
 				skipImplement = true
 			}
 		default:
@@ -7318,10 +7325,7 @@ func (r *run) rawPRText() (string, string) {
 			return title, strings.TrimSpace(body)
 		}
 	}
-	first := r.spec.TitleLine()
-	if runes := []rune(first); len(runes) > 72 {
-		first = string(runes[:71]) + "…"
-	}
+	first := r.titleLine()
 	// The description names the run by its short ID (spec.md §1, D1701); the
 	// branch, which a follow-up continues, keeps the full ID.
 	body := fmt.Sprintf("Opened by Fugaro run `%s`.\n\n## Task\n\n%s", task.ShortRun(r.rec.RunID), r.spec.Task)
@@ -7329,6 +7333,19 @@ func (r *run) rawPRText() (string, string) {
 		body = fmt.Sprintf("Opened by Fugaro run `%s`.\n\n# %s\n\n## Task\n\n%s", task.ShortRun(r.rec.RunID), first, r.spec.Task)
 	}
 	return first, body
+}
+
+// titleLine is the run's own title: the one place the fallback body's first
+// line and the title line of the hand-back the check gate writes (gateHandBackText)
+// are spelled, so the two cannot drift. The 72-rune cut and its ellipsis are the
+// fallback body's own: the title a person stored on the task, else the brief's
+// first line (task.Spec.TitleLine).
+func (r *run) titleLine() string {
+	first := r.spec.TitleLine()
+	if runes := []rune(first); len(runes) > 72 {
+		first = string(runes[:71]) + "…"
+	}
+	return first
 }
 
 // Pull request text bounds. They keep well under GitHub's limits (titles
