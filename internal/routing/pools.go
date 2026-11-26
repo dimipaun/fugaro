@@ -315,8 +315,9 @@ type PoolRef struct {
 // fallback source where a pool exists.
 //
 // The stub this contract ships is internal/credsvc/launcherpool_stub.go, whose
-// every answer is found false; PL4 deletes it and points the service at the real
-// lookup.
+// every answer is found false. PL4 pointed the service at the real lookup — it
+// assigns it in credsvc.NewServer, not from an init — and the stub stays for a
+// process that has built no server; its deletion is I1's (launcherpool_stub.go).
 type LauncherPool interface {
 	LauncherPool(ctx context.Context, principal Principal, named string) (PoolRef, bool, error)
 }

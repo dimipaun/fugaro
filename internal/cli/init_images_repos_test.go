@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -96,7 +98,7 @@ func TestDefaultEntryHeldWhileARepositoryIsUnread(t *testing.T) {
 	t.Run("every repository read", func(t *testing.T) {
 		r := ownImageRigNode(t, node)
 		onlyRepos(t, r, sibling)
-		stubViews(t, read, repoView{Repo: sibling, Cfg: viewCfg(t, bakedWorkflowYAML)})
+		stubViews(t, withPin(t, r, read), repoView{Repo: sibling, Cfg: viewCfg(t, bakedWorkflowYAML)})
 		out := convergeOn(t, r, []string{"policy-vs-jobs"})
 
 		entry, ok := writtenDefaultEntry(t)
@@ -111,7 +113,7 @@ func TestDefaultEntryHeldWhileARepositoryIsUnread(t *testing.T) {
 	t.Run("a repository the run could not read", func(t *testing.T) {
 		r := ownImageRigNode(t, node)
 		onlyRepos(t, r, sibling)
-		stubViews(t, read, repoView{Repo: sibling, Unread: "no fugaro.yaml on the default branch"})
+		stubViews(t, withPin(t, r, read), repoView{Repo: sibling, Unread: "no fugaro.yaml on the default branch"})
 		out := convergeOn(t, r, []string{"policy-vs-jobs"})
 
 		if entry, ok := writtenDefaultEntry(t); ok {
@@ -137,7 +139,7 @@ func TestDefaultEntryHeldWhileARepositoryIsUnread(t *testing.T) {
 		// it as the reader did — this config knows no provider to spell it with.
 		r := ownImageRigNode(t, node)
 		onlyRepos(t, r)
-		stubViews(t, read, repoView{Repo: sibling, Unread: "no fugaro.yaml on the default branch"})
+		stubViews(t, withPin(t, r, read), repoView{Repo: sibling, Unread: "no fugaro.yaml on the default branch"})
 		out := convergeOn(t, r, []string{"policy-vs-jobs"})
 
 		if entry, ok := writtenDefaultEntry(t); ok {
@@ -148,4 +150,17 @@ func TestDefaultEntryHeldWhileARepositoryIsUnread(t *testing.T) {
 			t.Errorf("the line this update prints about the entry does not name %s and say it read no fugaro.yaml of it: %q", sibling, line)
 		}
 	})
+}
+
+// withPin is the view with the checkout's own settings file in it: the pin
+// notice reads each repository's default branch through the view, and the
+// converge rig asserts that notice for the checkout's pin.
+func withPin(t *testing.T, r *convergeRig, v repoView) repoView {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(r.root, repoNoticePinFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Files = map[string][]byte{repoNoticePinFile: b}
+	return v
 }

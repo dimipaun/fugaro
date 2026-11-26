@@ -253,6 +253,56 @@ export function runsListPageSupported(version: string): boolean {
 }
 
 /**
+ * RUNS_LIST_OLDER_CLI_FLOOR is the release that first carries the run index the
+ * `--after` cursor reads (the indexed-reads spec's IR1), and it is **not**
+ * `RUNS_LIST_PAGE_CLI_FLOOR` above: the two words and the cursor are 0.16.0's,
+ * but a 0.16.0 CLI pages the window it was given.
+ *
+ * **That is the whole reason this floor exists.** `runs ls --since 24h --after
+ * <run id>` below the floor is answered from the window's own rows, so a page
+ * asked past the oldest run on screen has nothing after it to hand back: the
+ * read comes back empty -- or, for the first release carrying the cursor,
+ * refused -- and the Live list's "Load older" would be a control that can only
+ * say there is no older history on an installation that has years of it. At or
+ * above the floor the cursor is a position in the index, which is what makes a
+ * page past the window a page at all.
+ *
+ * **No release carries the index yet, so the constant is `null`**: the same
+ * state `PLAN_STATUS_NO_MERGES_CLI_FLOOR` and `ORCHESTRATOR_MAP_CLI_FLOOR` are
+ * in, and its rules -- a floor is a claim about a release that exists, a guessed
+ * version is a control drawn on a promise, and the release that ships the index
+ * sets this constant to its own version in a one-line pull request, a release
+ * step rather than a task of the plan.
+ */
+export const RUNS_LIST_OLDER_CLI_FLOOR: string | null = null
+
+/**
+ * runsListOlderSupported answers whether one version line may be asked for a
+ * page of the run list **past the window it was given**, by comparing the line
+ * against `RUNS_LIST_OLDER_CLI_FLOOR` at the patch level.
+ *
+ * **Its caller is the Live list's "Load older"** (`src/renderer/entry.ts`, the
+ * plan's IR7): below the floor the control is not drawn at all, because an
+ * `--after` the CLI cannot answer past its window is a press whose answer is a
+ * refusal and a section that says "no older runs" about a history that is there.
+ * The Live list itself is drawn either way -- the window is the day's runs, and
+ * that read has no floor.
+ *
+ * `floor` is the constant by default and an argument only so that the branch a
+ * release will take can be tested (the shape `planStatusNoMergesSupported` has):
+ * with the constant unset every version is refused, which is the state this
+ * console is in until a release carries the index (`version.test.ts` drives
+ * both).
+ */
+export function runsListOlderSupported(
+  version: string,
+  floor: string | null = RUNS_LIST_OLDER_CLI_FLOOR,
+): boolean {
+  if (floor === null) return false
+  return meetsCliFloor(version, floor)
+}
+
+/**
  * RUNS_SUMMARY_CLI_FLOOR is the oldest CLI that has the jobs-free totals read at
  * all, `runs summary --json` (contract §6.17).
  *

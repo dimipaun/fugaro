@@ -4327,8 +4327,16 @@ own `SETUP_EVENT_TYPES` in `console/src/shared/new-ops.ts`, which with
 `internal/cli/testdata/setup_events.golden.ndjson` is the authority):
 `{"type":"step",…}` is the run reaching a stage, `{"type":"stage",…}` is one
 stage it settled — **with the very members the `--json` document's `stages`
-element carries** — `{"type":"left_for_you",…}` is one thing only the user can do,
-carrying the step's own line to run, and the last line is `{"type":"done",
+element carries**, plus `repos`: the lines that stage reported about the
+repositories it read, one `{repo, state, detail}` each with the state `done`,
+`needs you`, `unread` or `skipped`, and `[]` for a stage that reports none (U13;
+a stage that reports lines says their summary as its `detail`) —
+`{"type":"left_for_you",…}` is one thing only the user can do,
+carrying the step's own line to run, `{"type":"notice",…}` is one line the run
+reported outside its stages (a step after the stage loop, or an admit pattern the
+CLI could not expand into repository names: `step` is the step's own name, and
+`repo` and `state` are empty for a notice about no repository), and the last line
+is `{"type":"done",
 "exit_code":N}` or `{"type":"error",…}`. **A run that ends with steps left for
 you ends `done` with exit code 1** — it did not fail, and the handed-back steps
 are the `left_for_you` lines above it — while an `error` line names the stage the

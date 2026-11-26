@@ -273,10 +273,10 @@ function named(raw: unknown): string | null {
 }
 
 /** drawnRefusal draws a sentence through `sanitizeRefusal`, the one door per
- * screen: the free-text rules would draw `roles/datastore.viewer` as
- * `[redacted]`, and the remedy is the whole value of a refusal, while the
- * credential rules still take a token a child echoed. A sentence the sanitizer
- * refuses whole is `REFUSAL_UNREADABLE`, so a refusal is never blank. */
+ * screen: the remedy is the whole value of a refusal, and the door is what takes
+ * a token a child echoed, where the free-text rules that used to draw a role as
+ * `[redacted]` went with D3213 (2026-11-21). A sentence the sanitizer refuses
+ * whole is `REFUSAL_UNREADABLE`, so a refusal is never blank. */
 function drawnRefusal(because: string): string {
   const drawn = sanitizeRefusal(because, 'the reason this section has nothing to draw')
   return drawn.ok ? drawn.text : REFUSAL_UNREADABLE

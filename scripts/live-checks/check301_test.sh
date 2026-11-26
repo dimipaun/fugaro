@@ -531,7 +531,9 @@ case_start_darwin() {
 # case_start_no_unit: the one thing the check cannot do for you. The install
 # needs a typed word at a real terminal, so the phase prints it and records it,
 # and it records NO state: a reboot would prove nothing about a unit that is not
-# there.
+# there. Both doors are named since D2700: `fugaro update` at your own terminal
+# installs the first unit (and the check runs neither command for you), and
+# `fugaro orchestrator install` stays the deliberate door.
 case_start_no_unit() {
   setup_case start-no-unit
   write_status "$dir" none
@@ -542,6 +544,7 @@ case_start_no_unit() {
   expect_fact human-install INFO "no unit: the install to run"
   expect_contains "$out" "fugaro orchestrator install" "no unit: the exact command"
   expect_contains "$out" "type the word install" "no unit: and why the check cannot run it"
+  expect_contains "$out" "it installs the first one and loads it, which is D2700" "no unit: the other door D2700 opened"
   if [ -e "$(state_file)" ]; then
     fail "no unit: it recorded a state file for a machine with nothing to reboot"
   fi

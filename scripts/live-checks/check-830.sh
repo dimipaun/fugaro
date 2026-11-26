@@ -1607,7 +1607,7 @@ print(json.dumps(d))' "$env_json" "$(json_obj "FUGARO_CHK830_LINGER=$PROBE_LIFE_
   fi
   B_UID=$(job_uid "$JOB_B")
   [ -n "$B_UID" ] || B_UID="$JOB_B"
-  wait_for_lines "$B_UID" '^C830 read$' "$SCRATCH/lines-b" "${CHK830_WAIT_LINES_B:-180}" || true
+  wait_for_lines "$B_UID" '^C830 read$' "$SCRATCH/lines-b" "$WAIT_LINES_B" || true
   # The job's own object is read beside its VM: a link that rests on a field of
   # the job's object is a field this launcher wrote too, and the candidate for it
   # is only judged if the object it would be forged on is read.
@@ -1875,7 +1875,7 @@ print_plan() {
   say "  [cloud]  ONLY IF no line arrived: gcloud batch jobs describe ${JOB_A} (the job's own state and status events, each task's state and its events), gcloud compute instances get-serial-port-output <the VM> (its last 40 lines, scanned so no value that looks like a token is printed), the same log query under resource.type=\"batch.googleapis.com/Job\" by the uid, and a bounded wait for the task to end — its exit status is the container's second channel, read with the batch.jobs.get the service already makes (probe-diag, probe-exit)"
   say "  [cloud]  gcloud compute instances describe <the VM the container named> — its whole object, which is what the link is judged on"
   say "  [local]  the link walk: every field of the instance, of the job and of the container's own metadata read that carries the other side's identity (U1)"
-  say "  [cloud]  gcloud batch jobs submit ${JOB_B} — a second job with the probe job's uid and name in every launcher-controlled field it has: Job.labels, AllocationPolicy.labels and the task's variables"
+  say "  [cloud]  gcloud batch jobs submit ${JOB_B} — a second job (${MT}, ${CPU_MILLI}m/${MEMORY_MIB}MiB, container alive $(probe_life_b)s after its reads) with the probe job's uid and name in every launcher-controlled field it has: Job.labels, AllocationPolicy.labels and the task's variables"
   say "  [cloud]  gcloud logging read + gcloud compute instances describe <the second job's VM> — the forge attempt, judged field by field against the first (U1)"
   say "  [cloud]  gcloud compute instances create ${HANDMADE_VM} — a plain VM named after the probe job, for O8, read and deleted at once"
   say "  [cloud]  gcloud logging read, three times — the job's own log entries, a search of the whole project for the marker's value, and the CreateJob audit record (waited for, bounded at ${WAIT_AUDIT}s). Its value is compared and never printed (U3)"

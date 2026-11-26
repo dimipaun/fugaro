@@ -662,6 +662,9 @@ func restoreRandom(t *testing.T, r io.Reader) {
 // and the database rules read afterwards.
 func TestMobileRestoreAdmitsADevice(t *testing.T) {
 	f := newRestoreFixture(t)
+	// The project's own compaction threshold, so that the policy half below is
+	// checked against a value the zero default cannot stand in for (Z2, D2789).
+	f.projects.shared.MobileCompactionThreshold = intPtr(55)
 
 	rec := f.restore(t, restoreBody(f.challenge))
 	if rec.Code != http.StatusOK {
@@ -697,8 +700,10 @@ func TestMobileRestoreAdmitsADevice(t *testing.T) {
 	}
 
 	// The policy half of the answer is the published node's (P6), and the
-	// compaction threshold is the contract's "the project set none" until Z2
-	// carries a project field for it.
+	// compaction threshold is the node's own whole percent (Z2, D2789): the
+	// phone's automatic compaction fires on it, and the member the node carries
+	// none of is the contract's zero, "this project set no automatic
+	// compaction".
 	node := f.projects.shared
 	wantModes := node.MobileCostlyModes()
 	if len(session.Policy.CostlyModes) != len(wantModes) {
@@ -713,8 +718,11 @@ func TestMobileRestoreAdmitsADevice(t *testing.T) {
 	if session.Policy.BiometricOnCostly != node.MobileBiometricOnCostly() {
 		t.Errorf("the session's biometric switch is %v, want the published node's %v", session.Policy.BiometricOnCostly, node.MobileBiometricOnCostly())
 	}
-	if session.Policy.CompactThresholdPercent != 0 {
-		t.Errorf("the session's compaction threshold is %d, want 0: no project field carries one until Z2", session.Policy.CompactThresholdPercent)
+	// The fixture's node carries 55 (the test's second line), so this compares
+	// against a value the contract's zero cannot stand in for: a session policy
+	// that read no project field would answer 0 and fail here.
+	if got, want := session.Policy.CompactThresholdPercent, node.MobileCompactionThresholdPercent(); got != want {
+		t.Errorf("the session's compaction threshold is %d, want the published node's %d: the phone's automatic compaction fires on the project's own value", got, want)
 	}
 	// The crash-report switch is the policy's own answer and never a value this
 	// route invents (D731, D738): C1 writes the member whether or not the

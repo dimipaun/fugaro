@@ -832,6 +832,36 @@ for e in sorted(seen):
     print(e)
 PY
 }
+# submitted_env: one variable of one submitted job's task, read out of the
+# configuration the fake kept — the check's own write, and the only place the
+# life it gave a container is visible.
+submitted_env() { # submitted_env JOB NAME
+  python3 - "$dir/state/submits" "$1" "$2" <<'PY' 2>/dev/null || true
+import json, os, sys
+d, job, name = sys.argv[1:4]
+for f in sorted(os.listdir(d)):
+    if not f.endswith("-" + job + ".json"):
+        continue
+    ts = json.load(open(os.path.join(d, f)))["taskGroups"][0]["taskSpec"]
+    var = ((ts.get("environment") or {}).get("variables") or {}).get(name)
+    if var is not None:
+        print(var)
+        break
+PY
+}
+# submitted_max_run: the same job's task maxRunDuration, which is computed from
+# the container's life rather than from the linger.
+submitted_max_run() { # submitted_max_run JOB
+  python3 - "$dir/state/submits" "$1" <<'PY' 2>/dev/null || true
+import json, os, sys
+d, job = sys.argv[1:3]
+for f in sorted(os.listdir(d)):
+    if not f.endswith("-" + job + ".json"):
+        continue
+    print(json.load(open(os.path.join(d, f)))["taskGroups"][0]["taskSpec"]["maxRunDuration"])
+    break
+PY
+}
 # write_default_case: the platform answers most cases start from. Both jobs ran;
 # the probe's VM carries Batch's OWN job-uid label, which is the Google-made fact
 # u1-link is about and the field a forge would have to reproduce, and its own
@@ -1210,6 +1240,29 @@ test_the_forge_attempt_is_what_makes_the_row() {
   # attempt, and only it, that the row rests on.
   expect_verdict u1-link PASS "red step: the link itself is still measured"
   expect_verdict probe-submitted PASS "red step: the probe still ran"
+}
+
+# The forging job's container has to be alive when the fields are read off its
+# VM, and the check waits WAIT_LINES_B for its lines first: the life it submits
+# is the linger RAISED past that wait, and the job's maxRunDuration is computed
+# from that life rather than from the linger. The raw linger submitted is the
+# defect this case pins — a container that ended while the check still waited
+# for its lines would have taken the reading with it, which is what the owner's
+# first run of this check cost it.
+test_the_forging_containers_life_outlasts_the_wait_for_its_lines() {
+  setup_case forge-life
+  write_default_case "$dir"
+  run_check CHK830_LINGER_B=30 CHK830_WAIT_LINES_B=120
+  expect_status "$status" 0 "a linger under the wait for the lines"
+  expect_call "batch jobs submit ${job_b}"
+  expect_verdict u1-forge PASS "a linger under the wait: the row is still measured"
+  local life maxrun
+  life=$(submitted_env "$job_b" FUGARO_CHK830_LINGER)
+  maxrun=$(submitted_max_run "$job_b")
+  [ "$life" = 180 ] \
+    || fail "a linger under the wait: the forging container's life should be the 120s wait for its lines raised to 180s, not the raw 30s linger; the job carried ${life:-<nothing>}"
+  [ "$maxrun" = 480s ] \
+    || fail "a linger under the wait: the forging job's maxRunDuration should be that life plus its own margin (480s), so a container Batch kills on time cannot be mistaken for one that failed; it was ${maxrun:-<nothing>}"
 }
 
 test_a_second_job_that_reproduces_the_field_fails_u1_forge() {
@@ -1801,6 +1854,7 @@ t test_help
 t test_dry_run
 t test_happy_path
 t test_the_forge_attempt_is_what_makes_the_row
+t test_the_forging_containers_life_outlasts_the_wait_for_its_lines
 t test_a_second_job_that_reproduces_the_field_fails_u1_forge
 t test_a_handmade_vm_that_carries_the_field_fails_u1_handmade
 t test_a_handmade_vm_that_carries_the_fallback_key_fails_the_row

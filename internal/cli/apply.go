@@ -358,7 +358,7 @@ func applyRunRecord(cmd *cobra.Command, r *initRun, run *stepRun, lc *localcfg.C
 	stages, unanswered := stagesNamed(e, stageNames...)
 	opts := e.options()
 	opts.ReportBorrowed = true
-	res, runErr := initflow.Run(cmd.Context(), stages, opts)
+	res, runErr := e.r.runStages(cmd.Context(), stages, opts)
 	cmd.SetOut(answer)
 
 	states := map[string]initflow.StageResult{}
