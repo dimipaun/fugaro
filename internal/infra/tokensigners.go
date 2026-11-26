@@ -78,9 +78,10 @@ const (
 // deployer account is there, tf.DeployerAccount) and Operators are the
 // principals the installation names — localcfg's terraform.admins, the list
 // the module's own var.operators is fed from, which is where this field's name
-// comes from — the ones the module grants the token-creator role on that
-// account to. The zero value recognises nothing, so every managed grant is
-// then a warning.
+// comes from — the ones the module grants the token-creator role to, on that
+// account and on the resident orchestrator's and the verifier's own
+// (impersonationGrant). The zero value recognises nothing, so every managed
+// grant is then a warning.
 type Managed struct {
 	Project   string
 	Operators []string
