@@ -410,6 +410,15 @@ func (g *GCS) Put(bucket, name string, data []byte) {
 	objs[name] = &object{data: append([]byte(nil), data...), gen: g.gen, metagen: 1, updated: time.Now().UTC()}
 }
 
+// Remove deletes bucket/name directly, without a request: the pair of Put,
+// for a test that takes a seeded object back out of the world rather than
+// making the call a run would.
+func (g *GCS) Remove(bucket, name string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	delete(g.buckets[bucket], name)
+}
+
 // DenyWrites makes every create, overwrite, delete and metadata patch of an
 // object under prefix in bucket answer 403, as GCS does for a principal
 // whose write grant is conditioned elsewhere (bucket-iam.md). Reads and

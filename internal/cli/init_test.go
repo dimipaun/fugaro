@@ -238,6 +238,22 @@ func (r *initRig) stateBucket() {
 	r.gcs.AddBucket(initStateBucket, initProjectNumber, map[string]string{"fugaro": "tfstate"})
 }
 
+// forgetRig is the world the rollback's own tests are about: the installation
+// this machine has, in a project nothing marks. `--forget` and `--config-only`
+// write no step at all — runInit returns out of its own door and never enters
+// the converge — so TN1's stop is not in their way, and taking the default
+// fixture's marks back out is what makes this the installation of a project
+// that is not managed, which is the only one that has a rollback. What a
+// managed project's rollback is refused by is a test of its own
+// (managedForgetRefusal).
+func forgetRig(t *testing.T) *initRig {
+	t.Helper()
+	r := newInitRig(t)
+	r.unmarkedInstallation(t)
+	r.stateBucket()
+	return r
+}
+
 const initLogView = "projects/proj-1234/locations/global/buckets/fugaro/views/fugaro-runs"
 
 func outputsJSON(t *testing.T) string {
@@ -460,13 +476,22 @@ func TestInitRefusesDeletePlan(t *testing.T) {
 	if len(r.ran(t, "apply")) != 0 {
 		t.Fatal("a plan the guard refused was applied")
 	}
-	// A budget exists only through its flags: the refusal says to pass
-	// them again.
-	r.setPlan(t, change("module.installation.google_billing_budget.this[0]", "delete"))
-	_, _, err = executeStdin(t, "", "setup")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--budget, --budget-currency and --billing-account") {
+	// A budget exists only through its flags: the refusal says to pass them
+	// again. That line is a hint, and a managed project's refusal carries none
+	// (the owner's own sentence stands in for them), so it is read off the
+	// preview of a project nothing flags — the run TN1's stop does not take.
+	p := newInitRig(t)
+	p.unmarkedInstallation(t)
+	p.stateBucket()
+	p.setPlan(t, change("module.installation.google_billing_budget.this[0]", "delete"))
+	if _, _, err := executeStdin(t, "", "setup", "--plan-only"); ExitCode(err) != ExitUserError ||
+		!strings.Contains(err.Error(), "--budget, --budget-currency and --billing-account") {
 		t.Fatalf("budget delete: exit %d, err %v", ExitCode(err), err)
 	}
+	// Back to the first rig's own world: the preview above was run in the rig
+	// that was built last, and FUGARO_CONFIG is the last rig's until it is
+	// named again.
+	t.Setenv("FUGARO_CONFIG", r.cfg)
 	r.setPlan(t, change("module.installation.google_storage_bucket.runs", "delete", "create"))
 	// Naming the address lets it through.
 	if _, _, err := executeStdin(t, "", "setup", "--allow-delete", "module.installation.google_storage_bucket.runs"); err != nil {
@@ -997,8 +1022,7 @@ func forgetPlan() []planChange {
 }
 
 func TestInitForgetUndoesExclusionThenStateRm(t *testing.T) {
-	r := newInitRig(t)
-	r.stateBucket()
+	r := forgetRig(t)
 	fakeTerminal(t)
 	r.setPlan(t, forgetPlan()...)
 	out, _, err := executeStdin(t, "", "update", "--forget")
@@ -1030,8 +1054,7 @@ func TestInitForgetUndoesExclusionThenStateRm(t *testing.T) {
 	}
 
 	// Any other delete is refused, and nothing is applied or removed.
-	r = newInitRig(t)
-	r.stateBucket()
+	r = forgetRig(t)
 	r.setPlan(t, append(forgetPlan(), change("module.installation.google_service_account.scheduler", "delete"))...)
 	_, _, err = executeStdin(t, "", "update", "--forget")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "google_service_account.scheduler") {
@@ -1041,8 +1064,7 @@ func TestInitForgetUndoesExclusionThenStateRm(t *testing.T) {
 		t.Fatalf("calls = %q", r.calls(t))
 	}
 	// So is a plan that creates anything.
-	r = newInitRig(t)
-	r.stateBucket()
+	r = forgetRig(t)
 	r.setPlan(t, change("module.installation.google_storage_bucket.runs", "create"))
 	if _, _, err := executeStdin(t, "", "update", "--forget"); ExitCode(err) != ExitUserError || len(r.ran(t, "apply")) != 0 {
 		t.Fatalf("a create: exit %d, err %v", ExitCode(err), err)
@@ -1058,8 +1080,7 @@ func TestInitForgetUndoesExclusionThenStateRm(t *testing.T) {
 // Mutation (run, restored): pass false for asFound at the rollback's two
 // prepare calls and the member is gone from the rewritten tfvars.
 func TestInitForgetCarriesTheVerifierListAsFound(t *testing.T) {
-	r := newInitRig(t)
-	r.stateBucket()
+	r := forgetRig(t)
 	fakeTerminal(t)
 	r.setPlan(t, forgetPlan()...)
 	if err := os.MkdirAll(r.root(), 0o700); err != nil {
@@ -1085,8 +1106,7 @@ func TestInitForgetCarriesTheVerifierListAsFound(t *testing.T) {
 // An installation that adopted the legacy registry keeps it declared in
 // the rollback's plan, which would otherwise delete it.
 func TestInitForgetKeepsAdoptedLegacyRegistry(t *testing.T) {
-	r := newInitRig(t)
-	r.stateBucket()
+	r := forgetRig(t)
 	fakeTerminal(t)
 	r.setPlan(t, forgetPlan()...)
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"legacy_registry": infra.LegacyRegistry})}
@@ -1109,8 +1129,7 @@ func TestInitForgetKeepsAdoptedLegacyRegistry(t *testing.T) {
 }
 
 func TestInitForgetRefusesWithRepoStates(t *testing.T) {
-	r := newInitRig(t)
-	r.stateBucket()
+	r := forgetRig(t)
 	b := r.gcs.Bucket(t, initStateBucket)
 	if err := b.WriteAll(t.Context(), infra.StatePrefixRepos+"bitbucket-acme-sandbox/default.tfstate", []byte("{}"), nil); err != nil {
 		t.Fatal(err)
@@ -1157,8 +1176,7 @@ func (r *initRig) runInitTfvars(t *testing.T) map[string]any {
 // --forget deletes only *.tfstate objects, so the installation's rollback
 // counts only those too, and a leftover lock doesn't block it.
 func TestInitForgetIgnoresStaleRepoLock(t *testing.T) {
-	r := newInitRig(t)
-	r.stateBucket()
+	r := forgetRig(t)
 	fakeTerminal(t)
 	r.setPlan(t, forgetPlan()...)
 	b := r.gcs.Bucket(t, initStateBucket)
@@ -1174,8 +1192,7 @@ func TestInitForgetIgnoresStaleRepoLock(t *testing.T) {
 }
 
 func TestInitForgetWarnsLogBucketUndelete(t *testing.T) {
-	r := newInitRig(t)
-	r.stateBucket()
+	r := forgetRig(t)
 	fakeTerminal(t)
 	r.setPlan(t, forgetPlan()...)
 	// The installation's bucket is in `global`, where an installation made

@@ -162,6 +162,48 @@ func staleNode(t *testing.T) map[string]any {
 	return n
 }
 
+// installationCredentialsPlan is the installation root's plan for its own
+// credentials service as modules/installation/credentials.tf really writes it:
+// the service on image, IAM required, the account it runs as and the module's
+// own environment names.
+//
+// A rig whose installation stage really moves the service plants this rather
+// than the bare change(). The bare one carries no attributes at all, and a
+// managed installation puts that plan in front of the gate (D1016), whose cover
+// refuses it — "a service that does not require IAM" — over a document
+// terraform never writes. action is the action the caller's own plan carried
+// for the service: the account is created where the service is and merely held
+// where it is already there, and the cover reads the account a template names
+// out of the plan's own google_service_account.credentials[0] either way
+// (tf.Cover.serviceAccount).
+func installationCredentialsPlan(action, image string) []planChange {
+	accountAction := "no-op"
+	if action == "create" {
+		accountAction = "create"
+	}
+	env := []any{planChange{"name": "FUGARO_GCP_PROJECT", "value": initProject, "value_source": []any{}}}
+	account := planChange{"account_id": credentialsAccount, "email": credentialsAccountEmail()}
+	return []planChange{
+		{
+			"address": credentialsServiceAddr, "type": "google_cloud_run_v2_service",
+			"change": planChange{"actions": []string{action}, "before": planChange{"invoker_iam_disabled": false},
+				"after": planChange{"invoker_iam_disabled": false,
+					"template": []any{planChange{"service_account": account["email"],
+						"containers": []any{planChange{"image": image, "env": env}}}}}},
+		},
+		{
+			"address": credentialsAccountAddr, "type": "google_service_account",
+			"change": planChange{"actions": []string{accountAction}, "before": account, "after": account},
+		},
+	}
+}
+
+// credentialsAccountEmail is the address the account above carries: the module's
+// own, derived from the project as credentials.tf derives it.
+func credentialsAccountEmail() string {
+	return credentialsAccount + "@" + initProject + ".iam.gserviceaccount.com"
+}
+
 func newConvergeRig(t *testing.T, node map[string]any) *convergeRig {
 	t.Helper()
 	return newConvergeRigYAML(t, node, refreshYAML)
@@ -444,7 +486,7 @@ func TestUpdateMigratesTheNodeBeforeItReplacesTheCredentialsService(t *testing.T
 	// plan be read as the installation's state, which manages nothing.
 	r.script["show -json"] = r.script["show"]
 	r.script["plan@installation"] = map[string]any{"exit": 2}
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("update", r.credentialsRefAt(convergeRelease))...)
 	// The installation's outputs carry the service this run's tfvars name, as
 	// the module's outputs.tf does: the installation stage refuses the
 	// half-carried state (a tfvars block whose outputs name no service), and
@@ -659,6 +701,11 @@ func convergeOn(t *testing.T, r *convergeRig, stale []string) string {
 	// for it is gone). A rig with no terminal would stop at the first of them,
 	// which is what the refusals' own tests are for.
 	fakeTerminal(t)
+	// The rig's project is a managed one (newInitRig's marks), so the steps that
+	// apply are the gate's and every one of them leaves a record naming who ran
+	// it (D1014) — which is the fixture's own identity here, as it is for the
+	// gate's rigs (isolateGateCredentials).
+	isolateGateCredentials(t)
 
 	before := doctorChecks(t, r.root)
 	for _, id := range stale {
@@ -1953,7 +2000,7 @@ func wsOwnerConvergeRig(t *testing.T, ownerExtra string) *convergeRig {
 	// and its state read is the rig's own document under the other spelling.
 	r.script["show -json"] = r.script["show"]
 	r.script["plan@installation"] = map[string]any{"exit": 2}
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("update", r.credentialsRefAt(convergeRelease))...)
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 		"credentials_service": credentialsServiceOutput(),
 		"intake":              intakeServiceOutput(),

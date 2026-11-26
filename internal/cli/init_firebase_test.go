@@ -1091,11 +1091,32 @@ func TestGuardListsRemovedAdminGrant(t *testing.T) {
 	if _, log := onlyLog(t, "setup"); !strings.Contains(log, addr) {
 		t.Errorf("the log does not carry the address --allow-delete takes:\n%s", log)
 	}
-	if !strings.Contains(err.Error(), "owners and editors") || !strings.Contains(err.Error(), "--budget-admin") {
-		t.Errorf("no hint on why a grant is removed: %v", err)
+	// The rig's installation is a managed project's (newInitRig's marks), and
+	// a managed refusal is the owner's own sentence: the hints that explain
+	// the removal are the unmanaged text's, and the arm below reads them.
+	if !strings.Contains(err.Error(), initManagedDeleteAdvice) {
+		t.Errorf("the refusal is not the guard's managed text: %v", err)
 	}
 	if len(r.applies(t)) != 0 {
 		t.Errorf("applied: %v", r.applies(t))
+	}
+
+	// The hints on why a grant is removed, in the words a project nothing
+	// flags is refused with. A run that converges an installation is a managed
+	// project's own, so they are read off the preview of one that is not —
+	// --plan-only is the run TN1's stop does not take.
+	p := newFBRig(t)
+	p.unmarkedInstallation(t)
+	fakeTerminal(t)
+	p.setPlan(t, planChange{"address": addr, "type": "google_project_iam_member",
+		"change": map[string]any{"actions": []string{"delete"}, "before": map[string]any{}, "after": nil}})
+	p.script["plan"] = map[string]any{"exit": 2}
+	p.script["plan@installation"] = map[string]any{"exit": 0}
+	p.script["show@installation"] = map[string]any{"stdout": `{"format_version":"1.2","resource_changes":[]}`}
+	p.save(t)
+	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--plan-only"); ExitCode(err) != ExitUserError ||
+		!strings.Contains(err.Error(), "owners and editors") || !strings.Contains(err.Error(), "--budget-admin") {
+		t.Fatalf("no hint on why a grant is removed: exit %d, err %v", ExitCode(err), err)
 	}
 	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--allow-delete", addr); err != nil {
 		t.Fatal(err)

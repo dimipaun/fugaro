@@ -73,6 +73,10 @@ func budgetModeUpdateRigUnmanaged(t *testing.T, mode string) (*initRig, *gcpfake
 	// a project nobody flagged, which is the whole of what makes the step
 	// leave it alone (D1553).
 	r.markedRuns(t, initProjectName, initProject)
+	// The update door's rig is a managed installation (updateRig), and this one
+	// is the other: the label is taken back out so the read answers "not
+	// managed" (removeManagedInstallation).
+	r.removeManagedInstallation(t)
 	db := gcpfake.NewRTDB(t)
 	r.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, firebase_project: "+initProject+", rtdb_url: "+db.URL+" }\n")
 	// Everything the raise would need is here and correct, so a step that

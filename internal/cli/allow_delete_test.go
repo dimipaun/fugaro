@@ -53,6 +53,10 @@ func allowDeleteUnmanagedRig(t *testing.T) *initRig {
 	noAgentSession(t)
 	r := newInitRig(t)
 	r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+	// The fixture's default world is a managed installation (newInitRig), and
+	// this one is the other: the project's own half of the fact is taken back
+	// out, which is what the write is refused for.
+	r.removeManagedInstallation(t)
 	return r
 }
 

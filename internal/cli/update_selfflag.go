@@ -72,6 +72,17 @@ func (e *initEngine) requireManagedInstallation() error {
 	if o.planOnly || !e.convergesAnInstallation() {
 		return nil
 	}
+	// The environment check comes first, as it does in front of every other
+	// cloud read this run makes (preflightStage): it is read-only and it is what
+	// refuses a run whose environment is not this project's — another project in
+	// the variables, an impersonation account, a terraform that is not the
+	// pinned one. A check that fails has already refused the run, and the loop
+	// says so itself at its first stage, so the stop has nothing to add — and it
+	// must not put the marks' read on the wire for a run the check is about to
+	// end, which is what a read in front of it would do.
+	if err := e.environment(); err != nil {
+		return nil
+	}
 	g := readUpdateGate(e, r)
 	if g.readErr != nil {
 		// D2218, amended: a read that did not answer is not the answer "not

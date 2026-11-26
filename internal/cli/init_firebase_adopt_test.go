@@ -382,7 +382,7 @@ func TestInitFirebaseManagedLauncherDropped(t *testing.T) {
 	r.script["show@installation"] = map[string]any{"stdout": `{"format_version":"1.2","resource_changes":[]}`}
 	r.save(t)
 	out, err := r.runAdoptIn(t, "us-east5\n")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), addr) || !strings.Contains(err.Error(), "name the address in --allow-delete") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), addr) || !strings.Contains(err.Error(), initManagedDeleteAdvice) {
 		t.Fatalf("exit %d, err %v\n%s; want the guard's refusal with the --allow-delete hint", ExitCode(err), err, out)
 	}
 	if strings.Contains(err.Error(), "not this installation's launchers") || strings.Contains(out, "was adopted") {

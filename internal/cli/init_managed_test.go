@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -50,7 +51,7 @@ func TestMarkCreatedWritesOnlyForACreationThisRunCreatedOrResumed(t *testing.T) 
 		if _, _, err := executeStdin(t, initProjectName+"\n", "setup"); err != nil {
 			t.Fatal(err)
 		}
-		noMarker(t, r.gcs, initRunsBucket)
+		noMarkerWrite(t, r.gcs, initRunsBucket)
 	})
 
 	// (b) update --firebase-project: Firebase is added to a project that already
@@ -62,7 +63,7 @@ func TestMarkCreatedWritesOnlyForACreationThisRunCreatedOrResumed(t *testing.T) 
 		if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID); err != nil {
 			t.Fatal(err)
 		}
-		noMarker(t, r.gcs, initRunsBucket)
+		noMarkerWrite(t, r.gcs, initRunsBucket)
 		if n := len(r.crm.Creates()); n != 0 {
 			t.Errorf("%d project(s) created: this run must not have created one", n)
 		}
@@ -545,6 +546,24 @@ func noMarker(t *testing.T, g *gcpfake.GCS, bucket string) {
 	}
 }
 
+// noMarkerWrite asserts the run sent no write of the creation fact into
+// bucket, whatever the bucket now holds. It is noMarker's assertion for a world
+// the fixture's own fact is in (managedInstallation seeds the object without a
+// request, Put): the object's name travels in an upload's metadata body rather
+// than in its URL (gcpfake's multipart and startResumable read it there), so
+// what the run did to the fact is what its own requests carry.
+func noMarkerWrite(t *testing.T, g *gcpfake.GCS, bucket string) {
+	t.Helper()
+	for _, q := range g.Requests() {
+		if q.Method != http.MethodPost && q.Method != http.MethodPut {
+			continue
+		}
+		if strings.Contains(q.Path, "/b/"+bucket+"/o") && strings.Contains(string(q.Body), managed.MarkerObject) {
+			t.Fatalf("the run wrote gs://%s/%s (%s %s): this run must not have written one", bucket, managed.MarkerObject, q.Method, q.Path)
+		}
+	}
+}
+
 // managedRuns is markedRuns plus the creation fact: the project's runs bucket
 // is the installation's own and holds fugaro/managed.json naming this GCP
 // project, which is what Task 0.2's read (IsManaged) answers managed with. A
@@ -572,7 +591,8 @@ func (r *initRig) managedRuns(t *testing.T, name, gcp string) {
 // managed read answers is not managed (TN1's stop, T3 of
 // docs/managed-flag-ergonomics), and a rig is a project a Fugaro run created.
 // A test about a project that is not managed takes the marks back out and says
-// so (removeManagedInstallation); one about the fact's own bytes writes its own
+// so — the label alone (removeManagedInstallation) or both halves
+// (unmarkedInstallation) — and one about the fact's own bytes writes its own
 // (managedRuns, seedFlagFact).
 //
 // It is the marks alone: the gate's own credentials are NOT stubbed here. They
@@ -618,6 +638,24 @@ func (r *initRig) managedInstallation(t *testing.T) {
 func (r *initRig) removeManagedInstallation(t *testing.T) {
 	t.Helper()
 	r.crm.SetLabels(initProject, map[string]string{managed.ProjectLabelKey: ""})
+}
+
+// unmarkedInstallation is a world no installation is in at all: both halves of
+// the default's fact are gone — the project's label, and the creation fact the
+// default put in the runs bucket. It is what a rig that means "the read answers
+// not managed, and there is nothing there to answer otherwise" takes.
+//
+// removeManagedInstallation is the narrower world, the one the refusals that
+// point at the fact itself are written for: the label alone is emptied and the
+// object stays where the default put it, so a test can still assert what a run
+// did to the object. A test whose assertion is about the OBJECT an unmanaged
+// project must not gain — the flag command's own refusals, which read the
+// bucket back and must find nothing — needs both halves gone, or the default's
+// own bytes answer the assertion for it.
+func (r *initRig) unmarkedInstallation(t *testing.T) {
+	t.Helper()
+	r.removeManagedInstallation(t)
+	r.gcs.Remove(initRunsBucket, managed.MarkerObject)
 }
 
 // stubManagedFact makes init's creation-fact read answer ok and err for this
@@ -686,10 +724,16 @@ func TestManagedInitRefusalNamesNoFlag(t *testing.T) {
 	}
 
 	// (b) The same plan where the project is not managed is today's refusal.
+	// A run that converges an installation is a managed project's own (TN1's
+	// stop refuses every other one before it reads anything), so the text a
+	// project that is not managed gets is read off the preview of one:
+	// --plan-only is the run the stop does not take, and it is the plan's own
+	// guard either way.
 	r2 := newInitRig(t)
+	r2.unmarkedInstallation(t)
 	r2.stateBucket()
 	r2.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
-	out2, _, err := executeStdin(t, "", "setup")
+	out2, _, err := executeStdin(t, "", "setup", "--plan-only")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out2)
 	}
@@ -836,15 +880,22 @@ func TestManagedInitWritesTheDeployerScopeFromTheCreationFact(t *testing.T) {
 	fakeTerminal(t)
 	for name, managedProject := range map[string]bool{"managed": true, "not managed": false} {
 		r := newInitRig(t)
+		args := []string{"setup"}
 		if managedProject {
 			r.managedRuns(t, initProjectName, initProject)
 		} else {
-			r.stateBucket()
+			// A run that converges an installation is a managed project's own
+			// (TN1's stop), so the direction which plans the deployer's scoped
+			// roles is read off the preview of one that is not managed — the
+			// plan is where installRoot writes these tfvars, and a preview
+			// writes nothing else.
+			r.unmarkedInstallation(t)
+			args = append(args, "--plan-only")
 		}
-		if out, _, err := executeStdin(t, "", "setup"); err != nil {
+		if out, _, err := executeStdin(t, "", args...); err != nil {
 			t.Fatalf("%s: %v\n%s", name, err, out)
 		}
-		if n := len(r.ran(t, "apply")); n != 1 {
+		if n := len(r.ran(t, "apply")); managedProject && n != 1 {
 			t.Fatalf("%s: the installation root was applied %d time(s), want 1: the tfvars read below are the ones that apply was planned from", name, n)
 		}
 		got, ok := r.tfvars(t)["managed_deployer_scoped"]

@@ -52,7 +52,10 @@ func TestInitHardeningAllowsOnlyTheLauncherGrantDeletes(t *testing.T) {
 	r.stateBucket()
 	r.setPlan(t, grantChange("runs", o, "roles/storage.objectAdmin", "delete"))
 	out, _, err = executeStdin(t, "", args...)
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), `runs["`+o+`"]`) || !strings.Contains(err.Error(), "--operator and --admin") {
+	// The rig's installation is a managed project's, so the refusal is the
+	// owner's own sentence rather than the launcher/operator hint a project
+	// nothing flags gets (TestManagedInitRefusalNamesNoFlag pins that text).
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), `runs["`+o+`"]`) || !strings.Contains(err.Error(), initManagedDeleteAdvice) {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
 	if strings.Contains(out, "bucket access (0.7.0)") {

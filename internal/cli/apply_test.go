@@ -52,6 +52,11 @@ func applyWorld(t *testing.T) (*initRig, *gcpfake.RTDB) {
 func applyWorldUnmanaged(t *testing.T) (*initRig, *gcpfake.RTDB) {
 	t.Helper()
 	r, db := updateBudgetRig(t)
+	// The update door's rig is a managed installation (updateRig), and this one
+	// is the other: the project's own half of the fact is taken back out, so
+	// the read answers "not managed" and D2217's fence is what a run here meets
+	// (removeManagedInstallation).
+	r.removeManagedInstallation(t)
 	updating(t, r)
 	// The installation's rules are the ones this binary deploys, so the policy
 	// stage's publisher gate is not what any of these tests are about.

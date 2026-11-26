@@ -163,7 +163,7 @@ const voiceServiceURL = "https://fugaro-voice-123456789012.us-east5.run.app"
 // change ends.
 func TestUpdateLeavesTheVoiceHopOffOnAnInstallationThatNeverOptedIn(t *testing.T) {
 	r := credentialsRig(t)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("create", r.credentialsRef())...)
 	credentialsOutputs(t, r)
 	applies := r.captureApplies(t)
 	out, errOut, err := executeStdin(t, "", "update")
@@ -659,7 +659,7 @@ func TestUpdatePlansTheVoiceHopAwayWhenTheOwnerTurnsItOff(t *testing.T) {
 	// its plan: what the run PLANS is this test's own fixture, while what the
 	// plan is built from — the document every apply of this root reads — is the
 	// point.
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("update", r.credentialsRef())...)
 	// The installation HAS the hop: its own outputs carry the service, which is
 	// the module's voice_service output and exists exactly while the variable
 	// does. That is what makes this the owner turning it off rather than an

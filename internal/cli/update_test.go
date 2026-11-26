@@ -35,6 +35,10 @@ func updateRig(t *testing.T) *initRig {
 	t.Helper()
 	releaseBuild(t, "0.2.0")
 	r := newInitRig(t)
+	// The installation is a managed one (newInitRig's marks), so the steps that
+	// apply are the gate's and every one of them leaves a record naming who ran
+	// it (D1014) — a hermetic world has no credentials to answer with.
+	isolateGateCredentials(t)
 	r.stateBucket()
 	r.script["plan"] = map[string]any{"exit": 0}
 	r.save(t)

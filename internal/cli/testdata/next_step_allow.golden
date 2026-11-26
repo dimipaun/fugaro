@@ -196,7 +196,6 @@ update_check.go	run fugaro update
 update_marker_version.go	next fugaro update
 update_repos_read.go	run fugaro update
 update_selfflag.go	Run fugaro update
-update_selfflag.go	run was given the budget once — a fugaro update
 upgrade_cloud.go	re-run fugaro update
 upgrade_cloud.go	run fugaro update
 upgrade_cloud.go	run picks a mount change up on the next fugaro update

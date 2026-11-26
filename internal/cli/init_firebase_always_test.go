@@ -30,6 +30,11 @@ import (
 func alwaysRig(t *testing.T) *fbRig {
 	t.Helper()
 	r := newFBRig(t)
+	// The installation is a managed one (newInitRig's marks), so the steps
+	// these runs apply are the gate's and every one of them leaves a record
+	// naming who ran it (D1014) — a hermetic world has no credentials to answer
+	// with.
+	isolateGateCredentials(t)
 	r.installationState(t)
 	r.script["plan"] = map[string]any{"exit": 0}
 	r.save(t)

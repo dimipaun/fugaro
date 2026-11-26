@@ -93,8 +93,8 @@ func TestUpdateConvergesFromPreviousInstallation(t *testing.T) {
 	r.script["show -json"] = r.script["show"]
 	r.script["plan@installation"] = map[string]any{"exit": 2}
 	r.setPlanAt(t, "installation",
-		change("module.installation.google_cloud_run_v2_service.intake", "create"),
-		change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+		append([]planChange{change("module.installation.google_cloud_run_v2_service.intake", "create")},
+			installationCredentialsPlan("update", r.credentialsRef())...)...)
 	// The roster the installation root reports, which is the one the class is
 	// derived from: a launcher and an operator (who launches too). A group is
 	// not in it: the roster the module records is a list of people, and what

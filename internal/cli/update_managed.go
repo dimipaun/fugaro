@@ -353,6 +353,16 @@ func readUpdateGate(e *initEngine, r *initRun) *initGate {
 	g := &initGate{}
 	r.gateRead = g
 	ctx := r.ctx()
+	// The environment check first, and for the reason preflightStage is the
+	// first stage of every converge: a run whose environment is not this
+	// project's is refused by the check, and the marks are not read with a
+	// credential that check refuses. The failure is kept as the read's
+	// (initGate.readErr): the callers that warn and go on see the outage, and
+	// the run's own first stage reports the environment's problem.
+	if err := e.environment(); err != nil {
+		g.readErr = err
+		return g
+	}
 	// The clients alone, and not setup's whole readiness: this read is made
 	// BEFORE the run has decided to do anything, and a run whose project turns
 	// out not to be managed must not have paid for the gate in any way a

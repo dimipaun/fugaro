@@ -26,6 +26,11 @@ func managedFlagRig(t *testing.T) *initRig {
 	noRunSession(t)
 	r := newInitRig(t)
 	r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+	// The command this file is about is the flag that puts the fact there in
+	// the first place, so every world here is the one before it: no label, and
+	// no creation fact in the bucket. The refusal tests read both back, and the
+	// default's own bytes would answer them that the run wrote one.
+	r.unmarkedInstallation(t)
 	return r
 }
 
@@ -651,6 +656,10 @@ func TestManagedFlagNeedsTheProjectsOwnRunsBucket(t *testing.T) {
 			noRunSession(t)
 			r := newInitRig(t)
 			terminal(t, true)
+			// The default's own fact is taken back out first: these rows are
+			// about the object a refused run must NOT leave, and the fixture's
+			// bytes would answer that assertion for it.
+			r.unmarkedInstallation(t)
 			// Only the row's bucket is seeded. The installation's runs bucket
 			// is the name the write looks in (fugaro-runs-<gcp_project>), so
 			// the last row seeds one of another name instead and the write

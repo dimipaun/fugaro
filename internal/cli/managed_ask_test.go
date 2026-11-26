@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -303,7 +304,10 @@ type askMarkWorld struct {
 func askMarkWorlds() []askMarkWorld {
 	return []askMarkWorld{
 		{"managed", func(t *testing.T, r *initRig) { r.managedRuns(t, initProjectName, initProject) }},
-		{"not managed", func(t *testing.T, r *initRig) { r.markedRuns(t, "", "") }},
+		// markedRuns takes the project's own half of the fact back out as a
+		// world without the fixture's label was written; the fixture carries
+		// it now, so the label goes too, and the creation fact with it.
+		{"not managed", func(t *testing.T, r *initRig) { r.markedRuns(t, "", ""); r.unmarkedInstallation(t) }},
 		{"a mark that could not be read", func(t *testing.T, r *initRig) {
 			r.managedRuns(t, initProjectName, initProject)
 			writeUnreadableMarker(t, r)
@@ -508,22 +512,21 @@ func TestUpdateManagedAskKeepsTheGatesOwnRefusalFirst(t *testing.T) {
 	}
 }
 
-// A project the marks did not answer "managed" for: --ask says so, and it is
-// not an error. This is rule 3 of the flag — the no-op — in both sessions whose
-// mistake would be expensive: a refusal in a coding agent's session would stop
-// a command that behaves exactly as it always has, and the restored line at a
-// person's terminal would claim confirmations were replaced that never were.
-// The comparison is the assertion: the flagged run IS the plain run with the
-// flag's one line taken out of the middle, and nothing else moved.
+// A project the marks did not answer "managed" for: the update door refuses the
+// run at its head (TN1's stop, requireManagedInstallation), before any step and
+// before the flag is read at all — so in both sessions whose mistake would be
+// expensive, --ask changes nothing, and neither the flag's own line for an
+// unmanaged project nor the one for a managed one reaches a run that never
+// started. A refusal in a coding agent's session would otherwise stop a command
+// that behaves as it always has, and the restored line at a person's terminal
+// would claim confirmations were replaced that never were.
 //
-// The runs it compares start from the same state, so the rig is settled by a
-// plain run first: this rig is a plan that applies, and its first run writes the
-// local config and takes the IAM removal — a second run differs from that one
-// for those reasons alone. The runs after it differ in one thing only, the flag
-// and the line it prints, and the applies are counted rather than assumed away:
-// a project that is not managed applies what it applies with or without the
-// flag, and nothing is applied for having passed it.
-func TestUpdateAskInAProjectThatIsNotManagedIsANoOp(t *testing.T) {
+// The stop is what this asserts, and the flag's rule over a read answering "not
+// managed" is not lost with it: the rule and its line belong to the gate, and
+// the door that still reaches it — settings set, which converges no installation
+// — is where the line is read back
+// (TestSettingsSetAskInAProjectThatIsNotManagedIsANoOp).
+func TestUpdateAskInAProjectThatIsNotManagedRefusesTheRun(t *testing.T) {
 	for _, w := range askMarkWorlds()[1:] {
 		for _, s := range []struct {
 			name  string
@@ -541,31 +544,26 @@ func TestUpdateAskInAProjectThatIsNotManagedIsANoOp(t *testing.T) {
 					fakeTerminal(t)
 				}
 
-				_, _ = updateRun(t, r, "update") // the rig settled
-				before := len(r.ran(t, "apply"))
-				// Both runs the comparison is between get a log name of their
-				// own: the settled run above took the only one there was, and a
-				// converge without a log cuts nothing on its screen (report.Brief
-				// is the log's), so the unflagged run would be the one the flag
-				// is read against with its rows whole.
-				freeLogName(t)
-				plain, _ := updateRun(t, r, "update")
-				freeLogName(t)
-				mid := len(r.ran(t, "apply"))
-				flagged, _ := updateRun(t, r, "update", "--ask")
-				after := len(r.ran(t, "apply"))
-
-				if !strings.Contains(flagged, initflow.AskUnmanaged()) {
-					t.Errorf("--ask did not say what the marks answered:\n%s", flagged)
+				plain, plainErr := updateRun(t, r, "update")
+				flagged, flaggedErr := updateRun(t, r, "update", "--ask")
+				for _, run := range []struct {
+					name string
+					out  string
+					err  error
+				}{
+					{"the run without the flag", plain, plainErr},
+					{"the run with it", flagged, flaggedErr},
+				} {
+					if ExitCode(run.err) != ExitUserError || !strings.Contains(run.err.Error(), "is not managed") ||
+						!strings.Contains(run.err.Error(), "managed flag") {
+						t.Errorf("%s: exit %d, err %v\n%s; want the stop's refusal", run.name, ExitCode(run.err), run.err, run.out)
+					}
+					if strings.Contains(run.out, initflow.AskUnmanaged()) || strings.Contains(run.out, initflow.AskRestored()) {
+						t.Errorf("%s: the flag's line reached a run the stop refused:\n%s", run.name, run.out)
+					}
 				}
-				if strings.Contains(flagged, initflow.AskRestored()) || strings.Contains(flagged, "never a silent proceed") {
-					t.Errorf("--ask answered as if the project were managed:\n%s", flagged)
-				}
-				if stripped := withoutRunOwn(strings.Replace(flagged, initflow.AskUnmanaged()+"\n", "", 1)); stripped != withoutRunOwn(plain) {
-					t.Errorf("--ask changed the run in a project that is not managed (the flag's line stripped from the middle).\nwithout: %s\nwith:    %s", plain, flagged)
-				}
-				if mid-before != after-mid {
-					t.Errorf("--ask applied %d step(s) of its own in a project that is not managed (%d without it)", after-mid, mid-before)
+				if n := len(r.ran(t, "apply")); n != 0 {
+					t.Errorf("%d terraform apply(s) ran in a project that is not managed", n)
 				}
 			})
 		}
@@ -579,6 +577,15 @@ func TestUpdateAskOnAPlanOnlyRunSaysThereWasNothingToRestore(t *testing.T) {
 	r := askUpdateRig(t, askMarkWorlds()[0])
 	fakeTerminal(t)
 	noAgentSession(t)
+	// The unit step is put on disk as this release renders it before either
+	// run: its own line is the one thing --ask moves by itself, because the
+	// step reads a person at the terminal through initflow.PersonAtTheTerminal,
+	// whose Ask half counts --ask as nobody being there — so it announces the
+	// write without the flag and skips it with it. That is the step's reading
+	// of the flag and not the flag's rule, and the comparison below is the
+	// flag's: with the unit already current, both runs read it as done.
+	u := currentUnit(t)
+	unitFileAt(t, u.Text, time.Now())
 
 	plain, plainErr := updateRun(t, r, "update", "--plan-only")
 	freeLogName(t)

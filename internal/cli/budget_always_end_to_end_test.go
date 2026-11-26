@@ -146,7 +146,10 @@ func TestUpdateLeavesARunStartedWithoutABudgetRunning(t *testing.T) {
 	r := offLocalConverge(t, offNode(), refreshYAML)
 	run := startRunInFlight(t, r)
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	// U6b retired the checkout's own `plugin-pin` and reports the pin under the
+	// per-repository ID (R15); this rig's pin was left under the retired name
+	// here, which no doctor reports any more and so asserted nothing.
+	out := convergeOn(t, r, []string{"policy-rules-skew", repoPluginPinCheckID})
 
 	// The line R5 owes, printed while this machine's config still says the
 	// word: such a run holds its key already and finishes. And never a request

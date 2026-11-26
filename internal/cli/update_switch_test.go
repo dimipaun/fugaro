@@ -454,7 +454,7 @@ func repoWorkdirExists(t *testing.T, slug string) bool {
 // with both entries recorded.
 func TestTheInstallationDoorRecordsNoRepositoryItDoesNotApply(t *testing.T) {
 	r := credentialsRig(t)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("create", r.credentialsRef())...)
 	credentialsOutputs(t, r)
 	addSwitchRepo(t, r.initRig, "acme/other")
 	putSwitchBundle(t, r.initRig, []byte(config.AnthropicSecret+": "+credsValue(t, "model")+"\n"))
@@ -539,7 +539,7 @@ func TestAnOptedInInstallationConvergesWithOneUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := credentialsRig(t)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("create", r.credentialsRef())...)
 	r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
 	credentialsOutputs(t, r)
 	addSwitchRepo(t, r.initRig, "acme/other")
@@ -617,7 +617,7 @@ func TestOneUpdateGrantsASharedJobTheServiceItsRecordsAskFor(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := credentialsRig(t)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("create", r.credentialsRef())...)
 	r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
 	credentialsOutputs(t, r)
 	// The job a shared one is deployed for is a github job (SharedJobProvider
@@ -727,7 +727,7 @@ func TestTheCredentialsStageAppliesForAMovedRecord(t *testing.T) {
 	// test is about the records, and a block still to be written is the other
 	// reason the stage has an apply to make.
 	seedOrchestratorBlock(t, r, r.credentialsRef())
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("update", r.credentialsRef())...)
 
 	// The records have not moved: the door derived the jobs from them, nothing
 	// wrote an entry, and the stage has nothing of its own — the sentence,
@@ -861,7 +861,7 @@ func TestAStaleFalseIsCorrectedByTheInstallationsState(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := credentialsRig(t)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("create", r.credentialsRef())...)
 	r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
 	credentialsOutputs(t, r)
 	putSwitchBundle(t, r.initRig, []byte(config.AnthropicSecret+": "+credsValue(t, "model")+"\n"))
@@ -925,7 +925,7 @@ func TestAStaleTrueIsCorrectedByTheInstallationsState(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := credentialsRig(t)
-			r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+			r.setPlanAt(t, "installation", installationCredentialsPlan("create", r.credentialsRef())...)
 			r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
 			credentialsOutputs(t, r)
 			putSwitchBundle(t, r.initRig, []byte(config.AnthropicSecret+": "+credsValue(t, "model")+"\n"))
@@ -1954,7 +1954,7 @@ func TestTheBackfillIsNotWrittenInAnAgentsSessionOrARunsProcess(t *testing.T) {
 	for _, marker := range managedFlagRunMarkers {
 		t.Run(marker, func(t *testing.T) {
 			r := credentialsRig(t)
-			r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+			r.setPlanAt(t, "installation", installationCredentialsPlan("create", r.credentialsRef())...)
 			r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
 			credentialsOutputs(t, r)
 			bundle := credsvc.BundleSecretID(initProjectName)

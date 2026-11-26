@@ -274,7 +274,7 @@ func orchestratorConvergeRig(t *testing.T, withBlock bool) *convergeRig {
 	// manages nothing.
 	r.script["show -json"] = r.script["show"]
 	r.script["plan@installation"] = map[string]any{"exit": 2}
-	changes := []planChange{change("module.installation.google_cloud_run_v2_service.credentials", "update")}
+	changes := installationCredentialsPlan("update", r.credentialsRef())
 	if withBlock {
 		changes = append(changes, change("module.installation.google_cloud_run_v2_service.orchestrator", "update"))
 	} else {
