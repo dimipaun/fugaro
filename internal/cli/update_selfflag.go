@@ -2,351 +2,212 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/initflow"
-	// managedmode is the package of the managed apply path, and the derived
-	// bucket names are its (the same alias init.go and managed_flag.go use): the
-	// check below is the flag command's own, by its name and not a literal.
-	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
-// update_selfflag.go is D1553's second half, and the HARD RULE's: `fugaro
-// update` on an installation that is not managed flags it itself when it is
-// given its budget once, so the upgrade stays one command and the owner runs no
-// second one. `fugaro managed flag` remains the owner's own command — it is
-// what a project unmanaged for a reason update cannot fix is flagged with, and
-// what the unmanaged refusal of every other mutating command names (D1541) —
-// but it is not a step the upgrade needs.
+// update_selfflag.go is TN1's stop and D2215's rewrite: the two things the head
+// of a run that converges an installation does about the project's managed
+// marks.
 //
-// Five things decide what the step does, and each is one of the answer's own:
+// The stop. An installation the managed read answers is not managed is one this
+// program may not converge: `fugaro update`, and `fugaro setup` on an
+// installation that is already there (R8), refuse through the sentence every
+// other command that changes a managed project uses (managedRequired), which
+// names `fugaro managed flag` — the one command that flags a project, run by
+// its owner at their own terminal (D1541, D1553 as TN1 amends it). The stop
+// sits at the head of the engine, before the first cloud write and before the
+// local config is rewritten (F16): everything below it converges an
+// installation this run has no business changing, and a run that stopped after
+// the catalog guard or the budget-mode rewrite would have edited the owner's
+// own files on its way to a refusal.
 //
-//   - It runs in `fugaro update` and in no other run. The doors share this
-//     engine and this hook, and D1553's answer is about the upgrade: update is
-//     the door that re-converges an installation that already exists, and the
-//     flag that triggers this step says so — `--budget`'s help on that door
-//     (budgetFlagHelp, init.go), which is where it has to be, because
-//     `--managed` is declared on this door, hidden and refused by name, so its
-//     text is rendered to nobody. `fugaro setup` on an existing project is a
-//     different question — its own --managed help says flagging a project that
-//     already exists is not setup's, and it stays that way: setup flags nothing
-//     it did not create.
-//   - It never runs under --plan-only. That door creates and changes nothing —
-//     it is what previews the plan — and this step's whole output is two marks
-//     that take an installation's typed confirmation away. A preview that wrote
-//     them would turn a consent gate off on a read-only flag's word, which is
-//     the one thing --plan-only promises it cannot do.
-//   - It runs only when the run was given the budget. The amount is the
-//     owner's, required and never defaulted (D64), and a fact that records no
-//     amount is refused by every managed apply — so a run given no amount has
-//     nothing to record and flags nothing: it says nothing rather than writing
-//     a marker the apply would refuse anyway. The pair is the installation's
-//     own --budget and --budget-currency; the billing account that must come
-//     with them is init's own check, before the run starts.
-//   - It flags what is not managed, through the flag command's own writers.
-//     The read is ReadBudgetAnswer, the read the apply-time gate makes: an
-//     installation whose fact already records an amount needs nothing (this is
-//     the ordinary second run, and it is silent), and everything else goes to
-//     managed.WriteFlag, which is the authority on what may be written — it
-//     creates the object where none exists and replaces this project's
-//     version-1 creation fact, and refuses every other state with what is
-//     there. The label is the flag command's own write beside it (WriteManaged-
-//     LabelForFlag), because the read requires both marks. The one refused
-//     write that is not the end of it is this step's own half-written state —
-//     the object recording the amount the flag writes, the label missing, which
-//     is what a run leaves when its label write fails; it is read
-//     without the label (ReadFlagFact), and the label is written to finish it,
-//     so the owner's way out of that state is this same command rather than a
-//     hand-written label
-//     (see the completion below).
-//   - It refuses in a coding agent's session, even when --budget was passed,
-//     and in a Fugaro run's own process whichever markers its agent carries:
-//     what it writes is the marks that take the installation's typed
-//     confirmation away, so consent given by a flag is only as strong as the
-//     markers that identify the session (F20). The two refusals are the flag
-//     command's own pair (managed_flag.go), kept here for the same reason: a
-//     run's variables are set by the platform rather than by the agent, so the
-//     run's credential would write these marks where the agent's session cannot
-//     — and here it would write them on its own installation. The refusal names
-//     the marker and the command the owner runs at their own terminal, which is
-//     the same one this step would have run for them.
+// That the upgrade is then two commands once is the owner's ruling of
+// 2026-11-21 (F11): `fugaro managed flag` is that once, and every `fugaro
+// update` after it is the one command it always was. What the stop replaces —
+// a converge that wrote the marks itself when it was given its budget once
+// (D1553's old self-flag) — is TN1's deletion, because a converge is not where
+// an owner decides that a project is managed, and because that write took the
+// installation's typed confirmation away on the word of a flag.
 //
-// What the step writes, it states before it writes it: the flag command's own
-// statement (managedFlagStatement, managed_flag.go), so a run that flags an
-// installation says what it records and what it gives up before either mark is
-// written, and not only in the line that reports the flag afterwards.
+// The rewrite. On a managed installation an explicit `--budget` rewrites the
+// amount the creation fact records, through the writer that owns that object
+// (managed.RewriteBudget), with the currency defaulting to the one the record
+// holds where nobody named one (R6, D2211), and it prints the old and the new
+// figures (D2215). A run given no amount writes nothing — a default never
+// overwrites a recorded amount — and neither does one whose record already
+// holds the figures it was given. The write is made here, at the head, before
+// the run's own apply: the installation's alert follows in that same apply,
+// because an explicit --budget is a figure this run's own document carries
+// (R7, explicitBudgetAccount).
 //
-// The fences stand where the write would be, and not at the head of the step:
-// a run whose installation already records an amount flags nothing, so an
-// agent's session that passes its budget to an up-to-date installation meets no
-// fence at all — refusing there would refuse an ordinary update for a write
-// that was never going to happen. What it reads before the fences is the same
-// read the apply-time gate makes, and reading writes nothing.
-//
-// Nothing here can make a `fugaro update` fail: a write that did not happen is
-// a warning and the run's outcome is unchanged (the unmarked project is the
-// fail-closed direction, and the update itself succeeded). The one exception is
-// the two refusals above, which are the run's outcome because they are the
-// fence F20 describes, and the exit code is a user error like every other
-// refusal.
-//
-// A run that created the project is not this step's: its mark is markCreated's
-// (init.go), which writes both halves for every project a run creates and
-// records the amount when the creation was asked to be managed. Flagging cannot
-// add anything to it, and a second writer of the same two marks is the drift
-// markCreated's own comments exist to prevent.
+// The two fences stand where the write would be, and not at the head of the
+// step (F20, D2217): a coding agent's session and a Fugaro run's own process
+// may not rewrite the amount a project's runs are judged by — the record every
+// later apply reads — so a rewrite either of them would make ends the run
+// rather than going on to apply the explicit amount anyway. A run whose record
+// already holds the figures it was given meets no fence, because there is no
+// write for one to stand in front of; what reaches the fences is a run that
+// would really change the record, and nothing else in this file can fail an
+// update: a fact that cannot be read, or that holds no amount this build can
+// replace, or a write the writer refused, are all warnings, and the run's own
+// apply goes on with the amount it was given.
 
-// selfFlagUnmanaged is the step: what it returns is the run's outcome only for
-// the agent refusal, and "" (nil) everywhere else.
-func (e *initEngine) selfFlagUnmanaged(ctx context.Context) error {
+// requireManagedInstallation is TN1's stop, called first by the converge of
+// every run that converges an installation: a project the managed read answers
+// is not managed is refused with the command that flags one, before anything is
+// read from the installation's own files and before anything is written.
+//
+// --plan-only is not stopped. It applies nothing by its own definition — it is
+// what previews a plan — and refusing it would take the preview of an
+// installation the owner is deciding about away from them. It reads, like every
+// other run, and writes nothing.
+func (e *initEngine) requireManagedInstallation() error {
 	r, o := e.r, e.r.o
-	// The door first, because it is the run and not the input: this step is the
-	// upgrade's (D1553), and the hook it hangs on is the one both doors share.
-	// `fugaro setup` on an existing unmanaged project flags nothing — its own
-	// --managed help says flagging one that already exists is not setup's, and a
-	// wizard door that wrote the marks taking the installation's typed
-	// confirmation away on its way past would be that sentence turned round.
-	if o.doorName() != updateDoor.name {
+	if o.planOnly || !e.convergesAnInstallation() {
 		return nil
 	}
-	// Then --plan-only, which creates and changes nothing, and the marks below
-	// are the marks that take this installation's typed confirmation away: a
-	// preview writes neither, and it is no fence's business either — what an
-	// agent's session could do with --plan-only is read a plan.
-	if o.planOnly {
+	g := readUpdateGate(e, r)
+	if g.readErr != nil {
+		// D2218, amended: a read that did not answer is not the answer "not
+		// managed", and this run takes the path a project that is not managed
+		// took before this plan — it warns and goes on. Stopping here would end
+		// an owner's update over an outage, and the fail-closed direction is
+		// the other one: an unproven project keeps every confirmation it has.
+		r.warn(fmt.Sprintf("could not read whether %s is managed (%s): going on as a project that is not managed, which keeps every confirmation this run would otherwise skip", safetext.Field(r.gcpProject), safetext.FieldErr(g.readErr)))
 		return nil
 	}
-	if o.budget <= 0 || o.budgetCurrency == "" {
+	if g.managed {
 		return nil
 	}
-	// A run that never opened the cloud (an environment refusal, a refusal
-	// before the clients) has nothing to read and nothing to write, and it has
-	// already said why it stopped: this step adds no second failure to it. The
-	// test is the clients and not the run's outputs, because a coding agent's
-	// session skips the local config's write and with it the read those outputs
-	// come from — and that session is exactly the one the fence below is for.
-	if e.c == nil {
+	return managedRequired(r.cmd, r.gcpProject, g.g.marks.Reason)
+}
+
+// convergesAnInstallation is whether this run converges an installation that is
+// already there rather than creating one: the two doors that do — `fugaro
+// update`, and `fugaro setup` on a project an earlier run installed (R8) — and
+// not a run that creates the project (T2a's markCreated is that run's, and a
+// project this run creates is one it marks itself) and not `fugaro apply`,
+// whose own steps are fenced by the command that saved them.
+func (e *initEngine) convergesAnInstallation() bool {
+	o := e.r.o
+	return !o.createProject && (o.door == updateDoor.name || o.door == setupDoor.name)
+}
+
+// settleExplicitBudget is D2215's rewrite and R6's currency with it, called by
+// the converge right after the stop and before the first stage.
+//
+// It returns an error only for the two fences, which are the run's outcome: the
+// write they refuse is one nothing else here may go around, and a run that
+// applied the explicit amount after a refusal would leave the record saying one
+// thing and the alert another.
+func (e *initEngine) settleExplicitBudget(ctx context.Context) error {
+	r, o := e.r, e.r.o
+	if o.budget <= 0 || !e.convergesAnInstallation() {
 		return nil
 	}
-	// The creating path's mark, and not this step's (see the file's comment).
-	if r.creation() != "" {
-		return nil
-	}
-	// The bucket the marks live in, under the default name the read looks in: a
-	// project whose config names another one is one whose mark nobody would
-	// read, so this step warns rather than writing it somewhere the managed read
-	// does not look (markCreated keeps the same rule for a creating run, and the
-	// same comparison `fugaro managed flag` and `unflag` refuse on). What names
-	// it is the installation's own outputs when the run read them, and the
-	// selected config otherwise — a coding agent's session skips the local
-	// config's write and with it the read those outputs come from.
-	bucket, named := e.runsBucketFor()
-	if named != "" && named != bucket {
-		r.warn(fmt.Sprintf("this run was given a budget and %s is not managed, but its runs bucket is %s, not %s: the managed read only looks for the creation fact in the default bucket name, so nothing was flagged. Check runs_bucket in the project config", r.gcpProject, named, bucket))
-		return nil
-	}
-	answer, err := managed.ReadBudgetAnswer(ctx, e.c.Storage, e.c.CRM, r.projectName, r.gcpProject)
-	if err != nil {
-		r.warn(fmt.Sprintf("this run was given a budget and could not read whether %s is managed (%v), so nothing was flagged and the installation stays as it is: a read that did not answer is not a reason to write", r.gcpProject, safetext.FieldErr(err)))
-		return nil
-	}
-	if answer.OK {
-		return nil
-	}
-	// A fact this build refuses is not this step's to replace, and the flag
-	// command's own writer would refuse it too: managed.WriteFlag replaces one
-	// object and one only — this project's version-1 creation fact — and leaves
-	// every other state exactly where it is. So there is no write to make here,
-	// which means no fence either, and the run says what it read instead of
-	// naming a command that would refuse the same object (the round-2 review of
-	// restore's own message made the same correction).
-	if answer.Invalid {
-		r.warn(fmt.Sprintf("this run was given a budget, and %s's creation fact is a figure this build refuses (%s): nothing was flagged, and no command of ours replaces that fact — `fugaro managed flag` replaces a version-1 creation fact, which records no amount, and nothing else. Read the object with `gcloud storage cat gs://%s/%s` and write the fact the owner means",
-			r.gcpProject, safetext.Field(managedReasonFor(answer)), bucket, managed.MarkerObject))
-		return nil
-	}
-	// And the installation's own state bucket, by the same rule and for the same
-	// reason `fugaro managed flag` refuses on (managed_flag.go's check, and
-	// checkManagedStateBucket's on the creating path): the managed apply reads
-	// what the installation's Terraform accounts for out of
-	// gs://fugaro-tfstate-<gcp_project> BY THAT DERIVED NAME, never from a flag
-	// or from the config, so state kept anywhere else reads as CauseStateUnread —
-	// and every managed apply of the project would keep the typed confirmation
-	// this step exists to take away, with a coding agent's run stopping there
-	// rather than applying. The flag command refuses the write; nothing here may
-	// fail an update, so this step warns and flags nothing: the state is the
-	// owner's to move, and a mark written first would only be one the managed
-	// read's apply-time gate does not believe.
-	if e.lc != nil {
-		want := managedmode.InstallationsStateBucket(r.gcpProject)
-		if got := e.lc.Terraform.StateBucket; got != "" && got != want {
-			r.warn(fmt.Sprintf("this run was given a budget and %s is not managed, but the project config records the Terraform state bucket %q, and a managed project's installation state must live in %s: the managed apply reads that state out of the derived bucket name — a function of the GCP project, never of a flag or of the config — so state kept anywhere else reads as state that could not be read at all, and every apply of %s would keep the typed confirmation instead of skipping it, so nothing was flagged: move the state to %s and run this again, or leave this project unmanaged", r.gcpProject, safetext.Field(got), safetext.Field(want), safetext.Field(r.projectName), safetext.Field(want)))
-			return nil
+	g := readUpdateGate(e, r)
+	recorded, why := e.recordedBudget(ctx, g)
+	// The currency first, and whether or not this run rewrites anything: the
+	// document it plans is built before the converge (installSpec), so a
+	// --budget-currency settled after the plan was made would leave the
+	// installation's alert on a line the plan does not carry. USD is the
+	// currency of a record that holds none (D2211), which is also every
+	// project that is not managed.
+	if o.budgetCurrency == "" {
+		currency := managed.DefaultBudgetCurrency
+		if why == "" {
+			currency = recorded.Currency
 		}
+		e.setBudgetCurrency(currency)
 	}
-	// The fence, exactly where the write would be: past this point this run
-	// flags the installation, and what it writes is what turns the typed
-	// confirmation off — so in a coding agent's session it is refused, whatever
-	// flags it was given (F20). The refusal is the run's outcome and not a
-	// warning, because a warning would let the session report a finished update
-	// over an installation that is still unmanaged, which is the state the next
-	// apply refuses.
+	switch {
+	case o.planOnly:
+		// A preview writes nothing, and it is not a fence's business either: it
+		// has read what the record holds and says what it would plan.
+		return nil
+	case why != "":
+		r.warn(fmt.Sprintf("this run was given --budget %d %s, and %s: nothing was written to the creation fact, and this run's own apply uses the amount it was given. `fugaro managed flag %s --budget %d --budget-currency %s`, run by its owner at their own terminal, is the command that records an amount there",
+			o.budget, safetext.Field(o.budgetCurrency), why, r.gcpProject, o.budget, safetext.Field(o.budgetCurrency)))
+		return nil
+	}
+	want := managed.Budget{Amount: o.budget, Currency: o.budgetCurrency}
+	if recorded == want {
+		return nil
+	}
 	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
-		return userErr("nothing was flagged: GCP project %s is not managed (%s), and this run was given the budget once — a fugaro update that is given its budget turns an installation that is not managed into a managed one in the same command, with no second command. What that write does is take the installation's typed confirmation away, and consent given by a flag is only as strong as the markers that identify the session (F20): %s. Run `fugaro update --budget N --budget-currency CCC --billing-account <account>` yourself at your own terminal, and nothing after it needs a second command",
-			safetext.Field(r.gcpProject), safetext.Field(managedReasonFor(answer)), initflow.AgentRefusal(m))
+		return userErr("nothing was applied: %s is a managed project whose creation fact records the budget %d %s, and the --budget %d %s this run was given would rewrite what the project's runs are judged by. That write is the owner's own decision, made at their own terminal: %s. Run `fugaro update --budget %d --budget-currency %s` yourself at your own terminal",
+			safetext.Field(r.gcpProject), recorded.Amount, safetext.Field(recorded.Currency), o.budget, safetext.Field(o.budgetCurrency), initflow.AgentRefusal(m), o.budget, safetext.Field(o.budgetCurrency))
 	}
-	// And a Fugaro run's own process, whatever its agent's markers: the plan
-	// refuses this write from a run credential as well as from an agent's
-	// session, and the two are not the same test — the flag command and the
-	// unflag both keep it beside the agent one, for the reason managed_flag.go
-	// states (a run's variables are set by the platform rather than by the
-	// agent, and the credential could write these marks itself). It matters
-	// more here than there: this write is the one a run makes on its own
-	// installation, so a run that could make it would take away the
-	// confirmation that stands between its next apply and its own verdict.
 	if m := managedFlagRunMarker(os.Getenv); m != "" {
-		return userErr("nothing was flagged: GCP project %s is not managed, this run was given the budget once, and this process is a Fugaro run's (%s is set): the marks this step writes are the ones that take the installation's typed confirmation away, and a run credential may not write them — it holds the operator's credentials and could take the confirmation off the project its own applies are judged by. Run `fugaro update --budget N --budget-currency CCC --billing-account <account>` yourself at your own terminal, and nothing after it needs a second command",
-			safetext.Field(r.gcpProject), m)
+		return userErr("nothing was applied: %s is a managed project whose creation fact records the budget %d %s, this run's --budget %d %s would rewrite it, and this process is a Fugaro run's (%s is set): a run credential holds the operator's credentials and may not decide the amount the project it runs in is judged by. Run `fugaro update --budget %d --budget-currency %s` yourself at your own terminal",
+			safetext.Field(r.gcpProject), recorded.Amount, safetext.Field(recorded.Currency), o.budget, safetext.Field(o.budgetCurrency), m, o.budget, safetext.Field(o.budgetCurrency))
+	}
+	if e.c == nil {
+		// A run that never opened the cloud has already said why it stopped,
+		// and this step adds no second failure to it.
+		return nil
 	}
 	number, err := infra.ProjectNumber(ctx, e.c, r.gcpProject)
 	if err != nil {
-		r.warn(fmt.Sprintf("this run was given a budget and %s records no amount, but its project number could not be read (%v), and the number is what proves a runs bucket is this project's own: nothing was flagged", r.gcpProject, safetext.Field(err.Error())))
+		r.warn(fmt.Sprintf("this run was given the budget %d %s and the creation fact of %s records %d %s, but its project number could not be read (%s), and the number is what proves the runs bucket is this project's own: nothing was written to the fact, and this run's own apply uses the amount it was given",
+			o.budget, safetext.Field(o.budgetCurrency), safetext.Field(r.gcpProject), recorded.Amount, safetext.Field(recorded.Currency), safetext.Field(err.Error())))
 		return nil
 	}
-	budget := managed.Budget{Amount: o.budget, Currency: o.budgetCurrency}
-	// What is about to be written, and what it costs, before it is written: the
-	// flag command's own statement, because this step makes the flag command's
-	// own write (managedFlagStatement, and managed_flag.go for why the two
-	// share it). `--budget`'s help on this door says in one sentence what the
-	// trio does here; this is the same statement the owner's own flag command
-	// prints, so a run that flags an installation is not quieter about it than
-	// the command that does the same thing. Its last line is this step's, where
-	// the two differ: what may be finished rather than refused.
-	managedFlagStatement(r.w, r.gcpProject, bucket, o.budget, o.budgetCurrency)
-	fmt.Fprintf(r.w, "  if this project already records whether it is managed: nothing is written unless its marker is the creation fact that records no amount (what `fugaro setup --create-project` without --managed leaves), which this replaces; a fact that already records the budget amount this run was given is left where it is, and only the missing label is written; anything else is refused, and so is any object this build cannot read as this project's.\n")
-	// The flag command's own writers, in the flag command's own order: the
-	// object is the authority and goes first, and the label is the narrowing
-	// mark that completes it. Both are what the read requires, so one without
-	// the other leaves the installation exactly as unmanaged as it was.
-	replaced, err := managed.WriteFlag(ctx, e.c.Storage, bucket, r.gcpProject, number, budget)
-	if err != nil && !errors.Is(err, managed.ErrAlreadyMarked) {
-		r.warn(fmt.Sprintf("this run was given a budget and %s is %s, so it was not flagged (%v): the installation stays as it is, and nothing of the update above is undone. `fugaro managed flag %s --budget N --budget-currency CCC`, run by its owner at their own terminal, is the command that does it",
-			r.gcpProject, managedReasonFor(answer), safetext.FieldErr(err), r.gcpProject))
-		return nil
-	}
-	// ErrAlreadyMarked is the one refused write with something left to do, and
-	// what that is depends on the object — which no read of this package that
-	// requires the label can tell (readFact drops the object when the label is
-	// missing), so it is read without the label here (ReadFlagFact, which
-	// proves the bucket the same way the writer did). The state it exists for
-	// is this step's own: the object written by a run whose label write then
-	// failed, which is this project's fact recording both figures the flag
-	// writes. A second run reads not-managed — the label it requires is the
-	// half that is missing — reaches this writer, and meets that same object,
-	// so without the completion below the owner's way out would be a label
-	// written by hand: exactly the manual repair the `fugaro update` rule
-	// forbids, and one `fugaro managed flag` cannot make either (it writes
-	// through this same WriteFlag, and refuses this object for the same
-	// reason).
-	already := false
+	bucket, _ := e.runsBucketFor()
+	old, err := managed.RewriteBudget(ctx, e.c.Storage, bucket, r.gcpProject, number, want)
 	if err != nil {
-		why := safetext.FieldErr(err)
-		fact, ferr := managed.ReadFlagFact(ctx, e.c.Storage, bucket, r.gcpProject, number)
-		switch {
-		case ferr != nil:
-			r.warn(fmt.Sprintf("this run was given a budget and %s is %s, so it was not flagged: %v. The object the flag writer found could not be read back (%v), so what is there is unknown: check gs://%s/%s with `gcloud storage cat` as the operator before relying on either mark",
-				r.gcpProject, managedReasonFor(answer), why, safetext.FieldErr(ferr), bucket, managed.MarkerObject))
-			return nil
-		case !fact.Ours:
-			// The object is not this project's fact, so it is not an amount this
-			// run may adopt either — the same answer `fugaro managed flag` gives
-			// it, and the reason the completion above is gated on the fact being
-			// this project's. What the object is, is readFact's own sentence
-			// (ReadFlagFact keeps the package's wording), so nothing here is a
-			// second account of what is there.
-			r.warn(fmt.Sprintf("this run was given a budget and %s is %s, so it was not flagged: %v. Nothing of the update above is undone, and there is nothing for this step to write — it replaces one object, this project's version-1 creation fact, which records no amount, and completes a fact that already records the amount this run was given. %s, and `fugaro managed flag` refuses that same object for the same reason: read it with `gcloud storage cat gs://%s/%s` as the operator before deciding what to do with it",
-				r.gcpProject, managedReasonFor(answer), why, safetext.Field(fact.Reason), bucket, managed.MarkerObject))
-			return nil
-		case fact.Budget != budget:
-			r.warn(fmt.Sprintf("this run was given a budget and %s is %s, so it was not flagged: %v. The fact where the object is records the budget amount %d %s, and this run was given %d %s — this step adds an amount to a fact that records none and never replaces a figure a fact already holds; a recorded amount is replaced by `fugaro managed flag` run with --budget naming the new figure (D2215) — so neither mark was written and the installation stays as it is. Run `fugaro update --budget %d --budget-currency %s --billing-account <account>` again if that is the amount meant: that run finds the fact recording it, writes the missing %s=%s label, and flags the installation in the same command",
-				r.gcpProject, managedReasonFor(answer), why, fact.Budget.Amount, safetext.Field(fact.Budget.Currency), o.budget, safetext.Field(o.budgetCurrency), fact.Budget.Amount, safetext.Field(fact.Budget.Currency), managed.ProjectLabelKey, managed.ProjectLabelValue))
-			return nil
-		}
-		// This project's fact, recording the amount this run was given, with the
-		// label the only half missing: the object is left exactly where it is —
-		// whatever version it is, since a version-3 object's build count is one
-		// this build no longer means anything by (D1543) and `fugaro update`'s
-		// own marker step is what rewrites it (update_marker_version.go) — and
-		// the label below finishes what the earlier run started.
-		already = true
-		// The object this run has just read, kept for the marker step: the
-		// read above is the one answer this run has about the fact, and the
-		// step that rewrites a version-3 fact (update_marker_version.go) runs
-		// after this one, when the label is in place and the object is the
-		// only half left.
-		e.flagFactVersion = fact.Version
-	}
-	what := fmt.Sprintf("wrote gs://%s/%s: %s is a managed project", bucket, managed.MarkerObject, r.projectName)
-	switch {
-	case replaced:
-		what = fmt.Sprintf("replaced the creation fact in gs://%s/%s, which recorded no budget amount, with the version that records %d %s", bucket, managed.MarkerObject, o.budget, safetext.Field(o.budgetCurrency))
-	case already:
-		what = fmt.Sprintf("left the creation fact in gs://%s/%s where it was, recording %d %s, and finished it", bucket, managed.MarkerObject, budget.Amount, safetext.Field(budget.Currency))
-	}
-	return e.selfFlagLabel(ctx, bucket, budget, what)
-}
-
-// selfFlagLabel writes the label half of the flag and reports what happened: the
-// label write itself, the read-back through the managed read the apply-time gate
-// makes, and the success line. It is one function because both of the step's
-// paths reach it — the write that created or replaced the object, and the write
-// that found the fact already there recording the amount this run was given —
-// and because a run whose label write fails has to say the one thing that
-// finishes it, which is the same sentence in both.
-//
-// Nothing here can fail the update: every outcome that is not the whole flag is
-// a warning (the unmarked project is the fail-closed direction, and the update
-// itself succeeded). what opens the success line and is the caller's, because
-// the three paths differ in what the object half did.
-func (e *initEngine) selfFlagLabel(ctx context.Context, bucket string, budget managed.Budget, what string) error {
-	r := e.r
-	if err := managed.WriteManagedLabelForFlag(ctx, e.c.CRM, r.gcpProject); err != nil {
-		r.warn(fmt.Sprintf("this run wrote gs://%s/%s but not the %s=%s label on %s (%v): the read requires both marks, so the installation is not managed yet and nothing is skipped for it. The fact in the runs bucket records the amount %d %s, so running `fugaro update --budget %d --budget-currency %s --billing-account <account>` again finishes the flag in that same run — it finds the fact recording that amount and writes the label this run could not; the label's own line, for the owner at their own terminal, is in docs/managed-projects/spec.md",
-			bucket, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, r.gcpProject, safetext.FieldErr(err), budget.Amount, safetext.Field(budget.Currency), budget.Amount, safetext.Field(budget.Currency)))
+		r.warn(fmt.Sprintf("the creation fact of %s was left as it is (%s): the update itself is unchanged, and this run's own apply uses the --budget %d %s it was given. `fugaro managed flag %s --budget %d --budget-currency %s` is the command that replaces what a fact records",
+			safetext.Field(r.gcpProject), safetext.FieldErr(err), o.budget, safetext.Field(o.budgetCurrency), r.gcpProject, o.budget, safetext.Field(o.budgetCurrency)))
 		return nil
 	}
-	// Read back through the managed read itself, the one the apply-time gate
-	// makes: a project this run said it flagged and the read still refuses is
-	// one nothing is skipped for, and the warning says so rather than the
-	// success line claiming a mark the read does not believe.
-	if ok, reason, err := managed.IsManaged(ctx, e.c.Storage, e.c.CRM, r.projectName, r.gcpProject); err != nil || !ok {
-		if err != nil {
-			reason = safetext.FieldErr(err).Error()
-		}
-		r.warn(fmt.Sprintf("this run wrote gs://%s/%s and the %s=%s label, and the managed read of %s still does not believe it (%s): check the two marks with the operator's own credentials before relying on them",
-			bucket, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, r.gcpProject, safetext.Field(reason)))
-		return nil
-	}
-	fmt.Fprintf(r.w, "%s, and the label %s=%s on the project itself: this run was given the budget once, so it flagged the installation in the same command — no second command, and %s's applies no longer stop for the typed confirmation from the next run on\n",
-		what, managed.ProjectLabelKey, managed.ProjectLabelValue, r.projectName)
+	fmt.Fprintf(r.w, "the creation fact in gs://%s/%s recorded the budget %d %s and now records %d %s: this run's own apply sets the installation's alert to that amount, keep the account its state records\n",
+		bucket, managed.MarkerObject, old.Amount, safetext.Field(old.Currency), want.Amount, safetext.Field(want.Currency))
 	return nil
 }
 
-// managedReasonFor is what a refused flag write says about what this run read:
-// the read's own reason when it gave one, and the state it answered with
-// otherwise. It keeps the warning about the write and the state the read
-// reported apart, so a sentence that says "not flagged" also says why.
-func managedReasonFor(a managed.BudgetAnswer) string {
-	if a.Reason != "" {
-		return safetext.Field(a.Reason)
+// recordedBudget is the budget amount the installation's creation fact records,
+// read through the same read the apply-time gate makes (ReadBudgetAnswer): an
+// amount, and the currency with it (R6).
+//
+// Its second return is why there is no amount to compare an explicit --budget
+// with, "" when there is one, and every way of not having one is a warning
+// rather than a failure: a fact that could not be read at all, a fact that
+// records no amount this build can use (a version-1 creation, or a figure
+// Budget.Check refuses), and a project this read does not answer managed for —
+// which under --plan-only is the one run that reaches here with the stop
+// skipped.
+func (e *initEngine) recordedBudget(ctx context.Context, g *initGate) (managed.Budget, string) {
+	r := e.r
+	if g.readErr != nil {
+		return managed.Budget{}, fmt.Sprintf("the creation fact of %s could not be read (%s)", safetext.Field(r.gcpProject), safetext.FieldErr(g.readErr))
 	}
-	if a.Invalid {
-		return "not a creation fact whose recorded amount this build could use"
+	if !g.managed || e.c == nil {
+		return managed.Budget{}, fmt.Sprintf("%s is not an installation whose creation fact records an amount", safetext.Field(r.gcpProject))
 	}
-	return "not an installation whose creation fact records an amount"
+	answer, err := managed.ReadBudgetAnswer(ctx, e.c.Storage, e.c.CRM, r.projectName, r.gcpProject)
+	switch {
+	case err != nil:
+		return managed.Budget{}, fmt.Sprintf("the creation fact of %s could not be read (%s)", safetext.Field(r.gcpProject), safetext.FieldErr(err))
+	case !answer.OK:
+		return managed.Budget{}, answer.Reason
+	}
+	return answer.Budget, ""
+}
+
+// setBudgetCurrency settles the currency of this run's explicit --budget: on
+// the flag's own field, which every later reader of it reads, and on the
+// document this run plans, which was already built from that field
+// (installSpec) and would otherwise carry the empty string the flag arrived
+// with.
+func (e *initEngine) setBudgetCurrency(currency string) {
+	e.r.o.budgetCurrency = currency
+	if e.spec.Budget != nil {
+		e.spec.Budget.CurrencyCode = currency
+	}
 }

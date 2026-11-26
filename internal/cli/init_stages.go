@@ -142,17 +142,6 @@ type initEngine struct {
 	// and the lines each stage and step reported about them
 	// (update_repos.go).
 	reposState reposState
-
-	// flagFactVersion is the version the self-flag step's own read of the
-	// creation fact answered with, and 0 where that step read nothing
-	// (update_selfflag.go). The marker step asks it beside the gate's version
-	// for the one installation whose fact the gate never saw: the half-written
-	// flag, whose object write succeeded and whose label write then failed. A
-	// run that finishes that flag has read the object — the step could not
-	// complete the object otherwise — so the version the migration needs is
-	// already in hand, and taking a read of its own for it would be the second
-	// read of an object this run has answered once.
-	flagFactVersion int
 }
 
 // environment runs the environment check once (it prints the local
@@ -513,6 +502,22 @@ func stagesNamed(e *initEngine, names ...string) (stages []initflow.Stage, unans
 // decides is what is applied and in what order — the canonical one
 // (initflow.Names), not the order the questions were asked in.
 func (e *initEngine) converge(ctx context.Context) error {
+	// TN1's stop, at the head of the engine and before anything of this run
+	// touches the installation (F16): a project the managed read answers is not
+	// managed is refused here, with the one command that flags it, and the
+	// steps below — every one of which either reads the installation's own
+	// files or writes them — are not reached at all.
+	if err := e.requireManagedInstallation(); err != nil {
+		return err
+	}
+	// D2215's rewrite, and R6's currency with it, in the same place and for the
+	// same reason: an explicit --budget is a figure the record has to agree
+	// with before this run's own apply carries it to the alert, and the figures
+	// the plan is made from are settled before the first stage plans anything.
+	// Only the two fences return from it, and each of them ends the run.
+	if err := e.settleExplicitBudget(ctx); err != nil {
+		return err
+	}
 	// The owner's own local config, read before anything else this run does and
 	// before the first stage plans (update_catalog_guard.go): every image
 	// catalog entry this release will refuse is named here, and the one entry
@@ -677,19 +682,6 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 			return res.Cause
 		}
 		return r.failureShown(res.Cause)
-	}
-	// D1553's self-flag, and it is here rather than beside markCreated above
-	// because of what each of the two marks means: markCreated records what a
-	// run created, which is true whatever the run did afterwards, while this
-	// one takes the installation's typed confirmation away, and a run that
-	// failed above applied nothing to be confirmed. So it is reached only by a
-	// run whose stages all succeeded, and its own test drives that path
-	// (update_selfflag.go, TestUpdateOnAnUnmanagedInstallation...). It is
-	// still before printResult, so what it says and the warnings it records are
-	// in the result the print encodes — the reason markCreated is where it is.
-	if err := e.selfFlagUnmanaged(ctx); err != nil {
-		_ = r.printResult()
-		return err
 	}
 	// And D1548's, on the same path and for the same reason: the converge has
 	// applied everything it had, and the mode a managed project's runs read is
