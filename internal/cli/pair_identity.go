@@ -267,6 +267,12 @@ func pairAskOverService(ctx context.Context, serviceURL, path string, req, out a
 	hreq.Header.Set("Content-Type", "application/json")
 	hreq.Header.Set("Accept", "application/json")
 	hreq.Header.Set("Authorization", "Bearer "+identity)
+	// The same token again in the person header, as the grant call sends it:
+	// Cloud Run's front end consumes a valid ID token in Authorization for the
+	// invoker check and hands the service that header changed, so a person's
+	// token — gcloud's own audience, the only one an operator's account can
+	// mint — is the one thing this route would never read back out of it.
+	hreq.Header.Set(credsvc.HeaderPersonIdentity, identity)
 	// The slip's own client, and not a second one: no redirect (the request
 	// carries this operator's ID token, and a followed 307 would carry it to
 	// whatever host a Location named), no cookie jar, one bound.

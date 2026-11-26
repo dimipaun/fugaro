@@ -122,6 +122,15 @@ func (p *pairRoutes) personBearer() func(*http.Request) {
 	return func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+p.launcherToken()) }
 }
 
+// personHeader is the same token where it really arrives: Cloud Run's front end
+// consumes a valid ID token in Authorization for the invoker check and hands the
+// service that header changed, so a person's own token — gcloud's audience, the
+// only one an operator's account can mint — is never the one the routes read as
+// a bearer.
+func (p *pairRoutes) personHeader() func(*http.Request) {
+	return func(r *http.Request) { r.Header.Set(HeaderPersonIdentity, p.launcherToken()) }
+}
+
 // serviceAccountBearer is a JOB's own Google ID token. It is a service
 // account, which is a class of the ticket route's and never a person's (LM3):
 // nothing a service account does is a member asking for a phone's token.
@@ -343,6 +352,47 @@ func TestPairRoutesRefuseServiceAccounts(t *testing.T) {
 	}
 	if got := p.logs.String(); strings.Contains(got, "token was issued") {
 		t.Fatalf("a refused caller was answered a token: %s", got)
+	}
+}
+
+// TestPairRoutesAdmitThePersonHeader: the two identity routes read a person's
+// token from HeaderPersonIdentity ahead of the bearer (personBearerFromHTTP),
+// and that precedence is the whole of the CLI's second ask — `fugaro pair`
+// presents the token in both, and the bearer is the one Cloud Run's front end
+// has already replaced by the time the route sees it. Both routes are asked,
+// because both read their caller through identityPerson and a half-wired pair
+// would leave one of them answering 403 to every operator.
+//
+// The second call is the shape a real ask arrives in: the person header carries
+// the operator's token and the bearer carries something else entirely, which is
+// what a rewritten Authorization is. It is admitted, which is what a route that
+// read the bearer instead would fail.
+func TestPairRoutesAdmitThePersonHeader(t *testing.T) {
+	for _, path := range []string{identitywire.PairingPath, identitywire.DevicePath} {
+		t.Run(path, func(t *testing.T) {
+			p := newPairRoutes(t, testLauncherAccount)
+			for _, tc := range []struct {
+				name   string
+				extra  []func(*http.Request)
+				reason string
+			}{
+				{"alone", nil, "a person's token arrives only in the person header once the front end has consumed the bearer"},
+				{"beside a rewritten bearer", []func(*http.Request){p.serviceAccountBearer()}, "the bearer the front end leaves is not the person's, and reading it would refuse every operator"},
+			} {
+				rec, answer := p.pairCall(t, path, "{}", append([]func(*http.Request){p.personHeader()}, tc.extra...)...)
+				if rec.Code != http.StatusOK {
+					t.Fatalf("the person header %s at %s is answered %s, want 200: %s", tc.name, path, answerSummary(rec), tc.reason)
+				}
+				var wire map[string]any
+				if err := json.Unmarshal(answer, &wire); err != nil {
+					t.Fatalf("the answer is not one this contract reads: %v", err)
+				}
+				tok, _ := wire["token"].(string)
+				if tok == "" {
+					t.Fatalf("the answer for the person header %s at %s carries no token: %s", tc.name, path, answerSummary(rec))
+				}
+			}
+		})
 	}
 }
 

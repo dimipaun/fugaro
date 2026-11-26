@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget/token"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/identitywire"
 )
 
@@ -61,9 +62,10 @@ var (
 var pairServiceExpiry = pairT0.Add(3 * time.Minute)
 
 // pairAsked is one call the service received: the path, the credential it was
-// presented and the body it carried.
+// presented — in the bearer and in the person header Cloud Run's front end
+// leaves alone — and the body it carried.
 type pairAsked struct {
-	Path, Authorization, Body string
+	Path, Authorization, Person, Body string
 }
 
 // pairAnswer is one route's answer: a status and a body. A status of zero is a
@@ -124,7 +126,7 @@ func (s *pairService) asked() []pairAsked {
 func (s *pairService) handle(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 	s.mu.Lock()
-	s.calls = append(s.calls, pairAsked{Path: r.URL.Path, Authorization: r.Header.Get("Authorization"), Body: string(body)})
+	s.calls = append(s.calls, pairAsked{Path: r.URL.Path, Authorization: r.Header.Get("Authorization"), Person: r.Header.Get(credsvc.HeaderPersonIdentity), Body: string(body)})
 	ans, known := s.answers[r.URL.Path]
 	s.mu.Unlock()
 	if !known {
@@ -174,6 +176,9 @@ func TestPairAsksTheIssuer(t *testing.T) {
 	for _, a := range asked {
 		if a.Authorization != "Bearer "+pairIssuerIdentity {
 			t.Fatalf("the call to %s was presented %q, want this operator's own Google ID token", a.Path, a.Authorization)
+		}
+		if a.Person != pairIssuerIdentity {
+			t.Fatalf("the call to %s presented %s %q, want the same token beside the bearer: Cloud Run's front end consumes the bearer's ID token for the invoker check and the route reads it back from this header", a.Path, credsvc.HeaderPersonIdentity, a.Person)
 		}
 		if a.Body != "{}" {
 			t.Fatalf("the call to %s carried %q, want the contract's ask with no field: the pairing id and the device's claims are the service's (R14)", a.Path, a.Body)
