@@ -522,7 +522,7 @@ func TestUpdateManagedProjectJobRemovalLeavesNoCommand(t *testing.T) {
 	updating(t, r2)
 	r2.setPlan(t, jobAndGrant()...)
 	got2, err2 := updateRun(t, r2, "update", "--allow-delete", grant, "--allow-delete", job)
-	if err2 == nil || !strings.Contains(got2, "retiring a project job is not supported yet") {
+	if err2 == nil || !strings.Contains(got2, "this run did not retire") {
 		t.Errorf("the owner's own run with the flags the refusal would have offered did not refuse the project job (err %v):\n%s", err2, got2)
 	}
 	if n := len(r2.ran(t, "apply")); n != 0 {

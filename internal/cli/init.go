@@ -3558,9 +3558,8 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 	// lose afterwards. CarriedProjectJobs keeps the job, whole, from the
 	// record the run that deployed it left, so that a project whose last
 	// github repository moves to Bitbucket, or that adds a repository on a
-	// second App, keeps converging instead of stopping on a job's deletion it
-	// cannot undo ("retiring a project job is not supported yet",
-	// RefuseProjectJobDeletes). The names are the ones heldDefaultProfiles
+	// second App, keeps converging instead of stopping on a job's deletion.
+	// The names are the ones heldDefaultProfiles
 	// decided from the same documents, and they are empty on every run that
 	// composes its jobs itself.
 	if len(spec.CarriedProjectJobs) > 0 {
@@ -3574,9 +3573,9 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 	// on the same records: a name such a credential is declared for gets no job
 	// at all from this release's composer (D1670, the filter ProjectJobs
 	// applies), so a document without the job the state holds is the plan of
-	// that job's destruction — and RefuseProjectJobDeletes stops the whole
-	// update on it, with "restore the profile as it was" as its remedy, which
-	// here is putting back the very name the filter drops the job for.
+	// that job's destruction — refused by RefuseProjectJobDeletes, whose
+	// remedy (restore the profile as it was) is here putting back the very
+	// name the filter drops the job for.
 	// CarriedProjectJobAccounts keeps each of them, whole, from the record the
 	// release behind deployed them in.
 	if len(spec.CarriedProjectJobAccounts) > 0 {
