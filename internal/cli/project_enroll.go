@@ -148,7 +148,9 @@ func newProjectReposAddCmd() *cobra.Command {
 			"will change, asks once for the project's name, and then does each step as\n" +
 			"far as it can:\n" +
 			"\n" +
-			"  1. the repository's own fugaro.yaml: read, never written\n" +
+			"  1. the repository's own fugaro.yaml: read for its workflows and its\n" +
+			"     base branch, and written only for the anchor line, through the gate,\n" +
+			"     in that repository's own checkout\n" +
 			"  2. this machine's project config: the repository's repos: entry (and, when\n" +
 			"     its fugaro.yaml names a Claude account by agent.oauth_token, the\n" +
 			"     repository in that one account's allow_data_to, which the next\n" +
