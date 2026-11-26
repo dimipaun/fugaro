@@ -58,7 +58,8 @@ merging alone.
   line says so.
 - **It does not decide anything the owner has not.** D1–D32 are **answered**
   (2026-10-20); O1–O7 are items for the owner and U1–U12 are unverified claims,
-  and those two stay open. A task below that depends on an answer says so in its
+  and those stay open — except **O7**, which the owner answered on 2026-11-26 (the
+  one sequence, T0.3). A task below that depends on an answer says so in its
   **Depends on** line, and the one value still unnamed — D29's designated
   repository — is named there too.
 
