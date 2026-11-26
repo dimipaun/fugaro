@@ -130,7 +130,12 @@ selects `cloud-batch` gets **every** launch refused, after its token was minted 
 to stay on `backend: cloud-run`, where the key travels in the override. There is no per-run fallback
 and no budget-off run on that backend: a launch that carries the seal key is refused before
 `jobs.create` (`ErrRejected`, the value never quoted), and the refusal an operator sees says so —
-what was refused, that it is deliberate, and what the installation has to do instead. The runner is
+what was refused, that it is deliberate, and what the installation has to do instead. **This is
+about the budget token alone, and not about a Batch run's identity: a Batch run's identity travels
+as its ticket**, which the launcher asks the installation's credentials service for — naming the
+full resource name of the job it is about to create — before anything exists, and writes on that
+job's own variables under `identitywire.TicketEnv` (`docs/batch-run-identity/`, BR1, D3101 as
+amended). The runner is
 unaffected: it reads the key from its environment either way. Nothing else in this document changes,
 and no carrier is added here for Batch.
 

@@ -1562,6 +1562,29 @@ func TestSettingsSetWritesTheBakeSwitch(t *testing.T) {
 	}
 }
 
+// TestSettingsSetRefusesRepoImages: the repository-to-image map's row is the
+// map's own (R15), so the generic path refuses it exactly as it refuses
+// image_map — an entry is checked against the repository and the catalog, which
+// needs the family's command, and the refusal names it (D1906, D3371).
+func TestSettingsSetRefusesRepoImages(t *testing.T) {
+	_, path := settingsWriteHome(t)
+	out, _, err := execute(t, "settings", "set", "repo_images", "x", "--layer", "local")
+	if err == nil {
+		t.Fatalf("settings set wrote the repository-to-image map:\n%s", out)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want %d (a user error: nothing was attempted)", ExitCode(err), ExitUserError)
+	}
+	if !strings.Contains(err.Error(), "fugaro image map") {
+		t.Errorf("the refusal does not name the command that writes the map: %v", err)
+	}
+	if _, statErr := os.Stat(path); statErr == nil {
+		if body := readFileString(t, path); strings.Contains(body, "repo_images") {
+			t.Errorf("a refused map write still wrote the key:\n%s", body)
+		}
+	}
+}
+
 // TestSettingsSetLiteralStarIsStillRefused: the widening of the allowlist does
 // not make the literal `*` a spelling a person writes. `workflows.*.commands.test`
 // is the row the concrete key resolves through, and it is refused as the map

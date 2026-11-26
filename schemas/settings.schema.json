@@ -1531,6 +1531,15 @@
         "orchestrator_enabled": {
           "default": "unset = true: the project's daemon launches runs, and a written false hands orchestration back to the person and their agent"
         },
+        "pause.max_pause": {
+          "default": "unset = 6h: the longest one chain may stay paused in total, and a reset beyond it halts the run at once (projectpolicy.DefaultMaxPause, D3187)"
+        },
+        "pause.min_pause": {
+          "default": "unset = 30m: a pause is never shorter than this (projectpolicy.DefaultMinPause, D3190 as amended)"
+        },
+        "pause.wait_in_job": {
+          "default": "unset = 5m: a reset nearer than this is waited out inside the job and a farther one suspends the run (projectpolicy.DefaultWaitInJob, D3184)"
+        },
         "planning.decoupling": {
           "$comment": "config.DefaultPlanningDecoupling",
           "default": "true"
@@ -1618,6 +1627,9 @@
         },
         "registry_host": {
           "default": "unset = none: no image has been pinned yet"
+        },
+        "repo_images": {
+          "default": "unset = none: no repository is mapped, and the catalog's default entry decides the image"
         },
         "reports_commit.dir": {
           "default": "unset = docs/fugaro-reviews-mirror: a folder the report layout never writes, so a designated repository's own reports and the mirror cannot meet"
