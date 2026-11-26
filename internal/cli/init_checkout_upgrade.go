@@ -278,26 +278,50 @@ func (s *checkoutStage) detail(places []repoPlace) string {
 }
 
 // skippedHere is the one line this run prints about the cloud step it did not
-// run, or "" when it ran it for every repository: one clause per repository the
-// step was skipped for, in the words the run has always said it in ("skipped
-// here: acme/app: cloud (…)"). The step is named because the repository's own
-// line names the repository and its state and never the step — a reader who
-// saw "acme/app: unread: …" learned nothing about the job images that were not
-// built — and it is one line for the run rather than one per repository, so a
-// project whose cloud step was skipped for four of them still says it once.
+// run, in the words the run has always said it in ("skipped here: acme/app:
+// cloud (…)"), or "" when it ran it for every repository. The step is named
+// because the repository's own line names the repository and its state and
+// never the step — a reader who saw "acme/app: unread: …" learned nothing about
+// the job images that were not built — and it is one line for the run rather
+// than one per repository.
 //
-// The reason is a clause here and whole in skip: a line naming the step for
-// every repository of a project cannot hold four paragraphs of why, and the
-// command that fixes each one is on the repository's own line.
+// The repositories a step was skipped for with one reason share a clause, so a
+// run that skipped it for every repository of the project still says it in one
+// line: four repositories of a coding agent's session read "acme/a, acme/b,
+// acme/c, acme/d: cloud (a coding agent's session never applies cloud
+// changes)". The reason is a clause here and whole in skip: the repository's
+// own line carries the whole of it with the command that fixes it, and a line
+// naming the step for the whole run cannot hold four of those.
 func skippedHere(places []repoPlace) string {
-	var skipped []string
-	for _, p := range places {
-		if p.clause != "" {
-			skipped = append(skipped, pluginwire.Printable(p.repo())+": "+p.step.name+" ("+p.clause+")")
-		}
+	type skipGroup struct {
+		step   string
+		clause string
+		repos  []string
 	}
-	if len(skipped) == 0 {
+	var groups []skipGroup
+	for _, p := range places {
+		if p.clause == "" {
+			continue
+		}
+		i := -1
+		for j := range groups {
+			if groups[j].step == p.step.name && groups[j].clause == p.clause {
+				i = j
+				break
+			}
+		}
+		if i < 0 {
+			groups = append(groups, skipGroup{step: p.step.name, clause: p.clause})
+			i = len(groups) - 1
+		}
+		groups[i].repos = append(groups[i].repos, pluginwire.Printable(p.repo()))
+	}
+	if len(groups) == 0 {
 		return ""
+	}
+	skipped := make([]string, 0, len(groups))
+	for _, g := range groups {
+		skipped = append(skipped, strings.Join(g.repos, ", ")+": "+g.step+" ("+g.clause+")")
 	}
 	return "skipped here: " + strings.Join(skipped, "; ")
 }
