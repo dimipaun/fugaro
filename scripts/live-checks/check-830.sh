@@ -39,12 +39,12 @@
 # found on the probe's own VM, and reports the ones it could not write rather
 # than dropping them. The `CreateJob` audit record is written by Google, so the
 # reading waits for it, bounded; a run that cannot read it FAILS rather than
-# concluding absence from a record it never saw. And a container that never
-# starts is read as exactly that, not as lines that went missing: the owner's two
-# runs of 2026-11-26 left the job SCHEDULED for the whole wait with its VM up and
-# no line of the container's own, which is a pull that had not finished, so the
-# boot log is read for the container-start line and the pull is bounded in the
-# wait (CHK830_PULL_BOUND).
+# concluding absence from a record it never saw. And the owner's two runs of
+# 2026-11-26 — the job SCHEDULED for the whole wait with its VM up and no line of
+# the container's own — are read for what they were: the block searches the VM's
+# boot log for the check's own container-start pattern and prints the pull's own
+# lines beside it rather than concluding which it was, and the pull is bounded in
+# the wait (CHK830_PULL_BOUND).
 #
 # Usage:      bash scripts/live-checks/check-830.sh [--dry-run]
 #             From the Fugaro checkout this script lives in: it is the tree the
@@ -848,7 +848,7 @@ step_observe_a() {
     # look at, and probe-diag reads the VM's boot log for the pull.
     local state_now
     state_now=$(job_field "$JOB_A" status.state)
-    fact probe-ran FAIL "no 'C830 read' line arrived in ${WAIT_LINES_A}s through the tree's own filter (labels.job_uid=\"${A_UID}\" AND logName=\"${TASK_LOG}\"): ${prefix}. The job's own state at the end of that wait was ${state_now:-<unread>} — SCHEDULED or PENDING there is a container that never started, and its image pull (${IMAGE}) is then what the VM's own boot log is read for. The rows below do not conclude from this: the job's own state and events, its task's state and events, the VM's serial console and the same query under the job's own resource type are read next (probe-diag), and the container's task exit status — its second channel — is read once the task has ended (probe-exit)"
+    fact probe-ran FAIL "no 'C830 read' line arrived in ${WAIT_LINES_A}s through the tree's own filter (labels.job_uid=\"${A_UID}\" AND logName=\"${TASK_LOG}\"): ${prefix}. The job's own state at the end of that wait was ${state_now:-<unread>} — SCHEDULED there is a container that never started, and the VM's own boot log is then what this block reads for the pull of the image ${IMAGE}. The rows below do not conclude from this: the job's own state and events, its task's state and events, the VM's serial console and the same query under the job's own resource type are read next (probe-diag), and the container's task exit status — its second channel — is read once the task has ended (probe-exit)"
   fi
   if ! vm_of_job "$SCRATCH/lines-a"; then
     fact vm-a FAIL "${VM_PROBLEM}: which instance is this job's is unknown, so nothing is read off it. A run of another job in ${P} at the same time is the innocent reading — run this check when the project is quiet"
@@ -992,41 +992,80 @@ first_lines() { # first_lines FILE LIMIT
   printf '%s' "$out"
 }
 
-# vm_network: whether the VM has an external address, and the network and
-# subnetwork it is on. A pull that can never finish and one that is merely slow
-# look the same from outside; the VM's own object is where they are told apart,
-# because a VM with no external address reaches a registry only through whatever
-# its network gives it. Nothing is printed but the interfaces.
+# subnet_pga: whether a subnetwork reaches Google's APIs — a registry among them —
+# from a VM with no external address. It is the reading a VM with no external
+# address owes the reader: without it, a pull that has no path at all and one
+# that is merely slow cannot be told apart. A refusal or a missing name is said
+# rather than guessed at.
+subnet_pga() { # subnet_pga SUBNET REGION
+  local sub=$1 region=$2
+  [ -n "$sub" ] && [ -n "$region" ] || {
+    printf '%s' "not read (the VM's object named no subnetwork to read)"
+    return 0
+  }
+  gcloud compute networks subnets describe "$sub" --project="${P:?}" --region="$region" \
+    --format="value(privateIpGoogleAccess)" 2>"$SCRATCH/err" \
+    || printf '%s' "not read ($(oneline <"$SCRATCH/err"))"
+}
+
+# vm_network: the VM's interfaces, whether each has an external address, and —
+# where it has none — whether its subnetwork reaches Google's APIs without one.
+# A pull that can never finish and one that is merely slow look the same from
+# outside; these are the reads that tell them apart. Nothing is printed but the
+# interfaces and that one flag.
 vm_network() {
   [ -s "$SCRATCH/vm-a.json" ] || {
     printf '%s' "not taken: the VM's own object was not read (see vm-a)"
     return 0
   }
-  python3 - "$SCRATCH/vm-a.json" <<'C830NET' 2>/dev/null || printf '%s' "the VM's own object could not be read for its interfaces"
+  local lines
+  lines=$(python3 - "$SCRATCH/vm-a.json" <<'C830NET' 2>/dev/null || true
 import json, sys
 try:
     vm = json.load(open(sys.argv[1]))
 except Exception:
-    raise SystemExit(1)
-out = []
+    raise SystemExit(0)
 for ni in vm.get("networkInterfaces") or []:
     nets = [a.get("natIP") for a in (ni.get("accessConfigs") or []) if a.get("natIP")]
-    out.append("nic %s on %s/%s, %s" % (
+    sub = ni.get("subnetwork") or ""
+    region = sub.split("/regions/")[1].split("/")[0] if "/regions/" in sub else ""
+    print("%s\t%s\t%s\t%s\t%s" % (
         ni.get("name") or "?",
         (ni.get("network") or "?").split("/")[-1],
-        (ni.get("subnetwork") or "?").split("/")[-1],
-        ("external address " + ",".join(nets)) if nets else "NO external address"))
-print("; ".join(out) or "the object names no network interface")
+        sub.split("/")[-1],
+        region,
+        ",".join(nets)))
 C830NET
+)
+  [ -n "$lines" ] || {
+    printf '%s' "the object names no network interface"
+    return 0
+  }
+  local out="" tab name net sub region nat path
+  tab=$(printf '\t')
+  while IFS="$tab" read -r name net sub region nat; do
+    [ -n "$name" ] || continue
+    if [ -n "$nat" ]; then
+      path="external address ${nat}"
+    else
+      path="NO external address, and its subnetwork's privateIpGoogleAccess is $(subnet_pga "$sub" "$region")"
+    fi
+    out="${out}${out:+; }nic ${name} on ${net}/${sub:-?}, ${path}"
+  done <<C830NL
+$lines
+C830NL
+  printf '%s' "$out"
 }
 
-# What a container that started leaves in the VM's serial console, and what a
-# container that never started leaves instead. The Batch agent writes the
-# container-start line there, so the boot log is the one reading that settles
-# whether the container ever ran — which a job still SCHEDULED with its VM up
-# cannot otherwise settle. The pull's own lines are collected loosely beside it,
-# because the agent's wording is not this check's to pin.
-CONTAINER_START_RE='Started Batch task container'
+# What this check searches a VM's boot log for when it has to say whether the
+# container ever started. It is the check's OWN pattern and not Batch's wording:
+# no boot log has been read into this repository, so a boot log worded otherwise
+# — or one that carries the agent's lines off the serial port — must not be read
+# as a container that never started, and a run that finds no match says what was
+# searched for and not found rather than what the platform did. The alternation
+# is loose on purpose, and the pull's own lines are collected loosely beside it
+# for the same reason: both are evidence printed raw, not conclusions.
+CONTAINER_START_RE='(Started Batch task container|Starting Batch task container|Started running task|started container|docker run)'
 PULL_RE='(docker|containerd|Pulling|pulling|pull|manifest|registry|image|Batch agent|batch_agent)'
 
 # probe-diag: what the block owes a run whose lines did not arrive. It is taken
@@ -1069,11 +1108,11 @@ step_probe_diag() {
       started=$(count_matching "$SCRATCH/serial-a.txt" "$CONTAINER_START_RE")
       pulls=$(grep -Ei "$PULL_RE" "$SCRATCH/serial-a.txt" 2>/dev/null | tail -n 3 | redact_stream | oneline | cut -c1-400 || true)
       if [ "${started:-0}" -gt 0 ]; then
-        started_note="the container-start line (\"${CONTAINER_START_RE}\") is in it ${started} time(s), so the container did start on this VM (a container that ran and whose lines did not land is then the reading)"
-        pull_note="and the container started inside it, so the pull for the image ${IMAGE} is not what this run is missing"
+        started_note="a line matching the check's own container-start pattern (\"${CONTAINER_START_RE}\") is in it ${started} time(s), so the container did start on this VM (a container that ran and whose lines did not land is then the reading)"
+        pull_note="and its boot log matched that pattern, so the pull for the image ${IMAGE} is not what this run is missing"
       else
-        started_note="the container-start line (\"${CONTAINER_START_RE}\") is in it NOT ONCE, so the container never started on this VM — a container whose image was still coming is what that reads as, and the last lines of the log that speak of the pull or the agent are: $(printf '%s' "${pulls:-<none>}")"
-        pull_note="and its boot log holds no container-start line, so the pull for the image ${IMAGE} did not finish inside that bound"
+        started_note="no line matching the check's own container-start pattern (\"${CONTAINER_START_RE}\") is in it at all — a container that never started reads that way and so does a boot log this pattern does not know — and the last lines of the log that speak of the pull or the agent are: $(printf '%s' "${pulls:-<none>}")"
+        pull_note="and its boot log matched no line of the check's own container-start pattern, which is consistent with the pull for the image ${IMAGE} not finishing inside that bound (the pattern is this check's own reading of a boot log no run has yet brought back, so the pull's own lines above are the evidence)"
       fi
       boot="its serial console (the VM's boot log) holds $(count_lines "$SCRATCH/serial-a.txt") non-empty line(s): ${started_note}. Its last $(count_lines "$SCRATCH/serial-a.tail") non-empty line(s) of the last 40, redacted for anything that looks like a credential: $(first_lines "$SCRATCH/serial-a.tail" 40)"
     else

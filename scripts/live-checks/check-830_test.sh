@@ -253,6 +253,21 @@ argv = sys.argv[1:]
 with open(os.path.join(state, "gcloud.calls"), "a") as fh:
     fh.write(" ".join(argv) + "\n")
 
+if argv[:3] == ["compute", "networks", "subnets"]:
+    op = argv[3] if len(argv) > 3 else ""
+    if op == "describe":
+        # A VM with no external address reaches a registry only through what its
+        # subnetwork gives it, so this is the read that says whether the pull had
+        # a path at all. A case can make it False, or refuse it, to pin both
+        # readings.
+        if cfg("subnet_pga") == "refused":
+            die("ERROR: PERMISSION_DENIED: the caller does not have compute.subnetworks.get")
+        if "privateIpGoogleAccess" in flag("--format"):
+            print(cfg("subnet_pga", "True"))
+            sys.exit(0)
+        die("fake gcloud: unhandled subnets describe format: %s" % flag("--format"))
+    die("fake gcloud: unhandled networks call: %s" % " ".join(argv))
+
 if argv[:2] == ["compute", "instances"]:
     op = argv[2] if len(argv) > 2 else ""
     name = argv[3] if len(argv) > 3 else ""
@@ -1089,10 +1104,12 @@ write_default_case() { # write_default_case DIR [bend...]
       # container's own, which is what a pull that has not finished looks like
       # from outside. Its boot log carries the pull and the agent and NOT the
       # container-start line, and its VM has no external address, so a pull that
-      # can never finish is told from one that is merely slow. The pull's line
-      # carries a token-shaped value on purpose: the boot log's own lines go
-      # through the same redaction the tail does.
+      # can never finish is told from one that is merely slow — and its
+      # subnetwork has no Private Google Access, so the pull had no path at all.
+      # The pull's line carries a token-shaped value on purpose: the boot log's
+      # own lines go through the same redaction the tail does.
       printf '[]\n' >"$d/state/log-$uid_a.json"
+      printf 'subnet_pga=False\n' >>"$d/state/cfg"
       write_diag "$d" "$job_a" SCHEDULED SCHEDULED ""
       printf '%s\t%s\n' "$job_a" SCHEDULED >"$d/state/state.map"
       mkdir -p "$d/state/serial"
@@ -1805,8 +1822,8 @@ test_no_line_arrives_and_the_exit_status_answers() {
   # why its lines did not land, which is a different reading from the probe that
   # never started at all.
   expect_row probe-diag "is in it 1 time(s), so the container did start on this VM" "no lines: the container-start reading"
-  expect_row probe-diag "the container started inside it, so the pull for the image" "no lines: the pull is not blamed once the boot log shows the container ran"
-  expect_absent "$out" "did not finish inside that bound" "no lines: a container that started is never read as a pull that did not finish"
+  expect_row probe-diag "and its boot log matched that pattern, so the pull for the image" "no lines: the pull is not blamed once the boot log shows the container ran"
+  expect_absent "$out" "not finishing inside that bound" "no lines: a container that started is never read as a pull that did not finish"
   expect_row probe-diag "The VM's own interfaces:" "no lines: the VM's own object is read for its interfaces too"
   expect_row probe-diag 'resource.type="batch.googleapis.com/Job"' "no lines: the broader read"
   expect_row probe-diag "found 0 line(s) by the runner's label" "no lines: by the runner's label"
@@ -1886,7 +1903,7 @@ test_a_probe_that_never_started_is_read_as_a_pull() {
   # whose lines did not land, and the image whose pull is then the reading.
   expect_verdict probe-ran FAIL "stuck pull: the row"
   expect_row probe-ran "The job's own state at the end of that wait was SCHEDULED" "stuck pull: the state the platform reported"
-  expect_row probe-ran "its image pull (gcr.io/google.com/cloudsdktool/google-cloud-cli:alpine) is then what the VM's own boot log is read for" "stuck pull: and the image the pull is for"
+  expect_row probe-ran "the VM's own boot log is then what this block reads for the pull of the image gcr.io/google.com/cloudsdktool/google-cloud-cli:alpine" "stuck pull: and the image the pull is for"
   # A container cannot report before its image is there, so the wait for its
   # first line is the pull bound when that is the longer of the two.
   expect_contains "$err" "waiting for the probe's first line (10s of 10s)" "stuck pull: the wait covers the pull"
@@ -1894,12 +1911,16 @@ test_a_probe_that_never_started_is_read_as_a_pull() {
   # pull's own lines beside it, and the VM's interfaces beside those.
   expect_verdict probe-diag INFO "stuck pull: the diagnostics"
   expect_row probe-diag "the job's own state is SCHEDULED" "stuck pull: the job's own state"
-  expect_row probe-diag "is in it NOT ONCE, so the container never started on this VM" "stuck pull: the reading that settles whether it ran"
+  # The row says what was searched for and not found, not what the platform did:
+  # the pattern is this check's own, and no boot log has been read back yet.
+  expect_row probe-diag "no line matching the check's own container-start pattern" "stuck pull: what was searched for and not found"
+  expect_row probe-diag "a boot log this pattern does not know" "stuck pull: and that a wording it does not know reads the same way"
   expect_row probe-diag "speak of the pull or the agent are: " "stuck pull: what the log says of the pull"
-  expect_row probe-diag "pulling image" "stuck pull: the pull's own line"
+  expect_row probe-diag "pulling image" "stuck pull: the pull's own line is kept as the evidence"
   expect_row probe-diag "NO external address" "stuck pull: and whether the VM could have pulled at all"
+  expect_row probe-diag "privateIpGoogleAccess is False" "stuck pull: the read that says the pull had no path"
   expect_row probe-diag "the configured 0s raised to the 10s pull bound" "stuck pull: the bound the wait was read against"
-  expect_row probe-diag "did not finish inside that bound" "stuck pull: and what that means for the pull"
+  expect_row probe-diag "not finishing inside that bound" "stuck pull: and what that is consistent with"
   # The boot log's own lines are the platform's, so a credential-shaped value in
   # them is redacted exactly as the tail's is.
   expect_row probe-diag "<redacted-token>" "stuck pull: a credential-shaped value in the pull's line"
