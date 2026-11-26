@@ -598,13 +598,6 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// this backend, and Task 10 is what turns these into the enable's gate.
 	o.Checks = append(o.Checks, doctorBatchChecks(ctx, lc, crmSvc)...)
 	o.Checks = append(o.Checks, doctorPolicyChecks(ctx, lc, doctorRoutingLayerOf(ctx, rf))...)
-	// The project's routing table, read where it governs this machine's own
-	// repositories (RT7 of docs/model-credentials-routing): what a run of this
-	// project would meet on the table — a chain that reaches nothing, a
-	// credential the bundle does not hold, a launcher's pool nobody
-	// designated, a pause nothing would resume. Offline: it reads the local
-	// config and this machine's own login unit, and reaches no cloud.
-	o.Checks = append(o.Checks, doctorModelRoutingChecks(ctx, cmd, lc)...)
 	// What this release stops, beside the policy checks: the same lines the
 	// update prints before it changes anything (R8, doctorBudgetStopsChecks).
 	o.Checks = append(o.Checks, doctorBudgetStopsChecks(ctx, sel, lc)...)
