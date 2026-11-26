@@ -157,10 +157,12 @@ func SetCredsWait(t *testing.T, f func(ctx context.Context, d time.Duration) err
 }
 
 // NoteExhausted is the credential service's typed `exhausted_until` answer
-// (C1.10) as C1.15's upstream delivers it: it ends the stage in flight, and
-// stage then waits for the reset and resumes the stage's session.
+// (C1.10) as C1.15's upstream delivers it, with no action on it: it ends the
+// stage in flight, and stage then waits for the reset and resumes the stage's
+// session. An answer carrying an action goes through ServiceAnswer, the way a
+// real one does.
 func (h *RunHandle) NoteExhausted(reset time.Time) {
-	h.r.noteExhausted(credsvc.ExhaustedUntil{ResetAt: reset})
+	h.r.noteExhausted(credsvc.ExhaustedUntil{ResetAt: reset}, "", time.Time{})
 }
 
 // NoteUnreachable is a call that could not reach the credentials service

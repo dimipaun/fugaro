@@ -1117,7 +1117,13 @@ func (r *run) serviceAnswer(a gateway.ServiceAnswer) {
 		for _, tr := range a.Exhausted.Tried {
 			tried = append(tried, credsvc.Tried{Name: tr.Name, Tier: tr.Tier, Reason: tr.Reason})
 		}
-		r.noteExhausted(credsvc.ExhaustedUntil{ResetAt: a.Exhausted.ResetAt, Tried: tried})
+		// The action and the resume instant come over with it (C3): they are
+		// the service's decision about what the run does next (R19), and the
+		// runner only carries them out. The gateway's spellings are the pause
+		// contract's own, mapped here to the record's the way the halt's
+		// reason is (gatewayHalt).
+		r.noteExhausted(credsvc.ExhaustedUntil{ResetAt: a.Exhausted.ResetAt, Tried: tried},
+			runstore.PauseAction(a.Exhausted.Action), a.Exhausted.ResumeAt)
 	}
 	if a.Unreachable != nil {
 		// The gateway's own answer and not the service's (D2983): no service
