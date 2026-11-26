@@ -836,6 +836,70 @@ func TestUpdateKeepsAHandWrittenModelGrades(t *testing.T) {
 	}
 }
 
+// TestUpdatePolicyStagePublishesThePauseBlock is the pause settings' own half
+// of the binaries test above (R11 of docs/model-credentials-routing, D3184,
+// D3187, D3190): the local config is the block's carrier and `fugaro settings
+// set` writes it, so the policy stage is what carries it into the node — the
+// node and nothing else, because the credentials service is what decides
+// between waiting, pausing and halting on it (PR3) and no job's environment
+// carries a setting of this kind. Without the stage the operator's own edit
+// would reach no run until they ran the explicit publish, which is the second
+// command the HARD RULE forbids.
+func TestUpdatePolicyStagePublishesThePauseBlock(t *testing.T) {
+	r := newConvergeRig(t, currentNode())
+	r.appendConfig(t, "pause:\n  wait_in_job: 2m\n  min_pause: 40m\n  max_pause: 8h\n")
+	registerInstallation(t, r.initRig)
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	p := convergeNode(t, r)
+	if p.Pause == nil {
+		t.Fatal("after one fugaro update, the node carries no pause block: the policy stage did not carry the settings the owner set, and every run of the project is decided on the defaults instead")
+	}
+	for _, tc := range []struct {
+		member string
+		got    time.Duration
+		want   time.Duration
+	}{
+		{"wait_in_job", p.Pause.WaitInJobDuration(), 2 * time.Minute},
+		{"min_pause", p.Pause.MinPauseDuration(), 40 * time.Minute},
+		{"max_pause", p.Pause.MaxPauseDuration(), 8 * time.Hour},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("after one fugaro update, the node's pause.%s = %s, want %s: the policy stage did not carry the setting the owner wrote", tc.member, tc.got, tc.want)
+		}
+	}
+}
+
+// TestUpdateKeepsAHandWrittenPauseBlock is the keep direction of the test
+// above, and the one the update's own promise rests on: a node that already
+// carries the block, read by a config that says nothing about it, keeps what it
+// carries. That is the state every installation is in the moment this release
+// arrives — the config's `pause:` key is this release's, so a file nothing was
+// written into says nothing — and the merge is what stops a publish from
+// putting a project's runs back on the defaults without anyone asking.
+func TestUpdateKeepsAHandWrittenPauseBlock(t *testing.T) {
+	node := currentNode()
+	node["pause"] = map[string]any{"wait_in_job": "2m", "min_pause": "40m", "max_pause": "8h"}
+	r := newConvergeRig(t, node)
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	p := convergeNode(t, r)
+	if p.Pause == nil {
+		t.Fatal("after one fugaro update, the node carries no pause block: the run rewrote the node without the settings the project was paused by")
+	}
+	for _, tc := range []struct {
+		member string
+		got    time.Duration
+		want   time.Duration
+	}{
+		{"wait_in_job", p.Pause.WaitInJobDuration(), 2 * time.Minute},
+		{"min_pause", p.Pause.MinPauseDuration(), 40 * time.Minute},
+		{"max_pause", p.Pause.MaxPauseDuration(), 8 * time.Hour},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("after one fugaro update, the node's pause.%s = %s, want %s: the run dropped the setting the node carried", tc.member, tc.got, tc.want)
+		}
+	}
+}
+
 // TestUpdateConvergesTheCrashReportSwitch is D738's whole update-side claim at
 // the one door the HARD RULE is about: an installation whose published node is
 // the node a release behind wrote — the mobile block as it states it and no
