@@ -114,8 +114,8 @@ var resourceSteps = map[string][]string{
 	// project_enroll.go): onboarding one is what the repository stage's own
 	// plan is made from, and the three stages are the ones the enrolment's own
 	// converge runs (project_enroll_converge.go's reposEnrolmentStageList): the
-	// policy stage publishes the node the enrolment rewrote (`image_map` beside
-	// the `allow_repos` the command wrote itself), the installation stage
+	// policy stage publishes the node the enrolment rewrote (`repo_images`
+	// beside the `allow_repos` the command wrote itself), the installation stage
 	// deploys the jobs of the profiles this project's repositories use, and the
 	// repository stage is the new repository's own Terraform root — its jobs and
 	// its service accounts (F15, D1574).

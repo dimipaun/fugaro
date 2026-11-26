@@ -1085,10 +1085,10 @@ func TestUpdateConvergesPreviousPolicy(t *testing.T) {
 	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	p := convergeNode(t, r)
-	want := projectpolicy.ImageMap{"acme/app": "app"}
-	if !reflect.DeepEqual(p.ImageMap, want) {
-		t.Errorf("after one fugaro update, the published node's image_map = %v, want %v: the map the local config names did not reach the node, so a run would fall back to the catalog's default image",
-			p.ImageMap, want)
+	want := projectpolicy.RepoImages{"github/acme/app": "app"}
+	if !reflect.DeepEqual(p.RepoImages, want) {
+		t.Errorf("after one fugaro update, the published node's repo_images = %v, want %v: the map the local config names did not reach the node, so a run would fall back to the catalog's default image",
+			p.RepoImages, want)
 	}
 	if p.BakeRepos == nil || *p.BakeRepos {
 		t.Errorf("after one fugaro update, the published node's bake_repos = %v, want a written false: the switch the local config states did not reach the node",
@@ -1096,6 +1096,15 @@ func TestUpdateConvergesPreviousPolicy(t *testing.T) {
 	}
 	if p.BakesRepos() {
 		t.Error("the published node bakes repos, want it not to: the reader every run uses is what a run would act on")
+	}
+	// The file drops the old member in the same run (R14), and the node keeps
+	// it until the step after the credentials service takes it away.
+	b, err := os.ReadFile(filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "fugaro", "projects", initProjectName+".yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if written := string(b); strings.Contains(written, "image_map") || !strings.Contains(written, "repo_images:") {
+		t.Errorf("after one fugaro update, the local config still states the old member or names no repo_images:\n%s", written)
 	}
 }
 

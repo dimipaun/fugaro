@@ -3966,6 +3966,39 @@ func TestAPublishThatSaysNothingLeavesTheNodeAlone(t *testing.T) {
 // disagree, and the folder is printed from the policy's accessor, which is what
 // the commit run reads: a node that writes no `dir` means the layout's own
 // folder and not a folder nobody named.
+// TestPolicyShowPrintsRepoImages is R5: from L11 on a consumer of the
+// document reads the repository-to-image map as repo_images, keyed by the
+// canonical name a lookup reaches, and not as the escape the node stores it
+// under.
+func TestPolicyShowPrintsRepoImages(t *testing.T) {
+	newProjectFixture(t, "repo_images:\n  github/acme/app: tools\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "project", "policy", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "github/acme/app") || strings.Contains(out, "%2F") {
+		t.Errorf("policy show does not print the repository's canonical name:\n%s", out)
+	}
+	js, _, err := execute(t, "project", "show", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Policy struct {
+			RepoImages map[string]string `json:"repo_images"`
+		} `json:"policy"`
+	}
+	if err := json.Unmarshal([]byte(js), &doc); err != nil {
+		t.Fatalf("--json is not JSON (%v):\n%s", err, js)
+	}
+	if got := doc.Policy.RepoImages["github/acme/app"]; got != "tools" {
+		t.Errorf("--json's policy.repo_images is not keyed by the canonical name: %v", doc.Policy.RepoImages)
+	}
+}
+
 func TestPolicyShowPrintsTheDesignatedReportsRepository(t *testing.T) {
 	f := newProjectFixture(t, "reports_commit: { repo: acme/reports }\n")
 	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
