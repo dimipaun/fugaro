@@ -192,51 +192,57 @@ agent's session, on a first run or on a follow-up (§[The hotfix mode](#the-hotf
 rules be matched from the first moment rather than from the run's diff. Repeat it
 for each path.
 
-**Per repository**, in its `fugaro.yaml`:
+**Per repository**, in the project layer's `defaults.rigor.repos`:
 
-```yaml
-rigor:
-  default: pro
-  areas:
-    - name: payments
-      match: "internal/payments/**"
-      mode: critical
+```
+fugaro rigor set pro --repo acme/app
 ```
 
-`rigor.default` is the mode a run of this repository starts from; `rigor.areas` is
-a list of named rules, each a `doublestar` glob and a mode. A rule applies to a
-run whose touched paths match it; the paths are the ones `--path` declared at
-launch, the run's own diff after each review round, and the paths it changed
-before the pull request is marked ready — so a rule that matches only at the end
-still decides the run's readiness.
+A repository's mode lives in the project layer, keyed by its `owner/name`:
+`defaults.rigor.repos.<owner/name>` is the mode a run of that repository starts
+from, and `fugaro rigor set MODE --repo <owner/name>` writes it. A rule for one
+repository is a project area with a member naming it: `fugaro rigor set MODE
+--area GLOB --name NAME --repo <owner/name>` writes a `defaults.rigor.areas`
+rule whose `members` entry is `{repo: <owner/name>, paths: [GLOB]}`. A
+repository's own `rigor.default` and `rigor.areas` in its `fugaro.yaml` are
+dropped and named at launch, with that command as the fix: the project layer is
+where a repository's mode is stated now. A rule applies to a run whose touched
+paths match it; the paths are the ones `--path` declared at launch, the run's own
+diff after each review round, and the paths it changed before the pull request is
+marked ready — so a rule that matches only at the end still decides the run's
+readiness.
 
 **Per project**, in the project layer that `fugaro update` publishes:
-`defaults.rigor.default` and `defaults.rigor.areas`, the same two keys for every
-repository in the project. `fugaro rigor set MODE` writes the project layer's
-default, and `fugaro rigor set MODE --area GLOB --name NAME` writes one rule;
-both write this machine's own project layer file, end with `next: fugaro update`,
-and refuse `hotfix` in either form — a mode a command writes is a mode every run
-of the project takes, and `hotfix` is a choice about one run
-(§[The hotfix mode](#the-hotfix-mode)). A mode below what
+`defaults.rigor.default`, `defaults.rigor.areas` and `defaults.rigor.repos`, the
+keys for every repository in the project. `fugaro rigor set MODE` writes the
+project layer's default, `fugaro rigor set MODE --area GLOB --name NAME` writes
+one rule, and `fugaro rigor set MODE --repo <owner/name>` writes one repository's
+level; all write this machine's own project layer file, end with
+`next: fugaro update`, and refuse `hotfix` in every form — a mode a command
+writes is a mode every run of the project takes, and `hotfix` is a choice about
+one run (§[The hotfix mode](#the-hotfix-mode)). A mode below what
 the project resolves to today is refused in a coding agent's session, with the
 command to run at the owner's own terminal.
 
 **The order** is the one rule `docs/project-layer.md` §2 states, weakest first:
 Fugaro's own default, which is `pro`, then the project layer's
-`defaults.rigor.default`, then the project layer's `defaults.rigor.areas`, then
-its `defaults.rigor.repos` entry for the repository, then the repository's own
-`rigor.default`, then its own `rigor.areas`, and last the run's own request,
-which is `--mode`. A floor sits outside every layer and none of the seven moves
-it (§[The floor](#the-floor)). Unlike every other key, a narrower layer may set a
-**lower** mode than a wider one — this is a default and not a floor. Two
-differences worth knowing:
+`defaults.rigor.default`, then a `defaults.rigor.areas` rule the run's paths
+match through its `match` alone, which answers for every repository of the
+project, then its `defaults.rigor.repos` entry for the repository, then a
+`defaults.rigor.areas` rule naming this repository in a member, which answers for
+a named part of it and so outranks the project's answer for the whole of it
+(D3294), then the repository's own `rigor.default`, then its own `rigor.areas`,
+and last the run's own request, which is `--mode`. A floor sits outside every
+layer and none of the eight moves it (§[The floor](#the-floor)). Unlike every
+other key, a narrower layer may set a **lower** mode than a wider one — this is a
+default and not a floor. Two differences worth knowing:
 
 - Both `areas` lists are in effect: a repository's rules and the project's are
   both read rather than the narrower list replacing the wider one, each at its
   own rank in the order above, and within one list the **strictest matched
-  rule** decides. So the project's rule for an area holds everywhere the
-  repository writes nothing, and the repository's own rule decides for its
-  paths. Every rule that matched is recorded, strictest first.
+  rule** decides. A repository file's own keys are dropped before that merge, so
+  a repository's rules now reach it as the project's member areas. Every rule
+  that matched is recorded, strictest first.
 - A mode a run has reached never falls within that run. A run that rose to
   `critical` for one path stays there for the rest of its rounds; a later
   resolution that comes back weaker leaves the reached mode standing.
