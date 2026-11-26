@@ -918,6 +918,57 @@ describe('setup.plan', () => {
     ])
   })
 
+  it('holds no budget in the bytes a CLI below the floor is given, digest included', async () => {
+    // The gate's **wiring**, and not the gate itself: `setupAnswersForCli` is
+    // driven directly in the cases above, and this is the one that fails if
+    // `createSetupWizard` stops calling it. 0.28.2 is at or above the spawn floor
+    // and below `SETUP_BUDGET_CLI_FLOOR`, so the plan runs and the amount the
+    // operator answered must not be in the bytes the child reads -- nor in the
+    // digest the window shows, which is of those bytes. `const sent = answers`
+    // in place of the gate turns both assertions red.
+    const { wizard, calls, confirmer } = aWizard({ floor: '0.28.0', cliVersion: '0.28.2' })
+    await wizard['setup.plan'](planArgs(anAnswers({ budget: BUDGET })))
+    const bytes = (calls[0] as SpawnCall).child.bytes[0] as Uint8Array
+    const document = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>
+    expect('budget' in document, 'a CLI below the floor was sent a budget').toBe(false)
+    const expected = serialiseSetupAnswers({
+      gcp_project: PROJECT,
+      region: REGION,
+      name: NAME,
+      rigor: RIGOR,
+      budget: undefined,
+      bake_repos: true,
+    })
+    expect(bytes).toEqual(expected)
+    const subject = confirmer.opened[0]?.subject
+    if (subject?.kind !== 'setup') throw new Error('the window was not shown a setup')
+    expect(subject.digest).toBe(setupAnswersDigest(expected))
+  })
+
+  it('sends the budget to a CLI at the floor, and digests those bytes', async () => {
+    // The other side of the same wiring: at `SETUP_BUDGET_CLI_FLOOR` the amount
+    // is in the document the child reads, and the digest is taken of the bytes
+    // that carry it -- so a gate that dropped the member for every version would
+    // fail here rather than passing on the case above alone.
+    const { wizard, calls, confirmer } = aWizard({ floor: '0.28.0', cliVersion: '0.29.0' })
+    await wizard['setup.plan'](planArgs(anAnswers({ budget: BUDGET })))
+    const bytes = (calls[0] as SpawnCall).child.bytes[0] as Uint8Array
+    const document = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>
+    expect(document['budget']).toBe(BUDGET)
+    const expected = serialiseSetupAnswers({
+      gcp_project: PROJECT,
+      region: REGION,
+      name: NAME,
+      rigor: RIGOR,
+      budget: BUDGET,
+      bake_repos: true,
+    })
+    expect(bytes).toEqual(expected)
+    const subject = confirmer.opened[0]?.subject
+    if (subject?.kind !== 'setup') throw new Error('the window was not shown a setup')
+    expect(subject.digest).toBe(setupAnswersDigest(expected))
+  })
+
   it('shows the answers main parsed, not the object the renderer sent', async () => {
     const { wizard, confirmer, made } = aWizard({ floor: '0.120.0' })
     await wizard['setup.plan'](planArgs(anAnswers({ name: undefined, budget: BUDGET, bake_repos: undefined })))
