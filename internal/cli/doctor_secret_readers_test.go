@@ -172,6 +172,62 @@ func TestDoctorSecretReadersAcceptsFugaroAccounts(t *testing.T) {
 	}
 }
 
+// TestDoctorSecretReadersPlacesTheOrchestratorsPairingGrant: the resident
+// orchestrator reads its own pairing key's cloud copy and nothing else
+// (deploy/terraform/gcp/modules/installation/orchestrator.tf,
+// google_secret_manager_secret_iam_member.orchestrator_pairing_key; the audit's
+// E29), so the sweep places that one member on that one container — and only
+// there: a second member on the container still warns, and so does the same
+// account granted on any other container, because neither is a grant Fugaro
+// creates.
+func TestDoctorSecretReadersPlacesTheOrchestratorsPairingGrant(t *testing.T) {
+	const pairing = infra.OrchestratorPairingSecretID
+	orchestrator := "serviceAccount:" + infra.OrchestratorAccountID + "@proj-1234.iam.gserviceaccount.com"
+	stray := "serviceAccount:stray@project-a.iam.gserviceaccount.com"
+
+	t.Run("its own container", func(t *testing.T) {
+		r := newSecretReadersRig(t)
+		r.sm.Seed(pairing, map[string]string{gcp.LabelManaged: gcp.ManagedValue}, []byte("pairing-key"))
+		r.sm.SetPolicy(pairing, []gcpfake.Binding{{Role: gcp.SecretAccessorRole, Members: []string{orchestrator}}})
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+		}
+		if w := readerWarnings(o); len(w) != 0 {
+			t.Fatalf("the sweep flagged the orchestrator's own pairing grant: %+v", w)
+		}
+	})
+
+	t.Run("a second member still warns", func(t *testing.T) {
+		r := newSecretReadersRig(t)
+		r.sm.Seed(pairing, map[string]string{gcp.LabelManaged: gcp.ManagedValue}, []byte("pairing-key"))
+		r.sm.SetPolicy(pairing, []gcpfake.Binding{{Role: gcp.SecretAccessorRole, Members: []string{orchestrator, stray}}})
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+		}
+		c := readerWarningAbout(t, o, stray)
+		if strings.Contains(c.Problem, orchestrator) {
+			t.Errorf("problem %q names the orchestrator beside the unplaced reader: only the unplaced one is the finding", c.Problem)
+		}
+	})
+
+	t.Run("another container still warns", func(t *testing.T) {
+		r := newSecretReadersRig(t)
+		r.sm.SetPolicy(r.secretID, []gcpfake.Binding{{Role: gcp.SecretAccessorRole, Members: []string{orchestrator}}})
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+		}
+		if !readerWarningSaying(o, orchestrator) {
+			t.Errorf("the orchestrator's grant on a container that is not its pairing container is not named: %+v", o.Checks)
+		}
+	})
+}
+
 // TestDoctorSecretReadersFlagsProjectLevelAccess: a project-level grant is
 // every container at once, so the sweep reads the project's own policy too. A
 // predefined Secret Manager role and a custom role whose permissions list

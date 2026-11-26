@@ -244,7 +244,8 @@ plan; this table says what happens to each task, and the levels below include th
   custom role whose own definition lists `secretmanager.versions.access` — on every
   container of the installation's project that is not one of the account classes Fugaro creates
   for that container (computed forward, as `doctorProjectSecretAccessorChecks` does; the managed
-  `fmgd-` accounts on `fmgd-` containers are a known class), or is a principal outside the
+  `fmgd-` accounts on `fmgd-` containers are a known class, and so is the resident orchestrator's
+  own account on its pairing container — E29's one grant, and nowhere else), or is a principal outside the
   installation; and every principal holding, **at the project level**, a role that carries
   `secretmanager.versions.access` (a predefined Secret Manager role or a custom role listing it),
   other than the classes Fugaro grants — service accounts, and, because a project-level grant is
