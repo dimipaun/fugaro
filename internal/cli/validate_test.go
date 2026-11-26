@@ -2003,7 +2003,7 @@ routing:
 						// and does the switch carry out over this checkout's
 						// routes?
 						sw := &config.RoutingClaude{Via: via, Models: []string{canonical}}
-						gateway := runner.GatewayOn(auth, mode)
+						gateway := runner.GatewayOn(auth)
 						acts := runner.RoutingInertReason(sw, auth, gateway, false) == runner.RoutingActs &&
 							runner.RoutingInertReason(sw, auth, gateway, true) == runner.RoutingActs
 						halts := acts && len(config.CheckRouting(&config.Routing{Claude: sw}, runner.ProvidersFor(claims, "acme/sandbox"), "routing")) > 0
@@ -2218,7 +2218,7 @@ func TestValidateAgreesWithTheRunAboutTheRoutedPins(t *testing.T) {
 					t.Fatal(err)
 				}
 				sw := &config.RoutingClaude{Via: via, Models: []string{canonical}}
-				gateway := runner.GatewayOn("api-key", mode)
+				gateway := runner.GatewayOn("api-key")
 				// A run halts here only when the switch reaches it: every run of
 				// this configuration for openrouter, and the keyless one for auto.
 				always := runner.RoutingInertReason(sw, "api-key", gateway, false) == runner.RoutingActs &&

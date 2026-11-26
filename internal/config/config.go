@@ -387,9 +387,9 @@ func (c *Config) ProjectRigor() rigor.Config {
 	return out
 }
 
-// Budget modes, as the project config spells them.
+// Budget modes, as the project config spells them. Two, since the word that
+// was the third is not a mode any more (D3009).
 const (
-	BudgetOff     = policy.ModeOff
 	BudgetObserve = policy.ModeObserve
 	BudgetEnforce = policy.ModeEnforce
 )
