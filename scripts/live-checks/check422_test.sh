@@ -505,20 +505,18 @@ stages:
 YAML
 }
 
-# write_crafts DIR [ACCESS] [PROBLEMS]: `craft ls --json`'s document. The default
-# access is the one the migration derives from the fixture's accounts, so the row
-# that reads the crafts back is reading the same installation the config
-# describes; a case bends either half.
-write_crafts() { # write_crafts DIR [ACCESS] [PROBLEMS]
-  local access=${2:-coder=$account_one,review=$account_one,senior-review=$account_two,security-review=$account_one}
-  local problems=${3:-[]} rows="" pair craft value
-  for pair in ${access//,/ }; do
-    craft=${pair%%=*}
-    value=${pair#*=}
-    rows="$rows${rows:+,}{\"craft\":\"$craft\",\"model\":\"claude-opus-4-1\",\"model_from\":\"local\",\"access\":\"$value\",\"access_from\":\"local\",\"inert\":false}"
+# write_crafts DIR [CRAFTS] [PROBLEMS]: `craft ls --json`'s document, version 2.
+# The default answers for every craft the fixture's config states, with an empty
+# chain — the local config carries no routing table, so a craft's calls go out
+# the release-1 way (R25); a case bends either half.
+write_crafts() { # write_crafts DIR [CRAFTS] [PROBLEMS]
+  local crafts=${2:-coder,review,senior-review,security-review}
+  local problems=${3:-[]} rows="" name
+  for name in ${crafts//,/ }; do
+    rows="$rows${rows:+,}{\"craft\":\"$name\",\"model\":\"claude-opus-4-1\",\"model_from\":\"local\",\"chain\":[],\"chain_problem\":\"\"}"
   done
   cat >"$1/json/crafts.json" <<JSON
-{"version":1,"project":"chk422","crafts":[$rows],"problems":$problems}
+{"version":2,"project":"chk422","crafts":[$rows],"problems":$problems}
 JSON
 }
 
@@ -1024,14 +1022,14 @@ test_a_crafts_list_with_problems_is_a_finding() {
   expect_contains "$out" "reports 1 problem(s) after the converge" "the crafts row: the problem"
 }
 
-test_a_craft_that_does_not_resolve_as_the_config_writes_it_is_a_finding() {
+test_a_craft_the_config_states_that_does_not_resolve_is_a_finding() {
   local dir=$work/craft-mismatch
   prepare "$dir"
-  write_crafts "$dir" "coder=$account_two,review=$account_one,senior-review=$account_two,security-review=$account_one"
+  write_crafts "$dir" "review,senior-review,security-review"
   run_check "$dir"
-  expect_status "$status" 1 "a craft that resolves to another access"
+  expect_status "$status" 1 "a craft the config states that craft ls does not answer for"
   expect_contains "$out" "FACT crafts: FAIL" "the crafts row"
-  expect_contains "$out" "do not resolve as they are written" "the crafts row: what disagrees"
+  expect_contains "$out" "answers for no craft named coder" "the crafts row: the craft that is missing"
 }
 
 test_a_crafts_list_that_cannot_be_read_is_not_measured() {
@@ -1249,7 +1247,7 @@ t test_a_second_converge_that_fails_is_a_finding
 t test_a_second_converge_that_applies_something_is_reported
 t test_a_stage_needing_you_is_a_finding
 t test_a_crafts_list_with_problems_is_a_finding
-t test_a_craft_that_does_not_resolve_as_the_config_writes_it_is_a_finding
+t test_a_craft_the_config_states_that_does_not_resolve_is_a_finding
 t test_a_crafts_list_that_cannot_be_read_is_not_measured
 t test_a_policy_whose_craft_members_moved_is_a_finding
 t test_a_policy_the_converge_removed_is_a_finding

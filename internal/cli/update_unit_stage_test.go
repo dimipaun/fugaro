@@ -390,6 +390,64 @@ func TestUpdateNeverRepointsAUnitAtABuildThatWillNotBeThereTomorrow(t *testing.T
 	}
 }
 
+// TestUpdateWritesNoFirstUnitFromABuildThatWillNotBeThereTomorrow is the same
+// rule one step earlier, where the machine has NO login unit at all: D2700 has
+// the update door write a machine's first one, and this is the guard that keeps
+// that write from naming a program that will not be there tomorrow. An update run
+// from a checkout's `go build`, from `go run`'s temporary binary or from a copy in
+// a scratch directory would otherwise leave a login unit restarting a program a
+// `go clean`, a reboot or a deleted checkout takes away — and, both doors
+// comparing the file's text, nothing would ever repair it. Nothing is written,
+// the machine is left exactly as it was for a released fugaro's own update to
+// install from, and the plan line names the binary this run is and the command
+// that writes the first unit deliberately.
+func TestUpdateWritesNoFirstUnitFromABuildThatWillNotBeThereTomorrow(t *testing.T) {
+	// The two shapes a person runs an update *from* without installing one, one
+	// per clause of unitMayNameThisBinary: a `dev` build wherever it sits, and a
+	// build in the system's temporary directory, whatever version it carries.
+	for _, tc := range []struct {
+		name, version, exe string
+	}{
+		{"a development build in a checkout", "dev", "/home/someone/src/fugaro/fugaro"},
+		{"a build in the temporary directory", "1.2.3", filepath.Join(os.TempDir(), "go-build123", "b001", "exe", "fugaro")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			unitHome(t)
+			f := fakeUnitService(t)
+			typed(t)
+			oldVersion, oldExe := Version, orchestratorExecutable
+			Version, orchestratorExecutable = tc.version, func() (string, error) { return tc.exe, nil }
+			t.Cleanup(func() { Version, orchestratorExecutable = oldVersion, oldExe })
+			e, _ := updateUnitEngine(t, &initOptions{})
+			u := currentUnit(t)
+			res, out := runUnitStage(t, e, newUpdateUnitStage(e))
+			if got := stateOf(res, initflow.Unit); got != initflow.Skipped {
+				t.Fatalf("the step is %s running from %s (version %s) with no unit on the machine, want skipped:\n%+v", got, tc.exe, tc.version, res.Stages)
+			}
+			if d := res.Stages[0].Detail; !strings.Contains(d, "leaves this machine without the login unit at "+u.Path) || !strings.Contains(d, tc.exe) {
+				t.Errorf("the skip does not name the machine left without a unit and the program this run is: %q", d)
+			}
+			if _, err := os.Stat(u.Path); !os.IsNotExist(err) {
+				t.Errorf("the step wrote a first unit from %s (stat: %v)", tc.exe, err)
+			}
+			if len(f.reloads) != 0 {
+				t.Errorf("the step reloaded the service although it wrote nothing: %v", f.reloads)
+			}
+			if len(res.Left) != 0 {
+				t.Errorf("the step left something for the user: %v", res.Left)
+			}
+			if askedSomething(out) {
+				t.Errorf("the step asked a question:\n%s", out)
+			}
+			for _, want := range []string{u.Path, tc.exe, "orchestrator install", "nothing was written here"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("the plan line does not name %q:\n%s", want, out)
+				}
+			}
+		})
+	}
+}
+
 // TestUpdateUnitStepAsksNothingAndIsLeftForThePerson: the step asks nothing at a
 // terminal (T8), and it is still never covered by --yes, a unit being code that
 // runs at login: a run that cannot put a person at the terminal leaves the unit

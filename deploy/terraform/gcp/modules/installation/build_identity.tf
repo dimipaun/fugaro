@@ -288,3 +288,23 @@ resource "google_service_account_iam_member" "operator_build_identity" {
 
   depends_on = [google_service_account.build_identity]
 }
+
+# The build identity's OpenID token, as itself. Cloud Build serves a build its
+# ID token from the metadata server only when the user-specified account the
+# build runs as holds iam.serviceAccounts.getOpenIdToken; without it the
+# endpoint answers 404 and the catalog build's credential step cannot present
+# the identity to the credentials service (internal/cli/gitcred.go). The role
+# is on the build identity's own account and held by it alone: it may mint an
+# identity token as itself and as no other account, and an identity token is
+# what the service already admits this account by (credentials_build_identity's
+# run.invoker above). The account is a literal path, as operator_build_identity
+# spells it, so internal/infra/tf's cover can read which account the role is on.
+resource "google_service_account_iam_member" "build_identity_openid_token" {
+  count = local.credentials_service_on ? 1 : 0
+
+  service_account_id = "projects/${var.project}/serviceAccounts/fugaro-build-identity@${var.project}.iam.gserviceaccount.com"
+  role               = "roles/iam.serviceAccountOpenIdTokenCreator"
+  member             = google_service_account.build_identity[0].member
+
+  depends_on = [google_service_account.build_identity]
+}

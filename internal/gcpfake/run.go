@@ -1065,9 +1065,10 @@ func (f *Run) run(w http.ResponseWriter, r *http.Request, jp string, body []byte
 }
 
 // listJobs answers jobs.list of a location, sorted by name, paged like
-// executions.list. Each job carries its labels and its task template's
-// timeout when set: the labels are what makes a job discoverable as ours
-// (infra.Orphans), and the real API lists them too.
+// executions.list. Each entry is the job as jobs get answers it — the real
+// API's listing carries the same resource, template, containers and env
+// included, which is what internal/infra's deployed-mount read and this
+// repository's own timeout lookup are both built on.
 func (f *Run) listJobs(w http.ResponseWriter, r *http.Request, parent string) {
 	if f.FailListWith != 0 {
 		writeError(w, f.FailListWith, http.StatusText(f.FailListWith), "injected failure")
@@ -1078,6 +1079,7 @@ func (f *Run) listJobs(w http.ResponseWriter, r *http.Request, parent string) {
 		f.unhandled(w, r)
 		return
 	}
+	project, region := f0[1], f0[3]
 	names := make([]string, 0, len(f.jobs))
 	for n := range f.jobs {
 		names = append(names, n)
@@ -1093,14 +1095,7 @@ func (f *Run) listJobs(w http.ResponseWriter, r *http.Request, parent string) {
 	end := min(start+size, len(names))
 	var out []any
 	for _, n := range names[start:end] {
-		job := map[string]any{"name": parent + "/jobs/" + n}
-		if l := f.jobs[n].labelMap(); len(l) > 0 {
-			job["labels"] = l
-		}
-		if d := f.jobs[n].timeout; d > 0 {
-			job["template"] = map[string]any{"template": map[string]any{"timeout": fmt.Sprintf("%ds", int(d/time.Second))}}
-		}
-		out = append(out, job)
+		out = append(out, f.jobBody(project, region, n))
 	}
 	resp := map[string]any{"jobs": out}
 	switch {

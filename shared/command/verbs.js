@@ -14,12 +14,13 @@
 // second way in -- no call to a service, no direct API. The two writes differ
 // in KIND, and that difference is the whole module:
 //
-//   * a **start** is D162's launch: an ordinary `message` carrying the owner's
-//     own words, with no read-back, no record and no confirmation, so the
-//     project's spend caps are what bound it. J5a later adds the typed launch
-//     action and J5b switches the phone to it; until then a launch is exactly
-//     this, and composing the field set of a task that has not landed is how
-//     two spellings of one message are born.
+//   * a **start** is D162's launch, typed since O10 (J5a): `kind: 'action'` with
+//     a `launch` verb, carrying the mode it would start in and the repository it
+//     starts in. A costly mode can therefore be refused by the consumer without a
+//     confirmation, and the mode is a field rather than prose in a body. J4 sent
+//     a launch as an ordinary message, because J5a had not landed; J5b switched
+//     the phone to the typed record, which is what makes the start fail closed at
+//     a reader that predates the verb.
 //   * a **cancel** is D169's action record (`kind: 'action'`): the read-back,
 //     the fixed phrase and exactly one confirmation are what authorise it, and
 //     the record the P6.2 machine built is what travels. This module does
@@ -27,8 +28,8 @@
 //     confirmation authorises exactly one action" is decided, and the record's
 //     id, target and confirmation are its answers, read back from the resolved
 //     target rather than parsed from anything a speaker said. The record is an
-//     input here, and what this module refuses is a record that is not a cancel
-//     of a run.
+//     input here, and what this module refuses is a record that is not that
+//     verb's action.
 //
 // **The role is a display claim, and this is the display.** What a role may do
 // is the P5.1 consumer's, decided at consume time with `internal/access`'s
@@ -93,15 +94,15 @@ export const JOB_CODES = Object.freeze({
   UNKNOWN_FIELD: 'unknown-field',
   /** The message's own text is absent, empty or not a string. */
   BAD_TEXT: 'bad-text',
-  /** A cancel without D169's action record, or with one that is not a cancel
-   * of a run. The record's own field set is the schema's and is validated by
-   * the client before the write; this names what this module needs to be sure
-   * of. */
+  /** A `launch` or `cancel` without that verb's action record, or with one that
+   * is not of the verb it was handed beside. The record's own field set is the
+   * schema's and is validated by the client before the write; this names what
+   * this module needs to be sure of. */
   BAD_RECORD: 'bad-record',
 });
 
-/** The fields a request may carry: `verb`, `text`, and -- for a cancel -- the
- * machine's `record`. A field this module does not name is refused rather than
+/** The fields a request may carry: `verb`, `text`, and the verb's own action
+ * `record`. A field this module does not name is refused rather than
  * ignored, so a caller that misspelled one hears about it instead of sending
  * something else. */
 const REQUEST_FIELDS = Object.freeze(['verb', 'text', 'record']);
@@ -149,7 +150,7 @@ export function maySend(session, verb) {
  * The write one job command makes: what to send, and what the client needs to
  * know about it.
  *
- *     jobWrite(session, { verb: 'launch', text })            // a start
+ *     jobWrite(session, { verb: 'launch', text, record })    // a start
  *     jobWrite(session, { verb: 'cancel', text, record })    // a cancel
  *
  * `session` is one paired project's session (C2's port value) and only its
@@ -160,15 +161,20 @@ export function maySend(session, verb) {
  * `shared/confirm`'s sentence, built from the resolved target, and a second
  * copy of it here would be a second spelling of one sentence.
  *
+ * `record` is the verb's action record, and it is an input: this module builds
+ * no record and mints no id. What it refuses is a record that is not the verb's
+ * -- a `launch` needs its `mode` and a `target.repo` and no `target.pr`, a
+ * `cancel` a `target.run` (O10) -- and everything else it carries is the
+ * schema's and is validated before the write.
+ *
  * What comes back is `{ ok: true, verb, text, options }`, where `options` is
- * exactly what `client.send` takes: `{ verb }` for a start, because a launch
- * and a question are the same bytes at the write path and the classification is
- * what lets a lapsed launch be refused (S6.3), and `{ action: record }` for a
- * cancel. The record is passed through as the machine built it, uncopied: the
- * client's schema validation deep-freezes it before anything is written.
+ * exactly what `client.send` takes: `{ action: record }`, for both verbs, so the
+ * message carries `kind: 'action'` and is never queued. The record is passed
+ * through as its builder built it, uncopied: the client's schema validation
+ * deep-freezes it before anything is written.
  *
  * @param {unknown} session one paired project's session (C2's port value)
- * @param {unknown} request `{ verb, text, record? }`
+ * @param {unknown} request `{ verb, text, record }`
  * @returns {{ok: true, verb: string, text: string, options: object}
  *   | {ok: false, code: string, field: string|null}}
  */
@@ -192,24 +198,23 @@ export function jobWrite(session, request = {}) {
   // nothing to start, or a message whose text is not text.
   if (typeof text !== 'string' || text === '') return refuse(JOB_CODES.BAD_TEXT, 'text');
 
-  if (verb === 'launch') {
-    // A launch carries nothing but its words: a record here is a caller that
-    // meant a cancel, or one that built the typed launch action J5a has not
-    // landed yet, and answering either with a plain message would be the
-    // silent one.
-    if (Object.hasOwn(request, 'record')) return refuse(JOB_CODES.UNKNOWN_FIELD, 'record');
-    return Object.freeze({ ok: true, verb, text, options: Object.freeze({ verb }) });
-  }
-
   const record = request.record;
   if (!isPlainObject(record)) return refuse(JOB_CODES.BAD_RECORD, 'record');
-  if (record.verb !== 'cancel') return refuse(JOB_CODES.BAD_RECORD, 'record.verb');
+  if (record.verb !== verb) return refuse(JOB_CODES.BAD_RECORD, 'record.verb');
   const target = record.target;
-  // P6.3's cancel target is `{ run }` and nothing else (`internal/mailbox`'s
-  // action record); a cancel that named no run is a record this module cannot
-  // send, and the rest of the record -- its id, its confirmation, the target's
+  // P6.3's target is `{ run }` for a cancel and `{ repo }` alone for a launch
+  // (`internal/mailbox`'s action record, O10): a start that named no repository
+  // and a cancel that named no run are records this module cannot send, and the
+  // rest of the record -- its id, its mode, its confirmation, the target's
   // characters -- is the schema's and is validated before the write.
-  if (!isPlainObject(target) || typeof target.run !== 'string' || target.run === '') {
+  if (verb === 'launch') {
+    if (typeof record.mode !== 'string' || record.mode === '') {
+      return refuse(JOB_CODES.BAD_RECORD, 'record.mode');
+    }
+    if (!isPlainObject(target) || typeof target.repo !== 'string' || target.repo === '') {
+      return refuse(JOB_CODES.BAD_RECORD, 'record.target');
+    }
+  } else if (!isPlainObject(target) || typeof target.run !== 'string' || target.run === '') {
     return refuse(JOB_CODES.BAD_RECORD, 'record.target');
   }
   return Object.freeze({ ok: true, verb, text, options: Object.freeze({ action: record }) });

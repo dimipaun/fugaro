@@ -189,6 +189,16 @@ type accountsRmPlan struct {
 	// Empty for a run that removes no typed entry, and for one whose crafts keep
 	// a model of their own.
 	craftsGone []string
+	// pools is the pools this entry was the whole of: a pool whose every member
+	// is the typed entry this removal takes away. They go with it rather than
+	// being refused over, because a pool left listing a member no block defines
+	// is the file this config's own loader refuses (config.ValidatePools), and
+	// no command takes a member away from a pool — `accounts pool rm` removes
+	// the whole pool — so a refusal would send the owner to a hand edit of the
+	// very pool this removal has already emptied. They are recorded in
+	// node_removals.pools, the record `accounts pool rm` writes for itself.
+	// Empty for a run that removes no typed entry.
+	pools []string
 }
 
 // runAccountsRm is the order spec §4 forces: everything that can refuse does,
@@ -231,6 +241,18 @@ func runAccountsRm(cmd *cobra.Command, name string, o accountsRmOptions) error {
 	// gate's own call below.
 	marker := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))
 	read := accountsRmRepos(cmd.Context(), &cloudEnv{lc: lc}, plan.name, marker != "")
+
+	// D2217's fence, asked here for the reason the add half asks it
+	// (accounts_add.go): the access gate above answers before it opens anything
+	// on an installation whose config names no budget database, and the gate
+	// below swallows the failure of the budget client it reads its marks
+	// through. Left to them, such an installation writes this removal and meets
+	// the fence at the delete below, which puts the file back and reports the
+	// fence's own refusal as a failed delete (accountsRmDelete) — the wrong
+	// sentence and the wrong exit code.
+	if err := requireManaged(cmd.Context(), cmd, lc); err != nil {
+		return err
+	}
 
 	// The managed gate, before anything is screened and written
 	// (accounts_managed.go, add's own file, and the helper below): in a managed
@@ -410,8 +432,15 @@ func accountsRmResolve(path string, lc *localcfg.Config, name, want string, old 
 	// credentials block by this removal is a credential whose secret and job are
 	// gone that a pool would still be admitted to list.
 	if plan.drop && plan.typed {
-		if err := accountsRmPoolMember(lc, name); err != nil {
+		poolsGone, err := accountsRmPoolMember(lc, name)
+		if err != nil {
 			return accountsRmPlan{}, nil, nil, err
+		}
+		plan.pools = poolsGone
+		// A craft's access is one value, so no craft names both this entry and a
+		// pool it empties: the two lists are appended rather than merged.
+		for _, pool := range poolsGone {
+			plan.crafts = append(plan.crafts, craftsNaming(lc, pool)...)
 		}
 		n, err := yamledit.RemoveSeqItemByKeyWithOptions(next, []string{"credentials"}, "name", name,
 			yamledit.RemoveOptions{DropEmptyParents: true})
@@ -419,6 +448,16 @@ func accountsRmResolve(path string, lc *localcfg.Config, name, want string, old 
 			return accountsRmPlan{}, nil, nil, userErr("credentials.%s: %v", pluginwire.Printable(name), err)
 		}
 		next = n
+		// A pool this entry was the whole of goes on the same bytes, for the
+		// reason it is not refused over (accountsRmPoolMember).
+		for _, pool := range poolsGone {
+			n, err := yamledit.RemoveSeqItemByKeyWithOptions(next, []string{"pools"}, "name", pool,
+				yamledit.RemoveOptions{DropEmptyParents: true})
+			if err != nil {
+				return accountsRmPlan{}, nil, nil, userErr("pools.%s: %v", pluginwire.Printable(pool), err)
+			}
+			next = n
+		}
 		// A craft's access that named the entry goes on the same bytes: the
 		// entry it named is gone, so an access left behind resolves to no
 		// credential at all (accountsRmPlan.crafts). The sentence this run
@@ -440,6 +479,15 @@ func accountsRmResolve(path string, lc *localcfg.Config, name, want string, old 
 		// hook runs is what acts on it.
 		if next, err = yamledit.AddListItem(next, []string{"node_removals", "craft_credentials"}, name); err != nil {
 			return accountsRmPlan{}, nil, nil, userErr("node_removals.craft_credentials: %v", err)
+		}
+		// The pool's own record, the one `accounts pool rm` writes for itself
+		// (accounts_pool.go): a publish keeps a node member the local config says
+		// nothing about, so a pool taken away without the record would go on
+		// being served by the node.
+		for _, pool := range poolsGone {
+			if next, err = yamledit.AddListItem(next, []string{"node_removals", "pools"}, pool); err != nil {
+				return accountsRmPlan{}, nil, nil, userErr("node_removals.pools: %v", err)
+			}
 		}
 		// A craft whose access was the whole of what this file stated goes with
 		// the entry — the block had the one leaf — and it is recorded too: the
@@ -469,6 +517,16 @@ func accountsRmResolve(path string, lc *localcfg.Config, name, want string, old 
 	return plan, next, after, nil
 }
 
+// accountsPoolKeys spells pool names for a sentence as `pools.<name>`, the keys
+// the write really removes, in the order accountsRmPoolMember answered them.
+func accountsPoolKeys(pools []string) string {
+	keys := make([]string, 0, len(pools))
+	for _, p := range pools {
+		keys = append(keys, "pools."+pluginwire.Printable(p))
+	}
+	return strings.Join(keys, " and ")
+}
+
 // accountsRmTyped is whether this account carries a typed half: the entry in
 // the credentials block that names it as the credential a craft or a pool may
 // spend. Every type this release can define is one `accounts add --type` wrote
@@ -483,28 +541,43 @@ func accountsRmTyped(lc *localcfg.Config, name string) bool {
 	return ok && slices.Contains(config.SupportedCredentialTypes(), c.Type)
 }
 
-// accountsRmPoolMember refuses an account whose typed entry is still a pool's
-// member: the entry goes with the account, and a pool left listing a member no
-// block defines is the file this config's own loader refuses — the state the
-// --type guard in `accounts add` exists to keep out of the file. The remedy it
-// names is a command the owner can run — `accounts pool rm` for the pool that
-// lists the entry — which is what makes the refusal worth printing.
+// accountsRmPoolMember answers what this account's typed entry going away does
+// to the pools that list it: a pool it was the whole of goes with it, and a
+// pool that keeps another member is the refusal. The entry goes with the
+// account, and a pool left listing a member no block defines is the file this
+// config's own loader refuses — the state the --type guard in `accounts add`
+// exists to keep out of the file. That same rule is why the emptied pool is not
+// refused over: the pool has no member left at all, and no command takes one
+// member away from a pool, so the refusal's remedy — a pool the owner names —
+// is the hand edit this command can make itself.
+//
+// The refusal is reserved for a pool that still holds a member, where the
+// remedy it names is a command the owner can run — `accounts pool add` for the
+// member the pool should keep instead, or `accounts pool rm` for a pool that
+// should go whole — which is what makes it worth printing.
 //
 // A craft's access is not refused here: the removal takes the entry away and
 // an access left naming it is a craft whose next call is refused, so the key
 // goes with the entry and the craft's own block stays (craftsNaming).
-func accountsRmPoolMember(lc *localcfg.Config, name string) error {
-	var named []string
+func accountsRmPoolMember(lc *localcfg.Config, name string) ([]string, error) {
+	var gone, keeps []string
 	for _, p := range lc.Pools {
-		if slices.Contains(p.Members, name) {
-			named = append(named, "pools."+pluginwire.Printable(p.Name)+".members")
+		if !slices.Contains(p.Members, name) {
+			continue
 		}
+		// A member written twice still leaves the pool with none, so the test is
+		// whether any member survives rather than how many the list has.
+		if slices.ContainsFunc(p.Members, func(m string) bool { return m != name }) {
+			keeps = append(keeps, "pools."+pluginwire.Printable(p.Name)+".members")
+			continue
+		}
+		gone = append(gone, p.Name)
 	}
-	if len(named) == 0 {
-		return nil
+	if len(keeps) > 0 {
+		return nil, userErr("credentials.%s is still a member of %s, so removing the account would leave the pool with a member no block defines: run `fugaro accounts pool add` for the member that pool should keep, or `fugaro accounts pool rm` for the pool, and run this again; nothing was written",
+			pluginwire.Printable(name), strings.Join(keeps, " and "))
 	}
-	return userErr("credentials.%s is still a member of %s, so removing the account would leave the pool with a member no block defines: run `fugaro accounts pool rm` for that pool first, then run this again; nothing was written",
-		pluginwire.Printable(name), strings.Join(named, " and "))
+	return gone, nil
 }
 
 // craftsNaming is the crafts whose access names this credential or pool, in
@@ -1096,6 +1169,10 @@ func accountsRmWhat(plan accountsRmPlan) string {
 		if len(plan.crafts) > 0 {
 			parts = append(parts, fmt.Sprintf("clear %s, which named that entry and would have nothing to spend without it",
 				craftAccessKeys(plan.crafts)))
+		}
+		if len(plan.pools) > 0 {
+			parts = append(parts, fmt.Sprintf("remove %s (the entry was every member) and record them in node_removals.pools, so the publish takes them off the node instead of leaving them served",
+				accountsPoolKeys(plan.pools)))
 		}
 		parts = append(parts, "record the removal in node_removals, so this run's own publish takes the typed entry off the node instead of leaving it served")
 		if len(plan.craftsGone) > 0 {
