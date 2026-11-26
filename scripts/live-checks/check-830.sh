@@ -39,7 +39,12 @@
 # found on the probe's own VM, and reports the ones it could not write rather
 # than dropping them. The `CreateJob` audit record is written by Google, so the
 # reading waits for it, bounded; a run that cannot read it FAILS rather than
-# concluding absence from a record it never saw.
+# concluding absence from a record it never saw. And a container that never
+# starts is read as exactly that, not as lines that went missing: the owner's two
+# runs of 2026-11-26 left the job SCHEDULED for the whole wait with its VM up and
+# no line of the container's own, which is a pull that had not finished, so the
+# boot log is read for the container-start line and the pull is bounded in the
+# wait (CHK830_PULL_BOUND).
 #
 # Usage:      bash scripts/live-checks/check-830.sh [--dry-run]
 #             From the Fugaro checkout this script lives in: it is the tree the
