@@ -22,10 +22,15 @@ import (
 //     existed whatever the project's marks say. The row that would break is the
 //     one where a managed project's verdict is read as permission for a billable
 //     build or a loosened ceiling.
-//   - The gate never answers for a session nobody is at. Removes may be true in
-//     a run with no terminal, which is why the terminal branch asks for one
-//     beside it; a step that reached past it would be a managed project's
-//     plan applied by a pipe or a --json run.
+//   - The gate never answers where the run's own reader said what the run does
+//     with a question: --json (which confirms no step, the console's whole
+//     contract), --non-interactive, and --ask, which is the owner asking for
+//     the question back. A managed project's verdict stands in for a step's
+//     confirmation wherever nobody can be asked — the owner's own terminal, a
+//     coding agent's session, and a session nobody is at, which is the pipe
+//     `fugaro update` is driven in by a script, a cron or check 292 (the
+//     owner's, 2026-11-26) — and never in a run whose reader asked for
+//     something else.
 
 // allConditions is the whole product of the six fields a run says about who
 // is there: 64 rows, each reachable from the CLI. --ask is one of them because
@@ -171,23 +176,32 @@ func TestManagedRemovesHoldsEveryFactAtOnce(t *testing.T) {
 	}
 }
 
-// TestManagedGateStandsInInBothSessions pins what a caller about to show a
-// prompt asks: under a coding agent's marker the answer is Removes, and in a
-// session with none it is PersonAtTheTerminal beside Removes. The two are told
-// apart by the marker because they are different sentences to two different
-// readers (AgentProceeded's and GateProceeded's), and a caller that conflated
-// them would print the wrong one.
+// TestManagedGateStandsInInEverySession pins what a caller about to show a
+// prompt asks, in the three sessions the answer is read in: under a coding
+// agent's marker and in a session nobody is at the answer is Removes, and at
+// the owner's own terminal it is PersonAtTheTerminal beside Removes. The
+// marker's session and the owner's are told apart by the marker because they
+// are different sentences to two different readers (AgentProceeded's and
+// GateProceeded's), and a caller that conflated them would print the wrong one;
+// the session nobody is at takes the owner's sentence, because the verdict
+// written and the plan shown are what it has to read instead of an answer.
 //
 // The mutation caught: PersonAtTheTerminal dropping its `c.Agent == ""` — the
 // terminal sentence printed to a coding agent's session — or the two halves
 // being swapped at a call site, which this equality makes a
-// compile-time-looking mistake rather than a silent one.
+// compile-time-looking mistake rather than a silent one. And the one this
+// predicate got wrong until check 292: answering a pipe with a step's own
+// confirmation, which is a demand for a person in a run that has none.
 //
-// --ask is the one condition that answers false here whatever else is true of
-// the row, and it is written into the oracle rather than taken from the code:
-// the owner asking for the prompts back is exactly "the gate does not confirm
-// this step", in both sessions.
-func TestManagedGateStandsInInBothSessions(t *testing.T) {
+// --ask, --json and --non-interactive answer false here whatever else is true
+// of the row, except under a marker: a coding agent's session is the agent's
+// case whatever else is true of it (the marker decides, --json included), and
+// the two flags are written into the oracle rather than taken from the code
+// because they say what the run does with a question (one asked for a document,
+// the other for a run that puts nothing to anybody) rather than where the run
+// is. The owner asking for the prompts back is exactly "the gate does not
+// confirm this step".
+func TestManagedGateStandsInInEverySession(t *testing.T) {
 	for _, c := range allConditions() {
 		for _, m := range allManaged() {
 			var want bool
@@ -196,11 +210,18 @@ func TestManagedGateStandsInInBothSessions(t *testing.T) {
 				want = false
 			case c.Agent != "":
 				want = m.Removes()
+			case c.JSON, c.NonInteractive:
+				want = false
 			default:
-				want = PersonAtTheTerminal(c) && m.Removes()
+				want = m.Removes()
 			}
 			if got := GateStandsIn(c, m); got != want {
 				t.Errorf("GateStandsIn(%s, %s) = %v, want %v", conditionsName(c), managedName(m), got, want)
+			}
+			// The gate's answer is never a licence to apply a step no verdict
+			// admitted, whatever the session: Removes is asked in every arm.
+			if GateStandsIn(c, m) && !m.Removes() {
+				t.Errorf("GateStandsIn(%s, %s) is true with no verdict behind it", conditionsName(c), managedName(m))
 			}
 			// A coding agent's session is the one the marker decides: the
 			// gate's sentence names a verdict there and never a person, so a
@@ -212,12 +233,39 @@ func TestManagedGateStandsInInBothSessions(t *testing.T) {
 	}
 }
 
-// TestManagedGateStandsInIsTheOwnerAtARealTerminal: the terminal case is the
-// same three facts plus the one fact about who is there, and the case it must
-// never be true of is the run nobody is at — a pipe, --json, a run that never
-// prompts, a session with a coding agent's marker in it, or a run whose owner
-// asked for the prompts back (--ask: the gate is then nobody's answer, which is
-// the whole of what the flag is for).
+// TestNobodyIsAtTheSessionIsThePipeAndNothingElse: the third session is the run
+// no person is at and no flag speaks for — no coding agent's marker, no
+// terminal, neither --json nor --non-interactive, and no --ask. It is the pipe
+// with its input closed a script, a cron or a live check drives `fugaro update`
+// in, and the case check 292 (the owner's, 2026-11-26) found answering with a
+// confirmation there was nobody to give.
+//
+// The two flags and the flag of the owner are the mutations caught: read as
+// this session, each of them would have the gate answer a run whose own reader
+// asked for something else — a document, a run that puts nothing to anybody, or
+// the question back.
+func TestNobodyIsAtTheSessionIsThePipeAndNothingElse(t *testing.T) {
+	for _, c := range allConditions() {
+		want := c.Agent == "" && !c.Terminal && !c.NonInteractive && !c.JSON && !c.Ask
+		if got := NobodyIsAtTheSession(c); got != want {
+			t.Errorf("NobodyIsAtTheSession(%s) = %v, want %v", conditionsName(c), got, want)
+		}
+		// The session nobody is at and the owner's own are the two halves of
+		// the same question, so no row is both and no row is neither of the
+		// two ways the gate stands in.
+		if got := PersonAtTheTerminal(c); got && NobodyIsAtTheSession(c) {
+			t.Errorf("%s is both the owner's session and a session nobody is at", conditionsName(c))
+		}
+	}
+}
+
+// TestManagedGateStandsInIsTheOwnerAtARealTerminal: the owner's own session is
+// the case where a person is there to be asked and the gate answers instead,
+// and the two sentences it can print are told apart by the marker
+// (TestManagedGateStandsInInEverySession's oracle). What this pins is the
+// half that is about who is there: where a person is at the terminal and the
+// verdict is Removes, the gate stands in for the step's confirmation, and in
+// every other row of the table it is the session's own answer that decides.
 func TestManagedGateStandsInIsTheOwnerAtARealTerminal(t *testing.T) {
 	for _, c := range allConditions() {
 		for _, m := range allManaged() {
@@ -247,23 +295,14 @@ func TestManagedGateStandsInIsTheOwnerAtARealTerminal(t *testing.T) {
 // row says (that is the mutation a "person at a terminal" read as "a terminal"
 // would make: a coding agent's session is a terminal too). And a run nobody is
 // at — a pipe, --json, a run that never prompts, --ask — is never the owner
-// either, and the answer there is the coding agent's refusal exactly as it was.
+// either: the owner's sentence is for a person who is there, and what a run
+// nobody is at reads is the other half of the same question
+// (NobodyIsAtTheSession, whose own test pins the truth table).
 func TestPersonAtTheTerminalIsTheOwnerAndNothingElse(t *testing.T) {
 	for _, c := range allConditions() {
 		want := c.Agent == "" && c.Terminal && !c.NonInteractive && !c.JSON && !c.Ask
 		if got := PersonAtTheTerminal(c); got != want {
 			t.Errorf("PersonAtTheTerminal(%s) = %v, want %v", conditionsName(c), got, want)
-		}
-		// And the predicate is exactly the owner half of GateStandsIn: under
-		// it the gate stands in for the step's confirmation, and the
-		// document's own facts are Removes' and nothing else's.
-		if c.Agent != "" {
-			continue
-		}
-		for _, m := range allManaged() {
-			if got, want := GateStandsIn(c, m), PersonAtTheTerminal(c) && m.Removes(); got != want {
-				t.Errorf("GateStandsIn(%s, %s) = %v, want %v", conditionsName(c), managedName(m), got, want)
-			}
 		}
 	}
 }

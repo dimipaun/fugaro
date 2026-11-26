@@ -1245,16 +1245,16 @@ func (m Managed) Removes() bool {
 // from the answer.
 //
 // The session nobody is at is the case this predicate got wrong until check 292
-// (the owner's, 2026-11-26): a pipe carries no marker, so it fell through the
-// two arms above, the step kept a confirmation there was nobody to give, and
-// `fugaro update` refused the owner's own plan with "the confirmation of this
-// step needs a real terminal" — a demand for a person, which is the prompt the
-// managed case exists to remove, printed for a plan the gate had already
-// admitted. What a session nobody is at must never get is a step APPLIED
-// without a verdict: Removes is still the whole of the answer here, so a
-// project that is not managed, a mark that did not answer, a verdict that
-// refused and a step no plan gate may judge (D1026) all keep the refusal they
-// had.
+// (the owner's, 2026-11-26): a pipe carries no marker and is no terminal, so it
+// fell through to the arm that asked for one, the step kept a confirmation
+// there was nobody to give, and `fugaro update` refused the owner's own plan
+// with "the confirmation of this step needs a real terminal" — a demand for a
+// person, which is the prompt the managed case exists to remove, printed for a
+// plan the gate had already admitted. What a session nobody is at must never
+// get is a step APPLIED without a verdict: Removes is still the whole of the
+// answer here, so a project that is not managed, a mark that did not answer, a
+// verdict that refused and a step no plan gate may judge (D1026) all keep the
+// refusal they had.
 //
 // The order is the rule's: a session with a marker is the agent's case whatever
 // else is true of it, and the terminal case cannot have a marker
