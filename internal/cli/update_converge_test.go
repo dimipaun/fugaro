@@ -671,21 +671,26 @@ func convergeOn(t *testing.T, r *convergeRig, stale []string) string {
 			t.Errorf("after fugaro update, doctor's %s check still fires: %s (fix: %s)", id, c.Problem, c.Fix)
 		}
 	}
-	// The checkout's pin still fires after the run, and that is the U6a truth
-	// rather than an omission: nothing in this tree writes a pin (U2, D949)
-	// and since U6a nothing takes one out either — the leftover is a notice
-	// naming the edit (repo_notices.go, D3340), and the checkout's file is left
-	// exactly as the release behind wrote it. Since U6b the check that says so
-	// is the per-repository one (R15), and it carries U6a's text.
-	c, ok := doctorCheckByID(after.Checks, repoPluginPinCheckID)
-	if !ok {
-		t.Fatalf("after fugaro update, doctor has no %s check at all: %+v", repoPluginPinCheckID, after.Checks)
-	}
-	if c.OK || !strings.Contains(c.Problem, repoNoticePinEdit) {
-		t.Errorf("after fugaro update, doctor's %s check reads %+v, want the previous release's pin still there, in U6a's words: nothing takes a pin out any more", repoPluginPinCheckID, c)
-	}
-	if !strings.Contains(out, repoNoticePinFile+": "+repoNoticePinEdit) {
-		t.Errorf("the run printed no notice for the pin still in the checkout's %s:\n%s", repoNoticePinFile, out)
+	// A fixture whose checkout holds an older release's pin still holds it
+	// after the run, and that is the U6a truth rather than an omission: nothing
+	// in this tree writes a pin (U2, D949) and since U6a nothing takes one out
+	// either — the leftover is a notice naming the edit (repo_notices.go,
+	// D3340), and the checkout's file is left exactly as the release behind
+	// wrote it. Since U6b the check that says so is the per-repository one
+	// (R15), and it carries U6a's text. Only a fixture that asked for that
+	// stale id in `stale` has a pin to report: the other rigs this helper
+	// serves never wrote one.
+	if slices.Contains(stale, repoPluginPinCheckID) {
+		c, ok := doctorCheckByID(after.Checks, repoPluginPinCheckID)
+		if !ok {
+			t.Fatalf("after fugaro update, doctor has no %s check at all: %+v", repoPluginPinCheckID, after.Checks)
+		}
+		if c.OK || !strings.Contains(c.Problem, repoNoticePinEdit) {
+			t.Errorf("after fugaro update, doctor's %s check reads %+v, want the previous release's pin still there, in U6a's words: nothing takes a pin out any more", repoPluginPinCheckID, c)
+		}
+		if !strings.Contains(out, repoNoticePinFile+": "+repoNoticePinEdit) {
+			t.Errorf("the run printed no notice for the pin still in the checkout's %s:\n%s", repoNoticePinFile, out)
+		}
 	}
 	for _, c := range after.Checks {
 		// The per-workflow settings comparison, which is the update's own
