@@ -277,13 +277,21 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	// running in, and each entry only answers whether it is that repository's
 	// image.
 	published, _, _ := env.policy.read(ctx, lc)
-	var publishedMap map[string]string
 	var publishedBake *bool
 	var publishedCloneURLs map[string]string
 	if published != nil {
-		publishedMap, publishedBake, publishedCloneURLs = published.ImageMap, published.BakeRepos, published.CloneURLs
+		publishedBake, publishedCloneURLs = published.BakeRepos, published.CloneURLs
 	}
-	imageMap := lc.ImageMapEffective(publishedMap)
+	// The map is read by provider (L11): the effective map is repo_images when
+	// the project or the node holds one, and the legacy bare-name map otherwise
+	// (R2), so the bake reads a repository's key — and a key at another provider
+	// is skipped rather than baked from a guess.
+	effective, fromRepoImages := lc.RepoImagesEffective(published)
+	imageMap := effective
+	var legacyMap map[string]string
+	if !fromRepoImages {
+		imageMap, legacyMap = nil, effective
+	}
 	bakeRepos := lc.BakeReposEffective(publishedBake)
 	// The project's repositories, each resolved to where it clones from: the map
 	// is what says which repositories the entry being built serves, and the bake
@@ -294,11 +302,11 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	// an entry is refused by name rather than baked from a URL this command
 	// would have to guess (imagebake.Decide).
 	//
-	// The two blocks a repository is read out of are keyed differently, and both
-	// spellings are canonical: `repos` and `image_map` by the repository alone
-	// (task.CanonicalRepo, "acme/app"), and `clone_urls` by the provider and the
+	// The blocks a repository is read out of are keyed by two spellings, and both
+	// are canonical: `repos` by the repository alone (task.CanonicalRepo,
+	// "acme/app"), and `clone_urls` and `repo_images` by the provider and the
 	// repository together (projectpolicy.Canonical, "github/acme/app", which is
-	// the key the block is published under and the key its own validation holds
+	// the key each block is published under and the key its own validation holds
 	// every entry to). A lookup that mixed them would read every repository as
 	// one the project gives no URL, which is not an error anywhere: CloneURL
 	// answers the provider's usual host for "", so the build would clone from a
@@ -323,7 +331,7 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			continue
 		}
 		projectRepos = append(projectRepos, imagebake.Repo{
-			Repo: canonical, Slug: slug, URL: url, Branch: cmp.Or(r.BaseBranch, "main"),
+			Repo: canonical, Key: key, Slug: slug, URL: url, Branch: cmp.Or(r.BaseBranch, "main"),
 		})
 	}
 	// What the map and the switch decide, and what they do not (imagebake.
@@ -332,7 +340,15 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	// installation that maps nothing composes nothing at all — byte-for-byte the
 	// definition it had. No path under fugaro update writes a definition at all
 	// (O1), which is what keeps it a one-command upgrade.
-	bakeRepo := imagebake.Repo{Repo: canon, Slug: rs.Slug, URL: repoURL, Branch: cmp.Or(rs.BaseBranch, "main")}
+	// The build's own repository as the map keys it. The provider is the
+	// checkout's own (infra.Repo's answer, F31), so a map that names this
+	// repository at the other provider is read as one this build serves nothing
+	// for and is skipped (R9).
+	bakeKey, err := projectpolicy.Canonical(rs.Provider, canon)
+	if err != nil {
+		return userErr("%v", err)
+	}
+	bakeRepo := imagebake.Repo{Repo: canon, Key: bakeKey, Slug: rs.Slug, URL: repoURL, Branch: cmp.Or(rs.BaseBranch, "main")}
 	bakeRef := bakeReference(cfg, cat, rs.Slug, catalog.Backend(lc.Backend()))
 	// The image is spelled from the host the installation's registries are
 	// under and not from a region of this command's own, so a build pushes
@@ -403,7 +419,7 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	}
 	var opener gitprov.Opener
 	if builds {
-		_, opener, err = openCatalogProvider(providerEnv, func(w string) {
+		opener, err = openRepoProvider(openCatalogProvider, providerEnv, repoServiceURL(lc, rs.Name), catalogDockerfileRead, func(w string) {
 			fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", w)
 		})
 		if err != nil {
@@ -523,7 +539,7 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			// Decide).
 			bakePlan := imagebake.Decide(imagebake.Request{
 				Entry: e.Name, Repo: bakeRepo, Reference: bakeRef,
-				Map: imageMap, Bake: bakeRepos,
+				Map: imageMap, LegacyMap: legacyMap, Bake: bakeRepos,
 				Repos: projectRepos,
 			})
 			noteBakePlan(cmd, e.Name, bakePlan)

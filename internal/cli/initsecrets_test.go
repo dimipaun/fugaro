@@ -239,7 +239,7 @@ func newSecretsRig(t *testing.T, origin string, in io.Reader, opts ...func(*init
 
 func (r *secretsRig) run(t *testing.T) (*initflow.Result, error) {
 	t.Helper()
-	return initflow.Run(context.Background(), []initflow.Stage{r.stage}, r.e.options())
+	return r.e.r.runStages(context.Background(), []initflow.Stage{r.stage}, r.e.options())
 }
 
 // noLeak fails when any of texts holds value, or its base64 or JSON form,
@@ -1415,6 +1415,93 @@ func TestInitSecretsStillPromptsWhenNothingStoredAnywhere(t *testing.T) {
 	}
 }
 
+// TestSetupKeepsItsValuePrompt: U3b puts value entry behind --ask on `fugaro
+// update` alone (D3347, R18). `setup`'s own value entry is not behind the flag:
+// it asks for a value at any real terminal exactly as it always has, and the
+// flag is not even registered on that door (it is refused by name).
+func TestSetupKeepsItsValuePrompt(t *testing.T) {
+	fakeTerminal(t)
+	r := newSecretsRig(t, bitbucketOrigin, strings.NewReader(""))
+	if !r.stage.canPrompt() {
+		t.Fatal("setup's canPrompt() is false without --ask: setup must keep its value prompt")
+	}
+	r.e.r.o.door = updateDoor.name
+	if r.stage.canPrompt() {
+		t.Fatal("update's canPrompt() is true without --ask: a value is asked for only under the flag there")
+	}
+	r.e.r.o.ask = true
+	if !r.stage.canPrompt() {
+		t.Fatal("update's canPrompt() is false under --ask at a real terminal")
+	}
+}
+
+// TestUpdateNeverAsksAnAgentOrJSON: the flag turns value entry on at the
+// owner's own terminal and nowhere else. A coding agent's session and --json
+// ask for no value even under it, whatever the terminal says, and the stage
+// leaves its one line per missing name instead.
+func TestUpdateNeverAsksAnAgentOrJSON(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		set  func(*testing.T, *initOptions)
+	}{
+		{"a coding agent's session", func(t *testing.T, o *initOptions) { t.Setenv("CLAUDECODE", "1") }},
+		{"--json", func(t *testing.T, o *initOptions) { o.asJSON = true }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeTerminal(t) // even a real terminal does not open the prompt here
+			noAgentSession(t)
+			r := newSecretsRig(t, bitbucketOrigin, strings.NewReader("value\n"),
+				func(o *initOptions) { o.door = updateDoor.name; o.ask = true })
+			tc.set(t, r.e.r.o)
+			if r.stage.canPrompt() {
+				t.Fatal("canPrompt() is true: a value must never be asked for an agent's session or under --json")
+			}
+			lr := waitLoop(t, r.start(context.Background()))
+			if strings.Contains(r.errOut.String(), "(input hidden)") {
+				t.Fatalf("the stage prompted where it must not: %q", r.errOut.String())
+			}
+			if got := stateOf(lr.res, initflow.Secrets); got != initflow.NeedsYou {
+				t.Fatalf("state = %q, want needs you: the value is left for the user", got)
+			}
+			if r.store.setCalls() != 0 {
+				t.Fatal("a value was stored where none may be taken")
+			}
+		})
+	}
+}
+
+// TestUpdateAskWithNoTerminalFailsAtOnce: under --ask on the update door, a
+// value with no terminal to type it at is refused rather than left waiting
+// (D1540): the stage reads nothing from stdin, prompts nothing and answers the
+// loop with the `fugaro secrets set` line for each missing name at once.
+func TestUpdateAskWithNoTerminalFailsAtOnce(t *testing.T) {
+	noAgentSession(t)
+	noTerminal(t)
+	spy := &readerSpy{Reader: strings.NewReader("bb-secret-value-EXAMPLE\n")}
+	r := newSecretsRig(t, bitbucketOrigin, spy,
+		func(o *initOptions) { o.door = updateDoor.name; o.ask = true })
+	lr := waitLoop(t, r.start(context.Background()))
+	if spy.read {
+		t.Fatal("stdin was read: a value with no terminal must fail at once, never wait")
+	}
+	if strings.Contains(r.errOut.String(), "(input hidden)") {
+		t.Fatalf("the stage prompted with no terminal: %q", r.errOut.String())
+	}
+	if got := stateOf(lr.res, initflow.Secrets); got != initflow.NeedsYou {
+		t.Fatalf("state = %q, want needs you: the value is left with the command that stores it", got)
+	}
+	var cmds []string
+	for _, l := range lr.res.Left {
+		cmds = append(cmds, l.Commands...)
+	}
+	if !slices.ContainsFunc(cmds, func(c string) bool { return strings.Contains(c, "secrets set ") }) {
+		t.Fatalf("the left lines name no command that stores the value: %q", cmds)
+	}
+	if r.store.setCalls() != 0 {
+		t.Fatal("a value was stored with no terminal to type one at")
+	}
+}
+
 type stubStage struct {
 	name    string
 	applied bool
@@ -1537,7 +1624,15 @@ workflows:
 			if tc.enforce {
 				r.e.lc.Budget = &localcfg.Budget{Mode: localcfg.BudgetEnforce}
 			}
-			r.writeConfig(t, tc.yaml)
+			// The pin is what decides the prompt, and a repository file's
+			// agent.model is lifted (S1, D3237): config.Resolve drops it, so
+			// the file resolves with no model at all and every case would
+			// read "a pin goes direct". The pin is published as the project
+			// layer the file is anchored to, which is where a real
+			// installation keeps it.
+			file, layer := testutil.FixturePins(tc.yaml, config.LiftedKeyPaths())
+			r.writeConfig(t, file)
+			attachLayer(t, "aurora", layer)
 			res, err := r.run(t)
 			if err != nil || len(res.Left) != 1 {
 				t.Fatalf("%v, left %v", err, res.Left)

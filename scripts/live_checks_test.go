@@ -428,7 +428,13 @@ import (
 // asserts never reaches the block or the progress log. A `compute instances
 // create` builds the object Compute would report out of the labels and metadata
 // the call carried, so the plain VM's row measures what a launcher can write
-// rather than what the test chose. The tree is a fixture too: the case writes the
+// rather than what the test chose. Three more of its answers are the readings a
+// run whose lines never arrived is judged on: the job's own object with the
+// state, task states and task status events a case writes (where the task's
+// exit code -- the probe's second channel -- lives), the VM's serial console,
+// and the broader log query under the job's own resource type, which a case can
+// answer with lines of its own so that "they landed elsewhere" is told from
+// "nothing landed". The tree is a fixture too: the case writes the
 // log filter into internal/backend/batch/logs.go, the managed label pair into
 // internal/backend/gcp/names.go and the wrapped variable's name into
 // docs/batch-run-identity/, and two cases bend those files to prove the check
@@ -722,6 +728,15 @@ import (
 // mount, what the service served a run and its review, what an unlisted
 // repository was refused with, and that a catalog build resolves no accessor
 // for the build identity.
+// Checks 910 to 912 are the repo-override-rulings work's owner-run checks (CK1
+// and CK2). 910's and 911's fakes are a fake `fugaro` whose `config list`,
+// `settings`, `recipes` and `update --plan-only` the case owns, over real git
+// checkouts with a bare origin of their own, so a case says which of the ref's
+// values the record holds and whether a value that moved was named by the
+// update. 912's is a fake `fugaro` that refuses a lifted key on the default
+// branch, names it on any other ref and refuses it in the plan, over real git
+// checkouts likewise, so a case says which of the three readings a bent answer
+// breaks and that the checkout is left exactly as it was.
 // Checks 136 and 341 to 343 are the periodic-reviews work's owner-run checks
 // (P8), and they drive the strict-fakes harness the other checks' libs carry:
 // the fake `fugaro` validates every command and flag against the real CLI's
@@ -767,6 +782,21 @@ import (
 // finding U9 exists for, that a step left for the owner is not a refusal, and
 // that an update which asks a question is a finding -- with no gcloud and no
 // curl anywhere, because the check holds no credential.
+// Checks 850 and 851 are the workspace-credentials plan's own, and each drives a
+// fake `gcloud` and a fake `fugaro` over files the case writes. 850's fake
+// `gcloud` is a small model of a workspace's project: the project policy and the
+// two services' own policies (so a case can say who holds an invoke grant and
+// under what condition a service account reaches a person's container), the
+// containers the project holds, and the workspace's own two services' log lines --
+// the intake's `intake: audit` lines by their sub, and the credentials service's
+// `credsvc: audit` and `credsvc: refused` lines by their run -- while its fake
+// `fugaro` answers `version`, `doctor` and `runs ls`, so a case can bend a
+// refusal's own sentence, a removal's moment and a run that did not halt. 851's
+// fake `gcloud` serves that service's lines for a member whose switch was never
+// turned on (a case bends them to name a `fugaro_u_` container) and its fake
+// `fugaro` answers the three doctor documents, the update logs of the case's own,
+// the run listing and the version, so a case says what both updates left and that
+// the member without the switch saw no change.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -819,6 +849,7 @@ var liveCheckScripts = []struct {
 	{"check-501.sh", "check-501_test.sh"},
 	{"check-580.sh", "check-580_test.sh"},
 	{"check-581.sh", "check-581_test.sh"},
+	{"check-582.sh", "check-582_test.sh"},
 	{"check-411.sh", "check-411_test.sh"},
 	{"check-412.sh", "check-412_test.sh"},
 	{"check-c0.sh", "check-c0_test.sh"},
@@ -913,7 +944,10 @@ var liveCheckScripts = []struct {
 	{"check-821.sh", "check-821_test.sh"},
 	{"check-910-lift-snapshot.sh", "check-910-lift-snapshot_test.sh"},
 	{"check-911-lift-compare.sh", "check-911-lift-compare_test.sh"},
+	{"check-912-lift-refusal.sh", "check-912-lift-refusal_test.sh"},
 	{"check940.sh", "check940_test.sh"},
+	{"check-850.sh", "check-850_test.sh"},
+	{"check-851.sh", "check-851_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent

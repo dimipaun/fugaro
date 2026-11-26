@@ -219,17 +219,21 @@ func TestSpecFromTheTable(t *testing.T) {
 	// A `vertex` repository is the case agent.auth cannot answer at all: the
 	// service is not a credential Vertex is held in — the service calls Vertex
 	// on its own identity (D3174) — so CredentialsServiceServes answers false
-	// for that auth and, before the table, such a job was told about no service
-	// and reached Vertex with its own account. A table that names Vertex makes
-	// the call the service's, so the job is told even though its auth is the one
-	// the bridge serves nothing for.
+	// for that auth. The address still reaches such a repository, and it reads
+	// the installation's own block alone, with no table and no switch's vouch
+	// (D3326, IS9): it is what the run fetches its workflow secrets through and
+	// what its git path reads. Its model path does not move with it, which is
+	// the half the assertion below keeps.
 	vertex := repoRootServed(t, repoRootVertexAgent, chainTableLC, config.BudgetObserve)
 	if vertex.Installation.CredentialsService == nil {
 		t.Error("a table that names Vertex does not tell the job about the service: nothing else can reach Vertex for it, so the run has no way to make the call its chain names")
 	}
 	vertexBridge := repoRootServed(t, repoRootVertexAgent, repoRootLC, config.BudgetObserve)
-	if vertexBridge.Installation.CredentialsService != nil {
-		t.Error("a vertex repository with no table plans an address and an invoker grant for the service: no arm of the release-1 bridge serves that auth, and the job reaches Vertex with its own account as it always did")
+	if vertexBridge.Installation.CredentialsService == nil {
+		t.Error("a vertex repository with no table is told about no service, want the installation's own block: the vertex arm of the address reads that block and no table at all (D3326, IS9), so the release-1 bridge and a table that names Vertex plan the same address for it")
+	}
+	if got := vertexBridge.ModelSecretsServed; got != config.ModelSecretServedNone {
+		t.Errorf("a vertex repository with no table plans model_secrets_served = %q, want %q: the address moves its git path and the workflow secrets it fetches, and no model credential of its own — its calls go out on the job's own account (D3174, F17)", got, config.ModelSecretServedNone)
 	}
 
 	// And the gate the table does not escape: a table is no service. On an

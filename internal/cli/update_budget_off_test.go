@@ -86,7 +86,7 @@ func TestTheLocalConfigIsRewrittenInPlace(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+		out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 		after, err := os.ReadFile(cfg)
 		if err != nil {
@@ -183,120 +183,6 @@ func TestTheLocalConfigIsRewrittenInPlace(t *testing.T) {
 	})
 }
 
-// TestTheRepositoryFileRemovalIsOfferedAsADiff: the checkout's fugaro.yaml is a
-// committed file somebody reviews, so the update offers the removal of the line
-// the way it offers the anchor's — the diff, then --yes writes, a person at the
-// terminal writes having read it, and anything else leaves the file alone and
-// prints the line to remove (F12, D3022).
-func TestTheRepositoryFileRemovalIsOfferedAsADiff(t *testing.T) {
-	removal := func(t *testing.T, o *initOptions, terminal bool) (*initRig, string, *syncBuf) {
-		t.Helper()
-		noAgentSession(t)
-		r := updateRig(t)
-		root := repoCheckout(t, githubOrigin, refreshYAML+offRepoYAML)
-		t.Chdir(root)
-		if terminal {
-			fakeTerminal(t)
-		} else {
-			noTerminal(t)
-		}
-		e := rigEngine(t, r, o)
-		out := &syncBuf{}
-		e.r.w = out
-		e.offerBudgetModeRemoval(context.Background())
-		return r, root, out
-	}
-
-	t.Run("--yes writes it", func(t *testing.T) {
-		_, root, out := removal(t, &initOptions{door: updateDoor.name, yes: true}, false)
-		file := filepath.Join(root, "fugaro.yaml")
-		got, err := os.ReadFile(file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(got) != refreshYAML+"budget:\n" {
-			t.Errorf("the file after the removal is:\n%q\nwant the line gone and every other byte kept:\n%q", got, refreshYAML+"budget:\n")
-		}
-		for _, want := range []string{file, "  -   mode: off", "confirmed by this run's own answer", "the budget.mode line is gone"} {
-			if !strings.Contains(out.String(), want) {
-				t.Errorf("the offer does not say %q:\n%s", want, out.String())
-			}
-		}
-	})
-
-	t.Run("a person at the terminal writes it having read the diff", func(t *testing.T) {
-		_, root, out := removal(t, &initOptions{door: updateDoor.name}, true)
-		got, err := os.ReadFile(filepath.Join(root, "fugaro.yaml"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(got) != refreshYAML+"budget:\n" {
-			t.Errorf("the file after the removal is:\n%q\nwant the line gone", got)
-		}
-		if !strings.Contains(out.String(), "  -   mode: off") {
-			t.Errorf("the run wrote the file without showing the diff it was read from:\n%s", out.String())
-		}
-	})
-
-	t.Run("nobody at the terminal: the line is printed and nothing is written", func(t *testing.T) {
-		_, root, out := removal(t, &initOptions{door: updateDoor.name}, false)
-		file := filepath.Join(root, "fugaro.yaml")
-		got, err := os.ReadFile(file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(got) != refreshYAML+offRepoYAML {
-			t.Errorf("a run with no terminal wrote the checkout's file:\n%s", got)
-		}
-		if !strings.Contains(out.String(), "to let this repository's runs start again, remove the budget.mode line from "+file) {
-			t.Errorf("the run did not print the line to remove:\n%s", out.String())
-		}
-		if strings.Contains(out.String(), "the budget.mode line is gone") {
-			t.Errorf("the run says it removed a line it left in place:\n%s", out.String())
-		}
-	})
-
-	t.Run("a file that does not say the word is left alone", func(t *testing.T) {
-		noAgentSession(t)
-		r := updateRig(t)
-		root := repoCheckout(t, githubOrigin, refreshYAML)
-		t.Chdir(root)
-		noTerminal(t)
-		e := rigEngine(t, r, &initOptions{door: updateDoor.name, yes: true})
-		out := &syncBuf{}
-		e.r.w = out
-		e.offerBudgetModeRemoval(context.Background())
-		got, err := os.ReadFile(filepath.Join(root, "fugaro.yaml"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(got) != refreshYAML {
-			t.Errorf("a file that does not say the word was rewritten:\n%s", got)
-		}
-		if out.String() != "" {
-			t.Errorf("the run said something about a file with nothing to remove:\n%s", out.String())
-		}
-	})
-
-	t.Run("a checkout with no fugaro.yaml is silence", func(t *testing.T) {
-		noAgentSession(t)
-		r := updateRig(t)
-		root := repoCheckout(t, githubOrigin, "")
-		t.Chdir(root)
-		noTerminal(t)
-		e := rigEngine(t, r, &initOptions{door: updateDoor.name, yes: true})
-		out := &syncBuf{}
-		e.r.w = out
-		e.offerBudgetModeRemoval(context.Background())
-		if out.String() != "" {
-			t.Errorf("the run said something about a checkout with no fugaro.yaml:\n%s", out.String())
-		}
-	})
-}
-
-// TestTheUpdateNamesWhatWillStopFirst: R8's lines, in R8's order, and the
-// listing printed before the update changes anything — the repository's three
-// and then the installation's two.
 func TestTheUpdateNamesWhatWillStopFirst(t *testing.T) {
 	t.Run("the lines, in R8's order", func(t *testing.T) {
 		f := budgetStopFacts{
@@ -317,7 +203,7 @@ func TestTheUpdateNamesWhatWillStopFirst(t *testing.T) {
 		}
 		want := []string{
 			"this repository's runs are refused: agent.models.coder acme-1 has no price",
-			f.repoPath + " says budget.mode: off, which is not a mode any more: this update offers the removal of the line",
+			f.repoPath + " says budget.mode: off, which is not a mode any more: delete the line",
 			"this repository's model key (" + f.modelKey + ") leaves its job at this apply",
 			"this machine's local config says budget.mode: off, which is removed: the update rewrites it to observe, and this machine's runs come under the database's mode " + budget.ModeEnforce,
 			"this installation launches runs on " + backend.CloudBatch,
@@ -341,87 +227,31 @@ func TestTheUpdateNamesWhatWillStopFirst(t *testing.T) {
 		}
 	})
 
-	// The model key's line is F26, and the state it is about is the one a
-	// repository the switch held off is really in: a node that says the word,
-	// a bundle the service can serve it from, and a record in the local config
-	// that is FALSE — the switch's own past answer, with the word folded into
-	// it. A line read from that record could never fire here, which is what
-	// these two subtests are about: the reading is the node's two modes and the
-	// bundle's readiness.
-	t.Run("the model key a repository under off loses", func(t *testing.T) {
-		rig := func(t *testing.T, mode, doc string) (*initEngine, budgetStopFacts) {
-			t.Helper()
-			noAgentSession(t)
-			r := newInitRig(t)
-			r.appendConfig(t, "  acme/app: { provider: github, credentials_service_ready: false, workflows: [app, api] }\n")
-			r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
-			db := gcpfake.NewRTDB(t)
-			r.appendConfig(t, budgetBlock(db))
-			adoptBudgetFake(db)
-			db.Set(projectpolicy.PathRulesMarker(), projectpolicy.PolicyRulesVersion)
-			node := currentNode()
-			node["budget"] = map[string]any{"mode": mode, "per_run_usd": 5}
-			db.Set(projectpolicy.PathShared(), node)
-			if doc != "" {
-				putSwitchBundle(t, r, []byte(doc))
-			}
-			t.Chdir(repoCheckout(t, githubOrigin, refreshYAML))
-			e := rigEngine(t, r, &initOptions{door: updateDoor.name})
-			if e.lc.Repos["acme/app"].CredentialsServiceOn() {
-				t.Fatalf("the fixture is not the state this line is about: the record says the service is ready for a repository the switch held off, and a line read from that record would fire for the wrong reason")
-			}
-			return e, e.budgetStopFacts(context.Background())
-		}
-		ready := config.ClaudeAccountSecret("") + ": " + credsValue(t, "token") + "\n" +
-			config.GitHubAppKeySecret + ": " + credsValue(t, "appkey") + "\n"
-		want := config.ReservedSecrets[config.ClaudeOAuthToken]
-
-		_, f := rig(t, "off", ready)
-		if f.modelKey != want {
-			t.Errorf("the model key a repository under off loses is %q, want %q: its node says the word, the policy stage of this same run rewrites it to observe, and the bundle holds what its oauth runs and its GitHub provider need — so the apply that follows serves it and drops the key from its job (F26)", f.modelKey, want)
-		}
-		if got := budgetStops(f); len(got) != 1 || !strings.Contains(got[0].line, want) {
-			t.Errorf("the listing holds %v, want the one line naming %s: what will stop is what the update owes before it changes anything (R8)", got, want)
-		}
-
-		// A bundle the service cannot serve this repository from is no move: the
-		// switch stays off and the job keeps its key.
-		if _, f := rig(t, "off", ""); f.modelKey != "" {
-			t.Errorf("the listing names %q over a bundle that holds nothing, want nothing: the switch needs a bundle it can serve the repository from, so no key leaves the job", f.modelKey)
-		}
-
-		// And a node that is already live is no move either: the switch serves
-		// the repository as it stands, so nothing about it changes at this apply.
-		if _, f := rig(t, "observe", ready); f.modelKey != "" {
-			t.Errorf("the listing names %q over a node that already says observe, want nothing: the key left that job at an earlier apply", f.modelKey)
-		}
-	})
-
-	t.Run("the predicate reads the node's two modes", func(t *testing.T) {
+	t.Run("the predicate reads the node's mode and the bundle", func(t *testing.T) {
 		apiKey, oauth := config.ReservedSecrets[config.AnthropicSecret], config.ReservedSecrets[config.ClaudeOAuthToken]
 		for name, tc := range map[string]struct {
-			installed, ready    bool
-			auth, before, after string
-			want                string
+			installed, ready bool
+			auth, before     string
+			want             string
 		}{
-			"an api-key repository under the word, over a ready bundle": {true, true, config.AuthAPIKey, "off", "observe", apiKey},
-			"an oauth repository under the word, over a ready bundle":   {true, true, config.AuthOAuth, "off", "observe", oauth},
-			"a bundle the service cannot serve it from":                 {true, false, config.AuthAPIKey, "off", "observe", ""},
-			"an installation with no service":                           {false, true, config.AuthAPIKey, "off", "observe", ""},
-			"a node that already says observe":                          {true, true, config.AuthAPIKey, "observe", "observe", ""},
-			"a node that already says enforce":                          {true, true, config.AuthOAuth, "enforce", "enforce", ""},
-			"a node that names no mode at all":                          {true, true, config.AuthAPIKey, "", "", ""},
-			"a cascade repository":                                      {true, true, config.AuthCascade, "off", "observe", ""},
+			"an api-key repository under the word, over a ready bundle": {true, true, config.AuthAPIKey, "off", apiKey},
+			"an oauth repository under the word, over a ready bundle":   {true, true, config.AuthOAuth, "off", oauth},
+			"a bundle the service cannot serve it from":                 {true, false, config.AuthAPIKey, "off", ""},
+			"an installation with no service":                           {false, true, config.AuthAPIKey, "off", ""},
+			"a node that already says observe":                          {true, true, config.AuthAPIKey, "observe", ""},
+			"a node that already says enforce":                          {true, true, config.AuthOAuth, "enforce", ""},
+			"a node that names no mode at all":                          {true, true, config.AuthAPIKey, "", ""},
+			"a cascade repository":                                      {true, true, config.AuthCascade, "off", ""},
 		} {
-			if got := movedModelKey(tc.installed, tc.ready, tc.auth, tc.before, tc.after); got != tc.want {
-				t.Errorf("%s: movedModelKey(%v, %v, %q, %q, %q) = %q, want %q", name, tc.installed, tc.ready, tc.auth, tc.before, tc.after, got, tc.want)
+			if got := movedModelKey(tc.installed, tc.ready, tc.auth, tc.before); got != tc.want {
+				t.Errorf("%s: movedModelKey(%v, %v, %q, %q) = %q, want %q", name, tc.installed, tc.ready, tc.auth, tc.before, got, tc.want)
 			}
 		}
 	})
 
 	t.Run("the listing comes before anything this run changes", func(t *testing.T) {
 		r := offLocalConverge(t, currentNode(), refreshYAML+offRepoYAML)
-		out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+		out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 		head := "This release is always a budget. Before this update changes anything, what will stop:"
 		at := strings.Index(out, head)
@@ -444,6 +274,75 @@ func TestTheUpdateNamesWhatWillStopFirst(t *testing.T) {
 			t.Errorf("the listing is not printed before the run changes anything (header %d, the repository's line %d, the rewrite %d):\n%s", at, repo, rewrite, out)
 		}
 	})
+}
+
+// modelMoveRig is the state F26's line is about, which is the state a
+// repository the switch held off is really in: a node whose bytes say the word,
+// a bundle the service can serve the repository from, and a record in the local
+// config that is FALSE — the switch's own past answer, with the word folded
+// into it. A line read from that record could never fire here, which is the
+// point of the fixture: what the line is answered from is the node's mode and
+// the bundle, and this rig makes those the two facts that decide it. mode is
+// the node's own budget mode; an empty doc is a bundle that holds nothing.
+func modelMoveRig(t *testing.T, mode, doc string) (*initEngine, budgetStopFacts) {
+	t.Helper()
+	noAgentSession(t)
+	r := newInitRig(t)
+	r.appendConfig(t, "  acme/app: { provider: github, credentials_service_ready: false, workflows: [app, api] }\n")
+	r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
+	db := gcpfake.NewRTDB(t)
+	r.appendConfig(t, budgetBlock(db))
+	adoptBudgetFake(db)
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.PolicyRulesVersion)
+	node := currentNode()
+	node["budget"] = map[string]any{"mode": mode, "per_run_usd": 5}
+	db.Set(projectpolicy.PathShared(), node)
+	if doc != "" {
+		putSwitchBundle(t, r, []byte(doc))
+	}
+	t.Chdir(repoCheckout(t, githubOrigin, refreshYAML))
+	e := rigEngine(t, r, &initOptions{door: updateDoor.name})
+	if e.lc.Repos["acme/app"].CredentialsServiceOn() {
+		t.Fatalf("the fixture is not the state this line is about: the record says the service is ready for a repository the switch held off, and a line read from that record would fire for the wrong reason")
+	}
+	return e, e.budgetStopFacts(context.Background())
+}
+
+// TestTheUpdateNamesAKeyThatWillMoveToTheService is F26 end to end: the update
+// printed, before it changed anything, the one line naming the model credential
+// this apply takes out of the repository's job. It is the state AB15 made —
+// the switch stopped reading the budget mode (D3009), so a node that says the
+// word no longer holds an `oauth` or `api-key` repository off it, and this
+// apply serves such a repository and drops the key its job mounts.
+func TestTheUpdateNamesAKeyThatWillMoveToTheService(t *testing.T) {
+	ready := config.ClaudeAccountSecret("") + ": " + credsValue(t, "token") + "\n" +
+		config.GitHubAppKeySecret + ": " + credsValue(t, "appkey") + "\n"
+	want := config.ReservedSecrets[config.ClaudeOAuthToken]
+
+	e, f := modelMoveRig(t, "off", ready)
+	if f.modelKey != want {
+		t.Errorf("the model key a repository under off loses is %q, want %q: its node says the word, the policy stage of this same run rewrites it to observe, and the bundle holds what its oauth runs and its GitHub provider need — so the apply that follows serves it and drops the key from its job (F26)", f.modelKey, want)
+	}
+	e.announceBudgetStops(context.Background())
+	w, ok := e.r.w.(*syncBuf)
+	if !ok {
+		t.Fatalf("the rig's stdout is %T, not the buffer this test reads the transcript from", e.r.w)
+	}
+	if out := w.String(); !strings.Contains(out, "model key ("+want+") leaves its job at this apply") {
+		t.Errorf("the update printed no line naming %s as leaving its job:\n%s", want, out)
+	}
+
+	// A bundle the service cannot serve this repository from is no move: the
+	// switch stays off and the job keeps its key.
+	if _, f := modelMoveRig(t, "off", ""); f.modelKey != "" {
+		t.Errorf("the listing names %q over a bundle that holds nothing, want nothing: the switch needs a bundle it can serve the repository from, so no key leaves the job", f.modelKey)
+	}
+
+	// And a node that is already live is no move either: the switch serves
+	// the repository as it stands, so nothing about it changes at this apply.
+	if _, f := modelMoveRig(t, "observe", ready); f.modelKey != "" {
+		t.Errorf("the listing names %q over a node that already says observe, want nothing: the key left that job at an earlier apply", f.modelKey)
+	}
 }
 
 // TestTheUpdateNamesTheDatabasesModeAndCaps: where this machine's local config
@@ -529,7 +428,7 @@ func TestTheUpdateSaysABudgetOffRunKeepsRunning(t *testing.T) {
 	t.Run("a config that says the word", func(t *testing.T) {
 		r := offLocalConverge(t, currentNode(), refreshYAML)
 		startRunInFlight(t, r)
-		line := inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"}))
+		line := inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"}))
 		if !strings.Contains(line, "a run that started with the budget off holds its key and finishes") {
 			t.Errorf("the note about the runs in flight does not say the budget-off run keeps running:\n%s", line)
 		}
@@ -538,7 +437,7 @@ func TestTheUpdateSaysABudgetOffRunKeepsRunning(t *testing.T) {
 	t.Run("a config that does not", func(t *testing.T) {
 		r := newConvergeRig(t, currentNode())
 		startRunInFlight(t, r)
-		line := inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"}))
+		line := inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"}))
 		if strings.Contains(line, "started with the budget off") {
 			t.Errorf("the note claims a run started with the budget off over a config that does not say the word:\n%s", line)
 		}

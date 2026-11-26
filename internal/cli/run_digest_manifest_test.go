@@ -27,7 +27,8 @@ const digestLaunchImage = releaseL8
 const digestOldImage = "ghcr.io/dimipaun/fugaro-base:0.12.0"
 
 // digestRepoRecipe is a repository's own report recipe: the digest step
-// first, which is all digestRecipe reads to call a launch a report run.
+// first, which is what makes the project's copy of it a report recipe for the
+// launch that embeds it (D3303).
 const digestRepoRecipe = "version: 1\nname: report\ndescription: This repository's own run report recipe.\n" +
 	"use_when: A scheduled run review only, launched by the repository's own routine.\n" +
 	"steps:\n  - digest: {}\n  - review:\n      max_rounds: 1\n"
@@ -35,9 +36,10 @@ const digestRepoRecipe = "version: 1\nname: report\ndescription: This repository
 // reportRecipeCheckout makes the working directory a checkout of acme/app
 // carrying digestRepoRecipe as .fugaro/recipes/report.yaml. A launch resolves
 // that recipe as the project's copy of it (D3303), so the arms below that
-// launch one publish the copy (repoRecipeCopy); the file is still what the
-// launcher's repository-recipe readers read for a task an older release
-// wrote, digestRecipe's among them.
+// launch one publish the copy (repoRecipeCopy); the file is what the
+// launcher's remaining repository-recipe reader reads — run.go's
+// repoRecipeFrom, which judges a task an older release wrote by the image
+// gates — and no reader judges a report run or a review by it any more.
 func reportRecipeCheckout(t *testing.T) {
 	t.Helper()
 	testutil.IsolateGit(t)
@@ -317,7 +319,7 @@ func TestDigestAttemptsRefused(t *testing.T) {
 // paid to start.
 //
 // Mutations: drop the refuseFollowUpReportMode calls from newFollowUpSpec and
-// carryChosenRecipe and the one from refuseFollowUpRepoRecipe, and every arm
+// carryChosenRecipe, and every arm
 // but the last launches a job and fails wantRefused on the execution count as
 // well as on the missing refusal; drop the prChain.PrevReport arm of
 // newFollowUpSpec and the last arm does.
@@ -404,7 +406,9 @@ func TestDigestFollowUpRefused(t *testing.T) {
 // would cover records that have moved on. The task says it is a report run
 // two ways, and both are refused: the manifest it carries (digest_runs is
 // accepted under no other recipe, task.Validate) and the recipe itself, for a
-// report run whose manifest came out empty.
+// report run whose manifest came out empty. A task naming a repository recipe
+// is a third shape, and one no launcher of this release writes (R7): the
+// launcher judges the text a task carries, so it is the runner's to refuse.
 //
 // Mutation (drop the retry refusal from retrySpec): both arms launch a job.
 func TestDigestRetryRefused(t *testing.T) {
@@ -420,7 +424,6 @@ func TestDigestRetryRefused(t *testing.T) {
 	}{
 		{"its manifest", []string{manifestRunID(time.Now().Add(-2 * time.Hour))}, report},
 		{"its recipe, with a manifest that came out empty", nil, report},
-		{"its recipe, a repository one", nil, &task.Recipe{Name: "report", Source: string(recipe.SourceRepo)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := digestFixture(t)
@@ -428,11 +431,7 @@ func TestDigestRetryRefused(t *testing.T) {
 			spec := firstRunSpec(id)
 			spec.Recipe, spec.DigestRuns = tc.recipe, tc.runs
 			seedSpec(t, f, spec, false)
-			if tc.recipe.Source == string(recipe.SourceRepo) {
-				reportRecipeCheckout(t)
-			} else {
-				t.Chdir(t.TempDir())
-			}
+			t.Chdir(t.TempDir())
 			_, _, err := execute(t, "run", "--retry", appSlug+"/"+id)
 			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "is a report run") {
 				t.Fatalf("--retry: err = %v, want the report run's refusal", err)
@@ -458,14 +457,17 @@ func TestDigestRetryRefused(t *testing.T) {
 // digest step from the text it carries.
 func TestDigestManifestRepoRecipe(t *testing.T) {
 	f := digestFixture(t)
+	// The digest gate passes on the fixture's own image, but the copy this
+	// launch embeds is refused below releaseCopy (recipeCopySince).
+	writeBuildRecord(t, f, appSlug, "web", releaseCopy)
 	mine := []string{manifestRunID(time.Now().Add(-time.Hour))}
 	seedManifestRun(t, f, "acme/app", appSlug, mine[0])
 	reportRecipeCheckout(t)
 	copy := repoRecipeCopy(t, f, "acme/app", "report", digestRepoRecipe)
 
 	spec := launchWith(t, f, "report", "20261028-120000-abcd")
-	if spec.Recipe == nil || spec.Recipe.Name != copy || spec.Recipe.Source != string(recipe.SourceProject) {
-		t.Fatalf("recipe = %+v, want the project's copy of the repository's report recipe", spec.Recipe)
+	if spec.Recipe == nil || spec.Recipe.Name != copy || spec.Recipe.Source != string(recipe.SourceProject) || spec.Recipe.YAML == "" {
+		t.Fatalf("recipe = %+v, want the project's copy of the repository's own report recipe, embedded", spec.Recipe)
 	}
 	if !slices.Equal(spec.DigestRuns, mine) {
 		t.Fatalf("digest_runs = %v, want %v", spec.DigestRuns, mine)
@@ -539,6 +541,10 @@ func TestDigestManifestOnlyForReportRuns(t *testing.T) {
 // this fails on the execution count and on the stored task.
 func TestDigestEmptyListingRefused(t *testing.T) {
 	f := digestFixture(t)
+	// The launch that must go through at the end carries the copy the store
+	// holds of the repository's own report recipe, which the release-A gate
+	// refuses below releaseCopy; the fixture's own image is below it.
+	writeBuildRecord(t, f, appSlug, "web", releaseCopy)
 	refuse := func(t *testing.T, name, id string) {
 		t.Helper()
 		_, _, err := execute(t, "run", "--repo", "acme/app", "--recipe", name, "--run-id", id, "Periodic run review")

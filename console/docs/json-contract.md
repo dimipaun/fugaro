@@ -2673,7 +2673,7 @@ today.**
 | Key | Type | Absent | Null | Notes |
 | --- | --- | --- | --- | --- |
 | `runs` | int | never | never | how many runs the window holds, each counted once on its own day. At least the sum of `states` |
-| `states` | object | never | never | the counts by state. **All six of `succeeded`, `failed`, `halted`, `cancelled`, `infra_error` and `other` are always present**, zero included, so a consumer reads a count without a nil check; a run whose outcome names a status outside the six is counted in `other` rather than dropped or given a key of its own |
+| `states` | object | never | never | the counts by state. **All six of `succeeded`, `failed`, `halted`, `cancelled`, `infra_error` and `other` are always present**, zero included, so a consumer reads a count without a nil check; **a run that suspended itself to be resumed by its chain is counted in `other`** — the day records these figures are added from name six states, so the pause has no key of its own here — and a run whose outcome names any other status outside the six is counted there too rather than dropped or given a key of its own |
 | `spent_micros` | int | never | never | the model money the caps count, in micro-dollars — the budget database's own figure, so nothing is rounded on the way out |
 | `notional_micros` | int | never | never | the part of the model figure a subscription paid, in micro-dollars: it counts toward the plan's limits and is nobody's bill. **It is separate from `spent_micros`, and the two are never summed** |
 | `compute_micros` | int or **null** | never | **yes** | what the runs whose compute was priced came to, in micro-dollars. **null when the row has runs and no run's compute is known** — "not estimated" is not "free", and a renderer draws it as `n/a` — and `0` when the row has no run at all, which is a fact. This read opens no bucket, so a live day's compute is never estimated here |
@@ -4303,10 +4303,11 @@ new flags is unchanged, and its one `--json` document is unchanged too**: the
 feed takes that document's place on stdout, the run's progress stays on stderr
 where `--json` already puts it, and the final exit code is the run's own.
 
-**`--answers-file -` is the wizard's other half.** The five questions
-(`gcp_project`, `region`, `name`, `rigor`, `bake` — `setupQuestions`, and the
-bake switch is `--bake-repos` beside the file) arrive as one JSON document with
-its own `version`; `-` means **stdin**, and the console passes the dash and never
+**`--answers-file -` is the wizard's other half.** The six questions
+(`gcp_project`, `region`, `name`, `rigor`, `budget`, `bake` — `setupQuestions`,
+whose place row the file answers as `region`, and the bake switch is
+`--bake-repos` beside the file) arrive as one JSON document with its own
+`version`; `-` means **stdin**, and the console passes the dash and never
 a path — the document reaches the child on its stdin as bytes main holds in
 memory, so no file exists for another process of the same user to change between
 main's validation and the CLI's read, and no word of the argv is a path. A flag
@@ -4326,8 +4327,16 @@ own `SETUP_EVENT_TYPES` in `console/src/shared/new-ops.ts`, which with
 `internal/cli/testdata/setup_events.golden.ndjson` is the authority):
 `{"type":"step",…}` is the run reaching a stage, `{"type":"stage",…}` is one
 stage it settled — **with the very members the `--json` document's `stages`
-element carries** — `{"type":"left_for_you",…}` is one thing only the user can do,
-carrying the step's own line to run, and the last line is `{"type":"done",
+element carries**, plus `repos`: the lines that stage reported about the
+repositories it read, one `{repo, state, detail}` each with the state `done`,
+`needs you`, `unread` or `skipped`, and `[]` for a stage that reports none (U13;
+a stage that reports lines says their summary as its `detail`) —
+`{"type":"left_for_you",…}` is one thing only the user can do,
+carrying the step's own line to run, `{"type":"notice",…}` is one line the run
+reported outside its stages (a step after the stage loop, or an admit pattern the
+CLI could not expand into repository names: `step` is the step's own name, and
+`repo` and `state` are empty for a notice about no repository), and the last line
+is `{"type":"done",
 "exit_code":N}` or `{"type":"error",…}`. **A run that ends with steps left for
 you ends `done` with exit code 1** — it did not fail, and the handed-back steps
 are the `left_for_you` lines above it — while an `error` line names the stage the
@@ -4631,7 +4640,7 @@ and **not** off this document or the design:
 | `image ls` | yes (`newImageLsCmd`, §6.30) — the project's image catalog, and with `--shared` the installation's shared-image lock. **It is offline** and writes nothing, and the group's writers — `image add`, `image rm`, `image promote`, `image build`, `image refresh` — are the never table's as commands and as words of `image`, **save the add §6.34 documents, whose two operations that same rule grants the console by name** — so this read is not quite the group's whole reach any more, and the write's own two rows are the other half of it |
 | `recipes ls` | yes (`newRecipesLsCmd`, §6.31) — the recipes in force, one winner per name. **It is offline** and writes nothing, and `recipes publish` and `recipes validate` are the never table's as words of `recipes` (`publish` as a command too) |
 | `apply --status` | yes (`newApplyCmd`, §6.28) — **the third row here that writes**, and the only one with a read arm: `fugaro apply` runs the follow-up steps a management command saved for later (the composite-commands plan's D1560). The console is admitted to `apply --status --json` and nothing else (D1569, design §5.1 rule 6): the bare `apply` is a row of that table the console does not spawn yet, and the read costs no cloud, so the pair here is what aims it at an installation |
-| `setup` | yes (`newSetupCmd`, §6.32) — **the first row here whose argv arrives partly on stdin as a document rather than as a word**: `--answers-file -` is the wizard's five answers, which the console passes as `-` and never a path. With `--plan-only` the row reads and creates nothing (the console's `setup.plan`), and without it the row is `setup.apply`, **the fourth row here that writes** (design §5.1 rule 5) and the console's fourth write overall. **The console gives both of the command's rows no project selection at all** — no `--project`, no `--config` and no `FUGARO_PROJECT` — because the answers name the project the run creates (§6.32) |
+| `setup` | yes (`newSetupCmd`, §6.32) — **the first row here whose argv arrives partly on stdin as a document rather than as a word**: `--answers-file -` is the wizard's six answers, which the console passes as `-` and never a path. With `--plan-only` the row reads and creates nothing (the console's `setup.plan`), and without it the row is `setup.apply`, **the fourth row here that writes** (design §5.1 rule 5) and the console's fourth write overall. **The console gives both of the command's rows no project selection at all** — no `--project`, no `--config` and no `FUGARO_PROJECT` — because the answers name the project the run creates (§6.32) |
 | **`run`** | yes (`newRunCmd`, §6.14) — **the first row here that writes**: the launch (design §5.1 rule 11) is cut for a project like every cloud command, so it carries `--project` and `--config` too, and the task itself arrives on stdin rather than as a flag |
 
 So the console passes `--project <name>` (and `--config <path>` when the

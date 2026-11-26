@@ -81,3 +81,9 @@ summaries:
   v0.4.1: A checkout can be pointed at its installation's cloud project on its own, so a repository no longer has to be brought fully up to date first. Editors and the schema check accept that setting, and the setup skill now asks which models you want for the coder and for the reviewer.
   v0.4.0: A teammate can now launch runs in a repository they were merely given access to, because the installation's shared settings come from the cloud instead of from a setup step each person runs. Moving an existing Firebase project into Fugaro no longer needs hand-edited state, and a second project can sit beside the first.
   v0.29.0: fugaro update moves what a repository's own file decided into the project, the project names the oldest CLI that may act on it, a workflow secret is stored once for the project, one management command is enough and --no-apply stops it, and fugaro setup adopts an empty project, with fugaro update as the whole upgrade.
+  v0.29.1: fugaro update completes on an installation that already runs the orchestrator, which 0.29.0 stopped on.
+  v0.29.2: fugaro update builds the job images on an installation whose build identity could not get its token.
+  v0.29.3: fugaro update builds every job image, including an entry the image map names nothing for, a long catalog build, and a Bitbucket repository's.
+  v0.29.4: fugaro update builds a Bitbucket repository's job image, which 0.29.3 still could not.
+  v0.29.5: every shared job reaches the credentials service, and fugaro update moves what a repository's file declared into the project.
+  v0.30.0: Shared project-level jobs are the default for GitHub and Bitbucket, so one fugaro update gives a project its shared-job profile, its image and the Bitbucket proxy and retires the per-repository jobs, a repository baked into an image is a cache rather than an access rule, and a person's own Claude subscription token can be served at a workspace.

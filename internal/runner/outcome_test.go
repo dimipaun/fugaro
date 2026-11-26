@@ -122,7 +122,7 @@ func TestDecideByMode(t *testing.T) {
 		if tc.verdict != "" {
 			last = &runstore.ReviewSummary{Round: tc.round, Verdict: tc.verdict, Findings: len(tc.findings)}
 		}
-		dec := Decide(tc.records, "abc", last, findingsPolicyOf(optedIn, "", tc.mode, tc.round, tc.findings, ""), nil)
+		dec := decide(tc.records, "abc", last, findingsPolicyOf(optedIn, "", tc.mode, tc.round, tc.findings, ""), nil)
 		ready, reason := dec.Ready, dec.Reason
 		if ready != tc.ready || reason != tc.reason {
 			t.Errorf("%s: Decide = %v %q, want %v %q", tc.name, ready, reason, tc.ready, tc.reason)
@@ -202,7 +202,7 @@ func TestDecideAtTheStop(t *testing.T) {
 	}
 	for _, tc := range cases {
 		last := &runstore.ReviewSummary{Round: 2, Verdict: "changes", Findings: len(tc.findings)}
-		dec := Decide(tc.records, "abc", last, findingsPolicyOf(tc.cfg, "", tc.mode, 2, tc.findings, tc.at), tc.owner)
+		dec := decide(tc.records, "abc", last, findingsPolicyOf(tc.cfg, "", tc.mode, 2, tc.findings, tc.at), tc.owner)
 		ready, reason := dec.Ready, dec.Reason
 		if ready != tc.ready || reason != tc.reason {
 			t.Errorf("%s: Decide = %v %q, want %v %q", tc.name, ready, reason, tc.ready, tc.reason)
@@ -218,7 +218,7 @@ func TestDecideUnscoredFindingBlocksEveryMode(t *testing.T) {
 	pass := verify.Record{Kind: verify.KindTest, HeadSHA: "abc", CleanTree: true, Passed: true}
 	last := &runstore.ReviewSummary{Round: 2, Verdict: "changes", Findings: 2}
 	for _, mode := range rigor.Rigors {
-		dec := Decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(optedIn, "", mode, 2, []rigor.Score{unscored, small}, ""), nil)
+		dec := decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(optedIn, "", mode, 2, []rigor.Score{unscored, small}, ""), nil)
 		ready, reason := dec.Ready, dec.Reason
 		if ready || reason != "review round 2 still has 2 findings" {
 			t.Errorf("%s: an unscored finding was tolerated: Decide = %v %q", mode, ready, reason)
@@ -254,7 +254,7 @@ func TestDecideStopBlockingNamesTheLevelThatLeftTheCatastrophicFinding(t *testin
 	} {
 		pol := findingsPolicyOf(optedIn, "", rigor.Startup, 1, []rigor.Score{accepted}, runstore.StopRoundsSpent)
 		pol.StopBlocking = tc.blocking
-		dec := Decide([]verify.Record{pass}, "abc", last, pol, nil)
+		dec := decide([]verify.Record{pass}, "abc", last, pol, nil)
 		ready, reason, class := dec.Ready, dec.Reason, dec.Class
 		if ready || reason != tc.reason {
 			t.Errorf("%s: Decide = %v %q, want a draft %q", tc.name, ready, reason, tc.reason)
@@ -265,7 +265,7 @@ func TestDecideStopBlockingNamesTheLevelThatLeftTheCatastrophicFinding(t *testin
 	}
 	// Without it, the same round and policy are the acceptance itself.
 	pol := findingsPolicyOf(optedIn, "", rigor.Startup, 1, []rigor.Score{accepted}, runstore.StopRoundsSpent)
-	if !Decide([]verify.Record{pass}, "abc", last, pol, nil).Ready {
+	if !decide([]verify.Record{pass}, "abc", last, pol, nil).Ready {
 		t.Error("startup did not accept the round it stopped on, so the case above proves nothing")
 	}
 }
@@ -292,7 +292,7 @@ func TestDecideToleratesOnlyWhatTheRunCanFile(t *testing.T) {
 		{"a repository that configured critical", optedIn, rigor.Critical, false},
 		{"a repository that configured nothing", rigor.Config{}, rigor.Pro, false},
 	} {
-		dec := Decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(tc.cfg, "", tc.mode, 2, []rigor.Score{tiny}, ""), nil)
+		dec := decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(tc.cfg, "", tc.mode, 2, []rigor.Score{tiny}, ""), nil)
 		ready, reason := dec.Ready, dec.Reason
 		if ready != tc.tolerated {
 			t.Errorf("%s: Decide = %v %q, want tolerated %v", tc.name, ready, reason, tc.tolerated)
@@ -321,7 +321,7 @@ func TestDecideBlocksAPolicyItCannotPlace(t *testing.T) {
 		{"a split from another round", findingsPolicyOf(optedIn, "", rigor.Startup, 1, []rigor.Score{tiny}, "")},
 		{"a split from fewer findings than the record counts", findingsPolicyOf(optedIn, "", rigor.Startup, 2, nil, "")},
 	} {
-		dec := Decide([]verify.Record{pass}, "abc", last, tc.pol, nil)
+		dec := decide([]verify.Record{pass}, "abc", last, tc.pol, nil)
 		ready, reason := dec.Ready, dec.Reason
 		if ready || reason != "review round 2 still has 1 finding" {
 			t.Errorf("%s: Decide = %v %q, want false with the count's own reason", tc.name, ready, reason)
@@ -427,12 +427,27 @@ var (
 // configuration, with the rest of a valid fugaro.yaml around it: the mode's
 // configuration comes from the base branch (D25), so the block has to be in
 // the remote's fugaro.yaml rather than in a layer a test hands the run.
-func raisedBase(t *testing.T, block string) string {
+// raisedBase is the remote such a run clones and the project layer that carries
+// what the repository's file may no longer decide: `block` is a rigor: block as
+// a test writes it, and since S1 (D3237) the level and the areas are the
+// project's, so the block moves into the layer and the file is written without
+// it (testutil.FixturePins).
+func raisedBase(t *testing.T, block string) (remote, layer string) {
 	t.Helper()
 	testutil.IsolateGit(t)
 	const head = "version: 1\nproject: aurora\ngit: { provider: github }\n"
 	const tail = "workflows:\n  server: { commands: { build: make, test: make test } }\n"
-	return testutil.NewRemote(t, map[string]string{"README.md": "hello\n", "fugaro.yaml": head + block + tail})
+	file, layer := testutil.FixturePins(head+block+tail, config.LiftedKeyPaths())
+	return testutil.NewRemote(t, map[string]string{"README.md": "hello\n", "fugaro.yaml": file}), layer
+}
+
+// rigorLayerSpec is a task carrying the layer a fixture's lifted keys moved to
+// (testutil.FixturePins): nil for a fixture that named none of them.
+func rigorLayerSpec(spec *task.Spec, layer string) *task.Spec {
+	if layer != "" {
+		spec.ProjectLayer = &task.ProjectLayer{SHA256: config.LayerSum([]byte(layer)), YAML: layer}
+	}
+	return spec
 }
 
 // raisedCase is one run's inputs: the repository's rigor block, the paths the
@@ -457,7 +472,7 @@ type raisedCase struct {
 // the round Decide reads.
 func raisedRun(t *testing.T, tc raisedCase) *run {
 	t.Helper()
-	remote := raisedBase(t, tc.block)
+	remote, layer := raisedBase(t, tc.block)
 	testutil.IsolateGit(t)
 	ctx := context.Background()
 	repo, err := gitops.OpenOrClone(ctx, filepath.Join(t.TempDir(), "work"), remote, gitops.IdentityEnv())
@@ -470,7 +485,8 @@ func raisedRun(t *testing.T, tc raisedCase) *run {
 	cfg := &config.Config{}
 	cfg.Git.BaseBranch = "main"
 	r := &run{
-		repo: repo, cfg: cfg, spec: &task.Spec{RequestedBy: "person-1", Paths: tc.declared},
+		repo: repo, cfg: cfg,
+		spec: rigorLayerSpec(&task.Spec{RequestedBy: "person-1", Paths: tc.declared}, layer),
 		rec: &runstore.Record{
 			Version: 1, RunID: "20261024-120000-abcd", Branch: "fugaro/x", BaseBranch: "main",
 			Status: runstore.StatusRunning, Outcome: runstore.OutcomeNone,
@@ -496,7 +512,7 @@ func raisedRun(t *testing.T, tc raisedCase) *run {
 func decideOf(t *testing.T, r *run) (bool, string) {
 	t.Helper()
 	pass := verify.Record{Kind: verify.KindTest, HeadSHA: "abc", CleanTree: true, Passed: true}
-	dec := Decide([]verify.Record{pass}, "abc", seniorReview(r.rec.Reviews), r.findingsPolicy(), nil)
+	dec := decide([]verify.Record{pass}, "abc", seniorReview(r.rec.Reviews), r.findingsPolicy(), nil)
 	ready, reason := dec.Ready, dec.Reason
 	return ready, reason
 }
@@ -637,7 +653,7 @@ func TestAllDeferredRoundReadsAsTolerated(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			last := &runstore.ReviewSummary{Round: 2, Verdict: "changes", Findings: len(tc.findings)}
 			pol := findingsPolicyOf(optedIn, "", rigor.Startup, 2, tc.findings, "").withDeferred(tc.deferred)
-			dec := Decide([]verify.Record{{Kind: verify.KindTest, HeadSHA: "abc", CleanTree: true, Passed: true}}, "abc", last, pol, nil)
+			dec := decide([]verify.Record{{Kind: verify.KindTest, HeadSHA: "abc", CleanTree: true, Passed: true}}, "abc", last, pol, nil)
 			if dec.Ready != tc.ready || dec.Reason != tc.reason {
 				t.Errorf("Decide = %v %q, want %v %q", dec.Ready, dec.Reason, tc.ready, tc.reason)
 			}
@@ -860,7 +876,7 @@ func TestDecideRefusalsCarryTheirClass(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			dec := Decide(tc.records, "abc", tc.last, tc.pol, nil)
+			dec := decide(tc.records, "abc", tc.last, tc.pol, nil)
 			ready, reason, class := dec.Ready, dec.Reason, dec.Class
 			if ready != tc.ready {
 				t.Fatalf("Decide = %v %q, want %v: %s", ready, reason, tc.ready, reason)
@@ -894,7 +910,7 @@ func TestNoSeniorRoundIsUnreviewed(t *testing.T) {
 		// names which round, because a reader has to know how far the run got.
 		{"a round that answered nothing", &runstore.ReviewSummary{Round: 2, Verdict: "none"}, "review round 2 returned no parseable verdict after a retry"},
 	} {
-		dec := Decide([]verify.Record{pass}, "abc", tc.last, FindingsPolicy{}, nil)
+		dec := decide([]verify.Record{pass}, "abc", tc.last, FindingsPolicy{}, nil)
 		if dec.Ready || dec.Kind != KindUnreviewed {
 			t.Errorf("%s: Decide = %+v, want the label a run no review answered carries", tc.name, dec)
 		}
@@ -962,7 +978,7 @@ func TestDecideClassMatchesTheReadiness(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			dec := Decide(tc.records, "abc", tc.last, tc.pol, tc.owner)
+			dec := decide(tc.records, "abc", tc.last, tc.pol, tc.owner)
 			if dec.Kind != tc.kind {
 				t.Fatalf("Decide = %+v, want the %s ending", dec, tc.kind)
 			}
@@ -993,7 +1009,7 @@ func TestFindingsBlocksStayFailed(t *testing.T) {
 	// rows of TestDecideByMode above are the modes' tolerances, and this is the
 	// finding none of them holds.
 	for _, mode := range rigor.Rigors {
-		dec := Decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(optedIn, "", mode, 2, []rigor.Score{catastrophic}, ""), nil)
+		dec := decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(optedIn, "", mode, 2, []rigor.Score{catastrophic}, ""), nil)
 		if dec.Kind != KindBlocked || dec.Ready {
 			t.Errorf("%s: Decide = %+v, want the refusal `failed` names", mode, dec)
 		}

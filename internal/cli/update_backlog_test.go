@@ -29,30 +29,21 @@ import (
 	"github.com/dimipaun/fugaro/internal/tier"
 )
 
-// backlogItemFile writes one item file into root's docs/backlog/ folder, in the
-// format backlog.Parse reads: D26's `<id>-<slug>.md` name with the id repeated
-// in the front matter, D27's nine fields, and the two headings every item's
-// body carries.
+// backlogItemText is a well-formed item's bytes, from docs_backlog_test.go's
+// own backlogItemDoc and the two headings every item's body carries.
+func backlogItemText(id, title, status string) string {
+	return backlogItemDoc(id, title, status, "## What was left open\n\n"+title+".\n\n## Why\n\nbecause it was.\n")
+}
+
+// backlogItemFile writes one item file into root's docs/backlog/ folder, under
+// D26's `<id>-<slug>.md` name with the id repeated in the front matter.
 func backlogItemFile(t *testing.T, root, id, slug, title, status string) {
 	t.Helper()
 	dir := filepath.Join(root, backlog.Dir)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	doc := "---\n" +
-		"id: " + id + "\n" +
-		"title: " + title + "\n" +
-		"level: none\n" +
-		"kind: deferred\n" +
-		"area: repo\n" +
-		"status: " + status + "\n" +
-		"filed-by: unknown\n" +
-		"filed-in: hand\n" +
-		"date: 2026-10-21\n" +
-		"---\n\n" +
-		"## What was left open\n\n" + title + ".\n\n" +
-		"## Why\n\nbecause it was.\n"
-	if err := os.WriteFile(filepath.Join(dir, id+"-"+slug+".md"), []byte(doc), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, id+"-"+slug+".md"), []byte(backlogItemText(id, title, status)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -150,7 +141,7 @@ func TestUpdateFoldsOpenBacklogOnce(t *testing.T) {
 	node = append(node, archivedBacklogOps("20261021-04", "a thing folded here and finished since")...)
 	seedBacklogNode(t, r.db, orchestrator.Actor{Class: orchestrator.Daemon, Name: "daemon", Now: orchestratorTestNow}, node...)
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if !strings.Contains(out, "folded 1") || !strings.Contains(out, backlog.Dir) {
 		t.Errorf("the run does not print the count of what it folded, and the folder it folded it from (D2716):\n%s", out)

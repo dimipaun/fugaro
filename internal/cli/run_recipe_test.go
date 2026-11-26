@@ -84,9 +84,12 @@ func TestRunRecipeRefusedOnOldImage(t *testing.T) {
 	wantRefused(t, f, "release 0.4.1", "run", "--repo", "acme/app", "--recipe", "solo", "x")
 }
 
+// TestRunUnknownRecipeFailsBeforeCloudWork: a name nothing holds is refused
+// before any cloud work. The refusal names the project and the catalog and no
+// longer the checkout's folder, which no launch reads (D3237).
 func TestRunUnknownRecipeFailsBeforeCloudWork(t *testing.T) {
 	f := newCloudFixture(t)
-	wantRefused(t, f, "recipe nope is not in project aurora", "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", "nope", "x")
+	wantRefused(t, f, "recipe nope is not in project aurora (fugaro recipes ls) and not in the catalog", "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", "nope", "x")
 	if _, err := os.Stat(filepath.Join(f.dir, "runs", "runs", appSlug, "20261007-100000-abcd", "task.json")); err == nil {
 		t.Fatal("a task.json was written for a refused recipe")
 	}
@@ -155,8 +158,9 @@ func recipeCheckout(t *testing.T, f *cloudFixture, agentLines string, extra map[
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
-	files := map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nagent:\n  auth: api-key\n" + agentLines +
-		"workflows:\n  svc: { commands: { build: sh build.sh, test: sh test.sh } }\n"}
+	body := "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nagent:\n  auth: api-key\n" + agentLines +
+		"workflows:\n  svc: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+	files := map[string]string{"fugaro.yaml": publishFilePins(t, f, body)}
 	for k, v := range extra {
 		files[k] = v
 	}
@@ -522,6 +526,9 @@ func TestRunNoteOnlyForExplicitNonDefault(t *testing.T) {
 	}
 }
 
+// TestRunRepoRecipeRefusedOnOldImage: the image gate judges the recipe the
+// launch resolved, which is the project's copy of the repository's own — the
+// folder beside it is a leftover no launch reads (D3237).
 func TestRunRepoRecipeRefusedOnOldImage(t *testing.T) {
 	f := newCloudFixture(t)
 	recipeCheckout(t, f, "", nil)
@@ -622,13 +629,20 @@ func TestRunPRKeepsChosenRecipeAndSaysItChanged(t *testing.T) {
 	}
 }
 
+// TestRunPRKeepsChosenRepoRecipeByName: the record names a repository recipe
+// — the shape a pre-L8 run wrote — and the follow-up keeps it by resolving the
+// name where it resolves now and embedding what it finds (D3303, R7), rather
+// than carrying a name the runner would refuse a job later (D3304).
 func TestRunPRKeepsChosenRepoRecipeByName(t *testing.T) {
 	f := newCloudFixture(t)
-	seedChosenRoot(t, f, &runstore.RecipeRecord{Name: "mine", Source: "repo", SHA256: strings.Repeat("a", 64)})
+	projectRecipesFixture(t, f, nil)
+	copied := publishCopy(t, f, "acme/app", "mine", repoRecipe)
+	seedChosenRootOnACopyImage(t, f, &runstore.RecipeRecord{Name: "mine", Source: "repo", SHA256: strings.Repeat("a", 64)})
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "x"); err != nil {
 		t.Fatal(err)
 	}
-	if got := readSpec(t, f, fuID).Recipe; got == nil || *got != (task.Recipe{Name: "mine", Source: "repo"}) {
+	want := strings.Replace(repoRecipe, "name: mine", "name: "+copied, 1)
+	if got := readSpec(t, f, fuID).Recipe; got == nil || got.Name != copied || got.Source != string(recipe.SourceProject) || got.YAML != want {
 		t.Fatalf("follow-up recipe = %+v", got)
 	}
 }

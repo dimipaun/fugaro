@@ -102,27 +102,29 @@ func TestUpdateConvergesPastAnInvalidCheckoutFugaroYAML(t *testing.T) {
 	}
 
 	// And the line the user is stuck on is said after the run, never before it.
-	staleLineWaitsForTheRun(t, errOut)
+	staleLineWaitsForTheRun(t, out+errOut)
 }
 
 // TestUpdateDoesNotBuildFromACheckoutFileTheRunDidNotOnboard (#1836, review):
 // the checkout runs past the repository stage's needs-you for the pin and the
-// plugin, which read this machine's own files, and its cloud step is the third
-// step of the same stage — the one that builds the repository's job images from
-// that very fugaro.yaml, billable Cloud Builds included. A working tree whose
-// file is valid but not the default branch's (an edit not merged yet) is
-// exactly what the repository stage refuses to onboard, so the run must not
-// build from it: the tolerance is for the local half, and an image from a
-// config no cloud run of the project reads is the other half.
+// plugin, which read this machine's own files, and its cloud step builds the
+// repository's job images from a fugaro.yaml no cloud run of the project reads
+// yet, billable Cloud Builds included. A working tree whose file is valid but
+// not the default branch's (an edit not merged yet) is exactly what the
+// repository stage refuses to onboard, so the run must not build for it: the
+// tolerance is for the local half, and an image from a config no cloud run of
+// the project reads is the other half.
 //
-// The fixture is the drift the file's own parse alone cannot see: the default
-// branch holds refreshYAML and the working tree holds the same file with one
-// workflow's build command changed, which resolves and names this project.
+// The fixture is that drift: the default branch holds refreshYAML and the
+// working tree holds the same file with one workflow's build command changed,
+// which resolves and names this project. The checkout stage reads no working
+// tree of its own (U4, R10) — the file it builds from is the repository's
+// default branch — so what drops the step here is the repository stage's own
+// stop, which this run is at (PastStops, repositoryStopped).
 //
-// Mutation (run, restore): drop the cloud skip from planFor
+// Mutation (run, restore): drop the repositoryStopped arm from placeFor
 // (init_checkout_upgrade.go) and this test fails — the checkout stage's own row
-// no longer says the cloud step was skipped, and the change that edit asked for
-// reaches Cloud Build.
+// no longer says the cloud step was skipped, and the build reaches Cloud Build.
 func TestUpdateDoesNotBuildFromACheckoutFileTheRunDidNotOnboard(t *testing.T) {
 	r := newConvergeRigYAML(t, v7Node(), refreshYAML)
 	currentRelease(t)
@@ -142,12 +144,13 @@ func TestUpdateDoesNotBuildFromACheckoutFileTheRunDidNotOnboard(t *testing.T) {
 		t.Fatalf("the repository stage is %q, want left for you: the working tree's fugaro.yaml is not the default branch's\n%s", got, out)
 	}
 
-	// The run's own account of what it ran for the checkout: its one step, the
-	// cloud build, dropped over a fugaro.yaml the repository stage did not
-	// onboard — its job images are that repository's, and a build from a config
-	// no cloud run of the project reads is the half the tolerance is not for.
-	if row := rows[initflow.Checkout].line; !strings.Contains(row, "skipped here: cloud") {
-		t.Errorf("the checkout stage's line is %q, want the cloud step dropped over a fugaro.yaml the repository stage did not onboard\n%s", row, out)
+	// The run's own account of what it ran for the project: its one step, the
+	// cloud build, dropped for a repository this run did not onboard — its job
+	// images are that repository's, and a build from a config no cloud run of
+	// the project reads is the half the tolerance is not for. The line names
+	// the repository the step was dropped for (U4).
+	if row := rows[initflow.Checkout].line; !strings.Contains(row, "1 skipped") || !strings.Contains(out, "acme/app: needs you: ") {
+		t.Errorf("the checkout stage's line is %q, want the cloud step dropped for a repository the repository stage did not onboard\n%s", row, out)
 	}
 	if n := len(r.builder.specs); n != 0 {
 		t.Errorf("%d job image(s) reached Cloud Build from a fugaro.yaml the repository stage did not onboard: %+v\n%s", n, r.builder.specs, out)
@@ -321,7 +324,7 @@ func TestUpdatePluginLineDoesNotReadCurrentWhileTheInstallIsBehind(t *testing.T)
 	if got := claudeListVersion(t, r); got != convergeRelease {
 		t.Errorf("Claude Code lists the plugin as %q after the run, want %q\n%s", got, convergeRelease, out)
 	}
-	staleLineWaitsForTheRun(t, errOut)
+	staleLineWaitsForTheRun(t, out+errOut)
 }
 
 // staleLineWaitsForTheRun is #1836b: the staleness line, when the run prints
@@ -331,18 +334,24 @@ func TestUpdatePluginLineDoesNotReadCurrentWhileTheInstallIsBehind(t *testing.T)
 // one line a run could not clear however often it was run. The fixture's fake
 // claude leaves Claude Code's own record alone, so what is left to say at the
 // end is still said: the point of the assertion is when.
-func staleLineWaitsForTheRun(t *testing.T, errOut string) {
+//
+// account is the run whole (its screen and its stderr), and not the stderr
+// alone: the line prints on stderr at the end, and the account of the install
+// it must come after is the run's own, which is stdout's. With the pin left in
+// place (U6a) the line is printed on runs whose account of the plugin is on
+// stdout, which is where the two halves are read together.
+func staleLineWaitsForTheRun(t *testing.T, account string) {
 	t.Helper()
-	line := staleWarnings(errOut)
+	line := staleWarnings(account)
 	if line == "" {
 		return
 	}
-	install := strings.Index(errOut, "installed "+convergeRelease)
+	install := strings.Index(account, "installed "+convergeRelease)
 	if install < 0 {
-		t.Fatalf("the run never said it installed the plugin:\n%s", errOut)
+		t.Fatalf("the run never said it installed the plugin:\n%s", account)
 	}
-	if i := strings.Index(errOut, line); i < install {
-		t.Errorf("fugaro update printed the staleness line before the run that clears it: %q\n%s", line, errOut)
+	if i := strings.Index(account, line); i < install {
+		t.Errorf("fugaro update printed the staleness line before the run that clears it: %q\n%s", line, account)
 	}
 }
 

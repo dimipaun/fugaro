@@ -132,8 +132,9 @@ func dropMount(ws WorkflowSpec, logical string) {
 //
 // `none` is the empty arm rather than a case left to the caller: it is the
 // value a repository the switch holds off carries — a `vertex` one, or an
-// `api-key` or `oauth` one whose root was applied with the switch off or whose
-// project's mode is off — so a caller that lost its guard would take away the
+// `api-key` or `oauth` one whose root was applied with the switch off (a mode
+// is not a condition of the switch any more, AB15, D3009) — so a caller that
+// lost its guard would take away the
 // credential a run of exactly the repository this drop must not touch still
 // reads (D2072, G17).
 //
@@ -388,7 +389,12 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 		// C1.20 is the task that drops them ("no model secret mounted when the
 		// service is on"), and it needs the runner to read each from the
 		// service first (C1.15).
-		if spec.Installation.CredentialsService != nil {
+		// spec.credentialsServiceServes and not the block's presence: a
+		// `vertex` repository is handed the block for its runs' address while
+		// the service serves it no credential, so its job keeps every mount it
+		// has (D3326, F17) — which is what the module's own drops read too
+		// (sa.tf's local.service_serves).
+		if spec.credentialsServiceServes() {
 			for _, logical := range config.ServiceHeldSecretNames {
 				dropMount(ws, logical)
 			}

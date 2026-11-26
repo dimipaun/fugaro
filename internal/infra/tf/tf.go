@@ -355,6 +355,30 @@ func (t *TF) Plan(ctx context.Context, out string) (changed bool, err error) {
 	return false, err
 }
 
+// PlanDestroy writes a plan that destroys everything the state holds and
+// reports whether there was anything to destroy. It is a plan like any other:
+// saved to out, shown, guarded and applied through Apply, which passes the
+// file and nothing else — there is no `apply -destroy` anywhere and no way to
+// destroy without the plan this function wrote.
+//
+// It exists for the retirement of a WHOLE root (M2, D2303): the repository
+// root's module is shared with every other repository, so it cannot leave the
+// configuration, and an ordinary plan of that root is the plan that CREATES
+// the jobs a migrated repository no longer wants. -destroy is the only plan
+// that takes the state apart while the configuration stays as it is, and it
+// honours lifecycle.prevent_destroy like any other (see
+// real_terraform_test.go: the block is read from the configuration, so a
+// destroy plan refuses a resource whose configuration still carries it).
+func (t *TF) PlanDestroy(ctx context.Context, out string) (changed bool, err error) {
+	args := []string{"plan", "-destroy", "-input=false", "-no-color", lockTimeout, "-detailed-exitcode", "-out=" + out, "-var-file=terraform.tfvars.json"}
+	code, err := t.run(ctx, args, nil)
+	var ee *ExitError
+	if errors.As(err, &ee) && code == 2 {
+		return true, nil
+	}
+	return false, err
+}
+
 // Show reads a saved plan file.
 func (t *TF) Show(ctx context.Context, planFile string) (*Plan, error) {
 	data, err := t.showJSON(ctx, planFile)

@@ -86,6 +86,7 @@ func runScenario(t *testing.T, sc scenario) result {
 	if sc.config != "" {
 		files["fugaro.yaml"] = sc.config
 	}
+	files, layer := liftPins(files)
 	remote := testutil.NewRemote(t, files)
 	fugaro := testutil.BuildFugaro(t)
 	claude := testutil.FakeClaude(t, sc.script)
@@ -99,7 +100,7 @@ func runScenario(t *testing.T, sc scenario) result {
 		t.Fatal(err)
 	}
 	taskFile := filepath.Join(tmp, "task.json")
-	if err := os.WriteFile(taskFile, []byte(`{"version":1,"run_id":"`+runID+`","repo":"acme/app","ref":"main","task":"Add a feature"}`), 0o644); err != nil {
+	if err := os.WriteFile(taskFile, taskJSON(t, layer), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	providerState := filepath.Join(tmp, "provider.json")
@@ -219,7 +220,7 @@ func TestFailingTestsDraft(t *testing.T) {
 }
 
 func TestFlakyRerunIsReady(t *testing.T) {
-	flaky := `{"shell":"echo feature > feature.txt && git add -A && git commit -qm 'Add feature'; fugaro verify test; : > \"$FIXTURE_FAILS_FILE\"; fugaro verify test --rerun-failed","cost":1}`
+	flaky := `{"shell":"echo feature > feature.txt && git add -A && git commit -qm 'Add feature'; fugaro verify test; : > \"$FIXTURE_FAILS_FILE\"; fugaro verify test --rerun-failed; printf 'Add feature\\n\\nAdds feature.txt.\\n' > \"$FUGARO_STATE_DIR/pr.md\"","cost":1}`
 	r := runScenario(t, scenario{script: `{"calls":[` + flaky + `,` + reviewShip + `]}`, fails: "beta"})
 	if r.rec.Outcome != runstore.OutcomeReady {
 		t.Fatalf("record %+v", r.rec)

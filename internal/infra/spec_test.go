@@ -2457,18 +2457,20 @@ func serviceReady(t *testing.T, lc *localcfg.Config, repo string) {
 
 // converged plans one repository's spec twice: as an installation that has not
 // deployed the credentials service leaves it (off — the block is absent
-// altogether) and as one that has converged on DON1 (on — the block written,
-// and the per-repository record the update read out of the bundle). The pair
-// is the whole of what DON1's own change is, which is why every caller asserts
-// what it moves for the agent.auth it spells: the switch is installed &&
-// ready && (auth == config.AuthCascade || the auth is one of
-// config.ServiceServedAuths && the published mode is observe or enforce)
-// (CredentialsServiceServes), so this pair — which publishes no policy, and so
-// carries no mode — may not move a repository of any other auth at all: the
+// altogether) and as one that has the block (on). ready is the caller's: with
+// it, the per-repository record the update read out of the bundle is there too,
+// which is the state DON1's own change is about, and without it only the block
+// moved — the state the deploy of the service alone leaves a repository in.
+//
+// The pair is the whole of what DON1's own change is, which is why every caller
+// asserts what it moves for the agent.auth it spells: the switch is installed
+// && ready && the auth is one it carries (CredentialsServiceServes), so a pair
+// whose record is absent may not move a repository of any auth at all — the
 // finding the switch was written for (docs/credentials-service/default-on.md
-// §1.4). A mode that IS published moves the flip list's two auths, which is
-// what repoRootServed and the tests below are for.
-func converged(t *testing.T, in Inputs, lc *localcfg.Config) (off, on RepoSpec) {
+// §1.4) — while a pair whose record is there moves the auths the switch serves,
+// which is what repoRootServed and the tests below are for. The budget mode was
+// the fourth condition of that answer until AB15 and is none any more (D3009).
+func converged(t *testing.T, in Inputs, lc *localcfg.Config, ready bool) (off, on RepoSpec) {
 	t.Helper()
 	in.LC = lc
 	offIn := in
@@ -2478,7 +2480,9 @@ func converged(t *testing.T, in Inputs, lc *localcfg.Config) (off, on RepoSpec) 
 		t.Fatal(err)
 	}
 	in.Installation.CredentialsService = credentialsService()
-	serviceReady(t, in.LC, in.Repo)
+	if ready {
+		serviceReady(t, in.LC, in.Repo)
+	}
 	if on, err = Repo(in); err != nil {
 		t.Fatal(err)
 	}
@@ -2672,6 +2676,22 @@ type repoRootFixture struct {
 var repoRootFixtures = map[string]repoRootFixture{
 	"repo_root":        {agent: repoRootOAuthAgent},
 	"repo_root_vertex": {agent: repoRootVertexAgent},
+	// repo_root_vertex_served is IS9's fixture (D3326 as amended by F17): the
+	// vertex repository of an installation whose credentials service is
+	// deployed, which is the one repository handed the ADDRESS without being
+	// served. What a real plan of its root pins is the pair this task is
+	// about: every job account holds its roles/run.invoker on the service
+	// (google_cloud_run_v2_service_iam_member.credentials), and NOTHING of the
+	// repository's is dropped — the job's accessor on each secret it mounts
+	// and the service's own account's grants are the ones the no-service
+	// fixture beside it has (G7). Without the fixture the address arm of the
+	// mirror was pinned by no real plan at all, which is the hole
+	// repo_root_credentials closed for the cascade and this closes for vertex.
+	//
+	// No record is written: localcfg.Repo.CredentialsServiceReady is the
+	// switch's answer and is false for a vertex repository by construction, so
+	// a fixture that wrote one would be a state no installation has.
+	"repo_root_vertex_served": {agent: repoRootVertexAgent, credentialsService: true},
 	// Its local config carries the service's address as well, which is what
 	// `fugaro update` leaves on a machine whose installation has one: every
 	// job that reaches the service — the check job now included (B4.9) —
@@ -2812,6 +2832,48 @@ func TestRepoAddressesMatchTheVertexGolden(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("Addresses() differs from repo_root_vertex_addresses.golden:\nmissing: %v\nunexpected: %v",
 			missingFrom(want, got), missingFrom(got, want))
+	}
+}
+
+// IS9's fixture pins the one branch no other golden can: the installation has
+// the credentials service and the repository is a `vertex` one, so the root
+// carries the block — the address every job account is granted
+// roles/run.invoker on — while nothing of the repository's is dropped (D3326
+// as amended by F17, G7). A real plan is what makes the second half mean
+// something: the address and the drop hang on two different inputs, and a
+// module that read one for the other would show here as a missing accessor or
+// a missing grant.
+func TestRepoAddressesMatchTheVertexServedGolden(t *testing.T) {
+	spec := repoRootFixtureSpec(t, "repo_root_vertex_served")
+	want := addressesGolden(t, "repo_root_vertex_served")
+	if len(want) == 0 {
+		t.Fatal("the golden is empty")
+	}
+	got := spec.Addresses()
+	if !slices.Equal(got, want) {
+		t.Errorf("Addresses() differs from repo_root_vertex_served_addresses.golden:\nmissing: %v\nunexpected: %v",
+			missingFrom(want, got), missingFrom(got, want))
+	}
+	// The golden's own premise, asserted rather than trusted: the plan names
+	// the job's invoker grant and none of the three things the drop would take
+	// away, so a golden regenerated from a module that dropped the wrong half
+	// fails here rather than reading as the new truth.
+	for _, want := range []string{
+		`module.repo.module.workflow["web"].google_cloud_run_v2_service_iam_member.credentials[0]`,
+		`module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["github-app-key"]`,
+		`module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["npm-token"]`,
+	} {
+		if !slices.Contains(got, want) {
+			t.Errorf("the vertex repository's addresses are missing %s, which a real plan of its root has: the address is handed without anything being dropped (D3326, G7)", want)
+		}
+	}
+	for _, unwanted := range []string{
+		"google_cloud_run_v2_service_iam_member.build_credentials",
+		"google_secret_manager_secret_iam_member.service[",
+	} {
+		if slices.ContainsFunc(got, func(a string) bool { return strings.Contains(a, unwanted) }) {
+			t.Errorf("the vertex repository's addresses name %s, which a real plan of its root does not: the service serves this repository nothing, so it is granted none of its containers and its build account is handed no address (D3326, F17)", unwanted)
+		}
 	}
 }
 
@@ -3120,6 +3182,11 @@ func TestRepoAddressesFollowTheSwitch(t *testing.T) {
 		// at all: the fixture's own premise, so a row that asserts nothing
 		// moves cannot pass by producing nothing in the first place.
 		holds []string
+		// ready says whether the on side carries the per-repository record the
+		// update read out of the bundle: the cascade row is the one whose record
+		// is there, and the two that hold their mounts are the deploy alone
+		// (AB15).
+		ready bool
 		// wantGone and wantAppKey are the two states of the drop: this branch,
 		// and C2.2's release with the App key in ServiceHeldSecretNames.
 		wantGone   []string
@@ -3135,9 +3202,10 @@ func TestRepoAddressesFollowTheSwitch(t *testing.T) {
 		wantAddAppKey []string
 	}{
 		{
-			name: "cascade, the auth the service serves",
-			in:   repoRootInputs(t, repoRootCascadeAgent),
-			lc:   parseLC(t, repoRootLC),
+			name:  "cascade, the auth the service serves",
+			in:    repoRootInputs(t, repoRootCascadeAgent),
+			lc:    parseLC(t, repoRootLC),
+			ready: true,
 			// The switch's own delta and the two fills meet in this row, and
 			// every one of them is an accessor: the credential the job reads
 			// stops being handed over by its own account and starts being
@@ -3167,7 +3235,7 @@ func TestRepoAddressesFollowTheSwitch(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			offSpec, onSpec := converged(t, tc.in, tc.lc)
+			offSpec, onSpec := converged(t, tc.in, tc.lc, tc.ready)
 			offAddrs := offSpec.Addresses()
 			for _, a := range tc.holds {
 				if !slices.Contains(offAddrs, a) {
@@ -3270,12 +3338,15 @@ func TestRepoAddressesFollowTheSwitch(t *testing.T) {
 // block on every installation; the repository root's own
 // `installation.credentials_service` — repoCredentialsService ->
 // CredentialsServiceServes — is what keeps the block out of a repository the
-// service does not serve, and that is the authorization condition. This
-// fixture publishes no policy, so these two rows are repositories held off by
-// the mode as well (B2.3, D2071), and their mounts stay because the switch's
-// answer is `none` for a held-off repository whatever the flip list says:
+// service does not serve, and that is the authorization condition. The record
+// the update reads out of the bundle is the condition this pair leaves out —
+// the deploy alone writes the block and no record, which is why the deploy
+// alone changes no run — and their mounts stay because the switch's answer is
+// `false` for a repository it does not serve whatever the flip list says:
 // B2.7's flip takes the two Claude mounts from a SWITCHED `api-key` or `oauth`
 // repository (ModelSecretsServed's `anthropic` arm), and this pair is not one.
+// The mode used to be the second half of that hold-off; a node that says the
+// word no longer holds a repository off at all (AB15, D3009).
 //
 // What each held-off row asserts, in the two forms the installations
 // distinguish (oauth: the shared subscription token, once per Claude account;
@@ -3304,7 +3375,9 @@ func TestTheDeployAloneDropsNoModelMount(t *testing.T) {
 		{name: "api-key", in: repoRootInputs(t, `agent: { auth: api-key }`), lc: parseLC(t, repoRootAPIKeyLC)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			offSpec, onSpec := converged(t, tc.in, tc.lc)
+			// No record on the on side: this pair is the deploy alone, and the
+			// record is what a repository apply writes (AB15).
+			offSpec, onSpec := converged(t, tc.in, tc.lc, false)
 			// The fixture's premise: with the service off the job really does
 			// mount a model credential, or the assertions below pass vacuously.
 			mounted := func(ws WorkflowSpec) []string {
@@ -3354,7 +3427,9 @@ func TestTheDeployAloneDropsNoModelMount(t *testing.T) {
 // TestNoRepositoryRootGainsAServiceTheBundleCannotServe is the whole-predicate
 // guard docs/credentials-service/default-on.md §3 (DON8) names: no repository
 // root the fixtures can build carries `installation.credentials_service` unless
-// all three of CredentialsServiceServes' conditions hold.
+// all three of CredentialsServiceServes' conditions hold — the two the function
+// takes (the service in the installation's outputs, the record that vouches for
+// the bundle) and the auth its own `agent` block runs under.
 //
 // The two tests above each pin one half — which addresses move, and which
 // mounts the job keeps — and each of them spells out the agent.auth it is
@@ -3366,15 +3441,27 @@ func TestTheDeployAloneDropsNoModelMount(t *testing.T) {
 // asserts the ON row's shape as well, because a root that carried the block
 // with the URL left in it would be a value the workflow module reads half of.
 //
-// The four states are the whole of what the three conditions can be, in the
-// order an installation reaches them: nothing deployed (every installation
-// before DON1); nothing deployed while a record says ready (a local config left
-// behind by an installation that turned the service off again — the record is
-// not the switch's authority on its own); the service deployed and its bundle
-// holding no model credential, which is the state EVERY installation is in the
-// moment its update deploys the service, because `fugaro creds set` is the
-// bundle's only writer; and all three holding, which is the one row that may
-// move, and only for the cascade.
+// The four states are the whole of what the two conditions the function takes
+// can be, in the order an installation reaches them: nothing deployed (every
+// installation before DON1); nothing deployed while a record says ready (a
+// local config left behind by an installation that turned the service off again
+// — the record is not the switch's authority on its own); the service deployed
+// and its bundle holding no model credential, which is the state EVERY
+// installation is in the moment its update deploys the service, because `fugaro
+// creds set` is the bundle's only writer; and both holding, which is the one
+// row that may move, and only for an auth the service carries.
+//
+// D3326 as amended by F17 is the one exception, and it is the vertex row: a
+// `vertex` repository is handed the ADDRESS whenever the installation HAS the
+// service — the record is the model switch's condition and a vertex repository
+// is never served — so for that row alone the block follows the installation's
+// own output, with the record in any state. What keeps that from being the
+// release blocker §1.4 names is the fact beside the block
+// (RepoInstallation.CredentialsServiceServes, false here): the module's drops
+// read it, so this root takes none of the job's credentials away and the
+// address it grants a call to is one the run only fetches its workflow secrets
+// through (§1.4's damage was a job that lost a credential the service could not
+// hand back).
 func TestNoRepositoryRootGainsAServiceTheBundleCannotServe(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -3387,7 +3474,9 @@ func TestNoRepositoryRootGainsAServiceTheBundleCannotServe(t *testing.T) {
 		{name: "vertex", agent: repoRootVertexAgent, lc: repoRootLC},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			served := tc.agent == repoRootCascadeAgent
+			served := slices.Contains([]string{repoRootCascadeAgent, repoRootOAuthAgent, `agent: { auth: api-key }`}, tc.agent)
+			// The one auth the address reaches without the switch (D3326).
+			addressed := tc.agent == repoRootVertexAgent
 			for _, st := range []struct {
 				name      string
 				installed bool
@@ -3411,9 +3500,9 @@ func TestNoRepositoryRootGainsAServiceTheBundleCannotServe(t *testing.T) {
 					t.Fatal(err)
 				}
 				got := rs.Installation.CredentialsService
-				if want := served && st.installed && st.ready; want != (got != nil) {
+				if want := served && st.installed && st.ready || addressed && st.installed; want != (got != nil) {
 					if want {
-						t.Fatalf("%s: the repository root carries no credentials service, want the installation's: the installation has the block, the record vouches for the bundle and agent.auth is %s — all three conditions — so this is the one row the switch turns on, and without it no repository of any installation ever reaches the service", st.name, config.AuthCascade)
+						t.Fatalf("%s: the repository root carries no credentials service, want the installation's: this is the row the service is reached on — all three switch conditions for the cascade, and the installation's own block alone for the one auth the address reaches without being served (D3326) — and without it no repository of any installation ever reaches the service", st.name)
 					}
 					t.Errorf("%s: the repository root carries installation.credentials_service %+v, want none: modules/workflow/sa.tf's gate is `var.credentials_service == null` and reads no auth, so this root's next apply would take the job's model credential away and grant its account roles/run.invoker on a service that cannot hand it back — the release blocker §1.4 states", st.name, got)
 				}
@@ -3504,6 +3593,224 @@ func repoRootServed(t *testing.T, agent, lc, mode string) RepoSpec {
 	return rs
 }
 
+// repoRootDeployed is repoRootServed with the switch's second condition left
+// out: the service is in the installation's outputs and the per-repository
+// record does not say the root was applied with it on. It is the state the
+// deploy of the service alone leaves a repository in — the record is written by
+// a repository apply, not by the installation root — and it is the way a
+// repository of a switched installation is held off the switch now that the
+// budget mode is not a condition of it (AB15, D3009).
+func repoRootDeployed(t *testing.T, agent, lc, mode string) RepoSpec {
+	t.Helper()
+	in := repoRootInputs(t, agent)
+	in.LC = parseLC(t, lc)
+	in.Installation.CredentialsService = credentialsService()
+	in.Policy = &projectpolicy.Policy{Budget: projectpolicy.Budget{Mode: mode}}
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rs
+}
+
+// TestWorkflowSecretsServedForVertex is IS9's own task, and D3326 as amended
+// by F17: a `vertex` repository of an installation whose credentials service is
+// deployed is handed the ADDRESS — its job accounts are granted
+// roles/run.invoker on the service and the launcher puts the URL on the
+// execution — while nothing of its credentials is served: the service's own
+// account is granted none of its containers and the job keeps every accessor
+// and every mount it has (G7). What the address is FOR on this auth is the
+// workflow secrets a run fetches instead of mounting (F17), which is why the
+// fact beside the block is false and not true.
+//
+// The switch is what the address is NOT read from, and the reason is
+// mechanical: localcfg.Repo.CredentialsServiceReady is documented as the
+// switch's own answer and is written from CredentialsServiceServes, which
+// answers false for `vertex` by construction — its model calls are the
+// project's own GCP service — so a root that waited for the switch would carry
+// no block and grant nothing.
+//
+// It was written red, and the red step is the first assertion: before
+// CredentialsServiceAddress, repoCredentialsService read CredentialsServiceServes,
+// and a vertex repository's root named no
+// google_cloud_run_v2_service_iam_member.credentials address at all.
+func TestWorkflowSecretsServedForVertex(t *testing.T) {
+	in := repoRootInputs(t, repoRootVertexAgent)
+	in.LC = parseLC(t, repoRootLC)
+	in.Installation.CredentialsService = credentialsService()
+	on, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The premise: the switch really does answer false for this repository, so
+	// what the assertions below pin is the address arm and not a switch that
+	// happened to be on (CredentialsServiceServes).
+	if CredentialsServiceServes(true, true, "vertex") {
+		t.Fatal("CredentialsServiceServes(installed, ready, vertex) = true: the switch serves no vertex repository, and a change there would make the vertex arm below say nothing")
+	}
+
+	const invoker = `google_cloud_run_v2_service_iam_member.credentials[0]`
+	if got := on.Installation.CredentialsService; got == nil {
+		t.Fatalf("a vertex repository's root carries no credentials service: D3326 hands it the address so its runs fetch their workflow secrets through the service, so the invoker grants below are the whole point (F17)")
+	} else if got.Name != credentialsService().Name || got.Region != credentialsService().Region {
+		t.Errorf("the vertex repository's credentials service is %+v, want name and region alone (%+v)", got, credentialsService())
+	}
+	if on.Installation.CredentialsServiceServes == nil || *on.Installation.CredentialsServiceServes {
+		t.Errorf("the vertex repository's root writes credentials_service_serves = %v, want a record that says false: the service serves none of this repository's credentials, and the module's drops hang on that fact (D3326, G7)", on.Installation.CredentialsServiceServes)
+	}
+	for _, key := range slices.Sorted(maps.Keys(on.Workflows)) {
+		if want := `module.repo.module.workflow[` + strconv.Quote(key) + `].` + invoker; !slices.Contains(on.Addresses(), want) {
+			t.Errorf("the vertex repository's addresses are missing %s: without the invoker grant the job account holds no roles/run.invoker on the service the launcher hands it the address of, and the run's own fetch is refused at the service's door (D3326, F17)", want)
+		}
+	}
+	// And the address is the whole of what this repository gained: every other
+	// address, and every job's mounts, are the ones it has with no service at
+	// all. That is G7's "model mounts and accessors are unchanged", asserted as
+	// a set difference rather than mount by mount.
+	offIn := in
+	offIn.Installation.CredentialsService = nil
+	off, err := Repo(offIn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gained []string
+	for _, a := range on.Addresses() {
+		if !slices.Contains(off.Addresses(), a) {
+			gained = append(gained, a)
+		}
+	}
+	var wantGained []string
+	for _, key := range slices.Sorted(maps.Keys(on.Workflows)) {
+		wantGained = append(wantGained, `module.repo.module.workflow[`+strconv.Quote(key)+`].`+invoker)
+	}
+	slices.Sort(wantGained)
+	if !slices.Equal(gained, wantGained) {
+		t.Errorf("the vertex repository's root gained %v over the same repository with no service (missing: %v), want exactly the job invoker grants %v: the address is the one thing D3326 adds, and a vertex run reads no credential of the service's so nothing of its may move (F17, G7)", gained, missingFrom(wantGained, gained), wantGained)
+	}
+	if slices.ContainsFunc(on.Addresses(), func(a string) bool {
+		return strings.Contains(a, "google_secret_manager_secret_iam_member.service[")
+	}) {
+		t.Error("the vertex repository's addresses name a grant to the service's own account: the service serves none of this repository's credentials, so it is granted none of its containers (D2074 hangs on credentials_service_serves)")
+	}
+	for _, key := range slices.Sorted(maps.Keys(off.Workflows)) {
+		if got, before := modelMountsOf(on.Workflows[key]), modelMountsOf(off.Workflows[key]); !slices.Equal(got, before) {
+			t.Errorf("the vertex repository's %s job mounts %v, want %v, what it mounts with no service at all: a vertex run reads no model credential of the service's, so the address moves no mount (G7, F17)", key, got, before)
+		}
+	}
+}
+
+// TestModeOffRepoGetsNoAddress is F17's other half — "no other held-off
+// repository gains it": the address reaches the one auth D3326 names and no
+// other repository the switch holds off. Every row plans the same installation
+// and differs in one word of the document, so what it pins is the auth.
+//
+// The address is what makes a repository proxied (proxiedRepo) and opens its
+// git provider keyless (internal/gitprov/providers), so an `api-key` or
+// `oauth` repository handed it while its credential was not dropped would lose
+// the path it has and get nothing in its place (D2071).
+//
+// The name is the plan's and the mode it was written for is gone: budget mode
+// `off` is not a mode any more (D3009), so the rows below are the held-off
+// states an installation reaches today — the service deployed for it and no
+// apply having recorded the repository on the switch, and an installation
+// with no service at all.
+func TestModeOffRepoGetsNoAddress(t *testing.T) {
+	const invoker = `google_cloud_run_v2_service_iam_member.credentials[0]`
+	plan := func(agent, lc string, installed bool, ready bool) RepoSpec {
+		in := repoRootInputs(t, agent)
+		in.LC = parseLC(t, lc)
+		if installed {
+			in.Installation.CredentialsService = credentialsService()
+		}
+		if ready {
+			serviceReady(t, in.LC, in.Repo)
+		}
+		in.Policy = &projectpolicy.Policy{Budget: projectpolicy.Budget{Mode: config.BudgetObserve}}
+		rs, err := Repo(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rs
+	}
+	for name, tc := range map[string]struct {
+		agent     string
+		lc        string
+		installed bool
+		want      bool
+	}{
+		"the vertex repository D3326 hands the address to, service deployed and no record": {repoRootVertexAgent, repoRootLC, true, true},
+		"the same vertex repository with no service at all":                                {repoRootVertexAgent, repoRootLC, false, false},
+		"an api-key repository deployed for and not recorded on the switch":                {`agent: { auth: api-key }`, repoRootAPIKeyLC, true, false},
+		"an oauth repository deployed for and not recorded on the switch":                  {repoRootOAuthAgent, repoRootLC, true, false},
+		"an api-key repository with no service at all":                                     {`agent: { auth: api-key }`, repoRootAPIKeyLC, false, false},
+		"an oauth repository with no service at all":                                       {repoRootOAuthAgent, repoRootLC, false, false},
+	} {
+		held := plan(tc.agent, tc.lc, tc.installed, false)
+		if got := held.Installation.CredentialsService != nil; got != tc.want {
+			t.Fatalf("%s: the repository root carries the credentials service = %v, want %v: the address is handed to `vertex` alone among the repositories the switch holds off, and every other one keeps the credential path it has (D3326 as amended by F17)", name, got, tc.want)
+		}
+		named := slices.ContainsFunc(held.Addresses(), func(a string) bool { return strings.Contains(a, invoker) })
+		if named != tc.want {
+			t.Errorf("%s: the addresses name an invoker grant = %v, want %v", name, named, tc.want)
+		}
+		if tc.want {
+			if held.Installation.CredentialsServiceServes == nil || *held.Installation.CredentialsServiceServes {
+				t.Errorf("%s: the root writes credentials_service_serves = %v, want false (the service serves a vertex repository nothing)", name, held.Installation.CredentialsServiceServes)
+			}
+			continue
+		}
+		if held.Installation.CredentialsServiceServes != nil {
+			t.Errorf("%s: a repository with no block carries credentials_service_serves = %v, want none: the fact belongs to the block above it, and Terraform reads an absent member as the idempotent default (D3326, RepoInstallation.CredentialsServiceServes)", name, held.Installation.CredentialsServiceServes)
+		}
+	}
+}
+
+// TestVertexRepoKeepsModelPath is G7 pinned where a reader would look for the
+// damage: the vertex repository's model path — whose credentials its job
+// mounts, which of them its account holds an accessor on, and what
+// model_secrets_served says — is exactly the one it has with no service at all.
+//
+// It matters more than the generic set difference above, because the vertex
+// repository is the one place the address and the switch disagree: everything
+// in the module and in Readiness that keys off "the service is on" would, if it
+// read the block's presence instead of the fact beside it, take this job's
+// model credential away and hand it an address to fetch one from — and a vertex
+// run reads no credential of the service's, so the run would simply lose it.
+func TestVertexRepoKeepsModelPath(t *testing.T) {
+	in := repoRootInputs(t, repoRootVertexAgent)
+	in.LC = parseLC(t, repoRootLC)
+	in.Installation.CredentialsService = credentialsService()
+	withService, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := repoRootSpec(t, repoRootVertexAgent)
+	if withService.Installation.CredentialsService == nil {
+		t.Fatal("the fixture carries no credentials service: this test is about a vertex repository of an installation that has one")
+	}
+	if got, want := withService.ModelSecretsServed, plain.ModelSecretsServed; got != want {
+		t.Errorf("the vertex repository plans model_secrets_served = %q, want %q, what it plans with no service at all: the drop of the job's model accessors hangs on the switch, which serves no vertex repository (G7, D3326)", got, want)
+	}
+	if got, want := len(withService.Secrets), len(plain.Secrets); got != want {
+		t.Errorf("the vertex repository declares %d secret containers, want %d: the address adds none and takes none away (G7)", got, want)
+	}
+	for _, key := range slices.Sorted(maps.Keys(plain.Workflows)) {
+		before, after := plain.Workflows[key], withService.Workflows[key]
+		if got, want := modelMountsOf(after), modelMountsOf(before); !slices.Equal(got, want) {
+			t.Errorf("the vertex repository's %s job mounts %v, want %v: a vertex run reads no model credential of the service's, so the address may not move its mounts (G7, F17)", key, got, want)
+		}
+		if got, want := slices.Sorted(maps.Keys(after.SecretEnv)), slices.Sorted(maps.Keys(before.SecretEnv)); !slices.Equal(got, want) {
+			t.Errorf("the vertex repository's %s job declares the secret env vars %v, want %v (G7)", key, got, want)
+		}
+	}
+	if got, want := vaultAccessors(withService, "job"), vaultAccessors(plain, "job"); !slices.Equal(got, want) {
+		t.Errorf("the vertex repository's job accounts hold the accessors %v, want %v, the ones they hold with no service at all: the service serves this repository nothing, so it takes no accessor away (G7, F17)", got, want)
+	}
+	if got, want := vaultAccessors(withService, "service"), vaultAccessors(plain, "service"); !slices.Equal(got, want) {
+		t.Errorf("the vertex repository grants the service's own account the accessors %v, want %v: the service reads none of this repository's containers, so it is granted none (D2074, D3326)", got, want)
+	}
+}
+
 // modelMountsOf are a workflow spec's model credentials, as env=logical, which
 // is the half of the drop that decides whether a run has a credential at all
 // (the other half is the account's accessor, Readiness' Addresses).
@@ -3548,16 +3855,17 @@ func withoutClaudeMounts(mounts []string) []string {
 	return out
 }
 
-// TestServesAPIKeyAndOAuthWhenTheModeIsOn is B2.3's own answer (D2071, F30): an
-// `api-key` or `oauth` repository of an installation whose published mode is
-// `observe` or `enforce` is ON the switch, and one whose mode is off is not.
+// TestServesAPIKeyAndOAuthInEveryMode is B2.3's own answer (D2071, F30) with the
+// mode dropped out of it (AB15, D3009): an `api-key` or `oauth` repository of an
+// installation whose block is there and whose record vouches for the bundle is
+// ON the switch whatever the published node's budget mode writes — observe,
+// enforce, the word that is not a mode any more, or no mode at all.
 //
-// The mode is the fourth condition and the reason it exists: the gateway is
-// what reaches the service, and the gateway exists only in those two modes, so
-// a repository on a mode-off project that was switched on would have its job
-// handed an address its own runner refuses to use. The auth half is what this
-// task adds: before it, the switch admitted the cascade alone, and every
-// non-cascade repository kept its model credential with no address to the
+// The mode was that condition because the gateway is what reaches the service
+// and the gateway existed only in two modes; every run has one now, so installed
+// and ready are the whole of what the switch asks beside the auth. The auth half
+// is what B2.3 added: before it, the switch admitted the cascade alone, and
+// every non-cascade repository kept its model credential with no address to the
 // service at all.
 //
 // The spec half is what the switch's answer buys a repository root: the
@@ -3565,15 +3873,11 @@ func withoutClaudeMounts(mounts []string) []string {
 // are handed) and the second step of D2072, which this release carries — a
 // model_secrets_served of `anthropic`, so the module drops the two Claude
 // accessors and the job gives up those two mounts while every provider key it
-// mounts stays (B2.7). The red step of the task was the first assertion below:
-// with the auth half removed, `api-key` answered false and this repository root
-// carried no block.
-func TestServesAPIKeyAndOAuthWhenTheModeIsOn(t *testing.T) {
+// mounts stays (B2.7).
+func TestServesAPIKeyAndOAuthInEveryMode(t *testing.T) {
 	for _, auth := range []string{config.AuthAPIKey, config.AuthOAuth} {
-		for _, mode := range []string{config.BudgetObserve, config.BudgetEnforce} {
-			if !CredentialsServiceServes(true, true, auth, mode) {
-				t.Errorf("CredentialsServiceServes(installed, ready, %q, %q) = false, want true: the gateway that reaches the service runs in observe and enforce, so a repository on one of those modes is exactly what the service serves (D2071)", auth, mode)
-			}
+		if !CredentialsServiceServes(true, true, auth) {
+			t.Errorf("CredentialsServiceServes(installed, ready, %q) = false, want true: the service serves this auth, and no budget mode is a condition of the switch any more (D2071, D3009)", auth)
 		}
 	}
 
@@ -3588,112 +3892,54 @@ func TestServesAPIKeyAndOAuthWhenTheModeIsOn(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			on := repoRootServed(t, tc.agent, tc.lc, config.BudgetEnforce)
+			for _, mode := range []string{"", "off", config.BudgetObserve, config.BudgetEnforce} {
+				on := repoRootServed(t, tc.agent, tc.lc, mode)
 
-			if on.Installation.CredentialsService == nil {
-				t.Fatalf("the repository root carries no credentials service with the mode in force: the installation has the block, the record vouches for the bundle and agent.auth is %s, and D2071 holds a repository off the switch for a mode that is off alone — so no non-cascade repository would ever reach the service", tc.agent)
-			}
-			if got := on.Installation.CredentialsService; got.Name != credentialsService().Name || got.Region != credentialsService().Region {
-				t.Errorf("the repository root's credentials service is %+v, want name and region alone (%+v): a repository root reads those two and nothing else (repoCredentialsService)", got, credentialsService())
-			}
-			// The address the launch is handed is the same answer, and the
-			// invoker grant follows the block: a job that may not call the
-			// service is a job whose address must not be set.
-			addrs := on.Addresses()
-			if len(addrs) == 0 {
-				t.Fatal("the fixture produces no address at all: the test would be vacuous")
-			}
-			if !slices.ContainsFunc(addrs, func(a string) bool {
-				return strings.Contains(a, "google_cloud_run_v2_service_iam_member.credentials[0]")
-			}) {
-				t.Errorf("the switched repository's jobs carry no invoker grant on the service: %v", addrs)
-			}
-			// D2072's second step, B2.7's flip: the address is handed out AND the
-			// two Claude mounts go, because this auth is in the flip list from
-			// the release that carries it.
-			if on.ModelSecretsServed != config.ModelSecretServedAnthropic {
-				t.Errorf("the switched %s repository's root plans model_secrets_served = %q, want %q: the service serves this auth's model calls, so the two Claude mounts go and a provider's key stays (D2072, R6)", tc.name, on.ModelSecretsServed, config.ModelSecretServedAnthropic)
-			}
-			var checked, dropped int
-			for key, ws := range on.Workflows {
-				offWS, ok := off.Workflows[key]
-				if !ok {
-					continue
+				if on.Installation.CredentialsService == nil {
+					t.Fatalf("with the published mode %q the repository root carries no credentials service: the installation has the block, the record vouches for the bundle and agent.auth is %s, and the mode is not a condition of the switch any more — so no non-cascade repository would ever reach the service", mode, tc.agent)
 				}
-				checked++
-				if kept, had := claudeMountsOf(modelMountsOf(ws)), claudeMountsOf(modelMountsOf(offWS)); len(kept) != 0 || len(had) == 0 {
-					t.Errorf("the switched repository's %s job still mounts %v, and with no service at all it mounted %v: the two Claude mounts must be gone from the flipped job and present in the unserved one (D2072, G17)", key, kept, had)
-				} else {
-					dropped++
+				if got := on.Installation.CredentialsService; got.Name != credentialsService().Name || got.Region != credentialsService().Region {
+					t.Errorf("the repository root's credentials service is %+v, want name and region alone (%+v): a repository root reads those two and nothing else (repoCredentialsService)", got, credentialsService())
 				}
-				if got, want := modelMountsOf(ws), withoutClaudeMounts(modelMountsOf(offWS)); !slices.Equal(got, want) {
-					t.Errorf("the switched repository's %s job mounts %v, want %v, what it mounted with no service at all minus the two Claude credentials: the flip takes those two away and nothing else (D2072, R6)", key, got, want)
+				// The address the launch is handed is the same answer, and the
+				// invoker grant follows the block: a job that may not call the
+				// service is a job whose address must not be set.
+				addrs := on.Addresses()
+				if len(addrs) == 0 {
+					t.Fatal("the fixture produces no address at all: the test would be vacuous")
 				}
-			}
-			if checked == 0 || dropped == 0 {
-				t.Fatalf("%d shared workflows and %d of them dropped a Claude mount: the mount assertions above passed vacuously", checked, dropped)
+				if !slices.ContainsFunc(addrs, func(a string) bool {
+					return strings.Contains(a, "google_cloud_run_v2_service_iam_member.credentials[0]")
+				}) {
+					t.Errorf("the switched repository's jobs carry no invoker grant on the service: %v", addrs)
+				}
+				// D2072's second step, B2.7's flip: the address is handed out AND the
+				// two Claude mounts go, because this auth is in the flip list from
+				// the release that carries it.
+				if on.ModelSecretsServed != config.ModelSecretServedAnthropic {
+					t.Errorf("the switched %s repository's root plans model_secrets_served = %q, want %q: the service serves this auth's model calls, so the two Claude mounts go and a provider's key stays (D2072, R6)", tc.name, on.ModelSecretsServed, config.ModelSecretServedAnthropic)
+				}
+				var checked, dropped int
+				for key, ws := range on.Workflows {
+					offWS, ok := off.Workflows[key]
+					if !ok {
+						continue
+					}
+					checked++
+					if kept, had := claudeMountsOf(modelMountsOf(ws)), claudeMountsOf(modelMountsOf(offWS)); len(kept) != 0 || len(had) == 0 {
+						t.Errorf("the switched repository's %s job still mounts %v, and with no service at all it mounted %v: the two Claude mounts must be gone from the flipped job and present in the unserved one (D2072, G17)", key, kept, had)
+					} else {
+						dropped++
+					}
+					if got, want := modelMountsOf(ws), withoutClaudeMounts(modelMountsOf(offWS)); !slices.Equal(got, want) {
+						t.Errorf("the switched repository's %s job mounts %v, want %v, what it mounted with no service at all minus the two Claude credentials: the flip takes those two away and nothing else (D2072, R6)", key, got, want)
+					}
+				}
+				if checked == 0 || dropped == 0 {
+					t.Fatalf("%d shared workflows and %d of them dropped a Claude mount: the mount assertions above passed vacuously", checked, dropped)
+				}
 			}
 		})
-	}
-}
-
-// TestServesNoAPIKeyOrOAuthWithBudgetOff is the other side of D2071: with the
-// published mode off, a non-cascade repository is held off the switch — no
-// block in its root, no invoker grant, no address — and every mount stays.
-//
-// The `""` row is the caller that read no node at all (fugaro image, fugaro
-// doctor, --print-vars): the fail-closed answer, and not the same one as a node
-// that was read and carries an empty mode. The vertex row is the auth nothing
-// serves whatever the mode says: its calls go to Vertex AI on the job's own
-// service account.
-func TestServesNoAPIKeyOrOAuthWithBudgetOff(t *testing.T) {
-	for _, auth := range []string{config.AuthAPIKey, config.AuthOAuth} {
-		for _, mode := range []string{"", config.BudgetOff} {
-			if CredentialsServiceServes(true, true, auth, mode) {
-				t.Errorf("CredentialsServiceServes(installed, ready, %q, %q) = true, want false: the gateway the service serves a run through exists in observe and enforce alone, so a mode-off repository must keep its own credential and be handed no address (D2071)", auth, mode)
-			}
-		}
-	}
-	for _, mode := range []string{"", config.BudgetOff, config.BudgetObserve, config.BudgetEnforce} {
-		if CredentialsServiceServes(true, true, "vertex", mode) {
-			t.Errorf("CredentialsServiceServes(installed, ready, %q, %q) = true, want false: a vertex repository's calls are the project's own GCP service and no credential of the service's, whatever the mode says", "vertex", mode)
-		}
-	}
-
-	offIn := repoRootInputs(t, repoRootOAuthAgent)
-	offIn.LC = parseLC(t, repoRootLC)
-	off, err := Repo(offIn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The fixture's premise: this repository root DOES carry the block and DOES
-	// reach the service for its model credential when the switch is on, so the
-	// assertions below are about the mode and not about a hold-off that would
-	// happen anyway. The mount is gone on that side, which is the flip's answer
-	// and not this test's subject.
-	on := repoRootServed(t, repoRootOAuthAgent, repoRootLC, config.BudgetObserve)
-	if on.Installation.CredentialsService == nil || on.ModelSecretsServed != config.ModelSecretServedAnthropic {
-		t.Fatalf("the mode-on fixture carries no block or does not reach the service (%+v, model_secrets_served=%q): the test would be vacuous", on.Installation.CredentialsService, on.ModelSecretsServed)
-	}
-
-	for _, mode := range []string{"", config.BudgetOff} {
-		held := repoRootServed(t, repoRootOAuthAgent, repoRootLC, mode)
-		if held.Installation.CredentialsService != nil {
-			t.Errorf("with the published mode %q the repository root carries the credentials service %+v, want none: its runs would be handed an address their own runner refuses to use, and its job would give up accessors on credentials it still mounts (D2071)", mode, held.Installation.CredentialsService)
-		}
-		if held.ModelSecretsServed != config.ModelSecretServedNone {
-			t.Errorf("with the published mode %q the root plans model_secrets_served = %q, want %q", mode, held.ModelSecretsServed, config.ModelSecretServedNone)
-		}
-		for key, ws := range off.Workflows {
-			if got := modelMountsOf(held.Workflows[key]); !slices.Equal(got, modelMountsOf(ws)) {
-				t.Errorf("with the published mode %q the %s job mounts %v, want %v: a held-off repository keeps every mount", mode, key, got, modelMountsOf(ws))
-			}
-		}
-		if slices.ContainsFunc(held.Addresses(), func(a string) bool {
-			return strings.Contains(a, "google_cloud_run_v2_service_iam_member.credentials[0]")
-		}) {
-			t.Errorf("with the published mode %q a job carries the invoker grant on the service: a repository the switch holds off must not be granted a call the service would refuse (D2071)", mode)
-		}
 	}
 }
 
@@ -3968,7 +4214,7 @@ func TestModelAccessorAllowDeleteIsTheFlipsOwn(t *testing.T) {
 	}
 	// And the cascade, the other arm: its job mounts no model credential at all,
 	// so no accessor of its account is one this flip took away.
-	cascade := repoRootServed(t, repoRootCascadeAgent, repoRootLC, config.BudgetOff)
+	cascade := repoRootServed(t, repoRootCascadeAgent, repoRootLC, "off")
 	if cascade.ModelSecretsServed != config.ModelSecretServedAll {
 		t.Fatalf("the cascade fixture plans model_secrets_served = %q, want %q", cascade.ModelSecretsServed, config.ModelSecretServedAll)
 	}
@@ -4124,18 +4370,19 @@ func TestFilledVaultListDropsWorkflowMountsAndAccessors(t *testing.T) {
 // (G9, D147, D2071): a repository the credentials service does not serve keeps
 // every mount whatever the class list says, and the two ways a repository is
 // not served are the two rows here — an installation with no service for it at
-// all, and a switched installation whose published mode holds it off the switch.
+// all, and a switched installation whose own apply has not recorded the
+// repository on the switch.
 func TestFilledVaultListKeepsAnUnswitchedRepository(t *testing.T) {
 	if !config.VaultFetchesClass(config.VaultSecretClassWorkflow) {
 		t.Fatalf("config.VaultFetchedSecretClasses = %v and does not carry %q: this case is about the list being FILLED and the repository still keeping its mounts (D147, G9)", config.VaultFetchedSecretClasses, config.VaultSecretClassWorkflow)
 	}
 	off := vaultSpecUnswitched(t)
-	held := repoRootServed(t, repoRootOAuthAgent, repoRootVaultLC, config.BudgetOff)
+	held := repoRootDeployed(t, repoRootOAuthAgent, repoRootVaultLC, config.BudgetObserve)
 	if off.Installation.CredentialsService != nil {
 		t.Fatal("the fixture carries a credentials service with no installation switch: nothing below would be about an unserved repository")
 	}
 	if held.Installation.CredentialsService != nil {
-		t.Fatalf("the mode-off fixture carries the credentials service (%+v): a mode-off repository is held off the switch entirely (D2071) and the test would be about nothing", held.Installation.CredentialsService)
+		t.Fatalf("the fixture with no record carries the credentials service (%+v): the record is the switch's second condition and a repository whose apply has not written one is held off it, whatever its node's mode says (AB15, D3009), and the test would be about nothing", held.Installation.CredentialsService)
 	}
 	for _, rs := range []RepoSpec{off, held} {
 		ws := rs.Workflows["web"]

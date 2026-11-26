@@ -25,11 +25,15 @@ import (
 	"golang.org/x/oauth2/google"
 	secretmanager "google.golang.org/api/secretmanager/v1"
 
+	accesslib "github.com/dimipaun/fugaro/internal/access"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/credsvc"
+	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
+	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/workspace"
 )
@@ -369,8 +373,8 @@ const (
 	// renders the ones this installation holds here; an installation whose
 	// roster names none renders no entry and must start, which is why it is read
 	// as an OPTIONAL value like every other class list. It is credsvc's
-	// IdentityConfig.ServiceAccounts, and nothing serves a caller by it until
-	// the issuer is wired in (I1).
+	// IdentityConfig.ServiceAccounts, the roster the ticket route admits the
+	// launcher class from (LM3).
 	envRosterServiceAccounts = "FUGARO_ROSTER_SERVICE_ACCOUNTS"
 	// envImplicitAdmins is the implicit admins of this installation (F29, R16):
 	// a JSON array of bare addresses, which is what the module renders from the
@@ -381,7 +385,7 @@ const (
 	// not on it, for the gate's own reason: a member the gate cannot match
 	// against a caller is not one it can place. It is credsvc's
 	// IdentityConfig.ImplicitAdmins, read as an OPTIONAL value like the lists
-	// above and used by nothing yet (LM23 judges with it).
+	// above, and the launch scope is built from it (LM23, LM24).
 	envImplicitAdmins = "FUGARO_IMPLICIT_ADMINS"
 )
 
@@ -713,11 +717,9 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 	// The identity half's three values (LM22): the signer a run's identity is
 	// signed as (D3121), the roster's service accounts (D3123) and the implicit
 	// admins the CLI's own gate reads (F29, R16). They are read here into C1's
-	// configuration and NOTHING USES THEM YET: the five identity routes answer
-	// the contract's "not served" whatever this configuration holds, because the
-	// issuer is not wired in (credsvc's identity stub, which I1 deletes), and
-	// the store, the scope check and the ticket's bound on a run's runtime are
-	// LM1's, LM23's and LM24's. Each is read as an OPTIONAL value by the rules
+	// configuration, and the issuer's own four parts are built from them below:
+	// the store (LM1), the scope check (LM23, LM24) and the ticket's bound on a
+	// run's runtime. Each is read as an OPTIONAL value by the rules
 	// above -- the module that renders them is LM12, so an installation whose
 	// module does not render one yet must start the service it always did --
 	// while a value that is present and is not the document the module renders
@@ -931,6 +933,23 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 	if workspace == "" {
 		credsvc.LegacyChain = credsvc.NewLegacyAuth(db, credsvc.RTDBPolicy{DB: db})
 	}
+	// The issuer's last three parts (I1): the issuance record's store, the
+	// launch-scope check with the orchestrator's class composed behind it, and
+	// the readers those two need. They are built here and not in credsvc
+	// because every one of them is a read of THIS deployment's database — the
+	// same client the routes beside them use and therefore the same service
+	// identity — and because the scope's own inputs are the deployment's: the
+	// repository table, the records, the published policy and the implicit
+	// admins, exactly as the CLI's own launch gate reads them (R16, F29).
+	//
+	// A workspace builds one too and never uses it: its container carries no
+	// signer (the block below is read only for an installation), so its
+	// identity routes answer the contract's "not served" whatever this holds,
+	// and the orchestrator's record is not a workspace's business at all.
+	scope, err := credentialsIdentityScope(db, repos, implicitAdmins, env[envProject])
+	if err != nil {
+		return credsvc.Config{}, userErr("the credentials service cannot judge a launch scope, so it will not start: %v", err)
+	}
 	return credsvc.Config{
 		Auth:    auth,
 		Bundles: loader,
@@ -1022,23 +1041,61 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 		// rather than answer a grant naming a proxy that admits nothing.
 		BuildPairs: &creds.RTDBStore{DB: db},
 		Log:        log,
-		// The identity half (LM22, C1): the three values this command read out
-		// of the deployment's environment above, and everything of the issuer's
-		// configuration that an environment can state. The rest of
-		// IdentityConfig — the issuance store (LM1), the launch-scope check
-		// (LM23 and LM24) and the bound on a run's runtime — is I1's, which
-		// wires the routes in and deletes credsvc's identity stub; until then
-		// every identity route answers the contract's "not served" whatever
-		// this holds, which is the bridge R7 leaves every installation on.
+		// The identity half (LM22, C1, I1): the values this command read out of
+		// the deployment's environment above, and the rest of what the issuer
+		// is built from — the issuance record's store, the launch-scope check
+		// with the orchestrator's class composed behind it, and the bound on a
+		// run's runtime. Every one of them is wired here rather than left to a
+		// default, because each answers a question the routes ASK: a store the
+		// service did not wire is a wiring fault the ticket route answers as
+		// one, and a maximum of zero refuses every ask there is.
 		//
-		// An empty Signer is the state that answer is about: an installation
-		// whose Firebase root carries no issuer row yet, and one deployed by a
-		// release before this work, has no account to sign a run's identity as
-		// and must serve the bridge rather than a route that cannot sign.
+		// An empty Signer is the state all of that is mute about: an
+		// installation whose Firebase root carries no issuer row yet, and one
+		// deployed by a release before this work, has no account to sign a run's
+		// identity as, and its six identity routes answer the contract's "not
+		// served" (R7) whatever this holds — the bridge a launcher of this
+		// release signs a run's identity locally across, as long as the people's
+		// minter row is still there.
+		//
+		// VMIdentity is deliberately left nil, and it is the one field of this
+		// configuration a deployment cannot yet fill: it is the link from a
+		// claiming VM to the Batch job the record names (BR3 of
+		// docs/batch-run-identity), whose reader that plan builds. Nil is the
+		// state C1 states for it and not an oversight — a Cloud Run launch
+		// names no job at all and claims exactly as it did (R18), and a claim
+		// on a record that DOES name a job is answered the contract's "not
+		// served" rather than served on the account check alone (D3114).
 		Identity: credsvc.IdentityConfig{
 			Signer:          signer,
 			ServiceAccounts: rosterAccounts,
-			ImplicitAdmins:  implicitAdmins,
+			// The roster's operators (R2, A2): the read mint's admitted people,
+			// the addresses `fugaro update` may be run by, and the only class
+			// the probe admits. They are this installation's
+			// FUGARO_PERSON_ACCOUNTS — the module renders them under that one
+			// name (credentials.tf's credentials_read_people) because the two
+			// are one list of one set of people — and a second variable for
+			// this second reader would be a second list to keep in step.
+			Operators: persons,
+			// The implicit admins, as the gate reads them (F29, R16): the
+			// machine's own terraform.budget_admins `user:` entries, which the
+			// scope check adds to the records' members so that an owner is not
+			// refused a launch that works today.
+			ImplicitAdmins: implicitAdmins,
+			// The ceiling on a run's identity (R4): a launch's ask is its
+			// repository's own timeouts.total plus the queue allowance, and one
+			// beyond the ceiling is refused rather than clamped — a shorter
+			// identity than the run needs is a run that halts in the middle of
+			// its work. A day is the longest a job's execution is held at all
+			// on either platform a run runs on (Cloud Run jobs and Cloud Batch
+			// both cap a task at 24 hours), so the ceiling is above every ask an
+			// installation could honour.
+			MaxRuntime: identityMaxRuntime,
+			// The issuance record's store (LM1) and the launch-scope check
+			// (LM23 with LM24 behind it), both built over this deployment's own
+			// database client above.
+			Store: credsvc.NewIssuanceStore(db),
+			Scope: scope,
 		},
 	}, nil
 }
@@ -1155,6 +1212,15 @@ func credentialsWorkspaceService(ctx context.Context, workspace string, env map[
 		return credentialsWorkspaceDeployment{}, err
 	}
 	credsvc.PersonScopeConfigForServe = person
+	// The switch this process reads a member's personal half with (R9, C1's
+	// PersonSwitchReader): WC6's reading of the MEMBER the call is under, taken
+	// from the call's own scope at the moment it is asked (credsvc.ScopePersonSwitch).
+	// It is assigned here and nowhere else, and it is the line that makes the
+	// personal half serve a token at all: the variable's own default answers OFF
+	// for every project, so a workspace whose half IS wired would refuse every
+	// call whose slip names a personal token with the sentence R11 reserves for a
+	// member who turned the switch off.
+	credsvc.PersonSwitchForServe = credsvc.ScopePersonSwitch()
 	build := credsvc.NewWorkspaceScopeResolver
 	if credentialsWorkspaceTest != nil {
 		build = credentialsWorkspaceTest
@@ -1524,9 +1590,9 @@ func credentialsServiceOrchestrators(raw string) ([]string, error) {
 // because the entry arrives with the module LM12 renders next, so a service
 // deployed by a release before it must start the same service it always did —
 // with no signer, which is an installation that has no issuer and whose
-// identity routes answer the contract's "not served" (R7, I1) — while a value
+// identity routes answer the contract's "not served" (R7) — while a value
 // that is present and is not one address is a deployment that is wrong. And
-// whether the value is an ADDRESS at all is left to whoever consumes it (I1),
+// whether the value is an ADDRESS at all is left to whoever consumes it,
 // which is the coordinator's own rule: this reader holds it to the shape the
 // module renders and decides nothing about the account.
 //
@@ -1556,9 +1622,8 @@ func credentialsServiceSigner(raw string) (string, error) {
 // that is wrong. The refusal names the variable and never an entry, because the
 // entries are service accounts of the installation's own project.
 //
-// The list is not a class of its own at this end yet: nothing serves a caller
-// by it until the issuer is wired in (I1), and it is read here into
-// credsvc.IdentityConfig.ServiceAccounts, which no route reads. A `group:` or
+// It is read here into credsvc.IdentityConfig.ServiceAccounts, the roster the
+// ticket route admits the launcher class from (LM3). A `group:` or
 // `domain:` roster entry is deliberately not on it — an address that holds no
 // token to present is one no caller can be — which is LM12's and the update's
 // to say, not this reader's.
@@ -1591,8 +1656,8 @@ func credentialsServiceRosterServiceAccounts(raw string) ([]string, error) {
 //
 // A `group:` or `domain:` member is not on the list by the gate's own rule: a
 // member the gate cannot match against a caller is not one it can place. The
-// value is read into credsvc.IdentityConfig.ImplicitAdmins and used by nothing
-// yet (LM23 judges with it).
+// value is read into credsvc.IdentityConfig.ImplicitAdmins, and the launch
+// scope is built from it (LM23, LM24).
 func credentialsServiceImplicitAdmins(raw string) ([]string, error) {
 	if raw == "" {
 		return nil, nil
@@ -1602,6 +1667,117 @@ func credentialsServiceImplicitAdmins(raw string) ([]string, error) {
 		return nil, fmt.Errorf("%s is not the installation's implicit admins: it must be a JSON array of the bare email addresses a Google ID token carries, one per terraform.budget_admins member the installation's own configuration names. Nothing was started and no credential was issued", envImplicitAdmins)
 	}
 	return admins, nil
+}
+
+// identityMaxRuntime is the ceiling on the runtime a launch may ask a run's
+// identity for (credsvc.IdentityConfig.MaxRuntime, R4). The ticket route
+// refuses an ask beyond it rather than clamping it, so this is the one place a
+// deployment's answer to "how long may a run's identity live" is stated, and
+// it is a constant of the process rather than a variable of the installation:
+// every installation asks for the same thing, and it is the greater of the
+// deployed job's own task timeout — the repository's timeouts.total plus
+// backend.TaskTimeoutSlack, which internal/infra deploys — and --total-timeout
+// plus the same slack, and both are held at or below Cloud Run's ceiling, by
+// internal/projectpolicy for the class and by parseTotalTimeout for the flag
+// (launchIdentityWindow). So the platform's own ceiling is the only bound that
+// admits every ask a launch may legitimately make, and a smaller one is not a
+// tighter policy but a launch that cannot work: the route refuses rather than
+// clamps, so a repository whose timeouts.total is longer would be refused at
+// the ticket route, with advice to launch a run the service refuses again.
+// A maximum of zero, which is the fail-closed reading of an installation that
+// stated none, would refuse every launch there is.
+const identityMaxRuntime = gcp.MaxTaskTimeout
+
+// credentialsIdentityScope builds the ticket route's launch-scope check (R16):
+// the CLI gate's own judgement recomputed on the service's side of the wire,
+// with the orchestrator's class composed behind it (LM23 and LM24).
+//
+// Every input is this deployment's: the repository table the route already
+// binds a call to (the same `repos` map the rest of this configuration holds),
+// the roles and scopes records and the published policy, both read over the
+// database client above and therefore with this service's own account, and the
+// implicit admins the machine's configuration names.
+//
+// The implicit admins are converted to MEMBERS here and not carried as the
+// bare addresses the environment holds, because that is the spelling both
+// readers of them use: internal/access matches a member against a member
+// (access.Member, which is what the CLI's own gate builds its input from), and
+// the addresses this deployment is rendered are the same ones with the prefix
+// taken off (the module's own reader, credentialsServiceImplicitAdmins). The
+// conversion is access.Member and not a `"user:" + addr`, so an entry the
+// resolver cannot hold as a member places nobody — the fail-closed direction,
+// and the one the gate takes for the same entry (userImplicitAdmins).
+//
+// An error is a wiring fault and not a deployment's typo: the only two ways to
+// reach it are a nil database and a nil check, and a service that served an
+// ask with no scope judged would issue a launcher a run's identity from a
+// repository nothing admitted.
+func credentialsIdentityScope(db *rtdb.Client, repos map[string]string, implicitAdmins []string, orchestratorID string) (credsvc.ScopeCheck, error) {
+	members := make([]string, 0, len(implicitAdmins))
+	for _, addr := range implicitAdmins {
+		if member, err := accesslib.Member(addr); err == nil {
+			members = append(members, member)
+		}
+	}
+	return credsvc.NewOrchestratedScope(
+		credsvc.NewLaunchScope(credsvc.LaunchScopeConfig{
+			Repos:          repos,
+			Records:        credsvc.RTDBAccess{DB: db},
+			Policy:         credsvc.RTDBPolicy{DB: db},
+			ImplicitAdmins: members,
+		}),
+		identityOrchestratorRecord{db: db, id: orchestratorID},
+		identityPauses{db: db},
+	)
+}
+
+// identityOrchestratorRecord is the resident orchestrator's own state node as
+// the issuer reads it (credsvc.OrchestratorRecord, LM24/D3136): the attempts
+// the daemon committed before it started anything, which is the whole of what
+// the orchestrator's class may be issued a ticket for.
+//
+// It is read over this deployment's own database client — the same one every
+// other node of this service is read with, and therefore the same service
+// account — and the id it reads is the project's own orchestrator, which is the
+// only one a project has: an id is `<project>` (orchestrator.PathState admits no
+// other shape in this release), and the project is the name this process is
+// configured with, not a value any caller can name.
+type identityOrchestratorRecord struct {
+	db *rtdb.Client
+	id string
+}
+
+func (r identityOrchestratorRecord) State(ctx context.Context) (orchestrator.State, error) {
+	return orchestrator.ReadState(ctx, r.db, r.id, orchestrator.RoleOrchestrator)
+}
+
+// identityPauses is this service's own record of the pauses it wrote
+// (credsvc.PausedNodes, D3189): the nodes under runstore.PauseNodeRoot, which
+// this service alone writes and which are the only evidence a resume is served
+// on.
+//
+// A node this release cannot read is answered ErrNoPause as the interface says
+// — a pause the issuer cannot read is not one it serves a resume of, and the
+// ask is refused rather than guessed at — while a node the database could not
+// be asked for at all is returned as it stands, because that is this service's
+// own failure and not a verdict about the caller (R16's ScopeFault rule).
+type identityPauses struct {
+	db *rtdb.Client
+}
+
+func (p identityPauses) Paused(ctx context.Context, slug, run string) error {
+	var raw json.RawMessage
+	found, err := p.db.Get(ctx, runstore.PauseNodePath(slug, run), &raw)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return credsvc.ErrNoPause
+	}
+	if _, err := runstore.ParsePauseNode(raw); err != nil {
+		return credsvc.ErrNoPause
+	}
+	return nil
 }
 
 // credentialsServiceCoordinator turns FUGARO_COORDINATOR_ACCOUNT into the read

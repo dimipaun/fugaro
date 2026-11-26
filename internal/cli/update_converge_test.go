@@ -271,7 +271,15 @@ func seedAppSecret(t *testing.T, r *initRig, logical string) {
 // records it at, so a repository that moves wants its secrets there.
 func seedRepoSecret(t *testing.T, r *initRig, provider, logical string) {
 	t.Helper()
-	slug, err := task.Slug(provider, "acme/app")
+	seedNamedRepoSecret(t, r, provider, "acme/app", logical)
+}
+
+// seedNamedRepoSecret is seedRepoSecret for any repository: the secrets stage
+// reads every repository the project lists, so a sibling with none stored
+// leaves the update needing its owner.
+func seedNamedRepoSecret(t *testing.T, r *initRig, provider, repo, logical string) {
+	t.Helper()
+	slug, err := task.Slug(provider, repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +340,7 @@ func TestUpdateConvergesFromThePreviousRelease(t *testing.T) {
 	// rules generation, the base image and the plugin and leaves the node
 	// alone.
 	t.Run("the node this binary writes", func(t *testing.T) {
-		converge(t, currentNode(), []string{"policy-rules-skew", "plugin-pin"})
+		converge(t, currentNode(), []string{"policy-rules-skew", "repo-plugin-pin"})
 	})
 	// The node the previous release publishes: one policy version below this
 	// binary's, so the policy stage has to carry it forward by the same run
@@ -342,7 +350,7 @@ func TestUpdateConvergesFromThePreviousRelease(t *testing.T) {
 	// written forward by the run, and the node it leaves is what the assertion
 	// in converge reads.
 	t.Run("the node the previous release publishes", func(t *testing.T) {
-		converge(t, v7Node(), []string{"policy-rules-skew", "plugin-pin"})
+		converge(t, v7Node(), []string{"policy-rules-skew", "repo-plugin-pin"})
 	})
 	// The node two releases back: version 4, whose step to 5 is not shape-free
 	// (it marks every ownerless pool legacy-open), so the reader refuses it
@@ -350,7 +358,7 @@ func TestUpdateConvergesFromThePreviousRelease(t *testing.T) {
 	t.Run("the node two releases back", func(t *testing.T) {
 		node := currentNode()
 		node["version"] = 4
-		converge(t, node, []string{"policy-older-than-binary", "policy-rules-skew", "plugin-pin"})
+		converge(t, node, []string{"policy-older-than-binary", "policy-rules-skew", "repo-plugin-pin"})
 	})
 	// The node two versions back: a v3 node, which an installation that has not
 	// republished since 0.13.0 carries. 0.14.0's operator notes removed that
@@ -358,7 +366,7 @@ func TestUpdateConvergesFromThePreviousRelease(t *testing.T) {
 	// does it inside `fugaro update` instead, so this is the fixture the update
 	// door has to converge.
 	t.Run("the node two versions back", func(t *testing.T) {
-		converge(t, v3Node(nil), []string{"policy-older-than-binary", "policy-rules-skew", "plugin-pin"})
+		converge(t, v3Node(nil), []string{"policy-older-than-binary", "policy-rules-skew", "repo-plugin-pin"})
 	})
 }
 
@@ -448,7 +456,7 @@ func TestUpdateMigratesTheNodeBeforeItReplacesTheCredentialsService(t *testing.T
 	})}
 	r.save(t)
 
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	// Both halves moved in ONE run: the node is this release's, and the service
 	// is on this release's image, which is the resolve's own reference and not a
@@ -588,19 +596,15 @@ func converge(t *testing.T, node map[string]any, stale []string) {
 	t.Helper()
 	r := newConvergeRig(t, node)
 	out := convergeOn(t, r, stale)
-	// The one thing this run writes in the checkout is the pin coming out
-	// (U5's migration, inside this same `fugaro update`): the fixture carries
-	// nothing but the pin, so both entries go and both parent keys with them,
-	// and an empty settings object is left — never a deleted file.
-	if got := convergeRead(t, r.settings); got != "{}\n" {
-		t.Errorf("the checkout's settings after the run:\n%s\nwant the pin taken out and nothing else moved:\n%s", got, "{}\n")
+	// The run writes nothing in the checkout: the pin the release behind left
+	// is still there, byte for byte, and the run's account of it is the notice
+	// line (U6a, D3340). The staleness line therefore still fires for this
+	// checkout, which is the state U6a leaves and U6b retires.
+	if got := convergeRead(t, r.settings); got != wiredAt("v"+convergePrev) {
+		t.Errorf("the checkout's settings after the run:\n%s\nwant them left as the release behind wrote them:\n%s", got, wiredAt("v"+convergePrev))
 	}
-	// And with the pin gone there is nothing stale left for the line every
-	// command prints to say about this checkout: the door the line sends the
-	// reader to is also the door that clears it (U2's review, #2235: until this
-	// migration, a checkout an older release pinned kept printing it).
-	if line := staleLine(pluginwire.Status(r.settings, convergeRelease, installedPlugins())); line != "" {
-		t.Errorf("after fugaro update the staleness line still fires for a checkout the run unpinned: %q", line)
+	if line := staleLine(pluginwire.Status(r.settings, convergeRelease, installedPlugins())); line == "" {
+		t.Errorf("the staleness line stopped firing for a checkout that still carries the pin, which is not this run's doing (U6a)")
 	}
 	if p := convergeNode(t, r); p.Version != projectpolicy.Version {
 		t.Errorf("after one fugaro update, the published node is version %d, want %d", p.Version, projectpolicy.Version)
@@ -675,21 +679,26 @@ func convergeOn(t *testing.T, r *convergeRig, stale []string) string {
 			t.Errorf("after fugaro update, doctor's %s check still fires: %s (fix: %s)", id, c.Problem, c.Fix)
 		}
 	}
-	// plugin-pin is asserted the other way round, and the assertion is not an
-	// omission: nothing in this tree writes a pin any more (U2, D949), so what
-	// this run must NOT do is report the pin converged — a version read back
-	// there would be the merge's write coming back. What it does instead is
-	// take the entry out (U5's migration, inside this same `fugaro update`), so
-	// the check reads the same file as a checkout with no marketplace at all.
-	c, ok := doctorCheckByID(after.Checks, "plugin-pin")
-	if !ok {
-		t.Fatalf("after fugaro update, doctor has no plugin-pin check at all: %+v", after.Checks)
-	}
-	if !strings.Contains(c.Problem, "no fugaro marketplace") {
-		t.Errorf("after fugaro update, doctor's plugin-pin check reads %+v, want the checkout read as one with no fugaro marketplace: the run takes the pin out (U5)", c)
-	}
-	if strings.Contains(c.Problem, convergePrev) {
-		t.Errorf("after fugaro update, doctor's plugin-pin check still reads the previous release's pin: %s", c.Problem)
+	// A fixture whose checkout holds an older release's pin still holds it
+	// after the run, and that is the U6a truth rather than an omission: nothing
+	// in this tree writes a pin (U2, D949) and since U6a nothing takes one out
+	// either — the leftover is a notice naming the edit (repo_notices.go,
+	// D3340), and the checkout's file is left exactly as the release behind
+	// wrote it. Since U6b the check that says so is the per-repository one
+	// (R15), and it carries U6a's text. Only a fixture that asked for that
+	// stale id in `stale` has a pin to report: the other rigs this helper
+	// serves never wrote one.
+	if slices.Contains(stale, repoPluginPinCheckID) {
+		c, ok := doctorCheckByID(after.Checks, repoPluginPinCheckID)
+		if !ok {
+			t.Fatalf("after fugaro update, doctor has no %s check at all: %+v", repoPluginPinCheckID, after.Checks)
+		}
+		if c.OK || !strings.Contains(c.Problem, repoNoticePinEdit) {
+			t.Errorf("after fugaro update, doctor's %s check reads %+v, want the previous release's pin still there, in U6a's words: nothing takes a pin out any more", repoPluginPinCheckID, c)
+		}
+		if !strings.Contains(out, repoNoticePinFile+": "+repoNoticePinEdit) {
+			t.Errorf("the run printed no notice for the pin still in the checkout's %s:\n%s", repoNoticePinFile, out)
+		}
 	}
 	for _, c := range after.Checks {
 		// The per-workflow settings comparison, which is the update's own
@@ -743,7 +752,7 @@ func TestInstallationAtPolicyVersion7ConvergesBinaries(t *testing.T) {
 	if v := nodeVersionOn(t, r.db); v != v7Version {
 		t.Fatalf("the fixture's published node is version %d, want %d: the red step is about the node the release behind leaves", v, v7Version)
 	}
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 	if v, want := nodeVersionOn(t, r.db), projectpolicy.Version; v != want {
 		t.Errorf("after one fugaro update, the published node is version %d, want %d", v, want)
 	}
@@ -774,7 +783,7 @@ func TestUpdatePolicyStagePublishesTheBinariesBlock(t *testing.T) {
 	r := newConvergeRig(t, currentNode())
 	r.appendConfig(t, "binaries:\n  allow:\n    - website/public/**\n    - brand/*.png\n  max_bytes: 1048576\n")
 	registerInstallation(t, r.initRig)
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 	p := convergeNode(t, r)
 	if want := []string{"website/public/**", "brand/*.png"}; !slices.Equal(p.BinariesAllow(), want) {
 		t.Errorf("after one fugaro update, the node's binaries.allow = %v, want %v: the policy stage did not carry the owner's block onto the node", p.BinariesAllow(), want)
@@ -802,7 +811,7 @@ func TestUpdateKeepsAHandWrittenBinariesBlock(t *testing.T) {
 	node := currentNode()
 	node["binaries"] = map[string]any{"allow": []string{"brand/*.png"}, "max_bytes": 1048576}
 	r := newConvergeRig(t, node)
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 	p := convergeNode(t, r)
 	if want := []string{"brand/*.png"}; !slices.Equal(p.BinariesAllow(), want) {
 		t.Errorf("after one fugaro update, the node's binaries.allow = %v, want %v: the run dropped the owner's grant", p.BinariesAllow(), want)
@@ -828,7 +837,7 @@ func TestUpdateKeepsAHandWrittenModelGrades(t *testing.T) {
 		"strongest": map[string]any{"model": "anthropic/claude-opus-4.6"},
 	}
 	r := newConvergeRig(t, node)
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 	p := convergeNode(t, r)
 	if p.ModelGrades == nil {
 		t.Fatal("after one fugaro update, the node carries no model_grades: the run dropped the project's grades")
@@ -838,6 +847,125 @@ func TestUpdateKeepsAHandWrittenModelGrades(t *testing.T) {
 	}
 	if got, want := p.ModelGrades.Of(config.GradeStrongest), (config.Craft{Model: "anthropic/claude-opus-4.6"}); got != want {
 		t.Errorf("after one fugaro update, model_grades.strongest = %+v, want %+v: the run dropped the grade the owner set", got, want)
+	}
+}
+
+// TestUpdatePolicyStagePublishesThePauseBlock is the pause settings' own half
+// of the binaries test above (R11 of docs/model-credentials-routing, D3184,
+// D3187, D3190): the local config is the block's carrier and `fugaro settings
+// set` writes it, so the policy stage is what carries it into the node — the
+// node and nothing else, because the credentials service is what decides
+// between waiting, pausing and halting on it (PR3) and no job's environment
+// carries a setting of this kind. Without the stage the operator's own edit
+// would reach no run until they ran the explicit publish, which is the second
+// command the HARD RULE forbids.
+func TestUpdatePolicyStagePublishesThePauseBlock(t *testing.T) {
+	r := newConvergeRig(t, currentNode())
+	r.appendConfig(t, "pause:\n  wait_in_job: 2m\n  min_pause: 40m\n  max_pause: 8h\n")
+	registerInstallation(t, r.initRig)
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
+	p := convergeNode(t, r)
+	if p.Pause == nil {
+		t.Fatal("after one fugaro update, the node carries no pause block: the policy stage did not carry the settings the owner set, and every run of the project is decided on the defaults instead")
+	}
+	for _, tc := range []struct {
+		member string
+		got    time.Duration
+		want   time.Duration
+	}{
+		{"wait_in_job", p.Pause.WaitInJobDuration(), 2 * time.Minute},
+		{"min_pause", p.Pause.MinPauseDuration(), 40 * time.Minute},
+		{"max_pause", p.Pause.MaxPauseDuration(), 8 * time.Hour},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("after one fugaro update, the node's pause.%s = %s, want %s: the policy stage did not carry the setting the owner wrote", tc.member, tc.got, tc.want)
+		}
+	}
+}
+
+// TestUpdateKeepsAHandWrittenPauseBlock is the keep direction of the test
+// above, and the one the update's own promise rests on: a node that already
+// carries the block, read by a config that says nothing about it, keeps what it
+// carries. That is the state every installation is in the moment this release
+// arrives — the config's `pause:` key is this release's, so a file nothing was
+// written into says nothing — and the merge is what stops a publish from
+// putting a project's runs back on the defaults without anyone asking.
+func TestUpdateKeepsAHandWrittenPauseBlock(t *testing.T) {
+	node := currentNode()
+	node["pause"] = map[string]any{"wait_in_job": "2m", "min_pause": "40m", "max_pause": "8h"}
+	r := newConvergeRig(t, node)
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
+	p := convergeNode(t, r)
+	if p.Pause == nil {
+		t.Fatal("after one fugaro update, the node carries no pause block: the run rewrote the node without the settings the project was paused by")
+	}
+	for _, tc := range []struct {
+		member string
+		got    time.Duration
+		want   time.Duration
+	}{
+		{"wait_in_job", p.Pause.WaitInJobDuration(), 2 * time.Minute},
+		{"min_pause", p.Pause.MinPauseDuration(), 40 * time.Minute},
+		{"max_pause", p.Pause.MaxPauseDuration(), 8 * time.Hour},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("after one fugaro update, the node's pause.%s = %s, want %s: the run dropped the setting the node carried", tc.member, tc.got, tc.want)
+		}
+	}
+}
+
+// TestUpdateRefusesAPauseBlockTheMergeBreaks is the third state of the two
+// tests above: neither half is wrong on its own and the block they make
+// together is. The node's `min_pause` is 15m, which is the shortest pause that
+// project takes and a node its own decode reads — the default 5m floor is under
+// it; the file writes only a 20m in-job floor, which its own load reads — the
+// default 30m minimum is above it. Merged, the floor is above the pause, which
+// the credentials service would refuse every run of the project on.
+//
+// So the publish is where it has to be caught, and the run stops there: the
+// sentence names the member the operator wrote, the file is what they have to
+// change, and the node is left exactly as it was — a publish that wrote the
+// block would leave a node every run of the project fails to read
+// (projectpolicy's decode refuses the block whole).
+func TestUpdateRefusesAPauseBlockTheMergeBreaks(t *testing.T) {
+	node := currentNode()
+	node["pause"] = map[string]any{"min_pause": "15m"}
+	r := newConvergeRig(t, node)
+	r.appendConfig(t, "pause:\n  wait_in_job: 20m\n")
+	registerInstallation(t, r.initRig)
+
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update")
+	s := out + errOut
+	if err == nil {
+		t.Fatalf("an update whose file and node make a pause block no run can use succeeded, want the publish's refusal:\n%s", s)
+	}
+	if stage := stoppedStage(out); stage != initflow.Policy {
+		t.Errorf("the run stopped at %q, want the %s stage: the block is read by the credentials service out of the node, so the merge is refused where the node is written\n%s", stage, initflow.Policy, s)
+	}
+	// The refusal is the publish's own and not the file's: the file's block is
+	// valid on its own (the default 30m minimum is above its 20m floor), so a
+	// sentence about the merge is what says the refusal is where the two halves
+	// met, beside the member the operator has to change.
+	if !strings.Contains(s, "make together is not one a run can use") || !strings.Contains(s, "pause.wait_in_job") {
+		t.Errorf("the refusal does not name pause.wait_in_job and the merge that broke it: %s", s)
+	}
+	p := convergeNode(t, r)
+	if p.Pause == nil {
+		t.Fatal("after the refused update, the node carries no pause block: the node's own block was dropped by a publish that wrote nothing")
+	}
+	for _, tc := range []struct {
+		member string
+		got    time.Duration
+		want   time.Duration
+	}{
+		{"wait_in_job", p.Pause.WaitInJobDuration(), projectpolicy.DefaultWaitInJob},
+		{"min_pause", p.Pause.MinPauseDuration(), 15 * time.Minute},
+		{"max_pause", p.Pause.MaxPauseDuration(), projectpolicy.DefaultMaxPause},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("after the refused update, the node's pause.%s = %s, want %s: the refused merge reached the node, and every run of this project would fail to read it", tc.member, tc.got, tc.want)
+		}
 	}
 }
 
@@ -886,7 +1014,7 @@ func TestUpdateConvergesTheCrashReportSwitch(t *testing.T) {
 		t.Fatalf("the fixture's node already carries %s (%s): it is not an installation whose node predates the key", projectpolicy.MobileCrashReportsKey, raw)
 	}
 
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	p := convergeNode(t, r)
 	if p.Mobile == nil {
@@ -954,7 +1082,7 @@ func TestUpdateConvergesPreviousPolicy(t *testing.T) {
 		}
 	}
 
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	p := convergeNode(t, r)
 	want := projectpolicy.ImageMap{"acme/app": "app"}
@@ -994,7 +1122,7 @@ func TestUpdateConvergesNoCatalogDefault(t *testing.T) {
 		t.Fatalf("the fixture's node already carries a catalog (%v): it is not an installation whose policy predates it", p.ImageCatalog)
 	}
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	p := convergeNode(t, r)
 	if p.ImageCatalog == nil || len(p.ImageCatalog.Entries) != 1 || p.ImageCatalog.Entries[0].Name != entry {
@@ -1068,7 +1196,7 @@ func TestUpdateConvergesAPrebuiltDefaultBesideAWorkflowsOwnImage(t *testing.T) {
 		t.Fatalf("the fixture's node already carries a catalog (%v): it is not an installation whose policy predates it", p.ImageCatalog)
 	}
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	p := convergeNode(t, r)
 	if p.ImageCatalog == nil || len(p.ImageCatalog.Entries) != 1 || p.ImageCatalog.Entries[0].Name != entry || !p.ImageCatalog.Entries[0].Default {
@@ -1116,7 +1244,7 @@ func TestEntryServicesOlderReaderConverges(t *testing.T) {
 		t.Fatalf("the fixture's node already carries image_services = %v: it is not an installation whose policy predates the key", p.ImageServices)
 	}
 
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	p := convergeNode(t, r)
 	want := projectpolicy.ImageServices{"app": {"postgres", "redis"}}
@@ -1195,7 +1323,7 @@ func TestUpdateConvergesTheOrchestratorRulesFromThePreviousGeneration(t *testing
 		t.Fatal("the fixture's deployed rules are already the document this binary generates, so nothing has to converge")
 	}
 
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	// One run, and the marker records this binary's generation. A marker left
 	// absent here is the daemon's own gate refusing to start on a database the
@@ -1259,7 +1387,7 @@ func TestUpdateConvergesTheVoicePolicyNodeFromThePreviousGeneration(t *testing.T
 		t.Fatal("the fixture's deployed rules are already the document this binary generates, so nothing has to converge")
 	}
 
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if got := r.db.Value(projectpolicy.PathRulesMarker()); fmt.Sprint(got) != fmt.Sprint(projectpolicy.RulesVersion) {
 		t.Errorf("after one fugaro update, %s = %v, want %d", projectpolicy.PathRulesMarker(), got, projectpolicy.RulesVersion)
@@ -1347,7 +1475,7 @@ func TestUpdateConvergesTheRegistrationKindFromThePreviousGeneration(t *testing.
 		t.Fatal("the fixture's deployed rules are already the document this binary generates, so nothing has to converge")
 	}
 
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if got := r.db.Value(projectpolicy.PathRulesMarker()); fmt.Sprint(got) != fmt.Sprint(projectpolicy.RulesVersion) {
 		t.Errorf("after one fugaro update, %s = %v, want %d", projectpolicy.PathRulesMarker(), got, projectpolicy.RulesVersion)
@@ -1444,7 +1572,7 @@ func TestUpdateConvergesTheSpendLeavesFromThePreviousGeneration(t *testing.T) {
 
 	run := startRunInFlight(t, r)
 
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if got := r.db.Value(projectpolicy.PathRulesMarker()); fmt.Sprint(got) != fmt.Sprint(projectpolicy.RulesVersion) {
 		t.Errorf("after one fugaro update, %s = %v, want %d", projectpolicy.PathRulesMarker(), got, projectpolicy.RulesVersion)
@@ -1526,7 +1654,7 @@ func TestRulesConvergeFromThePreviousVersion(t *testing.T) {
 
 	run := startRunInFlight(t, r)
 
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	// One run, and the marker records this binary's generation over the document
 	// the marker names.
@@ -1849,7 +1977,7 @@ func TestUpdateConvergesACachePriceWrittenTheOldWay(t *testing.T) {
 	// installation's own file in the XDG projects directory.
 	r.appendConfig(t, cacheKeyFixture)
 	registerInstallation(t, r.initRig)
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	path := installationConfigPath()
 	written := string(readFile(t, path))
@@ -1991,7 +2119,7 @@ func TestUpdateConvergesAWorkspaceFromThePreviousRelease(t *testing.T) {
 			"stdout": `{"workspace_service_url":{"value":"` + wsServiceURL + `"}}`}
 		r.save(t)
 
-		convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+		convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 		v := wsRootVars(t)
 		want := map[string]workspaceMemberVar{"member-b": {JobServiceAccounts: []string{wsMemberBAccount}}}
@@ -2036,7 +2164,7 @@ func TestUpdateConvergesAWorkspaceFromThePreviousRelease(t *testing.T) {
 		r.appendConfig(t, wsPin)
 		registerInstallation(t, r.initRig)
 
-		convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+		convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 		// The config the doors read and write, of which the rig's own file is
 		// only the seed (registerInstallation).
@@ -2086,7 +2214,7 @@ func TestUpdateDeploysTheWorkspaceServiceWithARunInFlight(t *testing.T) {
 	r.save(t)
 
 	startRunInFlight(t, r)
-	line := inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"}))
+	line := inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"}))
 
 	if !strings.Contains(line, "workspace service:") {
 		t.Errorf("the note does not name the workspace's service over a run in flight that this update puts a new revision of it behind (R11):\n%s", line)
@@ -2131,7 +2259,7 @@ func TestUpdateRemovesAMembersInvokeGrant(t *testing.T) {
 		wsServiceNoOpPlan(r.credentialsRefAt(convergeRelease)), wsInvokerRemovedPlan(wsMemberBAccount))
 	r.save(t)
 
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if n := wsApplies(t, r); n != 1 {
 		t.Errorf("the update applied the workspace root %d time(s), want 1 (the member's grant going away): %v", n, r.applies(t))
@@ -2174,7 +2302,7 @@ func TestUpdateConvergesAWorkspaceWhoseServiceHasNoAudience(t *testing.T) {
 		"stdout": `{"workspace_service_url":{"value":"` + wsServiceURL + `"}}`}
 	r.save(t)
 
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if n := wsApplies(t, r); n != 2 {
 		t.Errorf("the update applied the workspace root %d time(s), want 2 (the root itself, and the audience write that makes the revision behind it admit a member's ID token): %v", n, r.applies(t))
@@ -2225,7 +2353,7 @@ func TestUpdateConvergesAWorkspaceWhoseServiceHasNoAudienceAndPlansNothing(t *te
 		"stdout": `{"workspace_service_url":{"value":"` + wsServiceURL + `"}}`}
 	r.save(t)
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if n := wsApplies(t, r); n != 1 {
 		t.Errorf("the update applied the workspace root %d time(s), want 1 (the audience write alone, the root having nothing else to change): %v", n, r.applies(t))
@@ -2308,7 +2436,7 @@ func TestUpdateRendersTheRostersPeopleIntoTheWorkspaceProjectsIntake(t *testing.
 	r.db.Set(path, json.RawMessage(roster))
 	r.save(t)
 
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	block, _ := r.tfvars(t)["intake"].(map[string]any)
 	if block == nil {
@@ -2406,7 +2534,7 @@ func TestUpdateLeavesTheIntakeAloneWhenTheRosterNamesOnlyALauncher(t *testing.T)
 	r.db.Set(path, json.RawMessage(roster))
 	r.save(t)
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if strings.Contains(out, "plans nothing with credentials_service.url") {
 		t.Errorf("the update refused itself over the roster's own person, who is on the installation's launcher list already: the class the intake's revision is handed is the launchers and the people as ONE list, and this roster moved neither\n%s", out)

@@ -103,6 +103,14 @@ type initOptions struct {
 	// `fugaro upgrade` that was not a converge at all.
 	checkOnly bool
 
+	// repoHint is the repository this run's working directory is a checkout of
+	// ("" when it is not one, or when the door never looked): the hint the
+	// human output orders a stage's per-repository lines by, and nothing else
+	// (spec §Output, hintFirst). It is read once, where the run's selection
+	// already read this checkout, and no stage reads a working directory for
+	// it (R10).
+	repoHint string
+
 	// planning is whether this run plans an installation, which is what makes a
 	// --region that is not the installation's own a refusal (LP8, D3088 as
 	// amended). Only the runs that plan set it: repoEngine, which is
@@ -665,13 +673,13 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// run's own account of its cloud half: the plan drops the image refresh,
 	// whose writes are not this machine's, and the apply leaves it for the user
 	// as a named step rather than one line naming the door and nothing of what
-	// became of the images (checkoutStage.planFor's repositoryStopped;
+	// became of the images (checkoutStage.placeFor's repositoryStopped;
 	// the repository stop it applies past is #1836's, initflow's RunsPastStop).
 	// The help has to say that rather than promise a session a write it may not
 	// get to.
 	f.StringVar(&o.onboardRepo, "onboard-repo", "", "owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one opt-in that needs no terminal to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (neither it nor this flag is honoured in a coding agent's session; any other origin takes the confirmation of a person at the terminal)")
 	f.BoolVar(&o.coordinator, "coordinator", false, "with --firebase-project, opt the installation in to the coordinator's aggregation job (docs/coordinator, P5): the fugaro-coordinator service account, its roles/firebasedatabase.admin on the Firebase project (IAM cannot scope it to the coordinator's subtree; the job's own code does), roles/storage.objectViewer on the runs bucket, and — once the history image exists and the local config records a GitHub App ID — the Cloud Run job that holds the App key, its accessor on that one secret and a Scheduler job that runs it every 15 minutes. Nothing creates any of it by default. The opt-in is recorded in the local config (terraform.coordinator) once the apply has created the account, so later runs keep it. No flag covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor)")
-	f.BoolVar(&o.ask, "ask", false, "ask for the confirmations a managed project's gate would have stood in for, one step at a time: without it a managed project takes no confirmation at all (the ruling of 2026-11-01), and this is the flag that puts them back for one run — the review's own question, and each step's own, the billable builds included. It never weakens the gate, which judges every document and refuses in its own sentence before any prompt, and it never stands in for a confirmation: the step's own question is asked, and a no is a no. In a project whose marks do not answer \"managed\" it changes nothing and says so, and where no prompt can be answered — a coding agent's session, --json, no terminal — it refuses the run rather than letting the gate's verdict stand in: a confirmation nobody can answer is never a silent proceed")
+	f.BoolVar(&o.ask, "ask", false, "ask for the confirmations a managed project's gate would have stood in for, one step at a time: without it a managed project takes no confirmation at all (the ruling of 2026-11-01), and this is the flag that puts them back for one run — the review's own question, and each step's own, the billable builds included. It never weakens the gate, which judges every document and refuses in its own sentence before any prompt, and it never stands in for a confirmation: the step's own question is asked, and a no is a no. In a project whose marks do not answer \"managed\" it changes nothing and says so, and where no prompt can be answered — a coding agent's session, --json, no terminal — it refuses the run rather than letting the gate's verdict stand in: a confirmation nobody can answer is never a silent proceed. `fugaro update --ask` turns on one thing more, on any project: it asks for each repository's missing secret values by name with a hidden prompt, where without the flag the stage prints the `fugaro secrets set` line for each and asks nothing — a coding agent's session and --json ask for none there either, and with no terminal it fails at once with that line rather than waiting for a value. It also asks which agent.auth the project takes when the repositories it migrates write different ones (the default is the most common value)")
 	f.BoolVar(&o.asJSON, "json", false, "print the result as JSON on stdout (progress goes to stderr)")
 	f.BoolVar(&o.repo, "repo", false, "onboard the repository of the checkout at PATH (default: the current directory) instead of the installation")
 	f.BoolVar(&o.checkApp, "check-github-app", false, "let the GitHub App pre-check read the App's private key from Secret Manager with your own credentials (held in memory only, for one signed token; refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it); without it "+d.name+" checks only with the key you typed in this run")
@@ -686,6 +694,20 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 		_ = f.MarkHidden(ff.name)
 	}
 	return cmd
+}
+
+// runStages runs the stage loop with the options a caller built, with the loop
+// marked as running while it does: a stage reports its per-repository lines
+// through the same entry point a step does, and this is what tells the two
+// apart (reportRepos). Every loop this run drives goes through here — the
+// converge, the wizard's questions, `apply`, `project enroll`, the accounts
+// and the after-write door — so a stage's lines are a stage's wherever they
+// were reported from.
+func (r *initRun) runStages(ctx context.Context, stages []initflow.Stage, o initflow.Options) (*initflow.Result, error) {
+	prev := r.inStages
+	r.inStages = true
+	defer func() { r.inStages = prev }()
+	return initflow.Run(ctx, stages, o)
 }
 
 // initRun is one run of the converge, whichever front door it is (task
@@ -731,6 +753,13 @@ type initRun struct {
 	// (refreshOptions.detail) writes its lines where that converge keeps its
 	// own, instead of onto a screen that run has already accounted for (§9.2).
 	detail io.Writer
+	// inStages is whether the stage loop is running: a stage reports its
+	// per-repository lines while it does and a step after the loop reports
+	// them outside it, and only a step's are the run's notices
+	// (reportRepos, runStages). It is the run's and not the engine's because
+	// the wizard's questions are a loop of their own, asked before there is an
+	// engine to drive them (gatherInputs).
+	inStages bool
 	// cover is the run's own cover (initEngine.cover), set by the one door that
 	// has no review screen: `fugaro apply` converges the installation as it is
 	// and asks nothing, so its steps' plans are judged by the cover the review
@@ -772,6 +801,11 @@ type initRun struct {
 	events      *setupEvents
 	anchorNoted bool // update --repo's pointer at --anchor has been said
 	ideNoted    bool // the IDE-terminal notice has been said, once per run
+	// repoNotices is the lines the run's steps after the stage loop reported
+	// (update_repos.go's reportRepos, read off the engine's memo), and nil on a
+	// run that has no engine — a refusal, --check, an anchor run — which
+	// reported none. collectNotices is what reads it.
+	repoNotices func() []initflow.Notice
 	// enrolmentNote is what the repo engine did for a repository a deployed
 	// profile admits, in one line (M7): the engine prints it where there is no
 	// stage of its own to carry it (the update --repo door), and the converge's
@@ -1030,6 +1064,14 @@ type initRun struct {
 	// place. False -- every other case, including every unmanaged project and
 	// every coding agent's session -- is the flow as it has always run.
 	retireAuto bool
+	// retireWholeRoot makes retirePlan's plan the destruction of the ROOT
+	// itself rather than the set difference of one configuration change (M2,
+	// D2303): every address the state holds goes, so the plan is a destroy
+	// plan (tf.PlanDestroy) and the registry's lifecycle.prevent_destroy is
+	// lifted from the workdir's copy of the module for that one plan and
+	// apply (infra.LiftRegistryPreventDestroy). It is set only by
+	// retireSharedRoot, which is the one caller that retires a root whole.
+	retireWholeRoot bool
 }
 
 // initResult is what --json prints.
@@ -1060,6 +1102,11 @@ type initResult struct {
 	// stage's state, and what only the user can do.
 	Stages     []initflow.StageResult `json:"stages,omitempty"`
 	LeftForYou []initflow.Left        `json:"left_for_you"`
+	// Notices are the lines the run reported outside its stages: the steps
+	// after the stage loop, and the admit patterns the reader could not expand
+	// into names (R12, R19). It is the additive member U13 adds, and the event
+	// feed carries the same lines as `notice` events.
+	Notices []initflow.Notice `json:"notices,omitempty"`
 	// Failed is the stage the converge stopped at, with the one-line fix;
 	// Note says why a run only planned.
 	Failed *initflow.Failure `json:"failed,omitempty"`
@@ -1194,8 +1241,10 @@ func (r *initRun) lockWorkdirs(project string) (func(), error) {
 }
 
 // markTheUpdateReads makes this run's every read of a checkout's fugaro.yaml
-// the read of the file this run's own removal offer leaves behind: the word
-// that was a budget mode taken out of the bytes before anything judges them
+// the read of the file with the dead word taken out: budget.mode: off is not a
+// budget mode any more, and this run's answer to it is a notice naming the line
+// to delete rather than a write (repo_notices.go, U6a, D3340), so the bytes are
+// read through the word before anything judges them
 // (fugaroYAMLWithoutRemovedMode, AB8b, F22). The published node's own read is
 // the converge's, marked by policyMemo rather than here.
 //
@@ -1426,6 +1475,10 @@ func runInit(r *initRun) error {
 	}
 
 	e := &initEngine{r: r, lc: lc, spec: spec, path: path, old: old}
+	// The lines the steps after the stage loop report are the engine's memo's
+	// (update_repos.go), and the result reads them where it is printed
+	// (collectNotices): this is where the run is handed the way to.
+	r.repoNotices = e.notices
 	if !o.forget && !o.configOnly {
 		// The default and --firebase-project modes: the converge loop over the
 		// engines (init_stages.go), whose own outcome records the creation
@@ -2398,6 +2451,13 @@ func loadInitConfig(ctx context.Context, o *initOptions) (lc *localcfg.Config, p
 	co, err := checkoutProject(ctx, "")
 	if err != nil {
 		return nil, "", nil, err
+	}
+	if co != nil {
+		// The hint, read here where the selection already read this checkout
+		// and not by a stage (R10).
+		if oi, ok := readOrigin(ctx, co.Root); ok {
+			o.repoHint = oi.Repo
+		}
 	}
 	sel, lc, err := selectNamed(o.cloud, co, true, o.name)
 	if err != nil {
@@ -3664,6 +3724,10 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	if spec, err = r.carriedBudget(ctx, c, spec); err != nil {
 		return outs, false, err
 	}
+	// The project copies D3325 retires, marked before discovery reads the
+	// project's containers: the mark is what takes a retired copy out of the
+	// union that keeps for_each from shrinking (IS13).
+	retiredCopies := r.retireProjectCopies(ctx, c, lc, spec)
 	im, err := infra.DiscoverInstallation(ctx, c, spec)
 	if err != nil {
 		return outs, false, initErr(err)
@@ -3804,6 +3868,10 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	if err := t.Init(ctx, backend); err != nil {
 		return outs, false, remote(err)
 	}
+	// The retired copies leave the state before the plan that drops their key:
+	// the module's prevent_destroy refuses that plan while the state still
+	// holds the instance (U5, IS13).
+	r.removeRetiredCopiesFromState(ctx, t, retiredCopies, spec.ProjectSecrets)
 	// What the installation already is: its name may not change, and an
 	// unnamed one is named only on request. Before any plan.
 	var prior infra.InstallationOutputs
@@ -5057,10 +5125,29 @@ func forgetDeletesLogBucket(p *tf.Plan) bool {
 	return false
 }
 
+// collectNotices is the lines the run's steps after the stage loop reported,
+// locked into the result (initflow.Notice, R12, R19): the engine's memo holds
+// them and this is where the document and the feed read it. A run with no
+// engine, or one that reported none, is the result as it stands.
+func (r *initRun) collectNotices() {
+	if r.repoNotices == nil {
+		return
+	}
+	r.res.Notices = r.repoNotices()
+}
+
+// printResult is the --json document, or nothing when the run asked for the
+// event feed instead.
 func (r *initRun) printResult() error {
 	if !r.o.asJSON {
 		return nil
 	}
+	// The lines the steps after the loop reported (update_repos.go): the memo
+	// they were recorded in is the engine's, and this is the one place both
+	// answers read it — the document below, and the feed the door writes when
+	// the command ends (setup_events.go) — so the two cannot come to say
+	// different things.
+	r.collectNotices()
 	if r.events != nil {
 		// --events replaced the document with the feed (setup_events.go): this
 		// run's account is the lines already written, and its last one is
@@ -5659,12 +5746,22 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// M7, D2312 as amended: a repository a deployed profile admits (the spec's
 	// Shared, M6's mark) runs on the project's shared jobs, so this run enrols
 	// it and applies no repository-level Terraform at all. The root is skipped
-	// whole — its workdir's plan, its state, its first image builds, its
-	// retirement and the flip's drop, which is judged on the applies that would
-	// take a mount away and there are none — while everything the project's
-	// records need is still written (enrolSharedRepo).
+	// whole — its workdir's plan, its first image builds and the flip's drop,
+	// which is judged on the applies that would take a mount away and there
+	// are none — while everything the project's records need is still written
+	// (enrolSharedRepo).
+	//
+	// M2, D2303: the root it had before the profile admitted it is retired
+	// here, after the enrolment, so that a retirement that is held back or
+	// declined costs the update nothing it came to do. retireSharedRoot reads
+	// the state itself, because no repository-level Terraform of this run has
+	// and the set is the state's whole contents rather than a difference
+	// between the state and the configuration.
 	if spec.Shared {
 		if err := r.enrolSharedRepo(ctx, lc, spec, cfg, path, old); err != nil {
+			return err
+		}
+		if err := r.retireSharedRoot(ctx, c, t, wd, lc, spec, inst.StateBucket, slug, rootOpts); err != nil {
 			return err
 		}
 		if !embedded {
@@ -7121,9 +7218,10 @@ func (r *initRun) forgetSharedRepo(ctx context.Context, lc *localcfg.Config, rep
 // container a name is read from is the project's whatever this repository's
 // own containers hold (update_workflowsecrets.go's D2313 half).
 //
-// Nothing of the repository root is reached: no plan, no state, no first image
-// build, no retirement, and no flip drop (there is no apply that could take a
-// mount away).
+// Nothing of the repository root is reached: no plan, no first image build and
+// no flip drop (there is no apply that could take a mount away). The root a
+// profile admitted the repository away from is retired by M2's own flow, which
+// repoEngine runs after this one (retireSharedRoot).
 func (r *initRun) enrolSharedRepo(ctx context.Context, lc *localcfg.Config, spec infra.RepoSpec, cfg *config.Config, path string, old []byte) error {
 	// M1's warning (D2313), once for the repository and not once per name: a
 	// repository declaring secrets: keeps its containers and mounts, and no run

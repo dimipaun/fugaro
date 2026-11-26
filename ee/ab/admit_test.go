@@ -10,6 +10,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/routing"
 )
 
 // The fixtures are the owner's side of the checks: a provider route that
@@ -72,7 +73,7 @@ func admitLayer(challengers ...string) config.AB {
 // admit is Admit with the fixtures above and no service-held key, which is the
 // shape every test but the credentials service's own starts from.
 func admit(cfg config.Config, layer config.AB, eff policy.Effective, providers map[string]config.ModelProvider, prices *pricing.Table) (string, bool, string) {
-	return Admit(cfg, layer, admitRepo, eff, providers, prices, false)
+	return Admit(cfg, layer, admitRepo, nil, eff, providers, prices, false)
 }
 
 // TestAdmitTakesTheFirstChallengerThatPasses is the happy path: the list is
@@ -234,7 +235,7 @@ func TestAdmitSkipsChampionModel(t *testing.T) {
 // refuses: observe never refuses a call, and a provider's calls are real
 // dollars.
 func TestAdmitNeedsEnforceForProvider(t *testing.T) {
-	for _, mode := range []string{"", policy.ModeOff, policy.ModeObserve} {
+	for _, mode := range []string{"", "off", policy.ModeObserve} {
 		eff := admitPolicy()
 		eff.Mode = mode
 		if model, ok, why := admit(admitConfig(), admitLayer(admitChallenger), eff, admitProviders(), admitPrices()); ok || model != "" || why != ReasonNeedsEnforce {
@@ -259,9 +260,10 @@ func TestAdmitNeedsEnforceForProvider(t *testing.T) {
 func TestAdmitReadsAnEmptyModeAsObserve(t *testing.T) {
 	for _, tc := range []struct{ mode, want string }{
 		{"", policy.ModeObserve},
-		// The word that was a mode is named through the constant and never as
-		// a literal of its own (docs/always-a-budget/contract-mode.md §3).
-		{policy.ModeOff, policy.ModeObserve},
+		// The word that was a mode is a literal here: the constants that named
+		// it are deleted (I1, D3009), and what this row holds it to is the
+		// reading the vocabulary gives it (C1).
+		{"off", policy.ModeObserve},
 		{policy.ModeObserve, policy.ModeObserve},
 		{policy.ModeEnforce, policy.ModeEnforce},
 	} {
@@ -329,7 +331,7 @@ func TestAdmitSkipsBitbucket(t *testing.T) {
 // is handed the service's address — so it is refused here rather than after a
 // daily pair slot and a job execution.
 func TestAdmitSkipsServiceHeldKey(t *testing.T) {
-	if model, ok, why := Admit(admitConfig(), admitLayer(admitChallenger), admitRepo, admitPolicy(), admitProviders(), admitPrices(), true); ok || model != "" || why != ReasonServiceHeldKey {
+	if model, ok, why := Admit(admitConfig(), admitLayer(admitChallenger), admitRepo, nil, admitPolicy(), admitProviders(), admitPrices(), true); ok || model != "" || why != ReasonServiceHeldKey {
 		t.Errorf("Admit = %q %v %q, want no model and %q", model, ok, why, ReasonServiceHeldKey)
 	}
 	// It is the read-only mint that is missing and not the challenger: the
@@ -369,5 +371,73 @@ func TestAdmitAgreesWithTheProviderPolicy(t *testing.T) {
 		case len(ps) == 0 && !ok:
 			t.Errorf("%s: CheckProviderPolicy admits it but Admit said %q", model, why)
 		}
+	}
+}
+
+// TestAdmitReadsTheChain pins the table's arm of the admission (RT6): where the
+// project publishes one, the entry that matches the challenger's model and the
+// sources of its chain that admit this repository are the answer, and the
+// repository's own access is not read at all (D3170, R1). A model no entry
+// matches, or one whose winning entry admits this repository nowhere, is
+// refused — never reached by whatever credential is around (R22) — and a table
+// that does not serve this repository at all (absent, or serving only other
+// repositories: infra.ChainServes) is the release-1 bridge, where the access
+// decides as it always has.
+func TestAdmitReadsTheChain(t *testing.T) {
+	table := routing.Table{{
+		Match: "deepseek/*",
+		Chain: []routing.Source{{Kind: routing.KindProvider, Provider: "openrouter", Admit: []string{admitRepo}}},
+	}}
+	// The repository's own access says a provider's key cannot be carried here,
+	// which is the answer this call must NOT give once the table reaches the
+	// model: the chain is where the call goes out.
+	cfg := admitConfig()
+	cfg.Agent.Auth = "oauth"
+	if model, ok, why := Admit(cfg, admitLayer(admitChallenger), admitRepo, table, admitPolicy(), admitProviders(), admitPrices(), false); !ok || model != admitChallenger || why != "" {
+		t.Errorf("a chain that admits the repository: Admit = %q %v %q, want %q", model, ok, why, admitChallenger)
+	}
+	// The same launch with no table is the bridge: the access answers, and the
+	// refusal above is the chain's rather than something else's.
+	if model, ok, why := Admit(cfg, admitLayer(admitChallenger), admitRepo, nil, admitPolicy(), admitProviders(), admitPrices(), false); ok || model != "" || why != ReasonNeedsAPIKey {
+		t.Errorf("with no table: Admit = %q %v %q, want no model and %q", model, ok, why, ReasonNeedsAPIKey)
+	}
+	// No entry of the table matches the model.
+	unmatched := routing.Table{{
+		Match: "openai/*",
+		Chain: []routing.Source{{Kind: routing.KindAnthropic, Admit: []string{admitRepo}}},
+	}}
+	if model, ok, why := Admit(admitConfig(), admitLayer(admitChallenger), admitRepo, unmatched, admitPolicy(), admitProviders(), admitPrices(), false); ok || model != "" || why != ReasonUnrouted {
+		t.Errorf("a model no entry matches: Admit = %q %v %q, want no model and %q", model, ok, why, ReasonUnrouted)
+	}
+	// A table whose every source is admitted to another repository does not
+	// govern this repository's runs (infra.ChainServes): MG1's migration leaves
+	// a repository it cannot place on the release-1 bridge (R25, D3196), the
+	// run proceeds on its own access, and the challenger is judged by the
+	// checks the run itself makes rather than refused as unrouted for a table
+	// that is not in force here.
+	closed := routing.Table{{
+		Match: "deepseek/*",
+		Chain: []routing.Source{{Kind: routing.KindProvider, Provider: "openrouter", Admit: []string{admitOtherRepo}}},
+	}}
+	if model, ok, why := Admit(admitConfig(), admitLayer(admitChallenger), admitRepo, closed, admitPolicy(), admitProviders(), admitPrices(), false); !ok || model != admitChallenger || why != "" {
+		t.Errorf("a table that serves only another repository is not in force here: Admit = %q %v %q, want %q", model, ok, why, admitChallenger)
+	}
+	// And the answer is the access's and not the table's: under a credential
+	// that cannot carry a provider's call, the refusal is that one, which is
+	// the reason a run of this repository really would give.
+	bridgeCfg := admitConfig()
+	bridgeCfg.Agent.Auth = "oauth"
+	if model, ok, why := Admit(bridgeCfg, admitLayer(admitChallenger), admitRepo, closed, admitPolicy(), admitProviders(), admitPrices(), false); ok || model != "" || why != ReasonNeedsAPIKey {
+		t.Errorf("a table that serves only another repository leaves the access to answer: Admit = %q %v %q, want no model and %q", model, ok, why, ReasonNeedsAPIKey)
+	}
+	// The most specific entry wins (D3172), so it is the exact entry's chain
+	// that answers and not the prefix's: the two disagree about the repository,
+	// and the model is refused.
+	twins := routing.Table{
+		{Match: "deepseek/*", Chain: []routing.Source{{Kind: routing.KindProvider, Provider: "openrouter", Admit: []string{admitRepo}}}},
+		{Match: admitChallenger, Chain: []routing.Source{{Kind: routing.KindProvider, Provider: "openrouter", Admit: []string{admitOtherRepo}}}},
+	}
+	if model, ok, why := Admit(admitConfig(), admitLayer(admitChallenger), admitRepo, twins, admitPolicy(), admitProviders(), admitPrices(), false); ok || model != "" || why != ReasonUnrouted {
+		t.Errorf("the winner's chain is the one asked: Admit = %q %v %q, want no model and %q", model, ok, why, ReasonUnrouted)
 	}
 }

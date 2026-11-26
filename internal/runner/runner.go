@@ -3934,6 +3934,10 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// whatever its environment holds.
 		ImageEnv: r.imageEnv(secretEnvs, wfSecretEnvs),
 		Gateway:  r.gateway(), Compression: r.compression,
+		// The credentials service serves this run's calls, which is the fact
+		// the gateway's own options are built from (chainServed, gateway.go):
+		// the environment is then the cascade's whatever the file's auth says.
+		ChainServed: r.chainServed(),
 		// Docker stays false here, so the agent's environment has no
 		// DOCKER_HOST: nothing yet tells this runner that its workflow asked
 		// for `docker: true` (the workflow field and the runner's copy of it
@@ -6900,13 +6904,22 @@ func (r *run) finalize(ctx context.Context) error {
 	r.recordOwnerDecisions(halt)
 	pol := r.findingsPolicy()
 	decidedRound := r.decidingReview()
-	dec := Decide(records, decided, decidedRound, pol, r.rec.OwnerDecisions)
+	// What the level promised the reader and what the agent handed back, read
+	// here so readiness reads the agent's own file rather than a second parse
+	// of it (LV5.1).
+	hb, fromAgent := r.handBack()
+	dec := Decide(records, decided, decidedRound, pol, r.rec.OwnerDecisions, hb, fromAgent, r.owesHandBack())
 	r.rec.Tolerated = r.toleratedRecord(pol, decidedRound)
 	r.rec.Accepted = r.acceptedRecord(pol, decidedRound)
 	// The cap's leftovers are filed beside them and before the body is built:
 	// they are what the pull request's body and the report name as the
 	// follow-ups the run left (T-TR8, T-TR9).
 	r.recordCapDeferrals()
+	// The open findings the run ended with, written beside the record for the
+	// readers that judge a long run by them (findings.go, BF1). The three
+	// blocks above are the record's account of the same round, and this is the
+	// artifact those readers take instead of the record the run wrote itself.
+	r.writeFindings(ctx)
 	// The answer is replaced whole rather than having its sentence rewritten:
 	// the one reason this fires on is Decide's own, and the kind it came with is
 	// the one the replacement keeps (Decision, D995).

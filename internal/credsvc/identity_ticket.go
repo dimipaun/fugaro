@@ -111,7 +111,7 @@ const (
 func (s *Server) identityTicket(ctx context.Context, w http.ResponseWriter, caller IdentityCaller, r *http.Request) {
 	// The floor under the mount. The mount answers a service with no issuer
 	// before it verifies anyone, and that answer carries no line because no
-	// caller is verified yet (identity_stub.go's rule, kept by I1); a call that
+	// caller is verified yet (identity_mount.go's rule); a call that
 	// reached HERE did have a caller verified, so this branch owes the line
 	// below — and its answer stays the contract's "not served", the code a CLI
 	// bridges on (R7), because a service with no signer is exactly the
@@ -345,11 +345,11 @@ func (s *Server) identityTicket(ctx context.Context, w http.ResponseWriter, call
 		// record of the release behind.
 		Job: req.Job,
 	}
-	// The store decides the two facts of the record that are the record's own,
-	// from the node as it stands (identity_record.go's Put): whose record this
-	// run already is (R5) and whether its ticket was claimed (R6). Both are
-	// refusals of the ASK — the caller is told what to do about each, which is a
-	// new run id — and neither writes anything.
+	// The store decides the facts of the record that are the record's own, from
+	// the node as it stands (identity_record.go's Put): whose record this run
+	// already is (R5), whether its ticket was claimed (R6) and whether its job
+	// was registered (R19). Each is a refusal of the ASK — the caller is told
+	// what to do about it, which is a new run id — and none writes anything.
 	switch err := s.cfg.Identity.Store.Put(ctx, req.Slug, req.Run, rec); {
 	case err == nil:
 	case errors.Is(err, identitywire.ErrAnotherCaller):
@@ -359,6 +359,14 @@ func (s *Server) identityTicket(ctx context.Context, w http.ResponseWriter, call
 	case errors.Is(err, identitywire.ErrClaimed):
 		s.refuseTicket(ctx, w, caller, StatusRequestRefused, identitywire.RefusalIdentityRefused, ErrorRequestRefused,
 			requestRefused+"this run's ticket was already claimed, and a claimed ticket is never re-issued: a new attempt takes a new run id (R6)")
+		return
+	case errors.Is(err, ErrJobAlreadyRegistered):
+		// A re-ask is a whole new record and carries no id, so serving it would
+		// wipe the registered one and let the next registration write a
+		// different id under this run id: the record is past the point of a
+		// re-ask once its job is registered (BR17, R19).
+		s.refuseTicket(ctx, w, caller, StatusRequestRefused, identitywire.RefusalIdentityRefused, ErrorRequestRefused,
+			requestRefused+"this run's Batch job is already registered, and a registered ticket is never re-issued: a new attempt takes a new run id (R19)")
 		return
 	default:
 		// The store's own failure, wrapped as a *StoreError: a node nobody could

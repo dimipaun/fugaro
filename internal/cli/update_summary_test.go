@@ -156,7 +156,7 @@ func TestUpdateBackfillsRunSummaries(t *testing.T) {
 	lsAsViewer(t, r)
 	before := lsRunIDs(t, "--since", "0", "--repo", "acme/app")
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	// What the run said: the count of summaries it created. A run in flight and
 	// a run with no record are the two it must not write one for, so it wrote
@@ -201,7 +201,7 @@ func TestUpdateSummaryIdempotent(t *testing.T) {
 	r := prIndexRig(t)
 	b := prIndexBucket(t, r)
 	plantSummaryRuns(t, b)
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 	if keys := summaryKeys(t, b, "runs/"+appSlug+"/"); len(keys) == 0 {
 		t.Fatalf("the first update wrote no summary at all, so this test would pass over a step that does nothing")
 	}
@@ -255,7 +255,7 @@ func TestUpdateSummaryQuietWhenNothing(t *testing.T) {
 	t.Run("no runs at all", func(t *testing.T) {
 		r := prIndexRig(t)
 		b := prIndexBucket(t, r)
-		out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+		out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 		if strings.Contains(out, "run summaries") {
 			t.Errorf("the update says something about the run summaries over a repository with no runs:\n%s", out)
 		}
@@ -277,7 +277,7 @@ func TestUpdateSummaryQuietWhenNothing(t *testing.T) {
 			t.Fatalf("the fixture's recordless run has no task either (%v)", err)
 		}
 
-		out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+		out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 		if strings.Contains(out, "run summaries") {
 			t.Errorf("the update says something about the run summaries with nothing to write:\n%s", out)
@@ -332,7 +332,7 @@ func TestUpdateSummaryLeavesRunInFlight(t *testing.T) {
 	}
 	before := planted()
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	// The note about the runs in flight is untouched by this step, and the
 	// backfill still summarized the finished runs beside it.
@@ -358,7 +358,7 @@ func TestUpdateSummaryLeavesRunInFlight(t *testing.T) {
 
 // TestUpdateSummaryWritesNothingOutsideTheUpdateDoor: the step is `fugaro
 // update`'s, and it keeps the fences the steps beside it keep (update.go's
-// writeAdminList, update_prindex.go's backfillPRIndex): `fugaro setup` converges
+// writeAdminList, update_runindex.go's reindexRunIndex): `fugaro setup` converges
 // the same installation through the same hook (init_stages.go's outcome),
 // `--plan-only` writes nothing at all, and a coding agent's session under a
 // marker changes nothing outside this machine unless the managed gate is the
@@ -384,7 +384,7 @@ func TestUpdateSummaryWritesNothingOutsideTheUpdateDoor(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			e, _, opened := prIndexStepEngine(t)
+			e, opened := updateStepEngine(t)
 			c.fence(t, e)
 			e.backfillRunSummary(context.Background())
 			if *opened != c.opened {
@@ -397,7 +397,7 @@ func TestUpdateSummaryWritesNothingOutsideTheUpdateDoor(t *testing.T) {
 // TestUpdateSummaryConvergedHistoryReadsNoRun: an installation that has
 // converged keeps converging on every later `fugaro update`, and the price of
 // that must not be one object read a run. Which runs hold a summary comes from
-// ONE listing of the repository (indexedRuns' shape), so a history of a
+// ONE listing of the repository, so a history of a
 // thousand runs that all hold one is read by the walk without opening a single
 // run; only the runs a summary is missing are read, and each of those is read
 // for its record and its task.

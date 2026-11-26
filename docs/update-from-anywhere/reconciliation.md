@@ -228,10 +228,12 @@ Rows F42–F50 come from review round 3.
   `!r.gateUnderway()` (`update_backlog.go:80–82`), so it runs under the managed gate (D1016). With
   D3352 an agent's session reads no repository, so the fold reads nothing there. → R20.
 - **F49 (Gap).** Existing tests change with the tasks: `update_budget_off_test.go` (U6a),
-  `initsecrets_test.go` and `initsecrets_pty_test.go` (U3b), `plugin/update_skill_test.go` (U7a), and
-  `docs_upgrade_test.go:138`, which pins `fugaro update [--check [PATH]]` in `docs/upgrade/spec.md`
-  (U10). `.claude/skills/new-release/SKILL.md:79` and `docs/gcp-live-checklist.md:3300` also carry
-  the pin's diff sentence.
+  `initsecrets_test.go` and `initsecrets_pty_test.go` (U3b), `plugin/update_skill_test.go` (U7a),
+  `init_checkout_upgrade_test.go` and `update_repo_blocked_test.go` (U4), where
+  `TestUpdateFailsOnAnOriginItCannotRead` becomes `TestUpdateBuildsNothingInADirectoryItCannotRead`,
+  and `docs_upgrade_test.go:138`, which pins `fugaro update [--check [PATH]]` in
+  `docs/upgrade/spec.md` (U10). `.claude/skills/new-release/SKILL.md:79` and
+  `docs/gcp-live-checklist.md:3300` also carry the pin's diff sentence.
 - **F50 (Untestable).** U10's "no bucket read" depends on which staleness variant it calls: today's
   `cloudCheck` runs offline, while the converge's reads build records. → U4, U10.
 
@@ -255,6 +257,7 @@ to D3343 and D3347 were answered on 2026-11-24. All are as recommended.
 | D3350 | Does a published admit count as enrolled for secrets, builds and the fold? (F17) | Yes: the list is the project's own, not a directory's, so the hostile-checkout gate has nothing to guard in `update`'s stages | **As recommended (2026-11-24).** Whoever can publish the allow-list can direct a value into that repository's secrets. The gate stays for `setup --repo` and `--onboard-repo`. This is the owner's go for the cloud writes it widens (F41, R20) |
 | D3351 | Does `setup --anchor` go too? (F20) | Remove it from both; the anchor lives in `project repos add` alone | **As recommended (2026-11-24).** → R14 |
 | D3352 | In a coding agent's session, do L5's reads mint the operator's identity? (F44) | No, as D902: every repository reads as unread with one line, "run fugaro update from your own terminal", and the stages that need repositories say needs-you | **As recommended (2026-11-24).** An agent-run update converges only the project-wide parts. → R1 |
+| D3353 | Does `update --repo` go once plain `update` covers every repository? | Out of scope (spec) | **The owner's ruling (2026-11-26):** yes. U12 removes the flag and every instruction to run it per checkout, after U11 and U9d. Until U11 merges nothing changes. |
 
 ## Resolutions
 
@@ -369,7 +372,11 @@ to D3343 and D3347 were answered on 2026-11-24. All are as recommended.
 
 - **R21 (F45).** C1's stub returns today's behaviour: the working directory's checkout as a single
   view, read the way the stages read it now, or none outside a checkout. Each stage that switches to
-  `e.repos` keeps its behaviour, and its existing tests stay green until I1 deletes the stub.
+  `e.repos` keeps its behaviour, and its existing tests stay green until I1 deletes the stub. One
+  exception, U4's: the checkout stage's origin that is not `owner/name`, or that git cannot read,
+  refused the run and is now that repository's own line — a view carries no error channel, and the
+  spec's own rule is that one unread repository never fails the upgrade. The record follows the code
+  (F49, and the checkout row in `spec.md`).
 - **R22 (F46).** Every installation on a released version already has the credentials service
   (`fugaro update` deploys it everywhere). A run with no service URL reads every repository as
   unread, with one line that names the credentials stage and says the next `update` reads them. I1

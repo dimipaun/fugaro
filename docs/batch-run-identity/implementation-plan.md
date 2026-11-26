@@ -192,6 +192,20 @@ release, so what it measures is the only evidence the claim stands on (R4 as re-
   wait on this result (R4 as re-cut).** Its U3 row reads the wrapped marker's name out of this
   folder, which the amendment retires; the row still measures what it measured, and the
   ticket-specific measurement is BR13's (U3 as re-cut).
+- **Run of 2026-11-25 (the first run of it): FAIL.** The owner ran it in `fugaro-dev` and pasted the
+  block into the checklist's Check 830 section; `fugaro version` was not recorded, and `probe-ran`
+  and `u1-handmade` FAILED. It settles the owner's **O1** (the link is a field of the instance's own
+  object, read with `compute.instances.get` — a read that cannot be scoped to Fugaro's VMs) and his
+  **O8** (a hand-made VM CAN carry every field the probe's VM carries, so no field a launcher can
+  write may be the link), and **U8** is 10 s. **U2 and U3 are unmeasured** — no line of the probe
+  container's own arrived, so the block's two rows read as FAIL on an unread row rather than as
+  answers against the design, which is the reading a fix takes out. That fix also gives the check a
+  second channel for U2 and U3 (the task's exit status, read with the `batch.jobs.get` the service
+  already holds) and the readings a run with no line of its own owes the reader, taken before the
+  job is deleted. **R4 returns the design to the owner**: the link may not rest on fields a
+  hand-made VM can carry, and what it rests on instead is the open question (D3101's signed claims,
+  once U2 is measured). **BR3, BR5 and BR12 still wait (R4 as re-cut).** The rerun is the same one
+  command.
 - Depends on: none.
 
 ### BR1: the launcher gives a Batch launch its ticket, or refuses (`claim-attestation`)
@@ -219,7 +233,7 @@ release, so what it measures is the only evidence the claim stands on (R4 as re-
   `TestTheJobIsRegisteredAfterTheCreateWithItsId`, `TestASealedBatchLaunchIsRefused`,
   `TestABatchLaunchWithoutTheOptInIsRefusedWithItsFix`, `TestTheLaunchNamesTheServicesReason`,
   `TestTheTicketIsRedactedAndNotRecorded`, `TestAFailedTicketCreatesNothing`.
-- Command: `go test ./internal/backend/batch/ -run 'BatchLaunchCarriesTheTicket|TicketNamesTheJob|JobIsRegisteredAfter|SealedBatchLaunchIsRefused|WithoutTheOptInIsRefused|TicketIsRedacted|FailedTicketCreatesNothing' -count=1 && go test ./internal/cli/ -run 'LaunchBatch|NamesTheServicesReason|Docs' -count=1`.
+- Command: `go test ./internal/backend/batch/ -run 'BatchLaunchCarriesTheTicket|TicketNamesTheJob|JobIsRegisteredAfter|SealedBatchLaunchIsRefused|WithoutTheOptInIsRefused|TicketIsRedacted|FailedTicketCreatesNothing' -count=1 && go test ./internal/cli/ -run 'BatchLaunchCarriesTheTicket|TicketNamesTheJob|JobIsRegisteredAfter|SealedBatchLaunchIsRefused|WithoutTheOptInIsRefused|TicketIsRedacted|FailedTicketCreatesNothing|NamesTheServicesReason|Docs' -count=1`.
 - Red step: the plain marker appears among the job's variables, or the ticket is set without the
   job's name.
 - Depends on: C1 (the ticket's job field and the registration's route); BRS (kept: one file,
@@ -978,7 +992,7 @@ From the reserved block 830 to 839:
 
 | Check | Measures | Who | When |
 | --- | --- | --- | --- |
-| 830 | What links a Batch VM to its job and which permission reads it, whether a launcher can forge it, what the identity token carries, where Batch writes variables, how soon a job's name can be reused (U1, U2, U3, U8). Merged as BR0 | the owner | before `R-C1-link-permission`, BR2, BR3, BR5, BR12, BR13 and BR23 start |
+| 830 | What links a Batch VM to its job and which permission reads it, whether a launcher can forge it, what the identity token carries, where Batch writes variables, how soon a job's name can be reused (U1, U2, U3, U8). Merged as BR0. **Run 2026-11-25: FAIL** — `probe-ran` and `u1-handmade`, so U2 and U3 are unmeasured; O1 and O8 are answered and R4 returns the design to the owner, and BR3, BR5 and BR12 still wait | the owner | before `R-C1-link-permission`, BR2, BR3, BR5, BR12, BR13 and BR23 start |
 | 831 | The brief's item 6: launch, session, metering, and a second launcher failing four ways on the claim (R11, D3108, D3115) | the owner | after the release, on an updated `fugaro-dev` |
 
 832 to 839 are reserved and unused. Check 124 stays as it is; 831 does not replace its preemption

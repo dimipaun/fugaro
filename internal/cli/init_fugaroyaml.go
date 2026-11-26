@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"path/filepath"
 	"regexp"
@@ -199,8 +200,29 @@ func prepareAnchor(lc *localcfg.Config, root string) (*anchorEdit, error) {
 	return &anchorEdit{path: path, id: lc.GCPProject, old: old, out: out, changed: changed}, nil
 }
 
-// writeAnchor is the one write of the line, after the plugin stage's pattern:
-// the diff, then --yes writes, a person at the terminal writes having read the
+// anchorGate is the gate the gcp_project edit is offered through, as the facts
+// a door holds (F38, R8): the run that writes the line in a checkout has an
+// initRun, and `fugaro project repos add` — which offers the same edit in the
+// same checkout — has none, so the arms below read these and not a run.
+type anchorGate struct {
+	// w is where the diff, the gate's own sentence and the line to add go.
+	w io.Writer
+	// planOnly prints what it would do and writes nothing.
+	planOnly bool
+	// managed is the run's own gate (initRun.gateStandsIn) and person is
+	// initflow.PersonAtTheTerminal of the same run's conditions: together they
+	// are the arm that prints the sentence saying why nothing is asked.
+	managed, person bool
+	// yes is --yes, and interactive whether a person is at the terminal: a
+	// session with neither is handed the line to add.
+	yes, interactive bool
+	// confirm is the door's own confirmation, asked where the arms above did
+	// not answer and refusing a coding agent's session.
+	confirm func(string) (bool, error)
+}
+
+// write is the one write of the line, after the plugin stage's pattern: the
+// diff, then --yes writes, a person at the terminal writes having read the
 // diff, and anything else leaves the file alone and prints the line to add.
 // Nothing is typed for it (T7, docs/no-prompt-policy: the [y/N] this used to
 // ask for is gone, and --ask is the flag that puts the question back).
@@ -216,67 +238,77 @@ func prepareAnchor(lc *localcfg.Config, root string) (*anchorEdit, error) {
 // answered for. Nothing else moves: a project that is not managed, a mark that
 // did not answer and a coding agent's session keep the arms below exactly as
 // they were.
-func (r *initRun) writeAnchor(a *anchorEdit, env initflow.Env, planOnly bool) (bool, error) {
+func (g anchorGate) write(a *anchorEdit) (bool, error) {
 	if !a.changed {
 		return false, nil
 	}
-	fmt.Fprintf(r.w, "%s\n%s", a.path, lineDiff(string(a.old), string(a.out)))
+	fmt.Fprintf(g.w, "%s\n%s", a.path, lineDiff(string(a.old), string(a.out)))
 	addLine := fmt.Sprintf("to let teammates use this installation without setup, add this line to %s: %s (every teammate's CLI and every CI job or pin that runs fugaro against the repository must be on this release before the line is merged: older versions refuse the key as unknown)\n", a.path, a.line())
 	switch {
-	case planOnly:
-		fmt.Fprintln(r.w, "  (plan only: fugaro.yaml is not written)")
+	case g.planOnly:
+		fmt.Fprintln(g.w, "  (plan only: fugaro.yaml is not written)")
 		return false, nil
-	case r.gateStandsIn() && initflow.PersonAtTheTerminal(r.conditions()):
-		fmt.Fprintf(r.w, "  %s\n", initflow.OwnerProceeded())
-	case env.Yes:
-		fmt.Fprintln(r.w, "  confirmed by this run's own answer")
-	case !env.Interactive:
-		fmt.Fprint(r.w, addLine)
+	case g.managed && g.person:
+		fmt.Fprintf(g.w, "  %s\n", initflow.OwnerProceeded())
+	case g.yes:
+		fmt.Fprintln(g.w, "  confirmed by this run's own answer")
+	case !g.interactive:
+		fmt.Fprint(g.w, addLine)
 		return false, nil
 	default:
 		// A person at the terminal is asked nothing (T7): the y/N they used
 		// to type is gone, --ask is the flag that puts the question back, and
 		// the diff above is what they read.
-		ok, err := r.confirmNow("write this to " + a.path + "?")
+		ok, err := g.confirm("write this to " + a.path + "?")
 		if err != nil {
 			return false, err
 		}
 		if !ok {
-			fmt.Fprint(r.w, addLine)
+			fmt.Fprint(g.w, addLine)
 			return false, nil
 		}
 	}
 	if err := writeFileAtomic(a.path, a.out); err != nil {
 		return false, err
 	}
-	fmt.Fprintf(r.w, "Updated %s with gcp_project. Review it with git diff and commit it like any change. Every teammate's CLI and every CI job or pin that runs fugaro against the repository must be on this release before you merge a change that adds gcp_project: older versions refuse the key as unknown.\n", a.path)
+	fmt.Fprintf(g.w, "Updated %s with gcp_project. Review it with git diff and commit it like any change. Every teammate's CLI and every CI job or pin that runs fugaro against the repository must be on this release before you merge a change that adds gcp_project: older versions refuse the key as unknown.\n", a.path)
 	return true, nil
 }
 
-// budgetModeEdit is the removal of the budget.mode line from a checkout's
-// fugaro.yaml, prepared and not yet written (AB8b, D3022, F12).
-type budgetModeEdit struct {
-	path     string
-	old, out []byte
+// writeAnchor is anchorGate.write with this run's own facts: the arms every
+// door of the edit shares, and the one thing a run adds to them — the marks
+// (gateStandsIn) and the confirmation that refuses a coding agent's session
+// (confirmNow).
+func (r *initRun) writeAnchor(a *anchorEdit, env initflow.Env, planOnly bool) (bool, error) {
+	return anchorGate{
+		w:           r.w,
+		planOnly:    planOnly,
+		managed:     r.gateStandsIn(),
+		person:      initflow.PersonAtTheTerminal(r.conditions()),
+		yes:         env.Yes,
+		interactive: env.Interactive,
+		confirm:     r.confirmNow,
+	}.write(a)
 }
 
 // fugaroYAMLWithoutRemovedMode is a checkout's fugaro.yaml with the word that
-// was a budget mode spliced out of it, and whether the file said it: the bytes
-// this run's own removal offer leaves in the working tree
-// (writeBudgetModeRemoval). Nothing validates the file here — the word is read
-// out of the bytes (localcfg.RemovedBudgetMode, F22) — and a splice the editor
-// refuses leaves the bytes as they are and the word in the file, so the reader
-// that asked judges them as they always were.
+// was a budget mode spliced out of it, and whether the file said it. Nothing
+// validates the file here — the word is read out of the bytes
+// (localcfg.RemovedBudgetMode, F22) — and a splice the editor refuses leaves the
+// bytes as they are and the word in the file, so the reader that asked judges
+// them as they always were.
 //
 // The readers that take it are the update's own, and they take it because the
 // update is the one command that has to load a file that still says the word:
 // from this release the word is refused by the config's own validation (D3022),
-// and the update is the one that offers to take the line out — a stage that
-// stopped on the line it is about to remove would need a person to commit the
-// removal and run `fugaro update` a second time, which the upgrade may never
-// ask (CLAUDE.md's HARD RULE). Every other reader of these bytes refuses the
-// word, `fugaro validate` first among them, and a run in this repository still
-// halts in its job on the file it checks out until the line is gone.
+// and a stage that stopped on the line would need a person to commit the
+// removal and run `fugaro update` a second time, which the upgrade may never ask
+// (CLAUDE.md's HARD RULE). Since U6a of docs/update-from-anywhere the update
+// writes no removal: it reads through the word, and the line the repository
+// still carries comes back as a notice the owner acts on (repo_notices.go).
+// Every other reader of these bytes refuses the word, `fugaro validate` first
+// among them, and a run in this repository still halts in its job on the file it
+// checks out until the line is gone.
 func fugaroYAMLWithoutRemovedMode(data []byte) ([]byte, bool) {
 	if _, off := localcfg.RemovedBudgetMode(data); !off {
 		return data, false
@@ -292,15 +324,16 @@ func fugaroYAMLWithoutRemovedMode(data []byte) ([]byte, bool) {
 type updateRemovalKey struct{}
 
 // theUpdateLeavesTheRemoval marks every read of a checkout's fugaro.yaml in
-// this run as the update's own: the bytes as this run's removal offer leaves
-// them (fugaroYAMLWithoutRemovedMode). It is installed once, at the door
-// (runInit), because a run of the init door is the one whose own writes
-// include taking that line out — and because the readers of a checkout's file
-// along its way are many (the repository and checkout stages, the image
-// refresh, the image check, the image stage, the job resolution), so a flag
-// each of them has to remember is a flag one of them is found without. Every
-// other door reads the bytes as they are and refuses a file that still says
-// the word (D3022): `fugaro validate`, a launch, doctor.
+// this run as the update's own: the bytes with the dead word spliced out of them
+// (fugaroYAMLWithoutRemovedMode). It is installed once, at the door (runInit),
+// because the update is the one run that has to read a file that still says the
+// word — it reads through it and answers it with a notice (repo_notices.go,
+// U6a) — and because the readers of a checkout's file along its way are many
+// (the repository and checkout stages, the image refresh, the image check, the
+// image stage, the job resolution), so a flag each of them has to remember is a
+// flag one of them is found without. Every other door reads the bytes as they
+// are and refuses a file that still says the word (D3022): `fugaro validate`, a
+// launch, doctor.
 func theUpdateLeavesTheRemoval(ctx context.Context) context.Context {
 	return context.WithValue(ctx, updateRemovalKey{}, true)
 }
@@ -309,76 +342,6 @@ func theUpdateLeavesTheRemoval(ctx context.Context) context.Context {
 func updateLeavesTheRemoval(ctx context.Context) bool {
 	on, _ := ctx.Value(updateRemovalKey{}).(bool)
 	return on
-}
-
-// prepareBudgetModeRemoval reads the fugaro.yaml of the checkout at root and
-// makes the edit that takes the word which is not a budget mode any more out of
-// it; nil when the file does not say it.
-//
-// The word is read out of the bytes and before anything judges the file (F22):
-// from AB2 on, a checkout's file that says off is refused by the config's own
-// validation, and this edit is the fix that refusal names — so the reading is
-// localcfg.RemovedBudgetMode, which validates nothing. The edit is a splice and
-// not a re-marshal, so the file keeps every byte it had around the line, and a
-// splice the editor refuses is the caller's to say rather than a silent write.
-func prepareBudgetModeRemoval(root string) (*budgetModeEdit, error) {
-	path := filepath.Join(root, "fugaro.yaml")
-	old, err := requireFugaroYAML(path)
-	if err != nil {
-		return nil, err
-	}
-	if _, off := localcfg.RemovedBudgetMode(old); !off {
-		return nil, nil
-	}
-	out, err := yamledit.RemoveKey(old, []string{"budget", "mode"})
-	if err != nil {
-		return nil, err
-	}
-	return &budgetModeEdit{path: path, old: old, out: out}, nil
-}
-
-// writeBudgetModeRemoval is the one write of the removal, after writeAnchor's
-// pattern: the diff, then --yes writes, a person at the terminal writes having
-// read the diff, and anything else leaves the file alone and prints the line to
-// remove. Nothing is typed for it (docs/no-prompt-policy). planOnly prints what
-// it would do and writes nothing. It reports whether the file was written.
-//
-// A managed project's own terminal is asked nothing here either, for the reason
-// writeAnchor's is not: the diff above is the whole of what the owner reads,
-// the line to remove is not needed because the write is made, and the sentence
-// says why.
-func (r *initRun) writeBudgetModeRemoval(a *budgetModeEdit, env initflow.Env, planOnly bool) (bool, error) {
-	if a == nil {
-		return false, nil
-	}
-	fmt.Fprintf(r.w, "%s\n%s", a.path, lineDiff(string(a.old), string(a.out)))
-	removeLine := fmt.Sprintf("to let this repository's runs start again, remove the budget.mode line from %s: it is not a budget mode any more (there is always a budget, and a mode left unset is observe)\n", a.path)
-	switch {
-	case planOnly:
-		fmt.Fprintln(r.w, "  (plan only: fugaro.yaml is not written)")
-		return false, nil
-	case r.gateStandsIn() && initflow.PersonAtTheTerminal(r.conditions()):
-		fmt.Fprintf(r.w, "  %s\n", initflow.OwnerProceeded())
-	case env.Yes:
-		fmt.Fprintln(r.w, "  confirmed by this run's own answer")
-	case !env.Interactive:
-		fmt.Fprint(r.w, removeLine)
-		return false, nil
-	default:
-		ok, err := r.confirmNow("write this to " + a.path + "?")
-		if err != nil {
-			return false, err
-		}
-		if !ok {
-			fmt.Fprint(r.w, removeLine)
-			return false, nil
-		}
-	}
-	if err := writeFileAtomic(a.path, a.out); err != nil {
-		return false, err
-	}
-	fmt.Fprintf(r.w, "Updated %s: the budget.mode line is gone, and the file keeps every other byte it had. Review it with git diff and commit it like any change; until the line is merged away this repository's runs are refused.\n", a.path)
-	return true, nil
 }
 
 // anchor puts the checkout's gcp_project: line (the trust anchor shared
@@ -461,7 +424,9 @@ func reasonRegistryHost(kind string, err error) string {
 // kind, "" when none is known): its reasons, then one ordered fix: the
 // local config's base entry removed first when it is a custom image
 // (customBase), then fugaro image refresh (or fugaro image build when the
-// kind is unknown, since refresh needs one), then --anchor. lcPath is the
+// kind is unknown, since refresh needs one), then the command that writes
+// the gcp_project line — fugaro project repos add, run in that repository's
+// own checkout, which is where the line is offered (R14). lcPath is the
 // local config's file.
 func anchorProblemText(repo, wf, kind, lcPath string, reasons []string, customBase bool) string {
 	var steps []string
@@ -477,7 +442,7 @@ func anchorProblemText(repo, wf, kind, lcPath string, reasons []string, customBa
 	} else {
 		steps = append(steps, fmt.Sprintf("fugaro image build --repo %s --workflow %s", repo, wf))
 	}
-	steps = append(steps, "fugaro update --anchor")
+	steps = append(steps, "fugaro project repos add "+repo+" in the repository's checkout")
 	for i, s := range steps {
 		steps[i] = fmt.Sprintf("(%d) %s", i+1, s)
 	}

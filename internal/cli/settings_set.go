@@ -155,6 +155,17 @@ var settingsGenericKeys = map[string]bool{
 	// inert rule off, so the row carries TypedWhy and the agent-session fence
 	// asks its sentence.
 	"subscription_spread": true,
+	// The pause block's three settings (R11 of docs/model-credentials-routing,
+	// D3184, D3187, D3190) are here for the same reason one step further out:
+	// the read prints them, the local config is their only store and the
+	// publish copies them into the policy node, so a row this list does not
+	// name is a setting nobody can write at all. They are local-only and are
+	// named apart rather than reached by a `pause.` prefix, the orchestrator
+	// block's rule: a prefix is not the reason a row resolves, and the block
+	// has no member this path refuses.
+	"pause.wait_in_job": true,
+	"pause.min_pause":   true,
+	"pause.max_pause":   true,
 	// The pattern above is the registry's shape and this is every stage of the
 	// closed set beside it, one spelling per config.RunStages name: the registry
 	// carries a row for each (internal/settings' stageAccountRows), and a row no

@@ -66,41 +66,48 @@ func TestCraftInheritance(t *testing.T) {
 // nothing else parses to the same configuration as the same file without it,
 // its agent.levels block included (reconciliation F14).
 func TestSecurityCraftDoesNotEnableLevel3(t *testing.T) {
-	const without = `version: 1
+	// The craft is a project layer's now (D3237, R2): a repository's file may
+	// write agent.crafts.*.model and no longer decides it, so the craft the
+	// level-3 switch has to stay clear of is the one a project states.
+	const head = `version: 1
 project: aurora
+gcp_project: aurora-fugaro
+defaults:
+  agent:
+    auth: vertex
+    models: {coder: deepseek-v3, reviewer: opus-4}
+`
+	const repo = `version: 1
+project: aurora
+gcp_project: aurora-fugaro
 git: {provider: github}
-agent:
-  auth: vertex
-  models: {coder: deepseek-v3, reviewer: opus-4}
 workflows:
   server: {commands: {build: make, test: make test}}
 `
-	const with = `version: 1
-project: aurora
-git: {provider: github}
-agent:
-  auth: vertex
-  models: {coder: deepseek-v3, reviewer: opus-4}
-  crafts:
-    security-review: {model: opus-4-1}
-workflows:
-  server: {commands: {build: make, test: make test}}
-`
-	plain, ps := Parse([]byte(without))
-	if len(ps) > 0 {
-		t.Fatalf("the file without the craft has problems: %v", ps)
+	layer := func(extra string) *ProjectLayer {
+		l, ps := ParseProjectLayer([]byte(head+extra), LayerAnchor{Project: "aurora", GCPProject: "aurora-fugaro"})
+		if len(ps) > 0 {
+			t.Fatalf("the layer %q has problems: %v", extra, ps)
+		}
+		return l
 	}
-	crafted, ps := Parse([]byte(with))
+	plain, _, ps := Resolve([]byte(repo), layer(""))
 	if len(ps) > 0 {
-		t.Fatalf("the file with the security-review craft has problems: %v", ps)
+		t.Fatalf("the layer without the craft has problems: %v", ps)
+	}
+	crafted, _, ps := Resolve([]byte(repo), layer("    crafts:\n      security-review: {model: opus-4-1}\n"))
+	if len(ps) > 0 {
+		t.Fatalf("the layer with the security-review craft has problems: %v", ps)
 	}
 	if got, want := crafted.Agent.Crafts.SecurityReview, (Craft{Model: "opus-4-1"}); got != want {
-		t.Errorf("the file's security-review craft is %+v, want the model it wrote and no access of its own: %+v", got, want)
+		t.Errorf("the layer's security-review craft is %+v, want the model it wrote and no access of its own: %+v", got, want)
 	}
 
 	// The craft is the only difference: no level's block, and nothing else in
-	// the configuration, moved.
+	// the configuration, moved. The layer a config carries is the field the
+	// two resolutions' own layers differ in, so it goes with the craft.
 	crafted.Agent.Crafts = Crafts{}
+	plain.Layer, crafted.Layer = nil, nil
 	if !reflect.DeepEqual(plain, crafted) {
 		t.Errorf("setting the security-review craft changed more than the craft:\n without: %+v\n with:    %+v", plain, crafted)
 	}
@@ -177,6 +184,45 @@ func TestReservedCredentialNamesRefuse(t *testing.T) {
 // credential a pool of one may name.
 func poolMembers() []Credential {
 	return []Credential{{Name: "oauth-one", Type: CredentialTypeClaudeOAuth}}
+}
+
+// TestPoolMayTakeItsOnlyMembersName is the one collision ValidatePools admits
+// between a pool's name and a credential's, and the boundary the rule draws.
+//
+// A pool of one named after its only member is the shape every subscription
+// token is written in (D3176): `fugaro accounts add` writes it for a new token
+// and `fugaro update` migrates every lone account into one, so the config that
+// holds a token would be a config its own next read refuses if the namespace
+// rule did not admit the pair. What is still refused is every pool that would
+// leave the name meaning more than that one credential: a second member, or a
+// member that is another credential under the shared name.
+func TestPoolMayTakeItsOnlyMembersName(t *testing.T) {
+	creds := []Credential{{Name: "team-a", Type: CredentialTypeClaudeOAuth}}
+	if ps := ValidatePools([]Pool{{Name: "team-a", Members: []string{"team-a"}}}, creds); len(ps) != 0 {
+		t.Errorf("a pool of one named after its only member is refused: %v", ps)
+	}
+	for _, bad := range []Pool{
+		{Name: "team-a", Members: []string{"team-a", CredentialVertex}},
+		{Name: "team-a", Members: []string{CredentialVertex, "team-a"}},
+		{Name: "team-a", Members: []string{CredentialVertex}},
+	} {
+		ps := ValidatePools([]Pool{bad}, creds)
+		if len(ps) == 0 {
+			t.Errorf("%+v is written and nothing refuses the name it shares with a credential", bad)
+			continue
+		}
+		if !strings.Contains(ps[0].Message, "a credential of this name is defined in the same block") {
+			t.Errorf("%+v is refused with %q, want the namespace rule's own sentence", bad, ps[0].Message)
+		}
+	}
+	// The built-in vertex is a name a reference may carry and a definition
+	// never does, so a pool named after it is no pool of the block's own
+	// credential and the name rule refuses it as it always did.
+	for _, members := range [][]string{{CredentialVertex}, {"team-a", CredentialVertex}} {
+		if ps := ValidatePools([]Pool{{Name: CredentialVertex, Members: members}}, creds); len(ps) == 0 {
+			t.Errorf("a pool named %s with members %v is written and nothing refuses it", CredentialVertex, members)
+		}
+	}
 }
 
 // TestNewPoolWithoutOwnerRefused: a pool written at the version that gives

@@ -705,13 +705,13 @@ func TestViolationReasonNamesModel(t *testing.T) {
 	}
 }
 
-// tokenCfg is the fixture config with agent.max_run_tokens set, and the pins
-// every run behind a gateway needs: the policy tests write it to a branch
-// themselves, so they never pass through the harness's own call
-// (withFixturePins).
+// tokenCfg is the fixture config with agent.max_run_tokens set, anchored to the
+// GCP project the project layer applies by: the policy tests write it to a
+// branch themselves, so they never pass through the harness's own call
+// (testutil.FixturePins).
 func tokenCfg(t *testing.T, limit string) string {
 	t.Helper()
-	cfg := withFixturePins(testutil.FixtureFiles(t)["fugaro.yaml"])
+	cfg := testutil.AnchorFile(testutil.FixtureFiles(t)["fugaro.yaml"])
 	out := strings.Replace(cfg, "  review_rounds: 2\n", "  review_rounds: 2\n  max_run_tokens: "+limit+"\n", 1)
 	if out == cfg {
 		t.Fatal("fixture has no review_rounds line")

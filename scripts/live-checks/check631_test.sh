@@ -23,7 +23,9 @@
 # pty.openpty) and hand the check its slave device through CHECK631_TTY, with the
 # two values written into it — the check's own hidden prompt reads the first and
 # the command's own hidden prompt reads the second, in the order the check makes
-# them. A value never becomes an argument of any process here either.
+# them. A value never becomes an argument of any process here either. A machine
+# that can make no pty (a sandbox or a coding agent's session) runs every case
+# but the three terminal ones, which skip themselves with one line.
 #
 # Usage: bash scripts/live-checks/check631_test.sh
 set -euo pipefail
@@ -340,8 +342,10 @@ project)
       printf 'fugaro: the node could not be read back\n' >&2
       exit 1
     fi
+    node_access=$(cat "$state/access")
+    if [ "$mode" = craft-no-access ]; then node_access=""; fi
     printf '{"project":"%s","policy":{"version":10,"craft_credentials":[{"name":"%s","type":"anthropic"}],"craft_pools":[{"name":"%s","strategy":"failover","members":["%s"]}],"crafts":{"%s":{"model":"deepseek/deepseek-v4","access":"%s"}}}}\n' \
-      "$installation" "$anthropic" "$pool" "$anthropic" "$craft" "$pool"
+      "$installation" "$anthropic" "$pool" "$anthropic" "$craft" "$node_access"
     ;;
   *) printf 'fugaro: unexpected policy subcommand\n' >&2; exit 1 ;;
   esac
@@ -512,6 +516,32 @@ prepare() { # dir
 }
 
 # ------------------------------------------------------------------- the pty
+# Whether this machine can make a pty at all: only the three terminal cases
+# below need one, and a sandbox or a coding agent's session cannot make one —
+# python3's pty.openpty raises "out of pty devices". Probed once.
+PTY_AVAILABLE=""
+pty_available() {
+  if [ -z "$PTY_AVAILABLE" ]; then
+    if python3 -c 'import os, pty
+m, s = pty.openpty()
+os.close(m)
+os.close(s)' >/dev/null 2>&1; then
+      PTY_AVAILABLE=yes
+    else
+      PTY_AVAILABLE=no
+    fi
+  fi
+  [ "$PTY_AVAILABLE" = yes ]
+}
+
+# need_pty: a case that needs a terminal for the two pastes skips itself, with
+# one line, where this machine has no pty, and runs where it has one.
+need_pty() {
+  pty_available && return 0
+  echo "skip: ${case_name:-this case}: no pty on this machine (a sandbox or an agent session has none), so the two pastes are not made"
+  return 1
+}
+
 FEEDER_PID=""
 FEEDER_TTY=""
 start_feeder() { # start_feeder DIR VALUE...
@@ -655,6 +685,7 @@ test_dry_run_needs_no_terminal() {
 test_the_happy_path_at_a_terminal() {
   local dir=$work/happy
   prepare "$dir"
+  need_pty || return 0
   run_check_with_terminal "$dir"
   expect_status "$status" 0 "the happy path"
   local key
@@ -727,6 +758,7 @@ test_a_command_that_echoes_the_value_is_a_finding() {
 test_a_prompt_that_echoes_a_key_shape_is_a_finding() {
   local dir=$work/shape
   prepare "$dir"
+  need_pty || return 0
   run_check_with_terminal "$dir" FAKE_MODE=add-openrouter-echoes-shape
   expect_status "$status" 1 "a prompt that echoes a key shape"
   expect_contains "$out" "FACT prompt-hidden: FAIL" "a prompt that echoes a key shape: the row"
@@ -739,6 +771,7 @@ test_a_prompt_that_echoes_a_key_shape_is_a_finding() {
 test_the_two_pastes_are_read_at_two_different_prompts() {
   local dir=$work/prompts
   prepare "$dir"
+  need_pty || return 0
   run_check_with_terminal "$dir"
   expect_status "$status" 0 "the two prompts"
   expect_contains "$out" "the value was read at this check's own hidden prompt on your terminal" "the two prompts: the check's own prompt is the one its value came from"
@@ -1126,6 +1159,7 @@ t() {
   elif [ -n "${CHECK_TEST_SHARD:-}" ]; then
     [ $((i % ${CHECK_TEST_SHARD#*/})) -eq "${CHECK_TEST_SHARD%/*}" ] || return 0
   fi
+  case_name=$1
   "$1"
 }
 

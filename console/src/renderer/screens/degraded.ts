@@ -696,9 +696,10 @@ export const REFUSAL_UNREADABLE =
  * and wrong about the door: the Projects panel drew the same channel's text
  * through `putText`, so one input had two treatments, and neither was right.
  * `sanitizeRefusal` is the single treatment -- the credential rules and this
- * layer's own, never the pattern classes that eat `roles/datastore.viewer` --
- * so the remedy survives *and* a token a child echoed into its stderr is still
- * redacted. Sanitizing here, in the model, is what keeps `refused()`'s `literal`
+ * layer's own, and the pattern classes that used to eat `roles/datastore.viewer`
+ * went with D3213 (2026-11-21) -- so the remedy survives *and* a token a child
+ * echoed into its stderr is still redacted. Sanitizing here, in the model, is
+ * what keeps `refused()`'s `literal`
  * call honest: by the time the drawing reads `state.sentence`, it is a string
  * the sanitizer produced.
  */
@@ -708,20 +709,12 @@ export function refusedState(operation: string, refusal: { readonly sentence: st
 }
 
 /**
- * searched says **how many** places the resolution walked, and deliberately not
- * which ones.
- *
- * The first draft of this screen listed the candidates, and the `path` class is
- * why it cannot: `sanitize.ts` draws every path as the `<path>` placeholder
- * whatever it looks like -- "a path is where the operator's user name and
- * checkout live, and neither belongs in a screenshot" -- so a list of them would
- * be a column of `<path>` under a sentence saying the console looked somewhere,
- * and a list read as prose would be a column of `[redacted]` instead. The count
- * is the fact that survives that rule, and it is the whole of what the operator
- * needs from it: the console looked in the usual places and found no `fugaro`
- * there, so the answer is the install command above or the installations list in
- * the picker's own window, and the paths themselves are in the spawn log where
- * the resolution wrote them.
+ * searched says **how many** places the resolution walked. The count is the
+ * figure this screen is built around, and it is drawn beside the resolution's
+ * own sentence -- which names the places, where `sanitize.ts` drew each as the
+ * `<path>` placeholder until D3213 (2026-11-21) removed that mask. The paths
+ * themselves are also in the spawn log where the resolution wrote them, so the
+ * answer to "where" is never lost either way.
  *
  * The number goes through `putReading` like every other number -- a count this
  * file computed, drawn `measured` -- and `SEARCHED_LEAD` is this file's own
@@ -761,15 +754,15 @@ function noInstallation(factory: ScreenFactory, state: NoInstallationState): Scr
   const headline = cell(element, factory, 'h1', 'unavailable-headline')
   // The resolution's sentence is the CLI's shape of "where I looked", written by
   // `spawn.ts` rather than by a document: it goes through `putText` like every
-  // other string this screen did not author itself. As prose it is read as
-  // prose, so the path fragments inside the "looked at ..." form are redacted
-  // (`ABS_PATH_RE`) -- deliberately, and without loss: the resolution already
-  // says how many places it looked in, and `searched` below draws that count
-  // rather than the paths, so no place is lost with the redaction.
+  // other string this screen did not author itself. It is read as prose, and the
+  // path fragments inside the "looked at ..." form are drawn as the paths they
+  // are: D3213 (2026-11-21) removed the path rule that used to redact them, so
+  // where the console looked reaches the operator as the resolution wrote it.
   //
-  // Review round 5 of PR 478: this comment used to end "the list below carries
-  // the places, each one drawn as the path it is", which stopped being true when
-  // the list became a count.
+  // Review round 5 of PR 478: this comment used to say the path fragments were
+  // redacted and that the places were listed below as the paths they are; both
+  // halves stopped being true -- the mask went, and the list became the count
+  // `searched` draws.
   textCell(element, factory, 'p', state.reason, 'sentence', 'the resolution reason', 'unavailable-reason')
   switch (state.kind) {
     case 'no-binary': {
@@ -830,14 +823,15 @@ function refused(factory: ScreenFactory, state: RefusedState): ScreenElement {
   //     string from a CLI document reaches the renderer only through the
   //     sanitizer") is about the documents; this is the child's *stderr*,
   //     delivered on the `SourceRefusal` channel (`src/source/source.ts`).
-  //   - **`putText` (the `sentence` class) would destroy the sentence.** Design
-  //     section 6.3 requires the CLI's remedy on screen, and `FREE_TEXT_RULES`
-  //     eats it: `roles/datastore.viewer` is two long segments around a slash,
-  //     so `REPO_TOKEN_RE` draws it `[redacted]`, and `project sandbox-db` is a
-  //     GCP project named in a sentence, so `GCP_CONTEXT_RE` draws it
-  //     `<project>`. `degraded.test.ts` asserts both halves -- the sentence
-  //     unchanged through `sanitizeRefusal`, and changed by `putText` -- so the
-  //     reason cannot rot into a claim nobody checks.
+  //   - **`putText` (the `sentence` class) is not the door for it.** Design
+  //     section 6.3 requires the CLI's remedy on screen, and the door that keeps
+  //     it is `sanitizeRefusal`; the two agree on this sentence since D3213
+  //     (2026-11-21) removed the non-secret rules (`REPO_TOKEN_RE`,
+  //     `GCP_CONTEXT_RE`) that drew a role as `[redacted]` and a project as
+  //     `<project>`. What the door is still run for is the credential half: a
+  //     token a child echoed. `degraded.test.ts` asserts both halves -- the
+  //     sentence character for character through both doors, and a token still
+  //     redacted -- so the reason cannot rot into a claim nobody checks.
   //   - **The screen is the operator's only copy of it.** `report.go`'s
   //     `firestoreErr` is the one place the two role names are written, and a
   //     screen that redacted them would leave the operator with a refusal and no

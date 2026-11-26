@@ -204,22 +204,6 @@ type secretsStage struct {
 	checked bool
 	missing []string // names with no stored value
 	stored  []string // names stored in this run, for Verify
-	// repoLevel are the names of the checkout's own that D2313 disables: a
-	// repository-level secret no job mounts project-wide for this repository.
-	// They are dropped from what the stage wants (nothing to ask, nothing to
-	// store, no line to leave -- every store that would take one answers a
-	// notice), and the ruling's one sentence about them is what Check and Plan
-	// say instead of a step.
-	repoLevel []string
-	// providerKeys are the names the stage does not take because they are a
-	// configured model provider's own key (config.ProviderBySecret): since KS2
-	// the key is entered in the credentials service's bundle, one entry per
-	// repository, and this stage writes Secret Manager values. They are dropped
-	// from what the stage wants -- take() refuses one before reading anything,
-	// so a want left in would be one no run could ever satisfy -- and the
-	// command that enters this repository's own entry is what Check and Plan
-	// name for them (providerKeyNotTakenNotice).
-	providerKeys []string
 
 	// node is the project's published policy, read once when the stage
 	// resolves through the run's own memoized read (initRun.policy) and nil
@@ -230,6 +214,19 @@ type secretsStage struct {
 	// mount decision (infra.ProjectSecretCandidateFromNode) are the one
 	// answer.
 	node *projectpolicy.Policy
+
+	// list is the update door's work (U3a): one target per enrolled
+	// repository, in canonical order, each carrying what its jobs mount and
+	// where the stage left it. It is nil for setup, whose one checkout is tg:
+	// the door is what decides which of the two the stage has, and every
+	// method that reads one repository asks for its target (U3a, R18).
+	list []*secretTarget
+	// lines are what the stage reported about each repository, in the same
+	// order, and linesReported is the once-per-run guard: Check, Plan and
+	// Apply all call checkList, and the run's own record must not hold the
+	// same line three times.
+	lines         []initflow.RepoLine
+	linesReported bool
 }
 
 func newSecretsStage(e *initEngine) *secretsStage {
@@ -245,11 +242,40 @@ func newSecretsStage(e *initEngine) *secretsStage {
 	}
 }
 
-// secretTarget is the repository whose secrets the stage takes.
+// secretTarget is one repository whose secrets the stage takes: the setup
+// door's checkout, or one enrolled repository of the update door's list.
 type secretTarget struct {
 	repo, slug, label, provider string
 	wanted                      []string // every secret its jobs mount, in order
 	noConfig                    bool     // no fugaro.yaml here: only the git credential is known
+
+	// The update door's per-repository state (U3a). They are empty for the
+	// checkout target, whose state the stage's own fields carry.
+	unread string // the reader could not read this repository: its one-line reason
+	skip   string // the stage does not apply to this repository, and why
+	// enrol is a repository this project's own record does not name -- not
+	// this machine's config and not the published policy's allow-list -- and
+	// which this door does not enrol (D5, D3350). It is left for the user,
+	// with the command that enrols it.
+	enrol bool
+	// missing, repoLevel, providerKeys and checked mirror the stage's own
+	// fields for this repository alone: what find() left, the names D2313
+	// drops, the provider keys F21 leaves a line for, and whether the listing
+	// ran.
+	missing      []string
+	repoLevel    []string
+	providerKeys []string
+	checked      bool
+	// detail is the line the stage reports about this repository (state is
+	// what it did for it).
+	detail string
+	state  initflow.RepoState
+}
+
+// read is whether this target is one the stage could work on: the reader read
+// it, the stage applies to it, and the project's record names it.
+func (t *secretTarget) read() bool {
+	return t != nil && t.unread == "" && t.skip == "" && !t.enrol
 }
 
 func (s *secretsStage) Name() string { return initflow.Secrets }
@@ -259,8 +285,18 @@ func (s *secretsStage) Name() string { return initflow.Secrets }
 // neither --non-interactive nor --yes (which never supplies a secret, and is
 // the flag of an unattended run) nor --json (the output of a caller that reads
 // it: a hard rule, --json never prompts) is set.
+//
+// The update door adds one condition, and only it (D3347, R18): a value is
+// asked for there only under --ask, on any project, so without the flag the
+// stage leaves its one line per missing name and never prompts — which is what
+// makes `fugaro update` ask nothing by default. `setup` keeps the rule above
+// whole: its own steps are confirmed by the person at the terminal already, so
+// its value entry is not behind the flag.
 func (s *secretsStage) canPrompt() bool {
 	o, cmd := s.e.r.o, s.e.r.cmd
+	if s.listDoor() && !o.ask {
+		return false
+	}
 	return !o.nonInteractive && !o.yes && !o.asJSON && agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())) == "" &&
 		stdinIsTerminal(cmd.InOrStdin()) && writerIsTerminal(cmd.ErrOrStderr()) && writerIsTerminal(cmd.OutOrStdout())
 }
@@ -317,17 +353,131 @@ func allowedHarnessOAuthMounts(lc *localcfg.Config, repo string, mounts []infra.
 	return out
 }
 
-// resolve finds the repository the stage works on and what its jobs mount.
-// It applies only to a checkout of a repository of this project, found as
-// fugaro secrets set finds one: the provider comes from the local config's
-// entry and the checkout's fugaro.yaml (never from the origin's host) and
-// must agree between them; a fugaro.yaml naming another project, or a
-// checkout the project does not know, is skipped, so a container is never
-// created for an unrelated checkout. skip says why.
+// listDoor is whether this run's door reads the project's repositories rather
+// than the working directory's checkout: `fugaro update`'s converge does, and
+// `setup` keeps its checkout target (U3a, R18). The branch is on the door and
+// not on a stage flag, because one engine serves both and only the door knows
+// which list is the run's.
+func (s *secretsStage) listDoor() bool { return s.e.r.o.doorName() == updateDoor.name }
+
+// listTargets are the repositories this run works on: the update door's
+// enrolled list, or the one checkout the setup door resolved. A caller that
+// must not guess which of the two a run has asks this.
+func (s *secretsStage) listTargets() []*secretTarget {
+	if s.list != nil {
+		return s.list
+	}
+	if s.tg != nil {
+		return []*secretTarget{s.tg}
+	}
+	return nil
+}
+
+// singleCheckout is whether this run takes a value the way `fugaro update`
+// always has: the list it read is one repository, that repository is the
+// checkout the run was started in and one the stage can work on, and a person
+// is at this terminal to answer. The door's own line means something only
+// where this holds -- a `fugaro update` that asks for nothing is a step that
+// leaves itself -- and the store decision is the checkout door's own
+// (D2313, D3347).
+//
+// C1's stand-in answers the update door with the checkout the run was started
+// in, so this is every `update` in a checkout and nothing else for now (R21).
+// It is a stopgap in one direction only: once I1 connects the real reader the
+// list is the project's enrolled repositories, and a list of many is left with
+// the command that stores each name -- asking there is `--ask`'s, which U3b
+// gave the door (R18): canPrompt above turns it on, and a list of many is the
+// reader work I1 still owes.
+func (s *secretsStage) singleCheckout(ctx context.Context, f *os.File) bool {
+	if len(s.list) != 1 || !s.tg.read() || !s.canPrompt() || f == nil {
+		return false
+	}
+	oi, ok := readOrigin(ctx, ".")
+	if !ok || !sameRepo(oi.Repo, s.tg.repo) || oi.Host != providerHosts[s.tg.provider] {
+		return false
+	}
+	s.origin = oi
+	return true
+}
+
+// resolve finds the repositories the stage works on and what their jobs mount.
+//
+// The update door reads the project's every enrolled repository through
+// e.repos -- the same list from every directory, each read at its own default
+// branch -- and keeps one target per view (U3a, R18). The setup door keeps its
+// checkout: it applies only to a checkout of a repository of this project,
+// found as fugaro secrets set finds one, and skip says why it does not.
 func (s *secretsStage) resolve(ctx context.Context) {
-	if s.tg != nil || s.skip != "" {
+	if s.tg != nil || s.skip != "" || s.list != nil {
 		return
 	}
+	if s.listDoor() {
+		s.resolveList(ctx)
+		return
+	}
+	s.resolveCheckout(ctx)
+}
+
+// resolveList is the update door's resolve: one target per enrolled
+// repository, in the canonical order e.repos answers, with the reader's own
+// answer for a repository it could not read and the stage's for one it does
+// not apply to. A run whose reader found no repository at all is skipped, as
+// the checkout door is outside a checkout.
+//
+// The hostile-checkout gate is not asked (D3350): the list is the project's
+// own, an admit-only repository in it is enrolled, and a stage of `update`
+// plans nothing from a directory. It still guards `setup --repo` and
+// `--onboard-repo`, which are the doors that act on a checkout a person made.
+func (s *secretsStage) resolveList(ctx context.Context) {
+	lc := s.e.lc
+	views, _ := s.e.repos(ctx)
+	if len(views) == 0 {
+		s.skip = "no repository of this project was read: run " + s.e.r.o.doorProgram() + " in a checkout to take one's secrets"
+		return
+	}
+	// The published policy, read once before the targets are filled: a name's
+	// scope (projectScope) reads the node, and the checkout door reads it at
+	// the same point for the same reason (SD17).
+	p, found, err := s.e.r.policyMemo().read(ctx, lc)
+	s.node = repoPolicyInput(lc, p, found, err)
+	for _, v := range views {
+		tg := &secretTarget{repo: v.Repo, provider: v.Provider}
+		switch {
+		case !v.Read():
+			// The reader's own reason, sanitised by the view: a stage reports
+			// an unread repository and never guesses at it (R13).
+			tg.unread = v.Unread
+		default:
+			local, _ := localRepo(lc, v.Repo)
+			tg.skip = s.fillTarget(tg, v.Repo, local, v.Cfg)
+			switch {
+			case tg.skip != "":
+			case !s.enrolledRepo(tg):
+				tg.enrol = true
+			default:
+				// The two names the stage does not take are dropped once the
+				// node is in hand, as they are for the checkout: D2313's
+				// repository-level names and a configured provider's own key.
+				s.scopeTarget(tg)
+			}
+		}
+		s.list = append(s.list, tg)
+	}
+	if len(s.list) == 1 {
+		// One repository keeps the stage's own single-target fields the way the
+		// setup door fills them, so a line, a scope question or a test that
+		// reads the stage and not the list answers about that repository.
+		s.tg = s.list[0]
+	}
+}
+
+// resolveCheckout is the setup door's resolve: the working directory's
+// checkout, its local-config entry and the fugaro.yaml of its default branch
+// (not the working tree's, which whoever made the checkout could have
+// changed). A fugaro.yaml naming another project, or a checkout the project
+// does not know, is skipped, so a container is never created for an unrelated
+// checkout.
+func (s *secretsStage) resolveCheckout(ctx context.Context) {
 	lc := s.e.lc
 	root, err := gitRead(ctx, ".", "rev-parse", "--show-toplevel")
 	oi, ok := readOrigin(ctx, root)
@@ -336,17 +486,7 @@ func (s *secretsStage) resolve(ctx context.Context) {
 		return
 	}
 	repo := oi.Repo
-	var local localcfg.Repo
-	known := false
-	if want, err := task.CanonicalRepo(repo); err == nil {
-		for name, r := range lc.Repos {
-			if c, err := task.CanonicalRepo(name); err == nil && c == want {
-				local, known = r, true
-			}
-		}
-	}
-	// The default branch's file, as the repository stage reads it: not the
-	// working tree's, which whoever made the checkout could have changed.
+	local, known := localRepo(lc, repo)
 	cfg := defaultBranchConfig(ctx, root)
 	if cfg != nil && cfg.Project != lc.Name {
 		s.skip = "this checkout's fugaro.yaml names another project (or none): its secrets are not taken here"
@@ -356,31 +496,75 @@ func (s *secretsStage) resolve(ctx context.Context) {
 		s.skip = "this checkout is not a repository of this project yet: onboard it first"
 		return
 	}
+	tg := &secretTarget{repo: repo}
+	if reason := s.fillTarget(tg, repo, local, cfg); reason != "" {
+		s.skip = reason
+		return
+	}
+	s.tg, s.origin, s.root = tg, oi, root
+	// The published policy, read here because the node is what decides where a
+	// name is stored for a repository this machine's local config does not
+	// carry an entry for (SD17). It is the run's own memoized read -- the
+	// repository stage reads the same node later for the spec's
+	// bitbucket_proxied fact -- so this moves that read earlier rather than
+	// adding one, and a read that fails passes nil, exactly as
+	// repoPolicyInput gives the repository stage: a node the operator cannot
+	// reach must not be taken for one that admits nobody, and the repository
+	// stage stops the run on the same error.
+	p, found, err := s.e.r.policyMemo().read(ctx, lc)
+	s.node = repoPolicyInput(lc, p, found, err)
+	s.scopeTarget(s.tg)
+}
+
+// localRepo is this machine's local-config entry for a repository, and whether
+// it lists it at all (the /-spelling and the clone URL's ".git" are one
+// repository, as everywhere else).
+func localRepo(lc *localcfg.Config, repo string) (localcfg.Repo, bool) {
+	want, err := task.CanonicalRepo(repo)
+	if err != nil {
+		return localcfg.Repo{}, false
+	}
+	for name, r := range lc.Repos {
+		if c, err := task.CanonicalRepo(name); err == nil && c == want {
+			return r, true
+		}
+	}
+	return localcfg.Repo{}, false
+}
+
+// fillTarget fills one repository's target from its local-config entry and the
+// fugaro.yaml of its default branch (cfg, nil when it holds none): the provider
+// the two agree on (never the origin's host), the repository's slug and label,
+// and every name its jobs mount. It answers the one-line reason the repository
+// cannot be worked out at all, and "" when it can.
+//
+// It does not do the scope filter: a name's project scope reads the published
+// node, which resolveList reads before it fills the targets and
+// resolveCheckout reads right after. Both call scopeTarget once the node is in
+// hand.
+func (s *secretsStage) fillTarget(tg *secretTarget, repo string, local localcfg.Repo, cfg *config.Config) string {
+	lc := s.e.lc
 	provider := local.Provider
 	if cfg != nil {
 		switch {
 		case provider != "" && cfg.Git.Provider != "" && provider != cfg.Git.Provider:
-			s.skip = "the local config and this checkout's fugaro.yaml disagree on the git provider; make them agree"
-			return
+			return "the local config and its fugaro.yaml disagree on the git provider; make them agree"
 		case provider == "":
 			provider = cfg.Git.Provider
 		}
 	}
 	if _, ok := infra.GitSecret(provider); !ok {
-		s.skip = "this checkout's git provider is not github or bitbucket"
-		return
+		return "its git provider is not github or bitbucket"
 	}
 	slug, err := task.Slug(provider, repo)
 	if err != nil {
-		s.skip = "this checkout's repository has no usable name"
-		return
+		return "it has no usable repository name"
 	}
 	label, err := gcp.RepoLabel(slug)
 	if err != nil {
-		s.skip = "this checkout's repository has no usable name"
-		return
+		return "it has no usable repository name"
 	}
-	tg := &secretTarget{repo: repo, slug: slug, label: label, provider: provider}
+	tg.slug, tg.label, tg.provider = slug, label, provider
 	gitSecret, _ := infra.GitSecret(provider) // the provider is github or bitbucket here
 	tg.wanted = []string{gitSecret}
 	if cfg == nil {
@@ -407,8 +591,7 @@ func (s *secretsStage) resolve(ctx context.Context) {
 			// so init also prompts for each named account's own token.
 			mounts, err := infra.SecretMounts(gitSecret, cfg, name, config.DefaultClaudeAccount, cfg.Workflows[name], lc, repo)
 			if err != nil {
-				s.skip = "fugaro.yaml's secrets cannot be worked out: " + oneLine(err.Error())
-				return
+				return "the secrets its fugaro.yaml declares cannot be worked out: " + oneLine(err.Error())
 			}
 			for _, m := range allowedHarnessOAuthMounts(lc, repo, mounts) {
 				if m.Logical == config.ClaudeOAuthToken && !runsDefault {
@@ -455,43 +638,66 @@ func (s *secretsStage) resolve(ctx context.Context) {
 			}
 		}
 	}
-	s.tg, s.origin, s.root = tg, oi, root
-	// The published policy, read here because the node is what decides where a
-	// name is stored for a repository this machine's local config does not
-	// carry an entry for (SD17). It is the run's own memoized read -- the
-	// repository stage reads the same node later for the spec's
-	// bitbucket_proxied fact -- so this moves that read earlier rather than
-	// adding one, and a read that fails passes nil, exactly as
-	// repoPolicyInput gives the repository stage: a node the operator cannot
-	// reach must not be taken for one that admits nobody, and the repository
-	// stage stops the run on the same error.
-	p, found, err := s.e.r.policyMemo().read(ctx, lc)
-	s.node = repoPolicyInput(lc, p, found, err)
-	// A repository-level secret (D2313) is one no shared job mounts, so it is
-	// not a name this stage may take. The ruling closed the stores that would
-	// write one — both repository-scope forms of `fugaro secrets set` answer
-	// its notice and write nothing — and the only store a prompt here could
-	// write is that same repository container, through this stage's own
-	// Secret Manager write rather than the command's: leaving the name in
-	// would make one prompt the way around the ruling, and find() would then
-	// count the copy as covering the name and never ask again, so the stage's
-	// "stored" would be the last word over a name no shared job carries a
-	// variable for. The value a repository's OWN job still mounts (a
-	// repository a profile does not admit yet keeps one until M2 retires it)
-	// is the one already in the container, which the ruling leaves where it
-	// is: what it may not get is a new value, and that is what this drops.
-	//
-	// The commands that would store one answer the notice too, so there is no
-	// line to leave either. The name is therefore dropped here, once, before
-	// anything asks: what a person is told about it is the ruling's own
-	// sentence, which Check and Plan print (config.RepoSecretsIgnoredNotice).
-	//
-	// A name this repository may mount the project's copy of (projectScope) is
-	// kept: that copy IS mounted, and the stage's job for such a name is
-	// unchanged. That is why this sits after the node is read and not beside
-	// the mounts it filters: projectScope reads the node.
-	kept := make([]string, 0, len(s.tg.wanted))
-	for _, name := range s.tg.wanted {
+	return ""
+}
+
+// enrolledRepo is whether the project's own record names this repository:
+// this machine's local config, an origin the run's own confirmation has
+// already covered (the gate's own answer), or the published policy's
+// allow-list -- the admits I1's reader expands into the list, which count as
+// enrolled for this stage's writes (D3350, R20).
+//
+// The list door trusts e.repos: once the reader fills the list, every view in
+// it is enrolled by construction. This is what tells the working directory's
+// checkout, which C1's stand-in still answers the UPDATE door with, from one
+// the project has: the door re-converges what is enrolled (D5) and enrols
+// none, so such a repository is left for the user with the command that does.
+func (s *secretsStage) enrolledRepo(tg *secretTarget) bool {
+	o := originOf(tg)
+	if a, err := s.e.authState(o); err == nil && a == authOK {
+		return true
+	}
+	return s.node != nil && projectpolicy.AdmitRepo(s.node.AllowRepos, repoSortKey(tg.repo))
+}
+
+// originOf is the origin a list-door target's repository stands for: the
+// owner/name the reader answered, and the host that provider's repositories
+// live on. The door's gate reads nothing else of it -- there is no checkout
+// here to read.
+func originOf(tg *secretTarget) originInfo {
+	return originInfo{Repo: tg.repo, Host: providerHosts[tg.provider]}
+}
+
+// scopeTarget drops from one repository's wanted names the two the stage does
+// not take, once the published node is in hand.
+//
+// A repository-level secret (D2313) is one no shared job mounts, so it is not
+// a name this stage may take. The ruling closed the stores that would write
+// one — both repository-scope forms of `fugaro secrets set` answer its notice
+// and write nothing — and the only store a prompt here could write is that
+// same repository container, through this stage's own Secret Manager write
+// rather than the command's: leaving the name in would make one prompt the way
+// around the ruling, and find() would then count the copy as covering the name
+// and never ask again, so the stage's "stored" would be the last word over a
+// name no shared job carries a variable for. The value a repository's OWN job
+// still mounts (a repository a profile does not admit yet keeps one until M2
+// retires it) is the one already in the container, which the ruling leaves
+// where it is: what it may not get is a new value, and that is what this
+// drops.
+//
+// The commands that would store one answer the notice too, so there is no line
+// to leave either. The name is therefore dropped here, once, before anything
+// asks: what a person is told about it is the ruling's own sentence, which
+// Check and Plan print (config.RepoSecretsIgnoredNotice).
+//
+// A name this repository may mount the project's copy of (projectScope) is
+// kept: that copy IS mounted, and the stage's job for such a name is
+// unchanged. That is why this sits after the node is read and not beside the
+// mounts it filters: projectScope reads the node.
+func (s *secretsStage) scopeTarget(tg *secretTarget) {
+	lc := s.e.lc
+	kept := make([]string, 0, len(tg.wanted))
+	for _, name := range tg.wanted {
 		// A configured model provider's own key is one of the names an
 		// api-key job carries (infra.SecretMounts), and since KS2 (D1670
 		// reversed by D2975) it is entered in the credentials service's
@@ -504,16 +710,16 @@ func (s *secretsStage) resolve(ctx context.Context) {
 		// person is told about it is where the key is entered
 		// (providerKeyNotTakenNotice).
 		if _, provider := config.ProviderBySecret(lc.Providers, name); provider {
-			s.providerKeys = append(s.providerKeys, name)
+			tg.providerKeys = append(tg.providerKeys, name)
 			continue
 		}
-		if repoSecretsDisabledName(lc, name) && !s.projectScope(name) {
-			s.repoLevel = append(s.repoLevel, name)
+		if repoSecretsDisabledName(lc, name) && !s.scopeIn(tg, name) {
+			tg.repoLevel = append(tg.repoLevel, name)
 			continue
 		}
 		kept = append(kept, name)
 	}
-	s.tg.wanted = kept
+	tg.wanted = kept
 }
 
 // defaultBranchConfig is the fugaro.yaml of the checkout's default branch
@@ -528,7 +734,14 @@ func defaultBranchConfig(ctx context.Context, root string) *config.Config {
 // list takes a value for nobody until it is opted in, by --onboard-repo or by
 // typing its owner/name at the user's own terminal. A checkout whose default
 // branch names this project is no proof of anything.
+// The update door asks nothing (D3350): e.repos is the project's own list and
+// an admit-only repository in it is enrolled, so every repository the stage
+// plans for is one the project already admits and a container may be created
+// for it. The gate is the checkout door's.
 func (s *secretsStage) authorize(env initflow.Env) error {
+	if s.listDoor() {
+		return nil
+	}
 	switch a, err := s.e.authState(s.origin); {
 	case err != nil:
 		return err
@@ -561,7 +774,14 @@ func (s *secretsStage) authorize(env initflow.Env) error {
 // never store a value somewhere the check above would not look for it, and the
 // plan's own mount decision is the same answer.
 func (s *secretsStage) projectCandidate(name string) (string, bool) {
-	return infra.ProjectSecretCandidateFromNode(s.e.lc, name, s.tg.repo, s.tg.provider, s.node)
+	return s.candidateIn(s.tg, name)
+}
+
+// candidateIn is projectCandidate for one repository of the run's own list:
+// the update door asks it once per repository, so a name the node admits for
+// one of them and not another is answered for the repository in hand.
+func (s *secretsStage) candidateIn(tg *secretTarget, name string) (string, bool) {
+	return infra.ProjectSecretCandidateFromNode(s.e.lc, name, tg.repo, tg.provider, s.node)
 }
 
 // projectScope is where this stage stores name: the project's own container
@@ -586,7 +806,12 @@ func (s *secretsStage) projectCandidate(name string) (string, bool) {
 // for a Bitbucket repository, and only where the local config holds no entry
 // of its own (infra.ProjectSecretCandidateFromNode).
 func (s *secretsStage) projectScope(name string) bool {
-	_, ok := s.projectCandidate(name)
+	return s.scopeIn(s.tg, name)
+}
+
+// scopeIn is projectScope for one repository of the run's own list.
+func (s *secretsStage) scopeIn(tg *secretTarget, name string) bool {
+	_, ok := s.candidateIn(tg, name)
 	return ok
 }
 
@@ -600,7 +825,12 @@ func (s *secretsStage) projectScope(name string) bool {
 // repository with no project value stored yet it would store a repository copy
 // that overrides the project one forever.
 func (s *secretsStage) projectScopeLocal(name string) bool {
-	_, ok := infra.ProjectSecretCandidate(s.e.lc, name, s.tg.repo)
+	return s.scopeLocalIn(s.tg, name)
+}
+
+// scopeLocalIn is projectScopeLocal for one repository of the run's own list.
+func (s *secretsStage) scopeLocalIn(tg *secretTarget, name string) bool {
+	_, ok := infra.ProjectSecretCandidate(s.e.lc, name, tg.repo)
 	return ok
 }
 
@@ -625,17 +855,44 @@ func (s *secretsStage) projectScopeLocal(name string) bool {
 // account and no allowed provider otherwise, which is most installations), so
 // it costs an IAM-covered call only where it can change the answer.
 func (s *secretsStage) find(ctx context.Context, st secretStore) ([]string, error) {
-	list, err := st.List(ctx, map[string]string{gcp.LabelRepo: s.tg.label})
+	return s.findIn(ctx, &secretLister{st: st, project: s.e.lc.Name}, s.tg)
+}
+
+// secretLister is one listing of Secret Manager's metadata for a run: every
+// repository's names, and the project's own listing read at most once, so the
+// update door's fan-out costs one project-wide call however many repositories
+// want a project-covered name.
+type secretLister struct {
+	st         secretStore
+	project    string
+	projectOut []gcp.SecretInfo
+	projectRun bool
+}
+
+// projectList is the installation's own containers, read once.
+func (l *secretLister) projectList(ctx context.Context) ([]gcp.SecretInfo, error) {
+	if !l.projectRun {
+		var err error
+		if l.projectOut, err = l.st.List(ctx, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: l.project}); err != nil {
+			return nil, err
+		}
+		l.projectRun = true
+	}
+	return l.projectOut, nil
+}
+
+// findIn is find for one repository: the update door's fan-out asks it once
+// per repository, over the run's one secretLister.
+func (s *secretsStage) findIn(ctx context.Context, l *secretLister, tg *secretTarget) ([]string, error) {
+	list, err := l.st.List(ctx, map[string]string{gcp.LabelRepo: tg.label})
 	if err != nil {
 		return nil, err
 	}
 	var project []gcp.SecretInfo
-	if slices.ContainsFunc(s.tg.wanted, func(name string) bool {
-		_, ok := s.projectCandidate(name)
-		return ok
+	if slices.ContainsFunc(tg.wanted, func(name string) bool {
+		return s.scopeIn(tg, name)
 	}) {
-		project, err = st.List(ctx, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: s.e.lc.Name})
-		if err != nil {
+		if project, err = l.projectList(ctx); err != nil {
 			return nil, err
 		}
 	}
@@ -643,11 +900,11 @@ func (s *secretsStage) find(ctx context.Context, st secretStore) ([]string, erro
 		return slices.ContainsFunc(list, func(i gcp.SecretInfo) bool { return i.ID == id && i.Latest != "" })
 	}
 	var out []string
-	for _, name := range s.tg.wanted {
-		if has(list, gcp.SecretID(s.tg.slug, name)) {
+	for _, name := range tg.wanted {
+		if has(list, gcp.SecretID(tg.slug, name)) {
 			continue
 		}
-		if id, ok := s.projectCandidate(name); ok && has(project, id) {
+		if id, ok := s.candidateIn(tg, name); ok && has(project, id) {
 			continue
 		}
 		out = append(out, name)
@@ -685,6 +942,9 @@ func providerKeyNotTakenNotice(names []string, repo string) string {
 // error here: Apply lists again and says what it needs.
 func (s *secretsStage) Check(ctx context.Context) (initflow.Status, error) {
 	s.resolve(ctx)
+	if s.list != nil {
+		return s.checkList(ctx)
+	}
 	if s.skip != "" {
 		return initflow.Status{State: initflow.Skipped, Detail: s.skip}, nil
 	}
@@ -715,23 +975,12 @@ func (s *secretsStage) Check(ctx context.Context) (initflow.Status, error) {
 		return initflow.Status{State: initflow.Todo, Detail: "which secrets are stored is read when it runs"}, nil
 	}
 	s.checked = true
-	note := ""
-	if s.tg.noConfig {
-		note = " (no fugaro.yaml on the default branch as last fetched, so the Claude credential is not assumed; git fetch, then rerun)"
-	}
-	if len(s.repoLevel) > 0 {
-		// The names the stage does not take (resolve dropped them), said in the
-		// ruling's own sentence: no line is left for one, so this is the whole
-		// of what a person learns about it here, and the only place the remedy
-		// (a project-wide entry for the name) is named.
-		note += "; " + config.RepoSecretsIgnoredNotice(s.repoLevel)
-	}
-	if len(s.providerKeys) > 0 {
-		// The same shape of fact for another store: the names resolve dropped
-		// because they are a configured provider's own key, said with the
-		// command that enters this repository's entry (KS2).
-		note += "; " + providerKeyNotTakenNotice(s.providerKeys, s.tg.repo)
-	}
+	// The names the stage does not take (resolve dropped them) are said in the
+	// ruling's own sentence (D2313) and with the command that enters this
+	// repository's entry (KS2, a configured provider's own key): no line is
+	// left for either, so this is the whole of what a person learns about them
+	// here, and the only place the remedy is named.
+	note := s.targetNote(s.tg)
 	if len(s.missing) == 0 {
 		return initflow.Status{State: initflow.Done, Detail: "the secrets the jobs mount are stored" + note}, nil
 	}
@@ -751,6 +1000,115 @@ func (s *secretsStage) Check(ctx context.Context) (initflow.Status, error) {
 	return initflow.Status{State: initflow.Todo, Detail: detail + "; asks for each at a hidden prompt"}, nil
 }
 
+// checkList is the update door's Check: every repository of the list is read
+// and gets one line -- what the stage did for it, or why it could not. The
+// stage asks for a value only under --ask (U3b); until then a repository with
+// a missing name is left with the commands that store it, which is what the
+// stage's Left carries.
+//
+// A repository the reader could not read, one the stage does not apply to and
+// one the project does not have are lines and not stops: the door's other
+// stages report them the same way, and the run goes on past them. Such a
+// repository is drawn before the store is opened and may be the whole list, so
+// a run that has no repository to list reads no store at all. The stage is
+// needs-you when a repository is missing a name or is not the project's, done
+// when none is, and skipped when no repository could be worked on at all.
+func (s *secretsStage) checkList(ctx context.Context) (initflow.Status, error) {
+	var lines []initflow.RepoLine
+	var needs []string
+	readable := 0
+	var l *secretLister
+	for _, tg := range s.list {
+		switch {
+		case tg.unread != "":
+			tg.state, tg.detail = initflow.RepoUnread, tg.unread
+		case tg.skip != "":
+			tg.state, tg.detail = initflow.RepoSkipped, tg.skip
+		case tg.enrol:
+			tg.state, tg.detail = initflow.RepoNeedsYou, unknownDetailNotEnrolled(s.e.lc.Name, originOf(tg), s.e.r.o.doorName())
+			needs = append(needs, pluginwire.Printable(tg.repo)+": "+tg.detail)
+		default:
+			if l == nil {
+				st, err := s.open(ctx)
+				if err != nil {
+					// Before the installation exists, or without Secret
+					// Manager, the listing cannot run: as the checkout door,
+					// this is not the stage's error but what Apply says again.
+					return initflow.Status{State: initflow.Todo, Detail: "which secrets are stored is read when it runs"}, nil
+				}
+				l = &secretLister{st: st, project: s.e.lc.Name}
+			}
+			readable++
+			missing, err := s.findIn(ctx, l, tg)
+			if err != nil {
+				return initflow.Status{State: initflow.Todo, Detail: "which secrets are stored is read when it runs"}, nil
+			}
+			tg.missing, tg.checked = missing, true
+			note := s.targetNote(tg)
+			if len(missing) == 0 {
+				tg.state, tg.detail = initflow.RepoDone, "the secrets the jobs mount are stored"+note
+			} else {
+				tg.state, tg.detail = initflow.RepoNeedsYou, describeNeeds(missing)+note
+				needs = append(needs, pluginwire.Printable(tg.repo)+": "+describeNeeds(missing))
+			}
+		}
+		lines = append(lines, newRepoLine(tg.repo, tg.state, tg.detail))
+	}
+	s.reportList(lines)
+	switch {
+	case len(needs) > 0 && s.singleCheckout(ctx, s.terminal()):
+		// The list's one repository is this checkout and a person is at the
+		// terminal, so the value is taken at the prompt, as `fugaro update`
+		// has always taken it (R21). A needs-you here is a check the loop does
+		// not apply, and the value would never be taken -- the door's own line
+		// would leave the run asking itself. What is missing is said by the
+		// lines above, one per repository; this is the same sentence the
+		// checkout door's check gives for its prompt.
+		return initflow.Status{State: initflow.Todo, Detail: strings.Join(needs, "; ") + "; asks for each at a hidden prompt"}, nil
+	case len(needs) > 0:
+		lf := s.Left()
+		return initflow.Status{State: initflow.NeedsYou, Detail: strings.Join(needs, "; "), Left: &lf}, nil
+	case readable == 0:
+		return initflow.Status{State: initflow.Skipped, Detail: "no enrolled repository is one this stage takes: each line says why"}, nil
+	}
+	return initflow.Status{State: initflow.Done, Detail: "the secrets the jobs mount are stored"}, nil
+}
+
+// targetNote is the one-report note about a repository: what the stage does
+// not take for it (D2313's repository-level names, a configured provider's own
+// key), and the git credential's own case of a file the reader found none.
+func (s *secretsStage) targetNote(tg *secretTarget) string {
+	note := ""
+	if tg.noConfig {
+		note = " (no fugaro.yaml on the default branch as last fetched, so the Claude credential is not assumed; git fetch, then rerun)"
+	}
+	if len(tg.repoLevel) > 0 {
+		note += "; " + config.RepoSecretsIgnoredNotice(tg.repoLevel)
+	}
+	if len(tg.providerKeys) > 0 {
+		note += "; " + providerKeyNotTakenNotice(tg.providerKeys, tg.repo)
+	}
+	return note
+}
+
+// reportList records the stage's lines once per run, whatever the loop asks
+// (Check, Plan and Apply all reach it): the run's own record holds one line
+// per repository, not three.
+func (s *secretsStage) reportList(lines []initflow.RepoLine) {
+	if s.linesReported {
+		return
+	}
+	s.linesReported = true
+	s.lines = lines
+	if len(lines) > 0 {
+		s.e.reportRepos(initflow.Secrets, lines)
+	}
+}
+
+// RepoLines is what the stage reported about each repository, which the loop
+// carries into the stage's result and its event (R12, U13).
+func (s *secretsStage) RepoLines() []initflow.RepoLine { return slices.Clone(s.lines) }
+
 func (s *secretsStage) Plan(ctx context.Context, _ initflow.Env) (initflow.Plan, error) {
 	st, err := s.Check(ctx)
 	if err != nil {
@@ -764,6 +1122,9 @@ func (s *secretsStage) Plan(ctx context.Context, _ initflow.Env) (initflow.Plan,
 // each on a line of its own. None holds a value: the value is typed at the hidden
 // prompt, or the PEM is redirected from a file the user names.
 func (s *secretsStage) Left() initflow.Left {
+	if s.list != nil {
+		return s.leftList()
+	}
 	if s.tg == nil {
 		return initflow.Left{Stage: initflow.Secrets, Kind: initflow.LeftCommand, Text: "in a checkout of the repository, in your own terminal window, run", Commands: []string{selfCommand() + " " + s.e.r.o.doorName()}}
 	}
@@ -771,7 +1132,69 @@ func (s *secretsStage) Left() initflow.Left {
 	if !s.checked {
 		needs = s.tg.wanted
 	}
+	return initflow.Left{Stage: initflow.Secrets, Kind: initflow.LeftCommand, Text: s.leftText(), Commands: s.leftCommands(s.tg, needs, nil)}
+}
+
+// leftList is the update door's Left: the commands of every readable
+// repository's missing names, one line per name and repository. A name several
+// repositories want is one line when the command that stores it is the
+// project's own copy -- the bare `fugaro secrets set <name>`, which IS4's
+// project-wide workflow secret is and which every repository mounting it reads
+// -- and one line per repository otherwise, because `secrets set` names one
+// repository at a time (R2).
+//
+// A repository the project does not have is the door's own line, and it comes
+// first: `fugaro setup` is the command that enrols it, and the stores above
+// are the rest of what the user has to do (enrolledRepo).
+func (s *secretsStage) leftList() initflow.Left {
 	var cmds []string
+	for _, tg := range s.list {
+		if !tg.read() {
+			continue
+		}
+		needs := tg.missing
+		if !tg.checked {
+			needs = tg.wanted
+		}
+		cmds = s.leftCommands(tg, needs, cmds)
+	}
+	if s.enrols() {
+		lf := enrolLeft(s.e.r.o.doorName())
+		lf.Commands = append(lf.Commands, cmds...)
+		return lf
+	}
+	return initflow.Left{Stage: initflow.Secrets, Kind: initflow.LeftCommand, Text: s.leftText(), Commands: cmds}
+}
+
+// enrols is whether any repository of the list is one this project's record
+// does not name, which is the one line the door leaves for the user itself.
+func (s *secretsStage) enrols() bool {
+	return slices.ContainsFunc(s.list, func(tg *secretTarget) bool { return tg.enrol })
+}
+
+// leftText is what the lines above are for, in one sentence (and, in a coding
+// agent's session, the one word that keeps a value out of it).
+func (s *secretsStage) leftText() string {
+	if agentMarker(os.Getenv, s.e.r.stdinTerminal()) != "" {
+		return "run these in your own terminal window, not through a coding agent, one line at a time, in this order"
+	}
+	return "run these in your own terminal window, one line at a time, in this order"
+}
+
+// leftCommands appends the commands that store tg's names to cmds and answers
+// the whole slice: one repository of the run's list is one call of this, in the
+// canonical order, over the one slice every line is deduplicated in -- a name
+// several repositories want is one line when the command that stores it is the
+// project's own, and one per repository when `secrets set` has to name one
+// (R2).
+func (s *secretsStage) leftCommands(tg *secretTarget, needs []string, cmds []string) []string {
+	add := func(lines ...string) {
+		for _, line := range lines {
+			if !slices.Contains(cmds, line) {
+				cmds = append(cmds, line)
+			}
+		}
+	}
 	for _, name := range needs {
 		// The scope the command stores to is projectScopeLocal's, which is the
 		// scope `secrets set` itself decides: the line below is that command,
@@ -786,25 +1209,22 @@ func (s *secretsStage) Left() initflow.Left {
 		// covered name for. The line left for it is the run's own door instead:
 		// at a terminal that door's prompt is take's, which stores the value in
 		// the container this stage's own decision picks.
-		if s.projectScope(name) && !s.projectScopeLocal(name) {
-			door := selfCommand() + " " + s.e.r.o.doorName()
-			if !slices.Contains(cmds, door) {
-				cmds = append(cmds, door)
-			}
+		if s.scopeIn(tg, name) && !s.scopeLocalIn(tg, name) {
+			add(selfCommand() + " " + s.e.r.o.doorName())
 			continue
 		}
 		set := selfCommand() + " secrets set " + quoteWord(name)
-		if !s.projectScopeLocal(name) {
+		if !s.scopeLocalIn(tg, name) {
 			// The line is a repository-scope store, and a name D2313 disables
 			// never reaches it: no shared job mounts a repository-level secret,
 			// so such a name is not one this stage wants at all (resolve drops
 			// it, and Check prints the ruling's sentence for it). What is left
 			// here has a repository copy a run really mounts.
-			set += " --repo " + quoteWord(s.tg.repo)
+			set += " --repo " + quoteWord(tg.repo)
 		}
 		switch {
 		case name == config.ClaudeOAuthToken:
-			cmds = append(cmds, "claude setup-token", set)
+			add("claude setup-token", set)
 		case strings.HasPrefix(name, config.ClaudeOAuthTokenPrefix):
 			// A named account's token is the one command that declares the
 			// account, stores the token where the shared job mounts it and
@@ -829,7 +1249,7 @@ func (s *secretsStage) Left() initflow.Left {
 				// profile to choose for itself: the pair that mints the token and
 				// stores it in the container such a job would mount is the whole
 				// step, as it was before `accounts add` took it over.
-				cmds = append(cmds, "claude setup-token", set)
+				add("claude setup-token", set)
 				break
 			}
 			// --repos is this checkout's own repository, which is the one the
@@ -841,19 +1261,15 @@ func (s *secretsStage) Left() initflow.Left {
 			// say nothing. It is a union with the list the account already has
 			// (accountsAddWhat reads it back from the config the command would
 			// write), so naming this repository cannot narrow it.
-			cmds = append(cmds, selfCommand()+" accounts add "+quoteWord(account)+
-				" --repos "+quoteWord(s.tg.repo)+" --profile "+quoteWord(profile))
+			add(selfCommand() + " accounts add " + quoteWord(account) +
+				" --repos " + quoteWord(tg.repo) + " --profile " + quoteWord(profile))
 		case name == multilineSecret:
-			cmds = append(cmds, set+" < PATH-TO-THE-KEY-FILE")
+			add(set + " < PATH-TO-THE-KEY-FILE")
 		default:
-			cmds = append(cmds, set)
+			add(set)
 		}
 	}
-	text := "run these in your own terminal window, one line at a time, in this order"
-	if agentMarker(os.Getenv, s.e.r.stdinTerminal()) != "" {
-		text = "run these in your own terminal window, not through a coding agent, one line at a time, in this order"
-	}
-	return initflow.Left{Stage: initflow.Secrets, Kind: initflow.LeftCommand, Text: text, Commands: cmds}
+	return cmds
 }
 
 // terminal is stdin as a real terminal file, else nil. The stage reads
@@ -893,6 +1309,22 @@ func (s *secretsStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 		return initflow.Outcome{}, err
 	}
 	f := s.terminal()
+	if s.list != nil && !s.singleCheckout(ctx, f) {
+		// The update door asks for no value here: singleCheckout is false
+		// without --ask (canPrompt gates it, D3347/R18), where a name it
+		// cannot read or store is left with the command that does, and false
+		// for a list of many even under the flag until I1's reader lands.
+		// Apply therefore re-reads the list and answers the loop with it --
+		// nothing to do where every name is stored, and the lines otherwise.
+		st, err := s.checkList(ctx)
+		if err != nil {
+			return initflow.Outcome{}, err
+		}
+		if st.State == initflow.Done || st.State == initflow.Skipped {
+			return initflow.Outcome{Detail: "No changes"}, nil
+		}
+		return initflow.Outcome{}, &initflow.NeedsYouError{Left: s.Left()}
+	}
 	if s.skip != "" || s.tg == nil || !env.Interactive || !s.canPrompt() || f == nil {
 		return initflow.Outcome{}, &initflow.NeedsYouError{Left: s.Left()}
 	}

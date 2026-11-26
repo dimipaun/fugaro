@@ -725,9 +725,10 @@ func (e *initEngine) makeOnboardingRepoEntry() {
 // list the record this run goes on to write names (repoAuthRecord), so the
 // bundle has to hold every one of them and not the one the document happens to
 // name: a launch may declare any of them (`--token`, D2070 (a)). mode is the
-// node's own budget mode as B1.8b reads it: the bundle reading of an `api-key`
-// or `oauth` repository is the credential its auth calls for, and the switch
-// itself turns on the mode (D2071).
+// node's own budget mode as B1.8b reads it, and nothing here reads it: the
+// switch stopped taking a mode (AB15, D3009) — a repository whose runs have a
+// gateway is served on its auth and the bundle alone — and the argument stays
+// until I1 drops it with the constants.
 //
 // Nothing is written where the bundle was not read (credentialsBundleServes's
 // second answer): in a coding agent's session or in a run's own process, whose
@@ -824,12 +825,11 @@ func (r *initRun) recordCredentialsServiceReady(ctx context.Context, lc *localcf
 		return
 	}
 	// The one predicate, not a second copy of its conjunction: installed is
-	// read here exactly as the spec reads it, ready is this run's reading of
+	// read here exactly as the spec reads it and ready is this run's reading of
 	// the bundle — which the probe answers false for, without a read, when no
-	// block is known — and mode is the node's own, the one the spec reads out
-	// of Inputs.Policy for the `api-key` and `oauth` arm (D2071). So the record
-	// cannot come out differently from the plan it is the record of.
-	serves := infra.CredentialsServiceServes(installed, ready, auth, mode)
+	// block is known. So the record cannot come out differently from the plan
+	// it is the record of.
+	serves := infra.CredentialsServiceServes(installed, ready, auth)
 	entry.CredentialsServiceReady = localcfg.RecordSwitch(serves)
 	// R12's two facts, recorded beside the switch and read from the same
 	// reading (KS19, F31, F44): the repository's provider keys are served, and
@@ -1005,6 +1005,21 @@ func (r *initRun) backfillCredentialsServiceReady(ctx context.Context, c *infra.
 			// "no grant": the entry keeps the record it has, as it does for a
 			// read that failed.
 			continue
+		}
+		if on && lc.Repos[key].Vertex {
+			// The grant is the ADDRESS, and a vertex repository is the one
+			// repository whose root plans it without serving its credentials
+			// (D3326, infra.CredentialsServiceAddress): the state answers that
+			// the root was applied with the block on, which for a vertex root
+			// is the workflow-secret fetch's address and not the model switch
+			// this record is about. Writing the reading over such an entry
+			// would record `ready` for a repository whose jobs kept every
+			// model mount the module drops for a served one. The entry is
+			// answered as the repository door answers it — the switch's own
+			// reading for this auth, which is false for vertex by construction
+			// (CredentialsServiceServes) — so the two doors agree and neither
+			// oscillates.
+			on = false
 		}
 		if on {
 			switched = append(switched, key)

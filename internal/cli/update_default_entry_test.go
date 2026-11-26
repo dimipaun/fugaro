@@ -25,10 +25,10 @@ import (
 // written only in the state where writing it cannot make this same update
 // refuse a job it converges today (internal/infra's unbuiltOnBaked, D1191), and
 // there are three of those: a repository the project does not admit, a
-// repository this run holds no checkout of — both of them keep the
-// per-repository job their own root deploys, which the entry is the image of,
-// and the second is unreadable from here — and, for the checkout this run does
-// hold, a workflow of it that the entry would be handed to and cannot run.
+// repository this run could not read — both of them keep the per-repository
+// job their own root deploys, which the entry is the image of, and the second
+// is one no stage may plan from (R13, U5) — and a workflow of a repository it
+// did read that the entry would be handed to and cannot run.
 //
 // The rig is update_converge_test.go's: an installation a release behind, in a
 // checkout of its own repository, whose config lists the checkout's own
@@ -62,9 +62,9 @@ var appRepo = localcfg.Repo{Provider: "github", Workflows: []string{"app", "api"
 // installation doctor reads.
 //
 // Every test below starts from the checkout's repository alone, because that is
-// the one list this write happens on at all: a repository this run holds no
-// checkout of holds the entry back (defaultCatalogEntryRefusal's second state),
-// so a test that lists another repository is about the reason the write waits.
+// the one list this write happens on at all: a repository this run could not
+// read holds the entry back (defaultCatalogEntryRefusal's second state), so a
+// test that lists another repository is about the reason the write waits.
 func onlyRepos(t *testing.T, r *convergeRig, extra ...string) {
 	t.Helper()
 	repos := map[string]localcfg.Repo{"acme/app": appRepo}
@@ -72,6 +72,10 @@ func onlyRepos(t *testing.T, r *convergeRig, extra ...string) {
 		repos[name] = localcfg.Repo{Provider: "github", Workflows: []string{"app"}, GitHubAppID: "12345"}
 	}
 	rewriteRigConfig(t, r.imagesRig, func(lc *localcfg.Config) { lc.Repos = repos })
+	for _, name := range extra {
+		seedNamedRepoSecret(t, r.initRig, "github", name, "github-app-key")
+		seedNamedRepoSecret(t, r.initRig, "github", name, "claude-oauth-token")
+	}
 	registerInstallation(t, r.initRig)
 }
 
@@ -287,22 +291,26 @@ func TestUpdateLeavesTheEntryAndSaysWhyForARepositoryTheProjectDoesNotAdmit(t *t
 	}
 }
 
-// TestUpdateLeavesTheEntryAndSaysWhyForARepositoryItDoesNotHold: a repository
+// TestUpdateLeavesTheEntryAndSaysWhyForARepositoryItCouldNotRead: a repository
 // admitted to a profile still deploys the per-repository job of its own root
 // (RepoSpec.Shared is a mark no root reads yet, M7), so the entry would be that
 // job's image as much as an unadmitted repository's — and the workflows of a
-// repository this machine holds no checkout of are not readable from here, so a
-// bare `checkout: baked` one among them is refused by the deployer at its own
+// repository this run read no fugaro.yaml of are not its to read, so a bare
+// `checkout: baked` one among them is refused by the deployer at its own
 // repository stage, in a run this one cannot warn. The write therefore waits
-// for a project whose list is the checkout's own alone, whatever admission
-// says: the node and the profile this run writes both admit the second
-// repository here, and the entry is still not written.
+// for every repository the project lists to be read, whatever admission says:
+// the node and the profile this run writes both admit the second repository
+// here, and the entry is still not written.
+//
+// The second repository is one the stub reader answers with no view at all; a
+// view that says why is the same state, and init_images_repos_test.go's own
+// test is the one about it.
 //
 // The line the write prints names the repository and says nothing is left for
 // the operator (nothing about that project needs repairing), and the refusal
 // the entry would be the image of is in the run's log with it: the line is one
 // line (the owner's feedback of 2026-11-24).
-func TestUpdateLeavesTheEntryAndSaysWhyForARepositoryItDoesNotHold(t *testing.T) {
+func TestUpdateLeavesTheEntryAndSaysWhyForARepositoryItCouldNotRead(t *testing.T) {
 	const sibling = "github/acme/other"
 	node := currentNode()
 	node["allow_repos"] = []string{"github/acme/app", sibling}
@@ -311,7 +319,7 @@ func TestUpdateLeavesTheEntryAndSaysWhyForARepositoryItDoesNotHold(t *testing.T)
 	out := convergeOn(t, r, []string{"policy-vs-jobs"})
 
 	if entry, ok := writtenDefaultEntry(t); ok {
-		t.Errorf("this update wrote the default entry %+v while the project lists %s, a repository this run holds no checkout of: that repository keeps the per-repository job its own root deploys, the entry is that job's image, and its workflows are not readable here — so the deployer can refuse a bare baked one of them at its own repository stage\n%s",
+		t.Errorf("this update wrote the default entry %+v while the project lists %s, a repository this run could not read: that repository keeps the per-repository job its own root deploys, the entry is that job's image, and its workflows are not this run's to read — so the deployer can refuse a bare baked one of them at its own repository stage\n%s",
 			entry, sibling, out)
 	}
 	line := withheldEntryLine(out)
@@ -347,7 +355,7 @@ func TestUpdateLeavesTheEntryAndSaysWhyForARepositoryItDoesNotHold(t *testing.T)
 func TestUpdatePreviousVersionWithABakedWorkflowConvergesInOneUpdate(t *testing.T) {
 	r := newConvergeRig(t, staleNode(t))
 	onlyRepos(t, r)
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if got := convergeNode(t, r).Version; got != projectpolicy.Version {
 		t.Fatalf("the published node is version %d after one update, want this binary's %d", got, projectpolicy.Version)
@@ -389,11 +397,11 @@ func TestUpdatePreviousVersionWithABakedWorkflowConvergesInOneUpdate(t *testing.
 // is where the same run's whole reason is kept (D1352).
 //
 // Two states, because the two halves of the rule are not the same sentence: a
-// write that waits on a repository this machine holds no checkout of leaves the
-// operator nothing to do, and one that waits on the checkout's own workflow
-// names the remedy — an image of the workflow's own.
+// write that waits on a repository this run could not read leaves the operator
+// nothing to do, and one that waits on a workflow this run read names the
+// remedy — an image of the workflow's own.
 func TestTheWithheldEntryWarningIsOneLineAndNamesTheAction(t *testing.T) {
-	t.Run("a repository this machine holds no checkout of", func(t *testing.T) {
+	t.Run("a repository this run could not read", func(t *testing.T) {
 		const sibling = "github/acme/other"
 		node := currentNode()
 		node["allow_repos"] = []string{"github/acme/app", sibling}
@@ -403,7 +411,7 @@ func TestTheWithheldEntryWarningIsOneLineAndNamesTheAction(t *testing.T) {
 
 		line := oneWithheldEntryLine(t, out)
 		if !strings.Contains(line, "nothing to do") {
-			t.Errorf("the line leaves the operator with something to do, and a project whose write waits on a repository this checkout does not hold is one nothing about needs repairing: %q", line)
+			t.Errorf("the line leaves the operator with something to do, and a project whose write waits on a repository this run could not read is one nothing about needs repairing: %q", line)
 		}
 		if !strings.Contains(line, sibling) {
 			t.Errorf("the line does not name %s, the repository the write waits on: %q", sibling, line)
@@ -415,7 +423,7 @@ func TestTheWithheldEntryWarningIsOneLineAndNamesTheAction(t *testing.T) {
 	t.Run("a workflow of this checkout that writes no image of its own", func(t *testing.T) {
 		r := newConvergeRig(t, staleNode(t))
 		onlyRepos(t, r)
-		out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+		out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 		line := oneWithheldEntryLine(t, out)
 		if !strings.Contains(line, "dockerfile") {
@@ -495,7 +503,7 @@ func TestTheWithheldLineHoldsItsBound(t *testing.T) {
 	for i := range 20 {
 		repos = append(repos, fmt.Sprintf("acme/service-repository-%02d", i))
 	}
-	const head, tail = "no default catalog entry written: this machine holds no checkout of ", "; nothing to do"
+	const head, tail = "no default catalog entry written: this run read no fugaro.yaml of ", "; nothing to do"
 	line := withheldLine(head, repos, tail)
 	if n := len(line); n > withheldLineMax {
 		t.Errorf("withheldLine over twenty repositories is %d characters, want at most %d: %q", n, withheldLineMax, line)

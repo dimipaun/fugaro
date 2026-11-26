@@ -7043,10 +7043,10 @@ func TestImageSurveySchema(t *testing.T) {
 
 	consts := goConstValues(t, "../internal/cli/image_survey.go")
 	version := nodeOf(t, doc, "properties", "version")
-	if version["const"] != float64(1) {
-		t.Errorf("version: const = %v, and the document's first version is 1 (D784)", version["const"])
+	if version["const"] != float64(2) {
+		t.Errorf("version: const = %v, and setup.repo_images made the document version 2 (R4)", version["const"])
 	}
-	if got, _ := version["$comment"].(string); !strings.Contains(got, "imageSurveyDocVersion") || consts["imageSurveyDocVersion"] != "1" {
+	if got, _ := version["$comment"].(string); !strings.Contains(got, "imageSurveyDocVersion") || consts["imageSurveyDocVersion"] != "2" {
 		t.Errorf("version: $comment = %q, and imageSurveyDocVersion in internal/cli/image_survey.go is %q", got, consts["imageSurveyDocVersion"])
 	}
 	kinds := goConstValues(t, "../internal/imagesurvey/signals.go")
@@ -7226,8 +7226,10 @@ func TestSummarySchema(t *testing.T) {
 	}
 	// The counts are keyed by runstore's statuses, spelled as the wire names
 	// the run record and the outcome nodes use, plus the bucket a status from
-	// another release lands in. All six are required: a consumer adding them up
-	// reads a key whether or not the window had such a run.
+	// another release lands in, a paused run included (its count is the bucket's,
+	// not a key of its own: internal/budget's day records name six states). All
+	// six are required: a consumer adding them up reads a key whether or not the
+	// window had such a run.
 	states := stringsOf(t, doc, "$defs", "states", "required")
 	for _, key := range []string{"succeeded", "failed", "halted", "cancelled", "infra_error", "other"} {
 		if !slices.Contains(states, key) {

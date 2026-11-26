@@ -82,7 +82,7 @@ func firstTier(t *testing.T, rec *runstore.Record, tier string) runstore.ReviewS
 func TestLevelsL3BounceSkipsL2(t *testing.T) {
 	h := newHarnessFiles(t, levelsCfg(t, ""), nil, levelsFiles)
 	rec, err := h.run(t,
-		implement("feature"),
+		commitHandBack(handBackPR),
 		review("ship", 0),    // review_first
 		review("ship", 0),    // review (senior)
 		review("changes", 1), // adversarial round 1
@@ -144,7 +144,7 @@ func TestLevelsL3BounceNeverDecidesWithoutL2(t *testing.T) {
 	// (TestDecideToleratedRoundOpensAReadyPR, D4).
 	tolerated := map[string]any{"summary": "fix it", "likelihood": 2, "impact": 2, "fix_cost": 1, "class": "correctness"}
 	rec, err := h.run(t,
-		implement("feature"),
+		commitHandBack(handBackPR),
 		review("ship", 0),                  // review_first: level 1's own round
 		review("changes", 1),               // adversarial round 1: an unscored finding, which blocks in every mode (D4)
 		fixStep,                            // its fix
@@ -177,7 +177,7 @@ func TestLevelsReadinessHighestLevel(t *testing.T) {
 	t.Run("a lower level that did not ship holds the pull request back", func(t *testing.T) {
 		h := newHarnessFiles(t, levelsCfg(t, ""), nil, levelsFiles)
 		rec, err := h.run(t,
-			implement("feature"),
+			commitHandBack(handBackPR),
 			review("ship", 0),    // review_first
 			review("changes", 1), // review, round 1
 			fixStep,
@@ -203,7 +203,7 @@ func TestLevelsReadinessHighestLevel(t *testing.T) {
 	t.Run("the highest level's own verdict decides", func(t *testing.T) {
 		h := newHarnessFiles(t, levelsCfg(t, ""), nil, levelsFiles)
 		rec, err := h.run(t,
-			implement("feature"),
+			commitHandBack(handBackPR),
 			review("ship", 0),    // review_first
 			review("ship", 0),    // review: level 2 ships
 			review("changes", 1), // adversarial round 1
@@ -235,7 +235,7 @@ func TestLevelsPOCL1Decides(t *testing.T) {
 	t.Run("a shipped first line is ready", func(t *testing.T) {
 		cfg := modeCfg(t, "poc", 1, "  first_line_review: on\n  recipe: levels\n")
 		h := newHarnessFiles(t, cfg, nil, levelsFiles)
-		rec, err := h.run(t, implement("feature"), review("ship", 0))
+		rec, err := h.run(t, commitHandBack(handBackPR), review("ship", 0))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -252,7 +252,7 @@ func TestLevelsPOCL1Decides(t *testing.T) {
 	t.Run("a first line that asks for changes is a draft", func(t *testing.T) {
 		cfg := modeCfg(t, "poc", 1, "  first_line_review: on\n  recipe: levels\n")
 		h := newHarnessFiles(t, cfg, nil, levelsFiles)
-		rec, err := h.run(t, implement("feature"), review("changes", 1), fixStep)
+		rec, err := h.run(t, commitHandBack(handBackPR), review("changes", 1), fixStep)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -281,6 +281,7 @@ func TestLevelsBootstrapRefusesBelowFloor(t *testing.T) {
 		Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature",
 		ReviewLevels: &config.ReviewLevels{L2: &config.LevelSetting{Off: true}},
 	}
+	b.taskWithLayer(spec)
 	if err := b.store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)
 	}
@@ -348,7 +349,7 @@ func TestLevelsFocusReachesEveryLevelsPrompt(t *testing.T) {
 		l3 = "the retry path"
 	)
 	h := newHarnessFiles(t, levelsCfg(t, "  levels:\n    l1: {focus: \""+l1+"\"}\n    l2: {focus: \""+l2+"\"}\n    l3: {focus: \""+l3+"\"}\n"), nil, levelsFiles)
-	rec, err := h.run(t, implement("feature"), review("ship", 0), review("ship", 0), review("ship", 0))
+	rec, err := h.run(t, commitHandBack(handBackPR), review("ship", 0), review("ship", 0), review("ship", 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -398,7 +399,7 @@ func TestLevelsBounceCarriesLevel1sFocus(t *testing.T) {
 	t.Run("a senior rejection bounces into level 1", func(t *testing.T) {
 		h := newHarnessFiles(t, cfg, nil, levelsFiles)
 		rec, err := h.run(t,
-			implement("feature"),
+			commitHandBack(handBackPR),
 			review("ship", 0),    // review_first
 			review("changes", 1), // review: level 2 rejects
 			fixStep,
@@ -424,7 +425,7 @@ func TestLevelsBounceCarriesLevel1sFocus(t *testing.T) {
 	t.Run("an adversarial rejection bounces into level 1", func(t *testing.T) {
 		h := newHarnessFiles(t, cfg, nil, levelsFiles)
 		rec, err := h.run(t,
-			implement("feature"),
+			commitHandBack(handBackPR),
 			review("ship", 0),    // review_first
 			review("ship", 0),    // review: level 2 ships
 			review("changes", 1), // adversarial round 1 rejects
@@ -467,7 +468,7 @@ func assertBounceFocus(t *testing.T, prompt, l1, l2, l3 string) {
 // block the reviewer was never asked about.
 func TestLevelsNoFocusLeavesThePromptAlone(t *testing.T) {
 	h := newHarnessFiles(t, levelsCfg(t, ""), nil, levelsFiles)
-	rec, err := h.run(t, implement("feature"), review("ship", 0), review("ship", 0), review("ship", 0))
+	rec, err := h.run(t, commitHandBack(handBackPR), review("ship", 0), review("ship", 0), review("ship", 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -490,7 +491,7 @@ func TestLevelsNoFocusLeavesThePromptAlone(t *testing.T) {
 func TestLevelsFocusIsQuotedAndRecorded(t *testing.T) {
 	const focus = "the retry path and the backoff on the second attempt"
 	h := newHarnessFiles(t, levelsCfg(t, "  levels:\n    l3: {focus: \""+focus+"\"}\n"), nil, levelsFiles)
-	rec, err := h.run(t, implement("feature"), review("ship", 0), review("ship", 0), review("ship", 0))
+	rec, err := h.run(t, commitHandBack(handBackPR), review("ship", 0), review("ship", 0), review("ship", 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -534,7 +535,7 @@ func TestLevelsFocusIsQuotedAndRecorded(t *testing.T) {
 // a focus it never read.
 func TestLevelsFocusShownForEveryLevel(t *testing.T) {
 	h := newHarnessFiles(t, levelsCfg(t, "  levels:\n    l1: {focus: \"the cheap path\"}\n    l2: {focus: \"the contract\"}\n"), nil, levelsFiles)
-	rec, err := h.run(t, implement("feature"), review("ship", 0), review("ship", 0), review("ship", 0))
+	rec, err := h.run(t, commitHandBack(handBackPR), review("ship", 0), review("ship", 0), review("ship", 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -615,7 +616,7 @@ func TestLevelsFocusPromptSanitises(t *testing.T) {
 func TestLevelsPRBodyShowsHeads(t *testing.T) {
 	h := newHarnessFiles(t, levelsCfg(t, ""), nil, levelsFiles)
 	rec, err := h.run(t,
-		implement("feature"),
+		commitHandBack(handBackPR),
 		review("ship", 0),    // review_first
 		review("ship", 0),    // review: level 2 ships the head it read
 		review("changes", 1), // adversarial round 1
@@ -672,7 +673,7 @@ func TestLevelsAdversarialEffortOnAClaudeStageOnly(t *testing.T) {
 
 	t.Run("a Claude stage takes it", func(t *testing.T) {
 		g := newGWFiles(t, cfg, "observe", "50", levelsFiles)
-		rec, err := g.run(t, implement("feature"), review("ship", 0), review("ship", 0), review("ship", 0))
+		rec, err := g.run(t, commitHandBack(handBackPR), review("ship", 0), review("ship", 0), review("ship", 0))
 		if err != nil || rec.Outcome != runstore.OutcomeReady {
 			t.Fatalf("rec = %+v, err = %v", rec, err)
 		}
@@ -697,7 +698,7 @@ func TestLevelsAdversarialEffortOnAClaudeStageOnly(t *testing.T) {
 		}
 		g := newGWFiles(t, routed, "enforce", "50", levelsFiles)
 		wireProviders(t, g, nil, "acme/app")
-		rec, err := g.run(t, implement("feature"), review("ship", 0), review("ship", 0), review("ship", 0))
+		rec, err := g.run(t, commitHandBack(handBackPR), review("ship", 0), review("ship", 0), review("ship", 0))
 		if err != nil || rec.Outcome != runstore.OutcomeReady {
 			t.Fatalf("rec = %+v, err = %v: a provider-served background is not a refusal", rec, err)
 		}
@@ -743,7 +744,7 @@ func TestLevelsRecordNoEffortWhenTheStageIsOnAProviderRoute(t *testing.T) {
 	g := newGWFiles(t, cfg, "enforce", "50", levelsFiles)
 	// The owner's provider claims deepseek/*, which is the background's model.
 	wireProviders(t, g, nil, "acme/app")
-	rec, err := g.run(t, implement("feature"), review("ship", 0), review("ship", 0), review("ship", 0))
+	rec, err := g.run(t, commitHandBack(handBackPR), review("ship", 0), review("ship", 0), review("ship", 0))
 	if err != nil || rec.Outcome != runstore.OutcomeReady {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
@@ -781,7 +782,7 @@ func TestLevelsRecordTheReviewersModelAndEffort(t *testing.T) {
 		"  levels:\n    l2: {model: "+opus+"}\n    l3: {effort: "+effort+"}\n")
 	cfg = strings.Replace(cfg, "agent:\n", "rigor:\n  default: critical\nagent:\n", 1)
 	g := newGWFiles(t, cfg, "observe", "50", levelsFiles)
-	rec, err := g.run(t, implement("feature"), review("ship", 0), review("ship", 0), review("ship", 0))
+	rec, err := g.run(t, commitHandBack(handBackPR), review("ship", 0), review("ship", 0), review("ship", 0))
 	if err != nil || rec.Outcome != runstore.OutcomeReady {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}

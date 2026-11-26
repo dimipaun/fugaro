@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/routing"
 )
 
@@ -1109,6 +1110,42 @@ func TestSharedConfigRefusesModelRouting(t *testing.T) {
 	}
 }
 
+// TestSharedConfigRefusesThePauseBlock: the pause block is the machine's own
+// (R11 of docs/model-credentials-routing, D3184, D3187, D3190) and the shared
+// config is the file any launcher holding objectAdmin on the runs bucket can
+// write, so a `pause:` key in it would let one launcher hold every teammate's
+// runs to their own wait, their own shortest pause and their own total paused
+// time. Both doors are closed as they are for the routing table: the reader
+// refuses the key (sharedForbidden) and the publisher never writes it, because
+// localcfg's Shared nils the block (localcfg's TestPauseIsNeverPublished) and
+// the block reaches a run off the policy node instead, which the credentials
+// service reads.
+//
+// The decoded half is the second net: a config built another way — a merge, a
+// decoder that mapped a key onto a field of its own — must not publish a block
+// no document could have carried. The control beside it keeps the arm from
+// being replaced by a predicate that refuses everything.
+func TestSharedConfigRefusesThePauseBlock(t *testing.T) {
+	if !slices.Contains(sharedForbidden, "pause") {
+		t.Fatal("sharedForbidden does not name pause, so a published block would be decoded and read")
+	}
+	_, err := ParseShared([]byte(validShared()+"pause: {wait_in_job: 2m}\n"), sharedAnchor)
+	if err == nil {
+		t.Fatal("a published shared config carrying pause: was accepted")
+	}
+	for _, want := range []string{"pause", "never published", "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if !sharedNeverPublished(&localcfg.Config{Pause: &projectpolicy.Pause{MinPause: "40m"}}) {
+		t.Error("only the pause block is set, and the config is called publishable")
+	}
+	if sharedNeverPublished(&localcfg.Config{}) {
+		t.Error("a config carrying no section at all is called unpublishable, so the check is not the sections it names")
+	}
+}
+
 // TestConfigPublishRefusesTheBinariesKey: the binaries block is the owner's
 // grant of the paths a run may add a binary at and of the cap the run is held
 // to, and it travels the way the review floor and the clone URLs do (AR1, D986,
@@ -1334,7 +1371,11 @@ func TestSharedConfigRefusesEveryForbiddenSection(t *testing.T) {
 	// choice into the shared file would move every teammate with no local
 	// config onto VMs with a block that same launcher chose and no check ever
 	// saw.
-	for _, k := range []string{"image_map", "bake_repos", "triage", "rigor_pending", "backend"} {
+	//
+	// `repo_images` joins the map's reason one member over (R7 of
+	// docs/image-map-by-provider/): it names the image each repository's jobs
+	// execute, so the key is the map's own case in the spelling L11 gives it.
+	for _, k := range []string{"image_map", "repo_images", "bake_repos", "triage", "rigor_pending", "backend"} {
 		if !slices.Contains(sharedForbidden, k) {
 			t.Errorf("sharedForbidden does not name %s, so a published %s would be read", k, k)
 		}
@@ -1351,6 +1392,7 @@ func TestSharedConfigRefusesEveryForbiddenSection(t *testing.T) {
 func TestSharedNeverPublishedCatchesTheDecodedSections(t *testing.T) {
 	for _, tc := range []struct{ name, yaml string }{
 		{"image_map", "image_map:\n    acme/app: tools\n"},
+		{"repo_images", "repo_images:\n    github/acme/app: tools\n"},
 		{"bake_repos", "bake_repos: false\n"},
 		{"triage", "triage: false\n"},
 		{"review_against_task", "review_against_task: false\n"},

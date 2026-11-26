@@ -253,6 +253,7 @@ func (e *initEngine) options() initflow.Options {
 		Yes: o.yes, NonInteractive: o.nonInteractive, PlanOnly: o.planOnly,
 		Terminal: r.stdinTerminal(), JSON: o.asJSON, Agent: agentMarker(os.Getenv, r.stdinTerminal()), Out: r.w,
 		Program: o.loopProgram(),
+		AtEnd:   e.joinCatalogBuilds,
 		// The run's account: one line per stage and the closing line, in place
 		// of the result header and the plan view (CL5b). A run that has no
 		// reporter — --print-vars, --forget, --config-only, or a test's
@@ -261,6 +262,11 @@ func (e *initEngine) options() initflow.Options {
 		Detail:  r.accountWriter(),
 		Project: r.projectName, GCPProject: r.gcpProject, Region: e.lc.Region,
 		Redact: e.redact, OnPreview: func(rs []initflow.StageResult) { e.previewed = rs },
+		// The per-repository lines a stage reported go to the run's own
+		// account, hint first (U13): a stage that does per-repository work
+		// says one line per repository under its header, whatever door the run
+		// came in by.
+		OnRepos: e.printRepoLines,
 		// The managed gate is `fugaro update`'s (D1016, update_managed.go):
 		// managedStage answers which door and which stages, and the loop asks
 		// it only in a coding agent's session, so a person's run never reads a
@@ -593,7 +599,10 @@ func (e *initEngine) converge(ctx context.Context) error {
 	// it is the steps themselves.
 	e.r.printRunHeader(e.lc.Name, "")
 	fmt.Fprintln(e.r.w, e.r.qs.Header(convergeSection(e.r.o)))
-	res, err := initflow.Run(ctx, stages, e.options())
+	if e.images != nil && e.r.o.doorName() == "update" && !e.r.o.planOnly {
+		e.images.background = true
+	}
+	res, err := e.r.runStages(ctx, stages, e.options())
 	// The steps this run answered are steps nothing owes any more: `update`
 	// runs every stage, and the entries of the stages it ran successfully are
 	// cleared here and nowhere else (D1567). It is after the loop because the
@@ -696,16 +705,15 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// printResult for the reason the two above are: what it printed and
 	// recorded belongs to this run's result.
 	e.raiseBudgetMode(ctx)
-	// And the checkout's own file, which is the one door of the two that is a
-	// committed file somebody reviews: the removal of the budget.mode line is
-	// offered as a diff, written with --yes or by a person at the terminal and
-	// printed otherwise, exactly as the anchor's line is (AB8b, F12, D3022). It
-	// is here rather than before the loop because the repository stage reads
-	// that file and acts only while the working tree holds the default branch's
-	// bytes (resolveRepoTarget), so an edit before it would turn this run's own
-	// repository step into "not the default branch's file". It returns no error
-	// for the reason the raise above returns none.
-	e.offerBudgetModeRemoval(ctx)
+	// And U6a's: the two dead values a release behind this one left on an
+	// enrolled repository's default branch — the plugin pin in
+	// .claude/settings.json and budget.mode: off in fugaro.yaml — each get one
+	// notice line naming the file and the exact edit (D3340). Nothing is
+	// written: the diff offer and the line's removal are gone, and the value is
+	// the repository's own change to make. It is here with the raise above
+	// because both are steps of the update door's and neither may fail an
+	// update (the HARD RULE).
+	e.noticeRepoValues(ctx)
 	// And D1543's: the creation fact a release behind left at version 3 carries
 	// the image build count this one no longer bounds a build by, and a fact is
 	// migrated where it was written (update_marker_version.go). It is after the
@@ -744,17 +752,6 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// both doors — `fugaro setup` creates the installation whose record this
 	// is, and `fugaro update` is the command that keeps it true.
 	e.recordLocations(ctx)
-	// And D2965's, the seventh: the runs that opened, followed or reviewed a
-	// pull request before this release wrote an entry as it came to be on one,
-	// so `runs ls --pr N` finds them in the index instead of scanning the
-	// repository
-	// (update_prindex.go). It is here for the reason the six above are — the
-	// converge applied everything it had, so the runs it walks are the ones this
-	// run leaves behind — and it is beside writeAdminList because it is the
-	// other object of this run's that a later read of the installation takes:
-	// both are derived from what the installation holds and neither fails an
-	// update (the HARD RULE).
-	e.backfillPRIndex(ctx)
 	// And D2966's: the run summaries the runs before this release have none of,
 	// created in place so `runs ls` reads two objects a row instead of three
 	// (update_summary.go). It is here for the reason above — the converge
@@ -2246,26 +2243,41 @@ func (e *initEngine) renderIntakePeople(ctx context.Context, vars []byte) ([]byt
 // REFUSES an absent one: a workspace whose roster is not written yet is a
 // workspace with no people, and an update is not the command that fails over it.
 func (e *initEngine) rosterPeople(ctx context.Context) ([]string, error) {
-	lc, db, err := budgetDBFor(ctx, e.lc)
+	roster, found, err := e.rosterOf(ctx)
 	if err != nil {
 		return nil, err
-	}
-	store, err := workspace.NewRosterStore(db, workspaceNameOf(lc))
-	if err != nil {
-		return nil, err
-	}
-	node, found, err := store.Read(ctx)
-	if err != nil {
-		return nil, dbErr(lc, err, false)
 	}
 	if !found {
 		return []string{}, nil
 	}
+	return infra.IntakePeople(roster), nil
+}
+
+// rosterOf is the workspace's roster document itself, or found false for a
+// workspace whose roster is not written yet — the state rosterPeople reads as
+// no people, and the one every caller of it has to answer for rather than
+// decode.
+func (e *initEngine) rosterOf(ctx context.Context) (*workspace.Roster, bool, error) {
+	lc, db, err := budgetDBFor(ctx, e.lc)
+	if err != nil {
+		return nil, false, err
+	}
+	store, err := workspace.NewRosterStore(db, workspaceNameOf(lc))
+	if err != nil {
+		return nil, false, err
+	}
+	node, found, err := store.Read(ctx)
+	if err != nil {
+		return nil, false, dbErr(lc, err, false)
+	}
+	if !found {
+		return nil, false, nil
+	}
 	roster, err := workspace.DecodeRoster(node.Raw)
 	if err != nil {
-		return nil, userErr("%s: %v", store.Path(), err)
+		return nil, false, userErr("%s: %v", store.Path(), err)
 	}
-	return infra.IntakePeople(roster), nil
+	return roster, true, nil
 }
 
 // newInstallationStage is stage 3: init's installation engine. With

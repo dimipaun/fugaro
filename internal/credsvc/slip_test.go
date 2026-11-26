@@ -1299,6 +1299,7 @@ func TestServedRoutesAreExactly(t *testing.T) {
 		{http.MethodPost, LabelPath},
 		{http.MethodPost, SlipPath},
 		{http.MethodPost, SlipClaimPath},
+		{http.MethodPost, PoolDesignatePath},
 		{http.MethodPost, WorkflowSecretsPath},
 		{http.MethodPost, BuildTokenPath},
 		{http.MethodPost, BuildCredentialsPath},
@@ -1307,6 +1308,7 @@ func TestServedRoutesAreExactly(t *testing.T) {
 		{http.MethodPost, identitywire.PairingPath},
 		{http.MethodPost, identitywire.DevicePath},
 		{http.MethodPost, identitywire.ProbePath},
+		{http.MethodPost, identitywire.JobPath},
 		{http.MethodGet, BitbucketProxyPrefix + "acme/aurora.git/info/refs"},
 		{http.MethodPost, BitbucketProxyPrefix + "acme/aurora.git/git-receive-pack"},
 		{http.MethodPut, BitbucketProxyPrefix + "acme/aurora.git/lfs/objects/batch"},
@@ -1358,7 +1360,7 @@ func TestServedRoutesAreExactly(t *testing.T) {
 			if e.Error != "not_found" {
 				t.Errorf("the refusal is %q, want not_found", e.Error)
 			}
-			for _, p := range []string{MessagesPath, CountTokensPath, ProviderRoutePath, ProviderCountTokensPath, MintPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, LabelPath, SlipPath, SlipClaimPath, WorkflowSecretsPath, BuildTokenPath, BuildCredentialsPath, identitywire.TicketPath, identitywire.ClaimPath, identitywire.PairingPath, identitywire.DevicePath, identitywire.ProbePath} {
+			for _, p := range []string{MessagesPath, CountTokensPath, ProviderRoutePath, ProviderCountTokensPath, MintPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, LabelPath, SlipPath, SlipClaimPath, PoolDesignatePath, WorkflowSecretsPath, BuildTokenPath, BuildCredentialsPath, identitywire.TicketPath, identitywire.ClaimPath, identitywire.PairingPath, identitywire.DevicePath, identitywire.ProbePath, identitywire.JobPath} {
 				if !strings.Contains(e.Message, p) {
 					t.Errorf("the 404's sentence does not name the route %q: %s", p, e.Message)
 				}
@@ -1411,12 +1413,14 @@ func TestServedRoutesCensus(t *testing.T) {
 		{http.MethodPost, BuildCredentialsPath},
 		{http.MethodPost, SlipPath},
 		{http.MethodPost, SlipClaimPath},
+		{http.MethodPost, PoolDesignatePath},
 		{http.MethodPost, WorkflowSecretsPath},
 		{http.MethodPost, identitywire.TicketPath},
 		{http.MethodPost, identitywire.ClaimPath},
 		{http.MethodPost, identitywire.PairingPath},
 		{http.MethodPost, identitywire.DevicePath},
 		{http.MethodPost, identitywire.ProbePath},
+		{http.MethodPost, identitywire.JobPath},
 		{http.MethodGet, BitbucketProxyPrefix + "acme/aurora.git/info/refs"},
 		{http.MethodPost, BitbucketProxyPrefix + "acme/aurora.git/git-receive-pack"},
 		{http.MethodPut, BitbucketProxyPrefix + "acme/aurora.git/lfs/objects/batch"},

@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/settings"
 	"github.com/dimipaun/fugaro/internal/yamledit"
@@ -410,10 +411,9 @@ func modelsUseParse(lc *localcfg.Config, target settingsTarget, data []byte) (*c
 // the block a run reads rather than a second reading of it that could drift
 // from the first.
 //
-// Auth carries the default the rest of Fugaro applies to a block that names
-// none (config.DefaultAgentAuth), which is what a repository file naming no
-// auth reads as: of everything applyDefaults fills in, it is the one field the
-// two checks below read.
+// Auth stays as the layer states it, and empty when it states none: an absent
+// auth is "not stated", never vertex, so the write is not judged against an
+// auth nobody chose. Each repository's own launch judges its own stated auth.
 func modelsUseLayerAgent(l *config.ProjectLayer) (config.Agent, error) {
 	data, err := yaml.Marshal(l.Defaults.Agent)
 	if err != nil {
@@ -424,9 +424,6 @@ func modelsUseLayerAgent(l *config.ProjectLayer) (config.Agent, error) {
 	dec.KnownFields(true)
 	if err := dec.Decode(&agent); err != nil {
 		return config.Agent{}, userErr("the project layer's defaults.agent: %v", err)
-	}
-	if agent.Auth == "" {
-		agent.Auth = config.DefaultAgentAuth
 	}
 	return agent, nil
 }
@@ -581,6 +578,9 @@ func modelsUseModelCheck(lc *localcfg.Config, launch modelsUseLaunch, target set
 	if err := modelsUseRefuseID(id); err != nil {
 		return err
 	}
+	if err := modelsUseTableCheck(lc, scope, id); err != nil {
+		return err
+	}
 	name, p, claimed := config.ProviderFor(lc.Providers, id)
 	// A Claude model reaches Anthropic with no route at all, in either spelling
 	// a pin may carry (isClaudeModel), so the missing-route refusal is only for
@@ -623,11 +623,41 @@ func modelsUseModelCheck(lc *localcfg.Config, launch modelsUseLaunch, target set
 		return userErr("budget.allowed_models of the project config does not name %s, so %s use it: the owner names it there, or adds the model with `fugaro models add %s`", config.CodeSpan(id), scope.reach(), id)
 	}
 	agent := modelsUseAgent(launch.agent, base, id)
-	if ps := config.CheckProviderAuth(agent, lc.Providers); len(ps) > 0 {
+	layerStatesNoAuth := target.kind == settingsDocLayer && agent.Auth == ""
+	if ps := config.CheckProviderAuth(agent, lc.Providers); len(ps) > 0 && !layerStatesNoAuth {
 		return userErr("%s would not launch with %s pinned for %s: %s", target.path, config.CodeSpan(id), base, ps[0].String())
 	}
 	if ps := config.CheckProviderGateway(agent, config.EffectiveBackground(agent, lc.Providers), lc.Providers, launch.mode); len(ps) > 0 {
 		return userErr("%s would not launch with %s pinned for %s: %s", target.path, config.CodeSpan(id), base, ps[0].String())
+	}
+	return nil
+}
+
+// modelsUseTableCheck is the project's routing table's own answer about one pin:
+// the model must be one the resolver reaches, because a model no entry of the
+// table matches is one no run can send (R1, R2, R22) and a pattern written twice
+// is the resolver's own refusal (D3172). The sentence is RT3's, so it names the
+// fix `fugaro routing set` writes, and it is the same one `fugaro validate`
+// prints and the run's own gate refuses at (chainRoutingGate makes the same
+// call).
+//
+// Only the model's own answer is refused here. The chain problems of an entry —
+// an empty chain, a source naming a pool the project does not declare — are the
+// table's and are reported once, by validate, at the entry that carries them;
+// every model that entry matches meets them, and refusing a pin over one would
+// print the same fix from a second place.
+//
+// A table that does not govern the runs this write is for is not asked either:
+// the write's repositories are the scope's own (scope.repos, the set the route
+// checks above are made over), and where no source of the table admits one of
+// them its models are reached the release-1 way (D3170, O7, R25) — which is what
+// the rest of modelsUseModelCheck judges.
+func modelsUseTableCheck(lc *localcfg.Config, scope modelsUseScope, id string) error {
+	problems, _ := modelRoutingProblems(lc, scope.repos, []string{id})
+	for _, p := range problems {
+		if p.Code == routing.CodeNoEntry || p.Code == routing.CodeTwinPattern {
+			return userErr("model_routing: %s", oneLine(p.Message))
+		}
 	}
 	return nil
 }

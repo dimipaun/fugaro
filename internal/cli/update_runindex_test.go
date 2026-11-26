@@ -50,7 +50,7 @@ func TestUpdateStartsReindexWithRunInFlight(t *testing.T) {
 	r, fs := reindexConvergeRig(t)
 	run := startRunInFlight(t, r)
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	// The one line the update prints about it, and the execution it names.
 	if !strings.Contains(out, "run index: marked incomplete and reindexing now as ") {
@@ -115,7 +115,7 @@ func TestUpdateReindexWithoutAReportedName(t *testing.T) {
 	r, _ := reindexConvergeRig(t)
 	r.run.BadRunMetadata = true
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if !strings.Contains(out, "run index: marked incomplete and reindexing now (the platform started the execution but did not report its name), so `fugaro runs ls` is short") {
 		t.Fatalf("the update's reindex line does not name the start without an execution name:\n%s", out)
@@ -141,7 +141,7 @@ func TestUpdateDoesNotReindexACompleteIndex(t *testing.T) {
 		"compute_runs": int64(0), "compute_not_estimated": int64(0),
 	})
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if strings.Contains(out, "run index:") {
 		t.Fatalf("an update over a complete index said something about the run index:\n%s", out)
@@ -176,7 +176,7 @@ func TestUpdateReindexesAnIncompleteIndex(t *testing.T) {
 		"version": int64(1), "complete": false, "folded_through": at, "updated_at": at,
 	})
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if !strings.Contains(out, "run index: marked incomplete and reindexing now as ") {
 		t.Fatalf("an update over an incomplete index did not reindex:\n%s", out)
@@ -202,7 +202,7 @@ func TestUpdateStandsWhenTheReindexJobStartIsRefused(t *testing.T) {
 	r, fs := reindexConvergeRig(t)
 	r.run.FailRunWith = 403
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if !strings.Contains(out, "no reindex execution was started") || !strings.Contains(out, "the walk stands, and the history job's next sweep carries it") {
 		t.Fatalf("the update does not report the refused start and the mark that stands:\n%s", out)
@@ -228,7 +228,7 @@ func TestUpdateStandsWhenTheReindexJobStartIsRefused(t *testing.T) {
 
 // TestUpdateReindexWritesNothingOutsideTheUpdateDoor: the step is `fugaro
 // update`'s, and it keeps the fences the steps beside it keep (update.go's
-// writeAdminList, update_prindex.go's backfillPRIndex): `fugaro setup`
+// writeAdminList, update_summary.go's backfillRunSummary): `fugaro setup`
 // converges the same installation through the same hook (init_stages.go's
 // outcome), `--plan-only` writes nothing at all, and a coding agent's session
 // under a marker changes nothing outside this machine unless the managed gate

@@ -19,12 +19,14 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/craft"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/runner"
 )
 
@@ -784,7 +786,7 @@ func craftModelProblems(cfg *config.Config, lc *localcfg.Config, repo string, cl
 	}
 	routes := runner.ProvidersFor(claimed, repo)
 	ps := config.CheckAllowed(cfg.Agent, e, ceiling.AllowedModels, lc.Routing, routes, crafts...)
-	if runner.GatewayOn(cfg.Agent.Auth, e.Mode) {
+	if runner.GatewayOn(cfg.Agent.Auth) {
 		// The table is the run's own — lc.Providers' rows and the owner's
 		// model_prices — and a refused one is left alone: budgetProblems and
 		// providerProblems have already reported why (a malformed catalog, a
@@ -1502,7 +1504,7 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 			ps = append(ps, config.CheckProviderPolicy(a, allowed, repo, routes, prices)...)
 			ps = append(ps, config.CheckProviderAuth(a, routes)...)
 			ps = append(ps, config.CheckProviderGateway(a, bg, routes, mode)...)
-			if prices != nil && runner.GatewayOn(cfg.Agent.Auth, mode) {
+			if prices != nil && runner.GatewayOn(cfg.Agent.Auth) {
 				// CheckPins is the runner's other price rule, and it runs only
 				// with the gateway on (checkBudget). A routed pin is the route's
 				// own ID and is claimed by the entry that resolved it, so
@@ -1541,6 +1543,94 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 		}
 	}
 	return dedupeLines(problems), dedupeLines(notes)
+}
+
+// modelRoutingProblems is the project's own routing table judged by RT3's
+// checks: the problems — a chain that reaches nothing, a source naming a pool or
+// a provider the project does not declare, a model no entry matches, a pattern
+// written twice — and the one fact RT3 reports without refusing (X2: a
+// subscription token in no pool).
+//
+// It is the helper `validate` and `doctor` share, and it is one because both
+// hold the project config and judge it with these rules: a second assembly of
+// the checks would be free to hand RT3's rules another table, another budget or
+// another model list, which is the drift the checks exist to catch one level
+// down. Check50Passed is left false, as `fugaro routing set` leaves it: nothing
+// in this release records the check as run (reconciliation O3), and the
+// fail-closed answer is what a table carrying a routed Claude must meet.
+//
+// models are the models the caller knows a run of this project can call that
+// this helper cannot read for itself: `validate` passes the crafts of the file in
+// hand, which a launch of that file runs whatever this checkout's own file names
+// — a table is judged against the run, and the run is the file's. The project's
+// own model list is RT5's routingModels, and it is the caller's where it needs
+// one: doctor's read is the project's whole answer rather than one file's.
+//
+// repos are the repositories the caller's reading is for, and the table is
+// judged only where it governs one of them (routingTableGoverns). A project that
+// publishes no table and one whose every source is admitted to another repository
+// are one answer: their models are reached the release-1 way (D3170, O7, R25),
+// and RT3 asked about them would report every one of them unrouted — a project on
+// the bridge is not a table with no entries.
+func modelRoutingProblems(lc *localcfg.Config, repos, models []string) (problems, warnings []routing.Problem) {
+	if lc == nil || !routingTableGoverns(lc.ModelRouting, repos) {
+		return nil, nil
+	}
+	in := routing.Checks{
+		Table:       lc.ModelRouting,
+		Models:      models,
+		Credentials: lc.Credentials,
+		Pools:       lc.Pools,
+		Providers:   lc.Providers,
+	}
+	if lc.Budget != nil {
+		in.BudgetMode, in.BudgetPerRunUSD = lc.Budget.Mode, lc.Budget.PerRunUSD
+	}
+	return routing.Problems(in)
+}
+
+// routingTableGoverns reports whether the table judges a run of any of repos,
+// which is the question the launch's own gate asks before it refuses a model
+// (chainRoutingGate reads ChainPlanFor(...).Serves, ee/ab's admission reads
+// ChainServes) and the one every reader of the table here has to ask the same
+// way: a table that serves none of these repositories is not in force for their
+// runs — they go out on the release-1 bridge (O7, R25, D3196) — and judging
+// their models against it would report every one of them unrouted. A repository
+// whose name cannot be read is the same reading, "": no admit list carries it.
+func routingTableGoverns(table routing.Table, repos []string) bool {
+	for _, repo := range repos {
+		if infra.ChainServes(table, repo) {
+			return true
+		}
+	}
+	return false
+}
+
+// routingProblemLines is RT3's list in the shape this command prints: the path
+// and the sentence as they stand — the path is the table's own block, which is
+// the key `fugaro routing set` writes the fix at — one line each, with the code
+// carried for a caller that acts on it rather than prints it (RT7 tells a table
+// problem from a lone subscription token).
+func routingProblemLines(ps []routing.Problem) []config.Problem {
+	out := make([]config.Problem, 0, len(ps))
+	for _, p := range ps {
+		out = append(out, config.Problem{Path: p.Path, Message: oneLine(p.Message), Code: p.Code})
+	}
+	return out
+}
+
+// craftModels is the crafts of a resolution as RT3's checks take them: the
+// models in the canonical craft order, and no entry for a craft that resolved
+// none — a rung naming no model is a model nothing is called with, RT3's own
+// carve-out.
+func craftModels(crafts []config.CraftModel) []string {
+	var out []string
+	for _, c := range crafts {
+		if c.Model != "" {
+			out = append(out, c.Model)
+		}
+	}
+	return out
 }
 
 // dedupeLines drops a line the reader would see twice: the same path and the same
@@ -1606,14 +1696,12 @@ const (
 // neither api-key nor vertex (oauth, or nothing at all) is no gateway whichever
 // key the job holds, so it is inert either way.
 //
-// The budget mode is not an argument (AB1b, D3009): whether a run has a gateway
-// is a fact about its auth alone now, and the mode GatewayOn is asked with is
-// the one every run is accounted for under (C1, R3) rather than a value any
-// caller reads out of a file. A caller that passed its own mode passed a
-// string that decided nothing — and, for a mode left unset, the word that is
-// not a mode any more.
+// The budget mode is not an argument (AB1b, I1, D3009): whether a run has a
+// gateway is a fact about its auth and nothing else, and a caller that passed a
+// mode passed a string that decided nothing — for a mode left unset, the word
+// that is not a mode any more.
 func routingReachOf(sw *config.RoutingClaude, auth string) (routingReach, runner.RoutingInert) {
-	gateway := runner.GatewayOn(auth, policy.ModeObserve)
+	gateway := runner.GatewayOn(auth)
 	why := runner.RoutingInertReason(sw, auth, gateway, false)
 	switch {
 	case runner.RoutingInertReason(sw, auth, gateway, true) == runner.RoutingActs:
@@ -2291,6 +2379,24 @@ func newValidateCmd() *cobra.Command {
 				// once so that the levels and the model half's own checks cannot
 				// read two answers.
 				cr := craftsOf(validateCraftLayers(data, rf))
+				// The project's own table judged against the crafts this file's
+				// runs would call (RT3, RT6), where the table serves the
+				// repository these runs are for: a model no entry matches is a
+				// run that cannot start, and the problems true of an entry
+				// whatever model asked — an empty chain, a source naming a
+				// provider the project does not define — are the table's. The
+				// refusal is the checks' own sentence, which names the `fugaro
+				// routing set` that writes the fix. Only this file's own
+				// project: a selected config for another project holds another
+				// project's table, and judging this file's models against it
+				// would report them unrouted from a table that never answered
+				// for them — the guard budgetProblems, providerProblems and
+				// cascadeProblems carry.
+				if lc != nil && lc.Name == cfg.Project {
+					tp, tw := modelRoutingProblems(lc, []string{repo}, craftModels(cr.crafts))
+					problems = append(problems, routingProblemLines(tp)...)
+					warnings = append(warnings, routingProblemLines(tw)...)
+				}
 				// The review levels this file's runs would resolve (L3.2). The
 				// resolver reads the file's own agent.levels, agent.models and
 				// rigor:, so it is judged on the file as it is, and the recipe

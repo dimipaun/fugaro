@@ -256,6 +256,19 @@ func (p *Provider) find(ctx context.Context, branch string) (*pullRequest, error
 	return &page.Values[0], nil
 }
 
+// FindPR answers the open pull request whose source branch is branch, and
+// whether one exists. gitprov.Provider has no such read — EnsurePR finds one
+// only to update it — and a caller that must open a pull request only when none
+// is open needs the answer BEFORE it pushes a branch (a second `fugaro project
+// repos add` of a repository whose starter pull request is still open).
+func (p *Provider) FindPR(ctx context.Context, branch string) (gitprov.PR, bool, error) {
+	pr, err := p.find(ctx, branch)
+	if err != nil || pr == nil {
+		return gitprov.PR{}, false, err
+	}
+	return gitprov.PR{Number: pr.ID, URL: pr.Links.HTML.Href, Draft: pr.isDraft()}, true, nil
+}
+
 // escapeBBQL escapes s for embedding in a double-quoted BBQL string literal
 // (Bitbucket's query language, used by find's ?q= parameter): backslashes
 // and double quotes in a branch name must not be allowed to break out of

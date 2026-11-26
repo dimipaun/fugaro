@@ -65,6 +65,22 @@ type ProjectJob struct {
 	// does not serve is byte for byte what it was. See
 	// projectJobServesTheCredentialsService for what "served" means here.
 	CredentialsService *CredentialsService `json:"credentials_service,omitempty"`
+	// CredentialsServiceGrant is the same service for a job that reaches it
+	// for every shared job, switched or not: a Bitbucket job clones through it, and
+	// a GitHub job's grant must not vanish when a readiness record flips off.
+	// Its account keeps every model mount. The module grants on
+	// either field and drops mounts on CredentialsService only.
+	CredentialsServiceGrant *CredentialsService `json:"credentials_service_grant,omitempty"`
+}
+
+// projectJobGitGrant is the service every shared job's account is granted the
+// invoker role on whatever the model switch says: the grant follows the
+// installation having the service, never a repository's readiness record, which
+// a failed bundle read can flip to false and a plan would then delete a grant
+// the job still needs. Inert without the switch: the service refuses a caller
+// it does not admit (Q6).
+func projectJobGitGrant(lc *localcfg.Config) *CredentialsService {
+	return installationCredentialsService(lc)
 }
 
 // ProjectJobs is the installation's project jobs, by job name: one job and
@@ -192,6 +208,14 @@ func projectJobImage(lc *localcfg.Config) (string, error) {
 		Catalog: func(e config.Entry) string { return catalogEntryImage(host, gcp.SharedRegistryRepoID(), e) },
 	}), nil
 }
+
+// ProjectJobImage is projectJobImage for a caller outside this package: the
+// one fact the retirement of a repository's whole root asks of S10 (D2305,
+// M2's structural precondition). A project whose image does not resolve has no
+// shared job a repository could run on, so the retirement would take away the
+// only job the repository has -- which is the whole reason the precondition is
+// asked of this resolver and of no copy of it.
+func ProjectJobImage(lc *localcfg.Config) (string, error) { return projectJobImage(lc) }
 
 // catalogEntryImage is where a catalog entry's image is (D1152): a prebuilt
 // entry's own reference, and otherwise the installation's one shared registry,
@@ -485,8 +509,9 @@ func projectJobs(lc *localcfg.Config, bucket string, vertex bool, carried []stri
 					Title:      gcp.ProjectTokenBucketConditionTitle(saID),
 					Expression: gcp.ProjectTokenBucketCondition(bucket),
 				},
-				Vertex:             vertex,
-				CredentialsService: credentials,
+				Vertex:                  vertex,
+				CredentialsService:      credentials,
+				CredentialsServiceGrant: projectJobGitGrant(lc),
 			}); err != nil {
 				return nil, err
 			}
@@ -704,6 +729,10 @@ func reviewVariant(lc *localcfg.Config, j ProjectJob) ProjectJob {
 		// (internal/agent/env.go), and a variant that cannot start is not a
 		// narrower variant.
 		Vertex: false,
+		// The variant fetches the run's read-only token from the service, so
+		// its account needs the front-door grant; the service's own class
+		// check is what decides what it is served.
+		CredentialsServiceGrant: installationCredentialsService(lc),
 	}
 }
 
@@ -1223,6 +1252,7 @@ func RefreshProjectJobCredentialsService(jobs map[string]ProjectJob, lc *localcf
 		pr, declared := lc.Profiles[job.Profile]
 		served := declared && projectJobServesTheCredentialsService(lc, pr)
 		job.CredentialsService = repoCredentialsService(installationCredentialsService(lc), served)
+		job.CredentialsServiceGrant = projectJobGitGrant(lc)
 		if declared {
 			job = refreshProjectJobMounts(job, pr, lc, served)
 		}

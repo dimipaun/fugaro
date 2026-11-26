@@ -84,7 +84,7 @@ func TestPreviousMarkerVersionConvergesOnUpdate(t *testing.T) {
 
 	run := startRunInFlight(t, r)
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "policy-older-than-binary", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "policy-older-than-binary", "repo-plugin-pin"})
 
 	// The object, read back with the managed read's own bytes: the version this
 	// build writes, the amount unchanged, and no count anywhere in it.

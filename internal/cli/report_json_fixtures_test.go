@@ -71,6 +71,16 @@ var jsonCases = map[string]jsonCase{
 			return []string{"accounts", "ls", "--repo", "acme/app"}
 		},
 	},
+	// accounts pool ls reads the selected project's own config, so the fixture
+	// is the pools rig: a project whose config declares pools, which is what
+	// the document lists rather than an empty list.
+	"accounts pool ls": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			accountsPoolHome(t, "")
+			return []string{"accounts", "pool", "ls"}
+		},
+	},
 	// apply is a write verb whose run changes nothing here — this world's
 	// record owes no step — so what the fixture holds to the contract is the
 	// document an owed-nothing run prints. The command's other run arm, a step
@@ -908,8 +918,15 @@ func jsonCheckout(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	isolateProjects(t, dir)
-	writeProject(t, "aurora", "proj-1234")
+	// The project the checkout's own anchor names, and the layer its lifted
+	// model keys moved to (S1, D3237, the shape checkoutsFixture uses): a
+	// config whose gcp_project disagreed would leave findLayer no bucket but
+	// the real gs:// one, which the test seam refuses.
+	writeProject(t, "aurora", "aurora-gcp")
 	enrollRepo(t, "aurora", "acme/app")
+	if pins := pinsLayer(checkoutsYAML); pins != "" {
+		attachLayerHere(t, "aurora", pins)
+	}
 	co := checkoutsAt(t, filepath.Join(dir, "src", "app"), checkoutsYAML, "https://github.com/acme/app.git")
 	t.Chdir(co)
 	return co

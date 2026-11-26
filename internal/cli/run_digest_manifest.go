@@ -7,7 +7,6 @@ import (
 	"io"
 	"time"
 
-	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -59,16 +58,14 @@ var digestManifestMax = task.MaxDigestRuns
 // recipe.UsesDigest); every other launch stores no manifest, so the field
 // stays absent from its task the way an older release wrote it.
 //
-// rcp is the recipe the launch resolved — nil for the catalog default — and
-// root the checkout it resolved that recipe from, "" when there is none. A
-// repository recipe carries its name alone, so its file is read from root the
-// way refuseFollowUpRepoRecipe reads it; a recipe the launcher cannot read
-// there is not a report run, because the runner reads it at the task's own
-// base and refuses a bad one itself, and a manifest under a recipe that is
-// not a report recipe is read by nothing (the digest step is its only
-// reader).
-func digestManifest(ctx context.Context, env *cloudEnv, slug, root string, rcp *task.Recipe, now time.Time, warn io.Writer) ([]string, error) {
-	if !digestRecipe(root, rcp) {
+// rcp is the recipe the launch resolved — nil for the catalog default. A
+// repository recipe is the project's copy of it, which the task embeds
+// (D3303), so the text the task carries is what says whether this is a report
+// run; a task naming a repository recipe is one an older release's launcher
+// wrote, and a manifest under a recipe that is not a report recipe is read by
+// nothing (the digest step is its only reader).
+func digestManifest(ctx context.Context, env *cloudEnv, slug string, rcp *task.Recipe, now time.Time, warn io.Writer) ([]string, error) {
+	if !digestRecipe(rcp) {
 		return nil, nil
 	}
 	ids, err := runstore.ListRunIDs(ctx, env.bucket.Bucket, slug, now.Add(-digestManifestWindow))
@@ -103,22 +100,13 @@ func digestManifest(ctx context.Context, env *cloudEnv, slug, root string, rcp *
 
 // digestRecipe reports whether the launch is a report run: a recipe whose
 // first step is the digest step (task.RecipeUsesDigest, over T3.1's
-// recipe.UsesDigest). A repository recipe's task carries no text to read, so
-// its file is read from root; with no root, or a file that is not there or
-// does not parse, the answer is no, and the launch is an ordinary one.
-func digestRecipe(root string, rcp *task.Recipe) bool {
-	switch {
-	case rcp == nil:
+// recipe.UsesDigest). A repository recipe is the project's copy of it, which
+// the task embeds (D3303), so the text it carries is the whole of what is
+// judged here: a task naming a repository recipe — one an older release's
+// launcher wrote — carries none, and answers no.
+func digestRecipe(rcp *task.Recipe) bool {
+	if rcp == nil {
 		return false
-	case rcp.Source == string(recipe.SourceRepo):
-		if root == "" {
-			return false
-		}
-		data, found, err := recipe.ReadRepoFile(root, rcp.Name)
-		if err != nil || !found {
-			return false
-		}
-		return task.RecipeUsesDigest(string(data))
 	}
 	return task.RecipeUsesDigest(rcp.YAML)
 }

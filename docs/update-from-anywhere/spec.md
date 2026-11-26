@@ -32,10 +32,10 @@ from any directory.
 
 ## Scope
 
-Plain `fugaro update`, `update --check`, and the `gcp_project` anchor edit. Not in scope:
-`update --repo` and the per-repository roots (L2, which L5 waits on), catalog entries built by
-another repository's account (L3), credential records (L4), workflow-secret records and the
-GitHub App (L6).
+Plain `fugaro update`, `update --check`, and the `gcp_project` anchor edit. `update --repo` is out
+of scope until U11, and goes in U12 (the owner's ruling of 2026-11-26, D3353). Not in scope: the
+per-repository roots (L2, which L5 waits on), catalog entries built by another repository's
+account (L3), credential records (L4), workflow-secret records and the GitHub App (L6).
 
 ## The enrolled list
 
@@ -52,9 +52,11 @@ config lacks is still covered, so two admins' machines do the same work.
 listings through `gitprov.TreeReader`). It reads at the default branch: `fugaro.yaml`, and
 `.claude/settings.json` for the plugin pin. Until the fold retires, it also lists `docs/backlog/`.
 
-- **Cost.** About three API calls per repository per run, with bounded parallelism. That is 150
-  calls for 50 repositories, far below GitHub's hourly limit. Reads are memoized per run, as
-  `defaultBranchParse` is today (`checkoutParseCache`).
+- **Cost.** About three API calls per repository per run, one repository at a time. That is 150
+  calls for 50 repositories, far below GitHub's hourly limit, and the plan declines a bound of
+  concurrency for the read (§Considered and declined): it buys seconds and adds a second thing per
+  repository that can fail. Reads are memoized per run, as `defaultBranchParse` is today
+  (`checkoutParseCache`).
 - **Why not a clone.** A clone of each repository costs disk, time and network for three small
   files. A remembered local checkout (`recordCheckout`) is not used either: it is as fresh as its
   last fetch and exists on one machine only, which brings the machine dependence back.
@@ -77,7 +79,7 @@ the token variable to set (`FUGARO_GIT_TOKEN`, `GH_TOKEN`, `FUGARO_BITBUCKET_TOK
 | --- | --- | --- | --- |
 | `secrets` (RC98) | `initsecrets.go` `secretsStage.resolve`: `gitRead` ".", `readOrigin`, `defaultBranchConfig` of that checkout; skips outside one | every enrolled repository's default-branch `fugaro.yaml`; the wanted names come from `infra.SecretMounts` per repository, as today | list that repository first |
 | `repository` | `init_repo_target.go` `resolveRepoTarget`; refuses when the working tree differs from the default branch; `repoEngine(ctx, ".", …)` | after L2, the per-repository records for every enrolled repository, from its default branch; the working-tree comparison goes, since nothing reads the tree; a repository not enrolled is never onboarded by `update` (that is `project repos add`) | nothing |
-| `checkout` (RC73, RC74) | `init_checkout_upgrade.go` `checkoutStage.checkout` (`pluginwire.Locate` "."), `cloudStep` over the working tree (`upgrade_cloud.go` `loadCheckoutResolved`) | the derived-image refresh for every enrolled repository whose image is stale (open question 1) | nothing |
+| `checkout` (RC73, RC74) | `init_checkout_upgrade.go` `checkoutStage.checkout` (`pluginwire.Locate` "."), `cloudStep` over the working tree (`upgrade_cloud.go` `loadCheckoutResolved`); an origin it cannot read refuses the run | the derived-image refresh for every enrolled repository whose image is stale (open question 1); a repository whose view it cannot read, or whose origin is not `owner/name`, is one line for that repository and never fails the upgrade (U4, R10, R13) | nothing |
 | `images` (RC75) | `init_images.go` `imagesStage.kinds`: `loadCheckoutConfigAt(ctx, ".")`; `init_images_catalog.go` `staleCatalog` splits stale entries "here" and "elsewhere" by the cwd's repository | the union of base kinds over every enrolled repository's workflows; stale entries listed with their building repository, with no "here" split (which builds `update` may submit is L3's) | nothing |
 | `policy` (RC75) | `init_policy_migrate.go` `checkoutWorkflows` (the repository stage's target); `defaultCatalogEntryRefusal` holds the entry while `unvouchedRepos` names repositories it cannot read | every enrolled repository's workflows; the entry is written once all are read and none refuses; held, naming the unread ones, otherwise | nothing |
 | `plugin` (RC38) | `init_plugin_stage.go` `locate` and `pin`: the cwd checkout's `.claude/settings.json` (`pluginwire.PlanRemoval`); the install half runs `claude` in that directory | install half: unchanged, run in a fixed directory; the pin: read from each enrolled repository's default branch, reported as a notice (below) | nothing |

@@ -15,6 +15,10 @@ import (
 // wiring and not only the renderer: the tolerated block has to be on the
 // record by the time finalize builds the report, and a unit test over a
 // hand-built record cannot see that.
+//
+// The level the test writes in the file is a lifted key (S1, D3237), so the
+// harness moves it to the project layer and the report names the layer as where
+// it came from: a repository's file may no longer decide its own rigor.
 func TestReportCarriesWhatTheRunTolerated(t *testing.T) {
 	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "agent:\n", "rigor:\n  default: startup\nagent:\n", 1)
 	h := newHarness(t, cfg, nil)
@@ -41,7 +45,7 @@ func TestReportCarriesWhatTheRunTolerated(t *testing.T) {
 	}
 	got := string(raw)
 	for _, want := range []string{
-		"**Rigor:** startup, from repo, at bootstrap, read from origin/main",
+		"**Rigor:** startup, from project, at bootstrap, read from origin/main",
 		"#### Tolerated",
 		"| Label | Likelihood | Impact | Fix cost | Class | Mode | Finding |",
 		"| low | 2 | 2 | 1 | correctness | startup | `unbounded retry loop \\| in the fetch` |",

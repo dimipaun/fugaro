@@ -64,10 +64,13 @@ func TestResolveTable(t *testing.T) {
 		want map[string]want
 	}{
 		{
+			// review_rounds is a tighten-only key (B4): a repository's value
+			// beats the project's where it raises it, and is dropped where it
+			// lowers it (TestTightenOnly).
 			name: "a repository scalar beats the project",
-			repo: minimalRepo + "agent:\n  review_rounds: 1\n",
+			repo: minimalRepo + "agent:\n  review_rounds: 9\n",
 			get:  map[string]func(*Config) string{"agent.review_rounds": func(c *Config) string { return itoa(c.Agent.ReviewRounds) }},
-			want: map[string]want{"agent.review_rounds": {"1", SourceRepo}},
+			want: map[string]want{"agent.review_rounds": {"9", SourceRepo}},
 		},
 		{
 			name: "false beats a project true, and the project's false beats the default",
@@ -329,7 +332,7 @@ const literalsRepo = minimalRepo + `git:
 agent:
   model: 0x10
   review_rounds: !!int |-
-    2
+    9
 workflows:
   api:
     commands: { build: 1e3, test: 010 }
@@ -377,9 +380,17 @@ func TestResolveKeepsLiterals(t *testing.T) {
 		t.Fatal(ps)
 	}
 	api := c.Workflows["api"]
-	if c.Git.BaseBranch != "1.10" || c.Agent.Model != "0x10" || strings.Join(c.Git.PR.Labels, ",") != "1.10,1e3,0x10,yes" ||
+	if c.Git.BaseBranch != "1.10" || strings.Join(c.Git.PR.Labels, ",") != "1.10,1e3,0x10,yes" ||
 		api.Commands.Build != "1e3" || api.Commands.Test != "010" {
-		t.Fatalf("repository values changed: %q %q %q %+v", c.Git.BaseBranch, c.Agent.Model, c.Git.PR.Labels, api.Commands)
+		t.Fatalf("repository values changed: %q %q %+v", c.Git.BaseBranch, c.Git.PR.Labels, api.Commands)
+	}
+	// agent.model is a lifted key (D3237, R2), so the number-like literal is
+	// read by the file's own decode and dropped before the merge: the value
+	// the config carries is the empty one, and Parse's decode of the same file
+	// — the oracle the rest of this test compares against — agrees, which is
+	// the property the fixture is really about.
+	if c.Agent.Model != "" || c.Agent.Model != want.Agent.Model {
+		t.Fatalf("agent.model = %q, want the drop's empty value; Parse's own decode carries %q", c.Agent.Model, want.Agent.Model)
 	}
 	// review_rounds and early_draft are tagged (!!int, !!bool) block
 	// scalars: a merge that drops the tag re-marshals them as plain

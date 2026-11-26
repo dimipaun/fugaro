@@ -387,3 +387,26 @@ func whyOf(t *testing.T, key string) string {
 func edit(path, value string) LayerEdit {
 	return LayerEdit{Path: strings.Split(path, "."), Value: value}
 }
+
+func TestPlanModelsSetsTheAuthTheRepositoriesWrite(t *testing.T) {
+	app := repoAt(t, "acme/app", "agent:\n  auth: cascade\n  models:\n    background: claude-haiku-4-5\n")
+	web := repoAt(t, "acme/web", "agent:\n  auth: cascade\n")
+	c := planModels(t, Project{}, app, web)
+	checkEdits(t, c, []LayerEdit{
+		edit("defaults.agent.models.background", "claude-haiku-4-5"),
+		edit("defaults.agent.auth", "cascade"),
+	})
+
+	held := planModels(t, Project{Layer: layerOf(t, "defaults:\n  agent:\n    auth: vertex\n")}, app, web)
+	for _, e := range held.LayerEdits {
+		if strings.Join(e.Path, ".") == "defaults.agent.auth" {
+			t.Errorf("the project's own agent.auth was replaced: %+v", e)
+		}
+	}
+}
+
+func TestEveryItemHasItsPlanner(t *testing.T) {
+	if got := len(Planners()); got != 6 {
+		t.Fatalf("%d planners are registered, want 6", got)
+	}
+}

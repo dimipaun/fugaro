@@ -89,6 +89,7 @@
 
 import { isAbsolute } from 'node:path'
 
+import { SETUP_BUDGET_MAX, SETUP_BUDGET_MIN } from '../shared/new-ops'
 import { invisibleRe, isInvisibleCodePoint, isSeparatorCodePoint } from '../shared/sanitize'
 import { REDUCED_VIEWS, hidesView, unreadableCompatibility } from '../shared/version'
 import type { CliCompatibility, ReducedView } from '../shared/version'
@@ -1032,37 +1033,43 @@ export const CONSOLE_OPERATIONS = [
         why: 'the design allow-list admits `--all` on this command.',
       },
       // The page and its cursor (D818, the console coordinator-v2 plan's C2).
-      // They are the two arguments the job list was waiting for: the read is
-      // about 248 KB for a day of runs, so the screen asks for a page and walks
-      // it with the cursor rather than holding a window it cannot draw.
+      // They are the two arguments the run list is read in pages with: the read
+      // is about 248 KB for a day of runs, so the screen asks for a page and
+      // walks it with the cursor rather than holding a window it cannot draw.
       //
-      // **A page shrinks the bytes and not the seconds.** Since #1545 `--limit`
-      // cuts what is *printed*: the command still reads the whole window it
-      // prints from, so a day of runs costs its six seconds whether the screen
-      // asks for fifty rows or all of them. What the page buys is a document
-      // the console can hold and a first row it can draw -- the six seconds are
-      // the read's and are paid either way. Both words are emitted as one
+      // The caller is the Live list's "Load older" (the console-fixes plan's
+      // IR7, `live.ts`): it is the one read that goes **past** the window the
+      // first read was given, which is why the `--after` below is gated on a
+      // newer floor than the words themselves need.
+      //
+      // **A page cuts what is printed, and on a CLI without the run index that
+      // is all it cuts.** Since #1545 `--limit` cuts after the sort: the
+      // bucket read still reads the whole window it prints from, so a day of
+      // runs costs its six seconds whether the screen asks for fifty rows or
+      // all of them, and what the page buys is a document the console can hold
+      // and a first row it can draw. The index read (IR1) is what makes the
+      // page a bound on the read as well. Both words are emitted as one
       // `=`-form word each (`spawn.ts`), which is what keeps a value from ever
       // reading as a flag.
       //
       // **`--limit`'s ceiling is the console's** (`RUNS_LIST_MAX_LIMIT`) and
       // not the CLI's: the command takes any count it can parse, and a
       // renderer that could ask for more than the cap could ask for the window
-      // under another name. `--after` is the id the same read printed, held to
-      // the run id's own grammar; an id the window does not hold is the CLI's
-      // refusal and not this one's, because only the CLI can know what the
-      // window held.
+      // under another name. `--after` is the id the read before it printed,
+      // held to the run id's own grammar; a page that names an id the CLI
+      // cannot place is the CLI's refusal and not this one's, because only the
+      // CLI can know what its own listing held.
       {
         key: 'limit',
         kind: 'runLimit',
         required: false,
-        why: 'the design allow-list admits `--limit=N` on this command: the newest N rows of the window, at most RUNS_LIST_MAX_LIMIT. It needs CLI 0.16.0, the release that carries #1545: in the 0.15 line `--limit` means "read only the newest N", so its totals are the page’s and not the window’s. The caller is the Coordinator screen’s job list (`showCoordinator`, `src/renderer/entry.ts`), which passes it only above `RUNS_LIST_PAGE_CLI_FLOOR`; the queue’s own runs part passes neither word.',
+        why: 'the design allow-list admits `--limit=N` on this command: the newest N rows of the listing, at most RUNS_LIST_MAX_LIMIT. It needs CLI 0.16.0, the release that carries #1545: in the 0.15 line `--limit` means "read only the newest N", so its totals are the page’s and not the window’s. The caller is the Live list’s "Load older" (`live.ts`, driven from `src/renderer/entry.ts`), which passes it only above `RUNS_LIST_PAGE_CLI_FLOOR`.',
       },
       {
         key: 'after',
         kind: 'runAfter',
         required: false,
-        why: 'the design allow-list admits `--after=RUN-ID` on this command: the cursor pages on the row’s own run_id. It needs CLI 0.16.0, the release that carries #1545: a 0.15.x CLI refuses the word outright. The caller is the Coordinator screen’s job list (`showCoordinator`, `src/renderer/entry.ts`), which sends the last row it drew and only above `RUNS_LIST_PAGE_CLI_FLOOR`.',
+        why: 'the design allow-list admits `--after=RUN-ID` on this command: the cursor pages on the row’s own run_id. It needs CLI 0.16.0, the release that carries #1545: a 0.15.x CLI refuses the word outright, and below the release that carries the run index the cursor is only a position inside the window the read was given. The caller is the Live list’s "Load older" (`live.ts`, driven from `src/renderer/entry.ts`), which sends the last row it drew and only above `RUNS_LIST_OLDER_CLI_FLOOR`.',
       },
     ],
   },
@@ -2274,7 +2281,7 @@ export const CONSOLE_OPERATIONS = [
         key: 'answers',
         kind: 'setupAnswers',
         required: true,
-        why: 'the wizard’s five answers, validated here key by key and serialised by this process into the document the child decodes: the payload carries an object and never a path, and `version` is main’s to write.',
+        why: 'the wizard’s six answers, validated here key by key and serialised by this process into the document the child decodes: the payload carries an object and never a path, and `version` is main’s to write.',
       },
     ],
   },
@@ -3577,7 +3584,7 @@ const SETTINGS_KEY_RE = /^[a-z0-9_*]+(\.[a-z0-9_*]+)*$/
 // The first-run wizard's answers (docs/console-improvements, D2904).
 
 /**
- * SETUP_ANSWER_KEYS is the five questions `fugaro setup` answers from one
+ * SETUP_ANSWER_KEYS is the six questions `fugaro setup` answers from one
  * document (`setupAnswerQuestions`, `internal/cli/setup_answers.go`), in the
  * order the CLI asks them.
  *
@@ -3594,8 +3601,19 @@ export const SETUP_ANSWER_KEYS: readonly string[] = Object.freeze([
   'region',
   'name',
   'rigor',
+  'budget',
   'bake_repos',
 ])
+
+// The budget answer's bounds, `SETUP_BUDGET_MIN` and `SETUP_BUDGET_MAX`, are
+// **imported at the top of this module rather than spelled again here**, unlike
+// the keys above. The difference is which module has the authority: the keys are
+// what a payload may carry, which the allow-list decides itself, while these two
+// numbers are the CLI's own rule (`managed.MinBudgetAmount` and
+// `managed.MaxBudgetAmount`, `internal/infra/managed/marker.go`), which no module
+// here decides -- so one copy of them is the one honest number, and a payload
+// outside them is refused at this door rather than by a run the operator has
+// already confirmed.
 
 /** SETUP_ANSWERS_VERSION is the answers file's own schema version
  * (`schemas/setup-answers.schema.json`). It is main's to write: the file's
@@ -3900,7 +3918,7 @@ function refuse(reason: string): { readonly ok: false; readonly reason: string }
  * **The payload carries an object and never a path.** The only path this
  * operation ever sees is the `-` main puts in the argv (`--answers-file -`,
  * `spawn.ts`'s own row words), so no renderer member can name a file -- and a
- * member that is not one of the five known keys is refused by name right here,
+ * member that is not one of the six known keys is refused by name right here,
  * before any child exists. The object is checked as a plain payload, so the
  * `{__proto__: ...}` shape `isPlainPayload` exists for is refused too.
  *
@@ -3926,9 +3944,28 @@ function setupAnswersValue(
     // the case this branch is for, and echoing it would print it.
     if (!SETUP_ANSWER_KEYS.includes(key)) return refuse(`${spec.key} takes no ${key}`)
   }
-  const answers: Record<string, string | boolean> = {}
+  const answers: Record<string, string | boolean | number> = {}
   for (const key of SETUP_ANSWER_KEYS) {
     const member: unknown = value[key]
+    // **The budget is the one optional question** (D2210, D2212): a member that
+    // is absent is the operator leaving the wizard's field empty, which is the
+    // CLI's own default of 100 USD and not "no alert at all", so it is dropped
+    // from the file rather than written as anything. Every other question is
+    // required here, because the CLI would ask it at a terminal this run does
+    // not have.
+    if (key === 'budget') {
+      if (member === undefined) continue
+      if (typeof member !== 'number' || !Number.isInteger(member)) {
+        return refuse(`${spec.key}'s budget must be a whole number of its currency`)
+      }
+      if (member < SETUP_BUDGET_MIN || member > SETUP_BUDGET_MAX) {
+        return refuse(
+          `${spec.key}'s budget must be ${SETUP_BUDGET_MIN} to ${SETUP_BUDGET_MAX} whole units`,
+        )
+      }
+      answers[key] = member
+      continue
+    }
     if (member === undefined) return refuse(`${spec.key} is missing ${key}`)
     if (key === 'bake_repos') {
       if (typeof member !== 'boolean') return refuse(`${spec.key}'s bake_repos must be true or false`)
@@ -3955,7 +3992,12 @@ function setupAnswersValue(
     answers[key] = member
   }
   const file: Record<string, unknown> = { version: SETUP_ANSWERS_VERSION }
-  for (const key of SETUP_ANSWER_KEYS) file[key] = answers[key]
+  for (const key of SETUP_ANSWER_KEYS) {
+    // An unanswered question writes no key at all, `budget`'s own rule: the
+    // schema's `additionalProperties: false` is about *keys*, and a key written
+    // as `undefined` is a member the file claims to answer.
+    if (answers[key] !== undefined) file[key] = answers[key]
+  }
   const text = JSON.stringify(file)
   if (text.length > SETUP_ANSWERS_MAX_LENGTH) {
     return refuse(`${spec.key} must be an answers file of at most ${SETUP_ANSWERS_MAX_LENGTH} characters`)

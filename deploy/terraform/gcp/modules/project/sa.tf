@@ -109,6 +109,10 @@ locals {
   # below).
   shared_job_served_secret_classes = ["model"]
 
+  # The service the account may invoke: the served profile's, or the one a
+  # grant every shared job holds with every mount kept.
+  credentials_grant = var.job.credentials_service != null ? var.job.credentials_service : var.job.credentials_service_grant
+
   # The model credentials the class's drop reaches, identified the way
   # internal/config identifies them (config.ModelSecretEnvs): the two reserved
   # variables, so a mount is one of them exactly when its VARIABLE is — and a
@@ -192,11 +196,11 @@ resource "google_secret_manager_secret_iam_member" "job" {
 # the job is otherwise untouched, and everything it mounts stays until B5.7's
 # flip (G17).
 resource "google_cloud_run_v2_service_iam_member" "credentials" {
-  count = var.job.credentials_service == null ? 0 : 1
+  count = local.credentials_grant == null ? 0 : 1
 
   project  = var.project
-  location = var.job.credentials_service.region
-  name     = var.job.credentials_service.name
+  location = local.credentials_grant.region
+  name     = local.credentials_grant.name
   role     = "roles/run.invoker"
   member   = google_service_account.job.member
 }

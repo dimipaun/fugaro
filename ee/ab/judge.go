@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -134,12 +135,12 @@ const ReasonNoJudgeModel = "no-judge-model"
 // cfg is the repository's own file, which supplies the run's auth; layer is the
 // project layer's ab: block, which is where judge_model lives (D553: it is the
 // owner's, never a repository's).
-func JudgeAdmit(cfg config.Config, layer config.AB, repo string, eff policy.Effective, providers map[string]config.ModelProvider, prices *pricing.Table) (string, bool, string) {
+func JudgeAdmit(cfg config.Config, layer config.AB, repo string, table routing.Table, eff policy.Effective, providers map[string]config.ModelProvider, prices *pricing.Table) (string, bool, string) {
 	model := strings.TrimSpace(layer.JudgeModel)
 	if model == "" {
 		return "", false, ReasonNoJudgeModel
 	}
-	if why := refuseModel(cfg, model, repo, eff, providers, prices); why != "" {
+	if why := refuseModel(cfg, model, repo, table, eff, providers, prices); why != "" {
 		return "", false, why
 	}
 	return model, true, ""
@@ -339,14 +340,15 @@ func JudgeManifest(ctx context.Context, run fcli.PlannedRun, warn io.Writer) ([]
 		layer = *cfg.Layer.AB
 	}
 	return buildJudgeManifest(ctx, run.Cloud.RunsBucket(), judgeLaunch{
-		Slug:      run.Slug,
-		Repo:      run.Repo,
-		Now:       time.Now(),
-		Layer:     layer,
-		Config:    cfg,
-		Policy:    run.Policy,
-		Providers: run.Providers,
-		Prices:    run.Prices,
+		Slug:         run.Slug,
+		Repo:         run.Repo,
+		Now:          time.Now(),
+		Layer:        layer,
+		Config:       cfg,
+		Policy:       run.Policy,
+		Providers:    run.Providers,
+		Prices:       run.Prices,
+		ModelRouting: run.ModelRouting,
 	}, warn)
 }
 
@@ -360,13 +362,15 @@ type judgeLaunch struct {
 	// Layer is the project layer's ab: block, which is where judge_model
 	// lives (D553).
 	Layer config.AB
-	// Config, Policy, Providers and Prices are the launch's own resolved
-	// facts, as PlannedRun carries them: the judge model passes the same
-	// admission a challenger does (O2).
-	Config    config.Config
-	Policy    policy.Effective
-	Providers map[string]config.ModelProvider
-	Prices    *pricing.Table
+	// ModelRouting, Config, Policy, Providers and Prices are the launch's own
+	// resolved facts, as PlannedRun carries them: the judge model passes the
+	// same admission a challenger does (O2), the project's routing table
+	// included.
+	ModelRouting routing.Table
+	Config       config.Config
+	Policy       policy.Effective
+	Providers    map[string]config.ModelProvider
+	Prices       *pricing.Table
 }
 
 // buildJudgeManifest lists this repository's runs, refuses the launch while one
@@ -384,7 +388,7 @@ type judgeLaunch struct {
 //     complete) is refused plainly rather than by a job started and paid for
 //     to judge nothing, the way a report run's own launch refuses.
 func buildJudgeManifest(ctx context.Context, bucket *blobx.Bucket, l judgeLaunch, warn io.Writer) ([]byte, error) {
-	model, ok, why := JudgeAdmit(l.Config, l.Layer, l.Repo, l.Policy, l.Providers, l.Prices)
+	model, ok, why := JudgeAdmit(l.Config, l.Layer, l.Repo, l.ModelRouting, l.Policy, l.Providers, l.Prices)
 	if !ok {
 		if why == ReasonNoJudgeModel {
 			return nil, fcli.UserErr("recipe %s judges with the project layer's ab.judge_model, and this project publishes none: an owner sets it and publishes the layer (D553)", RecipeName)

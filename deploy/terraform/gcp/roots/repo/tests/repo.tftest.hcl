@@ -1929,6 +1929,70 @@ run "credentials_service_off_job" {
   }
 }
 
+# D3326 as amended by F17 (IS9): a vertex repository is the one repository
+# handed the ADDRESS without being served. The block is set and
+# credentials_service_serves is false, which is what Go writes for a `vertex`
+# repository — the job's accounts get roles/run.invoker and NOTHING of the
+# job's is dropped: it keeps every accessor and every mount the off case
+# keeps, and the service's own account gets no container of this job's. The
+# model path this preserves is G7's.
+run "credentials_service_vertex_repo_gets_the_address" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project         = var.bitbucket.project
+    fugaro_project  = var.bitbucket.fugaro_project
+    region          = var.bitbucket.region
+    name            = "web"
+    repo_label      = var.bitbucket.repo.label
+    workflow        = var.bitbucket.repo.workflows.web
+    secrets         = var.bitbucket.repo.secrets
+    runs_bucket     = var.bitbucket.installation.runs_bucket
+    job_runner_role = var.bitbucket.installation.role_ids.job_runner
+    credentials_service = {
+      name    = "fugaro-credentials"
+      region  = "us-east5"
+      account = "fugaro-credentials@proj-1234.iam.gserviceaccount.com"
+    }
+    credentials_service_serves = false
+  }
+
+  override_resource {
+    target          = google_service_account.job
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition = (length(google_cloud_run_v2_service_iam_member.credentials) == 1 &&
+      google_cloud_run_v2_service_iam_member.credentials[0].name == "fugaro-credentials" &&
+      google_cloud_run_v2_service_iam_member.credentials[0].location == "us-east5" &&
+      google_cloud_run_v2_service_iam_member.credentials[0].role == "roles/run.invoker" &&
+    google_cloud_run_v2_service_iam_member.credentials[0].member == "serviceAccount:fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com")
+    error_message = "a vertex repository's job account must invoke the installation's credentials service: the address is what its run fetches its workflow secrets through"
+  }
+  assert {
+    condition = tomap({ for k, m in google_secret_manager_secret_iam_member.job : k => m.secret_id }) == tomap({
+      claude-oauth-token = "fugaro-acme-sandbox-claude-oauth-token-d68d08fb66f32201"
+      bitbucket-token    = "fugaro-acme-sandbox-bitbucket-token-a9273afb5a2f66ba"
+      sandbox-probe      = "fugaro-acme-sandbox-sandbox-probe-8ed07eaf4b722cd8"
+    })
+    error_message = "being told the address drops nothing: a vertex repository keeps its accessor on every secret it mounts, the model credential included (G7)"
+  }
+  assert {
+    condition     = length(google_secret_manager_secret_iam_member.service) == 0
+    error_message = "the service serves no vertex repository's credentials, so it is granted none of its containers (D2074 hangs on credentials_service_serves)"
+  }
+}
+
 # D2074 (B3.3): with the service ON, the service's OWN account may read every
 # workflow secret this job mounts — one accessor per container, beside the
 # job's own grant and never a move of it. What the service reads them for is
@@ -2380,6 +2444,35 @@ run "build_account_invokes_the_service" {
   assert {
     condition     = length([for m in google_cloud_run_v2_service_iam_member.build_credentials : m if length(try(m.condition, [])) > 0]) == 0
     error_message = "the build account's invoker binding carries no condition (B4.4)"
+  }
+}
+
+# D3326 (IS9): the address without the service. A vertex repository's job
+# accounts are granted the invoker (checked in the workflow module run above,
+# where that binding lives) while the repository's BUILD account is granted
+# nothing: its builds read what they mount, they fetch no workflow secret, and
+# the one account the acceptance names is the job's.
+run "vertex_repo_build_account_gets_no_invoker" {
+  command = plan
+
+  module {
+    source = "../../modules/repo"
+  }
+
+  variables {
+    project        = var.github.project
+    fugaro_project = var.github.fugaro_project
+    region         = var.github.region
+    installation = merge(var.github.installation, {
+      credentials_service        = { name = "fugaro-credentials", region = "us-east5" }
+      credentials_service_serves = false
+    })
+    repo = var.github.repo
+  }
+
+  assert {
+    condition     = length(google_cloud_run_v2_service_iam_member.build_credentials) == 0
+    error_message = "a vertex repository is handed the address for its runs, not for its builds: the build account is granted no invoker binding"
   }
 }
 

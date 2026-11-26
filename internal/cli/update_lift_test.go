@@ -26,9 +26,8 @@ import (
 // migrates a repository once, names what it could not read or expand, and
 // writes nothing at all under --plan-only.
 //
-// The six migration items are their own tasks (MC1, AB3, RG2, PR4, RC4, RT3)
-// and internal/lift still registers the stubs, so every test here replaces the
-// stage's two seams: the planners it runs and the repositories it reads them
+// The registered planners are tested in internal/lift,
+// so most tests here replace the stage's two seams: the planners it runs and the repositories it reads them
 // over. That is what the seams are for — the stage's own promise is the order
 // of saying and writing, the records, and the gates, and none of it depends on
 // which item produced a change.
@@ -528,4 +527,106 @@ func TestLiftStageLowersTheCapBehindTheGate(t *testing.T) {
 	if !sameNode(liftJSON(t, db.Value(budget.PathCapsRepo(slug))), liftJSON(t, over)) {
 		t.Errorf("--plan-only lowered the cap: %v", db.Value(budget.PathCapsRepo(slug)))
 	}
+}
+
+// TestUpdateLiftsEveryKey runs the registered planners, not fixtures: an
+// installation whose repositories write lifted keys converges in one update,
+// with the models and agent.auth in the layer file and a record per repository,
+// and a second update changes nothing.
+func TestUpdateLiftsEveryKey(t *testing.T) {
+	// The fixture layer's agent line goes, so what the planner writes lands in a
+	// block of its own: yamledit cannot add a key inside a flow map, and
+	// defaults.agent is one while the line stands.
+	r := newLayerRig(t, strings.Replace(testProjectLayer, layerAgentLine, "", 1))
+	old := liftRepositories
+	liftRepositories = func(context.Context, *initEngine, *localcfg.Config, []string) ([]lift.Repo, []string, error) {
+		file := []byte("agent:\n  auth: cascade\n  models:\n    background: claude-haiku-4-5\n")
+		return []lift.Repo{
+			{Repo: "acme/one", Provider: "github", Config: file},
+			{Repo: "acme/two", Provider: "github", Config: file},
+		}, nil, nil
+	}
+	t.Cleanup(func() { liftRepositories = old })
+	fakeTerminal(t)
+
+	out, errOut, err := executeStdin(t, "", "update")
+	if err != nil {
+		t.Fatalf("fugaro update did not migrate: %v\n%s%s", err, out, errOut)
+	}
+	if all := out + errOut; !strings.Contains(all, "project: agent.auth -> cascade") {
+		t.Errorf("update says nothing about agent.auth:\n%s", all)
+	}
+	text, _ := localLayerText(t)
+	for _, want := range []string{"claude-haiku-4-5", "auth: cascade"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the layer file lacks %q:\n%s", want, text)
+		}
+	}
+	for _, repo := range []string{"acme/one", "acme/two"} {
+		if _, ok := liftRecordFile(t, r.runs, liftSlug(t, repo)); !ok {
+			t.Errorf("%s is not recorded as migrated", repo)
+		}
+	}
+
+	if _, _, err = executeStdin(t, "", "update"); err != nil {
+		t.Fatalf("the second update failed: %v", err)
+	}
+	if again, _ := localLayerText(t); again != text {
+		t.Errorf("the second update changed the layer file:\n%s", again)
+	}
+}
+
+// TestUpdateAskChoosesAuthWhereReposDisagree: update --ask puts one question
+// when the repositories write different agent.auth values, and only then; with
+// nobody to answer it is refused at once.
+func TestUpdateAskChoosesAuthWhereReposDisagree(t *testing.T) {
+	setup := func(t *testing.T) {
+		newLayerRig(t, strings.Replace(testProjectLayer, layerAgentLine, "", 1))
+		old := liftRepositories
+		liftRepositories = func(context.Context, *initEngine, *localcfg.Config, []string) ([]lift.Repo, []string, error) {
+			return []lift.Repo{
+				{Repo: "acme/one", Provider: "github", Config: []byte("agent:\n  auth: cascade\n")},
+				{Repo: "acme/two", Provider: "github", Config: []byte("agent:\n  auth: cascade\n")},
+				{Repo: "acme/three", Provider: "github", Config: []byte("agent:\n  auth: api-key\n")},
+			}, nil, nil
+		}
+		t.Cleanup(func() { liftRepositories = old })
+	}
+
+	t.Run("the first no moves to the next value", func(t *testing.T) {
+		setup(t)
+		fakeTerminal(t)
+		out, errOut, err := executeStdin(t, "n\ny\n", "update", "--ask")
+		if err != nil {
+			t.Fatalf("update --ask failed: %v\n%s%s", err, out, errOut)
+		}
+		if text, _ := localLayerText(t); !strings.Contains(text, "auth: api-key") {
+			t.Errorf("the chosen agent.auth is not in the layer file:\n%s", text)
+		}
+	})
+
+	t.Run("no terminal is refused at once", func(t *testing.T) {
+		setup(t)
+		noAgentSession(t)
+		noTerminalHere(t)
+		_, errOut, err := executeStdin(t, "", "update", "--ask")
+		if err == nil || !strings.Contains(err.Error()+errOut, "needs a real terminal") {
+			t.Fatalf("want a refusal naming the terminal, got %v\n%s", err, errOut)
+		}
+		if _, ok := localLayerText(t); ok {
+			t.Error("the layer file was written")
+		}
+	})
+
+	t.Run("without --ask the majority stands and nothing is asked", func(t *testing.T) {
+		setup(t)
+		fakeTerminal(t)
+		out, errOut, err := executeStdin(t, "", "update")
+		if err != nil {
+			t.Fatalf("update failed: %v\n%s%s", err, out, errOut)
+		}
+		if text, _ := localLayerText(t); !strings.Contains(text, "auth: cascade") {
+			t.Errorf("the majority value is not in the layer file:\n%s", text)
+		}
+	})
 }

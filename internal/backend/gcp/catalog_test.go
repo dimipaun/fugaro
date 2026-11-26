@@ -1272,6 +1272,7 @@ func TestCatalogBuildHasACheckoutStepForAContextEntry(t *testing.T) {
 		"DOCKER_BUILDKIT=1", "FUGARO_BASE=${_FUGARO_BASE}", "REPO_URL=${_REPO_URL}",
 		"COMMIT=" + s.ContextCommit, "REPO_HOST=bitbucket.org", "GITHUB_API=https://api.github.com",
 		"CONTEXT_DIR=${_CONTEXT_DIR}", "BUILD_CWD=" + buildStepCwd(step(t, b, "build")),
+		"CREDENTIALS_SERVICE_URL=${_CREDENTIALS_SERVICE_URL}", "BUILD_ID=$BUILD_ID",
 	}) {
 		t.Fatalf("the clone step's env = %v", env)
 	}
@@ -1540,6 +1541,15 @@ esac
 exit 0
 `
 
+// catalogGrantService is the credentials service address the clone step's
+// tests run a Bitbucket build against, and catalogCurlStub is the metadata
+// server's answer for the build identity's ID token: one clean value.
+const catalogGrantService = "https://creds.example"
+
+const catalogCurlStub = `#!/bin/sh
+printf 'eyJhbGciOi.eyJhdWQi.c2lnbmF0dXJl'
+`
+
 // runCatalogCloneGuard runs the clone step's script with the stub docker and
 // returns its output: ws holds the workspace the script's /workspace names,
 // with the credential volume the step mounts, the checkout the stubbed clone
@@ -1560,12 +1570,26 @@ func runCatalogCloneGuard(t *testing.T, st *cloudbuild.BuildStep, ws, tree, cont
 	bin := filepath.Join(ws, "bin")
 	testutil.WriteFiles(t, bin, map[string]string{"docker": catalogDockerStub})
 	script := strings.ReplaceAll(strings.ReplaceAll(st.Args[1], "$$", "$"), "/workspace", ws)
+	script = strings.ReplaceAll(script, catalogCloneCredential, filepath.Join(ws, catalogCloneCredential))
 	context = strings.ReplaceAll(context, "${WS}", ws)
 	env := []string{"PATH=" + bin + ":" + os.Getenv("PATH"), "WORKSPACE=" + ws, "TREE=" + tree}
 	for _, kv := range st.Env {
-		env = append(env, strings.ReplaceAll(strings.ReplaceAll(kv, "${_CONTEXT_DIR}", context), "/workspace", ws))
+		kv = strings.ReplaceAll(strings.ReplaceAll(kv, "${_CONTEXT_DIR}", context), "/workspace", ws)
+		env = append(env, strings.ReplaceAll(strings.ReplaceAll(kv, "${_CREDENTIALS_SERVICE_URL}", catalogGrantService), "$BUILD_ID", "3a67fac5-e201-46ce-88e3-6437cf2e0e11"))
+		if strings.HasPrefix(kv, "CREDENTIALS_SERVICE_URL=") {
+			// A Bitbucket build's step reads the grant its credential step
+			// wrote and the build identity's token from the metadata server.
+			testutil.WriteFiles(t, bin, map[string]string{"curl": catalogCurlStub})
+			testutil.WriteFiles(t, filepath.Join(ws, "creds"), map[string]string{
+				"git-credentials": "[url \"" + catalogGrantService + "/v1/bitbucket/proxy/\"]\n\tinsteadOf = https://bitbucket.org/\n",
+			})
+		}
 	}
-	cmd := exec.Command(bash, "-c", script)
+	args := []string{"-c", script, st.Args[2]}
+	for _, a := range st.Args[3:] {
+		args = append(args, strings.ReplaceAll(strings.ReplaceAll(a, "$$", "$"), "/workspace", ws))
+	}
+	cmd := exec.Command(bash, args...)
 	cmd.Env = env
 	return cmd.CombinedOutput()
 }
@@ -1602,8 +1626,8 @@ func TestCatalogContextStepRefusesAContextThatLeavesTheCheckoutByALink(t *testin
 		t.Fatal(err)
 	}
 	st := step(t, b, catalogCloneStepID)
-	if len(st.Args) != 2 {
-		t.Fatalf("the clone step's args = %q, want one script", st.Args)
+	if len(st.Args) < 5 {
+		t.Fatalf("the clone step's args = %q, want the shell, its name, a chunk count and the files", st.Args)
 	}
 	for _, tc := range []struct {
 		name    string

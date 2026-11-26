@@ -75,6 +75,16 @@ type cloudEnv struct {
 	// noBudgetCheck is --no-budget-check: fugaro run skips the launch
 	// pre-check of the budget (nothing else).
 	noBudgetCheck bool
+	// noPersonalToken is --no-personal-token: fugaro run asks the workspace for
+	// no grant, so this launch's runs draw on the shared entries rather than on
+	// the launcher's own token (D3142). It is read where the grant would be
+	// asked for (run_personal.go) and nowhere else.
+	noPersonalToken bool
+	// runPool is --pool: the pool "the launcher's pool" resolves to for this
+	// launch's run (D3176 as amended, CS12), read where the run's grant is
+	// asked for (run.go's runSlipEnv). Empty is a launch that named none,
+	// which is every launch but `fugaro run --pool`.
+	runPool string
 	// policy is the project's published policy, read at most once per run
 	// through the operator's own credentials (policyReadOnce.read): the launch
 	// gate reads it before anything of the launch exists, and the mint

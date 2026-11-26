@@ -46,6 +46,60 @@ func TestPlanExitCodeTwoIsChanges(t *testing.T) {
 	}
 }
 
+// TestPlanDestroyIsASavedPlan: the whole-root retirement's plan is a plan like
+// any other -- `plan -destroy`, saved to the -out file -- so what applies it is
+// Apply and nothing else. The two halves that matter are pinned here: the argv
+// carries -destroy, and the apply of that file carries none (there is no
+// `apply -destroy`, and a plan applied with -destroy would be a second
+// destruction path nobody guarded).
+func TestPlanDestroyIsASavedPlan(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	r.script["plan"] = map[string]any{"exit": 2}
+	tf := r.tf(t, nil)
+	out := filepath.Join(r.dir, "tfplan")
+	changed, err := tf.PlanDestroy(ctx, out)
+	if err != nil || !changed {
+		t.Fatalf("PlanDestroy: changed=%v err=%v, want a plan with changes", changed, err)
+	}
+	want := []string{"plan", "-destroy", "-input=false", "-no-color", "-lock-timeout=60s", "-detailed-exitcode", "-out=" + out, "-var-file=terraform.tfvars.json"}
+	if got := r.call(t, "plan").Args; !slices.Equal(got, want) {
+		t.Errorf("plan -destroy argv = %q, want %q", got, want)
+	}
+	if err := tf.Apply(ctx, out); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.call(t, "apply").Args; slices.Contains(got, "-destroy") {
+		t.Errorf("apply argv %q carries -destroy", got)
+	}
+	// A plan that changes nothing is no changes, exactly as Plan's is, and a
+	// failed one fails.
+	for _, tc := range []struct {
+		exit    int
+		stderr  string
+		changed bool
+		fails   bool
+	}{
+		{exit: 0, changed: false},
+		{exit: 2, changed: true},
+		{exit: 1, stderr: "boom", fails: true},
+	} {
+		r2 := newRig(t)
+		r2.script["plan"] = map[string]any{"exit": tc.exit, "stderr": tc.stderr}
+		tf2 := r2.tf(t, nil)
+		changed, err := tf2.PlanDestroy(ctx, filepath.Join(r2.dir, "tfplan"))
+		if tc.fails {
+			if err == nil {
+				t.Errorf("exit %d: the destroy plan succeeded, want a failure", tc.exit)
+			}
+			continue
+		}
+		if err != nil || changed != tc.changed {
+			t.Errorf("exit %d: changed=%v err=%v, want changed=%v", tc.exit, changed, err, tc.changed)
+		}
+	}
+}
+
 func TestApplyUsesSavedPlanOnly(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
