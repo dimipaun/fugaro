@@ -201,6 +201,19 @@ type Inputs struct {
 	// nothing" is a different answer from "not read", and only the first one
 	// refuses a local entry that proxies a repository the node does not.
 	Policy *projectpolicy.Policy
+	// CopiedWorkflowSecrets names the workflow secrets whose value the
+	// installation holds in its own fugaro_p_<name> grammar — the project
+	// record the update wrote once the copy was made (IS5, D3325) — as the
+	// caller read it (internal/cli's workflowCopiesInGrammar).
+	//
+	// nil means the caller read no record at all, which is the same answer
+	// Policy's nil is: a command that does not read one (fugaro image, fugaro
+	// doctor, --print-vars) judges every eligible name copied, which is the
+	// spec every release before IS6 computed. Non-nil is a READ record, and an
+	// empty one is the installation that has copied nothing: a name it does not
+	// hold keeps its mount, its grants and its copy until a later update copies
+	// it (IS5's skipped name, the plan's acceptance).
+	CopiedWorkflowSecrets []string
 }
 
 // InstallationOutputs are the installation root's outputs, as `terraform
@@ -652,15 +665,16 @@ type WorkflowSpec struct {
 	// VaultSecretNames are the logical names of the workflow's OWN secrets
 	// whose values the credentials service fetches for this job (B3.8, S3,
 	// config.VaultFetchedSecretClasses): sorted, and empty while no class of
-	// secrets is fetched or while this repository is one the switch holds off.
+	// secrets is fetched, while this repository is one the installation hands
+	// the service no address, or while the project record marks none of the
+	// names it declares copied (IS6, Inputs.CopiedWorkflowSecrets).
 	//
 	// The names are here because the module needs them and cannot derive them:
 	// the job mounts none of them, so var.workflow.secret_env no longer names
-	// them, and the credentials service still has to be able to READ each one's
-	// container — it is the service, and not the job, that fetches the value now
-	// (D2074's grant, B3.4's fetch). The containers stay declared and the job's
-	// own accessors on them go (modules/workflow/sa.tf drops both through this
-	// list, and internal/infra's dropVaultMounts takes the mounts away here).
+	// them, and the job's own accessor on each has to go with its mount — a
+	// mount the account may not read is a job Cloud Run refuses to create
+	// (C2.3). modules/workflow/sa.tf reads the list for that one clause, and
+	// internal/infra's dropVaultMounts is what took the mounts away here.
 	VaultSecretNames []string `json:"vault_secret_names,omitempty"`
 
 	Name                string            `json:"-"`
@@ -1033,8 +1047,12 @@ type repoCtx struct {
 	// repository credentialsServiceOn is, and for a `vertex` one of an
 	// installation that has the service, whose runs fetch their workflow
 	// secrets through it and read no credential of theirs there (D3326, F17).
-	// credentialsServiceOn stays the narrower answer and is the one every drop
-	// reads; the two travel together into the tfvars.
+	// credentialsServiceOn stays the narrower answer, and which drop reads
+	// which is the line between them (IS6): the model, App-key and proxied-git
+	// drops read credentialsServiceOn, because those are the credentials the
+	// service's own bundle holds, and the FETCHED class reads this one, because
+	// the run's fetch is over the address. The two travel together into the
+	// tfvars.
 	credentialsServiceAddressed bool
 	// budgetMode is the mode the published node carries, read once by resolve
 	// from Inputs.Policy: the fact VertexGrantForJob reads to take a job's
@@ -2092,12 +2110,24 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 		dropModelMounts(&ws, served)
 	}
 	// And the workflow's OWN secrets go the same way for a repository the
-	// service serves once the class list names them (B3.8, S3): the runner
-	// fetches their values from the service at bootstrap (B3.4) instead of
-	// reading them from its own environment, so the job mounts none of them and
-	// the module drops the matching accessor — while the containers stay
-	// declared, because the service is what reads them now (D2074's grant,
-	// B3.1's record, dropVaultMounts).
+	// installation hands the service's address, once the class list names them
+	// (B3.8, S3, IS6): the runner fetches their values from the service at
+	// bootstrap (B3.4) instead of reading them from its own environment, so the
+	// job mounts none of them and the module drops the matching accessor — and
+	// the project copy no longer exists to hold one, since the value the fetch
+	// reads is the installation's fugaro_p_<name> copy (IS5/D3325). The gate is
+	// the ADDRESS and not c.credentialsServiceOn, which is IS6's one widening:
+	// a `vertex` repository is handed the address and served no credential of
+	// its own, so nothing of its job's goes to the service's bundle (D3326/F17)
+	// — and its workflow secrets do go, because the run fetches those over that
+	// same address. It is local.service_addressed in modules/workflow/sa.tf,
+	// which holds the same two gates.
+	//
+	// The names are the ones the project record marks copied, and only those: a
+	// name IS5 skipped keeps its mount, its accessors and its copy until a later
+	// update copies it, because a fetch of a name the grammar does not hold
+	// fails for the run that declares it (copiedWorkflowSecret below). A caller
+	// that read no record (in.CopiedWorkflowSecrets nil) gets the whole class.
 	//
 	// The class list is the switch (config.VaultFetchedSecretClasses, which has
 	// carried VaultSecretClassWorkflow since the flip's second commit; with it
@@ -2105,8 +2135,8 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	// modules/workflow/sa.tf's own clause reads, held to it by that module's
 	// guard test. Read beside dropModelMounts because it is the same rule — a
 	// mount and an accessor are one answer — for a second class of secret.
-	if c.credentialsServiceOn {
-		dropVaultMounts(&ws, w, func(name string) bool {
+	if c.credentialsServiceAddressed {
+		dropVaultMounts(&ws, w, c.in.CopiedWorkflowSecrets, func(name string) bool {
 			// The repository's eligibility to use the name project-wide, which
 			// is ProjectSecretCandidates' own predicate for this name
 			// (ProjectSecretCandidateFromNode, with the two facts only this
@@ -2866,12 +2896,15 @@ func (rs RepoSpec) Addresses() []string {
 		// service may still be asked for (the module's set is the mounts), and
 		// a mount the job has given up is one the service is not granted.
 		//
-		// Plus the containers no job mounts any more and the service fetches
-		// for it instead (B3.8, WorkflowSpec.VaultSecretNames): the module's
-		// service_secret_names is its job_mounts together with that list, so
-		// the mirror reads both. Its job_secret_names half needs nothing here
-		// — the names left ws.SecretEnv when the drop took their mounts, so
-		// uniqueSecrets below no longer names them.
+		// The fetched class contributes nothing here any more (IS6): a name the
+		// job no longer mounts is no longer a container the service is granted,
+		// because the container a run's fetch reads is the installation's own
+		// fugaro_p_<name> copy and the service's prefix-wide grant on that
+		// grammar is D3323's, in modules/installation/credentials.tf. The
+		// module's service_secret_names is its job_mounts alone, and its
+		// job_secret_names half needs nothing here either — the names left
+		// ws.SecretEnv when the drop took their mounts, so uniqueSecrets below
+		// no longer names them.
 		//
 		// Empty for a repository the service does not SERVE, which the module's
 		// own gate says too (local.service_serves, B3.8/IS9): a `vertex`
@@ -2879,7 +2912,6 @@ func (rs RepoSpec) Addresses() []string {
 		// this account none of its containers (D3326, F17).
 		if rs.credentialsServiceServes() {
 			serviceNames := uniqueSecrets(ws)
-			serviceNames = append(serviceNames, ws.VaultSecretNames...)
 			slices.Sort(serviceNames)
 			for _, logical := range slices.Compact(serviceNames) {
 				if serviceReadsSecret(rs.Installation.CredentialsService, logical, rs.BitbucketProxied) {

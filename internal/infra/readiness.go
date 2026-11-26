@@ -177,20 +177,33 @@ func dropModelMounts(ws *WorkflowSpec, served string) {
 	}
 }
 
+// copiedWorkflowSecret is whether a name is one the project record marks copied
+// (IS6): the value the installation holds in its fugaro_p_<name> grammar, so
+// the run's fetch has something to be served. copied is Inputs.CopiedWorkflowSecrets,
+// and a NIL one means the caller read no record at all — every name is then
+// taken, which is the spec every release before IS6 computed and what a command
+// that reads no record (fugaro image, fugaro doctor, --print-vars) must get. An
+// empty, non-nil list is a read record that marks nothing.
+func copiedWorkflowSecret(copied []string, name string) bool {
+	if copied == nil {
+		return true
+	}
+	return slices.Contains(copied, name)
+}
+
 // dropVaultMounts removes from a job's mounts the variables that carry the
 // workflow's OWN secrets when the credentials service fetches them for it
-// (B3.8, S3; D2072's shape, G17) — the repository is one the switch serves
-// (the caller's own condition, CredentialsServiceServes) and
+// (B3.8, S3; D2072's shape, G17) — the repository is one the installation hands
+// the service's address (the caller's own condition) and
 // config.VaultFetchedSecretClasses names the class secrets of this kind belong
 // to (config.VaultSecretClassWorkflow, which the list has carried since the
 // flip's second commit; with the list empty this call is a no-op).
 //
 // The names go into ws.VaultSecretNames, which is the half the tfvars carry to
-// the module: it drops the job's accessor on each of them and keeps the
-// credentials service's own grant, which is what makes the fetch possible at
-// all. Read beside dropModelMounts, this is the same two-halves rule: the mount
-// this drops and the accessor the module takes away are one answer, read from
-// one list.
+// the module: it drops the job's accessor on each of them, and drops the job's
+// mount with it. Read beside dropModelMounts, this is the same two-halves rule:
+// the mount this drops and the accessor the module takes away are one answer,
+// read from one list.
 //
 // It is deliberately not dropMount: the CONTAINER has to stay. The service
 // reads it, D2074's grant is on it, and B3.1's record names it as the container
@@ -199,26 +212,36 @@ func dropModelMounts(ws *WorkflowSpec, served string) {
 // record naming a container that is gone, and make Retirements report a live
 // container as retired.
 //
-// Which of the workflow's secrets are on this path is not "every name it
-// declares": a repository-level name D2313 leaves storeless for this repository
-// (config.RepoSecretsOff, ignoredRepoSecret) is not mounted either — Readiness
-// drops that mount below — and B3.1's record holds no row for it, so the
-// service has no value to answer with and a job that gave up the mount would be
-// a run with nothing to read. Those names are skipped here, and the test is
-// projectWide: the same eligibility ignoredRepoSecret reads off
-// RepoSpec.ProjectSecretCandidates (ProjectSecretCandidate, which is what the
-// record's own rows are built from), and not a narrower reading of the local
-// config's project_secrets block — a name admitted through workflow_secrets, a
-// swept reserved name, an account's or a provider's own key is one the record
-// does hold a row for, and the flip is about every name the service can serve.
-// Every other name is fetched — with the ruling's door off, that is every one
-// of them.
+// Which of the workflow's secrets are on this path is asked twice, and the two
+// questions are not one. copied is the project record's own list
+// (Inputs.CopiedWorkflowSecrets): only a name whose value the installation
+// already holds in the fugaro_p_<name> grammar is fetched, because a fetch of
+// one it does not hold yet fails for the run that declares it — and a name IS5
+// skipped keeps its mount, its accessors and its copy until a later update
+// copies it (IS6, D3325). projectWide is the second, older question and it is
+// D2313's: a repository-level name the ruling leaves storeless for this
+// repository (config.RepoSecretsOff, ignoredRepoSecret) is not mounted either —
+// Readiness drops that mount below — and B3.1's record holds no row for it, so
+// the service has no value to answer with and a job that gave up the mount
+// would be a run with nothing to read. It is the same eligibility
+// ignoredRepoSecret reads off RepoSpec.ProjectSecretCandidates
+// (ProjectSecretCandidate, which is what the record's own rows are built from),
+// and not a narrower reading of the local config's project_secrets block — a
+// name admitted through workflow_secrets, a swept reserved name, an account's
+// or a provider's own key is one the record does hold a row for, and the flip
+// is about every name the service can serve.
+//
+// The two are separate arguments rather than one predicate because they answer
+// for different runs: projectWide's clause only fires while D2313's door is on
+// (internal/infra's own tests open it, as internal/cli's do), and a copied name
+// is not fetched there either — with the door off, this drop is the copied
+// list's answer alone.
 //
 // An empty class list returns before the loop rather than leaving it empty: the
 // flip's inert state must leave the job exactly as it found it, the redaction
 // list included, whatever the job happens to mount (D147's shape for a
 // repository the switch holds off).
-func dropVaultMounts(ws *WorkflowSpec, w config.Workflow, projectWide func(string) bool) {
+func dropVaultMounts(ws *WorkflowSpec, w config.Workflow, copied []string, projectWide func(string) bool) {
 	// A repository with no service, or one whose switch is off, never reaches
 	// this call: the caller asks CredentialsServiceServes, which is the same
 	// answer the runner reads off its own environment — no address, no fetch.
@@ -226,6 +249,9 @@ func dropVaultMounts(ws *WorkflowSpec, w config.Workflow, projectWide func(strin
 		return
 	}
 	for _, s := range w.Secrets {
+		if !copiedWorkflowSecret(copied, s.Name) {
+			continue
+		}
 		if config.RepoSecretsOff && config.RepoLevelSecret(s.Name) && !projectWide(s.Name) {
 			continue
 		}

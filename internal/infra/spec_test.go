@@ -3799,12 +3799,30 @@ func TestVertexRepoKeepsModelPath(t *testing.T) {
 		if got, want := modelMountsOf(after), modelMountsOf(before); !slices.Equal(got, want) {
 			t.Errorf("the vertex repository's %s job mounts %v, want %v: a vertex run reads no model credential of the service's, so the address may not move its mounts (G7, F17)", key, got, want)
 		}
-		if got, want := slices.Sorted(maps.Keys(after.SecretEnv)), slices.Sorted(maps.Keys(before.SecretEnv)); !slices.Equal(got, want) {
-			t.Errorf("the vertex repository's %s job declares the secret env vars %v, want %v (G7)", key, got, want)
+		// The class the address DOES move is the workflow's own secrets (IS6,
+		// D3324) — TestNoWorkflowSecretMount pins that — so both sides below
+		// are read with it taken out: what is left is the model path and the
+		// git provider credential, which is what G7 says may not move. The
+		// names come off the fixture rather than a list written here.
+		own := ownSecretNames(before)
+		if len(own) == 0 {
+			t.Fatalf("the fixture declares no workflow secret of its own (%v): this test would say nothing about the class the address does move", before.SecretEnv)
 		}
-	}
-	if got, want := vaultAccessors(withService, "job"), vaultAccessors(plain, "job"); !slices.Equal(got, want) {
-		t.Errorf("the vertex repository's job accounts hold the accessors %v, want %v, the ones they hold with no service at all: the service serves this repository nothing, so it takes no accessor away (G7, F17)", got, want)
+		wantEnv := maps.Clone(before.SecretEnv)
+		for env, logical := range wantEnv {
+			if slices.Contains(own, logical) {
+				delete(wantEnv, env)
+			}
+		}
+		if !maps.Equal(after.SecretEnv, wantEnv) {
+			t.Errorf("the vertex repository's %s job mounts %v, want %v, its mounts with no service at all minus the workflow's own secrets %v: the address moves the fetched class and no other (G7, F17, IS6)", key, after.SecretEnv, wantEnv, own)
+		}
+		wantJob := slices.DeleteFunc(vaultAccessors(plain, "job"), func(a string) bool {
+			return slices.ContainsFunc(own, func(n string) bool { return strings.Contains(a, `["`+n+`"]`) })
+		})
+		if got := vaultAccessors(withService, "job"); !slices.Equal(got, wantJob) {
+			t.Errorf("the vertex repository's job accounts hold the accessors %v, want %v: an accessor stays with the mount it covers — every one but the fetched class's, whose container the service reads in the fugaro_p_ grammar instead (G7, F17, IS6, D3323)", got, wantJob)
+		}
 	}
 	if got, want := vaultAccessors(withService, "service"), vaultAccessors(plain, "service"); !slices.Equal(got, want) {
 		t.Errorf("the vertex repository grants the service's own account the accessors %v, want %v: the service reads none of this repository's containers, so it is granted none (D2074, D3326)", got, want)
@@ -3823,6 +3841,24 @@ func modelMountsOf(ws WorkflowSpec) []string {
 	}
 	slices.Sort(out)
 	return out
+}
+
+// ownSecretNames are the logical names of a workflow spec's OWN secrets: every
+// mount that is neither a model credential nor the git provider credential,
+// which is the class the credentials service fetches for a repository whose job
+// carries its address (config.VaultFetchedSecretClasses, IS6/D3324). Read off
+// the spec rather than named here, so a fixture declaring two of them is
+// covered as it is written.
+func ownSecretNames(ws WorkflowSpec) []string {
+	var out []string
+	for env, logical := range ws.SecretEnv {
+		if config.IsModelSecretEnv(env) || logical == ws.GitSecret {
+			continue
+		}
+		out = append(out, logical)
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // claudeMountsOf are the two Claude mounts of a model-mount list: the pair the
@@ -4318,9 +4354,11 @@ func TestEmptyVaultListChangesNothing(t *testing.T) {
 // TestFilledVaultListDropsWorkflowMountsAndAccessors is B3.8's flip pinned
 // where it holds: the class list is filled, so a repository the credentials
 // service serves plans its workflow's own secrets away from the job — the
-// mount, the redaction entry and the account's accessor — and keeps the
-// container, which is what the service's own grant (D2074) and B3.1's record
-// name as the value's home.
+// mount, the redaction entry and the account's accessor — and IS6 adds the
+// service's own grant on that name to what goes with them: the run's fetch
+// reads the installation's fugaro_p_<name> copy (D3323, D3324), so a
+// per-container accessor for the service here would cover a container nobody
+// asks for.
 //
 // It was written red: with config.VaultFetchedSecretClasses still empty the
 // first assertion below fails and every mount is still there, which is the
@@ -4345,10 +4383,10 @@ func TestFilledVaultListDropsWorkflowMountsAndAccessors(t *testing.T) {
 		t.Errorf("the switched repository's web job mounts %v, want %v: the workflow's own secrets are the class the flip takes away, and every other mount stays", onWS.SecretEnv, want)
 	}
 	if got, want := onWS.VaultSecretNames, []string{"npm-token"}; !slices.Equal(got, want) {
-		t.Errorf("the switched job carries vault_secret_names = %v, want %v: that list is what the module reads to drop the job's accessor on the container and to keep the service's own grant on it (D2074, B3.8)", got, want)
+		t.Errorf("the switched job carries vault_secret_names = %v, want %v: that list is what the module reads to drop the job's own accessor on each name of it, and it is the only place a name that left the mounts is still visible to the module (B3.8, IS6)", got, want)
 	}
 	if !maps.Equal(off.Secrets, on.Secrets) {
-		t.Errorf("the secret containers moved with the flip: %v, want %v — a container carries prevent_destroy, so a dropped one plans a destruction, and the service's fetch reads the very container the job gave up", on.Secrets, off.Secrets)
+		t.Errorf("the secret containers moved with the flip: %v, want %v — a container carries prevent_destroy, so a dropped one plans a destruction, and which containers a repository root declares is no part of what its job mounts (IS6 leaves the containers where they were; what goes is the mount and the accessor)", on.Secrets, off.Secrets)
 	}
 	if got := onWS.Env[runner.SecretEnvsVar]; got != redactionEnvs(onWS.SecretEnv) {
 		t.Errorf("%s = %q, want %q: the list follows the mounts, and a mounted credential left off it is one the runner would print", runner.SecretEnvsVar, got, redactionEnvs(onWS.SecretEnv))
@@ -4361,8 +4399,13 @@ func TestFilledVaultListDropsWorkflowMountsAndAccessors(t *testing.T) {
 	if got := vaultAccessors(on, "job"); !slices.Equal(got, wantJob) {
 		t.Errorf("the switched job's account holds the accessors %v, want %v: the module drops the job's grant on each name of the same list its mount went with, and a job whose environment mounts no container while its account keeps the accessor is one Cloud Run refuses to create", got, wantJob)
 	}
-	if got := vaultAccessors(on, "service"); len(vaultNaming(got, "npm-token")) == 0 {
-		t.Errorf("the service's own grants are %v and name no container for npm-token: the container the job gave up is the one the run's fetch reads, so the service must keep its accessor (D2074, B3.3) — a grant dropped with the mount would leave every fetch refused", got)
+	// And the service's own set follows the mounts down (IS6): a name the job
+	// mounts no more is not one the service holds an accessor on, because the
+	// container a run's fetch reads is the installation's own fugaro_p_<name>
+	// copy, covered by D3323's prefix-wide grant in
+	// modules/installation/credentials.tf, and not this repository's.
+	if got := vaultAccessors(on, "service"); len(vaultNaming(got, "npm-token")) != 0 {
+		t.Errorf("the service's own grants %v name a container for npm-token: the job mounts it no more, and D2074's set is one accessor per container the job mounts — the fetch reads the fugaro_p_ copy instead, under the prefix grant that needs no name here (IS6, D3323)", got)
 	}
 }
 
@@ -4395,6 +4438,175 @@ func TestFilledVaultListKeepsAnUnswitchedRepository(t *testing.T) {
 		if got := ws.Env[runner.SecretEnvsVar]; !strings.Contains(got, "NPM_TOKEN") {
 			t.Errorf("%s's %s = %q does not name NPM_TOKEN: the mount is there, and a mounted secret left off the redaction list is one the run would print", rs.Name, runner.SecretEnvsVar, got)
 		}
+	}
+}
+
+// repoRootTwoVaultLC admits a SECOND workflow secret of the fixture repository
+// project-wide, and repoRootTwoSecretsCfg is the document that declares both,
+// for the agent block given. IS6's rule is "for each name the project record
+// marks copied, and only those", so a run has to carry two names before the
+// record has a set to be read against: one name alone cannot show what left and
+// what stayed.
+const repoRootTwoVaultLC = repoRootLC + `workflow_secrets:
+  npm-token: { allow_data_to: [acme/webapp] }
+  sandbox-probe: { allow_data_to: [acme/webapp] }
+`
+
+// repoRootTwoSecretsCfg is repoRootInputs' document with the second workflow
+// secret added. sandbox-probe is the name the tree's own fixture repository
+// declares (deploy/sandbox/fugaro.yaml), so this speaks about a workflow secret
+// a repository really has rather than one invented for the test.
+func repoRootTwoSecretsCfg(agent string) string {
+	return `version: 1
+project: aurora
+git: { provider: github, base_branch: main }
+` + agent + `
+workflows:
+  web:
+    commands: { build: npm run build, test: npm test }
+    secrets:
+      - { name: npm-token, env: NPM_TOKEN }
+      - { name: sandbox-probe, env: SANDBOX_PROBE }
+`
+}
+
+// repoRootTwoSecrets plans the two-secret fixture for the agent block given,
+// with the credentials service in the installation's outputs, the record that
+// makes the switch's second condition true for an auth it serves, and the
+// project record's own list of copied names — which is where the two tests
+// below differ. It returns the same repository's spec with NO service beside
+// it, which is what the two assertions below are read against: a mount that
+// was never there is not one the drop could have taken.
+func repoRootTwoSecrets(t *testing.T, agent string, copied []string) (plain, on RepoSpec) {
+	t.Helper()
+	in := repoRootInputs(t, agent)
+	in.Cfg = parseCfg(t, []byte(repoRootTwoSecretsCfg(agent)))
+	in.LC = parseLC(t, repoRootTwoVaultLC)
+	offIn := in
+	offIn.Installation.CredentialsService = nil
+	var err error
+	if plain, err = Repo(offIn); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"NPM_TOKEN", "SANDBOX_PROBE"} {
+		if _, ok := plain.Workflows["web"].SecretEnv[want]; !ok {
+			t.Fatalf("the fixture mounts no %s with no service at all (%v): the tests below would be vacuous", want, plain.Workflows["web"].SecretEnv)
+		}
+	}
+	in.Installation.CredentialsService = credentialsService()
+	serviceReady(t, in.LC, in.Repo)
+	in.CopiedWorkflowSecrets = copied
+	if on, err = Repo(in); err != nil {
+		t.Fatal(err)
+	}
+	if on.Installation.CredentialsService == nil {
+		t.Fatal("the fixture carries no credentials service: the address is what a run fetches its workflow secrets through, so nothing below would be about the fetch")
+	}
+	return plain, on
+}
+
+// TestNoWorkflowSecretMount is IS6's own red step: a repository the
+// credentials service hands its address plans its workflow's own secrets away
+// from the job — no mount, no job accessor, no per-container grant for the
+// service — and it is the `vertex` repository, which the address reaches while
+// the switch serves it nothing (D3326/F17), that shows the drop is the
+// ADDRESS's answer and not the switch's.
+//
+// Red before IS6, and the red step is exactly this: the drop hung on
+// credentialsServiceOn, which answers false for a vertex repository by
+// construction, so its plan still carried a secret_key_ref for every workflow
+// secret its job declared. job.tf turns a mount into that reference, which is
+// why the fix is a spec-level one and this test reads the spec: what the job
+// mounts IS the reference the plan carries.
+//
+// What the value's place is instead: the run fetches the name over the
+// service's address at bootstrap (IS2, config.VaultFetchedSecretClasses) and
+// the service reads the installation's own fugaro_p_<name> copy, which D3323's
+// prefix-wide grant covers — so the per-container accessor of D2074 on this
+// repository's copy goes with the mount, and the job's own accessor with it.
+func TestNoWorkflowSecretMount(t *testing.T) {
+	_, on := repoRootTwoSecrets(t, repoRootVertexAgent, []string{"npm-token", "sandbox-probe"})
+	if on.Installation.CredentialsServiceServes == nil || *on.Installation.CredentialsServiceServes {
+		t.Fatalf("the fixture's root writes credentials_service_serves = %v, want false: nothing of a vertex repository's own goes to the service, and this test is about the class that leaves by the address alone (D3326, F17)", on.Installation.CredentialsServiceServes)
+	}
+	ws := on.Workflows["web"]
+	for _, logical := range []string{"npm-token", "sandbox-probe"} {
+		for env, mounted := range ws.SecretEnv {
+			if mounted == logical {
+				t.Errorf("the vertex repository's web job mounts %s=%s (%v): the run fetches this name over the service's address instead of reading it out of its own environment, so no job of a repository with an address may mount one (IS6, D3324)", env, mounted, ws.SecretEnv)
+			}
+		}
+	}
+	if got, want := ws.VaultSecretNames, []string{"npm-token", "sandbox-probe"}; !slices.Equal(got, want) {
+		t.Errorf("the vertex job carries vault_secret_names = %v, want %v: the names left the mount map, and this list is the only place the module still sees them — it is what sa.tf drops the job's own accessor on each of them by (IS6, B3.8)", got, want)
+	}
+	// The job's own accessors follow the mounts, name by name: the git
+	// provider credential stays mounted and keeps its accessor, and the two
+	// names that left are the two no accessor may be left on — a job Cloud Run
+	// refuses to create is one whose environment mounts no container while its
+	// account keeps the accessor (C2.3).
+	for _, logical := range []string{"npm-token", "sandbox-probe"} {
+		if got := vaultNaming(vaultAccessors(on, "job"), logical); len(got) != 0 {
+			t.Errorf("the vertex job's account holds %v, an accessor on the workflow secret %s: the module drops the job's accessor on each name of vault_secret_names, and this name is one of them (IS6, C2.3)", got, logical)
+		}
+	}
+	if ws.GitSecret == "" {
+		t.Fatal("the fixture carries no git provider credential: the assertion below would be vacuous")
+	}
+	if got := vaultNaming(vaultAccessors(on, "job"), ws.GitSecret); len(got) == 0 {
+		t.Errorf("the vertex job's account holds the accessors %v and none on the git provider credential %s: that credential is not the fetched class — it is served by its own path, or brokered by name — so its mount and its accessor stay (IS6)", got, ws.GitSecret)
+	}
+	if got := vaultAccessors(on, "service"); len(got) != 0 {
+		t.Errorf("the service's own grants %v are not empty: the service serves a vertex repository none of its containers, so it holds no per-container accessor on one — the copies its fetches read are the installation's own, under D3323's prefix grant (D3326, F17, IS6)", got)
+	}
+	if got := ws.Env[runner.SecretEnvsVar]; strings.Contains(got, "NPM_TOKEN") || strings.Contains(got, "SANDBOX_PROBE") {
+		t.Errorf("%s = %q still names a workflow secret: the list follows the mounts, and a name left on it while nothing mounts it is a redaction the runner does not need (IS6)", runner.SecretEnvsVar, got)
+	}
+}
+
+// TestUncopiedNameKeepsItsMount is the other half of IS6's rule — "and only
+// those": a name the project record does not mark copied keeps its mount, its
+// accessors and its copy until a later update copies it, because the fetch of
+// a name the fugaro_p_ grammar does not hold yet fails for the run that
+// declares it. The repository is the one the switch SERVES here, so the service
+// keeps its own per-container accessor on the name that stayed as well — the
+// pair of sets D2074 holds equal to the mounts, moved by nothing.
+//
+// The copy is the third thing the name keeps and it is not this root's: the
+// installation's container for it is no longer derived from the config
+// (projectSecretContainers, IS6/D3324) and stays in the next apply's plan
+// because discovery adopts the live one by its label (N3), which is
+// TestRetireSkipsAnUncopiedName's half of the same rule (IS13).
+func TestUncopiedNameKeepsItsMount(t *testing.T) {
+	if !config.VaultFetchesClass(config.VaultSecretClassWorkflow) {
+		t.Fatalf("config.VaultFetchedSecretClasses = %v and does not carry %q: this test is about the class being fetched and one name of it staying mounted anyway (IS6)", config.VaultFetchedSecretClasses, config.VaultSecretClassWorkflow)
+	}
+	_, on := repoRootTwoSecrets(t, repoRootCascadeAgent, []string{"npm-token"})
+	ws := on.Workflows["web"]
+	if env, mounted := ws.SecretEnv["NPM_TOKEN"]; mounted {
+		t.Errorf("the served repository's web job still mounts NPM_TOKEN=%s (%v): the record marks npm-token copied, so the run fetches it and the job mounts it no more (IS6)", env, ws.SecretEnv)
+	}
+	if logical, mounted := ws.SecretEnv["SANDBOX_PROBE"]; !mounted {
+		t.Errorf("the served repository's web job mounts %v and no SANDBOX_PROBE: the record marks sandbox-probe uncopied, so a fetch of it would fail for the run that declares it, and the job keeps the mount it has (IS6)", ws.SecretEnv)
+	} else if logical != "sandbox-probe" {
+		t.Errorf("the job mounts SANDBOX_PROBE=%s, want the fixture's sandbox-probe", logical)
+	}
+	if got, want := ws.VaultSecretNames, []string{"npm-token"}; !slices.Equal(got, want) {
+		t.Errorf("the served job carries vault_secret_names = %v, want %v: the module drops the job's accessor on the names of THIS list and must keep the one on the name that stayed (IS6, D2074)", got, want)
+	}
+	kept := `["sandbox-probe"]`
+	if got := vaultAccessors(on, "job"); !slices.ContainsFunc(got, func(a string) bool { return strings.Contains(a, kept) }) {
+		t.Errorf("the job's account holds the accessors %v and none on sandbox-probe: an accessor goes with the mount it covers, and this mount stayed (IS6, C2.3)", got)
+	}
+	if got := vaultAccessors(on, "service"); !slices.ContainsFunc(got, func(a string) bool { return strings.Contains(a, kept) }) {
+		t.Errorf("the service's own grants %v name no container for sandbox-probe: the job still mounts it, and D2074's set is one accessor per container the job mounts (IS6, B3.3)", got)
+	}
+	fetched := `["npm-token"]`
+	if got := vaultAccessors(on, "service"); slices.ContainsFunc(got, func(a string) bool { return strings.Contains(a, fetched) }) {
+		t.Errorf("the service's own grants %v name a container for npm-token: the record marks it copied, so it is not a container this job mounts and not one the service is granted here — its fetch reads the installation's fugaro_p_ copy under D3323's prefix grant (IS6, D3323)", got)
+	}
+	if got := ws.Env[runner.SecretEnvsVar]; !strings.Contains(got, "SANDBOX_PROBE") || strings.Contains(got, "NPM_TOKEN") {
+		t.Errorf("%s = %q, want the kept mount on it and the fetched name off it: the list is the mounts', and a mounted credential left off it is one the runner would print (IS6)", runner.SecretEnvsVar, got)
 	}
 }
 

@@ -2628,10 +2628,11 @@ run "non_proxied_bitbucket_keeps_its_token" {
 # B3.8's flip, on the workflow module and with the class list FILLED: the
 # repository's job gives up the accessor on and the mount of each name Go put in
 # workflow.vault_secret_names (internal/infra's dropVaultMounts, which took the
-# same names off the spec these tfvars are built from), while the credentials
-# service's own grant on that container STAYS — the one flip that does not
-# narrow the service's set, because a workflow secret's value is read from this
-# job's container at fetch time (D2074, B3.4).
+# same names off the spec these tfvars are built from), and the credentials
+# service's own grant on that container goes with them (IS6): the container a
+# run's fetch reads is the installation's fugaro_p_<name> copy, which the
+# prefix-conditioned grant of D3323 already covers, so the service's set here is
+# the job's mounts and nothing more.
 #
 # The names are the whole of what the module reads: the class list decides
 # whether it reads them at all, and Go's per-workflow answer decides which. So
@@ -2692,13 +2693,12 @@ run "vault_fetched_workflow_secret_gives_up_the_mount" {
     condition = tomap({ for k, m in google_secret_manager_secret_iam_member.service : k => m.secret_id }) == tomap({
       claude-oauth-token = "fugaro-acme-sandbox-claude-oauth-token-d68d08fb66f32201"
       bitbucket-token    = "fugaro-acme-sandbox-bitbucket-token-a9273afb5a2f66ba"
-      sandbox-probe      = "fugaro-acme-sandbox-sandbox-probe-8ed07eaf4b722cd8"
     })
-    error_message = "the service keeps its accessor on the container whose mount the job gave up: it is the service, and not the job, that reads that value now, so this is the one flip that does not narrow the service's set (D2074, B3.3)"
+    error_message = "the service's set is the containers the job mounts and nothing more: a fetched workflow secret is read in the fugaro_p_ grammar, under the prefix-conditioned grant of D3323, so a grant on the retired project copy is one no run asks for (IS6, D2074)"
   }
   assert {
-    condition     = length(google_secret_manager_secret_iam_member.service) == 3
-    error_message = "one grant per container the job mounts, plus the fetched name's own container: the service's set is the job's mounts together with local.vault_secret_names"
+    condition     = length(google_secret_manager_secret_iam_member.service) == 2
+    error_message = "one grant per container the job mounts, and no grant for a fetched name: the service's set is local.job_mounts alone (IS6), because the container a run's fetch reads is not this repository's to grant"
   }
 }
 
