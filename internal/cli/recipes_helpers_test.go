@@ -24,10 +24,10 @@ func projectRecipesFixture(t *testing.T, f *cloudFixture, recipes map[string]str
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A no-op when the fixture already moved it (a checkout that published its
+	// own file's lifted keys as the project layer did): the name is what the
+	// layer is keyed by (decision L9), and a second move has nothing to do.
 	out := strings.Replace(string(data), "runs_bucket: unused-bucket", "runs_bucket: fugaro-runs-proj-1234", 1)
-	if out == string(data) {
-		t.Fatal("the fixture config has no runs_bucket: unused-bucket line")
-	}
 	if err := os.WriteFile(path, []byte(out), 0o600); err != nil {
 		t.Fatal(err)
 	}

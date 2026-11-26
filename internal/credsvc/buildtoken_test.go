@@ -1591,3 +1591,198 @@ func TestBuildRoutePathIsTheServicesOwn(t *testing.T) {
 		t.Errorf("the service serves GET %s, and the build route is a POST alone", buildPath)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// The map by provider (S1, R9)
+// ---------------------------------------------------------------------------
+
+// buildProviderPolicyDoc is buildPolicyDoc's map in the form L11 publishes it:
+// repo_images, keyed provider/owner/name (D3370, D3371). Each pair of arguments
+// is one key and the entry it runs, so a test writes exactly the map it means.
+//
+// The catalog names entry web's Dockerfile source as acme/aurora, which is the
+// one repository the map puts on web at GitHub: a reader that ignored the map
+// would still reach that repository through entrySourceRepo, which is what makes
+// the refusals below say something.
+func buildProviderPolicyDoc(t *testing.T, keys ...string) string {
+	t.Helper()
+	if len(keys)%2 != 0 {
+		t.Fatal("buildProviderPolicyDoc takes key and entry pairs")
+	}
+	var block strings.Builder
+	for i := 0; i < len(keys); i += 2 {
+		if i > 0 {
+			block.WriteString(",")
+		}
+		block.WriteString(`"` + keys[i] + `": "` + keys[i+1] + `"`)
+	}
+	return `{
+		"version": 9,
+		"budget": ` + testBudgetDoc + `,
+		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
+		"accounts": {
+			"default": {"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"]},
+			"` + testAccount + `": {"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"]}
+		},
+		"credentials": {"fallback": "auto"},
+		"image_catalog": {"entries": [
+			{"name": "` + buildEntry + `", "source": {"kind": "dockerfile", "repo": "` + testRepoPath + `", "path": "Dockerfile"}}
+		]},
+		"repo_images": {` + block.String() + `}
+	}`
+}
+
+// providerPolicy wires the fixture to a repo_images node and, on top of the
+// installation's own table, to the Bitbucket spelling of a GitHub repository:
+// the refusal a call naming the other provider meets has to be the MAP's and not
+// the table's, and a table without it would refuse the same call for the other
+// reason.
+func providerPolicy(t *testing.T, doc string, repos ...string) func(*svc, *Config) {
+	t.Helper()
+	return func(s *svc, cfg *Config) {
+		cfg.Repos[bitbucketSlug(t, testRepoPath)] = testCanonical(t, testRepoPath)
+		for _, r := range repos {
+			cfg.Repos[bitbucketSlug(t, r)] = testCanonical(t, r)
+		}
+		s.policy.shared = decodeTestPolicy(t, doc)
+	}
+}
+
+// TestBuildTokenRefusesOtherProvidersKey is spec acceptance 4 under repo_images:
+// the entry's set is the keys of the REQUEST's provider, so a repository mapped
+// only at the other provider is refused BY NAME — even where the installation
+// serves it at the request's provider too, and even though the entry's own
+// catalog sources it from that repository.
+func TestBuildTokenRefusesOtherProvidersKey(t *testing.T) {
+	policy := providerPolicy(t, buildProviderPolicyDoc(t, testRepo, buildEntry))
+
+	t.Run("the mapped provider is served", func(t *testing.T) {
+		s, gh := buildSvc(t, policy)
+		resp, body := s.buildCall(t, buildBody(t, buildRequestBody{
+			Entry: buildEntry, BuildID: buildBuildID, Provider: gitprov.KindGitHub,
+			Repositories: []string{testRepoPath}, TTLSeconds: 600, AppID: testAppID,
+		}), s.buildToken())
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("the build route refused the entry's own provider's repository: HTTP %d %s", resp.StatusCode, body)
+		}
+		gh.both(t)
+	})
+
+	t.Run("the other provider's key is refused by name", func(t *testing.T) {
+		s, gh := buildSvc(t, policy)
+		resp, body := s.buildCall(t, buildBody(t, buildRequestBody{
+			Entry: buildEntry, BuildID: buildBuildID, Provider: gitprov.KindBitbucket,
+			Repositories: []string{testRepoPath}, TTLSeconds: 600,
+		}), s.buildToken())
+		if resp.StatusCode != StatusRequestRefused {
+			t.Fatalf("a repository mapped only at the other provider was answered %d, want %d: %s", resp.StatusCode, StatusRequestRefused, body)
+		}
+		e := refusal(t, resp.StatusCode, body)
+		if e.Error != ErrorRequestRefused {
+			t.Errorf("the refusal is %q, want %q: %s", e.Error, ErrorRequestRefused, e.Message)
+		}
+		if !strings.Contains(e.Message, testRepoPath) {
+			t.Errorf("the refusal does not name the repository it refused (%s): %s", testRepoPath, e.Message)
+		}
+		if n := gh.count(); n != 0 {
+			t.Errorf("the fake GitHub saw %d requests for a refused call, want none: a refusal mints nothing", n)
+		}
+	})
+}
+
+// TestBuildTokenSkipsUnservedKey is R9 under repo_images: a key whose provider
+// does not serve that repository is SKIPPED, so it neither refuses the entry it
+// names nor reaches the entry's set, and a call naming that repository is
+// refused by name like any repository outside the set.
+func TestBuildTokenSkipsUnservedKey(t *testing.T) {
+	policy := providerPolicy(t, buildProviderPolicyDoc(t,
+		testRepo, buildEntry,
+		"github/"+buildUnlistedRepo, buildEntry,
+	))
+
+	t.Run("the entry is still served for its served key", func(t *testing.T) {
+		s, gh := buildSvc(t, policy)
+		resp, body := s.buildCall(t, buildBody(t, buildRequestBody{
+			Entry: buildEntry, BuildID: buildBuildID, Provider: gitprov.KindGitHub,
+			Repositories: []string{testRepoPath}, TTLSeconds: 600, AppID: testAppID,
+		}), s.buildToken())
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("an unserved key refused the entry's served repository: HTTP %d %s", resp.StatusCode, body)
+		}
+		gh.both(t)
+	})
+
+	t.Run("the unserved key is not in the entry's set", func(t *testing.T) {
+		s, _ := buildSvc(t, policy)
+		entry, err := s.server.buildEntryRepos(s.policy.shared, BuildTokenRequest{Request: buildtoken.Request{
+			Entry: buildEntry, BuildID: buildBuildID, Provider: gitprov.KindGitHub,
+			Repositories: []string{testRepoPath}, TTLSeconds: 600,
+		}})
+		if err != nil {
+			t.Fatalf("the entry could not be read: %v", err)
+		}
+		got := make([]string, 0, len(entry))
+		for _, r := range entry {
+			got = append(got, r.name)
+		}
+		if want := []string{testRepoPath}; !slices.Equal(got, want) {
+			t.Errorf("the entry's set is %v, want %v: a key its provider does not serve is skipped, not granted", got, want)
+		}
+	})
+
+	t.Run("a call naming the unserved key is refused by name", func(t *testing.T) {
+		s, _ := buildSvc(t, policy)
+		resp, body := s.buildCall(t, buildBody(t, buildRequestBody{
+			Entry: buildEntry, BuildID: buildBuildID, Provider: gitprov.KindGitHub,
+			Repositories: []string{buildUnlistedRepo}, TTLSeconds: 600, AppID: testAppID,
+		}), s.buildToken())
+		if resp.StatusCode != StatusRequestRefused {
+			t.Fatalf("an unserved repository was answered %d, want %d: %s", resp.StatusCode, StatusRequestRefused, body)
+		}
+		if e := refusal(t, resp.StatusCode, body); !strings.Contains(e.Message, buildUnlistedRepo) {
+			t.Errorf("the refusal does not name the repository it refused (%s): %s", buildUnlistedRepo, e.Message)
+		}
+	})
+}
+
+// TestBuildTokenReadsOldMapUntilMigrated is R2 at this route: a node that
+// carries only the old image_map is read exactly as it is read today — bare
+// names, matched at every provider — and a node that carries both reads
+// repo_images and ignores the old member, so the window D3376 keeps open
+// (image_map retired one step later) changes no answer.
+func TestBuildTokenReadsOldMapUntilMigrated(t *testing.T) {
+	t.Run("a legacy map is read as today", func(t *testing.T) {
+		s, _ := buildSvc(t, nil)
+		resp, body := s.buildCall(t, buildBody(t, buildRequestBody{
+			Entry: buildStoreEntry, BuildID: buildBuildID, Provider: gitprov.KindBitbucket,
+			Repositories: []string{testBitbucketRepo}, TTLSeconds: 600,
+		}), s.buildToken())
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("a legacy map's entry was refused: HTTP %d %s", resp.StatusCode, body)
+		}
+	})
+
+	t.Run("both members read repo_images", func(t *testing.T) {
+		doc := strings.TrimSuffix(strings.TrimSpace(buildProviderPolicyDoc(t, testRepo, buildEntry)), "}") +
+			`,"image_map": {"` + testRepoPath + `": "` + buildEntry + `"}}`
+		policy := providerPolicy(t, doc)
+
+		s, _ := buildSvc(t, policy)
+		resp, body := s.buildCall(t, buildBody(t, buildRequestBody{
+			Entry: buildEntry, BuildID: buildBuildID, Provider: gitprov.KindGitHub,
+			Repositories: []string{testRepoPath}, TTLSeconds: 600, AppID: testAppID,
+		}), s.buildToken())
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("the entry's repo_images key was refused while the old member names it too: HTTP %d %s", resp.StatusCode, body)
+		}
+
+		s, _ = buildSvc(t, policy)
+		resp, body = s.buildCall(t, buildBody(t, buildRequestBody{
+			Entry: buildEntry, BuildID: buildBuildID, Provider: gitprov.KindBitbucket,
+			Repositories: []string{testRepoPath}, TTLSeconds: 600,
+		}), s.buildToken())
+		if resp.StatusCode != StatusRequestRefused {
+			t.Fatalf("the old member was read beside repo_images: answered %d, want %d: %s", resp.StatusCode, StatusRequestRefused, body)
+		}
+	})
+}

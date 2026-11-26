@@ -9,6 +9,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // runnerLayer's profile app is the fixture's workflow app, minus its
@@ -41,6 +42,14 @@ workflows:
       - { name: fixture-fails, env: FIXTURE_FAILS_FILE }
 `
 
+// layerModels is what every layer these tests hand a run carries: since S1
+// (D3237) a repository's file names no model, so the layer is where a run's
+// models are. A layer that names none is handed the harness's own pins instead
+// (testutil.MergePins) — a text of its own, and so a sha256 that is not the
+// one a test wrote — and these two tests are about the sha256 a refused layer
+// is recorded by.
+const layerModels = "  agent: { auth: api-key, models: { coder: claude-sonnet-5-5, reviewer: claude-opus-5, background: claude-haiku-4-5 } }\n"
+
 func layerSpec(text string) *task.Spec {
 	return &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Task: "Add a feature",
 		ProjectLayer: &task.ProjectLayer{SHA256: config.LayerSum([]byte(text)), Generation: 3, YAML: text}}
@@ -64,9 +73,16 @@ func TestRunnerRecordsTheLayer(t *testing.T) {
 }
 
 // Review Focus 5: a launch from outside a checkout may carry the layer for
-// a file that is not anchored; the runner ignores it and says so.
+// a file that is not anchored; the runner ignores it and says so. The run it
+// leaves is one the gateway does not carry (oauth): a file no layer applies to
+// can name no model of its own (S1, D3237 — config.Resolve drops the file's
+// models, and a repository's file may not name one at all), so the credential
+// whose runs have no pins to price is the only one that still runs.
 func TestRunnerIgnoresTheLayerForAnUnanchoredFile(t *testing.T) {
-	h := newHarness(t, "", layerSpec(runnerLayer)) // the fixture's own fugaro.yaml: no gcp_project
+	unanchored := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"],
+		"project: aurora\n", "project: aurora\ngcp_project: other-gcp-project\n", 1)
+	h := newHarness(t, oauthCfg(t, unanchored), layerSpec(runnerLayer))
+	oauthEnv(h)
 	rec, err := h.run(t, implement("feature"), review("ship", 0))
 	if err != nil {
 		t.Fatal(err)
@@ -80,7 +96,7 @@ func TestRunnerIgnoresTheLayerForAnUnanchoredFile(t *testing.T) {
 // invalid layer's sha256 and generation, so ls and diagnose (Task 17) can
 // show it even though it was never applied.
 func TestRunnerRefusesAnInvalidLayer(t *testing.T) {
-	bad := "version: 1\nproject: aurora\ngcp_project: proj-1234\ndefaults:\n  budget: { per_run_usd: 1 }\n"
+	bad := "version: 1\nproject: aurora\ngcp_project: proj-1234\ndefaults:\n  budget: { per_run_usd: 1 }\n" + layerModels
 	h := newHarness(t, layeredRepo, layerSpec(bad))
 	rec, err := h.run(t, implement("feature"))
 	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "project layer") ||
@@ -98,7 +114,7 @@ func TestRunnerRefusesAnInvalidLayer(t *testing.T) {
 // layer published for another project is refused outright, with no
 // fallback to running without it.
 func TestRunnerRefusesALayerForAnotherProject(t *testing.T) {
-	other := "version: 1\nproject: other\ngcp_project: proj-1234\n"
+	other := "version: 1\nproject: other\ngcp_project: proj-1234\ndefaults:\n" + layerModels
 	h := newHarness(t, layeredRepo, layerSpec(other))
 	h.deps.Project = "aurora"
 	rec, err := h.run(t, implement("feature"))
@@ -112,8 +128,12 @@ func TestRunnerRefusesALayerForAnotherProject(t *testing.T) {
 	}
 }
 
+// TestRunnerWithoutALayerRecordsOnlyTheConfig: a run whose task carries no
+// layer records only its config. The run is an oauth one: a file that names no
+// model of its own is refused at bootstrap when the gateway carries it (the
+// pins rule), and since S1 a repository's file may not name one.
 func TestRunnerWithoutALayerRecordsOnlyTheConfig(t *testing.T) {
-	h := newHarness(t, "", nil)
+	h := oauthHarness(t, "", nil)
 	rec, err := h.run(t, implement("feature"), review("ship", 0))
 	if err != nil {
 		t.Fatal(err)

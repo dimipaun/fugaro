@@ -111,7 +111,7 @@ const (
 func (s *Server) identityTicket(ctx context.Context, w http.ResponseWriter, caller IdentityCaller, r *http.Request) {
 	// The floor under the mount. The mount answers a service with no issuer
 	// before it verifies anyone, and that answer carries no line because no
-	// caller is verified yet (identity_stub.go's rule, kept by I1); a call that
+	// caller is verified yet (identity_mount.go's rule); a call that
 	// reached HERE did have a caller verified, so this branch owes the line
 	// below — and its answer stays the contract's "not served", the code a CLI
 	// bridges on (R7), because a service with no signer is exactly the
