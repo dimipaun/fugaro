@@ -25,8 +25,8 @@ import (
 // WC5 (internal/credsvc) reads the switch and offers the person's own token as the first candidate;
 // WC11 (internal/cli) reports the switch in `fugaro doctor`. WC4 (internal/credsvc) and WC6
 // (internal/projectpolicy) build the other side of these names: the grant route that answers them and
-// the published policy that carries the switch. I1 deletes the stub this file ships with
-// (person_stub.go) and wires the real sides.
+// the published policy that carries the switch. The stub the sides were written against
+// (person_stub.go) is gone: both sides are wired, and nothing in this package implements the switch.
 //
 // **Why the names are here and not in the service.** internal/credsvc is the service and
 // internal/gateway is the run's proxy, and the gateway cannot import the service's wire constants for
@@ -154,8 +154,9 @@ const (
 var ErrPersonGrantRefused = errors.New("creds: the workspace refused the grant")
 
 // PersonSwitchReader answers R9's switch for one member project: whether that member's published
-// policy turns the personal half on. It is the seam WC6 builds the other side of, and the stub this
-// package ships until then answers "off" for every project (StubPersonSwitch).
+// policy turns the personal half on. It is the seam WC6 builds the other side of, in
+// internal/projectpolicy (PersonSwitchReader over the member's published node), and this package
+// implements it nowhere: the readers of this wire are the sides that read a policy.
 //
 // It is asked by project name because the workspace's service serves many members and reads each
 // member's own policy (credsvc.Workspace.Policy, reached from the verified run identity), while a

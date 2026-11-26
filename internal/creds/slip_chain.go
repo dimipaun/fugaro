@@ -64,10 +64,9 @@ import (
 // declared in it — a function or variable declared there would have to be moved
 // by the deletion rather than deleted. An interface and a stub TYPE are the two
 // halves that can live in different files: the type goes with the deletion, the
-// signature stays. It is the same arrangement the package already has for the
-// route record (RouteReader in route.go, StubRoute in route_stub.go) and for a
-// member's switch (PersonSwitchReader in person.go, StubPersonSwitch in
-// person_stub.go).
+// signature stays. It is the same arrangement a member's switch had while its
+// stub was in the tree (PersonSwitchReader in person.go, StubPersonSwitch in
+// person_stub.go, both sides wired now and the stub gone).
 //
 // The two settings being in the reference rather than in the members is what
 // keeps the members the same Credential the selection path already carries

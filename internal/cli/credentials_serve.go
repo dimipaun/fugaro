@@ -1155,6 +1155,16 @@ func credentialsWorkspaceService(ctx context.Context, workspace string, env map[
 		return credentialsWorkspaceDeployment{}, err
 	}
 	credsvc.PersonScopeConfigForServe = person
+	// The member's switch (C2's other variable, WC5's reader, WC6's reading of
+	// the member's published policy), beside the configuration above and for the
+	// same reason: a process that installed no reader would answer OFF for every
+	// member and refuse every call under a slip naming a personal token, which
+	// is the sentence R11 reserves for a member who turned the half off. What is
+	// installed is a reader over the CALL's own scope -- the member the caller's
+	// verified identity named -- because the reader is asked per call and this
+	// process serves many members; the CLI installs it and chooses nothing about
+	// the member it is asked of.
+	credsvc.PersonSwitchForServe = credsvc.PersonSwitchOverScope()
 	build := credsvc.NewWorkspaceScopeResolver
 	if credentialsWorkspaceTest != nil {
 		build = credentialsWorkspaceTest

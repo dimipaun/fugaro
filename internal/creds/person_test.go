@@ -1,13 +1,12 @@
 package creds
 
 import (
-	"context"
 	"testing"
 )
 
-// The tests of C1 (internal/creds/person.go): the grant's two shapes are read strictly, the stub
-// reader answers R9's default, and the names the person's half is spelled with are pinned where a
-// change to one of them is a change to a wire format or to a published policy key.
+// The tests of C1 (internal/creds/person.go): the grant's two shapes are read strictly, and the
+// names the person's half is spelled with are pinned where a change to one of them is a change to
+// a wire format or to a published policy key.
 
 // TestPersonGrantDecodesStrictly: the shapes of the workspace grant are the contract, so every way
 // of being another shape is refused rather than read. The two that matter most are the ones a
@@ -101,21 +100,12 @@ func TestPersonGrantDecodesStrictly(t *testing.T) {
 	}
 }
 
-// TestStubSwitchIsOff: the stub is the other side of C1 for WC5, WC7 and WC11 before WC6's reader
-// exists, and the one answer that keeps it honest is R9's own default — off for every project, and
-// an error for none, because an absent key is off and a refusal would mean a policy that could not
-// be read, which is the other thing a caller of this interface has to act on.
-func TestStubSwitchIsOff(t *testing.T) {
-	var reader PersonSwitchReader = StubPersonSwitch{}
-	for _, project := range []string{"acme", "", "a-project-of-a-later-release"} {
-		on, err := reader.PersonSwitchOn(context.Background(), project)
-		if err != nil {
-			t.Fatalf("StubPersonSwitch.PersonSwitchOn(%q): %v", project, err)
-		}
-		if on {
-			t.Errorf("StubPersonSwitch.PersonSwitchOn(%q) = true: a stub that turned the personal half on would offer a person's own token on a member that never asked for it (D2972)", project)
-		}
-	}
+// TestPersonSwitchKeyIsThePolicyKey pins the one name this package and the member's published
+// policy have to spell the same: the switch is read out of the policy the member wrote, by
+// internal/projectpolicy, which cannot import this package (creds does) and so carries the
+// spelling of its own field. The two agree by this constant and by the conformance test that
+// reads a published node with it (internal/cli/person_switch_conformance_test.go).
+func TestPersonSwitchKeyIsThePolicyKey(t *testing.T) {
 	if PersonSwitchKey != "personal_workspace_tokens" {
 		t.Errorf("PersonSwitchKey = %q, want %q: it is the key of the member's published policy and of the member's own settings row, so a spelling that moved here would move both with nothing red (R9)", PersonSwitchKey, "personal_workspace_tokens")
 	}

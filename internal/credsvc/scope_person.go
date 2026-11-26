@@ -39,8 +39,8 @@ import (
 // reader itself travels the same way for C1's own reason: WC4 (the scope that
 // calls the reader) and WC5 (the reader) are written in parallel, so the
 // constructor has to answer before its body exists, and NewPersonalReader is a
-// variable of the constructor's signature that WC5's file assigns and
-// scope_person_stub.go answers until WC5 lands.
+// variable of the constructor's signature that WC5's own file assigns (a stub
+// answered it while that file was being written; both are gone now).
 //
 // **What is deliberately not here** (the plan's §3: a contract holds types,
 // constants, a short document and stubs, and nothing that computes): no policy,
@@ -212,19 +212,10 @@ type PersonalReaderFunc func(cfg PersonScopeConfig) (PersonalReader, error)
 // WC4 builds the workspace's scope through this constructor while WC5 — which
 // owns the implementation, in personal_workspace.go — is still being written,
 // so the signature has to exist before its body does, and Go has no way to
-// declare a function in one file of a package and define it in another. The two
-// sides assign it from init: scope_person_stub.go assigns a reader that offers
-// nothing, and WC5's file assigns the real one.
-//
-// **The file-name order runs the other way here, and it is the stub that must
-// yield.** The toolchain presents a package's files in name order, so C1's stub
-// (scope_stub.go) is initialized before its side (scope_workspace.go) and can
-// assign unconditionally; WC5's file is personal_workspace.go, which comes
-// BEFORE scope_person_stub.go, so an unconditional assignment by the stub would
-// be the one that stands and WC5's reader would never be reached. The stub
-// therefore assigns only a nil constructor, and WC5's assignment is what answers
-// from the moment WC5 lands. I1's deletion of the stub is a deletion and not an
-// edit, and nothing outside the package may assign this.
+// declare a function in one file of a package and define it in another. The
+// stub that answered it while WC5 was being written is deleted, and WC5's own
+// file is the one assignment that stands; nothing outside the package may
+// assign this.
 //
 // A caller does not have to consider any of that: it calls the constructor and
 // what it gets is a reader or a refusal, never a nil.
