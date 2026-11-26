@@ -124,8 +124,8 @@ func (r *initRun) routingMigrationFor(lc *localcfg.Config) *routingMigrationDone
 	// never reached the write would not have.
 	src := *lc
 	migrateCraftKeys(&src)
-	cfgs, res, unseen := projectCheckoutResolved(&src)
-	mig, pools, creds := routingMigration(&src, cfgs, res)
+	cfgs, res, written, unseen := projectCheckoutWritten(&src)
+	mig, pools, creds := routingMigration(&src, cfgs, written, res)
 	// An answer with nothing in it is not a migration, and the one state that
 	// gives it is a machine that holds no checkout of any repository: MG1 is
 	// answered no model at all (buildTable reads Repos alone), so there is no
@@ -269,7 +269,13 @@ func (e *initEngine) migrateRouting(res *initflow.Result) {
 // routingMigration is MG1's input and its answer, translated: the installation
 // and its repositories as the function reads them, and the pools and the
 // credentials the config is written with.
-func routingMigration(lc *localcfg.Config, cfgs map[string]*config.Config, res map[string]*config.Resolution) (routing.Migration, []config.Pool, []config.Credential) {
+//
+// written is each repository's file as it is written, and only the models come
+// out of it: the keys this migration moves are the ones the resolved config
+// drops (R21), so reading the models off the resolved config alone would answer
+// the project layer's defaults for every repository whose file still chooses one
+// and write a table with no entry for the model the repository calls.
+func routingMigration(lc *localcfg.Config, cfgs, written map[string]*config.Config, res map[string]*config.Resolution) (routing.Migration, []config.Pool, []config.Credential) {
 	in := routing.Installation{
 		Project:            lc.Name,
 		DefaultAccount:     defaultAccountOf(lc),
@@ -287,7 +293,7 @@ func routingMigration(lc *localcfg.Config, cfgs map[string]*config.Config, res m
 	}
 	for _, name := range slices.Sorted(maps.Keys(lc.Repos)) {
 		if cfg := cfgs[name]; cfg != nil {
-			in.Repos = append(in.Repos, routingRepo(lc, cfg, res[name], name))
+			in.Repos = append(in.Repos, routingRepo(lc, cfg, written[name], res[name], name))
 		}
 	}
 	// The models the checked-in map spells for Vertex (D3175): the migration
@@ -353,8 +359,10 @@ func routingProviders(lc *localcfg.Config) []routing.Provider {
 	return out
 }
 
-// routingRepo is one repository's own file, as MG1 reads it.
-func routingRepo(lc *localcfg.Config, cfg *config.Config, res *config.Resolution, name string) routing.Repo {
+// routingRepo is one repository's own file, as MG1 reads it. cfg is the config
+// the file resolves to and written is the file itself, which only the models are
+// read from (routingRepoModels).
+func routingRepo(lc *localcfg.Config, cfg, written *config.Config, res *config.Resolution, name string) routing.Repo {
 	// An auth neither the file nor the project layer writes is the empty value
 	// C1's rule is about (F49), and config.Resolve answers the layer's own
 	// default (config.DefaultAgentAuth) for it: the source says which of the two
@@ -366,7 +374,7 @@ func routingRepo(lc *localcfg.Config, cfg *config.Config, res *config.Resolution
 		auth = cfg.Agent.Auth
 	}
 	in := legacyInput(lc, cfg, auth)
-	repo := routing.Repo{Name: name, Auth: auth, Models: routingRepoModels(lc, cfg, in.Grades)}
+	repo := routing.Repo{Name: name, Auth: auth, Models: routingRepoModels(lc, cfg, written, in.Grades)}
 	// The accounts the repository's stages go out on: the retired walk's answer
 	// for this repository, and the accounts a craft's or a grade's access names.
 	for _, stage := range config.RunStages {
@@ -426,22 +434,47 @@ func isAccountName(lc *localcfg.Config, name string) bool {
 // routingRepoModels is every model the repository's file names, with the provider
 // entry that claims it: `agent.model`, `agent.models.*`, a craft's model and a
 // grade's (MG1's Repo.Models).
-func routingRepoModels(lc *localcfg.Config, cfg *config.Config, grades config.ModelGrades) []routing.Model {
+//
+// Every one of those keys is the project's now (R21), so the file itself is the
+// document they are read from and the resolved config is only the fallback: the
+// model a file still writes is the one this repository's calls go out on until
+// the migration moves it, and a key the file does not write is the project
+// layer's default — which is the answer the resolution gave before the lifted
+// keys were dropped (D3237). A reader of the resolved config alone would answer
+// the layer's model for every repository whose file still chooses one, and write
+// a table with no entry for the model that repository calls.
+func routingRepoModels(lc *localcfg.Config, cfg, written *config.Config, grades config.ModelGrades) []routing.Model {
+	var w config.Config
+	if written != nil {
+		w = *written
+	}
+	var writtenGrades config.ModelGrades
+	if w.ModelGrades != nil {
+		writtenGrades = *w.ModelGrades
+	}
+	// A model the file writes wins; otherwise the resolved config answers, the
+	// project layer's default with it.
+	model := func(asWritten, resolved string) string {
+		if asWritten != "" {
+			return asWritten
+		}
+		return resolved
+	}
 	var ids []string
 	for _, id := range []string{
-		cfg.Agent.Model,
-		cfg.Agent.Models.Coder,
-		cfg.Agent.Models.Reviewer,
-		cfg.Agent.Models.Background,
-		cfg.Agent.Models.Vision,
+		model(w.Agent.Model, cfg.Agent.Model),
+		model(w.Agent.Models.Coder, cfg.Agent.Models.Coder),
+		model(w.Agent.Models.Reviewer, cfg.Agent.Models.Reviewer),
+		model(w.Agent.Models.Background, cfg.Agent.Models.Background),
+		model(w.Agent.Models.Vision, cfg.Agent.Models.Vision),
 	} {
 		ids = appendName(ids, id)
 	}
 	for _, name := range config.CraftNames {
-		ids = appendName(ids, cfg.Agent.Crafts.Of(name).Model)
+		ids = appendName(ids, model(w.Agent.Crafts.Of(name).Model, cfg.Agent.Crafts.Of(name).Model))
 	}
 	for _, name := range config.GradeNames {
-		ids = appendName(ids, grades.Of(name).Model)
+		ids = appendName(ids, model(writtenGrades.Of(name).Model, grades.Of(name).Model))
 	}
 	out := make([]routing.Model, 0, len(ids))
 	for _, id := range ids {

@@ -58,6 +58,14 @@ const routingMigrateRepoYAML = "version: 1\nproject: aurora\ngit: { provider: gi
 	"agent: { auth: oauth, oauth_token: ada, model: claude-haiku-4-5 }\n" +
 	"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 
+// routingMigrateModelsYAML is acme/api's own file as a repository that pins its
+// models one by one rather than with `agent.model`: every key here is a lifted
+// one (R21), so the config this file resolves to carries none of them.
+const routingMigrateModelsYAML = "version: 1\nproject: aurora\ngit: { provider: github }\n" +
+	"agent:\n  auth: oauth\n  oauth_token: ada\n  models: { coder: claude-sonnet-5, reviewer: claude-opus-5-5 }\n" +
+	"model_grades: { strongest: { model: claude-opus-5-5 } }\n" +
+	"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+
 // routingMigrateLocalYAML is the installation's own config at the release
 // behind: the account ada, and the repository enrolled.
 const routingMigrateLocalYAML = `version: 1
@@ -123,6 +131,35 @@ func TestUpdateMigratesToTheTable(t *testing.T) {
 	}
 	if !held {
 		t.Errorf("the account's claude-oauth credential was not written: %+v, and the shared pool's member names it", written.Credentials)
+	}
+}
+
+// TestUpdateMigratesTheModelsAFileWrites: a repository whose file pins its
+// models one by one — `agent.models` and a grade's model, both lifted keys — is
+// migrated to a table carrying an entry for each of them, although the config
+// this run resolves for it carries none: Resolve drops every lifted key (R21),
+// and the migration is the one reader of the models that has to see the file as
+// it is written, because it is the step that moves them.
+//
+// The red step is the drop. Read off the resolved config alone the migration
+// answers the project layer's models — this fixture's project has none — so the
+// update writes no table at all and every call of the repository routes nowhere.
+func TestUpdateMigratesTheModelsAFileWrites(t *testing.T) {
+	// The claim this test rests on: the file's own resolution carries none of
+	// the models the file writes.
+	file := []byte(routingMigrateModelsYAML)
+	if cfg, _, ps := config.Resolve(file, nil); len(ps) > 0 || cfg.Agent.Models.Coder != "" || cfg.Agent.Models.Reviewer != "" {
+		t.Fatalf("the fixture's resolved config carries the models the file writes, so this test proves nothing (problems=%v): %+v", ps, cfg.Agent.Models)
+	}
+
+	e, path, _ := routingMigrateRig(t, routingMigrateModelsYAML)
+	convergeTail(t, e, path, nil)
+	written := parseLocalConfigBytes(t, readFile(t, path))
+
+	for _, model := range []string{"claude-sonnet-5", "claude-opus-5-5"} {
+		if _, ok := routingEntryFor(written.ModelRouting, model); !ok {
+			t.Errorf("the table has no entry for %s, the model the repository's file writes: %+v", model, written.ModelRouting)
+		}
 	}
 }
 

@@ -152,6 +152,25 @@ func projectCheckoutConfigs(lc *localcfg.Config) (map[string]*config.Config, []s
 // an `agent.auth` is the file's own answer or the default config.Resolve fills
 // in when nothing wrote one (MG2, F49).
 func projectCheckoutResolved(lc *localcfg.Config) (map[string]*config.Config, map[string]*config.Resolution, []string) {
+	out, resolved, _, unseen := readCheckoutConfigs(lc)
+	return out, resolved, unseen
+}
+
+// projectCheckoutWritten is the same read as projectCheckoutResolved with each
+// repository's file as it is written beside it: the routing migration is the one
+// caller that has to see a lifted key, because it is the step that moves those
+// keys into the project's table, and every resolved config drops them (R21).
+// The two maps are keyed alike and hold the same repositories — a file this
+// machine cannot read is in neither.
+func projectCheckoutWritten(lc *localcfg.Config) (map[string]*config.Config, map[string]*config.Resolution, map[string]*config.Config, []string) {
+	return readCheckoutConfigs(lc)
+}
+
+// readCheckoutConfigs is the one read behind the two above: each of the
+// project's repositories whose own fugaro.yaml this machine can read, resolved
+// over the project layer, as the file writes it, the resolution, and the
+// repositories it cannot read.
+func readCheckoutConfigs(lc *localcfg.Config) (map[string]*config.Config, map[string]*config.Resolution, map[string]*config.Config, []string) {
 	checkouts, err := localcfg.LoadCheckouts(os.Getenv)
 	if err != nil {
 		checkouts = localcfg.EmptyCheckouts()
@@ -163,6 +182,7 @@ func projectCheckoutResolved(lc *localcfg.Config) (map[string]*config.Config, ma
 	layer := modelsLayer(lc.Name)
 	out := map[string]*config.Config{}
 	resolved := map[string]*config.Resolution{}
+	written := map[string]*config.Config{}
 	var unseen []string
 	for _, name := range slices.Sorted(maps.Keys(lc.Repos)) {
 		dir := remembered[checkoutKeyFor(name, remembered)]
@@ -182,8 +202,14 @@ func projectCheckoutResolved(lc *localcfg.Config) (map[string]*config.Config, ma
 		}
 		out[name] = cfg
 		resolved[name] = res
+		// The file as it is written, beside the resolved config: the strict
+		// decode a resolved config never is. A file this read refuses is one the
+		// read above refuses too, so the two maps hold the same repositories.
+		if asWritten, ok := config.RepoOf(data); ok {
+			written[name] = asWritten
+		}
 	}
-	return out, resolved, unseen
+	return out, resolved, written, unseen
 }
 
 // modelsModelPinned is the repositories whose fugaro.yaml pins id in one of the
