@@ -520,7 +520,7 @@ func (p *sharedCloudProd) MoveJob(ctx context.Context, workflow, image string) e
 	case err != nil:
 		return remote(err)
 	case u == nil:
-		return userErr("the job %s of workflow %s was not found: run fugaro update --repo in the checkout to deploy it", pluginwire.Printable(ws.Job), pluginwire.Printable(workflow))
+		return userErr("the job %s of workflow %s does not exist in project %s, so nothing was moved onto an image: this repository's shared job is the one its own root deploys", pluginwire.Printable(ws.Job), pluginwire.Printable(workflow), pluginwire.Printable(p.lc.GCPProject))
 	case !u.Changes():
 		return nil
 	}
