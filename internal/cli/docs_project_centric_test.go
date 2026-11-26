@@ -1935,7 +1935,7 @@ func TestChecklistHasCheck50(t *testing.T) {
 	chk50MustContain(t, step1, "step 1", []string{"jq -c '.policy.routing'"})
 
 	// STEP 7'S FACT ASKS FOR TWO THINGS NO COMMAND IN IT PRODUCED: the job's
-	// environment names and the anthropic-api-key version's state. A FACT whose
+	// environment names and the state of the key container's version. A FACT whose
 	// evidence the step never reads is a line the owner cannot paste back, so
 	// the step reads both (read-only, after the restore, before the records are
 	// removed).
