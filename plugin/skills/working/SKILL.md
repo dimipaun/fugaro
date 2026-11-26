@@ -8,7 +8,7 @@ description: "Work with Fugaro, the fleeting cloud workers that run coding-agent
 
 # Working with Fugaro
 
-Fugaro runs one coding task in a fleeting cloud worker: it checks out the repository, does the task with a coding agent, runs the repository's build and tests, has the result reviewed and opens a pull request. It always ends with a pull request, a draft one when it is not sure. You launch, watch and follow up runs with the `fugaro` CLI; the user's own credentials do the work, so you stay within what this skill says.
+Fugaro runs one coding task in a fleeting cloud worker: it checks out the repository, does the task with a coding agent, runs the repository's build and tests, has the result reviewed and opens a pull request. It always ends with a pull request, a draft one when it is not sure. You launch, watch and follow up runs with the `fugaro` CLI; the user's credentials do the work, so stay within what this skill says.
 
 ## At the start of a session
 
@@ -89,8 +89,8 @@ On a pull request that was retargeted, check the base its runs recorded before l
 **The state of a pull request.** Four words name it, and use them when you report on a pull request so the user reads the same word for the same state: **live** when a run is going on it; **ready** when no run is going, it is not a draft, and the last run that opened or followed it ended with the outcome `ready` (the runner writes that only for a pull request it really left ready — a review job's own outcome `reviewed` changes nothing, though `fugaro runs ls --pr` lists it too, so a pull request a review has since read is still ready); **stalled** when it had a run, no run is going and it is not ready — the outcome `draft`, which is a draft, an ordinary pull request on a host with no drafts that marks it `[DRAFT]` in its title and can look ready, or a ready-looking one the run left a blocking finding on — or a ready one a person turned back into a draft: a follow-up run's work, or a merge as-is with the leftovers as follow-ups; and **orphan** when no run ever produced or follows it (a person's pull request, or one whose run records are gone).
 
 - **Draft or ready.** A run ends with a passing test run and a senior review verdict of `ship` for a ready pull request, a draft otherwise. A draft appears early, at the run's first checkpoint push, with a status section it keeps updating as "not verified" until a passing test covers the commit. Reviewers are requested only when it becomes ready.
-- **A failed or halted run is not always a bad one.** Its draft pull request holds the work: look at CI before deciding.
-- **Two review tiers.** A run may have a first-line review by a cheaper coder model before the senior review. Only the senior review decides readiness.
+- **A failed or halted run is not always a bad one.** Its draft pull request holds the work: read CI before deciding.
+- **Two review tiers.** A first-line review by a cheaper coder model may run before the senior review; only the senior review decides readiness.
 - **Cost.** `fugaro diagnose` shows it, and its JSON has `row.cost.route_by`, splitting the spend by route, and `row.cost.reported_usd`, what a provider claimed — the figure a complete call on a provider route settles on. Subscription (`oauth`) spend is notional, never billed. What this run would have cost on another model is `fugaro estimate --run ID --model ID`: it reprices the run's recorded tokens at that model's list rates: the figure is an estimate, not the run's bill.
 - **Statuses and halts** are in `reference/status.md` and `reference/diagnose.md`. A halt is a budget cap or a kill switch, or a review that stopped because what comes next is the owner's decision, not a code change (reason `owner_decision`): then say what is waiting on them and stop, and never launch the follow-up without their ruling (`--owner-ruled`).
 
@@ -108,7 +108,7 @@ Do not wait for the daily look. Whoever launched a run watches the COST column o
 
 `fugaro runs digest --due` says whether the cadence has lapsed, offline: the closed periods with no report, and the age of the newest it found. Without `--date` it is the most recent closed period; one holding today is refused. Fugaro schedules nothing.
 
-The **daily report is the outlier sweep**: read its flagged runs and the dearest of the rest, and write each lesson where the next run reads it. That file has the four periods and the submission step, which is the person's.
+The **daily report is the outlier sweep**: read its flagged runs and the dearest of the rest, and write each lesson where the next run reads it. That file has the four periods and the person's submission step.
 
 ## A usage limit on the Claude account
 
@@ -116,16 +116,16 @@ A `failed` run can mean its Claude account ran out of its subscription's usage l
 
 ## Workspaces of projects
 
-A workspace groups projects and holds one list of who may do what in each: `fugaro workspace init` sets one up, `fugaro workspace project add|ls|rm|status|reconcile|link|unlink|save` manages its member projects, `fugaro workspace user add|rm|ls|grant|revoke` its people and their roles, and `fugaro workspace domains add|rm|ls` its allowed email domains. Every write refuses in a coding agent's session: name the command for the user's own terminal.
+A workspace groups projects and holds one list of who may do what in each: `fugaro workspace init` sets one up, `fugaro workspace project add|ls|rm|status|reconcile|link|unlink|save` manages its member projects, `fugaro workspace user add|rm|ls|grant|revoke` its people and their roles, and `fugaro workspace domains add|rm|ls` its allowed email domains. Every write refuses in a coding agent's session — name it for the user's own terminal.
 
-A member joins the workspace's table with `fugaro workspace project add`, but the authority over it — the folder it moves into, or the workspace's service account's grant — is the member owner's own opt-in at `fugaro workspace project link`, run on the member's own machine: `fugaro update` links nobody, and a member nobody has linked keeps `fugaro user …` and everything else about it whole (D2819).
+A member joins the workspace's table with `fugaro workspace project add`, but the authority over it — its folder, or the workspace's service account's grant — is the member owner's own opt-in at `fugaro workspace project link`, run on the member's own machine: `fugaro update` links nobody, and an unlinked member keeps `fugaro user …` and everything else about it whole (D2819).
 
-`fugaro workspace user grant` lands the grant in the member's own roster, and the binding it means appears at that member's own `fugaro update`, which `fugaro workspace project status` reports as still pending (D2801). The member list a workspace mirrors into a member's database is advisory, because that member's own database admin can rewrite it, so the fence is drift, read against the workspace's own record (D2813). And neither audit trail is tamper-proof: each is written with the permission the roster write itself needs (D2811).
+`fugaro workspace user grant` lands the grant in the member's own roster, and the binding it means appears at that member's own `fugaro update`, which `fugaro workspace project status` reports as still pending (D2801). The member list a workspace mirrors into a member's database is advisory, because that member's own database admin can rewrite it, so the fence is drift, read against the workspace's own record (D2813). And neither audit trail is tamper-proof: each is written with the permission the roster write itself needs (D2811). A roster person's own token at the workspace serves their runs; `--no-personal-token` skips it.
 
 ## What dogfooding taught
 
 - On GitHub, Fugaro can never change `.github/workflows/*`: GitHub refuses a push to a workflow file from an App without the workflows permission. Tell the user such a task is theirs, or leave those files out of the task.
-- The run's verify step excludes the slow packages and anything that needs Docker (Cloud Run has no Docker daemon). CI on the pull request is the merge gate, so read its result before calling a run good.
+- The run's verify step excludes the slow packages and anything that needs Docker (Cloud Run has no Docker daemon); CI on the pull request is the merge gate, so read its result first.
 - Work on money or security code (budget, policy, gateway, secrets, IAM, the workflows) is better done locally with the user watching; a run may open the pull request, but the review is theirs.
 
 ## Ground rules

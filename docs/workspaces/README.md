@@ -160,6 +160,13 @@ member's job accounts and the workspace owner's people and no other caller class
 orchestrator, coordinator and image builds — different callers on different routes — keep calling
 their own project's service (D2988, F24).
 
+**The workspace's service admits the roster's people too, on two routes of its own**: the personal
+half, where a person on the roster stores their own Claude token at the workspace and a run of theirs
+is handed it, through the grant (`/v1/slip`) and its claim (`/v1/slip/claim`). It is one switch per
+member and off until that member's admin writes it, so a member that leaves it off is served what it
+was served before. That half — its design, its threat model, its plan and the switch's key — is
+[../workspace-credentials/](../workspace-credentials/).
+
 ## The owner's spec, and what was not recovered
 
 **The verbatim text of the owner's spec was not recovered by this run.** [spec.md](spec.md) §0

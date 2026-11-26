@@ -66,6 +66,8 @@ The JSON has `run`, `repo`, `run_id`, `branch`, `ref` (the ref a new run is cut 
 
 When the run ends, the pull request has a report comment. `fugaro diagnose <run>` explains a run that failed or halted.
 
+**A run in a workspace may draw on the launcher's own Claude token.** Where the repository's model route is a workspace and that member's admins turned the personal half on, the launch asks the workspace for a grant: a launcher who stored a token at the workspace gets one, the job is handed it, and the launch prints one line naming the workspace and the flag that skips it. `--no-personal-token` asks for none, so the run draws on the shared entries as every run did before. A person who holds no token launches as before and prints nothing, and a refused or unreachable workspace starts the run on the shared entries and says why: the personal half never blocks a launch. The token is stored once at the workspace, by the person, naming the workspace's own project — `fugaro secrets user set claude-oauth-token --project <the workspace's own project>` (D3148) — and a member that never turned the half on is untouched.
+
 ## 5. When the launch is refused
 
 The CLI exits 1 and says why, and you don't work around it. Report the message and what it means:
