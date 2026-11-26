@@ -7141,6 +7141,7 @@ func slipGrantOverService(ctx context.Context, serviceURL string, req credsvc.Sl
 	hreq.Header.Set("Content-Type", "application/json")
 	hreq.Header.Set("Accept", "application/json")
 	hreq.Header.Set("Authorization", "Bearer "+identity)
+	hreq.Header.Set(credsvc.HeaderPersonIdentity, identity)
 	resp, err := slipClient().Do(hreq)
 	if err != nil {
 		return credsvc.SlipGrantResponse{}, errors.New("the installation's credentials service could not be reached")
