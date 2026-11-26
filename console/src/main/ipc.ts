@@ -89,6 +89,7 @@
 
 import { isAbsolute } from 'node:path'
 
+import { SETUP_BUDGET_MAX, SETUP_BUDGET_MIN } from '../shared/new-ops'
 import { invisibleRe, isInvisibleCodePoint, isSeparatorCodePoint } from '../shared/sanitize'
 import { REDUCED_VIEWS, hidesView, unreadableCompatibility } from '../shared/version'
 import type { CliCompatibility, ReducedView } from '../shared/version'
@@ -2280,7 +2281,7 @@ export const CONSOLE_OPERATIONS = [
         key: 'answers',
         kind: 'setupAnswers',
         required: true,
-        why: 'the wizard’s five answers, validated here key by key and serialised by this process into the document the child decodes: the payload carries an object and never a path, and `version` is main’s to write.',
+        why: 'the wizard’s six answers, validated here key by key and serialised by this process into the document the child decodes: the payload carries an object and never a path, and `version` is main’s to write.',
       },
     ],
   },
@@ -3583,7 +3584,7 @@ const SETTINGS_KEY_RE = /^[a-z0-9_*]+(\.[a-z0-9_*]+)*$/
 // The first-run wizard's answers (docs/console-improvements, D2904).
 
 /**
- * SETUP_ANSWER_KEYS is the five questions `fugaro setup` answers from one
+ * SETUP_ANSWER_KEYS is the six questions `fugaro setup` answers from one
  * document (`setupAnswerQuestions`, `internal/cli/setup_answers.go`), in the
  * order the CLI asks them.
  *
@@ -3600,8 +3601,19 @@ export const SETUP_ANSWER_KEYS: readonly string[] = Object.freeze([
   'region',
   'name',
   'rigor',
+  'budget',
   'bake_repos',
 ])
+
+// The budget answer's bounds, `SETUP_BUDGET_MIN` and `SETUP_BUDGET_MAX`, are
+// **imported at the top of this module rather than spelled again here**, unlike
+// the keys above. The difference is which module has the authority: the keys are
+// what a payload may carry, which the allow-list decides itself, while these two
+// numbers are the CLI's own rule (`managed.MinBudgetAmount` and
+// `managed.MaxBudgetAmount`, `internal/infra/managed/marker.go`), which no module
+// here decides -- so one copy of them is the one honest number, and a payload
+// outside them is refused at this door rather than by a run the operator has
+// already confirmed.
 
 /** SETUP_ANSWERS_VERSION is the answers file's own schema version
  * (`schemas/setup-answers.schema.json`). It is main's to write: the file's
@@ -3906,7 +3918,7 @@ function refuse(reason: string): { readonly ok: false; readonly reason: string }
  * **The payload carries an object and never a path.** The only path this
  * operation ever sees is the `-` main puts in the argv (`--answers-file -`,
  * `spawn.ts`'s own row words), so no renderer member can name a file -- and a
- * member that is not one of the five known keys is refused by name right here,
+ * member that is not one of the six known keys is refused by name right here,
  * before any child exists. The object is checked as a plain payload, so the
  * `{__proto__: ...}` shape `isPlainPayload` exists for is refused too.
  *
@@ -3932,9 +3944,28 @@ function setupAnswersValue(
     // the case this branch is for, and echoing it would print it.
     if (!SETUP_ANSWER_KEYS.includes(key)) return refuse(`${spec.key} takes no ${key}`)
   }
-  const answers: Record<string, string | boolean> = {}
+  const answers: Record<string, string | boolean | number> = {}
   for (const key of SETUP_ANSWER_KEYS) {
     const member: unknown = value[key]
+    // **The budget is the one optional question** (D2210, D2212): a member that
+    // is absent is the operator leaving the wizard's field empty, which is the
+    // CLI's own default of 100 USD and not "no alert at all", so it is dropped
+    // from the file rather than written as anything. Every other question is
+    // required here, because the CLI would ask it at a terminal this run does
+    // not have.
+    if (key === 'budget') {
+      if (member === undefined) continue
+      if (typeof member !== 'number' || !Number.isInteger(member)) {
+        return refuse(`${spec.key}'s budget must be a whole number of its currency`)
+      }
+      if (member < SETUP_BUDGET_MIN || member > SETUP_BUDGET_MAX) {
+        return refuse(
+          `${spec.key}'s budget must be ${SETUP_BUDGET_MIN} to ${SETUP_BUDGET_MAX} whole units`,
+        )
+      }
+      answers[key] = member
+      continue
+    }
     if (member === undefined) return refuse(`${spec.key} is missing ${key}`)
     if (key === 'bake_repos') {
       if (typeof member !== 'boolean') return refuse(`${spec.key}'s bake_repos must be true or false`)
@@ -3961,7 +3992,12 @@ function setupAnswersValue(
     answers[key] = member
   }
   const file: Record<string, unknown> = { version: SETUP_ANSWERS_VERSION }
-  for (const key of SETUP_ANSWER_KEYS) file[key] = answers[key]
+  for (const key of SETUP_ANSWER_KEYS) {
+    // An unanswered question writes no key at all, `budget`'s own rule: the
+    // schema's `additionalProperties: false` is about *keys*, and a key written
+    // as `undefined` is a member the file claims to answer.
+    if (answers[key] !== undefined) file[key] = answers[key]
+  }
   const text = JSON.stringify(file)
   if (text.length > SETUP_ANSWERS_MAX_LENGTH) {
     return refuse(`${spec.key} must be an answers file of at most ${SETUP_ANSWERS_MAX_LENGTH} characters`)

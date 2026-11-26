@@ -56,6 +56,7 @@ import {
   REDUCED_VIEWS,
   RUNS_LIST_PAGE_CLI_FLOOR,
   RUNS_STREAM_CLI_FLOOR,
+  SETUP_BUDGET_CLI_FLOOR,
   SETUP_CLI_FLOOR,
   SPEND_STREAM_CLI_FLOOR,
   SKEW_HEADLINES,
@@ -75,6 +76,7 @@ import {
   RUNS_LIST_OLDER_CLI_FLOOR,
   renderVersionSkew,
   runsListOlderSupported,
+  setupBudgetSupported,
   runsListPageSupported,
   SEATS_CLI_FLOOR,
   seatsSupported,
@@ -634,6 +636,51 @@ describe('the console improvements’ floors', () => {
     }
     for (const line of ['0.27.0', '0.27.1', '0.28.0', '1.0.0', '0.27.0+build.7']) {
       expect(meetsCliFloor(line, floor), line).toBe(true)
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The setup answers file's budget member (D2210, task T6).
+// ---------------------------------------------------------------------------
+
+describe('setupBudgetSupported', () => {
+  it('is the release that accepts the amount without its currency, and no earlier one', () => {
+    // The console answers `budget` and never `budget_currency` (D2211), and the
+    // member alone is not what the floor is about: `budget` has been in the
+    // document since 0.28.0 and no release refuses it by name, but before 0.29.0
+    // nothing wrote the currency the document left out back from the default, so
+    // the amount reached the run's own trio rule and the whole plan or apply
+    // ended there. The floor is the first release that reads a half-answered pair
+    // as a whole one, and this is that number rather than a `null`: 0.29.0 reads
+    // an amount on its own perfectly well, so a floor that refused every version
+    // would drop an answer the operator gave (`console/docs/json-contract.md`
+    // §6.32).
+    expect(SETUP_BUDGET_CLI_FLOOR).toBe('0.29.0')
+    expect(setupBudgetSupported('0.29.0')).toBe(true)
+    expect(setupBudgetSupported('0.29.1')).toBe(true)
+    expect(setupBudgetSupported('0.30.0')).toBe(true)
+    for (const line of ['0.28.9', '0.29.0-rc.1', 'dev', '']) {
+      expect(setupBudgetSupported(line), line).toBe(false)
+    }
+  })
+
+  it('is the patch comparison every other floor is, and a `null` floor refuses everything', () => {
+    // The rule is `meetsCliFloor`'s rather than a seventh copy of it: below the
+    // floor is a refusal however close, the floor itself and everything above it
+    // are not, and a line that cannot be placed at all is a refusal. The floor is
+    // driven as an argument -- which is what that parameter is for -- and a
+    // `null` is the state a console would be in before the release exists, which
+    // is a refusal for every line.
+    const floor = '0.31.0'
+    for (const line of ['0.30.9', '0.31.0-rc.1', 'dev', '']) {
+      expect(setupBudgetSupported(line, floor), line).toBe(false)
+    }
+    for (const line of ['0.31.0', '0.31.1', '1.0.0', '0.31.0+build.7']) {
+      expect(setupBudgetSupported(line, floor), line).toBe(true)
+    }
+    for (const line of ['0.29.0', '99.99.99', 'dev']) {
+      expect(setupBudgetSupported(line, null), line).toBe(false)
     }
   })
 })

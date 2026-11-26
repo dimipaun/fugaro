@@ -854,7 +854,7 @@ export const SPAWN_KIND_FOR: Record<ArgumentKind, SpawnArgumentKind> = Object.fr
   roadmapRelease: 'roadmapRelease',
   // The first-run wizard's answers (AL, D2904). The mapping is the launch's
   // own `stdin`: what the validator hands over is one string -- main's own
-  // serialisation of the five answers it checked -- and it reaches the child on
+  // serialisation of the six answers it checked -- and it reaches the child on
   // standard input, where `--answers-file -` reads it. It is the second kind
   // that emits no argv word, and for a stronger reason than the first: a path
   // in an argv is what `--answers-file <PATH>` would be.
