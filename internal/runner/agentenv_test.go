@@ -91,6 +91,7 @@ func TestStagePinsPerRole(t *testing.T) {
 func TestStagePinsFollowTheModelOverride(t *testing.T) {
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Task: "Add a feature", Overrides: task.Overrides{Model: "claude-opus-5-5"}}
 	h := newGW(t, pinnedConfig(t), "observe", "").harness
+	h.taskWithLayer(spec)
 	if err := h.store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)
 	}

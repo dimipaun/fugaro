@@ -53,12 +53,12 @@ const (
 	doctorClassAudit = "audit"
 	// doctorClassSecurity is the one class the default view both prints and
 	// counts: an item with its fix, and a count in the "N security findings"
-	// pointer the screen ends with. The owner's ruling of 2026-11-01 put the
-	// model key in the agent's reach there — a credential in a workflow's own
-	// environment is a fact the reader acts on now, not an audit line to
-	// review later — while keeping it a security finding, so the pointer line
-	// still says the sweep has something. Every other check lands in exactly
-	// one bucket; this one is deliberately in two.
+	// pointer the screen ends with. It is for a security finding the reader
+	// acts on now rather than reviews later (the owner's ruling of 2026-11-01),
+	// and no check is in it today: its one member was the model key in the
+	// agent's reach, which RT7 removed with the auth mode it was about. Every
+	// other check lands in exactly one bucket; a check of this class is
+	// deliberately in two.
 	doctorClassSecurity = "security"
 )
 
@@ -68,9 +68,13 @@ const (
 // the line now: the sweep's other findings — a grant doctor could not derive,
 // a provider setting nobody can read from here — are the ones the pointer line
 // exists for.
-var doctorShownSecurityIDs = map[string]bool{
-	"model-key-in-agent": true,
-}
+//
+// It holds no ID today: its one member was "model-key-in-agent", a model
+// credential in a workflow's agent, and RT7 removed that check with the auth
+// mode it reported — which model a call is served by is the routing table's
+// answer now, and the bundle's own line (routing-bundle-source) is what says
+// whether a source's secret is there.
+var doctorShownSecurityIDs = map[string]bool{}
 
 // doctorUpdatePrefixes are the checks whose remedy is `fugaro update` itself
 // (CLAUDE.md's hard rule: the one documented command brings the installation,
@@ -164,14 +168,6 @@ var doctorSecurityPrefixes = []string{
 	// line, so today it reaches the default view either way; naming it here is
 	// what keeps it in the sweep if it ever gains a measurement.
 	"batch-launcher-iam",
-	// model-key-in-agent is the owner's ruling: a model credential that reaches
-	// a workflow's agent (budget off, or no credentials service) is a security
-	// finding, not a measurement. It is the sweep's only info half that the
-	// default view prints as an item as well as counts (doctorClassSecurity,
-	// the owner's correction of 2026-11-01): the installation that runs without
-	// the budget is a legitimate choice, but a credential in the agent's own
-	// reach is a fact the reader acts on now rather than reviews later.
-	"model-key-in-agent",
 	// security-list is D1513's line: the security list in force for a
 	// checkout — the floor, the project layer's rows and the repository's own —
 	// which is only measured: the default view does not print it and --security
@@ -1018,7 +1014,6 @@ var doctorShorts = map[string]doctorShort{
 	"bitbucket-token-broken":      {"a stored Bitbucket token was refused with 401 and the credential state holds it as broken.", ""},
 	"bitbucket-token-expiry":      {"a stored Bitbucket token's recorded expiry is near or past.", ""},
 	"bitbucket-direct":            {"a job of a proxied Bitbucket repository still mounts its own token, or that could not be read.", ""},
-	"model-key-in-agent":          {"a model credential reaches a workflow's agent's own environment.", ""},
 	"launcher-jobs":               {"which Cloud Run jobs a launcher can start could not be checked.", ""},
 	"launcher-jobs-public":        {"a Cloud Run job can be started by allUsers or allAuthenticatedUsers, which is anyone.", ""},
 	"launcher-jobs-unread":        {"the IAM policy of some Cloud Run jobs could not be read, so whether a launcher can start them is unknown.", ""},

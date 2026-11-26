@@ -649,18 +649,24 @@ func (r *run) registryEntry() budget.AgentEntry {
 	if runes := []rune(title); len(runes) > 80 {
 		title = string(runes[:80])
 	}
-	// Auth is the whole-run upstream this release still picks, and it is the
-	// only fact about the upstream a stage has until the run's calls follow the
-	// table (model-credentials-routing CS6: the runner stops choosing a
-	// whole-run upstream from agent.auth, and the entry then carries the
-	// stage's own answer instead — the gateway's chain answer, C1's hook that
-	// CS2 makes an option and CS8 reads into the record — as `source` and
-	// `fallback`). Until that lands no run is one "the table serves", so there
-	// is nothing else to write: the registry, the rules' allowlist and every
-	// view already take all three (CS9, D3070), and this member is the whole of
-	// what CS6 changes.
+	// Auth is the credential this run's model calls go out on, and a run the
+	// routing table serves has none of its own to write: what such a run goes
+	// out on is the table's own answer and arrives per stage as `source` and
+	// `fallback` (chainAnswered), so the runner chooses no whole-run upstream
+	// for it (model-credentials-routing CS6, D3070 — every view prints the dash
+	// for an absent member, CS9). An `oauth` run keeps it, and keeps it until
+	// the entry's source can say the same thing: `fugaro watch` and the console
+	// read this member, and only this member, to call the run's spend notional
+	// (watch's RunRow.Notional), so writing nothing here would book a
+	// subscription's list price as billed dollars. An unmigrated repository
+	// keeps its file's auth whatever it is: nothing of the table reaches it and
+	// its calls are its own, as its file says (R3).
+	auth := r.cfg.Agent.Auth
+	if r.serviceModelPath() && auth != config.AuthOAuth {
+		auth = ""
+	}
 	e := budget.AgentEntry{
-		Repo: r.spec.Repo, Workflow: r.rec.Workflow, Title: title, Stage: "bootstrap", Auth: r.cfg.Agent.Auth,
+		Repo: r.spec.Repo, Workflow: r.rec.Workflow, Title: title, Stage: "bootstrap", Auth: auth,
 		Coder: r.cfg.Agent.ModelFor(config.RoleCoder), Reviewer: r.cfg.Agent.ModelFor(config.RoleReviewer),
 	}
 	if r.rec.Deadline != nil {

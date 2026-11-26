@@ -2843,7 +2843,7 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 		FugaroProject: lc.Name,
 		Region:        lc.Region,
 		RunsBucket:    bucket,
-		StateBucket:   firstOf(o.StateBucket, lc.Terraform.StateBucket, "fugaro-tfstate-"+lc.GCPProject),
+		StateBucket:   StateBucketName(o.StateBucket, lc),
 		Names: InstallationNames{
 			LegacyRegistry:            LegacyRegistry,
 			BaseRegistry:              BaseRegistry,
@@ -3016,6 +3016,19 @@ func firstOf(v ...string) string {
 		}
 	}
 	return ""
+}
+
+// StateBucketName is the installation's state bucket as InstallSpec resolves it:
+// the flag's own value, else the local config's terraform.state_bucket — which
+// is where a managed project's dedicated bucket is recorded — else the project's
+// default name. A caller that holds no spec reads the bucket by this: the
+// update's note about the runs in flight asks whether a repository's root is
+// still in that state, and it asks it before the stage that builds the spec.
+func StateBucketName(flag string, lc *localcfg.Config) string {
+	if lc == nil {
+		return flag
+	}
+	return firstOf(flag, lc.Terraform.StateBucket, "fugaro-tfstate-"+lc.GCPProject)
 }
 
 // members is flag, else the local config's, never nil (an empty list, not

@@ -20,10 +20,12 @@ import (
 func TestValidateReportsRoutingProblems(t *testing.T) {
 	craftFixture(t)
 	// The coder's model is the one thing this world changes: the fixture's
-	// table routes a DeepSeek model through the OpenRouter route, and this file
-	// names a model no entry matches.
-	testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": strings.Replace(validateCraftModelYAML,
-		"  crafts:\n", "  crafts:\n    coder: {model: qwen/qwen3-coder, access: openrouter-main}\n", 1)})
+	// table routes a DeepSeek model through the OpenRouter route, and this model
+	// no entry matches. It is the project layer's, because a repository's file
+	// may not name a craft's model since S1 (D3237) — the file's own copy is
+	// dropped before the table judges anything.
+	writeCraftLayer(t, craftLayerCoderModel("qwen/qwen3-coder"))
+	testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": validateCraftModelYAML})
 
 	out, errOut, err := execute(t, "validate", "--offline", "fugaro.yaml")
 	if ExitCode(err) != ExitUserError {
@@ -53,7 +55,11 @@ func TestValidateIgnoresATableThatServesAnotherRepo(t *testing.T) {
 	// rules serve whole. No model its crafts resolve to — the fixture's DeepSeek
 	// one, claude-opus-4-1 or claude-sonnet-5-5 — is matched by the elsewhere
 	// table either, so a reading that judged this file by that table would
-	// report every one of them unrouted (R22) and the arm would fail.
+	// report every one of them unrouted (R22) and the arm would fail. Its own
+	// pins are the layer's since S1 (D3237), as in its sibling test: a run of
+	// this file is priced by the layer, and a file the drop left naming no model
+	// would be refused for that before the table is read at all.
+	writeCraftLayer(t, testutil.MergePins(craftProjectLayer, pinsLayer(validateCraftPinnedYAML)))
 	testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": validateCraftPinnedYAML})
 	out, errOut, err := execute(t, "validate", "--offline", "fugaro.yaml")
 	if ExitCode(err) != ExitOK {

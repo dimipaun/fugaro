@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backlog"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/headroomproc"
@@ -80,7 +81,9 @@ func (a *scriptedAgent) Run(ctx context.Context, req agent.Request) (agent.Resul
 
 type harness struct {
 	files map[string]string
-	deps  runner.Deps
+	// noHandBack leaves the agent's hand-back as the step wrote it.
+	noHandBack bool
+	deps       runner.Deps
 	// budget is the fake budget database this run's job carries: the address
 	// and the key its environment names, the harness's own unless a test asked
 	// for none (noBudget). Deps.Backend stays zero here and is a test's own
@@ -104,6 +107,24 @@ type harness struct {
 	// sidecarFailsDuring is the stage during which the fake sidecar's Dead
 	// channel closes, set by killSidecarDuring and hangSidecarDuring.
 	sidecarFailsDuring string
+	// layer is the project layer this fixture's run is resolved with, the
+	// task's own when it carries one and the harness's pins' otherwise. A
+	// task a test writes itself must carry it too (taskWithLayer): a
+	// repository's file names no model any more (S1, D3237), so the layer is
+	// the only thing that prices a run.
+	layer *task.ProjectLayer
+}
+
+// taskWithLayer is a task spec a test wrote itself, with the fixture's project
+// layer on it. Every path that stores a task — a follow-up, a resumed run, a
+// judge — writes one of its own, and a launcher writes the layer onto each of
+// them; a task without it is a run with no models at all, which is refused at
+// bootstrap (CheckPins) rather than the thing the test is about.
+func (h *harness) taskWithLayer(spec *task.Spec) *task.Spec {
+	if spec.ProjectLayer == nil {
+		spec.ProjectLayer = h.layer
+	}
+	return spec
 }
 
 // sidecarURL is what the fake sidecar says it listens on. Nothing dials it:
@@ -205,58 +226,15 @@ func oauthEnv(h *harness) {
 	h.deps.Env = append(filterEnv(h.deps.Env, "ANTHROPIC_API_KEY"), "CLAUDE_CODE_OAUTH_TOKEN="+oauthToken)
 }
 
-// fixturePins is the models line withFixturePins puts under agent:, spelled
-// the way firstLineCfg and gwConfig name theirs.
-const fixturePins = "models: { coder: claude-sonnet-5-5, reviewer: claude-opus-5, background: claude-haiku-4-5 }"
-
-// withFixturePins gives a config the fixture's own model pins when the test's
-// config names none: the coder and the first line on sonnet, the senior review
-// on opus, the background model on haiku.
-//
-// Every run has a gateway now (AB1b, D3009), and a run behind a gateway must
-// name models the price table knows (CheckPins, D3020): a configuration that
-// pins nothing is refused at bootstrap, so a test that hands the harness the
-// bare fixture — a repository, as the fixture stands in for one — would run
-// nothing at all. A real installation's pins arrive from the project layer's
-// defaults (config.ProjectLayer); the harness puts them in the file instead,
-// because a test's file is the one thing it reads.
-//
-// It inserts a line rather than re-encoding the document, so a test that reads
-// the file back and edits it by line (project_test's withProject, policy_test's
-// own replacements) still finds the lines it wrote.
-//
-// What this does not touch: a config that names a model, or names a models
-// block at all — even an empty one, which is how a test about the pin rules
-// itself asks for a run that pins nothing; a config with no agent block, which
-// is a layer or a fragment rather than a repository's own file; a config the
-// gateway does not carry — every oauth one, whose runs are the only ones with
-// no pins to price — and a config that does not parse, which is the config
-// under test in tests of their own.
-func withFixturePins(cfg string) string {
-	var doc struct {
-		Agent *struct {
-			Model  string         `yaml:"model"`
-			Models map[string]any `yaml:"models"`
-			Auth   string         `yaml:"auth"`
-		} `yaml:"agent"`
+// withPins is the task's project layer with the pins in it: the harness's own
+// when the task carries none, and the test's own layer with the pins merged
+// when it carries one that names no model (testutil.MergePins).
+func withPins(pl *task.ProjectLayer, pins string) *task.ProjectLayer {
+	if pl == nil {
+		return &task.ProjectLayer{SHA256: config.LayerSum([]byte(pins)), Generation: 3, YAML: pins}
 	}
-	if err := yaml.Unmarshal([]byte(cfg), &doc); err != nil || doc.Agent == nil {
-		return cfg
-	}
-	if doc.Agent.Model != "" || doc.Agent.Models != nil {
-		return cfg
-	}
-	// One auth kind is left alone: oauth, the credential the gateway does not
-	// carry (D3026, R12), whose runs are the only ones with no pins to price.
-	// An auth the file leaves empty is vertex by default (config.
-	// DefaultAgentAuth), which is a credential the gateway carries.
-	if doc.Agent.Auth == "oauth" {
-		return cfg
-	}
-	if strings.Contains(cfg, "agent: {") {
-		return strings.Replace(cfg, "agent: {", "agent: { "+fixturePins+",", 1)
-	}
-	return strings.Replace(cfg, "agent:\n", "agent:\n  "+fixturePins+"\n", 1)
+	merged := testutil.MergePins(pl.YAML, pins)
+	return &task.ProjectLayer{SHA256: config.LayerSum([]byte(merged)), Generation: pl.Generation, YAML: merged}
 }
 
 // liftedRecipe is the recipe a fixture's launch now embeds (PR3, D3304): a
@@ -295,7 +273,15 @@ func newHarnessFiles(t *testing.T, cfg string, spec *task.Spec, extra map[string
 	if cfg != "" {
 		files["fugaro.yaml"] = cfg
 	}
-	files["fugaro.yaml"] = withFixturePins(files["fugaro.yaml"])
+	// A run behind a gateway must name models the price table knows (CheckPins,
+	// D3020): a configuration that pins nothing is refused at bootstrap, so a
+	// test that hands the harness the bare fixture — a repository, as the
+	// fixture stands in for one — would run nothing at all. The pins go to the
+	// project layer, where an installation's arrive from (config.ProjectLayer);
+	// a repository's own file may no longer name one (S1, D3237), and the file
+	// is anchored to the project and GCP project that layer applies by.
+	pinned, pins := testutil.FixturePins(files["fugaro.yaml"], config.LiftedKeyPaths())
+	files["fugaro.yaml"] = pinned
 	for k, v := range extra {
 		files[k] = v
 	}
@@ -311,6 +297,9 @@ func newHarnessFiles(t *testing.T, cfg string, spec *task.Spec, extra map[string
 		// in, and every test here that gives the run a Cloud Run execution
 		// would stop on that instead of on what it is about.
 		spec = &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature"}
+	}
+	if pins != "" {
+		spec.ProjectLayer = withPins(spec.ProjectLayer, pins)
 	}
 	if spec.Recipe == nil {
 		spec.Recipe = liftedRecipe(files)
@@ -342,6 +331,7 @@ func newHarnessFiles(t *testing.T, cfg string, spec *task.Spec, extra map[string
 			Local: true,
 		},
 		store: store, bucket: bucket, provider: p, agent: a, remote: remote, failsFile: failsFile,
+		layer: spec.ProjectLayer,
 	}
 	h.budget = testutil.NewBudget(t)
 	h.deps.Env = append(h.deps.Env, h.budget.Env()...)
@@ -378,6 +368,7 @@ func (h *harness) setTask(t *testing.T, text string) {
 // the same text has to hand the run both.
 func (h *harness) setSpec(t *testing.T, spec *task.Spec) {
 	t.Helper()
+	h.taskWithLayer(spec)
 	if err := h.store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)
 	}
@@ -413,8 +404,70 @@ func filterEnv(env []string, key string) []string {
 // reaches (below).
 func (h *harness) run(t *testing.T, steps ...step) (*runstore.Record, error) {
 	t.Helper()
-	h.agent.steps = append(slices.Clone(steps), h.escalationRound())
+	steps = slices.Clone(steps)
+	if len(steps) > 0 {
+		steps[0] = h.owingHandBack(steps[0])
+	}
+	h.agent.steps = append(steps, h.escalationRound())
 	return runner.Run(context.Background(), h.deps)
+}
+
+// owingHandBack gives a run's first step the hand-back its level owes
+// (LV5.1): a fixture about something else than the account writes none, or
+// none with the sections a level stands on, and a run without them is not
+// ready. A section a step wrote itself is kept, and so is a hand-back left
+// out by a harness that says so (h.noHandBack).
+func (h *harness) owingHandBack(s step) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		res, err := s(t, ctx, req)
+		if h.noHandBack {
+			return res, err
+		}
+		name, title := "pr.md", "Add feature"
+		if spec, rerr := h.store.ReadTask(ctx); rerr == nil {
+			if spec.PreviousRun != "" {
+				name = "followup.md"
+			}
+			if line, _, _ := strings.Cut(strings.TrimSpace(spec.Task), "\n"); line != "" {
+				title = line
+			}
+		}
+		p := filepath.Join(envValue(req.Env, "FUGARO_STATE_DIR"), name)
+		body, rerr := os.ReadFile(p)
+		if rerr != nil && !os.IsNotExist(rerr) {
+			t.Fatal(rerr)
+		}
+		text := string(body)
+		if text == "" && name == "pr.md" {
+			text = "# " + title + "\n"
+		}
+		if text == "" {
+			text = "Done.\n"
+		}
+		text = withOwedSections(text)
+		if werr := os.WriteFile(p, []byte(text), 0o644); werr != nil {
+			t.Fatal(werr)
+		}
+		return res, err
+	}
+}
+
+// withOwedSections adds, to a hand-back text, each section a level stands on
+// that it lacks: what a test whose pull request body it compares exactly
+// expects after owingHandBack wrote the file.
+func withOwedSections(text string) string {
+	for _, sec := range []string{"Verification", "Open risks", "Revert plan", "Morning note"} {
+		if !strings.Contains(text, "## "+sec) {
+			text += "\n## " + sec + "\n\n- Nothing to add.\n"
+		}
+	}
+	return text
+}
+
+// owedBody is the pull request description a run publishes from a hand-back
+// text: the sections added, the trailing whitespace trimmed.
+func owedBody(text string) string {
+	return strings.TrimSpace(withOwedSections(text))
 }
 
 // escalationRound is the step every fixture's script ends with: the review
@@ -536,7 +589,7 @@ func TestReadyPR(t *testing.T) {
 		t.Fatalf("record = %+v", rec)
 	}
 	pr := onlyPR(t, h.provider)
-	if pr.Draft || pr.Title != "Add feature" || gitprov.StripStatus(pr.Body) != "Adds feature.txt." || pr.Spec.Base != "main" || pr.Spec.Branch != "fugaro/"+runID {
+	if pr.Draft || pr.Title != "Add feature" || gitprov.StripStatus(pr.Body) != owedBody("Adds feature.txt.") || pr.Spec.Base != "main" || pr.Spec.Branch != "fugaro/"+runID {
 		t.Fatalf("PR = %+v", pr)
 	}
 	if len(pr.Comments) != 1 || !strings.Contains(pr.Comments[0], "ready for review") {
@@ -735,7 +788,7 @@ func TestDecideToleratedHotfixRoundFilesNothing(t *testing.T) {
 	if pr.Draft {
 		t.Errorf("the pull request is a draft: %+v", pr)
 	}
-	if !strings.Contains(pr.Body, "rigor: hotfix (repo)") {
+	if !strings.Contains(pr.Body, "rigor: hotfix (project)") {
 		t.Errorf("the status section does not name the mode the run was held to:\n%s", pr.Body)
 	}
 }
@@ -1220,7 +1273,7 @@ func TestPRTextIsRedacted(t *testing.T) {
 		t.Fatal(err)
 	}
 	pr := onlyPR(t, h.provider)
-	if pr.Title != "Add feature [REDACTED]" || gitprov.StripStatus(pr.Body) != "The key is [REDACTED]." {
+	if pr.Title != "Add feature [REDACTED]" || gitprov.StripStatus(pr.Body) != owedBody("The key is [REDACTED].") {
 		t.Fatalf("PR text is not redacted: title %q, body %q", pr.Title, pr.Body)
 	}
 }

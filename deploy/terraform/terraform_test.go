@@ -5304,7 +5304,7 @@ func TestBuildAccountInvokesOnlyTheService(t *testing.T) {
 		// Null is the switch's own answer on this side, and the whole of it:
 		// an installation that has not opted in plans no binding at all, and
 		// one that has plans this one.
-		"count = var.installation.credentials_service == null ? 0 : 1",
+		"count = var.installation.credentials_service == null || !var.installation.credentials_service_serves ? 0 : 1",
 		// The service's own name and the region it runs in: the two values
 		// internal/infra writes (infra.CredentialsServiceName and the
 		// installation's region), and never a URL.
@@ -7314,7 +7314,7 @@ func TestServiceHeldSecretsMatchTheCredentialsService(t *testing.T) {
 	// The drop is gated on the opt-in, in the same expression that reads the
 	// names: with credentials_service null the set is the workflow's own
 	// secret_env and nothing changes (D147).
-	if !strings.Contains(squash(code), "logical if var.credentials_service == null || !local.is_service_held[env]") {
+	if !strings.Contains(squash(code), "logical if !local.service_serves || !local.is_service_held[env]") {
 		t.Errorf("%s: the job's secret set must be the workflow's own secret_env while the credentials service is off, and drop the credentials it holds only when it is on:\n%s", path, code)
 	}
 
@@ -7348,7 +7348,7 @@ func TestServiceHeldSecretsMatchTheCredentialsService(t *testing.T) {
 	// halves here, and the tftest run credentials_service_on_github_app_key_
 	// stays plans the state this branch ships them in: neither moves, because
 	// the list is empty and the job still reads the key.
-	if !strings.Contains(squash(code), "env => logical if var.credentials_service == null || !contains(local.service_held_secret_names, logical)") {
+	if !strings.Contains(squash(code), "env => logical if !local.service_serves || !contains(local.service_held_secret_names, logical)") {
 		t.Errorf("%s: job_mounts must keep every mount while the credentials service is off and drop the service-held ones (the App key) once it is on, by logical name:\n%s", path, code)
 	}
 	// The container is the consumer of that local, and it is what a missing
@@ -7421,7 +7421,7 @@ func TestServiceWorkflowSecretGrantsMatchTheJobsMounts(t *testing.T) {
 	// Terraform's `||` does not short-circuit before 1.12 while these modules
 	// require 1.9 (versions.tf), so the `||` form reads an attribute of a null
 	// value and fails the plan of every repository root whose switch is off.
-	if !strings.Contains(code, `service_secret_names = try(var.credentials_service.account, "") == "" ? toset([]) : toset(concat(values(local.job_mounts), local.vault_secret_names))`) {
+	if !strings.Contains(code, `service_secret_names = local.service_serves && try(var.credentials_service.account, "") != "" ? toset(concat(values(local.job_mounts), local.vault_secret_names)) : toset([])`) {
 		t.Errorf("%s: service_secret_names must be the mounts' own values, plus local.vault_secret_names (empty only while the class list is), behind a `try(...) == \"\"` gate — a set built any other way can drift from the containers it has to cover (D2074), and a gate that reads var.credentials_service.account under an `||` fails on Terraform 1.9-1.11:\n%s", path, code)
 	}
 
@@ -7508,7 +7508,7 @@ func TestNoServiceGrantWithoutTheService(t *testing.T) {
 		}
 	}
 
-	if !strings.Contains(code, `service_secret_names = try(var.credentials_service.account, "") == "" ? toset([])`) {
+	if !strings.Contains(code, `local.service_serves && try(var.credentials_service.account, "") != "" ? toset(concat(values(local.job_mounts), local.vault_secret_names)) : toset([])`) {
 		t.Errorf("%s: service_secret_names must be empty BOTH while the installation has no service and while the service it names has no account in it yet — an empty for_each creates nothing, so both plans are the ones this root planned before D2074 (D147, and the outputs of an installation applied before the account existed). It is `try(...)`, not `var.credentials_service == null || ...`: `||` does not short-circuit before Terraform 1.12, and the `||` form reads an attribute of a null value, which fails the plan of every repository root whose switch is off on 1.9-1.11:\n%s", path, code)
 	}
 
@@ -7650,10 +7650,10 @@ func TestAppKeyAndProxiedGitClausesStayOnTheVariable(t *testing.T) {
 	if got := local("is_service_held"); !strings.Contains(got, "contains(local.service_held_secret_names, logical)") || !strings.Contains(got, "|| local.is_proxied_git[env]") {
 		t.Errorf("%s: is_service_held = %s; the App key's clause and the proxied repository's must stay keyed on the installation's opt-in, or the App key outlives the service that mints with it (#907) and a proxied repository's token goes with it (G9)", path, got)
 	}
-	if got := local("job_mounts"); got != "env => logical if var.credentials_service == null || !contains(local.service_held_secret_names, logical) && !local.is_proxied_git[env] && !contains(local.vault_secret_names, logical)" {
+	if got := local("job_mounts"); got != "env => logical if !local.service_serves || !contains(local.service_held_secret_names, logical) && !local.is_proxied_git[env] && !contains(local.vault_secret_names, logical)" {
 		t.Errorf("%s: job_mounts = %s, want the opt-in, the App key's name, the proxied repository's clause and B3.8's fetched class and nothing else: the model mounts are dropped by Go's own spec from the tfvars this module plans (C1.20's pairing), a mount removed here for a runner that cannot read the service yet breaks every run, and the fetched class's clause is the rule written down where the accessor is decided (a tfvars that still names one of those cannot be applied into a job that reads it)", path, got)
 	}
-	if !strings.Contains(squash(code), "logical if var.credentials_service == null || !local.is_service_held[env]") {
+	if !strings.Contains(squash(code), "logical if !local.service_serves || !local.is_service_held[env]") {
 		t.Errorf("%s: the job's accessor set must still be gated on the installation's opt-in (D147):\n%s", path, code)
 	}
 	if !strings.Contains(squash(code), "count = var.credentials_service == null ? 0 : 1") {
@@ -7735,7 +7735,7 @@ func TestProxiedGitSecretNamesMatchTheModule(t *testing.T) {
 	// create. The drop is the list AND the input, inside the same opt-in gate
 	// as the service-held names — a non-proxied repository of an opted-in
 	// installation still mounts its Bitbucket token (G9).
-	if got, want := local("job_mounts"), "env => logical if var.credentials_service == null || !contains(local.service_held_secret_names, logical) && !local.is_proxied_git[env] && !contains(local.vault_secret_names, logical)"; got != want {
+	if got, want := local("job_mounts"), "env => logical if !local.service_serves || !contains(local.service_held_secret_names, logical) && !local.is_proxied_git[env] && !contains(local.vault_secret_names, logical)"; got != want {
 		t.Errorf("%s: job_mounts = %s, want %s: the mount must go with the accessor, for a proxied repository only, with B3.8's fetched class as the one further clause", path, got, want)
 	}
 }
@@ -7891,10 +7891,10 @@ func TestBuildServedClassesMatchTheModule(t *testing.T) {
 		}
 		return squash(found[1])
 	}
-	if got, want := local("build_mounts_served"), `var.installation.credentials_service != null && contains(local.build_served_secret_classes, "build")`; got != want {
+	if got, want := local("build_mounts_served"), `var.installation.credentials_service != null && var.installation.credentials_service_serves && contains(local.build_served_secret_classes, "build")`; got != want {
 		t.Errorf("%s: build_mounts_served = %s, want %s: the accessor list leaves with the class \"build\" (D2077), for a repository the service serves alone (G9, D147)", path, got, want)
 	}
-	if got, want := local("check_mount_served"), `var.installation.credentials_service != null && length(local.build_served_secret_classes) > 0`; got != want {
+	if got, want := local("check_mount_served"), `var.installation.credentials_service != null && var.installation.credentials_service_serves && length(local.build_served_secret_classes) > 0`; got != want {
 		t.Errorf("%s: check_mount_served = %s, want %s: the check job's mount leaves with either class — it mounts the git credential, whose accessor is the build account's own — and for a repository the service serves alone (C2.3, G9)", path, got, want)
 	}
 

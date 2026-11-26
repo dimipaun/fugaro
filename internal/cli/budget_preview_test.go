@@ -110,10 +110,32 @@ func (f *budgetFixture) Checkout(t *testing.T, agentYAML string) {
 	yaml := "version: 1\nproject: aurora\ngit: { provider: github, base_branch: main }\n" +
 		"agent:\n  auth: api-key\n" + agentYAML +
 		"workflows:\n  web: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+	// A model or a rigor default this file writes is a lifted key since S1
+	// (D3237): config.Resolve drops it, so the checkout would resolve to
+	// whatever the project layer holds. The fixture publishes the pins its own
+	// file wrote as that layer — where a run reads them now — and anchors the
+	// file to it, so a checkout prices what it always priced. A file that names
+	// none is untouched.
+	if pins := pinsLayer(yaml); pins != "" {
+		f.PublishLayer(t, testutil.MergePins(previewLayerNoMode, pins))
+		yaml = anchoredText(yaml)
+	}
 	if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	t.Chdir(dir)
+}
+
+// PublishLayer writes text as the project layer of the fixture's runs bucket
+// and moves the config to the default runs bucket name (L9), which is what
+// makes a layer apply at all: findLayer reads the fixture's bucket_url only
+// for a config whose runs bucket is fugaro-runs-<gcp>.
+func (f *budgetFixture) PublishLayer(t *testing.T, text string) {
+	t.Helper()
+	if data, err := os.ReadFile(os.Getenv("FUGARO_CONFIG")); err == nil && bytes.Contains(data, []byte("runs_bucket: unused-bucket")) {
+		f.DefaultRunsBucket(t)
+	}
+	testutil.WriteFiles(t, f.runsDir(), map[string]string{config.LayerKey: text})
 }
 
 // previewStage is one stage of a seeded result.json: its kind, the model it
@@ -1305,7 +1327,12 @@ func TestBudgetPreviewUsesTheProjectsRigorMode(t *testing.T) {
 		stages  int
 	}{
 		{name: "no layer and no repository value: pro", mode: "pro", first: 3, rounds: 3, stages: 31},
-		{name: "the repository's own rigor default", repoRigor: "rigor: { default: poc }\n", mode: "poc", first: 1, rounds: 1, stages: 7},
+		// A repository's own top-level rigor: block is a lifted key since S1
+		// (D3237): config.Resolve drops it before the merge, so the file's poc
+		// never reaches the run and the layer's critical is the mode this
+		// checkout prices.
+		{name: "the repository's own rigor default is the layer's", repoRigor: "rigor: { default: poc }\n",
+			layer: "critical", mode: "critical", first: 3, rounds: 5, stages: 47},
 		{name: "the project layer's default", layer: "critical", mode: "critical", first: 3, rounds: 5, stages: 47},
 		{name: "no checkout: the project layer's default", layer: "startup", noCheckout: true, mode: "startup", first: 2, rounds: 2, stages: 17},
 		// --mode is resolved over the layers a preview without a checkout has
@@ -1323,10 +1350,6 @@ func TestBudgetPreviewUsesTheProjectsRigorMode(t *testing.T) {
 			f := newBudgetFixture(t, "")
 			f.SetCaps(100, 3, 20, 3)
 			f.SetSpentToday(0)
-			if tc.layer != "" {
-				f.DefaultRunsBucket(t)
-				testutil.WriteFiles(t, f.runsDir(), map[string]string{config.LayerKey: previewLayer(tc.layer)})
-			}
 			args := []string{"budget", "preview", "--recipe", "standard", "--runs", "1"}
 			agent := "  max_budget_usd: 0.5\n"
 			if tc.repoRigor != "" {
@@ -1346,6 +1369,12 @@ func TestBudgetPreviewUsesTheProjectsRigorMode(t *testing.T) {
 					// fugaro.yaml does not carry (minimalAnchored's shape).
 					testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": previewCheckoutYAML(agent)})
 				}
+			}
+			// Last, so a case's own layer is the one that resolves: Checkout
+			// publishes the pins its file wrote, which a case naming a layer of
+			// its own replaces.
+			if tc.layer != "" {
+				f.PublishLayer(t, previewLayer(tc.layer))
 			}
 			if tc.request != "" {
 				args = append(args, "--mode", tc.request)
@@ -1404,12 +1433,10 @@ func TestBudgetPreviewCountsLevelThreeOnlyWhereTheLevelsRunIt(t *testing.T) {
 			f.SetSpentToday(0)
 			agent := "  max_budget_usd: 0.5\n" + tc.levels
 			f.Checkout(t, agent)
-			// The mode is the repository's own top-level rigor: block
-			// (config.Rigor), which is the one a run reads; Checkout writes
-			// the agent block alone, so the file is rewritten with the anchor
-			// a layer is resolved against (previewCheckoutYAML) plus it.
-			testutil.WriteFiles(t, ".", map[string]string{
-				"fugaro.yaml": previewCheckoutYAML(agent) + "rigor: { default: " + tc.mode + " }\n"})
+			// The mode is the project layer's rigor default, which is the one a
+			// run reads: a repository's own top-level rigor: block is a lifted
+			// key since S1 (D3237) and config.Resolve drops it.
+			previewCheckoutRigor(t, f, agent, tc.mode)
 			out, _, err := execute(t, "budget", "preview", "--recipe", "default", "--runs", "1")
 			if err != nil {
 				t.Fatal(err)
@@ -1434,8 +1461,7 @@ func TestBudgetPreviewCountsTheLevelThreeKnob(t *testing.T) {
 	f.SetSpentToday(0)
 	agent := "  max_budget_usd: 0.5\n  adversarial_rounds: 7\n"
 	f.Checkout(t, agent)
-	testutil.WriteFiles(t, ".", map[string]string{
-		"fugaro.yaml": previewCheckoutYAML(agent) + "rigor: { default: critical }\n"})
+	previewCheckoutRigor(t, f, agent, string(rigor.Critical))
 	out, _, err := execute(t, "budget", "preview", "--recipe", "default", "--runs", "1")
 	if err != nil {
 		t.Fatal(err)
@@ -1457,12 +1483,14 @@ func previewCheckoutYAML(agentYAML string) string {
 }
 
 // previewCheckoutRigor rewrites the checkout's fugaro.yaml with agentYAML and
-// the repository's own rigor: block, the layer a run reads its mode from and
-// the one a preview's --mode request resolves over.
-func previewCheckoutRigor(t *testing.T, agentYAML, mode string) {
+// publishes mode as the project layer's rigor default: a repository's own
+// rigor: block is a lifted key since S1 (D3237), so the mode a run reads — and
+// the one a preview's --mode request resolves over — is the layer's.
+func previewCheckoutRigor(t *testing.T, f *budgetFixture, agentYAML, mode string) {
 	t.Helper()
-	testutil.WriteFiles(t, ".", map[string]string{
-		"fugaro.yaml": previewCheckoutYAML(agentYAML) + "rigor: { default: " + mode + " }\n"})
+	body := previewCheckoutYAML(agentYAML)
+	f.PublishLayer(t, testutil.MergePins(previewLayer(mode), pinsLayer(body)))
+	testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": body})
 }
 
 // TestBudgetPreviewModeEqualsTheModesOwnEffects: --mode asks for a rigor mode
@@ -1504,12 +1532,12 @@ func TestBudgetPreviewModeEqualsTheModesOwnEffects(t *testing.T) {
 			// poc is the base the request raises from: a request may raise a
 			// mode and never lower it, so every mode above poc is reachable
 			// this way and the four rows are comparable one by one.
-			previewCheckoutRigor(t, agent, string(rigor.POC))
+			previewCheckoutRigor(t, f, agent, string(rigor.POC))
 			asked, _, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "3", "--mode", string(tc.mode))
 			if err != nil {
 				t.Fatal(err)
 			}
-			previewCheckoutRigor(t, agent, string(tc.mode))
+			previewCheckoutRigor(t, f, agent, string(tc.mode))
 			said, _, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "3")
 			if err != nil {
 				t.Fatal(err)
@@ -1566,7 +1594,7 @@ func TestBudgetPreviewModeLowers(t *testing.T) {
 			f.SetCaps(100, 50, 100, 50)
 			f.SetSpentToday(0)
 			f.Checkout(t, agent)
-			previewCheckoutRigor(t, agent, string(rigor.Critical))
+			previewCheckoutRigor(t, f, agent, string(rigor.Critical))
 			out, errOut, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "3", "--mode", string(tc.mode))
 			if err != nil {
 				t.Fatal(err)
@@ -1604,7 +1632,7 @@ func TestBudgetPreviewTakesHotfix(t *testing.T) {
 	f.SetCaps(100, 50, 100, 50)
 	f.SetSpentToday(0)
 	f.Checkout(t, agent)
-	previewCheckoutRigor(t, agent, string(rigor.Critical))
+	previewCheckoutRigor(t, f, agent, string(rigor.Critical))
 	out, errOut, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "3", "--mode", "hotfix")
 	if err != nil {
 		t.Fatal(err)
@@ -1641,10 +1669,15 @@ func TestBudgetPreviewTypicalStaysAbsentBelowTheMinimumInEveryMode(t *testing.T)
 // from: testProjectLayer's shape with defaults.rigor.default set to mode, at
 // the project and GCP project the budget fixture names.
 func previewLayer(mode string) string {
-	return "version: 1\nproject: aurora\ngcp_project: proj-1234\ndefaults:\n" +
-		"  git: { provider: github }\n  agent: { auth: api-key }\n  rigor: { default: " + mode + " }\n" +
-		"profiles:\n  svc:\n    commands: { build: sh build.sh, test: sh test.sh }\ndefault_profile: svc\n"
+	return strings.Replace(previewLayerNoMode, "  agent: { auth: api-key }\n",
+		"  agent: { auth: api-key }\n  rigor: { default: "+mode+" }\n", 1)
 }
+
+// previewLayerNoMode is previewLayer's shape without a rigor default: the base
+// a checkout publishes the pins its file wrote over.
+const previewLayerNoMode = "version: 1\nproject: aurora\ngcp_project: proj-1234\ndefaults:\n" +
+	"  git: { provider: github }\n  agent: { auth: api-key }\n" +
+	"profiles:\n  svc:\n    commands: { build: sh build.sh, test: sh test.sh }\ndefault_profile: svc\n"
 
 // TestBudgetPreviewRecipeNote: resolveRecipe's note explains figures that did
 // not come from the layer they should have, so the preview prints it, as run

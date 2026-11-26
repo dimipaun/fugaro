@@ -279,6 +279,18 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy, identities 
 	if lc.ModelGrades != nil {
 		add("model_grades", publishedModelGrades(lc, p.ModelGrades), p.ModelGrades, false)
 	}
+	// The pause block is the same case one key over (R11, D3184, D3187, D3190):
+	// the local config carries it and the node is what the credentials service
+	// reads, so a config that states a member the node does not carry is
+	// exactly the gap this stage exists to close — without the comparison the
+	// operator's own `pause:` edit would reach no run until they ran the
+	// explicit publish, which is the second command the HARD RULE forbids. It
+	// is compared through the publisher's own merge, the rows above's reason: a
+	// config that states nothing is not reported as a difference, while a
+	// written block is the operator's edit and is reported like any other.
+	if lc.Pause != nil {
+		add("pause", pauseForPublish(lc, p.Pause), p.Pause, false)
+	}
 	// The triage switch reaches a run off this node too (D1854), so a config
 	// that states it where the node states the other answer is a difference a
 	// publish closes, and it is compared the bake switch's way: the node's value
@@ -772,6 +784,28 @@ func policyNodeForPublish(ctx context.Context, lc *localcfg.Config, old *project
 	if problems, _ := pol.ModelRoutingProblems(); len(problems) > 0 {
 		return nil, nil, nil, userErr("the routing table this publish would write is not one a run can be served by, so nothing was written: %s %s", problems[0].Path, problems[0].Message)
 	}
+	// The pause block is the same case one key over (R11, D3184, D3187, D3190):
+	// the local config is its carrier, the node is where the credentials
+	// service reads it, and the merge is written here so that this build and
+	// the explicit door write the same node (the routing line's reason). The
+	// merged block is refused by the block's own rule, which no single read
+	// could ask: the file's block was held to it at load and the node's at
+	// decode, and a member the file states beside a member the node holds is a
+	// pair neither of them saw — a 20m in-job floor is valid beside the
+	// default's 30m minimum and invalid beside a node whose min_pause is 15m.
+	// Refused here, the sentence names the file's key while both halves are
+	// still in hand; left to the node's decode, the operator would meet it on
+	// the next run of the project, in a refusal of the whole node.
+	var publishedPause *projectpolicy.Pause
+	if old != nil {
+		publishedPause = old.Pause
+	}
+	pol.Pause = pauseForPublish(lc, publishedPause)
+	if lc.Pause != nil {
+		if err := projectpolicy.ValidPause(pol.Pause, "pause"); err != nil {
+			return nil, nil, nil, userErr("the pause block this config and the published node make together is not one a run can use: %v; write the member in the file too", err)
+		}
+	}
 	if err := policyContextRefusal(pol, imageContextShipped); err != nil {
 		return nil, nil, nil, err
 	}
@@ -855,6 +889,45 @@ func modelRoutingForPublish(lc *localcfg.Config, old *projectpolicy.Policy, pool
 			}
 		}
 		out.Pools = append(out.Pools, pub)
+	}
+	return &out
+}
+
+// pauseForPublish is the node's `pause` member: how long a run waits inside its
+// own job for an exhausted credential's reset, how short a pause may be and how
+// long one chain may stay paused in total (R11, D3184, D3187, D3190). The local
+// config is the block's carrier (localcfg.Config.Pause) and it is merged the way
+// every carrier of that shape is: a member the file states is this machine's, a
+// member it leaves out is the node's, and a file that says nothing about the
+// block keeps the node's whole (publishedCredentials, D2607).
+//
+// Silence keeps the node's block rather than writing the defaults over it,
+// which is the whole reason the block is a pointer: the node is what the
+// credentials service reads to decide between waiting, pausing and halting
+// (PR3), so a publish that wrote the defaults onto a node the operator had set
+// would move every run of the project back to a 5m in-job wait with nothing
+// having asked for it.
+//
+// A block that states no member — an absent block, `pause: {}`, and a block
+// whose three members are all absent — is no block (SetsNothing), the cascade's
+// rule: the database keeps none for an empty object, so a publish that wrote one
+// would report a difference against the node it had just written on every run
+// after it.
+func pauseForPublish(lc *localcfg.Config, node *projectpolicy.Pause) *projectpolicy.Pause {
+	if lc.Pause == nil || lc.Pause.SetsNothing() {
+		return node
+	}
+	out := *lc.Pause
+	if node != nil {
+		if out.WaitInJob == "" {
+			out.WaitInJob = node.WaitInJob
+		}
+		if out.MinPause == "" {
+			out.MinPause = node.MinPause
+		}
+		if out.MaxPause == "" {
+			out.MaxPause = node.MaxPause
+		}
 	}
 	return &out
 }

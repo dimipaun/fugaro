@@ -384,15 +384,19 @@ func TestLayerClaimRemovedPutsTheRefusalBack(t *testing.T) {
 	refusedBeforeAnyCall(t, g, "no provider serves it", "agent.models.reviewer")
 }
 
-// A layer that did not apply (it names another project) changes nothing:
-// the claim is not merged and the run is refused exactly as without it.
+// A layer that did not apply (it names another project) changes nothing: the
+// claim is not merged and the run is refused exactly as without it. Since S1
+// (D3237) that refusal is the bootstrap's own — the model the file names is one
+// no layer prices the run with, because a repository's file may not name a
+// model at all and this layer applies to another project — and it still lands
+// before the first call.
 func TestLayerClaimNotAppliedChangesNothing(t *testing.T) {
 	other := "version: 1\nproject: other\ngcp_project: proj-1234\nclaude_models:\n  openrouter: [\"" + claimedClaude + "\"]\n"
 	g := layerClaimGW(t, claimCfg(t, claimedClaude), other, nil)
 	g.deps.Project = ""
 	rec, err := g.run(t)
 	if err == nil || rec.ProjectLayer == nil || rec.ProjectLayer.Applied ||
-		!strings.Contains(rec.Reason, "no provider serves it") || g.fake.Count() != 0 {
+		!strings.Contains(rec.Reason, "agent.models.reviewer") || g.fake.Count() != 0 {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
 }

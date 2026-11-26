@@ -11540,6 +11540,7 @@
         "internal/cli/init_credentials.go",
         "internal/cli/init_firebase.go",
         "internal/cli/init_repo_target.go",
+        "internal/cli/init_retire.go",
         "internal/cli/launch_budget.go",
         "internal/cli/orchestrator_issuesync.go",
         "internal/cli/orchestrator_labels.go",

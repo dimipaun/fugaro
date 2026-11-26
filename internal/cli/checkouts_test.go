@@ -46,7 +46,7 @@ var prodCheckoutTempRoots = checkoutTempRoots
 // checkoutsYAML is a fugaro.yaml that validates cleanly, so the recording
 // tests run a command that succeeds and can only fail by what it does beside
 // it.
-const checkoutsYAML = "version: 1\nproject: aurora\ngit: { provider: github, base_branch: main }\n" +
+const checkoutsYAML = "version: 1\nproject: aurora\ngcp_project: aurora-gcp\ngit: { provider: github, base_branch: main }\n" +
 	"agent:\n" + pinnedAgent + "\n" +
 	"workflows:\n  web: { commands: { build: sh b.sh, test: sh t.sh } }\n"
 
@@ -63,6 +63,12 @@ func checkoutsFixture(t *testing.T) string {
 	writeProject(t, "bramble", "bramble-gcp")
 	enrollRepo(t, "aurora", "acme/app")
 	enrollRepo(t, "aurora", "acme/other")
+	// The model keys checkoutsYAML writes are lifted (S1, D3237): the file's
+	// copy is dropped before the merge, so they are published as aurora's
+	// project layer, which is where validate reads them.
+	if pins := pinsLayer(checkoutsYAML); pins != "" {
+		attachLayerHere(t, "aurora", pins)
+	}
 	return dir
 }
 
