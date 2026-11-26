@@ -178,7 +178,31 @@ import (
 // version-9 node forward is shape-free (internal/projectpolicy/migrate.go): a
 // node with no `reports_commit` designates nothing, which is what a project
 // that never named one means, and every version-9 node keeps its bytes.
-const Version = 10
+//
+// Version 11 (launcher-does-not-mint, plan task LM21; decision D3124) adds no
+// member at all. What it marks is the release an identity-issuing installation
+// publishes: the grant that let every launcher and operator sign a token for
+// any run's identity is taken away (D3121, D3127) and the credentials service
+// issues a run's identity instead, as a one-time ticket the launcher asks for
+// and the run itself claims (D3122). A launcher of the release behind does not
+// know the issuer's routes at all: it signs the run's identity with its own
+// grant, which is exactly the grant this release removes, so its launch would
+// either fail at the signer or mint an identity this release no longer accepts.
+// The bump is the lockstep that turns that into the documented refusal — a CLI
+// of the release behind refuses the node with SkewSentence's CLISkew, which
+// names this release (`VersionSince[11]`) and the upgrade — and it is why this
+// bump and the move are one release and not two: the version without the move
+// tells every older CLI to upgrade for nothing, and the move without the
+// version leaves that CLI to launch against an installation that no longer
+// mints what it signs (the plan's Conventions). It buys nothing else: no
+// reader of this release enforces a member by it, which is why the migration
+// step that carries a version-10 node forward is shape-free
+// (internal/projectpolicy/migrate.go) — a version-10 node is a version-11 node
+// in everything but the number, so it keeps its bytes while `fugaro update`'s
+// policy stage moves it in place, and a job image of the release behind is
+// refused a version-11 node (policyImageGate) rather than serving runs whose
+// identity it would mint itself.
+const Version = 11
 
 // VersionSince names, for each policy version, the fugaro release that
 // introduced it: 1 is the model itself (0.8.0, internal/cli's policySince), 2
@@ -186,8 +210,9 @@ const Version = 10
 // Bitbucket token block (0.14.0), 5 the pools' owner and roster (0.23.0), 6 the
 // binaries block (0.24.0), 7 the two model grades (0.24.0) and 8 the binaries
 // block's carrier in the project's own config (0.26.0), 9 the one-path pool
-// (0.26.0) and 10 the project's designated repository for committed reports
-// (0.26.0). It sits beside
+// (0.26.0), 10 the project's designated repository for committed reports
+// (0.26.0) and 11 the version an identity-issuing installation publishes
+// (0.30.0). It sits beside
 // Version because a bump of Version adds its row in the same change
 // (TestVersionSinceCoversEveryVersion fails until it does), and it is
 // read by every message about a node *ahead* of its reader (SkewSentence, so
@@ -211,6 +236,7 @@ var VersionSince = map[int]string{
 	8:  "0.26.0",
 	9:  "0.26.0",
 	10: "0.26.0",
+	11: "0.30.0",
 }
 
 // VersionRelease is the release that introduced policy version v, and false
