@@ -46,13 +46,27 @@ fugaro secrets set <name> --repo <owner/name>
 
 The row turns green on the next `fugaro project repos status owner/name`, and a run of that repository can start.
 
-## 4. Enrolling and removing, which are the user's
+## 4. A workflow secret the project does not serve
+
+A run whose workflow declares a secret the project does not admit it to stops at its start, before any agent call, and nothing was mounted for it to read instead. What admits it is the project's own record and never the repository's `fugaro.yaml`, so the entry is the owner's and the command is refused in your session. The user runs it in their own terminal, not through the agent:
+
+```bash user-runs
+fugaro secrets allow <name> <owner/name>...
+fugaro secrets allow <name> --all-repos
+fugaro secrets deny <name> <owner/name>...
+fugaro secrets set <name>
+fugaro update
+```
+
+A pattern is one repository, a workspace glob (`acme/*` matches every repository it covers, now and later) or `--all-repos`, which admits every repository the project admits whatever its owner; the third line takes one away, the fourth stores the value once for the project, and the last publishes the entry to the runs. A repository-level copy of one is ignored. A **shared project job's run carries no workflow secret at all**, the fetch turning that class away whole, so the value reaches a per-repository coding job's run alone.
+
+## 5. Enrolling and removing, which are the user's
 
 `fugaro project repos add` does the whole enrolment behind one confirmation: it reads what it can and never guesses — the provider, the workflows and base branch, the image, the GitHub App ID and the Claude accounts — prints everything it will change, asks once for the project's name, and then writes this machine's `repos:` entry and image mapping, the published allow-list entry, the policy, and the repository's job set with its `roles/run.invoker` grant. It is idempotent and resumable, it needs a checkout of that repository, and a value it cannot read it refuses with the one command that supplies it. `--allow-list-only` writes the allow-list entry alone, which is what a pattern needs. Where the user asks for it, read its refusal out rather than working around it.
 
 `fugaro project repos rm` is the inverse, store by store, behind one confirmation: the allow-list entry, this machine's `repos:` entry and image mapping, the published per-repository admission, and the repository's workflow job, check job and Scheduler job. It says before and after what it deliberately leaves — the provider's App installation, the built images, the secrets and their versions, the run history, every pull request a run opened and the remote branch — and it keeps the repository's Terraform state and the root's own IAM grants, which go by hand the way `docs/how-to/offboarding.md` lays out. While a run is in flight the confirmation is the typing alone, and the run keeps its job and its records until it ends: never promise the user a quieter removal than that, and never run it for them.
 
-## 5. What to report
+## 6. What to report
 
 - which repositories the project admits, and which of them this machine's config holds
 - for one repository, each failing row with its `fix`, in the row's own words, and the command the user runs
