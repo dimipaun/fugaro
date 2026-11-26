@@ -110,7 +110,7 @@ Resolutions (one defensible answer, so not asked):
 - **Open item 8** is answered: D2312, as amended (no repository-level Terraform).
 - **Open item 3** is answered (2026-11-13), as recommended: one Bitbucket workspace per project; `update` names a second one and holds the switch back over it (S6, amended 2026-11-18: the update warns and finishes every other step rather than failing — the refusal cost the one command that is the whole upgrade). Recorded as D2314.
 - **Open item 4** is answered (2026-11-13): D2309 is amended, the runner removes the other baked directories (S9).
-- **Open item 5** is confirmed (2026-11-13): M6, M7, S10 and M2 launch only after Check 580 passes, and M2 retires a job only when no execution runs on it.
+- **Open item 5** is answered: M6, M7 and S10 launch only after Check 580 passes, and M2 retires a job only when no execution runs on it. **M2's own gate is lifted (owner's ruling, 2026-11-26)**: per-repository jobs go as soon as the code is ready and any fault is fixed forward, so a retirement waits on its structural precondition alone — never on a check.
 
 ## UNVERIFIED
 
