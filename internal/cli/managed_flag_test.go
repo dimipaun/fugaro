@@ -662,8 +662,12 @@ func TestManagedFlagNeedsTheProjectsOwnRunsBucket(t *testing.T) {
 			r.unmarkedInstallation(t)
 			// Only the row's bucket is seeded. The installation's runs bucket
 			// is the name the write looks in (fugaro-runs-<gcp_project>), so
-			// the last row seeds one of another name instead and the write
-			// finds no bucket at all.
+			// the last row takes the one the fixture's own default put there
+			// out of the world and seeds one of another name instead, and the
+			// write finds no bucket at all.
+			if tc.bucket != initRunsBucket {
+				r.gcs.RemoveBucket(initRunsBucket)
+			}
 			r.gcs.AddBucket(tc.bucket, tc.number, tc.labels)
 			out, _, err := executeStdin(t, initProject+"\n", managedFlagArgs()...)
 			if err == nil {

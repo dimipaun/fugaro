@@ -86,6 +86,10 @@ func afterWriteFixture(t *testing.T) (*initRig, *gcpfake.RTDB) {
 func afterWriteUnmanagedFixture(t *testing.T) (*initRig, *gcpfake.RTDB) {
 	t.Helper()
 	r, db := updateBudgetRig(t)
+	// The rig's own default is a managed installation (newInitRig), and this
+	// world is the one explicit unmanaged case: the project's own half of the
+	// fact goes, so the read answers "not managed" from the label alone.
+	r.removeManagedInstallation(t)
 	r.appendConfig(t, "orchestrator: { max_running: 7 }\n")
 	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
 	db.Set(projectpolicy.PathShared(), v3Node(nil))

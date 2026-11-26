@@ -206,15 +206,12 @@ func TestUpdateKeepsTheInstallationSpellingOfAMixedCaseDomain(t *testing.T) {
 // first confirmation (init_stages.go's converge calls syncAccess), so a
 // migration written there would be a cloud write of a converge that no
 // confirmation stands in front of — and a coding agent's session writes nothing.
-// The migration is no exception: it is computed in the step and written by the
-// installation root, past the confirmation and the gate (landSeed), and the
-// loop hands a session whose project is not managed no apply to reach that
-// landing from (initflow's agentStage): it plans read-only, records a stage
-// with nothing to do and stops at the first that has something. The node is
-// left absent, the run answers with the session's own refusal instead of the
-// migration's line, and the installation is left for the person's next `fugaro
-// update`. A project the managed gate admits is the one session that applies,
-// and there the migration lands (TestAManagedSessionMigratesTheNode).
+// On an installation that is not managed the run stops at the door (T3,
+// D1541) before the step is reached at all, so the node is left absent, the
+// run answers with the door's refusal instead of the migration's line, and the
+// installation is left for the person's next `fugaro update`. A project the
+// managed gate admits is the one session that applies, and there the migration
+// lands (TestAManagedSessionMigratesTheNode).
 //
 // Mutation (the migration's write in the step, as it was): the node is there
 // when the session stops, and this fails.
@@ -222,6 +219,10 @@ func TestAnAgentSessionWritesNoGrantsNode(t *testing.T) {
 	operators := []string{"user:ops@example.com"}
 	admins := []string{"user:root@example.com"}
 	r, db := accessRig(t, operators, admins, operators, admins)
+	// The rig's own default is a managed installation (newInitRig), and this
+	// test is the other side of the boundary: the project's own half of the
+	// fact is taken back out, so the run is one the door refuses.
+	r.removeManagedInstallation(t)
 	t.Setenv(agentMarkers[0], "1")
 	out, errOut, err := executeStdin(t, "", "update")
 	all := accessOut(out, errOut, err)
@@ -231,8 +232,8 @@ func TestAnAgentSessionWritesNoGrantsNode(t *testing.T) {
 	if err == nil {
 		t.Fatalf("the roles step wrote nothing and still reported a converged run:\n%s", all)
 	}
-	if !strings.Contains(all, "a coding agent's session") || !strings.Contains(all, "your own terminal window") {
-		t.Errorf("the refusal is not the session's own:\n%s", all)
+	if !strings.Contains(all, initProject+" is not managed") || !strings.Contains(all, "`"+managedFlagCommand()+"`") {
+		t.Errorf("the refusal is not the door's own:\n%s", all)
 	}
 	if strings.Contains(all, "migrated the member lists into the grants node") {
 		t.Errorf("the run says it migrated a node it never wrote:\n%s", all)

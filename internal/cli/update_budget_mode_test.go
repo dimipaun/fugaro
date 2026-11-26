@@ -93,18 +93,22 @@ func budgetModeUpdateRigUnmanaged(t *testing.T, mode string) (*initRig, *gcpfake
 }
 
 // TestAnUnmanagedProjectKeepsItsSeededObserve: the raise's precondition is the
-// project being managed, and on one that is not it is not a warning, a
-// refusal or a question — the step declines in silence and the mode is exactly
-// what it found. D1553: `fugaro managed flag` is what makes an installation
-// managed, never the update, so an owner's own run may not move a mode the
-// owner never asked this command to touch.
+// project being managed, and on one that is not the whole run stops at the
+// door before the step that raises a mode is reached (T3, D1541) — so the mode
+// is exactly what it found and nothing about it is written or said. D1553
+// amended: `fugaro managed flag` is what makes an installation managed, never
+// the update, so an owner's own run may not move a mode the owner never asked
+// this command to touch.
 func TestAnUnmanagedProjectKeepsItsSeededObserve(t *testing.T) {
 	_, db := budgetModeUpdateRigUnmanaged(t, budget.ModeObserve)
 	fakeTerminal(t)
 	out, errOut, err := executeStdin(t, "", "update")
 	said := out + errOut
-	if err != nil {
-		t.Fatalf("fugaro update: %v\n%s", err, said)
+	if err == nil {
+		t.Fatalf("fugaro update ran on an installation that is not managed:\n%s", said)
+	}
+	if !strings.Contains(ErrorText(err), "`"+managedFlagCommand()+"`, run by its owner at their own terminal") {
+		t.Errorf("the refusal does not name the command that flags a project managed:\n%s", ErrorText(err))
 	}
 	if got := db.Value(budget.PathMode); got != budget.ModeObserve {
 		t.Errorf("%s = %v after an update of an unmanaged project, want %s: this step raises a mode on a managed project alone", budget.PathMode, got, budget.ModeObserve)

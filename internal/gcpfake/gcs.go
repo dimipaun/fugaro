@@ -165,6 +165,18 @@ func (g *GCS) AddBucket(name string, projectNumber uint64, labels map[string]str
 	g.meta[name] = &bucketMeta{projectNumber: projectNumber, labels: maps.Clone(labels), policyGen: 1}
 }
 
+// RemoveBucket takes bucket name out of the world: its get answers the 404 a
+// bucket that was never made does, and its objects go with it. What a world
+// whose installation carries no runs bucket is built with — the bucket's
+// absence is what a test about it asserts on, and AddBucket alone can only
+// ever add one.
+func (g *GCS) RemoveBucket(name string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	delete(g.meta, name)
+	delete(g.buckets, name)
+}
+
 // SetBucketLocation makes bucket name's get report location, the one the
 // bucket was made with. A bucket a test adds without one reports none, and
 // the field is then absent from the get: that is how a caller with no

@@ -335,6 +335,10 @@ func TestADeletedStateDoesNotLeadToASecondDatabase(t *testing.T) {
 // history image's mirror, and the budget admins' review.
 func TestTheStagesBehindTheFlagRunWithTheDatabase(t *testing.T) {
 	r := newImagesRigFor(t, "1.2.3", fpID)
+	// A managed project's steps file an audit record naming the account the
+	// run is running as (D1014), and this rig's default is a managed
+	// installation (newInitRig): the account is answered by the test.
+	isolateGateCredentials(t)
 	r.installationState(t)
 	mayCreate(t, r.fbRig)
 	noDatabaseYet(t, r.fbRig)

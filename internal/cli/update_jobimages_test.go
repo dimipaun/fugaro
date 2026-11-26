@@ -150,6 +150,10 @@ func useRepoFilesProvider(t *testing.T, repo, yaml string) {
 // before the command ends.
 func TestAPlainUpdateMovesARepositoryJobToTheMappedEntry(t *testing.T) {
 	r := newInitRig(t)
+	// A managed project's steps file an audit record naming the account the
+	// run is running as (D1014), and this rig's default is a managed
+	// installation (newInitRig): the account is answered by the test.
+	isolateGateCredentials(t)
 	r.stateBucket()
 	installRepoJobImages(t, r, "sandbox-web-gh")
 	slug, label := checkJobOwner(t, "bitbucket", "acme/sandbox")
