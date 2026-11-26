@@ -679,12 +679,84 @@ func TestUpdatePublishesTheFirstPolicyNodeForAnImageMap(t *testing.T) {
 	if !strings.Contains(out, "⚠ CONFIRM (project aurora)") {
 		t.Errorf("the first publish was not behind the confirmation:\n%s", out)
 	}
-	if !strings.Contains(out, "this publish creates the node") || !strings.Contains(out, "image_map") {
+	if !strings.Contains(out, "this publish creates the node") || !strings.Contains(out, "repo_images") {
 		t.Errorf("the diff the operator confirmed does not name the map it creates the node with:\n%s", out)
 	}
 	p := publishedPolicy(t, f)
+	if got := p.RepoImages["github/acme/app"]; got != "universal" {
+		t.Fatalf("the published node maps github/acme/app to %q, want the entry the config names: %+v", got, p.RepoImages)
+	}
+}
+
+// policyMapBlockOn is a node's map member as the database holds it: the escaped
+// shape, built from the block's own type, so no fixture spells a key the node
+// would hold another way (RTDB refuses a key carrying "/").
+func policyMapBlockOn(t *testing.T, m any) map[string]any {
+	t.Helper()
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var block map[string]any
+	if err := json.Unmarshal(raw, &block); err != nil {
+		t.Fatal(err)
+	}
+	return block
+}
+
+// TestPolicyStageImageMapIsDrift is L11's red step (U1b): a node that serves
+// the repository-to-image map as the old member alone is drift, because a key
+// without a provider in it reaches no repository this release looks up. Before
+// this, such a node matched the file read as the file's own map, so the check
+// answered done and the map was never rewritten.
+func TestPolicyStageImageMapIsDrift(t *testing.T) {
+	f := newProjectFixture(t, "")
+	node := currentPolicyNode()
+	node["image_map"] = policyMapBlockOn(t, projectpolicy.ImageMap{"acme/app": "universal"})
+	f.db.Set(projectpolicy.PathShared(), node)
+	h := newMigrationRig(t, f, &initOptions{})
+
+	st, err := h.s.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo {
+		t.Fatalf("a node whose map is the old member reads %s %q, want it left to do: the map has to reach the node as repo_images, with the provider in every key", st.State, st.Detail)
+	}
+}
+
+// TestPolicyStageMigratesImageMap is U1b's write: one `fugaro update` takes a
+// file and a node that state the map as image_map and leaves repo_images in
+// both, each key naming the provider its repository is at (R1), while the node
+// keeps the old member until the step after the credentials service takes it
+// away (D3376 as amended, R14).
+func TestPolicyStageMigratesImageMap(t *testing.T) {
+	f := newProjectFixture(t, imageMapConfigYAML)
+	node := currentPolicyNode()
+	node["image_map"] = policyMapBlockOn(t, projectpolicy.ImageMap{"acme/app": "universal"})
+	f.db.Set(projectpolicy.PathShared(), node)
+	h := newMigrationRig(t, f, &initOptions{})
+
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("the stage refused an installation whose map is the old member: %v\n%s", err, out)
+	}
+	p := publishedPolicy(t, f)
+	if got := p.RepoImages["github/acme/app"]; got != "universal" {
+		t.Errorf("the published repo_images maps github/acme/app to %q, want the entry the file names: %+v", got, p.RepoImages)
+	}
 	if got := p.ImageMap["acme/app"]; got != "universal" {
-		t.Fatalf("the published node maps acme/app to %q, want the entry the config names: %+v", got, p.ImageMap)
+		t.Errorf("the node lost the old member in the same write: the step after the credentials service takes it away, so this stage keeps it: %+v", p.ImageMap)
+	}
+	lc, err := localcfg.Load(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lc.ImageMap != nil {
+		t.Errorf("the local config still states image_map: %v", lc.ImageMap)
+	}
+	if got := lc.RepoImages["github/acme/app"]; got != "universal" {
+		t.Errorf("the local config's repo_images maps github/acme/app to %q, want universal: %v", got, lc.RepoImages)
 	}
 }
 
