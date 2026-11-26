@@ -122,6 +122,7 @@ launch_budget.go	with fugaro image refresh
 launch_budget.go	with fugaro update
 operator_write.go	with fugaro update
 orchestrator_identity.go	run fugaro update
+pair.go	run fugaro update
 pair_invite.go	fugaro update, which writes it
 pair_invite.go	run fugaro update
 pair_invite.go	run.app): run fugaro update
