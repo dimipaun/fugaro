@@ -288,6 +288,57 @@ func TestManagedApplyRefusesWhenNoBudgetReadOpensTheGate(t *testing.T) {
 	}
 }
 
+// TestManagedApplyRefusesUnmanaged: D2217's row for this command (T7b), and the
+// one place the design of that row differs from the other five files'.
+//
+// The command refuses an unmanaged project before anything is written, and it
+// does so in the sentence its own gate writes — "is not managed", the reason,
+// and every planned change refused — never in the fence's. The fence is not
+// asked here at all, and that is deliberate rather than a gap: what makes a
+// managed project's apply admissible is the creation fact's recorded figure,
+// and the read that judges it is the one that can tell "there is no fact of
+// this project" from "the fact is here and what it records is invalid". A fence
+// in front of that read answers both with `fugaro managed flag`, which is the
+// wrong cure for the second (ApplyGate's own case says so), so the ROOT of an
+// unmanaged project is refused by the read that knows which of the two it is.
+// D2217's substance holds either way: the command stops, and nothing of the
+// project is changed.
+func TestManagedApplyRefusesUnmanaged(t *testing.T) {
+	noAgentSession(t)
+	r, root := managedBudgetRig(t)
+
+	out, errOut, err := execute(t, "managed", "apply", root)
+	if err == nil {
+		t.Fatalf("the apply of an unmanaged project ran to completion:\n%s\n%s", out, errOut)
+	}
+	if got := ExitCode(err); got != ExitUserError {
+		t.Errorf("exit %d, want %d: a refused apply is the user's to act on", got, ExitUserError)
+	}
+	said := err.Error()
+	if !strings.Contains(said, managedmode.ErrNotEnabled.Error()) {
+		t.Errorf("the refusal %v is not the gate's, which is the one this command keeps (D2217)", err)
+	}
+	if !strings.Contains(said, "nothing was applied") || !strings.Contains(said, initProject) || !strings.Contains(said, "is not managed") {
+		t.Errorf("the refusal does not say what it declines, about which project, and why:\n%s", said)
+	}
+	// Not the fence's sentence: a project whose fact is there and wrong must
+	// not be sent to `fugaro managed flag` (the row above is where the
+	// difference between the two is exercised).
+	if strings.Contains(said, managedFlagCommand()) {
+		t.Errorf("an unmanaged project was answered with the fence's sentence, so an owner whose marker records an invalid figure reads the wrong cure:\n%s", said)
+	}
+	// And nothing of the project was touched: the fakes' logs are reads only,
+	// terraform was never launched, and the owner's delete list was never read
+	// — the steps behind the gate are behind it.
+	noWriteAcrossFakes(t, r)
+	if _, err := os.Stat(r.log); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("terraform was launched on the way to the refusal (%s: %v)", r.log, err)
+	}
+	if readAllowList(r) {
+		t.Error("the delete list was read past a closed gate")
+	}
+}
+
 // readAllowList reports whether the GCS fake was asked for the owner's
 // delete list.
 func readAllowList(r *initRig) bool {

@@ -275,6 +275,7 @@ flag	accounts	bool	-v	--verbose
 flag	accounts add	bool		--ask
 flag	accounts add	bool		--claude
 flag	accounts add	bool	-h	--help
+flag	accounts add	value		--pool
 flag	accounts add	value		--profile
 flag	accounts add	value		--repos
 flag	accounts add	value		--type
@@ -326,7 +327,10 @@ flag	accounts pool add	bool	-h	--help
 flag	accounts pool add	value		--allow-user
 flag	accounts pool add	value		--layer
 flag	accounts pool add	value		--owner
+flag	accounts pool add	value		--rule
+flag	accounts pool add	value		--service-account
 flag	accounts pool add	value		--strategy
+flag	accounts pool ls	bool		--json
 flag	accounts pool ls	bool	-h	--help
 flag	accounts pool ls	value		--config
 flag	accounts pool ls	value		--gcp-project
@@ -1138,6 +1142,7 @@ flag	run	bool		--commit-reports
 flag	run	bool		--json
 flag	run	bool		--no-budget-check
 flag	run	bool		--no-compression
+flag	run	bool		--no-personal-token
 flag	run	bool		--promote
 flag	run	bool		--security
 flag	run	bool	-h	--help

@@ -1077,15 +1077,6 @@ func (r *run) writeReviewArtifact(ctx context.Context, res agent.Result) error {
 	// API call at the moment of writing would be a call the artifact does not
 	// need and a run can fail on.
 	r.rec.PR = &runstore.PRRef{Number: head.Number}
-	// The index entry, written on this line because the number above is what
-	// puts the review on a pull request at all: `runs ls --pr N` prints a
-	// review's row from the number its record names (onPR), so an old finished
-	// review is a row the scan lists and a listing that reads the index has
-	// nothing to find it by (D2964). It goes before the record so the entry
-	// stands a moment before the row it stands for: an entry whose run never
-	// recorded the pull request buys a read and no row, which is what the
-	// index is allowed to cost.
-	r.writePRIndex(ctx, head.Number, runstore.PRIndexReviewed)
 	r.rec.Reviews = []runstore.ReviewSummary{{
 		Round: 1, Tier: runstore.TierIndependent,
 		Verdict:  r.recordVerdict(art.Verdict),

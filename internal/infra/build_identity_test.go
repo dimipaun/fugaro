@@ -187,6 +187,7 @@ func TestProjectHasOneBuildIdentity(t *testing.T) {
 		"module.installation.google_artifact_registry_repository_iam_member.build_identity_shared_writer[0]",
 		"module.installation.google_cloud_run_v2_service_iam_member.credentials_build_identity[0]",
 		"module.installation.google_project_iam_member.build_identity_log_writer[0]",
+		"module.installation.google_service_account_iam_member.build_identity_openid_token[0]",
 	}
 	for _, op := range p.operators {
 		want = append(want, "module.installation.google_service_account_iam_member.operator_build_identity[\""+op+"\"]")
@@ -508,6 +509,7 @@ func TestBuildIdentityHoldsOnlyTheRegistryRoles(t *testing.T) {
 		ghcrReader = "module.installation.google_artifact_registry_repository_iam_member.build_identity_ghcr_reader[0]"
 		defsRead   = "module.installation.google_storage_bucket_iam_member.build_identity_definitions[0]"
 		logWriter  = "module.installation.google_project_iam_member.build_identity_log_writer[0]"
+		openID     = "module.installation.google_service_account_iam_member.build_identity_openid_token[0]"
 	)
 	recordsAddr := func(slug string) string {
 		return "module.installation.google_storage_bucket_iam_member.build_identity_records[\"" + slug + "\"]"
@@ -534,6 +536,7 @@ func TestBuildIdentityHoldsOnlyTheRegistryRoles(t *testing.T) {
 		ghcrReader: "roles/artifactregistry.reader",
 		defsRead:   "roles/storage.objectViewer",
 		logWriter:  "roles/logging.logWriter",
+		openID:     "roles/iam.serviceAccountOpenIdTokenCreator",
 	}
 	for _, r := range p.repos {
 		want[recordsAddr(r.Slug)] = "roles/storage.objectUser"

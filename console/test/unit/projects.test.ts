@@ -2445,10 +2445,10 @@ describe('renderRun', () => {
 
   it('draws the whole recorded launcher in the run view, in the person class', () => {
     // The run view is where the owner's spec puts the **full identity** ("the
-    // full identity only in the expanded or run view and in JSON"): the Live and
-    // Projects columns draw the short form. It goes through the `person` class,
-    // the class the wire key carries, and a person is drawn as the identity it
-    // names (D3213): the address, here as in the requester cell beside it.
+    // full identity only in the expanded or run view and in JSON"), and the Live
+    // row now draws that same whole value (D3213). It goes through the `person`
+    // class, the class the wire key carries, and a person is drawn as the
+    // identity it names: the address, here as in the requester cell beside it.
     const named = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, launched_by: 'dana@example.test' } }
     const tree = renderRun(factory, buildRunModel(runInputs({ diagnosis: named })), 'light')
     expect(one(tree, 'run-started-by').textContent).toBe('dana@example.test')

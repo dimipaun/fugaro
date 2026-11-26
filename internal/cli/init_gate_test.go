@@ -217,17 +217,12 @@ func TestRepoGateReadsNoName(t *testing.T) {
 	}
 }
 
-// The plugin is wired only into the checkout of a repository of this project:
-// another project's file, or no origin, is skipped and --yes writes nothing.
-//
-// What the wiring's skip decides is the settings file alone (U1): the install
-// half is a step of the same stage now — before, it ran as a step of the
-// checkout stage beside this stage's own skip — and the plugin in Claude Code
-// is the machine's, the same one for every project and the step that clears the
-// staleness line every command prints, so a checkout this run may not wire is
-// not a machine that has nothing to install. With nothing installed here the
-// stage's own line is that install; where the machine's plugin is current the
-// wiring's line is the stage's answer, as it was on its own before.
+// The plugin in Claude Code is the machine's, the same one for every project,
+// so a checkout of another project's repository — and one with no origin at all
+// — is not a machine that has nothing to install: this stage's whole step is
+// that install, and since U6a it reads no checkout wiring of its own. With
+// nothing installed here the stage's line is the install; with the machine's
+// plugin at this release there is nothing to do and the stage says so.
 func TestPluginStageNotInAForeignRepo(t *testing.T) {
 	releaseBuild(t, "0.2.0")
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir()) // what is installed is this test's, not the machine's
@@ -258,14 +253,14 @@ func TestPluginStageNotInAForeignRepo(t *testing.T) {
 		t.Error("settings written into a checkout with no origin")
 	}
 	// The machine's plugin is this release's: there is nothing to install, and
-	// the wiring's own skip — the wording the pin's departure corrected (F15) —
-	// is the stage's answer again, as it was on the wiring's own.
+	// that is the stage's whole answer. Since U6a the stage reads no checkout
+	// wiring at all, so a repository this run may not wire is not an answer
+	// about the machine's own plugin either way.
 	checkoutFile(t, filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "plugins", "installed_plugins.json"),
 		`{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"0.2.0"}]}}`)
-	checkoutFile(t, filepath.Join(dir, ".claude", "settings.json"), wiredAt("v0.2.0"))
 	t.Chdir(dir)
 	e, _ = stageEngine(t, "", &initOptions{yes: true, onboardRepo: "acme/app"})
-	if st := runPlugin(t, e).Stages[0]; st.State != initflow.Skipped || !strings.Contains(st.Detail, "another project") {
+	if st := runPlugin(t, e).Stages[0]; st.State != initflow.Done || !strings.Contains(st.Detail, "No changes") {
 		t.Errorf("nothing to install: %+v", st)
 	}
 }

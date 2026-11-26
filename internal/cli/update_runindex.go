@@ -15,10 +15,11 @@ import (
 // installation of the release behind has never built, or has stopped building,
 // is marked for a rebuild and one execution is started to walk it.
 //
-// The index is a derived object like the two beside it (update_prindex.go's
-// pull-request index, update_backlog.go's standing backlog), so nothing here
-// may fail the update: a step that could not mark or start is a step the next
-// `fugaro update` runs, `fugaro runs reindex` asks for by hand, and -- because
+// The index is a derived object like the run summaries beside it
+// (update_summary.go) and the checkout's backlog (update_backlog.go), so
+// nothing here may fail the update: a step that could not mark or start is a
+// step the next `fugaro update` runs, `fugaro runs reindex` asks for by hand,
+// and -- because
 // the mark is what a walk is judged by -- the next sweep of the history job
 // continues on its own (F9, F39).
 //
@@ -49,7 +50,7 @@ const reindexNotMarked = "the run index was not marked for a rebuild (%s): `fuga
 
 func (e *initEngine) reindexRunIndex(ctx context.Context) {
 	r, o := e.r, e.r.o
-	// The door first, as in backfillPRIndex: this is the upgrade's step, and
+	// The door first, as in backfillRunSummary: this is the upgrade's step, and
 	// the hook the doors share is the end of the converge (init_stages.go's
 	// outcome). `fugaro setup` creates an installation, and an installation it
 	// has just created has no history to walk.
