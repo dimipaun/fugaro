@@ -1095,9 +1095,17 @@ this one, **the only one outside the console's set** (§9.2).
 `checks` `[]doctorCheck`, `project`° (`doctorProject`), `fugaro_yaml`°
 (`doctorFugaroYAML`), `secrets`° (**`[]secretEntry` — names and metadata only,
 never a value**), `plugin` (`pluginwire.Report`), `release`° (`releaseInfo`:
-the binary's tag and commit), `error`° (**why doctor could not run its checks —
-`--json` prints an object on every outcome**, so the console always gets
-parseable JSON).
+the binary's tag and commit), `notes`° (`config.Problem`: `path`°,
+`line`° and `message` — what doctor read and did not refuse, one entry per
+line), `error`° (**why doctor
+could not run its checks — `--json` prints an object on every outcome**, so the
+console always gets parseable JSON).
+
+**`notes` is not a check** and never moves `ok` or a `severity`: it carries the
+lines doctor's human view prints as `note: `, and each one says the same thing
+about the checkout — a key the project now owns that its `fugaro.yaml` still
+writes, a value the merge dropped with the project's that stands instead, and
+the recipes cleanup diff. A renderer shows them as text, after the checks.
 
 `doctorCheck`: `id`, `ok` bool, `problem`°, `fix`°,
 `severity`°, **`skipped`°** (CLI 0.24.0, the plugin-user-scope plan's U3: the
