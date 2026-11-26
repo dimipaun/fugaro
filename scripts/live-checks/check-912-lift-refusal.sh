@@ -31,11 +31,17 @@
 #            follow-up cut before the cleanup must not be stopped by it.
 #   plan     `fugaro update --plan-only --project <project>` refuses the key with
 #            the same sentence, before any write (acceptance 4's update arm). No
-#            launch is made, and no other update form is run.
+#            launch is made, and no other update form is run. `update` reads the
+#            repositories a project enrolls at their default branches through the
+#            git provider and never a working directory (internal/repofiles), so
+#            this row is measured only where the repository's own default branch
+#            writes the key; where the check had to write one into its copy, the
+#            row is UNVERIFIED rather than an accusation about a file `update`
+#            never read.
 #   writes   the checkout, its HEAD, its branch and its file are exactly what
-#            they were: everything this check runs happens in a copy of the
-#            default branch's tree inside its own scratch directory, and the
-#            owner's checkout is never switched, never written.
+#            they were: the two `validate` reads happen in a copy of the default
+#            branch's tree inside its own scratch directory, and the owner's
+#            checkout is never switched, never written.
 #   restore  the scratch directory is gone from the exit trap.
 #
 # Every judging is of the text the real binary printed: this check holds no
@@ -45,9 +51,9 @@
 #
 #          <checkout> is any checkout of a repository the project enrolls, on
 #          this machine. Its default branch's tree is copied into a scratch
-#          directory and the three reads happen there; the copy's `origin` is the
-#          checkout's own remote URL, so the repository a read is about is the
-#          same one. The checkout itself is not touched.
+#          directory and the two `validate` reads happen there; the copy's
+#          `origin` is the checkout's own remote URL, so the repository a read is
+#          about is the same one. The checkout itself is not touched.
 #
 #          --dry-run   prints the plan and calls NOTHING.
 # Needs:   bash, mktemp, python3, git, tar, and a release-B `fugaro` on PATH
@@ -203,15 +209,20 @@ Check 912 plan (nothing is called: no fugaro, no git, no read)
    smallest model key is written into this check's own copy and the premise row
    says so, because the state release B refuses is a file that still writes one.
 3. run, in the copy:
-     fugaro validate <copy>            on the default branch  -> must be REFUSED
-                                                               with the fix
-     fugaro validate <copy>            on $FOLLOWUP          -> must be NAMED,
-                                                               not refused
-     fugaro update --plan-only --project $PROJECT            -> must be REFUSED
-   and judge each answer's own text: the key's path and a fix for it.
+     fugaro validate <copy>/fugaro.yaml   on the default branch
+                                          -> must be REFUSED, with the fix
+     fugaro validate <copy>/fugaro.yaml   on $FOLLOWUP
+                                          -> must be NAMED, not refused
+     fugaro update --plan-only --project $PROJECT
+                                          -> must be REFUSED
+   and judge each answer's own text: the key's path and a fix for it. validate
+   takes the fugaro.yaml and not its directory. update reads the default branches
+   of the repositories the project enrolls through the git provider and never a
+   working directory, so where step 2 had to write the key into the copy the plan
+   read is UNVERIFIED and no update is run.
 
-No launch is made, no image is built, and no other update form is run. Every
-read happens in the copy: this check writes NOTHING outside its scratch
+No launch is made, no image is built, and no other update form is run. The two
+validate reads happen in the copy: this check writes NOTHING outside its scratch
 directory, and the restore row says the copy went with it.
 PLAN
 }
@@ -314,7 +325,7 @@ finish() {
     if [ "$status" -eq 0 ] || [ "$status" -eq 1 ]; then status=2; fi
   fi
   if [ "$SCRATCH_REMOVED" = yes ]; then
-    facts="${facts}"$'\n'"restore|PASS|the scratch directory is gone, and with it the copy of the default branch's tree the three reads were run on. Nothing outside it was written: the checkout, its HEAD, its branch and its file are the ones the writes row read back"
+    facts="${facts}"$'\n'"restore|PASS|the scratch directory is gone, and with it the copy of the default branch's tree the two \`validate\` reads were run on. Nothing outside it was written: the checkout, its HEAD, its branch and its file are the ones the writes row read back"
   else
     facts="${facts}"$'\n'"restore|FAIL|the scratch directory is STILL THERE, at ${SCRATCH} — remove it yourself"
   fi
@@ -636,11 +647,11 @@ BEFORE_PROJECT=$(py hash "$PROJECT_FILE" 2>/dev/null || true)
 
 fact premise PASS "$CHECKOUT is on $DEFAULT ($SOURCE), and its $REF tree was copied into this check's scratch directory $ORIGIN_URL_NOTE, with refs/remotes/origin/HEAD at it. The key judged is $KEY: $ORIGIN_NOTE"
 
-# --------------------------------------------------------- the three reads
+# ----------------------------------------------------- the reads and the plan
 
 say "fugaro validate on the default branch ($DEFAULT) — it must refuse $KEY"
 rc=0
-(cd "$CLONE" && "$FUGARO_BIN" validate "$CLONE" </dev/null) >"$SCRATCH/refuse.out" 2>&1 || rc=$?
+(cd "$CLONE" && "$FUGARO_BIN" validate "$CLONE/fugaro.yaml" </dev/null) >"$SCRATCH/refuse.out" 2>&1 || rc=$?
 { printf '|'; py refuse "$SCRATCH/refuse.out" "$KEY" "$rc"; } >"$SCRATCH/refuse.row"
 state=$(cut -d'|' -f2 "$SCRATCH/refuse.row")
 detail=$(cut -d'|' -f3- "$SCRATCH/refuse.row")
@@ -649,19 +660,23 @@ fact refuse "$state" "$detail"
 say "fugaro validate on $FOLLOWUP — it must name $KEY and NOT refuse it"
 git -C "$CLONE" checkout -q -B "$FOLLOWUP" "$DEFAULT"
 rc=0
-(cd "$CLONE" && "$FUGARO_BIN" validate "$CLONE" </dev/null) >"$SCRATCH/name.out" 2>&1 || rc=$?
+(cd "$CLONE" && "$FUGARO_BIN" validate "$CLONE/fugaro.yaml" </dev/null) >"$SCRATCH/name.out" 2>&1 || rc=$?
 { printf '|'; py name "$SCRATCH/name.out" "$KEY" "$rc" "$FOLLOWUP"; } >"$SCRATCH/name.row"
 state=$(cut -d'|' -f2 "$SCRATCH/name.row")
 detail=$(cut -d'|' -f3- "$SCRATCH/name.row")
 fact name "$state" "$detail"
 
-say "fugaro update --plan-only --project $PROJECT — it must refuse $KEY"
-rc=0
-(cd "$CLONE" && "$FUGARO_BIN" update --plan-only --project "$PROJECT" </dev/null) >"$SCRATCH/plan.out" 2>&1 || rc=$?
-{ printf '|'; py plan "$SCRATCH/plan.out" "$KEY" "$rc"; } >"$SCRATCH/plan.row"
-state=$(cut -d'|' -f2 "$SCRATCH/plan.row")
-detail=$(cut -d'|' -f3- "$SCRATCH/plan.row")
-fact plan "$state" "$detail"
+if [ "$ADDED" = yes ]; then
+  fact plan UNVERIFIED "the key $KEY was written into this check's own copy of the tree because $REF's own file writes no lifted key, and \`fugaro update\` reads the default branches of the repositories the project enrolls through the git provider and never a working directory: the copy's key never reaches it, and judging the plan here would accuse a release B that read a file this check made up. Run the check against a checkout whose default branch still writes a lifted key"
+else
+  say "fugaro update --plan-only --project $PROJECT — it must refuse $KEY"
+  rc=0
+  (cd "$CLONE" && "$FUGARO_BIN" update --plan-only --project "$PROJECT" </dev/null) >"$SCRATCH/plan.out" 2>&1 || rc=$?
+  { printf '|'; py plan "$SCRATCH/plan.out" "$KEY" "$rc"; } >"$SCRATCH/plan.row"
+  state=$(cut -d'|' -f2 "$SCRATCH/plan.row")
+  detail=$(cut -d'|' -f3- "$SCRATCH/plan.row")
+  fact plan "$state" "$detail"
+fi
 
 # ------------------------------------------------------------- what was left
 
@@ -674,7 +689,7 @@ AFTER_PROJECT=$(py hash "$PROJECT_FILE" 2>/dev/null || true)
 if [ "$AFTER_HEAD" = "$BEFORE_HEAD" ] && [ "$AFTER_BRANCH" = "$BEFORE_BRANCH" ] &&
   [ "$AFTER_STATUS" = "$BEFORE_STATUS" ] && [ "$AFTER_FILE" = "$BEFORE_FILE" ] &&
   [ "$AFTER_PROJECT" = "$BEFORE_PROJECT" ]; then
-  fact writes PASS "the checkout at $CHECKOUT is exactly what it was: the same HEAD ($BEFORE_HEAD), the same branch ($BEFORE_BRANCH), the same \`git status\` and the same fugaro.yaml, and the project's local config is unchanged too. The three reads were run on the copy in $SCRATCH, which the restore row removes with everything written into it"
+  fact writes PASS "the checkout at $CHECKOUT is exactly what it was: the same HEAD ($BEFORE_HEAD), the same branch ($BEFORE_BRANCH), the same \`git status\` and the same fugaro.yaml, and the project's local config is unchanged too. The two \`validate\` reads were run on the copy in $SCRATCH, which the restore row removes with everything written into it, and the plan read answers about the project's enrolled repositories and writes nothing here"
 else
   fact writes FAIL "the checkout at $CHECKOUT is not what it was: HEAD $BEFORE_HEAD -> $AFTER_HEAD, branch $BEFORE_BRANCH -> $AFTER_BRANCH, fugaro.yaml $BEFORE_FILE -> $AFTER_FILE, the project's local config $BEFORE_PROJECT -> $AFTER_PROJECT, and \`git status\` was '$BEFORE_STATUS' and is now '$AFTER_STATUS'. This check switches no branch and writes no file of the checkout's, so something else did"
 fi

@@ -117,8 +117,12 @@ case "${1:-}" in
   printf 'fugaro version 0.0.0-release-b\n'
   ;;
 validate)
-  path=${2:-.}
-  key=$(key_of "$path/fugaro.yaml")
+  # `fugaro validate [path]` takes the fugaro.yaml itself, not its directory
+  # (config.ReadRegular refuses a directory with "is not a regular file"), so the
+  # fake reads the file it is handed and takes the repository from its directory.
+  file=${2:-fugaro.yaml}
+  path=$(dirname "$file")
+  key=$(key_of "$file")
   [ -n "$key" ] || exit 0
   fix=yes
   [ -f "$dir/no-fix" ] && fix=no
@@ -154,7 +158,19 @@ update)
     printf 'fugaro update --plan-only: the plan is written\n'
     exit 0
   fi
-  key=$(key_of "$PWD/fugaro.yaml")
+  # `fugaro update` reads the default branches of the repositories the project
+  # enrolls through the git provider and never a working directory
+  # (internal/repofiles), so this fake reads the checkout's own origin and not
+  # the tree the check copied: the copy supplies the `project:` selector alone.
+  url=$(git -C "$PWD" remote get-url origin 2>/dev/null || true)
+  served=$dir/update-served.yaml
+  rm -f "$served"
+  if [ -n "$url" ]; then
+    branch=$(git -C "$url" symbolic-ref --short HEAD 2>/dev/null || printf 'main')
+    if ! git -C "$url" rev-parse -q --verify "refs/heads/$branch" >/dev/null 2>&1; then branch=main; fi
+    git -C "$url" show "$branch:fugaro.yaml" >"$served" 2>/dev/null || rm -f "$served"
+  fi
+  key=$(key_of "$served")
   [ -n "$key" ] || { printf 'fugaro update --plan-only: the plan is written\n'; exit 0; }
   printf 'fugaro update: refused: %s\n' "$(sentence_of "$key" yes)" >&2
   exit 1
@@ -179,6 +195,9 @@ chmod +x "$fakebin/fugaro"
 make_checkout() { # make_checkout <checkout> <origin> [--no-lift]
   mkdir -p "$1" "$2"
   git -C "$2" init -q --bare
+  # The origin's own default branch is main: `git init --bare` names master, and
+  # the origin is what the fake `fugaro update` reads a default branch from.
+  git -C "$2" symbolic-ref HEAD refs/heads/main
   git -C "$1" init -q
   git -C "$1" symbolic-ref HEAD refs/heads/main
   git -C "$1" config user.email check912@example.invalid
@@ -280,15 +299,21 @@ test_the_happy_path() {
   # back out of their terminal.
   expect_not_contains "$out" "app-origin.git" "the premise does not print the origin URL"
   expect_not_contains "$err" "app-origin.git" "nothing else prints the origin URL"
-  # The three reads really happened, on the copy, and only these three.
+  # The reads really happened, on the copy, and only these.
   local calls
   calls=$(cat "$CALLS")
-  expect_contains "$calls" "fugaro validate" "validate is run"
   expect_contains "$calls" "fugaro update --plan-only --project fugaro" "the plan is run"
   [ "$(grep -c '^fugaro validate' "$CALLS")" = 2 ] ||
     fail "the happy path: expected two validate reads, saw $(grep -c '^fugaro validate' "$CALLS")"
   [ "$(grep -c '^fugaro update --plan-only' "$CALLS")" = 1 ] ||
     fail "the happy path: expected one plan read, saw $(grep -c '^fugaro update --plan-only' "$CALLS")"
+  # `fugaro validate [path]` reads the path as the fugaro.yaml itself
+  # (config.ReadRegular refuses a directory with "is not a regular file"), so both
+  # reads are handed the file and never its directory: a directory here would be
+  # refused for being one, and no row would be about the key at all.
+  if ! grep -qE '^fugaro validate .*/fugaro\.yaml \(in ' "$CALLS"; then
+    fail "the happy path: validate was handed something other than a fugaro.yaml: $(grep '^fugaro validate' "$CALLS" | head -2)"
+  fi
 }
 
 test_the_owner_s_checkout_is_never_switched_or_written() {
@@ -387,11 +412,20 @@ test_a_plan_that_stops_for_another_reason_leaves_the_row_unverified() {
 test_a_file_that_writes_no_lifted_key_gets_one_in_the_copy() {
   case_dir no_lift --no-lift
   run912
-  expect_status "$status" 0 "a file that writes no lifted key"
+  # The two `validate` reads still measure: the key is written into the copy and
+  # refused there. The plan read does not: `fugaro update` reads the enrolled
+  # repositories' default branches through the git provider and never a working
+  # directory, so a copy's own key is one it never read, and the row is
+  # UNVERIFIED rather than an accusation about a file the update never saw.
+  expect_status "$status" 3 "a file that writes no lifted key"
   expect_row "$out" premise PASS "a file that writes no lifted key"
   expect_row "$out" refuse PASS "a file that writes no lifted key"
+  expect_row "$out" name PASS "a file that writes no lifted key"
+  expect_row "$out" plan UNVERIFIED "a file that writes no lifted key"
   expect_contains "$out" "agent.models.coder was written into this check's own copy" "the premise says what it wrote"
+  expect_contains "$out" "never a working directory" "the row says why the plan was not judged"
   expect_not_contains "$(cat "$app/fugaro.yaml")" "coder:" "the checkout's own file was not written"
+  expect_not_contains "$(cat "$CALLS")" "fugaro update" "no update is run against a key the copy made up"
 }
 
 test_the_checkout_is_copied_and_the_ref_is_the_one_read() {
