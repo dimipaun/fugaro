@@ -97,8 +97,7 @@ const liftKeyRead = "fugaro update"
 
 // liftPlanners and liftRepositories are the two things the stage reads the
 // world through, and both are seams for the same reason: a test has neither a
-// registered planner that produces a change (the six items of C2 are their own
-// tasks, and internal/lift still registers the stubs) nor an account to read a
+// registered planner that produces a change (a fixture decides what each says) nor an account to read a
 // repository with. Production reads the registry and repofiles.Read.
 var (
 	liftPlanners     = lift.Planners
@@ -245,13 +244,17 @@ func liftPlanFor(ctx context.Context, e *initEngine, lc *localcfg.Config) (*lift
 		p.skipUndone = true
 		return p, nil
 	}
-	if err := p.runPlanners(lift.Project{
+	proj := lift.Project{
 		Layer:    p.tree,
 		Recipes:  p.store,
 		Caps:     caps,
 		Prices:   prices,
 		Migrated: p.migrated,
-	}, repos); err != nil {
+	}
+	if proj.Auth, err = liftAskAuth(e, proj, repos); err != nil {
+		return nil, err
+	}
+	if err := p.runPlanners(proj, repos); err != nil {
 		return nil, err
 	}
 	if err := p.applyEdits(lc); err != nil {
@@ -259,6 +262,38 @@ func liftPlanFor(ctx context.Context, e *initEngine, lc *localcfg.Config) (*lift
 	}
 	p.empty = len(p.edits) == 0 && len(p.stored) == 0 && len(p.dbw) == 0
 	return p, nil
+}
+
+// liftAskAuth is update --ask's one question here: which agent.auth the
+// project takes where its repositories write different ones. Without --ask, or
+// where they agree, nothing is asked and the planner's majority stands; --ask
+// where nobody can answer is refused at once, never waited on. Each value is
+// offered most common first and the first yes is the answer.
+func liftAskAuth(e *initEngine, proj lift.Project, repos []lift.Repo) (string, error) {
+	if e.r == nil || !e.r.o.ask || e.r.o.planOnly {
+		return "", nil
+	}
+	opts := lift.AuthOptions(proj, repos)
+	if len(opts) < 2 {
+		return "", nil
+	}
+	refusal := func(initflow.Conditions) string {
+		return initflow.NeedsTerminal("update --ask, which asks which agent.auth the project takes (" + strings.Join(opts, ", ") + "),")
+	}
+	for _, o := range opts {
+		var ok bool
+		err := e.r.asking(func() (err error) {
+			ok, err = askAtTerminal(e.r.cmd, fmt.Sprintf("Repositories write different agent.auth values: set the project's to %s?", o), refusal)
+			return err
+		})
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			return o, nil
+		}
+	}
+	return "", userErr("no agent.auth was chosen for the project (%s); nothing was written", strings.Join(opts, ", "))
 }
 
 // readLayer reads the document the edits are made on: this machine's own layer
