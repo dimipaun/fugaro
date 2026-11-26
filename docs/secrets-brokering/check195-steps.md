@@ -127,7 +127,8 @@ worth knowing by name:
   (`gcloud builds describe <build id> --project=fugaro-dev` → `steps[0].exitCode`, which is not Cloud
   Logging at all), and the row names the outcome from it — 0 (the service answered 200 *and* the
   token's email claim is the throwaway account), 11 (401), 12 (403), 13 (any other status or none at
-  all), 14 (the metadata server minted no token), 15 (the claim is another identity). Code `0` is the
+  all), 14 (the metadata server minted no token — the step keeps curl's own words about the mint, so
+  the build's log says what the metadata server answered), 15 (the claim is another identity). Code `0` is the
   one code that record does **not** carry: `exitCode` is a proto3 `int64` with no presence, so a zero
   is omitted and a step that exited 0 and a step that never ran leave the same empty column — the
   check reads that `0` from the build's own `SUCCESS` instead (this build's only step is this one),

@@ -667,6 +667,11 @@ func viewRepoURL(lc *localcfg.Config, v repoView) (string, error) {
 // that repository: same verdict (repoCloudCheck), same refresh, and its
 // screen is the view and not a checkout (viewCloudStep).
 func cloudStep(ctx context.Context, u *stepCtx) stepResult {
+	if u.check != nil {
+		// `fugaro update --check`'s own shape (U10): the project's own list,
+		// not a checkout, and no build record anywhere in it.
+		return checkCloudStep(ctx, u)
+	}
 	if u.view != nil {
 		return viewCloudStep(ctx, u)
 	}

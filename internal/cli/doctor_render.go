@@ -898,9 +898,13 @@ var doctorShorts = map[string]doctorShort{
 	// The two dead values U6b reads off every repository's default branch
 	// (R15): each line's own fix is the edit that takes the value out, so the
 	// entry names the file rather than carrying a fix of its own.
-	"claude-through-a-provider": {"a repository pins a Claude model a provider route serves.", claudeGateFix},
-	"repo-plugin-pin":           {"an older Fugaro's plugin pin is still in a repository's .claude/settings.json.", ""},
-	"repo-budget-mode":          {"a repository's fugaro.yaml still says budget.mode: off, which is not a budget mode any more.", ""},
+	"repo-plugin-pin":  {"an older Fugaro's plugin pin is still in a repository's .claude/settings.json.", ""},
+	"repo-budget-mode": {"a repository's fugaro.yaml still says budget.mode: off, which is not a budget mode any more.", ""},
+	// What this release's credentials service stops (KS20): the sentence keeps
+	// the refusal, which is the whole reason a person has to act before the
+	// upgrade, and the check's own fix is the edit, one line, so the entry
+	// carries no fix of its own either.
+	"claude-through-a-provider": {"a repository still pins a Claude model through a provider key, which this release refuses.", ""},
 	// The login unit the daemon runs under was written from an older template,
 	// and `fugaro update` re-renders it in place (init_stages.go's unit stage),
 	// so the entry carries no fix of its own: the class's command is the whole

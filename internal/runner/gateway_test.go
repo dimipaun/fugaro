@@ -1332,6 +1332,42 @@ func TestACoderWithoutAnImageRateRunsTheVisionModel(t *testing.T) {
 	}
 }
 
+// TestACoderWithoutAnImageRateKeepsItsModelForARunThatNamesNoImage (D2017):
+// the same repository and the same slot as the test above, on a run whose task
+// names no picture and which was handed none: every stage runs the coder's own
+// model, its calls reach the coder's route at the coder's own price, and the
+// vision model's ID is nowhere in the record. A slot that moved this run would
+// be the owner's complaint of 2026-11-26 — a project setting the slot once and
+// paying the vision model's price for every implement stage of every run, at
+// roughly ten times the coder's.
+func TestACoderWithoutAnImageRateKeepsItsModelForARunThatNamesNoImage(t *testing.T) {
+	use := pricing.Usage{Input: 1000, Output: 500}
+	g := providerRun(t, withVision(t, providerPinned(t), opus), "enforce", "50",
+		[]anthropicfake.Reply{anthropicfake.Compat{}.MessageOK(deepseek, use)}, "acme/app")
+	g.setTask(t, "Refactor the palette handling in the theme layer")
+	var status int
+	var body string
+	rec, err := g.run(t, callDeepseek(&status, &body, implement("feature")), review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded || status != 200 {
+		t.Fatalf("a run that names no image was moved onto the slot: the coder's call was answered %d %s; rec = %+v, err = %v",
+			status, body, rec, err)
+	}
+	if len(rec.Stages) == 0 || rec.Stages[0].Model != deepseek {
+		t.Fatalf("stages = %+v, want the coder's stage on its own model %s", rec.Stages, deepseek)
+	}
+	coderRow, ok := g.deps.Spend.Prices.Lookup(deepseek)
+	if !ok {
+		t.Fatalf("no price row for %s", deepseek)
+	}
+	if want := coderRow.Rates.Cost(use).USD(); micros(t, rec.Stages[0].ModelUSD) != micros(t, want) {
+		t.Errorf("the coder's stage cost %v, want the coder's own row %v: the slot may not move the price of a run that reads no picture",
+			rec.Stages[0].ModelUSD, want)
+	}
+	if _, moved := rec.Cost.ModelBy[opus]; moved {
+		t.Errorf("model_by = %v: the vision model served a call of a run that reads no picture", rec.Cost.ModelBy)
+	}
+}
+
 // visionFirstLine is the configuration the pin question needs: the provider's
 // coder, which has no image rate, the vision model for the stages that reach
 // it, a first-line review so level 1's own stage runs, and a senior reviewer on
@@ -1358,6 +1394,7 @@ func visionFirstLine(t *testing.T) string {
 // as not pinned, which is the disagreement stageModel exists to prevent.
 func TestTheVisionModelIsPinnedForTheStagesItRuns(t *testing.T) {
 	g := providerRun(t, visionFirstLine(t), "enforce", "50", nil, "acme/app")
+	g.setTask(t, "Fix the console golden: docs/shot.png is out of date")
 	g.fake.Script = []anthropicfake.Reply{
 		anthropicfake.MessageOK(sonnet, pricing.Usage{Output: 100}),
 		anthropicfake.MessageOK(sonnet, pricing.Usage{Output: 100}),
@@ -1398,6 +1435,7 @@ func TestTheVisionModelIsPinnedForTheStagesItRuns(t *testing.T) {
 	// more, so a call naming it is refused rather than admitted on the old pin.
 	t.Run("the coder's own model is no stage's", func(t *testing.T) {
 		g := providerRun(t, visionFirstLine(t), "enforce", "50", nil, "acme/app")
+		g.setTask(t, "Fix the console golden: docs/shot.png is out of date")
 		var refusal string
 		stale := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 			_, refusal = post(t, req, deepseek, 1000)
@@ -1429,7 +1467,7 @@ func TestGatewayStageSpecCarriesTheVisionModel(t *testing.T) {
 	prices := `{"` + vision + `": {"input_per_m": 1, "output_per_m": 2}}`
 	g := routeRun(t, withVision(t, providerPinned(t), vision), "enforce", "50",
 		[]string{"deepseek/*"}, prices, nil, "acme/app")
-	g.setTask(t, "Refactor the palette handling in the theme layer")
+	g.setTask(t, "Fix the console golden: docs/shot.png is out of date")
 	var refusal string
 	reads := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		status, body := postImage(t, req, vision)

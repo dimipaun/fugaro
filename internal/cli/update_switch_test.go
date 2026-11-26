@@ -134,9 +134,8 @@ func TestAnOAuthInstallationStillLaunchesAfterUpdateAlone(t *testing.T) {
 }
 
 // TestEditingTheAuthModeTakesEffectWithoutAnotherUpdate: the auth is read from
-// the document the RUN will read and never from a copy stored when the record
-// was written, so a repository that switches to the cascade — or away from it —
-// is judged by the file it has now.
+// the document the RUN will read and never from a copy stored when a record was
+// written, so a repository an owner edits is judged by the file it has now.
 //
 // It matters because `fugaro update` is the whole upgrade (CLAUDE.md's HARD
 // RULE): an installation whose owner edits agent.auth must not need a second

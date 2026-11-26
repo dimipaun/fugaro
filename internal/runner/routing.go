@@ -287,6 +287,14 @@ func (r *run) applyGrade() error {
 // configuration names for images (agent.models.vision), for the pins whose own
 // model cannot read an image (V7, D2000, D2002).
 //
+// It rewrites for the run that reads a picture and for no other (D2017): the
+// coder keeps its own model for every stage that does not read one, and the
+// slot serves only the run whose task names an image or whose launch handed it
+// one (coderReadsAnImage). The slot is a pin *for those runs* — the model the
+// stage that must read the image runs — where the owner's own complaint
+// (2026-11-26) was a project that set it paying the vision model's price for
+// every implement stage of every run, at ten times the coder's.
+//
 // Whether a model can read an image is one fact about it — its price row's
 // image rate — and the rewrite is what makes that fact reach the stage. Claude
 // Code reads the picture the task names, puts it into its next request as an
@@ -322,6 +330,14 @@ func (r *run) applyVision(prices *pricing.Table) error {
 	if vision == "" {
 		// No model to move a stage onto (V1). V5's check is what refuses the
 		// run such a pin would save, before any stage spends.
+		return nil
+	}
+	// The slot is set for the run that reads a picture, not for every run of a
+	// project that set it (D2017): the coder keeps its own model for every
+	// stage that does not, which is what the owner pays for a cheap coder to
+	// get. `agent.models.vision` names what serves the image, and a run whose
+	// task names no image and was handed none never has one to serve.
+	if !r.coderReadsAnImage() {
 		return nil
 	}
 	// A provider coder's haiku role is served by the coder's own model, not by

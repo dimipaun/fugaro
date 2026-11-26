@@ -235,7 +235,7 @@ function depthOf(el) {
 // The app reports crashes through Firebase Crashlytics, to a
 // Firebase project the Fugaro project operates (the owner's ruling of 2026-10-19, which names
 // no decision number: the ruling is the authority here, not a number, and the repository's own
-// allocation records D193 onward as free — docs/coordinator/README.md — so a number cited for
+// allocation records the numbers above every block written as free — docs/coordinator/README.md — so a number cited for
 // it would be a number nobody gave). **The owner's ruling of 2026-10-30 (D731) supersedes that
 // ruling's always-on half**: crash reports are on by default and opt-out, and Firebase Analytics
 // is dropped from the app, which T3.1 of `docs/review-levels-ab-jobmax/` carried out — so the

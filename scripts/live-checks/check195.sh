@@ -1162,6 +1162,11 @@ wait_for_write_grants() {
 # Run checks the audience against the service's own URL, so the two have to be
 # the same string, and they are the one the check read off the deployed service.
 #
+# The token itself is minted the way a real catalog build mints it, because that
+# is the call this check exists to make: the metadata server's identity endpoint
+# for the build's own default service account, the audience URL-encoded, and no
+# `format` parameter -- see the step's own comment.
+#
 # `$$` is Cloud Build's escape for a literal `$`: the step's script is a shell
 # script inside a YAML block scalar, and without the escape Cloud Build would
 # substitute its own variables into it. The URL, the account, the bucket and the
@@ -1213,16 +1218,31 @@ steps:
           done
           return 1
         }
-        tok="$$(curl -f -sS -H 'Metadata-Flavor: Google' "$${meta}/default/identity?audience=__AUDIENCE__&format=full" 2>/dev/null || true)"
-        if [ -z "$${tok}" ]; then
-          tok="$$(curl -f -sS -H 'Metadata-Flavor: Google' "$${meta}/__ACCOUNT__/identity?audience=__AUDIENCE__&format=full" 2>/dev/null || true)"
-        fi
-        if [ -z "$${tok}" ]; then
+        # The build identity's ID token, minted the way the product's own build
+        # steps mint it: the build's default service account's identity endpoint,
+        # the header the metadata server requires, the audience URL-encoded, and
+        # nothing else (internal/backend/gcp/catalog_clone.go's grant step, which
+        # a real catalog build runs, and internal/cli/gitcred_build.go, which its
+        # credential step runs). No `format` parameter: `full` is the attestation
+        # a Batch VM's own token carries (internal/runner/batch_attest.go) and no
+        # mint in the product sends it, and the owner's run of 2026-11-26 read
+        # nothing at all back from the two calls this step used to send with it.
+        # curl's own words about a mint that answered nothing are kept
+        # (--show-error, and no 2>/dev/null): a run that ends `notoken` and says
+        # nothing else leaves the next reader exactly where that one was. What
+        # came back has to be one clean value, the product's own rule -- an error
+        # page on stdout is not a token and must not be sent as one.
+        tok="$$(curl --silent --show-error --fail --max-time 30 \
+          --header 'Metadata-Flavor: Google' --get --data-urlencode "audience=$${url}" \
+          "$${meta}/default/identity" || true)"
+        case "$${tok}" in
+        ""|*[!A-Za-z0-9._-]*)
           line="CHK195 status=notoken email=unread"
           echo "$${line}"
           put_line "$${line}" || echo "CHK195-OBJECT-NOT-WRITTEN __BUCKET__/__OBJECT__"
           exit 14
-        fi
+          ;;
+        esac
         code="$$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $${tok}" "$${url}" 2>/dev/null || true)"
         email="$$(printf '%s' "$${tok}" | python3 -c 'import base64,json,sys; p=sys.stdin.read().strip().split(".")[1]; p+="="*(-len(p)%4); print(json.loads(base64.urlsafe_b64decode(p)).get("email",""))' 2>/dev/null || true)"
         line="CHK195 status=$${code:-none} email=$${email:-unread}"
@@ -1427,7 +1447,7 @@ step_build() {
     call_from_step_exit_code "$step_exit" "$detail" "$step_exit_omitted_zero"
     ;;
   notoken)
-    fact call FAIL "the build's step minted no ID token from the build's own metadata server, so it never called ${SVC}: the metadata server answered it nothing, which is a fact about the build and not about the grant this check made. Read the step's own lines with 'gcloud builds log ${BUILD_ID} --project=${P}'"
+    fact call FAIL "the build's step minted no ID token from the build's own metadata server, so it never called ${SVC}: the metadata server answered it nothing, which is a fact about the build and not about the grant this check made. The metadata server's own words about that mint are in the build's log — 'gcloud builds log ${BUILD_ID} --project=${P}' — beside the step's line"
     ;;
   none)
     fact call FAIL "the build's step called ${SVC} with an ID token minted for ${URL} and read no HTTP status back at all (curl answered nothing), so the token's email claim is ${email:-unread} and whether the grant admits the call is NOT measured. Read the step's own lines with 'gcloud builds log ${BUILD_ID} --project=${P}'"
@@ -1489,7 +1509,7 @@ call_from_step_exit_code() {
     fact call FAIL "the build's own record says its step exited 13, the one code it exits for any other status or none at all: neither the claim nor the status was printed"
     ;;
   14)
-    fact call FAIL "the build's own record says its step exited 14, the one code it exits for the metadata server minting it no ID token: ${SVC} was never called, so the grant was not measured"
+    fact call FAIL "the build's own record says its step exited 14, the one code it exits for the metadata server minting it no ID token: ${SVC} was never called, so the grant was not measured. The metadata server's own words about that mint are in the build's log: gcloud builds log ${BUILD_ID} --project=${P}"
     ;;
   15)
     fact call FAIL "the build's own record says its step exited 15, the one code it exits for a 200 whose token is NOT ${CALLER_EMAIL}: the 200 is another identity's, so it says nothing about the account this check granted"
@@ -1526,7 +1546,7 @@ print_plan() {
   say "  [network] gcloud storage cat gs://${BUCKET}/${LINE_OBJECT}  (the step's own line, OUT of the object it wrote it into: re-read for up to ${LINE_WAIT_SECONDS} s (CHECK195_LINE_WAIT_SECONDS) — this is the reading that needs no Cloud Logging)"
   say "  [network] gcloud logging read 'resource.type=\"build\" resource.labels.build_id=\"<build id>\"' --project=${P}  (the same line out of the build's log, read only when the object did not carry it: retried while Cloud Logging catches up. Nothing rests on it)"
   say "  [network, local] when NEITHER the object nor the log carried the line, the row says so in one line, with the exact command to read it by hand (gcloud storage cat gs://${BUCKET}/${LINE_OBJECT}) and the step's exit code above as the reading that is left"
-  say "  [the build itself, which is the point of the check] one step in ${IMAGE}: mint an ID token for the service's URL from the build's own metadata server (http://metadata.google.internal/…/default/identity?audience=<the service URL>&format=full), call the service with it, print CHK195 status=<code> email=<the token's email claim> — never the token — and end with ONE exit code per outcome, which Cloud Build writes into the build's own record: 0 = 200 and the claim is ${CALLER_EMAIL} (the one code the record does not carry: Cloud Build omits a zero exit code, and this check reads it from the build's own SUCCESS), 11 = 401, 12 = 403, 13 = any other status or none at all, 14 = the metadata server minted no token, 15 = the claim is another identity"
+  say "  [the build itself, which is the point of the check] one step in ${IMAGE}: mint an ID token for the service's URL from the build's own metadata server (http://metadata.google.internal/…/default/identity with the audience URL-encoded, the product's own build-step mint — no format parameter), call the service with it, print CHK195 status=<code> email=<the token's email claim> — never the token — and end with ONE exit code per outcome, which Cloud Build writes into the build's own record: 0 = 200 and the claim is ${CALLER_EMAIL} (the one code the record does not carry: Cloud Build omits a zero exit code, and this check reads it from the build's own SUCCESS), 11 = 401, 12 = 403, 13 = any other status or none at all, 14 = the metadata server minted no token (curl's own words about it stay in the build's log), 15 = the claim is another identity"
   say "and its Restore (also from the exit trap) would run:"
   say "  [network, writes] gcloud builds cancel <build id> --project=${P} (refused, harmlessly, when the build already ended)"
   say "  [network, deletes] gcloud run services delete ${SVC} --project=${P} --region=${L}  (which takes the roles/run.invoker binding with it)"

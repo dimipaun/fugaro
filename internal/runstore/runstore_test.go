@@ -102,6 +102,55 @@ func TestRecordRoundTripsOAuthAccount(t *testing.T) {
 	}
 }
 
+// TestRecordRoundTripsNeedsGuidance is the field LV5.2 adds
+// (docs/rigor-modes/levels-implementation-plan.md): a run whose agent asked a
+// question it may not settle stops a draft with needs_guidance set, and the
+// record it writes is the one every reader reads back — the field beside the
+// outcome and not a second ending, additive, so an old record still parses and
+// the format's version stays 1.
+//
+// Mutation: drop the field from Record, and the value is lost on the way
+// through the store — the listing and the console have nothing to read.
+func TestRecordRoundTripsNeedsGuidance(t *testing.T) {
+	s := newStore(t)
+	rec := &Record{Version: 1, RunID: runID, Status: StatusFailed, Stage: "writeback",
+		Outcome: OutcomeDraft, Reason: "the agent's hand-back asks for guidance", NeedsGuidance: true,
+		StartedAt: time.Now().UTC()}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadRecord(ctx)
+	if err != nil || !got.NeedsGuidance || got.Outcome != OutcomeDraft {
+		t.Fatalf("ReadRecord needs_guidance = %v (outcome %s), %v; want the flag beside the draft", got.NeedsGuidance, got.Outcome, err)
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"needs_guidance":true`) {
+		t.Fatalf("the record a guidance run writes does not encode the flag: %s", data)
+	}
+
+	// Empty is omitted, like the flags beside it.
+	data, err = json.Marshal(&Record{Version: 1, RunID: runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "needs_guidance") {
+		t.Fatalf("a run that asked nothing encoded the field: %s", data)
+	}
+
+	// A record written before this field existed still parses, without one.
+	old := `{"version":1,"run_id":"` + runID + `","status":"succeeded","stage":"writeback","outcome":"ready","cost_usd":1,"started_at":"2026-09-26T22:15:30Z"}`
+	if err := s.PutFile(ctx, "result.json", []byte(old), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.ReadRecord(ctx)
+	if err != nil || got.NeedsGuidance || got.Version != 1 {
+		t.Fatalf("old record = %+v, %v; want no flag and version 1", got, err)
+	}
+}
+
 // TestStageAccountsIsAdditive is D876's own compatibility claim (spec §11.5 of
 // docs/accounts-add): the record gains a second, new field beside the scalar it
 // already has, so a record written before it decodes unchanged, the format's

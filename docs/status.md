@@ -76,7 +76,7 @@ Merged since the last read (120 commits on `main` after #3965): shared-jobs-defa
 | subscriptions | about 41/50 | no agent task open (S2.9, the production public key in the three verifiers, and S8.3, the copyright commit to the licensing entity, are merged); S0.7 (what remains of it is the app's first release, the owner's); S1.7 and S1.9 closed (superseded by ee-reorg E1.4; the key-secret mount deferred by D524 and replaced by D2137); owner-run: S1.10 (Check 178, deferred, and its premise of a mounted key no longer holds), S3.7 and S3.8 (now the portal's P0.4 to P0.6 and licence-key-v2's K0.2), S6.4, S7.4, S8.1, S8.2, S8.5 and S8.6; the count is about because the 50 predates the closures |
 | task-governance | not counted | owner Checks 137 and 138 (scripts on main, #3087), not run |
 | troubleshoot-cloud | not counted | owner Check 680 (not run); approved 2026-11-16 |
-| vision-model | not counted | owner Checks 520 and 521, not run; issue #1865 carries the 0.26.0 milestone |
+| vision-model | not counted | owner Checks 520 and 521, not run (both still measure what they were written to measure, and the ruling's own state is the reserved Check 522, an owner step); issue #1865 carries the 0.26.0 milestone; the owner ruled 2026-11-26 (D2017) that the slot serves only the runs that read an image, and V7 was narrowed to it |
 | workspace-projects-users | 26/26 | none (26/26 merged); owner-run Checks 720 and 721 (scripts on main) |
 | workspace-service | 25/25 | none (25/25 merged); owner-run Checks 770–773 once the installation has fugaro 0.27.0 and `fugaro update`; D2980–D2992 answered (D2984 not the recommendation; D2987 amended after review) |
 

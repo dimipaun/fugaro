@@ -24,16 +24,16 @@ type ProjectCopy struct {
 }
 
 // ProjectCopiesDropped is whether THIS RELEASE still derives a project-wide
-// container per `workflow_secrets` entry. It is off, and the release that
-// removes that loop from projectSecretContainers (IS6) turns it on in the same
-// commit: retirement is decided by what the release drops, so IS13 ships inert
-// on every installation — no local config, no cloud state and no record can
-// retire a copy while the release that produced the container is the one
-// running.
+// container per `workflow_secrets` entry. It is on, from the release that
+// removed that loop from projectSecretContainers (IS6) in the same commit:
+// retirement is decided by what the release drops, so IS13 shipped inert —
+// while the release that produced the container was the one running, no local
+// config, no cloud state and no record could retire a copy — and this flag is
+// what turns that half on.
 //
-// It is a variable rather than a constant for that one release to flip and for
-// the tests that pin both sides of it. Nothing else may write it.
-var ProjectCopiesDropped = false
+// It is a variable rather than a constant because IS13 shipped reading it, and
+// because the tests pin both sides of it. Nothing else may write it.
+var ProjectCopiesDropped = true
 
 // RetiredProjectCopies is the project copies D3325 retires, once the release
 // has stopped deriving them (ProjectCopiesDropped): every name whose value the

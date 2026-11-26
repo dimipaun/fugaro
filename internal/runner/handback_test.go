@@ -12,10 +12,10 @@ import (
 )
 
 // handBackPR is the fixture pr.md every level's golden body is rendered from:
-// one file carrying all six sections of the contract (LV4.2), so a level's row
-// is what decides which of them its account shows. The open questions are
-// nobody's section here — LV5.2 reads them itself — so no golden may carry
-// them.
+// one file carrying every section of the contract (LV4.2), so a level's row is
+// what decides which of them its account shows. The open questions are nobody's
+// section here — LV5.2 reads them itself — so they are not in this file, and
+// handBackPRAsked is the same file for a run that stopped on one.
 const handBackPR = `# Add a feature
 
 Adds feature.txt, and a flag to turn it off.
@@ -39,13 +39,18 @@ Adds feature.txt, and a flag to turn it off.
 - what was done: the parser keeps the last key instead of stopping
 - what needs a proper fix: the import should report the duplicate
 - how to verify: the nightly run finished clean
+`
 
+// handBackPRAsked is handBackPR as the agent of a run that needs a call it may
+// not make writes it (LV5.2, LD8): the same file plus the section the run reads
+// as its own stop.
+const handBackPRAsked = handBackPR + `
 ## Open questions
 - should the flag default to off?
 `
 
-// handBackFU is the fixture followup.md: the same six sections, as a
-// follow-up's agent writes them.
+// handBackFU is the fixture followup.md: the same sections, as a follow-up's
+// agent writes them.
 const handBackFU = `The retry loop now backs off with jitter.
 
 ## Deferred
@@ -65,9 +70,6 @@ const handBackFU = `The retry loop now backs off with jitter.
 - what was done: the loop backs off with jitter instead of hammering
 - what needs a proper fix: the import should report the duplicate
 - how to verify: the nightly run finished clean
-
-## Open questions
-- is jitter enough, or does the loop need a cap?
 `
 
 // levels is the vocabulary, in the order the spec names it: one golden per
@@ -176,8 +178,9 @@ func TestPRBodyHandBackIsTheLevelsOwn(t *testing.T) {
 		"critical": {"**Open risks** (`## Open risks`)", "**Verification** (`## Verification`)", "ran the fixture suite"},
 		"hotfix":   {"**Revert plan** (`## Revert plan`)", "**Morning note** (`## Morning note`)", "what broke: the nightly import stopped"},
 	}
-	// No level carries the open questions, and none carries a section that is
-	// not its own.
+	// No level carries the open questions — LV5.2 draws that block for a run
+	// that asked, not for a level, and this fixture's agent asked nothing — and
+	// none carries a section that is not its own.
 	not := map[string][]string{
 		"poc":     {"**Deferred**", "**Open risks**", "**Verification**", "**Revert plan**", "**Morning note**"},
 		"startup": {"**Open risks**", "**Verification**", "**Revert plan**", "**Morning note**", "prototype"},
@@ -199,7 +202,7 @@ func TestPRBodyHandBackIsTheLevelsOwn(t *testing.T) {
 					t.Errorf("the body's hand-back does not carry %q:\n%s", w, block)
 				}
 			}
-			for _, n := range append(not[level], "should the flag default to off?") {
+			for _, n := range append(not[level], "**OPEN QUESTIONS**") {
 				if strings.Contains(block, n) {
 					t.Errorf("the body's hand-back carries %q, which this level does not hand back:\n%s", n, block)
 				}
@@ -291,7 +294,7 @@ func TestFollowUpCommentHandBackIsTheLevelsOwn(t *testing.T) {
 					t.Errorf("the comment's hand-back does not carry %q:\n%s", w, block)
 				}
 			}
-			for _, n := range append(tc.not, "is jitter enough", "**Open questions**") {
+			for _, n := range append(tc.not, "**OPEN QUESTIONS**") {
 				if strings.Contains(block, n) {
 					t.Errorf("the comment's hand-back carries %q, which this level does not hand back:\n%s", n, block)
 				}

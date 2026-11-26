@@ -113,10 +113,15 @@ start. This file is the three commands and what each row means.
   `build` for each repository, read out of Cloud Logging: where one exists it must name the account the
   build's own record says it ran as (**G20**, the one field a call cannot claim for itself), the
   provider's own git credential (the App key for GitHub, a `bitbucket-token…` for Bitbucket) and the
-  repository's own slug. A catalog build asks the **entry** route instead, whose lines name the project's
+  repository's own slug — which the row takes from the build itself, since a catalog request has no
+  `_SLUG` substitution and a repository-level image and its daily check job are retired (**D1900**, M2):
+  the KEY of the build's own record step, `builds/<slug>/catalog/<entry>/image.json`, which is the
+  entry's **source** repository's slug and is named as such in the row where the two differ. A catalog
+  build asks the **entry** route instead, whose lines name the project's
   build identity and **no** repository (one token covers the entry's repositories), so the line such a
   build's own call leaves cannot appear under a repository's slug and **no line is INFO**, with the reason
-  in the row. A **refused** line under the repository's slug is a **FAIL**: nothing of this installation's
+  in the row; a build carrying neither a `_SLUG` nor a record step reads as a row that could not be
+  measured. A **refused** line under that slug is a **FAIL**: nothing of this installation's
   names a repository on that route.
 - **`check-github`**, **`check-bitbucket`** — the repository's own daily check job runs as its build
   account, still **mounts** the repository's git credential (the platform's own reserved variable for the

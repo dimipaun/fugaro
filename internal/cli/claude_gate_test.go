@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -175,6 +176,18 @@ func TestDoctorNamesARepositoryTheGateWillStop(t *testing.T) {
 			strings.Replace(claudeGateYAML(), "auth: api-key", "auth: oauth", 1), 0, ""},
 		{"a level pinned to the routed Claude ID", claudeGateLC(claudeGateRoute("acme/app")),
 			layerWithRoles("levels: { l1: { model: " + gatePinModel + " } }"), claudeGateYAML(), 1, "agent.levels.l1.model"},
+		// The other three role pins and a level that is not the first: each is
+		// read the same way, and a gate that named only the coder would leave a
+		// repository stopped by its reviewer, its background model, its vision
+		// model or its third level unnamed.
+		{"the reviewer pinned to the routed Claude ID", claudeGateLC(claudeGateRoute("acme/app")),
+			claudeGateLayer("reviewer: " + gatePinModel), claudeGateYAML(), 1, "agent.models.reviewer"},
+		{"the background model pinned to it", claudeGateLC(claudeGateRoute("acme/app")),
+			claudeGateLayer("background: " + gatePinModel), claudeGateYAML(), 1, "agent.models.background"},
+		{"the vision model pinned to it", claudeGateLC(claudeGateRoute("acme/app")),
+			claudeGateLayer("vision: " + gatePinModel), claudeGateYAML(), 1, "agent.models.vision"},
+		{"the third level pinned to it", claudeGateLC(claudeGateRoute("acme/app")),
+			layerWithRoles("levels: { l3: { model: " + gatePinModel + " } }"), claudeGateYAML(), 1, "agent.levels.l3.model"},
 		// The pin a repository's file still writes is dropped before the merge
 		// (S1, D3237): it is the lifted-key note S2 and S5 print, and the gate
 		// reads the layer's model instead — here the provider's own.
@@ -195,5 +208,36 @@ func TestDoctorNamesARepositoryTheGateWillStop(t *testing.T) {
 				t.Errorf("%s's line is %q, want it to name %s", tc.name, lines[0].Detail, tc.wantPath)
 			}
 		})
+	}
+}
+
+// TestDoctorReadsTheEnrolledListOnce: doctor's three per-repository checks --
+// the plugin pin, budget.mode: off and the gate -- read C1's list, and one read
+// answers all three. The list is a read of every enrolled repository, so a
+// second read is every one of them read twice for the same facts, and nothing
+// in the output says how many there were: the reader stands in for the real one
+// and counts the calls, which is the only way to see it.
+//
+// The views are the gate's own fixture, so the read is one the checks really
+// judge rather than one they would have made anyway.
+func TestDoctorReadsTheEnrolledListOnce(t *testing.T) {
+	r := newDoctorRig(t)
+	// The bucket_url keeps doctor's own layer reads local (layerDrift), as the
+	// positive case above does: the rig's config names the real bucket, and a
+	// layer that applies would open it for real.
+	addLocalLines(t, r, "bucket_url: file://"+t.TempDir()+"\n")
+	root := repoCheckout(t, githubOrigin, claudeGateYAML())
+	t.Chdir(root)
+
+	reads := 0
+	stubEnrolledRepos(t, func(context.Context, enrolledIn) ([]repoView, []string) {
+		reads++
+		yaml := []byte(claudeGateYAML())
+		cfg, _, _ := config.Resolve(yaml, nil)
+		return []repoView{{Repo: "acme/app", Provider: "github", Branch: "main", Head: "0f1e2d", YAML: yaml, Cfg: cfg}}, nil
+	})
+	repoNoticeDoctorChecks(t, root)
+	if reads != 1 {
+		t.Errorf("doctor read the enrolled list %d times, want 1: the three per-repository checks read the same list, and one read answers them all", reads)
 	}
 }

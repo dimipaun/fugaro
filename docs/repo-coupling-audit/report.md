@@ -6,9 +6,9 @@ check scripts' reviews found, were checked against `1d4b59344` on 2026-11-23 (re
 Rows RC106 and RC107, which the live checks found, were checked against `d8f1ae007` on 2026-11-23
 (reconciliation F21). Locations name a path and a symbol, never a line, because lines drift. The live
 columns (data layout on a real project, runtime trace, IAM a member really holds) come from the
-owner's runs of Checks 890–892 on the project `fugaro` on 2026-11-23; §1's "Live result" says what
-each check saw. Where [reconciliation.md](reconciliation.md) and this report disagree, the
-reconciliation wins.
+owner's runs of Checks 890–892 on the project `fugaro` on 2026-11-23, and Check 890 re-run there on
+2026-11-26 with 0.29.5, when it passed; §1's "Live result" says what each check saw. Where
+[reconciliation.md](reconciliation.md) and this report disagree, the reconciliation wins.
 
 **Legend**
 
@@ -48,14 +48,15 @@ reconciliation A5 says why.
 Scope item 9 (caps, rigor, recipes, routing) has no rows of its own: its rows sit under surfaces 2
 and 3, where the setting lives.
 
-### Live result (2026-11-23, project `fugaro`)
+### Live result (2026-11-23, project `fugaro`; Check 890 re-run 2026-11-26: PASS)
 
 The owner ran Checks 890–892 on `fugaro` (GCP `fugaro-dev`). Each read only. They print keys,
 stage lines, job names and IAM members, never a value, and so does this section.
 
 **Check 890, the data layout: FAIL on one path, now a row.** Every repo-keyed path it listed is a
 row of this report except `creds/current/<slug>/<run>`, which is RC106 now (#3700 named it in the
-script). What was seen and what was not:
+script). **Re-run on 2026-11-26 with 0.29.5: PASS** — 7 rows, every repo-keyed path a storage-path
+row, RC106 included. What the 2026-11-23 run saw and what it did not:
 
 - **Seen live**: RC40 (one slug), RC41 (one), RC42 (`runs/`, `outcomes/<day>`,
   `spend/<day>/runs`), RC43, RC44 (two), RC45 (four), RC48 (`creds/repoauth` only), RC49, RC50

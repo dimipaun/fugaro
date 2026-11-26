@@ -216,7 +216,7 @@ the recommendation first.
 | D3268 | The stamp only rises (D3262). How is a bad value kept out (F23)? | **Bound it.** `update` writes only a published release: a `Version` that `updatecheck.Valid` accepts and that is no newer than the newest release tag `updatecheck` can see. It never writes a `dev` build or one stamped with `-X` for a release that does not exist; it leaves the stamp unchanged with a line instead. A cached value above the binary refuses on its own only while it is younger than 15 minutes. Past that, only a re-read that confirms it refuses, and a re-read that fails passes with the stderr line. D3262 stands: there is still no command that lowers the stamp. The last-resort recovery is a hand edit of the node in the Firebase console, documented in T7 | Leave it unbounded: a mistaken value stays until someone hand-edits the node, and every member is refused meanwhile | **2026-11-23, as recommended ("Bound it").** Owner's ruling on the availability risk the first review raised. D3269 replaces "no newer than the newest release tag" with a live check that the tag `v<Version>` is a published release |
 | D3269 | How does `update` know its `Version` is a published release (D3268)? | **A live check:** the release tag `v<Version>` must exist as a published release that is neither a draft nor a pre-release, read from the same releases API `updatecheck` uses. The check ignores the update-check switches (`FUGARO_NO_UPDATE_CHECK`, `update_check: false`) and the update-check cache. When the lookup fails, the stamp stays unchanged and a line says why. An older-line hotfix (a 0.27.x published after 0.28.0) passes, because the question is about the tag, not about the newest release | Reuse the update-check cache and its "newest release" answer: no extra call, but it is switched off by the very switches a CI or an offline owner sets, and it wrongly refuses an older-line hotfix | **2026-11-23, as recommended** |
 | D3270 | Is `fugaro budget kill` fenced (F25)? | **Exempt, in all its forms, `--workspace` included:** stopping spend must always work | Fenced like any writer: a member below the stamp could not stop a runaway run | **2026-11-23, as recommended** |
-| D3271 | (O7) Does `update`'s door read get a longer timeout than every command's 2 seconds? | **No: keep 2 seconds and decide after Check 900.** There is no new parameter. Check 900 measures whether a cold read, token refresh included, fits (U1); if it does not, a follow-up raises the timeout. A failed read falls back to the cache rule | 10 seconds for `update` only, at the cost of a new parameter and up to 10 seconds of waiting before `update`'s first line when the database is unreachable; or 10 seconds everywhere, so every project command can stall | **2026-11-23, as recommended.** Closes O7 |
+| D3271 | (O7) Does `update`'s door read get a longer timeout than every command's 2 seconds? | **No: keep 2 seconds and decide after Check 900.** There is no new parameter. Check 900 measures whether a cold read, token refresh included, fits (U1); if it does not, a follow-up raises the timeout. A failed read falls back to the cache rule | 10 seconds for `update` only, at the cost of a new parameter and up to 10 seconds of waiting before `update`'s first line when the database is unreachable; or 10 seconds everywhere, so every project command can stall | **2026-11-23, as recommended.** Closes O7. Check 900 ran 2026-11-26: the cold read fit (284 ms), so 2 seconds stands |
 
 ## 5. Resolutions (one defensible answer, stated rather than asked)
 
@@ -300,7 +300,8 @@ No open tension.
   left for the workspace work's own spec. Nothing in this plan checks it.
 - **O6.** U3 (whether the console treats one stderr line on its reads as a failure) is the console
   owner's. This plan changes no console code, so no task here tests it.
-- **O7 (closed 2026-11-23 by D3271: keep 2 seconds, revisit after Check 900).** Should `update`'s door read have a longer timeout than the 2 seconds every
+- **O7 (closed 2026-11-23 by D3271; the Check 900 reading of 2026-11-26 keeps it: the cold read fit
+  in 284 ms, so 2 seconds stands).** Should `update`'s door read have a longer timeout than the 2 seconds every
   command's read has? T4's fresh read uses T1's timeout. When it fails, it falls back to the cache
   rule, so a cached value above the binary that is younger than 15 minutes still refuses. A longer
   door timeout would be a new parameter, so it is the owner's call.
@@ -313,11 +314,13 @@ No open tension.
 ## 7. UNVERIFIED
 
 - **U1.** Whether a cold-cache read of the stamp, including ADC's token refresh, fits in the 2-second
-  timeout on a real machine. Settled by Check 900, run by the owner.
+  timeout on a real machine. **Settled by Check 900 on 2026-11-26: PASS** — the owner's run on
+  `fugaro` with 0.29.5 measured the cold read at 284 ms, well under `ReadTimeout`.
 - **U2.** Whether a principal holding only `roles/firebasedatabase.viewer` reads
   `config/policy/required_cli` over REST under the rules' `".read": false` root. The CLI's other IAM
-  reads of `config/` suggest it does, but Check 892 found no member on `fugaro`. Settled by Check 900
-  run as a member, on a project that has one.
+  reads of `config/` suggest it does, but Check 892 found no member on `fugaro`, and the owner's run
+  of Check 900 on 2026-11-26 was run as the owner. Settled by Check 900 run as a member, on a
+  project that has one.
 - **U3.** Whether the console marks a read failed when the CLI prints one line on stderr and its JSON
   on stdout. The console does not change here (spec), so this is for the console's owner: a unit test
   in `console/test/unit` over `spawn.ts` settles it.

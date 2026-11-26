@@ -59,7 +59,7 @@
         },
         "detail": {
           "type": "string",
-          "description": "The stage's own one-line detail: the document's `stages[].detail`, unchanged — the plan's counts, the reason it was skipped, the sentence it failed with. A stage that reports `repos` says the summary those lines make instead (\"3 repositories: 1 done, 1 needs you, 1 unread\"), which is the same sentence from every directory, where a stage's own reason would name the directory it ran in."
+          "description": "The stage's own one-line detail: the document's `stages[].detail`, unchanged — the plan's counts, the reason it was skipped, the sentence it failed with. A stage that reports `repos` says the summary those lines make instead (\"3 repositories: 1 done, 1 needs you, 1 unread\"), which is the same sentence from every directory, where a stage's own reason would name the directory it ran in; after that summary a stage that has one adds its own line about the step it did not run, naming the step and the repository it was dropped for (\"1 repository: 1 unread; skipped here: acme/app: cloud (…)\") — the summary counts how the repositories were left and never says which step was dropped for one of them."
         },
         "after": {
           "type": "string",
@@ -71,7 +71,7 @@
         },
         "repos": {
           "type": "array",
-          "description": "The lines the stage reported about the repositories it read (C1's RepoLine, U13), in canonical owner/name order: one per repository it has something to say about, with how it left it. Always an array, and `[]` for a stage that reported none, so a consumer reads it without a case for \"absent\". The stage's own `detail` above is the summary these lines make, so what a consumer draws is the same from every directory. It is the same list the --json document's `stages[].repos` carries; a person reading the lines has them ordered with their working directory's repository first, which is the human output's alone.",
+          "description": "The lines the stage reported about the repositories it read (C1's RepoLine, U13), in canonical owner/name order: one per repository it has something to say about, with how it left it. Always an array, and `[]` for a stage that reported none, so a consumer reads it without a case for \"absent\". The stage's own `detail` above is the summary these lines make, plus the line a stage has of its own where it has one, so what a consumer draws is the same from every directory. It is the same list the --json document's `stages[].repos` carries; a person reading the lines has them ordered with their working directory's repository first, which is the human output's alone.",
           "items": {
             "type": "object",
             "required": ["repo", "state"],

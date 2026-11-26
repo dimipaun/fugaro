@@ -76,6 +76,15 @@ func TestSecurityMdStatesTheModelAndItsLimits(t *testing.T) {
 		// read it (C6 as re-pointed by D651; the sentences themselves are
 		// pinned in docs_registry_readers_test.go).
 		"### The source an image carries, and who can read it",
+		// The shared image's own half of that claim, which the design's §12
+		// states and its prerequisites ask SECURITY.md to carry: it holds the
+		// dependency layer and no repository's source, so a repository's
+		// registry readers never read another's through it.
+		"**A shared dependency-layer image bakes no repository's source at all.**",
+		// And what C8b does and does not ship, so the paragraph above it cannot
+		// go back to claiming a refresh that builds a shared image out of
+		// nothing.
+		"no catalog entry is keyed by a resolved dependency set yet",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("SECURITY.md never says %q", want)

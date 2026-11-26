@@ -415,6 +415,84 @@ func TestTheBuildReadsTheMountsTheDeploymentHas(t *testing.T) {
 	}
 }
 
+// TestVertexRepoBuildRequestNamesNoWorkflowSecret is IS6's build-side clause
+// pinned where the request is made: a `vertex` repository — the one D3326 hands
+// the credentials service's ADDRESS without the service serving it anything
+// (F17) — submits a build that names no secret at all, exactly as a served
+// repository's does. The container the request would otherwise name is the
+// installation's fugaro_p_<name> copy: this release stopped deriving it
+// (D3324) and the next update retires it, so a build naming it is one Cloud
+// Build refuses. The gate is therefore the ADDRESS alone
+// (infra.RepoSpec.BuildMountsServed, modules/repo/build.tf's
+// local.build_mounts_served) and not the switch, which answers false for this
+// auth by construction.
+//
+// The spec is the deployment the test above reads with Readiness's two edits
+// for the fetched class applied by hand — the workflow secrets' mounts and their
+// accessors leave the job (dropVaultMounts) and the names join
+// VaultSecretNames, and the module's accessor list for the build goes with
+// them — so what is asserted is the state a vertex repository's root really
+// plans. `fugaro update` and `fugaro image build` both set the address from
+// spec.BuildMountsServed() (internal/cli's submitAndWait), which is why that
+// gate is asserted here beside the request it decides.
+func TestVertexRepoBuildRequestNamesNoWorkflowSecret(t *testing.T) {
+	cfg, problems := config.Parse([]byte(workflowSecretsYAML))
+	if len(problems) > 0 {
+		t.Fatal(problems)
+	}
+	repoSecretsOn(t)
+	spec, err := infra.Repo(infra.Inputs{LC: repoSecretsLC(t), Repo: "acme/app", Cfg: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := spec.Workflows["app"]
+	if logical, mounted := ws.SecretEnv["NPM_TOKEN"]; !mounted {
+		t.Fatalf("the fixture mounts no NPM_TOKEN (%v): there would be no fetched name to leave the request", ws.SecretEnv)
+	} else if logical != "npm-token" {
+		t.Fatalf("the fixture mounts NPM_TOKEN=%s, want the file's npm-token", logical)
+	}
+	// The address without the service (D3326 as amended by F17), and the drop
+	// Readiness makes for the fetched class: the mounts and their accessors go,
+	// the names join VaultSecretNames, and the module's build accessor list
+	// empties.
+	spec.Installation.CredentialsService = &infra.CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
+	serves := false
+	spec.Installation.CredentialsServiceServes = &serves
+	delete(ws.SecretEnv, "NPM_TOKEN")
+	delete(ws.SecretEnv, "DEPLOY_TOKEN")
+	delete(ws.SecretIDs, "npm-token")
+	delete(ws.SecretIDs, "deploy-token")
+	ws.VaultSecretNames = []string{"deploy-token", "npm-token"}
+	spec.Workflows["app"] = ws
+	spec.BuildSecrets = nil
+	if !spec.BuildMountsServed() {
+		t.Fatal("the vertex repository's root answers BuildMountsServed false: its build names the retired project copy, and Cloud Build refuses the build fugaro update submits")
+	}
+	bs, err := cloudBuildSpec(spec, cfg, "app", checkBase, "E2_HIGHCPU_8", "gs://fugaro-runs-proj-1234", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bs.CredentialsServiceURL = "https://credentials.example.com"
+	req, err := gcp.BuildRequest("proj-1234", bs)
+	if err != nil {
+		t.Fatalf("the vertex repository's build was refused: %v", err)
+	}
+	if req.AvailableSecrets != nil {
+		t.Errorf("the vertex repository's build request carries availableSecrets %+v, want none: the account holds no accessor on any of them, and the container the workflow secret's entry would name is the retired project copy (IS6, D3324)", req.AvailableSecrets)
+	}
+	for _, st := range req.Steps {
+		if len(st.SecretEnv) != 0 {
+			t.Errorf("the vertex repository's build step %q mounts %v, want none: the values come from the service at the address (IS6, B4.5)", st.Id, st.SecretEnv)
+		}
+	}
+	if got := req.Substitutions["_SECRET_ENVS"]; got != "NPM_TOKEN DEPLOY_TOKEN" {
+		t.Errorf("_SECRET_ENVS = %q, want %q: the list of variables to fetch is the same either way, so the build step reads each fetched secret under the name it always read it under (IS6)", got, "NPM_TOKEN DEPLOY_TOKEN")
+	}
+	if got := req.Substitutions["_CREDENTIALS_SERVICE_URL"]; got != bs.CredentialsServiceURL {
+		t.Errorf("_CREDENTIALS_SERVICE_URL = %q, want %q: a vertex build's credential step fetches at the address and nowhere else", got, bs.CredentialsServiceURL)
+	}
+}
+
 // TestSecretsStageDoesNotAskForARepositoryLevelSecret: a repository-level
 // secret is one no shared job mounts (D2313), so the stage must not take one.
 // Every store a line or a prompt could name for it answers the ruling's notice

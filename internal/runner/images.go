@@ -10,6 +10,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitops"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // visionPinPath is where a problem with the vision slot points the owner: the
@@ -74,6 +75,54 @@ func namesAnImage(word string, exts []string) bool {
 	}
 	i := strings.LastIndexByte(w, '.')
 	return i >= 0 && slices.Contains(exts, w[i+1:])
+}
+
+// imageNamesAttached are the files this run was handed whose own name is an
+// image file's, in the order the task lists them: the attachments a launch
+// uploaded under inputs/ (task.Spec.Inputs), read with the same name rule and
+// the same kind list imageNamesInTask reads the task's text with, so the two
+// halves of "this run reads a picture" cannot disagree.
+func imageNamesAttached(inputs []task.InputFile) []string {
+	exts := agent.ImageBlockExtensions()
+	var out []string
+	for _, in := range inputs {
+		if namesAnImage(in.Name, exts) {
+			out = append(out, in.Name)
+		}
+	}
+	return out
+}
+
+// coderReadsAnImage reports whether this run is one whose coder-role stages
+// read a picture of their own: one of the files the launch attached is an
+// image, or the task's text names one.
+//
+// The two are what a run can be *asked* to read, and neither is the repository
+// merely tracking a picture: nearly every repository tracks a logo, and a
+// rewrite that fired on one would put every run of a project that set the slot
+// on the vision model, which is the cost the slot exists to bound (D2017). The
+// read of a picture nobody named is the deny rule's business
+// (denyBinaryReads), which refuses it outright rather than paying a model to
+// answer it.
+//
+// An artifact run is read for its attachments alone, and a review, report or
+// rebase run for neither: `render out/banner.png` is the shape the artifact
+// mode exists for, so its task text names the file it is about to *write*,
+// while the files it was attached are inputs a stage may really read
+// (checkImages reads the modes the same way). A review run's stages read the
+// pull request, a report's steps are the runner's own work, and a rebase's one
+// stage resolves conflicts — none of the three is handed the task's picture.
+func (r *run) coderReadsAnImage() bool {
+	if r.spec == nil || r.review || r.digest || r.rebase {
+		return false
+	}
+	if len(imageNamesAttached(r.spec.Inputs)) > 0 {
+		return true
+	}
+	if r.artifact {
+		return false
+	}
+	return len(imageNamesInTask(r.spec.Task)) > 0
 }
 
 // imageScanArgs is the one git command the repository scan runs: the files of

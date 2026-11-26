@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/gitops"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -121,6 +123,36 @@ func TestImageNamesInTaskReadsNamesAndKindWords(t *testing.T) {
 		t.Run(c.why, func(t *testing.T) {
 			if got := imageNamesInTask(c.text); !slices.Equal(got, c.want) {
 				t.Errorf("imageNamesInTask(%q) = %v, want %v", c.text, got, c.want)
+			}
+		})
+	}
+}
+
+// TestWhichRunReadsAnImage is the gate the vision rewrite hangs on (D2017): the
+// slot covers the run whose task names a picture, and the run whose launch
+// attached one, and no other. An artifact run is read for its attachments
+// alone, because the picture its task names is the one it is about to write.
+func TestWhichRunReadsAnImage(t *testing.T) {
+	const named = "Fix the console golden: docs/shot.png is out of date"
+	attached := []task.InputFile{{Name: "brand/logo.png", Bytes: 1024, SHA256: strings.Repeat("a", 64)}}
+	for _, c := range []struct {
+		why  string
+		r    *run
+		want bool
+	}{
+		{"a task that names one", &run{spec: &task.Spec{Task: named}}, true},
+		{"a task that names none", &run{spec: &task.Spec{Task: "Refactor the palette handling"}}, false},
+		{"a launch attachment", &run{spec: &task.Spec{Task: "Add a feature", Inputs: attached}}, true},
+		{"no spec at all", &run{}, false},
+		{"a review run", &run{review: true, spec: &task.Spec{Task: named}}, false},
+		{"a report run", &run{digest: true, spec: &task.Spec{Task: named}}, false},
+		{"a rebase run", &run{rebase: true, spec: &task.Spec{Task: named}}, false},
+		{"an artifact run with an attachment", &run{artifact: true, spec: &task.Spec{Task: "Render out/banner.png at 1200x630", Inputs: attached}}, true},
+		{"an artifact run naming only its output", &run{artifact: true, spec: &task.Spec{Task: "Render out/banner.png at 1200x630"}}, false},
+	} {
+		t.Run(c.why, func(t *testing.T) {
+			if got := c.r.coderReadsAnImage(); got != c.want {
+				t.Errorf("coderReadsAnImage() = %v, want %v", got, c.want)
 			}
 		})
 	}

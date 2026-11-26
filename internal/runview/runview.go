@@ -326,6 +326,14 @@ type Row struct {
 	// DraftFallback: the host has no draft pull requests, so the PR is an
 	// ordinary one with "[DRAFT]" in its title.
 	DraftFallback bool `json:"draft_fallback,omitempty"`
+	// NeedsGuidance is the record's own needs_guidance (docs/rigor-modes/
+	// levels-implementation-plan.md LV5.2, LD8): the run's agent asked a
+	// question the run may not settle by itself, so the pull request is a draft
+	// whose status section opens with OPEN QUESTIONS and a follow-up answers
+	// it. It is the record's flag and nothing derived: absent for a run that
+	// asked nothing, which is every record written before the field existed, so
+	// a reader never sees "needs guidance" where the answer is unknown.
+	NeedsGuidance bool `json:"needs_guidance,omitempty"`
 	// PRStatusAt is when the runner last wrote the PR's status section.
 	PRStatusAt *time.Time `json:"pr_status_at,omitempty"`
 	// StaleDraft means the run's record is still not final but its draft
@@ -848,6 +856,7 @@ func followUpFields(row *Row, t *task.Spec, r *runstore.Record) {
 		}
 		row.Outcome, row.BaseBranch = string(r.Outcome), r.BaseBranch
 		row.DraftFallback = r.DraftFallback
+		row.NeedsGuidance = r.NeedsGuidance
 		if r.PR != nil {
 			row.RecordPR = r.PR.Number
 			row.PRStatusAt = r.PR.StatusAt

@@ -46,6 +46,10 @@ func summaryFixture() (*Record, *task.Spec) {
 		PushedHead:    strings.Repeat("b", 40),
 		PR:            &PRRef{Number: 42, URL: "https://example.test/acme/app/pull/42", Desc: "the pull request's own description", StatusAt: &statusAt},
 		DraftFallback: true,
+		// The agent's own stop (LV5.2, LD8): a flag of the projection beside
+		// DraftFallback, so a listing that reads the summary rather than the
+		// record can name a run that asked for guidance.
+		NeedsGuidance: true,
 		StartedAt:     built,
 		Deadline:      &deadline,
 		FollowUp:      &FollowUp{PR: 41, PreviousRun: "20261119-120000-9999", Comments: 2, Session: "fresh"},

@@ -177,6 +177,23 @@ func TestServiceConstantsMirrorCredsvc(t *testing.T) {
 			t.Errorf("a tried reason is %q in the gateway and %q on the wire", x.gateway, x.wire)
 		}
 	}
+	// The actions an exhausted answer carries are spelled the way the pause's
+	// own contract spells them (runstore.PauseAction): the service decides
+	// which one a run takes and this gateway hands it to the runner by that
+	// string alone, and the two ends of the answer are one release's code.
+	actions := []struct {
+		gateway string
+		record  runstore.PauseAction
+	}{
+		{gateway.ActionWait, runstore.ActionWait},
+		{gateway.ActionPause, runstore.ActionPause},
+		{gateway.ActionHalt, runstore.ActionHalt},
+	}
+	for _, x := range actions {
+		if x.gateway != string(x.record) {
+			t.Errorf("an action is %q in the gateway and %q in the run's record", x.gateway, x.record)
+		}
+	}
 	// The halt D143 names is spelled the way the run's record and the
 	// budget's own halts spell it: one reason reaches the record through
 	// three packages, and the runner maps the gateway's halt to a runstore

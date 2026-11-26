@@ -405,6 +405,18 @@ first_line() {
   fi
 }
 
+# says_absent FILE: whether a failed describe said the resource is NOT THERE,
+# read from gcloud's own words rather than from one spelling of them. The real
+# gcloud answers a describe of a missing Cloud Run job with
+# `ERROR: (gcloud.run.jobs.describe) Cannot find job [NAME].` — no NOT_FOUND in
+# it — so a grep for NOT_FOUND alone reads the normal "absent" answer as
+# "unreadable" and the check stops at its first guard against a clean project.
+# Both spellings are accepted; any other failure stays a could-not-be-read,
+# which is the whole point of the guard.
+says_absent() {
+  grep -Eqi 'NOT_FOUND|not found|Cannot find' "$1" 2>/dev/null
+}
+
 # ------------------------------------------------------------------- the job
 # guard_probe_is_free: the name this check creates must be free BEFORE anything
 # is created, so that the Restore below can never delete a job this run did not
@@ -419,14 +431,15 @@ guard_probe_is_free() {
     fact probe FAIL "$PROBE_JOB is already in $P/$L, and this check creates exactly that name: it never adopts a job it did not create, so nothing was created and nothing was deleted. Read it with 'gcloud run jobs describe $PROBE_JOB --project $P --region $L' and delete it yourself if it is a leftover of an earlier run"
     stop "$PROBE_JOB already exists in $P/$L: this check will not adopt it. Delete it yourself and run again"
   fi
-  # gcloud exits 1 with NOT_FOUND for a missing job, and any other failure is not
-  # the answer this guard needs.
-  if grep -qi 'NOT_FOUND\|not found' "$SCRATCH/probe-before.err" 2>/dev/null; then
+  # A missing job is not one message: gcloud exits 1 with `Cannot find job
+  # [NAME]` (and NOT_FOUND on other paths), and any other failure is not the
+  # answer this guard needs.
+  if says_absent "$SCRATCH/probe-before.err"; then
     fact probe PASS "$PROBE_JOB is not in $P/$L (read back by a describe before anything was created), and this run creates it and deletes it again"
     return 0
   fi
-  fact probe FAIL "whether $PROBE_JOB is already in $P/$L could not be read (the describe failed without saying NOT_FOUND), so nothing was created: this guard is what stops the Restore deleting a job this run did not make ($(first_line "$SCRATCH/probe-before.err"))"
-  stop "the describe of $PROBE_JOB did not answer with NOT_FOUND (the line above), so this run created nothing. Read it by hand and run again"
+  fact probe FAIL "whether $PROBE_JOB is already in $P/$L could not be read (the describe failed without saying the job is absent), so nothing was created: this guard is what stops the Restore deleting a job this run did not make ($(first_line "$SCRATCH/probe-before.err"))"
+  stop "the describe of $PROBE_JOB did not say the job is absent (the line above), so this run created nothing. Read it by hand and run again"
 }
 
 # read_job: the installation's own job, and the two plain values this check needs
@@ -1173,7 +1186,7 @@ row_verdict() {
 
 # ------------------------------------------------------------------- the Restore
 # Everything this run created, deleted in the one order that works: the job (and
-# with it its executions), then read back by a describe that must say NOT_FOUND.
+# with it its executions), then read back by a describe that must say it is gone.
 # It runs from the exit trap, so it runs whether the run passed, failed or was
 # interrupted, and what it managed to do is READ BACK rather than assumed.
 restore() {
@@ -1189,11 +1202,11 @@ restore() {
   local code=0
   gcloud run jobs describe "$PROBE_JOB" --project "$P" --region "$L" --format=json \
     >"$SCRATCH/probe-after.json" 2>"$SCRATCH/probe-after.err" || code=$?
-  if [ "$code" -ne 0 ] && grep -qi 'NOT_FOUND\|not found' "$SCRATCH/probe-after.err" 2>/dev/null; then
-    fact restore PASS "$PROBE_JOB and the executions on it are gone from $P/$L (deleted, and read back by a describe that answers NOT_FOUND). The only thing this run leaves in $P is the executions' own log lines, which are the project's record of what ran, not a resource this check made"
+  if [ "$code" -ne 0 ] && says_absent "$SCRATCH/probe-after.err"; then
+    fact restore PASS "$PROBE_JOB and the executions on it are gone from $P/$L (deleted, and read back by a describe that says the job is absent). The only thing this run leaves in $P is the executions' own log lines, which are the project's record of what ran, not a resource this check made"
     return 0
   fi
-  fact restore FAIL "$PROBE_JOB may still be in $P/$L: the describe after the delete did not answer NOT_FOUND. Delete it yourself with 'gcloud run jobs delete $PROBE_JOB --project $P --region $L' ($(first_line "$SCRATCH/probe-after.err"))"
+  fact restore FAIL "$PROBE_JOB may still be in $P/$L: the describe after the delete did not say the job is absent. Delete it yourself with 'gcloud run jobs delete $PROBE_JOB --project $P --region $L' ($(first_line "$SCRATCH/probe-after.err"))"
   return 0
 }
 
@@ -1286,7 +1299,7 @@ print_plan() {
   say "  [reads] gcloud iam roles describe $LAUNCHER_ROLE --project $P — whether the launcher role carries run.executions.get"
   say "  [reads, signs U3] curl -X POST $IAMCRED_URL/<signer>:signJwt — one Firebase custom token signed as the runs' signer, never printed"
   say "  [reads, U3] curl -X POST $IDENTITY_URL — TWICE, the same token, to see whether Firebase exchanges it more than once. The token and the ID tokens it answers with are in 0600 files and are never printed"
-  say "  [deletes] gcloud run jobs delete $PROBE_JOB --project $P --region $L --quiet, then a describe that must answer NOT_FOUND: the ONE job this check creates is deleted again and the deletion is read back"
+  say "  [deletes] gcloud run jobs delete $PROBE_JOB --project $P --region $L --quiet, then a describe that must say the job is gone: the ONE job this check creates is deleted again and the deletion is read back"
   say "  [deletes] curl -X POST $TOOLKIT_BASE/projects/$FP/accounts:delete, then an accounts:lookup for the same uid: the Firebase Auth user the accepted exchange CREATES (a sign-in makes the account) is deleted and read back gone"
   say "Nothing else is created, changed or deleted, no Fugaro job is launched and no run starts: this dry run made no gcloud and no curl call at all."
 }

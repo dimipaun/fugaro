@@ -511,8 +511,8 @@ func TestReposAddIsIdempotentOverACompletedEnrolment(t *testing.T) {
 	if !reflect.DeepEqual(after.Repos, before.Repos) {
 		t.Errorf("the second run changed the repos: block:\n--- before\n%+v\n--- after\n%+v", before.Repos, after.Repos)
 	}
-	if !reflect.DeepEqual(after.ImageMap, before.ImageMap) {
-		t.Errorf("the second run changed the image_map: block:\n--- before\n%+v\n--- after\n%+v", before.ImageMap, after.ImageMap)
+	if !reflect.DeepEqual(after.RepoImages, before.RepoImages) {
+		t.Errorf("the second run changed the repo_images: block:\n--- before\n%+v\n--- after\n%+v", before.RepoImages, after.RepoImages)
 	}
 	if !reflect.DeepEqual(after.Profiles, before.Profiles) {
 		t.Errorf("the second run changed the allow_repos the profiles carry:\n--- before\n%+v\n--- after\n%+v", before.Profiles, after.Profiles)
@@ -549,8 +549,8 @@ func TestReposAddConvergesAHalfDoneEnrolment(t *testing.T) {
 	if p := r.policy(t); !slices.Contains(p.AllowRepos, enrolEntry) {
 		t.Errorf("allow_repos = %v: the half-done enrolment did not converge", p.AllowRepos)
 	}
-	if got := r.addLocal(t).ImageMap[enrolMapKey]; got != "base" {
-		t.Errorf("image_map[%s] = %q: the half-done enrolment did not converge", enrolMapKey, got)
+	if got := r.addLocal(t).RepoImages[enrolEntry]; got != "base" {
+		t.Errorf("repo_images[%s] = %q: the half-done enrolment did not converge", enrolEntry, got)
 	}
 	// The entry that was already there is answered as already done and the step
 	// that was missing as written: one run, both readings.
@@ -586,8 +586,8 @@ func TestReposAddPublishesOverTheGenerationItsAllowListWriteLanded(t *testing.T)
 	// The two local steps are the ones a re-seed takes away with it: it writes
 	// the node's values into the file, and the node carries neither a repos entry
 	// for this repository nor a repo-to-image map.
-	if got := after.ImageMap[enrolMapKey]; got != "base" {
-		t.Errorf("image_map[%s] = %q after the run, want the mapping step 3 wrote: %v", enrolMapKey, got, after.ImageMap)
+	if got := after.RepoImages[enrolEntry]; got != "base" {
+		t.Errorf("repo_images[%s] = %q after the run, want the mapping step 3 wrote: %v", enrolEntry, got, after.RepoImages)
 	}
 	if _, ok := after.Repos[enrolRepo]; !ok {
 		t.Errorf("repos has no entry for %s after the run: %v", enrolRepo, after.Repos)
@@ -644,31 +644,24 @@ func TestReposAddMergesThePublishedImageMap(t *testing.T) {
 	// The node holds the project's other repository's mapping, in the escaped
 	// shape the block is stored in on the node.
 	node := addPolicyNode()
-	raw, err := json.Marshal(projectpolicy.ImageMap{"owner/repo-a": "base"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var block map[string]any
-	if err := json.Unmarshal(raw, &block); err != nil {
-		t.Fatal(err)
-	}
-	node["image_map"] = block
+	node["image_map"] = policyMapBlockOn(t, projectpolicy.ImageMap{"owner/repo-a": "base"})
 	r.db.Set(projectpolicy.PathShared(), node)
 
 	if _, _, err := r.enrol(t, enrolRepo); err != nil {
 		t.Fatal(err)
 	}
-	m := r.addLocal(t).ImageMap
-	if m["owner/repo-a"] != "base" {
-		t.Errorf("image_map = %v: the mapping the published node held for the project's other repository was replaced rather than merged into", m)
+	m := r.addLocal(t).RepoImages
+	if m["github/owner/repo-a"] != "base" {
+		t.Errorf("repo_images = %v: the mapping the published node held for the project's other repository was replaced rather than merged into", m)
 	}
-	if m[enrolMapKey] != "base" {
-		t.Errorf("image_map = %v, want this repository's entry beside it", m)
+	if m[enrolEntry] != "base" {
+		t.Errorf("repo_images = %v, want this repository's entry beside it", m)
 	}
 	// The node's own mapping is the project's, and the converge publishes what
-	// this machine's file now states.
-	if got := r.policy(t).ImageMap["owner/repo-a"]; got != "base" {
-		t.Errorf("the published image_map lost the other repository's mapping: %v", r.policy(t).ImageMap)
+	// this machine's file now states — in the new member, the old one staying on
+	// the node until the step after the credentials service takes it away (R14).
+	if got := r.policy(t).RepoImages["github/owner/repo-a"]; got != "base" {
+		t.Errorf("the published repo_images lost the other repository's mapping: %v", r.policy(t).RepoImages)
 	}
 }
 
