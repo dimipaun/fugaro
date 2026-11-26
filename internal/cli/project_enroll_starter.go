@@ -62,6 +62,9 @@ const enrolStarterTokenNotice = "reads the project's " + config.BitbucketSecret 
 // credentials, is never printed, logged or written anywhere, and the caller
 // holds it for the one push it makes.
 //
+// No coding agent's session can reach it: the command refuses one before any
+// read (runProjectReposEnroll), so this is a person's own step.
+//
 // A var so a test drives the Bitbucket path without a project.
 var enrolStarterToken = func(ctx context.Context, lc *localcfg.Config, ownerName string) (string, error) {
 	slug, err := task.Slug(gitprov.KindBitbucket, ownerName)
