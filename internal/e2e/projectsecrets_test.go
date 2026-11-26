@@ -26,9 +26,12 @@ package e2e
 // and RTDBProjectSecrets), the runner leg is the shipped runner.Run against a
 // scripted agent, and the caller's identity is answered whole by a verifier
 // whose shape is IS2's (the fakes sign nothing a real verifier would verify).
-// The migration's copy (IS5) cannot run here at all: it needs the operator's own
-// Google account, which `endpoints: no_auth` has none of, so the test asserts
-// that ref refusal and seeds what the copy would have left.
+// The migration's copy (IS5) itself cannot run here: it is reached by the
+// installation converge's tail, and it needs the operator's own Google account,
+// which `endpoints: no_auth` has none of. What the test drives of IS5 is
+// therefore its record -- the converge's repository stage, which is what the
+// version-1 fetch reads -- and it seeds, with the intake's own labels, the
+// `fugaro_p_` container the copy would have left.
 
 import (
 	"bytes"
@@ -44,6 +47,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -71,6 +75,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/secretname"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 	"github.com/dimipaun/fugaro/internal/verify"
@@ -91,8 +96,8 @@ const (
 	// The two copies' values. They are different so an answer read as the other
 	// copy's shows, and they are values only: no test, doc or log line here
 	// carries one except the two comparisons that have to.
-	psGrammarValue = "grammar-workflow-secret-2f9d"
-	psCopyValue    = "project-copy-workflow-secret-71b4"
+	psGrammarValue = "grammar-value-2f9d"
+	psCopyValue    = "project-copy-value-71b4"
 	// psRB is the refresh identity the budget session's token carries.
 	psRB = "dev@example.invalid"
 	// psFirebaseProject is the Firebase project the fake signer and identity
@@ -123,9 +128,15 @@ var psSlug = func() string {
 // copies into the grammar.
 func psCopyID() string { return gcp.ProjectSecretID(initRepoProjectName, psSecretName) }
 
-// psGrammarID is the name's grammar container (secretname.Project), which is
-// what version 2 reads.
-func psGrammarID() string { return "fugaro_p_" + psSecretName }
+// psGrammarID is the name's grammar container, which is what version 2 reads
+// (secretname.Project, the one place that spells one).
+func psGrammarID() string {
+	id, err := secretname.Project(psSecretName)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
 
 // psCanonical is the repository as the service's pairing spells it: the
 // provider segment and then owner/name (projectpolicy.Canonical).
@@ -181,7 +192,7 @@ func newPSRig(t *testing.T, allow ...string) *psRig {
 	if err := os.WriteFile(r.cfg, []byte(r.cfgText), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	r.respec(t)
+	r.respec(t, slices.Contains(allow, psRepoName))
 	r.seedBackend(t)
 	// The name's project-wide copy, as an installation that ever stored one has
 	// it (readiness reads it back to decide the version-1 record's container).
@@ -208,7 +219,7 @@ func psAllowList(allow []string) string {
 // respec recomputes the spec the way newInitRepoRig's constructor did, on the
 // config this rig left on disk: the allow-list decides which project secrets
 // the plan mounts, so the spec is not the one the bare sandbox computed.
-func (r *psRig) respec(t *testing.T) {
+func (r *psRig) respec(t *testing.T, admitted bool) {
 	t.Helper()
 	lc, err := localcfg.Parse([]byte(r.cfgText))
 	if err != nil {
@@ -226,11 +237,15 @@ func (r *psRig) respec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The candidate is the plan's half of the decision (the container is
-	// resolved against live state at Readiness, which is not what this test
-	// drives): a repository the block does not admit has no candidate at all.
-	if id, ok := r.spec.ProjectSecretCandidates[psSecretName]; !ok || id != psCopyID() {
+	// The candidate is the plan's half of the decision (the container itself is
+	// resolved against live state at Readiness, which is not what these tests
+	// drive): a repository the block does not admit has no candidate at all.
+	id, ok := r.spec.ProjectSecretCandidates[psSecretName]
+	switch {
+	case admitted && (!ok || id != psCopyID()):
 		t.Fatalf("the plan mounts %q for %s, want the project copy %s", id, psSecretName, psCopyID())
+	case !admitted && ok:
+		t.Fatalf("the plan mounts %q for %s, and the block admits another repository", id, psSecretName)
 	}
 }
 
@@ -395,9 +410,10 @@ func (psVerifier) VerifyRepoBuild(context.Context, string) (credsvc.RepoBuildAcc
 	return credsvc.RepoBuildAccount{}, errPSNoClass
 }
 
-// psPolicy is the published node, which the workflow-secrets route reads none
-// of: an installation with no node is the state a deployment that has never
-// published one is in, and the route's own answers do not depend on it.
+// psPolicy is the service's own reader of the published node, which the
+// workflow-secrets route never asks: its gate is the account's class, the
+// record and the container (workflowsecrets.go). The node the RUN reads is the
+// database's, seeded by seedBackend, and read by the runner's own policy read.
 type psPolicy struct{}
 
 func (psPolicy) Shared(context.Context) (*projectpolicy.Policy, bool, error) { return nil, false, nil }
@@ -514,7 +530,6 @@ func (r *psRig) v1Record(t *testing.T) map[string]string {
 // exposed as at the first of them -- which is the whole of what these tests
 // assert about the fetch.
 type psAgent struct {
-	t     *testing.T
 	path  string
 	value string
 	calls []agent.Request
@@ -594,7 +609,7 @@ func (r *psRig) newRun(t *testing.T) *psRun {
 	if err := os.Mkdir(managed, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	script := &psAgent{t: t}
+	script := &psAgent{}
 	run := &psRun{
 		rig: r, store: store, agent: script,
 		deps: runner.Deps{
