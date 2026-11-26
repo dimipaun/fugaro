@@ -1350,11 +1350,14 @@ func profilesAsPolicy(profiles map[string]config.JobProfile) map[string]projectp
 // list of variables that job's secrets are mounted as.
 //
 // It is deliberately *not* budgetEnv, which sets per-repository values too
-// (the token ceiling, the model allow-list and the price overrides come from
-// the repository's own config and its policy): a project job is shared, so
-// those ride the execution (plan task 3.3) instead
-// of sitting in the job, where one repository's ceiling would become every
-// repository's. What stays is what belongs to the installation (D11, plan
+// (the model routes, the price overrides and the model allow-list, each cut to
+// one repository): a project job is shared, so those are the published
+// policy's, and a run reads them from the node (internal/runner's
+// resolvePolicy) rather than from its own environment, which a launcher would
+// otherwise be able to write — a route there names the host a repository's
+// code and the profile's provider key go to, and a price is the cap's own
+// arithmetic. The token ceiling and the cap are the node's the same way. What
+// stays is what belongs to the installation (D11, plan
 // task 1.4 step 1): a job deployed without the two backend variables cannot
 // read the project's policy at all, and the mode it names is the
 // installation's own — the fallback for a run whose policy node is absent

@@ -650,9 +650,17 @@ radius (§1), and `accounts.<name>.allow_repos` plus the two gates are what boun
   0.8.x, where a clone launch is refused — so on the released CLI no clone run reaches a shared job
   at all. What a shared job still does not carry is the table in
   [project-layer.md §"Which runs work on a shared job today"](project-layer.md#which-runs-work-on-a-shared-job-today):
-  no `FUGARO_CHECKOUT` (a full clone rather than a blobless one, and no `mise install`), no
-  owner-configured model providers, no local compute-price override, the default budget grace, and
-  no repository-level `workflows.<n>.secrets` — only the profile's project-wide ones. **The account
+  no `FUGARO_CHECKOUT` (a full clone rather than a blobless one, and no `mise install`), no local
+  compute-price override, the default budget grace, and no repository-level
+  `workflows.<n>.secrets` — only the profile's project-wide ones. The model variables are no longer
+  among them: the routes, the price overrides and the allow-list a run on a shared job goes by are
+  the published policy's (`fugaro project policy publish` writes them, and `internal/runner`'s
+  `resolvePolicy` reads them and cuts the routes to the repository the run is for), so a run whose
+  coder a provider serves resolves it on a shared job as it does on its own — the node, not the
+  launching machine's config, is what says where a repository's code goes and what its calls are
+  charged at, because a launcher can write neither the route nor the price without sending the
+  profile's provider key and the repository's code to a host of its own choosing or pricing its way
+  around the owner's cap. **The account
   gates are not what admits such a run, and no live check has proved one end to end on a shared
   job:** the check that would (the plan's own, `docs/project-centric/implementation-plan.md` Task 3.7)
   has not been run. A Bitbucket repository never reaches a shared job at all.

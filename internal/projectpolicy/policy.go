@@ -3712,6 +3712,18 @@ func providerCarrier(providers map[string]Provider) map[string]config.ModelProvi
 	return out
 }
 
+// ProviderCarrier is the node's providers as the route table internal/runner
+// routes and prices by, filtered to a repository by the caller. A run on a
+// shared project job has no route table of its own -- its deployment carries
+// none, and the node is the one object a launcher cannot write -- so the node's
+// providers are what such a run goes by (internal/runner's resolvePolicy).
+func (p *Policy) ProviderCarrier() map[string]config.ModelProvider {
+	if p == nil {
+		return nil
+	}
+	return providerCarrier(p.Providers)
+}
+
 // validPricePolicy checks the one provider value the carrier's own validation
 // does not: an unrecognised price_policy would price a route at the wrong end
 // of the catalogue's range rather than fail. internal/config refuses it too
