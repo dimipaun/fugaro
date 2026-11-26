@@ -400,14 +400,6 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 			pluginReport.UserInstall, pluginReport.UserVersion = "", ""
 		}
 		pluginChecks = append(pluginDoctorChecks(pluginReport), pluginSettingsChecks(loc.Settings)...)
-	} else {
-		// Not inside a checkout there is no wiring to find: a warning (so
-		// --strict fails, as update-skills --check does), never silence. D942
-		// keeps it: a caller that asked doctor inside no checkout asked a
-		// question about a checkout.
-		pluginChecks = []doctorCheck{{ID: "plugin-pin", Severity: "warning",
-			Problem: pluginwire.Printable(dir) + " is not in a checkout (no .git above it), so the Fugaro plugin wiring cannot be checked",
-			Fix:     "run doctor inside the repository, or pass --dir"}}
 	}
 	o := doctorOutput{Plugin: pluginReport, Checks: pluginChecks, Release: release()}
 
@@ -417,6 +409,11 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		// skipped here; the full run below always includes it. It answers
 		// first whatever else was asked: it is the plugin's own view, and
 		// --offline is a wider one.
+		//
+		// The two per-repository notice checks are read off the repositories
+		// themselves, which this mode does not reach, so they come back as
+		// skips that say so (R15).
+		o.Checks = append(o.Checks, repoNoticeSkips()...)
 		o.OK = !checksFail(o.Checks, strict)
 		return emitDoctor(cmd, o, asJSON, view)
 	}
@@ -601,6 +598,10 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// What this release stops, beside the policy checks: the same lines the
 	// update prints before it changes anything (R8, doctorBudgetStopsChecks).
 	o.Checks = append(o.Checks, doctorBudgetStopsChecks(ctx, sel, lc)...)
+	// The two dead values an older release left on a repository's default
+	// branch (U6b, R15): the plugin pin and budget.mode: off, read off every
+	// enrolled repository through the same list the update's stages read.
+	o.Checks = append(o.Checks, doctorRepoNoticeChecks(ctx, lc)...)
 	o.Checks = append(o.Checks, doctorRepoAccountChecks(lc)...)
 	// The pools the published policy serves (DS3.1, MC1): a legacy-open one is
 	// served to whoever asks and D1942 asks doctor to name it. It reads the
@@ -847,7 +848,10 @@ func doctorOfflineChecks(ctx context.Context, o cloudOptions, loc pluginwire.Loc
 		skip("policy-vs-jobs", "whether this checkout's jobs are old enough to miss a published policy is a fact of the project's database and of what its jobs last ran, and --offline reads neither"),
 		skip("policy-older-than-binary", "the published policy node lives in the project's Realtime Database, and --offline reads no database"),
 	)
-	return out
+	// The two per-repository notice checks read every enrolled repository's
+	// default branch, which is a call --offline does not make: they report the
+	// skip in their own words (R15).
+	return append(out, repoNoticeSkips()...)
 }
 
 // doctorOfflineWorkflows are the workflow names the checkout's own config
@@ -2227,14 +2231,17 @@ func authOf(rf *resolvedFile) string {
 
 // pluginDoctorChecks turns a plugin report's states into doctor checks.
 //
-// plugin-install asks the checkout's own question where the checkout carries a
-// release-tag pin — the install that applies there, against the ref the
-// repository asked for — and the machine's question everywhere else: the
-// plugin installed at user scope, against this binary's release (D942). The
-// second is the whole question in the repositories this check is read in now:
-// nothing in the tree writes a pin any more (D949), so a checkout without one
-// is the normal checkout, and reporting nothing about the plugin there would
-// leave the one fact the owner acts on unreported.
+// plugin-install is the one row (U6b retired plugin-pin, which reported the
+// checkout's own pin: what a repository still pins is read off every
+// repository's default branch now, doctorRepoNoticeChecks). plugin-install
+// asks the checkout's own question where the checkout carries a release-tag
+// pin — the install that applies there, against the ref the repository asked
+// for — and the machine's question everywhere else: the plugin installed at
+// user scope, against this binary's release (D942). The second is the whole
+// question in the repositories this check is read in now: nothing in the tree
+// writes a pin any more (D949), so a checkout without one is the normal
+// checkout, and reporting nothing about the plugin there would leave the one
+// fact the owner acts on unreported.
 //
 // Its "not installed" state is raised to a warning here rather than in
 // pluginwire, whose Severity is what `update-skills --check` exits on and
@@ -2266,7 +2273,6 @@ func pluginDoctorChecks(r pluginwire.Report) []doctorCheck {
 		out = append(out, c)
 	}
 	install, _ := pluginInstallState(r)
-	add("plugin-pin", r.Pin)
 	add("plugin-install", install)
 	return out
 }
@@ -2287,8 +2293,6 @@ func pluginInstallState(r pluginwire.Report) (pluginwire.State, bool) {
 // same wording update-skills --check and the staleness warning use.
 func pluginStateProblem(id string, s pluginwire.State, r pluginwire.Report) string {
 	switch {
-	case id == "plugin-pin" && r.Detail != "":
-		return r.Detail
 	case id == "plugin-install" && s == pluginwire.InstalledDiffers:
 		if _, fromPin := pluginInstallState(r); fromPin {
 			return fmt.Sprintf("the installed plugin is %s, the pin is %s", r.Version, r.Ref)
@@ -2776,6 +2780,85 @@ func doctorBudgetStopsChecks(ctx context.Context, sel localcfg.Selection, lc *lo
 	return []doctorCheck{{ID: budgetStopsCheckID, Severity: "warning",
 		Problem: "this release is always a budget, and it stops something here: " + strings.Join(lines, "; "),
 		Fix:     "run `fugaro update` in your own terminal: it prints this list before it changes anything, rewrites what it can, and each line names the file, the node or the model that answers it"}}
+}
+
+// repoPluginPinCheckID and repoBudgetModeCheckID are the checks U6b adds
+// (R15): the two dead values an older release left behind on a repository's
+// default branch. `fugaro update` reports them as notices (U6a,
+// repo_notices.go), and doctor reports the same finding, with the same text,
+// as a check with a fix. The IDs they replace — `plugin-pin` for the pin,
+// and the checkout's own `budget-mode` reading — meant "this checkout", and
+// reading every repository changes that meaning, so both are retired rather
+// than reused.
+const (
+	repoPluginPinCheckID  = "repo-plugin-pin"
+	repoBudgetModeCheckID = "repo-budget-mode"
+)
+
+// repoNoticeNotRead is what the two checks say in the modes that make no call
+// (R15): `--offline` and `--plugin` reach no repository, and a check that read
+// none says so rather than reporting ok.
+const repoNoticeNotRead = "not read (offline)"
+
+// repoNoticeSkips are those two checks as a mode that reads no repository
+// reports them: skipped, informational, and each saying why it was not read.
+func repoNoticeSkips() []doctorCheck {
+	return []doctorCheck{
+		{ID: repoPluginPinCheckID, Skipped: true, Severity: "info", Problem: repoNoticeNotRead, Fix: doctorOfflineAsk},
+		{ID: repoBudgetModeCheckID, Skipped: true, Severity: "info", Problem: repoNoticeNotRead, Fix: doctorOfflineAsk},
+	}
+}
+
+// doctorRepoNoticeChecks is doctor's two per-repository notice checks: the
+// plugin pin an older Fugaro wrote into a repository's .claude/settings.json,
+// and budget.mode: off in its fugaro.yaml. Both values are dead — nothing
+// writes a pin any more (D949), and off is not a budget mode any more (D3022)
+// — and the edit that takes each out is the repository's own to make, which is
+// why neither is a write of doctor's (D3340).
+//
+// They read the project's repositories through the same free function every
+// stage of `fugaro update` reads (enrolledRepos, R16): doctor has no engine of
+// its own, and I1 pointing the seam at the real reader gives doctor the real
+// list too. The text is U6a's own (repoNotices), so a person who reads the line
+// here and then runs `fugaro update` meets the same sentence twice.
+//
+// One row per value, with one line per affected repository in the check's own
+// text, and a fix naming the line to delete. A repository the reader could not
+// read earns no line here: its own unread line is where that is said, and this
+// check is about what a file says rather than about the repository being
+// reachable.
+//
+// The read is the update's own (theUpdateLeavesTheRemoval): a view whose
+// fugaro.yaml still says the word is refused by the parse, and it comes back
+// unread — with no file to judge — in exactly the state this check exists to
+// report; reading through the word is what leaves the file's bytes in the
+// view, and the bytes are what the notice is read from (repoNotices).
+func doctorRepoNoticeChecks(ctx context.Context, lc *localcfg.Config) []doctorCheck {
+	views, _ := enrolledRepos(theUpdateLeavesTheRemoval(ctx), enrolledIn{LC: lc, ExtraPaths: repoNoticeExtra})
+	byFile := map[string][]string{}
+	for _, v := range views {
+		for _, n := range repoNotices(v) {
+			byFile[n.File] = append(byFile[n.File], v.Repo+": "+n.File+": "+n.Detail)
+		}
+	}
+	var out []doctorCheck
+	for _, c := range []struct{ id, file, lead, fix string }{
+		{repoPluginPinCheckID, repoNoticePinFile,
+			"the plugin pin an older Fugaro wrote is still in",
+			"delete the " + pluginwire.Marketplace + " entry from extraKnownMarketplaces and the " + pluginwire.PluginID + " entry from enabledPlugins in each repository named above"},
+		{repoBudgetModeCheckID, repoNoticeYAMLFile,
+			"budget.mode: off, which is not a budget mode any more, is still in",
+			"delete the budget.mode line in each repository named above"},
+	} {
+		lines := byFile[c.file]
+		if len(lines) == 0 {
+			continue
+		}
+		out = append(out, doctorCheck{ID: c.id, Severity: "warning",
+			Problem: fmt.Sprintf("%s %d %s:\n%s", c.lead, len(lines), plural(len(lines), "repository", "repositories"), strings.Join(lines, "\n")),
+			Fix:     c.fix})
+	}
+	return out
 }
 
 // routingCacheMarkersUnmeasured is what doctor says when the policy routes a
