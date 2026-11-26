@@ -2035,6 +2035,16 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	if err := batchLaunchRefusal(ctx, env, spec); err != nil {
 		return config.Inputs{}, err
 	}
+	// And the installation's own half of a Batch run's identity, beside the
+	// two above and for the same reason: a Batch run's identity is the ticket
+	// its launcher asks the credentials service for, the service issues one
+	// only where the installation has opted in, and an installation that has
+	// not is refused here — before the claim, before a token is minted, before
+	// the ticket is asked and before a byte of the run is written
+	// (batchIdentityRefusal, BR1, R17).
+	if err := batchIdentityRefusal(env, spec); err != nil {
+		return config.Inputs{}, err
+	}
 	co, kind, clone, shared, mode, err := launchWorkflowShape(ctx, env, spec)
 	if err != nil {
 		return config.Inputs{}, err
@@ -6462,7 +6472,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	if err != nil {
 		return res, err
 	}
-	identityAsk, err := env.launchTicketFor(ctx, slug, spec, account, job, reviewJob, now)
+	identityAsk, err := env.launchTicketFor(ctx, slug, spec, account, job, reviewJob, variant, now)
 	if err != nil {
 		return res, err
 	}
@@ -6753,6 +6763,14 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		return res, remote(fmt.Errorf("launching %s: the outcome is unknown (%w); don't relaunch before %s: fugaro run --retry %s launches the task only if it never started, and refuses with nothing launched, naming the run's pull request, if it did",
 			res.Run, err, now.Add(claimTTL).UTC().Format(time.RFC3339), res.Run))
 	}
+	// The second half of a Batch launch's identity, taken once the create
+	// returned: the job this launch asked its ticket about now exists, and the
+	// id the platform gave it is registered with the installation's credentials
+	// service, so the run's claim is served to that job's VM and to no other
+	// (BR1, R19, D3108). A launch that holds no ticket — every Cloud Run launch
+	// — registers nothing, and a registration that fails warns rather than
+	// refusing a job that is already running (registerBatchJob).
+	env.registerBatchJob(hctx, slug, spec, identityAsk, launchWarn)
 	// The backend the launch actually used, from the seam, as above: the
 	// launch succeeded on env.be, so env.be's codec is what names it.
 	l := &runstore.Launch{Version: 1, RunID: spec.RunID, Backend: launchBackend(env.be), Execution: ref.Name, Job: ref.Job, LogURL: ref.LogURL, LaunchedBy: spec.RequestedBy, PlanTask: spec.PlanTask, LaunchedAt: now.UTC()}
