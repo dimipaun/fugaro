@@ -14,7 +14,7 @@
 
 ## In one paragraph
 
-`runs ls` reads every run in its window and filters afterwards, so `--state running` takes 20 s for no rows and `--pr N` 23 s for one. The fix has three parts: the live states read the backend's live executions and the launch claims (RL1); a per-run object under `runs/<slug>/pr-index/<N>/` names the runs on a pull request, written by the runner and the launcher and backfilled in place by `fugaro update` (RL2, RL2W, RL2B); and `--pr N` reads it as a hint, verifying each run's own records, unioned with the last 24 hours and falling back to the scan when empty (RL3). A per-run summary object (RL4) is built only if the default listing is still slow afterwards.
+`runs ls` reads every run in its window and filters afterwards, so `--state running` takes 20 s for no rows and `--pr N` 23 s for one. The fix has three parts: the live states read the backend's live executions and the launch claims (RL1); a per-run object under `runs/<slug>/pr-index/<N>/` names the runs on a pull request, written by the launcher and backfilled in place by `fugaro update` (RL2, RL2B; RL2W's runner write retired with D3204's IR5a, and the two that remain stop with its IR5b); and `--pr N` reads it as a hint, verifying each run's own records, unioned with the last 24 hours and falling back to the scan when empty (RL3). A per-run summary object (RL4) is built only if the default listing is still slow afterwards.
 
 ## Numbers
 

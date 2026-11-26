@@ -4684,6 +4684,13 @@ func TestProjectPolicyPublishKeepsTheOrchestratorSwitchAndIssueSync(t *testing.T
 // false, which is exactly D731's opt-out, and the publish has to carry that
 // answer back and say so (O13: a hand edit is the only door that value has).
 //
+// The phone's compaction threshold is the third of the family (Z2,
+// `mobile_compaction_threshold`, D2789): no key of this machine's config states
+// it either, so a publish carries a written value back — and this is the
+// difference that matters, because before the key was modelled this publish
+// *refused* such a node ("publishing would drop them") rather than rewriting it
+// without the member.
+//
 // The diff has to say both were kept, the two lines above it: the members are
 // unchanged, so no +/- line above mentions them, and an operator who set these
 // switches would read that silence as "they are gone".
@@ -4701,7 +4708,8 @@ func TestProjectPolicyPublishKeepsTheMobileBlock(t *testing.T) {
 			"costly_modes":        []string{"critical"},
 			"biometric_on_costly": true,
 		},
-		"mobile_crash_reports": false,
+		"mobile_crash_reports":        false,
+		"mobile_compaction_threshold": 70,
 	})
 	out, _, err := execute(t, "project", "policy", "publish")
 	if err != nil {
@@ -4729,11 +4737,14 @@ func TestProjectPolicyPublishKeepsTheMobileBlock(t *testing.T) {
 	if got := p.MobileCostlyModes(); !slices.Equal(got, []rigor.Rigor{rigor.Critical}) {
 		t.Errorf("MobileCostlyModes() = %v, want [critical]", got)
 	}
-	if raw := nodeJSON(t, f, projectpolicy.PathShared()); !strings.Contains(raw, `"mobile"`) || !strings.Contains(raw, `"mobile_crash_reports"`) {
-		t.Errorf("the node no longer carries mobile and its crash-report key:\n%s", raw)
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); !strings.Contains(raw, `"mobile"`) || !strings.Contains(raw, `"mobile_crash_reports"`) || !strings.Contains(raw, `"mobile_compaction_threshold"`) {
+		t.Errorf("the node no longer carries mobile, its crash-report key and its compaction threshold:\n%s", raw)
 	}
 	if p.MobileCrashReportsOn() {
 		t.Error("MobileCrashReportsOn() = true, want false: the publish turned the app's crash reports back on over a written false")
+	}
+	if got := p.MobileCompactionThresholdPercent(); got != 70 {
+		t.Errorf("MobileCompactionThresholdPercent() = %d, want the 70 the node wrote: the publish dropped the project's own threshold", got)
 	}
 	for _, want := range []string{
 		"mobile kept: pairing on, sync off, providers google.com, auth age 6h, a new device needs a QR code, costly modes critical, biometric on a costly start",

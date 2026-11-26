@@ -21,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/repourl"
 	"github.com/dimipaun/fugaro/internal/runner"
 )
 
@@ -95,21 +96,43 @@ func resolveCloudRepo(ctx context.Context, root string, co cloudOptions) (rf res
 	return rf, lc, lcPath, repo, host, nil
 }
 
-// cloudCheck is the cloud step's state from fugaro.yaml and the local
-// project config alone: never a bucket, the registry or a job, and no
+// cloudCheck is the cloud step's state from a checkout's fugaro.yaml and the
+// local project config alone: never a bucket, the registry or a job, and no
 // credentials (fugaro update --check, and the skips of the cloud step). It
 // cannot see a build that failed after the base moved: build records live in
 // the bucket. It prints nothing; rerun is the command line a blocked reason
 // tells the user to run again ("" is the bare fugaro update).
 func cloudCheck(ctx context.Context, root string, co cloudOptions, rerun string) cloudVerdict {
-	if rerun == "" {
-		rerun = selfCommand() + " update"
-	}
-	rf, lc, lcPath, repo, host, v := resolveCloudRepo(ctx, root, co)
+	rf, lc, lcPath, repo, _, v := resolveCloudRepo(ctx, root, co)
 	if v != nil {
 		return *v
 	}
-	cfg := rf.Cfg
+	return repoCloudCheck(lc, lcPath, repo, rf.Cfg, rerun)
+}
+
+// repoCloudCheck is cloudCheck's rule for one repository whose fugaro.yaml and
+// local-config entry a caller already has: the staleness test the checkout
+// stage plans every repository of the project with, and the one U10 reads,
+// offline — the local config's recorded base against this release's, and never
+// a build record, so a build that failed after the base moved is invisible
+// here. cfg is the repository's default-branch fugaro.yaml as the reader parsed
+// it (a view's Cfg, C1); lcPath is the local config's own path, which a custom
+// base's fix names. It prints nothing; rerun is the command line a blocked
+// reason tells the user to run again ("" is the bare fugaro update).
+func repoCloudCheck(lc *localcfg.Config, lcPath, repo string, cfg *config.Config, rerun string) cloudVerdict {
+	if releaseVersion() == "" {
+		return cloudVerdict{state: cloudNotHere, repo: repo, reason: "a development build has no release base image to move to"}
+	}
+	if lc == nil || cfg == nil {
+		return cloudVerdict{state: cloudNotHere, repo: repo, reason: "no fugaro.yaml on its default branch, so no job image to refresh"}
+	}
+	if rerun == "" {
+		rerun = selfCommand() + " update"
+	}
+	host, err := infra.RegistryHost(lc)
+	if err != nil {
+		return cloudVerdict{state: cloudFailed, repo: repo, reason: oneLine(err.Error())}
+	}
 	ver := releaseVersion()
 	set := map[string]bool{}
 	for _, w := range cfg.Workflows {
@@ -226,14 +249,22 @@ func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string
 		}
 		return "" // a U9 skip (cloudNotHere): nothing to check here
 	}
-	cfg := rf.Cfg
-	names := slices.Sorted(maps.Keys(cfg.Workflows))
-	if len(names) == 0 {
-		return ""
-	}
 	repoURL, err := checkoutURL(ctx, root)
 	if err != nil {
 		return couldNotCheckJobConfigCopy("cannot read the checkout's origin")
+	}
+	return jobConfigCopyNoteFor(ctx, lc, repo, rf.Cfg, fileSetsBaseBranch(rf), repoURL)
+}
+
+// jobConfigCopyNoteFor is jobConfigCopyNote for one repository whose fugaro.yaml
+// the caller already has: the rows of the note below, for a checkout and for a
+// repository read from the project's own list alike (a view, U4/R6), so the two
+// say the same thing about the same job. sets is whether that file writes
+// git.base_branch itself (config.SetsGitBaseBranch, what infra.Inputs carries).
+func jobConfigCopyNoteFor(ctx context.Context, lc *localcfg.Config, repo string, cfg *config.Config, sets *bool, repoURL string) string {
+	names := slices.Sorted(maps.Keys(cfg.Workflows))
+	if len(names) == 0 {
+		return ""
 	}
 	// jobConfigCopyNote is an advisory extra on an otherwise-successful
 	// cloud step, not the thing the operator ran for (the same risk
@@ -259,7 +290,7 @@ func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string
 	projectScopes := map[string]bool{}
 	anyJob := false
 	for _, name := range names {
-		spec, err := infra.Workflow(infra.Inputs{LC: lc, Repo: repo, Cfg: cfg, FileSetsBaseBranch: fileSetsBaseBranch(rf), RepoURL: repoURL}, name)
+		spec, err := infra.Workflow(infra.Inputs{LC: lc, Repo: repo, Cfg: cfg, FileSetsBaseBranch: sets, RepoURL: repoURL}, name)
 		if err != nil {
 			return couldNotCheckJobConfigCopy("cannot compute the repository's spec from the local config")
 		}
@@ -589,6 +620,40 @@ func checkoutNamesProject(ctx context.Context, root string) bool {
 	return err == nil && co != nil && config.ProjectNameRE.MatchString(co.Project)
 }
 
+// viewEntry is this machine's local-config entry for a view's repository. Every
+// per-repository fact a build needs — the provider, the base branch, the
+// workflows, the GitHub App — is read from it, and the region, the registry host
+// and the image names come from the config it belongs to, so a repository the
+// config does not list is one this machine cannot build (V1, D3350): `fugaro
+// update` names it and leaves its build to the owner.
+func viewEntry(lc *localcfg.Config, v repoView) (localcfg.Repo, bool) {
+	if lc == nil {
+		return localcfg.Repo{}, false
+	}
+	e, ok := lc.Repos[repoConfigKey(lc, v.Repo)]
+	return e, ok
+}
+
+// viewProvider is the git provider a view's build clones through: the local
+// config's entry for this repository, which is what the build's secret and slug
+// are resolved from, and the repository's own answer where the entry names none
+// (localcfg.Repo.Provider's own rule, which the reader already applied).
+func viewProvider(lc *localcfg.Config, v repoView) string {
+	if e, ok := viewEntry(lc, v); ok && e.Provider != "" {
+		return e.Provider
+	}
+	return v.Provider
+}
+
+// viewRepoURL is the URL a view's runs and builds clone from, where a checkout
+// answers with its origin remote (checkoutURL): the provider's own host and the
+// canonical owner/name. A repository whose provider this machine does not know
+// has no URL, and the caller reports it (V1) rather than guessing a host
+// (repourl.CloneURL refuses one, which is why it is asked and not built here).
+func viewRepoURL(lc *localcfg.Config, v repoView) (string, error) {
+	return repourl.CloneURL(viewProvider(lc, v), v.Repo, "")
+}
+
 // cloudStep is fugaro image refresh for the checkout's repository, in this
 // process (runImageRefresh, decision U16). `--check` reports cloudCheck's
 // state without running the refresh. In a coding agent's session (U7) the step
@@ -596,7 +661,15 @@ func checkoutNamesProject(ctx context.Context, root string) bool {
 // (a real run, or --check) a real local-file error (cloudFailed) stops the
 // checkout: a failure, not a skip; where there is nothing to refresh from here
 // (cloudNotHere, U9) the step is skipped.
+//
+// For a repository the run read from the project's list rather than from a
+// directory — the checkout stage's own call, u.view — the same step runs for
+// that repository: same verdict (repoCloudCheck), same refresh, and its
+// screen is the view and not a checkout (viewCloudStep).
 func cloudStep(ctx context.Context, u *stepCtx) stepResult {
+	if u.view != nil {
+		return viewCloudStep(ctx, u)
+	}
 	verdict := func() (cloudVerdict, *stepResult) {
 		v := cloudCheck(ctx, u.loc.Root, u.o.refresh.cloud, u.o.again(u.loc.Root))
 		if v.state == cloudFailed {
@@ -652,6 +725,72 @@ func cloudStep(ctx context.Context, u *stepCtx) stepResult {
 	return stepResult{state: stepDone, reason: "the repository is on this release's base image"}
 }
 
+// viewCloudStep is cloudStep for the repository the run read (u.view): the same
+// verdict, the same refresh and the same lines, resolved from the view's
+// fugaro.yaml and its local-config entry instead of from a checkout — no
+// working directory is read anywhere in it (C1, R10). `--check` answers the
+// offline verdict, which is what it can answer without a checkout either: its
+// build records live in the bucket, and the caller that wants them reads them
+// through the apply (the stage's own check does, checkoutBehind).
+func viewCloudStep(ctx context.Context, u *stepCtx) stepResult {
+	rv := u.view
+	verdict := func() (cloudVerdict, *stepResult) {
+		v := repoCloudCheck(rv.lc, rv.lcPath, rv.v.Repo, rv.v.Cfg, u.cloudRerun())
+		if v.state == cloudFailed {
+			return v, &stepResult{state: stepFailed, code: ExitUserError, reason: v.reason}
+		}
+		return v, nil
+	}
+	if u.o.check {
+		v, failed := verdict()
+		if failed != nil {
+			return *failed
+		}
+		if v.state != cloudNotHere {
+			fmt.Fprintf(u.w, "note: %s\n", checkJobCopyCaveat)
+		}
+		switch v.state {
+		case cloudCurrent:
+			return stepResult{state: stepCurrent, reason: v.reason}
+		case cloudStale, cloudBlocked:
+			return stepResult{state: stepStale, reason: v.reason}
+		}
+		return stepResult{state: stepSkipped, reason: v.reason}
+	}
+	if u.agent != "" {
+		return stepResult{state: stepSkipped, reason: cloudAgentRefusal(u)}
+	}
+	v, failed := verdict()
+	if failed != nil {
+		return *failed
+	}
+	if v.state == cloudNotHere {
+		return stepResult{state: stepSkipped, reason: v.reason}
+	}
+	// The refresh is the one the checkout path runs, with the view where the
+	// checkout was (refreshOptions.view): its plan is the same plan, and the
+	// job-config note after it is the same note, from the repository's own
+	// fugaro.yaml and the URL its runs clone from.
+	repoURL, err := rv.repoURL()
+	if err != nil {
+		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
+	}
+	ro := u.o.refresh
+	ro.view, ro.yes, ro.rerun, ro.out = rv, u.o.yes, u.cloudRerun(), u.w
+	var plan *refreshPlan
+	ro.onPlan = func(p *refreshPlan) { plan = p }
+	if err := runImageRefresh(u.cmd, ro); err != nil {
+		return stepResult{state: stepFailed, code: ExitCode(err), reason: oneLine(err.Error())}
+	}
+	if note := jobConfigCopyNoteFor(ctx, rv.lc, rv.v.Repo, rv.v.Cfg, rv.setsBaseBranch(), repoURL); note != "" {
+		fmt.Fprintf(u.w, "note: %s\n", note)
+	}
+	if plan != nil && plan.current() {
+		return stepResult{state: stepCurrent, reason: "no base image to pin and no image to rebuild"}
+	}
+	return stepResult{state: stepDone, reason: "the repository is on this release's base image"}
+}
+
 // cloudAgentRefusal is why the cloud step applies nothing in a coding agent's
 // session (U7), in one place: cloudStep returns it as its own skip, and the
 // checkout stage of the converge refuses the step with it before the step is
@@ -660,11 +799,35 @@ func cloudStep(ctx context.Context, u *stepCtx) stepResult {
 // stage that plans it say the same thing about the same session.
 func cloudAgentRefusal(u *stepCtx) string {
 	reason := fmt.Sprintf("a coding agent's session (%s is set) never applies cloud changes, by design; in your own terminal window, not through the agent, run %s (that terminal is what confirms every step, each billable build included)",
-		u.agent, u.o.cloudLine(u.loc.Root))
+		u.agent, u.cloudCommand())
 	if h := initflow.IDEHint(u.agent); h != "" {
 		reason += " (" + h + ")"
 	}
 	return reason
+}
+
+// cloudCommand is the command that really runs the cloud half on the screen
+// this step is on: this run's flags for the checkout it was handed, and, where
+// the step holds no checkout at all — a repository the run read from the
+// project's own list (U4), or the stage's line for a session that may not run
+// any of them — this door by itself, which is the line that re-reads every
+// repository of the project. Naming a checkout that the step never read (an
+// empty --repo) would print a command that cannot run.
+func (u *stepCtx) cloudCommand() string {
+	if u.view != nil || u.loc.Root == "" {
+		return u.o.cloudLineView()
+	}
+	return u.o.cloudLine(u.loc.Root)
+}
+
+// cloudRerun is cloudCommand with this run's own --check kept: the line a
+// blocked reason tells the user to run again, which is what reruns the same
+// question in the same mode.
+func (u *stepCtx) cloudRerun() string {
+	if u.view != nil || u.loc.Root == "" {
+		return u.o.againView()
+	}
+	return u.o.again(u.loc.Root)
 }
 
 // cloudLine is the command that runs the cloud step for root in the user's
@@ -677,4 +840,13 @@ func (o stepOptions) cloudLine(root string) string {
 	c := o
 	c.check = false
 	return c.again(root)
+}
+
+// cloudLineView is cloudLine for a step whose screen is the project's own
+// repositories rather than a checkout: the same command with no --repo, which
+// is the line that re-reads every repository (againView).
+func (o stepOptions) cloudLineView() string {
+	c := o
+	c.check = false
+	return c.againView()
 }

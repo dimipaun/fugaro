@@ -51,8 +51,10 @@ package credsvc
 
 import (
 	"context"
+	"errors"
 
 	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/secretname"
 )
 
@@ -62,16 +64,14 @@ import (
 // which `fugaro credentials serve` assigns in workspace mode beside
 // PersonScopeConfigForServe.
 //
-// **No task sets it yet, and the one that owes it is I1 rather than WC14.** Its
-// default below is C1's stub, which answers OFF for every project, so a process
-// whose half IS wired — a workspace whose owner has published a roster, which is
-// what WC14 hands the scope — refuses every call whose slip names a personal
-// token with personalSwitchOff, the sentence R11 reserves for a member who
-// turned the switch off. The line that ends that is I1's, and the plan's own
-// words say so: I1's acceptance is "the two stub files are deleted and the real
-// sides are wired", the `creds` stub it deletes is exactly this variable's
-// default, and its end-to-end test cannot be served a personal token without
-// it.
+// **The serve path assigns it, and I1 is the line that does so.** C1's stub is
+// deleted with WC5's half landed (person_stub.go), so this variable's default is
+// the process's own unwiredPersonSwitch below: OFF for every project, which is
+// what a workspace-mode process whose personal half is not wired answers, and
+// what `fugaro credentials serve` replaces in workspace mode with scopePersonSwitch
+// (I1). Until that line the half refuses every call whose slip names a personal
+// token with personalSwitchOff, the sentence R11 reserves for a member who turned
+// the switch off.
 //
 // **Where the real reader is built is fixed by the CALL, and that is why this is
 // a variable of the process and not a field of its configuration.** The switch
@@ -79,7 +79,7 @@ import (
 // process's, a deployment serving many members — and the member's policy is read
 // from the member the caller's own verified project names: this process reads no
 // member's database before a caller has been verified (R8 of workspace-service),
-// so the reader I1 installs is a scope-aware one over the call's OWN policy
+// so the reader is a scope-aware one over the call's OWN policy
 // reader (`Scope.Policy`, WC6's reading of the member's published policy), and
 // the CLI's assignment only installs it.
 //
@@ -95,13 +95,63 @@ import (
 // is still the scope's, and what travels here is the switch alone. What C2 is
 // silent on is who builds it, which is I1's line above.
 //
-// Its default is C1's stub, which answers OFF for every project, and that is the
-// state of a process whose personal half is not wired: an installation, a
-// workspace-mode process before I1's line, and every hermetic test. It is the
-// tighter answer rather than an error for C1's own reason — absent is off (R9) —
-// and it is what keeps an installation's path exactly as it was (A3): no
-// candidate, no container read, no refusal.
-var PersonSwitchForServe creds.PersonSwitchReader = creds.StubPersonSwitch{}
+// Its default answers OFF for every project, and that is the state of a process
+// whose personal half is not wired: an installation, a workspace-mode process
+// before the serve path's line, and every hermetic test. It is the tighter
+// answer rather than an error for C1's own reason — absent is off (R9) — and it
+// is what keeps an installation's path exactly as it was (A3): no candidate, no
+// container read, no refusal.
+var PersonSwitchForServe creds.PersonSwitchReader = unwiredPersonSwitch{}
+
+// unwiredPersonSwitch is the switch of a process that has not been handed one:
+// OFF for every project. It is R9's absent key stated as a value and not a
+// placeholder answer, which is what lets every hermetic test drive the half with
+// no member and no policy, and it turns nothing on — a process that answered ON
+// here would offer a person's token on a member that never asked for it (D2972).
+type unwiredPersonSwitch struct{}
+
+// PersonSwitchOn answers off for every project: see the file's own comment.
+func (unwiredPersonSwitch) PersonSwitchOn(context.Context, string) (bool, error) {
+	return false, nil
+}
+
+// ScopePersonSwitch is the switch reader a workspace-mode process serves R9's
+// question with: WC6's reading (`projectpolicy.PersonSwitchReader`) of the
+// MEMBER whose policy the CALL is under, taken from the call's own scope
+// (`Scope.Policy`) and never from a reader built at startup. `fugaro credentials
+// serve` assigns what it answers to PersonSwitchForServe in workspace mode.
+//
+// **It reads the scope rather than a database, and that is the whole of why it
+// is a function here.** The member a call belongs to is the one the front door
+// verified (R8 of workspace-service), and the policy that member is held to is
+// the scope's own reader over that member's database: a reader built at startup
+// would pick one member for a deployment that serves many, and a reader handed a
+// database would reach one this process never verified a caller against.
+//
+// It is asked under a call and answers an error without one: a call's switch
+// cannot be read for a caller nobody named, and C1's own rule is that a policy
+// that could not be read is an error and never an off.
+func ScopePersonSwitch() creds.PersonSwitchReader { return scopePersonSwitch{} }
+
+// scopePersonSwitch is ScopePersonSwitch's reader: the scope of the context the
+// question arrives on, and WC6's reader over that scope's own policy.
+type scopePersonSwitch struct{}
+
+// PersonSwitchOn answers whether the call's own member turns the personal half
+// on. The project argument is the one WC5 asks about (the caller's own) and the
+// scope's policy is already that member's, so the read does not choose by it —
+// the same reason projectpolicy.PersonSwitchOverDB ignores its own.
+func (scopePersonSwitch) PersonSwitchOn(ctx context.Context, project string) (bool, error) {
+	sc, ok := scopeOf(ctx)
+	if !ok {
+		return false, errors.New("credsvc: the workspace's switch was asked without the call's own scope, so no member's policy could be read")
+	}
+	return projectpolicy.PersonSwitchReader{
+		Read: func(ctx context.Context, _ string) (*projectpolicy.Policy, bool, error) {
+			return sc.Policy().Shared(ctx)
+		},
+	}.PersonSwitchOn(ctx, project)
+}
 
 // The two sentences the personal half refuses with. They are classes and never
 // another package's text, and neither carries a value, a container or a

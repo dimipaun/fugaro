@@ -83,20 +83,28 @@ func TestProjectCopyLeavesStateBeforeApply(t *testing.T) {
 func TestRetiredCopyDeletedOnlyWhenUnreferenced(t *testing.T) {
 	copies := RetiredProjectCopies([]string{"npm-token", "pypi-token"}, "acme", true)
 	mounted := map[string]bool{gcp.ProjectSecretID("acme", "npm-token"): true}
-	got := ProjectCopiesToDelete(copies, mounted)
+	got := ProjectCopiesToDelete(copies, mounted, true)
 	want := []ProjectCopy{{Name: "pypi-token", ID: gcp.ProjectSecretID("acme", "pypi-token")}}
 	if !slices.Equal(got, want) {
 		t.Fatalf("deleted = %+v, want only the copy no deployed job names", got)
 	}
 
 	// Nothing names one of them: every copy goes.
-	if got := ProjectCopiesToDelete(copies, map[string]bool{}); len(got) != len(copies) {
+	if got := ProjectCopiesToDelete(copies, map[string]bool{}, true); len(got) != len(copies) {
 		t.Fatalf("deleted = %+v, want every copy when no job names one", got)
 	}
 
-	// The read that could not be made is NOT "nothing names it": the CLI warns
-	// (DeployedSecretIDs' empty set comes with its warning) and deletes
-	// nothing, which is the direction a call that takes a container away needs.
+	// The read that could not be made is NOT "nothing names it": an empty set
+	// the read did answer deletes everything, and the same empty set it did not
+	// answer deletes nothing, which is the direction a call that takes a
+	// container away needs.
+	if got := ProjectCopiesToDelete(copies, nil, false); len(got) != 0 {
+		t.Fatalf("deleted = %+v for a read that was never made, want every copy kept", got)
+	}
+
+	// And the CLI's one input is that answer, whatever shape the failure has:
+	// a refused listing, and a read with no client to make it, both answer no
+	// IDs with answered false, so neither can reach a deletion.
 	f := newCloud(t)
 	spec := InstallationSpec{Project: "proj-1234", FugaroProject: "acme", Region: "us-east5"}
 	f.run.AddJob("fugaro-acme-app-web", "1", "512Mi")
@@ -104,12 +112,30 @@ func TestRetiredCopyDeletedOnlyWhenUnreferenced(t *testing.T) {
 		"PACKAGE_TOKEN": gcp.ProjectSecretID("acme", "npm-token"),
 	})
 	f.run.FailListWith = http.StatusForbidden
-	ids, warning := DeployedSecretIDs(context.Background(), f.c, spec)
-	if len(ids) != 0 || warning == "" {
-		t.Fatalf("a refused listing answered %v with warning %q, want no IDs and the warning", ids, warning)
+	ids, answered, warning := DeployedSecretIDs(context.Background(), f.c, spec)
+	if len(ids) != 0 || answered || warning == "" {
+		t.Fatalf("a refused listing answered %v (answered %v) with warning %q, want no IDs, no answer and the warning", ids, answered, warning)
 	}
 	if !strings.Contains(warning, "gcloud run jobs list") {
 		t.Errorf("the warning names no way to check by hand: %q", warning)
+	}
+	ids, answered, warning = DeployedSecretIDs(context.Background(), &Clients{}, spec)
+	if len(ids) != 0 || answered || warning == "" {
+		t.Fatalf("a read with no Run client answered %v (answered %v) with warning %q, want no IDs, no answer and the warning", ids, answered, warning)
+	}
+	if !strings.Contains(warning, "gcloud run jobs list") {
+		t.Errorf("the warning names no way to check by hand: %q", warning)
+	}
+	// A run whose own context is done is the one case with no line to print —
+	// the run is already over — and it is kept alive the same way.
+	done, cancel := context.WithCancel(context.Background())
+	cancel()
+	ids, answered, warning = DeployedSecretIDs(done, f.c, spec)
+	if len(ids) != 0 || answered || warning != "" {
+		t.Fatalf("an abandoned run answered %v (answered %v) with warning %q, want no IDs, no answer and no line", ids, answered, warning)
+	}
+	if got := ProjectCopiesToDelete(copies, ids, answered); len(got) != 0 {
+		t.Fatalf("deleted = %+v on a run whose own read was abandoned, want every copy kept", got)
 	}
 }
 

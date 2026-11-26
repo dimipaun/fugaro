@@ -1293,7 +1293,7 @@ async function main(): Promise<void> {
   })
   // **The window the console improvements' flows ask as well** (I-OPS): the
   // wizard, the models write and the image write all open this same window
-  // (D1115: one modal, and now five questions), and `newOperations` reads it
+  // (D1115: one modal, and now six questions), and `newOperations` reads it
   // through this name at message time. Set here, before the picker and before
   // `lifecycle.start`, for the launcher's own reason: those two are the paths
   // that put the surface on `ipcMain`, so a row a renderer can reach finds this

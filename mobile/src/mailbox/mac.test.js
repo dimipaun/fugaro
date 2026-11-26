@@ -30,12 +30,14 @@
 // has to be taught to ignore.
 
 import assert from 'node:assert/strict';
+import { generateKeyPairSync, sign as ed25519Sign, verify as ed25519Verify } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import { DIRECTIONS, canonicalBytes, validateHeartbeat, validateMessage } from '../../../shared/mailbox-schema/index.js';
+import { DIRECTIONS, SIG_CHARS, canonicalBytes, validateHeartbeat, validateMessage } from '../../../shared/mailbox-schema/index.js';
 import { macOf as nodeMacOf, verifyMac as nodeVerifyMac } from '../../../shared/mailbox-schema/mac.js';
-import { macOf, verifyMac } from './mac.js';
+import { decodeBase64url } from '../pairing/base64url.js';
+import { macOf, sigOf, verifyMac } from './mac.js';
 
 const VECTORS = JSON.parse(readFileSync(new URL('../../../shared/mailbox-schema/vectors.json', import.meta.url), 'utf8'));
 
@@ -326,4 +328,74 @@ test('the tag is lowercase hex of the schema\'s length, and the schema takes it'
   // written, so the two ends cannot disagree about what a tag looks like.
   assert.equal(validateMessage({ ...message, mac: mac.toUpperCase() }).ok, false);
   assert.equal(validateMessage({ ...message }).ok, false, 'and an unsigned message is refused');
+});
+
+// ---------------------------------------------------------------------------
+// O6: the device signature (J5b)
+// ---------------------------------------------------------------------------
+
+// A real Ed25519 key pair, made here and thrown away. A fake signer would pin
+// neither the length nor the bytes the signature covers, and those are exactly
+// what the consumer's gate verifies; `node:crypto` is hermetic (no network, no
+// device, no home directory).
+const DEVICE = generateKeyPairSync('ed25519');
+
+/** C2's `signMessage`, as the session hands it to `sigOf`: the device key stays
+ * inside the session and the caller is given a signature. */
+const signMessage = async (bytes) =>
+  new Uint8Array(ed25519Sign(null, Buffer.from(bytes), DEVICE.privateKey));
+
+/** Does this tag verify as a device signature over `canonicalBytes(record,
+ * direction)`? The consumer's half of the claim, done here with the public key
+ * -- and through the app's own decoder, which refuses a non-canonical spelling,
+ * so this also holds the tag to the ONE string 64 bytes have. */
+function verifies(sig, record, direction) {
+  const decoded = decodeBase64url(sig, 64);
+  if (!decoded.ok) return false;
+  return ed25519Verify(null, Buffer.from(canonicalBytes(record, direction), 'utf8'),
+    DEVICE.publicKey, Buffer.from(decoded.bytes));
+}
+
+test('sigOf signs the schema\'s canonical bytes, spelled as unpadded base64url', async () => {
+  const message = { id: 'm-0001', sender: 'phone', text: 'run 42 finished', at: 1_700_000_000_000 };
+  const sig = await sigOf(message, signMessage, 'inbox');
+
+  assert.equal(sig.length, SIG_CHARS);
+  assert.match(sig, /^[A-Za-z0-9_-]+$/);
+  assert.equal(sig.includes('='), false, 'unpadded: the schema\'s count is of the characters, not of a padded length');
+  // The bytes are the schema's, so the one serialisation is signed either way:
+  // a record signed here verifies under the public key the device node carries.
+  assert.equal(verifies(sig, message, 'inbox'), true);
+  assert.equal(validateMessage({ ...message, sig }).ok, true, 'the schema accepts what this writes');
+  assert.equal(validateMessage({ ...message, sig, mac: macOf(message, KEY, 'inbox') }).ok, false,
+    'a record with both tags is refused: exactly one scheme covers a record');
+});
+
+test('a signature is made for one direction, and does not verify in another', async () => {
+  // The direction is inside the covered bytes, so a message reflected from the
+  // inbox into the outbox fails -- the same ruling the MAC is under.
+  const message = { id: 'm-0001', sender: 'phone', text: 'run 42 finished', at: 1_700_000_000_000 };
+  const sig = await sigOf(message, signMessage, 'inbox');
+
+  assert.equal(verifies(sig, message, 'outbox'), false);
+  assert.notEqual(await sigOf(message, signMessage, 'outbox'), sig);
+});
+
+test('sigOf throws for a signer or a record it cannot sign with', async () => {
+  // The writer's asymmetry, exactly as `macOf` has it: a writer that fell back
+  // to something would write records nobody can verify, and the failure would
+  // surface at the other end.
+  const message = { id: 'm-0001', sender: 'phone', text: 'run 42 finished', at: 1_700_000_000_000 };
+  for (const sign of [undefined, null, 'sign', 42, {}, []]) {
+    await assert.rejects(() => sigOf(message, sign, 'inbox'), TypeError, String(sign));
+  }
+  await assert.rejects(() => sigOf(message, signMessage, 'nowhere'), TypeError, 'an unknown direction');
+  await assert.rejects(() => sigOf({ ...message, direction: 'inbox' }, signMessage, 'inbox'), TypeError,
+    'a record that carries its own direction is refused by the serialisation');
+  // A session that answered with something that is not a device signature is a
+  // session this writer cannot use: 64 bytes is the one length Ed25519 has.
+  for (const answer of [new Uint8Array(63), new Uint8Array(65), new Uint8Array(0), 'sig', null, undefined]) {
+    const sign = async () => answer;
+    await assert.rejects(() => sigOf(message, sign, 'inbox'), TypeError, String(answer));
+  }
 });

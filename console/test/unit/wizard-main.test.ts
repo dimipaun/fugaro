@@ -33,9 +33,12 @@
 //     `--yes`, `--ask`, `--non-interactive` by name;
 //   - a **second plan replacing a pending one** fails "one wizard at a time",
 //     and a second apply that spawns a second child fails the join case;
-//   - a window that drew the setup rows as **anything but the five answers,
-//     the digest, the two commands and the four sentences** fails the renderer
-//     case at the end, which runs `mountConfirm` over a fake document.
+//   - a window that drew the setup rows as **anything but the five drawn
+//     answers, the digest, the two commands and the four sentences** fails the
+//     renderer case at the end, which runs `mountConfirm` over a fake document;
+//   - a console that **sends the budget to a CLI that cannot read it** -- or
+//     drops it for one that can -- fails the budget cases, which drive
+//     `setupAnswersForCli` on both sides of the floor.
 
 import { createHash } from 'node:crypto'
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
@@ -89,6 +92,7 @@ import {
   removeSetupDirectory,
   serialiseSetupAnswers,
   setupAnswersDigest,
+  setupAnswersForCli,
   setupFailureSentence,
   setupFeedFailure,
   setupFloorSentence,
@@ -100,6 +104,8 @@ import { NEW_READ_BOUNDS } from '../../src/source/new-reads'
 import {
   SETUP_ANSWER_KEYS,
   SETUP_ANSWERS_FILE_KEYS,
+  SETUP_BUDGET_MAX,
+  SETUP_BUDGET_MIN,
   SETUP_RIGOR_MODES,
 } from '../../src/shared/new-ops'
 import { SourceRefusal } from '../../src/source/source'
@@ -128,17 +134,21 @@ import type {
 // The answers, and the two rows task AL will add
 // ---------------------------------------------------------------------------
 
-/** PROJECT, REGION, NAME and RIGOR are one well-formed set of the five answers.
- * The project is a project ID, the region a Google Cloud region and the name a
- * project name, all three inside the CLI's own grammars. */
+/** PROJECT, REGION, NAME, RIGOR and BUDGET are one well-formed set of the six
+ * answers. The project is a project ID, the region a Google Cloud region, the
+ * name a project name, all three inside the CLI's own grammars, and the budget a
+ * whole amount inside the alert's own bounds. */
 const PROJECT = 'project-a1'
 const REGION = 'us-east5'
 const NAME = 'sandbox-install'
 const RIGOR = 'startup'
+const BUDGET = 250
 
-/** anAnswers is the object the renderer sends: the five questions, and no
- * `version` (main adds that when it serialises the file, because `version` is
- * the file's own schema version and not a question the wizard asks). */
+/** anAnswers is the object the renderer sends for a form whose budget field was
+ * left **empty**: the six questions, one of them -- `budget` -- with no member at
+ * all, and no `version` (main adds that when it serialises the file, because
+ * `version` is the file's own schema version and not a question the wizard
+ * asks). A case that wants an amount answers `{ budget: BUDGET }` over it. */
 function anAnswers(overrides: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
   return {
     gcp_project: PROJECT,
@@ -474,20 +484,25 @@ async function refusalOf(run: () => Promise<unknown>): Promise<string | null> {
 // ---------------------------------------------------------------------------
 
 describe('the answers main accepts', () => {
-  it('takes the five questions, and freezes them', () => {
-    const answers = validateSetupAnswers(anAnswers())
+  it('takes the six questions, and freezes them', () => {
+    const answers = validateSetupAnswers(anAnswers({ budget: BUDGET }))
     expect(answers).toEqual({
       gcp_project: PROJECT,
       region: REGION,
       name: NAME,
       rigor: RIGOR,
+      budget: BUDGET,
       bake_repos: true,
     })
     expect(Object.isFrozen(answers)).toBe(true)
-    // The five, in the order the contract names them, and no `version`: that is
+    // The six, in the order the contract names them, and no `version`: that is
     // the file's own schema version, which main adds when it serialises.
     expect(Object.keys(answers).sort()).toEqual([...SETUP_ANSWER_KEYS].sort())
     expect(SETUP_ANSWER_KEYS).not.toContain('version')
+    // An **empty** budget field is held as `undefined` and not refused: main's
+    // own reader takes the absent member as unanswered (`setupAnswers.answer`),
+    // which is the run's default amount (D2212) and not a zero.
+    expect(validateSetupAnswers(anAnswers()).budget).toBeUndefined()
   })
 
   it('refuses anything that is not an object', () => {
@@ -610,6 +625,7 @@ describe('the bytes the child is given', () => {
     region: REGION,
     name: NAME,
     rigor: RIGOR,
+    budget: BUDGET,
     bake_repos: true,
   })
 
@@ -622,6 +638,52 @@ describe('the bytes the child is given', () => {
     expect(document['version']).toBe(1)
     expect(document['rigor']).toBe(RIGOR)
     expect(document['bake_repos']).toBe(true)
+  })
+
+  it('writes the budget when the operator answered one, and leaves the member out when the field was empty', () => {
+    // The schema's member is optional, and the two states are different
+    // statements: an amount is an amount, while an **absent** member is the
+    // field nobody answered -- which the CLI reads as its own default of 100 USD
+    // (D2212), not as no alert at all. A written `0` is neither: it is an amount
+    // the installation refuses later.
+    const empty = JSON.parse(new TextDecoder().decode(serialiseSetupAnswers(answers))) as Record<
+      string,
+      unknown
+    >
+    expect(empty['budget']).toBe(BUDGET)
+    const unanswered = JSON.parse(
+      new TextDecoder().decode(serialiseSetupAnswers({ ...answers, budget: undefined })),
+    ) as Record<string, unknown>
+    expect(unanswered).not.toHaveProperty('budget')
+  })
+
+  it('sends no budget to a CLI below the release that takes an amount without its currency', () => {
+    // The console answers an amount and never `budget_currency` (D2211), and
+    // before 0.29.0 nothing wrote the currency the document left out back from
+    // the default: the amount alone reached the run's own trio rule and the whole
+    // plan or apply ended there. So a CLI below the release that reads a
+    // half-answered pair as a whole one is sent the answers the file has always
+    // carried, and the run records its own default amount (D2212) -- the question
+    // was still asked and still shown, and what is dropped is the bytes and never
+    // the form.
+    for (const version of ['0.28.9', '0.29.0-rc.1', 'dev', '']) {
+      expect(
+        setupAnswersForCli(answers, version).budget,
+        `${version} was sent a budget`,
+      ).toBeUndefined()
+    }
+    for (const version of ['0.29.0', '0.29.1', '0.30.0']) {
+      expect(setupAnswersForCli(answers, version).budget).toBe(BUDGET)
+    }
+    // Below the floor the answers are the ones the file has always carried, and
+    // nothing else about them changes.
+    expect(setupAnswersForCli(answers, '0.28.9')).toEqual({ ...answers, budget: undefined })
+    // A field the operator left empty is the same object on either side: there
+    // is no member to drop, and the gate is a function of the answers and the
+    // version line and nothing else.
+    const unanswered = Object.freeze({ ...answers, budget: undefined })
+    expect(setupAnswersForCli(unanswered, '0.1.0')).toBe(unanswered)
+    expect(setupAnswersForCli(unanswered, '0.30.0')).toBe(unanswered)
   })
 
   it('writes a no as `false` and leaves only an unanswered switch out', () => {
@@ -640,6 +702,7 @@ describe('the bytes the child is given', () => {
       'gcp_project',
       'region',
       'rigor',
+      'budget',
       'bake_repos',
     ])
     expect(declined['bake_repos']).toBe(false)
@@ -654,7 +717,13 @@ describe('the bytes the child is given', () => {
         serialiseSetupAnswers({ ...answers, name: '', bake_repos: undefined }),
       ),
     ) as Record<string, unknown>
-    expect(Object.keys(unanswered)).toEqual(['version', 'gcp_project', 'region', 'rigor'])
+    expect(Object.keys(unanswered)).toEqual([
+      'version',
+      'gcp_project',
+      'region',
+      'rigor',
+      'budget',
+    ])
     expect(unanswered).not.toHaveProperty('bake_repos')
   })
 
@@ -849,9 +918,60 @@ describe('setup.plan', () => {
     ])
   })
 
+  it('holds no budget in the bytes a CLI below the floor is given, digest included', async () => {
+    // The gate's **wiring**, and not the gate itself: `setupAnswersForCli` is
+    // driven directly in the cases above, and this is the one that fails if
+    // `createSetupWizard` stops calling it. 0.28.2 is at or above the spawn floor
+    // and below `SETUP_BUDGET_CLI_FLOOR`, so the plan runs and the amount the
+    // operator answered must not be in the bytes the child reads -- nor in the
+    // digest the window shows, which is of those bytes. `const sent = answers`
+    // in place of the gate turns both assertions red.
+    const { wizard, calls, confirmer } = aWizard({ floor: '0.28.0', cliVersion: '0.28.2' })
+    await wizard['setup.plan'](planArgs(anAnswers({ budget: BUDGET })))
+    const bytes = (calls[0] as SpawnCall).child.bytes[0] as Uint8Array
+    const document = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>
+    expect('budget' in document, 'a CLI below the floor was sent a budget').toBe(false)
+    const expected = serialiseSetupAnswers({
+      gcp_project: PROJECT,
+      region: REGION,
+      name: NAME,
+      rigor: RIGOR,
+      budget: undefined,
+      bake_repos: true,
+    })
+    expect(bytes).toEqual(expected)
+    const subject = confirmer.opened[0]?.subject
+    if (subject?.kind !== 'setup') throw new Error('the window was not shown a setup')
+    expect(subject.digest).toBe(setupAnswersDigest(expected))
+  })
+
+  it('sends the budget to a CLI at the floor, and digests those bytes', async () => {
+    // The other side of the same wiring: at `SETUP_BUDGET_CLI_FLOOR` the amount
+    // is in the document the child reads, and the digest is taken of the bytes
+    // that carry it -- so a gate that dropped the member for every version would
+    // fail here rather than passing on the case above alone.
+    const { wizard, calls, confirmer } = aWizard({ floor: '0.28.0', cliVersion: '0.29.0' })
+    await wizard['setup.plan'](planArgs(anAnswers({ budget: BUDGET })))
+    const bytes = (calls[0] as SpawnCall).child.bytes[0] as Uint8Array
+    const document = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>
+    expect(document['budget']).toBe(BUDGET)
+    const expected = serialiseSetupAnswers({
+      gcp_project: PROJECT,
+      region: REGION,
+      name: NAME,
+      rigor: RIGOR,
+      budget: BUDGET,
+      bake_repos: true,
+    })
+    expect(bytes).toEqual(expected)
+    const subject = confirmer.opened[0]?.subject
+    if (subject?.kind !== 'setup') throw new Error('the window was not shown a setup')
+    expect(subject.digest).toBe(setupAnswersDigest(expected))
+  })
+
   it('shows the answers main parsed, not the object the renderer sent', async () => {
     const { wizard, confirmer, made } = aWizard({ floor: '0.120.0' })
-    await wizard['setup.plan'](planArgs(anAnswers({ name: undefined, bake_repos: undefined })))
+    await wizard['setup.plan'](planArgs(anAnswers({ name: undefined, budget: BUDGET, bake_repos: undefined })))
     expect(confirmer.opened).toHaveLength(1)
     const subject = confirmer.opened[0]?.subject
     // The view is the main half's own builder over the parsed answers, and it is
@@ -902,6 +1022,7 @@ describe('setup.plan', () => {
           region: REGION,
           name: '',
           rigor: RIGOR,
+          budget: BUDGET,
           bake_repos: undefined,
         }),
       ),
