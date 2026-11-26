@@ -1070,7 +1070,7 @@ func AskUnmanaged() string {
 // R18). It is not AskUnmanaged's words: that line promises a run that behaves
 // exactly as it always has, and here the flag does something new.
 func AskValues() string {
-	return "--ask: this project's marks do not answer \"managed\", so the gate restores nothing; its repositories' missing secret values are asked for at this terminal"
+	return "--ask: project not managed; missing secret values are asked for here"
 }
 
 // AskNoGate is the line --ask prints in a run the managed gate never covers:
