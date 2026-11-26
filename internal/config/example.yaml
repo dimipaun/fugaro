@@ -72,13 +72,18 @@ workflows:
       # lint: npm run lint        # the check step's gate command (build | test | lint)
       # fix: npm run lint -- --fix   # the check step's autofix command; needs lint, since the gate runs fix, then lint
       reports: ["**/junit*.xml"]   # JUnit XML, such as jest-junit or Vitest's junit reporter
-    # secrets:                # logical names; disabled for now and ignored (D2313), like a
-    #                         # repository's own image: a shared job mounts only the project's
-    #                         # secrets, so store the value once for the project instead
+    # secrets:                # a workflow's own secret: store the value once for the project
+    #                         # (`fugaro secrets set NAME`), and the repositories that may read it
+    #                         # are the operator's own record (`fugaro secrets allow NAME
+    #                         # PATTERN...`, or this checkout's local workflow_secrets block). A
+    #                         # repository-level copy is disabled for now and ignored (D2313)
     #   # bitbucket-token, github-app-key, claude-oauth-token, anthropic-api-key, and anything
     #   # starting claude-oauth-token- (a named Claude account's own secret, set in the local
     #   # config's claude_accounts, never here) are reserved and refused as a workflow's own name
     #   - { name: npm-token, env: NPM_TOKEN }
+    #   - { name: npmrc, env: NPM_CONFIG_USERCONFIG, file: true }   # file: writes the value to a
+    #                         # 0400 file and sets the variable to its path; a file is written for a
+    #                         # coding run's stages only, never in an independent review run
     resources: { cpu: 4, memory: 8Gi }
     timeouts: { total: 3h, stage: 60m, verify: 30m, finalize_reserve: 5m }   # the defaults; a stage and the verify step may not exceed the total
     # rebuild:                # optional; the daily image check. A changed image:, dockerfile:, base or image.setup always rebuilds
@@ -97,7 +102,7 @@ workflows:
         command: ./gradlew test
         each: "--tests {id}"  # appended once per failed test ID
       reports: ["**/build/test-results/**/*.xml"]
-    # secrets:                # disabled for now and ignored (D2313)
+    # secrets:                # stored once for the project; see the note under web: above
     #   - { name: artifactory-token, env: ARTIFACTORY_TOKEN }
     resources: { cpu: 8, memory: 32Gi }
     timeouts: { total: 3h, stage: 60m, verify: 30m, finalize_reserve: 5m }   # the defaults; a stage and the verify step may not exceed the total
