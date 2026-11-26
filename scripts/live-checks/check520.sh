@@ -11,12 +11,13 @@
 #
 # The plan's sentence reads "a provider model with an image rate"; the state the
 # work is about — and the state doctor names "the coder model X is priced
-# without an image rate, and agent.models.vision is Y, which a stage that reads
-# a picture runs instead" — is the coder priced WITHOUT one (D2016: a coder
+# without an image rate, and agent.models.vision is Y, which a run whose task
+# names an image runs in the coder's place" — is the coder priced WITHOUT one (D2016: a coder
 # whose own price row carries an image rate reads the picture itself and keeps
 # its own model, so the slot is never reached). This check measures the state
-# V7 rewrites, and the `premise` row says so in as many words when the sandbox
-# is configured the other way.
+# V7 rewrites (D2017: for the run that reads a picture, and this check's task
+# names the `.png` it is about), and the `premise` row says so in as many words
+# when the sandbox is configured the other way.
 #
 # What it measures:
 #
@@ -538,7 +539,7 @@ step_premise() {
     ;;
   *"is priced without an image rate"*)
     PREMISE_OK=yes
-    fact premise PASS "doctor says: ${problem} — the coder cannot read an image and the vision slot covers it, which is the state V7 rewrites. Its own remedy line reads: ${fix}"
+    fact premise PASS "doctor says: ${problem} — the coder cannot read an image and the vision slot covers it, which is the state a run naming an image is rewritten in (V7, D2017). Its own remedy line reads: ${fix}"
     return 0
     ;;
   esac
