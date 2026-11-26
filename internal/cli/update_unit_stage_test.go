@@ -390,6 +390,60 @@ func TestUpdateNeverRepointsAUnitAtABuildThatWillNotBeThereTomorrow(t *testing.T
 	}
 }
 
+// TestUpdateLeavesTheMachineWithoutAUnitWhenTheRunIsNotARelease: the install
+// D2700 has this door make is fenced by the same rule as the re-render, one step
+// earlier — a machine with NO unit gets none when this run is a build that will
+// not be there tomorrow. A login unit restarts its program at every login, so the
+// first unit is the one write that must not point at a checkout's `go build`, at
+// `go run`'s temporary binary or at a copy in a scratch directory: the machine is
+// left exactly as it was for a released fugaro's own next update to install from,
+// and the one line names the binary this run is and the command that writes the
+// first unit deliberately. Nothing is written, nothing is reloaded, and nothing
+// is asked.
+func TestUpdateLeavesTheMachineWithoutAUnitWhenTheRunIsNotARelease(t *testing.T) {
+	// The same two shapes as the re-point test, one per clause of the rule: a
+	// `dev` build wherever it was built, and a build in the system's temporary
+	// directory whatever version it carries.
+	for _, tc := range []struct {
+		name, version, exe string
+	}{
+		{"a development build in a checkout", "dev", "/home/someone/src/fugaro/fugaro"},
+		{"a build in the temporary directory", "1.2.3", filepath.Join(os.TempDir(), "go-build123", "b001", "exe", "fugaro")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			unitHome(t)
+			f := fakeUnitService(t)
+			typed(t)
+			oldVersion, oldExe := Version, orchestratorExecutable
+			Version, orchestratorExecutable = tc.version, func() (string, error) { return tc.exe, nil }
+			t.Cleanup(func() { Version, orchestratorExecutable = oldVersion, oldExe })
+			e, _ := updateUnitEngine(t, &initOptions{})
+			res, out := runUnitStage(t, e, newUpdateUnitStage(e))
+			u := currentUnit(t)
+			if got := stateOf(res, initflow.Unit); got != initflow.Skipped {
+				t.Fatalf("the step is %s running from %s (version %s) on a machine with no unit, want skipped:\n%+v", got, tc.exe, tc.version, res.Stages)
+			}
+			if _, err := os.Stat(u.Path); !os.IsNotExist(err) {
+				t.Errorf("the step wrote a first unit (stat: %v)", err)
+			}
+			if len(f.reloads) != 0 {
+				t.Errorf("the step reloaded the service although it wrote nothing: %v", f.reloads)
+			}
+			if len(res.Left) != 0 {
+				t.Errorf("the step left something for the user: %v", res.Left)
+			}
+			if askedSomething(out) {
+				t.Errorf("the step asked a question:\n%s", out)
+			}
+			for _, want := range []string{u.Path, tc.exe, "orchestrator install"} {
+				if !strings.Contains(res.Stages[0].Detail, want) {
+					t.Errorf("the plan line does not name %q:\n%s", want, res.Stages[0].Detail)
+				}
+			}
+		})
+	}
+}
+
 // TestUpdateUnitStepAsksNothingAndIsLeftForThePerson: the step asks nothing at a
 // terminal (T8), and it is still never covered by --yes, a unit being code that
 // runs at login: a run that cannot put a person at the terminal leaves the unit

@@ -370,9 +370,9 @@ func TestDocsStatelessOrchestratorUnitRepointRule(t *testing.T) {
 		t.Errorf("%s: the plan still names the test the re-point rule replaced", soPlan)
 	}
 	src := stageSource(t, "init_orchestrator_stage.go")
-	for _, want := range []string{"unitMayNameThisBinary(", "unitStepLeavesAnotherProgram(", `Version != "dev"`, "os.TempDir()"} {
+	for _, want := range []string{"unitMayNameThisBinary(", "unitStepLeavesAnotherProgram(", "unitStepLeavesNoUnit(", `Version != "dev"`, "os.TempDir()"} {
 		if !strings.Contains(src, want) {
-			t.Errorf("init_orchestrator_stage.go no longer carries the re-point rule's %q", want)
+			t.Errorf("init_orchestrator_stage.go no longer carries the installed-binary rule's %q", want)
 		}
 	}
 }
