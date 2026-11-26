@@ -714,6 +714,13 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// because both are steps of the update door's and neither may fail an
 	// update (the HARD RULE).
 	e.noticeRepoValues(ctx)
+	// And KS20's: the repositories this release's credentials service stops,
+	// because they pin a Claude model through a provider key and the service
+	// refuses that call (D3000, D3013). Nothing is written — the provider table
+	// and the pin are the owner's files — and it is here for the reason the
+	// notice above is: the release stops these runs, so a person is owed the
+	// list before it does, and it may not fail an update (the HARD RULE).
+	e.noticeClaudeGate(ctx)
 	// And D1543's: the creation fact a release behind left at version 3 carries
 	// the image build count this one no longer bounds a build by, and a fact is
 	// migrated where it was written (update_marker_version.go). It is after the
