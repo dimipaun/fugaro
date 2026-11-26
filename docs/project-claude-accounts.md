@@ -656,7 +656,11 @@ radius (§1), and `accounts.<name>.allow_repos` plus the two gates are what boun
   among them: the launcher writes `FUGARO_MODEL_PROVIDERS` (cut to the repository the run is for),
   `FUGARO_MODEL_PRICES` and `FUGARO_ALLOWED_MODELS` on the execution itself (`internal/cli`'s
   `projectJobModelEnv`), so a run whose coder a provider serves resolves it on a shared job as it
-  does on its own. **The account
+  does on its own — **for the launcher whose own config defines the provider**: the routes are written
+  from the launching machine's local config, whose `providers:` block is local-only and never
+  published, so a teammate whose config defines none writes no routes and meets
+  `no provider serves it` on a shared job where the same repository's per-repository job works (its
+  deployment already carries them). **The account
   gates are not what admits such a run, and no live check has proved one end to end on a shared
   job:** the check that would (the plan's own, `docs/project-centric/implementation-plan.md` Task 3.7)
   has not been run. A Bitbucket repository never reaches a shared job at all.
