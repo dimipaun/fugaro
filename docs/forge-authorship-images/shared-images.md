@@ -15,6 +15,8 @@ are composable rather than rivals: a catalog entry's `source: dockerfile` is jus
 entry may later be keyed by a resolved dependency set. See the catalog's
 [reconciliation.md](../project-image-catalog/reconciliation.md) **D1141**.
 
+**Amended 2026-11-26: the owner unparked C8b and C8c and approved them (D650).** They build to D653: a shared image is a catalog entry keyed by the dependency set, and the commands read `repo_images` by provider.
+
 The decisions are settled. **D617**: the published policy is the intent and the lock lives in the
 runs bucket beside `builds/`. **D618 as answered** (the owner chose *against* the recommendation):
 images are shared between repositories whose resolved dependency set is identical, scoped to exactly
