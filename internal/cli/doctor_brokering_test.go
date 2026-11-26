@@ -432,6 +432,50 @@ func pinDoctorNow(t *testing.T, now func() time.Time) {
 	t.Cleanup(func() { doctorNow = old })
 }
 
+// TestDoctorCredentialsServiceFixLineFitsTheRule: the fix's first sentence is
+// the whole line the default view prints for this check (doctorShortFix hands
+// the view the check's own first sentence), so its length is the reader's — a
+// line past the ~140 characters CLAUDE.md sets is one they scroll to read and
+// cut to copy. The names are the long ones of the field — a sandbox repository
+// and a project name — because those are what push the sentence furthest, and
+// the project is the half the command added to it.
+func TestDoctorCredentialsServiceFixLineFitsTheRule(t *testing.T) {
+	// The line is what a person sees, so it names the binary as they run it.
+	old := selfCommand
+	selfCommand = func() string { return "fugaro" }
+	t.Cleanup(func() { selfCommand = old })
+
+	svcs := gcpfake.NewRunServices(t)
+	svcs.AddService(infra.CredentialsServiceName)
+	runs := gcpfake.NewRun(t)
+	lc := &localcfg.Config{
+		Name:               "fugaro",
+		GCPProject:         "fugaro-dev",
+		Region:             "us-east5",
+		CredentialsService: &localcfg.CredentialsService{URL: "https://fugaro-credentials-abc-uc.a.run.app"},
+		Endpoints:          localcfg.Endpoints{NoAuth: true, Run: cloudRunEndpoint(t, runs, svcs)},
+		Repos: map[string]localcfg.Repo{
+			"dimipaun/fugarosandbox2": {Provider: "bitbucket", Workflows: []string{"app"}},
+		},
+	}
+	checks := doctorCredentialsServiceDeployed(t.Context(), lc)
+	if len(checks) != 1 || checks[0].OK || checks[0].Severity != "warning" {
+		t.Fatalf("checks = %+v, want the one warning about the missing grant", checks)
+	}
+	var line string
+	for _, l := range strings.Split(doctorDefaultOutput(t, checks), "\n") {
+		if strings.Contains(l, "update --project") {
+			line = strings.TrimSpace(l)
+		}
+	}
+	if line == "" {
+		t.Fatal("the default view prints no line naming the command")
+	}
+	if n := len([]rune(line)); n > 140 {
+		t.Errorf("the fix line is %d characters, over the 140 a line may take: %q", n, line)
+	}
+}
+
 // TestDoctorBrokeringCredentialsServiceDeployed: the check reads the service's
 // own policy, and it is a warning in both failing directions — a service the
 // installation opted into that is not there, and a service no job account may
@@ -518,16 +562,18 @@ func TestDoctorBrokeringCredentialsServiceDeployed(t *testing.T) {
 		if !strings.Contains(cs[0].Problem, "workspace-a/repo-a") || !strings.Contains(cs[0].Problem, "roles/run.invoker") {
 			t.Errorf("the warning does not name the repository and the role: %q", cs[0].Problem)
 		}
-		if !strings.Contains(cs[0].Fix, "update --repo") {
+		if !strings.Contains(cs[0].Fix, "update --project aurora --repo") {
 			t.Errorf("the fix does not name the command that grants it: %q", cs[0].Fix)
 		}
-		// The repository is named in the words around the command, and the
-		// sentence above it names it as well: the screen prints these two lines
-		// and nothing else of the check, so a placeholder is a line nobody can
-		// act on. It is not named as --repo's argument, which the CLI refuses:
-		// that flag takes the checkout's PATH, not owner/name.
-		if !strings.Contains(cs[0].Fix, "update --repo in the checkout of workspace-a/repo-a") {
-			t.Errorf("the fix does not name the repository the command is for: %q", cs[0].Fix)
+		// The repository is named in the words around the command, and so is the
+		// project, and the sentence above names the repository too: the screen
+		// prints these two lines and nothing else of the check, so a placeholder
+		// is a line nobody can act on. The repository is not named as --repo's
+		// argument, which the CLI refuses: that flag takes the checkout's PATH,
+		// not owner/name, and a machine holding several project configs would
+		// otherwise read the command as one about whichever it selects.
+		if !strings.Contains(cs[0].Fix, "from a checkout of workspace-a/repo-a, run "+selfCommand()+" update --project aurora --repo") {
+			t.Errorf("the fix does not name the repository and the project the command is for: %q", cs[0].Fix)
 		}
 		if strings.Contains(cs[0].Fix, "update --repo workspace-a/repo-a") {
 			t.Errorf("the fix passes the repository as --repo's argument, which takes a checkout's PATH: %q", cs[0].Fix)
@@ -638,11 +684,11 @@ func TestDoctorCredentialsServiceDeployedCountsTheDeployedVariants(t *testing.T)
 		}
 		// One repository, two workflows: the command is per repository, so the
 		// fix names it once rather than twice.
-		if got := strings.Count(cs[0].Fix, "update --repo"); got != 1 {
+		if got := strings.Count(cs[0].Fix, "update --project aurora --repo"); got != 1 {
 			t.Errorf("the fix carries the repository's command %d times for its two workflows, want one: %q", got, cs[0].Fix)
 		}
-		if !strings.Contains(cs[0].Fix, "update --repo in the checkout of workspace-a/repo-a") {
-			t.Errorf("the fix does not name the repository the command is for: %q", cs[0].Fix)
+		if !strings.Contains(cs[0].Fix, "from a checkout of workspace-a/repo-a, run "+selfCommand()+" update --project aurora --repo") {
+			t.Errorf("the fix does not name the repository and the project the command is for: %q", cs[0].Fix)
 		}
 		if strings.Contains(cs[0].Fix, "update --repo workspace-a/repo-a") {
 			t.Errorf("the fix passes the repository as --repo's argument, which takes a checkout's PATH: %q", cs[0].Fix)
@@ -2310,8 +2356,8 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 
 	// The one warning state whose sentence and fix are both a repository's:
 	// a reader who meets this line has to know which checkout the command runs
-	// in, and the name goes in the words around it because --repo takes a PATH
-	// and refuses owner/name.
+	// in and which project it acts on, and the name goes in the words around the
+	// command because --repo takes a PATH and refuses owner/name.
 	t.Run("the credentials service does not admit a job account", func(t *testing.T) {
 		r := newBrokeringRig(t)
 		r.svcs.AddService(infra.CredentialsServiceName)
@@ -2321,7 +2367,7 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 		}
 		def := doctorDefaultOutput(t, o.Checks)
 		wants(t, def, "warning credentials-service-deployed: the credentials service does not admit workspace-a/repo-a's job account.",
-			"update --repo in the checkout of workspace-a/repo-a")
+			"from a checkout of workspace-a/repo-a, run "+selfCommand()+" update --project aurora --repo")
 		if strings.Contains(def, "update --repo workspace-a/repo-a") {
 			t.Errorf("the default view passes the repository as --repo's argument, which takes a checkout's PATH:\n%s", def)
 		}
