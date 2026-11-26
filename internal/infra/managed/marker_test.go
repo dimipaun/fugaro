@@ -1875,8 +1875,14 @@ var runAccountGrants = setOf(
 	// repository handed the ADDRESS without being served (a `vertex` one) keeps
 	// every accessor here. That narrows this account's reach and never widens
 	// it: the clause can only turn a drop off, and it does so exactly where the
-	// row below grants the service nothing.
-	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | google_service_account.job.member | for_each=local.job_secret_names [local.job_secret_names=toset([ for env, logical in var.workflow.secret_env : logical if !local.service_serves || !local.is_service_held[env] && !contains(local.vault_secret_names, logical) ])] | perms=`,
+	// row below grants the service nothing. Reviewed again for IS6 (D3324,
+	// D3326): the two clauses carry two gates, because the flip is the
+	// address's and not the service's — local.service_addressed drops the
+	// workflow secrets the run fetches from the service even for the `vertex`
+	// repository the clause before it keeps everything of. The set this account
+	// holds shrinks by exactly the names var.workflow.vault_secret_names
+	// carries, which is what the row below stops granting too.
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | google_service_account.job.member | for_each=local.job_secret_names [local.job_secret_names=toset([ for env, logical in var.workflow.secret_env : logical if !(local.service_serves && local.is_service_held[env]) && !(local.service_addressed && contains(local.vault_secret_names, logical)) ])] | perms=`,
 	// Reviewed for D2074 (B3.3): the SAME account the row above is about, the
 	// other way round — the credentials service's own account reads each
 	// container the workflow's job still mounts, so that the value a run asks
@@ -1913,7 +1919,14 @@ var runAccountGrants = setOf(
 	// local.service_serves reads the fact beside the block, so a vertex
 	// repository's containers are granted to no one here even though its root
 	// carries the block for its address. That narrows this account's reach.
-	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | "serviceAccount:${var.credentials_service.account}" | for_each=local.service_secret_names [local.service_secret_names=local.service_serves && try(var.credentials_service.account, "") != "" ? toset(concat(values(local.job_mounts), local.vault_secret_names)) : toset([])] | perms=`,
+	// Reviewed again for IS6 (D3324, D3326): the concat's second half is gone,
+	// because the job no longer mounts the class the run fetches — the set is
+	// the job's mounts, and D2074's rule (one accessor per container the job
+	// mounts) leaves the service nothing to hold on a container the job gave
+	// up. That narrows this account's reach: it reads exactly the containers
+	// the job's own account can read, and no container of the fetched class on
+	// any repository.
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | "serviceAccount:${var.credentials_service.account}" | for_each=local.service_secret_names [local.service_secret_names=local.service_serves && try(var.credentials_service.account, "") != "" ? toset(values(local.job_mounts)) : toset([])] | perms=`,
 	// Reviewed for C1.18: the credentials service's own account, on the one
 	// bundle container C1.18 creates, and on nothing else. secretAccessor on
 	// a secret the installation creates is not a write path to the marker:

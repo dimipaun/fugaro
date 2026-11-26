@@ -2855,17 +2855,25 @@ func TestRepoAddressesMatchTheVertexServedGolden(t *testing.T) {
 			missingFrom(want, got), missingFrom(got, want))
 	}
 	// The golden's own premise, asserted rather than trusted: the plan names
-	// the job's invoker grant and none of the three things the drop would take
-	// away, so a golden regenerated from a module that dropped the wrong half
-	// fails here rather than reading as the new truth.
+	// the job's invoker grant and the accessors the address does NOT take away
+	// — the git credential's, which is the service-held half and not the fetch
+	// — so a golden regenerated from a module that dropped the wrong half fails
+	// here rather than reading as the new truth.
 	for _, want := range []string{
 		`module.repo.module.workflow["web"].google_cloud_run_v2_service_iam_member.credentials[0]`,
 		`module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["github-app-key"]`,
-		`module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["npm-token"]`,
 	} {
 		if !slices.Contains(got, want) {
-			t.Errorf("the vertex repository's addresses are missing %s, which a real plan of its root has: the address is handed without anything being dropped (D3326, G7)", want)
+			t.Errorf("the vertex repository's addresses are missing %s, which a real plan of its root has: the address is handed without the service-held half being dropped (D3326, G7)", want)
 		}
+	}
+	// The fetched class is the one thing the address DOES take away, and this
+	// is the repository that makes the two gates tell apart (IS6, D3324,
+	// D3326): a vertex job is served nothing and keeps every accessor the
+	// service-held half would drop, and gives up the workflow secret the run
+	// fetches from the service over the same address.
+	if slices.Contains(got, `module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["npm-token"]`) {
+		t.Error("the vertex repository's job account holds an accessor on npm-token, which a real plan of its root does not: the flip is the ADDRESS's and not the service's, so the job gives up the workflow secret the run fetches even where the service serves it nothing (IS6, D3326)")
 	}
 	for _, unwanted := range []string{
 		"google_cloud_run_v2_service_iam_member.build_credentials",
@@ -3210,15 +3218,17 @@ func TestRepoAddressesFollowTheSwitch(t *testing.T) {
 			// every one of them is an accessor: the credential the job reads
 			// stops being handed over by its own account and starts being
 			// fetched for it (config.VaultFetchedSecretClasses, npm-token
-			// here), while the service keeps its own accessor on that
-			// container — that is the one D2074 grant the fill does not
-			// narrow, and it is what lets the service hand the value over at
-			// all. B4.9's fill is the other half (D2076): the build account
-			// keeps no accessor either, because the build's own request names
-			// none of these secrets and fetches them at the service.
+			// here), and the service keeps no accessor on that container either
+			// — IS6's half of D2074, one accessor per container the job MOUNTS,
+			// so the container the job gave up is one the service is granted
+			// nothing on; the value is served from the fugaro_p_ copy under
+			// D3323's prefix grant instead. B4.9's fill is the third (D2076):
+			// the build account keeps no accessor either, because the build's
+			// own request names none of these secrets and fetches them at the
+			// service.
 			wantGone:      []string{accessor("web", "npm-token"), buildSecret("github-app-key"), buildSecret("npm-token")},
-			wantAdd:       slices.Concat(invoker("web"), buildInvoker, []string{serviceAccessor("web", "github-app-key"), serviceAccessor("web", "npm-token")}),
-			wantAddAppKey: slices.Concat(invoker("web"), buildInvoker, []string{serviceAccessor("web", "npm-token")}),
+			wantAdd:       slices.Concat(invoker("web"), buildInvoker, []string{serviceAccessor("web", "github-app-key")}),
+			wantAddAppKey: slices.Concat(invoker("web"), buildInvoker),
 			wantAppKey:    appKey("web"),
 		},
 		{
