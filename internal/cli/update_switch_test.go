@@ -141,15 +141,16 @@ func TestAnOAuthInstallationStillLaunchesAfterUpdateAlone(t *testing.T) {
 // It matters because `fugaro update` is the whole upgrade (CLAUDE.md's HARD
 // RULE): an installation whose owner edits agent.auth must not need a second
 // command before the change is honoured. One fixture, one local config and one
-// record, two launches: the first on a checkout of the cascade, the second on a
-// checkout of the same repository with agent.auth: vertex, the one auth the
-// service does not serve. Nothing between them writes the config.
+// record that is not ready, two launches: the first on a checkout of the
+// cascade, which the switch has not vouched for and so gets no address, the
+// second on a checkout of the same repository with agent.auth: vertex, which
+// gets the address whenever the installation has the service (IS9, D3326).
+// Nothing between them writes the config.
 //
 // Mutation (verified, run and restored): store agent.auth on the record at the
 // write and read it at the launch (pass the recorded auth into
 // credentialsServiceLaunchEnv's third argument instead of the checkout's), and
-// this fails on the second launch — the vertex checkout is still handed the
-// service's address.
+// this fails on the second launch — the vertex checkout is handed nothing.
 func TestEditingTheAuthModeTakesEffectWithoutAnotherUpdate(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
 	f.appendConfig(t, "credentials_service:\n  url: "+launchCredsURL+"\n")
@@ -164,21 +165,17 @@ func TestEditingTheAuthModeTakesEffectWithoutAnotherUpdate(t *testing.T) {
 		}
 		return withoutServicesStamp(t, rec.env)
 	}
-	markRepoCredentialsServiceReady(t, f.cloudFixture)
-
-	on := launch(cascadeLaunchYAML, "20261107-100000-ca5c")
-	if want := envCredentialsServiceURL + "=" + launchCredsURL; len(on) != 1 || on[0] != want {
-		t.Fatalf("the cascade checkout launched with %v, want [%s]: the fixture is the switch on, or the second launch below says nothing", on, want)
+	off := launch(cascadeLaunchYAML, "20261107-100000-ca5c")
+	if len(off) != 0 {
+		t.Fatalf("the cascade checkout launched with %v on a repository whose record is not ready: the fixture is the switch off, or the second launch below says nothing", off)
 	}
 	vertex := strings.Replace(cascadeLaunchYAML, "auth: cascade", "auth: vertex", 1)
-	off := launch(vertex, "20261107-100000-0a5c")
-	for _, kv := range off {
-		if strings.HasPrefix(kv, envCredentialsServiceURL+"=") {
-			t.Errorf("after the repository's fugaro.yaml was edited to agent.auth: vertex, the launch carried %q: the auth the switch is judged with is the one the run will read from that file — the service serves no vertex runs — so an owner's edit takes effect without another update", kv)
-		}
+	on := launch(vertex, "20261107-100000-0a5c")
+	if want := envCredentialsServiceURL + "=" + launchCredsURL; len(on) != 1 || on[0] != want {
+		t.Errorf("after the repository's fugaro.yaml was edited to agent.auth: vertex, the launch carried %v, want [%s]: the auth the address is judged with is the one the run will read from that file, and a vertex repository is handed the address whenever the installation has the service (IS9, D3326)", on, want)
 	}
-	if off := readFileString(t, os.Getenv("FUGARO_CONFIG")); !strings.Contains(off, "credentials_service_ready: true") {
-		t.Errorf("the local config no longer carries the record the fixture wrote, so the second launch's answer is not the auth's:\n%s", off)
+	if got := readFileString(t, os.Getenv("FUGARO_CONFIG")); strings.Contains(got, "credentials_service_ready: true") {
+		t.Errorf("the local config carries a ready record, so the second launch's answer is not the auth's:\n%s", got)
 	}
 }
 

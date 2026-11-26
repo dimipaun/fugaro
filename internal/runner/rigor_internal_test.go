@@ -30,9 +30,43 @@ import (
 func rigorRun(t *testing.T, remoteFiles map[string]string, cfg *config.Config, spec *task.Spec) (*run, *gitops.Repo) {
 	t.Helper()
 	testutil.IsolateGit(t)
+	spec = rigorPins(t, remoteFiles, spec)
 	r, repo := rigorRunOn(t, testutil.NewRemote(t, remoteFiles), cfg, spec)
 	r.cfg.Git.BaseBranch = "main"
 	return r, repo
+}
+
+// rigorPins is spec with the layer a fixture's own file may no longer hold:
+// since S1 (lift L8, D3237) a repository's file decides neither its level nor
+// its areas, so a test that writes a rigor: block in the file writes it
+// through the project layer instead, which is where an installation states it
+// now (testutil.FixturePins). remoteFiles is rewritten in place — the file
+// goes without the block it may no longer carry — and a spec whose task
+// already carries a layer of its own is left exactly as the test wrote it: it
+// is what that test is about. A run always has a task, so a nil spec becomes
+// one when there is a layer to carry.
+func rigorPins(t *testing.T, remoteFiles map[string]string, spec *task.Spec) *task.Spec {
+	t.Helper()
+	yaml, ok := remoteFiles["fugaro.yaml"]
+	if !ok || (spec != nil && spec.ProjectLayer != nil) {
+		return spec
+	}
+	file, layer := testutil.FixturePins(yaml, config.LiftedKeyPaths())
+	remoteFiles["fugaro.yaml"] = file
+	if layer == "" {
+		return spec
+	}
+	if spec == nil {
+		spec = &task.Spec{}
+	}
+	spec.ProjectLayer = pinLayer(layer)
+	return spec
+}
+
+// pinLayer is a project layer's text as the task's own field, with the sum the
+// runner checks it by.
+func pinLayer(layer string) *task.ProjectLayer {
+	return &task.ProjectLayer{SHA256: config.LayerSum([]byte(layer)), YAML: layer}
 }
 
 // rigorRunOn is rigorRun on a remote the test built itself, for the tests that
@@ -77,30 +111,33 @@ func rigorLayer(t *testing.T, mode rigor.Rigor) *config.ProjectLayer {
 // mode's own table splits.
 var openRound = runstore.ReviewSummary{Round: 2, Tier: runstore.TierSenior, Verdict: "changes", Findings: 3}
 
-// modeBase is a repository whose base branch pins one mode and declares no
+// modeBase is a repository whose project layer pins one mode and declares no
 // area rule, so the run's own paths match nothing and the mode it resolves at
-// finalize is exactly the one the file names (D22's third moment reads the
+// finalize is exactly the one the layer names (D22's third moment reads the
 // run's diff, and a matching rule would outrank the default). An empty block
-// is a repository that configures no rigor at all, which is D19's case.
-func modeBase(t *testing.T, block string) string {
+// is a repository whose project configures no rigor at all, which is D19's
+// case. The block is written in the file as a test would and moves to the
+// layer, since a repository's file decides no level (S1, D3237).
+func modeBase(t *testing.T, block string) (remote, layer string) {
 	t.Helper()
 	testutil.IsolateGit(t)
 	const head = "version: 1\nproject: aurora\ngit: { provider: github }\n"
 	const tail = "workflows:\n  server: { commands: { build: make, test: make test } }\n"
-	return testutil.NewRemote(t, map[string]string{"README.md": "hello\n", "fugaro.yaml": head + block + tail})
+	file, layer := testutil.FixturePins(head+block+tail, config.LiftedKeyPaths())
+	return testutil.NewRemote(t, map[string]string{"README.md": "hello\n", "fugaro.yaml": file}), layer
 }
 
-// modeRun is one run at finalize, cloned from a remote of its own whose base
-// pins mode, and resolved from its own work. It returns the run and the path
-// of the remote it pushes to.
+// modeRun is one run at finalize, cloned from a remote of its own whose
+// project layer pins mode, and resolved from its own work. It returns the run
+// and the path of the remote it pushes to.
 func modeRun(t *testing.T, mode string, reviews ...runstore.ReviewSummary) (*run, string) {
 	t.Helper()
 	block := ""
 	if mode != "" {
 		block = "rigor: { default: " + mode + " }\n"
 	}
-	remote := modeBase(t, block)
-	return runAtFinalize(t, remote, "fugaro/x", "20261024-120000-abcd", reviews...), remote
+	remote, layer := modeBase(t, block)
+	return runAtFinalize(t, remote, layer, "fugaro/x", "20261024-120000-abcd", reviews...), remote
 }
 
 // runAtFinalize is a run at finalize in a checkout cloned from remote, on
@@ -108,7 +145,7 @@ func modeRun(t *testing.T, mode string, reviews ...runstore.ReviewSummary) (*run
 // run whose record carries the reviews given, which is what the status
 // section under test reads. runID is the run's own id, which the work is
 // named after so that the diff the mode is resolved from is this run's.
-func runAtFinalize(t *testing.T, remote, branch, runID string, reviews ...runstore.ReviewSummary) *run {
+func runAtFinalize(t *testing.T, remote, layer, branch, runID string, reviews ...runstore.ReviewSummary) *run {
 	t.Helper()
 	testutil.IsolateGit(t)
 	repo, err := gitops.OpenOrClone(context.Background(), filepath.Join(t.TempDir(), "work"), remote, gitops.IdentityEnv())
@@ -125,8 +162,12 @@ func runAtFinalize(t *testing.T, remote, branch, runID string, reviews ...runsto
 	}
 	cfg := &config.Config{}
 	cfg.Git.BaseBranch = "main"
+	spec := &task.Spec{RequestedBy: "octocat"}
+	if layer != "" {
+		spec.ProjectLayer = pinLayer(layer)
+	}
 	r := &run{
-		repo: repo, cfg: cfg, spec: &task.Spec{RequestedBy: "octocat"},
+		repo: repo, cfg: cfg, spec: spec,
 		rec: &runstore.Record{
 			Version: 1, RunID: runID, Branch: branch, BaseBranch: "main",
 			Status: runstore.StatusRunning, Outcome: runstore.OutcomeNone, Reviews: reviews,
@@ -146,8 +187,13 @@ func runAtFinalize(t *testing.T, remote, branch, runID string, reviews ...runsto
 // the reason this field exists at all: a run that could take its mode from its
 // own tree could set itself to POC in the same pull request it wants merged.
 // The config here is the branch under review's — a first run's r.cfg is read
-// from the checked-out ref, so it is what the branch asked for — and the mode
-// must be the base branch's instead, named with the revision it was read from.
+// from the checked-out ref, so it is what the branch asked for, and since S1
+// (D3237) a repository's file cannot put a level there at all: the value
+// stands in for any answer the checkout's own configuration might carry, and
+// none of it may be what the run resolves. The level and the areas are the
+// project layer's, which is the base branch's own file's as it was read
+// (rigorPins) and is no branch's to write — and the revision the record names
+// is the base's.
 func TestBootstrapRigorReadsTheBaseBranchNotTheBranchUnderReview(t *testing.T) {
 	base := `version: 1
 project: aurora
@@ -168,20 +214,20 @@ workflows:
 	if r.rigorRev != "origin/main" {
 		t.Errorf("the revision the mode was read from = %q", r.rigorRev)
 	}
-	if r.rigorCfg.Repo != rigor.Critical {
-		t.Errorf("the base branch's default = %q, want critical", r.rigorCfg.Repo)
+	if r.rigorCfg.Project != rigor.Critical {
+		t.Errorf("the base branch's default = %q, want critical", r.rigorCfg.Project)
 	}
-	// Both of the base's area rules, and neither of the branch's: the
+	// Both of the base's area rules, and nothing of the checkout's: the
 	// resolution at a later moment reads this configuration, not r.cfg's.
-	if names := areaNamesOf(r.rigorCfg.RepoAreas); !reflect.DeepEqual(names, []string{"payments", "docs"}) {
+	if names := areaNamesOf(r.rigorCfg.ProjectAreas); !reflect.DeepEqual(names, []string{"payments", "docs"}) {
 		t.Errorf("the base branch's areas = %v", names)
 	}
 	rg := r.rec.Rigor
 	if rg == nil {
 		t.Fatal("bootstrap recorded no rigor block")
 	}
-	if rg.Mode != rigor.Critical || rg.From != rigor.FromRepo || rg.At != runstore.RigorAtBootstrap {
-		t.Errorf("the block = %+v, want critical from the repository's default at bootstrap", rg)
+	if rg.Mode != rigor.Critical || rg.From != rigor.FromProject || rg.At != runstore.RigorAtBootstrap {
+		t.Errorf("the block = %+v, want critical from the project layer at bootstrap", rg)
 	}
 	if rg.Revision != "origin/main" {
 		t.Errorf("the block names the revision it read: %+v", rg)
@@ -201,24 +247,24 @@ workflows:
 // can choose. The test above hard-codes a base that agrees with the default
 // branch, so it never sees this; this one disagrees on purpose.
 func TestBootstrapRigorReadsTheDefaultBranchNotTheCheckoutsBase(t *testing.T) {
-	remote := selfNamingBranchRemote(t)
+	remote, layer := selfNamingBranchRemote(t)
 	// r.cfg is the file in the checkout: the branch under review's own, naming
 	// itself as its base, exactly as bootstrap resolves it for a first run.
 	cfg := &config.Config{Git: config.Git{BaseBranch: "feature-x"}, RepoRigor: &config.Rigor{Default: rigor.POC}}
-	r, repo := rigorRunOn(t, remote, cfg, nil)
+	r, repo := rigorRunOn(t, remote, cfg, &task.Spec{ProjectLayer: pinLayer(layer)})
 	if err := repo.FetchBase(context.Background(), "feature-x"); err != nil {
 		t.Fatal(err)
 	}
 
 	r.bootstrapRigor(context.Background())
 
-	if r.rigorCfg.Repo != rigor.Critical {
-		t.Errorf("the mode = %q, want the default branch's %q: a branch must not choose its own mode (D25)", r.rigorCfg.Repo, rigor.Critical)
+	if r.rigorCfg.Project != rigor.Critical {
+		t.Errorf("the mode = %q, want the default branch's %q: a branch must not choose its own mode (D25)", r.rigorCfg.Project, rigor.Critical)
 	}
 	if r.rigorRev != "origin/main" {
 		t.Errorf("the revision the mode was read from = %q, want the repository's default branch", r.rigorRev)
 	}
-	if rg := r.rec.Rigor; rg == nil || rg.Mode != rigor.Critical || rg.From != rigor.FromRepo || rg.Revision != "origin/main" {
+	if rg := r.rec.Rigor; rg == nil || rg.Mode != rigor.Critical || rg.From != rigor.FromProject || rg.Revision != "origin/main" {
 		t.Errorf("the block = %+v, want critical read from origin/main", rg)
 	}
 }
@@ -228,11 +274,15 @@ func TestBootstrapRigorReadsTheDefaultBranchNotTheCheckoutsBase(t *testing.T) {
 // there, and the mode's read skips it the same way rather than reaching the
 // network for a branch it does not need (readBaseRigor). Nothing is at stake
 // the way it is in a job: the checkout is the developer's own branch, not one
-// under review, so it keeps reading the ref its own config names.
+// under review, so it keeps reading the ref its own config names. What the
+// branch's own file says is not the level either — since S1 (D3237) a
+// repository's file decides none, and this branch asks for POC in a file that
+// resolves to nothing — so the level is the project layer's, which is what
+// both branches' files would have carried.
 func TestBootstrapRigorLocalRunReadsTheCheckoutsBaseRef(t *testing.T) {
-	remote := selfNamingBranchRemote(t)
+	remote, layer := selfNamingBranchRemote(t)
 	cfg := &config.Config{Git: config.Git{BaseBranch: "feature-x"}, RepoRigor: &config.Rigor{Default: rigor.POC}}
-	r, repo := rigorRunOn(t, remote, cfg, nil)
+	r, repo := rigorRunOn(t, remote, cfg, &task.Spec{ProjectLayer: pinLayer(layer)})
 	r.d.Project = "" // FUGARO_PROJECT unset: a local run
 	if err := repo.FetchBase(context.Background(), "feature-x"); err != nil {
 		t.Fatal(err)
@@ -240,8 +290,8 @@ func TestBootstrapRigorLocalRunReadsTheCheckoutsBaseRef(t *testing.T) {
 
 	r.bootstrapRigor(context.Background())
 
-	if r.rigorCfg.Repo != rigor.POC {
-		t.Errorf("the mode = %q, want the ref the local config names", r.rigorCfg.Repo)
+	if r.rigorCfg.Project != rigor.Critical {
+		t.Errorf("the mode = %q, want the project layer's", r.rigorCfg.Project)
 	}
 	if r.rigorRev != "origin/feature-x" {
 		t.Errorf("the revision = %q, want the ref the local config names", r.rigorRev)
@@ -252,8 +302,12 @@ func TestBootstrapRigorLocalRunReadsTheCheckoutsBaseRef(t *testing.T) {
 // critical and whose feature-x asks for poc *and* names itself as its
 // git.base_branch: the shape a branch under review is in when it writes its own
 // base, which is what makes "the base branch" and "the checkout" two different
-// answers.
-func selfNamingBranchRemote(t *testing.T) string {
+// answers. Neither file decides a level, since S1 (D3237) takes both blocks
+// out of them (testutil.FixturePins) and into the one project layer a project
+// has: the file a branch writes is no place for a level at all, which is D25
+// read the strict way. The layer is that of the repository's default branch's
+// file, which is what the run would be priced and resolved by.
+func selfNamingBranchRemote(t *testing.T) (remote, layer string) {
 	t.Helper()
 	testutil.IsolateGit(t)
 	base := `version: 1
@@ -265,14 +319,16 @@ rigor: { default: critical }
 	if own == base {
 		t.Fatal("the fixture does not carry the strings this test rewrites")
 	}
-	remote := testutil.NewRemote(t, map[string]string{"README.md": "hello\n", "fugaro.yaml": base})
+	mainFile, layer := testutil.FixturePins(base, config.LiftedKeyPaths())
+	ownFile, _ := testutil.FixturePins(own, config.LiftedKeyPaths())
+	remote = testutil.NewRemote(t, map[string]string{"README.md": "hello\n", "fugaro.yaml": mainFile})
 	other := filepath.Join(t.TempDir(), "other")
 	testutil.Git(t, filepath.Dir(other), "clone", "--quiet", remote, other)
 	testutil.Git(t, other, "checkout", "--quiet", "-b", "feature-x")
-	testutil.WriteFiles(t, other, map[string]string{"fugaro.yaml": own})
+	testutil.WriteFiles(t, other, map[string]string{"fugaro.yaml": ownFile})
 	testutil.Git(t, other, "commit", "--quiet", "-am", "the branch under review asks for poc")
 	testutil.Git(t, other, "push", "--quiet", "origin", "HEAD:refs/heads/feature-x")
-	return remote
+	return remote, layer
 }
 
 // TestBootstrapRigorForAFollowUpReadsNoBranch: a follow-up and a review run
@@ -338,9 +394,9 @@ rigor:
 	}{
 		{"a request above the repository's default", "critical", rigor.Critical, rigor.FromRequest},
 		{"a request below it", "poc", rigor.POC, rigor.FromRequest},
-		{"a request for the mode the layers set", "startup", rigor.Startup, rigor.FromRepo},
+		{"a request for the mode the layers set", "startup", rigor.Startup, rigor.FromProject},
 		{"hotfix, which the request takes whole", "hotfix", rigor.Hotfix, rigor.FromRequest},
-		{"no request at all", "", rigor.Startup, rigor.FromRepo},
+		{"no request at all", "", rigor.Startup, rigor.FromProject},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, _ := rigorRun(t, map[string]string{"README.md": "hello\n", "fugaro.yaml": base}, nil, &task.Spec{Rigor: rigor.Rigor(tc.req)})
@@ -383,18 +439,25 @@ rigor: { default: critical }
 		spec  *task.Spec
 		files map[string]string
 		cfg   *config.Config
+		from  rigor.Layer
 		setup func(*run)
 	}{
 		{
 			name:  "a task filed from a parent run",
 			spec:  &task.Spec{Rigor: rigor.Startup, FollowUpOf: &task.FollowUpOf{Run: "20261024-120000-abcd", Keys: []string{"fix"}}},
 			files: map[string]string{"README.md": "hello\n", "fugaro.yaml": base},
+			from:  rigor.FromProject,
 		},
 		{
+			// A follow-up's configuration is the base branch's, resolved
+			// (readBaseConfig) rather than read again: where the level stands
+			// in it is the repository's own, since the drop is the file's and
+			// this config is a resolved one the test wrote.
 			name:  "a --pr follow-up",
 			spec:  &task.Spec{Rigor: rigor.Startup, Branch: "fugaro/20261024-120000-abcd", PR: 7, PreviousRun: "20261024-120000-abcd"},
 			files: map[string]string{"README.md": "hello\n"},
 			cfg:   &config.Config{RepoRigor: &config.Rigor{Default: rigor.Critical}},
+			from:  rigor.FromRepo,
 			setup: func(r *run) { r.follow = &followState{} },
 		},
 	} {
@@ -407,8 +470,8 @@ rigor: { default: critical }
 			r.bootstrapRigor(context.Background())
 
 			rg := r.rec.Rigor
-			if rg == nil || rg.LevelOf() != rigor.Critical || rg.From != rigor.FromRepo {
-				t.Fatalf("the block = %+v; want critical from the repository: a carried startup may not lower the settings", rg)
+			if rg == nil || rg.LevelOf() != rigor.Critical || rg.From != tc.from {
+				t.Fatalf("the block = %+v; want critical from %q: a carried startup may not lower the settings", rg, tc.from)
 			}
 			if got := r.layersRigor; got != "" {
 				t.Errorf("the mode kept beside the request = %q; want none: a carried request never goes below the layers", got)
@@ -593,14 +656,15 @@ func TestFinalSectionNamesTheModeAndWhereItCameFrom(t *testing.T) {
 		block string
 		want  string
 	}{
-		{"the repository's own default", "rigor: { default: critical }\n", "rigor: critical (repo)"},
+		{"the project layer's own default", "rigor: { default: critical }\n", "rigor: critical (project)"},
 		{"the area a path the run touched matched",
 			"rigor:\n  default: startup\n  areas:\n    - { name: payments, match: \"internal/payments/**\", level: critical }\n",
 			"rigor: critical (area payments)"},
 		{"two matching rules, the strictest named", twoAreas, "rigor: critical (area payments +1)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := runAtFinalize(t, modeBase(t, tc.block), "fugaro/x", "20261024-120000-abcd", openRound)
+			remote, layer := modeBase(t, tc.block)
+			r := runAtFinalize(t, remote, layer, "fugaro/x", "20261024-120000-abcd", openRound)
 
 			section := r.finalSection(false, "review round 2 still has 3 findings", nil)
 
@@ -685,7 +749,7 @@ func TestFinalSectionNamesWhatTheModeTolerated(t *testing.T) {
 			if !strings.Contains(section, tc.want) {
 				t.Fatalf("the status section does not carry %q:\n%s", tc.want, section)
 			}
-			if !strings.Contains(section, "rigor: "+tc.mode+" (repo)") {
+			if !strings.Contains(section, "rigor: "+tc.mode+" (project)") {
 				t.Errorf("the status section lost the mode line (D18):\n%s", section)
 			}
 			if strings.Contains(section, "tolerated") != strings.Contains(tc.want, "tolerated") {
@@ -704,7 +768,7 @@ func TestFinalSectionWithoutAFindingToTolerateIsUnchanged(t *testing.T) {
 
 	section := r.finalSection(true, "", nil)
 
-	const want = "**Ready for review** · rigor: startup (repo) · no test run yet · senior review: ship in round 2 · model cost $0.00 · finished 2026-10-24 12:00Z\n" +
+	const want = "**Ready for review** · rigor: startup (project) · no test run yet · senior review: ship in round 2 · model cost $0.00 · finished 2026-10-24 12:00Z\n" +
 		"Run `abcd` (a stale time here means the run died: `fugaro diagnose 20261024-120000-abcd`)"
 	if section != want {
 		t.Errorf("the status section of a run with nothing to tolerate:\n got %q\nwant %q", section, want)
@@ -740,8 +804,8 @@ workflows:
 	}
 
 	r.bootstrapRigor(ctx)
-	if rg := r.rec.Rigor; rg == nil || rg.Mode != rigor.Startup || rg.From != rigor.FromRepo || rg.At != runstore.RigorAtBootstrap {
-		t.Fatalf("bootstrap = %+v, want the repository's default", rg)
+	if rg := r.rec.Rigor; rg == nil || rg.Mode != rigor.Startup || rg.From != rigor.FromProject || rg.At != runstore.RigorAtBootstrap {
+		t.Fatalf("bootstrap = %+v, want the project layer's default", rg)
 	}
 
 	r.recordChangedFiles(ctx)
@@ -764,7 +828,7 @@ workflows:
 	}
 
 	// D22's never-falls rule, at the runner: the bootstrap moment again,
-	// which with no declared path resolves the repository's weaker default.
+	// which with no declared path resolves the project layer's weaker default.
 	before, err := json.Marshal(rg)
 	if err != nil {
 		t.Fatal(err)

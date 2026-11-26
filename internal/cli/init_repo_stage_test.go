@@ -732,7 +732,13 @@ func TestRepoEngineBuildsKeylessProviderOnly(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(layerDir, "fugaro"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(layerDir, "fugaro", "project-layer.yaml"), []byte(testProjectLayer), 0o644); err != nil {
+	// The file's own models are lifted (S1, D3237), so this checkout's pins are
+	// read from the layer: openrouter serves every one of them, and the reviewer
+	// is another model than level 1's, which D721's guard asks of a layer naming
+	// both.
+	layer := layerWithAgent("auth: api-key, model: deepseek/deepseek-v4-flash, " +
+		"models: { reviewer: deepseek/deepseek-v4-pro, background: deepseek/deepseek-v4-flash }")
+	if err := os.WriteFile(filepath.Join(layerDir, "fugaro", "project-layer.yaml"), []byte(layer), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	openLayer := layerBucketOpener

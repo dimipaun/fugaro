@@ -75,6 +75,7 @@ func runBudget(t *testing.T, auth, mode, script string, onStart func(r *budgetRi
 	r := &budgetRig{t: t}
 	files := testutil.FixtureFiles(t)
 	files["fugaro.yaml"] = e2eBudgetConfig(t, auth)
+	files, layer := liftPins(files)
 	remote := testutil.NewRemote(t, files)
 	fugaro := testutil.BuildFugaro(t)
 	r.claude = testutil.FakeClaude(t, script)
@@ -124,7 +125,7 @@ func runBudget(t *testing.T, auth, mode, script string, onStart func(r *budgetRi
 	b.Close()
 
 	taskFile := filepath.Join(tmp, "task.json")
-	if err := os.WriteFile(taskFile, []byte(`{"version":1,"run_id":"`+runID+`","repo":"acme/app","ref":"main","task":"Add a feature"}`), 0o644); err != nil {
+	if err := os.WriteFile(taskFile, taskJSON(t, layer), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	managed := filepath.Join(tmp, "claude-code")

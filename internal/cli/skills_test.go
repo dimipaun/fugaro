@@ -40,7 +40,9 @@ var skillJSONFields = []jsonFieldClaim{
 	// The images skill reads the survey: per repository the signals it found
 	// and whether it could be read at all, and its `setup` member — the
 	// catalog, the map and the bake switch — which is what a rerun proposes
-	// its differences against (F16).
+	// its differences against (F16). The map is the one member the project
+	// serves: `repo_images` while it is provider-keyed, `legacy_image_map`
+	// while it is the bare-name map an update has not migrated yet (R4).
 	{"image survey", imageSurveyOut{}, "project"},
 	{"image survey", imageSurveyOut{}, "repos"},
 	{"image survey", imageSurveyOut{}, "repos[].repo"},
@@ -49,7 +51,8 @@ var skillJSONFields = []jsonFieldClaim{
 	{"image survey", imageSurveyOut{}, "repos[].signals"},
 	{"image survey", imageSurveyOut{}, "setup"},
 	{"image survey", imageSurveyOut{}, "setup.catalog"},
-	{"image survey", imageSurveyOut{}, "setup.image_map"},
+	{"image survey", imageSurveyOut{}, "setup.repo_images"},
+	{"image survey", imageSurveyOut{}, "setup.legacy_image_map"},
 	{"image survey", imageSurveyOut{}, "setup.bake_repos"},
 	{"image survey", imageSurveyOut{}, "setup.unread"},
 	// The catalog both image skills read: the entry a job runs, its tags and

@@ -241,7 +241,12 @@ func (e *initEngine) gateRun(ctx context.Context) error {
 	// The refusal is the user's to read and the run's to stop: it is returned
 	// whole (a user error, exit 1), and nothing after it runs — no stage, no
 	// write, no record.
-	return askDecide(r.w, askFlags{ask: r.o.ask}, r.gateUnderway(), r.conditions())
+	//
+	// update is the one door whose --ask turns value entry on (D3347, R18): a
+	// project the marks did not answer "managed" for gets AskValues or its
+	// refusal there, not AskUnmanaged's no-op. `fugaro apply` runs the same
+	// gate but keeps the flag's plain meaning, so it passes values false.
+	return askDecide(r.w, askFlags{ask: r.o.ask, values: r.o.doorName() == updateDoor.name}, r.gateUnderway(), r.conditions())
 }
 
 // gateable is whether this door has a gate for this run at all. The two doors

@@ -63,24 +63,34 @@ var askFlagStates = []string{"neither", "--ask"}
 //
 //   - a run that did not pass the flag prints nothing and refuses nothing: the
 //     flag decides nothing about a confirmation it was not asked for;
-//   - --ask in a project the marks did NOT answer "managed" for prints the
-//     no-op line, in every session: there is nothing to restore, and a refusal
-//     would fail a command that behaves exactly as it always has;
 //   - --ask in a managed project prints the restored line at a real terminal
 //     and REFUSES in every session that cannot answer a prompt. It never
 //     proceeds on the gate's verdict instead, which is the one answer that
-//     would make the flag a way to write without the confirmation it asked for.
-func askOracle(isManaged bool, flag string, c initflow.Conditions) (line, refusal string) {
+//     would make the flag a way to write without the confirmation it asked for;
+//   - --ask in a project the marks did NOT answer "managed" for is the no-op
+//     line — there is nothing to restore, and a refusal would fail a command
+//     that behaves exactly as it always has — UNLESS the door's flag also
+//     turns value entry on (`values`, the update door alone, D3347/R18): then
+//     it says so and asks the repositories' values at a real terminal
+//     (AskValues), and where no terminal can ask a value it prints and refuses
+//     nothing and the stage leaves its own `fugaro secrets set` lines (D1540).
+func askOracle(values, isManaged bool, flag string, c initflow.Conditions) (line, refusal string) {
 	if flag != "--ask" {
 		return "", ""
 	}
-	if !isManaged {
-		return initflow.AskUnmanaged(), ""
-	}
-	if c.Agent != "" || c.JSON || !c.Terminal {
+	canPrompt := c.Agent == "" && c.Terminal && !c.JSON
+	switch {
+	case isManaged && canPrompt:
+		return initflow.AskRestored(), ""
+	case isManaged:
 		return "", initflow.AskRefusal(c)
+	case !values:
+		return initflow.AskUnmanaged(), ""
+	case canPrompt:
+		return initflow.AskValues(), ""
+	default:
+		return "", ""
 	}
-	return initflow.AskRestored(), ""
 }
 
 // askDecider is one candidate for the flag's decision — the flags as they
@@ -124,21 +134,23 @@ func askViolations(decide askDecider, mode func(bool, string, error) bool, reads
 		m := initflow.Managed{Managed: rd.managed, Admitted: rd.managed}
 		for _, flag := range askFlagStates {
 			for _, s := range askSessions() {
-				n++
-				c := s.c
-				c.Ask = flag == "--ask"
-				f := askFlags{ask: flag == "--ask"}
-				wantLine, wantRefusal := askOracle(rd.managed, flag, c)
-				line, refusal := decide(f, isManaged, c)
-				where := rd.state + ", " + flag + ", " + s.name
-				if line != wantLine {
-					bad = append(bad, where+": line "+askQuote(line)+", want "+askQuote(wantLine))
-				}
-				if refusal != wantRefusal {
-					bad = append(bad, where+": refusal "+askQuote(refusal)+", want "+askQuote(wantRefusal))
-				}
-				if c.Ask && initflow.GateStandsIn(c, m) {
-					bad = append(bad, where+": the gate still stands in for this step")
+				for _, values := range []bool{false, true} {
+					n++
+					c := s.c
+					c.Ask = flag == "--ask"
+					f := askFlags{ask: flag == "--ask", values: values}
+					wantLine, wantRefusal := askOracle(values, rd.managed, flag, c)
+					line, refusal := decide(f, isManaged, c)
+					where := rd.state + ", " + flag + ", values=" + boolWord(values) + ", " + s.name
+					if line != wantLine {
+						bad = append(bad, where+": line "+askQuote(line)+", want "+askQuote(wantLine))
+					}
+					if refusal != wantRefusal {
+						bad = append(bad, where+": refusal "+askQuote(refusal)+", want "+askQuote(wantRefusal))
+					}
+					if c.Ask && initflow.GateStandsIn(c, m) {
+						bad = append(bad, where+": the gate still stands in for this step")
+					}
 				}
 			}
 		}
@@ -558,8 +570,10 @@ func TestUpdateAskInAProjectThatIsNotManagedRefusesTheRun(t *testing.T) {
 						!strings.Contains(run.err.Error(), "managed flag") {
 						t.Errorf("%s: exit %d, err %v\n%s; want the stop's refusal", run.name, ExitCode(run.err), run.err, run.out)
 					}
-					if strings.Contains(run.out, initflow.AskUnmanaged()) || strings.Contains(run.out, initflow.AskRestored()) {
-						t.Errorf("%s: the flag's line reached a run the stop refused:\n%s", run.name, run.out)
+					for _, line := range []string{initflow.AskUnmanaged(), initflow.AskRestored(), initflow.AskValues()} {
+						if strings.Contains(run.out, line) {
+							t.Errorf("%s: the flag's line reached a run the stop refused (%q):\n%s", run.name, line, run.out)
+						}
 					}
 				}
 				if n := len(r.ran(t, "apply")); n != 0 {
@@ -567,6 +581,45 @@ func TestUpdateAskInAProjectThatIsNotManagedRefusesTheRun(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// The path the stop does not take: a read that did not ANSWER at all (D2218)
+// warns and goes on as a project that is not managed, and on that path the
+// update door's --ask is still U3b's row (D3347, R18) — the flag turns value
+// entry on there, so the line it prints is AskValues, and never AskUnmanaged,
+// whose promise ("this run asks the confirmations it always asks") is not what a
+// run that turns the flag's value entry on does.
+//
+// Nothing here claims a value was typed. The head's warning is answered by the
+// same outage in the run's first stage's own read, which is what ends the run
+// (TestUpdateManagedReadFailsWarns) — so this pins which line the flag gets on
+// the one path a not-managed answer does not stop, and that it applies nothing.
+func TestUpdateAskOnAFailedReadKeepsTheValuesLine(t *testing.T) {
+	r := updateManagedRig(t)
+	noAgentSession(t)
+	noRunSession(t)
+	unreadableRead(r)
+	fakeTerminal(t)
+
+	out, errOut, err := executeStdin(t, "", "update", "--ask")
+	said := out + errOut + ErrorText(err)
+	if !strings.Contains(said, "could not read whether "+initProject+" is managed") {
+		t.Fatalf("the run does not warn about the read that failed:\n%s", said)
+	}
+	if !strings.Contains(said, initflow.AskValues()) {
+		t.Errorf("--ask did not answer with the update door's own line where the read did not answer:\n%s", said)
+	}
+	for _, line := range []string{initflow.AskUnmanaged(), initflow.AskRestored()} {
+		if strings.Contains(said, line) {
+			t.Errorf("--ask answered another door's line on a read that did not answer (%q):\n%s", line, said)
+		}
+	}
+	if n := len(r.ran(t, "apply")); n != 0 {
+		t.Errorf("%d terraform apply(s) ran on a read that did not answer", n)
+	}
+	if err != nil && ExitCode(err) == ExitUserError {
+		t.Errorf("the run refused where a read that failed only warns:\n%s", said)
 	}
 }
 

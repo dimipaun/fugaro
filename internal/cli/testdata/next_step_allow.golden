@@ -60,6 +60,7 @@ doctor_render.go	run brew upgrade fugaro, then fugaro update
 doctor_render.go	run fugaro config publish
 doctor_render.go	run fugaro update
 doctor_render.go	then run fugaro update
+doctor_routing.go	run fugaro update
 doctor_workspace.go	fugaro update deploys it
 exec.go	run fugaro update
 history_rollover.go	run fugaro update
