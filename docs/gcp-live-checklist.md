@@ -25153,7 +25153,9 @@ at all, or a prefix ending early) and names the readings taken next; `probe-diag
 own state and status events, each task's state and its events, what the VM's serial console — its
 boot log — says of the container at all (whether the container-start line is in it, once or not at
 all, with the last lines that speak of the pull or the agent beside it, and the VM's own interfaces:
-a VM with no external address is a pull that can never finish rather than a slow one), the boot
+a VM with no external address is a pull that can never finish rather than a slow one — and the wait
+for the first line is read against that boot log alone, so the pull is blamed only where the
+container-start line is not in it, never on a VM whose container ran), the boot
 log's tail (the events and the console scanned so nothing credential-shaped is printed) and the same
 query under the job's own
 resource type (`resource.type="batch.googleapis.com/Job"`) by the runner's label and by the uid
@@ -25255,8 +25257,8 @@ like one that can never finish.
   started — with the last lines that speak of the pull or the agent beside it, and with the VM's own
   interfaces (a VM with **no external address** is a pull that can never finish, not a slow one).
 - the probe's image is the **Alpine** variant of the Google-hosted gcloud image: the container needs
-  python3 and a POSIX shell and nothing else, so it no longer uses curl, and the pull is a fraction
-  of the SDK image's.
+  python3 and a POSIX shell and nothing else, so it no longer uses curl and the image is the
+  smallest of that family's.
 - the wait for the container's first line is never shorter than **`CHK830_PULL_BOUND`** (600 s): a
   container whose image is still coming cannot have reported anything.
 
