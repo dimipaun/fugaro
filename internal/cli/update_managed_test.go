@@ -1524,15 +1524,22 @@ func jobUpdate(addr string) planChange {
 // cron or a sandbox check drives the command in — and the plan an added catalog
 // entry leaves (catalogEntryPlan).
 //
-// The step applies and nothing is confirmed. The gate's verdict is the step's
-// confirmation in this session exactly as it is at the owner's terminal (D1016,
-// the ruling of 2026-11-01): there is no one to put a question to, and the plan
-// the gate admitted is the plan, so a run that asked here would be asking a
-// person who is not there — the prompt the managed case exists to remove. What
-// check 292 read instead was "CONFIRM (project …): applies 0 imports, 0
-// creates, 7 updates …" and then "the confirmation of this step needs a real
-// terminal": the session rule answered for the marks, a pipe carries no marker,
-// and the step kept a confirmation it asked of nobody.
+// The step applies and nothing is confirmed. What answers for it is the run's
+// own confirmation — the read of the two marks, which is the same answer the
+// owner's own terminal gets on a managed project (D1016, the ruling of
+// 2026-11-01) — because there is no one to put a question to: a run that asked
+// here would be asking a person who is not there, which is the prompt the
+// managed case exists to remove. What check 292 read instead was "CONFIRM
+// (project …): applies 0 imports, 0 creates, 7 updates …" and then "the
+// confirmation of this step needs a real terminal": the session rule answered
+// for the marks at the terminal only, a pipe carries no marker and is no
+// terminal, and the step kept a confirmation it asked of nobody.
+//
+// The plan is one the run's own cover covers (tf.Cover, whose tables name the
+// job and the paths an entry moves), so the step is one the run may take
+// silently; a plan outside it — a delete, a replace, an IAM binding — asks its
+// own question and refuses in this session, which is the half that must not
+// move.
 //
 // The plugin stage is current in this rig — Claude Code's own record of the
 // installed plugin, at this release's version — which is the machine a by-hand
@@ -1562,11 +1569,9 @@ func TestUpdateManagedAppliesInASessionNobodyIsAt(t *testing.T) {
 	// stage that re-applies the root once the images stage has moved the base
 	// image the scheduled jobs run FROM (R7). Both are the one document.
 	if n := len(r.ran(t, "apply")); n != 2 {
-		t.Errorf("%d terraform apply(s) ran, want the two the gate admitted:\n%s", n, got)
+		t.Errorf("%d terraform apply(s) ran, want the two the run covered:\n%s", n, got)
 	}
-	if !strings.Contains(got, initflow.GateProceeded()) {
-		t.Errorf("the applied step does not say what decided it:\n%s", got)
-	}
+	stepLineInLog(t, got+newestLog(t, "update"), "  "+initflow.GateOrdinary())
 	recs := audits(t, r)
 	if len(recs) != 2 || recs[0].Verdict != managedmode.AuditAdmitted {
 		t.Fatalf("%d record(s) after an admitted plan, want two admitted: %+v", len(recs), recs)

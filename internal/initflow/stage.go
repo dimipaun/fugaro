@@ -1234,27 +1234,23 @@ func (m Managed) Removes() bool {
 }
 
 // GateStandsIn is the whole of "the gate's verdict IS this step's
-// confirmation", in every session the step's own confirmation would otherwise
-// be put to: Removes under a coding agent's marker, the owner at their own real
-// terminal on a managed project, and a run nobody is at — a pipe with its input
-// closed, a script, a cron — where there is no one to ask and the verdict is
-// what stands in for the answer (D1016; the no-prompt policy's rule 1: managing
-// resources inside a managed project never needs confirmation, and no command
-// may wait for input). A caller asks it when it is about to decide what the
-// step proceeds on, and prints AgentProceeded's or GateProceeded's sentence
-// from the answer.
+// confirmation", in both sessions it is asked in: Removes under a coding
+// agent's marker, and the owner at their own real terminal on a managed
+// project for a document the gate admitted. A caller asks it when it is about
+// to decide what the step proceeds on, and prints AgentProceeded's or
+// GateProceeded's sentence from the answer.
 //
-// The session nobody is at is the case this predicate got wrong until check 292
-// (the owner's, 2026-11-26): a pipe carries no marker and is no terminal, so it
-// fell through to the arm that asked for one, the step kept a confirmation
-// there was nobody to give, and `fugaro update` refused the owner's own plan
-// with "the confirmation of this step needs a real terminal" — a demand for a
-// person, which is the prompt the managed case exists to remove, printed for a
-// plan the gate had already admitted. What a session nobody is at must never
-// get is a step APPLIED without a verdict: Removes is still the whole of the
-// answer here, so a project that is not managed, a mark that did not answer, a
-// verdict that refused and a step no plan gate may judge (D1026) all keep the
-// refusal they had.
+// The session nobody is at — a pipe with its input closed, a script, a cron,
+// check 292 (the owner's, 2026-11-26) — is deliberately NOT one of them, and
+// the two arms below are the whole of the reason: this predicate is what the
+// step's own confirmation is put to where a person or an agent is present, and
+// a step whose answer is instead the run's one confirmation (internal/cli's
+// runCovers, which asks NobodyIsAtTheSession beside the marks) reads
+// GateOrdinary's sentence rather than this one. Widening it here would reach
+// every caller at once, `fugaro apply` included, whose own question a person
+// must be there to answer (internal/managed's Request.confirm) — and a
+// predicate that answered a pipe would send that apply to a question with
+// nobody to give it.
 //
 // The order is the rule's: a session with a marker is the agent's case whatever
 // else is true of it, and the terminal case cannot have a marker
@@ -1262,11 +1258,7 @@ func (m Managed) Removes() bool {
 // owner taking this question off the table: the gate still judges the document
 // — that is the caller's own admit, made before this predicate is reached, and
 // this predicate changes nothing about it — and what the flag restores is the
-// confirmation the verdict would have replaced. --json and --non-interactive
-// keep their confirmation too, and they are the two flags whose reader has said
-// what the run does with a question rather than where the run is: one asked for
-// a document, the other for a run that puts nothing to anybody, and neither is
-// the session the gate's sentence is written for.
+// confirmation the verdict would have replaced.
 func GateStandsIn(c Conditions, m Managed) bool {
 	if c.Ask {
 		// The owner asked for the prompts back: whatever the verdict was, this
@@ -1278,10 +1270,7 @@ func GateStandsIn(c Conditions, m Managed) bool {
 	if c.Agent != "" {
 		return m.Removes()
 	}
-	if c.JSON || c.NonInteractive {
-		return false
-	}
-	return m.Removes()
+	return PersonAtTheTerminal(c) && m.Removes()
 }
 
 // NobodyIsAtTheSession reports whether the conditions are a session no person
@@ -1291,14 +1280,15 @@ func GateStandsIn(c Conditions, m Managed) bool {
 // the question back. It is a pipe with its input closed, a script, a cron — the
 // session check 292 and check 821 drive `fugaro update` in.
 //
-// It is the counterpart of PersonAtTheTerminal, and the two are what
-// GateStandsIn decides between: a managed project's gate stands in for a step's
-// confirmation in either session (D1016), and the run's own confirmation
-// (internal/cli's runCovers) stands in for the ordinary steps the gate has no
-// document for. A caller asking it beside its own read of the marks is asking
-// whether the run it is in is one the gate answers for, which is never a
-// licence to apply a step no verdict admitted: Removes is asked beside it
-// wherever a step is decided.
+// It is the counterpart of PersonAtTheTerminal, and the two are the sessions a
+// managed project's run answers a step's confirmation in: the gate's own read
+// of the marks is what stands in for it in either of them (internal/cli's
+// runCovers, and the ruling of 2026-11-01 the managed case carries). A caller
+// asks it BESIDE its own read of the marks, never instead of one, and it is
+// never a licence to apply a step no verdict admitted: Removes is asked beside
+// it wherever a step is decided, and the plan's own cover is still what decides
+// whether a step is one the run may take silently (a delete, a replace or an
+// IAM binding asks, and a session nobody is at refuses it).
 func NobodyIsAtTheSession(c Conditions) bool {
 	return c.Agent == "" && !c.Terminal && !c.NonInteractive && !c.JSON && !c.Ask
 }
@@ -1310,15 +1300,15 @@ func NobodyIsAtTheSession(c Conditions) bool {
 // asked again is a question to put, never a licence to skip one), a run that
 // never prompts and --json.
 //
-// It is one half of GateStandsIn's condition — the other is
-// NobodyIsAtTheSession, the run with nobody there at all — named once so that a
-// caller asking the same question about a document the gate's verdict does not
-// cover — the policy node a managed project rewrites, whose widening is
-// admitted by no plan gate; the ordinary steps of the converge the run's one
-// confirmation covered, the owner's ruling of 2026-11-06 — asks it the same
-// way. A caller asks this beside its own read of the marks (the gate's own
-// read, never a second one) and prints OwnerProceeded's sentence; it is not a
-// verdict about any plan, and it admits nothing on its own.
+// It is GateStandsIn's condition half, named once so that a caller asking the
+// same question about a document the gate's verdict does not cover — the policy
+// node a managed project rewrites, whose widening is admitted by no plan gate;
+// the ordinary steps of the converge the run's one confirmation covered, the
+// owner's ruling of 2026-11-06 — asks it the same way. A caller asks this
+// beside its own read of the marks (the gate's own read, never a second one)
+// and prints OwnerProceeded's sentence; it is not a verdict about any plan, and
+// it admits nothing on its own. NobodyIsAtTheSession is its counterpart, for
+// the other session a managed project's run answers in.
 //
 // The terminal is the load-bearing half and the one a caller writing this out
 // again would drop: a pipe carries no marker, so a session nobody is at reads
