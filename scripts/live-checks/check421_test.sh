@@ -317,7 +317,7 @@ write_docs() { # dir
   local dir=$1 json=$1/json
   mkdir -p "$json"
   write_doctor "$dir"
-  write_crafts "$dir" "$coder_model" "$pool" ""
+  write_crafts "$dir" "$coder_model" "pool:$pool" ""
   write_policy "$dir" round-robin
   write_creds "$dir" both
   write_launch "$dir" 1 "$run1"
@@ -359,20 +359,26 @@ write_rows() { # write_rows DIR STATE
 JSON
 }
 
-# write_crafts DIR MODEL ACCESS PROBLEMS EXTRA: `craft ls --json`'s document, with
-# the coder row the check reads, any other craft's row a case adds beside it (the
-# rotation is only taken up when none of them is pinned), and the problems list.
-write_crafts() { # write_crafts DIR MODEL ACCESS PROBLEMS [EXTRA]
-  local model=$2 access=$3 problems=${4:-[]} extra=${5:-} rows
+# write_crafts DIR MODEL CHAIN PROBLEMS EXTRA: `craft ls --json`'s document,
+# version 2 (RT6): the coder row the check reads carries the chain its model
+# resolves to in place of the access the version-1 document held. EXTRA is any
+# other craft's row a case adds beside it (the rotation is only taken up when
+# none of them is pinned), and PROBLEMS the problems list.
+write_crafts() { # write_crafts DIR MODEL CHAIN PROBLEMS [EXTRA]
+  local model=$2 chain=$3 problems=${4:-[]} extra=${5:-} rows sources=""
+  local source
+  for source in $(printf '%s' "$chain" | tr ',' ' '); do
+    sources="$sources${sources:+,}\"$source\""
+  done
   rows=$(cat <<JSON
-{"craft":"coder","model":"$model","model_from":"repo","access":"$access","access_from":"repo","inert":false}
+{"craft":"coder","model":"$model","model_from":"repo","chain":[$sources],"model_servable":true}
 JSON
 )
   if [ -n "$extra" ]; then
     rows="$rows,$extra"
   fi
   cat >"$1/json/crafts.json" <<JSON
-{"version":1,"project":"chk421","crafts":[$rows],"problems":$problems}
+{"version":2,"project":"chk421","crafts":[$rows],"problems":$problems}
 JSON
 }
 
@@ -653,7 +659,7 @@ test_happy_path() {
   expect_contains "$out" "FACT sandbox: PASS" "happy path: the checkout and its project"
   expect_contains "$out" "belongs to ${project}" "happy path: the project it read"
   expect_contains "$out" "FACT crafts: PASS" "happy path: the coder craft's access"
-  expect_contains "$out" "the coder craft's access is '${pool}'" "happy path: the access it read"
+  expect_contains "$out" "the coder craft's chain is 'pool:${pool}'" "happy path: the chain it read"
   expect_contains "$out" "FACT pool: PASS" "happy path: the premise"
   expect_contains "$out" "goes out on the round-robin pool '${pool}' of ${first_member}, ${second_member}" "happy path: the members it read"
   expect_contains "$out" "FACT bundle: PASS" "happy path: the members are in the bundle"
@@ -814,23 +820,38 @@ test_a_doctor_that_is_not_a_document_is_not_measured() {
   expect_contains "$out" "could not read" "a doctor that is not a document: what it found"
 }
 
-test_a_craft_that_resolves_to_no_pool_is_a_finding() {
-  # The default credential is the built-in vertex, and no pool of it exists: the
-  # runs here would measure nothing about a rotation.
+test_a_chain_that_names_no_pool_is_a_finding() {
+  # The coder's model resolves to the built-in vertex, and no pool of it exists:
+  # the runs here would measure nothing about a rotation.
   local dir=$work/nopool
   prepare "$dir"
   write_crafts "$dir" "$coder_model" vertex ""
   run_check "$dir"
-  expect_status "$status" 1 "a craft on the built-in credential"
-  expect_contains "$out" "FACT crafts: FAIL" "a craft on the built-in credential: the row"
-  expect_contains "$out" "the built-in vertex credential" "a craft on the built-in credential: what it means"
-  assert_no_run "$dir" "a craft on the built-in credential"
+  expect_status "$status" 1 "a chain that names no pool"
+  expect_contains "$out" "FACT pool: FAIL" "a chain that names no pool: the row"
+  expect_contains "$out" "goes out on no pool (chain: vertex" "a chain that names no pool: what it read"
+  assert_no_run "$dir" "a chain that names no pool"
+}
+
+test_a_project_with_no_routing_table_reads_the_node() {
+  # An empty chain is a project that publishes no routing table (RT6, D3170):
+  # its calls go out the release-1 way, on the access the published node names
+  # for the craft, and the rotation below is the one the credentials service is
+  # asked for there.
+  local dir=$work/bridge
+  prepare "$dir"
+  write_crafts "$dir" "$coder_model" ""
+  run_check "$dir"
+  expect_status "$status" 0 "a project with no routing table"
+  expect_contains "$out" "FACT pool: PASS" "a project with no routing table: the row"
+  expect_contains "$out" "the coder craft goes out on the round-robin pool" "a project with no routing table: the node's answer is the pool"
+  expect_contains "$out" "FACT spread: PASS" "a project with no routing table: the batch still reads"
 }
 
 test_a_craft_list_with_problems_is_a_finding() {
   local dir=$work/problems
   prepare "$dir"
-  write_crafts "$dir" "$coder_model" "$pool" '["agent.crafts.coder.access: no credential of this name is defined"]'
+  write_crafts "$dir" "$coder_model" "pool:$pool" '["agent.crafts.coder.access: no credential of this name is defined"]'
   run_check "$dir"
   expect_status "$status" 1 "a craft list with problems"
   expect_contains "$out" "FACT crafts: FAIL" "a craft list with problems: the row"
@@ -907,7 +928,7 @@ test_a_craft_on_a_single_credential_is_a_finding() {
   prepare "$dir"
   # The craft read and the node have to agree, or the check would be reading a
   # name the node does not hold at all rather than a credential instead of a pool.
-  write_crafts "$dir" "$coder_model" "$second_member" ""
+  write_crafts "$dir" "$coder_model" "" ""
   write_policy_single_credential "$dir"
   run_check "$dir"
   expect_status "$status" 1 "a craft on a single credential"
@@ -944,7 +965,7 @@ test_a_craft_pinned_to_another_access_is_a_finding() {
   # for it. Here the review craft sits on a single credential.
   local dir=$work/pinned
   prepare "$dir"
-  write_crafts "$dir" "$coder_model" "$pool" "" "{\"craft\":\"review\",\"model\":\"$coder_model\",\"model_from\":\"project\",\"access\":\"$second_member\",\"access_from\":\"project\",\"inert\":false}"
+  write_crafts "$dir" "$coder_model" "pool:$pool" "" "{\"craft\":\"review\",\"model\":\"$coder_model\",\"model_from\":\"project\",\"chain\":[\"anthropic\"],\"model_servable\":true}"
   write_policy "$dir" pinned-review
   run_check "$dir"
   expect_status "$status" 1 "a craft pinned to another access"
@@ -959,7 +980,7 @@ test_a_craft_on_vertex_is_named_and_is_not_a_pin() {
   # nothing, and the row names it so the reading is not taken on trust.
   local dir=$work/vertexreview
   prepare "$dir"
-  write_crafts "$dir" "$coder_model" "$pool" "" "{\"craft\":\"review\",\"model\":\"$coder_model\",\"model_from\":\"project\",\"access\":\"vertex\",\"access_from\":\"project\",\"inert\":false}"
+  write_crafts "$dir" "$coder_model" "pool:$pool" "" "{\"craft\":\"review\",\"model\":\"$coder_model\",\"model_from\":\"project\",\"chain\":[\"vertex\"],\"model_servable\":true}"
   run_check "$dir"
   expect_status "$status" 0 "a craft on vertex"
   expect_contains "$out" "FACT pool: PASS" "a craft on vertex: the row"
@@ -1235,7 +1256,8 @@ t test_a_run_count_that_is_not_a_number_is_refused
 t test_a_build_without_the_crafts_vocabulary_is_refused
 t test_a_doctor_that_cannot_be_read_is_not_measured
 t test_a_doctor_that_is_not_a_document_is_not_measured
-t test_a_craft_that_resolves_to_no_pool_is_a_finding
+t test_a_chain_that_names_no_pool_is_a_finding
+t test_a_project_with_no_routing_table_reads_the_node
 t test_a_craft_list_with_problems_is_a_finding
 t test_a_failover_pool_is_a_finding
 t test_a_pool_of_one_member_is_a_finding

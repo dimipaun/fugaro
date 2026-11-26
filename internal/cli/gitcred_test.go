@@ -695,31 +695,78 @@ func TestCatalogGitCredentialFromService(t *testing.T) {
 		}
 	})
 	t.Run("bitbucket", func(t *testing.T) {
-		testutil.IsolateGit(t)
-		gitCredentialEnv(t)
-		buildCallMetadata(t)
-		route := &buildTokenRoute{answer: buildtoken.Response{Proxy: &buildtoken.ProxyGrant{
-			URL: "https://credentials.example.com/v1/bitbucket/proxy/", Repositories: []string{"acme/app"},
-			ExpiresAt: time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC),
-		}}}
-		srv := route.start(t)
-		t.Setenv(envCredentialsServiceURL, srv.URL)
-		// The mounted token is a decoy: a step that fell back to its
-		// environment instead of refusing the grant would pass on it.
-		t.Setenv(gitCredTokenEnv, "mounted-token-not-a-real-credential")
-		t.Setenv(gitCredUserEnv, "x-token-auth")
-		out := filepath.Join(t.TempDir(), "git-credentials")
-		_, _, err := execute(t, "image", "git-credential",
-			"--entry", "agent", "--build-id", "b-1", "--provider", gitprov.KindBitbucket,
-			"--repos", "acme/app", "--ttl-seconds", strconv.Itoa(ttl), "--out", out)
-		if err == nil {
-			t.Fatal("the step wrote a credential out of a proxy grant")
+		grant := func(srv string, mutate func(*buildtoken.ProxyGrant)) buildtoken.Response {
+			g := &buildtoken.ProxyGrant{
+				URL: srv + credsvc.BitbucketProxyPrefix, Repositories: []string{"acme/app"},
+				ExpiresAt: time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC),
+			}
+			if mutate != nil {
+				mutate(g)
+			}
+			return buildtoken.Response{Proxy: g}
 		}
-		if !strings.Contains(err.Error(), "grant") {
-			t.Errorf("the step refused a grant with %v, want the refusal naming it", err)
+		run := func(t *testing.T, mutate func(*buildtoken.ProxyGrant)) (string, error) {
+			t.Helper()
+			testutil.IsolateGit(t)
+			gitCredentialEnv(t)
+			buildCallMetadata(t)
+			route := &buildTokenRoute{}
+			srv := route.start(t)
+			route.answer = grant(srv.URL, mutate)
+			t.Setenv(envCredentialsServiceURL, srv.URL)
+			// The mounted token is a decoy: a step that fell back to its
+			// environment instead of the grant would pass on it.
+			t.Setenv(gitCredTokenEnv, "mounted-token-not-a-real-credential")
+			t.Setenv(gitCredUserEnv, "x-token-auth")
+			out := filepath.Join(t.TempDir(), "git-credentials")
+			_, _, err := execute(t, "image", "git-credential",
+				"--entry", "agent", "--build-id", "b-1", "--provider", gitprov.KindBitbucket,
+				"--repos", "acme/app", "--ttl-seconds", strconv.Itoa(ttl), "--out", out)
+			if err != nil {
+				if _, serr := os.Stat(out); !os.IsNotExist(serr) {
+					t.Errorf("a refused build wrote a credential file")
+				}
+				return "", err
+			}
+			got, rerr := os.ReadFile(out)
+			if rerr != nil {
+				t.Fatal(rerr)
+			}
+			return string(got), nil
 		}
-		if _, err := os.Stat(out); !os.IsNotExist(err) {
-			t.Errorf("a refused build wrote a credential file")
+		t.Run("the grant is written as the one rewrite, with no token", func(t *testing.T) {
+			got, err := run(t, nil)
+			if err != nil {
+				t.Fatalf("the step refused its own installation's grant: %v", err)
+			}
+			if !strings.HasPrefix(got, "[url \"http://127.0.0.1:") || !strings.HasSuffix(got, credsvc.BitbucketProxyPrefix+"\"]\n\tinsteadOf = https://bitbucket.org/\n") || strings.Count(got, "\n") != 2 {
+				t.Errorf("the step wrote %q, want the one insteadOf section for the proxy and nothing else", got)
+			}
+			if strings.Contains(got, "mounted-token") {
+				t.Errorf("the step wrote the mounted token: %q", got)
+			}
+		})
+		// Mutation (verified, run and restored): compare the grant's URL by its
+		// path alone and the other-host case writes a rewrite to a host that
+		// would be offered the build's identity; drop the repository set check and
+		// the wider case does too.
+		for _, c := range []struct {
+			name   string
+			mutate func(*buildtoken.ProxyGrant)
+			want   string
+		}{
+			{"another host", func(g *buildtoken.ProxyGrant) { g.URL = "https://evil.example" + credsvc.BitbucketProxyPrefix }, "not this installation's credentials service"},
+			{"another path", func(g *buildtoken.ProxyGrant) { g.URL = strings.TrimSuffix(g.URL, "/") + "x/" }, "not this installation's credentials service"},
+			{"a wider repository set", func(g *buildtoken.ProxyGrant) { g.Repositories = []string{"acme/app", "acme/other"} }, "held to exactly"},
+			{"a narrower repository set", func(g *buildtoken.ProxyGrant) { g.Repositories = nil }, "held to exactly"},
+			{"a grant that has ended", func(g *buildtoken.ProxyGrant) { g.ExpiresAt = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC) }, "already ended"},
+		} {
+			t.Run("refuses "+c.name, func(t *testing.T) {
+				_, err := run(t, c.mutate)
+				if err == nil || !strings.Contains(err.Error(), c.want) {
+					t.Errorf("err = %v, want it to say %q", err, c.want)
+				}
+			})
 		}
 	})
 }

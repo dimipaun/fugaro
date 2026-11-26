@@ -563,7 +563,7 @@ func TestSelectAFullRunIsTheWholeMatrix(t *testing.T) {
 	if got := len(out.Legs); got != DefaultMaxLegs {
 		t.Errorf("legs = %d, want the full matrix's %d", got, DefaultMaxLegs)
 	}
-	for _, want := range []string{"cli-update", "cli-0", "cli-7", "scripts-0", "scripts-1", "scripts-live-2"} {
+	for _, want := range []string{"cli-update", "cli-0", "cli-7", "scripts-0", "scripts-1", "scripts-live-5"} {
 		if !selectHasLeg(out, want) {
 			t.Errorf("legs = %v, want %s", selectLegNames(out), want)
 		}

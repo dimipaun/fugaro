@@ -73,8 +73,12 @@ func TestDocsMobileChecks620AreRegistered(t *testing.T) {
 		if row == "" {
 			t.Fatalf("%s has no `| %s |` row: Check %s's section is written below it, and the table is where a reader finds it", liveChecksDoc, number, number)
 		}
-		if !strings.Contains(row, "OWNER-RUN, NOT RUN.") {
-			t.Errorf("Check %s's row does not read `OWNER-RUN, NOT RUN.`: the check is the owner's and has not been run, and a row that leaves either half out is read as a result", number)
+		rowState, headState, sectionState := "OWNER-RUN, NOT RUN.", "run by you; NOT RUN)", "not run"
+		if number == "620" {
+			rowState, headState, sectionState = "OWNER-RUN, RUN 2026-11-26: DONE", "run by you; RUN 2026-11-26: DONE", "run 2026-11-26: done"
+		}
+		if !strings.Contains(row, rowState) {
+			t.Errorf("Check %s's row does not read %q: the check is the owner's, and a row that leaves either half out is read as a result", number, rowState)
 		}
 		if !strings.Contains(row, `See "Check `+number+`" below`) {
 			t.Errorf("Check %s's row does not point at its own section (`See \"Check %s\" below`): the row and the section are one registration, and a row pointing elsewhere sends its reader to another check's steps", number, number)
@@ -95,14 +99,14 @@ func TestDocsMobileChecks620AreRegistered(t *testing.T) {
 		if want := strings.ToLower(mobileAuth620Subjects[number]); !strings.Contains(flat, want) {
 			t.Errorf("Check %s's section does not name the check %q: the heading is the name the plan's §9 table and the row both carry, and a section that dropped it is a check the reader cannot match to its row", number, mobileAuth620Subjects[number])
 		}
-		if !strings.Contains(head, "run by you; NOT RUN)") {
-			t.Errorf("Check %s's heading is %q: every section of this block is written in the register's own heading form, `(<target>; run by you; NOT RUN)`", number, head)
+		if !strings.Contains(head, headState) {
+			t.Errorf("Check %s's heading is %q: every section of this block is written in the register's own heading form, `(<target>; run by you; <state>)`", number, head)
 		}
 		for _, want := range []string{
 			// Both halves, flattened and folded: the register's prose wraps, and
 			// a pin that missed a phrase across a line break would be a pin on
 			// the line breaks.
-			"not run",
+			sectionState,
 			"no agent runs any step of it",
 			"never `belong`",
 			// The number is the work's own, so the section says where it came

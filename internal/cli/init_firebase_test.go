@@ -269,22 +269,22 @@ func TestInitFirebaseNeverCreatesProject(t *testing.T) {
 	}
 }
 
-// The billing read failing because the Cloud Billing API is disabled on the
-// credentials' quota project must say so, not blame permissions (found live).
+// A Cloud Billing API that is off is turned on in the installation's own
+// project, and the run goes on: update converges with no step of the person's.
 func TestInitFirebaseBillingAPIDisabled(t *testing.T) {
 	r := newFBRig(t)
 	r.su.Disable("cloudbilling.googleapis.com", r.billing.Server)
 	_, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID)
-	if ExitCode(err) != ExitUserError || err == nil {
-		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	if err != nil && (strings.Contains(err.Error(), "Cloud Billing") || strings.Contains(err.Error(), "quota project")) {
+		t.Fatalf("the billing read was not converged: %v", err)
 	}
-	for _, want := range []string{"Cloud Billing API", "cloudbilling.googleapis.com", "quota project", "gcloud services enable cloudbilling.googleapis.com --project 123456789012"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error lacks %q: %v", want, err)
+	if !r.su.Enabled("cloudbilling.googleapis.com") {
+		t.Errorf("cloudbilling was not enabled: %v", r.su.Enables())
+	}
+	for _, q := range r.su.Requests() {
+		if strings.Contains(q.Path, "cloudbilling") && strings.HasSuffix(q.Path, ":enable") && !strings.Contains(q.Path, "/projects/"+initProject+"/") {
+			t.Errorf("enabled outside the installation's project: %s", q.Path)
 		}
-	}
-	if strings.Contains(err.Error(), "resourceAssociations") {
-		t.Errorf("error blames permissions: %v", err)
 	}
 }
 

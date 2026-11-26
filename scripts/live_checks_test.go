@@ -428,7 +428,13 @@ import (
 // asserts never reaches the block or the progress log. A `compute instances
 // create` builds the object Compute would report out of the labels and metadata
 // the call carried, so the plain VM's row measures what a launcher can write
-// rather than what the test chose. The tree is a fixture too: the case writes the
+// rather than what the test chose. Three more of its answers are the readings a
+// run whose lines never arrived is judged on: the job's own object with the
+// state, task states and task status events a case writes (where the task's
+// exit code -- the probe's second channel -- lives), the VM's serial console,
+// and the broader log query under the job's own resource type, which a case can
+// answer with lines of its own so that "they landed elsewhere" is told from
+// "nothing landed". The tree is a fixture too: the case writes the
 // log filter into internal/backend/batch/logs.go, the managed label pair into
 // internal/backend/gcp/names.go and the wrapped variable's name into
 // docs/batch-run-identity/, and two cases bend those files to prove the check
@@ -722,6 +728,32 @@ import (
 // mount, what the service served a run and its review, what an unlisted
 // repository was refused with, and that a catalog build resolves no accessor
 // for the build identity.
+// Checks 136 and 341 to 343 are the periodic-reviews work's owner-run checks
+// (P8), and they drive the strict-fakes harness the other checks' libs carry:
+// the fake `fugaro` validates every command and flag against the real CLI's
+// surface, and the fake `gcloud` and `gh` refuse a subcommand or flag their
+// allow-lists do not name, so a check that called a command the CLI does not
+// have fails in its own test rather than on the owner's terminal. 136's are
+// that fake `fugaro`, a fake `git` and a fake `gh`, so a case says which period
+// a recipe's digest run wrote under a repository's reports folder, what a
+// period with no due date was refused with, and that a run whose digest
+// differed from the store was a finding. 341's are a fake `fugaro` (the
+// settings document the case's own state backs, so a write is visible to the
+// next read, and an `update` that records it ran), a fake `gcloud` (the
+// scheduler job, the reports job and its own spec document, the bucket's
+// listing, its lifecycle configuration and its IAM policy, and the executions
+// the case fires) and a fake `git`, so a case says which repositories the
+// deployed job was assigned, what a store missing a repository's report or a
+// period's aggregate reads, which principal may write under `reports/`, and
+// that the pause the check lifted is put back and the schedule reads PAUSED.
+// 342's is a fake `fugaro` over a stored failures report and the grouped
+// listing, so a case says what a window that cannot account for a class the
+// report names reads, that a class only the window names is not a finding, and
+// that FC5's derivation is recorded rather than measured.
+// 343's are a fake `fugaro`, a fake `gcloud`, a fake `gh` and a fake `git`
+// over the designated mirror, so a case says which stored reports the commit
+// run had to add, what a file the checkout already held and the run rewrote
+// reads, and that a report the folder holds by hand is left alone.
 // Check 820 is the location preference's owner-run first-EU-installation check.
 // Its fakes are a fake `gcloud` over the reads a first installation is judged
 // by (the project, its buckets -- counted, because the premise reads them before
@@ -754,6 +786,7 @@ var liveCheckScripts = []struct {
 	{"check211.sh", "check211_test.sh"},
 	{"check212.sh", "check212_test.sh"},
 	{"check130.sh", "check130_test.sh"},
+	{"check136.sh", "check136_test.sh"},
 	{"check145.sh", "check145_test.sh"},
 	{"check146.sh", "check146_test.sh"},
 	{"check148.sh", "check148_test.sh"},
@@ -781,6 +814,9 @@ var liveCheckScripts = []struct {
 	{"check314.sh", "check314_test.sh"},
 	{"check330.sh", "check330_test.sh"},
 	{"check340.sh", "check340_test.sh"},
+	{"check341.sh", "check341_test.sh"},
+	{"check342.sh", "check342_test.sh"},
+	{"check343.sh", "check343_test.sh"},
 	{"check96.sh", "check96_test.sh"},
 	{"check361.sh", "check361_test.sh"},
 	{"check401.sh", "check401_test.sh"},
@@ -881,6 +917,9 @@ var liveCheckScripts = []struct {
 	{"check733.sh", "check733_test.sh"},
 	{"check-820.sh", "check-820_test.sh"},
 	{"check-821.sh", "check-821_test.sh"},
+	{"check-910-lift-snapshot.sh", "check-910-lift-snapshot_test.sh"},
+	{"check-911-lift-compare.sh", "check-911-lift-compare_test.sh"},
+	{"check940.sh", "check940_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent

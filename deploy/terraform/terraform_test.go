@@ -2326,6 +2326,13 @@ func checkLiteralRole(t *testing.T, path, where, role, typ string, inFirebase bo
 	if (role == "roles/iam.serviceAccountUser" || role == "roles/iam.serviceAccountTokenCreator") && (typ == "google_service_account_iam_member" || typ == "") {
 		return
 	}
+	// roles/iam.serviceAccountOpenIdTokenCreator is the build identity's own
+	// ID-token minting on itself (installation/build_identity.tf's
+	// build_identity_openid_token, which Cloud Build requires before it serves
+	// a build an identity token): one file, on a service account.
+	if role == "roles/iam.serviceAccountOpenIdTokenCreator" && path == "gcp/modules/installation/build_identity.tf" && (typ == "google_service_account_iam_member" || typ == "") {
+		return
+	}
 	t.Errorf("%s: %s names %s, a role that reaches the budget backend or IAM, outside the Firebase module", path, where, role)
 }
 
@@ -5195,12 +5202,12 @@ func TestProjectJobAccountGetsTheInvokerGrant(t *testing.T) {
 	body := blocks[0].body
 	for _, want := range []string{
 		// Null is the switch's own answer on this side, and the whole of it.
-		"count = var.job.credentials_service == null ? 0 : 1",
+		"count = local.credentials_grant == null ? 0 : 1",
 		// The service's own name and the region it runs in: the two values
 		// internal/infra writes (infra.CredentialsServiceName and the
 		// installation's region), and never a URL.
-		"location = var.job.credentials_service.region",
-		"name     = var.job.credentials_service.name",
+		"location = local.credentials_grant.region",
+		"name     = local.credentials_grant.name",
 		`role     = "roles/run.invoker"`,
 		// The job's own account and no other member, ever.
 		"member   = google_service_account.job.member",

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -633,6 +634,39 @@ func TestModelsUseRefusesAProviderModelUnderOAuth(t *testing.T) {
 	}
 }
 
+// TestModelsUseNeverReadsAnUnsetAuthAsVertex: a project layer that states no
+// agent.auth has not chosen vertex, so a provider model is written to it and
+// each repository's own stated auth judges its launch.
+func TestModelsUseNeverReadsAnUnsetAuthAsVertex(t *testing.T) {
+	path := modelsUseProjectHome(t, "defaults:\n  rigor:\n    default: startup\n")
+
+	out, _, err := execute(t, "models", "use", "coder", "deepseek/deepseek-v4-pro")
+	if err != nil {
+		t.Fatalf("a layer that states no auth refused a provider model: %v\n%s", err, out)
+	}
+	if strings.Contains(out+fmt.Sprint(err), "agent.auth is vertex") {
+		t.Errorf("an unset auth was reported as vertex:\n%s", out)
+	}
+	if after := readFileString(t, path); !strings.Contains(after, "coder: deepseek/deepseek-v4-pro") {
+		t.Errorf("the pin was not written:\n%s", after)
+	}
+}
+
+// TestModelsUseRefusesAProviderModelUnderAnExplicitVertex: an auth the layer
+// states is still judged; vertex serves Claude only.
+func TestModelsUseRefusesAProviderModelUnderAnExplicitVertex(t *testing.T) {
+	path := modelsUseProjectHome(t, "defaults:\n  agent:\n    auth: vertex\n")
+	before := readFileString(t, path)
+
+	_, _, err := execute(t, "models", "use", "coder", "deepseek/deepseek-v4-pro")
+	if err == nil || !strings.Contains(err.Error(), "api-key") {
+		t.Fatalf("an explicit vertex accepted a provider model: %v", err)
+	}
+	if got := readFileString(t, path); got != before {
+		t.Errorf("the refused switch wrote the file:\n%s", got)
+	}
+}
+
 // TestModelsUsePinsTheBackgroundRole: background is the third key
 // agent.models has — Claude Code's own small requests — and it is a pin this
 // command writes like the other two, as the one line it adds.
@@ -853,4 +887,87 @@ func modelsUseGit(t *testing.T, dir string, args ...string) string {
 		t.Fatalf("git %s: %v", strings.Join(args, " "), err)
 	}
 	return out
+}
+
+// modelsUseRouted is the project the routing tests run against: the route that
+// serves the models, and the project's own routing table — one entry that
+// reaches the model a pin may take, admitted to both repositories the project
+// onboards, and nothing at all for the model the refusal is about.
+const modelsUseRouted = modelsUseLayerProject + `
+model_routing:
+  - match: vendor/model-x
+    chain:
+      - {kind: provider, provider: openrouter, admit: [owner/repo-a, owner/repo-b]}
+`
+
+// TestModelsUseRefusesAnUnroutedModel: a project that publishes a routing table
+// reaches its models by that table and by nothing else (R1, R2), so a pin no
+// entry of it matches is refused, and the refusal is the table's own — RT3's
+// sentence with the `fugaro routing set` that writes the entry, which is the
+// same one `fugaro validate` prints and the run's own gate refuses at — rather
+// than the release-1 route answer this command would otherwise give the same
+// pin. Nothing is written.
+//
+// The same command still writes a pin its entry routes, which is what keeps the
+// rule the table's own answer and not a wall: a table project every pin of which
+// were refused would be a table nobody can use.
+func TestModelsUseRefusesAnUnroutedModel(t *testing.T) {
+	modelsWriteHomeWith(t, modelsUseRouted)
+	path := settingsWriteLayerFile(t, modelsUseLayerCommented)
+	before := readFileString(t, path)
+
+	_, _, err := execute(t, "models", "use", "coder", "qwen/qwen3-coder")
+	if err == nil {
+		t.Fatal("a model no entry of the table matches was accepted")
+	}
+	if !strings.Contains(err.Error(), `no entry of the table matches "qwen/qwen3-coder"`) {
+		t.Errorf("the refusal is not the table's own: %v", err)
+	}
+	if !strings.Contains(err.Error(), "fugaro routing set qwen/qwen3-coder") {
+		t.Errorf("the refusal does not name the routing set that fixes it: %v", err)
+	}
+	if strings.Contains(err.Error(), "no route of the project config serves") {
+		t.Errorf("the release-1 route answer refused a table project's pin: %v", err)
+	}
+	if got := readFileString(t, path); got != before {
+		t.Errorf("the refused switch wrote the file:\n%s", got)
+	}
+
+	out, _, err := execute(t, "models", "use", "coder", "vendor/model-x")
+	if err != nil {
+		t.Fatalf("a model the table routes was refused: %v\n%s", err, out)
+	}
+	if !strings.Contains(readFileString(t, path), "coder: vendor/model-x") {
+		t.Errorf("the pin was not written:\n%s", readFileString(t, path))
+	}
+}
+
+// modelsUseRoutedElsewhere is the same project with a table that serves another
+// repository: its one source is admitted to a repository this project does not
+// onboard (D3182), so no entry of it governs a write to this project's layer.
+// The entry reaches a model the write below does not name, so the pin is one no
+// entry of the table matches — the case the table's own reader would refuse.
+const modelsUseRoutedElsewhere = modelsUseLayerProject + `
+model_routing:
+  - match: vendor/model-q
+    chain:
+      - {kind: provider, provider: openrouter, admit: [owner/other]}
+`
+
+// TestModelsUseWritesAModelATableThatServesAnotherRepoDoesNotRoute: a table
+// whose every source is admitted to another repository is not in force for this
+// project's runs (O7, R25, D3196), so the pin is judged the release-1 way — as
+// on a project that publishes no table — and written, rather than refused with
+// the table's sentence about an entry no run of these repositories reads.
+func TestModelsUseWritesAModelATableThatServesAnotherRepoDoesNotRoute(t *testing.T) {
+	modelsWriteHomeWith(t, modelsUseRoutedElsewhere)
+	path := settingsWriteLayerFile(t, modelsUseLayerCommented)
+
+	out, _, err := execute(t, "models", "use", "coder", "vendor/model-x")
+	if err != nil {
+		t.Fatalf("a model no entry of a table that serves another repository matches was refused: %v\n%s", err, out)
+	}
+	if !strings.Contains(readFileString(t, path), "coder: vendor/model-x") {
+		t.Errorf("the pin was not written:\n%s", readFileString(t, path))
+	}
 }

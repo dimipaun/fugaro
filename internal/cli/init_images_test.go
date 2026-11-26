@@ -383,6 +383,24 @@ func TestInitBasePinsTheRemoteRepositoryAtTheVerifiedDigest(t *testing.T) {
 	}
 }
 
+// checkoutWorkflowYAML is the fugaro.yaml of the checkout these two tests run
+// in: a workflow that names no base:, which is the implicit Fugaro base.
+const checkoutWorkflowYAML = "version: 1\nproject: " + initProjectName + "\ngit: { provider: github }\nworkflows:\n  app: { commands: { build: make, test: make test } }\n"
+
+// checkoutThroughTheReader makes the working directory the checkout these two
+// tests run from, and stands the reader in for it: the one repository this run
+// read, whose workflow is the checkout's own. The images stage mirrors the
+// base kinds of the repositories this run read and reads no working tree
+// (R9), so a test about a checkout's own workflow is about a read view of it.
+func checkoutThroughTheReader(t *testing.T) {
+	t.Helper()
+	testutil.Git(t, ".", "init", "--quiet")
+	if err := os.WriteFile("fugaro.yaml", []byte(checkoutWorkflowYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stubViews(t, repoView{Repo: "acme/app", Cfg: viewCfg(t, checkoutWorkflowYAML)})
+}
+
 // A release with no signed "-pinned" tag published yet (#318's release
 // side, a later task): the converge on a checkout whose workflow has no
 // base: (the implicit Fugaro base) must refuse with a clear error naming
@@ -396,10 +414,7 @@ func TestInitRefusesWhenFugaroBaseIsNotPublished(t *testing.T) {
 	r := newImagesRig(t, "v1.2.3")
 	fakeTerminal(t)
 	delete(r.src.tags, "dimipaun/fugaro-base:1.2.3-pinned")
-	testutil.Git(t, ".", "init", "--quiet")
-	if err := os.WriteFile("fugaro.yaml", []byte("version: 1\nproject: "+initProjectName+"\ngit: { provider: github }\nworkflows:\n  app: { commands: { build: make, test: make test } }\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	checkoutThroughTheReader(t)
 	out, _, err := executeStdin(t, "", "setup")
 	if ExitCode(err) != ExitRemoteError {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
@@ -419,10 +434,7 @@ func TestInitRefusesWhenFugaroBaseIsNotPublished(t *testing.T) {
 func TestCheckoutWithoutBaseAsksForTheBaseKind(t *testing.T) {
 	r := newImagesRig(t, "v1.2.3")
 	fakeTerminal(t)
-	testutil.Git(t, ".", "init", "--quiet")
-	if err := os.WriteFile("fugaro.yaml", []byte("version: 1\nproject: "+initProjectName+"\ngit: { provider: github }\nworkflows:\n  app: { commands: { build: make, test: make test } }\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	checkoutThroughTheReader(t)
 	out, _, err := executeStdin(t, "", "setup")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)

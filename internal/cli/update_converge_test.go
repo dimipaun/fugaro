@@ -588,19 +588,15 @@ func converge(t *testing.T, node map[string]any, stale []string) {
 	t.Helper()
 	r := newConvergeRig(t, node)
 	out := convergeOn(t, r, stale)
-	// The one thing this run writes in the checkout is the pin coming out
-	// (U5's migration, inside this same `fugaro update`): the fixture carries
-	// nothing but the pin, so both entries go and both parent keys with them,
-	// and an empty settings object is left — never a deleted file.
-	if got := convergeRead(t, r.settings); got != "{}\n" {
-		t.Errorf("the checkout's settings after the run:\n%s\nwant the pin taken out and nothing else moved:\n%s", got, "{}\n")
+	// The run writes nothing in the checkout: the pin the release behind left
+	// is still there, byte for byte, and the run's account of it is the notice
+	// line (U6a, D3340). The staleness line therefore still fires for this
+	// checkout, which is the state U6a leaves and U6b retires.
+	if got := convergeRead(t, r.settings); got != wiredAt("v"+convergePrev) {
+		t.Errorf("the checkout's settings after the run:\n%s\nwant them left as the release behind wrote them:\n%s", got, wiredAt("v"+convergePrev))
 	}
-	// And with the pin gone there is nothing stale left for the line every
-	// command prints to say about this checkout: the door the line sends the
-	// reader to is also the door that clears it (U2's review, #2235: until this
-	// migration, a checkout an older release pinned kept printing it).
-	if line := staleLine(pluginwire.Status(r.settings, convergeRelease, installedPlugins())); line != "" {
-		t.Errorf("after fugaro update the staleness line still fires for a checkout the run unpinned: %q", line)
+	if line := staleLine(pluginwire.Status(r.settings, convergeRelease, installedPlugins())); line == "" {
+		t.Errorf("the staleness line stopped firing for a checkout that still carries the pin, which is not this run's doing (U6a)")
 	}
 	if p := convergeNode(t, r); p.Version != projectpolicy.Version {
 		t.Errorf("after one fugaro update, the published node is version %d, want %d", p.Version, projectpolicy.Version)
@@ -675,21 +671,20 @@ func convergeOn(t *testing.T, r *convergeRig, stale []string) string {
 			t.Errorf("after fugaro update, doctor's %s check still fires: %s (fix: %s)", id, c.Problem, c.Fix)
 		}
 	}
-	// plugin-pin is asserted the other way round, and the assertion is not an
-	// omission: nothing in this tree writes a pin any more (U2, D949), so what
-	// this run must NOT do is report the pin converged — a version read back
-	// there would be the merge's write coming back. What it does instead is
-	// take the entry out (U5's migration, inside this same `fugaro update`), so
-	// the check reads the same file as a checkout with no marketplace at all.
+	// plugin-pin still fires after the run, and that is the U6a truth rather
+	// than an omission: nothing in this tree writes a pin (U2, D949) and since
+	// U6a nothing takes one out either — the leftover is a notice naming the
+	// edit (repo_notices.go, D3340), and the checkout's file is left exactly as
+	// the release behind wrote it. doctor's own reading of it is U6b's.
 	c, ok := doctorCheckByID(after.Checks, "plugin-pin")
 	if !ok {
 		t.Fatalf("after fugaro update, doctor has no plugin-pin check at all: %+v", after.Checks)
 	}
-	if !strings.Contains(c.Problem, "no fugaro marketplace") {
-		t.Errorf("after fugaro update, doctor's plugin-pin check reads %+v, want the checkout read as one with no fugaro marketplace: the run takes the pin out (U5)", c)
+	if !strings.Contains(c.Problem, convergePrev) {
+		t.Errorf("after fugaro update, doctor's plugin-pin check reads %+v, want the previous release's pin still there: nothing takes a pin out any more (U6a)", c)
 	}
-	if strings.Contains(c.Problem, convergePrev) {
-		t.Errorf("after fugaro update, doctor's plugin-pin check still reads the previous release's pin: %s", c.Problem)
+	if !strings.Contains(out, repoNoticePinFile+": "+repoNoticePinEdit) {
+		t.Errorf("the run printed no notice for the pin still in the checkout's %s:\n%s", repoNoticePinFile, out)
 	}
 	for _, c := range after.Checks {
 		// The per-workflow settings comparison, which is the update's own

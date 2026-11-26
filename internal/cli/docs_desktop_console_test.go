@@ -51,6 +51,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/plan"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -474,6 +475,13 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(modelsAddPlanStep{}),
 		reflect.TypeOf(imageAddPlanDoc{}), reflect.TypeOf(imageAddPlanEntry{}),
 		reflect.TypeOf(imageAddPlanStep{}),
+		// §6.35's map document (C-ORCH, D3221): the Coordinator tab's read, and
+		// the one shape here whose builder lives under ee/ while the document
+		// itself is the core's (`internal/orchestrator/mapdoc.go`). It is here
+		// because the section is a contract the console reads, and a field table
+		// is held to the shape it documents.
+		reflect.TypeOf(orchestrator.MapDoc{}), reflect.TypeOf(orchestrator.MapNode{}),
+		reflect.TypeOf(orchestrator.MapEdge{}), reflect.TypeOf(orchestrator.MapHealth{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command:
 		// ee/coordinator/cli/console_contract_test.go pins them against the
 		// tagged tree, which is the tree that still serves the console.
@@ -884,6 +892,12 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(modelsAddPlanStep{}),
 		reflect.TypeOf(imageAddPlanDoc{}), reflect.TypeOf(imageAddPlanEntry{}),
 		reflect.TypeOf(imageAddPlanStep{}),
+		// §6.35's map document (C-ORCH, D3221), the same four shapes as the test
+		// above: the Coordinator tab's read. It is here for this test's own
+		// reason — a field table that names a key no shape carries is a field
+		// invented rather than read.
+		reflect.TypeOf(orchestrator.MapDoc{}), reflect.TypeOf(orchestrator.MapNode{}),
+		reflect.TypeOf(orchestrator.MapEdge{}), reflect.TypeOf(orchestrator.MapHealth{}),
 		// §6.29's document (WH1, the console improvements plan's AL): the
 		// caller's own role, the scope it is held at and the patterns that scope
 		// names -- the `whoami` read. It is here for this test's own reason: a
@@ -1719,25 +1733,6 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// `visible` argument the window sends to stop the child reaches no word
 		// of this argv, so the row spells the command's argv back whole.
 		"graph --watch --json",
-		// The project view (Bitbucket credentials T1.2, the
-		// `coordinator.status` operation): read-only, no path in the argv.
-		// `--from-store` is what makes it need no host credential at all --
-		// it prints the view the sweep stored -- and `--all` is every
-		// repository the installation's config lists.
-		"coordinator status --from-store --all --json",
-		// The pull request read (coordinator v2 C3, the `coordinator.show`
-		// operation): one pull request as the host has it, the description
-		// included. `--repo` and `--pr` are arguments the operation's own schema
-		// fills (both required, `src/main/ipc.ts`), so the table spells them in
-		// the order the console emits them -- the row's fixed words, then the
-		// arguments -- and this list spells that back.
-		"coordinator show --json --repo <owner/name> --pr <n>",
-		// The declarations read (coordinator v2 C4c, the `coordinator.intents`
-		// operation): what the fleet's writers have declared, newest first.
-		// It has no argument of its own -- `--all` and `--json` are the row's
-		// fixed words -- so this list spells the whole argv back with nothing
-		// an operation's schema fills.
-		"coordinator intents --all --json",
 		// The orchestrator map (the console-fixes plan's CG7a, the
 		// `orchestrator.map` operation, D3221; C-ORCH's document,
 		// `internal/orchestrator/mapdoc.go`): the project's **active**
@@ -2215,11 +2210,7 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	// Thirty-four commands: the thirteen dashboard reads (logs has two argvs), the
 	// rail's `config list --json` (D13's amendment of 2026-10-20), the graph
 	// screen's `plan status --json` (GV2.1), the dependency graph read
-	// `graph --json` (the graph plan's CG9a), the project view's
-	// `coordinator status --from-store --all --json` (Bitbucket credentials
-	// T1.2), the pull request read `coordinator show --json --repo <owner/name>
-	// --pr <n>` (coordinator v2 C3), the declarations read
-	// `coordinator intents --all --json` (coordinator v2 C4c), the jobs-free
+	// `graph --json` (the graph plan's CG9a), the jobs-free
 	// totals read `runs summary --json` (console 0.119.0, B4/#1580), the models
 	// read `models ls --json` (console 0.119.0, the owner's ruling of
 	// 2026-11-02), the settings read `settings --json` (the settings-edit
@@ -2240,10 +2231,11 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	// shares its command with the chain the console runs after a management
 	// command saved a change (D1572): the two are two argvs and one command. The
 	// two enrolment reads of the repos-management plan's RE5 (D2413) are the
-	// thirtieth and thirty-first commands: `project repos ls --json` and `project
-	// repos status --json`, the `project repos` group's whole reach, since its two
-	// writes are on the never table below. The console improvements plan's AL
-	// adds the thirty-second to thirty-fourth: the Code tab's two catalogue reads
+	// twenty-seventh and twenty-eighth commands: `project repos ls --json` and
+	// `project repos status --json`, the `project repos` group's whole reach,
+	// since its two writes are on the never table below. The console improvements
+	// plan's AL adds the twenty-ninth to thirty-first: the Code tab's two
+	// catalogue reads
 	// `image ls --json` and `recipes ls --json`, each offline and each the whole
 	// of its group's reach, and the first-run wizard's `setup`, whose two rows
 	// are the plan (`setup --plan-only …`) and the apply (`setup …`) -- a write,
@@ -2251,24 +2243,31 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	// three streams are second argvs of commands this census already carries
 	// (`budget show`, `report` and `runs ls`), so they move the argv count and
 	// not the command count. The console improvements plan's MW1 adds the
-	// thirty-fifth: `fugaro models add`, the models write, whose two rows on the
+	// thirty-second: `fugaro models add`, the models write, whose two rows on the
 	// table are its dry run (`models add --no-apply --dry-run --json …`) and the
 	// write itself (`models add --no-apply …`) -- a write, so `fugaro models add`
 	// is named in consoleLaunchPaths rather than here, and the group's other
 	// words stay on the never table below. The same plan's MW2 adds the
-	// thirty-sixth: `fugaro image add`, the image write, whose two rows are its
+	// thirty-third: `fugaro image add`, the image write, whose two rows are its
 	// dry run (`image add --no-apply --dry-run --json …`) and the write itself
 	// (`image add --no-apply …`) -- a write too, so `fugaro image add` is named
 	// in consoleLaunchPaths rather than here, and the group's other writers stay
 	// on the never table below. The console-fixes plan's CG7a adds the
-	// thirty-seventh, and the first of its own this list has carried: `fugaro
+	// thirty-fourth, and the first of its own this list has carried: `fugaro
 	// orchestrator map --json`, the Coordinator tab's map of the project's active
 	// orchestrators (C-ORCH's document, D3221). It is a read -- one document,
 	// assembled from the caller's own database node, needing no checkout -- so it
 	// is named here, and the command lives under `ee/` until a release carries it
-	// (which is why the console's own read is behind a version floor).
-	if len(allowed) != 37 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 37 (logs and apply have two argvs each, `settings` and `settings set` are one command's two rows, `models add` and `image add` are the same for the two writes, and each of the console improvements' three streams is a second row on a command the table already carries)", path, argvs, len(allowed))
+	// (which is why the console's own read is behind a version floor). The same
+	// plan's I-ORCH then removed the three coordinator reads this census had
+	// carried -- `coordinator status --from-store --all --json`, `coordinator
+	// show --json …` and `coordinator intents --all --json` -- because no screen
+	// reaches them any more: they leave §5.1's table in the task that drops the
+	// console's surface for them, while their documents stay where they are
+	// (§6.13, §6.15 and §6.16) and so do the commands themselves, which the CLI
+	// keeps. What left the console is the read, not the command.
+	if len(allowed) != 34 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 34 (logs and apply have two argvs each, `settings` and `settings set` are one command's two rows, `models add` and `image add` are the same for the two writes, and each of the console improvements' three streams is a second row on a command the table already carries)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the read the design names for the console and §5.1 has not grown
@@ -2460,15 +2459,18 @@ func consoleSpelledNumber(t *testing.T, spelled string) int {
 //     plan's CG7a -- the Coordinator tab's map read, `orchestrator.map`, the
 //     first operation here whose command the table had not carried and the one
 //     whose read sits behind a CLI version floor because no release carries the
-//     command yet -- to the fifty-seven rule 5 carries today.
+//     command yet -- to the fifty-seven, and the same plan's I-ORCH -- which
+//     took four back, `coordinator.status`, `coordinator.show`,
+//     `coordinator.intents` and `link.openPullRequest`, no screen reaching any
+//     of them -- to the fifty-three rule 5 carries today.
 //   - **every row of spawn.ts's `SPAWN_COMMANDS` is admitted by rule 6's table**:
 //     the row's own words lead some row of the design's table **and what that row
 //     carries after them is flags, nothing else**. The second half is the whole
 //     check rather than a refinement of it: on a leading-words test alone a row
-//     cut back to its group word reads as admitted -- `['project']` against
-//     `project policy show --json …`, `['coordinator']` against `coordinator
-//     intents --all --json` -- which is a spawn that lost its subcommand passing
-//     as an argv the design allows. A bare word after the row's words is another
+//     cut back to its group word reads as admitted -- `['graph']` against
+//     `graph --watch --json …`, `['logs']` against `logs --url …` -- which is a
+//     spawn that lost the word telling it apart from its sibling passing as an
+//     argv the design allows. A bare word after the row's words is another
 //     word of the command, and the one exception is the design's own: the
 //     `settings.edit` row states the `set`/`unset` its `op` argument becomes
 //     while `SPAWN_COMMANDS` carries `['settings']`.
@@ -2546,9 +2548,9 @@ func TestDocsDesktopConsoleDesignSurfaceIsTheConsoleSource(t *testing.T) {
 			}
 			// What the design row carries after the row's own words must be
 			// flags and nothing else. A prefix alone admits a row cut back to
-			// its group word -- `['project']` would pass against `project policy
-			// show --json …`, and `['coordinator']` against `coordinator intents
-			// --all --json` -- so a spawn that lost its subcommand would read as
+			// its group word -- `['graph']` would pass against `graph --watch
+			// --json …`, and `['logs']` against `logs --url …` -- so a spawn
+			// that lost the word telling it apart from its sibling would read as
 			// an argv the design allows, which is the hole this half exists to
 			// close.
 			if consoleOnlyFlags(rest) {
@@ -7063,7 +7065,7 @@ func TestReleaseGateDispatchesARunACommitNeverHad(t *testing.T) {
 		start := time.Now()
 		// Empty GATE_WAIT_SECONDS falls back to RELEASE_GATE_TIMEOUT_MIN, so this
 		// also pins the default deadline and the minutes it is reported in.
-		ok, out := h.run(t, "GATE_DRY_RUN=1", "GATE_WAIT_SECONDS=", "RELEASE_GATE_TIMEOUT_MIN=90")
+		ok, out := h.run(t, "GATE_DRY_RUN=1", "GATE_WAIT_SECONDS=", "RELEASE_GATE_TIMEOUT_MIN=90", "GITHUB_ACTIONS=")
 		if !ok {
 			t.Fatalf("the dry run refused a commit whose checks are only running:\n%s", out)
 		}

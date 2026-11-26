@@ -25,8 +25,9 @@
 #     the slot was left alone;
 #   * **the craft's own answer**: `fugaro craft ls --json` — the resolution a run
 #     makes, from the same layers — carries the coder's model, where it came
-#     from (`model_from`), the access that serves it and whether the model is
-#     servable in this project at all;
+#     from (`model_from`), the chain the model resolves to (the routing table's
+#     answer, or empty on a project that publishes no table) and whether the
+#     model is servable in this project at all;
 #   * **one sandbox run**, launched from the checkout with `fugaro run --json`
 #     and followed with `fugaro runs ls --repo <repo> --json` until it is
 #     terminal — a record read while a run is still working is whatever was
@@ -35,7 +36,7 @@
 #     listing's own `run` ref gives, checked against the run id this check
 #     launched): every stage the coder craft serves (`plan`, `implement`, `fix`
 #     — internal/runner's stageCraft) records that model, and the run's own
-#     stages and accounts name the credential the craft's access named;
+#     stages and accounts name the credential the craft goes out on;
 #   * **the gateway's own lines for that execution** (`gcloud logging read`,
 #     filtered by the execution's own labels): NO `budget: request refused` line
 #     whose `violation` says a model "is not pinned for" a stage. That refusal
@@ -43,8 +44,8 @@
 #     what raises it (internal/gateway/forward.go, checkRequest);
 #   * **the credentials service's own audit line for the run** (`credsvc:
 #     audit`): the NAME of the credential it served — never a value — which is
-#     what says which credential answered, when the craft's access is one the
-#     service serves;
+#     what says which credential answered, when the craft goes out on a pool
+#     the service serves;
 #   * nothing else. No credential value is read, and none can reach the block:
 #     the rows carry names, paths, sources, model IDs, statuses and money.
 #
@@ -56,8 +57,16 @@
 # the same way.
 #
 # Usage:      bash scripts/live-checks/check628.sh --sandbox <a sandbox repository checkout> [--project <name>]
+#             bash scripts/live-checks/check628.sh --sandbox <path> --preflight
 #             bash scripts/live-checks/check628.sh --sandbox <path> --dry-run
 #             bash scripts/live-checks/check628.sh --help
+#             --preflight makes the check's own READS and evaluates every
+#             precondition before anything is written or launched (the
+#             installation `fugaro doctor --project <name> --all` reads, the
+#             project layer's craft model, the coder craft's own answer and the
+#             published allow-list), prints every blocker at once with the
+#             command that clears it, writes nothing and launches nothing, and
+#             exits non-zero when anything blocks.
 # Needs:      bash, mktemp, date, python3 (the `--json` documents are read with
 #             it), gcloud (authenticated as YOU, able to read the runs bucket
 #             and Cloud Logging) and fugaro (the installed release: the whole
@@ -85,7 +94,7 @@
 #             one, a read did not answer, or the run never ended. A key the run
 #             never reached reads `FAIL — not reached`.
 #
-# Knobs (all CHECK628_*): DRY_RUN, KEEP_SCRATCH, SANDBOX (the checkout, when you
+# Knobs (all CHECK628_*): DRY_RUN, PREFLIGHT, KEEP_SCRATCH, SANDBOX (the checkout, when you
 # would rather set it in the environment), PROJECT (the installation's own name,
 # when the checkout's is not the one to read), CRAFT (coder), TASK and RECIPE
 # (what the run is launched with), LOG_VIEW (a Cloud Logging view to scope the
@@ -138,6 +147,13 @@ on_error() {
   say "an internal error ended this check at line $line"
   exit 2
 }
+
+# The shared `--preflight` driver (scripts/live-checks/lib/preflight.sh).
+live_check_lib_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib
+LIVE_CHECK_LIB=${LIVE_CHECK_LIB:-$live_check_lib_dir}
+# shellcheck source=lib/preflight.sh
+. "$LIVE_CHECK_LIB/preflight.sh"
+PREFLIGHT_TOOL=check628
 
 need_tools() {
   command -v bash >/dev/null 2>&1 || die "Check 628 needs bash"
@@ -248,10 +264,12 @@ elif what == "launch":
     print("status=%s" % (doc.get("status") or ""))
 elif what == "crafts":
     print("count=%d" % len(doc.get("crafts") or []))
+    # Version 2 (RT6): the chain a craft's model resolves to, in place of the
+    # access, access_from and inert columns the version-1 document carried.
     for row in doc.get("crafts") or []:
-        print("craft\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s" % (
+        print("craft\t%s\t%s\t%s\t%s\t%s\t%s" % (
             row.get("craft") or "", row.get("model") or "", row.get("model_from") or "",
-            row.get("access") or "", row.get("access_from") or "", yes(row.get("inert")),
+            ",".join(row.get("chain") or []),
             yes(row.get("model_servable")), row.get("model_problem") or ""))
 elif what == "node":
     # `fugaro project policy show --json` prints {"project": ..., "policy": ...}:
@@ -391,6 +409,44 @@ row_field() { # row_field COLUMN
   awk -F'\t' -v id="$RUN_ID" -v col="$1" '$1 == "row" && $2 == id { print $col; exit }' "$SCRATCH/rows.txt" 2>/dev/null
 }
 
+# chain_pool CHAIN — the name of the pool a craft's chain goes out on, from the
+# `chain` column of a `craft ls --json` row (RT6, D3170): the first source
+# spelled `pool:<name>`, with the `@MODEL` a written downgrade appends cut off.
+# Every other kind — launcher-pool, anthropic, provider:<name>, vertex — names no
+# pool, and neither does an empty chain (a project that publishes no routing
+# table), so both answer "" and the caller says what it read.
+chain_pool() { # chain_pool CHAIN
+  local source pool
+  for source in $(printf '%s' "$1" | tr ',' ' '); do
+    case "$source" in
+    pool:*)
+      pool=${source#pool:}
+      printf '%s' "${pool%@*}"
+      return 0
+      ;;
+    esac
+  done
+}
+
+# craft_access CRAFT — the name the craft's calls go out on, out of the two
+# documents this check has already read. The chain answers it where it names a
+# pool: that is the table's own answer for the craft's model (D3170). An EMPTY
+# chain is a project that publishes no routing table, whose calls go out the
+# release-1 way (R25) — on the access the published node names for the craft,
+# which is the document the credentials service itself reads — so the node
+# answers there. A chain that names sources and no pool answers "": the craft's
+# model resolves to something that is no pool or credential the service hands
+# in, and the caller reports it.
+craft_access() { # craft_access CRAFT
+  local chain name
+  chain=$(table_field "$SCRATCH/crafts.txt" craft "$1" 5)
+  name=$(chain_pool "$chain")
+  if [ -z "$name" ] && [ -z "$chain" ]; then
+    name=$(table_field "$SCRATCH/node.txt" nodecraft "$1" 4)
+  fi
+  printf '%s' "$name"
+}
+
 # table_field TABLE KIND NAME COLUMN: one column of one row of a read document,
 # keyed by its first field — the crafts, the config's resolved keys and the
 # record's stages are all read this way. A document that was never read answers
@@ -475,6 +531,130 @@ version_row() {
   fact "fugaro-version" PASS "${v:-fugaro version printed nothing} (the release whose craft ladder this check measures)"
 }
 
+# ---------------------------------------------------------------- preflight
+# step_preflight: --preflight. The reads this check makes, every precondition it
+# has evaluated before its first write, nothing written and nothing launched. The
+# sandbox checkout is the owner's own (there is no --preflight-only clone here),
+# and every command below is a read run from it.
+step_preflight() {
+  if [ ! -d "$SANDBOX" ]; then
+    die "--sandbox is not a directory: $SANDBOX (pass the checkout of a repository of the sandbox project)"
+  fi
+  if [ ! -f "$SANDBOX/fugaro.yaml" ]; then
+    die "--sandbox carries no fugaro.yaml: $SANDBOX is not a Fugaro repository's checkout, and every command below is run from it"
+  fi
+  local pflag=()
+  [ -z "$PROJECT_ARG" ] || pflag=(--project "$PROJECT_ARG")
+  local doctor_fix="cd $SANDBOX && fugaro doctor --all"
+  [ -z "$PROJECT_ARG" ] || doctor_fix="cd $SANDBOX && fugaro doctor --project $PROJECT_ARG --all"
+
+  say "preflight: reading the installation: fugaro doctor ${pflag[@]+"${pflag[@]} "}--all, in ${SANDBOX}"
+  run_bounded "$DOCTOR_TIMEOUT" pf-doctor "$SANDBOX" "$FUGARO_BIN" doctor ${pflag[@]+"${pflag[@]}"} --all
+  local line
+  line=$(grep -m1 '^project: ' "$SCRATCH/pf-doctor.out" 2>/dev/null || true)
+  if [ -z "$line" ]; then
+    preflight_block installation \
+      "fugaro doctor ${pflag[@]+"${pflag[@]} "}--all prints no 'project: <name> (GCP <project>, <region>)' line in ${SANDBOX} (exit ${BOUNDED_STATUS}), so the installation this check reads cannot be read" \
+      "$doctor_fix"
+  else
+    PROJECT=$(printf '%s' "$line" | sed -n 's/^project: \([^ ]*\) .*/\1/p')
+    INSTALLATION=$PROJECT
+    GCP_PROJECT=$(printf '%s' "$line" | sed -n 's/^.*(GCP \([^,]*\),.*/\1/p')
+    REGION_USED=$(printf '%s' "$line" | sed -n 's/^.*, \([^)]*\)).*/\1/p')
+    preflight_note installation "${SANDBOX} is a checkout of the installation ${PROJECT} (GCP ${GCP_PROJECT:-unknown}, ${REGION_USED:-unknown})"
+  fi
+
+  say "preflight: reading the resolved config: fugaro config show --json, in ${SANDBOX}"
+  local layer_ok=yes slot slot_from
+  if run_bounded "$CLI_TIMEOUT" pf-config "$SANDBOX" "$FUGARO_BIN" config show --json &&
+    read_json config "$SCRATCH/pf-config.out" "$SCRATCH/pf-config.txt"; then
+    LAYER_MODEL=$(table_field "$SCRATCH/pf-config.txt" value "agent.crafts.${CRAFT}.model" 3)
+    local model_from
+    model_from=$(table_field "$SCRATCH/pf-config.txt" value "agent.crafts.${CRAFT}.model" 4)
+    if [ -z "$LAYER_MODEL" ]; then
+      preflight_block layer \
+        "the resolved config names no model for agent.crafts.${CRAFT}.model in ${SANDBOX}, and the acceptance's first clause is a project layer that names one" \
+        "fugaro update"
+    elif [ "$model_from" != project ]; then
+      preflight_block layer \
+        "agent.crafts.${CRAFT}.model resolves to ${LAYER_MODEL} with source '${model_from}', not the project layer the acceptance names" \
+        "fugaro update"
+    else
+      preflight_note layer "the project layer sets agent.crafts.${CRAFT}.model = ${LAYER_MODEL}, read from fugaro config show --json in ${SANDBOX}"
+    fi
+    slot=$(table_field "$SCRATCH/pf-config.txt" value "agent.models.${ROLE}" 3)
+    slot_from=$(table_field "$SCRATCH/pf-config.txt" value "agent.models.${ROLE}" 4)
+    if [ "$slot_from" = project ] && [ -n "$slot" ]; then
+      preflight_block role-slot \
+        "agent.models.${ROLE} resolves to ${slot} with source 'project', so a run would pin this model whether or not the craft key is read" \
+        "fugaro update"
+    else
+      preflight_note role-slot "agent.models.${ROLE} resolves to ${slot:-nothing} with source '${slot_from:-default}' in ${SANDBOX}, so the craft's own key is what names the model"
+    fi
+  else
+    layer_ok=no
+    preflight_block layer \
+      "fugaro config show --json did not answer in ${SANDBOX} (exit ${BOUNDED_STATUS}), so the project layer's craft model cannot be read" \
+      "cd $SANDBOX && fugaro config show --json"
+    preflight_block role-slot \
+      "fugaro config show --json did not answer in ${SANDBOX} (exit ${BOUNDED_STATUS}), so the role slot cannot be read either" \
+      "cd $SANDBOX && fugaro config show --json"
+  fi
+
+  say "preflight: reading the crafts: fugaro craft ls --json, in ${SANDBOX}"
+  local craft_model=""
+  if run_bounded "$CLI_TIMEOUT" pf-crafts "$SANDBOX" "$FUGARO_BIN" craft ls --json &&
+    read_json crafts "$SCRATCH/pf-crafts.out" "$SCRATCH/pf-crafts.txt"; then
+    craft_model=$(table_field "$SCRATCH/pf-crafts.txt" craft "$CRAFT" 3)
+    local craft_from
+    craft_from=$(table_field "$SCRATCH/pf-crafts.txt" craft "$CRAFT" 4)
+    if [ -z "$craft_model" ]; then
+      preflight_block craft-ls \
+        "fugaro craft ls --json names no model for the ${CRAFT} craft in ${SANDBOX}, so a run would resolve the coder's model from the role slot and not the craft" \
+        "fugaro update"
+    elif [ "$craft_from" != project ]; then
+      preflight_block craft-ls \
+        "fugaro craft ls --json resolves the ${CRAFT} craft's model to ${craft_model} from '${craft_from}', not the project layer" \
+        "fugaro update"
+    elif [ -n "$LAYER_MODEL" ] && [ "$craft_model" != "$LAYER_MODEL" ]; then
+      preflight_block craft-ls \
+        "fugaro craft ls --json resolves the ${CRAFT} craft's model to ${craft_model} while the resolved config names ${LAYER_MODEL}: the two surfaces disagree" \
+        "fugaro update"
+    else
+      preflight_note craft-ls "fugaro craft ls --json resolves the ${CRAFT} craft to model ${craft_model} from '${craft_from}', the same model the project layer names"
+    fi
+  else
+    preflight_block craft-ls \
+      "fugaro craft ls --json did not answer in ${SANDBOX} (exit ${BOUNDED_STATUS}): if this build has no craft command, this check is not for it" \
+      "fugaro update"
+  fi
+
+  say "preflight: reading the published node: fugaro project policy show --json, in ${SANDBOX}"
+  if run_bounded "$CLI_TIMEOUT" pf-node "$SANDBOX" "$FUGARO_BIN" project policy show --json ${pflag[@]+"${pflag[@]}"} &&
+    read_json node "$SCRATCH/pf-node.out" "$SCRATCH/pf-node.txt"; then
+    local allowed
+    allowed=$(field "$SCRATCH/pf-node.txt" allowed_models)
+    if [ -z "$LAYER_MODEL" ]; then
+      preflight_note allow-list "there is no layer model to look for in the allow-list (the row above says why)"
+    elif [ -z "$allowed" ]; then
+      preflight_note allow-list "the published node names no allowed_models, so the ceiling is the job's own environment and the craft's own model_servable is what the check reads"
+    else
+      case ";$allowed;" in
+      *";$LAYER_MODEL;"*)
+        preflight_note allow-list "${LAYER_MODEL} is in the published node's allowed_models (${allowed})" ;;
+      *)
+        preflight_block allow-list \
+          "the published node's allowed_models is ${allowed} and the model the project layer names is ${LAYER_MODEL}, so a run is refused before its first call" \
+          "fugaro models add $LAYER_MODEL" ;;
+      esac
+    fi
+  else
+    preflight_block allow-list \
+      "fugaro project policy show --json did not answer in ${SANDBOX} (exit ${BOUNDED_STATUS}), so the project's published allow-list cannot be read" \
+      "cd $SANDBOX && fugaro project policy show --json"
+  fi
+}
+
 # ---------------------------------------------------------------- the steps
 # step_installation: the premise. The project comes from the checkout itself
 # through `fugaro doctor --project <name> --all`, whose `project:` line the
@@ -556,7 +736,7 @@ step_layer() {
 }
 
 # step_craft_ls: the craft's own answer — the resolution a run makes from the
-# same layers, with where the model came from and the access that serves it.
+# same layers, with where the model came from and the chain it resolves to.
 step_craft_ls() {
   if [ -z "$INSTALLATION" ]; then
     unmeasured craft-ls "there is no installation whose crafts could be listed: the row above says why"
@@ -572,19 +752,16 @@ step_craft_ls() {
     unmeasured craft-ls "fugaro craft ls --json printed a document this check could not read: what it printed is in $SCRATCH/crafts.out"
     return 0
   fi
-  local model model_from access access_from problem
+  local model model_from chain problem
   model=$(table_field "$SCRATCH/crafts.txt" craft "$CRAFT" 3)
   model_from=$(table_field "$SCRATCH/crafts.txt" craft "$CRAFT" 4)
-  access=$(table_field "$SCRATCH/crafts.txt" craft "$CRAFT" 5)
-  access_from=$(table_field "$SCRATCH/crafts.txt" craft "$CRAFT" 6)
-  problem=$(table_field "$SCRATCH/crafts.txt" craft "$CRAFT" 9)
-  CRAFT_ACCESS=$access
+  chain=$(table_field "$SCRATCH/crafts.txt" craft "$CRAFT" 5)
+  problem=$(table_field "$SCRATCH/crafts.txt" craft "$CRAFT" 7)
   # The notes below are built here rather than with ${VAR:+...}: an apostrophe
   # or a bracket inside the word of a parameter expansion is read as quoting by
   # the shell that parses it, and a check on the owner's machine may be any
   # bash.
-  local access_note="" problem_note=""
-  [ -z "$access_from" ] || access_note=", from ${access_from}"
+  local problem_note=""
   [ -z "$problem" ] || problem_note=", and reports '${problem}'"
   if [ -z "$model" ]; then
     fact craft-ls FAIL "fugaro craft ls --json names no model for the ${CRAFT} craft in ${SANDBOX} (the document carries $(field "$SCRATCH/crafts.txt" count) craft row(s)): a run of this repository would resolve the coder's model from the role slot and not from the craft, which is the half of the acceptance this row measures"
@@ -593,7 +770,7 @@ step_craft_ls() {
   elif [ -n "$LAYER_MODEL" ] && [ "$model" != "$LAYER_MODEL" ]; then
     fact craft-ls FAIL "fugaro craft ls --json resolves the ${CRAFT} craft's model to ${model} while the resolved config's agent.crafts.${CRAFT}.model is ${LAYER_MODEL}: the two surfaces a run and this check read disagree about the model, so nothing below can be read as one model's"
   else
-    fact craft-ls PASS "fugaro craft ls --json resolves the ${CRAFT} craft to model ${model} from '${model_from}' (access ${access:-none}${access_note}): the craft command a run's own resolution is built on names the layer's model${problem_note}"
+    fact craft-ls PASS "fugaro craft ls --json resolves the ${CRAFT} craft to model ${model} from '${model_from}' (chain ${chain:-none}): the craft command a run's own resolution is built on names the layer's model${problem_note}"
   fi
 }
 
@@ -619,8 +796,8 @@ step_allow_list() {
   fi
   local allowed servable problem problem_note=""
   allowed=$(field "$SCRATCH/node.txt" allowed_models)
-  servable=$(table_field "$SCRATCH/crafts.txt" craft "$CRAFT" 8)
-  problem=$(table_field "$SCRATCH/crafts.txt" craft "$CRAFT" 9)
+  servable=$(table_field "$SCRATCH/crafts.txt" craft "$CRAFT" 6)
+  problem=$(table_field "$SCRATCH/crafts.txt" craft "$CRAFT" 7)
   [ -z "$problem" ] || problem_note=" (model_problem: ${problem})"
   if [ -z "$LAYER_MODEL" ]; then
     unmeasured allow-list "there is no model to look for in the allow-list: the craft row above says why"
@@ -792,12 +969,25 @@ step_stage_model() {
 }
 
 # step_credential: the credential that served the run, against the access the
-# craft names. This build's record carries no craft_credentials (MC8's record
-# half), so the reading is the surfaces it does carry — the record's
+# craft goes out on. This build's record carries no craft_credentials (MC8's
+# record half), so the reading is the surfaces it does carry — the record's
 # stage_accounts, its per-stage credential/served_by, and the credentials
 # service's own audit line — and the row says so.
 step_credential() {
-  local account="" served="" audit_cred="" forward=""
+  local account="" served="" audit_cred="" forward="" chain
+  chain=$(table_field "$SCRATCH/crafts.txt" craft "$CRAFT" 5)
+  CRAFT_ACCESS=$(craft_access "$CRAFT")
+  if [ -z "$CRAFT_ACCESS" ]; then
+    # An empty chain is a project that publishes no routing table, and a chain
+    # the node was to answer for is unread — both are rows that could not be
+    # measured. A chain that names sources and no pool is a finding of its own.
+    if [ -z "$chain" ]; then
+      unmeasured credential "neither a chain nor an access could be read for the ${CRAFT} craft, so there is nothing to compare the run's credential against: the craft row above says why"
+      return 0
+    fi
+    fact credential FAIL "the ${CRAFT} craft's chain (${chain}) names no pool, so there is nothing to compare the run's credential against: a chain of launcher-pool, anthropic, provider or vertex hands the calls to something that is no pool the credentials service serves. Point the craft's model at a pool ('fugaro routing set <model> pool:<name>') and run this check again"
+    return 0
+  fi
   if [ -z "$RUN_ID" ]; then
     unmeasured credential "there is no run whose credential could be read: the rows above say why"
     return 0
@@ -827,12 +1017,8 @@ step_credential() {
   if [ -z "$named" ] && [ -f "$SCRATCH/record.txt" ]; then
     named=$(awk -F'\t' '$1 == "account" { print $3; exit }' "$SCRATCH/record.txt" 2>/dev/null || true)
   fi
-  if [ -z "$CRAFT_ACCESS" ]; then
-    unmeasured credential "the ${CRAFT} craft's access could not be read, so there is nothing to compare the run's credential against: the craft row above says why"
-    return 0
-  fi
   if [ -z "$named" ]; then
-    fact credential FAIL "neither the record of ${RUN_ID} (stage_accounts: ${account:-none}) nor the credentials service's audit lines name a credential for this run, while the ${CRAFT} craft's access is ${CRAFT_ACCESS}: nothing here says what served the run. Note that this build's record carries no craft_credentials (MC8's record half has not landed), so the reading is the record's stage rows and the service's audit line — read them yourself with 'fugaro watch ${RUN_ID}' and this check's own commands, which are in $SCRATCH"
+    fact credential FAIL "neither the record of ${RUN_ID} (stage_accounts: ${account:-none}) nor the credentials service's audit lines name a credential for this run, while the ${CRAFT} craft goes out on ${CRAFT_ACCESS}: nothing here says what served the run. Note that this build's record carries no craft_credentials (MC8's record half has not landed), so the reading is the record's stage rows and the service's audit line — read them yourself with 'fugaro watch ${RUN_ID}' and this check's own commands, which are in $SCRATCH"
     return 0
   fi
   local members=""
@@ -848,18 +1034,18 @@ step_credential() {
   [ -z "$forward" ] || forward_note=" (${forward} forwarded call(s))"
   [ "$forward" = 0 ] && forward_note=""
   if [ "$named" = "$CRAFT_ACCESS" ]; then
-    fact credential PASS "the run ${RUN_ID} was served by ${named} — the access the ${CRAFT} craft names — read from ${audit_note}the record's own stage rows (stage_accounts: ${account:-none}${served_note})"
+    fact credential PASS "the run ${RUN_ID} was served by ${named} — the access the ${CRAFT} craft goes out on — read from ${audit_note}the record's own stage rows (stage_accounts: ${account:-none}${served_note})"
   elif [ -n "$members" ]; then
     case ",${members}," in
     *",$named,"*)
-      fact credential PASS "the run ${RUN_ID} was served by ${named}, which is a member of the pool ${CRAFT_ACCESS} (members ${members}) the ${CRAFT} craft's access names — read from the credentials service's own audit line for this run${forward_note} and the record's own stage rows (stage_accounts: ${account:-none})"
+      fact credential PASS "the run ${RUN_ID} was served by ${named}, which is a member of the pool ${CRAFT_ACCESS} (members ${members}) the ${CRAFT} craft goes out on — read from the credentials service's own audit line for this run${forward_note} and the record's own stage rows (stage_accounts: ${account:-none})"
       ;;
     *)
-      fact credential FAIL "the run ${RUN_ID} was served by ${named}, which is NOT a member of ${CRAFT_ACCESS} (members ${members}) — the pool the ${CRAFT} craft's access names: the acceptance's 'the same credential' is about the craft's access and the credential that answered, and these two disagree"
+      fact credential FAIL "the run ${RUN_ID} was served by ${named}, which is NOT a member of ${CRAFT_ACCESS} (members ${members}) — the pool the ${CRAFT} craft goes out on: the acceptance's 'the same credential' is about the access the craft goes out on and the credential that answered, and these two disagree"
       ;;
     esac
   else
-    fact credential FAIL "the run ${RUN_ID} was served by ${named} while the ${CRAFT} craft's access is ${CRAFT_ACCESS}: the acceptance's 'the same credential' is about the craft's access and the credential that answered, and these two disagree. The published node names no pool called ${CRAFT_ACCESS} to read a member list from (craft_credentials: $(field "$SCRATCH/node.txt" credentials), craft_pools: $(field "$SCRATCH/node.txt" pools)). Note that this build's record carries no craft_credentials (MC8's record half has not landed), so the row reads the record's stage rows and the service's audit line instead"
+    fact credential FAIL "the run ${RUN_ID} was served by ${named} while the ${CRAFT} craft goes out on ${CRAFT_ACCESS}: the acceptance's 'the same credential' is about the access the craft goes out on and the credential that answered, and these two disagree. The published node names no pool called ${CRAFT_ACCESS} to read a member list from (craft_credentials: $(field "$SCRATCH/node.txt" credentials), craft_pools: $(field "$SCRATCH/node.txt" pools)). Note that this build's record carries no craft_credentials (MC8's record half has not landed), so the row reads the record's stage rows and the service's audit line instead"
   fi
 }
 
@@ -933,6 +1119,12 @@ finish() {
   local status=$?
   trap - EXIT
   trap - ERR
+  if [ "$PREFLIGHT_MODE" = yes ]; then
+    # A preflight wrote nothing and launched nothing: it prints its own lines
+    # and no RESULT block.
+    remove_scratch
+    exit "$status"
+  fi
   CLEANUP_RUNNING=yes
   cleanup
   local facts=$FACTS_CAPTURED
@@ -973,7 +1165,7 @@ plan() {
   say "CHECK 628 plan (dry run: nothing below is run, and no row in the block was measured)"
   say "  [read] fugaro doctor --project <name> --all in ${SANDBOX} — the project line: which installation this is"
   say "  [read] fugaro config show --json in ${SANDBOX} — agent.crafts.${CRAFT}.model, its source, and agent.models.${ROLE} left alone"
-  say "  [read] fugaro craft ls --json in ${SANDBOX} — the craft's model, where it came from, and the access that serves it"
+  say "  [read] fugaro craft ls --json in ${SANDBOX} — the craft's model, where it came from, and the chain it resolves to"
   say "  [read] fugaro project policy show --json in ${SANDBOX} — the published allow-list"
   say "  [network, BILLABLE] fugaro run --repo ${SANDBOX}${RECIPE:+ --recipe ${RECIPE}} --json \"${TASK}\" — one sandbox run, followed with fugaro runs ls --json until it is terminal"
   say "  [read] gcloud storage cat gs://fugaro-runs-<gcp-project>/runs/<slug>/<run>/result.json — the stages, their models and the accounts that served them"
@@ -1028,6 +1220,7 @@ on_signal() {
 
 # ---------------------------------------------------------------------- inputs
 DRY_RUN_CLI=""
+PREFLIGHT_CLI=""
 SANDBOX_CLI=""
 PROJECT_CLI=""
 TASK_CLI=""
@@ -1061,6 +1254,10 @@ while [ $# -gt 0 ]; do
     DRY_RUN_CLI=1
     shift
     ;;
+  --preflight)
+    PREFLIGHT_CLI=1
+    shift
+    ;;
   -h | --help)
     usage
     exit 0
@@ -1091,6 +1288,9 @@ ROLE=${CHECK628_ROLE:-coder}
 TASK=${CHECK628_TASK:-${TASK_CLI:-"Reply with the single word ok and change nothing in the repository."}}
 RECIPE=${CHECK628_RECIPE:-${RECIPE_CLI:-}}
 DRY_RUN=${CHECK628_DRY_RUN:-$DRY_RUN_CLI}
+PREFLIGHT=${CHECK628_PREFLIGHT:-$PREFLIGHT_CLI}
+PREFLIGHT_MODE=no
+[ -z "$PREFLIGHT" ] || PREFLIGHT_MODE=yes
 KEEP_SCRATCH=${CHECK628_KEEP_SCRATCH:-}
 LOG_VIEW=${CHECK628_LOG_VIEW:-}
 REGION=${CHECK628_REGION:-us-east5}
@@ -1122,6 +1322,10 @@ main() {
   if [ -n "$DRY_RUN" ]; then
     plan
     return 0
+  fi
+  if [ -n "$PREFLIGHT" ]; then
+    step_preflight
+    preflight_report
   fi
   step_installation
   step_layer

@@ -471,6 +471,11 @@ variable "project_jobs" {
       name   = string
       region = string
     }))
+    # Every shared job, switched or not: the invoker grant, no mount drop.
+    credentials_service_grant = optional(object({
+      name   = string
+      region = string
+    }))
   }))
   default  = {}
   nullable = false
@@ -502,12 +507,15 @@ variable "project_review_jobs" {
       expression = string
     })
     vertex = bool
-    # Null for every variant (B5.2): the module's object type is one type, so
-    # the attribute is here, and internal/infra's reviewVariant sets none — a
-    # variant is pointed at the service by its own deployment's environment,
-    # and no variant account carries the roles/run.invoker grant sa.tf makes
-    # from a value here.
+    # Null for every variant (B5.2): it drops no mount, so reviewVariant sets
+    # none; the grant is credentials_service_grant below.
     credentials_service = optional(object({
+      name   = string
+      region = string
+    }))
+    # The invoker grant a variant's account holds on the service (it fetches
+    # the run's read-only token from it); no mount is dropped by it.
+    credentials_service_grant = optional(object({
       name   = string
       region = string
     }))

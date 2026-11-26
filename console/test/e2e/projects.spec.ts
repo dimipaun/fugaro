@@ -1361,7 +1361,10 @@ test.describe('the Projects view in the dashboard', () => {
       },
       { button: tab('projects'), body: THE_BODY },
     )
-    expect(inTheFrame).toEqual({
+    // Cold, the frame is the marked skeleton. When the prewarm queue (PW1) read
+    // this tab first, it is the stamped view that read cached: a header and no
+    // mark.
+    const cold = {
       mounted: true,
       busy: 'true',
       marked: true,
@@ -1370,7 +1373,9 @@ test.describe('the Projects view in the dashboard', () => {
       skeleton: true,
       header: false,
       jobs: 0,
-    })
+    }
+    const warm = { ...cold, busy: null, marked: false, label: null, spinner: false, skeleton: false, header: true }
+    expect([cold, warm]).toContainEqual(inTheFrame)
 
     // Then the content, drawn from the document the stub answered with.
     await expect(page.locator(`${THE_PROJECTS} h1.projects-project`)).toHaveText('example-project')
@@ -1388,15 +1393,22 @@ test.describe('the Projects view in the dashboard', () => {
     // And the reads behind that drawing: `budget show` and `models ls`, the two
     // commands this tab's two sections name, and **no `runs` read at all**
     // since this view was opened.
+    // Both reads may predate this visit: a prewarmed tab read them from the
+    // queue, so they are looked for in the whole log, and only `runs` is held
+    // to what this view's own visit asked.
+    const everything = readsOf(spawnLog).map((record) => record.argv.slice(1))
     const asked = readsOf(spawnLog)
       .slice(before)
       .map((record) => record.argv.slice(1))
-    expect(asked).toContainEqual(['budget', 'show', '--json', '--project', 'e2e'])
+    expect(everything).toContainEqual(['budget', 'show', '--json', '--project', 'e2e'])
     // The models read is the group's one reachable word and takes no argument
     // of its own: the argv is the command, the row's `--json` and the
     // installation's `--project`, and nothing a renderer chose.
-    expect(asked).toContainEqual(['models', 'ls', '--json', '--project', 'e2e'])
-    expect(asked.filter((argv) => argv[0] === 'runs')).toEqual([])
+    expect(everything).toContainEqual(['models', 'ls', '--json', '--project', 'e2e'])
+    // The Live view's own rigor join is not this view's read: its poll may land
+    // again while this tab is open, so it is admitted by its whole argv.
+    const liveJoin = ['runs', 'ls', '--json', '--since', '24h', '--project', 'e2e'].join(' ')
+    expect(asked.filter((argv) => argv[0] === 'runs' && argv.join(' ') !== liveJoin)).toEqual([])
   })
 
   test('draws the settings section from the read, and records that read', async () => {
