@@ -260,6 +260,11 @@ func (s *ServiceReadTokens) mint(ctx context.Context, minValid time.Duration) (s
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+id)
+	// The same token again in the person header — the name credsvc spells and
+	// this package cannot import, as github's read mint spells it — because
+	// Cloud Run's front end consumes the ID token in Authorization for the
+	// invoker check and hands the service that header changed.
+	req.Header.Set("X-Fugaro-Person-Identity", id)
 	resp, err := serviceReadClient(s.HTTP).Do(req)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("%w: the credentials service could not be reached", ErrServiceRead)

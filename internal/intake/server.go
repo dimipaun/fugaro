@@ -547,7 +547,7 @@ type call struct {
 // caller verifies the call's Google ID token and answers the verified caller,
 // or refuses — its audit line included — and reports false.
 func (c *call) caller(r *http.Request) (credsvc.LauncherCaller, bool) {
-	tok, err := bearer(r)
+	tok, err := callerToken(r)
 	if err != nil {
 		// A call with no token is a caller the class does not admit, and it is
 		// answered as that rather than as a malformed request: there is
@@ -710,6 +710,28 @@ func bearer(r *http.Request) (string, error) {
 		return "", errors.New("the presented token is over the header's bound")
 	}
 	return tok, nil
+}
+
+// callerToken reads the token the caller is verified by: the person header when
+// the call presents it, and the bearer otherwise. Cloud Run's front end consumes
+// a valid ID token in Authorization for the invoker check and hands the process
+// that header changed, so the token a person's own account minted — the one
+// this intake's callers present — arrives in credsvc.HeaderPersonIdentity
+// alone; a call in front of no front end presents the bearer as before. The
+// header's own rules are the bearer's: exactly one value, and a token inside
+// the header's bound.
+func callerToken(r *http.Request) (string, error) {
+	values := r.Header.Values(credsvc.HeaderPersonIdentity)
+	if len(values) == 0 {
+		return bearer(r)
+	}
+	if len(values) != 1 {
+		return "", errors.New("the call does not present exactly one " + credsvc.HeaderPersonIdentity + " header")
+	}
+	if tok := values[0]; tok != "" && len(tok) <= maxTokenBytes {
+		return tok, nil
+	}
+	return "", errors.New("the presented token is over the header's bound")
 }
 
 // AuditEvent is one intake call: exactly the fields the line carries, and no

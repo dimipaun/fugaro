@@ -327,7 +327,11 @@ func workspaceOf(repos map[string]string, repo string) (slug, workspace string, 
 //     reaches nobody (C1.13, D143).
 func (s *Server) bitbucketRead(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	purpose, credential := routeAct(r.URL.Path)
-	tok, err := bearerFromHTTP(r)
+	// A person is one of this route's two classes, so the token is read where
+	// the front end leaves it: Cloud Run consumes a valid ID token in
+	// Authorization for the invoker check and hands the service that header
+	// changed, and the coordinator presents its own there too.
+	tok, err := personBearerFromHTTP(r)
 	if err != nil {
 		// No line: the call is refused before its caller was verified, which is
 		// the one refusal on this route with nothing to name.

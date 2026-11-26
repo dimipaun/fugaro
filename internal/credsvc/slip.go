@@ -1334,6 +1334,11 @@ func (s *Server) personGrant(ctx context.Context, w http.ResponseWriter, r *http
 	// that header changed.
 	tok, err := personBearerFromHTTP(r)
 	if err != nil {
+		// No line: the call is refused before its caller was verified, which is
+		// the one refusal on this route with nothing to name. The warning
+		// beside it is the installation's grant's own, because the operator
+		// meets the same refusal there and has only this to read.
+		s.log.Warn("credsvc: a workspace grant carried no readable token", "reason", err.Error())
 		s.refuse(w, StatusUnverified, ErrorUnverifiedJobIdentity, err.Error())
 		return
 	}

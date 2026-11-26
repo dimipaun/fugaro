@@ -28,14 +28,15 @@ type fakeReadService struct {
 	expires time.Duration
 	// now is the clock the answer's expiry is built from, so a test that moves
 	// its own clock forward moves the token's life with it.
-	now       func() time.Time
-	names     string // the repository the answer names; "" means the one asked for
-	status    int
-	body      string // a raw answer body, when a case needs one
-	lastBody  string
-	lastAuth  string
-	lastPath  string
-	callCount int
+	now        func() time.Time
+	names      string // the repository the answer names; "" means the one asked for
+	status     int
+	body       string // a raw answer body, when a case needs one
+	lastBody   string
+	lastAuth   string
+	lastPerson string
+	lastPath   string
+	callCount  int
 }
 
 func newReadService(t *testing.T) *fakeReadService {
@@ -45,6 +46,7 @@ func newReadService(t *testing.T) *fakeReadService {
 		body, _ := io.ReadAll(r.Body)
 		f.lastBody = string(body)
 		f.lastAuth = r.Header.Get("Authorization")
+		f.lastPerson = r.Header.Get("X-Fugaro-Person-Identity")
 		f.lastPath = r.URL.Path
 		f.callCount++
 		if f.body != "" {
@@ -110,6 +112,13 @@ func TestServiceReadTokens(t *testing.T) {
 	}
 	if !strings.HasPrefix(f.lastAuth, "Bearer ") {
 		t.Errorf("the call presented no bearer identity: %q", f.lastAuth)
+	}
+	// The same token again in the person header, spelled here because this
+	// package cannot import credsvc: Cloud Run's front end consumes the ID token
+	// in Authorization for the invoker check and hands the service that header
+	// changed, so the service reads the caller's own token from this one.
+	if want := strings.TrimPrefix(f.lastAuth, "Bearer "); f.lastPerson != want {
+		t.Errorf("the call presented %q in X-Fugaro-Person-Identity, want the token it presented as the bearer", f.lastPerson)
 	}
 	// The service hears the repository the caller is reading, in the spelling
 	// the installation uses, and nothing else: it is the one field of this

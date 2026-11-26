@@ -691,6 +691,34 @@ func TestServiceAccountRefused(t *testing.T) {
 	}
 }
 
+// TestTheCallerTokenComesFromThePersonHeader: this intake is a Cloud Run
+// service whose invoker check consumes a valid ID token in Authorization and
+// hands this process that header changed, so the token a person's own account
+// minted — the one a caller of this service presents — is read where it lands:
+// credsvc.HeaderPersonIdentity. A call with no readable token in either header
+// is still the class's refusal.
+func TestTheCallerTokenComesFromThePersonHeader(t *testing.T) {
+	f := member(t)
+	tok := f.token(t, testOwnerEmail, testOwnerSub)
+
+	r := httptest.NewRequest(http.MethodPost, CreatePath, strings.NewReader(createBody(ScopeUser, "api-key", testValue)))
+	r.Header.Set("Authorization", "Bearer front-end-rewritten")
+	r.Header.Set(credsvc.HeaderPersonIdentity, tok)
+	w := httptest.NewRecorder()
+	f.srv.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("a person's token in %s beside a rewritten bearer: got %d %s", credsvc.HeaderPersonIdentity, w.Code, w.Body.String())
+	}
+	if want := []string{secretname.UserPrefix + testOwnerSub + "_api-key"}; !slices.Equal(f.store.created, want) {
+		t.Fatalf("the created containers are %v, want %v", f.store.created, want)
+	}
+
+	w = f.post(t, CreatePath, "", createBody(ScopeUser, "api-key", testValue))
+	if w.Code != http.StatusForbidden || errorType(t, w) != ErrorUnverifiedLauncher {
+		t.Fatalf("a call with no readable token: got %d %s, want 403 %s", w.Code, errorType(t, w), ErrorUnverifiedLauncher)
+	}
+}
+
 // TestNonAdminCannotDeleteOtherPrefix: a member deletes under their own prefix
 // and nowhere else — not by naming another account's container, and not by
 // naming its owner (D1935, R10).

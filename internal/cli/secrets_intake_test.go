@@ -368,14 +368,15 @@ func TestTheIntakeFamilyTakesOneLineValues(t *testing.T) {
 // as the deployment it is.
 func TestTheIntakeCallIsTheRoutesOwnCall(t *testing.T) {
 	var (
-		path, auth string
-		body       intake.CreateRequest
-		status     int
-		answer     any
+		path, auth, person string
+		body               intake.CreateRequest
+		status             int
+		answer             any
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
 		path, auth = r.URL.Path, r.Header.Get("Authorization")
+		person = r.Header.Get(credsvc.HeaderPersonIdentity)
 		_ = json.Unmarshal(raw, &body)
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -406,6 +407,12 @@ func TestTheIntakeCallIsTheRoutesOwnCall(t *testing.T) {
 	}
 	if auth != "Bearer "+fakeLauncherToken {
 		t.Errorf("the call presented %q, want the caller's own Google ID token: the intake's launcher class verifies that token and no other identity", auth)
+	}
+	// The intake is a Cloud Run service whose invoker check consumes a valid ID
+	// token in Authorization and hands it that header changed, so the same token
+	// travels again in the person header, which is where the intake reads it.
+	if person != fakeLauncherToken {
+		t.Errorf("the call presented %q in %s, want the caller's own Google ID token: the intake reads the token there", person, credsvc.HeaderPersonIdentity)
 	}
 	if body.Name != req.Name || body.Scope != req.Scope || body.Value != req.Value {
 		t.Errorf("the call sent %+v, want the request it was given (%+v)", body, req)

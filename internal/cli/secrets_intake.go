@@ -497,6 +497,10 @@ func secretsIntakeOver(ctx context.Context, serviceURL string, c secretsIntakeCa
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+identity)
+	// The same token again in the person header: Cloud Run's front end consumes
+	// the ID token in Authorization for the invoker check and hands the intake
+	// that header changed, and the intake reads the caller's own token from
+	// this one (credsvc.HeaderPersonIdentity).
 	resp, err := secretsIntakeClient().Do(req)
 	if err != nil {
 		return remote(fmt.Errorf("the installation's intake could not be reached at %s: %v", safetext.Field(serviceURL), err))

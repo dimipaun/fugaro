@@ -735,6 +735,43 @@ func TestPersonGcloudTokenAdmittedAndAudited(t *testing.T) {
 	}
 }
 
+// TestTheReadMintAdmitsThePersonHeader: this route's person class is reached
+// through a front end that consumes a valid ID token in Authorization for the
+// invoker check, so a person's own gcloud token arrives in HeaderPersonIdentity
+// and the bearer arrives changed. The call below is that shape — the header
+// holds the person's token and the bearer holds a job's own, which the class
+// refuses — so a route that read the bearer would answer the 403 an operator
+// met on every read mint before this. A call carrying neither is refused for
+// the reason it always was.
+func TestTheReadMintAdmitsThePersonHeader(t *testing.T) {
+	s, f := bitbucketSvc(t, testPersonAccount)
+	tok := s.personToken(testPersonAccount, audienceClaim(GcloudAudience))
+	resp, body := s.callPerson(t, readTokenPath, `{"repository":"`+testBitbucketRepo+`"}`, "", func(r *http.Request) {
+		r.Header.Set("Authorization", "Bearer "+s.jobToken())
+		r.Header.Set(HeaderPersonIdentity, tok)
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("a person's token in %s beside a rewritten bearer was refused: HTTP %d %s", HeaderPersonIdentity, resp.StatusCode, body)
+	}
+	if n := len(f.seen()); n != 1 {
+		t.Errorf("the service exchanged the read consumer %d times, want one", n)
+	}
+	if lines := auditLines(t, s.audit); len(lines) != 1 {
+		t.Errorf("an admitted mint wrote %d audit lines, want exactly 1: %v", len(lines), lines)
+	}
+	if strings.Contains(s.audit.String(), tok) {
+		t.Error("the audit line carries the identity token the caller presented")
+	}
+
+	s2, _ := bitbucketSvc(t, testPersonAccount)
+	resp, _ = s2.callPerson(t, readTokenPath, `{"repository":"`+testBitbucketRepo+`"}`, "", func(r *http.Request) {
+		r.Header.Set("Authorization", "front-end-rewritten")
+	})
+	if resp.StatusCode != StatusUnverified {
+		t.Errorf("a call with no readable token answered HTTP %d, want %d", resp.StatusCode, StatusUnverified)
+	}
+}
+
 // TestPersonGcloudTokenRefusals: the person class's other checks are unchanged
 // by the audience it now admits. A token gcloud minted for a person is admitted
 // only when its audience is gcloud's own or this service's, its address is on
