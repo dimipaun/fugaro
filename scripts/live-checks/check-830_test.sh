@@ -1805,6 +1805,8 @@ test_no_line_arrives_and_the_exit_status_answers() {
   # why its lines did not land, which is a different reading from the probe that
   # never started at all.
   expect_row probe-diag "is in it 1 time(s), so the container did start on this VM" "no lines: the container-start reading"
+  expect_row probe-diag "the container started inside it, so the pull for the image" "no lines: the pull is not blamed once the boot log shows the container ran"
+  expect_absent "$out" "did not finish inside that bound" "no lines: a container that started is never read as a pull that did not finish"
   expect_row probe-diag "The VM's own interfaces:" "no lines: the VM's own object is read for its interfaces too"
   expect_row probe-diag 'resource.type="batch.googleapis.com/Job"' "no lines: the broader read"
   expect_row probe-diag "found 0 line(s) by the runner's label" "no lines: by the runner's label"
