@@ -249,7 +249,7 @@ func runUpdateCheck(cmd *cobra.Command, o *initOptions, args []string) error {
 func checkLocalOf(ctx context.Context, o *initOptions) *checkLocal {
 	co := o.cloud
 	co.stderr = func() io.Writer { return io.Discard } // the mode prints its own account
-	lc, path, _, err := loadRepoConfig(ctx, &initOptions{cloud: co}, ".")
+	lc, path, _, err := loadRepoConfigReadOnly(ctx, &initOptions{cloud: co}, ".")
 	if err != nil {
 		return &checkLocal{why: oneLine(err.Error())}
 	}

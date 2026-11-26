@@ -6401,7 +6401,22 @@ const printVarsNoBudget = "the budget alert this installation holds is not in th
 // --gcp-project and --region applied. The checkout that selects it is
 // dir's, the one being onboarded, not the working directory's.
 func loadRepoConfig(ctx context.Context, o *initOptions, dir string) (lc *localcfg.Config, path string, old []byte, err error) {
-	co, err := checkoutProject(ctx, dir)
+	return loadRepoConfigAt(ctx, o, dir, checkoutProject)
+}
+
+// loadRepoConfigReadOnly is loadRepoConfig for the one caller that must write
+// nothing — `fugaro update --check` (U10): the checkout is resolved, so
+// looking at it does not remember it (checkoutProject's one side effect),
+// which is the same split the reader that must not write takes
+// (config list --json, resolveCheckout).
+func loadRepoConfigReadOnly(ctx context.Context, o *initOptions, dir string) (lc *localcfg.Config, path string, old []byte, err error) {
+	return loadRepoConfigAt(ctx, o, dir, resolveCheckout)
+}
+
+// loadRepoConfigAt is both of them: at is the checkout the selection is
+// resolved through, and its only difference is the writing.
+func loadRepoConfigAt(ctx context.Context, o *initOptions, dir string, at func(context.Context, string) (*localcfg.Checkout, error)) (lc *localcfg.Config, path string, old []byte, err error) {
+	co, err := at(ctx, dir)
 	if err != nil {
 		return nil, "", nil, err
 	}
