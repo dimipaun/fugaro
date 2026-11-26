@@ -61,7 +61,7 @@ const craftModelModel = "claude-opus-4-1"
 // pin. The published node is version 7, one below this binary's, so the same
 // run's policy stage carries it forward as well (the rig's own reading of
 // v7Node: MC4's fixture, whose account keys this one states).
-var craftModelStale = []string{"policy-rules-skew", "plugin-pin"}
+var craftModelStale = []string{"policy-rules-skew", "repo-plugin-pin"}
 
 // craftModelDocuments is the fixture's three documents as they were read.
 //

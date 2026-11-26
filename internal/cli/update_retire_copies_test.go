@@ -160,7 +160,7 @@ func TestUpdateRetiresTheProjectCopiesItCopied(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if d := r.sm.Deleted(); !slices.Contains(d, goneID) || slices.Contains(d, keptID) || slices.Contains(d, uncopiedID) || slices.Contains(d, plannedID) {
 		t.Fatalf("deleted = %v; want %s alone: a copy a deployed job still names, one of a name the grammar does not hold, and one the configuration still plans are not this run's to delete", d, goneID)
@@ -252,7 +252,7 @@ func TestUpdateKeepsTheCopiesWhenTheJobsReadFails(t *testing.T) {
 	// The whole installation's jobs, not one job: this is the read G4 rests on.
 	r.run.FailListWith = http.StatusForbidden
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if d := r.sm.Deleted(); len(d) != 0 {
 		t.Errorf("deleted = %v; want nothing from a run that could not read the jobs", d)
@@ -300,7 +300,7 @@ func TestUpdateRetiresNothingBeforeTheReleaseDropsTheKeys(t *testing.T) {
 	r, db, _, _, _ := retiredCopiesRig(t)
 	dropProjectCopies(t, false)
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if d := r.sm.Deleted(); len(d) != 0 {
 		t.Errorf("deleted = %v; want nothing at the release that still derives the containers", d)

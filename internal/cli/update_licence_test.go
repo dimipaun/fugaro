@@ -38,7 +38,7 @@ func TestUpdateAddsTheRenewalJobAndLeavesARunInFlightRunning(t *testing.T) {
 	r := convergeRigWithTheCoordinator(t)
 	run := startRunInFlight(t, r)
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	// The job exists, at this release's names, in the document the apply read.
 	vars := r.tfvars(t)
@@ -109,7 +109,7 @@ func TestUpdateAddsTheRenewalJobAndLeavesARunInFlightRunning(t *testing.T) {
 // that follows it has nothing to do about the licence job at all.
 func TestASecondUpdateLeavesTheLicenceJobAlone(t *testing.T) {
 	r := convergeRigWithTheCoordinator(t)
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 	first := licenceBlock(t, r)
 
 	// The second run is allowed to end non-zero, and the tolerance is the
@@ -155,7 +155,7 @@ func TestASecondUpdateLeavesTheLicenceJobAlone(t *testing.T) {
 // condition, not about this carry.
 func TestAnUpdateKeepsTheLicenceJobTheInstallationHolds(t *testing.T) {
 	r := convergeRigWithTheCoordinator(t)
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 	if first := licenceBlock(t, r); first == "null" {
 		t.Fatalf("the first update wrote no licence block, so this is not the installation this test is about: %s", first)
 	}
@@ -212,7 +212,7 @@ func TestAnUpdateKeepsTheLicenceJobTheInstallationHolds(t *testing.T) {
 // function: the config below is this rig's own minus the coordinator's opt-in.
 func TestNoCoordinatorMeansNoLicenceJob(t *testing.T) {
 	r := newConvergeRig(t, v3Node(nil))
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if v, ok := r.tfvars(t)["licence"]; ok {
 		t.Errorf("an installation with no coordinator planned a licence job: %v\nthe job's image is the coordinator's, so an installation that never opted in has no tagged image to run and `fugaro licence status` says renewal is by hand there (TN5)", v)
@@ -240,7 +240,7 @@ func TestNoCoordinatorJobMeansNoLicenceJob(t *testing.T) {
 	// tagged, so its own job is not.
 	r.appendConfig(t, "terraform: { budget_backend: true, coordinator: true }\n")
 	registerInstallation(t, r.initRig)
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if c, ok := r.tfvars(t)["coordinator"].(map[string]any); !ok || c["deploy_job"] == true {
 		t.Fatalf("the fixture deployed the coordinator's own job: %v, so it is not the installation this test is about", r.tfvars(t)["coordinator"])
@@ -299,7 +299,7 @@ func TestTheReviewCoversTheRenewalBindingTheUpdatePlans(t *testing.T) {
 	r.script["plan@installation"] = map[string]any{"exit": 2}
 	r.setPlanAt(t, "installation", renewalBindingChange())
 	r.save(t)
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 	// The review admits the binding, or refuses it by the one reason
 	// licenceSecretGrant exists to give (tf.Cover): its target is not the
 	// container this installation's licence renewal job writes into. The

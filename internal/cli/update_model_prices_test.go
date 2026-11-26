@@ -91,7 +91,7 @@ func TestUpdateMigratesCacheReadKey(t *testing.T) {
 	// FUGARO_CONFIG, so the local config `fugaro update` reads and writes is the
 	// one this rig left in the XDG projects directory.
 	registerInstallation(t, r.initRig)
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	written := string(readFile(t, installationConfigPath()))
 	for _, want := range []string{
@@ -252,7 +252,7 @@ func TestUpdateMigrationIdempotent(t *testing.T) {
 	r := newConvergeRig(t, currentNode())
 	r.appendConfig(t, cacheKeyFixture)
 	registerInstallation(t, r.initRig)
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	path := installationConfigPath()
 	second, err := modelPricesPlanFor(path)
