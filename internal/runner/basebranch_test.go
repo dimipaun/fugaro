@@ -63,6 +63,7 @@ func TestFollowUpTaskBaseBranch(t *testing.T) {
 	h.followUp(t, followID, runID, "Tidy up.")
 	spec := &task.Spec{Version: 1, RunID: followID, Repo: "acme/app", Ref: "master", BaseBranch: "master",
 		Workflow: h.first.Workflow, Task: "Tidy up.", Branch: "fugaro/" + runID, PR: 1, PreviousRun: runID}
+	h.taskWithLayer(spec)
 	if err := h.store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)
 	}

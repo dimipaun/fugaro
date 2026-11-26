@@ -62,24 +62,34 @@ var askFlagStates = []string{"neither", "--ask"}
 //
 //   - a run that did not pass the flag prints nothing and refuses nothing: the
 //     flag decides nothing about a confirmation it was not asked for;
-//   - --ask in a project the marks did NOT answer "managed" for prints the
-//     no-op line, in every session: there is nothing to restore, and a refusal
-//     would fail a command that behaves exactly as it always has;
 //   - --ask in a managed project prints the restored line at a real terminal
 //     and REFUSES in every session that cannot answer a prompt. It never
 //     proceeds on the gate's verdict instead, which is the one answer that
-//     would make the flag a way to write without the confirmation it asked for.
-func askOracle(isManaged bool, flag string, c initflow.Conditions) (line, refusal string) {
+//     would make the flag a way to write without the confirmation it asked for;
+//   - --ask in a project the marks did NOT answer "managed" for is the no-op
+//     line — there is nothing to restore, and a refusal would fail a command
+//     that behaves exactly as it always has — UNLESS the door's flag also
+//     turns value entry on (`values`, the update door alone, D3347/R18): then
+//     it says so and asks the repositories' values at a real terminal
+//     (AskValues), and where no terminal can ask a value it prints and refuses
+//     nothing and the stage leaves its own `fugaro secrets set` lines (D1540).
+func askOracle(values, isManaged bool, flag string, c initflow.Conditions) (line, refusal string) {
 	if flag != "--ask" {
 		return "", ""
 	}
-	if !isManaged {
-		return initflow.AskUnmanaged(), ""
-	}
-	if c.Agent != "" || c.JSON || !c.Terminal {
+	canPrompt := c.Agent == "" && c.Terminal && !c.JSON
+	switch {
+	case isManaged && canPrompt:
+		return initflow.AskRestored(), ""
+	case isManaged:
 		return "", initflow.AskRefusal(c)
+	case !values:
+		return initflow.AskUnmanaged(), ""
+	case canPrompt:
+		return initflow.AskValues(), ""
+	default:
+		return "", ""
 	}
-	return initflow.AskRestored(), ""
 }
 
 // askDecider is one candidate for the flag's decision — the flags as they
@@ -123,21 +133,23 @@ func askViolations(decide askDecider, mode func(bool, string, error) bool, reads
 		m := initflow.Managed{Managed: rd.managed, Admitted: rd.managed}
 		for _, flag := range askFlagStates {
 			for _, s := range askSessions() {
-				n++
-				c := s.c
-				c.Ask = flag == "--ask"
-				f := askFlags{ask: flag == "--ask"}
-				wantLine, wantRefusal := askOracle(rd.managed, flag, c)
-				line, refusal := decide(f, isManaged, c)
-				where := rd.state + ", " + flag + ", " + s.name
-				if line != wantLine {
-					bad = append(bad, where+": line "+askQuote(line)+", want "+askQuote(wantLine))
-				}
-				if refusal != wantRefusal {
-					bad = append(bad, where+": refusal "+askQuote(refusal)+", want "+askQuote(wantRefusal))
-				}
-				if c.Ask && initflow.GateStandsIn(c, m) {
-					bad = append(bad, where+": the gate still stands in for this step")
+				for _, values := range []bool{false, true} {
+					n++
+					c := s.c
+					c.Ask = flag == "--ask"
+					f := askFlags{ask: flag == "--ask", values: values}
+					wantLine, wantRefusal := askOracle(values, rd.managed, flag, c)
+					line, refusal := decide(f, isManaged, c)
+					where := rd.state + ", " + flag + ", values=" + boolWord(values) + ", " + s.name
+					if line != wantLine {
+						bad = append(bad, where+": line "+askQuote(line)+", want "+askQuote(wantLine))
+					}
+					if refusal != wantRefusal {
+						bad = append(bad, where+": refusal "+askQuote(refusal)+", want "+askQuote(wantRefusal))
+					}
+					if c.Ask && initflow.GateStandsIn(c, m) {
+						bad = append(bad, where+": the gate still stands in for this step")
+					}
 				}
 			}
 		}
@@ -508,67 +520,75 @@ func TestUpdateManagedAskKeepsTheGatesOwnRefusalFirst(t *testing.T) {
 	}
 }
 
-// A project the marks did not answer "managed" for: --ask says so, and it is
-// not an error. This is rule 3 of the flag — the no-op — in both sessions whose
-// mistake would be expensive: a refusal in a coding agent's session would stop
-// a command that behaves exactly as it always has, and the restored line at a
-// person's terminal would claim confirmations were replaced that never were.
-// The comparison is the assertion: the flagged run IS the plain run with the
-// flag's one line taken out of the middle, and nothing else moved.
+// A project the marks did not answer "managed" for, on the one door whose
+// --ask turns value entry on — `fugaro update` (D3347, R18). This is where the
+// flag stops being the pure no-op it is everywhere else: at the owner's own
+// terminal it says so and asks the repositories' missing secret values
+// (AskValues), and in a session that cannot answer one it REFUSES
+// (AskValuesRefusal) rather than reading as a silent proceed, because the flag
+// asked for a value nobody can type. It never claims the gate's line, and it
+// still applies nothing of its own: the applies are counted rather than assumed
+// away, and the terminal run IS the plain run with the flag's one line taken out
+// of the middle, so the flag moved nothing but its own sentence.
 //
-// The runs it compares start from the same state, so the rig is settled by a
-// plain run first: this rig is a plan that applies, and its first run writes the
-// local config and takes the IAM removal — a second run differs from that one
-// for those reasons alone. The runs after it differ in one thing only, the flag
-// and the line it prints, and the applies are counted rather than assumed away:
-// a project that is not managed applies what it applies with or without the
-// flag, and nothing is applied for having passed it.
-func TestUpdateAskInAProjectThatIsNotManagedIsANoOp(t *testing.T) {
+// The runs the comparison is between start from the same state, so the rig is
+// settled by a plain run first: this rig is a plan that applies, and its first
+// run writes the local config and takes the IAM removal — a second run differs
+// from that one for those reasons alone.
+func TestUpdateAskInAProjectThatIsNotManagedTurnsOnValueEntry(t *testing.T) {
 	for _, w := range askMarkWorlds()[1:] {
-		for _, s := range []struct {
-			name  string
-			agent bool
-		}{
-			{"a real terminal", false},
-			{"a coding agent's session", true},
-		} {
-			t.Run(w.name+", "+s.name, func(t *testing.T) {
-				r := askUpdateRig(t, w)
-				noAgentSession(t)
-				if s.agent {
-					t.Setenv("CLAUDECODE", "1")
-				} else {
-					fakeTerminal(t)
-				}
+		t.Run(w.name+", a real terminal", func(t *testing.T) {
+			r := askUpdateRig(t, w)
+			noAgentSession(t)
+			fakeTerminal(t)
 
-				_, _ = updateRun(t, r, "update") // the rig settled
-				before := len(r.ran(t, "apply"))
-				// Both runs the comparison is between get a log name of their
-				// own: the settled run above took the only one there was, and a
-				// converge without a log cuts nothing on its screen (report.Brief
-				// is the log's), so the unflagged run would be the one the flag
-				// is read against with its rows whole.
-				freeLogName(t)
-				plain, _ := updateRun(t, r, "update")
-				freeLogName(t)
-				mid := len(r.ran(t, "apply"))
-				flagged, _ := updateRun(t, r, "update", "--ask")
-				after := len(r.ran(t, "apply"))
+			_, _ = updateRun(t, r, "update") // the rig settled
+			before := len(r.ran(t, "apply"))
+			// Both runs the comparison is between get a log name of their
+			// own: the settled run above took the only one there was, and a
+			// converge without a log cuts nothing on its screen (report.Brief
+			// is the log's), so the unflagged run would be the one the flag
+			// is read against with its rows whole.
+			freeLogName(t)
+			plain, _ := updateRun(t, r, "update")
+			freeLogName(t)
+			mid := len(r.ran(t, "apply"))
+			flagged, _ := updateRun(t, r, "update", "--ask")
+			after := len(r.ran(t, "apply"))
 
-				if !strings.Contains(flagged, initflow.AskUnmanaged()) {
-					t.Errorf("--ask did not say what the marks answered:\n%s", flagged)
-				}
-				if strings.Contains(flagged, initflow.AskRestored()) || strings.Contains(flagged, "never a silent proceed") {
-					t.Errorf("--ask answered as if the project were managed:\n%s", flagged)
-				}
-				if stripped := withoutRunOwn(strings.Replace(flagged, initflow.AskUnmanaged()+"\n", "", 1)); stripped != withoutRunOwn(plain) {
-					t.Errorf("--ask changed the run in a project that is not managed (the flag's line stripped from the middle).\nwithout: %s\nwith:    %s", plain, flagged)
-				}
-				if mid-before != after-mid {
-					t.Errorf("--ask applied %d step(s) of its own in a project that is not managed (%d without it)", after-mid, mid-before)
-				}
-			})
-		}
+			if !strings.Contains(flagged, initflow.AskValues()) {
+				t.Errorf("--ask did not say what it turns on in a project that is not managed:\n%s", flagged)
+			}
+			if strings.Contains(flagged, initflow.AskUnmanaged()) {
+				t.Errorf("--ask answered the no-op line on the door whose flag asks for values:\n%s", flagged)
+			}
+			if strings.Contains(flagged, initflow.AskRestored()) {
+				t.Errorf("--ask answered as if the project were managed:\n%s", flagged)
+			}
+			if stripped := withoutRunOwn(strings.Replace(flagged, initflow.AskValues()+"\n", "", 1)); stripped != withoutRunOwn(plain) {
+				t.Errorf("--ask changed the run in a project that is not managed (the flag's line stripped from the middle).\nwithout: %s\nwith:    %s", plain, flagged)
+			}
+			if mid-before != after-mid {
+				t.Errorf("--ask applied %d step(s) of its own in a project that is not managed (%d without it)", after-mid, mid-before)
+			}
+		})
+		t.Run(w.name+", a coding agent's session", func(t *testing.T) {
+			r := askUpdateRig(t, w)
+			noAgentSession(t)
+			t.Setenv("CLAUDECODE", "1")
+
+			got, err := updateRun(t, r, "update", "--ask")
+			if err == nil {
+				t.Fatalf("a coding agent's run applied with --ask:\n%s", got)
+			}
+			// No line and no refusal from the flag: a value cannot be asked
+			// here, so the stage leaves its own `fugaro secrets set` lines and
+			// the flag says nothing — it never claims the gate's line, and it
+			// is never the no-op it is on the doors without value entry.
+			if strings.Contains(got, initflow.AskUnmanaged()) || strings.Contains(got, initflow.AskValues()) {
+				t.Errorf("--ask answered a line where a value cannot be asked:\n%s", got)
+			}
+		})
 	}
 }
 

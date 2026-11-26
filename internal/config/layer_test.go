@@ -1108,7 +1108,8 @@ defaults:
 // (D834, internal/cli's rigorHotfixRefusal, pinning that the request is the
 // door: `fugaro run --mode hotfix`), and a hand-written hotfix still resolves —
 // as a default, as an area's level and as a per-repo level at the project
-// layer, and as the repository's own default. The plan states it in so many
+// layer, which is where a repository's level lives from release A on (D3237,
+// R2). The plan states it in so many
 // words ("the command that writes a default still refuses hotfix in every
 // form ... a hand-written rigor.default: hotfix still resolves", LV3.1's
 // Global constraints), and a layer this reader refused would strand an
@@ -1128,8 +1129,8 @@ func TestLayerResolvesAWrittenHotfix(t *testing.T) {
 	if len(ps) > 0 {
 		t.Fatalf("the repository's own hotfix default was refused: %s", problemsText(ps))
 	}
-	if cfg.Rigor.Default != rigor.Hotfix {
-		t.Errorf("the repository's own hotfix default resolved as %q; want hotfix", cfg.Rigor.Default)
+	if cfg.Rigor.Default != "" || !cfg.RepoRigorSet {
+		t.Errorf("the repository's own hotfix default resolved as %+v; want the empty block the drop left, with the file's own rigor: key still read", cfg.Rigor)
 	}
 }
 
@@ -1137,10 +1138,12 @@ func TestLayerResolvesAWrittenHotfix(t *testing.T) {
 // are settable in both layers (L1.3, D722), and the merge between them is the
 // per-key deep merge of docs/layered-config/spec.md §4 — not a whole-block
 // replacement. A project that pins level 1's model and turns level 3 off
-// keeps both while a repository adds level 1's focus and level 2's model; a
+// keeps both while a repository adds level 1's focus and level 2's effort; a
 // repository writing one key of a level cannot drop the project's other keys
 // of that same level, which is what would happen if agent.levels were merged
-// as one leaf.
+// as one leaf. A repository's agent.levels.lN.model is the project's from
+// release A on (D3291, R2), so the keys it brings here are the ones it still
+// decides.
 func TestLayerLevelsOverlay(t *testing.T) {
 	const head = "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
 	layer := mustLayer(t, head+`defaults:
@@ -1154,7 +1157,7 @@ func TestLayerLevelsOverlay(t *testing.T) {
 	repo := minimalRepo + `agent:
   levels:
     l1: { focus: the migration and its rollback }
-    l2: { model: claude-opus-5-5 }
+    l2: { effort: xhigh }
 workflows:
   default:
     commands: { build: make, test: make test }
@@ -1170,8 +1173,8 @@ workflows:
 	if levels.L1.Model != "claude-haiku-4-5" || levels.L1.Effort != "low" || levels.L1.Focus != "the migration and its rollback" {
 		t.Errorf("agent.levels.l1 = %+v, want the project's model and effort beside the repository's focus", levels.L1)
 	}
-	if levels.L2.Model != "claude-opus-5-5" || levels.L2.Effort != "" {
-		t.Errorf("agent.levels.l2 = %+v, want the repository's model alone", levels.L2)
+	if levels.L2.Model != "" || levels.L2.Effort != "xhigh" {
+		t.Errorf("agent.levels.l2 = %+v, want the repository's own effort and no model: a repository's level model is the project's", levels.L2)
 	}
 	if !levels.L3.Off || levels.L3.Model != "" {
 		t.Errorf("agent.levels.l3 = %+v, want the project's none", levels.L3)
@@ -1183,7 +1186,7 @@ workflows:
 		"agent.levels.l1.model":    SourceProject,
 		"agent.levels.l1.effort":   SourceProject,
 		"agent.levels.l1.focus":    SourceRepo,
-		"agent.levels.l2.model":    SourceRepo,
+		"agent.levels.l2.effort":   SourceRepo,
 		"agent.levels.l3.none":     SourceProject,
 		"agent.adversarial_rounds": SourceProject,
 	} {
@@ -1217,8 +1220,10 @@ workflows:
 // beside it rather than merged into it: the level replaces the inherited one
 // whole. Read the other way, a layer that writes any other key is turning the
 // level back on, so an inherited `none: true` is cleared. A repository can
-// therefore turn a level the project set off, and turn one the project turned
-// off back on, which is what docs/multi-model.md §4 tells it it can do.
+// therefore turn on a level the project turned off, which is what
+// docs/multi-model.md §4 tells it it can do, and turn off one the project
+// leaves alone — never one the project turns on: a level on beats off (B4,
+// spec §5.2), so that off is dropped and recorded (TestTightenOnly).
 func TestLayerLevelsNoneReplacesTheLevel(t *testing.T) {
 	const head = "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
 	const workflows = "workflows:\n  default:\n    commands: { build: make, test: make test }\n"
@@ -1234,45 +1239,37 @@ func TestLayerLevelsNoneReplacesTheLevel(t *testing.T) {
 		goneSource string
 	}{
 		{
-			name:       "the repository turns the project's level off",
+			name:       "the repository turns off a level the project leaves alone",
 			level:      "l1",
-			layerLevel: "      l1: { model: claude-haiku-4-5, effort: low }\n",
+			layerLevel: "      l2: { effort: low }\n",
 			repoLevel:  "    l1: { none: true }\n",
 			off:        true,
 			repoSource: "agent.levels.l1.none",
-			goneSource: "agent.levels.l1.model",
 		},
 		{
 			name:       "the repository turns the project's none back on",
 			level:      "l3",
 			layerLevel: "      l3: { none: true }\n",
-			repoLevel:  "    l3: { model: claude-opus-5-5, effort: xhigh }\n",
-			model:      "claude-opus-5-5",
+			repoLevel:  "    l3: { effort: xhigh }\n",
 			effort:     "xhigh",
-			repoSource: "agent.levels.l3.model",
+			repoSource: "agent.levels.l3.effort",
 			goneSource: "agent.levels.l3.none",
 		},
 		{
 			// The literal model name `none` is the same switch written the
-			// other way, so it replaces the level the layer below set exactly
-			// as none: true does: the project's model and effort are gone, and
-			// what the repository wrote is read as the level's own switch.
-			name:       "the repository turns the project's level off by its model name",
-			level:      "l1",
-			layerLevel: "      l1: { model: claude-haiku-4-5, effort: low }\n",
-			repoLevel:  "    l1: { model: none }\n",
-			off:        true,
-			repoSource: "agent.levels.l1.model",
-			goneSource: "agent.levels.l1.effort",
-		},
-		{
+			// other way, so the level the layer below set is replaced exactly
+			// as none: true replaces it: the project's own is gone, and the
+			// repository's key is read as turning the level back on. The
+			// literal is the spelling a layer still carries — a repository's
+			// agent.levels.lN.model is the project's from release A on (D3291,
+			// R2), so the switch it spells itself is none: true, which the
+			// first case holds.
 			name:       "the repository turns the project's model-name none back on",
 			level:      "l3",
 			layerLevel: "      l3: { model: none }\n",
-			repoLevel:  "    l3: { model: claude-opus-5-5, effort: xhigh }\n",
-			model:      "claude-opus-5-5",
+			repoLevel:  "    l3: { effort: xhigh }\n",
 			effort:     "xhigh",
-			repoSource: "agent.levels.l3.model",
+			repoSource: "agent.levels.l3.effort",
 			goneSource: "agent.levels.l3.none",
 		},
 	} {
@@ -1294,8 +1291,10 @@ func TestLayerLevelsNoneReplacesTheLevel(t *testing.T) {
 			if src := res.SourceOf(tc.repoSource); src != SourceRepo {
 				t.Errorf("SourceOf(%s) = %q, want %q", tc.repoSource, src, SourceRepo)
 			}
-			if src := res.SourceOf(tc.goneSource); src != SourceDefault {
-				t.Errorf("SourceOf(%s) = %q, want %q: no layer set it, the key did not survive the merge", tc.goneSource, src, SourceDefault)
+			if tc.goneSource != "" {
+				if src := res.SourceOf(tc.goneSource); src != SourceDefault {
+					t.Errorf("SourceOf(%s) = %q, want %q: no layer set it, the key did not survive the merge", tc.goneSource, src, SourceDefault)
+				}
 			}
 		})
 	}

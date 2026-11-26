@@ -149,11 +149,13 @@ func readBuildRequest(body []byte) (BuildTokenRequest, error) {
 	if len(req.Repositories) == 0 {
 		return BuildTokenRequest{}, errors.New("the call names no repository: the credential covers exactly the repositories the call lists, and a call naming none asks for nothing")
 	}
-	// Every repository is held to the canonical form HERE, which is the key space
-	// the image map is read in (ValidImageMap): what the handler compares against
-	// the entry's set is then a name and not a value a caller chose, and a name
-	// that is not owner/name is refused before anything is compared. A name twice
-	// is refused too: the set of repositories a credential covers is a set.
+	// Every repository is held to the canonical form HERE, which is how both
+	// members of the map key a repository (ValidRepoImages builds its
+	// provider/owner/name from this half, and a legacy image_map keys it
+	// directly): what the handler compares against the entry's set is then a name
+	// and not a value a caller chose, and a name that is not owner/name is refused
+	// before anything is compared. A name twice is refused too: the set of
+	// repositories a credential covers is a set.
 	seen := make(map[string]bool, len(req.Repositories))
 	for _, r := range req.Repositories {
 		canonical, err := task.CanonicalRepo(r)
@@ -211,14 +213,31 @@ type buildRepo struct {
 
 // buildEntryRepos narrows one call against the entry it names (rule 8, D1906).
 //
-// The map is the authority and the request is not: the entry's set is every key
-// of the published image_map whose value is the entry's name, the request's
-// repositories are held to that set, and a repository outside it is refused BY
-// NAME — whether the project holds it on another entry or nowhere at all,
-// because the two are the same answer to the caller: this entry's credential
-// does not reach it. An entry the map puts nothing on has its published
-// catalog definition's source repository as its set (entrySourceRepo), and
-// no other.
+// The map is the authority and the request is not: the entry's set is every
+// repository the published map puts on the entry's name AT THE REQUEST'S
+// PROVIDER — a legacy map, which names no provider, matches every provider, as
+// it always did — the request's repositories are held to that set, and a
+// repository outside it is refused BY NAME — whether the project holds it on
+// another entry or nowhere at all, because the two are the same answer to the
+// caller: this entry's credential does not reach it. An entry the map puts
+// nothing on has its published catalog definition's source repository as its set
+// (entrySourceRepo), and no other.
+//
+// Which member is the map is read through EffectiveRepoImages (R2, D3372), and
+// the two members key a repository differently:
+//
+//   - repo_images keys it provider/owner/name, so the entry's set is the keys of
+//     the REQUEST'S provider alone: a key at another provider is another
+//     repository's — the same name on the other host is another repository — and
+//     a key whose provider does not serve that repository is SKIPPED, never a
+//     refusal of the entry it names (R9). A stale key, or one a later release
+//     wrote for a provider this installation has no repository at, must not stop
+//     a build of the rest of the entry.
+//   - a legacy image_map keys it owner/name with no provider to read, so it is
+//     read as it always was: its names are held to the installation's table, and
+//     a name the table does not serve at the request's provider is refused,
+//     because there the map itself names something the installation does not
+//     have.
 //
 // The set is then held to the INSTALLATION's own table, one repository at a
 // time, which is githubRepository's reading of a repository and not a second
@@ -232,13 +251,28 @@ type buildRepo struct {
 // something this installation does not serve, which the caller cannot fix and is
 // the service being unable to answer.
 func (s *Server) buildEntryRepos(shared *projectpolicy.Policy, req BuildTokenRequest) ([]buildRepo, error) {
-	onEntry := make(map[string]bool, len(shared.ImageMap))
-	for name, entry := range shared.ImageMap {
-		if entry == req.Entry {
-			onEntry[name] = true
+	images, fromRepoImages := shared.EffectiveRepoImages()
+	onEntry := make(map[string]bool, len(images))
+	mapped := false
+	for key, entry := range images {
+		if entry != req.Entry {
+			continue
 		}
+		mapped = true
+		if !fromRepoImages {
+			onEntry[key] = true
+			continue
+		}
+		provider, repo, ok := strings.Cut(key, "/")
+		if !ok || provider != req.Provider || !s.servesRepo(provider, repo) {
+			// A key at another provider is another repository's, and a key this
+			// installation does not serve at that provider is skipped: neither may
+			// refuse the entry the call named (R9).
+			continue
+		}
+		onEntry[repo] = true
 	}
-	if len(onEntry) == 0 {
+	if !mapped {
 		// An entry the map puts nothing on is still built, for the one repository
 		// its catalog definition is sourced from (the nightly check and update
 		// assign it there). That repository is read off the PUBLISHED catalog and
@@ -247,17 +281,22 @@ func (s *Server) buildEntryRepos(shared *projectpolicy.Policy, req BuildTokenReq
 		if source, ok := entrySourceRepo(shared, req.Entry); ok {
 			onEntry[source] = true
 		}
-	}
-	if len(onEntry) == 0 {
-		return nil, buildRepos{status: StatusRequestRefused, typ: ErrorRequestRefused,
-			message: requestRefused + "the project's image map puts no repository on " + req.Entry}
+		if len(onEntry) == 0 {
+			return nil, buildRepos{status: StatusRequestRefused, typ: ErrorRequestRefused,
+				message: requestRefused + "the project's image map puts no repository on " + req.Entry}
+		}
 	}
 	for _, r := range req.Repositories {
-		if !onEntry[r] {
-			return nil, buildRepos{status: StatusRequestRefused, typ: ErrorRequestRefused,
-				message: requestRefused + "the repository " + r + " is not one the image map puts on " + req.Entry +
-					", and a build's credential covers the repositories of the entry it names and no others"}
+		if onEntry[r] {
+			continue
 		}
+		if fromRepoImages && images[otherProvider(req.Provider)+"/"+r] == req.Entry {
+			return nil, buildRepos{status: StatusRequestRefused, typ: ErrorRequestRefused,
+				message: requestRefused + "the image map puts " + r + " on " + req.Entry + " at the other provider, and a build's credential is minted at the entry's own provider and not at the caller's choice of host"}
+		}
+		return nil, buildRepos{status: StatusRequestRefused, typ: ErrorRequestRefused,
+			message: requestRefused + "the repository " + r + " is not one the image map puts on " + req.Entry +
+				", and a build's credential covers the repositories of the entry it names and no others"}
 	}
 	// The entry's repositories, in one order: the grant names the whole set, the
 	// token is scoped to the request's subset of it, and both are spelled the same
@@ -318,19 +357,32 @@ func entrySourceRepo(shared *projectpolicy.Policy, entry string) (string, bool) 
 // other than the one the call named, which is what tells "the call named the
 // wrong provider" from "the project does not have this repository at all".
 func (s *Server) reposElsewhere(name, provider string) bool {
-	other := gitprov.KindGitHub
-	if provider == gitprov.KindGitHub {
-		other = gitprov.KindBitbucket
-	}
-	canonical, err := projectpolicy.Canonical(other, name)
+	return s.servesRepo(otherProvider(provider), name)
+}
+
+// servesRepo reports whether this installation's own table holds repo at
+// provider: the enrolled set a build's credential may reach (R9), read the way
+// githubRepository reads a repository and not a second way.
+func (s *Server) servesRepo(provider, repo string) bool {
+	slug, err := task.Slug(provider, repo)
 	if err != nil {
 		return false
 	}
-	slug, err := task.Slug(other, name)
+	canonical, err := projectpolicy.Canonical(provider, repo)
 	if err != nil {
 		return false
 	}
 	return s.cfg.Repos[slug] == canonical
+}
+
+// otherProvider is the provider the call did not name: owner/name is not unique
+// across hosts, so it is how "the call named the wrong provider" is told from
+// "the project does not have this repository at all".
+func otherProvider(provider string) string {
+	if provider == gitprov.KindGitHub {
+		return gitprov.KindBitbucket
+	}
+	return gitprov.KindGitHub
 }
 
 // buildToken answers one build call: it verifies its caller, reads its call,

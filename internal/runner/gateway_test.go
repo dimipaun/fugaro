@@ -994,7 +994,7 @@ func TestPinsInvalidForBudgetIsInfraError(t *testing.T) {
 	// run has a gateway now (AB1b), and a config that names no models at all
 	// is the one shape a real installation cannot reach any more — the
 	// project layer's defaults pin one — so the run that pins nothing has to
-	// ask for it here (withFixturePins).
+	// ask for it here (testutil.PinsLayerText).
 	noModels := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "agent:\n", "agent:\n  models: {}\n", 1)
 	for name, cfg := range map[string]string{
 		"no models": noModels,

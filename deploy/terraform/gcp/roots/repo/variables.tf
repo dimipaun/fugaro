@@ -29,19 +29,30 @@ variable "installation" {
     launchers = list(string)
     operators = list(string)
     # The installation's credentials service (D146, D147), absent while it has
-    # not opted in: its Cloud Run service name, its region and the email of its
-    # own account. This root passes it to the workflow module, which grants each
-    # job account roles/run.invoker on it, drops that job's model-secret
-    # accessors, and grants the service's account secretAccessor on each secret
-    # the job mounts (D2074). `account` is optional so a repository root
-    # planned against an installation whose outputs predate it plans what it
-    # planned before; the object names it, because an object-typed variable
-    # drops an attribute it does not name.
+    # not opted in and while this repository is handed no address at all
+    # (infra.CredentialsServiceAddress): its Cloud Run service name, its region
+    # and the email of its own account. This root passes it to the workflow
+    # module, which grants each job account roles/run.invoker on it, and — with
+    # the fact below — drops that job's model-secret accessors and grants the
+    # service's account secretAccessor on each secret the job mounts (D2074).
+    # `account` is optional so a repository root planned against an
+    # installation whose outputs predate it plans what it planned before; the
+    # object names it, because an object-typed variable drops an attribute it
+    # does not name.
     credentials_service = optional(object({
       name    = string
       region  = string
       account = optional(string, "")
     }))
+    # Whether that service serves THIS repository's credentials
+    # (infra.CredentialsServiceServes), which is the half every drop is keyed
+    # on: false for the one repository handed the address without being served,
+    # a `vertex` one, whose runs fetch workflow secrets through the service and
+    # give up none of their own credentials (D3326 as amended by F17). Optional
+    # and TRUE, so a tfvars written before this input existed — which carried
+    # credentials_service only for a repository the switch served — plans
+    # exactly what it planned.
+    credentials_service_serves = optional(bool, true)
     # The project's catalog check job account (D1148), its email, or "" on an
     # installation whose project publishes no catalog. modules/repo grants it
     # actAs on this repository's build account from here.

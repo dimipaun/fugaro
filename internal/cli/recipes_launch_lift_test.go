@@ -361,7 +361,7 @@ func TestReviewLaunchCarriesNoRepoRecipe(t *testing.T) {
 		dir := projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
 		testutil.WriteFiles(t, dir, map[string]string{recipe.RepoPath(reviewOnlyRecipe): repoReviewRecipe})
 
-		if _, _, err := reviewCLI(t, "--pr", "7", "--token", "acme-personal"); err != nil {
+		if _, _, err := reviewCLI(t, "--pr", "7"); err != nil {
 			t.Fatalf("a review from a checkout keeping its own %s.yaml: %v", reviewOnlyRecipe, err)
 		}
 		slug, id, err := parseRunRef(storedRunRef(t, f.cloudFixture))
