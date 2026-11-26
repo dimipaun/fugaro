@@ -1398,6 +1398,15 @@ var localRows = []Row{
 	// path writes no image policy, and a person reading the row is sent to the
 	// command that does.
 	loc("image_map", "none: no repository is mapped, and the catalog's default entry decides the image", "image map", docImages),
+	// The repository-to-image map is the map above in the form L11 gives it
+	// (D3370, D3371): the same entry per repository, keyed by
+	// provider/owner/name, so one name at two providers is two entries rather
+	// than one. It sits beside the old map's row while both fields exist (R15,
+	// D3372): whichever member the file holds, the key is one the read answers
+	// and the write refuses against, and `fugaro image map set` is the command
+	// that writes it — the owner names that family for the reason the row above
+	// states.
+	loc("repo_images", "none: no repository is mapped, and the catalog's default entry decides the image", "image map", docImages),
 	// The bake switch is the setup wizard's question (D1901), answered yes when
 	// it is asked with nothing else, so an installation that never answers it is
 	// told how the absent key reads rather than what a value would be. IS7 asks
