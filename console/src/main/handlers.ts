@@ -276,13 +276,16 @@ function bindingKeyOf(installation: BoundInstallation): string {
  *
  * The string is the answers **file** the allow-list built and main holds in
  * memory (`setupAnswersValue`, `ipc.ts`), and this is the other end of the same
- * seam: `version` is the file's schema member and not one of the five questions,
- * so it is dropped here and added again by the wizard's own serialiser when it
- * makes the bytes the child reads. Every member the five names is read with its
- * own type checked, and a document that is not this console's own text is
- * refused rather than half-read: what a child decodes is a claim about a
- * project, a region and a rigor, and half of that document is not a plan anyone
- * agreed to.
+ * seam: `version` is the file's schema member and not one of the questions, so
+ * it is dropped here and added again by the wizard's own serialiser when it
+ * makes the bytes the child reads. Every member is read with its own type
+ * checked, and a document that is not this console's own text is refused rather
+ * than half-read: what a child decodes is a claim about a project, a region and
+ * a rigor, and half of that document is not a plan anyone agreed to.
+ *
+ * `budget` is the one member a document may leave out -- the operator answered
+ * no amount and the CLI takes its own default -- so an absent key stays absent
+ * here rather than being read as an answer of any kind.
  */
 export function setupAnswersFromFile(text: string): ValidatedArguments {
   let parsed: unknown
@@ -298,6 +301,15 @@ export function setupAnswersFromFile(text: string): ValidatedArguments {
   const answers: Record<string, ValidatedArgument> = {}
   for (const key of SETUP_ANSWER_KEYS) {
     const member = record[key]
+    if (member === undefined && key === 'budget') continue
+    // The amount is the one member that is neither text nor a switch, and every
+    // other member is one of those two: an amount spelled as text, or a project
+    // spelled as a number, is not this console's own answers file.
+    if (key === 'budget') {
+      if (typeof member !== 'number') throw new SourceRefusal(SETUP_ANSWERS_UNREADABLE)
+      answers[key] = member
+      continue
+    }
     if (typeof member !== 'string' && typeof member !== 'boolean') {
       throw new SourceRefusal(SETUP_ANSWERS_UNREADABLE)
     }

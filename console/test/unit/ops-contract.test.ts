@@ -52,6 +52,8 @@ import {
   CONSOLE_OPERATIONS,
   NO_ACTIVE_INSTALLATION,
   SETUP_ANSWER_KEYS,
+  SETUP_BUDGET_MAX as IPC_SETUP_BUDGET_MAX,
+  SETUP_BUDGET_MIN as IPC_SETUP_BUDGET_MIN,
   registerConsoleHandlers,
   validateArguments,
 } from '../../src/main/ipc'
@@ -91,6 +93,8 @@ import {
   NEW_OPERATION_NAMES,
   NEW_OPERATION_PAYLOAD_KEYS,
   SETUP_ANSWER_KEYS as CONTRACT_SETUP_ANSWER_KEYS,
+  SETUP_BUDGET_MAX,
+  SETUP_BUDGET_MIN,
   decodeNewOperationAnswer,
 } from '../../src/shared/new-ops'
 import type { NewOperationName, NewOperationRequest } from '../../src/shared/new-ops'
@@ -731,19 +735,45 @@ describe('the wizard’s answers cross from the allow-list to the wizard', () =>
     region: 'europe-west1',
     name: 'fugaro',
     rigor: 'startup',
+    budget: 100,
     bake_repos: true,
   })
 
-  it('keeps the allow-list’s five questions and the contract’s five equal', () => {
+  it('keeps the allow-list’s six questions and the contract’s six equal', () => {
     // Two copies of one fact, held equal here because the allow-list keeps its
     // own list rather than importing the contract's (`ipc.ts` says why: the door
     // is the surface's own module). A question one of them grew alone would be a
     // key the door refuses or the wizard never sees.
     expect([...SETUP_ANSWER_KEYS]).toEqual([...CONTRACT_SETUP_ANSWER_KEYS])
-    expect([...SETUP_ANSWER_KEYS]).toEqual(['gcp_project', 'region', 'name', 'rigor', 'bake_repos'])
+    expect([...SETUP_ANSWER_KEYS]).toEqual([
+      'gcp_project',
+      'region',
+      'name',
+      'rigor',
+      'budget',
+      'bake_repos',
+    ])
   })
 
-  it('serialises the payload into the file, and hands the wizard the five questions back', () => {
+  it('holds the amount’s bounds to the schema’s, in main and in the renderer', () => {
+    // Two copies of one fact again, and the third is the schema's own
+    // (`schemas/setup-answers.schema.json`, which `internal/cli` decodes and
+    // `managed.Budget.Check` enforces). An amount outside the range is refused
+    // by the run after a child exists, so each copy is read here rather than
+    // trusted: a door that took one the run refuses would spawn the child that
+    // fails.
+    const schema = JSON.parse(
+      readFileSync(goldenPath('schemas/setup-answers.schema.json'), 'utf8'),
+    ) as {
+      properties: { budget: { minimum: number; maximum: number } }
+    }
+    expect(schema.properties.budget.minimum).toBe(SETUP_BUDGET_MIN)
+    expect(schema.properties.budget.maximum).toBe(SETUP_BUDGET_MAX)
+    expect(IPC_SETUP_BUDGET_MIN).toBe(SETUP_BUDGET_MIN)
+    expect(IPC_SETUP_BUDGET_MAX).toBe(SETUP_BUDGET_MAX)
+  })
+
+  it('serialises the payload into the file, and hands the wizard the six questions back', () => {
     // The seam, end to end and with no child: the door's validation of what a
     // renderer sends, the string main holds, and the wizard's own reader on the
     // other side of it.
@@ -758,8 +788,29 @@ describe('the wizard’s answers cross from the allow-list to the wizard', () =>
       region: 'europe-west1',
       name: 'fugaro',
       rigor: 'startup',
+      budget: 100,
       bake_repos: true,
     })
+  })
+
+  it('carries an amount nobody typed as no amount at all', () => {
+    // The other half of the pair: a renderer that sent no `budget` -- the field
+    // it drew empty -- must reach the wizard with no amount, so the CLI applies
+    // its own default. An absent member read back as `0`, or as the default, is
+    // an alert nobody asked for.
+    const { budget: _omitted, ...noBudget } = GIVEN
+    const door = validateArguments('setup.plan', { answers: noBudget })
+    expect(door.ok).toBe(true)
+    if (!door.ok) return
+    const held = validateSetupAnswers(setupAnswersFromFile(String(door.args['answers'])))
+    expect(held.budget).toBeUndefined()
+    expect(Object.keys(setupAnswersFromFile(String(door.args['answers'])))).toEqual([
+      'gcp_project',
+      'region',
+      'name',
+      'rigor',
+      'bake_repos',
+    ])
   })
 
   it('drops the file’s version, which the wizard refuses by name as not a question', () => {
@@ -769,7 +820,15 @@ describe('the wizard’s answers cross from the allow-list to the wizard', () =>
   })
 
   it('refuses text that is not this console’s own answers file', () => {
-    for (const text of ['', 'not json', '[]', '{}', '{"version":1}', JSON.stringify({ ...GIVEN, name: 7 })]) {
+    for (const text of [
+      '',
+      'not json',
+      '[]',
+      '{}',
+      '{"version":1}',
+      JSON.stringify({ ...GIVEN, name: 7 }),
+      JSON.stringify({ ...GIVEN, budget: '100' }),
+    ]) {
       expect(() => setupAnswersFromFile(text), `${JSON.stringify(text)} was read back`).toThrow(
         SETUP_ANSWERS_UNREADABLE,
       )

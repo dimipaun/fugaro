@@ -193,19 +193,26 @@ describe('the fixtures answer every operation with a value that decodes', () => 
 })
 
 describe('an answers object never names a file', () => {
-  it('carries the five questions, and the five are the wizard’s own', () => {
-    expect(SETUP_ANSWER_KEYS).toEqual(['gcp_project', 'region', 'name', 'rigor', 'bake_repos'])
+  it('carries the six questions, and the six are the wizard’s own', () => {
+    expect(SETUP_ANSWER_KEYS).toEqual([
+      'gcp_project',
+      'region',
+      'name',
+      'rigor',
+      'budget',
+      'bake_repos',
+    ])
   })
 
   it('leaves the file’s version to main, which writes the file', () => {
-    // The renderer sends the five answers; the file main hands the CLI on stdin
+    // The renderer sends the six answers; the file main hands the CLI on stdin
     // carries the schema's `version` beside them (`schemas/setup-answers.json`,
     // ST1), and `version` is nobody's answer.
     expect(SETUP_ANSWERS_FILE_KEYS).toEqual(['version', ...SETUP_ANSWER_KEYS])
     expect(SETUP_ANSWER_KEYS).not.toContain('version')
   })
 
-  it('has no key of the five that could name a path', () => {
+  it('has no key of the six that could name a path', () => {
     for (const key of SETUP_ANSWERS_FILE_KEYS) {
       expect(key, `${key} is not an answer`).not.toMatch(/file|path|stdin/i)
     }

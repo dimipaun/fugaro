@@ -677,6 +677,53 @@ export const BUDGET_STREAM_CLI_FLOOR: string | null = null
 export const SETUP_CLI_FLOOR: string | null = null
 
 /**
+ * BUDGET_ANSWER_CLI_FLOOR is the oldest CLI whose answers file carries
+ * **`budget`** -- the sixth question of the setup wizard, the monthly amount of
+ * the project's budget alert (T2b of docs/managed-flag-ergonomics; D2210,
+ * D2211, D2212).
+ *
+ * It is a floor of its own and not `SETUP_CLI_FLOOR`'s, because the two facts
+ * are two releases: `--answers-file` and the budget question are separate CLI
+ * tasks, and a release may carry the file without the question. The document's
+ * reader refuses a member it does not know **by name** (`readSetupAnswers`,
+ * `internal/cli/setup_answers.go`), so a `budget` handed to a CLI below this
+ * floor stops the whole setup rather than being ignored.
+ *
+ * **No release carries the member yet, so the constant is `null`** and the
+ * console sends no `budget` to any CLI today -- `RUNS_STREAM_CLI_FLOOR`'s state
+ * and its own rules: a floor is a claim about a release that exists, and a
+ * version this file guessed at would be a document an installed CLI refuses.
+ * Unset is the safe direction and the only honest one, and the release that
+ * ships the member sets this constant to its own version in a one-line pull
+ * request, which is a release step and not a task of the plan.
+ */
+export const BUDGET_ANSWER_CLI_FLOOR: string | null = null
+
+/**
+ * budgetAnswerSupported answers whether one version line may be handed the
+ * wizard's `budget` answer, by comparing the line against
+ * `BUDGET_ANSWER_CLI_FLOOR` at the patch level.
+ *
+ * **Its caller is the wizard's plan** (`src/main/wizardrun.ts`): below the floor
+ * the answer is dropped from the held answers before the bytes are serialised
+ * **and** before the window is shown, so what the operator reads in the window
+ * and what the child decodes are the same document -- a budget drawn there but
+ * never sent would be a window confirming an amount the run does not use.
+ *
+ * `floor` is the constant by default and an argument only so that the branch a
+ * release will take can be tested: with the constant unset every version is
+ * refused, which is the state this console is in until a release carries the
+ * member (`version.test.ts` drives both).
+ */
+export function budgetAnswerSupported(
+  version: string,
+  floor: string | null = BUDGET_ANSWER_CLI_FLOOR,
+): boolean {
+  if (floor === null) return false
+  return meetsCliFloor(version, floor)
+}
+
+/**
  * IMAGE_CATALOG_CLI_FLOOR and RECIPES_CLI_FLOOR are the oldest CLIs that carry
  * `image ls --json` and `recipes ls --json`: the Code tab's two reads (the
  * console improvements plan's AL).

@@ -610,6 +610,7 @@ describe('the bytes the child is given', () => {
     region: REGION,
     name: NAME,
     rigor: RIGOR,
+    budget: undefined,
     bake_repos: true,
   })
 
@@ -618,10 +619,28 @@ describe('the bytes the child is given', () => {
       string,
       unknown
     >
-    expect(Object.keys(document)).toEqual([...SETUP_ANSWERS_FILE_KEYS])
+    // The fixture answered no amount, and an amount nobody typed is left out of
+    // the document rather than written as a zero: the run reads an absent
+    // `budget` as its own default, and `0` is an amount no alert can be created
+    // with (`the bytes` below, and `marker.go`'s `Budget.Check`).
+    expect(Object.keys(document)).toEqual(
+      [...SETUP_ANSWERS_FILE_KEYS].filter((key) => key !== 'budget'),
+    )
+    expect(document).not.toHaveProperty('budget')
     expect(document['version']).toBe(1)
     expect(document['rigor']).toBe(RIGOR)
     expect(document['bake_repos']).toBe(true)
+  })
+
+  it('writes an amount the operator chose in the schema’s own place for it', () => {
+    // The place is the file schema's key order, which this asserts in full: a
+    // member appended at the end instead would still decode, and the document a
+    // person diffs against the schema would be the one that drifted.
+    const document = JSON.parse(
+      new TextDecoder().decode(serialiseSetupAnswers({ ...answers, budget: 250 })),
+    ) as Record<string, unknown>
+    expect(Object.keys(document)).toEqual([...SETUP_ANSWERS_FILE_KEYS])
+    expect(document['budget']).toBe(250)
   })
 
   it('writes a no as `false` and leaves only an unanswered switch out', () => {
@@ -902,6 +921,7 @@ describe('setup.plan', () => {
           region: REGION,
           name: '',
           rigor: RIGOR,
+          budget: undefined,
           bake_repos: undefined,
         }),
       ),

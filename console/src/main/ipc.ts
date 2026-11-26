@@ -3577,9 +3577,11 @@ const SETTINGS_KEY_RE = /^[a-z0-9_*]+(\.[a-z0-9_*]+)*$/
 // The first-run wizard's answers (docs/console-improvements, D2904).
 
 /**
- * SETUP_ANSWER_KEYS is the five questions `fugaro setup` answers from one
- * document (`setupAnswerQuestions`, `internal/cli/setup_answers.go`), in the
- * order the CLI asks them.
+ * SETUP_ANSWER_KEYS is the questions `fugaro setup` answers from one document
+ * (`setupAnswerQuestions`, `internal/cli/setup_answers.go`), in the order the
+ * CLI asks them: `budget` is the sixth, between the rigor mode and the bake
+ * switch, where `setupQuestions` puts its row (T2b of
+ * docs/managed-flag-ergonomics, D2210).
  *
  * **The console keeps its own copy rather than importing
  * `src/shared/new-ops.ts`'s**, and that direction is the design's: the contract
@@ -3594,8 +3596,21 @@ export const SETUP_ANSWER_KEYS: readonly string[] = Object.freeze([
   'region',
   'name',
   'rigor',
+  'budget',
   'bake_repos',
 ])
+
+/**
+ * SETUP_BUDGET_MIN and SETUP_BUDGET_MAX bound the wizard's `budget` answer, and
+ * they are the alert's own bounds rather than this console's:
+ * `managed.MinBudgetAmount` and `managed.MaxBudgetAmount`
+ * (`internal/infra/managed/marker.go`), which `Budget.Check` applies and the
+ * answers file's schema states (`schemas/setup-answers.schema.json`). An amount
+ * outside them is a document the run refuses later, after a child exists, which
+ * is exactly what this door is here to prevent.
+ */
+export const SETUP_BUDGET_MIN = 1
+export const SETUP_BUDGET_MAX = 10_000_000
 
 /** SETUP_ANSWERS_VERSION is the answers file's own schema version
  * (`schemas/setup-answers.schema.json`). It is main's to write: the file's
@@ -3911,6 +3926,13 @@ function refuse(reason: string): { readonly ok: false; readonly reason: string }
  * no path for an unchecked member to ride along. `version` is added here: it is
  * the answers file's schema member and not one of the wizard's questions.
  *
+ * **`budget` is the one optional member, and the one that is a number.** A
+ * document that leaves it out answers nothing and the run takes its own default
+ * (100, D2212), so an absent key is written as an absent key rather than as a
+ * zero -- 0 is an amount the alert cannot be created with. A number outside
+ * [SETUP_BUDGET_MIN, SETUP_BUDGET_MAX] is refused here with this console's own
+ * sentence, because the CLI would refuse it after a child had started.
+ *
  * The bytes themselves are not made here. They are the caller's (`setup.plan`'s
  * handler, SW3a), which encodes this string and hands it to the child on
  * standard input -- so no file exists for another process of the same user to
@@ -3926,10 +3948,30 @@ function setupAnswersValue(
     // the case this branch is for, and echoing it would print it.
     if (!SETUP_ANSWER_KEYS.includes(key)) return refuse(`${spec.key} takes no ${key}`)
   }
-  const answers: Record<string, string | boolean> = {}
+  const answers: Record<string, string | boolean | number> = {}
   for (const key of SETUP_ANSWER_KEYS) {
     const member: unknown = value[key]
-    if (member === undefined) return refuse(`${spec.key} is missing ${key}`)
+    // The budget is the question an operator may leave unanswered: an absent
+    // key is written as an absent key, and the CLI reads that as its own
+    // default. Every other question is required.
+    if (member === undefined) {
+      if (key === 'budget') continue
+      return refuse(`${spec.key} is missing ${key}`)
+    }
+    if (key === 'budget') {
+      if (
+        typeof member !== 'number' ||
+        !Number.isInteger(member) ||
+        member < SETUP_BUDGET_MIN ||
+        member > SETUP_BUDGET_MAX
+      ) {
+        return refuse(
+          `${spec.key}'s budget must be a whole number of units between ${SETUP_BUDGET_MIN} and ${SETUP_BUDGET_MAX}`,
+        )
+      }
+      answers[key] = member
+      continue
+    }
     if (key === 'bake_repos') {
       if (typeof member !== 'boolean') return refuse(`${spec.key}'s bake_repos must be true or false`)
       answers[key] = member
@@ -3955,7 +3997,12 @@ function setupAnswersValue(
     answers[key] = member
   }
   const file: Record<string, unknown> = { version: SETUP_ANSWERS_VERSION }
-  for (const key of SETUP_ANSWER_KEYS) file[key] = answers[key]
+  // A question nobody answered is left out of the document rather than written
+  // empty: `budget` is the only one of those, and the CLI reads its absence as
+  // its own default (`setupAnswers.answer`).
+  for (const key of SETUP_ANSWER_KEYS) {
+    if (key in answers) file[key] = answers[key]
+  }
   const text = JSON.stringify(file)
   if (text.length > SETUP_ANSWERS_MAX_LENGTH) {
     return refuse(`${spec.key} must be an answers file of at most ${SETUP_ANSWERS_MAX_LENGTH} characters`)

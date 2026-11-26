@@ -231,27 +231,57 @@ export type NewOperationRequest = {
 // The setup answers.
 // ---------------------------------------------------------------------------
 
-/** SETUP_ANSWER_KEYS is the five questions `fugaro setup` asks
+/** SETUP_ANSWER_KEYS is the questions `fugaro setup` asks
  * (`internal/cli/setup.go`, `setupQuestions`), in the order it asks them. These
  * are what the wizard collects and what the renderer sends; **`version` is not
  * one of them** -- it is the answers file's own schema version, which main adds
- * when it serialises the file. */
+ * when it serialises the file.
+ *
+ * `budget` is the sixth question and the CLI's own (T2b of
+ * docs/managed-flag-ergonomics, D2210): the monthly amount of the project's
+ * budget ALERT, which the wizard asks after the rigor mode and before the bake
+ * switch, exactly where `setupQuestions` puts its row. It is optional on the
+ * wire -- an operator who leaves the field empty answers nothing and the CLI
+ * takes its own default (100, D2212) -- and it is the one answer a CLI older
+ * than `BUDGET_ANSWER_CLI_FLOOR` (`src/shared/version.ts`) refuses by name, so
+ * main drops it for such a CLI rather than sending a document it stops on. */
 export const SETUP_ANSWER_KEYS: readonly string[] = Object.freeze([
   'gcp_project',
   'region',
   'name',
   'rigor',
+  'budget',
   'bake_repos',
 ])
 
-/** SETUP_ANSWERS_FILE_KEYS is every key of the file the CLI decodes
- * (`schemas/setup-answers.json`, ST1): the five answers, and the schema's
+/** SETUP_ANSWERS_FILE_KEYS is every key of the file this console writes and the
+ * CLI decodes (`schemas/setup-answers.json`, ST1): the answers, and the schema's
  * `version` in front of them. Named here so the difference between what the
- * renderer sends and what the child reads is one place and not two. */
+ * renderer sends and what the child reads is one place and not two.
+ *
+ * The file the CLI accepts has one member this console never writes:
+ * `budget_currency` (D2211), the unit `budget` is in. The console asks for the
+ * amount and leaves the unit alone, which is the CLI's own default (USD) -- a
+ * second field for a unit nobody in this console chooses would be a question
+ * whose answer is always the same. */
 export const SETUP_ANSWERS_FILE_KEYS: readonly string[] = Object.freeze([
   'version',
   ...SETUP_ANSWER_KEYS,
 ])
+
+/**
+ * SETUP_BUDGET_MIN and SETUP_BUDGET_MAX bound the wizard's `budget` answer, and
+ * they are the alert's own bounds rather than this console's: the range
+ * `managed.Budget.Check` applies (`internal/infra/managed/marker.go`) and the
+ * answers file's schema states (`schemas/setup-answers.schema.json`). The
+ * renderer holds its field to them so a press with an amount the run would
+ * refuse is refused by the form, and main holds the wire to them again at its
+ * own door (`ipc.ts` keeps its own copy of the two figures, the way it keeps
+ * its own copy of `SETUP_ANSWER_KEYS`, and `ops-contract.test.ts` holds the two
+ * pairs equal).
+ */
+export const SETUP_BUDGET_MIN = 1
+export const SETUP_BUDGET_MAX = 10_000_000
 
 /** SetupRigor is the rigor mode as the wire spells it: the five modes of
  * `docs/rigor-modes`. It has no default and the setup file requires it, which is
@@ -270,12 +300,20 @@ export const SETUP_RIGOR_MODES: readonly SetupRigor[] = Object.freeze([
   'hotfix',
 ])
 
-/** SetupAnswers is the answers object, and the whole of it. */
+/** SetupAnswers is the answers object, and the whole of it.
+ *
+ * `budget` is the one optional member: a whole number of units (never minor
+ * units), absent when the operator left the field empty. The CLI reads an
+ * absent `budget` as its own default (100) and refuses an amount outside
+ * [1, 10,000,000] -- the alert's own bounds (`managed.Budget.Check`) -- so main
+ * refuses both a fractional and an out-of-range answer here, before a child
+ * exists. */
 export interface SetupAnswers {
   readonly gcp_project: string
   readonly region: string
   readonly name: string
   readonly rigor: SetupRigor
+  readonly budget?: number
   readonly bake_repos: boolean
 }
 

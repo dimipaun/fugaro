@@ -6,25 +6,26 @@
 // `src/shared/new-ops.ts`, task C-OPS).
 //
 // **What it is.** The screen the onboarding view draws in place of `fugaro
-// setup`'s command line when the console has no installation: the five questions
+// setup`'s command line when the console has no installation: the questions
 // `fugaro setup` asks, answered in a form, sent to main as one answers object,
 // and then the run's own event feed drawn as the lines arrive. It is the same
 // screen behind the rail's "Add project" (SW3c), which is why it is a module of
 // its own rather than a branch inside `entry.ts`.
 //
-// **What it asks, and what it never asks.** The five questions are the contract's
-// (`SETUP_ANSWER_KEYS`: `gcp_project`, `region`, `name`, `rigor`, `bake_repos`)
-// in the order `fugaro setup` asks them, with the defaults the CLI has -- the
-// region `us-east5` (the US place's default, `place.DefaultRegion`) and baking on
-// -- and with **none** for the rigor mode, which is the one question with no
-// default at all (D900) and the one this screen marks required: the CLI refuses a
-// setup that answers no mode, so a form that offered a default would be offering
-// an answer the CLI does not accept. Nothing else is asked here. There is no
-// field for a secret value and no field for a path or a flag (`validateSetupAnswers`
-// refuses a sixth key, and D2905 keeps every secret out of this console), there is
-// no `<form>` -- so Enter submits nothing, which is the second half of the red
-// step -- and this module spawns no terminal and no child: it hands main an
-// answers object and draws what main answers.
+// **What it asks, and what it never asks.** The questions are the contract's
+// (`SETUP_ANSWER_KEYS`: `gcp_project`, `region`, `name`, `rigor`, `budget`,
+// `bake_repos`) in the order `fugaro setup` asks them, with the defaults the CLI
+// has -- the region `us-east5` (the US place's default, `place.DefaultRegion`),
+// the monthly budget alert amount `100` (D2212, `managed.DefaultBudgetAmount`)
+// and baking on -- and with **none** for the rigor mode, which is the one
+// question with no default at all (D900) and the one this screen marks required:
+// the CLI refuses a setup that answers no mode, so a form that offered a default
+// would be offering an answer the CLI does not accept. Nothing else is asked
+// here. There is no field for a secret value and no field for a path or a flag
+// (`validateSetupAnswers` refuses a key outside that set, and D2905 keeps every
+// secret out of this console), there is no `<form>` -- so Enter submits nothing,
+// which is the second half of the red step -- and this module spawns no terminal
+// and no child: it hands main an answers object and draws what main answers.
 //
 // **The feed.** A plan answers the events `setup --events` wrote (ST2), in
 // arrival order, and each line is drawn as it is read: the stages the run
@@ -64,7 +65,12 @@ import { NODE_PAINT, STREAM_INTERRUPTED_WORD } from '../stream'
 import type { StreamPaint } from '../stream'
 import { RIGOR_MODE_WORDS } from '../../shared/rigor'
 import type { TextClass } from '../../shared/sanitize'
-import { SETUP_ANSWER_KEYS, SETUP_RIGOR_MODES } from '../../shared/new-ops'
+import {
+  SETUP_ANSWER_KEYS,
+  SETUP_BUDGET_MAX,
+  SETUP_BUDGET_MIN,
+  SETUP_RIGOR_MODES,
+} from '../../shared/new-ops'
 import type {
   NewOpsReply,
   NoArgumentRequest,
@@ -269,6 +275,22 @@ export const WIZARD_APPLY_BUSY = 'Following the run…'
  * emptiness is the CLI's refusal rather than a default it takes. */
 export const WIZARD_RIGOR_REQUIRED = 'the rigor mode has no default: a setup that answers no mode is refused'
 
+/** WIZARD_BUDGET_DEFAULT is the budget row's own default, and it is the CLI's:
+ * `managed.DefaultBudgetAmount` (100 whole units of USD, D2212). The field is
+ * drawn with it, so a press that leaves it alone sends 100 -- which is what the
+ * run would have used anyway -- and an operator who wants another amount types
+ * over it. */
+export const WIZARD_BUDGET_DEFAULT = '100'
+
+/** WIZARD_BUDGET_NOTE is the budget row's note, and it says the one thing a
+ * figure like this is misread as: the amount is the threshold Cloud Billing
+ * warns the owner at, and **not** a cap on what a run may spend -- that is the
+ * gateway's cost cap, a different figure in a different place (D64, D2210). The
+ * unit is named because the field carries no currency: the console asks for the
+ * amount and the run takes USD (D2211). */
+export const WIZARD_BUDGET_NOTE =
+  'the amount Cloud Billing warns you at, in whole US dollars; this is an alert and not a cap on what a run may spend'
+
 /** WIZARD_DONE and WIZARD_HAND_OFF are the console's two sentences for a feed
  * that ended `done`: the run finished, and -- where it left steps for the
  * operator -- those steps are theirs. The CLI's own `done` line carries nothing
@@ -358,12 +380,13 @@ export const WIZARD_NO = 'no'
  * than being a question nobody is asked.
  *
  * The defaults are the CLI's own: `region` is `us-east5` (the US place's region
- * when only the place is chosen, `place.DefaultRegion(place.US)`) and `bake_repos`
- * is yes. `gcp_project` and `name` are drawn empty -- the first is required and
- * the second is optional, and the CLI's own answer to a blank name is the
- * `left_for_you` line that names it, which a wizard that invented one would take
- * away. `rigor` is the one row whose `default` is empty *and* whose emptiness is
- * a refusal.
+ * when only the place is chosen, `place.DefaultRegion(place.US)`), `budget` is
+ * `WIZARD_BUDGET_DEFAULT` and `bake_repos` is yes. `gcp_project` and `name` are
+ * drawn empty -- the first is required and the second is optional, and the CLI's
+ * own answer to a blank name is the `left_for_you` line that names it, which a
+ * wizard that invented one would take away. `rigor` is the one row whose
+ * `default` is empty *and* whose emptiness is a refusal; `budget` is optional
+ * like `name`, and a blank one is an answer nobody gave rather than a refusal.
  */
 export const WIZARD_QUESTIONS: readonly WizardQuestion[] = Object.freeze([
   Object.freeze({
@@ -405,7 +428,20 @@ export const WIZARD_QUESTIONS: readonly WizardQuestion[] = Object.freeze([
     ]),
   }),
   Object.freeze({
+    // The budget question (T2b of docs/managed-flag-ergonomics; D2210, D2211,
+    // D2212). The field carries no currency: the run takes USD unless a
+    // document says otherwise, and the console asks for the amount alone. It is
+    // optional, and the drawn default is the CLI's own amount, so a press that
+    // does not touch it sends the figure the run would have used.
     key: SETUP_ANSWER_KEYS[4] ?? '',
+    label: 'Monthly budget alert',
+    note: WIZARD_BUDGET_NOTE,
+    control: 'text' as const,
+    default: WIZARD_BUDGET_DEFAULT,
+    required: false,
+  }),
+  Object.freeze({
+    key: SETUP_ANSWER_KEYS[5] ?? '',
     label: 'Bake your repos into the Docker images?',
     note: 'this makes jobs start faster; the setup bakes unless you say no',
     control: 'select' as const,
@@ -435,6 +471,16 @@ export function wizardUnanswered(label: string): string {
  * its own choices, which only a caller that did not draw this form can produce. */
 export function wizardNotAChoice(label: string): string {
   return `this question’s answer is not one of the choices it offers: ${label}`
+}
+
+/** WIZARD_BUDGET_REFRUSAL is the refusal of a budget field that is not a whole
+ * number of units. It names the question and the rule and echoes no value: a
+ * field is a value the operator typed, and the sentence is about what the
+ * question takes. The bounds are the alert's own (`SETUP_BUDGET_MIN`,
+ * `SETUP_BUDGET_MAX`), so a form that accepted an amount outside them would be
+ * offering an answer the run refuses after a child exists. */
+export function wizardBadBudget(label: string): string {
+  return `this question takes a whole number of units between ${SETUP_BUDGET_MIN} and ${SETUP_BUDGET_MAX}: ${label}`
 }
 
 // ---------------------------------------------------------------------------
@@ -668,14 +714,18 @@ export function drawWizard(deps: WizardDeps): WizardElement {
 
 /** assemble reads the form and answers the answers object main validates, or the
  * console's own sentence for the question that stopped it. It is the one place
- * the wire object is built, so its five members are spelled once and each is read
+ * the wire object is built, so its members are spelled once and each is read
  * from the row whose key it is -- never copied across from a record whose shape
  * only this function believes in.
  *
  * The rigor member is the one that is not a plain string on the wire, so it is
  * looked back up among the modes this form offers: a value that is not one of
  * them is refused here rather than cast into the contract's own type and left for
- * main to refuse later with a sentence about a file. */
+ * main to refuse later with a sentence about a file.
+ *
+ * The budget member is the other one that is not a string, and it is the only
+ * optional one: an empty field carries no amount at all, so it is left out of
+ * the object rather than sent as a zero the run would read as a real alert. */
 export function assemble(drawn: readonly DrawnQuestion[]): AssembleAnswer {
   const read: Record<string, string> = {}
   for (const row of drawn) {
@@ -705,15 +755,31 @@ export function assemble(drawn: readonly DrawnQuestion[]): AssembleAnswer {
           : wizardNotAChoice(rigorRow.question.label),
     }
   }
+  const budgetRow = drawn.find((row) => row.question.key === 'budget')
+  const typedBudget = read['budget'] ?? ''
+  let budget: number | undefined
+  if (typedBudget !== '') {
+    // Digits only: `Number('1e3')`, `Number(' 0x10')` and `Number('1_000')` are
+    // all amounts the field never offered, and the run takes a whole number of
+    // units, so the shape is checked here rather than left to a cast.
+    if (!/^[0-9]+$/.test(typedBudget)) {
+      return { ok: false, sentence: wizardBadBudget(budgetRow?.question.label ?? 'Budget') }
+    }
+    budget = Number(typedBudget)
+    if (budget < SETUP_BUDGET_MIN || budget > SETUP_BUDGET_MAX) {
+      return { ok: false, sentence: wizardBadBudget(budgetRow?.question.label ?? 'Budget') }
+    }
+  }
+  const answers: SetupAnswers = {
+    gcp_project: read['gcp_project'] ?? '',
+    region: read['region'] ?? '',
+    name: read['name'] ?? '',
+    rigor,
+    bake_repos: read['bake_repos'] === WIZARD_YES,
+  }
   return {
     ok: true,
-    answers: {
-      gcp_project: read['gcp_project'] ?? '',
-      region: read['region'] ?? '',
-      name: read['name'] ?? '',
-      rigor,
-      bake_repos: read['bake_repos'] === WIZARD_YES,
-    },
+    answers: budget === undefined ? answers : { ...answers, budget },
   }
 }
 
