@@ -41,10 +41,16 @@ import (
 // this program where a flag silently proceeds.
 
 // askFlags is one command's --ask as it reaches the gate. It is a struct rather
-// than a bool because the two callers below take the same shape, and because a
-// second word beside it — the --yes T11 removed — would be read with it.
+// than a bool because the callers take the same shape, and because a second
+// word beside it — the --yes T11 removed — would be read with it.
 type askFlags struct {
 	ask bool
+	// values is whether this run's --ask also turns on value entry: `fugaro
+	// update`'s door alone (D3347, R18), where the flag asks for the
+	// repositories' missing secret values at the owner's own terminal even in a
+	// project the marks did not answer "managed" for. Every other command
+	// leaves it false, so the flag keeps AskUnmanaged's no-op there.
+	values bool
 }
 
 // askDecide is the whole of what --ask does once the marks have been read: the
@@ -60,9 +66,15 @@ func askDecide(out io.Writer, f askFlags, managed bool, c initflow.Conditions) e
 	if !f.ask {
 		return nil
 	}
-	line, refusal := initflow.AskDecision(c, managed)
+	line, refusal := initflow.AskDecision(c, managed, f.values)
 	if refusal != "" {
 		return userErr("%s", refusal)
+	}
+	// An empty line is a real answer on the one row that has one: the update
+	// door's --ask at a session with no terminal to ask a value at, where the
+	// stage leaves its own lines instead of a word from the flag.
+	if line == "" {
+		return nil
 	}
 	fmt.Fprintln(out, line)
 	return nil

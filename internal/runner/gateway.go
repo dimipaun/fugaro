@@ -427,10 +427,11 @@ func (r *run) serviceModelPath() bool {
 // alone (ServiceSwitchedAuth) and a served project job admits a vertex run
 // without the service (projectjob's checkProjectJobServed, where Vertex is the
 // job's own identity and no mount), so nothing serves a vertex repository's
-// Vertex yet and the refusal holds. It goes when the served path does — CS6
-// spells the run's model path as the service's for a repository the table
-// serves, and CS10 hands that repository's job the address. A local run is
-// never the service's (D149).
+// Vertex yet and the refusal holds. It goes when the served path does: a
+// repository the table serves would have to be handed the service's address
+// for this auth, and a `vertex` file's run keeps the job's own GCP identity
+// until it is (the run's model path is the launch's own address,
+// serviceModelPath). A local run is never the service's (D149).
 func (r *run) vertexServedByTheService() bool {
 	return r.serviceModelPath()
 }
@@ -544,6 +545,18 @@ func (r *run) startGateway(ctx context.Context) error {
 	// is the one hand-off C1.15 owns, and an answer that is not the exhausted
 	// one is left alone rather than guessed at here.
 	o.OnServiceAnswer = r.serviceAnswer
+	// The credentials service is what serves this run's model calls, and that
+	// is the whole of what its model path is (serviceModelPath, CS6): the
+	// gateway then sends the run's current stage on every call it makes to the
+	// service and reads the chain's own answer back — the source that served
+	// the call, whether it was the chain's first and the model that served —
+	// through the hook below, which is what the stage's row and the live entry
+	// are written from. Both stay off for a run whose model path is its own
+	// repository's: it sends no stage header and is answered exactly as it was
+	// before this contract, which is what lets the migration land one
+	// repository at a time (R25, chain_names.go).
+	o.ChainServed = gateway.ChainServed(r.serviceModelPath())
+	o.OnChainAnswer = r.chainAnswered
 	// Where each kind of this repository's credentials is served from, read
 	// once here, at the run's start (C2, D2982): a record that moves a kind to
 	// the workspace is a second upstream for that kind, and the record's answer
