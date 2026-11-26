@@ -84,6 +84,46 @@ func TestFixturePinsLeavesTheFilesThatAskForNoPins(t *testing.T) {
 	}
 }
 
+// TestSanctionAgentStatesTheFilesKeys: the tighten-only agent keys a fixture's
+// file writes are written into the layer that prices it, so a run behind that
+// layer takes the number the fixture wrote rather than the mode's own row (RT1,
+// R20, RT2) — and a key the layer names itself stays exactly as the test wrote
+// it, since the layer's own word is what wins in the merge.
+func TestSanctionAgentStatesTheFilesKeys(t *testing.T) {
+	const file = `version: 1
+project: aurora
+agent:
+  auth: api-key
+  review_rounds: 2
+  first_line_rounds: 1
+  levels: { l3: { none: true } }
+  max_output_tokens: { coder: 4096 }
+`
+	const layer = "version: 1\nproject: aurora\ngcp_project: " + PinsGCPProject +
+		"\ndefaults:\n  agent:\n    models: { coder: claude-sonnet-5-5 }\n    levels: { l2: { none: true } }\n"
+	var doc map[string]any
+	if err := yaml.Unmarshal([]byte(SanctionAgent(file, layer)), &doc); err != nil {
+		t.Fatal(err)
+	}
+	agent := doc["defaults"].(map[string]any)["agent"].(map[string]any)
+	if agent["review_rounds"] != 2 || agent["first_line_rounds"] != 1 {
+		t.Errorf("the layer does not carry the fixture's numbers: %v", agent)
+	}
+	levels := agent["levels"].(map[string]any)
+	if levels["l3"] == nil || levels["l2"] == nil {
+		t.Errorf("the sanction took a level the layer stated or missed the one it did not: %v", levels)
+	}
+	if agent["max_output_tokens"] != nil || agent["auth"] != nil {
+		t.Errorf("the sanction carried a key that is not tighten-only: %v", agent)
+	}
+	// A key the layer states itself is the layer's: the sanction fills holes, it
+	// does not decide.
+	stated := SanctionAgent(file, strings.Replace(layer, "models:", "review_rounds: 5\n    models:", 1))
+	if !strings.Contains(stated, "review_rounds: 5") || strings.Contains(stated, "review_rounds: 2") {
+		t.Errorf("the sanction overwrote the layer's own number:\n%s", stated)
+	}
+}
+
 // TestTakeFilePinsKeepsACraftsAccessAndALevelsEffort: the model is the only
 // half of a craft and a level a repository's file may no longer decide, so the
 // other half stays in the file and the model moves.
