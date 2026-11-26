@@ -404,8 +404,10 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		// Not inside a checkout there is no wiring to find: a warning (so
 		// --strict fails, as update-skills --check does), never silence. D942
 		// keeps it: a caller that asked doctor inside no checkout asked a
-		// question about a checkout.
-		pluginChecks = []doctorCheck{{ID: "plugin-pin", Severity: "warning",
+		// question about a checkout. The ID is not plugin-pin's: that check went
+		// with the pin (U6b, R15), and this line is about the wiring doctor
+		// cannot read at all.
+		pluginChecks = []doctorCheck{{ID: "plugin-wiring", Severity: "warning",
 			Problem: pluginwire.Printable(dir) + " is not in a checkout (no .git above it), so the Fugaro plugin wiring cannot be checked",
 			Fix:     "run doctor inside the repository, or pass --dir"}}
 	}
@@ -417,6 +419,11 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		// skipped here; the full run below always includes it. It answers
 		// first whatever else was asked: it is the plugin's own view, and
 		// --offline is a wider one.
+		//
+		// The two repository checks are recorded as skipped with it (R15 of
+		// docs/update-from-anywhere): their answer is each enrolled
+		// repository's default branch, and neither flag reads a repository.
+		o.Checks = append(o.Checks, doctorRepoNoticeSkips()...)
 		o.OK = !checksFail(o.Checks, strict)
 		return emitDoctor(cmd, o, asJSON, view)
 	}
@@ -602,6 +609,12 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// update prints before it changes anything (R8, doctorBudgetStopsChecks).
 	o.Checks = append(o.Checks, doctorBudgetStopsChecks(ctx, sel, lc)...)
 	o.Checks = append(o.Checks, doctorRepoAccountChecks(lc)...)
+	// The two dead values an older release left on a repository's default branch
+	// — the plugin pin and budget.mode: off — each with the line to delete (U6b
+	// of docs/update-from-anywhere, R15). The rows are the project's repositories
+	// and not this checkout's: the same read the update's stages make, so the two
+	// doors answer with the same line.
+	o.Checks = append(o.Checks, doctorRepoNoticeChecks(ctx, lc)...)
 	// The pools the published policy serves (DS3.1, MC1): a legacy-open one is
 	// served to whoever asks and D1942 asks doctor to name it. It reads the
 	// published node for itself — the policy checks above read it through
@@ -847,7 +860,29 @@ func doctorOfflineChecks(ctx context.Context, o cloudOptions, loc pluginwire.Loc
 		skip("policy-vs-jobs", "whether this checkout's jobs are old enough to miss a published policy is a fact of the project's database and of what its jobs last ran, and --offline reads neither"),
 		skip("policy-older-than-binary", "the published policy node lives in the project's Realtime Database, and --offline reads no database"),
 	)
+	// The two repository checks (U6b of docs/update-from-anywhere, R15): what a
+	// repository's default branch holds is a fact of that repository, and
+	// --offline reads no repository — the list is C1's, and reading it means
+	// reaching every enrolled one.
+	out = append(out, doctorRepoNoticeSkips()...)
 	return out
+}
+
+// doctorRepoNoticeSkips are the two repository checks as `--offline` and
+// `--plugin` record them (R15): one skip each, in the words the other skips use,
+// so the pointer line counts them and no view reads them as "checked and found
+// fine". Nothing is read to build them, which is what makes the two flags' "no
+// call" promise hold.
+func doctorRepoNoticeSkips() []doctorCheck {
+	skip := func(id, what string) doctorCheck {
+		return doctorCheck{ID: id, Skipped: true, Severity: "info",
+			Problem: what + " is not read (offline): it is a fact of each enrolled repository's default branch, and this flag reads no repository",
+			Fix:     doctorOfflineAsk}
+	}
+	return []doctorCheck{
+		skip(repoPluginPinCheckID, "whether a repository's default branch still carries the plugin pin"),
+		skip(repoBudgetModeCheckID, "whether a repository's default branch still says budget.mode: off"),
+	}
 }
 
 // doctorOfflineWorkflows are the workflow names the checkout's own config
@@ -2227,6 +2262,11 @@ func authOf(rf *resolvedFile) string {
 
 // pluginDoctorChecks turns a plugin report's states into doctor checks.
 //
+// It is the one check of the report: the pin's own line is gone with the pin
+// (U6b of docs/update-from-anywhere, R15 — a leftover pin is a repository's own
+// line to delete now, repo-plugin-pin), so what is left to say about the wiring
+// is the install.
+//
 // plugin-install asks the checkout's own question where the checkout carries a
 // release-tag pin — the install that applies there, against the ref the
 // repository asked for — and the machine's question everywhere else: the
@@ -2266,8 +2306,22 @@ func pluginDoctorChecks(r pluginwire.Report) []doctorCheck {
 		out = append(out, c)
 	}
 	install, _ := pluginInstallState(r)
-	add("plugin-pin", r.Pin)
 	add("plugin-install", install)
+	// The two states that are not a pin's version: a marketplace entry that is
+	// not this project's own, and one that follows a branch. They are the
+	// supply-chain findings of design §4.4, and they are read from the checkout's
+	// own .claude/settings.json — a file, not a repository — so `--plugin` and
+	// `--strict` keep answering them (R15 skips the two new repository checks
+	// there, which read repositories; this one reads nothing remote).
+	//
+	// The version states are not here: nothing writes a pin any more (D949), so a
+	// pin that names an older or a newer release is a leftover, and what to do
+	// about it is delete it — repo-plugin-pin's own line, and the notice `fugaro
+	// update` prints (U6a, D3340). Comparing it with this binary would be a
+	// second answer to a question the person has already been given.
+	if s := r.Pin; s == pluginwire.Foreign || s == pluginwire.Unpinned {
+		add("plugin-wiring", s)
+	}
 	return out
 }
 
@@ -2287,7 +2341,7 @@ func pluginInstallState(r pluginwire.Report) (pluginwire.State, bool) {
 // same wording update-skills --check and the staleness warning use.
 func pluginStateProblem(id string, s pluginwire.State, r pluginwire.Report) string {
 	switch {
-	case id == "plugin-pin" && r.Detail != "":
+	case id == "plugin-wiring" && r.Detail != "":
 		return r.Detail
 	case id == "plugin-install" && s == pluginwire.InstalledDiffers:
 		if _, fromPin := pluginInstallState(r); fromPin {

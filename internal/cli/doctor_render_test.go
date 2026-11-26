@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // doctorOwnerCase is the state the owner pasted on 2026-10-30: "fugaro doctor
@@ -50,9 +51,9 @@ func doctorOwnerCase(t *testing.T) []doctorCheck {
 		{ID: "base-image", Severity: "warning",
 			Problem: "the installation has no Fugaro base image recorded, so every derived image build starts from whatever the repository's Dockerfile names: `fugaro image refresh` records the release's base and rebuilds the job images from it, and until it runs the base the jobs were built on is whatever the last build happened to resolve",
 			Fix:     "fugaro image refresh (in your own terminal: it rebuilds the job images, which takes cloud calls)"},
-		{ID: "plugin-pin", Severity: "warning",
-			Problem: "the plugin is pinned at fugaro@0.13.0, and this Fugaro is 0.14.0",
-			Fix:     "run fugaro update to repin the plugin"},
+		{ID: repoPluginPinCheckID, Severity: "warning",
+			Problem: "acme/app: needs you: " + repoNoticePinFile + ": " + repoNoticePinEdit,
+			Fix:     repoNoticeFix(repoNotice{File: repoNoticePinFile})},
 		{ID: "policy-older-than-binary", Severity: "warning",
 			Problem: "config/policy/shared holds a policy of version 2, and this Fugaro writes version 4: no run applies it, and publishing over it is refused",
 			Fix:     "run `fugaro update`: its policy stage rewrites the node in place at this Fugaro's version 4, keeping the members the node carries, so nothing has to be deleted and published again"},
@@ -729,7 +730,7 @@ func TestDoctorAllPrintsEveryCheck(t *testing.T) {
 // lost: --all and --json still carry it.
 func TestDoctorUpdateItemsAreOneCommand(t *testing.T) {
 	updateIDs := []string{
-		"cli-version", "plugin-pin", "base-image", "image-config-web",
+		"cli-version", "base-image", "image-config-web",
 		"policy-rules-skew", "policy-vs-jobs", "policy-older-than-binary",
 	}
 	for _, id := range updateIDs {
@@ -741,9 +742,8 @@ func TestDoctorUpdateItemsAreOneCommand(t *testing.T) {
 		}
 		line := doctorItemLine(t, c)
 		// The line names `fugaro update` and what makes it do the work: the
-		// upgrade before it (cli-version), or the repository the checkout
-		// runs in (plugin-pin). A check here that carries no line of its own
-		// gets the class's one command, whole.
+		// upgrade before it, or the policy node the stage rewrites. A check here
+		// that carries no line of its own gets the class's one command, whole.
 		if !strings.Contains(line, "`fugaro update") {
 			t.Errorf("%s's line does not name the fugaro update command: %q", id, line)
 		}
@@ -950,25 +950,23 @@ func TestDoctorNeverHidesAFinding(t *testing.T) {
 		}
 	}
 
-	// plugin-pin joined the allow-list with D942 (U3 of
-	// docs/plugin-user-scope/implementation-plan.md): the state it measures is
-	// the un-wired checkout, which is the normal one now that the merge which
-	// wrote a pin is deleted (D949). Filed as audit it was counted by the
-	// default view's pointer line, so the one screen the owner reads most said
-	// "1 more finding" over a checkout with nothing wrong with it. Its finding
-	// states are the update class — a pin this binary does not match, a foreign
-	// wiring — which is what keeps them on that screen, so the two ends are
-	// pinned together here.
-	pin := doctorCheck{ID: "plugin-pin", Severity: "info", Problem: "no fugaro marketplace in .claude/settings.json"}
-	if got := doctorClassOf(pin); got != doctorClassMeasure {
-		t.Errorf("the un-wired plugin-pin is %q, want %q: it is the normal state, not a finding (D942)", got, doctorClassMeasure)
-	}
-	if out := doctorDefaultOutput(t, []doctorCheck{pin}); strings.Contains(out, "more finding") || strings.Contains(out, "plugin-pin") {
-		t.Errorf("the un-wired checkout is printed or counted by the default view:\n%s", out)
-	}
-	stale := doctorCheck{ID: "plugin-pin", Severity: "warning", Problem: "the plugin is pinned at fugaro@0.1.0, and this fugaro is 0.2.0", Fix: "run `fugaro update`"}
-	if got := doctorClassOf(stale); got != doctorClassUpdate {
-		t.Errorf("a pin this binary does not match is %q, want %q: nothing acts on it otherwise", got, doctorClassUpdate)
+	// The two repository checks are findings, not measurements and not the
+	// update class (U6b of docs/update-from-anywhere, R15): the value they name
+	// is one `fugaro update` no longer takes out (U6a), so their fix is the edit
+	// itself and the default view prints the item with it.
+	for _, id := range []string{repoPluginPinCheckID, repoBudgetModeCheckID} {
+		c := doctorCheck{ID: id, Severity: "warning",
+			Problem: "acme/app: needs you: " + repoNoticePinFile + ": " + repoNoticePinEdit,
+			Fix:     "delete the line"}
+		if got := doctorClassOf(c); got != doctorClassActionable {
+			t.Errorf("%s is %q, want %q: the repository's own edit is what clears it", id, got, doctorClassActionable)
+		}
+		if !checksFail([]doctorCheck{c}, true) {
+			t.Errorf("%s does not fail --strict: a leftover value in a repository is a finding whatever the mode", id)
+		}
+		if out := doctorDefaultOutput(t, []doctorCheck{c}); !strings.Contains(out, "warning "+id+": ") {
+			t.Errorf("the default view does not print %s:\n%s", id, out)
+		}
 	}
 
 	// The per-instance IDs of those same sweeps are findings: runs-bucket-iam-1
@@ -1137,6 +1135,10 @@ func doctorCheckEmitted(t *testing.T, id string) doctorCheck {
 // "a clean installation prints one line" is a fact about what doctor emits, not
 // about a fixture assembled to make the view look right.
 //
+// Its checkout carries no pin, which is the ordinary checkout since D949: a pin
+// an older fugaro wrote is a finding of its own now (repo-plugin-pin, U6b), so a
+// rig that kept one would not be the clean installation this helper promises.
+//
 // configure runs on the rig before the clean state is completed, for a test
 // that needs one real finding in it.
 func doctorCleanRig(t *testing.T, configure func(*doctorRig)) (*doctorRig, string) {
@@ -1145,7 +1147,7 @@ func doctorCleanRig(t *testing.T, configure func(*doctorRig)) (*doctorRig, strin
 	if configure != nil {
 		configure(r)
 	}
-	root, _ := skillCheckout(t, wiredAt("v0.2.0"))
+	root, _ := skillCheckout(t, "")
 	return doctorCleanState(t, r, root), root
 }
 
@@ -1181,7 +1183,9 @@ func doctorCleanState(t *testing.T, r *doctorRig, root string) *doctorRig {
 // secretCleanRig is the same clean installation in a checkout whose jobs mount
 // a stored secret: the state secret-scope exists for. Its listing is a
 // measurement and not a decision — one line, no choice to make, nobody to send
-// anywhere — so the clean screen stays the one line the owner asked for.
+// anywhere — so the clean screen stays the one line the owner asked for. The
+// checkout carries no pin, like doctorCleanRig's: since D949 that is the
+// ordinary checkout, and a pin left in one is a finding of its own (U6b).
 func secretCleanRig(t *testing.T) (*doctorRig, string) {
 	t.Helper()
 	r, root := secretScopeCheckout(t)
@@ -1208,12 +1212,6 @@ func secretCleanRig(t *testing.T) (*doctorRig, string) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(manifest, []byte(strings.Replace(string(data), "project: aurora\n", "project: aurora\ngcp_project: proj-1234\n", 1)), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, ".claude", "settings.json"), []byte(wiredAt("v0.2.0")), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return doctorCleanState(t, r, root), root
@@ -1273,13 +1271,23 @@ func TestDoctorRealFindingPrintsItAndThePointer(t *testing.T) {
 		r.withRunsBucket(t, g, "", gcpfake.Binding{Role: "roles/storage.objectAdmin",
 			Members: []string{"user:x@example.com"}})
 	})
-	// The plugin is pinned behind this binary: a warning the reader fixes.
-	settings := filepath.Join(root, ".claude", "settings.json")
+	// A pin an older fugaro wrote into a checkout, left there: the item the
+	// reader deletes, which is what this view prints and neither counts nor
+	// hides (U6b of docs/update-from-anywhere). The check reads the project's
+	// repositories, which until I1's read is the working directory's checkout
+	// (R21) — so the checkout this test stands up, and not the one doctor is
+	// pointed at, is the repository that carries it.
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": skillCheckoutYAML})
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/"+skillCheckoutRepo+".git")
+	settings := filepath.Join(dir, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settings), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(settings, []byte(wiredAt("v0.1.0")), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	out, _, _ := execute(t, "doctor", "--dir", root)
-	if !strings.Contains(out, "warning plugin-pin: ") {
+	if !strings.Contains(out, "warning repo-plugin-pin: ") {
 		t.Errorf("the default view does not print the real item:\n%s", out)
 	}
 	if !strings.Contains(out, "1 security finding: `fugaro doctor --security`") {
@@ -1490,10 +1498,15 @@ func TestDoctorUnreadPolicyStatesAreCounted(t *testing.T) {
 // `--all` — while the fixed caveat beside it stays a measurement.
 func TestDoctorPluginSettingsNoticeIsCounted(t *testing.T) {
 	_, root := doctorCleanRig(t, nil)
-	// The wiring an installation has, plus a hook: the notice the per-notice
-	// line is for, written through the check's own emitter below.
+	// A settings file whose only subject is the hook: the notice the per-notice
+	// line is for, written through the check's own emitter below. No pin in it:
+	// this test is about the notice, and a pin is a finding of its own now
+	// (repo-plugin-pin, U6b).
 	settings := filepath.Join(root, ".claude", "settings.json")
-	withHook := strings.TrimSuffix(wiredAt("v0.2.0"), "}") + `,"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"make lint"}]}]}}`
+	withHook := `{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"make lint"}]}]}}`
+	if err := os.MkdirAll(filepath.Dir(settings), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(settings, []byte(withHook), 0o644); err != nil {
 		t.Fatal(err)
 	}

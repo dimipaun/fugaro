@@ -287,27 +287,38 @@ func TestDoctorGatesTheBatchName(t *testing.T) {
 	}
 }
 
-// TestDoctorStrictPlugin: a stale pin fails doctor only with --strict; a
-// current one never does.
+// TestDoctorStrictPlugin: `--plugin` answers the wiring alone, and a pin in the
+// checkout is no longer one of its questions — under any ref, at any version.
+// A pin an older fugaro wrote is a leftover now (U6a), the line about it is the
+// repository's own edit (repo-plugin-pin, U6b), and it is read where the
+// repositories are read: not in this mode, which reaches nothing (R15 of
+// docs/update-from-anywhere).
 func TestDoctorStrictPlugin(t *testing.T) {
 	withVersion(t, "0.2.0")
-	for _, tc := range []struct {
-		name            string
-		ref             string
-		failsWithStrict bool
-	}{
-		{"ok", "v0.2.0", false},
-		{"outdated", "v0.1.0", true},
-		{"newer", "v0.3.0", true},
+	for _, tc := range []struct{ name, ref string }{
+		{"our release", "v0.2.0"},
+		{"older", "v0.1.0"},
+		{"newer", "v0.3.0"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root, _ := skillCheckout(t, wiredAt(tc.ref))
 			if _, _, err := execute(t, "doctor", "--plugin", "--dir", root); err != nil {
 				t.Fatalf("without --strict: %v", err)
 			}
-			_, _, err := execute(t, "doctor", "--plugin", "--strict", "--dir", root)
-			if failed := err != nil; failed != tc.failsWithStrict {
-				t.Fatalf("--strict: failed = %v, want %v (err %v)", failed, tc.failsWithStrict, err)
+			// --strict used to fail this checkout on a pin at another release;
+			// nothing about a pin is left for it to fail on (R15).
+			out, _, err := execute(t, "doctor", "--plugin", "--strict", "--json", "--dir", root)
+			if err != nil {
+				t.Fatalf("--strict: %v\n%s", err, out)
+			}
+			var o doctorOutput
+			if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+				t.Fatalf("json: %v\n%s", jerr, out)
+			}
+			for _, c := range o.Checks {
+				if c.ID == repoPluginPinCheckID && !c.Skipped {
+					t.Fatalf("--plugin read the repository's pin: %+v", c)
+				}
 			}
 		})
 	}
@@ -340,13 +351,12 @@ func TestDoctorStrictFailsForeignAndUnpinned(t *testing.T) {
 }
 
 // TestDoctorUnwiredCheckoutPassesStrict: a repository that never opted in to
-// the plugin pin is not a CI failure (D942, reconciliation F21). Its
-// plugin-pin check is informational — the state every checkout fugaro leaves
-// behind is in now that the merge that wrote the pin is deleted (D949) — and
-// the check that does fail a machine, plugin-install, is not evaluated in this
-// mode at all, because the runner that runs it has no Claude Code install.
-// This is the red test of U3: before it, the un-wired checkout failed --strict
-// on plugin-pin, for the wrong reason.
+// the plugin pin is not a CI failure (D942, reconciliation F21). Nothing about
+// the pin is said here at all any more — the check that read it is gone with it
+// (R15 of docs/update-from-anywhere) — and the check that does fail a machine,
+// plugin-install, is not evaluated in this mode either, because the runner that
+// runs it has no Claude Code install. This is the red test of U3: before it, the
+// un-wired checkout failed --strict on plugin-pin, for the wrong reason.
 func TestDoctorUnwiredCheckoutPassesStrict(t *testing.T) {
 	withVersion(t, "0.2.0")
 	root, _ := skillCheckout(t, "")
@@ -358,14 +368,20 @@ func TestDoctorUnwiredCheckoutPassesStrict(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &o); err != nil {
 		t.Fatalf("json: %v\n%s", err, out)
 	}
-	pin, ok := doctorCheckByID(o.Checks, "plugin-pin")
-	if !ok || pin.OK || pin.Severity != "info" {
-		t.Fatalf("plugin-pin on an un-wired checkout = %+v, want ok false and info", pin)
+	if pin, ok := doctorCheckByID(o.Checks, "plugin-pin"); ok {
+		t.Fatalf("--plugin still reports a pin check on an un-wired checkout: %+v", pin)
 	}
-	// The wiring it could not find is still said, in the check's own words:
-	// informational is not silence.
-	if !strings.Contains(pin.Problem, "settings.json") {
-		t.Errorf("plugin-pin's problem does not say what is missing: %q", pin.Problem)
+	// The two repository checks are recorded as not run, in their own words:
+	// this mode reads no repository, and a question nobody asked may not be
+	// answered by silence (R15).
+	for _, id := range []string{repoPluginPinCheckID, repoBudgetModeCheckID} {
+		c, ok := doctorCheckByID(o.Checks, id)
+		if !ok || !c.Skipped {
+			t.Fatalf("%s under --plugin = %+v (present %v), want a recorded skip", id, c, ok)
+		}
+		if !strings.Contains(c.Problem, "not read (offline)") {
+			t.Errorf("%s's skip does not say it was not read: %q", id, c.Problem)
+		}
 	}
 	if !o.OK {
 		t.Fatalf("the verdict is false on an un-wired checkout: %+v", o)
@@ -396,7 +412,7 @@ func TestDoctorOpenProvidersIsInformational(t *testing.T) {
 		}
 		return o
 	}
-	// The rig has failures of its own (no checkout for plugin-pin, no base
+	// The rig has failures of its own (no checkout at all, no base
 	// image), so strictness is compared rather than expected to pass: the
 	// set of checks that fail under --strict must be the same one as before
 	// the provider existed.
@@ -452,7 +468,7 @@ func TestDoctorOpenProvidersIsInformational(t *testing.T) {
 // all.
 func TestDoctorProviderSecretNameIsInformational(t *testing.T) {
 	r := newDoctorRig(t)
-	// The rig has failures of its own (no checkout for plugin-pin, no base
+	// The rig has failures of its own (no checkout at all, no base
 	// image), so strictness is compared rather than expected to pass: the set
 	// of checks that fail under --strict must be the same one as before the
 	// provider existed.
@@ -729,10 +745,12 @@ func TestDoctorOffline(t *testing.T) {
 			t.Errorf("%s = %+v (present %v), want skipped and not ok", id, c, ok)
 		}
 	}
-	// And the checks a file here answers: the plugin pair (the rig's machine
-	// has the plugin at this binary's release), the login unit and the base
-	// image. Not one of them is skipped, and none is a failure.
-	for _, id := range []string{"plugin-pin", "plugin-install", "orchestrator-unit", "base-image"} {
+	// And the checks a file here answers: the plugin on this machine (the rig's
+	// machine has it at this binary's release), the login unit and the base
+	// image. Not one of them is skipped, and none is a failure. The two
+	// repository checks are not among them: their answer is each enrolled
+	// repository's default branch, which this flag does not read (R15).
+	for _, id := range []string{"plugin-install", "orchestrator-unit", "base-image"} {
 		c, ok := byID[id]
 		if !ok {
 			t.Errorf("--offline did not answer %s: it is one of the class's local checks:\n%s", id, out)
@@ -885,15 +903,15 @@ func TestDoctorOfflineImageConfigNamesOnlyComparedWorkflows(t *testing.T) {
 			t.Errorf("--offline names %s: no run emits that check for that workflow, so --all would list a check that does not exist", id)
 		}
 	}
-	// The count on the screen is the checks that exist: cli-version and the
-	// three policy checks are the only other skips this rig has (base-image
-	// answers from the local config).
+	// The count on the screen is the checks that exist: cli-version, the three
+	// policy checks and the two repository ones are the only other skips this
+	// rig has (base-image answers from the local config).
 	view, _, err := execute(t, "doctor", "--offline")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, view)
 	}
-	if !strings.Contains(view, "5 checks not run by `--offline`") {
-		t.Errorf("the default view does not count exactly the five skipped checks:\n%s", view)
+	if !strings.Contains(view, "7 checks not run by `--offline`") {
+		t.Errorf("the default view does not count exactly the seven skipped checks:\n%s", view)
 	}
 }
 

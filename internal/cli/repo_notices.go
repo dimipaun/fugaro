@@ -86,15 +86,29 @@ func repoNotices(v repoView) []repoNotice {
 	return out
 }
 
+// repoNoticeLine is one notice's line about one repository, built through
+// newRepoLine (C1) so the repository-controlled text is made safe and bounded
+// once for both of its readers: `update` reports it, and `doctor`'s row carries
+// it (R15). The state is needs-you, because only the owner makes the edit and
+// nothing here writes one.
+func repoNoticeLine(repo string, n repoNotice) initflow.RepoLine {
+	return newRepoLine(repo, initflow.RepoNeedsYou, n.File+": "+n.Detail)
+}
+
+// repoNoticeText is that line as the string each reader prints it as: the shape
+// `update` writes to the terminal and `doctor`'s one row carries, so the two
+// doors say the same thing about the same value (R15, spec acceptance 5).
+func repoNoticeText(l initflow.RepoLine) string {
+	return l.Repo + ": " + string(l.State) + ": " + l.Detail
+}
+
 // noticeRepoLines is the notices of every repository as the lines the run
-// reports, one per repository per notice, built through newRepoLine (C1): the
-// repository-controlled detail is made safe and bounded there. The state is
-// needs-you, because only the owner makes the edit and nothing here writes one.
+// reports, one per repository per notice (repoNoticeLine).
 func noticeRepoLines(views []repoView) []initflow.RepoLine {
 	var lines []initflow.RepoLine
 	for _, v := range views {
 		for _, n := range repoNotices(v) {
-			lines = append(lines, newRepoLine(v.Repo, initflow.RepoNeedsYou, n.File+": "+n.Detail))
+			lines = append(lines, repoNoticeLine(v.Repo, n))
 		}
 	}
 	return lines
@@ -128,6 +142,6 @@ func (e *initEngine) noticeRepoValues(ctx context.Context) {
 	}
 	e.reportRepos(repoNoticesStep, lines)
 	for _, l := range lines {
-		fmt.Fprintf(r.w, "%s: %s: %s\n", l.Repo, l.State, l.Detail)
+		fmt.Fprintln(r.w, repoNoticeText(l))
 	}
 }

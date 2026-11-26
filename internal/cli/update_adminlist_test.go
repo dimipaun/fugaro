@@ -48,7 +48,7 @@ func TestUpdateRewritesListAfterRoleChange(t *testing.T) {
 	// since demoted, and one it no longer holds at all.
 	setAdminList(t, r, []roleaccess.Admin{{Email: "gone@example.com"}, {Email: "demoted@example.com"}})
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 	assertAdminList(t, r, []string{"deputy@example.com", "owner@example.com"}, "after the update that follows the role change")
 
 	// And it says so: the list is a derivation of the roster, so a person who
@@ -78,7 +78,7 @@ func TestUpdateRevokesWhenTheRosterIsGone(t *testing.T) {
 	r := newConvergeRig(t, v7Node())
 	setAdminList(t, r, []roleaccess.Admin{{Email: "gone@example.com"}})
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 	// The object is rewritten, not deleted: an absent list and a list that
 	// holds nobody are different documents, and the intake reads the second.
 	assertAdminList(t, r, nil, "after the update that follows the roster's removal")

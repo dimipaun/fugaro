@@ -590,7 +590,7 @@ func TestUpdateConvergesASplitWorkspaceOwnerInOneCommand(t *testing.T) {
 		t.Fatalf("doctor does not report the split workspace owner: %+v", c)
 	}
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "policy-older-than-binary", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "policy-older-than-binary", "repo-plugin-pin"})
 
 	// The step's line is the first clause of its reason and the log the whole of
 	// it (report.Brief), so the owner sees the skip on the screen and reads why
@@ -1361,7 +1361,7 @@ func TestSplitFirebaseGetsNoService(t *testing.T) {
 	wsSeedRecorded(t, initProjectName, oldCredentialsRef(convergePrev), "")
 
 	startRunInFlight(t, r)
-	out := convergeOn(t, r, []string{"policy-rules-skew", "policy-older-than-binary", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "policy-older-than-binary", "repo-plugin-pin"})
 
 	if line := inFlightLine(t, out); strings.Contains(line, "workspace service:") {
 		t.Errorf("the note names the workspace's service over an installation that deploys none, so an owner reads a step no run makes (R12):\n%s", line)
