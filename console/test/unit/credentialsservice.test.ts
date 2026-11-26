@@ -300,7 +300,7 @@ const SERVICE_STATES: readonly { readonly name: string; readonly line: Record<st
       severity: 'warning',
       problem:
         'the credentials service fugaro-credentials is deployed and grants no roles/run.invoker to example-repo (example-workflow): a run of example-repo would fail to fetch a model credential',
-      fix: 'from a checkout of example-repo, run fugaro update --project fugaro --repo (grants each of its job accounts roles/run.invoker on the service)',
+      fix: 'from a checkout of example-repo, run fugaro update --project fugaro --repo. The command grants each repository’s job accounts roles/run.invoker on the service',
     }),
   },
   { name: 'the service is deployed, serving and admitting its callers', line: check({ ok: true }) },

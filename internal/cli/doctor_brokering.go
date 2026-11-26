@@ -317,8 +317,12 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) 
 	// is named with it because a checkout alone does not select one where this
 	// machine holds several project configs, and the config doctor read is the
 	// one whose service is short a grant, so the command has to be that
-	// project's. One command serves a repository however many of its
-	// workflows are missing, and missingRepos holds each repository once.
+	// project's. The first sentence ends at the command and nothing else rides
+	// in it, because the default view prints the first sentence alone
+	// (doctorShortFix): it is the line a reader copies, and every word after
+	// it is one the line does not need. One command serves a repository however
+	// many of its workflows are missing, and missingRepos holds each repository
+	// once.
 	names := make([]string, len(missingRepos))
 	for i, repo := range missingRepos {
 		names[i] = pluginwire.Printable(repo)
@@ -334,7 +338,7 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) 
 		Problem: fmt.Sprintf("%s The credentials service %s is deployed and grants no %s to %s: a run of %s that is on the switch would fail to fetch a model credential%s. The grant follows the switch, and the switch follows the repository's own agent.auth: a repository that runs with agent.auth: cascade reaches the service wherever the installation has one, and one that runs with agent.auth api-key or oauth reaches it only where its budget mode is observe or enforce AND the service's bundle holds the credential its auth needs — %s for api-key, and the token of every account its workflows may run under for oauth. So a repository of that list that is held off has no grant: the published policy's proxy: true is inert for it — it brokers nothing, and its runs hold their own Bitbucket token instead of being served one",
 			sentence, infra.CredentialsServiceName, runInvokeRoles[0], strings.Join(missing, ", "), strings.Join(missing, ", "),
 			noteIfAny("; not read: "+strings.Join(unread, ", "), len(unread) > 0), config.AnthropicSecret),
-		Fix: where + " (grants each of its job accounts " + runInvokeRoles[0] + " on the service). For one of them the switch is held off until it holds: an api-key or oauth repository needs its budget mode at observe or enforce and the service's bundle to hold the credential its auth needs (" + selfCommand() + " creds set " + config.AnthropicSecret + " for api-key; " + selfCommand() + " creds set " + config.ClaudeOAuthTokenPrefix + "<account> for oauth), and a repository of any other agent.auth has to run with agent.auth: cascade first (with a model credential in the service's bundle, " + selfCommand() + " creds set). Until then the switch is off for that repository, proxy: true is inert, and its runs hold their own Bitbucket token"}}
+		Fix: where + ". The command grants each repository's job accounts " + runInvokeRoles[0] + " on the service. For one of them the switch is held off until it holds: an api-key or oauth repository needs its budget mode at observe or enforce and the service's bundle to hold the credential its auth needs (" + selfCommand() + " creds set " + config.AnthropicSecret + " for api-key; " + selfCommand() + " creds set " + config.ClaudeOAuthTokenPrefix + "<account> for oauth), and a repository of any other agent.auth has to run with agent.auth: cascade first (with a model credential in the service's bundle, " + selfCommand() + " creds set). Until then the switch is off for that repository, proxy: true is inert, and its runs hold their own Bitbucket token"}}
 }
 
 // doctorCredentialsServiceServing is the rest of

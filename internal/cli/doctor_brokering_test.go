@@ -432,6 +432,50 @@ func pinDoctorNow(t *testing.T, now func() time.Time) {
 	t.Cleanup(func() { doctorNow = old })
 }
 
+// TestDoctorCredentialsServiceFixLineFitsTheRule: the fix's first sentence is
+// the whole line the default view prints for this check (doctorShortFix hands
+// the view the check's own first sentence), so its length is the reader's — a
+// line past the ~140 characters CLAUDE.md sets is one they scroll to read and
+// cut to copy. The names are the long ones of the field — a sandbox repository
+// and a project name — because those are what push the sentence furthest, and
+// the project is the half the command added to it.
+func TestDoctorCredentialsServiceFixLineFitsTheRule(t *testing.T) {
+	// The line is what a person sees, so it names the binary as they run it.
+	old := selfCommand
+	selfCommand = func() string { return "fugaro" }
+	t.Cleanup(func() { selfCommand = old })
+
+	svcs := gcpfake.NewRunServices(t)
+	svcs.AddService(infra.CredentialsServiceName)
+	runs := gcpfake.NewRun(t)
+	lc := &localcfg.Config{
+		Name:               "fugaro",
+		GCPProject:         "fugaro-dev",
+		Region:             "us-east5",
+		CredentialsService: &localcfg.CredentialsService{URL: "https://fugaro-credentials-abc-uc.a.run.app"},
+		Endpoints:          localcfg.Endpoints{NoAuth: true, Run: cloudRunEndpoint(t, runs, svcs)},
+		Repos: map[string]localcfg.Repo{
+			"dimipaun/fugarosandbox2": {Provider: "bitbucket", Workflows: []string{"app"}},
+		},
+	}
+	checks := doctorCredentialsServiceDeployed(t.Context(), lc)
+	if len(checks) != 1 || checks[0].OK || checks[0].Severity != "warning" {
+		t.Fatalf("checks = %+v, want the one warning about the missing grant", checks)
+	}
+	var line string
+	for _, l := range strings.Split(doctorDefaultOutput(t, checks), "\n") {
+		if strings.Contains(l, "update --project") {
+			line = strings.TrimSpace(l)
+		}
+	}
+	if line == "" {
+		t.Fatal("the default view prints no line naming the command")
+	}
+	if n := len([]rune(line)); n > 140 {
+		t.Errorf("the fix line is %d characters, over the 140 a line may take: %q", n, line)
+	}
+}
+
 // TestDoctorBrokeringCredentialsServiceDeployed: the check reads the service's
 // own policy, and it is a warning in both failing directions — a service the
 // installation opted into that is not there, and a service no job account may
