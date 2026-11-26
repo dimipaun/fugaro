@@ -134,34 +134,6 @@ billing (the gcloud billing projects link line for the new project, the
 billing account's id theirs to supply, and the rerun line), and the rerun
 resumes the project it created.
 
-setup --anchor, run in the checkout of a repository the project lists, writes
-only the gcp_project: line of its fugaro.yaml (the line teammates find the
-shared config from), with no Terraform, no discovery, no publish and no image
-copy; plain fugaro setup writes the same line as its last stage, after the whole
-converge. Before it writes anything it checks, and reports together (one
-line per workflow, with its fix in order), that every workflow's build record
-in the runs bucket exists and was submitted by a fugaro release at or after
-the one that added the field, and that the base image the image was built
-FROM (the record's base_ref, whose fugaro binary the image holds) is such a
-release too: a missing record, a record that does not say its base, an older
-or development CLI, or an older, development or hand-pushed base fails. It
-also checks that each base image the local config sets for those workflows is
-this release's pin through the remote repository, or a release image an
-earlier fugaro copied, at or after that release, since the next build starts
-from it (a development or hand-pushed one is never replaced by fugaro setup
---base or fugaro image refresh: remove its base_images entry first). The fix
-it names is: that removal when needed, fugaro image refresh --repo
-<owner/name> --workflow <name> in the checkout (it verifies the release's
-base image and pins it by digest, points the daily image check job at it and
-rebuilds the image), then fugaro setup --anchor. The image checks trust the build records (written by
-the builds, unsigned: the same trust as the shared config), and a hand-pushed
-image under a release-looking tag passes them. Then the diff; a person at the
-terminal confirms it there (nothing is typed), and a run with no terminal
-prints the line and writes nothing. Exit codes: 0 written or already present
-and safe, 1 a check failed or nothing was written, 2 a build record could not
-be read from the cloud (missing credentials included). A coding agent's
-session may run it: it edits only a local file.
-
 setup --firebase-project <gcp-project-id> turns the shared budget on: it
 builds the budget backend in the installation's own GCP project. The value is
 the installation's own GCP project id (the default; the flag is only needed to
@@ -268,8 +240,7 @@ once, in the sentence naming --link-billing, before any account of yours is
 read. In a coding agent's environment (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT,
 CLAUDE_CODE_REMOTE, CURSOR_AGENT or AI_AGENT is set) setup
 applies nothing and says to run it in your own terminal
-window; --plan-only and the read-only checks still work, and so does setup
---anchor, which edits only the checkout's fugaro.yaml. That is a mitigation,
+window; --plan-only and the read-only checks still work. That is a mitigation,
 not a barrier: an agent can unset its own environment. CLAUDE_CODE_SSE_PORT is
 read the same way and is the one case that is not an agent's: the Claude Code
 IDE extension sets it in a person's own terminal too, so on its own it counts

@@ -76,7 +76,7 @@ func declaredFlags(door string) map[string]bool {
 // equal to each other and empty of it.
 var sharedFlagsFloor = []string{
 	"repo", "firebase-project", "plan-only", "print-vars", "config-only",
-	"json", "anchor", "retire", "gcp-project", "region", "name",
+	"json", "retire", "gcp-project", "region", "name",
 }
 
 // TestBothDoorsTakeTheSharedFlags: the flags that belong to the converge are
@@ -232,11 +232,11 @@ func TestNoDoorsHelpOffersAFlagItRefuses(t *testing.T) {
 // `--yes` is where this went wrong: one sentence interpolated the door for its
 // first half ("fugaro setup applies nothing, --yes included") and hardcoded
 // "update" for the second ("except update --anchor"), so setup's own help
-// contradicted setup's Long two paragraphs above it, on the same screen. Both
-// doors accept --anchor and run it through the same door-independent path
-// (runAnchor, before any door-specific step), so the exception is the reader's
-// own door, not update's. That sentence went with the flag (T11,
-// docs/no-prompt-policy), so the positive half is held door-independently now:
+// contradicted setup's Long two paragraphs above it, on the same screen. That
+// sentence named the wrong door, and both are gone now — the sentence with the
+// prompt (T11, docs/no-prompt-policy) and the flag itself with the anchor's move
+// into `fugaro project repos add` (U9b) — so the positive half is held
+// door-independently now:
 // a usage string that names a door at all names the one the reader is at, and
 // none is left naming a command it should not.
 func TestNoDoorsFlagHelpNamesTheOtherDoor(t *testing.T) {
@@ -414,5 +414,19 @@ func TestUpdateRefusesAnArgument(t *testing.T) {
 		t.Error("fugaro setup <path> without --repo exited 0")
 	} else if !strings.Contains(ErrorText(err), "--repo") {
 		t.Errorf("fugaro setup's argument refusal does not name --repo: %v", err)
+	}
+}
+
+// TestUpdateHasNoAnchorFlag and TestSetupHasNoAnchorFlag are U9b's red step:
+// the gcp_project line is `fugaro project repos add`'s alone (D3345, D3351,
+// R14), and neither converge door offers a flag that writes it any more.
+func TestUpdateHasNoAnchorFlag(t *testing.T) { assertNoAnchorFlag(t, "update") }
+
+func TestSetupHasNoAnchorFlag(t *testing.T) { assertNoAnchorFlag(t, "setup") }
+
+func assertNoAnchorFlag(t *testing.T, door string) {
+	t.Helper()
+	if f := doorCommands[door]().Flags().Lookup("anchor"); f != nil {
+		t.Errorf("fugaro %s still declares --anchor: the gcp_project line is written by fugaro project repos add alone (R14)", door)
 	}
 }

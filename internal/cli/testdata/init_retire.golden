@@ -77,5 +77,4 @@ The local config <tmp> changes:
 backed up the old local config to <tmp>
 wrote <tmp>
 published the shared config to gs://fugaro-runs-proj-1234/fugaro/config.yaml
-note: to let teammates use this installation without setup, run fugaro update --anchor in this checkout (it checks the images first)
 project: aurora (GCP proj-1234)

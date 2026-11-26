@@ -88,8 +88,7 @@ first image build, replacing a registry tag and onboarding an unlisted
 repository on a provider's own host with an origin git config that does not
 rewrite it (the build, the tag and the repository are covered in setup too); the
 secrets stage's hidden prompts and the one line of fugaro secrets set commands
-it leaves instead; the plugin wiring; --anchor, which writes the checkout's
-gcp_project line and nothing else; --plan-only, --print-vars, --config-only and
+it leaves instead; the plugin wiring; --plan-only, --print-vars, --config-only and
 --publish-config; and --json, which prints the same result object. The Firestore
 database's location is not among the steps: where this door creates the
 database it prints where, and that the location is permanent, and creates it
