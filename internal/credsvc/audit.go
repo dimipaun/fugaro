@@ -214,6 +214,23 @@ const (
 	// a credential of the cascade. The service's own line carries it, and that
 	// line is where the execution name the claim reported is recorded (F7).
 	PurposeSlipClaim = "slip_claim"
+	// PurposePoolDesignate is a launcher's own designation of the pool its runs
+	// in this project are served from (R26, PL4): the one act that writes the
+	// record the launcher's-pool lookup reads, over the route of
+	// designation_route.go.
+	//
+	// Its line names the verified launcher and NO run, no job and no credential,
+	// and for the grant's reasons exactly: the act is a launcher's own statement
+	// about itself, made with a token that holds no run identity — the runs it
+	// answers for do not exist yet — and it writes a record of NAMES (the
+	// principal, the project and the pool), so nothing on the path reads a
+	// bundle entry or names one a line could carry (callerWithoutJobPurpose,
+	// credentiallessPurpose).
+	//
+	// The record is display data every launcher of the project can read (R26),
+	// so the line is what an operator greps to see WHO designated a pool, and
+	// the store's own node is where the pool's name is read back.
+	PurposePoolDesignate = "pool_designate"
 	// PurposeMergeMint is the short-lived GitHub installation token the
 	// installation's orchestrator daemon asks this service for on the merge mint
 	// (E16, D2049), once the mint's gate has passed: the pull request is still at
@@ -468,7 +485,7 @@ const (
 func ValidPurpose(purpose string) bool {
 	switch purpose {
 	case PurposeForward, PurposeProbe, PurposeMint, PurposeReviewSign, PurposeReviewVerify, PurposeBitbucketRead, PurposeGitHubRead,
-		PurposeGit, PurposeBitbucketAPI, PurposeSlipGrant, PurposeSlipClaim, PurposeMergeMint, PurposeWorkflowSecret, PurposeLabel, PurposeIssue,
+		PurposeGit, PurposeBitbucketAPI, PurposeSlipGrant, PurposeSlipClaim, PurposePoolDesignate, PurposeMergeMint, PurposeWorkflowSecret, PurposeLabel, PurposeIssue,
 		PurposeBuildToken, PurposeBuildGrant, PurposeBuildGit,
 		PurposeBuildBitbucket, PurposeBuildProxy, PurposeContextToken, PurposeBuild,
 		PurposeMobilePair, PurposeMobileRefresh, PurposeMobileRestore, PurposeMobileRevoke:
@@ -525,6 +542,10 @@ func credentialWithoutTier(purpose string) bool {
 // them (B1): it is the account a catalog build runs as, and it holds no run
 // identity either, so every purpose of its own is here — the two the build
 // route answers under and the three a build's proxy calls are recorded under.
+// A designation (PurposePoolDesignate) is the launcher's own act and comes with
+// the grant's (PL4): the same caller, the same class of route, and no run for
+// either to name.
+//
 // A REPOSITORY's build is the seventh (B4.3): its caller is the account one
 // repository's image build and daily check run as, which holds no run identity
 // either, so its one purpose is here too. The mobile routes' four are the
@@ -533,6 +554,7 @@ func credentialWithoutTier(purpose string) bool {
 func callerWithoutJobPurpose(purpose string) bool {
 	return purpose == PurposeReviewVerify || purpose == PurposeBitbucketRead ||
 		purpose == PurposeGitHubRead || purpose == PurposeSlipGrant ||
+		purpose == PurposePoolDesignate ||
 		purpose == PurposeMergeMint || purpose == PurposeLabel ||
 		purpose == PurposeIssue ||
 		purpose == PurposeBuildToken || purpose == PurposeBuildGrant ||
@@ -552,6 +574,10 @@ func callerWithoutJobPurpose(purpose string) bool {
 // bundle entry — it writes a record — so a name on its line would be an entry
 // this service never read. WC4's grant line is this family's first writer.
 //
+// A designation (PurposePoolDesignate) is the third of the family and the
+// grant's own shape one step further (PL4): the launcher's act, writing a
+// record of names, over the route that is the only writer of it.
+//
 // The line is the narrowest in the file for the same reason: the act holds no
 // run identity and is not a job of this installation, so it names neither a run
 // nor the repository that run belongs to nor a job, and any of the three on one
@@ -567,7 +593,7 @@ func callerWithoutJobPurpose(purpose string) bool {
 func credentiallessPurpose(purpose string) bool {
 	switch purpose {
 	case PurposeMobilePair, PurposeMobileRefresh, PurposeMobileRestore, PurposeMobileRevoke,
-		PurposeSlipGrant:
+		PurposeSlipGrant, PurposePoolDesignate:
 		return true
 	}
 	return false

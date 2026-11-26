@@ -14,6 +14,7 @@ member, `repo_images`, and `fugaro update` moves the old map once.
 | --- | --- |
 | [spec.md](spec.md) | The spec as approved. No typo was fixed |
 | [reconciliation.md](reconciliation.md) | Assumptions A1–A4, findings F1–F35 (F12–F20 from review round 1, F21–F32 from round 2, F33–F35 from round 3), decisions D3370–D3377 with the owner's answers (D3372 and D3376 amended after review, by the owner), resolutions R1–R16, open items O1–O4, UNVERIFIED V1–V3. **Where it disagrees with the spec, it wins** |
+| [contract.md](contract.md) | The shape T0 lands and every other task compiles against: the `repo_images` member, its type and its escape, `ValidRepoImages`' two halves (the write against `config.Providers`, the read against the shape), `Policy.EffectiveRepoImages`, and `catalog.ImageRequest`'s three new fields |
 | [implementation-plan.md](implementation-plan.md) | Nineteen tasks in six levels (T0, K1; T0b, S1; T0c, U1a, R1, R2a, R2b, R2c; U1b, R2d, R3, S2; U1c, S3, D1a, D1b; X1), the shared files, the edges kept, and the owner's Check 940. Nothing in it is approved |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph, as `fugaro plan graph` reads it |
 

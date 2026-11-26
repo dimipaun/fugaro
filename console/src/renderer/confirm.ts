@@ -30,9 +30,10 @@
 //     the operator reads.
 //
 // **The setup half is the same window with a subject of its own** (SW3a,
-// D2904): `'setup'` is a first `fugaro setup`, and what it draws is the five
-// answers **the main process parsed** (never the renderer's own object), the
-// SHA-256 of the bytes the child is given on its stdin, the two command lines,
+// D2904): `'setup'` is a first `fugaro setup`, and what it draws is the answers
+// **the main process parsed** (never the renderer's own object) -- five rows of
+// the six, the budget alert having none yet (D2210) -- the SHA-256 of the bytes
+// the child is given on its stdin, the two command lines,
 // and the console's four sentences of what a yes does -- that `--json` confirms
 // no step, that everything needing a person comes back as a line for the
 // operator's terminal, that this yes is their go to run the CLI and not a
@@ -81,9 +82,9 @@
 // value. The window's **argv is not one of those strings**: it is the console's
 // own command line, whose first word is the CLI's own path, and rule 12's
 // promise is that the window shows what is spawned rather than a summary of it
-// -- a class that draws a path as `<path>` would break exactly that promise, the
-// way `sanitizeRefusal`'s own doc says of the CLI's refusal sentences. So the
-// argv reaches the screen as it does today, for both halves.
+// -- a class that masked the path would break exactly that promise, the way
+// `sanitizeRefusal`'s own doc says of the CLI's refusal sentences. So the argv
+// reaches the screen as it does today, for both halves.
 //
 // The keyboard is the one place this view is stricter than it looks. The main
 // process already declines Enter and Escape (`before-input-event` in
@@ -177,8 +178,9 @@ export type SettingsEntryFields = SettingsEntryView
  *
  * Two things about it are the point rather than the drawing:
  *
- *   - **the five answers are main's**, parsed and held by `wizardrun.ts` before
- *     this window existed. They are drawn the way the launch's rows are -- as the
+ *   - **the answers are main's**, parsed and held by `wizardrun.ts` before
+ *     this window existed -- five of the six, the budget alert having no row
+ *     here yet (D2210). They are drawn the way the launch's rows are -- as the
  *     main process's own values -- because that is what they are: every one of
  *     them has been through the CLI's own grammar, so a project row can hold
  *     nothing but `[a-z0-9-]`. The renderer's object reaches no row, which is the
@@ -988,8 +990,9 @@ export async function mountConfirm(document: ConfirmDocument, bridge: ConfirmBri
     cancel.focus()
   }
 
-  /** drawSetup is the first setup's set of rows: the five answers as main
-   * parsed them, the digest of the very bytes the child is given, the two command
+  /** drawSetup is the first setup's set of rows: the answers as main parsed
+   * them -- five of the six, the budget alert having no row here yet (D2210) --
+   * the digest of the very bytes the child is given, the two command
    * lines, and the four sentences of what a yes does. Every one of them is the
    * main process's own value or its own sentence, which is why they are drawn as
    * the launch's rows are -- and why the digest is drawn as `code`: it is the one

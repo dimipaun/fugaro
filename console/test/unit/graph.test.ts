@@ -1853,8 +1853,8 @@ const SCOPE_REFUSAL = 'this installation’s CLI has no graph command'
  * a reader that split a key on a colon rather than taking the `source` and `id`
  * beside it would get wrong. **The repository in the id is also what makes the
  * pull-request cell's own case what it is**: the id goes through its wire key's
- * class, and that class placeholders a repository path, so the cell is drawn
- * `[redacted]#42` rather than the id whole. */
+ * class, and since D3213 (2026-11-21) that class draws a repository path as it
+ * came, so the cell is drawn `acme/widgets#42` whole. */
 const SCOPE_RAW: Readonly<Record<string, unknown>> = {
   version: GRAPH_DOCUMENT_VERSION,
   stream_id: '',

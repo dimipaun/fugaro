@@ -253,6 +253,56 @@ export function runsListPageSupported(version: string): boolean {
 }
 
 /**
+ * RUNS_LIST_OLDER_CLI_FLOOR is the release that first carries the run index the
+ * `--after` cursor reads (the indexed-reads spec's IR1), and it is **not**
+ * `RUNS_LIST_PAGE_CLI_FLOOR` above: the two words and the cursor are 0.16.0's,
+ * but a 0.16.0 CLI pages the window it was given.
+ *
+ * **That is the whole reason this floor exists.** `runs ls --since 24h --after
+ * <run id>` below the floor is answered from the window's own rows, so a page
+ * asked past the oldest run on screen has nothing after it to hand back: the
+ * read comes back empty -- or, for the first release carrying the cursor,
+ * refused -- and the Live list's "Load older" would be a control that can only
+ * say there is no older history on an installation that has years of it. At or
+ * above the floor the cursor is a position in the index, which is what makes a
+ * page past the window a page at all.
+ *
+ * **No release carries the index yet, so the constant is `null`**: the same
+ * state `PLAN_STATUS_NO_MERGES_CLI_FLOOR` and `ORCHESTRATOR_MAP_CLI_FLOOR` are
+ * in, and its rules -- a floor is a claim about a release that exists, a guessed
+ * version is a control drawn on a promise, and the release that ships the index
+ * sets this constant to its own version in a one-line pull request, a release
+ * step rather than a task of the plan.
+ */
+export const RUNS_LIST_OLDER_CLI_FLOOR: string | null = null
+
+/**
+ * runsListOlderSupported answers whether one version line may be asked for a
+ * page of the run list **past the window it was given**, by comparing the line
+ * against `RUNS_LIST_OLDER_CLI_FLOOR` at the patch level.
+ *
+ * **Its caller is the Live list's "Load older"** (`src/renderer/entry.ts`, the
+ * plan's IR7): below the floor the control is not drawn at all, because an
+ * `--after` the CLI cannot answer past its window is a press whose answer is a
+ * refusal and a section that says "no older runs" about a history that is there.
+ * The Live list itself is drawn either way -- the window is the day's runs, and
+ * that read has no floor.
+ *
+ * `floor` is the constant by default and an argument only so that the branch a
+ * release will take can be tested (the shape `planStatusNoMergesSupported` has):
+ * with the constant unset every version is refused, which is the state this
+ * console is in until a release carries the index (`version.test.ts` drives
+ * both).
+ */
+export function runsListOlderSupported(
+  version: string,
+  floor: string | null = RUNS_LIST_OLDER_CLI_FLOOR,
+): boolean {
+  if (floor === null) return false
+  return meetsCliFloor(version, floor)
+}
+
+/**
  * RUNS_SUMMARY_CLI_FLOOR is the oldest CLI that has the jobs-free totals read at
  * all, `runs summary --json` (contract §6.17).
  *
@@ -675,6 +725,60 @@ export const BUDGET_STREAM_CLI_FLOOR: string | null = null
  * spawned for either.
  */
 export const SETUP_CLI_FLOOR: string | null = null
+
+/**
+ * SETUP_BUDGET_CLI_FLOOR is the oldest CLI that **accepts a lone `budget` in the
+ * answers file** the first-run wizard writes: the monthly budget alert the
+ * wizard's own question answers (D2210), which `setupAnswerQuestions`
+ * (`internal/cli/setup_answers.go`) reads as an optional member of 1 to
+ * 10,000,000, and which the console sends **without `budget_currency`** (D2211
+ * leaves the currency to the CLI's USD default).
+ *
+ * **`0.29.0` is the release that carries that**, and the member alone is not
+ * enough to be sent: `budget` has been in the file since 0.28.0
+ * (`setup_answers.go:82` at `v0.28.0`, and still at `v0.28.2`), and no release
+ * refuses it by name. What 0.28.x does with it is stop: nothing writes the
+ * currency the document left out, so the amount reaches the run's own trio rule
+ * (`init.go`'s `check`, "a budget needs --budget (more than 0) and
+ * --budget-currency together") and the whole setup -- the plan the wizard holds
+ * as much as the apply -- ends there. 0.29.0 is the first release whose reading
+ * writes the member the document left out back with the default it was checked
+ * against (`setup_answers.go:206`), which is what makes an amount on its own an
+ * answer. So this floor is about a **half-answered pair**, not about a member an
+ * older CLI cannot decode: dropping it to the release that first carried
+ * `budget` would refuse every 0.28.x setup this console would otherwise plan.
+ *
+ * Below the floor the console asks the question and sends nothing, and the
+ * CLI's own default records the amount -- which is what the field says it will
+ * do. The release that first carries a **retyped or removed** member would be a
+ * new constant, not a moved one: this one answers for the amount without its
+ * currency only.
+ */
+export const SETUP_BUDGET_CLI_FLOOR: string | null = '0.29.0'
+
+/**
+ * setupBudgetSupported answers whether one version line may be sent the
+ * wizard's `budget` answer, by comparing the line against
+ * `SETUP_BUDGET_CLI_FLOOR` at the patch level.
+ *
+ * **Its caller is the wizard's own plan** (`src/main/wizardrun.ts`,
+ * `createSetupWizard`): the answers are gated **before** they are serialised,
+ * so the bytes the child reads, the bytes the digest is taken of and the
+ * answers the confirmation window shows are one document -- a `budget` a CLI
+ * below the floor would stop on is dropped from all three rather than from the
+ * wire alone.
+ *
+ * `floor` is the constant by default and an argument only so that the branch a
+ * later release takes can be tested; a `null` floor refuses every version, the
+ * idiom `licenceKeySupported` and `noApplySupported` follow.
+ */
+export function setupBudgetSupported(
+  version: string,
+  floor: string | null = SETUP_BUDGET_CLI_FLOOR,
+): boolean {
+  if (floor === null) return false
+  return meetsCliFloor(version, floor)
+}
 
 /**
  * IMAGE_CATALOG_CLI_FLOOR and RECIPES_CLI_FLOOR are the oldest CLIs that carry

@@ -60,16 +60,22 @@
 # judges it against the project's caps before it is submitted, as it does for
 # every `fugaro image build`. Nothing else is spent: no run, no model call.
 # Runs: in any session, a coding agent's included (the owner's ruling of
-# 2026-11-19). `run` builds in the sandbox project only and tags nothing, so
-# nothing outward-facing turns on who started it, and this script holds no fence
-# against a session — there is nothing here for one to keep. The CLI's own gate
-# is no such fence either: it admits an agent's session whose plan it admitted
-# and prints AgentProceeded (internal/cli/image_build_managed.go), refusing only
-# where no verdict came, which is why nothing here leans on it. The release this
-# is a step of is another matter — scripts/release.sh refuses a coding agent's
-# session in its own preconditions, before the branch, the pull request and the
-# merge — so from a release this build still happens in the person's session;
-# run by hand, it happens in anybody's.
+# 2026-11-19), where the installation's credentials service serves this
+# repository: the entry's Dockerfile is then read with a token the service
+# mints, and no App key reaches the process. `run` builds in the sandbox project
+# only and tags nothing, so nothing outward-facing turns on who started it, and
+# this script holds no fence against a session — there is nothing here for one
+# to keep. The CLI's own gate is no such fence either: it admits an agent's
+# session whose plan it admitted and prints AgentProceeded
+# (internal/cli/image_build_managed.go), refusing only where no verdict came,
+# which is why nothing here leans on it. The one thing that can refuse one is
+# the build's own Dockerfile read, on an installation the service does not serve
+# (no published address, or a root applied with the switch off): there the App
+# key is read with the person's own credentials, which an agent's session may
+# not hold. The release this is a step of holds no fence either: scripts/release.sh
+# refuses no coding agent's session in its own preconditions (the owner's order
+# of 2026-11-21), so a release is cut from an agent's session as from the owner's
+# terminal, and the one step of it that can refuse one is the build above.
 # Needs: bash, git, mktemp, sed, grep, cut, tr, head, go (the CLI is built from
 # the commit), and a checkout of this repository at that commit.
 # Env: FUGARO_LIVE_GCP_PROJECT the sandbox GCP project (required for `run`),
