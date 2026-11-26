@@ -26,7 +26,7 @@
 # before a byte is written — and it then reads its value at its OWN hidden prompt,
 # the sentence the acceptance names.
 #
-# The two pastes are real: the cases that get past the check's terminal gate
+# The two values are typed for real: the cases that get past the check's terminal gate
 # start a pty (python3's pty.openpty) and hand the check its slave device
 # through CHECK631_TTY, with the two values written into it — each command's own
 # hidden prompt reads its own, in the order the check runs them. The check never
@@ -438,7 +438,7 @@ GCLOUD_EOF
   chmod +x "$1/bin/gcloud"
 }
 
-write_feeder() { # dir — the pty the two pastes are made at
+write_feeder() { # dir — the pty the two declarations run at
   cat >"$1/feeder.py" <<'PY'
 import os
 import pty

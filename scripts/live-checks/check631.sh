@@ -1543,7 +1543,7 @@ plan() {
   say "  [read] gcloud storage cat gs://fugaro-runs-<gcp-project>/runs/<slug>/<run>/result.json and gcloud logging read (credsvc: audit for the run)"
   say "  [write] fugaro accounts craft set ${CRAFT} --access ${PREV_ACCESS:-<the access it had>}, fugaro project policy publish, fugaro accounts pool rm ${POOL}, fugaro accounts rm ${ANTHROPIC} and fugaro accounts rm ${OPENROUTER} — the unwinding"
   for key in installation declaration agent-refusal add-anthropic add-openrouter prompt-hidden nothing-echoed no-file no-history serving-path wiring publish run-launched terminal record served-by unwiring rm-refusal rm-clears; do
-    fact "$key" INFO "planned: only a real run with your own two pastes measures this row; --dry-run did not"
+    fact "$key" INFO "planned: only a real run with your own two declarations at your terminal measures this row; --dry-run did not"
   done
   fact dry-run PASS "the plan was printed and nothing was run: no credential, no pool, no publish, no run and no read"
 }
