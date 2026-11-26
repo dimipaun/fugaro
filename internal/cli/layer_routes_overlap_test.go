@@ -41,7 +41,7 @@ func TestValidateJudgesALayerClaimAgainstTheRoutesTheRepositoryHas(t *testing.T)
 			"agent:\n  auth: api-key\n  model: claude-sonnet-5-5\n  models: { reviewer: claude-sonnet-5-5, background: claude-sonnet-5-5 }\n" +
 			"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 		layerCheckout(t, f, repo)
-		publishedLayer(t, f, testProjectLayer+"claude_models:\n  openrouter: [\""+id+"\"]\n")
+		publishedLayer(t, f, layerPins(repo)+"claude_models:\n  openrouter: [\""+id+"\"]\n")
 		out, errOut, err := execute(t, "validate")
 		return out, errOut, err
 	}
@@ -105,7 +105,7 @@ func TestValidateKeepsTheProviderReasonBesideALayerClaim(t *testing.T) {
 			"agent:\n  auth: api-key\n  model: zz/m1\n  models: { reviewer: zz/m1, background: zz/m1 }\n" +
 			"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 		layerCheckout(t, f, repo)
-		publishedLayer(t, f, testProjectLayer+layerClaims)
+		publishedLayer(t, f, layerPins(repo)+layerClaims)
 		out, errOut, err := execute(t, "validate")
 		return out, errOut, err
 	}
@@ -166,7 +166,7 @@ func TestValidatePointsAtAllowDataToBesideALayerClaim(t *testing.T) {
 		"agent:\n  auth: api-key\n  model: claude-opus-5-5\n  models: { background: claude-haiku-4-5 }\n" +
 		"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 	layerCheckout(t, f, repo)
-	publishedLayer(t, f, testProjectLayer+"claude_models:\n  openrouter: [\"anthropic/claude-haiku-4.5\"]\n")
+	publishedLayer(t, f, layerPins(repo)+"claude_models:\n  openrouter: [\"anthropic/claude-haiku-4.5\"]\n")
 	out, errOut, err := execute(t, "validate")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("a switch no run of this repository can carry out is a halt: exit %d\n%s%s", ExitCode(err), out, errOut)
@@ -198,7 +198,7 @@ func TestValidateALayerWithNoClaimsLeavesTheRoutesAsTheyAre(t *testing.T) {
 		"agent:\n  auth: api-key\n  model: deepseek/deepseek-v4.1-flash\n  models: { reviewer: deepseek/deepseek-v4.1-flash, background: deepseek/deepseek-v4.1-flash }\n" +
 		"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 	layerCheckout(t, f, repo)
-	publishedLayer(t, f, testProjectLayer)
+	publishedLayer(t, f, layerPins(repo))
 	if out, errOut, err := execute(t, "validate"); err != nil || !strings.Contains(out, "is valid") {
 		t.Fatalf("a layer with no claims: exit %d\n%s%s", ExitCode(err), out, errOut)
 	}

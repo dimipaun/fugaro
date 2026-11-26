@@ -7,10 +7,12 @@
 # policy and the published layer, the job images and the local config — and a
 # second command, a deletion or a hand repair is a broken release. The same
 # release also reaches a repository: `fugaro update --repo <checkout>` converges
-# the checkout (a workflow, a `fugaro.yaml` field, the plugin pin it offers to
-# remove). Nothing offline can settle what that does to a real installation and
-# to the repositories on it, so this check does its own setup and reads, row by
-# row:
+# the checkout (a workflow, a `fugaro.yaml` field), and the converge prints one
+# notice line per repository whose default branch still carries a value an older
+# release wrote — a plugin pin, `budget.mode: off` — naming the file and the
+# exact edit, never a diff written into a checkout. Nothing offline can settle
+# what that does to a real installation and to the repositories on it, so this
+# check does its own setup and reads, row by row:
 #
 #   premise     every checkout it is pointed at is a git checkout with a clean
 #               working tree, so "did the update move anything" is a question
@@ -22,7 +24,11 @@
 #               left FOR YOU (a secret's value, the confirmation of a billable
 #               image build, a publish that is yours to make) is not that: the
 #               command is unfinished, not refused, and the row reads UNVERIFIED
-#               with the step counted, telling you to run it yourself.
+#               with the step counted, telling you to run it yourself. The row
+#               also names the notice lines the update printed for repositories
+#               whose default branch still carries a value an older release
+#               wrote (D943, D3340): a line naming the file and the edit, and
+#               not the diff a release behind offered.
 #   policy      the published policy, read back through `fugaro project policy
 #               show --json`, must decode on THIS CLI: a policy carrying a key
 #               this Fugaro does not know is the pair that did not converge, and
@@ -33,11 +39,11 @@
 #               is run in it, and they are recorded again. Nothing may have
 #               moved: an update that commits, tags or rewrites anything in a
 #               repository moves a source the owner did not ask it to touch. A
-#               change in the WORKING TREE is not that — the update offers the
-#               plugin pin's removal as a diff the owner commits or does not —
-#               so it is counted and named, and it is not a failure. A checkout
-#               whose update was left for you is UNVERIFIED, for the reason the
-#               update row gives.
+#               change in the WORKING TREE is not that — the update writes no
+#               plugin pin any more, and a leftover pin is a notice line the
+#               converge prints (D943, D3340) — so it is counted and named, and
+#               it is not a failure. A checkout whose update was left for you is
+#               UNVERIFIED, for the reason the update row gives.
 #   restore     the check's own scratch directory is gone.
 #
 # It runs `fugaro update` once for the installation and once per checkout, and
@@ -78,8 +84,8 @@
 # Cleanup:    its scratch directory is removed from the exit trap, and the
 #             `restore` row says whether it really went. Nothing else is
 #             created: the updates are the ones the owner would run anyway, and
-#             a checkout is left exactly as the update left it (a diff it
-#             offers is the owner's to commit or drop).
+#             a checkout is left exactly as the update left it (its notices are
+#             lines, and the edit they name is the repository's own).
 # Output:     progress on stderr, ONE block on stdout headed CHECK 884 RESULT,
 #             to copy back. Its last line is the verdict, and the verdict is the
 #             exit status:
@@ -253,9 +259,12 @@ What it would do, in order:
                move anything" has an answer. A premise that does not hold STOPS the check (exit 2).
   update       fugaro update --project ${INSTALLATION:-<installation>}   (with your cwd unchanged, output captured)
                -> the real update: Terraform, the Firebase rules, the published policy and layer, the job
-               images, the local config. It must exit 0. This is the migration the check is about, and it
-               is NOT read-only. A step it left for YOU (its output says "N step(s) left for you") means the
-               command is unfinished rather than refused: the row reads UNVERIFIED and tells you to run
+               images, the local config, and its notice lines for the repositories whose default branch
+               still carries a value an older release wrote (a plugin pin, budget.mode: off) - a line naming
+               the file and the exact edit, which the update row names. It must exit 0. This is the migration
+               the check is about, and it is NOT read-only. A step it left for YOU (its output says
+               "N step(s) left for you") means the command is unfinished rather than refused: the row reads
+               UNVERIFIED and tells you to run
                'fugaro update --project ${INSTALLATION:-<installation>}' yourself and run this check again.
   policy       fugaro project policy show --json --project ${INSTALLATION:-<installation>}
                -> the published policy must decode on this CLI (a key this Fugaro does not know is the
@@ -265,7 +274,8 @@ What it would do, in order:
                fugaro update --repo --project ${INSTALLATION:-<installation>} <checkout>
                in it; record them again
                -> nothing may have moved (a commit, a tag, a rewritten ref). A change in the WORKING TREE
-               is the diff the update offers the owner, not a source moving: it is counted and named. A
+               is not a source moving (the update writes no plugin pin any more: a leftover pin is a notice
+               line, named in the update row): it is counted and named. A
                checkout whose update was left for you is UNVERIFIED, and the row names it.
   restore      the check's own scratch directory is removed.
 
@@ -344,7 +354,7 @@ finish() {
     if [ "$status" -eq 0 ] || [ "$status" -eq 1 ]; then status=2; fi
   fi
   if [ "$SCRATCH_REMOVED" = yes ]; then
-    facts="${facts}"$'\n'"restore|PASS|the scratch directory is gone (its documents: every checkout's HEAD, branch, tree, references and working tree before and after its update, the installation's own update output, and the published policy as this CLI printed it). Nothing else was created: the updates are the ones the owner would run anyway, and a checkout is left exactly as the update left it — a diff it offers is the owner's to commit or drop"
+    facts="${facts}"$'\n'"restore|PASS|the scratch directory is gone (its documents: every checkout's HEAD, branch, tree, references and working tree before and after its update, the installation's own update output, and the published policy as this CLI printed it). Nothing else was created: the updates are the ones the owner would run anyway, and a checkout is left exactly as the update left it — the notice lines it printed name the repository's own edit, and it wrote nothing there"
   else
     facts="${facts}"$'\n'"restore|FAIL|the scratch directory is STILL THERE, at ${SCRATCH} — remove it yourself"
   fi
@@ -406,7 +416,8 @@ safe_name() { # safe_name <name>
 # committed_state CHECKOUT OUT records everything of a checkout's git state that
 # an update must not move: HEAD, the branch HEAD is on, HEAD's own tree, and
 # every reference with the object it names. The working tree is recorded
-# separately, because the update is allowed to leave a diff there.
+# separately: a working-tree change is not a source moving, and the row names
+# one when there is one.
 committed_state() { # committed_state <checkout> <out>
   {
     printf 'head %s\n' "$(git -C "$1" rev-parse HEAD 2>/dev/null || printf '<none>')"
@@ -511,20 +522,36 @@ left_for_you() { # left_for_you <file>
   grep -o -E '[0-9]+ step\(s\) left for you' "$1" 2>/dev/null | tail -1
 }
 
+# notice_lines FILE prints the update's own notice lines for the repositories
+# whose default branch still carries a value an older release wrote — a plugin
+# pin in .claude/settings.json, or `budget.mode: off` in fugaro.yaml (D3340,
+# U6a). They are LINES and not writes: each names the repository, `needs you`,
+# the file and the exact edit, the value is the repository's own change to make,
+# and a release behind offered a diff here instead. This row reads them because
+# a migration that printed nothing for a repository that still carries one is
+# the half of the convergence this check is about.
+notice_lines() { # notice_lines <file>
+  grep -E ': needs you: (\.claude/settings\.json|fugaro\.yaml): ' "$1" 2>/dev/null | head -3
+}
+
 # step_update runs the real installation update. It is the check's own subject:
 # the whole upgrade is that one command (CLAUDE.md's HARD RULE), and an update
 # that does not finish is not the migration this check is about.
 step_update() {
   say "running 'fugaro update --project ${INSTALLATION}' (the migration)"
-  local rc=0 left=""
+  local rc=0 left="" notices="" extra=""
   fugaro update --project "$INSTALLATION" >"$SCRATCH/update.out" 2>&1 || rc=$?
+  notices=$(notice_lines "$SCRATCH/update.out" | tr '\n' ';' | sed 's/; */; /g; s/; $//' || true)
+  if [ -n "$notices" ]; then
+    extra=" Its notice lines — the repositories whose default branch still carries a value an older release wrote (a plugin pin, 'budget.mode: off'), named with the file and the exact edit, which is a line and not a diff the update writes (D943, D3340): ${notices}"
+  fi
   if [ "$rc" -eq 0 ]; then
-    fact update PASS "'fugaro update --project ${INSTALLATION}' exited 0: the installation was converged by the one command that is the whole upgrade (CLAUDE.md's HARD RULE). Its own output was $(wc -l <"$SCRATCH/update.out" | tr -d ' ') line(s), left in the check's scratch directory until the check ends"
+    fact update PASS "'fugaro update --project ${INSTALLATION}' exited 0: the installation was converged by the one command that is the whole upgrade (CLAUDE.md's HARD RULE). Its own output was $(wc -l <"$SCRATCH/update.out" | tr -d ' ') line(s), left in the check's scratch directory until the check ends.${extra}"
     return 0
   fi
   left=$(left_for_you "$SCRATCH/update.out" || true)
   if [ -n "$left" ]; then
-    fact update UNVERIFIED "'fugaro update --project ${INSTALLATION}' converged what asks nothing and exited 1 with ${left}: the one command is not finished because a step only YOU can take is left — a secret's value, the confirmation of a billable image build, a publish that is yours to make. This check runs the door with its output redirected so it can never wait for an answer, and a step that needs a person is the whole of what that leaves behind, so the MIGRATION IS NOT MEASURED YET and this row does not pass: run 'fugaro update --project ${INSTALLATION}' yourself, in your own terminal, answer what it asks, and run this check again. The door's own last line: $(tail -n 1 "$SCRATCH/update.out" 2>/dev/null)"
+    fact update UNVERIFIED "'fugaro update --project ${INSTALLATION}' converged what asks nothing and exited 1 with ${left}: the one command is not finished because a step only YOU can take is left — a secret's value, the confirmation of a billable image build, a publish that is yours to make. This check runs the door with its output redirected so it can never wait for an answer, and a step that needs a person is the whole of what that leaves behind, so the MIGRATION IS NOT MEASURED YET and this row does not pass: run 'fugaro update --project ${INSTALLATION}' yourself, in your own terminal, answer what it asks, and run this check again. The door's own last line: $(tail -n 1 "$SCRATCH/update.out" 2>/dev/null).${extra}"
     return 0
   fi
   fact update FAIL "'fugaro update --project ${INSTALLATION}' did not exit 0 (exit ${rc}) and left no step for you: $(head -c 600 "$SCRATCH/update.out" 2>/dev/null). The whole upgrade is that one command, and an update that refused or failed is not the migration this check is about. Every row below still reads the checkouts, but the installation is where it stopped"
@@ -564,8 +591,9 @@ step_policy() {
 
 # step_source runs `fugaro update --repo` in every checkout and reads whether
 # anything of its source moved. A change in the working tree is NOT that: the
-# update offers the plugin pin's removal as a diff the owner commits or does
-# not, so it is counted and named and the row still passes.
+# update writes no plugin pin any more — a leftover pin and `budget.mode: off`
+# are notice lines the converge prints and the update row names (D3340, U6a) —
+# so a working-tree change is counted and named and the row still passes.
 step_source() {
   say "updating each checkout and reading whether anything of its source moved (source)"
   local r name safe rc=0 lf="" failed=() lefts=() moved=() lines=() diffs=() g
@@ -592,7 +620,7 @@ step_source() {
     fi
     g=$(working_changes "$r" "$SCRATCH/post-$safe.txt" || true)
     if [ "${g:-0}" != 0 ]; then
-      lines+=("left ${g} working-tree change of ${name} ($(working_paths "$SCRATCH/post-$safe.txt")) — the diff the update offers, which commits nothing")
+      lines+=("left ${g} working-tree change of ${name} ($(working_paths "$SCRATCH/post-$safe.txt")) — a change in the working tree, which is not a repository's source moving: the update writes no plugin pin any more (a leftover pin is a notice line, named in the update row), commits nothing and rewrites no ref")
     fi
   done
   if [ "${#failed[@]}" -gt 0 ]; then
@@ -605,7 +633,7 @@ step_source() {
       detail="${detail}${moved[$i]}: ${diffs[$i]}; "
       i=$((i + 1))
     done
-    fact source FAIL "'fugaro update --repo' moved a reference of $(printf '%s, ' "${moved[@]}" | sed 's/, $//') — ${detail%, }. A repository's source is the owner's: the update converges a workflow, a config field or the plugin pin it offers as a diff, and it commits nothing and rewrites no ref (CLAUDE.md's HARD RULE and the update's own design). A moved HEAD, branch or tag is a source that moved without the owner asking"
+    fact source FAIL "'fugaro update --repo' moved a reference of $(printf '%s, ' "${moved[@]}" | sed 's/, $//') — ${detail%, }. A repository's source is the owner's: the update converges a workflow or a config field, offers a leftover plugin pin and `budget.mode: off` as notice LINES rather than as a diff (D3340, U6a), and commits nothing and rewrites no ref (CLAUDE.md's HARD RULE and the update's own design). A moved HEAD, branch or tag is a source that moved without the owner asking"
     return 0
   fi
   if [ "${#lefts[@]}" -gt 0 ]; then

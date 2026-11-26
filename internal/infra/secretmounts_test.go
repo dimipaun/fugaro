@@ -702,18 +702,40 @@ workflows:
 // case names: the shape the owner's ruling of 2026-11-05 is about, where the
 // project's default_claude_account and not a stage key is what asks for the
 // mix (docs/mixed-credentials/spec.md §11).
+//
+// The reviewer is the project layer's and not the file's, because since S1
+// (D3237) a repository's file may name no model at all: config.Resolve drops
+// every key config.LiftedKeys lists — agent.models.reviewer among them — before
+// the merge, so a file that wrote one would resolve to a run whose review stage
+// names no model and no case here would reach the mix. The file is anchored to
+// the project and GCP project the layer applies by, which is what an
+// installation's own file carries.
 func mixedRungFourCfg(t *testing.T, reviewer string) *config.Config {
 	t.Helper()
-	return parseCfg(t, []byte(`version: 1
+	const anchor = "proj-1234"
+	layer, ps := config.ParseProjectLayer([]byte(`version: 1
 project: aurora
+gcp_project: `+anchor+`
+defaults:
+  agent:
+    models: { coder: deepseek/chat, reviewer: `+reviewer+` }
+`), config.LayerAnchor{Project: "aurora", GCPProject: anchor})
+	if len(ps) > 0 {
+		t.Fatalf("this fixture's own layer is invalid: %v", ps)
+	}
+	cfg, _, ps := config.Resolve([]byte(`version: 1
+project: aurora
+gcp_project: `+anchor+`
 git: { provider: github, base_branch: main }
-agent:
-  auth: api-key
-  models: { coder: deepseek/chat, reviewer: `+reviewer+` }
+agent: { auth: api-key }
 workflows:
   app:
     commands: { build: npm run build, test: npm test }
-`))
+`), layer)
+	if len(ps) > 0 {
+		t.Fatalf("fugaro.yaml: %v", ps)
+	}
+	return cfg
 }
 
 // TestMixedStageAccountRungFourIsTheProjectDefault: the ruling's second way

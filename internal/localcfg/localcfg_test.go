@@ -2508,6 +2508,126 @@ func TestLocalConfigImageMapKeepsThePublishedOneWhenSilent(t *testing.T) {
 	}
 }
 
+// repoImagesYAML is the repository-to-image map as L11 writes it (D3370,
+// D3371), on the sample's own repository at its provider.
+const repoImagesYAML = `repo_images:
+  github/acme/web: universal
+`
+
+// TestLocalRepoImagesDecoded: the member the node's map is published from
+// (D3371) is this file's own, strict decoding carries it under its canonical
+// provider/owner/name keys, and the loader holds it to the node's rule as T0's
+// decode does — a key the node refuses is refused here, and a key at a provider
+// this release does not serve is kept (R10), so a later release that adds one
+// cannot make this loader refuse the node.
+func TestLocalRepoImagesDecoded(t *testing.T) {
+	c, err := Parse([]byte(sample + repoImagesYAML))
+	if err != nil {
+		t.Fatalf("a config carrying repo_images: %v", err)
+	}
+	if got := c.RepoImages["github/acme/web"]; got != "universal" {
+		t.Errorf("repo_images = %v, want the entry the file names for github/acme/web", c.RepoImages)
+	}
+	// The provider is held to its SHAPE (task.ValidProvider) and not to
+	// config.Providers (R10): a well-shaped key at a provider this release does
+	// not know is kept and serves nothing, never refused.
+	unknown, err := Parse([]byte(sample + "repo_images:\n  gitlab/acme/web: universal\n"))
+	if err != nil {
+		t.Fatalf("a key at a provider this release does not serve was refused: %v", err)
+	}
+	if unknown.RepoImages["gitlab/acme/web"] != "universal" {
+		t.Errorf("repo_images = %v, want the unknown provider's key kept (R10)", unknown.RepoImages)
+	}
+	for _, tc := range []struct{ name, yaml, wants string }{
+		{"a key with no provider", "repo_images:\n  acme/web: universal\n", "a repo_images key is <provider>/<owner>/<name>"},
+		{"a key in another case", "repo_images:\n  github/Acme/Web: universal\n", "a repo_images key is <provider>/<owner>/<name>"},
+		{"a provider that is not a shape", "repo_images:\n  GitHub/acme/web: universal\n", "a repo_images key is <provider>/<owner>/<name>"},
+		{"a value that is not an entry name", "repo_images:\n  github/acme/web: Universal\n", config.CatalogNameMessage},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(sample + tc.yaml))
+			if err == nil {
+				t.Fatalf("%s was accepted, and the node refuses it", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.wants) {
+				t.Errorf("the refusal = %v, want it to name %q", err, tc.wants)
+			}
+		})
+	}
+	// The key is this file's own text, escaped the way every other refused name
+	// is, so a direction mark cannot reorder the line it appears on.
+	const bidi = "‮" // RIGHT-TO-LEFT OVERRIDE
+	_, err = Parse([]byte(sample + "repo_images:\n  \"github/acme/" + bidi + "web\": universal\n"))
+	if err == nil {
+		t.Fatal("a key carrying a direction mark was accepted")
+	}
+	if strings.Contains(err.Error(), bidi) {
+		t.Errorf("the refusal prints the key's direction mark raw: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "repo_images.github/acme/\\u202eweb") {
+		t.Errorf("the refusal does not name the key escaped: %q", err.Error())
+	}
+	// A written map with no entry is how a published mapping is taken away on
+	// purpose (RepoImagesEffective), not a refusal.
+	if _, err := Parse([]byte(sample + "repo_images: {}\n")); err != nil {
+		t.Errorf("a written empty map was refused: %v", err)
+	}
+}
+
+// TestEffectivePrefersAnyRepoImages is R2's order and the constraint the lift
+// hangs on: any repo_images wins over any image_map — this file's first, then
+// the node's — and the legacy map is read only when neither place carries
+// repo_images, this file's first again. The node's half is T0's
+// projectpolicy.Policy.EffectiveRepoImages, and this reader is what fills
+// catalog.ImageRequest's RepoImages or LegacyMap.
+func TestEffectivePrefersAnyRepoImages(t *testing.T) {
+	local := func(t *testing.T, yaml string) *Config {
+		t.Helper()
+		c, err := Parse([]byte(sample + yaml))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	nodeNew := &projectpolicy.Policy{RepoImages: projectpolicy.RepoImages{"github/acme/web": "node-new"}}
+	nodeOld := &projectpolicy.Policy{ImageMap: map[string]string{"acme/web": "node-old"}}
+	// The red step: a local image_map beside a node repo_images reads the
+	// node's, because any repo_images wins over any image_map.
+	got, fromRepo := local(t, imageMapYAML).RepoImagesEffective(nodeNew)
+	if !fromRepo || !reflect.DeepEqual(got, map[string]string{"github/acme/web": "node-new"}) {
+		t.Errorf("a local image_map beside a node repo_images reads (%v, %v), want the node's repo_images", got, fromRepo)
+	}
+	// This file's repo_images wins over the node's, and over a node image_map.
+	got, fromRepo = local(t, repoImagesYAML).RepoImagesEffective(nodeNew)
+	if !fromRepo || !reflect.DeepEqual(got, map[string]string{"github/acme/web": "universal"}) {
+		t.Errorf("a local repo_images beside a node repo_images reads (%v, %v), want this file's", got, fromRepo)
+	}
+	got, fromRepo = local(t, repoImagesYAML).RepoImagesEffective(nodeOld)
+	if !fromRepo || !reflect.DeepEqual(got, map[string]string{"github/acme/web": "universal"}) {
+		t.Errorf("a local repo_images beside a node image_map reads (%v, %v), want this file's repo_images", got, fromRepo)
+	}
+	// The legacy map, and only then: the node's when this file is silent, this
+	// file's when it states one.
+	got, fromRepo = local(t, "").RepoImagesEffective(nodeOld)
+	if fromRepo || !reflect.DeepEqual(got, map[string]string{"acme/web": "node-old"}) {
+		t.Errorf("a silent config beside a node image_map reads (%v, %v), want the node's legacy map", got, fromRepo)
+	}
+	got, fromRepo = local(t, imageMapYAML).RepoImagesEffective(nodeOld)
+	if fromRepo || !reflect.DeepEqual(got, map[string]string{"acme/web": "universal"}) {
+		t.Errorf("a local image_map beside a node image_map reads (%v, %v), want this file's", got, fromRepo)
+	}
+	// A written empty repo_images takes the node's away on purpose, and no
+	// legacy map is read behind it.
+	got, fromRepo = local(t, "repo_images: {}\n").RepoImagesEffective(nodeNew)
+	if !fromRepo || len(got) != 0 {
+		t.Errorf("a written empty repo_images beside a node repo_images reads (%v, %v), want nothing and no legacy map", got, fromRepo)
+	}
+	// Nothing anywhere, and a node this machine has none of.
+	if got, fromRepo = local(t, "").RepoImagesEffective(nil); got != nil || fromRepo {
+		t.Errorf("a silent config beside no node reads (%v, %v), want nothing", got, fromRepo)
+	}
+}
+
 // TestLocalConfigBakeSwitchKeepsThePublishedOneWhenSilent: the switch's own
 // keep rule. A machine whose config predates the key must not publish a node
 // that turns baking off for the project, and a written true and a written false
@@ -2586,15 +2706,20 @@ func TestLocalConfigTriageKeepsThePublishedSwitchWhenSilent(t *testing.T) {
 // each repository's jobs execute, so a launcher who could write it into the
 // runs bucket's shared file would be choosing what every teammate's runs run,
 // and one who could write the switch could turn baking off for everyone from
-// one file. internal/cli's ParseShared refuses both keys besides.
+// one file. internal/cli's ParseShared refuses both keys besides. The
+// repository-to-image map travels the same way for the same reason, one member
+// over (R7).
 func TestImageMapAndBakeSwitchNotInShared(t *testing.T) {
-	c, err := Parse([]byte(sample + imageMapYAML))
+	c, err := Parse([]byte(sample + imageMapYAML + repoImagesYAML))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for name, got := range map[string]*Config{"shared": c.Shared(), "merged": MergeShared(nil, c)} {
 		if got.ImageMap != nil {
 			t.Errorf("%s: image_map = %v", name, got.ImageMap)
+		}
+		if got.RepoImages != nil {
+			t.Errorf("%s: repo_images = %v", name, got.RepoImages)
 		}
 		if got.BakeRepos != nil {
 			t.Errorf("%s: bake_repos = %v", name, got.BakeRepos)
@@ -2603,13 +2728,13 @@ func TestImageMapAndBakeSwitchNotInShared(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		for _, key := range []string{"image_map", "bake_repos"} {
+		for _, key := range []string{"image_map", "repo_images", "bake_repos"} {
 			if strings.Contains(string(out), key) {
 				t.Errorf("%s: output carries %s:\n%s", name, key, out)
 			}
 		}
 	}
-	if c.ImageMap == nil || c.BakeRepos == nil {
+	if c.ImageMap == nil || c.RepoImages == nil || c.BakeRepos == nil {
 		t.Error("Shared/MergeShared cleared the local map or the local switch")
 	}
 }

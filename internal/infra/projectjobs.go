@@ -209,6 +209,14 @@ func projectJobImage(lc *localcfg.Config) (string, error) {
 	}), nil
 }
 
+// ProjectJobImage is projectJobImage for a caller outside this package: the
+// one fact the retirement of a repository's whole root asks of S10 (D2305,
+// M2's structural precondition). A project whose image does not resolve has no
+// shared job a repository could run on, so the retirement would take away the
+// only job the repository has -- which is the whole reason the precondition is
+// asked of this resolver and of no copy of it.
+func ProjectJobImage(lc *localcfg.Config) (string, error) { return projectJobImage(lc) }
+
 // catalogEntryImage is where a catalog entry's image is (D1152): a prebuilt
 // entry's own reference, and otherwise the installation's one shared registry,
 // one image per entry, named catalog-<entry> with the moving :latest tag a job

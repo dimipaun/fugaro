@@ -101,6 +101,7 @@ func digestGCSBucket(t *testing.T, h *harness, spec *task.Spec) *gcpfake.GCS {
 	h.bucket = g.Bucket(t, digestBucket).Bucket
 	h.store = runstore.Open(h.bucket, repoSlug, spec.RunID)
 	h.deps.Store = h.store
+	h.taskWithLayer(spec)
 	if err := h.store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)
 	}

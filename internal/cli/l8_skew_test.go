@@ -123,9 +123,7 @@ func l8ABReposNoCheckoutLaunch(t *testing.T, rel string) (*cloudFixture, error) 
 // and the models the layer states itself, because a repository that named them
 // would trip the lifted-key trigger first.
 func l8ABReposLayer() string {
-	layer := strings.Replace(testProjectLayer, "  agent: { auth: api-key }\n",
-		"  agent: { auth: api-key, models: { coder: claude-sonnet-5-5 } }\n", 1)
-	return layer + "ab:\n  repos: { acme/other: 0 }\n"
+	return testProjectLayer + "ab:\n  repos: { acme/other: 0 }\n"
 }
 
 // l8CopyNameLaunch is D3302's task: one that embeds a project recipe's copy

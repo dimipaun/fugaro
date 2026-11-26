@@ -53,23 +53,19 @@ model_routing:
       - {kind: provider, provider: openrouter-main}
 `
 
-// routingRepoYAML is the checkout's own fugaro.yaml: the security review's
-// model, so the models the read judges come from two documents (the
-// installation's config and the checkout's file) rather than one. gcp_project
-// names the cached layer's, without which that layer's defaults apply to this
-// file at no pass at all (config.Resolve's anchor rule).
+// routingRepoYAML is the checkout's own fugaro.yaml: the one agent key a
+// repository's file still decides here, its auth. The two models it wrote
+// before S1 (D3237) — the security review's and the vision slot, both lifted
+// keys — are the project layer's now, which is the second of the documents the
+// read judges. gcp_project names the cached layer's, without which that layer's
+// defaults apply to this file at no pass at all (config.Resolve's anchor rule).
 const routingRepoYAML = `version: 1
 project: aurora
 gcp_project: aurora-gcp
 git: { provider: github }
 workflows:
   web: { commands: { build: sh b.sh, test: sh t.sh } }
-agent:
-  auth: api-key
-  crafts:
-    security-review: {model: claude-sonnet-5}
-  models:
-    vision: claude-haiku-4-5
+agent: { auth: api-key }
 `
 
 // routingProjectLayer is the project layer file the last cloud read cached: the
@@ -90,8 +86,10 @@ defaults:
     model: claude-fable-5-1
     models:
       background: claude-opus-5
+      vision: claude-haiku-4-5
     crafts:
       review: {model: claude-sonnet-5-5}
+      security-review: {model: claude-sonnet-5}
 `
 
 // routingFixture is the world the routing tests read: project aurora in a

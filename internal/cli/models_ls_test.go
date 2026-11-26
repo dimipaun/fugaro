@@ -105,7 +105,12 @@ func modelsCheckout(t *testing.T, home, repo, fugaroYAML string) string {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": fugaroYAML})
+	// The models the file writes are lifted (S1, D3237): config.Resolve drops
+	// them, so they are published as aurora's project layer — the copy this read
+	// loads (modelsLayer) — and the file is anchored to the project it names,
+	// which is what makes it apply.
+	body := publishFilePinsHere(t, fugaroYAML)
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": body})
 	testutil.Git(t, dir, "init", "-q", "-b", "main")
 	testutil.Git(t, dir, "add", "-A")
 	testutil.Git(t, dir, "commit", "-q", "-m", "the repository's files")
@@ -670,17 +675,22 @@ func TestModelsLsEscapesTableCells(t *testing.T) {
 	}
 }
 
-// TestModelsLsSanitisesAPin: a repository's own pin reaches three cells of this
-// read — the MODELS and ALLOW-LISTS rows it adds, and the USAGE row's CODER —
-// and a pin is a string the repository writes. A bidi override or an ANSI
-// sequence in it is escaped rather than printed: an ESC[31m would colour the
-// rest of the table and a U+202E would let the ID read backwards.
+// TestModelsLsSanitisesAPin: a repository's file is a string a person writes,
+// and this read prints model IDs — so a bidi override or an ANSI sequence in
+// the file must not reach the terminal, and one that did would colour the rest
+// of the table (ESC[31m) or let an ID read backwards (U+202E).
 //
-// Mutation (run, restored): print the model ID raw at the MODELS and
-// ALLOW-LISTS rows (drop oneLine/cellOneLine) and this fails on the raw
-// characters.
+// Nothing raw reaches it, and since S1 (D3237) nothing of the pin reaches it at
+// all: a repository's file may name no model — config.Resolve drops it before
+// the merge — so a hostile one is neither honoured in the USAGE row nor printed
+// as a row of its own. The project config and the project layer, the homes a
+// model has left, both refuse a control character outright, which is why the
+// file is the input this test can still write one in.
+//
+// Mutation (run, restored): drop S1's lift from config.Resolve and the file's
+// pin is honoured again — the read then shows "vendor/mo?del" in the USAGE row,
+// which the last two checks fail on.
 func TestModelsLsSanitisesAPin(t *testing.T) {
-	home := modelsFixture(t)
 	// The pin reaches the checkout in two steps, and both are needed: the Go
 	// raw string keeps \u202e and \x1b[31m as the six and eight characters
 	// they look like (a backquoted string processes no Go escape), and the
@@ -688,6 +698,7 @@ func TestModelsLsSanitisesAPin(t *testing.T) {
 	// names: U+202E and an ESC[31m. Spelling the characters literally here
 	// would work, and would put an invisible override in this file's source.
 	pin := `coder: "vendor/mo\u202edel\x1b[31m"`
+	home := modelsFixture(t)
 	modelsCheckout(t, home, "owner/repo-a", strings.Replace(modelsRepoYAML, "coder: deepseek/deepseek-v4-flash", pin, 1))
 
 	out, _, err := execute(t, "models", "ls")
@@ -696,23 +707,13 @@ func TestModelsLsSanitisesAPin(t *testing.T) {
 	}
 	for _, raw := range []string{"\u202e", "\x1b"} {
 		if strings.Contains(out, raw) {
-			t.Errorf("the read prints a raw %q from a repository's pin:\n%q", raw, out)
+			t.Errorf("the read prints a raw %q from a repository's file:\n%q", raw, out)
 		}
 	}
-	if !strings.Contains(out, "vendor/mo?del") {
-		t.Errorf("the pin is not in the read at all:\n%s", out)
-	}
-	models := modelsSection(t, out, "MODELS")
-	if !strings.Contains(models, "vendor/mo?del") {
-		t.Errorf("the MODELS section does not carry the pin's row:\n%s", models)
-	}
-	allow := modelsSection(t, out, "ALLOW-LISTS")
-	if !strings.Contains(allow, "vendor/mo?del") {
-		t.Errorf("the ALLOW-LISTS section does not carry the pin's row:\n%s", allow)
-	}
-	usage := modelsSection(t, out, "USAGE")
-	if !strings.Contains(usage, "vendor/mo?del") {
-		t.Errorf("the USAGE section does not carry the pin:\n%s", usage)
+	for _, section := range []string{"MODELS", "ALLOW-LISTS", "USAGE"} {
+		if strings.Contains(modelsSection(t, out, section), "vendor/mo?del") {
+			t.Errorf("the %s section carries a repository's pin:\n%s", section, modelsSection(t, out, section))
+		}
 	}
 }
 

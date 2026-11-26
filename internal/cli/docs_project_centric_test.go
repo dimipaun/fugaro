@@ -1096,21 +1096,22 @@ func TestChecklistHasCheck49(t *testing.T) {
 	// in Claude Code at user scope while `rules` and `policy` deploy the rules
 	// and the policy node, and the check must say so rather than sending the
 	// owner through writes it then has to undo. It is `fugaro update` the
-	// sentence names since U7 — `fugaro upgrade` is gone (U4). What it must not
-	// claim any more is that the converge writes nothing in the checkout at
-	// all: the pin merge is deleted (U2, D949), but the plugin step still takes
-	// a leftover pin out of `.claude/settings.json` at a person's own terminal
-	// (D943, init_plugin_stage.go's remove), and this check is entirely
-	// owner-run, so the pin below is what keeps that exception in the sentence.
+	// sentence names since U7 — `fugaro upgrade` is gone (U4). Since L5 (U6a,
+	// D3340) the converge writes nothing in the checkout either: the pin merge
+	// is deleted (U2, D949) and the leftover pin a plugin step used to take out
+	// of `.claude/settings.json` is a notice `update` prints and `doctor`
+	// reports, naming the line to delete, so the pin below is what keeps that
+	// correction in the sentence — where it read "the one write of its four
+	// steps", it now says there is none.
 	chk49MustContain(t, section, "section", []string{
 		"Use `fugaro image refresh` for the image half, not `fugaro update`",
-		"**So the converge can write this one file in this checkout, and that removal is the only write of its four steps here.**",
+		"**So the converge writes nothing in this checkout at all.**",
 		"`internal/cli/update_check.go` is where those four steps live (`checkSteps`): `plugin`, `cloud`, `rules`, `policy`",
 		// Both places the settings file is compared: step 8's block and
 		// step 8's FACT. One without the other is a restore that checks the
 		// file and a FACT that does not claim it.
 		"git diff -- .claude/settings.json\ncmp -s /tmp/chk49-claude-settings-before.json .claude/settings.json",
-		"`git diff -- .claude/settings.json` holds nothing but a pin removal if the converge made one",
+		"`git diff -- .claude/settings.json` is empty (step 3's warning: the converge writes no file of this check's any more",
 	})
 
 	// The step 3 read prints the environment's NAMES and value LENGTHS, and

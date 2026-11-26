@@ -101,7 +101,8 @@ func TestDocsNameNoRetiredUpgradeDoor(t *testing.T) {
 // the deployed generation), the deletion of the pin step the list used to open
 // with, the owner's ruling that replaced the open decision, and the three
 // truths the plugin-user-scope work leaves in a session — a session moves no
-// stale pin, the plugin stage is one of the steps that *do* run there, a
+// stale pin (D943, U6a: a leftover pin is a notice, never a write), the plugin
+// stage is one of the steps that *do* run there, a
 // machine-local stage runs although a cloud stage stopped, and the run still
 // leaves the checkout for the user and exits 1.
 func TestDocsDesignListsEveryUpgradeStep(t *testing.T) {
@@ -124,11 +125,11 @@ func TestDocsDesignListsEveryUpgradeStep(t *testing.T) {
 		"`left_for_you`",
 		// The session's own half of the design (U1, U8): the plugin stage is
 		// local under the agent marker and applies, the machine-local marker
-		// runs a stage although a cloud stage stopped, and the migration writes
-		// nothing there.
+		// runs a stage although a cloud stage stopped, and a leftover pin is a
+		// notice that writes nothing there (D943, U6a).
 		"plugin stage **is** one of them since U1",
 		"machine-local: ran although images waits for you",
-		"In a coding agent's session the diff is printed and nothing is written",
+		"reads no working tree, the change is the repository's own to make and to commit or not",
 		// `--check` survived the retired command and `--local` did not (D948).
 		"**`--local` is gone**",
 		// The usage block is this door's, not the retired command's under a new

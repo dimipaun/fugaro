@@ -6,12 +6,11 @@ package e2e
 //
 // Three runs of the sandbox's own repository, all hermetic:
 //
-//   - TestProjectSecretFetchedEndToEnd: the owner runs `fugaro secrets allow`
-//     (IS3, which writes the project record the service admits a version-2
-//     fetch by), `fugaro update --repo` writes the version-1 record, the name's
-//     `fugaro_p_` container holds the copied value, and the run's fetch reads it
-//     -- the value lands in the file the declaration asked for and the agent
-//     stage sees the path.
+//   - TestProjectSecretFetchedEndToEnd: the installation's own converge copies
+//     the name into the `fugaro_p_` grammar and records it (IS5), `fugaro update
+//     --repo` writes the version-1 record, and the run's fetch reads the
+//     grammar's copy -- the value lands in the file the declaration asked for
+//     and the agent stage sees the path.
 //   - TestUnlistedRepositoryRefusedEndToEnd: the record admits another
 //     repository, so version 2 refuses, version 1 has no record to read, and the
 //     run stops before any agent call.
@@ -26,23 +25,43 @@ package e2e
 // and RTDBProjectSecrets), the runner leg is the shipped runner.Run against a
 // scripted agent, and the caller's identity is answered whole by a verifier
 // whose shape is IS2's (the fakes sign nothing a real verifier would verify).
-// The migration's copy (IS5) itself cannot run here: it is reached by the
-// installation converge's tail, and it needs the operator's own Google account,
-// which `endpoints: no_auth` has none of. What the test drives of IS5 is
-// therefore its record -- the converge's repository stage, which is what the
-// version-1 fetch reads -- and it seeds, with the intake's own labels, the
-// `fugaro_p_` container the copy would have left.
+//
+// The migration's copy (IS5) runs too, at the one door it runs at: the
+// installation converge's tail (psRig.migrate). What stands in for the
+// operator's own Google account there is its two answers -- a metadata
+// stand-in for the token ADC resolves to, and a proxy for the HTTPS calls the
+// hermetic environment has no host for: who the credentials belong to, and the
+// budget database at the address a real installation names.
+//
+// The copy's own value is the project copy's -- that is what it moves -- so the
+// two copies are told apart by a version newer than the copy's written into the
+// grammar before the run: what an operator's `fugaro secrets set` does to that
+// same container after a migration, and the only value this file writes
+// itself.
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
+	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,6 +72,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/creack/pty"
 	"gocloud.dev/blob"
 	"gocloud.dev/blob/memblob"
 	"golang.org/x/oauth2"
@@ -103,6 +123,15 @@ const (
 	// psFirebaseProject is the Firebase project the fake signer and identity
 	// toolkit live in.
 	psFirebaseProject = "aurora-fp"
+	// psOperatorEmail is the person the migration's copy runs as: the account
+	// the identity stand-in answers with, and the who the copied container
+	// records. Never a real address.
+	psOperatorEmail = "owner@example.invalid"
+	// psBudgetHost is the installation's database as a real one names it --
+	// <its firebase project>-default-rtdb -- which is the URL a config without
+	// endpoints: no_auth must carry (rtdb.ValidateURL) and the one the
+	// migration's proxy forwards to the fake.
+	psBudgetHost = initRepoProject + "-default-rtdb.firebaseio.com"
 	// psBudgetMode is how this run is accounted for: observe, so the caps the
 	// adds below seed are read and no lease has to be granted for a scripted
 	// stage that makes no model call.
@@ -186,8 +215,17 @@ func newPSRig(t *testing.T, allow ...string) *psRig {
 	// reaches a name only when the local config already holds the entry.
 	// The block names the Firebase project too: the local record's writer refuses
 	// a database it cannot tell is this project's (requireOwnBudgetDB).
+	//
+	// It states a budget mode, the models and the routing for one reason: the
+	// migration's leg is the installation door, which publishes the project's
+	// policy node out of this config, and that door refuses a config setting no
+	// budget.mode at all and one that states no routing while the node carries
+	// a cascade. The mode, the models and the route are the ones seedBackend's
+	// node holds, and the per-run cap is this rig's own 20 dollars -- a cap is
+	// what a config in `enforce` has to name.
 	r.cfgText += "budget: { firebase_api_key: " + r.budget.APIKey + ", rtdb_url: " + r.db.URL +
-		", token_signer: " + testutil.BudgetSigner + ", firebase_project: " + initRepoProject + " }\n" +
+		", token_signer: " + testutil.BudgetSigner + ", firebase_project: " + initRepoProject + ", mode: enforce, per_run_usd: 20, allowed_models: [claude-haiku-4-5, claude-sonnet-5-5] }\n" +
+		"routing: { claude: { via: cascade } }\n" +
 		"workflow_secrets:\n  " + psSecretName + ":\n    allow_data_to:" + psAllowList(allow)
 	if err := os.WriteFile(r.cfg, []byte(r.cfgText), 0o600); err != nil {
 		t.Fatal(err)
@@ -354,6 +392,232 @@ func (r *psRig) callsOf() []psCall {
 	return append([]psCall(nil), r.calls...)
 }
 
+// psOperator is the operator's own Google account, as much of it as the
+// migration's copy needs: a token, and who it belongs to.
+//
+// The copy asks two things of the outer world that the hermetic environment
+// takes away, and this stands up exactly those two. The token: ADC is a path
+// that does not exist, so the token source falls through to the metadata
+// server, which meta answers. Who it belongs to:
+// openidconnect.googleapis.com/v1/userinfo, over HTTPS -- Google's real
+// address, which no configuration can point elsewhere -- so the child's HTTPS
+// traffic goes to the proxy below, which answers that one address and forwards
+// the budget database's. Everything else the child reaches is loopback (the
+// fakes, the metadata stand-in), and Go's proxy settings never send a loopback
+// address to a proxy.
+type psOperator struct {
+	// ca is the file the child trusts, and leaf is what the proxy serves: an
+	// address the child asks for is one it can verify.
+	ca   string
+	leaf tls.Certificate
+	// proxy and meta are the two addresses the child's environment names.
+	proxy, meta string
+
+	mu   sync.Mutex
+	seen map[string]int
+}
+
+// newPSOperator stands the operator's account up for one migration: dbURL is
+// what the installation's database stands for.
+func newPSOperator(t *testing.T, dbURL string) *psOperator {
+	t.Helper()
+	o := &psOperator{seen: map[string]int{}}
+	dir := t.TempDir()
+	o.ca = filepath.Join(dir, "ca.pem")
+	caPEM, leaf := psCertificate(t, psUserinfoHost, psBudgetHost)
+	o.leaf = leaf
+	if err := os.WriteFile(o.ca, caPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	meta := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// The one answer a token source asks the metadata server for. The
+		// project-id read that comes with it is answered the same way: the
+		// client wants a token and reads no field of the other answer.
+		w.Header().Set("Metadata-Flavor", "Google")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"access_token":"ya29.operator","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	t.Cleanup(meta.Close)
+	o.meta = strings.TrimPrefix(meta.URL, "http://")
+
+	// The database, forwarded as it is: the fake serves the same paths the real
+	// one does, and the client streams, so nothing here may buffer an answer.
+	budget := httputil.NewSingleHostReverseProxy(mustURL(t, dbURL))
+	budget.FlushInterval = -1
+	userinfo := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/v1/userinfo" {
+			http.Error(w, "this stand-in answers one address", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"email":"`+psOperatorEmail+`","email_verified":true}`)
+	})
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		host := req.Host
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		o.mu.Lock()
+		o.seen[host]++
+		o.mu.Unlock()
+		inner := http.Handler(nil)
+		switch host {
+		case psBudgetHost:
+			inner = budget
+		case psUserinfoHost:
+			inner = userinfo
+		}
+		if req.Method != http.MethodConnect || inner == nil {
+			http.Error(w, "the operator's stand-in answers no call to "+req.Host, http.StatusBadGateway)
+			return
+		}
+		conn, rw, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Errorf("hijacking the proxy's connection: %v", err)
+			return
+		}
+		// The response is written raw: a CONNECT answer is not a response a
+		// ResponseWriter may build (the tunnel has no body of its own).
+		if _, err := io.WriteString(conn, "HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
+			conn.Close()
+			return
+		}
+		go func() {
+			defer conn.Close()
+			tlsConn := tls.Server(psBuffered{Conn: conn, r: rw.Reader}, &tls.Config{Certificates: []tls.Certificate{o.leaf}})
+			done := make(chan struct{})
+			var once sync.Once
+			srv := &http.Server{Handler: inner}
+			// The server says when the connection is done, and only then may
+			// this listener answer that there are no more.
+			srv.ConnState = func(_ net.Conn, st http.ConnState) {
+				if st == http.StateClosed || st == http.StateHijacked {
+					once.Do(func() { close(done) })
+				}
+			}
+			_ = srv.Serve(&psTunnel{conn: tlsConn, done: done})
+		}()
+	}))
+	t.Cleanup(proxy.Close)
+	o.proxy = proxy.URL
+	return o
+}
+
+// env is what the child's environment gains over the hermetic one: the
+// account's two answers, and the certificate to trust them with. The hermetic
+// environment's own values are the last word for a child, so these come after
+// them.
+func (o *psOperator) env() []string {
+	return []string{
+		// Empty is unset for the ADC lookup, which is what sends the token
+		// source to the metadata server.
+		"GOOGLE_APPLICATION_CREDENTIALS=",
+		"GCE_METADATA_HOST=" + o.meta,
+		"HTTPS_PROXY=" + o.proxy, "https_proxy=" + o.proxy,
+		"SSL_CERT_FILE=" + o.ca,
+		"NO_PROXY=", "no_proxy=",
+	}
+}
+
+// hosts is every address the child asked the proxy for, in no order.
+func (o *psOperator) hosts() map[string]int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return maps.Clone(o.seen)
+}
+
+// psUserinfoHost is Google's OpenID Connect userinfo address, spelled here
+// because it is what the child asks for: internal/cli's own constant is
+// unexported and this is a host, not a decision.
+const psUserinfoHost = "openidconnect.googleapis.com"
+
+// psTunnel is one connection served as a listener: the proxy runs an HTTP
+// server on a connection it hijacked, and a server wants something to accept
+// from. The connection is handed over once, and the second Accept is not
+// answered until the server says it is done with it: a listener that answers
+// "no more connections" while one is still being served makes that server close
+// the connection under itself, which is a tunnel that dies mid-handshake.
+type psTunnel struct {
+	conn net.Conn
+	done chan struct{}
+	used bool
+}
+
+func (l *psTunnel) Accept() (net.Conn, error) {
+	if l.used {
+		<-l.done
+		return nil, io.EOF
+	}
+	l.used = true
+	return l.conn, nil
+}
+
+func (l *psTunnel) Close() error   { return l.conn.Close() }
+func (l *psTunnel) Addr() net.Addr { return l.conn.LocalAddr() }
+
+// psBuffered is the hijacked connection with whatever the server already read
+// in front of it: a client whose handshake came in with its CONNECT is not left
+// waiting on bytes nobody reads again.
+type psBuffered struct {
+	net.Conn
+	r *bufio.Reader
+}
+
+func (c psBuffered) Read(b []byte) (int, error) { return c.r.Read(b) }
+
+// psCertificate makes a certificate authority and one certificate for hosts,
+// signed by it: what the proxy serves, and what the child trusts (SSL_CERT_FILE
+// is the file the CA is written to). A test's own certificate, never a real
+// one.
+func psCertificate(t *testing.T, hosts ...string) (caPEM []byte, leaf tls.Certificate) {
+	t.Helper()
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	caTmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "fugaro e2e operator stand-in"},
+		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour),
+		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTmpl, caTmpl, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca, err := x509.ParseCertificate(caDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leafTmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: hosts[0]},
+		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour),
+		DNSNames: hosts, KeyUsage: x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	leafDER, err := x509.CreateCertificate(rand.Reader, leafTmpl, ca, &leafKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}),
+		tls.Certificate{Certificate: [][]byte{leafDER}, PrivateKey: leafKey}
+}
+
+// mustURL is url.Parse for a URL a test wrote itself.
+func mustURL(t *testing.T, raw string) *url.URL {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("%q is not a URL: %v", raw, err)
+	}
+	return u
+}
+
 // psSource is the containers the route reads: one value, and the marker a
 // `fugaro_p_` container carries (F18, G2). It is a stand-in for the Secret
 // Manager reader and not for the contract: gcpfake's Secrets cannot serve the
@@ -482,14 +746,131 @@ func (r *psRig) converge(t *testing.T) cliResult {
 	return res
 }
 
-// seedGrammar leaves the name's `fugaro_p_` container as IS5's copy would: the
-// intake's own labels, and the copied value (D3323, D3325).
-func (r *psRig) seedGrammar(t *testing.T, value string) {
+// migrate is the installation door: the one door IS5's copy runs at (the
+// converge's tail, D3325), and the only leg of this file that reaches anything
+// outside the fakes.
+//
+// It runs against its own local config, the one a real installation has: the
+// same file without endpoints: no_auth, and with its database at the address a
+// real one names. The rest of the rig keeps the config it had, because the
+// fakes are reached over plain loopback and a budget write that needs the
+// operator's own credentials has no business in the legs that are not about it.
+//
+// The project's name is typed: the publish of the policy node this config
+// states is confirmed by typing it, and this door has no flag that stands in
+// (T7, docs/no-prompt-policy).
+func (r *psRig) migrate(t *testing.T) cliResult {
 	t.Helper()
-	r.sm.Seed(psGrammarID(), map[string]string{
-		intake.LabelScope:          string(intake.ScopeShared),
-		intake.LabelWorkflowSecret: intake.WorkflowSecretMarker,
-	}, []byte(value))
+	op := newPSOperator(t, r.db.URL)
+	// The migration reads the project copy's value, which no other leg here
+	// reads: the fakes refuse a value read to everything but a caller a test
+	// said may make one.
+	r.sm.AllowAccess()
+
+	alt := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "fugaro", "projects", "operator.yaml")
+	text := strings.Replace(r.cfgText, "no_auth: true", "no_auth: false", 1)
+	text = strings.Replace(text, "rtdb_url: "+r.db.URL, "rtdb_url: https://"+psBudgetHost, 1)
+	if strings.Contains(text, "no_auth: true") || !strings.Contains(text, psBudgetHost) {
+		t.Fatalf("the rig's config no longer holds what the operator's own config replaces:\n%s", r.cfgText)
+	}
+	if err := os.WriteFile(alt, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FUGARO_CONFIG", alt)
+	res := r.migrateIn(t, op.env(), initRepoProjectName+"\n")
+	// The legs after this one are not the operator's: they read the rig's own
+	// config, found by the checkout's project, as they did before.
+	t.Setenv("FUGARO_CONFIG", "")
+	if res.code != 0 {
+		t.Fatalf("the installation door exited %d:\n%s", res.code, res)
+	}
+	if got := op.hosts(); got[psBudgetHost] == 0 || got[psUserinfoHost] == 0 {
+		t.Errorf("the operator's own account was asked for %v, want the database at %s and the identity at %s", got, psBudgetHost, psUserinfoHost)
+	}
+	if !strings.Contains(res.stdout, "1 copied into the "+secretname.ProjectPrefix+" grammar") {
+		t.Errorf("the door's own summary does not say it copied the name:\n%s", res.stdout)
+	}
+	return res
+}
+
+// migrateIn runs the installation door at a terminal, with the environment the
+// operator's own account needs. It is fugaroInitIn's recipe with a seam: the
+// hermetic environment's values are the last word for a child, so a run that
+// has to reach Google builds the environment itself rather than layering on
+// one that leaves it no room.
+func (r *psRig) migrateIn(t *testing.T, extra []string, typed string, args ...string) cliResult {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	env := os.Environ()
+	for _, k := range []string{"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT", "CLAUDE_CODE_REMOTE", "CURSOR_AGENT", "AI_AGENT"} {
+		env = append(env, k+"=")
+	}
+	cmd := exec.CommandContext(ctx, r.fugaro, append([]string{convergeCmd}, args...)...)
+	cmd.Dir = r.dir
+	cmd.Env = append(hermeticEnv(env), extra...)
+	master, tty, err := pty.Open()
+	if err != nil {
+		t.Skipf("no pty: %v", err)
+	}
+	defer master.Close()
+	defer tty.Close()
+	go func() { _, _ = io.Copy(io.Discard, master) }() // the terminal's echo
+	if _, err := master.WriteString(typed); err != nil {
+		t.Fatal(err)
+	}
+	cmd.Stdin = tty
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err = cmd.Run()
+	res := cliResult{stdout: stdout.String(), stderr: stderr.String()}
+	var xe *exec.ExitError
+	switch {
+	case errors.As(err, &xe):
+		res.code = xe.ExitCode()
+	case err != nil:
+		t.Fatal(err)
+	}
+	return res
+}
+
+// grammarContainer reads the name's `fugaro_p_` container back through
+// internal/backend/gcp's own client: the one the copy wrote it with, and the
+// one whose own shape check (internal/intake) the container has to pass.
+func (r *psRig) grammarContainer(t *testing.T) (gcp.ContainerInfo, bool) {
+	t.Helper()
+	svc, err := gcp.NewSecrets(context.Background(), gcp.Options{GCPProject: initRepoProject, Region: "us-east5",
+		Endpoints: gcp.Endpoints{SecretManager: r.sm.URL + "/", NoAuth: true}})
+	if err != nil {
+		t.Fatalf("connecting to the rig's Secret Manager fake: %v", err)
+	}
+	info, found, err := svc.Container(context.Background(), psGrammarID())
+	if err != nil {
+		t.Fatalf("reading %s: %v", psGrammarID(), err)
+	}
+	return info, found
+}
+
+// newerGrammar writes a version newer than the copy's into the name's
+// `fugaro_p_` container, as an operator's own store does to the same container
+// after a migration (D3323). It is what tells the grammar's value from the
+// project copy's when the run answers, and it insists on the copy being there
+// first: a container this test made itself would prove nothing.
+func (r *psRig) newerGrammar(t *testing.T, value string) {
+	t.Helper()
+	if v := r.sm.Latest(psGrammarID()); v == nil {
+		t.Fatalf("%s holds no version: the migration's copy did not make it", psGrammarID())
+	}
+	r.sm.AddVersion(psGrammarID(), []byte(value))
+}
+
+// psIntakeSecret is one of our containers as the intake's own shape check reads
+// it, so the check asked here is the check the copy's own write path asks.
+func psIntakeSecret(c gcp.ContainerInfo) intake.Secret {
+	return intake.Secret{
+		Labels: c.Labels, Annotations: c.Annotations,
+		Shape: intake.Shape{TTL: c.TTL, ExpireTime: c.ExpireTime, Topics: c.Topics, CMEK: c.CMEK, Rotation: c.Rotation},
+	}
 }
 
 // projectRule is the record's entry for the name, which is the whole of what
@@ -748,10 +1129,10 @@ func envValue(env []string, key string) string {
 	return ""
 }
 
-// TestProjectSecretFetchedEndToEnd is the whole path: the owner allows the name
-// to this repository, the converge records the version-1 row, the name's copy
-// is in the grammar, and the run's fetch serves it as the file the declaration
-// asked for.
+// TestProjectSecretFetchedEndToEnd is the whole path: the migration copies the
+// name into the grammar and records it (IS5), the converge records the
+// version-1 row, and the run's fetch serves the grammar's copy as the file the
+// declaration asked for.
 //
 // What the run proves is the end of the chain: the agent stage's environment
 // carries the variable, the variable is a path, the file holds the value the
@@ -759,15 +1140,37 @@ func envValue(env []string, key string) string {
 // contract's version-2 shape.
 func TestProjectSecretFetchedEndToEnd(t *testing.T) {
 	r := newPSRig(t, psRepoName)
-	r.allow(t, psRepoName)
-	if rule, ok := r.projectRule(t); !ok || len(rule.Repos) != 1 || rule.Repos[0] != psRepoName {
+	if _, ok := r.projectRule(t); ok {
+		t.Fatalf("the record holds an entry for %s before the migration", psSecretName)
+	}
+	r.migrate(t)
+	// The migration's two halves: the copied container, and the record entry it
+	// seeded from the operator's own allow_data_to (D3325, F23).
+	info, found := r.grammarContainer(t)
+	if !found {
+		t.Fatalf("the migration left no %s", psGrammarID())
+	}
+	if err := intake.AcceptsWorkflowWrite(psGrammarID(), psIntakeSecret(info)); err != nil {
+		t.Errorf("the copied container is not one the intake would write: %v", err)
+	}
+	if got := info.Annotations[intake.AnnotationCreatedBy]; got != psOperatorEmail {
+		t.Errorf("the copied container says %q made it, want the operator %s", got, psOperatorEmail)
+	}
+	if got := string(r.sm.Latest(psGrammarID())); got != psCopyValue {
+		t.Errorf("the grammar holds %q, want the project copy's value the migration moved", got)
+	}
+	if !slices.Contains(r.sm.Accessed(), psCopyID()) {
+		t.Errorf("the migration read no value from %s, the copy it exists to move", psCopyID())
+	}
+	rule, ok := r.projectRule(t)
+	if !ok || !slices.Equal(rule.Repos, []string{psRepoName}) {
 		t.Fatalf("the record's entry for %s is %+v, want this repository and nothing else", psSecretName, rule)
 	}
 	r.converge(t)
 	if got := r.v1Record(t); got[psSecretEnv] != psCopyID() {
 		t.Fatalf("the version-1 record is %v, want %s -> %s", got, psSecretEnv, psCopyID())
 	}
-	r.seedGrammar(t, psGrammarValue)
+	r.newerGrammar(t, psGrammarValue)
 
 	leg := r.newRun(t)
 	rec, err := leg.run(t)
@@ -839,9 +1242,10 @@ func TestUnlistedRepositoryRefusedEndToEnd(t *testing.T) {
 
 // TestUncopiedNameFallsBackToV1EndToEnd: the local block admits this repository
 // -- so the converge recorded the name's container -- and no `fugaro_p_`
-// container exists, which is the state every installation is in until the
-// migration copies the name (D3325). Version 2 refuses, and version 1 answers
-// out of the record and the project copy it names.
+// container exists: this rig runs no migration (the fetch test's leg), so it is
+// in the state every installation is in until one copies the name (D3325).
+// Version 2 refuses, and version 1 answers out of the record and the project
+// copy it names.
 func TestUncopiedNameFallsBackToV1EndToEnd(t *testing.T) {
 	r := newPSRig(t, psRepoName)
 	if _, ok := r.projectRule(t); ok {
