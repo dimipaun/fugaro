@@ -3,7 +3,7 @@
 
 # An independent review of a pull request
 
-`fugaro review --pr N` reviews a pull request that already exists, in a job of its own rather than the run's: a review needs no profile, and with no shared project job `fugaro update` deploys an implicit review-only job. `--token NAME` names the account, and `--mutate <file>:<test>` asks for one mutation check of the reviewed head.
+`fugaro review --pr N` reviews a pull request that already exists, in a job of its own rather than the run's: a review needs no profile, and with no shared project job `fugaro update` deploys an implicit review-only job. The account is the repository's own — `agent.oauth_token` in `fugaro.yaml`, else the project's `default_claude_account` — and which credential serves its model calls is the project's routing table (`fugaro routing ls`). `--mutate <file>:<test>` asks for one mutation check of the reviewed head.
 
 ## What the review is judged against
 

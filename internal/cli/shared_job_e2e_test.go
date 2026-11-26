@@ -181,6 +181,9 @@ type sharedJobE2E struct {
 	service *sharedJobE2EService
 	meta    *httptest.Server
 
+	// layer is the project layer the task carries: the fixture file's own
+	// lifted keys, which a repository's file may no longer decide (S1, D3237).
+	layer      string
 	job        infra.ProjectJob
 	store      *runstore.Store
 	bucket     *blobx.Bucket
@@ -229,6 +232,7 @@ func sharedJobE2EUp(t *testing.T, provider, repo, policy string) *sharedJobE2E {
 	if provider == gitprov.KindGitHub {
 		e.opener = &fake.Provider{Repo: repo}
 	}
+	_, e.layer = sharedJobE2EWorkflowConfig(t, provider)
 	e.publishInstallation(t, ctx, lc)
 	e.mintRun(t, ctx)
 	e.job = job
@@ -285,7 +289,8 @@ func (e *sharedJobE2E) mintRun(t *testing.T, ctx context.Context) {
 	e.bucket = blobx.Wrap(bucket)
 	e.store = runstore.Open(bucket, e.slug, sharedJobE2ERunID)
 	spec := &task.Spec{Version: 1, RunID: sharedJobE2ERunID, Repo: e.repo, Ref: "main",
-		Workflow: "app", Task: "Add a feature", RequestedBy: sharedJobE2EOwner}
+		Workflow: "app", Task: "Add a feature", RequestedBy: sharedJobE2EOwner,
+		ProjectLayer: &task.ProjectLayer{YAML: e.layer, SHA256: config.LayerSum([]byte(e.layer))}}
 	if err := e.store.WriteTask(ctx, spec); err != nil {
 		t.Fatal(err)
 	}
@@ -534,7 +539,8 @@ func (l *lockedSlogBuf) String() string {
 func (e *sharedJobE2E) host(t *testing.T) string {
 	t.Helper()
 	files := testutil.FixtureFiles(t)
-	files["fugaro.yaml"] = sharedJobE2EWorkflowConfig(t, e.provider)
+	file, _ := sharedJobE2EWorkflowConfig(t, e.provider)
+	files["fugaro.yaml"] = file
 	source := testutil.NewRemote(t, files)
 	bare := filepath.Join(t.TempDir(), filepath.FromSlash(e.repo)+".git")
 	if err := os.MkdirAll(filepath.Dir(bare), 0o755); err != nil {
@@ -580,7 +586,7 @@ func (e *sharedJobE2E) host(t *testing.T) string {
 // and a container for the fixture's own suite is nothing this installation has.
 // The suite tests the same three cases with the variable unset, which is the
 // one thing the block was for.
-func sharedJobE2EWorkflowConfig(t *testing.T, provider string) string {
+func sharedJobE2EWorkflowConfig(t *testing.T, provider string) (file, layer string) {
 	t.Helper()
 	cfg := testutil.FixtureFiles(t)["fugaro.yaml"]
 	const block = `    secrets:
@@ -601,7 +607,12 @@ func sharedJobE2EWorkflowConfig(t *testing.T, provider string) string {
 	if !strings.Contains(out, "provider: "+provider) {
 		t.Fatalf("the fixture repository's config no longer writes a github provider:\n%s", cfg)
 	}
-	return out
+	// The pins are a repository's file's no longer (S1, D3237): config.Resolve
+	// drops them before the merge, so a run seeded with this file alone names no
+	// model and bootstrap refuses it. The task carries them as the project layer
+	// instead — where an installation's arrive from — and the file is anchored
+	// to the project that layer names, which is what makes it apply.
+	return testutil.FixturePins(out, config.LiftedKeyPaths())
 }
 
 // urlRewrite writes a git global configuration whose url.<base>.insteadOf

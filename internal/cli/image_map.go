@@ -159,11 +159,14 @@ func runImageMapSet(cmd *cobra.Command, o cloudOptions, repo, entry string) erro
 	// carries another repository's checkout: the map decides who runs an
 	// entry's image and the copy decides whose source is in it, so this write
 	// is the only moment before jobs run on that image when the two can be
-	// seen apart (noteBakedExposure). The read is best effort — a machine that
-	// cannot reach the runs bucket still writes the mapping, and the note says
-	// what it could not check — and the rebuild it names is the entry's next
-	// build, which composes the copy for the map this write leaves.
-	noteBakedExposure(ctx, cmd.ErrOrStderr(), onDisk, next, entry)
+	// seen apart (noteBakedExposure). The map read is the file's after this
+	// write, by the member the project serves (R2) — the file's map wins over
+	// the node's, so the node cannot change the answer here. The read is best
+	// effort — a machine that cannot reach the runs bucket still writes the
+	// mapping, and the note says what it could not check — and the rebuild it
+	// names is the entry's next build, which composes the copy for the map
+	// this write leaves.
+	noteBakedExposure(ctx, cmd.ErrOrStderr(), onDisk, configImageMap(next, nil), entry)
 	if err := imageCatalogGate(onDisk, "the map's entry for "+pluginwire.Printable(canon), cmd.ErrOrStderr()); err != nil {
 		return err
 	}

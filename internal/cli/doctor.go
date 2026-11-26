@@ -602,6 +602,10 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// branch (U6b, R15): the plugin pin and budget.mode: off, read off every
 	// enrolled repository through the same list the update's stages read.
 	o.Checks = append(o.Checks, doctorRepoNoticeChecks(ctx, lc)...)
+	// And what this release's credentials service stops: a Claude model a
+	// repository pins through a provider key, which the service refuses (D3000,
+	// D3013). It is read off the same enrolled list as the two above it.
+	o.Checks = append(o.Checks, doctorClaudeGateChecks(ctx, lc)...)
 	o.Checks = append(o.Checks, doctorRepoAccountChecks(lc)...)
 	// The pools the published policy serves (DS3.1, MC1): a legacy-open one is
 	// served to whoever asks and D1942 asks doctor to name it. It reads the

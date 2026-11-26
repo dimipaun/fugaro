@@ -998,3 +998,37 @@ func TestPrebuiltEntrySmokedIsJudgedByTheGate(t *testing.T) {
 		}
 	}
 }
+
+// TestImageBuildRefusesUnmanaged is T7c's own case for this file, and it is the
+// arm T7a's TestImageBuildUnmanagedIsRefused is not: that one builds a CATALOG
+// entry (a positional name), and this one builds the checkout's own derived
+// image (`--workflow`), which is a different function of the command
+// (runImageBuildCloud). Both reach the fence at the same seam — a derived build
+// opens its installation through openBuildCloud, which is openCloud for the
+// command's own selection and openCloudFor when a caller handed the config in —
+// so a project whose marks do not say managed is refused in one sentence and
+// nothing is submitted.
+//
+// Why it is worth a test of its own rather than a second case of the catalog
+// arm: the fence is free at the seam only for the commands that open their
+// clients there, and "image build" is on that list because of THESE two
+// functions. A later edit that moved the derived arm onto a client set of its
+// own would take the fence off it silently, and this is where that shows: the
+// submission below would be made.
+func TestImageBuildRefusesUnmanaged(t *testing.T) {
+	noAgentSession(t)
+	fugaroAtItsOwnName(t)
+	fb, f := cloudBuildCheckout(t, false)
+	unmanagedBuildWorld(t, f)
+	fakeTerminal(t)
+	stdin := &unreadStdin{}
+
+	out, errOut, err := executeStdinReader(t, stdin, "image", "build", "--workflow", "app")
+	checkFenceRefusal(t, err, "image build")
+	if stdin.read {
+		t.Errorf("the refusal read the caller's own stdin, so a question was asked:\n%s%s", out, errOut)
+	}
+	if n := buildPosts(fb); n != 0 {
+		t.Errorf("a derived build was submitted %d time(s) on a project that is not managed", n)
+	}
+}

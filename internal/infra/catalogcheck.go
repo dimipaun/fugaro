@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"maps"
 	"slices"
+	"strings"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/catalog"
@@ -524,7 +525,7 @@ func catalogCheckRepos(lc *localcfg.Config, cat *config.Catalog, containers map[
 	// what this function has: a check job's spec is rendered from the
 	// installation root's own inputs (catalogCheckFor takes the local config
 	// alone), while a build reads the map over the published one
-	// (localcfg.ImageMapEffective over the policy node). A project whose map
+	// (localcfg.RepoImagesEffective over the policy node). A project whose map
 	// lives only on the published node — a second machine published it — then
 	// assigns an inline entry to the project's first repository here while the
 	// build baked the mapped repository's checkout into it. They disagree in
@@ -535,7 +536,12 @@ func catalogCheckRepos(lc *localcfg.Config, cat *config.Catalog, containers map[
 	// the `fugaro update` that re-renders this spec. Nothing is therefore
 	// built under an account that does not reach the checkout a definition
 	// bakes; the cost is a night of refusals until the map is set here.
-	imageMap := lc.ImageMapEffective(nil)
+	//
+	// A key is read only when this installation serves it (R9): a repo_images
+	// key whose provider is not the provider this installation's own repository
+	// of that name is on serves nothing, so it is skipped rather than let it
+	// assign an entry to a repository that would run it as the wrong account.
+	images, fromRepoImages := lc.RepoImagesEffective(nil)
 	for _, e := range cat.Entries {
 		i := 0 // the project's first repository: the one an entry with none of its own goes to
 		switch e.Source.Kind {
@@ -557,18 +563,31 @@ func catalogCheckRepos(lc *localcfg.Config, cat *config.Catalog, containers map[
 			// the first mapped repository that can answer is the one its
 			// rebuild runs as. A prebuilt image is left with the first
 			// repository: the job passes it over without a build.
-			for _, name := range slices.Sorted(maps.Keys(imageMap)) {
-				if imageMap[name] != e.Name {
+			for _, key := range slices.Sorted(maps.Keys(images)) {
+				if images[key] != e.Name {
 					continue
+				}
+				name, provider := key, ""
+				if fromRepoImages {
+					p, repo, ok := strings.Cut(key, "/")
+					if !ok {
+						continue
+					}
+					name, provider = repo, p
 				}
 				canonical, err := task.CanonicalRepo(name)
 				if err != nil {
 					continue
 				}
-				if j, found := at[canonical]; found && j >= 0 {
-					i = j
-					break
+				j, found := at[canonical]
+				if !found || j < 0 {
+					continue
 				}
+				if provider != "" && out[j].Provider != provider {
+					continue
+				}
+				i = j
+				break
 			}
 		}
 		if i < 0 {

@@ -86,6 +86,7 @@ func runScenario(t *testing.T, sc scenario) result {
 	if sc.config != "" {
 		files["fugaro.yaml"] = sc.config
 	}
+	files, layer := liftPins(files)
 	remote := testutil.NewRemote(t, files)
 	fugaro := testutil.BuildFugaro(t)
 	claude := testutil.FakeClaude(t, sc.script)
@@ -99,7 +100,7 @@ func runScenario(t *testing.T, sc scenario) result {
 		t.Fatal(err)
 	}
 	taskFile := filepath.Join(tmp, "task.json")
-	if err := os.WriteFile(taskFile, []byte(`{"version":1,"run_id":"`+runID+`","repo":"acme/app","ref":"main","task":"Add a feature"}`), 0o644); err != nil {
+	if err := os.WriteFile(taskFile, taskJSON(t, layer), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	providerState := filepath.Join(tmp, "provider.json")

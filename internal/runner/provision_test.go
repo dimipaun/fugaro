@@ -433,7 +433,7 @@ func TestCloneReviewProvisionsTheBaseBranch(t *testing.T) {
 	pushReviewBranch(t, h, "release", func(dir string) {
 		testutil.WriteFiles(t, dir, map[string]string{
 			"mise.toml":   "# release\n[tools]\nnode = \"22\"\n",
-			"fugaro.yaml": strings.Replace(withFixturePins(cloneYAML), "base_branch: main", "base_branch: release", 1),
+			"fugaro.yaml": strings.Replace(testutil.AnchorFile(cloneYAML), "base_branch: main", "base_branch: release", 1),
 		})
 	})
 	pushReviewBranch(t, h, "someone-elses-change", func(dir string) {

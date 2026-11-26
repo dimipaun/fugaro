@@ -6206,15 +6206,23 @@ func deployedCatalogEntry(ctx context.Context, env *cloudEnv, slug string, spec 
 	// catalog: this machine's own entry stands, exactly as it does on an
 	// installation that has published no policy.
 	var published *config.Catalog
-	var publishedMap map[string]string
 	var pol *projectpolicy.Policy
 	if p, found, err := env.policy.read(ctx, env.lc); err == nil && found && p != nil {
-		pol, published, publishedMap = p, p.ImageCatalog, p.ImageMap
+		pol, published = p, p.ImageCatalog
 	}
 	cat := env.lc.ImageCatalogEffective(published)
 	if cat == nil {
 		return config.Entry{}, false, false, nil
 	}
+	// The repository's provider, and the project's effective map: the two
+	// halves a repo_images key is read with (R2). The provider comes from the
+	// repository's local-config entry, else this checkout's own fugaro.yaml —
+	// the source the launch resolves every other per-repository fact from —
+	// and a launch that cannot name it is answered by no mapping rather than by
+	// the legacy map, which is the collision L11 ends.
+	co := checkoutConfig(ctx, spec.Repo)
+	provider := env.repoProvider(spec.Repo, co)
+	images, fromRepoImages := env.lc.RepoImagesEffective(pol)
 	// The workflow this launcher has a file for, if it has one at all, and
 	// whether the catalog speaks for it. The one resolver, asked the way the
 	// deploy-time arm asks it (F21): the project's images decide this job's
@@ -6230,17 +6238,27 @@ func deployedCatalogEntry(ctx context.Context, env *cloudEnv, slug string, spec 
 	var w config.Workflow
 	var sel catalog.Selection
 	var selErr error
-	if co := checkoutConfig(ctx, spec.Repo); co != nil {
+	if co != nil {
 		if wt, ok := co.Workflows[spec.Workflow]; ok {
 			hasWorkflowFile = true
 			w = wt
-			sel, selErr = catalog.JobImage(catalog.ImageRequest{
+			req := catalog.ImageRequest{
 				Catalog:   cat,
-				ImageMap:  env.lc.ImageMapEffective(publishedMap),
+				Provider:  provider,
 				Canonical: spec.Repo,
 				Workflow:  w,
 				Backend:   catalog.Backend(launchBackend(env.be)),
-			})
+			}
+			// Exactly one of the two keyspaces is filled, which is what tells
+			// the resolver which member the project's map is (R2): the keys of
+			// the effective map are provider-qualified when it came from
+			// repo_images and bare repository names otherwise.
+			if fromRepoImages {
+				req.RepoImages = images
+			} else {
+				req.LegacyMap = images
+			}
+			sel, selErr = catalog.JobImage(req)
 			// A resolver that refused the configuration is the catalog's own
 			// claim on the job (the deploy-time arm refuses it the same way),
 			// so it is not the answer that the catalog is silent.
@@ -6307,7 +6325,7 @@ func deployedCatalogEntry(ctx context.Context, env *cloudEnv, slug string, spec 
 	// the map does not name keeps the image this project builds for it, and its
 	// own record with it.
 	if !hasWorkflowFile && !speaks {
-		if mapped, mappedOK := mappedEntryName(env.lc.ImageMapEffective(publishedMap), spec.Repo); mappedOK && mapped == entry.Name {
+		if mapped, mappedOK := mappedEntryName(provider, images, fromRepoImages, spec.Repo); mappedOK && mapped == entry.Name {
 			speaks = true
 		}
 	}
@@ -6385,22 +6403,36 @@ type jobImageReader interface {
 	JobImage(ctx context.Context, job string) (string, bool, error)
 }
 
-// mappedEntryName is the catalog entry the project's repo-to-image map gives
-// repo, and whether it gives it one. The map is read under repo's canonical
-// form, which is the form its keys are validated in and the form the resolver
-// looks a repository up by (catalog.ImageRequest.mappedEntry): a launcher with
-// no checkout has repository names as the person spelled them, and a lookup
-// that skipped the canonicalization would miss the map entry for every
-// repository written in another case.
-func mappedEntryName(imageMap map[string]string, repo string) (string, bool) {
-	if len(imageMap) == 0 {
-		return "", false
-	}
+// mappedEntryName is the catalog entry the project's repository-to-image map
+// gives repo at provider, and whether it gives it one. The map is read the way
+// the resolver reads it (catalog.ImageRequest.mappedEntry, R2): under
+// Canonical(provider, repo) when the project's effective map is repo_images,
+// and under repo's canonical form when it is the legacy image_map, whose keys
+// are bare repository names matched against every provider.
+//
+// The two keyspaces are told apart by fromRepoImages and never by the shape of
+// a key, so a provider this CLI cannot canonicalize a key with is no mapping
+// rather than a fallback to the legacy member. The canonicalization is the
+// resolver's own: a launcher with no checkout has repository names as the
+// person spelled them, and a lookup that skipped it would miss the map entry
+// for every repository written in another case.
+func mappedEntryName(provider string, images map[string]string, fromRepoImages bool, repo string) (string, bool) {
 	c, err := task.CanonicalRepo(repo)
 	if err != nil {
 		return "", false
 	}
-	name, ok := imageMap[c]
+	if fromRepoImages {
+		key, err := projectpolicy.Canonical(provider, c)
+		if err != nil {
+			return "", false
+		}
+		name, ok := images[key]
+		return name, ok && name != ""
+	}
+	if len(images) == 0 {
+		return "", false
+	}
+	name, ok := images[c]
 	return name, ok && name != ""
 }
 
@@ -7002,8 +7034,10 @@ func servicesLaunchEnv(entry config.Entry) string {
 // the repository the run works on and auth its agent.auth as the run will read
 // it (the ref's fugaro.yaml, else the checkout's).
 //
-// THE SWITCH DECIDES, and it is the same function the plan decides with
-// (infra.CredentialsServiceServes): the installation has the block, the record
+// THE ADDRESS DECIDES, and it is the same function the plan decides with
+// (infra.CredentialsServiceAddress, which is infra.CredentialsServiceServes for
+// every auth and the installation's own block for a `vertex` one, D3326/F17):
+// the installation has the block, the record
 // `fugaro update` wrote for this repository says a root of it was applied with
 // the service on (localcfg.Repo.CredentialsServiceReady, written into the local
 // config's repository entry and published with the rest of it, so a teammate's
@@ -7016,6 +7050,17 @@ func servicesLaunchEnv(entry config.Entry) string {
 // proxied one (proxiedRepo). A job that still mounts its own model credential
 // and is handed the address of a service that cannot serve it would lose the
 // credential it has and get nothing in its place.
+//
+// A VERTEX repository is the one repository told without being served (D3326):
+// the address is what its runner fetches its workflow secrets through
+// (internal/runner's fetchWorkflowSecrets), and the vertex arm reaches that one
+// auth alone — a repository the switch holds off is not handed the address,
+// because the variable would open its git provider keyless and move a model
+// path that works (F17). The record is deliberately not read for it: that
+// record is the model switch's own answer and is false for `vertex` by
+// construction, so a launch waiting for it would never hand a vertex
+// repository anything. Its one reader that cannot read a document — a console
+// launch, below — reads the repository's own recorded auth instead.
 //
 // That is the answer for a repository's OWN job. A launch on a shared project
 // job is judged on its PROFILE (below), because that is the switch its mounts
@@ -7169,25 +7214,41 @@ func credentialsServiceLaunchEnv(lc *localcfg.Config, sharedProfile, repo, auth,
 	}
 	local, _ := lc.RepoFor(repo)
 	// Two arms, one answer, exactly as the repository root's plan reads them
-	// (internal/infra's resolve): the release-1 bridge, which reads agent.auth,
-	// and the table, which does not. A repository the table serves is told
-	// about the service whatever its file names — a `vertex` repository above
-	// all, which has no credential to hand the service and whose chain the
-	// service serves on its own identity (D3174) — and a repository the bridge
-	// would serve keeps its answer.
+	// (internal/infra's resolve): the address, which is the release-1 bridge
+	// with the vertex arm beside it, and the table, which does not read
+	// agent.auth at all. A repository the table serves is told about the
+	// service whatever its file names — whose chain the service serves on its
+	// own identity (D3174) — and a repository the bridge would serve, or a
+	// `vertex` one of an installation that has the block, keeps its answer.
 	ready := local.CredentialsServiceOn()
-	serves := infra.CredentialsServiceServes(installed, ready, auth) ||
+	serves := infra.CredentialsServiceAddress(installed, ready, auth) ||
 		infra.CredentialsServiceServesChains(installed, ready, infra.ChainPlanFor(lc, repo))
 	if auth == "" && !serves {
-		// No document this launcher could read, so the switch's third
-		// condition is judged on the two answers that do not need one: the
-		// repository's own record, and this machine's tfvars of the root it
-		// was applied from. Either one saying on is enough — both are written
-		// by an apply that dropped the job's mounts and granted its account
-		// roles/run.invoker, and a launch that withheld the address from a
-		// repository whose mounts are already gone would halt at the service's
-		// door (D143).
-		serves = installed && (local.CredentialsServiceOn() || deployed)
+		if local.Vertex {
+			// The auth this launcher could not read, read off the repository's
+			// own record of it instead (localcfg.Repo.Vertex, which `fugaro
+			// update` writes from the very auth the spec builder decides the
+			// address with, infra's repoCtx): a vertex repository's address is
+			// the installation's own block and nothing else
+			// (CredentialsServiceAddress's vertex arm), so both stand-ins
+			// below describe the model switch, which is false for it by
+			// construction. Without this a console launch of a vertex
+			// repository — no document to read and no tfvars of its root on
+			// the machine that spawns it — was handed nothing while its root's
+			// own apply granted its account roles/run.invoker, and its run
+			// then fetched no workflow secret at all.
+			serves = installed
+		} else {
+			// No document this launcher could read, so the switch's third
+			// condition is judged on the two answers that do not need one: the
+			// repository's own record, and this machine's tfvars of the root it
+			// was applied from. Either one saying on is enough — both are written
+			// by an apply that dropped the job's mounts and granted its account
+			// roles/run.invoker, and a launch that withheld the address from a
+			// repository whose mounts are already gone would halt at the service's
+			// door (D143).
+			serves = installed && (ready || deployed)
+		}
 	}
 	if !serves {
 		return nil

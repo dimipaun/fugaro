@@ -25,7 +25,7 @@ Adds feature.txt, and a flag to turn it off.
 
 [//]: # (fugaro:status begin)
 ### Fugaro status
-**Ready for review** · rigor: critical (repo) · tests passed on `<sha>` · adversarial review: ship in round 1 (recorded: model claude-opus-5, at <sha>) · review levels: level 2: ship in round 1 on `<sha>`; level 3: ship in round 1 on `<sha>` · model cost $0.00 · finished <time>
+**Ready for review** · rigor: critical (project) · tests passed on `<sha>` · adversarial review: ship in round 1 (recorded: model claude-opus-5, at <sha>) · review levels: level 2: ship in round 1 on `<sha>`; level 3: ship in round 1 on `<sha>` · model cost $0.00 · finished <time>
 **Hand-back** (`pr.md`)
 
 **Open risks** (`## Open risks`)

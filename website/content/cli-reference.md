@@ -62,7 +62,7 @@ Subcommands:
 - `fugaro recipes` -- List, show, validate, publish and remove recipes, the task loop a run follows after implement
 - `fugaro report` -- Report what the project spent, by day, week, month, year, repository, model, person or mode
 - `fugaro restore` -- Rebuild a managed project from zero, into a new GCP project ID, and print what is not restored
-- `fugaro review` -- Review a pull request in a job of its own, on a named account
+- `fugaro review` -- Review a pull request in a job of its own
 - `fugaro rigor` -- Set the rigor mode a project's runs are held to
 - `fugaro routing` -- Show and edit the project's model routing table
 - `fugaro run` -- Launch a task in the cloud; it always ends with a PR
@@ -8191,10 +8191,10 @@ This command has no subcommands.
 
 ## `fugaro review`
 
-Review a pull request in a job of its own, on a named account
+Review a pull request in a job of its own
 
 Launch an independent review of pull request N, in a container the coding
-run never ran in and with the account you name.
+run never ran in.
 
 The review runs in a job of its own and never in the repository's coding job:
 the review-only variant of the repository's shared project job, or, where the
@@ -8206,8 +8206,10 @@ pull request's head, writes its verdict as an artifact (fugaro review show
 RUN prints it) and posts no comment and no review on the pull request: what
 reaches the pull request is the owner's and the coordinator's to decide.
 
-The account is picked as everywhere else: --token, else agent.oauth_token in
-fugaro.yaml at the run's ref, else the project's default_claude_account.
+The account is the repository's own: agent.oauth_token in fugaro.yaml at
+the run's ref, else the project's default_claude_account. It picks the
+review-only job the review runs on; which credential serves its model calls
+is the project's routing table's answer (fugaro routing ls).
 
 A review judges the pull request against the task the run that opened it was
 given, found through the runs bucket alone, and says what it judged against
@@ -8248,7 +8250,6 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--spec` | string | "" | no | review against the task in this FILE instead of the task of the run that opened the pull request: the way to review a pull request no run produced. Its text is redacted like any other a launcher adds, and a file over 16384 bytes is refused with its size. Refused with --code-only |
-| `--token` | string | "" | no | named Claude account (claude_accounts in the local config) this review runs as; default: agent.oauth_token in fugaro.yaml at the run's ref, else the project's default_claude_account |
 
 Subcommands:
 
@@ -11224,7 +11225,7 @@ Flags:
 | `--allow-job-delete` | bool | `false` | no | with --repo: lower the jobs' deletion protection, for offboarding |
 | `--anchor` | bool | `false` | no | in a checkout of an onboarded repository, only write the gcp_project line into its fugaro.yaml, after checking that every workflow's job image was submitted by fugaro 0.4.0 or later and built FROM a release base image of 0.4.0 or later, and that no base image the local config sets is a development or older one (no Terraform, no publish, no image copy; the diff, then the person at the terminal confirms it, and a run with no terminal prints the line and writes nothing) |
 | `--answers-file` | string | "" | no | answer the wizard's questions from one JSON document: version, gcp_project, location, region, name, rigor, budget, budget_currency, bake_repos — the questions a first run asks (--gcp-project, --location or its precise form --region, --name, --rigor, --budget with --budget-currency, and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation |
-| `--ask` | bool | `false` | no | ask for the confirmations a managed project's gate would have stood in for, one step at a time: without it a managed project takes no confirmation at all (the ruling of 2026-11-01), and this is the flag that puts them back for one run — the review's own question, and each step's own, the billable builds included. It never weakens the gate, which judges every document and refuses in its own sentence before any prompt, and it never stands in for a confirmation: the step's own question is asked, and a no is a no. In a project whose marks do not answer "managed" it changes nothing and says so, and where no prompt can be answered — a coding agent's session, --json, no terminal — it refuses the run rather than letting the gate's verdict stand in: a confirmation nobody can answer is never a silent proceed. `fugaro update --ask` also asks which agent.auth the project takes when the repositories it migrates write different ones (the default is the most common value) |
+| `--ask` | bool | `false` | no | ask for the confirmations a managed project's gate would have stood in for, one step at a time: without it a managed project takes no confirmation at all (the ruling of 2026-11-01), and this is the flag that puts them back for one run — the review's own question, and each step's own, the billable builds included. It never weakens the gate, which judges every document and refuses in its own sentence before any prompt, and it never stands in for a confirmation: the step's own question is asked, and a no is a no. In a project whose marks do not answer "managed" it changes nothing and says so, and where no prompt can be answered — a coding agent's session, --json, no terminal — it refuses the run rather than letting the gate's verdict stand in: a confirmation nobody can answer is never a silent proceed. `fugaro update --ask` turns on one thing more, on any project: it asks for each repository's missing secret values by name with a hidden prompt, where without the flag the stage prints the `fugaro secrets set` line for each and asks nothing — a coding agent's session and --json ask for none there either, and with no terminal it fails at once with that line rather than waiting for a value. It also asks which agent.auth the project takes when the repositories it migrates write different ones (the default is the most common value) |
 | `--bake-repos` | bool | `false` | no | answer the bake question without a terminal: whether a repository the build can read is baked into the image its job runs (the default is yes, and an absent key means the same). --bake-repos says yes, --bake-repos=false says no, and either one writes the value into the local config this run writes, which the same run publishes. Passing neither asks the question where it can be asked — on a run that creates the installation, and nowhere else: a run with a project config keeps the answer the project's own (the published policy's) and is never asked, which is the rule for a managed project. Either way the answer takes effect in the images built from then on: the build is what bakes a repository in, so the images already built keep what they have until they are rebuilt |
 | `--base` | stringSlice | `[]` | no | copy the release's base image (the only kind: base) into the project's registry now, besides what the checkout's fugaro.yaml needs (comma-separated or repeated) |
 | `--base-image` | stringArray | `[]` | no | a base image the image checks run and builds start from, recorded in the local config under its base kind (repeatable; KIND=IMAGE, or just IMAGE when its repository is named fugaro-<kind>; the kinds you don't name keep theirs) |

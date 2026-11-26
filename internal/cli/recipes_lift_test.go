@@ -192,10 +192,14 @@ func TestLaunchRefusesAnUnmigratedFolderRecipe(t *testing.T) {
 		t.Fatal("a task.json was written for a refused launch")
 	}
 
-	// The same launch with the migration record: the project's recipe.
+	// The same launch with the migration record, on an image that knows the
+	// project store: the project's recipe. The folder is still on the default
+	// branch, which release A's own gate refuses on a job image older than
+	// l8Since however migrated the repository is (l8Skew) — the image here is
+	// the release that gate accepts.
 	f = newCloudFixture(t)
 	projectRecipesFixture(t, f, map[string]string{name: text})
-	writeBuildRecord(t, f, appSlug, "web", releaseL8)
+	writeBuildRecord(t, f, appSlug, "web", l8Base(l8Since))
 	appCopyCheckout(t, map[string]string{".fugaro/recipes/" + name + ".yaml": repoTeam})
 	writeBucketFile(t, f, lift.RecordPath(appSlug), `{"version":1}`)
 	if _, _, err := execute(t, "run", "--run-id", "20261007-100000-abcd", "--recipe", name, "A task"); err != nil {

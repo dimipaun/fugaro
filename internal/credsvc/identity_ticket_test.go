@@ -12,8 +12,8 @@ package credsvc
 // and not clamped; and every refusal of a VERIFIED caller writes exactly one
 // audit line — no more, no fewer.
 //
-// The handler is called the way the mount (I1) will call it, with the caller
-// the mount has already verified: verifying a Google ID token is LM3's act and
+// The handler is called the way the mount calls it, with the caller the mount
+// has already verified: verifying a Google ID token is LM3's act and
 // its own test, and what is under test here is everything that happens after
 // it. The route's own body is read by the handler (readCall), so the calls
 // below carry a body and no bearer, exactly as the mount's will.

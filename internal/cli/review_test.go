@@ -169,16 +169,19 @@ func reviewTaskSpec(t *testing.T, f *cloudFixture, slug, id string) *task.Spec {
 }
 
 // TestReviewLaunchesOnTheNamedAccount is the command's core: `fugaro review
-// --pr N --token NAME` writes one task that names the pull request and the
-// account, and starts it on that account's REVIEW-ONLY job — the variant
-// beside the shared project job, which is the whole point of the command (the
-// reviewer left the coder's container, its mounts and its App key; CSR7), and
-// never the shared coding job itself.
+// --pr N` writes one task that names the pull request and the account the
+// repository's own fugaro.yaml names (agent.oauth_token, rung 3 of the accounts
+// chain), and starts it on that account's REVIEW-ONLY job — the variant beside
+// the shared project job, which is the whole point of the command (the reviewer
+// left the coder's container, its mounts and its App key; CSR7), and never the
+// shared coding job itself. The account is no longer a flag (CS15): the review
+// job reaches its model by the project's routing table, so what is left for the
+// account to pick is the job the review runs on.
 func TestReviewLaunchesOnTheNamedAccount(t *testing.T) {
 	f := newReviewFixture(t)
-	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
+	projectJobCheckoutYAML(t, repoYAMLWithAccount(t, "acme-personal"))
 
-	if _, _, err := reviewCLI(t, "--pr", "7", "--token", "acme-personal"); err != nil {
+	if _, _, err := reviewCLI(t, "--pr", "7"); err != nil {
 		t.Fatalf("a review of PR #7 on acme-personal: %v", err)
 	}
 	calls := f.run.RunRequests()
@@ -231,16 +234,17 @@ func wantReviewRefused(t *testing.T, f *cloudFixture, args []string, wants ...st
 }
 
 // TestReviewRefusesAnAccountTheRepoMayNotUse is the F4 allow-list rule the
-// other launches already carry (claudeAccountMembership), reused here: --token
-// names an account the repository's claude_accounts does not list, so the
-// review is refused before anything is written. A review is launched by hand
-// more often than most runs, which is exactly why the rule is not relaxed for
-// it: --token here is the operator naming the credential a job will run on.
+// other launches already carry (claudeAccountMembership), reused here: the
+// repository's own agent.oauth_token names an account its claude_accounts does
+// not list, so the review is refused before anything is written. A review is
+// launched by hand more often than most runs, which is exactly why the rule is
+// not relaxed for it: the account here is the one the repository names for the
+// credential its job will run on.
 func TestReviewRefusesAnAccountTheRepoMayNotUse(t *testing.T) {
 	f := newReviewFixture(t)
-	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
+	projectJobCheckoutYAML(t, repoYAMLWithAccount(t, "acme-stranger"))
 
-	err := wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7", "--token", "acme-stranger"}, "is not one acme/app may use")
+	err := wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7"}, "is not one acme/app may use")
 	if !strings.Contains(err.Error(), "acme-stranger") {
 		t.Errorf("the refusal does not name the account asked for: %q", err.Error())
 	}
@@ -252,12 +256,12 @@ func TestReviewRefusesAnAccountTheRepoMayNotUse(t *testing.T) {
 // is refused a minute later and whose run is then retried by hand.
 func TestReviewRefusesAnExhaustedAccount(t *testing.T) {
 	f := newReviewFixture(t)
-	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
+	projectJobCheckoutYAML(t, repoYAMLWithAccount(t, "acme-personal"))
 	until := time.Now().UTC().Truncate(time.Second).Add(3 * time.Hour)
 	f.db.Set(credsMarkPath("acme-personal"), map[string]any{
 		"state": "exhausted", "until": until.Format(time.RFC3339Nano)})
 
-	wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7", "--token", "acme-personal"},
+	wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7"},
 		"the Claude account acme-personal is exhausted until "+until.Format("2006-01-02 15:04Z"),
 		"no review is started on it")
 }
@@ -280,7 +284,7 @@ func TestReviewRefusesWhileTheCodingRunIsGoing(t *testing.T) {
 
 	// The refusal names the run the way every human surface does, by its
 	// ending (spec.md §1), so the sentence is pinned whole around it.
-	wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7", "--token", "acme-personal"},
+	wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7"},
 		"run "+task.ShortRun(active)+" on PR #7 is still running", "fugaro runs ls --pr 7 --repo acme/app")
 }
 
@@ -334,7 +338,7 @@ func TestReviewStillRefusesWhenTheCredentialsServiceIsOff(t *testing.T) {
 	setBaseImage(t, nodeRelease)
 	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
 
-	wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7", "--token", "acme-personal"},
+	wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7"},
 		"credentials_service is not published in this project's config",
 		"fugaro update --firebase-project",
 		"fugaro creds set github-app-key")
@@ -354,7 +358,7 @@ func TestReviewRefusesAnInstallationWhoseServicePredatesTheClass(t *testing.T) {
 	f := newReviewFixtureAt(t, reviewJobSince)
 	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
 
-	wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7", "--token", "acme-personal"},
+	wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7"},
 		"only from fugaro "+reviewAdmissionSince+" on",
 		"Run fugaro update",
 		"refused rather than started")
@@ -368,9 +372,9 @@ func TestReviewRefusesAnInstallationWhoseServicePredatesTheClass(t *testing.T) {
 // which is the whole of what the constant decides.
 func TestReviewLaunchIsAdmittedWhenTheConstantIsFlipped(t *testing.T) {
 	f := newReviewFixture(t)
-	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
+	projectJobCheckoutYAML(t, repoYAMLWithAccount(t, "acme-personal"))
 
-	if _, errOut, err := reviewCLI(t, "--pr", "7", "--token", "acme-personal"); err != nil {
+	if _, errOut, err := reviewCLI(t, "--pr", "7"); err != nil {
 		t.Fatalf("a review on the release that admits the review class: %v (stderr %q)", err, errOut)
 	}
 	calls := f.run.RunRequests()
@@ -393,7 +397,7 @@ func TestReviewLaunchIsAdmittedWhenTheConstantIsFlipped(t *testing.T) {
 		projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
 		unadmitReviewJob(t)
 
-		wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7", "--token", "acme-personal"}, "predates the release")
+		wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7"}, "predates the release")
 	})
 }
 
@@ -411,7 +415,7 @@ func TestReviewStillRefusesWhenTheConstantIsOff(t *testing.T) {
 
 	const refusal = "this fugaro predates the release in which the credentials service admits the review job's own caller: the review's account belongs to a project-scoped job, and whether the service admits that class is not a question this launcher can ask it (E7's second half) — it is a fact the binary carries, and this one was built while the answer was no, so it refuses the launch whatever the installation in front of it admits. Upgrade Fugaro (`brew upgrade dimipaun/tap/fugaro`), then run `fugaro update` with the newer binary: that is the whole upgrade, and the command that deploys the service's review class beside the review-only job variant. Until then, review a pull request in the run's own job with fugaro run --pr N --recipe review-only"
 	before := len(f.run.Executions())
-	out, errOut, err := reviewCLI(t, "--pr", "7", "--token", "acme-personal")
+	out, errOut, err := reviewCLI(t, "--pr", "7")
 	if err == nil {
 		t.Fatalf("a review launched by a binary that predates the flip (out %q err %q)", out, errOut)
 	}
@@ -531,9 +535,9 @@ func TestReviewResolvesTheImplicitJobForABakedWorkflow(t *testing.T) {
 	// account runs on the variant of that account's coding job.
 	t.Run("a repository that resolves a shared job keeps its profile-derived variant", func(t *testing.T) {
 		f := newImplicitReviewFixture(t)
-		projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
+		projectJobCheckoutYAML(t, repoYAMLWithAccount(t, "acme-personal"))
 
-		if _, errOut, err := reviewCLI(t, "--pr", "7", "--token", "acme-personal"); err != nil {
+		if _, errOut, err := reviewCLI(t, "--pr", "7"); err != nil {
 			t.Fatalf("a review of a clone workflow: %v (stderr %q)", err, errOut)
 		}
 		calls := f.run.RunRequests()
@@ -853,7 +857,7 @@ func TestReviewReadsNoAdmissionSwitch(t *testing.T) {
 	unadmitReviewJob(t)
 
 	before := len(f.run.Executions())
-	out, errOut, err := reviewCLI(t, "--pr", "7", "--token", "acme-personal")
+	out, errOut, err := reviewCLI(t, "--pr", "7")
 	if err == nil {
 		t.Fatalf("%s set and the launch was admitted (out %q err %q): no code path reads the variable", name, out, errOut)
 	}
@@ -1579,18 +1583,19 @@ func TestReviewRefusesWhenTheConfigComposesNoImplicitJob(t *testing.T) {
 	}
 }
 
-// TestReviewRefusesATokenOnTheImplicitJob is the account axis of the resolution:
-// the implicit job is deployed for the default account alone (its account
-// segment is fixed where it is deployed, internal/infra's ImplicitReviewJobName),
-// and the credentials service pairs the caller it verifies with the account the
-// job was deployed for — so a review that names another account with --token is
-// refused here rather than launched onto the default account's job with a task
-// that says otherwise.
+// TestReviewRefusesANamedAccountOnTheImplicitJob is the account axis of the
+// resolution: the implicit job is deployed for the default account alone (its
+// account segment is fixed where it is deployed, internal/infra's
+// ImplicitReviewJobName), and the credentials service pairs the caller it
+// verifies with the account the job was deployed for — so a review whose
+// repository names another account (agent.oauth_token, rung 3) is refused here
+// rather than launched onto the default account's job with a task that says
+// otherwise.
 //
 // Mutation (run, restored): drop the account refusal. This launch is admitted
 // and the job's reviewer is served as the default account while the task names
 // another one.
-func TestReviewRefusesATokenOnTheImplicitJob(t *testing.T) {
+func TestReviewRefusesANamedAccountOnTheImplicitJob(t *testing.T) {
 	f := newReviewFixture(t)
 	const bbRepo = bitbucketReviewClaim
 	addRepoToConfig(t, f.cloudFixture, bbRepo, "bitbucket")
@@ -1602,12 +1607,12 @@ func TestReviewRefusesATokenOnTheImplicitJob(t *testing.T) {
 		config.ReviewVariantAccount("")+config.ReviewVariantSuffix, "2", "4Gi")
 	f.run.SetJobTimeout(implicit, projectJobTimeout+backend.TaskTimeoutSlack)
 	// The account has to be one the repository may use and one the fixture's
-	// installation has not marked: acme-personal is both, and the review
-	// document says agent.oauth: it is what a repository whose own fugaro.yaml
-	// names a named account carries (projectJobOAuthRepoYAML's provider moved).
-	bitbucketReviewCheckout(t, bbRepo, strings.Replace(projectJobOAuthRepoYAML, "provider: github", "provider: bitbucket", 1))
+	// installation has not marked: acme-personal is both, and it is what a
+	// repository whose own fugaro.yaml names a named account carries
+	// (agent.oauth_token; the fixture's provider moved to bitbucket).
+	bitbucketReviewCheckout(t, bbRepo, strings.Replace(repoYAMLWithAccount(t, "acme-personal"), "provider: github", "provider: bitbucket", 1))
 
-	wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7", "--token", "acme-personal"},
+	wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7"},
 		"acme-personal", "serves one account", config.DefaultClaudeAccount,
 		"fugaro run --pr N --recipe "+reviewOnlyRecipe)
 }
@@ -1738,42 +1743,27 @@ func TestReviewLaunchesOnTheImplicitJobOfAProjectWithANamedDefaultAccount(t *tes
 }
 
 // TestReviewRefusesAnAccountTheProjectDoesNotDefaultTo is the other half of the
-// account axis, on the installation above: a review whose account is NOT the
-// project's default is refused with the sentence that names the job's one
-// account, whether it came from --token or from the repository's own
-// agent.oauth_token (rung 3) — the second case being a launch the person passed
-// no flag on, which the sentence must not answer by telling them to drop one.
+// account axis, on the installation above: a review whose repository names an
+// account that is NOT the project's default (agent.oauth_token, rung 3) is
+// refused with the sentence that names the job's one account — and that
+// sentence must not answer it by telling the person to drop a flag, which this
+// launch passed none of (CS15 removed the account flag from the command).
 //
-// Mutation (run, restored): drop the account refusal, and both launches are
+// Mutation (run, restored): drop the account refusal, and the launch is
 // admitted onto a job whose reviewer the credentials service pairs with the
-// project's default account, while their tasks name another.
+// project's default account, while its task names another.
 func TestReviewRefusesAnAccountTheProjectDoesNotDefaultTo(t *testing.T) {
 	const other = "acme-work"
-	for _, tc := range []struct {
-		name      string
-		args      []string
-		committed bool // the repository's own fugaro.yaml names the account
-	}{
-		{name: "--token", args: []string{"--pr", "7", "--token", other}},
-		{name: "the repository's own agent.oauth_token", args: []string{"--pr", "7"}, committed: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newReviewFixture(t)
-			f.appendConfig(t, "default_claude_account: acme-personal\n")
-			publishPolicy(t, f.launchBudgetFixture, reviewImplicitPolicy(t, "acme-personal"))
-			recordGitHubAppID(t)
-			yaml := projectJobOAuthRepoYAML
-			if tc.committed {
-				yaml = repoYAMLWithAccount(t, other)
-			}
-			projectJobCheckoutYAML(t, yaml)
+	f := newReviewFixture(t)
+	f.appendConfig(t, "default_claude_account: acme-personal\n")
+	publishPolicy(t, f.launchBudgetFixture, reviewImplicitPolicy(t, "acme-personal"))
+	recordGitHubAppID(t)
+	projectJobCheckoutYAML(t, repoYAMLWithAccount(t, other))
 
-			err := wantReviewRefused(t, f.cloudFixture, tc.args, other, "serves one account", "acme-personal",
-				"fugaro run --pr N --recipe "+reviewOnlyRecipe)
-			if strings.Contains(err.Error(), "without --token") {
-				t.Errorf("the refusal tells the person to drop a --token, which this launch may never have passed: %q", err.Error())
-			}
-		})
+	err := wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7"}, other, "serves one account", "acme-personal",
+		"fugaro run --pr N --recipe "+reviewOnlyRecipe)
+	if strings.Contains(err.Error(), "without --token") {
+		t.Errorf("the refusal tells the person to drop a --token, which this launch never passed: %q", err.Error())
 	}
 }
 
@@ -1915,7 +1905,7 @@ func TestReviewCodeOnlyLaunchesWithoutATask(t *testing.T) {
 	// is put on a release that carries it — the other test covers the drop.
 	setBaseImage(t, reviewSpecSince)
 	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
-	if _, _, err := reviewCLI(t, "--pr", "7", "--token", "acme-personal", "--code-only"); err != nil {
+	if _, _, err := reviewCLI(t, "--pr", "7", "--code-only"); err != nil {
 		t.Fatalf("fugaro review --code-only: %v", err)
 	}
 	ref := storedRunRef(t, f.cloudFixture)

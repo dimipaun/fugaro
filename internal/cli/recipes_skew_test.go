@@ -1208,8 +1208,7 @@ func TestRecipesSkewRefusesLevelsCarriedByTheTaskLayerOutsideACheckout(t *testin
 			"review level 3 (its adversarial step)"},
 		// The layer's own levels block (L1.3): the resolution turns no level
 		// on, and the block alone is what the 0.15.0 runner cannot read.
-		{"the layer's agent.levels", strings.Replace(testProjectLayer, "  agent: { auth: api-key }\n",
-			"  agent: { auth: api-key, levels: { l3: { model: deepseek/deepseek-v4-pro } } }\n", 1),
+		{"the layer's agent.levels", layerWithRoles("levels: { l3: { model: deepseek/deepseek-v4-pro } }"),
 			"fugaro.yaml's agent.levels (l3.model)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1245,8 +1244,14 @@ func TestRecipesSkewRefusesLevelsCarriedByTheTaskLayerOutsideACheckout(t *testin
 // config.ResolveLevels(...)` does): the launches below succeed.
 func TestRecipesSkewRefusesAResolutionThatRefused(t *testing.T) {
 	f := newCloudFixture(t)
-	checkoutWorkflows(t, "  first_line_review: \"on\"\n  models: { coder: deepseek/deepseek-v4-pro, reviewer: deepseek/deepseek-v4-pro }\n",
+	// The two models are the layer's (S1, D3237): a repository's file decides
+	// no model, and what ResolveLevels refuses on is the configuration the run
+	// resolves, layer included.
+	publishedLayer(t, f, layerWithAgent("auth: api-key, model: deepseek/deepseek-v4-pro, "+
+		"models: { coder: deepseek/deepseek-v4-pro, reviewer: deepseek/deepseek-v4-pro, background: claude-haiku-4-5 }"))
+	checkoutWorkflows(t, "  first_line_review: \"on\"\n",
 		"  web: { commands: { build: sh build.sh, test: sh test.sh } }\n")
+	anchorCheckoutFile(t)
 	for _, image := range []string{"ghcr.io/dimipaun/fugaro-base:0.15.0", "ghcr.io/dimipaun/fugaro-base:0.16.0"} {
 		writeBuildRecord(t, f, appSlug, "web", image)
 		_, _, err := execute(t, "run", "--repo", "acme/app", "--mode", "critical", "--run-id", "20261007-100000-abcd", "Fix it.")
@@ -2123,8 +2128,11 @@ func configSkewLevelsHead(level string) string {
 }
 
 // TestRunRefusesTheNoneModelOnAnOlderBaseImage is noneModelSince's launch gate.
-// A level written `model: none` is the level's own switch written the other
-// way, and the releases that act on levels without knowing the spelling —
+// The layer writes the literal, and not the repository's file: a level's model
+// is a lifted key (S1, D3237), so the file's copy is dropped before the merge
+// and the layer is the only text a run resolves — the gate is judged on where
+// the resolution read it (R2). A level written `model: none` is the level's own
+// switch written the other way, and the releases that act on levels without knowing the spelling —
 // reviewLevelsSince through the release before this one — decode the block and
 // resolve the level on the model ID `none`: the level the file switched off is
 // run where no allowed_models ceiling refuses it, and dies at bootstrap where
@@ -2150,7 +2158,8 @@ func TestRunRefusesTheNoneModelOnAnOlderBaseImage(t *testing.T) {
 	} {
 		t.Run(c.rel, func(t *testing.T) {
 			f := newCloudFixture(t)
-			configSkewCheckout(t, f, configSkewLevelsHead("model: none")+configSkewWorkflow)
+			configSkewCheckout(t, f, configSkewHead+configSkewWorkflow)
+			publishedLayer(t, f, noneModelLayer("l2"))
 			writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:"+c.rel)
 			_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
 			if !c.refused {
@@ -2163,12 +2172,12 @@ func TestRunRefusesTheNoneModelOnAnOlderBaseImage(t *testing.T) {
 				t.Fatalf("err = %v, want the launch refused", err)
 			}
 			for _, want := range []string{
-				"fugaro.yaml's agent.levels of acme/other",
+				"the project layer's defaults.agent.levels (read for acme/other)",
 				"needs a job image whose runner knows " + noneModelKnows,
 				"fugaro " + noneModelSince + " or later",
 				"ghcr.io/dimipaun/fugaro-base:" + c.rel + ", release " + c.rel,
 				imageGateRemedy,
-				"; or write it as none: true in fugaro.yaml",
+				"write it as none: true in the project layer's defaults.agent.levels and publish it again",
 			} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("%v lacks %q", err, want)
@@ -2185,22 +2194,24 @@ func TestRunRefusesTheNoneModelOnAnOlderBaseImage(t *testing.T) {
 // workflow's job has no derived image and so no build record to judge, so the
 // gate judges base_images.base's own release (checkCloneImageSince) and names
 // the fix that image has — fugaro update --base base — rather than an image
-// refresh of a workflow that is never built.
+// refresh of a workflow that is never built. The literal is the layer's, as
+// above: the file may decide no level's model (S1, D3237).
 func TestRunRefusesTheNoneModelOnACloneWorkflowsOlderBaseImage(t *testing.T) {
 	f := newCloudFixture(t)
 	older := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, noneModelSince, -1)
 	f.appendConfig(t, "base_images: {base: "+older+"}\n")
-	configSkewCheckout(t, f, configSkewLevelsHead("model: none")+
+	configSkewCheckout(t, f, configSkewHead+
 		"workflows:\n  svc: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n")
+	publishedLayer(t, f, noneModelLayer("l2"))
 	_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want the launch refused", err)
 	}
 	for _, want := range []string{
-		"fugaro.yaml's agent.levels of acme/other",
+		"the project layer's defaults.agent.levels (read for acme/other)",
 		"needs a job image whose runner knows " + noneModelKnows,
 		"Run fugaro update --base base",
-		"; or write it as none: true in fugaro.yaml",
+		"write it as none: true in the project layer's defaults.agent.levels and publish it again",
 		older,
 	} {
 		if !strings.Contains(err.Error(), want) {
@@ -2220,8 +2231,7 @@ func TestRunRefusesTheNoneModelOnACloneWorkflowsOlderBaseImage(t *testing.T) {
 func TestRunRefusesTheLayersNoneModelOnAnOlderBaseImage(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
-	publishedLayer(t, f, strings.Replace(testProjectLayer, "  agent: { auth: api-key }\n",
-		"  agent: { auth: api-key, levels: { l2: { model: none } } }\n", 1))
+	publishedLayer(t, f, layerWithRoles("levels: { l2: { model: none } }"))
 	dir := layerCheckout(t, f, minimalAnchored)
 	registerOtherLocally(t, f)
 	// Committed at the ref the launch resolves (the local config's base_branch
@@ -2314,8 +2324,7 @@ func TestNoneModelSinceHasAReleaseBullet(t *testing.T) {
 // 0.20.0 launch below succeeds with the layer's level running.
 func TestRecipesSkewRefusesTheNoneModelInTheTaskLayerOutsideACheckout(t *testing.T) {
 	f := newCloudFixture(t)
-	publishedLayer(t, f, strings.Replace(testProjectLayer, "  agent: { auth: api-key }\n",
-		"  agent: { auth: api-key, levels: { l2: { model: none } } }\n", 1))
+	publishedLayer(t, f, layerWithRoles("levels: { l2: { model: none } }"))
 	isolateCache(t)
 	testutil.IsolateGit(t)
 	t.Chdir(t.TempDir())
@@ -2362,8 +2371,7 @@ func TestRecipesSkewRefusesTheNoneModelInTheTaskLayerOutsideACheckout(t *testing
 // silence, which is the failure this gate exists for.
 func TestRecipesSkewRefusesTheNoneModelInALayerWithNoDefaultProfile(t *testing.T) {
 	f := newCloudFixture(t)
-	layer := strings.Replace(testProjectLayer, "  agent: { auth: api-key }\n",
-		"  agent: { auth: api-key, levels: { l2: { model: none } } }\n", 1)
+	layer := layerWithRoles("levels: { l2: { model: none } }")
 	layer = strings.Replace(layer, "default_profile: svc\n", "", 1)
 	if strings.Contains(layer, "default_profile") {
 		t.Fatal("the layer still names a default_profile: the state this test needs is gone")
@@ -2525,8 +2533,7 @@ func TestRunRefusesTheLayersStopFractionOnAnOlderBaseImage(t *testing.T) {
 		t.Run(written, func(t *testing.T) {
 			f := newCloudFixture(t)
 			isolateCache(t)
-			publishedLayer(t, f, strings.Replace(testProjectLayer, "  agent: { auth: api-key }\n",
-				"  agent: { auth: api-key, review_stop_fraction: "+written+" }\n", 1))
+			publishedLayer(t, f, layerWithRoles("review_stop_fraction: "+written))
 			dir := layerCheckout(t, f, minimalAnchored)
 			registerOtherLocally(t, f)
 			commitRef(t, dir, "main")
@@ -3180,7 +3187,7 @@ func TestReviewAgainstTaskKeyGatedOnImage(t *testing.T) {
 		setBaseImage(t, shiftRelease(t, reviewSpecSince, -1))
 		projectJobCheckoutYAML(t, strings.Replace(projectJobOAuthRepoYAML,
 			"  auth: oauth\n", "  auth: oauth\n  review_against_task: false\n", 1))
-		_, _, err := reviewCLI(t, "--pr", "7", "--token", "acme-personal")
+		_, _, err := reviewCLI(t, "--pr", "7")
 		if ExitCode(err) != ExitUserError {
 			t.Fatalf("err = %v, want the review launch refused", err)
 		}
@@ -4399,8 +4406,7 @@ func TestWorkspaceBeatKeyGatedOnImage(t *testing.T) {
 		f := newCloudFixture(t)
 		isolateCache(t)
 		older := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, workspaceBeatSince, -1)
-		publishedLayer(t, f, strings.Replace(testProjectLayer, "  agent: { auth: api-key }\n",
-			"  agent: { auth: api-key, workspace_beat: false }\n", 1))
+		publishedLayer(t, f, layerWithRoles("workspace_beat: false"))
 		dir := layerCheckout(t, f, minimalAnchored)
 		registerOtherLocally(t, f)
 		commitRef(t, dir, "main")

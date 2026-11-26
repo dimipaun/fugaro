@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -1815,10 +1816,61 @@ func TestServiceAuthSinceHasAReleaseBullet(t *testing.T) {
 
 // imageGateOnly reports whether err is policyImageGate's refusal of a node
 // the image at base is older than, with none of the proxy refusal's words.
+// The node's own release is what the image has to reach
+// (projectpolicy.VersionSince), so a row whose fixture names an image older
+// than it reads the image gate's refusal whatever else that row is about.
 func imageGateOnly(err error, base string) bool {
-	rel, ok := projectpolicy.VersionRelease(projectpolicy.Version - 1)
-	if !ok || !strings.Contains(err.Error(), "needs a job image whose runner knows policy version") {
+	if !strings.Contains(err.Error(), "needs a job image whose runner knows policy version") {
 		return false
 	}
-	return !strings.Contains(err.Error(), "Bitbucket proxy") && !strings.HasSuffix(base, ":"+rel)
+	if strings.Contains(err.Error(), "Bitbucket proxy") {
+		return false
+	}
+	tag := base[strings.LastIndex(base, ":")+1:]
+	return newer(nodeRelease, tag)
+}
+
+// TestOlderCLIIsToldToUpgrade is LM21's own guarantee (D3124): the release an
+// identity-issuing installation publishes moves the policy version, and a CLI
+// of the release behind — one that understands the version before this
+// release's — refuses the node with the sentence the launch gate words
+// (policySkewRefusal, which launchPolicyGates refuses a launch with before the
+// execution is created), naming the release it has to reach. That is the whole
+// of what the bump buys: the older CLI signs a run's identity with the very
+// grant this release takes away, so the launch must stop at the read of the
+// policy rather than at a signer that no longer exists.
+//
+// The binary behind is built here rather than launched, because a test cannot
+// install another release's CLI: the two versions in the error are the whole of
+// what tells the readers apart (VersionError's Found and Understood), and the
+// gate's answer is a function of them and of the table. What the release that
+// introduced the version is named from is projectpolicy.VersionSince, so a bump
+// that forgot its row fails here as it fails TestVersionSinceCoversEveryVersion
+// — the message would name no release at all.
+func TestOlderCLIIsToldToUpgrade(t *testing.T) {
+	rel, ok := projectpolicy.VersionRelease(projectpolicy.Version)
+	if !ok {
+		t.Fatalf("projectpolicy.VersionSince has no row for Version %d: a node ahead of an older CLI is answered with the release that introduced it, and a bump without its row tells the operator to upgrade to a release they already run", projectpolicy.Version)
+	}
+	ve := &projectpolicy.VersionError{Found: projectpolicy.Version, Understood: projectpolicy.Version - 1}
+	msg := policySkewRefusal(ve).Error()
+	for _, want := range []string{
+		fmt.Sprintf(projectpolicy.Skew, ve.Found, ve.Understood),
+		"upgrade Fugaro",
+		"brew upgrade dimipaun/tap/fugaro",
+		"fugaro update",
+		fmt.Sprintf("policy version %d arrived in fugaro %s", ve.Found, rel),
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("policySkewRefusal of a version-%d node over a version-%d binary does not say %q: %s", ve.Found, ve.Understood, want, msg)
+		}
+	}
+	// And not the remedies of the other states: the node is ahead of the
+	// reader, so nothing here deletes it or rewrites it in place, and the image
+	// is not what is behind.
+	for _, bad := range []string{"publish --delete", "rewrites the node in place", "refresh the runner image", policySince} {
+		if strings.Contains(msg, bad) {
+			t.Errorf("policySkewRefusal of a version-%d node over a version-%d binary says %q, which is another state's remedy: %s", ve.Found, ve.Understood, bad, msg)
+		}
+	}
 }

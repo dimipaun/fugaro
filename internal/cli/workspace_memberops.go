@@ -120,9 +120,20 @@ type WorkspaceMemberOps struct {
 }
 
 // NewWorkspaceMemberOps returns the member writer `fugaro workspace` uses.
+//
+// D1541's fence is asked here rather than in a method: every call that reaches
+// a member project goes through this opener, so a command the fence applies to
+// (a roster write is one) is refused before a client exists, once per command.
+// It is keyed on the running command, as openCloudFor is, which leaves the
+// read-only listings and the exempt commands answered without a read.
 func NewWorkspaceMemberOps(lc *localcfg.Config, workspaceIAM string) *WorkspaceMemberOps {
 	return &WorkspaceMemberOps{
-		cloud:        func(ctx context.Context) (*infra.Clients, error) { return newInitClients(ctx, lc) },
+		cloud: func(ctx context.Context) (*infra.Clients, error) {
+			if err := requireManaged(ctx, managedCommandFrom(ctx), lc); err != nil {
+				return nil, err
+			}
+			return newInitClients(ctx, lc)
+		},
 		workspaceIAM: workspaceIAM,
 		loopback:     lc.Endpoints.NoAuth,
 	}
