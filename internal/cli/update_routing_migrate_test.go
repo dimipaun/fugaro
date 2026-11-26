@@ -79,6 +79,12 @@ repos:
 // already. Before this release the key was an unknown field and the update
 // wrote no table at all.
 func TestUpdateMigratesToTheTable(t *testing.T) {
+	// MG1 spells the shared pool's name itself because internal/routing imports
+	// no package of this tree, and this is the one side that sees both: a config
+	// whose pool the table names under another string would route nothing.
+	if routing.SharedPool != config.PoolCascade {
+		t.Fatalf("the migration names the shared pool %q and the config spells it %q", routing.SharedPool, config.PoolCascade)
+	}
 	e, path, _ := routingMigrateRig(t, routingMigrateRepoYAML)
 	// The write every stage of the converge makes: it carries no table, because
 	// the stages after it plan from this config and the table is what moves
@@ -149,7 +155,7 @@ credential_cascade: { fallback: auto }
 	for _, want := range []string{
 		"routing: acme/api's runs go out on the account default, then the account ada, as they do today",
 		"routing: the pool pair rotates among its tokens now that subscription_spread is gone",
-		"routing: fallback is auto, so a run pays on the project's key as soon as its subscriptions are exhausted",
+		"routing: fallback is auto, so a run pays on the key as soon as its subscriptions are exhausted, not after the old threshold",
 		"routing: acme/api's calls of claude-haiku-4-5 stay on the release-1 bridge (craft-access)",
 	} {
 		if !strings.Contains(report, want) {
@@ -273,7 +279,7 @@ func TestUpdatePublishesNoTableTheNodeCannotCarry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the update ended on the table the node cannot carry: %v\n%s", err, out)
 	}
-	if want := "the routing table was not published: the node cannot carry the pool " + routing.SharedPool; !strings.Contains(out, want) {
+	if want := "the routing table was not published: the project's policy cannot carry the pool " + routing.SharedPool; !strings.Contains(out, want) {
 		t.Errorf("the update does not say the table stayed behind (%q):\n%s", want, out)
 	}
 	if pol := publishedPolicy(t, f); pol.ModelRouting != nil {

@@ -72,6 +72,17 @@ import (
 // the config refuses a pool and a credential of one name, and the account's own
 // credential — which the craft migration derived — is that pool of one already.
 
+// The migration's own lines, each a constant because a person reads them and
+// their length is pinned (TestUpdateMessagesAreLaconic, CLAUDE.md's bound on
+// what a command tells someone): one per state this migration can be in and
+// cannot write, and the one D3192's change is announced with.
+const (
+	routingNoCheckoutWarn   = "the routing table was not written: no checkout of %s is here, so its calls would route nowhere"
+	routingUnwrittenWarn    = "the routing table was not written: the config it writes does not validate (%s)"
+	routingUnpublishedWarn  = "the routing table was not published: the project's policy cannot carry the pool %s, so a table naming it is refused"
+	routingFallbackAutoLine = "routing: fallback is auto, so a run pays on the key as soon as its subscriptions are exhausted, not after the old threshold"
+)
+
 // routingMigrationDone is MG1's answer for this installation, as the two writers
 // use it: the members the config is written with, and the documents the report
 // and the publish are made of.
@@ -130,8 +141,7 @@ func (r *initRun) routingMigrationFor(lc *localcfg.Config) *routingMigrationDone
 		// files name, and a model no entry matches is a refused call. Nothing
 		// is written, and the next update on a machine that holds the checkout
 		// migrates.
-		r.warn(fmt.Sprintf("the routing table was not written: %s has no readable fugaro.yaml here, and a table without it would route its calls nowhere",
-			strings.Join(unseen, ", ")))
+		r.warn(fmt.Sprintf(routingNoCheckoutWarn, strings.Join(unseen, ", ")))
 		return nil
 	}
 	// The config the migration would write is judged before it is written and
@@ -145,7 +155,7 @@ func (r *initRun) routingMigrationFor(lc *localcfg.Config) *routingMigrationDone
 		_, err = localcfg.Parse(data)
 	}
 	if err != nil {
-		r.warn(fmt.Sprintf("the routing table was not written: the config it writes does not validate (%s)", safetext.FieldErr(err)))
+		r.warn(fmt.Sprintf(routingUnwrittenWarn, safetext.FieldErr(err)))
 		return nil
 	}
 	r.routingMig = &routingMigrationDone{table: mig.Table, pools: pools, creds: creds, cfgs: cfgs, mig: mig}
@@ -178,8 +188,7 @@ func (r *initRun) routingForPublish(lc *localcfg.Config) *localcfg.Config {
 	next := *lc
 	next.ModelRouting, next.Pools, next.Credentials = d.table, d.pools, d.creds
 	if left := poolsTheNodeCannotCarry(&next); len(left) > 0 {
-		r.warn(fmt.Sprintf("the routing table was not published: the node cannot carry the pool %s, and a table naming it is refused (D2608)",
-			strings.Join(left, ", ")))
+		r.warn(fmt.Sprintf(routingUnpublishedWarn, strings.Join(left, ", ")))
 		return lc
 	}
 	return &next
@@ -616,7 +625,7 @@ func (r *initRun) printRoutingMigration(lc *localcfg.Config, cfgs map[string]*co
 	// D3192: the paid key is in a cascade's chain as soon as the subscriptions
 	// are exhausted, where the retired threshold waited for them to be spent.
 	if lc.CredentialCascade.FallbackValue() == projectpolicy.FallbackAuto {
-		fmt.Fprintln(w, "routing: fallback is auto, so a run pays on the project's key as soon as its subscriptions are exhausted, rather than waiting for the old threshold")
+		fmt.Fprintln(w, routingFallbackAutoLine)
 	}
 	for _, b := range mig.Bridge {
 		fmt.Fprintf(w, "routing: %s's calls of %s stay on the release-1 bridge (%s)\n", b.Repo, b.Model, b.Reason)
