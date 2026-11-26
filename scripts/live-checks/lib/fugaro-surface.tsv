@@ -677,6 +677,7 @@ flag	image refresh	value		--config
 flag	image refresh	value		--expect-digest
 flag	image refresh	value		--gcp-project
 flag	image refresh	value		--image-source
+flag	image refresh	value		--on-divergence
 flag	image refresh	value		--project
 flag	image refresh	value		--region
 flag	image refresh	value		--repo

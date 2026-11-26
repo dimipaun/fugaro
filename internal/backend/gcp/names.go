@@ -410,10 +410,10 @@ func SharedImageName(registry, key string) (string, error) {
 const sharedKeyLen = 64
 
 // validSharedKey reports whether key is shaped as imagecheck.Key's answer.
-// This package cannot import imagecheck (imagecheck imports nothing of the
-// backend, and the name is written where a registry path is built), so the
-// shape is stated here once and both halves of the layout are held to it by
-// TestSharedImageNameMatchesTheKey.
+// This package cannot import imagecheck (imagecheck imports this one, and a
+// name is written where a registry path is built), so the shape is stated here
+// once: names_test.go pins what this accepts, and the refresh's own test is
+// what holds imagecheck.Key's answer to it.
 func validSharedKey(key string) bool {
 	if len(key) != sharedKeyLen {
 		return false
@@ -426,41 +426,6 @@ func validSharedKey(key string) bool {
 		}
 	}
 	return true
-}
-
-// SharedImageKey is the key a shared image was named for, from the image name
-// SharedImageName wrote: the 12 hex the name carries, which is a prefix of the
-// key and not the key. ok is false for any other image, and for one of
-// SharedRegistryRepoID whose name is not a shared image's (a catalog entry's,
-// which lives in the same registry).
-func SharedImageKey(image string) (prefix string, ok bool) {
-	base, _ := cutTag(image)
-	parts := strings.Split(base, "/")
-	if len(parts) < 3 || parts[len(parts)-2] != SharedRegistryRepoID() {
-		return "", false
-	}
-	name, found := strings.CutPrefix(parts[len(parts)-1], SharedImagePrefix)
-	if !found || len(name) != sharedKeyHex {
-		return "", false
-	}
-	for i := 0; i < len(name); i++ {
-		switch c := name[i]; {
-		case c >= '0' && c <= '9', c >= 'a' && c <= 'f':
-		default:
-			return "", false
-		}
-	}
-	return name, true
-}
-
-// cutTag splits an image reference at its tag, leaving a digest reference's
-// own "@" alone: a name carries a tag or a digest, never both.
-func cutTag(image string) (base, tag string) {
-	base, tag, found := strings.Cut(image, ":")
-	if !found || strings.Contains(base, "@") {
-		return image, ""
-	}
-	return base, tag
 }
 
 // DefaultRegistryHost is the registry host, the prefix of every image
