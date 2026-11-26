@@ -358,7 +358,7 @@ func TestDocsMobileChecklistHasChecks80And83To88(t *testing.T) {
 		{
 			n:     "88",
 			row:   []string{"never `belong`", "P5.2"},
-			stops: []string{"[ -f \"$ROOT/internal/cli/push.go\" ]", "firebasecloudmessaging.messages.create", "P5.2.7", "P5.2.4"},
+			stops: []string{"[ -f \"$ROOT/internal/cli/push.go\" ]", "grep -q 'fcmSender' \"$ROOT/internal/cli/push.go\"", "P5.2.7", "P5.2.4"},
 		},
 	} {
 		row := ""

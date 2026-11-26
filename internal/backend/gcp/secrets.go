@@ -408,6 +408,25 @@ func (s *Secrets) countVersions(ctx context.Context, info *SecretInfo) error {
 	return nil
 }
 
+// SetLabels replaces id's labels with labels, and nothing else about the
+// container: the update mask is labels, so no replication, no TTL and no
+// version is touched.
+//
+// The whole map is the new one, which is what a caller taking a mark OFF a
+// container needs: the retirement of a project copy drops LabelSecret — the
+// label internal/infra's discovery adopts a project-wide container by — and
+// writes LabelRetired in its place. The caller builds the map from the
+// container's own labels, so nothing it does not know about is dropped by
+// accident.
+func (s *Secrets) SetLabels(ctx context.Context, id string, labels map[string]string) error {
+	_, err := s.svc.Projects.Secrets.Patch(s.name(id), &secretmanager.Secret{Labels: labels}).
+		UpdateMask("labels").Context(ctx).Do()
+	if err != nil {
+		return fmt.Errorf("labelling secret %s: %w", id, err)
+	}
+	return nil
+}
+
 // Delete removes secret id and all its versions.
 func (s *Secrets) Delete(ctx context.Context, id string) error {
 	if _, err := s.svc.Projects.Secrets.Delete(s.name(id)).Context(ctx).Do(); err != nil {

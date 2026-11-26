@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -56,6 +57,29 @@ providers:
     auth: bearer
     secret: openrouter-api-key
     models: [deepseek/*]
+`
+
+// craftRoutingTable is the routing table the craft fixtures append beside
+// craftLocalExtra: the project's own answer about where each model goes, and
+// one RT3 accepts whatever budget the arms below write. The Claude entry puts
+// the launcher's own credentials before the project's pool (D3176) and names no
+// paid source at all, because a paid source after a pool is R17's refusal
+// without an enforcing budget — which is what `validate` reports a table for
+// (RT6) and what these arms are not about. The arms that answer the budget
+// append their own block to this config, so this one may not write one.
+//
+// It is a block of its own rather than a line of the const above because the
+// bridge is a state of its own: a project that publishes no table at all
+// (D3170), which craftFixtureBridge is the fixture for.
+const craftRoutingTable = `
+model_routing:
+  - match: deepseek/*
+    chain:
+      - {kind: provider, provider: openrouter-main}
+  - match: claude-*
+    chain:
+      - {kind: launcher-pool}
+      - {kind: pool, pool: claude-pool}
 `
 
 // craftRepoYAML is the checkout's own fugaro.yaml: it selects the first-line
@@ -125,6 +149,52 @@ func craftFixture(t *testing.T) string {
 // world whose config says so.
 func craftFixtureWith(t *testing.T, extra string) string {
 	t.Helper()
+	return craftFixtureBody(t, craftLocalExtra+craftRoutingTable+extra)
+}
+
+// craftFixtureBridge is the same world with no routing table at all: the state
+// every installation that has not migrated is in (D3170, R25), where the crafts
+// are reached the release-1 way and the table is not the document that answers
+// for their calls. Everything else — the credentials, the pool, the crafts and
+// their accesses — is the fixture above's.
+func craftFixtureBridge(t *testing.T) string {
+	t.Helper()
+	return craftFixtureBody(t, craftLocalExtra)
+}
+
+// craftRoutingTableElsewhere is a table that serves another repository and not
+// this checkout's own: every source names an admit list the checkout is not in
+// (D3182), so no entry of it governs a run of this repository — which is the
+// second way a project is on the release-1 bridge, beside publishing no table at
+// all (O7, R25, D3196).
+//
+// Its pattern matches no model any craft of the fixture world names, which is
+// what makes the two arms that read it hold a reading that judged the table
+// anyway: every craft's model would then be one no entry matches, so the read
+// would report every row unrouted (R22) — a refusal no launch makes, and the
+// failure these arms are here to catch.
+const craftRoutingTableElsewhere = `
+model_routing:
+  - match: gemini/*
+    chain:
+      - {kind: anthropic, admit: [other/repo]}
+`
+
+// craftFixtureElsewhere is the fixture world whose routing table serves another
+// repository: the checkout names aurora/api as its origin and the table admits
+// only other/repo, so the project publishes a table that is not in force for
+// these runs.
+func craftFixtureElsewhere(t *testing.T) string {
+	t.Helper()
+	orig := craftFixtureBody(t, craftLocalExtra+craftRoutingTableElsewhere)
+	testutil.Git(t, ".", "remote", "add", "origin", "https://github.com/aurora/api.git")
+	return orig
+}
+
+// craftFixtureBody is the world every craft fixture builds, from the text
+// appended to the installation's own config.
+func craftFixtureBody(t *testing.T, body string) string {
+	t.Helper()
 	orig, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -135,7 +205,7 @@ func craftFixtureWith(t *testing.T, extra string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, append(base, []byte(craftLocalExtra+extra)...), 0o600); err != nil {
+	if err := os.WriteFile(path, append(base, []byte(body)...), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("FUGARO_CONFIG", path)
@@ -168,10 +238,12 @@ func writeCraftLayer(t *testing.T, layer string) {
 
 // craftRows is the document the fixture resolves to, spelled once so the two
 // tests below cannot disagree about what the layers mean. It is the spec's own
-// example read through the command: the coder is DeepSeek through OpenRouter,
-// the senior review is Opus on a pool of two subscriptions, the first-line
-// review goes out on the Anthropic key and keeps the coder's model, and the
-// security review takes the senior review's pool and a model of its own.
+// example read through the command: the coder is a DeepSeek model the table
+// routes to the OpenRouter provider, the three Claude models resolve to the
+// launcher's own credentials and then the project's pool of two subscriptions
+// (D3176, D3180: a chain is written, and the second source is what the first
+// falls back to), the first-line review keeps the model the project layer set,
+// and the security review takes a model of its own.
 //
 // Every row is servable here, which is the one thing this fixture has to say
 // about MC16's member: the coder's model is claimed by the route the fixture's
@@ -186,23 +258,24 @@ func craftRows() []craftLsRow {
 	return []craftLsRow{
 		{
 			Craft: config.CraftCoder, Model: "deepseek/deepseek-v4.1-flash", ModelFrom: craft.SourceLocal,
-			Access: "openrouter-main", AccessFrom: craft.SourceLocal, Servable: true,
+			Chain: []string{"provider:openrouter-main"}, Servable: true,
 		},
 		{
-			// The halves part: the model is the project layer's (nothing
-			// narrower sets one) and the access the repository's.
+			// The model is the project layer's (nothing narrower sets one), and
+			// the chain is the table's, which no layer of a craft writes.
 			Craft: config.CraftReview, Model: "claude-sonnet-5-5", ModelFrom: craft.SourceProject,
-			Access: "anthropic-key", AccessFrom: craft.SourceRepo, Servable: true,
+			Chain: []string{"launcher-pool", "pool:claude-pool"}, Servable: true,
 		},
 		{
 			Craft: config.CraftSeniorReview, Model: "claude-opus-4", ModelFrom: craft.SourceLocal,
-			Access: "claude-pool", AccessFrom: craft.SourceLocal, Inert: true, Servable: true,
+			Chain: []string{"launcher-pool", "pool:claude-pool"}, Servable: true,
 		},
 		{
-			// The spec's own example of the halves parting the other way.
+			// The spec's own example of a craft that keeps a model it inherits
+			// nothing of: its model is the repository's and its chain the
+			// table's, like every other row's.
 			Craft: config.CraftSecurityReview, Model: "claude-opus-4-1", ModelFrom: craft.SourceRepo,
-			Access: "claude-pool", AccessFrom: craft.InheritedFrom(config.CraftSeniorReview), Inert: true,
-			Servable: true,
+			Chain: []string{"launcher-pool", "pool:claude-pool"}, Servable: true,
 		},
 	}
 }
@@ -220,20 +293,17 @@ func TestCraftLsTheThreeLayers(t *testing.T) {
 	if !strings.Contains(out, "crafts for project aurora (offline)") {
 		t.Errorf("the read does not say which project it answered for:\n%s", out)
 	}
-	for _, want := range []string{"CRAFT", "MODEL", "ACCESS", "SERVES"} {
+	for _, want := range []string{"CRAFT", "MODEL", "MODEL FROM", "CHAIN", "SERVES"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the table has no %s column:\n%s", want, out)
 		}
 	}
 	for _, row := range craftRows() {
 		line := craftLine(t, out, row.Craft)
-		for _, cell := range []string{row.Model, row.ModelFrom, row.Access, row.AccessFrom} {
+		for _, cell := range []string{row.Model, row.ModelFrom, strings.Join(row.Chain, " → ")} {
 			if !strings.Contains(line, cell) {
 				t.Errorf("the %s row does not carry %q: %q", row.Craft, cell, line)
 			}
-		}
-		if got := strings.Contains(line, "no: the subscription-spread switch is off"); got != row.Inert {
-			t.Errorf("the %s row says inert=%v, want %v: %q", row.Craft, got, row.Inert, line)
 		}
 	}
 	if errOut != "" && strings.Contains(errOut, "fugaro: problem:") {
@@ -241,57 +311,87 @@ func TestCraftLsTheThreeLayers(t *testing.T) {
 	}
 }
 
-// TestCraftLsServesWhenTheSpreadIsOn is the switch's own arm: the same three
-// layers with the installation's own `subscription_spread: true`, where the
-// pool holds two subscriptions and therefore serves — on both rows that name
-// it, the one the owner set and the one that inherits it. The column states
-// what a run will do with the access and a run reads this switch, so a read
-// that answered it as off would report the one fact the column exists for the
-// wrong way round.
-func TestCraftLsServesWhenTheSpreadIsOn(t *testing.T) {
-	craftFixtureWith(t, "subscription_spread: true\n")
+// TestCraftLsOnTheBridgeShowsNoChainProblem is the read on a project that
+// publishes no routing table: its calls go out the release-1 way, on the access
+// its crafts resolve to (D3170, R25), so there is no entry to match and nothing
+// is missing — every row carries an empty chain and no problem, and the row's
+// verdict stays the model's own.
+//
+// It is the state every installation is in until `fugaro update` writes a table
+// (MG1's migration), so the answer matters more than the table's own: a read
+// that asked the empty table anyway would report every craft of every unmigrated
+// project as unserved, in the launch gate's words, for a refusal no launch makes
+// — the gate asks whether the table serves the repository before it judges a
+// model by it (chainRoutingGate, infra.ChainPlanFor).
+func TestCraftLsOnTheBridgeShowsNoChainProblem(t *testing.T) {
+	craftFixtureBridge(t)
 	out, errOut, err := execute(t, "craft", "ls")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	pooled := 0
-	for _, row := range craftRows() {
-		if row.Access != "claude-pool" {
-			continue
-		}
-		pooled++
-		line := craftLine(t, out, row.Craft)
-		if strings.Contains(line, "no: the subscription-spread switch is off") {
-			t.Errorf("the %s row says the switch is off, and this machine's config turns it on: %q", row.Craft, line)
-		}
-		if !strings.HasSuffix(strings.TrimSpace(line), "yes") {
-			t.Errorf("the %s row names the pool the switch turns on and does not say it serves: %q", row.Craft, line)
-		}
+	jsOut, _, err := execute(t, "craft", "ls", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, jsOut)
 	}
-	if pooled == 0 {
-		t.Fatal("the fixture names no pool, so this test would pass against a read that says nothing at all")
+	craftLsOnTheReleaseOneBridge(t, out, errOut, jsOut)
+}
+
+// TestCraftLsWhereTheTableServesAnotherRepo is the same read on the second state
+// that means the same thing: the project publishes a table, and every source of
+// it is admitted to another repository (D3182, D3196), so no entry of it governs
+// these runs. The read's answer is the one above's, row for row, because the
+// question it asks first is the gate's own — whether the table serves this
+// repository — and not whether a table exists at all.
+func TestCraftLsWhereTheTableServesAnotherRepo(t *testing.T) {
+	craftFixtureElsewhere(t)
+	out, errOut, err := execute(t, "craft", "ls")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	jsOut, _, err := execute(t, "craft", "ls", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, jsOut)
+	}
+	craftLsOnTheReleaseOneBridge(t, out, errOut, jsOut)
+}
+
+// craftLsOnTheReleaseOneBridge holds a read to the release-1 answer: no row is
+// refused and no row carries a chain or a problem, every craft that names a model
+// is served by the checks of its own facts, and the document has no
+// chain_problem member. The two states that mean it — a project that publishes no
+// routing table and one whose every source is admitted to another repository
+// (D3170, O7, R25, D3196) — are one answer, so the two tests above share this.
+func craftLsOnTheReleaseOneBridge(t *testing.T, out, errOut, jsOut string) {
+	t.Helper()
+	if strings.Contains(out, "no entry") || strings.Contains(out, "no:") {
+		t.Errorf("no table serves this repository, so no row of it is refused:\n%s", out)
+	}
+	for _, row := range craftRows() {
+		line := craftLine(t, out, row.Craft)
+		if !strings.Contains(line, "yes") {
+			t.Errorf("the %s row is not served on the release-1 bridge: %q", row.Craft, line)
+		}
+		if strings.Contains(line, "→") {
+			t.Errorf("the %s row prints a chain, and a table that does not serve this repository has none to print: %q", row.Craft, line)
+		}
 	}
 	if errOut != "" && strings.Contains(errOut, "fugaro: problem:") {
-		t.Errorf("every access names a credential or a pool a layer holds, so the read has nothing to warn about: %q", errOut)
-	}
-	// The document the console reads carries the same answer, from the same
-	// serializer: a member that kept saying inert would be the table and the
-	// wire disagreeing about one fact.
-	raw, _, err := execute(t, "craft", "ls", "--json")
-	if err != nil {
-		t.Fatalf("%v\n%s", err, raw)
+		t.Errorf("the fixture's accesses all resolve, so the read has nothing to warn about: %q", errOut)
 	}
 	var doc craftLsDoc
-	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+	if err := json.Unmarshal([]byte(jsOut), &doc); err != nil {
 		t.Fatal(err)
 	}
-	if len(doc.Crafts) != len(config.CraftNames) {
-		t.Fatalf("the document carries %d rows, want one per craft (%d)", len(doc.Crafts), len(config.CraftNames))
-	}
-	for i, row := range doc.Crafts {
-		if row.Inert {
-			t.Errorf("crafts[%d] (%s) is inert with the switch on: %+v", i, row.Craft, row)
+	for _, row := range doc.Crafts {
+		if len(row.Chain) != 0 || row.ChainProblem != "" {
+			t.Errorf("the %s row resolves to %v / %q, and no table that serves this repository has an entry to resolve it by", row.Craft, row.Chain, row.ChainProblem)
 		}
+		if row.Model != "" && !row.Servable {
+			t.Errorf("the %s row is not servable on the release-1 bridge: %s", row.Craft, row.ModelProblem)
+		}
+	}
+	if strings.Contains(jsOut, "chain_problem") {
+		t.Errorf("the document carries a chain_problem member where no table serves the repository:\n%s", jsOut)
 	}
 }
 
@@ -362,8 +462,13 @@ func TestCraftLsJSONMatchesSchema(t *testing.T) {
 		t.Fatalf("the document carries %d rows, want one per craft (%d)", len(decoded.Crafts), len(config.CraftNames))
 	}
 	for i, want := range craftRows() {
-		if decoded.Crafts[i] != want {
-			t.Errorf("crafts[%d] = %+v, want %+v", i, decoded.Crafts[i], want)
+		// Compared member by member rather than as a value: the row carries a
+		// slice (the chain), so no two rows are Go-comparable.
+		got := decoded.Crafts[i]
+		if got.Craft != want.Craft || got.Model != want.Model || got.ModelFrom != want.ModelFrom ||
+			got.ChainProblem != want.ChainProblem || got.Servable != want.Servable || got.ModelProblem != want.ModelProblem ||
+			!slices.Equal(got.Chain, want.Chain) {
+			t.Errorf("crafts[%d] = %+v, want %+v", i, got, want)
 		}
 	}
 	if len(decoded.Problems) != 0 {
@@ -380,12 +485,13 @@ func TestCraftLsJSONMatchesSchema(t *testing.T) {
 			t.Errorf("the document carries a %s member, and a credential's value is stored nowhere a reader of it can reach:\n%s", member, out)
 		}
 	}
-	// And the names it does carry are the ones the layers wrote, never a
-	// substituted default: an access that resolved to something else would
-	// hide the misconfiguration from the reader who has to fix it.
+	// And every row that names a model resolves to a chain, since the fixture's
+	// table routes every model it names: a model with no chain is one no run
+	// could call, and a document that printed an empty one without saying so
+	// would be the read hiding the refusal (R22).
 	for _, row := range decoded.Crafts {
-		if row.Access == "" {
-			t.Errorf("the %s row names no access: an access no layer sets is the default credential, which is never an empty name", row.Craft)
+		if row.Model != "" && len(row.Chain) == 0 {
+			t.Errorf("the %s row names %s and resolves to no chain: %s", row.Craft, row.Model, row.ChainProblem)
 		}
 	}
 }
@@ -410,8 +516,10 @@ agent:
 // agent.crafts.<craft>.access, the installation config's crafts.<craft>.access,
 // the project layer's defaults.agent.crafts.<craft>.access — because a reader
 // told to fix a key that is not in the file they have is sent to the wrong
-// file. The craft that wrote it keeps the name it wrote and the layer it wrote
-// it in: a reader has to see the misconfiguration, not a silent fallback.
+// file. Nothing is substituted for it: the row carries the chain the craft's
+// model resolves to, and the warning is where the key that names nothing is
+// reported, so a reader is sent to the document they have (RT6: the row shows
+// the chain, and the access is on its way out with the migration, D3170).
 func TestCraftLsReportsAnAccessThatNamesNothing(t *testing.T) {
 	craftFixture(t)
 	testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": craftRepoUnknownAccessYAML})
@@ -422,10 +530,6 @@ func TestCraftLsReportsAnAccessThatNamesNothing(t *testing.T) {
 	}
 	if !strings.Contains(errOut, "agent.crafts.review.access") {
 		t.Errorf("the warning does not name the key in the document that wrote it:\n%s", errOut)
-	}
-	line := craftLine(t, out, config.CraftReview)
-	if !strings.Contains(line, "claude-9") || !strings.Contains(line, craft.SourceRepo) {
-		t.Errorf("the review row does not carry the name as written and the layer it was written in: %q", line)
 	}
 
 	jsonOut, _, err := execute(t, "craft", "ls", "--json")
@@ -758,11 +862,13 @@ func TestCraftLsRowNamesWhyAModelCannotBeServed(t *testing.T) {
 	})
 }
 
-// TestCraftLsSchemaPinsVersionOne holds schemas/craft-ls.schema.json to the rule
-// the document is versioned by (F16, D1667, and CLAUDE.md's own): MC16 adds
-// `model_servable` and `model_problem` to every row and renames, retypes and
-// removes nothing, so the version stays 1 and the two members are members a
-// reader of version 1 may ignore.
+// TestCraftLsSchemaPinsTheDocumentVersion holds schemas/craft-ls.schema.json to
+// the rule the document is versioned by (F16, D1667, and CLAUDE.md's own): MC16
+// added `model_servable` and `model_problem` within version 1, because a member
+// added is a member a reader of that version may ignore, while RT6 removes the
+// access, the layer it came from and the inert flag (D3170) -- a removal, which
+// is what bumps the version rather than a name reused (CLAUDE.md). So the
+// version is 2, and the members below are version 2's.
 //
 // The file is read as its own JSON rather than compiled, because what a consumer
 // of this document reads is the file: a version const only the Go struct still
@@ -770,7 +876,7 @@ func TestCraftLsRowNamesWhyAModelCannotBeServed(t *testing.T) {
 // that consumer reading a promise this repository no longer makes. The compiled
 // read is TestCraftLsJSONMatchesSchema's, which is the other direction -- the
 // command's own output against this file.
-func TestCraftLsSchemaPinsVersionOne(t *testing.T) {
+func TestCraftLsSchemaPinsTheDocumentVersion(t *testing.T) {
 	pkg := craftFixture(t)
 	raw, err := os.ReadFile(filepath.Join(pkg, "..", "..", "schemas", "craft-ls.schema.json"))
 	if err != nil {
@@ -793,15 +899,15 @@ func TestCraftLsSchemaPinsVersionOne(t *testing.T) {
 	}
 	// Every member a row carries and the type it is written in. A member that
 	// changes meaning or type is a new member under a new name with the old one
-	// kept, so this list only ever grows -- and it is spelled here rather than
-	// read off the file, or a rename would move the pin with it.
+	// kept, and one that goes is a bumped version -- so within a version this
+	// list only ever grows, and it is spelled here rather than read off the
+	// file, or a rename would move the pin with it.
 	wantTypes := map[string]string{
 		"craft":          "string",
 		"model":          "string",
 		"model_from":     "string",
-		"access":         "string",
-		"access_from":    "string",
-		"inert":          "boolean",
+		"chain":          "array",
+		"chain_problem":  "string",
 		"model_servable": "boolean",
 		"model_problem":  "string",
 	}
@@ -811,7 +917,7 @@ func TestCraftLsSchemaPinsVersionOne(t *testing.T) {
 	}
 	sort.Strings(names)
 	if len(props) != len(wantTypes) {
-		t.Errorf("the row carries %d members (%v), want %d: version 1's five halves, MC16's two, and nothing else", len(props), names, len(wantTypes))
+		t.Errorf("the row carries %d members (%v), want %d: version 2's three halves, MC16's two and nothing else", len(props), names, len(wantTypes))
 	}
 	for name, want := range wantTypes {
 		p, ok := props[name].(map[string]any)
@@ -837,9 +943,75 @@ func TestCraftLsSchemaPinsVersionOne(t *testing.T) {
 		name, _ := r.(string)
 		required[name] = true
 	}
-	for name, want := range map[string]bool{"model_servable": true, "model_problem": false} {
+	for name, want := range map[string]bool{"model_servable": true, "model_problem": false, "chain": true, "chain_problem": false} {
 		if required[name] != want {
 			t.Errorf("the row's required list carries %q = %v, want %v", name, required[name], want)
 		}
+	}
+}
+
+// TestCraftLsShowsTheChain is the read's subject after RT6 (D3170): every row
+// carries the model it runs and the chain the project's routing table resolves
+// that model to, where the access and the layer it came from used to be. The
+// column a release behind printed is gone -- a row that still said ACCESS would
+// be this read and the table disagreeing about where a craft's calls go out --
+// and a model no entry matches has no chain and says why, rather than being
+// reached by whatever source happened to be printed first (R1, R22).
+func TestCraftLsShowsTheChain(t *testing.T) {
+	craftFixture(t)
+	out, _, err := execute(t, "craft", "ls")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if strings.Contains(out, "ACCESS") {
+		t.Errorf("the table still carries an access column:\n%s", out)
+	}
+	for _, want := range []string{"CRAFT", "MODEL", "MODEL FROM", "CHAIN", "SERVES"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the table has no %s column:\n%s", want, out)
+		}
+	}
+	for _, row := range craftRows() {
+		line := craftLine(t, out, row.Craft)
+		chain := strings.Join(row.Chain, " → ")
+		if !strings.Contains(line, chain) {
+			t.Errorf("the %s row does not carry the chain %q its model resolves to: %q", row.Craft, chain, line)
+		}
+	}
+
+	// The other half of the column: a model no entry of the table matches is
+	// the one a run cannot call, and the row says so in the checks' own words
+	// and with the fix `fugaro routing ls` would give it (RT5's own sentence).
+	testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": craftRepoUnservedModelYAML})
+	raw, _, err := execute(t, "craft", "ls", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, raw)
+	}
+	coder := craftRowRaw(t, raw, config.CraftCoder)
+	var chain []string
+	if err := json.Unmarshal(coder["chain"], &chain); err != nil {
+		t.Fatalf("the coder row's chain is not an array: %v (%s)", err, raw)
+	}
+	if len(chain) != 0 {
+		t.Errorf("the coder row resolves qwen/qwen3-coder to %v, and no entry of the fixture's table matches it: %s", chain, raw)
+	}
+	var why string
+	if err := json.Unmarshal(coder["chain_problem"], &why); err != nil {
+		t.Fatalf("the coder row carries no chain_problem: %v (%s)", err, raw)
+	}
+	for _, want := range []string{"qwen/qwen3-coder", "no entry matches", "fugaro routing set"} {
+		if !strings.Contains(why, want) {
+			t.Errorf("the coder row's chain_problem does not name %q: %q", want, why)
+		}
+	}
+	// And the text form says the same thing in the SERVES cell, which is the
+	// whole verdict now that nothing resolves to an inert pool: a craft whose
+	// model is priced and routed nowhere is served by no run.
+	text, _, err := execute(t, "craft", "ls")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, text)
+	}
+	if line := craftLine(t, text, config.CraftCoder); !strings.Contains(line, "no: ") {
+		t.Errorf("the coder row serves no chain and its SERVES cell does not say so: %q", line)
 	}
 }

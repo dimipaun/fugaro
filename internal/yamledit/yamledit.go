@@ -482,6 +482,69 @@ func UpsertSeqItemListByKey(src []byte, path []string, keyField, keyValue, field
 	return out, nil
 }
 
+// UpsertSeqItemMapByKey sets a MAPPING-valued field on the item of a sequence of
+// mappings whose keyField holds keyValue: the item is written whole with the
+// field when the sequence does not have it, the field is written beside the
+// fields the item already carries when it does not have that one yet, and the
+// mapping's own keys are written where the field stands when it does — so the
+// item keeps its place, its other fields and their lines, and the field keeps
+// the comment block above its key, the comment beside it and whatever trails its
+// last key's line.
+//
+// UpsertSeqItemByKey writes scalar fields only, UpsertSeqItemListByKey a field
+// whose value is a list of scalars, and UpsertSeqItemItemsByKey a field whose
+// value is a list of mappings; a field whose value is a mapping of its own — a
+// pool's `principal`, a kind and an id under one key — is none of the three, and
+// this is that quarter. The mapping is written as a block mapping, one key per
+// line, which is the shape a reader of the file expects and the shape this
+// package's other writers produce.
+//
+// A field written in flow style — `{}` and `{kind: person, id: x}` alike — a
+// sequence item that is not a mapping, and a field whose value is a scalar or a
+// list rather than a mapping are refused rather than half-written
+// (ReasonFlowCollection, ReasonNotAMapping, ReasonNotASequence,
+// ReasonReplacesCollection). The refusals are the list writer's own, on the same
+// shapes and for the same reason: the edit would have to measure bytes inside a
+// collection whose delimiters it does not own.
+func UpsertSeqItemMapByKey(src []byte, path []string, keyField, keyValue, field string, keys map[string]string) ([]byte, error) {
+	const op = "UpsertSeqItemMapByKey"
+	if err := checkPath(op, path); err != nil {
+		return src, err
+	}
+	if keyField == "" || field == "" {
+		return src, refuse(op, pathString(path), ReasonEmptyField)
+	}
+	if field == keyField {
+		return src, refuse(op, pathString(path), ReasonFieldIsKeyField)
+	}
+	if len(keys) == 0 {
+		return src, refuse(op, pathString(path), ReasonEmptyList)
+	}
+	out, err := upsertMapField(op, src, path, keyField, keyValue, field, keys)
+	if err != nil {
+		return src, err
+	}
+	if err := verified(op, path, out, func(root *yaml.Node) bool {
+		item := keyedItem(resolve(root, path), keyField, keyValue)
+		if item == nil {
+			return false
+		}
+		m := mapValue(item, field)
+		if m == nil || m.Kind != yaml.MappingNode || len(m.Content) != 2*len(keys) {
+			return false
+		}
+		for k, want := range keys {
+			if !scalarIs(mapValue(m, k), want) {
+				return false
+			}
+		}
+		return true
+	}); err != nil {
+		return src, err
+	}
+	return out, nil
+}
+
 // SeqItem is one item of a NESTED sequence of mappings: a field whose value is
 // a sequence of mappings rather than of scalars, which is the one shape
 // UpsertSeqItemByKey and UpsertSeqItemListByKey do not reach. The layer file's
@@ -1592,6 +1655,151 @@ func upsertItemsField(op string, src []byte, path []string, keyField, keyValue, 
 		return nil, err
 	}
 	repl := []byte(strings.Join(itemsFieldLines(fieldIndent, d.step, field, items), d.eol))
+	if end > 0 && d.src[end-1] == '\n' {
+		repl = append(repl, d.eol...)
+	}
+	return splice(d.src, start, end, repl), nil
+}
+
+// upsertMapField applies one mapping-valued field of an upsert, in the same
+// three places upsertListField's list can land: the key the sequence hangs from
+// written from nothing, the item written with the field, and the field replaced
+// on the item that already carries it. It is a third walker rather than a
+// renderer argument to one of the other two for the same reason they are two:
+// what differs is only the lines written, and every refusal, span and comment
+// the entries keep is the same code path in all of them.
+func upsertMapField(op string, src []byte, path []string, keyField, keyValue, field string, keys map[string]string) ([]byte, error) {
+	d, err := open(op, src)
+	if err != nil {
+		return src, err
+	}
+	leaf := mapItemLeaf(keyField, keyValue, field, keys)
+	if d.root == nil {
+		return d.openRoot(chain(path, 0, d.step, leaf)), nil
+	}
+	cur := d.root
+	for i := 0; i < len(path)-1; i++ {
+		out, next, done, err := d.descend(op, cur, path, i, leaf)
+		if err != nil {
+			return nil, err
+		}
+		if done {
+			return out, nil
+		}
+		cur = next
+	}
+	last := path[len(path)-1]
+	here := pathString(path)
+	if err := d.expectMapping(op, cur, here); err != nil {
+		return nil, err
+	}
+	e, err := d.find(op, cur, last, here)
+	if err != nil {
+		return nil, err
+	}
+	if e == nil {
+		if mergeKey(cur) {
+			return nil, refuse(op, here, ReasonMergeKey)
+		}
+		return d.appendBlock(op, cur, chain(path[len(path)-1:], d.entryIndent(cur), d.step, leaf))
+	}
+	if err := d.anchorFree(op, e, here); err != nil {
+		return nil, err
+	}
+	if empty, err := d.emptyValue(e.value); err != nil {
+		return nil, withOp(err, op)
+	} else if empty {
+		indent := d.entryIndent(cur) + d.step
+		return d.openChild(op, e, mapItemLines(indent, d.step, keyField, keyValue, field, keys))
+	}
+	seq := e.value
+	if seq.Style&yaml.FlowStyle != 0 {
+		return nil, refuse(op, here, ReasonFlowCollection)
+	}
+	if seq.Kind != yaml.SequenceNode {
+		return nil, refuse(op, here, ReasonNotASequence)
+	}
+	for _, it := range seq.Content {
+		if it.Kind != yaml.MappingNode {
+			return nil, refuse(op, here, ReasonNotAMapping)
+		}
+	}
+	indent, err := d.itemIndent(seq)
+	if err != nil {
+		return nil, err
+	}
+	if mergeKey(cur) {
+		return nil, refuse(op, here, ReasonMergeKey)
+	}
+	item := keyedItem(seq, keyField, keyValue)
+	if item == nil {
+		off, err := d.blockEnd(op, seq)
+		if err != nil {
+			return nil, err
+		}
+		return splice(d.src, off, off, []byte(d.eol+
+			strings.Join(mapItemLines(indent, d.step, keyField, keyValue, field, keys), d.eol))), nil
+	}
+	if item.Style&yaml.FlowStyle != 0 {
+		return nil, refuse(op, here, ReasonFlowCollection)
+	}
+	at := pathString(append(append([]string{}, path...), field))
+	fe, err := d.find(op, item, field, at)
+	if err != nil {
+		return nil, err
+	}
+	fieldIndent := d.entryIndent(item)
+	if fe == nil {
+		off, err := d.blockEnd(op, item)
+		if err != nil {
+			return nil, err
+		}
+		return splice(d.src, off, off, []byte(d.eol+strings.Join(mapLines(fieldIndent, d.step, field, keys), d.eol))), nil
+	}
+	if err := d.anchorFree(op, fe, at); err != nil {
+		return nil, err
+	}
+	if fe.value.Style&yaml.FlowStyle != 0 {
+		return nil, refuse(op, at, ReasonFlowCollection)
+	}
+	mapping := fe.value
+	empty, err := d.emptyValue(mapping)
+	if err != nil {
+		return nil, withOp(err, op)
+	}
+	if empty {
+		return d.openChild(op, fe, mapValueLines(fieldIndent, d.step, keys))
+	}
+	if mapping.Kind == yaml.MappingNode && len(mapping.Content) > 0 {
+		// The mapping's own lines are replaced and no more: the field's key line
+		// stays as the document wrote it, its comment with it, and so does the
+		// comment block above it. The replacement starts where the first key's
+		// line does and ends where the last one's written text does, so a trailing
+		// comment on that line stays where it was.
+		end, err := d.nodeEnd(op, mapping)
+		if err != nil {
+			return nil, err
+		}
+		first, err := d.offset(mapping.Content[0])
+		if err != nil {
+			return nil, withOp(err, op)
+		}
+		start := d.lines.start(d.lines.lineOf(first))
+		return splice(d.src, start, end, []byte(strings.Join(mapValueLines(fieldIndent, d.step, keys), d.eol))), nil
+	}
+	// A field written with no mapping yet — a scalar or a list the caller is
+	// retyping — has nothing to keep: the whole entry goes, its own comment block
+	// with it, because the entry is what the mapping takes the place of. A
+	// sequence is refused rather than dropped, the same shape and the same reason
+	// the scalar writer refuses a mapping (ReasonReplacesCollection).
+	if mapping.Kind == yaml.SequenceNode {
+		return nil, refuse(op, at, ReasonReplacesCollection)
+	}
+	start, end, err := d.entrySpan(op, fe)
+	if err != nil {
+		return nil, err
+	}
+	repl := []byte(strings.Join(mapLines(fieldIndent, d.step, field, keys), d.eol))
 	if end > 0 && d.src[end-1] == '\n' {
 		repl = append(repl, d.eol...)
 	}
