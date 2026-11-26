@@ -119,7 +119,9 @@
 # Knobs (all CHECK210_*): DRY_RUN, KEEP_SCRATCH, SANDBOX (the checkout, when you
 # would rather set it in the environment), YES, TASK (what each launch is
 # launched with), MAX_LAUNCHES (30), RELEASE (0.24.0: the release the pair
-# launch ships in), SINCE (1d: the window `fugaro ab` is read over), REGION
+# launch ships in), RATE (0.1: the premise's rate, and the one the setup writes
+# where the layer carries none), SINCE (1d: the window `fugaro ab` is read
+# over), REGION
 # (us-east5), RUN_TIMEOUT_SECONDS (3600), POLL_SECONDS (15), CLI_TIMEOUT_SECONDS
 # (180), CANCEL_TIMEOUT_SECONDS (300), LAUNCH_TIMEOUT_SECONDS (600),
 # DOCTOR_TIMEOUT_SECONDS (300). --sandbox,
